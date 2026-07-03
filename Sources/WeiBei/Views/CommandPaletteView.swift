@@ -7,7 +7,6 @@ struct CommandPaletteView: View {
     @State private var query = ""
     @State private var selectedIndex = 0
     @FocusState private var searchFocused: Bool
-    @AppStorage("topBarVariant") private var topBarVariantRaw = TopBarVariant.balanced.rawValue
 
     private var commands: [PaletteCommand] {
         var items = [
@@ -26,11 +25,6 @@ struct CommandPaletteView: View {
             PaletteCommand(title: "沉浸阅读", shortcut: "⌥⌘R", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveReading) },
             PaletteCommand(title: "沉浸对话", shortcut: "⌥⌘A", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveConversation) },
             PaletteCommand(title: "沉浸写笔记", shortcut: "⌥⌘N", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveWriting) },
-            PaletteCommand(title: "顶栏 甲 纸脊", shortcut: "", animation: WeiBeiMotion.layout) { topBarVariantRaw = TopBarVariant.balanced.rawValue },
-            PaletteCommand(title: "顶栏 乙 窄栏", shortcut: "", animation: WeiBeiMotion.layout) { topBarVariantRaw = TopBarVariant.compact.rawValue },
-            PaletteCommand(title: "顶栏 丙 阅读", shortcut: "", animation: WeiBeiMotion.layout) { topBarVariantRaw = TopBarVariant.reader.rawValue },
-            PaletteCommand(title: "顶栏 丁 图形", shortcut: "", animation: WeiBeiMotion.layout) { topBarVariantRaw = TopBarVariant.glyph.rawValue },
-            PaletteCommand(title: "顶栏 戊 宽排", shortcut: "", animation: WeiBeiMotion.layout) { topBarVariantRaw = TopBarVariant.wide.rawValue },
             PaletteCommand(title: "Agent 底部抽屉", shortcut: "⌃⌥1") { store.setAgentSurface(.bottomDrawer) },
             PaletteCommand(title: "Agent 右下角小窗", shortcut: "⌃⌥2") { store.setAgentSurface(.cornerPanel) },
             PaletteCommand(title: "Agent 划线浮层", shortcut: "⌃⌥3") { store.setAgentSurface(.selectionFloat) },
