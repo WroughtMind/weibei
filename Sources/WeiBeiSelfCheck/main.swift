@@ -201,6 +201,7 @@ expect(!workspaceStoreSource.contains("请根据当前文档和当前笔记") &&
 expect(workspaceStoreSource.contains("func resetNote()") && workspaceStoreSource.contains("createNotebookNote()") && !workspaceStoreSource.contains("updateNote(defaultNote(for: selectedItem))"), "new note command creates a notebook note instead of overwriting the current material note")
 expect(workspaceStoreSource.contains("isNotebookNote: true") && workspaceStoreSource.contains("nextNotebookNoteURL") && workspaceStoreSource.contains("try defaultNote(for: item).write"), "new notebook notes are backed by local markdown files")
 expect(workspaceStoreSource.contains("let title = item?.title ?? \"新笔记\"") && workspaceStoreSource.contains("let excerptSeed = item.map { $0.isNotebookNote ? \"- \" : \"> 来源：\\($0.title)\" } ?? \"- \"") && !workspaceStoreSource.contains("未命名材料"), "standalone note template avoids fake material/source copy")
+expect(workspaceStoreSource.contains("已创建双链笔记：\\(url.lastPathComponent)") && !workspaceStoreSource.contains("已创建双链笔记：\\(url.path)") && !workspaceStoreSource.contains("无法创建双链笔记：\\(url.path)"), "wikilink note statuses avoid exposing full local paths")
 expect(workspaceStoreSource.contains("func insertMarkdownSnippet(_ markdown: String)")
     && workspaceStoreSource.contains("layout = .immersiveWriting")
     && workspaceStoreSource.contains("showRightPane = true")

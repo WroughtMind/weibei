@@ -613,9 +613,9 @@ final class WorkspaceStore: ObservableObject {
                 importedItems.append(item)
             }
             select(itemID: item.id)
-            noteFileError = "已创建双链笔记：\(url.path)"
+            noteFileError = "已创建双链笔记：\(url.lastPathComponent)"
         } catch {
-            noteFileError = "无法创建双链笔记：\(url.path)"
+            noteFileError = "无法创建双链笔记：\(error.localizedDescription)"
         }
     }
 
