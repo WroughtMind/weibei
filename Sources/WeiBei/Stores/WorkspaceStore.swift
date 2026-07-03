@@ -132,6 +132,10 @@ final class WorkspaceStore: ObservableObject {
         selectedMaterialItem?.title ?? "未选择材料"
     }
 
+    var agentMessageSourceTitle: String? {
+        selectedMaterialItem?.title ?? selectedItem?.title
+    }
+
     var agentPromptScope: String {
         hasSelectedMaterial ? "当前材料和当前笔记" : "当前笔记"
     }
@@ -860,7 +864,8 @@ final class WorkspaceStore: ObservableObject {
         agentDraft = ""
         isAskingAgent = true
         let recentMessages = Array(messages.suffix(8))
-        messages.append(AgentMessage(role: .user, text: question, source: selectedMaterialItem?.title))
+        let sourceTitle = agentMessageSourceTitle
+        messages.append(AgentMessage(role: .user, text: question, source: sourceTitle))
 
         do {
             let client = OpenAIResponsesClient(apiKey: credential.key, model: resolvedModelName)
@@ -872,9 +877,9 @@ final class WorkspaceStore: ObservableObject {
                 selectionText: selectionContext?.text,
                 recentMessages: recentMessages
             )
-            messages.append(AgentMessage(role: .assistant, text: answer, source: selectedMaterialItem?.title))
+            messages.append(AgentMessage(role: .assistant, text: answer, source: sourceTitle))
         } catch {
-            messages.append(AgentMessage(role: .assistant, text: "Agent 请求失败：\(error.localizedDescription)", source: selectedMaterialItem?.title))
+            messages.append(AgentMessage(role: .assistant, text: "Agent 请求失败：\(error.localizedDescription)", source: sourceTitle))
         }
 
         isAskingAgent = false

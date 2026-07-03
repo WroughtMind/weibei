@@ -208,6 +208,7 @@ expect(
     "material search state clears when selection no longer points to a material"
 )
 expect(workspaceStoreSource.contains("var selectedMaterialTitle") && workspaceStoreSource.contains("selectedMaterialItem?.title ?? \"未选择材料\""), "agent material title does not invent a current material")
+expect(workspaceStoreSource.contains("var agentMessageSourceTitle: String?") && workspaceStoreSource.contains("selectedMaterialItem?.title ?? selectedItem?.title") && !workspaceStoreSource.contains("source: selectedMaterialItem?.title"), "agent message source falls back to the selected note title")
 expect(!workspaceStoreSource.contains("selectedItem?.title ?? \"当前材料\"") && !workspaceStoreSource.contains("保存后 Agent 会用当前材料") && !workspaceStoreSource.contains("已选择材料、当前选区和右侧笔记"), "agent context avoids fake material fallback copy")
 expect(workspaceStoreSource.contains("var agentPromptScope") && workspaceStoreSource.contains("var selectionPromptScope") && workspaceStoreSource.contains("var libraryOrganizationScope"), "agent prompt builders share context wording")
 expect(!workspaceStoreSource.contains("请根据当前文档和当前笔记") && !workspaceStoreSource.contains("请根据当前材料和当前笔记") && !workspaceStoreSource.contains("结合当前文档和笔记"), "agent draft presets do not hardcode fake material context")
