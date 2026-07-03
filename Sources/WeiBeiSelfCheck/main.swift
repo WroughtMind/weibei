@@ -16,6 +16,10 @@ expect(runScript.contains("let isOnscreen = window[kCGWindowIsOnscreen as String
 expect(!runScript.contains("pid=\"$(pgrep -x \"$PRODUCT_NAME\""), "run script window verification does not depend on pgrep")
 expect(runScript.contains("visual_verify_window") && runScript.contains("--visual-verify") && runScript.contains("visual_non_black_ratio") && runScript.contains("visual verify failed: captured window is black or empty") && runScript.contains("nonBlackRatio < 0.02"), "run script exposes an explicit visual non-black window check")
 expect(runScript.contains("visual verify blocked: macOS refused window capture") && runScript.contains("Grant Screen Recording permission"), "visual verification reports capture-permission failures instead of looking like an app rendering failure")
+expect(runScript.contains("RUN_VISUAL_VERIFY=false")
+    && runScript.contains("if [[ \"${2:-}\" == \"--visual-verify\"")
+    && runScript.contains("if [[ \"$RUN_VISUAL_VERIFY\" == true ]]; then\n          visual_verify_window")
+    && runScript.contains("swift run WeiBeiWebEditorCheck"), "run script verify mode includes Web editor checks and honors --verify --visual-verify")
 let editorIndexURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Resources/Editor/index.html")
 let editorIndexSource = (try? String(contentsOf: editorIndexURL, encoding: .utf8)) ?? ""

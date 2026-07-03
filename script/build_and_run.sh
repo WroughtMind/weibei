@@ -2,6 +2,14 @@
 set -euo pipefail
 
 MODE="${1:-run}"
+RUN_VISUAL_VERIFY=false
+if [[ "$MODE" == "--visual-verify" || "$MODE" == "visual-verify" ]]; then
+  MODE="--verify"
+  RUN_VISUAL_VERIFY=true
+fi
+if [[ "${2:-}" == "--visual-verify" || "${2:-}" == "visual-verify" ]]; then
+  RUN_VISUAL_VERIFY=true
+fi
 PRODUCT_NAME="WeiBei"
 APP_DISPLAY_NAME="魏碑"
 BUNDLE_ID="com.changfenhuang.weibei"
@@ -87,6 +95,11 @@ visual_verify_window() {
   rm -f "$capture_path"
 }
 
+run_verifiers() {
+  swift run WeiBeiSelfCheck
+  swift run WeiBeiWebEditorCheck
+}
+
 case "$MODE" in
   run)
     open_app
@@ -103,16 +116,24 @@ case "$MODE" in
     /usr/bin/log stream --info --style compact --predicate "subsystem == \"$BUNDLE_ID\""
     ;;
   --verify|verify)
+    run_verifiers
     open_app
     for _ in {1..30}; do
       if verify_window >/dev/null 2>&1; then
+        if [[ "$RUN_VISUAL_VERIFY" == true ]]; then
+          visual_verify_window
+        fi
         exit 0
       fi
       sleep 0.2
     done
     verify_window
+    if [[ "$RUN_VISUAL_VERIFY" == true ]]; then
+      visual_verify_window
+    fi
     ;;
   --visual-verify|visual-verify)
+    run_verifiers
     open_app
     for _ in {1..30}; do
       if verify_window >/dev/null 2>&1; then
@@ -124,7 +145,7 @@ case "$MODE" in
     verify_window
     ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--visual-verify]" >&2
+    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify [--visual-verify]|--visual-verify]" >&2
     exit 2
     ;;
 esac
