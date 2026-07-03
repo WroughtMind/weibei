@@ -979,6 +979,28 @@ const selectFirstTextForCheck = (needle) => {
   });
 };
 
+const typeTextForCheck = (text) => {
+  ensureEditor();
+  if (!window.weiBeiEditorCheckMode) return false;
+  return editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    view.focus();
+    for (const character of String(text || '')) {
+      const { from, to } = view.state.selection;
+      let handled = false;
+      view.someProp('handleTextInput', (handler) => {
+        if (handled) return true;
+        handled = handler(view, from, to, character) === true;
+        return handled;
+      });
+      if (!handled) {
+        view.dispatch(view.state.tr.insertText(character, from, to));
+      }
+    }
+    return true;
+  });
+};
+
 window.WeiBeiEditor = {
   getMarkdown: getMarkdownInternal,
   setMarkdown: setMarkdownInternal,
@@ -1047,6 +1069,7 @@ window.WeiBeiEditor = {
 if (window.weiBeiEditorCheckMode) {
   window.WeiBeiEditor.selectFirstTextForCheck = selectFirstTextForCheck;
   window.WeiBeiEditor.selectedTextForCheck = editorSelectedText;
+  window.WeiBeiEditor.typeTextForCheck = typeTextForCheck;
 }
 
 const initialDocument = splitFrontmatter(window.initialMarkdown || '');

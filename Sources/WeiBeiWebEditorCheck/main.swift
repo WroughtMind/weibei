@@ -640,8 +640,64 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                     self.fail("inline formula marker did not select the editable formula")
                     return
                 }
-                self.isDone = true
+                self.validateTypedInlineFormula()
             }
+        }
+    }
+
+    private func validateTypedInlineFormula() {
+        let script = """
+        window.WeiBeiEditor.insertMarkdown("\\n\\n{{WEIBEI_CURSOR}}");
+        if (!window.WeiBeiEditor.typeTextForCheck('$A^*$')) {
+          throw new Error('typeTextForCheck unavailable');
+        }
+        (() => ({
+          markdown: window.WeiBeiEditor.getMarkdown(),
+          mathNodes: document.querySelectorAll('span[data-type="math_inline"], .math-inline').length,
+          rawFormulaText: (() => {
+            const root = document.querySelector('.ProseMirror');
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            let count = 0;
+            let node;
+            while ((node = walker.nextNode())) {
+              const parent = node.parentElement;
+              if (!node.nodeValue.includes('$A^*$')) continue;
+              if (parent?.closest('[data-type="math_inline"], .math-inline')) continue;
+              count += 1;
+            }
+            return count;
+          })(),
+          mathBackground: getComputedStyle(document.querySelector('span[data-type="math_inline"], .math-inline') || document.body).backgroundColor
+        }))();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            if let error {
+                self.fail("typed inline formula check threw \(error.localizedDescription)")
+                return
+            }
+            guard let result = value as? [String: Any],
+                  let markdown = result["markdown"] as? String else {
+                self.fail("typed inline formula check did not return result")
+                return
+            }
+            if !markdown.contains("$A^*$") {
+                self.fail("typed inline formula did not serialize as Markdown math: \(markdown)")
+                return
+            }
+            if (result["mathNodes"] as? Int ?? 0) < 1 {
+                self.fail("typed inline formula did not become a math node")
+                return
+            }
+            if (result["rawFormulaText"] as? Int ?? 0) > 0 {
+                self.fail("typed inline formula left a raw source text block beside KaTeX")
+                return
+            }
+            if result["mathBackground"] as? String != "rgba(0, 0, 0, 0)" {
+                self.fail("typed inline formula should not look like a filled source chip")
+                return
+            }
+            self.isDone = true
         }
     }
 
