@@ -689,8 +689,10 @@ private struct LayoutContentView: View {
                     } third: {
                         NotePaneView()
                     }
+                    .transition(WeiBeiTransition.rightPanel)
                 } else {
                     ReaderView()
+                        .transition(WeiBeiTransition.layout)
                 }
             case .documentNotesAgent:
                 if store.showRightPane {
@@ -707,8 +709,10 @@ private struct LayoutContentView: View {
                     } third: {
                         AgentPaneView()
                     }
+                    .transition(WeiBeiTransition.rightPanel)
                 } else {
                     ReaderView()
+                        .transition(WeiBeiTransition.layout)
                 }
             case .documentNotesSplit:
                 if store.showRightPane {
@@ -720,8 +724,10 @@ private struct LayoutContentView: View {
                         }
                         agentOverlay
                     }
+                    .transition(WeiBeiTransition.rightPanel)
                 } else {
                     ReaderView()
+                        .transition(WeiBeiTransition.layout)
                 }
             case .immersiveReading:
                 ZStack(alignment: .bottomTrailing) {
@@ -755,6 +761,7 @@ private struct LayoutContentView: View {
                         ContextRailView(title: "写入目标", items: conversationTargetRailItems, edge: .leading)
                             .transition(WeiBeiTransition.rail)
                     }
+                    .transition(WeiBeiTransition.rightPanel)
                 } else {
                     ResizableTwoPane(split: conversationLeftSplit, minFirst: 92, minSecond: 520) {
                         ContextRailView(title: "来源", items: conversationSourceRailItems, edge: .trailing)
@@ -762,6 +769,7 @@ private struct LayoutContentView: View {
                     } second: {
                         AgentPaneView()
                     }
+                    .transition(WeiBeiTransition.layout)
                 }
             case .immersiveWriting:
                 ZStack(alignment: agentAlignment) {
@@ -781,6 +789,7 @@ private struct LayoutContentView: View {
                             ContextRailView(title: "写作辅助", items: writingAssistRailItems, edge: .leading)
                                 .transition(WeiBeiTransition.rail)
                         }
+                        .transition(WeiBeiTransition.rightPanel)
                     } else {
                         ResizableTwoPane(split: writingLeftSplit, minFirst: 96, minSecond: 540) {
                             ContextRailView(title: "文档", items: writingDocumentRailItems, edge: .trailing)
@@ -788,6 +797,7 @@ private struct LayoutContentView: View {
                         } second: {
                             NotePaneView()
                         }
+                        .transition(WeiBeiTransition.layout)
                     }
 
                     if store.agentSurface != .quietInsight {

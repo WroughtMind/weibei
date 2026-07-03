@@ -203,6 +203,8 @@ expect(contentViewSource.contains("normalSidePaneMinimum"), "normal three-pane l
 expect(!contentViewSource.contains("DragGesture()"), "content panes avoid SwiftUI drag resizing")
 expect(!contentViewSource.contains(".id(store.layout)"), "layout changes avoid whole-screen identity resets")
 expect(!contentViewSource.contains("PaneSeparator"), "content panes avoid hand-drawn split separators")
+expect(contentViewSource.components(separatedBy: ".transition(WeiBeiTransition.rightPanel)").count >= 5
+    && contentViewSource.components(separatedBy: ".transition(WeiBeiTransition.layout)").count >= 3, "right-pane visibility changes use shared transitions instead of naked tree swaps")
 expect(!contentViewSource.contains("topBarContentFade"), "top bar avoids a duplicate content fade wash")
 expect(contentViewSource.contains("store.toggleLibrary()")
     && contentViewSource.contains("sidebar.left")
