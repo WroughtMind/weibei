@@ -261,6 +261,7 @@ expect(webEditorSource.contains("const insertionCursorMarker = '{{WEIBEI_CURSOR}
 let appSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/App/WeiBeiApp.swift")
 let appSource = (try? String(contentsOf: appSourceURL, encoding: .utf8)) ?? ""
+expect(appSource.contains("window.isOpaque = true"), "main window declares opaque paper backing for stable capture")
 expect(appSource.contains("sharedWorkspaceStore"), "main window and settings share one workspace store")
 expect(!appSource.contains("launchProbe"), "app launch path has no temporary probe logging")
 expect(appSource.contains("addLocalMonitorForEvents(matching: .keyDown)") && appSource.contains("removeMonitor(shortcutMonitor)"), "app-level shortcuts survive focused web editor")

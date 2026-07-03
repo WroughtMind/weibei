@@ -227,7 +227,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
         window.toolbar = nil
-        window.isOpaque = false
+        window.isOpaque = true
         window.backgroundColor = NSColor(
             calibratedRed: 0.985,
             green: 0.960,
