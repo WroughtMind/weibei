@@ -255,6 +255,12 @@ let richEditorSourceURL = URL(fileURLWithPath: FileManager.default.currentDirect
     .appendingPathComponent("Sources/WeiBei/Views/RichMarkdownEditorView.swift")
 let richEditorSource = (try? String(contentsOf: richEditorSourceURL, encoding: .utf8)) ?? ""
 expect(richEditorSource.contains("var documentID = \"\"") && richEditorSource.contains("var pendingExternalMarkdown: String?"), "rich editor tracks document identity and pending external sync")
+expect(
+    richEditorSource.contains("window.weiBeiDocumentID")
+        && richEditorSource.contains("func setDocumentID(_ id: String)")
+        && richEditorSource.contains("guard messageMatchesDocument(message.body) else { return }"),
+    "rich editor rejects stale web callbacks from a previous document"
+)
 expect(richEditorSource.contains("guard text == pendingExternalMarkdown else { return }"), "rich editor ignores stale markdown callbacks during document sync")
 expect(richEditorSource.contains("command && shift && !option && !control") && richEditorSource.contains("[\"a\", \"r\", \"e\", \"c\"].includes(key)"), "rich editor forwards command-shift agent shortcuts to Swift")
 expect(richEditorSource.contains("runPendingCommandIfReady()")
@@ -267,6 +273,9 @@ expect(!webEditorSource.contains("event.metaKey && event.shiftKey && event.key.t
 expect(webEditorSource.contains("const insertionCursorMarker = '{{WEIBEI_CURSOR}}'")
     && webEditorSource.contains("insertionSelectionStartMarker")
     && webEditorSource.contains("placeCursorAtInsertionMarker()"), "web editor removes command snippet cursor markers after insertion")
+expect(webEditorSource.contains("let currentDocumentID = window.weiBeiDocumentID || ''")
+    && webEditorSource.contains("postMessage({ ...body, documentID: currentDocumentID })")
+    && webEditorSource.contains("setDocumentID: (next) =>"), "web editor tags bridge messages with the current document identity")
 let appSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/App/WeiBeiApp.swift")
 let appSource = (try? String(contentsOf: appSourceURL, encoding: .utf8)) ?? ""

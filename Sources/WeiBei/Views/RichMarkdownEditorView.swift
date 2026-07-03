@@ -170,6 +170,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         controller.addUserScript(WKUserScript(
             source: """
             window.initialMarkdown = \(Self.json(markdown));
+            window.weiBeiDocumentID = \(Self.json(documentID));
             window.weiBeiMarkdownEditable = \(isEditable ? "true" : "false");
             window.weiBeiMarkdownBaseURL = \(Self.json(markdownBaseURL?.absoluteString ?? ""));
             window.weiBeiLocalImageScheme = \(Self.json(Self.localImageScheme));
@@ -243,6 +244,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.command = $command
         if context.coordinator.documentID != documentID {
             context.coordinator.documentID = documentID
+            context.coordinator.setDocumentID(documentID)
         }
         context.coordinator.attachmentDirectory = attachmentDirectory
         context.coordinator.imageSchemeHandler.update(
@@ -362,6 +364,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard messageMatchesDocument(message.body) else { return }
             switch message.name {
             case "editorReady":
                 isReady = true
@@ -430,6 +433,14 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             }
         }
 
+        private func messageMatchesDocument(_ body: Any) -> Bool {
+            guard let body = body as? [String: Any],
+                  let messageDocumentID = body["documentID"] as? String else {
+                return documentID.isEmpty
+            }
+            return messageDocumentID == documentID
+        }
+
         private func modifiers(from body: [String: Any]) -> NSEvent.ModifierFlags {
             var modifiers: NSEvent.ModifierFlags = []
             if body["command"] as? Bool == true {
@@ -455,6 +466,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
         func setEditable(_ editable: Bool) {
             evaluate("window.WeiBeiEditor?.setEditable(\(editable ? "true" : "false"))")
+        }
+
+        func setDocumentID(_ id: String) {
+            evaluate("window.WeiBeiEditor?.setDocumentID(\(Self.json(id)))")
         }
 
         func setMarkdownBaseURL(_ url: String) {

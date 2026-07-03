@@ -93,6 +93,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         let controller = WKUserContentController()
         let source = """
         window.initialMarkdown = \(json(sampleMarkdown));
+        window.weiBeiDocumentID = "web-editor-check";
         window.weiBeiMarkdownEditable = true;
         window.weiBeiEditorCheckMode = true;
         window.weiBeiLocalImageScheme = "weibeiimage";
@@ -127,6 +128,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         switch message.name {
         case "editorReady":
+            guard (message.body as? [String: Any])?["documentID"] as? String == "web-editor-check" else {
+                fail("editorReady did not include the current document identity")
+                return
+            }
             validateInitialMarkdown()
         case "wikiLinkActivated":
             activatedWikiTitle = (message.body as? [String: Any])?["title"] as? String

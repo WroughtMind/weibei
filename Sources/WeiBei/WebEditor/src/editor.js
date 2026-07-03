@@ -32,6 +32,7 @@ let lastMarkdown = '';
 let lastSelectionRange = null;
 let frontmatterBlock = '';
 let isEditable = window.weiBeiMarkdownEditable !== false;
+let currentDocumentID = window.weiBeiDocumentID || '';
 let markdownBaseURL = window.weiBeiMarkdownBaseURL || '';
 const localImageScheme = window.weiBeiLocalImageScheme || 'weibeiimage';
 let attachmentRequestID = 0;
@@ -90,8 +91,8 @@ const showFailure = (error) => {
 window.addEventListener('error', (event) => showFailure(event.error || event.message));
 window.addEventListener('unhandledrejection', (event) => showFailure(event.reason));
 
-const post = (name, body) => {
-  bridge?.[name]?.postMessage(body);
+const post = (name, body = {}) => {
+  bridge?.[name]?.postMessage({ ...body, documentID: currentDocumentID });
 };
 
 const rectFromSelection = () => {
@@ -1033,6 +1034,9 @@ window.WeiBeiEditor = {
   setEditable: (next) => {
     isEditable = next !== false;
     syncEditableState();
+  },
+  setDocumentID: (next) => {
+    currentDocumentID = next || '';
   },
   setMarkdownBaseURL: (next) => {
     markdownBaseURL = next || '';
