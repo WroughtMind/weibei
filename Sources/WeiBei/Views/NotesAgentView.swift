@@ -955,21 +955,6 @@ struct CornerAgentView: View {
             }
             .animation(WeiBeiMotion.micro, value: canSend)
 
-            HStack(spacing: 6) {
-                cornerToolButton("list.bullet.rectangle", label: "整理笔记") {
-                    store.askToOrganizeNote()
-                }
-                if store.canApplyAgentAnswer {
-                    cornerToolButton("square.and.arrow.down", label: "写入笔记") {
-                        store.applyLastAgentAnswerToNote()
-                    }
-                }
-                if store.canReplaceNoteSelection {
-                    cornerToolButton("arrow.left.arrow.right", label: "替换笔记选区") {
-                        store.replaceSelectionWithLastAgentAnswer()
-                    }
-                }
-            }
         }
         .padding(12)
         .frame(width: 308)
@@ -988,15 +973,6 @@ struct CornerAgentView: View {
 
     private var agentPrompt: String {
         store.hasSelectedMaterial ? "问当前材料" : "问当前笔记"
-    }
-
-    private func cornerToolButton(_ systemName: String, label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-        }
-        .buttonStyle(WeiBeiIconButtonStyle(size: 26))
-        .accessibilityLabel(Text(label))
-        .help(label)
     }
 }
 

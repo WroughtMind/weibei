@@ -237,6 +237,13 @@ expect(workspaceStoreSource.contains("var selectedMaterialTitle") && workspaceSt
 expect(workspaceStoreSource.contains("var agentMessageSourceTitle: String?") && workspaceStoreSource.contains("selectedMaterialItem?.title ?? selectedItem?.title") && !workspaceStoreSource.contains("source: selectedMaterialItem?.title"), "agent message source falls back to the selected note title")
 expect(workspaceStoreSource.contains("private var quietInsightReferenceTitle: String") && workspaceStoreSource.contains("selectionContext?.ownerTitle ?? selectedMaterialItem?.title ?? selectedItem?.title") && workspaceStoreSource.contains("没有证据就说\\(evidenceText)"), "quiet insight uses real note or material source wording")
 expect(workspaceStoreSource.contains("layout == .immersiveReading || layout == .immersiveWriting") && workspaceStoreSource.contains("agentSurface = .cornerPanel") && !workspaceStoreSource.contains("layout = .immersiveConversation\n                showLibrary = false\n                showRightPane = true"), "agent focus in immersive layouts opens an overlay instead of switching layout")
+if let agentFocusStart = workspaceStoreSource.range(of: "if pane == .agent")?.lowerBound,
+   let focusEnd = workspaceStoreSource.range(of: "focusedPane = pane")?.lowerBound {
+    let agentFocusSource = String(workspaceStoreSource[agentFocusStart..<focusEnd])
+    expect(!agentFocusSource.contains("showLibrary = false"), "agent focus does not close a user-opened immersive library")
+} else {
+    expect(false, "agent focus source is readable")
+}
 expect(workspaceStoreSource.contains("let canShowSelectionFloat = SelectionFloatingAgentPlacement.isVisible") && workspaceStoreSource.contains("surface == .selectionFloat && !canShowSelectionFloat ? .cornerPanel : surface"), "selection-float agent surface falls back to a visible corner panel when no selection can anchor it")
 expect(!workspaceStoreSource.contains("selectedItem?.title ?? \"当前材料\"") && !workspaceStoreSource.contains("保存后 Agent 会用当前材料") && !workspaceStoreSource.contains("已选择材料、当前选区和右侧笔记"), "agent context avoids fake material fallback copy")
 expect(workspaceStoreSource.contains("var agentPromptScope") && workspaceStoreSource.contains("var selectionPromptScope") && workspaceStoreSource.contains("var libraryOrganizationScope"), "agent prompt builders share context wording")
@@ -288,7 +295,13 @@ expect(notesAgentSource.contains(".help(\"新建独立 Markdown 笔记\")") && n
 expect(notesAgentSource.contains("drawerPrompt") && notesAgentSource.contains("return \"问当前选区\"") && !notesAgentSource.contains("问当前选区或当前材料"), "agent drawer placeholder avoids fake material context")
 expect(notesAgentSource.contains("store.hasSelectedMaterial ? \"问当前材料\" : \"问当前笔记\"") && notesAgentSource.contains("prompt: Text(agentPrompt).foregroundStyle(WeiBeiTheme.tertiaryInk)"), "agent input placeholder matches whether a material is selected")
 expect(notesAgentSource.contains("store.hasSelectedMaterial ? \"来源\" : \"笔记\"") && notesAgentSource.contains("store.selectedMaterialItem?.title ?? \"当前笔记\""), "agent drawer source row avoids fake current material")
-expect(notesAgentSource.contains("cornerToolButton(\"list.bullet.rectangle\", label: \"整理笔记\"") && !notesAgentSource.contains("Button(\"整理笔记\")"), "corner agent uses compact semantic icon tools")
+if let cornerStart = notesAgentSource.range(of: "struct CornerAgentView")?.lowerBound,
+   let selectionStart = notesAgentSource.range(of: "struct FloatingSelectionAgentView")?.lowerBound {
+    let cornerAgentSource = String(notesAgentSource[cornerStart..<selectionStart])
+    expect(!cornerAgentSource.contains("cornerToolButton(") && !cornerAgentSource.contains("整理笔记"), "corner agent stays a lightweight prompt surface")
+} else {
+    expect(false, "corner agent source is readable")
+}
 expect(notesAgentSource.contains("private var agentInputTray: some View"), "agent pane uses a dedicated input tray")
 expect(notesAgentSource.contains("WeiBeiGlassHeaderBackground(") && notesAgentSource.contains("WeiBeiTheme.glassTint.opacity(0.66)"), "agent input tray uses paper glass fade instead of a hard white strip")
 expect(!notesAgentSource.contains(".disabled(store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)") && !notesAgentSource.contains(".disabled(!canSend)") && !notesAgentSource.contains(".disabled(store.isAskingAgent)"), "agent inputs hide unavailable send actions instead of showing disabled buttons")

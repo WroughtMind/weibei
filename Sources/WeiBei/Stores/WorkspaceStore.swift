@@ -248,7 +248,6 @@ final class WorkspaceStore: ObservableObject {
                     agentSurface = .cornerPanel
                     showQuietInsight = false
                 }
-                showLibrary = false
             }
         }
         focusedPane = pane
