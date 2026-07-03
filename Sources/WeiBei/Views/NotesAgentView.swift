@@ -821,16 +821,17 @@ private struct AgentStarterChip: View {
             Label(title, systemImage: systemImage)
                 .labelStyle(.titleAndIcon)
                 .font(.system(size: 11.5, weight: .medium))
-                .padding(.horizontal, 9)
-                .frame(height: 26)
+                .symbolRenderingMode(.hierarchical)
+                .padding(.horizontal, 7)
+                .frame(height: 24)
         }
         .buttonStyle(.plain)
         .foregroundStyle(hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
-        .background(WeiBeiTheme.paperInset.opacity(hovering ? 0.32 : 0.20))
-        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .background(WeiBeiTheme.paperInset.opacity(hovering ? 0.22 : 0.0))
+        .clipShape(RoundedRectangle(cornerRadius: 5))
         .overlay {
-            RoundedRectangle(cornerRadius: 7)
-                .stroke(hovering ? WeiBeiTheme.hairline.opacity(0.92) : WeiBeiTheme.hairline.opacity(0.68), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 5)
+                .stroke(hovering ? WeiBeiTheme.hairline.opacity(0.78) : WeiBeiTheme.hairline.opacity(0.0), lineWidth: 1)
         }
         .offset(y: hovering ? -1 : 0)
         .onHover { value in

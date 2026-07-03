@@ -337,19 +337,28 @@ private struct UnifiedTopBarView: View {
     }
 
     private var shouldShowTopDocumentTitle: Bool {
-        store.hasSelectedMaterial && store.layout != .immersiveConversation
+        store.hasSelectedMaterial && hasReaderScopedTopActions
     }
 
     private var shouldShowSearchAction: Bool {
-        store.hasSelectedMaterial && store.layout != .immersiveConversation
+        store.hasSelectedMaterial && hasReaderScopedTopActions
     }
 
     private var shouldShowReferenceAction: Bool {
-        store.layout != .immersiveConversation && store.hasSelectedMaterial
+        store.hasSelectedMaterial && hasReaderScopedTopActions
     }
 
     private var shouldShowAgentAction: Bool {
         store.layout != .immersiveConversation && !hasPrimaryAgentPaneVisible
+    }
+
+    private var hasReaderScopedTopActions: Bool {
+        switch store.layout {
+        case .immersiveConversation, .immersiveWriting:
+            return false
+        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit, .immersiveReading:
+            return true
+        }
     }
 
     private var shortLayoutLabel: String {
