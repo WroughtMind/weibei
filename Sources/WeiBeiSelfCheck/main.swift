@@ -183,6 +183,7 @@ let notesAgentSourceURL = URL(fileURLWithPath: FileManager.default.currentDirect
     .appendingPathComponent("Sources/WeiBei/Views/NotesAgentView.swift")
 let notesAgentSource = (try? String(contentsOf: notesAgentSourceURL, encoding: .utf8)) ?? ""
 expect(notesAgentSource.contains("compactHovering") && notesAgentSource.contains("compactBackground"), "compact quiet insight uses a light margin-note surface")
+expect(notesAgentSource.contains(".opacity(compactHovering ? 1 : 0.68)") && notesAgentSource.contains("paperRaised.opacity(compactHovering ? 0.82 : 0.58)"), "compact quiet insight stays readable before hover")
 expect(notesAgentSource.contains("let itemID = store.selectedItemID") && notesAgentSource.contains("store.updateNote(value, for: itemID)"), "rich note editor writes through selected item guard")
 expect(notesAgentSource.contains("ContextRailLine") && notesAgentSource.contains(".onHover"), "context rails keep hover motion")
 expect(notesAgentSource.contains("struct ContextRailItem: Identifiable") && notesAgentSource.contains("Button(action: action)"), "context rails expose actionable rows")
