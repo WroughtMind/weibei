@@ -920,7 +920,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func defaultNote(for item: StudyItem?) -> String {
-        let title = item?.title ?? "未命名材料"
+        let title = item?.title ?? "新笔记"
+        let excerptSeed = item.map { "> 来源：\($0.title)" } ?? "- "
         return """
         # \(title)
 
@@ -928,7 +929,7 @@ final class WorkspaceStore: ObservableObject {
         - 
 
         ## 摘录
-        > 来源：\(title)
+        \(excerptSeed)
 
         ## 待追问
         - 
