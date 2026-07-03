@@ -656,7 +656,7 @@ final class WorkspaceStore: ObservableObject {
             \(selectionContext.text)
             """
         } else {
-            agentDraft = "请解释我刚才选中的内容，并结合当前文档和笔记回答。"
+            agentDraft = "请根据当前材料和当前笔记，帮我梳理重点和可追问的问题。"
             if layout == .immersiveReading || layout == .documentNotesSplit {
                 agentSurface = .cornerPanel
             }
