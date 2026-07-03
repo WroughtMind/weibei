@@ -997,7 +997,6 @@ struct FloatingSelectionAgentView: View {
             }
         }
         .matchedGeometryEffect(id: "selection-agent-surface", in: floatingNamespace)
-        .id(expanded)
         .transition(WeiBeiTransition.floating)
         .weibeiFloatingPanel(cornerRadius: 7)
         .scaleEffect(expanded ? 1 : 0.985)

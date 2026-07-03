@@ -179,6 +179,7 @@ expect(notesAgentSource.contains("ContextRailLine") && notesAgentSource.contains
 expect(notesAgentSource.contains("struct ContextRailItem: Identifiable") && notesAgentSource.contains("Button(action: action)"), "context rails expose actionable rows")
 expect(notesAgentSource.contains(".accessibilityLabel(Text(item.help ?? item.title))") && notesAgentSource.contains(".help(item.help ?? item.title)"), "context rail actions explain their intent")
 expect(notesAgentSource.contains("var edge: HorizontalEdge = .trailing") && notesAgentSource.contains("edge == .leading ? -3 : 3"), "context rails move inward from either side")
+expect(!notesAgentSource.contains(".id(expanded)"), "selection agent expands without forcing a hard view identity reset")
 expect(contentViewSource.contains("edge: .leading") && contentViewSource.contains("edge: .trailing"), "immersive rails declare their content-facing edge")
 expect(contentViewSource.contains("conversationSourceRailItems") && contentViewSource.contains("conversationTargetRailItems") && contentViewSource.contains("writingAssistRailItems"), "immersive rails wire role-specific actions")
 expect(contentViewSource.contains("store.appendSelectionToNote()") && contentViewSource.contains("store.copyCurrentReference()") && contentViewSource.contains("prepareAgentDraft"), "immersive rails connect to existing note, reference, and agent actions")
