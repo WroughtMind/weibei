@@ -1,5 +1,15 @@
 import Foundation
 
+public struct AgentPromptPayload: Equatable {
+    public var instructions: String
+    public var input: String
+
+    public init(instructions: String, input: String) {
+        self.instructions = instructions
+        self.input = input
+    }
+}
+
 public struct OpenAIResponsesClient {
     let apiKey: String
     let model: String
@@ -13,7 +23,9 @@ public struct OpenAIResponsesClient {
         question: String,
         materialTitle: String,
         materialText: String,
+        noteTitle: String = "当前笔记",
         noteText: String,
+        selectionTitle: String? = nil,
         selectionText: String?,
         recentMessages: [AgentMessage]
     ) async throws -> String {
@@ -22,43 +34,20 @@ public struct OpenAIResponsesClient {
         request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let trimmedMaterial = String(materialText.prefix(18_000))
-        let trimmedNote = String(noteText.prefix(6_000))
-        let trimmedSelection = selectionText.map { String($0.prefix(2_000)) } ?? "无"
-        let hasMaterial = !trimmedMaterial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let materialBlock = hasMaterial ? """
-        当前材料：\(materialTitle)
-
-        材料内容：
-        \(trimmedMaterial)
-        """ : "当前材料：无"
-        let dialogue = recentMessages.suffix(8).map { message in
-            let role = message.role == .user ? "用户" : "Agent"
-            return "\(role)：\(String(message.text.prefix(1_200)))"
-        }.joined(separator: "\n")
-        let instructions = hasMaterial
-            ? "你是魏碑里的学习 Agent。只根据当前材料、当前笔记和当前选区回答；没有证据就说未在材料或笔记中确认。回答用中文，先给结论，再列来源依据。"
-            : "你是魏碑里的学习 Agent。只根据当前笔记和当前选区回答；没有证据就说未在笔记或选区中确认。回答用中文，先给结论，再列来源依据。"
-        let input = """
-        \(materialBlock)
-
-        当前选区：
-        \(trimmedSelection)
-
-        当前笔记：
-        \(trimmedNote)
-
-        最近对话：
-        \(dialogue.isEmpty ? "无" : dialogue)
-
-        用户问题：
-        \(question)
-        """
-
+        let prompt = Self.composePrompt(
+            question: question,
+            materialTitle: materialTitle,
+            materialText: materialText,
+            noteTitle: noteTitle,
+            noteText: noteText,
+            selectionTitle: selectionTitle,
+            selectionText: selectionText,
+            recentMessages: recentMessages
+        )
         let body: [String: Any] = [
             "model": model,
-            "instructions": instructions,
-            "input": input
+            "instructions": prompt.instructions,
+            "input": prompt.input
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
@@ -69,6 +58,70 @@ public struct OpenAIResponsesClient {
         }
 
         return try Self.extractText(from: data)
+    }
+
+    public static func composePrompt(
+        question: String,
+        materialTitle: String,
+        materialText: String,
+        noteTitle: String = "当前笔记",
+        noteText: String,
+        selectionTitle: String? = nil,
+        selectionText: String?,
+        recentMessages: [AgentMessage]
+    ) -> AgentPromptPayload {
+        func label(_ value: String?, fallback: String) -> String {
+            let cleaned = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return cleaned.isEmpty ? fallback : cleaned
+        }
+
+        let trimmedMaterial = String(materialText.prefix(18_000))
+        let trimmedNote = String(noteText.prefix(6_000))
+        let trimmedSelection = selectionText.map { String($0.prefix(2_000)) } ?? ""
+        let hasMaterial = !trimmedMaterial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let materialLabel = label(materialTitle, fallback: "当前材料")
+        let noteLabel = label(noteTitle, fallback: "当前笔记")
+        let selectionLabel = label(selectionTitle, fallback: hasMaterial ? materialLabel : noteLabel)
+        let materialBlock = hasMaterial ? """
+        当前材料：\(materialLabel)
+
+        材料内容：
+        \(trimmedMaterial)
+        """ : "当前材料：无"
+        let selectionBlock = trimmedSelection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "当前选区：无" : """
+        当前选区（来源：\(selectionLabel)）：
+        \(trimmedSelection)
+        """
+        let noteBlock = """
+        当前笔记：\(noteLabel)
+
+        笔记内容：
+        \(trimmedNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "无" : trimmedNote)
+        """
+        let dialogue = recentMessages.suffix(8).map { message in
+            let role = message.role == .user ? "用户" : "Agent"
+            let source = message.source?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let sourceText = source?.isEmpty == false ? "（来源：\(source!)）" : ""
+            return "\(role)\(sourceText)：\(String(message.text.prefix(1_200)))"
+        }.joined(separator: "\n")
+        let sourceRule = "回答末尾用“来源依据”列出真正用到的材料标题、选区来源或笔记标题；没有用到的来源不要列。"
+        let instructions = hasMaterial
+            ? "你是魏碑里的学习 Agent。只根据当前材料、当前笔记和当前选区回答；没有证据就说未在材料或笔记中确认。回答用中文，先给结论。\(sourceRule)"
+            : "你是魏碑里的学习 Agent。只根据当前笔记和当前选区回答；没有证据就说未在笔记或选区中确认。回答用中文，先给结论。\(sourceRule)"
+        let input = """
+        \(materialBlock)
+
+        \(selectionBlock)
+
+        \(noteBlock)
+
+        最近对话：
+        \(dialogue.isEmpty ? "无" : dialogue)
+
+        用户问题：
+        \(question)
+        """
+        return AgentPromptPayload(instructions: instructions, input: input)
     }
 
     public static func extractText(from data: Data) throws -> String {

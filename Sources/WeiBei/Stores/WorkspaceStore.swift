@@ -136,6 +136,16 @@ final class WorkspaceStore: ObservableObject {
         selectedMaterialItem?.title ?? selectedItem?.title
     }
 
+    var agentNoteTitle: String {
+        if selectedItem?.isNotebookNote == true {
+            return selectedItem?.title ?? "当前笔记"
+        }
+        if let title = selectedMaterialItem?.title {
+            return "\(title) 的笔记"
+        }
+        return "当前笔记"
+    }
+
     var agentPromptScope: String {
         hasSelectedMaterial ? "当前材料和当前笔记" : "当前笔记"
     }
@@ -809,7 +819,9 @@ final class WorkspaceStore: ObservableObject {
                 question: "请静默阅读\(contextScope)，只输出一条最值得提示给用户的洞察。要温和、短、可执行；\(evidenceText)",
                 materialTitle: materialTitle,
                 materialText: materialText,
+                noteTitle: agentNoteTitle,
                 noteText: currentNoteText,
+                selectionTitle: selectionContext?.ownerTitle,
                 selectionText: selectionText,
                 recentMessages: []
             )
@@ -885,7 +897,9 @@ final class WorkspaceStore: ObservableObject {
                 question: question,
                 materialTitle: selectedMaterialTitle,
                 materialText: selectedContextText,
+                noteTitle: agentNoteTitle,
                 noteText: noteText,
+                selectionTitle: selectionContext?.ownerTitle,
                 selectionText: selectionContext?.text,
                 recentMessages: recentMessages
             )

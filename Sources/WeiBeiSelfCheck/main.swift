@@ -33,6 +33,33 @@ let data = Data("""
 """.utf8)
 let text = try OpenAIResponsesClient.extractText(from: data)
 expect(text == "只根据当前材料回答。", "response parser")
+let groundedPrompt = OpenAIResponsesClient.composePrompt(
+    question: "解释金融体系",
+    materialTitle: "Mishkin 教材样例",
+    materialText: "金融体系把储蓄者的资金转移给有投资机会的人。",
+    noteTitle: "利率笔记",
+    noteText: "## 摘录\n金融体系和利率相关。",
+    selectionTitle: "Mishkin 教材样例，第 1 页选区",
+    selectionText: "储蓄者的资金转移给有投资机会的人",
+    recentMessages: [
+        AgentMessage(role: .user, text: "上一问", source: "利率笔记")
+    ]
+)
+expect(groundedPrompt.input.contains("当前材料：Mishkin 教材样例"), "agent prompt includes material title")
+expect(groundedPrompt.input.contains("当前笔记：利率笔记"), "agent prompt includes note title")
+expect(groundedPrompt.input.contains("当前选区（来源：Mishkin 教材样例，第 1 页选区）："), "agent prompt includes selection source")
+expect(groundedPrompt.input.contains("用户（来源：利率笔记）：上一问"), "agent prompt keeps recent message source")
+expect(groundedPrompt.instructions.contains("来源依据") && groundedPrompt.instructions.contains("没有用到的来源不要列"), "agent prompt requires grounded source evidence")
+let noteOnlyPrompt = OpenAIResponsesClient.composePrompt(
+    question: "整理这段",
+    materialTitle: "未选择材料",
+    materialText: "",
+    noteTitle: "概念笔记",
+    noteText: "实际利率需要区分通胀预期。",
+    selectionText: "实际利率",
+    recentMessages: []
+)
+expect(noteOnlyPrompt.input.contains("当前材料：无") && noteOnlyPrompt.input.contains("当前选区（来源：概念笔记）："), "note-only prompt anchors selection to the current note")
 let openAIClientSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBeiCore/OpenAIResponsesClient.swift")
 let openAIClientSource = (try? String(contentsOf: openAIClientSourceURL, encoding: .utf8)) ?? ""
@@ -40,6 +67,7 @@ expect(
     openAIClientSource.contains("let hasMaterial = !trimmedMaterial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty")
         && openAIClientSource.contains(": \"当前材料：无\"")
         && openAIClientSource.contains("只根据当前笔记和当前选区回答")
+        && openAIClientSource.contains("当前选区（来源：\\(selectionLabel)）")
         && !openAIClientSource.contains("只根据当前材料和当前笔记回答"),
     "agent request prompt switches to note-only context when no material exists"
 )
