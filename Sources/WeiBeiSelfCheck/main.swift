@@ -351,6 +351,7 @@ expect(workspaceStoreSource.contains("func insertMarkdownSnippet(_ markdown: Str
 expect(!workspaceStoreSource.contains("当前页提示"), "quiet insight avoids old page alert title")
 expect(workspaceStoreSource.contains("阅读线索"), "quiet insight uses margin-note language")
 expect(appSource.contains("if store.hasSelectedMaterial || store.selectionContext != nil") && appSource.contains("if store.hasSelectedMaterial") && appSource.contains("Button(\"搜索当前资料\")"), "app menu hides material-only actions when there is no material context")
+expect(appSource.contains("Button(\"新建笔记\") { animateLayout { store.resetNote() } }"), "new-note menu command uses layout motion")
 expect(appSource.contains("Button(store.hasSelectedMaterial ? \"问当前材料\" : \"问当前笔记\")"), "app command label matches whether a material is selected")
 expect(appSource.contains("Button(store.showLibrary ? \"收起资料\" : \"恢复资料\")") && appSource.contains("Button(store.showRightPane ? \"收起辅助栏\" : \"展开辅助栏\")"), "app menu names pane toggles by current state")
 expect(appSource.contains("Button(\"聚焦资料\") { animateLayout { store.focus(.library) } }")

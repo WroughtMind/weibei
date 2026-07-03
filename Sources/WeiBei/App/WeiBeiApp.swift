@@ -52,7 +52,7 @@ struct WeiBeiApp: App {
                 Button("打开资料") { store.importFilesFromPanel() }
                     .keyboardShortcut("o")
 
-                Button("新建笔记") { store.resetNote() }
+                Button("新建笔记") { animateLayout { store.resetNote() } }
                     .keyboardShortcut("n")
 
                 Divider()
