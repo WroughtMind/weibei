@@ -193,7 +193,7 @@ private struct UnifiedTopBarView: View {
                     .fill(dividerColor.opacity(0.72))
                     .frame(width: 1, height: 18)
 
-                Text(store.selectedItem?.title ?? "未选择资料")
+                Text(store.selectedMaterialItem?.title ?? "未选择资料")
                     .font(documentTitleFont)
                     .foregroundStyle(primaryText.opacity(0.82))
                     .lineLimit(1)
@@ -345,15 +345,15 @@ private struct UnifiedTopBarView: View {
     }
 
     private var shouldShowTopDocumentTitle: Bool {
-        store.selectedItem != nil && store.layout != .immersiveConversation
+        store.hasSelectedMaterial && store.layout != .immersiveConversation
     }
 
     private var shouldShowSearchAction: Bool {
-        store.selectedItem != nil && store.layout != .immersiveConversation
+        store.hasSelectedMaterial && store.layout != .immersiveConversation
     }
 
     private var shouldShowReferenceAction: Bool {
-        store.layout != .immersiveConversation && store.selectedItem != nil
+        store.layout != .immersiveConversation && store.hasSelectedMaterial
     }
 
     private var shouldShowAgentAction: Bool {
@@ -835,7 +835,7 @@ private struct LayoutContentView: View {
 
     private var conversationSourceRailItems: [ContextRailItem] {
         var items: [ContextRailItem] = []
-        if let item = store.selectedItem {
+        if let item = store.selectedMaterialItem {
             items.append(
                 ContextRailItem(
                     title: item.title,
@@ -885,7 +885,7 @@ private struct LayoutContentView: View {
 
     private var writingDocumentRailItems: [ContextRailItem] {
         var items: [ContextRailItem] = []
-        if let item = store.selectedItem {
+        if let item = store.selectedMaterialItem {
             items.append(
                 ContextRailItem(
                     title: item.title,
@@ -897,7 +897,7 @@ private struct LayoutContentView: View {
                 }
             )
         }
-        if store.selectedItem != nil || store.selectionContext != nil {
+        if store.hasSelectedMaterial || store.selectionContext != nil {
             items.append(
                 ContextRailItem(title: "引用", help: "复制当前材料或选区引用", systemImage: "quote.opening") {
                     store.copyCurrentReference()
@@ -913,7 +913,7 @@ private struct LayoutContentView: View {
                 prepareAgentDraft("请根据\(store.agentPromptScope)，给出一版更清晰的笔记大纲。")
             },
             ContextRailItem(title: "补来源", help: "让 Agent 检查笔记缺少来源的位置", systemImage: "link") {
-                prepareAgentDraft(store.selectedItem == nil ? "请检查当前笔记缺少来源的位置，并标出需要补证据的段落。" : "请检查当前笔记缺少来源的位置，并建议应该引用当前材料的哪些部分。")
+                prepareAgentDraft(store.hasSelectedMaterial ? "请检查当前笔记缺少来源的位置，并建议应该引用当前材料的哪些部分。" : "请检查当前笔记缺少来源的位置，并标出需要补证据的段落。")
             },
             ContextRailItem(title: "润色表达", help: "让 Agent 润色当前笔记", systemImage: "text.quote") {
                 prepareAgentDraft("请整理和润色当前笔记，保留原意，并标出缺少来源的位置。")

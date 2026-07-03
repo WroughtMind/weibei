@@ -51,9 +51,11 @@ struct CommandPaletteView: View {
         if let rightPaneCommand {
             items.insert(rightPaneCommand, at: 9)
         }
-        if store.selectedItem != nil {
+        if store.hasSelectedMaterial {
             items.append(PaletteCommand(title: "复制引用", shortcut: "⌘⇧C") { store.copyCurrentReference() })
             items.append(PaletteCommand(title: "搜索当前资料", shortcut: "⌘F") { store.revealReaderSearch() })
+        } else if store.selectionContext != nil {
+            items.append(PaletteCommand(title: "复制引用", shortcut: "⌘⇧C") { store.copyCurrentReference() })
         }
         if store.selectionContext != nil {
             items.append(PaletteCommand(title: "问选区 Agent", shortcut: "") { store.askSelection() })

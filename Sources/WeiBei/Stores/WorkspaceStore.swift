@@ -93,6 +93,15 @@ final class WorkspaceStore: ObservableObject {
         allItems.first { $0.id == selectedItemID }
     }
 
+    var selectedMaterialItem: StudyItem? {
+        guard let item = selectedItem, !item.isNotebookNote else { return nil }
+        return item
+    }
+
+    var hasSelectedMaterial: Bool {
+        selectedMaterialItem != nil
+    }
+
     var canUseSelectedMarkdownAsNotebookNote: Bool {
         selectedItem?.canBecomeNotebookNote == true
     }
@@ -112,7 +121,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var selectedContextText: String {
-        guard let item = selectedItem else { return "" }
+        guard let item = selectedMaterialItem else { return "" }
         if let text = DocumentTextExtractor.text(for: item) {
             return text
         }
@@ -120,11 +129,11 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var selectedMaterialTitle: String {
-        selectedItem?.title ?? "未选择材料"
+        selectedMaterialItem?.title ?? "未选择材料"
     }
 
     var agentPromptScope: String {
-        selectedItem == nil ? "当前笔记" : "当前材料和当前笔记"
+        hasSelectedMaterial ? "当前材料和当前笔记" : "当前笔记"
     }
 
     var selectionPromptScope: String {
@@ -132,7 +141,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var libraryOrganizationScope: String {
-        selectedItem == nil ? "当前资料库列表和当前笔记" : "当前资料库列表、已选择材料和当前笔记"
+        hasSelectedMaterial ? "当前资料库列表、已选择材料和当前笔记" : "当前资料库列表和当前笔记"
     }
 
     var canApplyAgentAnswer: Bool {
@@ -149,7 +158,7 @@ final class WorkspaceStore: ObservableObject {
 
     var quietInsight: QuietInsight {
         if isGeneratingQuietInsight {
-            return QuietInsight(body: selectedItem == nil ? "Agent 正在静默阅读当前笔记。" : "Agent 正在静默阅读当前材料和笔记。", noteBlock: "")
+            return QuietInsight(body: hasSelectedMaterial ? "Agent 正在静默阅读当前材料和笔记。" : "Agent 正在静默阅读当前笔记。", noteBlock: "")
         }
         if let generatedQuietInsight {
             return generatedQuietInsight
@@ -170,7 +179,7 @@ final class WorkspaceStore: ObservableObject {
         if selectionContext != nil {
             return "来自当前选区"
         }
-        if selectedItem == nil {
+        if !hasSelectedMaterial {
             return "来自当前笔记"
         }
         return generatedQuietInsight == nil ? "来自当前材料" : "来自材料和笔记"
@@ -412,7 +421,7 @@ final class WorkspaceStore: ObservableObject {
             case "e":
                 animatePanelChange { applyAgentPatchToEditor() }
             case "c":
-                guard selectedItem != nil || selectionContext != nil else { return false }
+                guard hasSelectedMaterial || selectionContext != nil else { return false }
                 copyCurrentReference()
             default:
                 return false
@@ -437,7 +446,7 @@ final class WorkspaceStore: ObservableObject {
             case "k":
                 animatePanelChange { commandPalettePresented.toggle() }
             case "f":
-                guard selectedItem != nil else { return false }
+                guard hasSelectedMaterial else { return false }
                 animatePanelChange { revealReaderSearch() }
             case "return":
                 Task { await askAgent() }
@@ -654,7 +663,7 @@ final class WorkspaceStore: ObservableObject {
         if let selectionContext, let selection, !selection.isEmpty {
             reference = "> \(selection)\n来源：\(selectionContext.ownerTitle)"
         } else {
-            guard let itemTitle = selectedItem?.title else { return }
+            guard let itemTitle = selectedMaterialItem?.title else { return }
             reference = "来源：\(itemTitle)"
         }
         NSPasteboard.general.clearContents()
@@ -668,13 +677,20 @@ final class WorkspaceStore: ObservableObject {
         selectionContext = SelectionContext(
             text: String(cleaned.prefix(2_000)),
             source: source,
-            ownerTitle: selectedItem?.title ?? (source == .note ? "当前笔记" : "当前文档"),
+            ownerTitle: selectionOwnerTitle(for: source),
             isEditable: isEditable
         )
         selectionAnchor = anchor
         floatingSelectionPrompt = selectionContext?.label ?? "当前选区"
         agentSurface = .selectionFloat
         showQuietInsight = false
+    }
+
+    private func selectionOwnerTitle(for source: SelectionSource) -> String {
+        if source == .note || selectedItem?.isNotebookNote == true {
+            return selectedItem?.title ?? "当前笔记"
+        }
+        return selectedMaterialItem?.title ?? "当前文档"
     }
 
     func askToOrganizeNote() {
@@ -753,7 +769,7 @@ final class WorkspaceStore: ObservableObject {
         let materialText = selectedContextText
         let currentNoteText = noteText
         let selectionText = selectionContext?.text
-        let contextScope = selectedItem == nil ? "当前选区和当前笔记" : "当前材料、当前选区和当前笔记"
+        let contextScope = hasSelectedMaterial ? "当前材料、当前选区和当前笔记" : "当前选区和当前笔记"
         let signature = makeQuietInsightSignature(materialText: materialText, noteText: currentNoteText, selectionText: selectionText)
         guard signature != quietInsightSignature else { return }
         guard let credential = resolvedOpenAIAPIKey() else {
@@ -833,7 +849,7 @@ final class WorkspaceStore: ObservableObject {
         agentDraft = ""
         isAskingAgent = true
         let recentMessages = Array(messages.suffix(8))
-        messages.append(AgentMessage(role: .user, text: question, source: selectedItem?.title))
+        messages.append(AgentMessage(role: .user, text: question, source: selectedMaterialItem?.title))
 
         do {
             let client = OpenAIResponsesClient(apiKey: credential.key, model: resolvedModelName)
@@ -845,9 +861,9 @@ final class WorkspaceStore: ObservableObject {
                 selectionText: selectionContext?.text,
                 recentMessages: recentMessages
             )
-            messages.append(AgentMessage(role: .assistant, text: answer, source: selectedItem?.title))
+            messages.append(AgentMessage(role: .assistant, text: answer, source: selectedMaterialItem?.title))
         } catch {
-            messages.append(AgentMessage(role: .assistant, text: "Agent 请求失败：\(error.localizedDescription)", source: selectedItem?.title))
+            messages.append(AgentMessage(role: .assistant, text: "Agent 请求失败：\(error.localizedDescription)", source: selectedMaterialItem?.title))
         }
 
         isAskingAgent = false

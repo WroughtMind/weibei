@@ -33,7 +33,7 @@ struct NotePaneView: View {
                             .labelStyle(.titleAndIcon)
                     }
                     .buttonStyle(WeiBeiTextActionButtonStyle())
-                    .help(store.selectedItem == nil ? "新建当前笔记" : "新建当前资料笔记")
+                    .help("新建独立 Markdown 笔记")
                     if store.canUseSelectedMarkdownAsNotebookNote {
                         Button("写回原 Markdown") {
                             store.useSelectedMarkdownAsNotebookNote()
@@ -210,7 +210,7 @@ struct NotePaneView: View {
     }
 
     private var emptyNoteHintText: String {
-        store.selectedItem == nil ? "开始记录当前笔记" : "开始记录当前材料"
+        store.hasSelectedMaterial ? "开始记录当前材料" : "开始记录当前笔记"
     }
 }
 
@@ -639,7 +639,7 @@ struct AgentPaneView: View {
     }
 
     private var agentPrompt: String {
-        store.selectedItem == nil ? "问当前笔记" : "问当前材料"
+        store.hasSelectedMaterial ? "问当前材料" : "问当前笔记"
     }
 
     private var agentInputTray: some View {
@@ -735,7 +735,7 @@ struct AgentPaneView: View {
     private var emptyAgentState: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(store.selectedItem?.title ?? "未选择材料")
+                Text(store.selectedMaterialItem?.title ?? "当前笔记")
                     .font(.system(size: 15, weight: .semibold, design: .serif))
                     .foregroundStyle(WeiBeiTheme.ink)
                     .lineLimit(1)
@@ -756,7 +756,7 @@ struct AgentPaneView: View {
                 .lineLimit(1)
 
             HStack(spacing: 8) {
-                if store.selectedItem != nil {
+                if store.hasSelectedMaterial {
                     starterChip("梳理材料", systemImage: "text.alignleft") {
                         askWith("请基于当前材料提炼核心概念、关键公式和需要回看出处的位置。")
                     }
@@ -764,7 +764,7 @@ struct AgentPaneView: View {
                 starterChip("整理笔记", systemImage: "list.bullet.rectangle") {
                     store.askToOrganizeNote()
                 }
-                if store.selectedItem != nil {
+                if store.hasSelectedMaterial {
                     starterChip("出复习题", systemImage: "questionmark.square") {
                         askWith("请根据当前材料和笔记生成 5 个复习问题，并标出每题依据。")
                     }
@@ -872,8 +872,8 @@ struct AgentDrawerView: View {
             .animation(WeiBeiMotion.micro, value: canSend)
 
             HStack(spacing: 8) {
-                Label(store.selectedItem == nil ? "笔记" : "来源", systemImage: store.selectedItem == nil ? "square.and.pencil" : "link")
-                Text(store.selectedItem?.title ?? "当前笔记")
+                Label(store.hasSelectedMaterial ? "来源" : "笔记", systemImage: store.hasSelectedMaterial ? "link" : "square.and.pencil")
+                Text(store.selectedMaterialItem?.title ?? "当前笔记")
                     .lineLimit(1)
                 Spacer()
             }
@@ -899,7 +899,7 @@ struct AgentDrawerView: View {
         if store.selectionContext != nil {
             return "问当前选区"
         }
-        return store.selectedItem == nil ? "问当前笔记" : "问当前材料"
+        return store.hasSelectedMaterial ? "问当前材料" : "问当前笔记"
     }
 }
 
@@ -921,7 +921,7 @@ struct CornerAgentView: View {
                 .help("收起右下角 Agent")
             }
 
-            Text(store.selectedItem?.title ?? "当前笔记")
+            Text(store.selectedMaterialItem?.title ?? "当前笔记")
                 .font(.system(size: 11, weight: .medium))
                 .lineLimit(1)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
@@ -983,7 +983,7 @@ struct CornerAgentView: View {
     }
 
     private var agentPrompt: String {
-        store.selectedItem == nil ? "问当前笔记" : "问当前材料"
+        store.hasSelectedMaterial ? "问当前材料" : "问当前笔记"
     }
 
     private func cornerToolButton(_ systemName: String, label: String, action: @escaping () -> Void) -> some View {

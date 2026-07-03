@@ -151,11 +151,11 @@ struct WeiBeiApp: App {
 
                 Divider()
 
-                if store.selectedItem != nil || store.selectionContext != nil {
+                if store.hasSelectedMaterial || store.selectionContext != nil {
                     Button("复制引用") { store.copyCurrentReference() }
                         .keyboardShortcut("c", modifiers: [.command, .shift])
                 }
-                if store.selectedItem != nil {
+                if store.hasSelectedMaterial {
                     Button("搜索当前资料") {
                         animatePanel {
                             store.revealReaderSearch()
@@ -163,7 +163,7 @@ struct WeiBeiApp: App {
                     }
                     .keyboardShortcut("f")
                 }
-                Button(store.selectedItem == nil ? "问当前笔记" : "问当前材料") { Task { await store.askAgent() } }
+                Button(store.hasSelectedMaterial ? "问当前材料" : "问当前笔记") { Task { await store.askAgent() } }
                     .keyboardShortcut(.return, modifiers: [.command])
             }
         }
