@@ -222,6 +222,7 @@ for helperName in ["openReader", "openWriting", "askCurrentSelection", "prepareA
 }
 expect(contentViewSource.contains(".weibeiInputPrompt(\"当前资料内搜索\", visible: store.readerSearch.isEmpty, fontSize: 12)") && contentViewSource.contains(".foregroundColor(primaryText)"), "top search placeholder uses the shared readable overlay above the field")
 expect(contentViewSource.contains("store.hasSelectedMaterial && store.layout != .immersiveConversation"), "top search only appears when a material is selected")
+expect(contentViewSource.contains("if shouldShowSearchAction && !store.showReaderSearch"), "top bar hides the search icon while the search field is already open")
 expect(contentViewSource.contains("variant == .glyph || variant == .compact ? shortLayoutLabel : store.layout.label"), "compact top bar uses short layout labels")
 expect(contentViewSource.contains("layout == store.layout ? \"checkmark\"") && contentViewSource.contains(".accessibilityLabel(Text(\"切换布局\"))"), "layout menu marks current layout and explains itself")
 expect(contentViewSource.contains(": layout.systemImage") && !contentViewSource.contains(": \"rectangle.split.3x1\""), "layout menu avoids repeating one generic icon")

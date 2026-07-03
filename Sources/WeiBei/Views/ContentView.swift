@@ -228,7 +228,7 @@ private struct UnifiedTopBarView: View {
                 .transition(.move(edge: .trailing).combined(with: .opacity))
             }
 
-            if shouldShowSearchAction {
+            if shouldShowSearchAction && !store.showReaderSearch {
                 searchButton
             }
 
