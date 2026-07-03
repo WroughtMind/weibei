@@ -703,7 +703,7 @@ final class WorkspaceStore: ObservableObject {
         let selection = selectionContext?.text.trimmingCharacters(in: .whitespacesAndNewlines)
         let reference: String
         if let selectionContext, let selection, !selection.isEmpty {
-            reference = "> \(selection)\n来源：\(selectionContext.ownerTitle)"
+            reference = quotedReferenceBlock(text: selection, sourceTitle: selectionContext.ownerTitle)
         } else {
             guard selectedMaterialItem != nil || selectedItem?.isNotebookNote == true else { return }
             reference = "来源：\(currentReferenceTitle)"
@@ -774,19 +774,25 @@ final class WorkspaceStore: ObservableObject {
 
     func appendSelectionToNote() {
         guard let selectionContext else { return }
-        let quoted = selectionContext.text
-            .split(separator: "\n", omittingEmptySubsequences: false)
-            .map { "> \($0)" }
-            .joined(separator: "\n")
         let block = """
 
-        ## 选区摘录
-        \(quoted)
-
-        来源：\(selectionContext.ownerTitle)
+        \(quotedReferenceBlock(text: selectionContext.text, sourceTitle: selectionContext.ownerTitle))
         """
         updateNote(noteText + block)
         focus(.notes)
+    }
+
+    private func quotedReferenceBlock(text: String, sourceTitle: String) -> String {
+        let quoted = text
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { "> \($0)" }
+            .joined(separator: "\n")
+        return """
+        > [!quote] 选区摘录
+        \(quoted)
+        >
+        > 来源：\(sourceTitle)
+        """
     }
 
     func acceptQuietInsight() {
