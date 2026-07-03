@@ -175,6 +175,9 @@ let themeSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPa
 let themeSource = (try? String(contentsOf: themeSourceURL, encoding: .utf8)) ?? ""
 expect(themeSource.contains(".fill(.regularMaterial)") && themeSource.contains("paperWashOpacity"), "header glass uses one shared paper material wash")
 expect(themeSource.contains("WeiBeiTheme.glassTint.opacity(0.16 * opacity)") && !themeSource.contains("WeiBeiTheme.paperInset.opacity(0.10 * opacity)"), "header handoff fade avoids a hard paper edge")
+expect(themeSource.contains("paperRaised.opacity(0.985)")
+    && themeSource.contains(".opacity(0.015)")
+    && !themeSource.contains("paperRaised.opacity(0.92)"), "floating panels stay readable without losing the light glass surface")
 expect(
     themeSource.contains("struct WeiBeiInputPrompt")
         && themeSource.contains("final class WeiBeiPromptDrawingView: NSView")

@@ -431,10 +431,10 @@ extension View {
             .background {
                 ZStack {
                     RoundedRectangle(cornerRadius: cornerRadius)
-                        .fill(WeiBeiTheme.paperRaised.opacity(0.92))
+                        .fill(WeiBeiTheme.paperRaised.opacity(0.985))
                     RoundedRectangle(cornerRadius: cornerRadius)
                         .fill(.ultraThinMaterial)
-                        .opacity(0.06)
+                        .opacity(0.015)
                 }
             }
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
