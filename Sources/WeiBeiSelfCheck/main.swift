@@ -15,6 +15,7 @@ expect(runScript.contains("kCGWindowOwnerName") && runScript.contains("\"$APP_DI
 expect(runScript.contains("let isOnscreen = window[kCGWindowIsOnscreen as String] as? NSNumber") && runScript.contains("let visibleEnough = isOnscreen == nil || isOnscreen?.intValue != 0"), "run script tolerates missing onscreen metadata when the window is otherwise capturable")
 expect(!runScript.contains("pid=\"$(pgrep -x \"$PRODUCT_NAME\""), "run script window verification does not depend on pgrep")
 expect(runScript.contains("visual_verify_window") && runScript.contains("--visual-verify") && runScript.contains("visual_non_black_ratio") && runScript.contains("visual verify failed: captured window is black or empty") && runScript.contains("nonBlackRatio < 0.02"), "run script exposes an explicit visual non-black window check")
+expect(runScript.contains("visual verify blocked: macOS refused window capture") && runScript.contains("Grant Screen Recording permission"), "visual verification reports capture-permission failures instead of looking like an app rendering failure")
 let editorIndexURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Resources/Editor/index.html")
 let editorIndexSource = (try? String(contentsOf: editorIndexURL, encoding: .utf8)) ?? ""
