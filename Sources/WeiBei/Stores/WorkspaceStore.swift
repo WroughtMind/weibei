@@ -192,7 +192,7 @@ final class WorkspaceStore: ObservableObject {
         if !OpenAIAPIKeyStore.load().isEmpty {
             return "已保存到 macOS 钥匙串。Agent 可在打包应用里直接读取。"
         }
-        return "未保存密钥。保存后 Agent 会用已选择材料、当前选区和右侧笔记作答。"
+        return "未保存密钥。保存后 Agent 会用\(agentPromptScope)，并在有选区时结合当前选区作答。"
     }
 
     func select(itemID: String?) {
@@ -848,7 +848,7 @@ final class WorkspaceStore: ObservableObject {
         guard !question.isEmpty, !isAskingAgent else { return }
 
         guard let credential = resolvedOpenAIAPIKey() else {
-            let notice = "未配置 OPENAI_API_KEY 或钥匙串密钥。Agent 不会编造回答；设置密钥后会用已选择材料、当前选区和右侧笔记作答。"
+            let notice = "未配置 OPENAI_API_KEY 或钥匙串密钥。Agent 不会编造回答；设置密钥后会用\(agentPromptScope)，并在有选区时结合当前选区作答。"
             openAIKeyStatus = notice
             if !messages.contains(where: { $0.role == .assistant && $0.source == "Agent 设置" && $0.text == notice }) {
                 messages.append(AgentMessage(role: .assistant, text: notice, source: "Agent 设置"))

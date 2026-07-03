@@ -1231,7 +1231,7 @@ struct FloatingSelectionAgentView: View {
 
     private func floatingText(for message: AgentMessage) -> String {
         if isCredentialNotice(message) {
-            return "未配置密钥。设置后会结合已选择材料、选区和笔记作答。"
+            return "未配置密钥。设置后会结合\(store.agentPromptScope)和当前选区作答。"
         }
         return message.text
     }
