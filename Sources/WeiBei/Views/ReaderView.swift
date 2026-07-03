@@ -14,15 +14,14 @@ struct ReaderView: View {
     @State private var pendingPDFPageIndex: Int?
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
+        ZStack(alignment: .trailing) {
             VStack(spacing: 0) {
                 readerBody
             }
 
             if store.selectedMaterialItem?.kind == .pdf {
                 pdfFloatingControls
-                    .padding(.trailing, isImmersive ? 30 : 16)
-                    .padding(.bottom, isImmersive ? 28 : 18)
+                    .padding(.trailing, isImmersive ? 18 : 10)
                     .transition(WeiBeiTransition.floating)
             }
         }
@@ -86,20 +85,21 @@ struct ReaderView: View {
         .background {
             ZStack {
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(WeiBeiTheme.paperRaised.opacity(pdfControlsHovering ? 0.90 : 0.68))
+                    .fill(WeiBeiTheme.paperRaised.opacity(pdfControlsHovering ? 0.86 : 0.54))
                 RoundedRectangle(cornerRadius: 8)
                     .fill(.regularMaterial)
-                    .opacity(pdfControlsHovering ? 0.035 : 0.012)
+                    .opacity(pdfControlsHovering ? 0.055 : 0.018)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay {
             RoundedRectangle(cornerRadius: 8)
-                .stroke(WeiBeiTheme.hairline.opacity(pdfControlsHovering ? 0.82 : 0.46), lineWidth: 1)
+                .stroke(WeiBeiTheme.hairline.opacity(pdfControlsHovering ? 0.76 : 0.34), lineWidth: 1)
         }
-        .shadow(color: WeiBeiTheme.ink.opacity(pdfControlsHovering ? 0.045 : 0.014), radius: 7, y: 3)
-        .opacity(pdfControlsHovering || pdfBrowseMode == .page ? 0.96 : 0.44)
-        .offset(y: pdfControlsHovering ? 0 : 1)
+        .shadow(color: WeiBeiTheme.ink.opacity(pdfControlsHovering ? 0.045 : 0.010), radius: 7, y: 3)
+        .opacity(pdfControlsHovering || pdfBrowseMode == .page ? 0.94 : 0.34)
+        .offset(x: pdfControlsHovering || pdfBrowseMode == .page ? 0 : 3)
+        .scaleEffect(pdfControlsHovering ? 1.01 : 1, anchor: .trailing)
         .contentShape(RoundedRectangle(cornerRadius: 8))
         .onHover { hovering in
             withAnimation(WeiBeiMotion.hover) {
@@ -152,9 +152,9 @@ struct ReaderView: View {
         } label: {
             Image(systemName: pdfBrowseMode.systemImage)
                 .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .foregroundStyle(pdfBrowseMode == .page ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
             .frame(width: 24, height: 24)
-            .background(WeiBeiTheme.paperInset.opacity(pdfControlsHovering ? 0.24 : 0.10))
+            .background(WeiBeiTheme.paperInset.opacity(pdfControlsHovering ? 0.20 : 0.06))
             .contentShape(RoundedRectangle(cornerRadius: 6))
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay {
