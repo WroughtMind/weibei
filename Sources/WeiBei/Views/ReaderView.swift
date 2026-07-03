@@ -13,13 +13,14 @@ struct ReaderView: View {
     @State private var pendingPDFPageIndex: Int?
 
     var body: some View {
-        ZStack(alignment: .bottom) {
+        ZStack(alignment: .bottomLeading) {
             VStack(spacing: 0) {
                 readerBody
             }
 
             if store.selectedMaterialItem?.kind == .pdf {
                 pdfFloatingControls
+                    .padding(.leading, isImmersive ? 28 : 14)
                     .padding(.bottom, isImmersive ? 20 : 16)
                     .transition(WeiBeiTransition.drawer)
             }
@@ -80,38 +81,53 @@ struct ReaderView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(WeiBeiTheme.ink)
-        .padding(.horizontal, 10)
-        .frame(height: 38)
-        .weibeiFloatingPanel()
+        .padding(3)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(WeiBeiTheme.paperRaised.opacity(0.86))
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(.ultraThinMaterial)
+                    .opacity(0.035)
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(WeiBeiTheme.hairline.opacity(0.82), lineWidth: 1)
+        }
+        .shadow(color: WeiBeiTheme.ink.opacity(0.045), radius: 8, y: 3)
     }
 
     @ViewBuilder
     private var pdfControls: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 1) {
             ForEach(PDFBrowseMode.allCases) { mode in
                 Button(mode.label) {
                     withAnimation(WeiBeiMotion.panel) {
                         pdfBrowseMode = mode
                     }
                 }
-                .buttonStyle(WeiBeiTextActionButtonStyle(active: pdfBrowseMode == mode))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(pdfBrowseMode == mode ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+                .frame(width: 38, height: 24)
+                .background(pdfBrowseMode == mode ? WeiBeiTheme.cinnabarSoft : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 5))
                 .help(mode.help)
             }
-        }
-        .padding(2)
-        .background(WeiBeiTheme.paperInset.opacity(0.26))
-        .clipShape(RoundedRectangle(cornerRadius: 7))
-        .overlay {
-            RoundedRectangle(cornerRadius: 7)
-                .stroke(WeiBeiTheme.hairline, lineWidth: 1)
         }
 
         if pdfBrowseMode == .page, pdfPageCount > 1 {
             Group {
+                Rectangle()
+                    .fill(WeiBeiTheme.hairline.opacity(0.8))
+                    .frame(width: 1, height: 18)
+                    .padding(.horizontal, 2)
+
                 Button { pdfPageIndex = PageNavigator.previous(pdfPageIndex) } label: {
                     Image(systemName: "chevron.left")
                 }
-                .buttonStyle(WeiBeiIconButtonStyle())
+                .buttonStyle(WeiBeiIconButtonStyle(size: 22))
                 .keyboardShortcut("[", modifiers: [.command])
                 .accessibilityLabel(Text("上一页"))
                 .help("上一页")
@@ -119,12 +135,12 @@ struct ReaderView: View {
                 Text(PageNavigator.display(pdfPageIndex, pageCount: pdfPageCount))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    .frame(width: 64)
+                    .frame(width: 54, height: 22)
 
                 Button { pdfPageIndex = PageNavigator.next(pdfPageIndex, pageCount: pdfPageCount) } label: {
                     Image(systemName: "chevron.right")
                 }
-                .buttonStyle(WeiBeiIconButtonStyle())
+                .buttonStyle(WeiBeiIconButtonStyle(size: 22))
                 .keyboardShortcut("]", modifiers: [.command])
                 .accessibilityLabel(Text("下一页"))
                 .help("下一页")
@@ -214,8 +230,8 @@ private enum PDFBrowseMode: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .scroll: "连续"
-        case .page: "单页"
+        case .scroll: "滚动"
+        case .page: "翻页"
         }
     }
 
