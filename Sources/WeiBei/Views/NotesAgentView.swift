@@ -139,7 +139,6 @@ struct NotePaneView: View {
                 }
             }
         }
-        .id(store.noteRenderMode)
         .transition(WeiBeiTransition.layout)
         .animation(WeiBeiMotion.layout, value: store.noteRenderMode)
         .overlay(alignment: .topLeading) {

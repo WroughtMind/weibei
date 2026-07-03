@@ -402,6 +402,7 @@ expect(notesAgentSource.contains("compactHovering") && notesAgentSource.contains
 expect(notesAgentSource.contains(".opacity(compactHovering ? 1 : 0.68)") && notesAgentSource.contains("paperRaised.opacity(compactHovering ? 0.82 : 0.58)"), "compact quiet insight stays readable before hover")
 expect(notesAgentSource.contains("let itemID = store.selectedItemID") && notesAgentSource.contains("store.updateNote(value, for: itemID)"), "rich note editor writes through selected item guard")
 expect(notesAgentSource.contains("ContextRailLine") && notesAgentSource.contains(".onHover"), "context rails keep hover motion")
+expect(!notesAgentSource.contains(".id(store.noteRenderMode)"), "note mode changes avoid forced hard view identity resets")
 expect(notesAgentSource.contains("struct ContextRailItem: Identifiable") && notesAgentSource.contains("Button(action: action)"), "context rails expose actionable rows")
 expect(notesAgentSource.contains("var systemImage: String?") && notesAgentSource.contains("Image(systemName: systemImage)"), "context rail rows support semantic icons")
 expect(notesAgentSource.contains(".accessibilityLabel(Text(item.help ?? item.title))") && notesAgentSource.contains(".help(item.help ?? item.title)"), "context rail actions explain their intent")
