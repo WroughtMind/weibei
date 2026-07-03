@@ -183,6 +183,15 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             if (!node) return -1;
             return Array.from(node.childNodes).filter((child) => child.nodeType === Node.TEXT_NODE && child.nodeValue.trim()).length;
           })(),
+          mathInlineSourceChildrenVisible: (() => {
+            const node = document.querySelector('span[data-type="math_inline"], .math-inline');
+            if (!node) return false;
+            return Array.from(node.children).some((child) => {
+              if (child.classList.contains('katex')) return false;
+              const style = getComputedStyle(child);
+              return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+            });
+          })(),
           mathInlinePseudoBefore: getComputedStyle(document.querySelector('span[data-type="math_inline"]') || document.body, '::before').content,
           mathInlinePseudoAfter: getComputedStyle(document.querySelector('span[data-type="math_inline"]') || document.body, '::after').content,
           mathInlineMathMLHidden: (() => {
@@ -265,6 +274,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             if (result["mathInlineDirectTextNodes"] as? Int ?? 1) > 0 {
                 self.fail("inline math should not render raw source text beside KaTeX")
+                return
+            }
+            if result["mathInlineSourceChildrenVisible"] as? Bool == true {
+                self.fail("inline math source child should not occupy layout beside KaTeX")
                 return
             }
             if result["mathInlinePseudoBefore"] as? String != "none"

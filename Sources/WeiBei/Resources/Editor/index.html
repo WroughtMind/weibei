@@ -513,6 +513,13 @@
       vertical-align: baseline;
     }
 
+    .ProseMirror span[data-type="math_inline"] > :not(.katex),
+    .ProseMirror .math-inline > :not(.katex),
+    .ProseMirror div[data-type="math_block"] > :not(.katex),
+    .ProseMirror .math-block > :not(.katex) {
+      display: none !important;
+    }
+
     .ProseMirror span[data-type="math_inline"] > .katex > .katex-mathml,
     .ProseMirror div[data-type="math_block"] > .katex > .katex-mathml {
       position: absolute !important;
