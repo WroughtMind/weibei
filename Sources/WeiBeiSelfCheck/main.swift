@@ -130,6 +130,7 @@ expect(!commandPaletteSource.contains("PaletteCommand(title: \"顶栏") && conte
 expect(commandPaletteSource.contains("private var rightPaneCommand: PaletteCommand?") && commandPaletteSource.contains("store.layout.hasCollapsibleRightPane"), "command palette hides right pane command when the layout has no auxiliary pane")
 expect(commandPaletteSource.contains("收起辅助栏") && commandPaletteSource.contains("展开辅助栏"), "command palette names auxiliary pane action by current state")
 expect(commandPaletteSource.contains("if store.selectedItem != nil") && commandPaletteSource.contains("PaletteCommand(title: \"复制引用\"") && commandPaletteSource.contains("PaletteCommand(title: \"搜索当前资料\""), "command palette hides material-only actions without a selected material")
+expect(commandPaletteSource.contains("private var canSendAgentDraft: Bool") && commandPaletteSource.contains("PaletteCommand(title: \"发送 Agent 问题\""), "command palette hides the agent send command until a draft exists")
 let readerViewSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/ReaderView.swift")
 let readerViewSource = (try? String(contentsOf: readerViewSourceURL, encoding: .utf8)) ?? ""
@@ -211,7 +212,7 @@ expect(notesAgentSource.contains("Text(\"已含选区\")"), "agent empty state k
 expect(notesAgentSource.contains("AgentStarterChip") && notesAgentSource.contains("hovering ? -1 : 0"), "agent starter chips keep subtle hover motion")
 expect(notesAgentSource.contains("canPolishNoteSelection") && notesAgentSource.contains("store.selectionContext?.isNoteSelection == true"), "selection agent only shows polish for note selections")
 expect(notesAgentSource.contains("emptyNoteHint") && notesAgentSource.contains("开始记录当前材料") && notesAgentSource.contains(".allowsHitTesting(false)"), "blank note editor shows a light nonblocking cue")
-expect(notesAgentSource.contains("prompt: Text(\"问当前材料\").foregroundStyle(WeiBeiTheme.tertiaryInk)"), "corner agent input placeholder stays readable")
+expect(notesAgentSource.contains("store.selectedItem == nil ? \"问当前笔记\" : \"问当前材料\"") && notesAgentSource.contains("prompt: Text(agentPrompt).foregroundStyle(WeiBeiTheme.tertiaryInk)"), "agent input placeholder matches whether a material is selected")
 expect(notesAgentSource.contains("cornerToolButton(\"list.bullet.rectangle\", label: \"整理笔记\"") && !notesAgentSource.contains("Button(\"整理笔记\")"), "corner agent uses compact semantic icon tools")
 expect(notesAgentSource.contains("private var agentInputTray: some View"), "agent pane uses a dedicated input tray")
 expect(notesAgentSource.contains("WeiBeiGlassHeaderBackground(") && notesAgentSource.contains("WeiBeiTheme.glassTint.opacity(0.66)"), "agent input tray uses paper glass fade instead of a hard white strip")

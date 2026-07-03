@@ -45,8 +45,7 @@ struct CommandPaletteView: View {
             PaletteCommand(title: "问选区 Agent", shortcut: "") { store.askSelection() },
             PaletteCommand(title: "应用 Agent 到笔记", shortcut: "⌘⇧A") { store.applyLastAgentAnswerToNote() },
             PaletteCommand(title: "用 Agent 替换笔记选区", shortcut: "⌘⇧R") { store.replaceSelectionWithLastAgentAnswer() },
-            PaletteCommand(title: "追加 Agent 整理建议", shortcut: "⌘⇧E") { store.applyAgentPatchToEditor() },
-            PaletteCommand(title: "问当前材料", shortcut: "⌘↩") { Task { await store.askAgent() } }
+            PaletteCommand(title: "追加 Agent 整理建议", shortcut: "⌘⇧E") { store.applyAgentPatchToEditor() }
         ]
         if store.canUseSelectedMarkdownAsNotebookNote {
             items.insert(
@@ -61,7 +60,14 @@ struct CommandPaletteView: View {
             items.append(PaletteCommand(title: "复制引用", shortcut: "⌘⇧C") { store.copyCurrentReference() })
             items.append(PaletteCommand(title: "搜索当前资料", shortcut: "⌘F") { store.revealReaderSearch() })
         }
+        if canSendAgentDraft {
+            items.append(PaletteCommand(title: "发送 Agent 问题", shortcut: "⌘↩") { Task { await store.askAgent() } })
+        }
         return items
+    }
+
+    private var canSendAgentDraft: Bool {
+        !store.isAskingAgent && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var rightPaneCommand: PaletteCommand? {

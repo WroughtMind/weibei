@@ -634,6 +634,10 @@ struct AgentPaneView: View {
         !store.isAskingAgent && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var agentPrompt: String {
+        store.selectedItem == nil ? "问当前笔记" : "问当前材料"
+    }
+
     private var agentInputTray: some View {
         VStack(spacing: 0) {
             LinearGradient(
@@ -652,7 +656,7 @@ struct AgentPaneView: View {
                 TextField(
                     "",
                     text: $store.agentDraft,
-                    prompt: Text("问当前材料").foregroundStyle(WeiBeiTheme.tertiaryInk),
+                    prompt: Text(agentPrompt).foregroundStyle(WeiBeiTheme.tertiaryInk),
                     axis: .vertical
                 )
                 .textFieldStyle(.plain)
@@ -902,16 +906,16 @@ struct CornerAgentView: View {
                 .help("收起右下角 Agent")
             }
 
-            Text(store.selectedItem?.title ?? "当前材料")
+            Text(store.selectedItem?.title ?? "当前笔记")
                 .font(.system(size: 11, weight: .medium))
                 .lineLimit(1)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
 
             HStack(spacing: 8) {
                 TextField(
-                    "问当前材料",
+                    agentPrompt,
                     text: $store.agentDraft,
-                    prompt: Text("问当前材料").foregroundStyle(WeiBeiTheme.tertiaryInk)
+                    prompt: Text(agentPrompt).foregroundStyle(WeiBeiTheme.tertiaryInk)
                 )
                     .textFieldStyle(.plain)
                     .focused($draftFocused)
@@ -961,6 +965,10 @@ struct CornerAgentView: View {
 
     private var canSend: Bool {
         !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var agentPrompt: String {
+        store.selectedItem == nil ? "问当前笔记" : "问当前材料"
     }
 
     private func cornerToolButton(_ systemName: String, label: String, action: @escaping () -> Void) -> some View {
