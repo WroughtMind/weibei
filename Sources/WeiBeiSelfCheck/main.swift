@@ -126,6 +126,7 @@ let commandPaletteSourceURL = URL(fileURLWithPath: FileManager.default.currentDi
 let commandPaletteSource = (try? String(contentsOf: commandPaletteSourceURL, encoding: .utf8)) ?? ""
 expect(commandPaletteSource.contains("withAnimation(command.animation)") && commandPaletteSource.contains("animation: WeiBeiMotion.layout"), "command palette uses layout motion for layout commands")
 expect(!commandPaletteSource.contains("收起右栏"), "command palette avoids fixed right-pane wording")
+expect(commandPaletteSource.contains("store.showLibrary ? \"收起资料\" : \"恢复资料\""), "command palette names the library toggle by current state")
 expect(!commandPaletteSource.contains("PaletteCommand(title: \"顶栏") && contentViewSource.contains("Section(\"顶部栏\")"), "top bar variants live in the more menu instead of the command palette")
 expect(commandPaletteSource.contains("private var rightPaneCommand: PaletteCommand?") && commandPaletteSource.contains("store.layout.hasCollapsibleRightPane"), "command palette hides right pane command when the layout has no auxiliary pane")
 expect(commandPaletteSource.contains("收起辅助栏") && commandPaletteSource.contains("展开辅助栏"), "command palette names auxiliary pane action by current state")
