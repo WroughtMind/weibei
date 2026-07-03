@@ -81,13 +81,14 @@ struct WeiBeiApp: App {
                     }
                 }
                     .keyboardShortcut("b")
-                Button(store.showRightPane ? "收起辅助栏" : "展开辅助栏") {
-                    animateLayout {
-                        store.toggleRightPane()
+                if store.layout.hasCollapsibleRightPane {
+                    Button(store.showRightPane ? "收起辅助栏" : "展开辅助栏") {
+                        animateLayout {
+                            store.toggleRightPane()
+                        }
                     }
-                }
                     .keyboardShortcut("j")
-                    .disabled(!store.layout.hasCollapsibleRightPane)
+                }
 
                 Divider()
 
@@ -128,17 +129,18 @@ struct WeiBeiApp: App {
                 Button("笔记预览") { setNoteRenderMode(.preview) }
                     .keyboardShortcut("4", modifiers: [.control, .command])
 
-                Divider()
+                if store.canApplyAgentAnswer {
+                    Divider()
 
-                Button("应用 Agent 到笔记") { animatePanel { store.applyLastAgentAnswerToNote() } }
-                    .keyboardShortcut("a", modifiers: [.command, .shift])
-                    .disabled(!store.canApplyAgentAnswer)
-                Button("用 Agent 替换笔记选区") { animatePanel { store.replaceSelectionWithLastAgentAnswer() } }
-                    .keyboardShortcut("r", modifiers: [.command, .shift])
-                    .disabled(!store.canReplaceNoteSelection)
-                Button("追加 Agent 整理建议") { animatePanel { store.applyAgentPatchToEditor() } }
-                    .keyboardShortcut("e", modifiers: [.command, .shift])
-                    .disabled(!store.canApplyAgentAnswer)
+                    Button("应用 Agent 到笔记") { animatePanel { store.applyLastAgentAnswerToNote() } }
+                        .keyboardShortcut("a", modifiers: [.command, .shift])
+                    if store.canReplaceNoteSelection {
+                        Button("用 Agent 替换笔记选区") { animatePanel { store.replaceSelectionWithLastAgentAnswer() } }
+                            .keyboardShortcut("r", modifiers: [.command, .shift])
+                    }
+                    Button("追加 Agent 整理建议") { animatePanel { store.applyAgentPatchToEditor() } }
+                        .keyboardShortcut("e", modifiers: [.command, .shift])
+                }
 
                 Divider()
 
