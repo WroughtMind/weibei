@@ -111,6 +111,7 @@ expect(!contentViewSource.contains("PaneSeparator"), "content panes avoid hand-d
 expect(!contentViewSource.contains("topBarContentFade"), "top bar avoids a duplicate content fade wash")
 expect(!contentViewSource.contains("文代笔") && contentViewSource.contains("Agent中"), "top bar short layout labels avoid cryptic abbreviations")
 expect(contentViewSource.contains("prompt: Text(\"当前资料内搜索\").foregroundStyle(tertiaryText)"), "top search placeholder uses readable semantic ink")
+expect(contentViewSource.contains("store.selectedItem != nil && store.layout != .immersiveConversation"), "top search only appears when a material is selected")
 expect(contentViewSource.contains("layout == store.layout ? \"checkmark\"") && contentViewSource.contains(".accessibilityLabel(Text(\"切换布局\"))"), "layout menu marks current layout and explains itself")
 expect(contentViewSource.contains(": layout.systemImage") && !contentViewSource.contains(": \"rectangle.split.3x1\""), "layout menu avoids repeating one generic icon")
 expect(contentViewSource.contains(".accessibilityLabel(Text(\"更多设置\"))"), "top bar more menu has a readable semantic label")

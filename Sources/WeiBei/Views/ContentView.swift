@@ -349,7 +349,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private var shouldShowSearchAction: Bool {
-        store.layout != .immersiveConversation
+        store.selectedItem != nil && store.layout != .immersiveConversation
     }
 
     private var shouldShowReferenceAction: Bool {
