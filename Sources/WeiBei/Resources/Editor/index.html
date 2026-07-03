@@ -494,9 +494,12 @@
     .ProseMirror span[data-type="math-inline"],
     .ProseMirror .math-inline {
       color: transparent;
+      font-size: 0;
+      line-height: 0;
       background: transparent !important;
       border: 0;
       box-shadow: none;
+      user-select: none;
     }
 
     .ProseMirror span[data-type="math_inline"]::before,
@@ -512,8 +515,11 @@
     .ProseMirror div[data-type="math-block"],
     .ProseMirror .math-block {
       color: transparent;
+      font-size: 0;
+      line-height: 0;
       background: rgba(63, 105, 82, .06);
       border: 1px solid rgba(63, 105, 82, .12);
+      user-select: none;
     }
 
     .ProseMirror span[data-type="math_inline"] > .katex,
@@ -523,6 +529,9 @@
     .ProseMirror div[data-type="math-block"] > .katex,
     .ProseMirror .math-block > .katex {
       color: rgba(33, 27, 23, .92);
+      font-size: 1rem;
+      line-height: 1.2;
+      user-select: text;
     }
 
     .ProseMirror span[data-type="math_inline"],

@@ -183,7 +183,9 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           mathInline: document.querySelectorAll('span[data-type="math_inline"], .math-inline, .katex').length,
           mathInlineBackground: getComputedStyle(document.querySelector('span[data-type="math_inline"], .math-inline') || document.body).backgroundColor,
           mathInlineContainerColor: getComputedStyle(document.querySelector('span[data-type="math_inline"], .math-inline') || document.body).color,
+          mathInlineContainerFontSize: getComputedStyle(document.querySelector('span[data-type="math_inline"], .math-inline') || document.body).fontSize,
           mathInlineKatexColor: getComputedStyle(document.querySelector('span[data-type="math_inline"] > .katex, .math-inline > .katex') || document.body).color,
+          mathInlineKatexFontSize: getComputedStyle(document.querySelector('span[data-type="math_inline"] > .katex, .math-inline > .katex') || document.body).fontSize,
           mathInlineDirectTextNodes: (() => {
             const node = document.querySelector('span[data-type="math_inline"], .math-inline');
             if (!node) return -1;
@@ -279,8 +281,16 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("inline math container should hide raw source text")
                 return
             }
+            if result["mathInlineContainerFontSize"] as? String != "0px" {
+                self.fail("inline math source container should collapse raw source font size")
+                return
+            }
             if result["mathInlineKatexColor"] as? String == "rgba(0, 0, 0, 0)" {
                 self.fail("inline math rendered KaTeX should remain visible")
+                return
+            }
+            if result["mathInlineKatexFontSize"] as? String == "0px" {
+                self.fail("inline math rendered KaTeX should keep readable font size")
                 return
             }
             if (result["mathInlineDirectTextNodes"] as? Int ?? 1) > 0 {
@@ -654,6 +664,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         (() => ({
           markdown: window.WeiBeiEditor.getMarkdown(),
           mathNodes: document.querySelectorAll('span[data-type="math_inline"], .math-inline').length,
+          typedMathNode: !!document.querySelector('span[data-type="math_inline"][data-value="A^*"], .math-inline[data-value="A^*"]'),
+          typedMathColor: getComputedStyle(document.querySelector('span[data-type="math_inline"][data-value="A^*"], .math-inline[data-value="A^*"]') || document.body).color,
+          typedMathFontSize: getComputedStyle(document.querySelector('span[data-type="math_inline"][data-value="A^*"], .math-inline[data-value="A^*"]') || document.body).fontSize,
+          typedKatexFontSize: getComputedStyle(document.querySelector('span[data-type="math_inline"][data-value="A^*"] > .katex, .math-inline[data-value="A^*"] > .katex') || document.body).fontSize,
           rawFormulaText: (() => {
             const root = document.querySelector('.ProseMirror');
             const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
@@ -687,6 +701,19 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             if (result["mathNodes"] as? Int ?? 0) < 1 {
                 self.fail("typed inline formula did not become a math node")
+                return
+            }
+            if result["typedMathNode"] as? Bool != true {
+                self.fail("typed inline formula did not create a math node for A^*")
+                return
+            }
+            if result["typedMathColor"] as? String != "rgba(0, 0, 0, 0)"
+                || result["typedMathFontSize"] as? String != "0px" {
+                self.fail("typed inline formula source container should be invisible and collapsed")
+                return
+            }
+            if result["typedKatexFontSize"] as? String == "0px" {
+                self.fail("typed inline formula rendered KaTeX should stay readable")
                 return
             }
             if (result["rawFormulaText"] as? Int ?? 0) > 0 {

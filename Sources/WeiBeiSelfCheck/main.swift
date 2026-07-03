@@ -31,7 +31,13 @@ expect(
         && editorIndexSource.contains(".ProseMirror .math-block"),
     "math styling hides raw source for common Milkdown math node attribute and class shapes"
 )
-expect(editorIndexSource.contains(".ProseMirror .math-inline {\n      color: transparent") && editorIndexSource.contains(".ProseMirror .katex-error {\n      color: var(--cinnabar)"), "math styling hides raw source while keeping KaTeX errors readable")
+expect(
+    editorIndexSource.contains(".ProseMirror .math-inline {\n      color: transparent")
+        && editorIndexSource.contains("font-size: 0;")
+        && editorIndexSource.contains("font-size: 1rem;")
+        && editorIndexSource.contains(".ProseMirror .katex-error {\n      color: var(--cinnabar)"),
+    "math styling collapses raw source while keeping KaTeX and errors readable"
+)
 expect(editorIndexSource.contains("color: rgba(58, 46, 38, .56)") && !editorIndexSource.contains("color: rgba(58, 46, 38, .36)"), "editable markdown markers stay readable on paper")
 expect(editorIndexSource.contains(".frontmatter-title {\n      color: var(--muted)") && editorIndexSource.contains("li[data-item-type=\"task\"][data-checked=\"true\"] {\n      color: var(--muted)"), "small frontmatter and completed task text avoid faint low-contrast ink")
 expect(editorIndexSource.contains(".weibei-source-reference") && editorIndexSource.contains("border-bottom: 1px dotted"), "source references have readable link styling")
