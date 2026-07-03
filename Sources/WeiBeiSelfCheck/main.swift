@@ -13,6 +13,15 @@ let runScriptURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath
 let runScript = (try? String(contentsOf: runScriptURL, encoding: .utf8)) ?? ""
 expect(runScript.contains("kCGWindowOwnerName") && runScript.contains("\"$APP_DISPLAY_NAME\""), "run script verifies the visible app window by owner name")
 expect(!runScript.contains("pid=\"$(pgrep -x \"$PRODUCT_NAME\""), "run script window verification does not depend on pgrep")
+let editorIndexURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Resources/Editor/index.html")
+let editorIndexSource = (try? String(contentsOf: editorIndexURL, encoding: .utf8)) ?? ""
+expect(
+    editorIndexSource.contains(".ProseMirror span[data-type=\"math_inline\"],")
+        && editorIndexSource.contains(".ProseMirror .math-inline")
+        && editorIndexSource.contains(".ProseMirror .math-block"),
+    "math styling hides raw source for both Milkdown math node class shapes"
+)
 
 expect(StudyItemKind.detect(from: URL(fileURLWithPath: "/tmp/a.pdf")) == .pdf, "pdf detection")
 expect(StudyItemKind.detect(from: URL(fileURLWithPath: "/tmp/a.html")) == .html, "html detection")
