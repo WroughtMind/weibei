@@ -355,6 +355,8 @@ expect(appSource.contains("Button(store.hasSelectedMaterial ? \"问当前材料\
 expect(appSource.contains("Button(store.showLibrary ? \"收起资料\" : \"恢复资料\")") && appSource.contains("Button(store.showRightPane ? \"收起辅助栏\" : \"展开辅助栏\")"), "app menu names pane toggles by current state")
 expect(appSource.contains("Button(\"聚焦资料\") { animateLayout { store.focus(.library) } }")
     && appSource.contains("Button(\"下一份资料\") { animateLayout { store.selectAdjacentItem(step: 1) } }"), "app menu focus and material navigation use the same layout motion as shortcuts")
+expect(appSource.contains("Button(\"应用 Agent 到笔记\") { animatePanel { store.applyLastAgentAnswerToNote() } }")
+    && appSource.contains("Button(\"追加 Agent 整理建议\") { animatePanel { store.applyAgentPatchToEditor() } }"), "app menu agent write actions use the same panel motion as shortcuts")
 let notesAgentSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/NotesAgentView.swift")
 let notesAgentSource = (try? String(contentsOf: notesAgentSourceURL, encoding: .utf8)) ?? ""

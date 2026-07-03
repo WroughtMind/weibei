@@ -130,13 +130,13 @@ struct WeiBeiApp: App {
 
                 Divider()
 
-                Button("应用 Agent 到笔记") { store.applyLastAgentAnswerToNote() }
+                Button("应用 Agent 到笔记") { animatePanel { store.applyLastAgentAnswerToNote() } }
                     .keyboardShortcut("a", modifiers: [.command, .shift])
                     .disabled(!store.canApplyAgentAnswer)
-                Button("用 Agent 替换笔记选区") { store.replaceSelectionWithLastAgentAnswer() }
+                Button("用 Agent 替换笔记选区") { animatePanel { store.replaceSelectionWithLastAgentAnswer() } }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
                     .disabled(!store.canReplaceNoteSelection)
-                Button("追加 Agent 整理建议") { store.applyAgentPatchToEditor() }
+                Button("追加 Agent 整理建议") { animatePanel { store.applyAgentPatchToEditor() } }
                     .keyboardShortcut("e", modifiers: [.command, .shift])
                     .disabled(!store.canApplyAgentAnswer)
 
