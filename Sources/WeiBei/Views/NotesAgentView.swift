@@ -1330,26 +1330,29 @@ struct QuietInsightView: View {
 
             Spacer(minLength: 4)
 
-            HStack(spacing: 4) {
-                if !store.quietInsight.noteBlock.isEmpty {
-                    iconButton("text.badge.plus", help: "收进摘录") {
+            if compactHovering {
+                HStack(spacing: 4) {
+                    if !store.quietInsight.noteBlock.isEmpty {
+                        iconButton("text.badge.plus", help: "收进摘录") {
+                            withAnimation(WeiBeiMotion.panel) {
+                                store.acceptQuietInsight()
+                            }
+                        }
+                    }
+
+                    iconButton("bubble.left", help: "追问") {
                         withAnimation(WeiBeiMotion.panel) {
-                            store.acceptQuietInsight()
+                            store.askQuietInsight()
+                        }
+                    }
+
+                    iconButton("xmark", help: "忽略") {
+                        withAnimation(WeiBeiMotion.panel) {
+                            store.showQuietInsight = false
                         }
                     }
                 }
-
-                iconButton("bubble.left", help: "追问") {
-                    withAnimation(WeiBeiMotion.panel) {
-                        store.askQuietInsight()
-                    }
-                }
-
-                iconButton("xmark", help: "忽略") {
-                    withAnimation(WeiBeiMotion.panel) {
-                        store.showQuietInsight = false
-                    }
-                }
+                .transition(WeiBeiTransition.floating)
             }
         }
         .padding(.horizontal, 9)

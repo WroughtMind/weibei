@@ -438,6 +438,7 @@ expect(notesAgentSource.contains("compactHovering") && notesAgentSource.contains
 expect(!notesAgentSource.contains(".opacity(compactHovering ? 1 : 0.68)")
     && notesAgentSource.contains("paperRaised.opacity(compactHovering ? 0.82 : 0.68)")
     && notesAgentSource.contains("hairline.opacity(compactHovering ? 0.58 : 0.38)"), "compact quiet insight actions stay readable before hover")
+expect(notesAgentSource.contains("if compactHovering {\n                HStack(spacing: 4)") && notesAgentSource.contains(".transition(WeiBeiTransition.floating)"), "compact quiet insight keeps actions hidden until hover")
 expect(notesAgentSource.contains("let itemID = store.selectedItemID") && notesAgentSource.contains("store.updateNote(value, for: itemID)"), "rich note editor writes through selected item guard")
 expect(notesAgentSource.contains("ContextRailLine") && notesAgentSource.contains(".onHover"), "context rails keep hover motion")
 expect(!notesAgentSource.contains(".id(store.noteRenderMode)"), "note mode changes avoid forced hard view identity resets")
