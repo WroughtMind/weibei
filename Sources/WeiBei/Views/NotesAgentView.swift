@@ -33,7 +33,7 @@ struct NotePaneView: View {
                             .labelStyle(.titleAndIcon)
                     }
                     .buttonStyle(WeiBeiTextActionButtonStyle())
-                    .help("新建当前资料笔记")
+                    .help(store.selectedItem == nil ? "新建当前笔记" : "新建当前资料笔记")
                     if store.canUseSelectedMarkdownAsNotebookNote {
                         Button("写回原 Markdown") {
                             store.useSelectedMarkdownAsNotebookNote()
@@ -1227,7 +1227,7 @@ struct FloatingSelectionAgentView: View {
 
     private func floatingText(for message: AgentMessage) -> String {
         if isCredentialNotice(message) {
-            return "未配置密钥。设置后会结合材料、选区和笔记作答。"
+            return "未配置密钥。设置后会结合已选择材料、选区和笔记作答。"
         }
         return message.text
     }

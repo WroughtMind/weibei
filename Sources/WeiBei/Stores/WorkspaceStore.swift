@@ -123,6 +123,18 @@ final class WorkspaceStore: ObservableObject {
         selectedItem?.title ?? "未选择材料"
     }
 
+    var agentPromptScope: String {
+        selectedItem == nil ? "当前笔记" : "当前材料和当前笔记"
+    }
+
+    var selectionPromptScope: String {
+        selectionContext?.source == .note ? "当前笔记" : agentPromptScope
+    }
+
+    var libraryOrganizationScope: String {
+        selectedItem == nil ? "当前资料库列表和当前笔记" : "当前资料库列表、已选择材料和当前笔记"
+    }
+
     var canApplyAgentAnswer: Bool {
         lastUsableAgentAnswer != nil
     }
@@ -639,14 +651,14 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func askToOrganizeNote() {
-        agentDraft = "请根据当前文档和当前笔记，把笔记整理成更清晰的大纲，保留来源信息，并标出缺少证据的位置。"
+        agentDraft = "请根据\(agentPromptScope)，把笔记整理成更清晰的大纲，保留来源信息，并标出缺少证据的位置。"
         Task { await askAgent() }
     }
 
     func askToOrganizeWorkspace() {
         let libraryList = allItems.map { "- \($0.title)（\($0.kind.label)）" }.joined(separator: "\n")
         agentDraft = """
-        请根据当前资料库列表、当前文档和当前笔记，提出资料整理方案。不要直接改名，只给出课程分组、文件命名建议、笔记合并建议和缺少来源的位置。
+        请根据\(libraryOrganizationScope)，提出资料整理方案。不要直接改名，只给出课程分组、文件命名建议、笔记合并建议和缺少来源的位置。
 
         资料库：
         \(libraryList)
@@ -659,13 +671,13 @@ final class WorkspaceStore: ObservableObject {
             agentSurface = .selectionFloat
             floatingSelectionPrompt = selectionContext.label
             agentDraft = """
-            请解释下面选区，并结合当前文档和笔记回答。没有证据就说未在材料中确认。
+            请解释下面选区，并结合\(selectionPromptScope)回答。没有证据就说未在材料中确认。
 
             选区：
             \(selectionContext.text)
             """
         } else {
-            agentDraft = "请根据当前材料和当前笔记，帮我梳理重点和可追问的问题。"
+            agentDraft = "请根据\(agentPromptScope)，帮我梳理重点和可追问的问题。"
             if layout == .immersiveReading || layout == .documentNotesSplit {
                 agentSurface = .cornerPanel
             }
@@ -698,9 +710,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func askQuietInsight() {
-        let contextScope = selectedItem == nil ? "当前笔记" : "当前材料和笔记"
         agentDraft = """
-        请根据这条阅读线索继续解释，并结合\(contextScope)回答。没有证据就说未在材料中确认。
+        请根据这条阅读线索继续解释，并结合\(agentPromptScope)回答。没有证据就说未在材料中确认。
 
         阅读线索：
         \(quietInsight.body)

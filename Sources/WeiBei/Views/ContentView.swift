@@ -555,7 +555,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private var agentButtonHelp: String {
-        hasPrimaryAgentPaneAvailable ? "打开 Agent 对话区" : "把当前材料或选区交给 Agent"
+        hasPrimaryAgentPaneAvailable ? "打开 Agent 对话区" : "把\(store.selectionPromptScope)交给 Agent"
     }
 
     private func activateAgentEntry() {
@@ -877,7 +877,7 @@ private struct LayoutContentView: View {
         }
         items.append(
             ContextRailItem(title: "问题与结论", help: "让 Agent 整理问题、结论和缺少证据", systemImage: "checkmark.circle") {
-                prepareAgentDraft("请根据当前材料和当前笔记，整理出问题、结论和还缺少的证据。")
+                prepareAgentDraft("请根据\(store.agentPromptScope)，整理出问题、结论和还缺少的证据。")
             }
         )
         return items
@@ -910,10 +910,10 @@ private struct LayoutContentView: View {
     private var writingAssistRailItems: [ContextRailItem] {
         [
             ContextRailItem(title: "大纲建议", help: "让 Agent 生成笔记大纲", systemImage: "list.bullet.rectangle", emphasized: true) {
-                prepareAgentDraft("请根据当前材料和当前笔记，给出一版更清晰的笔记大纲。")
+                prepareAgentDraft("请根据\(store.agentPromptScope)，给出一版更清晰的笔记大纲。")
             },
             ContextRailItem(title: "补来源", help: "让 Agent 检查笔记缺少来源的位置", systemImage: "link") {
-                prepareAgentDraft("请检查当前笔记缺少来源的位置，并建议应该引用当前材料的哪些部分。")
+                prepareAgentDraft(store.selectedItem == nil ? "请检查当前笔记缺少来源的位置，并标出需要补证据的段落。" : "请检查当前笔记缺少来源的位置，并建议应该引用当前材料的哪些部分。")
             },
             ContextRailItem(title: "润色表达", help: "让 Agent 润色当前笔记", systemImage: "text.quote") {
                 prepareAgentDraft("请整理和润色当前笔记，保留原意，并标出缺少来源的位置。")
