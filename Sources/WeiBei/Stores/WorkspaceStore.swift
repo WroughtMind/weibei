@@ -216,7 +216,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func resetNote() {
-        updateNote(defaultNote(for: selectedItem))
+        createNotebookNote()
         focus(.notes)
     }
 
@@ -610,6 +610,33 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    private func createNotebookNote() {
+        persistCurrentNote()
+        let title = "新笔记"
+        let notesDirectory = appOwnedFilesDirectory().appendingPathComponent("Notes", isDirectory: true)
+
+        do {
+            try FileManager.default.createDirectory(at: notesDirectory, withIntermediateDirectories: true)
+            let url = nextNotebookNoteURL(in: notesDirectory, title: title)
+            let item = StudyItem(
+                id: "file:\(url.path)",
+                title: url.deletingPathExtension().lastPathComponent,
+                subtitle: url.lastPathComponent,
+                kind: .markdown,
+                urlPath: url.path,
+                isSample: false,
+                isNotebookNote: true
+            )
+            try defaultNote(for: item).write(to: url, atomically: true, encoding: .utf8)
+            importedItems.append(item)
+            noteRenderMode = .rich
+            select(itemID: item.id)
+            noteFileError = "已创建笔记：\(url.lastPathComponent)"
+        } catch {
+            noteFileError = "无法创建笔记：\(error.localizedDescription)"
+        }
+    }
+
     func useSelectedMarkdownAsNotebookNote() {
         guard let selectedItemID,
               let index = importedItems.firstIndex(where: { $0.id == selectedItemID && $0.canBecomeNotebookNote }) else { return }
@@ -900,6 +927,17 @@ final class WorkspaceStore: ObservableObject {
         MarkdownAttachmentStore.safeFileStem(value, fallback: "未命名", limit: 80)
     }
 
+    private func nextNotebookNoteURL(in directory: URL, title: String) -> URL {
+        let stem = Self.safeFileStem(title)
+        var index = 1
+        var url = directory.appendingPathComponent("\(stem).md")
+        while FileManager.default.fileExists(atPath: url.path) {
+            index += 1
+            url = directory.appendingPathComponent("\(stem) \(index).md")
+        }
+        return url
+    }
+
     private func clearGeneratedQuietInsight() {
         generatedQuietInsight = nil
         quietInsightSignature = ""
@@ -921,7 +959,7 @@ final class WorkspaceStore: ObservableObject {
 
     private func defaultNote(for item: StudyItem?) -> String {
         let title = item?.title ?? "新笔记"
-        let excerptSeed = item.map { "> 来源：\($0.title)" } ?? "- "
+        let excerptSeed = item.map { $0.isNotebookNote ? "- " : "> 来源：\($0.title)" } ?? "- "
         return """
         # \(title)
 
