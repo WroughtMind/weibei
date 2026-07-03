@@ -118,6 +118,8 @@ let sidebarSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectory
     .appendingPathComponent("Sources/WeiBei/Views/SidebarView.swift")
 let sidebarSource = (try? String(contentsOf: sidebarSourceURL, encoding: .utf8)) ?? ""
 expect(sidebarSource.contains("prompt: Text(\"搜索资料库\").foregroundStyle(WeiBeiTheme.tertiaryInk)"), "library search placeholder uses readable semantic ink")
+expect(!sidebarSource.contains("commandPalettePresented.toggle()") && !sidebarSource.contains("Label(\"命令\", systemImage: \"command\")"), "sidebar does not duplicate the command palette entry")
+expect(contentViewSource.contains("topIconButton(\"command\", help: \"命令面板\")"), "top bar keeps the command palette entry")
 let commandPaletteSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/CommandPaletteView.swift")
 let commandPaletteSource = (try? String(contentsOf: commandPaletteSourceURL, encoding: .utf8)) ?? ""

@@ -58,29 +58,6 @@ struct SidebarView: View {
                         .opacity(0.035)
                 }
             }
-
-            Rectangle()
-                .fill(WeiBeiTheme.hairline.opacity(0.48))
-                .frame(height: 1)
-
-            HStack {
-                Button {
-                    withAnimation(WeiBeiMotion.panel) {
-                        store.commandPalettePresented.toggle()
-                    }
-                } label: {
-                    Label("命令", systemImage: "command")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-
-                Spacer()
-
-                Text("⌘K")
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    .font(.caption.monospaced())
-            }
-            .padding(12)
         }
         .weibeiPanel()
         .environment(\.colorScheme, .light)
