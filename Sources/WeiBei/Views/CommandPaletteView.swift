@@ -88,7 +88,7 @@ struct CommandPaletteView: View {
         return PaletteCommand(
             title: store.showRightPane ? "收起辅助栏" : "展开辅助栏",
             shortcut: "⌘J",
-            animation: WeiBeiMotion.panel
+            animation: WeiBeiMotion.layout
         ) {
             store.toggleRightPane()
         }
