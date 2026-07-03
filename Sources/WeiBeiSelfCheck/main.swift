@@ -131,6 +131,7 @@ expect(commandPaletteSource.contains("private var rightPaneCommand: PaletteComma
 expect(commandPaletteSource.contains("收起辅助栏") && commandPaletteSource.contains("展开辅助栏"), "command palette names auxiliary pane action by current state")
 expect(commandPaletteSource.contains("if store.selectedItem != nil") && commandPaletteSource.contains("PaletteCommand(title: \"复制引用\"") && commandPaletteSource.contains("PaletteCommand(title: \"搜索当前资料\""), "command palette hides material-only actions without a selected material")
 expect(commandPaletteSource.contains("private var canSendAgentDraft: Bool") && commandPaletteSource.contains("PaletteCommand(title: \"发送 Agent 问题\""), "command palette hides the agent send command until a draft exists")
+expect(commandPaletteSource.contains("if store.canApplyAgentAnswer") && commandPaletteSource.contains("if store.canReplaceNoteSelection") && commandPaletteSource.contains("PaletteCommand(title: \"替换笔记选区\""), "command palette hides agent answer actions until they can work")
 let readerViewSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/ReaderView.swift")
 let readerViewSource = (try? String(contentsOf: readerViewSourceURL, encoding: .utf8)) ?? ""

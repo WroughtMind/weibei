@@ -42,10 +42,7 @@ struct CommandPaletteView: View {
             PaletteCommand(title: "插入 Callout", shortcut: "") { store.insertMarkdownSnippet("\n> [!note] 标题\n> {{WEIBEI_SELECT_START}}内容{{WEIBEI_SELECT_END}}\n") },
             PaletteCommand(title: "插入表格", shortcut: "") { store.insertMarkdownSnippet("\n| A | B |\n| --- | --- |\n| {{WEIBEI_SELECT_START}}内容{{WEIBEI_SELECT_END}} |  |\n") },
             PaletteCommand(title: "插入 Mermaid", shortcut: "") { store.insertMarkdownSnippet("\n```mermaid\ngraph TD\n  {{WEIBEI_SELECT_START}}A[开始] --> B[整理]{{WEIBEI_SELECT_END}}\n```\n") },
-            PaletteCommand(title: "问选区 Agent", shortcut: "") { store.askSelection() },
-            PaletteCommand(title: "应用 Agent 到笔记", shortcut: "⌘⇧A") { store.applyLastAgentAnswerToNote() },
-            PaletteCommand(title: "用 Agent 替换笔记选区", shortcut: "⌘⇧R") { store.replaceSelectionWithLastAgentAnswer() },
-            PaletteCommand(title: "追加 Agent 整理建议", shortcut: "⌘⇧E") { store.applyAgentPatchToEditor() }
+            PaletteCommand(title: "问选区 Agent", shortcut: "") { store.askSelection() }
         ]
         if store.canUseSelectedMarkdownAsNotebookNote {
             items.insert(
@@ -59,6 +56,13 @@ struct CommandPaletteView: View {
         if store.selectedItem != nil {
             items.append(PaletteCommand(title: "复制引用", shortcut: "⌘⇧C") { store.copyCurrentReference() })
             items.append(PaletteCommand(title: "搜索当前资料", shortcut: "⌘F") { store.revealReaderSearch() })
+        }
+        if store.canApplyAgentAnswer {
+            items.append(PaletteCommand(title: "写入 Agent 回答", shortcut: "⌘⇧A") { store.applyLastAgentAnswerToNote() })
+            items.append(PaletteCommand(title: "追加 Agent 整理建议", shortcut: "⌘⇧E") { store.applyAgentPatchToEditor() })
+        }
+        if store.canReplaceNoteSelection {
+            items.append(PaletteCommand(title: "替换笔记选区", shortcut: "⌘⇧R") { store.replaceSelectionWithLastAgentAnswer() })
         }
         if canSendAgentDraft {
             items.append(PaletteCommand(title: "发送 Agent 问题", shortcut: "⌘↩") { Task { await store.askAgent() } })
