@@ -200,6 +200,8 @@ expect(contentViewSource.contains("store.appendSelectionToNote()") && contentVie
 expect(!notesAgentSource.contains("Agent 抽屉"), "agent drawer avoids engineering labels")
 expect(!notesAgentSource.contains("Agent 只在右下角待命"), "corner agent avoids explanatory placeholder copy")
 expect(!notesAgentSource.contains("魏碑会优先读取材料"), "agent empty state avoids product-explainer copy")
+expect(!notesAgentSource.contains("Text(\"当前上下文\")") && !notesAgentSource.contains("contextLine("), "agent empty state avoids diagnostic context rows")
+expect(notesAgentSource.contains("Text(\"已含选区\")"), "agent empty state keeps a compact selection cue")
 expect(notesAgentSource.contains("AgentStarterChip") && notesAgentSource.contains("hovering ? -1 : 0"), "agent starter chips keep subtle hover motion")
 expect(notesAgentSource.contains("emptyNoteHint") && notesAgentSource.contains("开始记录当前材料") && notesAgentSource.contains(".allowsHitTesting(false)"), "blank note editor shows a light nonblocking cue")
 expect(notesAgentSource.contains("prompt: Text(\"问当前材料\").foregroundStyle(WeiBeiTheme.tertiaryInk)"), "corner agent input placeholder stays readable")

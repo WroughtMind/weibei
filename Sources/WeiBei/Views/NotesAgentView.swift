@@ -726,26 +726,27 @@ struct AgentPaneView: View {
     }
 
     private var emptyAgentState: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text("当前上下文")
-                    .font(.system(size: 16, weight: .semibold, design: .serif))
-                    .foregroundStyle(WeiBeiTheme.ink)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(store.selectedItem?.title ?? "未选择材料")
-                    .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .font(.system(size: 15, weight: .semibold, design: .serif))
+                    .foregroundStyle(WeiBeiTheme.ink)
                     .lineLimit(1)
+                if store.selectionContext != nil {
+                    Text("已含选区")
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(WeiBeiTheme.cinnabar)
+                        .padding(.horizontal, 6)
+                        .frame(height: 18)
+                        .background(WeiBeiTheme.cinnabarSoft)
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                }
             }
 
-            HStack(alignment: .firstTextBaseline, spacing: 18) {
-                contextLine("材料", store.selectedItem?.title ?? "未选择")
-                contextLine("笔记", noteContextTitle)
-                contextLine("选区", store.selectionContext == nil ? "未选择" : "已选中")
-            }
-
-            Rectangle()
-                .fill(WeiBeiTheme.hairline.opacity(0.42))
-                .frame(height: 1)
+            Text(noteContextTitle)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .lineLimit(1)
 
             HStack(spacing: 8) {
                 starterChip("梳理材料", systemImage: "text.alignleft") {
@@ -767,19 +768,6 @@ struct AgentPaneView: View {
                 .fill(WeiBeiTheme.cinnabar.opacity(0.34))
                 .frame(width: 2)
         }
-    }
-
-    private func contextLine(_ title: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(WeiBeiTheme.tertiaryInk)
-            Text(value)
-                .font(.system(size: 12))
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                .lineLimit(1)
-        }
-        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func starterChip(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
