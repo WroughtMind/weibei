@@ -46,8 +46,6 @@ struct CommandPaletteView: View {
             PaletteCommand(title: "应用 Agent 到笔记", shortcut: "⌘⇧A") { store.applyLastAgentAnswerToNote() },
             PaletteCommand(title: "用 Agent 替换笔记选区", shortcut: "⌘⇧R") { store.replaceSelectionWithLastAgentAnswer() },
             PaletteCommand(title: "追加 Agent 整理建议", shortcut: "⌘⇧E") { store.applyAgentPatchToEditor() },
-            PaletteCommand(title: "复制引用", shortcut: "⌘⇧C") { store.copyCurrentReference() },
-            PaletteCommand(title: "搜索当前资料", shortcut: "⌘F") { store.revealReaderSearch() },
             PaletteCommand(title: "问当前材料", shortcut: "⌘↩") { Task { await store.askAgent() } }
         ]
         if store.canUseSelectedMarkdownAsNotebookNote {
@@ -58,6 +56,10 @@ struct CommandPaletteView: View {
         }
         if let rightPaneCommand {
             items.insert(rightPaneCommand, at: 9)
+        }
+        if store.selectedItem != nil {
+            items.append(PaletteCommand(title: "复制引用", shortcut: "⌘⇧C") { store.copyCurrentReference() })
+            items.append(PaletteCommand(title: "搜索当前资料", shortcut: "⌘F") { store.revealReaderSearch() })
         }
         return items
     }

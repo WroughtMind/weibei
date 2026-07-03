@@ -129,6 +129,7 @@ expect(!commandPaletteSource.contains("收起右栏"), "command palette avoids f
 expect(!commandPaletteSource.contains("PaletteCommand(title: \"顶栏") && contentViewSource.contains("Section(\"顶部栏\")"), "top bar variants live in the more menu instead of the command palette")
 expect(commandPaletteSource.contains("private var rightPaneCommand: PaletteCommand?") && commandPaletteSource.contains("store.layout.hasCollapsibleRightPane"), "command palette hides right pane command when the layout has no auxiliary pane")
 expect(commandPaletteSource.contains("收起辅助栏") && commandPaletteSource.contains("展开辅助栏"), "command palette names auxiliary pane action by current state")
+expect(commandPaletteSource.contains("if store.selectedItem != nil") && commandPaletteSource.contains("PaletteCommand(title: \"复制引用\"") && commandPaletteSource.contains("PaletteCommand(title: \"搜索当前资料\""), "command palette hides material-only actions without a selected material")
 let readerViewSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/ReaderView.swift")
 let readerViewSource = (try? String(contentsOf: readerViewSourceURL, encoding: .utf8)) ?? ""
