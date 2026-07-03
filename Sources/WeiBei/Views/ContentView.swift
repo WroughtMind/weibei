@@ -941,7 +941,6 @@ private struct LayoutContentView: View {
     private func openReader() {
         withAnimation(WeiBeiMotion.layout) {
             store.layout = .immersiveReading
-            store.showLibrary = false
             store.focus(.reader)
         }
     }
@@ -949,7 +948,6 @@ private struct LayoutContentView: View {
     private func openWriting() {
         withAnimation(WeiBeiMotion.layout) {
             store.layout = .immersiveWriting
-            store.showLibrary = false
             store.showRightPane = true
             store.focus(.notes)
         }
@@ -959,7 +957,6 @@ private struct LayoutContentView: View {
         store.askSelection()
         withAnimation(WeiBeiMotion.layout) {
             store.layout = .immersiveConversation
-            store.showLibrary = false
             store.showRightPane = true
             store.focus(.agent)
         }
@@ -974,7 +971,6 @@ private struct LayoutContentView: View {
         withAnimation(WeiBeiMotion.layout) {
             store.agentDraft = prompt
             store.layout = .immersiveConversation
-            store.showLibrary = false
             store.showRightPane = true
             store.focus(.agent)
         }

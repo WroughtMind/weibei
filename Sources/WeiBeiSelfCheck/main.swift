@@ -136,6 +136,15 @@ expect(!contentViewSource.contains("PaneSeparator"), "content panes avoid hand-d
 expect(!contentViewSource.contains("topBarContentFade"), "top bar avoids a duplicate content fade wash")
 expect(contentViewSource.contains("store.toggleLibrary()") && contentViewSource.contains("sidebar.left") && !contentViewSource.contains(".opacity(isImmersiveLayout ? 0.45 : 1)"), "immersive top bar keeps a clear library chooser instead of dimming a live control")
 expect(!contentViewSource.contains("文代笔") && !contentViewSource.contains("Agent中") && contentViewSource.contains("对话中栏") && contentViewSource.contains("对话右栏"), "top bar short layout labels avoid cryptic abbreviations")
+for helperName in ["openReader", "openWriting", "askCurrentSelection", "prepareAgentDraft"] {
+    if let helperStart = contentViewSource.range(of: "private func \(helperName)")?.lowerBound,
+       let helperEnd = contentViewSource[helperStart...].range(of: "\n    }\n")?.upperBound {
+        let helperSource = String(contentViewSource[helperStart..<helperEnd])
+        expect(!helperSource.contains("showLibrary = false"), "\(helperName) keeps a user-opened immersive library visible")
+    } else {
+        expect(false, "\(helperName) source is readable")
+    }
+}
 expect(contentViewSource.contains("prompt: Text(\"当前资料内搜索\").foregroundStyle(tertiaryText)"), "top search placeholder uses readable semantic ink")
 expect(contentViewSource.contains("store.hasSelectedMaterial && store.layout != .immersiveConversation"), "top search only appears when a material is selected")
 expect(contentViewSource.contains("layout == store.layout ? \"checkmark\"") && contentViewSource.contains(".accessibilityLabel(Text(\"切换布局\"))"), "layout menu marks current layout and explains itself")
@@ -243,6 +252,13 @@ if let agentFocusStart = workspaceStoreSource.range(of: "if pane == .agent")?.lo
     expect(!agentFocusSource.contains("showLibrary = false"), "agent focus does not close a user-opened immersive library")
 } else {
     expect(false, "agent focus source is readable")
+}
+if let insertStart = workspaceStoreSource.range(of: "func insertMarkdownSnippet")?.lowerBound,
+   let insertEnd = workspaceStoreSource[insertStart...].range(of: "\n    }\n")?.upperBound {
+    let insertSource = String(workspaceStoreSource[insertStart..<insertEnd])
+    expect(!insertSource.contains("showLibrary = false"), "markdown insertion keeps a user-opened immersive library visible")
+} else {
+    expect(false, "markdown insertion source is readable")
 }
 expect(workspaceStoreSource.contains("let canShowSelectionFloat = SelectionFloatingAgentPlacement.isVisible") && workspaceStoreSource.contains("surface == .selectionFloat && !canShowSelectionFloat ? .cornerPanel : surface"), "selection-float agent surface falls back to a visible corner panel when no selection can anchor it")
 expect(!workspaceStoreSource.contains("selectedItem?.title ?? \"当前材料\"") && !workspaceStoreSource.contains("保存后 Agent 会用当前材料") && !workspaceStoreSource.contains("已选择材料、当前选区和右侧笔记"), "agent context avoids fake material fallback copy")

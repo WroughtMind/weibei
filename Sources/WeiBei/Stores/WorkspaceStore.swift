@@ -356,7 +356,6 @@ final class WorkspaceStore: ObservableObject {
     func insertMarkdownSnippet(_ markdown: String) {
         if layout == .immersiveReading || layout == .immersiveConversation {
             layout = .immersiveWriting
-            showLibrary = false
         }
         if layout.hasCollapsibleRightPane {
             showRightPane = true
