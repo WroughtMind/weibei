@@ -436,6 +436,8 @@ expect(workspaceStoreSource.contains("阅读线索"), "quiet insight uses margin
 expect(appSource.contains("if store.hasSelectedMaterial || store.selectionContext != nil") && appSource.contains("if store.hasSelectedMaterial") && appSource.contains("Button(\"搜索当前资料\")"), "app menu hides material-only actions when there is no material context")
 expect(appSource.contains("Button(\"新建笔记\") { animateLayout { store.resetNote() } }"), "new-note menu command uses layout motion")
 expect(appSource.contains("Button(store.hasSelectedMaterial ? \"问当前材料\" : \"问当前笔记\")"), "app command label matches whether a material is selected")
+expect(appSource.contains("if !store.isAskingAgent && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty")
+    && appSource.contains(".keyboardShortcut(.return, modifiers: [.command])"), "app menu hides the agent send action until a draft can really send")
 expect(appSource.contains("Button(store.showLibrary ? \"收起资料库\" : \"打开资料库\")")
     && !appSource.contains("恢复资料")
     && appSource.contains("Button(store.showRightPane ? \"收起辅助栏\" : \"展开辅助栏\")"), "app menu names pane toggles by current state")

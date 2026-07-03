@@ -165,8 +165,10 @@ struct WeiBeiApp: App {
                     }
                     .keyboardShortcut("f")
                 }
-                Button(store.hasSelectedMaterial ? "问当前材料" : "问当前笔记") { Task { await store.askAgent() } }
-                    .keyboardShortcut(.return, modifiers: [.command])
+                if !store.isAskingAgent && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button(store.hasSelectedMaterial ? "问当前材料" : "问当前笔记") { Task { await store.askAgent() } }
+                        .keyboardShortcut(.return, modifiers: [.command])
+                }
             }
         }
 
