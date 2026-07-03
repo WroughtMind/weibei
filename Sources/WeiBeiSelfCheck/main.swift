@@ -134,6 +134,7 @@ let readerViewSource = (try? String(contentsOf: readerViewSourceURL, encoding: .
 expect(readerViewSource.contains("readerStyleScript"), "html reader injects responsive reading style")
 expect(readerViewSource.contains("overflow-wrap: anywhere"), "html reader prevents narrow-pane clipping")
 expect(!readerViewSource.contains("readerHeader") && !readerViewSource.contains("statusBar"), "reader avoids duplicate internal chrome under unified top bar")
+expect(readerViewSource.contains("ReaderStateMessage") && !readerViewSource.contains("ContentUnavailableView("), "reader empty states use WeiBei paper styling")
 expect(readerViewSource.contains("if store.selectedItem?.kind == .pdf") && readerViewSource.contains("pdfFloatingControls"), "pdf controls stay available as a light floating tray")
 expect(readerViewSource.contains(".accessibilityLabel(Text(\"上一页\"))") && readerViewSource.contains(".accessibilityLabel(Text(\"下一页\"))"), "pdf page controls have readable icon labels")
 let richEditorSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)

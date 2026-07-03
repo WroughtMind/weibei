@@ -543,17 +543,46 @@ private struct MarkdownReadFailureView: View {
     var fileName: String
 
     var body: some View {
-        ContentUnavailableView(
-            "无法读取 Markdown 文件",
-            systemImage: "exclamationmark.triangle",
-            description: Text(fileName)
+        ReaderStateMessage(
+            title: "无法读取 Markdown",
+            detail: fileName,
+            systemImage: "exclamationmark.triangle"
         )
     }
 }
 
 private struct EmptyReaderView: View {
     var body: some View {
-        ContentUnavailableView("选择资料", systemImage: "doc.text.magnifyingglass", description: Text("从左侧导入或选择一个 HTML、PDF、Markdown 文件。"))
+        ReaderStateMessage(
+            title: "选择资料",
+            detail: "从资料库打开 HTML、PDF 或 Markdown。",
+            systemImage: "doc.text.magnifyingglass"
+        )
+    }
+}
+
+private struct ReaderStateMessage: View {
+    var title: String
+    var detail: String
+    var systemImage: String
+
+    var body: some View {
+        VStack(spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.62))
+            Text(title)
+                .font(.system(size: 18, weight: .semibold, design: .serif))
+                .foregroundStyle(WeiBeiTheme.ink)
+            Text(detail)
+                .font(.system(size: 12))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+        }
+        .frame(maxWidth: 320)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(WeiBeiTheme.paper)
     }
 }
 
