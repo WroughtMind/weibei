@@ -10,6 +10,7 @@ struct ReaderView: View {
     @State private var pdfBrowseMode: PDFBrowseMode = .scroll
     @State private var pdfPageIndex = 0
     @State private var pdfPageCount = 0
+    @State private var pdfControlsHovering = false
     @State private var pendingPDFPageIndex: Int?
 
     var body: some View {
@@ -97,6 +98,14 @@ struct ReaderView: View {
                 .stroke(WeiBeiTheme.hairline.opacity(0.82), lineWidth: 1)
         }
         .shadow(color: WeiBeiTheme.ink.opacity(0.045), radius: 8, y: 3)
+        .opacity(pdfControlsHovering ? 1 : 0.72)
+        .offset(y: pdfControlsHovering ? 0 : 2)
+        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .onHover { hovering in
+            withAnimation(WeiBeiMotion.hover) {
+                pdfControlsHovering = hovering
+            }
+        }
     }
 
     @ViewBuilder
