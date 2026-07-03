@@ -501,10 +501,13 @@ final class WorkspaceStore: ObservableObject {
         if modifiers == [.command, .shift] {
             switch key {
             case "a":
+                guard canApplyAgentAnswer else { return false }
                 animatePanelChange { applyLastAgentAnswerToNote() }
             case "r":
+                guard canReplaceNoteSelection else { return false }
                 animatePanelChange { replaceSelectionWithLastAgentAnswer() }
             case "e":
+                guard canApplyAgentAnswer else { return false }
                 animatePanelChange { applyAgentPatchToEditor() }
             case "c":
                 guard hasSelectedMaterial || selectionContext != nil else { return false }
