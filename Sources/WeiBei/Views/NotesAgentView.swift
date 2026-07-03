@@ -664,14 +664,13 @@ struct AgentPaneView: View {
                     Task { await store.askAgent() }
                 }
 
-                if canSendDraft || store.isAskingAgent {
+                if canSendDraft {
                     Button { Task { await store.askAgent() } } label: {
-                        Image(systemName: store.isAskingAgent ? "hourglass" : "paperplane.fill")
+                        Image(systemName: "paperplane.fill")
                     }
                     .buttonStyle(WeiBeiIconButtonStyle(active: canSendDraft, size: 28))
-                    .disabled(store.isAskingAgent)
-                    .accessibilityLabel(Text(store.isAskingAgent ? "等待 Agent" : "发送"))
-                    .help(store.isAskingAgent ? "等待 Agent" : "发送")
+                    .accessibilityLabel(Text("发送"))
+                    .help("发送")
                     .keyboardShortcut(.return, modifiers: [.command])
                     .transition(WeiBeiTransition.floating)
                     .animation(WeiBeiMotion.micro, value: canSendDraft)

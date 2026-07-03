@@ -212,7 +212,7 @@ expect(notesAgentSource.contains("prompt: Text(\"问当前材料\").foregroundSt
 expect(notesAgentSource.contains("cornerToolButton(\"list.bullet.rectangle\", label: \"整理笔记\"") && !notesAgentSource.contains("Button(\"整理笔记\")"), "corner agent uses compact semantic icon tools")
 expect(notesAgentSource.contains("private var agentInputTray: some View"), "agent pane uses a dedicated input tray")
 expect(notesAgentSource.contains("WeiBeiGlassHeaderBackground(") && notesAgentSource.contains("WeiBeiTheme.glassTint.opacity(0.66)"), "agent input tray uses paper glass fade instead of a hard white strip")
-expect(!notesAgentSource.contains(".disabled(store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)") && !notesAgentSource.contains(".disabled(!canSend)"), "agent drawer and corner hide empty send actions instead of showing disabled buttons")
+expect(!notesAgentSource.contains(".disabled(store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)") && !notesAgentSource.contains(".disabled(!canSend)") && !notesAgentSource.contains(".disabled(store.isAskingAgent)"), "agent inputs hide unavailable send actions instead of showing disabled buttons")
 expect(notesAgentSource.contains("agentToolButton(\"整理\", help: \"整理笔记\"") && notesAgentSource.contains("agentToolButton(\"写入\", help: \"写入笔记\""), "agent toolbar uses short readable action labels")
 expect(notesAgentSource.contains("private func iconButton(_ systemName: String, help: String") && notesAgentSource.contains(".accessibilityLabel(Text(help))"), "floating icon buttons carry semantic labels")
 expect(notesAgentSource.contains(".help(\"收起右下角 Agent\")"), "corner agent close button explains its action")
