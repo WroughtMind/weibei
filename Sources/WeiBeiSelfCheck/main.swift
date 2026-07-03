@@ -246,6 +246,13 @@ expect(workspaceStoreSource.contains("var selectedMaterialTitle") && workspaceSt
 expect(workspaceStoreSource.contains("var agentMessageSourceTitle: String?") && workspaceStoreSource.contains("selectedMaterialItem?.title ?? selectedItem?.title") && !workspaceStoreSource.contains("source: selectedMaterialItem?.title"), "agent message source falls back to the selected note title")
 expect(workspaceStoreSource.contains("private var quietInsightReferenceTitle: String") && workspaceStoreSource.contains("selectionContext?.ownerTitle ?? selectedMaterialItem?.title ?? selectedItem?.title") && workspaceStoreSource.contains("没有证据就说\\(evidenceText)"), "quiet insight uses real note or material source wording")
 expect(workspaceStoreSource.contains("layout == .immersiveReading || layout == .immersiveWriting") && workspaceStoreSource.contains("agentSurface = .cornerPanel") && !workspaceStoreSource.contains("layout = .immersiveConversation\n                showLibrary = false\n                showRightPane = true"), "agent focus in immersive layouts opens an overlay instead of switching layout")
+if let setLayoutStart = workspaceStoreSource.range(of: "func setLayout(_ layout: WorkspaceLayout)")?.lowerBound,
+   let setAgentSurfaceStart = workspaceStoreSource.range(of: "func setAgentSurface")?.lowerBound {
+    let setLayoutSource = String(workspaceStoreSource[setLayoutStart..<setAgentSurfaceStart])
+    expect(!setLayoutSource.contains("showLibrary = false"), "layout switching preserves the current library visibility")
+} else {
+    expect(false, "layout switching source is readable")
+}
 if let agentFocusStart = workspaceStoreSource.range(of: "if pane == .agent")?.lowerBound,
    let focusEnd = workspaceStoreSource.range(of: "focusedPane = pane")?.lowerBound {
     let agentFocusSource = String(workspaceStoreSource[agentFocusStart..<focusEnd])

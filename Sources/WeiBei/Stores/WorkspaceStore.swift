@@ -296,9 +296,6 @@ final class WorkspaceStore: ObservableObject {
 
     func setLayout(_ layout: WorkspaceLayout) {
         self.layout = layout
-        if [.documentNotesSplit, .immersiveReading, .immersiveConversation, .immersiveWriting].contains(layout) {
-            showLibrary = false
-        }
         showRightPane = true
         let nextFocus: PaneFocus = switch layout {
         case .immersiveConversation:
