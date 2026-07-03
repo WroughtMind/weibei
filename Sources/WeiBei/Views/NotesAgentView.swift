@@ -860,14 +860,17 @@ struct AgentDrawerView: View {
                     .focused($draftFocused)
                     .font(.system(size: 13))
                     .weibeiInputSurface(active: draftFocused)
-                Button { Task { await store.askAgent() } } label: {
-                    Image(systemName: "paperplane.fill")
+                if canSend {
+                    Button { Task { await store.askAgent() } } label: {
+                        Image(systemName: "paperplane.fill")
+                    }
+                    .buttonStyle(WeiBeiIconButtonStyle(active: true))
+                    .accessibilityLabel(Text("发送"))
+                    .help("发送")
+                    .transition(WeiBeiTransition.floating)
                 }
-                .buttonStyle(WeiBeiIconButtonStyle(active: !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
-                .disabled(store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .accessibilityLabel(Text("发送"))
-                .help("发送")
             }
+            .animation(WeiBeiMotion.micro, value: canSend)
 
             HStack(spacing: 8) {
                 Label("来源", systemImage: "link")
@@ -887,6 +890,10 @@ struct AgentDrawerView: View {
         .onAppear {
             draftFocused = store.focusedPane == .agent
         }
+    }
+
+    private var canSend: Bool {
+        !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }
 
@@ -924,16 +931,19 @@ struct CornerAgentView: View {
                     .font(.system(size: 13))
                     .weibeiInputSurface(active: draftFocused, height: 32)
 
-                Button {
-                    Task { await store.askAgent() }
-                } label: {
-                    Image(systemName: "paperplane.fill")
+                if canSend {
+                    Button {
+                        Task { await store.askAgent() }
+                    } label: {
+                        Image(systemName: "paperplane.fill")
+                    }
+                    .buttonStyle(WeiBeiIconButtonStyle(active: true))
+                    .accessibilityLabel(Text("发送"))
+                    .help("发送")
+                    .transition(WeiBeiTransition.floating)
                 }
-                .buttonStyle(WeiBeiIconButtonStyle(active: canSend))
-                .disabled(!canSend)
-                .accessibilityLabel(Text("发送"))
-                .help("发送")
             }
+            .animation(WeiBeiMotion.micro, value: canSend)
 
             HStack {
                 Button("整理笔记") {
