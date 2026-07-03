@@ -29,8 +29,6 @@ struct CommandPaletteView: View {
             PaletteCommand(title: "Agent 右下角小窗", shortcut: "⌃⌥2") { store.setAgentSurface(.cornerPanel) },
             PaletteCommand(title: "Agent 划线浮层", shortcut: "⌃⌥3") { store.setAgentSurface(.selectionFloat) },
             PaletteCommand(title: "Agent 静默洞察", shortcut: "⌃⌥4") { store.setAgentSurface(.quietInsight) },
-            PaletteCommand(title: "Agent 整理资料与笔记", shortcut: "") { store.askToOrganizeWorkspace() },
-            PaletteCommand(title: "本地排序资料库", shortcut: "") { store.sortImportedItems() },
             PaletteCommand(title: "笔记原地写作", shortcut: "⌃⌘1") { store.setNoteRenderMode(.rich) },
             PaletteCommand(title: "笔记源码对照", shortcut: "⌃⌘2") { store.setNoteRenderMode(.split) },
             PaletteCommand(title: "笔记源码", shortcut: "⌃⌘3") { store.setNoteRenderMode(.source) },

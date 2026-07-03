@@ -160,10 +160,6 @@ final class WorkspaceStore: ObservableObject {
         selectionContext?.source == .note ? "当前笔记" : agentPromptScope
     }
 
-    var libraryOrganizationScope: String {
-        hasSelectedMaterial ? "当前资料库列表、已选择材料和当前笔记" : "当前资料库列表和当前笔记"
-    }
-
     var canApplyAgentAnswer: Bool {
         lastUsableAgentAnswer != nil
     }
@@ -388,7 +384,14 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func setNoteRenderMode(_ mode: NoteRenderMode) {
+        if layout == .immersiveReading || layout == .immersiveConversation {
+            layout = .immersiveWriting
+        }
+        if layout.hasCollapsibleRightPane {
+            showRightPane = true
+        }
         noteRenderMode = mode
+        focus(.notes)
         save()
     }
 
@@ -776,17 +779,6 @@ final class WorkspaceStore: ObservableObject {
         Task { await askAgent() }
     }
 
-    func askToOrganizeWorkspace() {
-        let libraryList = allItems.map { "- \($0.title)（\($0.kind.label)）" }.joined(separator: "\n")
-        agentDraft = """
-        请根据\(libraryOrganizationScope)，提出资料整理方案。不要直接改名，只给出课程分组、文件命名建议、笔记合并建议和缺少来源的位置。
-
-        资料库：
-        \(libraryList)
-        """
-        Task { await askAgent() }
-    }
-
     func askSelection() {
         if let selectionContext {
             agentSurface = .selectionFloat
@@ -888,16 +880,6 @@ final class WorkspaceStore: ObservableObject {
 
     private var quietInsightReferenceTitle: String {
         selectionContext?.ownerTitle ?? selectedMaterialItem?.title ?? selectedItem?.title ?? "当前笔记"
-    }
-
-    func sortImportedItems() {
-        importedItems.sort {
-            if $0.kind.label != $1.kind.label {
-                return $0.kind.label < $1.kind.label
-            }
-            return $0.title.localizedStandardCompare($1.title) == .orderedAscending
-        }
-        save()
     }
 
     func applyLastAgentAnswerToNote() {

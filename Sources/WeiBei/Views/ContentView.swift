@@ -340,7 +340,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private var layoutMenuTitle: String {
-        variant == .glyph ? shortLayoutLabel : store.layout.label
+        variant == .glyph || variant == .compact ? shortLayoutLabel : store.layout.label
     }
 
     private var shouldShowTopDocumentTitle: Bool {

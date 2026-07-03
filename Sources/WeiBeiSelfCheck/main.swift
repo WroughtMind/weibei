@@ -209,6 +209,7 @@ for helperName in ["openReader", "openWriting", "askCurrentSelection", "prepareA
 }
 expect(contentViewSource.contains(".weibeiInputPrompt(\"当前资料内搜索\", visible: store.readerSearch.isEmpty)") && contentViewSource.contains(".foregroundColor(primaryText)"), "top search placeholder uses the shared readable overlay above the field")
 expect(contentViewSource.contains("store.hasSelectedMaterial && store.layout != .immersiveConversation"), "top search only appears when a material is selected")
+expect(contentViewSource.contains("variant == .glyph || variant == .compact ? shortLayoutLabel : store.layout.label"), "compact top bar uses short layout labels")
 expect(contentViewSource.contains("layout == store.layout ? \"checkmark\"") && contentViewSource.contains(".accessibilityLabel(Text(\"切换布局\"))"), "layout menu marks current layout and explains itself")
 expect(contentViewSource.contains(": layout.systemImage") && !contentViewSource.contains(": \"rectangle.split.3x1\""), "layout menu avoids repeating one generic icon")
 expect(contentViewSource.contains(".accessibilityLabel(Text(\"更多设置\"))"), "top bar more menu has a readable semantic label")
@@ -225,6 +226,7 @@ let commandPaletteSourceURL = URL(fileURLWithPath: FileManager.default.currentDi
 let commandPaletteSource = (try? String(contentsOf: commandPaletteSourceURL, encoding: .utf8)) ?? ""
 expect(commandPaletteSource.contains("withAnimation(command.animation)") && commandPaletteSource.contains("animation: WeiBeiMotion.layout"), "command palette uses layout motion for layout commands")
 expect(!commandPaletteSource.contains("收起右栏"), "command palette avoids fixed right-pane wording")
+expect(!commandPaletteSource.contains("Agent 整理资料与笔记") && !commandPaletteSource.contains("本地排序资料库"), "command palette avoids half-built library organization shortcuts")
 expect(commandPaletteSource.contains("store.showLibrary ? \"收起资料\" : \"恢复资料\""), "command palette names the library toggle by current state")
 expect(!commandPaletteSource.contains("PaletteCommand(title: \"顶栏") && contentViewSource.contains("Section(\"顶部栏\")"), "top bar variants live in the more menu instead of the command palette")
 expect(commandPaletteSource.contains("private var rightPaneCommand: PaletteCommand?") && commandPaletteSource.contains("store.layout.hasCollapsibleRightPane"), "command palette hides right pane command when the layout has no auxiliary pane")
@@ -350,9 +352,22 @@ if let insertStart = workspaceStoreSource.range(of: "func insertMarkdownSnippet"
 } else {
     expect(false, "markdown insertion source is readable")
 }
+if let setNoteModeStart = workspaceStoreSource.range(of: "func setNoteRenderMode(_ mode: NoteRenderMode)")?.lowerBound,
+   let revealStart = workspaceStoreSource.range(of: "private func revealRichWritingSurface")?.lowerBound {
+    let setNoteModeSource = String(workspaceStoreSource[setNoteModeStart..<revealStart])
+    expect(
+        setNoteModeSource.contains("layout = .immersiveWriting")
+            && setNoteModeSource.contains("showRightPane = true")
+            && setNoteModeSource.contains("noteRenderMode = mode")
+            && setNoteModeSource.contains("focus(.notes)"),
+        "note render mode commands reveal and focus the writing surface"
+    )
+} else {
+    expect(false, "note render mode source is readable")
+}
 expect(workspaceStoreSource.contains("let canShowSelectionFloat = SelectionFloatingAgentPlacement.isVisible") && workspaceStoreSource.contains("surface == .selectionFloat && !canShowSelectionFloat ? .cornerPanel : surface"), "selection-float agent surface falls back to a visible corner panel when no selection can anchor it")
 expect(!workspaceStoreSource.contains("selectedItem?.title ?? \"当前材料\"") && !workspaceStoreSource.contains("保存后 Agent 会用当前材料") && !workspaceStoreSource.contains("已选择材料、当前选区和右侧笔记"), "agent context avoids fake material fallback copy")
-expect(workspaceStoreSource.contains("var agentPromptScope") && workspaceStoreSource.contains("var selectionPromptScope") && workspaceStoreSource.contains("var libraryOrganizationScope"), "agent prompt builders share context wording")
+expect(workspaceStoreSource.contains("var agentPromptScope") && workspaceStoreSource.contains("var selectionPromptScope") && !workspaceStoreSource.contains("var libraryOrganizationScope"), "agent prompt builders avoid half-built library organization context")
 expect(!workspaceStoreSource.contains("请根据当前文档和当前笔记") && !workspaceStoreSource.contains("请根据当前材料和当前笔记") && !workspaceStoreSource.contains("结合当前文档和笔记"), "agent draft presets do not hardcode fake material context")
 expect(workspaceStoreSource.contains("func resetNote()") && workspaceStoreSource.contains("createNotebookNote()") && !workspaceStoreSource.contains("updateNote(defaultNote(for: selectedItem))"), "new note command creates a notebook note instead of overwriting the current material note")
 expect(workspaceStoreSource.contains("isNotebookNote: true") && workspaceStoreSource.contains("nextNotebookNoteURL") && workspaceStoreSource.contains("try defaultNote(for: item).write"), "new notebook notes are backed by local markdown files")
@@ -413,6 +428,7 @@ expect(notesAgentSource.contains("emptyNoteHintText") && notesAgentSource.contai
 expect(notesAgentSource.contains("noteFileStatusColor(for message: String)") && notesAgentSource.contains("message.hasPrefix(\"无法\") ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk"), "note file success statuses do not render as errors")
 expect(notesAgentSource.contains(".help(\"新建独立 Markdown 笔记\")") && notesAgentSource.contains("结合\\(store.agentPromptScope)和当前选区作答") && !notesAgentSource.contains("结合已选择材料、选区和笔记"), "note and floating agent hints avoid fake current material context")
 expect(notesAgentSource.contains("drawerPrompt") && notesAgentSource.contains("return \"问当前选区\"") && !notesAgentSource.contains("问当前选区或当前材料"), "agent drawer placeholder avoids fake material context")
+expect(notesAgentSource.components(separatedBy: "!store.isAskingAgent && !store.agentDraft.trimmingCharacters").count >= 4, "all agent send affordances hide while a request is running")
 expect(notesAgentSource.contains("store.hasSelectedMaterial ? \"问当前材料\" : \"问当前笔记\"") && notesAgentSource.contains(".weibeiInputPrompt(agentPrompt, visible: store.agentDraft.isEmpty)") && notesAgentSource.contains(".foregroundColor(WeiBeiTheme.ink)"), "agent input placeholder matches context and uses the shared readable overlay")
 expect(notesAgentSource.contains("store.hasSelectedMaterial ? \"来源\" : \"笔记\"") && notesAgentSource.contains("store.selectedMaterialItem?.title ?? \"当前笔记\""), "agent drawer source row avoids fake current material")
 if let cornerStart = notesAgentSource.range(of: "struct CornerAgentView")?.lowerBound,

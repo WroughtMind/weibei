@@ -898,7 +898,7 @@ struct AgentDrawerView: View {
     }
 
     private var canSend: Bool {
-        !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !store.isAskingAgent && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var drawerPrompt: String {
@@ -968,7 +968,7 @@ struct CornerAgentView: View {
     }
 
     private var canSend: Bool {
-        !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !store.isAskingAgent && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var agentPrompt: String {
@@ -1174,7 +1174,7 @@ struct FloatingSelectionAgentView: View {
     }
 
     private var canSendDraft: Bool {
-        !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !store.isAskingAgent && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var visibleFloatingMessages: [AgentMessage] {
