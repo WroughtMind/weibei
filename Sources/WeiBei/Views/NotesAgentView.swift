@@ -1351,7 +1351,6 @@ struct QuietInsightView: View {
                     }
                 }
             }
-            .opacity(compactHovering ? 1 : 0.68)
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 8)
@@ -1368,12 +1367,12 @@ struct QuietInsightView: View {
     private var compactBackground: some View {
         ZStack {
             RoundedRectangle(cornerRadius: 5)
-                .fill(WeiBeiTheme.paperRaised.opacity(compactHovering ? 0.82 : 0.58))
+                .fill(WeiBeiTheme.paperRaised.opacity(compactHovering ? 0.82 : 0.68))
             RoundedRectangle(cornerRadius: 5)
                 .fill(.ultraThinMaterial)
                 .opacity(compactHovering ? 0.06 : 0.03)
             RoundedRectangle(cornerRadius: 5)
-                .stroke(WeiBeiTheme.hairline.opacity(compactHovering ? 0.58 : 0.28), lineWidth: 1)
+                .stroke(WeiBeiTheme.hairline.opacity(compactHovering ? 0.58 : 0.38), lineWidth: 1)
         }
     }
 
