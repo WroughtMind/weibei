@@ -21,9 +21,9 @@ struct ReaderView: View {
 
             if store.selectedMaterialItem?.kind == .pdf {
                 pdfFloatingControls
-                    .padding(.trailing, isImmersive ? 28 : 14)
-                    .padding(.bottom, isImmersive ? 20 : 16)
-                    .transition(WeiBeiTransition.drawer)
+                    .padding(.trailing, isImmersive ? 30 : 16)
+                    .padding(.bottom, isImmersive ? 28 : 18)
+                    .transition(WeiBeiTransition.floating)
             }
         }
         .background(WeiBeiTheme.paper)
@@ -82,24 +82,24 @@ struct ReaderView: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(WeiBeiTheme.ink)
-        .padding(3)
+        .padding(2)
         .background {
             ZStack {
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(WeiBeiTheme.paperRaised.opacity(0.86))
+                    .fill(WeiBeiTheme.paperRaised.opacity(pdfControlsHovering ? 0.92 : 0.76))
                 RoundedRectangle(cornerRadius: 8)
                     .fill(.ultraThinMaterial)
-                    .opacity(0.035)
+                    .opacity(pdfControlsHovering ? 0.045 : 0.018)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay {
             RoundedRectangle(cornerRadius: 8)
-                .stroke(WeiBeiTheme.hairline.opacity(0.82), lineWidth: 1)
+                .stroke(WeiBeiTheme.hairline.opacity(pdfControlsHovering ? 0.82 : 0.46), lineWidth: 1)
         }
-        .shadow(color: WeiBeiTheme.ink.opacity(0.045), radius: 8, y: 3)
-        .opacity(pdfControlsHovering ? 1 : 0.72)
-        .offset(y: pdfControlsHovering ? 0 : 2)
+        .shadow(color: WeiBeiTheme.ink.opacity(pdfControlsHovering ? 0.055 : 0.018), radius: 8, y: 3)
+        .opacity(pdfControlsHovering || pdfBrowseMode == .page ? 1 : 0.58)
+        .offset(y: pdfControlsHovering ? 0 : 1)
         .contentShape(RoundedRectangle(cornerRadius: 8))
         .onHover { hovering in
             withAnimation(WeiBeiMotion.hover) {
@@ -110,13 +110,13 @@ struct ReaderView: View {
 
     @ViewBuilder
     private var pdfControls: some View {
-        pdfModeMenu
+        pdfModeToggle
 
         if pdfBrowseMode == .page, pdfPageCount > 1 {
             Group {
                 Rectangle()
-                    .fill(WeiBeiTheme.hairline.opacity(0.8))
-                    .frame(width: 1, height: 18)
+                    .fill(WeiBeiTheme.hairline.opacity(0.55))
+                    .frame(width: 1, height: 16)
                     .padding(.horizontal, 2)
 
                 Button { pdfPageIndex = PageNavigator.previous(pdfPageIndex) } label: {
@@ -128,9 +128,9 @@ struct ReaderView: View {
                 .help("上一页")
 
                 Text(PageNavigator.display(pdfPageIndex, pageCount: pdfPageCount))
-                    .font(.caption.monospacedDigit())
+                    .font(.system(size: 11, weight: .medium, design: .monospaced))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    .frame(width: 54, height: 22)
+                    .frame(width: 50, height: 22)
 
                 Button { pdfPageIndex = PageNavigator.next(pdfPageIndex, pageCount: pdfPageCount) } label: {
                     Image(systemName: "chevron.right")
@@ -144,18 +144,10 @@ struct ReaderView: View {
         }
     }
 
-    private var pdfModeMenu: some View {
-        Menu {
-            ForEach(PDFBrowseMode.allCases) { mode in
-                Button {
-                    withAnimation(WeiBeiMotion.panel) {
-                        pdfBrowseMode = mode
-                    }
-                } label: {
-                    Label(mode.label, systemImage: pdfBrowseMode == mode ? "checkmark" : mode.systemImage)
-                }
-                .accessibilityLabel(Text(mode.label))
-                .help(mode.help)
+    private var pdfModeToggle: some View {
+        Button {
+            withAnimation(WeiBeiMotion.panel) {
+                pdfBrowseMode = pdfBrowseMode.toggled
             }
         } label: {
             HStack(spacing: 5) {
@@ -163,19 +155,20 @@ struct ReaderView: View {
                     .font(.system(size: 11, weight: .semibold))
                 Text(pdfBrowseMode.label)
                     .font(.system(size: 11, weight: .medium))
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
             }
             .foregroundStyle(WeiBeiTheme.secondaryInk)
             .padding(.horizontal, 7)
             .frame(height: 22)
+            .background(WeiBeiTheme.paperInset.opacity(pdfControlsHovering ? 0.24 : 0.10))
             .contentShape(RoundedRectangle(cornerRadius: 6))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay {
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(WeiBeiTheme.hairline.opacity(pdfControlsHovering ? 0.70 : 0.20), lineWidth: 1)
+            }
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .accessibilityLabel(Text("PDF 浏览方式"))
-        .help(pdfBrowseMode.help)
+        .accessibilityLabel(Text("切换 PDF 浏览方式，当前\(pdfBrowseMode.label)"))
+        .help("切换到\(pdfBrowseMode.toggled.help)")
     }
 
     @ViewBuilder
@@ -268,6 +261,13 @@ private enum PDFBrowseMode: String, CaseIterable, Identifiable {
         switch self {
         case .scroll: "arrow.up.and.down"
         case .page: "rectangle.portrait"
+        }
+    }
+
+    var toggled: PDFBrowseMode {
+        switch self {
+        case .scroll: .page
+        case .page: .scroll
         }
     }
 
