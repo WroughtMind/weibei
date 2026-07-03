@@ -184,7 +184,6 @@ private struct UnifiedTopBarView: View {
             .buttonStyle(WeiBeiIconButtonStyle())
             .accessibilityLabel(Text(store.showLibrary ? "完全收起资料库" : "恢复资料库"))
             .help(store.showLibrary ? "完全收起资料库" : "恢复资料库")
-            .opacity(isImmersiveLayout ? 0.45 : 1)
 
             brandBlock
 

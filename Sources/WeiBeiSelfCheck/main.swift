@@ -134,6 +134,7 @@ expect(!contentViewSource.contains("DragGesture()"), "content panes avoid SwiftU
 expect(!contentViewSource.contains(".id(store.layout)"), "layout changes avoid whole-screen identity resets")
 expect(!contentViewSource.contains("PaneSeparator"), "content panes avoid hand-drawn split separators")
 expect(!contentViewSource.contains("topBarContentFade"), "top bar avoids a duplicate content fade wash")
+expect(contentViewSource.contains("store.toggleLibrary()") && contentViewSource.contains("sidebar.left") && !contentViewSource.contains(".opacity(isImmersiveLayout ? 0.45 : 1)"), "immersive top bar keeps a clear library chooser instead of dimming a live control")
 expect(!contentViewSource.contains("文代笔") && !contentViewSource.contains("Agent中") && contentViewSource.contains("对话中栏") && contentViewSource.contains("对话右栏"), "top bar short layout labels avoid cryptic abbreviations")
 expect(contentViewSource.contains("prompt: Text(\"当前资料内搜索\").foregroundStyle(tertiaryText)"), "top search placeholder uses readable semantic ink")
 expect(contentViewSource.contains("store.hasSelectedMaterial && store.layout != .immersiveConversation"), "top search only appears when a material is selected")
