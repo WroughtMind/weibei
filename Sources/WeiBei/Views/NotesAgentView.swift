@@ -1534,20 +1534,19 @@ struct ContextRailView: View {
 
     private var railBackground: some View {
         ZStack(alignment: highlightAlignment) {
-            WeiBeiTheme.paper.opacity(0.18)
             LinearGradient(
                 colors: [
-                    WeiBeiTheme.paperRaised.opacity(0.30),
-                    WeiBeiTheme.paper.opacity(0.08),
+                    WeiBeiTheme.paperRaised.opacity(0.18),
+                    WeiBeiTheme.paper.opacity(0.05),
                     .clear
                 ],
                 startPoint: edge == .leading ? .leading : .trailing,
                 endPoint: edge == .leading ? .trailing : .leading
             )
-            .frame(width: 34)
+            .frame(width: 22)
             LinearGradient(
                 colors: [
-                    WeiBeiTheme.glassHighlight.opacity(0.18),
+                    WeiBeiTheme.glassHighlight.opacity(0.12),
                     .clear
                 ],
                 startPoint: .top,

@@ -917,6 +917,13 @@ private struct LayoutContentView: View {
                 }
             )
         }
+        if items.isEmpty {
+            items.append(
+                ContextRailItem(title: "资料库", help: "打开资料库选择资料", systemImage: "sidebar.left", emphasized: true) {
+                    openLibrary()
+                }
+            )
+        }
         return items
     }
 
@@ -953,6 +960,13 @@ private struct LayoutContentView: View {
             store.layout = .immersiveWriting
             store.showRightPane = true
             store.focus(.notes)
+        }
+    }
+
+    private func openLibrary() {
+        withAnimation(WeiBeiMotion.layout) {
+            store.showLibrary = true
+            store.focus(.library)
         }
     }
 
