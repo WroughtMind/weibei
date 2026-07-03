@@ -10,6 +10,7 @@ struct ReaderView: View {
     @State private var pdfBrowseMode: PDFBrowseMode = .scroll
     @State private var pdfPageIndex = 0
     @State private var pdfPageCount = 0
+    @State private var pendingPDFPageIndex: Int?
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -30,17 +31,26 @@ struct ReaderView: View {
         .animation(WeiBeiMotion.panel, value: store.showReaderSearch)
         .onAppear {
             syncReaderLocationTitle()
+            pendingPDFPageIndex = store.readerTargetPageIndex
+            applyPendingPDFPageIfReady()
         }
         .onChange(of: store.selectedItemID) { _, _ in
             pdfPageIndex = 0
             pdfPageCount = store.selectedMaterialItem?.kind == .pdf && store.selectedMaterialItem?.url == nil ? 1 : 0
             syncReaderLocationTitle()
+            pendingPDFPageIndex = store.readerTargetPageIndex
+            applyPendingPDFPageIfReady()
         }
         .onChange(of: pdfPageIndex) { _, _ in
             syncReaderLocationTitle()
         }
         .onChange(of: pdfPageCount) { _, _ in
             syncReaderLocationTitle()
+            applyPendingPDFPageIfReady()
+        }
+        .onChange(of: store.readerTargetPageIndex) { _, target in
+            pendingPDFPageIndex = target
+            applyPendingPDFPageIfReady()
         }
     }
 
@@ -51,6 +61,17 @@ struct ReaderView: View {
         }
         let title = item.kind == .pdf ? "\(item.title)，第 \(pdfPageIndex + 1) 页" : item.title
         store.updateReaderLocationTitle(title)
+    }
+
+    private func applyPendingPDFPageIfReady() {
+        guard let target = pendingPDFPageIndex,
+              store.selectedMaterialItem?.kind == .pdf,
+              pdfPageCount > 0 else { return }
+        pdfBrowseMode = .page
+        pdfPageIndex = min(max(target, 0), max(pdfPageCount - 1, 0))
+        pendingPDFPageIndex = nil
+        store.readerTargetPageIndex = nil
+        syncReaderLocationTitle()
     }
 
     private var pdfFloatingControls: some View {

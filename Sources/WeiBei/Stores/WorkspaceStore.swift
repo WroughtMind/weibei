@@ -20,6 +20,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var readerSearch = ""
     @Published var showReaderSearch = false
     @Published var readerLocationTitle: String?
+    @Published var readerTargetPageIndex: Int?
     @Published var focusedPane: PaneFocus = .reader
     @Published var focusRequest = 0
     @Published var layout: WorkspaceLayout = .documentAgentNotes
@@ -313,6 +314,26 @@ final class WorkspaceStore: ObservableObject {
     func updateReaderLocationTitle(_ title: String?) {
         let cleaned = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         readerLocationTitle = cleaned.isEmpty ? selectedMaterialItem?.title : cleaned
+    }
+
+    var canOpenSelectedSourceReference: Bool {
+        guard selectionContext?.isNoteSelection == true else { return false }
+        return sourceReferenceItem(from: selectionContext?.text) != nil
+    }
+
+    func openSelectedSourceReference() {
+        guard let text = selectionContext?.text else { return }
+        openSourceReference(text)
+    }
+
+    @discardableResult
+    func openSourceReference(_ rawReference: String) -> Bool {
+        guard let item = sourceReferenceItem(from: rawReference) else { return false }
+        let reference = SourceReferenceTitle.parse(rawReference)
+        select(itemID: item.id)
+        readerTargetPageIndex = item.kind == .pdf ? reference.pageIndex : nil
+        focus(.reader)
+        return true
     }
 
     func setLayout(_ layout: WorkspaceLayout) {
@@ -735,6 +756,15 @@ final class WorkspaceStore: ObservableObject {
             return selectedItem?.title ?? "当前笔记"
         }
         return currentReferenceTitle
+    }
+
+    private func sourceReferenceItem(from rawReference: String?) -> StudyItem? {
+        let reference = SourceReferenceTitle.parse(rawReference ?? "")
+        guard !reference.title.isEmpty else { return nil }
+        return allItems.first {
+            !$0.isNotebookNote
+                && ($0.title == reference.title || $0.subtitle == reference.title)
+        }
     }
 
     func askToOrganizeNote() {

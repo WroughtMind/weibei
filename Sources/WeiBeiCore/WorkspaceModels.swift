@@ -104,6 +104,40 @@ public enum WikiLink {
     }
 }
 
+public enum SourceReferenceTitle {
+    public static func parse(_ raw: String) -> (title: String, pageIndex: Int?) {
+        var text = raw
+            .components(separatedBy: .newlines)
+            .reversed()
+            .map(cleanedLine)
+            .first(where: { $0.hasPrefix("来源：") })
+            ?? cleanedLine(raw)
+        text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix(">") {
+            text = String(text.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if text.hasPrefix("来源：") {
+            text = String(text.dropFirst("来源：".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        guard let range = text.range(of: #"，第\s*\d+\s*页$"#, options: .regularExpression) else {
+            return (text, nil)
+        }
+        let suffix = text[range]
+        let pageNumber = Int(suffix.filter(\.isNumber))
+        let title = text[..<range.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        return (title, pageNumber.map { max($0 - 1, 0) })
+    }
+
+    private static func cleanedLine(_ raw: String) -> String {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.hasPrefix(">") {
+            text = String(text.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return text
+    }
+}
+
 public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable {
     case documentAgentNotes
     case documentNotesAgent

@@ -60,6 +60,9 @@ struct CommandPaletteView: View {
         if store.selectionContext != nil {
             items.append(PaletteCommand(title: "问选区 Agent", shortcut: "") { store.askSelection() })
         }
+        if store.canOpenSelectedSourceReference {
+            items.append(PaletteCommand(title: "打开选区来源", shortcut: "") { store.openSelectedSourceReference() })
+        }
         if store.agentSurface != .hidden {
             items.append(PaletteCommand(title: "隐藏 Agent", shortcut: "⌃⌥0") { store.setAgentSurface(.hidden) })
         }
