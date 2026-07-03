@@ -29,7 +29,6 @@ struct CommandPaletteView: View {
             PaletteCommand(title: "Agent 右下角小窗", shortcut: "⌃⌥2") { store.setAgentSurface(.cornerPanel) },
             PaletteCommand(title: "Agent 划线浮层", shortcut: "⌃⌥3") { store.setAgentSurface(.selectionFloat) },
             PaletteCommand(title: "Agent 静默洞察", shortcut: "⌃⌥4") { store.setAgentSurface(.quietInsight) },
-            PaletteCommand(title: "隐藏 Agent", shortcut: "⌃⌥0") { store.setAgentSurface(.hidden) },
             PaletteCommand(title: "Agent 整理资料与笔记", shortcut: "") { store.askToOrganizeWorkspace() },
             PaletteCommand(title: "本地排序资料库", shortcut: "") { store.sortImportedItems() },
             PaletteCommand(title: "笔记原地写作", shortcut: "⌃⌘1") { store.setNoteRenderMode(.rich) },
@@ -58,6 +57,9 @@ struct CommandPaletteView: View {
         }
         if store.selectionContext != nil {
             items.append(PaletteCommand(title: "问选区 Agent", shortcut: "") { store.askSelection() })
+        }
+        if store.agentSurface != .hidden {
+            items.append(PaletteCommand(title: "隐藏 Agent", shortcut: "⌃⌥0") { store.setAgentSurface(.hidden) })
         }
         if store.canApplyAgentAnswer {
             items.append(PaletteCommand(title: "写入 Agent 回答", shortcut: "⌘⇧A") { store.applyLastAgentAnswerToNote() })
