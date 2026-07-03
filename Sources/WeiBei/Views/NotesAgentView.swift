@@ -677,7 +677,7 @@ struct AgentPaneView: View {
                         Task { await store.askAgent() }
                     }
                 .weibeiInputSurface(active: draftFocused, height: 34)
-                .weibeiInputPrompt(agentPrompt, visible: store.agentDraft.isEmpty)
+                .weibeiInputPrompt(agentPrompt, visible: store.agentDraft.isEmpty, fontSize: 14)
 
                 if canSendDraft {
                     Button { Task { await store.askAgent() } } label: {
@@ -863,7 +863,7 @@ struct AgentDrawerView: View {
                     .foregroundColor(WeiBeiTheme.ink)
                 .font(.system(size: 13))
                 .weibeiInputSurface(active: draftFocused)
-                .weibeiInputPrompt(drawerPrompt, visible: store.agentDraft.isEmpty)
+                .weibeiInputPrompt(drawerPrompt, visible: store.agentDraft.isEmpty, fontSize: 13)
                 if canSend {
                     Button { Task { await store.askAgent() } } label: {
                         Image(systemName: "paperplane.fill")
@@ -938,7 +938,7 @@ struct CornerAgentView: View {
                     .foregroundColor(WeiBeiTheme.ink)
                 .font(.system(size: 13))
                 .weibeiInputSurface(active: draftFocused, height: 32)
-                .weibeiInputPrompt(agentPrompt, visible: store.agentDraft.isEmpty)
+                .weibeiInputPrompt(agentPrompt, visible: store.agentDraft.isEmpty, fontSize: 13)
 
                 if canSend {
                     Button {
@@ -1163,7 +1163,7 @@ struct FloatingSelectionAgentView: View {
             .padding(.horizontal, 8)
             .frame(height: 30)
             .weibeiInputSurface(active: draftFocused)
-            .weibeiInputPrompt("继续追问", visible: store.agentDraft.isEmpty, leading: 18)
+            .weibeiInputPrompt("继续追问", visible: store.agentDraft.isEmpty, leading: 18, fontSize: 12)
         }
         .padding(10)
         .frame(width: 312, alignment: .leading)

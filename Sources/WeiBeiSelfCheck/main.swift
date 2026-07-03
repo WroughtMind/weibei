@@ -176,13 +176,15 @@ expect(themeSource.contains(".fill(.regularMaterial)") && themeSource.contains("
 expect(themeSource.contains("WeiBeiTheme.glassTint.opacity(0.16 * opacity)") && !themeSource.contains("WeiBeiTheme.paperInset.opacity(0.10 * opacity)"), "header handoff fade avoids a hard paper edge")
 expect(
     themeSource.contains("struct WeiBeiInputPrompt")
-        && themeSource.contains(".foregroundColor(WeiBeiTheme.tertiaryInk)")
-        && themeSource.contains(".foregroundStyle(WeiBeiTheme.tertiaryInk)")
-        && themeSource.contains("func weibeiInputPrompt(_ text: String, visible: Bool, leading: CGFloat = 10)")
+        && themeSource.contains("final class WeiBeiPromptLabel: NSTextField")
+        && themeSource.contains("override var allowsVibrancy: Bool { false }")
+        && themeSource.contains("label.textColor = WeiBeiTheme.tertiaryInkNS.withAlphaComponent(0.94)")
+        && themeSource.contains("fontSize: CGFloat = 13")
+        && themeSource.contains(".zIndex(2)")
         && !themeSource.contains(".foregroundColor(.white)")
         && !themeSource.contains(".foregroundStyle(.white)")
         && !themeSource.contains(".colorMultiply(WeiBeiTheme.tertiaryInk)"),
-    "input placeholders draw as a shared readable overlay without white vibrancy hacks"
+    "input placeholders draw as a non-vibrant readable overlay without white vibrancy hacks"
 )
 expect(themeSource.contains("func weibeiInputSurface") && themeSource.contains(".foregroundColor(WeiBeiTheme.ink)") && themeSource.contains(".foregroundStyle(WeiBeiTheme.ink)") && themeSource.contains(".tint(WeiBeiTheme.link)"), "input surfaces force readable text color on paper")
 expect(contentViewSource.contains("ResizableTwoPane<First: View, Second: View>: NSViewRepresentable"), "two-pane layout uses native bridge")
@@ -207,7 +209,7 @@ for helperName in ["openReader", "openWriting", "askCurrentSelection", "prepareA
         expect(false, "\(helperName) source is readable")
     }
 }
-expect(contentViewSource.contains(".weibeiInputPrompt(\"当前资料内搜索\", visible: store.readerSearch.isEmpty)") && contentViewSource.contains(".foregroundColor(primaryText)"), "top search placeholder uses the shared readable overlay above the field")
+expect(contentViewSource.contains(".weibeiInputPrompt(\"当前资料内搜索\", visible: store.readerSearch.isEmpty, fontSize: 12)") && contentViewSource.contains(".foregroundColor(primaryText)"), "top search placeholder uses the shared readable overlay above the field")
 expect(contentViewSource.contains("store.hasSelectedMaterial && store.layout != .immersiveConversation"), "top search only appears when a material is selected")
 expect(contentViewSource.contains("variant == .glyph || variant == .compact ? shortLayoutLabel : store.layout.label"), "compact top bar uses short layout labels")
 expect(contentViewSource.contains("layout == store.layout ? \"checkmark\"") && contentViewSource.contains(".accessibilityLabel(Text(\"切换布局\"))"), "layout menu marks current layout and explains itself")
@@ -216,7 +218,11 @@ expect(contentViewSource.contains(".accessibilityLabel(Text(\"更多设置\"))")
 let sidebarSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/SidebarView.swift")
 let sidebarSource = (try? String(contentsOf: sidebarSourceURL, encoding: .utf8)) ?? ""
-expect(sidebarSource.contains(".weibeiInputPrompt(\"搜索资料库\", visible: store.librarySearch.isEmpty)") && sidebarSource.contains(".foregroundColor(WeiBeiTheme.ink)"), "library search placeholder uses the shared readable overlay above the field")
+expect(sidebarSource.contains(".weibeiInputPrompt(\"搜索资料库\", visible: store.librarySearch.isEmpty, fontSize: 13)") && sidebarSource.contains(".foregroundColor(WeiBeiTheme.ink)"), "library search placeholder uses the shared readable overlay above the field")
+let notesAgentSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Views/NotesAgentView.swift")
+let notesAgentSource = (try? String(contentsOf: notesAgentSourceURL, encoding: .utf8)) ?? ""
+expect(notesAgentSource.contains(".weibeiInputPrompt(agentPrompt, visible: store.agentDraft.isEmpty, fontSize: 14)"), "agent tray placeholder uses readable non-vibrant prompt text")
 expect(!sidebarSource.contains("commandPalettePresented.toggle()") && !sidebarSource.contains("Label(\"命令\", systemImage: \"command\")"), "sidebar does not duplicate the command palette entry")
 expect(sidebarSource.contains("sidebarSection(title: \"导入资料\", items: importedMaterialItems)") && sidebarSource.contains("sidebarSection(title: \"笔记\", items: notebookItems)"), "sidebar separates materials from notebook notes")
 expect(sidebarSource.contains("!$0.isSample && !$0.isNotebookNote") && sidebarSource.contains("store.filteredItems.filter(\\.isNotebookNote)"), "sidebar material list excludes notebook notes without hiding notes")
@@ -288,7 +294,7 @@ expect(appSource.contains("sharedWorkspaceStore"), "main window and settings sha
 expect(!appSource.contains("launchProbe"), "app launch path has no temporary probe logging")
 expect(appSource.contains("addLocalMonitorForEvents(matching: .keyDown)") && appSource.contains("removeMonitor(shortcutMonitor)"), "app-level shortcuts survive focused web editor")
 expect(appSource.contains("applicationShouldHandleReopen") && appSource.contains("return true") && !appSource.contains("return flag"), "reopen creates a main window when no visible window exists")
-expect(!appSource.contains("Form {") && appSource.contains(".weibeiInputPrompt(\"OpenAI 密钥\", visible: store.openAIAPIKey.isEmpty)") && appSource.contains("SecureField(\"\", text: $store.openAIAPIKey)") && appSource.contains(".foregroundColor(WeiBeiTheme.ink)") && appSource.contains(".weibeiInputSurface(active: focusedField == .apiKey)"), "settings key input uses WeiBei input surface instead of the default form field")
+expect(!appSource.contains("Form {") && appSource.contains(".weibeiInputPrompt(\"OpenAI 密钥\", visible: store.openAIAPIKey.isEmpty, fontSize: 13)") && appSource.contains("SecureField(\"\", text: $store.openAIAPIKey)") && appSource.contains(".foregroundColor(WeiBeiTheme.ink)") && appSource.contains(".weibeiInputSurface(active: focusedField == .apiKey)"), "settings key input uses WeiBei input surface instead of the default form field")
 expect(appSource.contains("WeiBeiTextActionButtonStyle(active: true)") && appSource.contains(".background(WeiBeiTheme.paper)"), "settings view uses WeiBei paper and button styles")
 let workspaceStoreSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Stores/WorkspaceStore.swift")
@@ -392,9 +398,6 @@ expect(appSource.contains("Button(\"聚焦资料\") { animateLayout { store.focu
     && appSource.contains("Button(\"下一份资料\") { animateLayout { store.selectAdjacentItem(step: 1) } }"), "app menu focus and material navigation use the same layout motion as shortcuts")
 expect(appSource.contains("Button(\"应用 Agent 到笔记\") { animatePanel { store.applyLastAgentAnswerToNote() } }")
     && appSource.contains("Button(\"追加 Agent 整理建议\") { animatePanel { store.applyAgentPatchToEditor() } }"), "app menu agent write actions use the same panel motion as shortcuts")
-let notesAgentSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-    .appendingPathComponent("Sources/WeiBei/Views/NotesAgentView.swift")
-let notesAgentSource = (try? String(contentsOf: notesAgentSourceURL, encoding: .utf8)) ?? ""
 let directPromptConsumers = [appSource, contentViewSource, sidebarSource, commandPaletteSource, notesAgentSource].joined(separator: "\n")
 expect(!directPromptConsumers.contains("WeiBeiInputPrompt("), "views use the shared input prompt overlay instead of direct prompt layering")
 expect(!workspaceStoreSource.contains("请解释我刚才选中的内容") && !notesAgentSource.contains("请解释我刚才选中的内容"), "agent entry does not invent a missing selection")
@@ -431,7 +434,7 @@ expect(notesAgentSource.contains("noteFileStatusColor(for message: String)") && 
 expect(notesAgentSource.contains(".help(\"新建独立 Markdown 笔记\")") && notesAgentSource.contains("结合\\(store.agentPromptScope)和当前选区作答") && !notesAgentSource.contains("结合已选择材料、选区和笔记"), "note and floating agent hints avoid fake current material context")
 expect(notesAgentSource.contains("drawerPrompt") && notesAgentSource.contains("return \"问当前选区\"") && !notesAgentSource.contains("问当前选区或当前材料"), "agent drawer placeholder avoids fake material context")
 expect(notesAgentSource.components(separatedBy: "!store.isAskingAgent && !store.agentDraft.trimmingCharacters").count >= 4, "all agent send affordances hide while a request is running")
-expect(notesAgentSource.contains("store.hasSelectedMaterial ? \"问当前材料\" : \"问当前笔记\"") && notesAgentSource.contains(".weibeiInputPrompt(agentPrompt, visible: store.agentDraft.isEmpty)") && notesAgentSource.contains(".foregroundColor(WeiBeiTheme.ink)"), "agent input placeholder matches context and uses the shared readable overlay")
+expect(notesAgentSource.contains("store.hasSelectedMaterial ? \"问当前材料\" : \"问当前笔记\"") && notesAgentSource.contains(".weibeiInputPrompt(agentPrompt, visible: store.agentDraft.isEmpty, fontSize: 14)") && notesAgentSource.contains(".foregroundColor(WeiBeiTheme.ink)"), "agent input placeholder matches context and uses the shared readable overlay")
 expect(notesAgentSource.contains("store.hasSelectedMaterial ? \"来源\" : \"笔记\"") && notesAgentSource.contains("store.selectedMaterialItem?.title ?? \"当前笔记\""), "agent drawer source row avoids fake current material")
 if let cornerStart = notesAgentSource.range(of: "struct CornerAgentView")?.lowerBound,
    let selectionStart = notesAgentSource.range(of: "struct FloatingSelectionAgentView")?.lowerBound {

@@ -29,7 +29,7 @@ struct SidebarView: View {
                     .foregroundColor(WeiBeiTheme.ink)
                 .font(.system(size: 13))
                 .weibeiInputSurface(active: librarySearchFocused)
-                .weibeiInputPrompt("搜索资料库", visible: store.librarySearch.isEmpty)
+                .weibeiInputPrompt("搜索资料库", visible: store.librarySearch.isEmpty, fontSize: 13)
                 .padding(.horizontal, 14)
                 .padding(.bottom, 10)
             }

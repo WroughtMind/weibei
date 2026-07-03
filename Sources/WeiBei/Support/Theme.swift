@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 enum WeiBeiTheme {
@@ -8,6 +9,7 @@ enum WeiBeiTheme {
     static let ink = Color(red: 0.115, green: 0.095, blue: 0.080)
     static let secondaryInk = Color(red: 0.335, green: 0.285, blue: 0.245)
     static let tertiaryInk = Color(red: 0.490, green: 0.430, blue: 0.365)
+    static let tertiaryInkNS = NSColor(calibratedRed: 0.490, green: 0.430, blue: 0.365, alpha: 1)
     static let hairline = Color(red: 0.500, green: 0.380, blue: 0.260).opacity(0.24)
     static let cinnabar = Color(red: 0.570, green: 0.150, blue: 0.105)
     static let cinnabarSoft = Color(red: 0.570, green: 0.150, blue: 0.105).opacity(0.10)
@@ -25,21 +27,39 @@ enum WeiBeiMetric {
     static let controlRadius: CGFloat = 7
 }
 
-struct WeiBeiInputPrompt: View {
-    var text: String
+final class WeiBeiPromptLabel: NSTextField {
+    override var allowsVibrancy: Bool { false }
+}
 
-    init(_ text: String) {
+struct WeiBeiInputPrompt: NSViewRepresentable {
+    var text: String
+    var fontSize: CGFloat
+    var weight: NSFont.Weight
+
+    init(_ text: String, fontSize: CGFloat = 13, weight: NSFont.Weight = .regular) {
         self.text = text
+        self.fontSize = fontSize
+        self.weight = weight
     }
 
-    var body: some View {
-        Text(text)
-            .foregroundColor(WeiBeiTheme.tertiaryInk)
-            .foregroundStyle(WeiBeiTheme.tertiaryInk)
-            .opacity(0.94)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-            .colorScheme(.light)
+    func makeNSView(context: Context) -> WeiBeiPromptLabel {
+        let label = WeiBeiPromptLabel(labelWithString: "")
+        label.drawsBackground = false
+        label.backgroundColor = .clear
+        label.isEditable = false
+        label.isSelectable = false
+        label.isBordered = false
+        label.focusRingType = .none
+        label.lineBreakMode = .byTruncatingTail
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return label
+    }
+
+    func updateNSView(_ label: WeiBeiPromptLabel, context: Context) {
+        label.stringValue = text
+        label.font = NSFont.systemFont(ofSize: fontSize, weight: weight)
+        label.textColor = WeiBeiTheme.tertiaryInkNS.withAlphaComponent(0.94)
     }
 }
 
@@ -322,12 +342,22 @@ extension View {
             .animation(WeiBeiMotion.reveal, value: active)
     }
 
-    func weibeiInputPrompt(_ text: String, visible: Bool, leading: CGFloat = 10) -> some View {
+    func weibeiInputPrompt(
+        _ text: String,
+        visible: Bool,
+        leading: CGFloat = 10,
+        fontSize: CGFloat = 13,
+        weight: NSFont.Weight = .regular
+    ) -> some View {
         self
             .overlay(alignment: .leading) {
                 if visible {
-                    WeiBeiInputPrompt(text)
+                    WeiBeiInputPrompt(text, fontSize: fontSize, weight: weight)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(height: max(18, fontSize + 6))
                         .padding(.leading, leading)
+                        .padding(.trailing, 8)
+                        .zIndex(2)
                         .transition(.opacity.combined(with: .offset(x: -2)))
                 }
             }

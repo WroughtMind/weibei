@@ -128,7 +128,7 @@ struct CommandPaletteView: View {
                         .foregroundColor(WeiBeiTheme.ink)
                         .focused($searchFocused)
                         .font(.system(size: 18, weight: .semibold, design: .serif))
-                        .weibeiInputPrompt("命令", visible: query.isEmpty, leading: 0)
+                        .weibeiInputPrompt("命令", visible: query.isEmpty, leading: 0, fontSize: 18, weight: .semibold)
                 }
                 .padding(.horizontal, 16)
                 .frame(height: 52)

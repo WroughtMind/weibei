@@ -218,7 +218,7 @@ private struct UnifiedTopBarView: View {
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(dividerColor, lineWidth: 1)
                 }
-                .weibeiInputPrompt("当前资料内搜索", visible: store.readerSearch.isEmpty)
+                .weibeiInputPrompt("当前资料内搜索", visible: store.readerSearch.isEmpty, fontSize: 12)
                 .onExitCommand {
                     withAnimation(WeiBeiMotion.panel) {
                         store.hideReaderSearch()
