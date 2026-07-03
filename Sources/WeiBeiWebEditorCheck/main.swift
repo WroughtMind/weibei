@@ -175,11 +175,11 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           mermaidPlaceholder: document.body.textContent.includes('渲染器未安装完成') ? 1 : 0,
           mermaidText: document.querySelector('.weibei-mermaid-render')?.textContent || '',
           mathInline: document.querySelectorAll('span[data-type="math_inline"], .math-inline, .katex').length,
-          mathInlineBackground: getComputedStyle(document.querySelector('span[data-type="math_inline"]') || document.body).backgroundColor,
-          mathInlineContainerColor: getComputedStyle(document.querySelector('span[data-type="math_inline"]') || document.body).color,
-          mathInlineKatexColor: getComputedStyle(document.querySelector('span[data-type="math_inline"] > .katex') || document.body).color,
+          mathInlineBackground: getComputedStyle(document.querySelector('span[data-type="math_inline"], .math-inline') || document.body).backgroundColor,
+          mathInlineContainerColor: getComputedStyle(document.querySelector('span[data-type="math_inline"], .math-inline') || document.body).color,
+          mathInlineKatexColor: getComputedStyle(document.querySelector('span[data-type="math_inline"] > .katex, .math-inline > .katex') || document.body).color,
           mathInlineDirectTextNodes: (() => {
-            const node = document.querySelector('span[data-type="math_inline"]');
+            const node = document.querySelector('span[data-type="math_inline"], .math-inline');
             if (!node) return -1;
             return Array.from(node.childNodes).filter((child) => child.nodeType === Node.TEXT_NODE && child.nodeValue.trim()).length;
           })(),
@@ -192,10 +192,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
               return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
             });
           })(),
-          mathInlinePseudoBefore: getComputedStyle(document.querySelector('span[data-type="math_inline"]') || document.body, '::before').content,
-          mathInlinePseudoAfter: getComputedStyle(document.querySelector('span[data-type="math_inline"]') || document.body, '::after').content,
+          mathInlinePseudoBefore: getComputedStyle(document.querySelector('span[data-type="math_inline"], .math-inline') || document.body, '::before').content,
+          mathInlinePseudoAfter: getComputedStyle(document.querySelector('span[data-type="math_inline"], .math-inline') || document.body, '::after').content,
           mathInlineMathMLHidden: (() => {
-            const mathML = document.querySelector('span[data-type="math_inline"] .katex-mathml');
+            const mathML = document.querySelector('span[data-type="math_inline"] .katex-mathml, .math-inline .katex-mathml');
             if (!mathML) return false;
             const style = getComputedStyle(mathML);
             return style.position === 'absolute' && style.overflow === 'hidden' && (style.clipPath !== 'none' || style.clip !== 'auto');
