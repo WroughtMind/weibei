@@ -12,6 +12,7 @@ let runScriptURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath
     .appendingPathComponent("script/build_and_run.sh")
 let runScript = (try? String(contentsOf: runScriptURL, encoding: .utf8)) ?? ""
 expect(runScript.contains("kCGWindowOwnerName") && runScript.contains("\"$APP_DISPLAY_NAME\""), "run script verifies the visible app window by owner name")
+expect(runScript.contains("let isOnscreen = window[kCGWindowIsOnscreen as String] as? NSNumber") && runScript.contains("let visibleEnough = isOnscreen == nil || isOnscreen?.intValue != 0"), "run script tolerates missing onscreen metadata when the window is otherwise capturable")
 expect(!runScript.contains("pid=\"$(pgrep -x \"$PRODUCT_NAME\""), "run script window verification does not depend on pgrep")
 expect(runScript.contains("visual_verify_window") && runScript.contains("--visual-verify") && runScript.contains("visual_non_black_ratio") && runScript.contains("visual verify failed: captured window is black or empty") && runScript.contains("nonBlackRatio < 0.02"), "run script exposes an explicit visual non-black window check")
 let editorIndexURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
@@ -342,6 +343,7 @@ if let setLayoutStart = workspaceStoreSource.range(of: "func setLayout(_ layout:
    let setAgentSurfaceStart = workspaceStoreSource.range(of: "func setAgentSurface")?.lowerBound {
     let setLayoutSource = String(workspaceStoreSource[setLayoutStart..<setAgentSurfaceStart])
     expect(!setLayoutSource.contains("showLibrary = false"), "layout switching preserves the current library visibility")
+    expect(!setLayoutSource.contains("showRightPane = true"), "layout switching preserves a user-collapsed auxiliary pane")
 } else {
     expect(false, "layout switching source is readable")
 }
@@ -410,6 +412,7 @@ expect(notesAgentSource.contains("struct ContextRailItem: Identifiable") && note
 expect(notesAgentSource.contains("var systemImage: String?") && notesAgentSource.contains("Image(systemName: systemImage)"), "context rail rows support semantic icons")
 expect(notesAgentSource.contains(".accessibilityLabel(Text(item.help ?? item.title))") && notesAgentSource.contains(".help(item.help ?? item.title)"), "context rail actions explain their intent")
 expect(notesAgentSource.contains("var edge: HorizontalEdge = .trailing") && notesAgentSource.contains("edge == .leading ? -3 : 3"), "context rails move inward from either side")
+expect(notesAgentSource.contains("private var railBackground: some View") && notesAgentSource.contains(".frame(width: 34)") && !notesAgentSource.contains("WeiBeiTheme.paperRaised.opacity(0.40),\n                    WeiBeiTheme.paper.opacity(0.42),\n                    WeiBeiTheme.paper.opacity(0.28)"), "immersive context rails avoid full-height heavy background bands")
 expect(!notesAgentSource.contains(".id(expanded)"), "selection agent expands without forcing a hard view identity reset")
 expect(contentViewSource.contains("edge: .leading") && contentViewSource.contains("edge: .trailing"), "immersive rails declare their content-facing edge")
 expect(contentViewSource.contains("conversationSourceRailItems") && contentViewSource.contains("conversationTargetRailItems") && contentViewSource.contains("writingAssistRailItems"), "immersive rails wire role-specific actions")

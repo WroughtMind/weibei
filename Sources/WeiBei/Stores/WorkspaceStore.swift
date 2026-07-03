@@ -334,7 +334,6 @@ final class WorkspaceStore: ObservableObject {
 
     func setLayout(_ layout: WorkspaceLayout) {
         self.layout = layout
-        showRightPane = true
         let nextFocus: PaneFocus = switch layout {
         case .immersiveConversation:
             .agent

@@ -1493,22 +1493,12 @@ struct ContextRailView: View {
         .padding(.horizontal, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .foregroundStyle(WeiBeiTheme.ink)
-        .background {
-            LinearGradient(
-                colors: [
-                    WeiBeiTheme.paperRaised.opacity(0.40),
-                    WeiBeiTheme.paper.opacity(0.42),
-                    WeiBeiTheme.paper.opacity(0.28)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
+        .background(railBackground)
         .overlay(alignment: separatorAlignment) {
             LinearGradient(
                 colors: [
                     .clear,
-                    WeiBeiTheme.hairline.opacity(0.48),
+                    WeiBeiTheme.hairline.opacity(0.34),
                     .clear
                 ],
                 startPoint: .top,
@@ -1538,6 +1528,31 @@ struct ContextRailView: View {
 
     private var inwardOffset: CGFloat {
         edge == .leading ? -3 : 3
+    }
+
+    private var railBackground: some View {
+        ZStack(alignment: highlightAlignment) {
+            WeiBeiTheme.paper.opacity(0.18)
+            LinearGradient(
+                colors: [
+                    WeiBeiTheme.paperRaised.opacity(0.30),
+                    WeiBeiTheme.paper.opacity(0.08),
+                    .clear
+                ],
+                startPoint: edge == .leading ? .leading : .trailing,
+                endPoint: edge == .leading ? .trailing : .leading
+            )
+            .frame(width: 34)
+            LinearGradient(
+                colors: [
+                    WeiBeiTheme.glassHighlight.opacity(0.18),
+                    .clear
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(width: 1)
+        }
     }
 
     private var separatorAlignment: Alignment {
