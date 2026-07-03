@@ -8,6 +8,7 @@ enum WeiBeiTheme {
     static let chrome = Color(red: 0.155, green: 0.145, blue: 0.130)
     static let ink = Color(red: 0.115, green: 0.095, blue: 0.080)
     static let secondaryInk = Color(red: 0.335, green: 0.285, blue: 0.245)
+    static let secondaryInkNS = NSColor(calibratedRed: 0.335, green: 0.285, blue: 0.245, alpha: 1)
     static let tertiaryInk = Color(red: 0.490, green: 0.430, blue: 0.365)
     static let tertiaryInkNS = NSColor(calibratedRed: 0.490, green: 0.430, blue: 0.365, alpha: 1)
     static let hairline = Color(red: 0.500, green: 0.380, blue: 0.260).opacity(0.24)
@@ -92,7 +93,7 @@ final class WeiBeiPromptDrawingView: NSView {
         paragraph.lineBreakMode = .byTruncatingTail
         return [
             .font: font,
-            .foregroundColor: WeiBeiTheme.tertiaryInkNS.withAlphaComponent(0.96),
+            .foregroundColor: WeiBeiTheme.secondaryInkNS.withAlphaComponent(0.92),
             .paragraphStyle: paragraph
         ]
     }

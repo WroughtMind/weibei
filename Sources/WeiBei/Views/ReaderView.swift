@@ -110,18 +110,17 @@ struct ReaderView: View {
 
     @ViewBuilder
     private var pdfControls: some View {
-        HStack(spacing: 1) {
+        HStack(spacing: 2) {
             ForEach(PDFBrowseMode.allCases) { mode in
-                Button(mode.label) {
+                Button {
                     withAnimation(WeiBeiMotion.panel) {
                         pdfBrowseMode = mode
                     }
+                } label: {
+                    Image(systemName: mode.systemImage)
                 }
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(pdfBrowseMode == mode ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
-                .frame(width: 38, height: 24)
-                .background(pdfBrowseMode == mode ? WeiBeiTheme.cinnabarSoft : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: 5))
+                .buttonStyle(WeiBeiIconButtonStyle(active: pdfBrowseMode == mode, size: 24))
+                .accessibilityLabel(Text(mode.label))
                 .help(mode.help)
             }
         }
@@ -241,6 +240,13 @@ private enum PDFBrowseMode: String, CaseIterable, Identifiable {
         switch self {
         case .scroll: "滚动"
         case .page: "翻页"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .scroll: "arrow.up.and.down"
+        case .page: "rectangle.portrait"
         }
     }
 
