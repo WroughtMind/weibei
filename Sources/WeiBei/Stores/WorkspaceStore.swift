@@ -242,9 +242,13 @@ final class WorkspaceStore: ObservableObject {
             if layout == .documentNotesSplit, agentSurface == .hidden {
                 agentSurface = .bottomDrawer
             } else if layout == .immersiveReading || layout == .immersiveWriting {
-                layout = .immersiveConversation
+                if agentSurface == .hidden
+                    || agentSurface == .quietInsight
+                    || (agentSurface == .selectionFloat && selectionContext == nil && !pinnedFloatingAgent) {
+                    agentSurface = .cornerPanel
+                    showQuietInsight = false
+                }
                 showLibrary = false
-                showRightPane = true
             }
         }
         focusedPane = pane

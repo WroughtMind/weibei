@@ -363,9 +363,9 @@ private struct UnifiedTopBarView: View {
     private var shortLayoutLabel: String {
         switch store.layout {
         case .documentAgentNotes:
-            return "Agent中"
+            return "对话中栏"
         case .documentNotesAgent:
-            return "Agent右"
+            return "对话右栏"
         case .documentNotesSplit:
             return "文笔对半"
         case .immersiveReading:
@@ -551,11 +551,11 @@ private struct UnifiedTopBarView: View {
     }
 
     private var agentButtonTitle: String {
-        hasPrimaryAgentPaneAvailable ? "Agent" : "问 Agent"
+        hasPrimaryAgentPaneAvailable ? "对话" : "问 Agent"
     }
 
     private var agentButtonHelp: String {
-        hasPrimaryAgentPaneAvailable ? "打开 Agent 对话区" : "把\(store.selectionPromptScope)交给 Agent"
+        hasPrimaryAgentPaneAvailable ? "打开对话区" : "把\(store.selectionPromptScope)交给 Agent"
     }
 
     private func activateAgentEntry() {
@@ -734,6 +734,11 @@ private struct LayoutContentView: View {
                             .transition(WeiBeiTransition.rightPanel)
                     }
                 }
+                .overlay(alignment: agentAlignment) {
+                    if store.agentSurface != .quietInsight {
+                        agentOverlay
+                    }
+                }
             case .immersiveConversation:
                 if store.showRightPane {
                     ResizableThreePane(
@@ -760,28 +765,34 @@ private struct LayoutContentView: View {
                     }
                 }
             case .immersiveWriting:
-                if store.showRightPane {
-                    ResizableThreePane(
-                        firstSplit: writingFirstSplit,
-                        secondSplit: writingSecondSplit,
-                        minFirst: 96,
-                        minSecond: 540,
-                        minThird: 104
-                    ) {
-                        ContextRailView(title: "文档", items: writingDocumentRailItems, edge: .trailing)
-                            .transition(WeiBeiTransition.rail)
-                    } second: {
-                        NotePaneView()
-                    } third: {
-                        ContextRailView(title: "写作辅助", items: writingAssistRailItems, edge: .leading)
-                            .transition(WeiBeiTransition.rail)
+                ZStack(alignment: agentAlignment) {
+                    if store.showRightPane {
+                        ResizableThreePane(
+                            firstSplit: writingFirstSplit,
+                            secondSplit: writingSecondSplit,
+                            minFirst: 96,
+                            minSecond: 540,
+                            minThird: 104
+                        ) {
+                            ContextRailView(title: "文档", items: writingDocumentRailItems, edge: .trailing)
+                                .transition(WeiBeiTransition.rail)
+                        } second: {
+                            NotePaneView()
+                        } third: {
+                            ContextRailView(title: "写作辅助", items: writingAssistRailItems, edge: .leading)
+                                .transition(WeiBeiTransition.rail)
+                        }
+                    } else {
+                        ResizableTwoPane(split: writingLeftSplit, minFirst: 96, minSecond: 540) {
+                            ContextRailView(title: "文档", items: writingDocumentRailItems, edge: .trailing)
+                                .transition(WeiBeiTransition.rail)
+                        } second: {
+                            NotePaneView()
+                        }
                     }
-                } else {
-                    ResizableTwoPane(split: writingLeftSplit, minFirst: 96, minSecond: 540) {
-                        ContextRailView(title: "文档", items: writingDocumentRailItems, edge: .trailing)
-                            .transition(WeiBeiTransition.rail)
-                    } second: {
-                        NotePaneView()
+
+                    if store.agentSurface != .quietInsight {
+                        agentOverlay
                     }
                 }
             }
