@@ -236,47 +236,75 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
 
 struct SettingsView: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @FocusState private var focusedField: Field?
 
     var body: some View {
-        Form {
-            Section("Agent") {
-                SecureField("OpenAI 密钥", text: $store.openAIAPIKey)
+        VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 10) {
+                sectionTitle("Agent")
 
-                HStack {
-                    Button("保存到钥匙串") {
-                        store.saveOpenAIAPIKey()
-                    }
-                    Button("清除") {
-                        store.clearOpenAIAPIKey()
-                    }
+                SecureField("OpenAI 密钥", text: $store.openAIAPIKey)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 13))
+                    .foregroundStyle(WeiBeiTheme.ink)
+                    .focused($focusedField, equals: .apiKey)
+                    .weibeiInputSurface(active: focusedField == .apiKey)
+
+                HStack(spacing: 8) {
+                    Button("保存到钥匙串") { store.saveOpenAIAPIKey() }
+                        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                    Button("清除") { store.clearOpenAIAPIKey() }
+                        .buttonStyle(WeiBeiTextActionButtonStyle())
                 }
 
                 if let status = store.openAIKeyStatus {
                     Text(status)
                         .font(.footnote)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
                 }
 
                 Text(store.openAIKeyHelpText)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
 
-            Section("模型") {
+            VStack(alignment: .leading, spacing: 10) {
+                sectionTitle("模型")
+
                 TextField(
                     "模型",
                     text: Binding(
                         get: { store.modelName },
                         set: { store.updateModelName($0) }
-                    )
+                    ),
+                    prompt: Text("模型").foregroundStyle(WeiBeiTheme.tertiaryInk)
                 )
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .foregroundStyle(WeiBeiTheme.ink)
+                .focused($focusedField, equals: .model)
+                .weibeiInputSurface(active: focusedField == .model)
 
                 Text("本机环境变量 WEIBEI_OPENAI_MODEL 会覆盖这里的模型。")
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
         }
         .padding(24)
         .frame(width: 480)
+        .background(WeiBeiTheme.paper)
+        .foregroundStyle(WeiBeiTheme.ink)
+        .environment(\.colorScheme, .light)
+    }
+
+    private enum Field: Hashable {
+        case apiKey
+        case model
+    }
+
+    private func sectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 12, weight: .semibold, design: .serif))
+            .foregroundStyle(WeiBeiTheme.tertiaryInk)
     }
 }

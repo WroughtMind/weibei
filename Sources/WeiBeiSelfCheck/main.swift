@@ -158,6 +158,8 @@ expect(appSource.contains("sharedWorkspaceStore"), "main window and settings sha
 expect(!appSource.contains("launchProbe"), "app launch path has no temporary probe logging")
 expect(appSource.contains("addLocalMonitorForEvents(matching: .keyDown)") && appSource.contains("removeMonitor(shortcutMonitor)"), "app-level shortcuts survive focused web editor")
 expect(appSource.contains("return flag"), "reopen does not swallow the system window creation path")
+expect(!appSource.contains("Form {") && appSource.contains("SecureField(\"OpenAI 密钥\"") && appSource.contains(".weibeiInputSurface(active: focusedField == .apiKey)"), "settings key input uses WeiBei input surface instead of the default form field")
+expect(appSource.contains("WeiBeiTextActionButtonStyle(active: true)") && appSource.contains(".background(WeiBeiTheme.paper)"), "settings view uses WeiBei paper and button styles")
 let workspaceStoreSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Stores/WorkspaceStore.swift")
 let workspaceStoreSource = (try? String(contentsOf: workspaceStoreSourceURL, encoding: .utf8)) ?? ""
