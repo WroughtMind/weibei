@@ -177,15 +177,17 @@ expect(themeSource.contains(".fill(.regularMaterial)") && themeSource.contains("
 expect(themeSource.contains("WeiBeiTheme.glassTint.opacity(0.16 * opacity)") && !themeSource.contains("WeiBeiTheme.paperInset.opacity(0.10 * opacity)"), "header handoff fade avoids a hard paper edge")
 expect(
     themeSource.contains("struct WeiBeiInputPrompt")
-        && themeSource.contains("final class WeiBeiPromptLabel: NSTextField")
+        && themeSource.contains("final class WeiBeiPromptDrawingView: NSView")
+        && themeSource.contains("override var isFlipped: Bool { true }")
         && themeSource.contains("override var allowsVibrancy: Bool { false }")
-        && themeSource.contains("label.textColor = WeiBeiTheme.tertiaryInkNS.withAlphaComponent(0.94)")
+        && themeSource.contains(".foregroundColor: WeiBeiTheme.tertiaryInkNS.withAlphaComponent(0.96)")
+        && themeSource.contains(".allowsHitTesting(false)")
         && themeSource.contains("fontSize: CGFloat = 13")
         && themeSource.contains(".zIndex(2)")
         && !themeSource.contains(".foregroundColor(.white)")
         && !themeSource.contains(".foregroundStyle(.white)")
         && !themeSource.contains(".colorMultiply(WeiBeiTheme.tertiaryInk)"),
-    "input placeholders draw as a non-vibrant readable overlay without white vibrancy hacks"
+    "input placeholders are custom-drawn as a non-vibrant readable overlay without white vibrancy hacks"
 )
 expect(themeSource.contains("func weibeiInputSurface") && themeSource.contains(".foregroundColor(WeiBeiTheme.ink)") && themeSource.contains(".foregroundStyle(WeiBeiTheme.ink)") && themeSource.contains(".tint(WeiBeiTheme.link)"), "input surfaces force readable text color on paper")
 expect(contentViewSource.contains("ResizableTwoPane<First: View, Second: View>: NSViewRepresentable"), "two-pane layout uses native bridge")

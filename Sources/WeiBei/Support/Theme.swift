@@ -27,8 +27,75 @@ enum WeiBeiMetric {
     static let controlRadius: CGFloat = 7
 }
 
-final class WeiBeiPromptLabel: NSTextField {
+final class WeiBeiPromptDrawingView: NSView {
+    var text: String = "" {
+        didSet {
+            needsDisplay = true
+            invalidateIntrinsicContentSize()
+        }
+    }
+
+    var fontSize: CGFloat = 13 {
+        didSet {
+            needsDisplay = true
+            invalidateIntrinsicContentSize()
+        }
+    }
+
+    var weight: NSFont.Weight = .regular {
+        didSet {
+            needsDisplay = true
+            invalidateIntrinsicContentSize()
+        }
+    }
+
+    override var isFlipped: Bool { true }
+    override var isOpaque: Bool { false }
     override var allowsVibrancy: Bool { false }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setup()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setup()
+    }
+
+    override var intrinsicContentSize: NSSize {
+        let font = NSFont.systemFont(ofSize: fontSize, weight: weight)
+        let textSize = (text as NSString).size(withAttributes: attributes(font: font))
+        return NSSize(width: ceil(textSize.width), height: max(18, ceil(font.ascender - font.descender + 5)))
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard !text.isEmpty else { return }
+        let font = NSFont.systemFont(ofSize: fontSize, weight: weight)
+        let lineHeight = font.ascender - font.descender
+        let y = max(0, (bounds.height - lineHeight) / 2 - 1)
+        let rect = NSRect(x: 0, y: y, width: bounds.width, height: lineHeight + 3)
+        (text as NSString).draw(
+            with: rect,
+            options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine],
+            attributes: attributes(font: font)
+        )
+    }
+
+    private func setup() {
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+    }
+
+    private func attributes(font: NSFont) -> [NSAttributedString.Key: Any] {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        return [
+            .font: font,
+            .foregroundColor: WeiBeiTheme.tertiaryInkNS.withAlphaComponent(0.96),
+            .paragraphStyle: paragraph
+        ]
+    }
 }
 
 struct WeiBeiInputPrompt: NSViewRepresentable {
@@ -42,24 +109,17 @@ struct WeiBeiInputPrompt: NSViewRepresentable {
         self.weight = weight
     }
 
-    func makeNSView(context: Context) -> WeiBeiPromptLabel {
-        let label = WeiBeiPromptLabel(labelWithString: "")
-        label.drawsBackground = false
-        label.backgroundColor = .clear
-        label.isEditable = false
-        label.isSelectable = false
-        label.isBordered = false
-        label.focusRingType = .none
-        label.lineBreakMode = .byTruncatingTail
-        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        label.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        return label
+    func makeNSView(context: Context) -> WeiBeiPromptDrawingView {
+        let view = WeiBeiPromptDrawingView()
+        view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return view
     }
 
-    func updateNSView(_ label: WeiBeiPromptLabel, context: Context) {
-        label.stringValue = text
-        label.font = NSFont.systemFont(ofSize: fontSize, weight: weight)
-        label.textColor = WeiBeiTheme.tertiaryInkNS.withAlphaComponent(0.94)
+    func updateNSView(_ view: WeiBeiPromptDrawingView, context: Context) {
+        view.text = text
+        view.fontSize = fontSize
+        view.weight = weight
     }
 }
 
@@ -357,6 +417,7 @@ extension View {
                         .frame(height: max(18, fontSize + 6))
                         .padding(.leading, leading)
                         .padding(.trailing, 8)
+                        .allowsHitTesting(false)
                         .zIndex(2)
                         .transition(.opacity.combined(with: .offset(x: -2)))
                 }
