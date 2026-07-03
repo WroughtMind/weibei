@@ -1054,6 +1054,16 @@ struct FloatingSelectionAgentView: View {
             }
             .foregroundStyle(WeiBeiTheme.link)
 
+            if store.canOpenSelectedSourceReference {
+                Divider()
+                    .frame(height: 14)
+                    .padding(.horizontal, 8)
+
+                Button("来源") {
+                    openSourceReference()
+                }
+            }
+
             if store.selectionContext != nil {
                 Divider()
                     .frame(height: 14)
@@ -1087,6 +1097,9 @@ struct FloatingSelectionAgentView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
                 actionButton("解释") { explainSelection() }
+                if store.canOpenSelectedSourceReference {
+                    actionButton("来源") { openSourceReference() }
+                }
                 if store.selectionContext != nil {
                     actionButton("摘录") {
                         store.appendSelectionToNote()
@@ -1272,6 +1285,11 @@ struct FloatingSelectionAgentView: View {
             store.askSelection()
         }
         Task { await store.askAgent() }
+    }
+
+    private func openSourceReference() {
+        store.openSelectedSourceReference()
+        closeFloatingAgent()
     }
 
     private func polishNote() {
