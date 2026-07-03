@@ -531,6 +531,7 @@ final class WorkspaceStore: ObservableObject {
             case "b":
                 animateLayoutChange { toggleLibrary() }
             case "j":
+                guard layout.hasCollapsibleRightPane else { return false }
                 animateLayoutChange { toggleRightPane() }
             case "k":
                 animatePanelChange { commandPalettePresented.toggle() }
