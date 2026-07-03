@@ -176,6 +176,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           mermaidText: document.querySelector('.weibei-mermaid-render')?.textContent || '',
           mathInline: document.querySelectorAll('span[data-type="math_inline"], .math-inline, .katex').length,
           mathInlineBackground: getComputedStyle(document.querySelector('span[data-type="math_inline"]') || document.body).backgroundColor,
+          mathInlineContainerColor: getComputedStyle(document.querySelector('span[data-type="math_inline"]') || document.body).color,
+          mathInlineKatexColor: getComputedStyle(document.querySelector('span[data-type="math_inline"] > .katex') || document.body).color,
           mathInlineDirectTextNodes: (() => {
             const node = document.querySelector('span[data-type="math_inline"]');
             if (!node) return -1;
@@ -251,6 +253,14 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             if result["mathInlineBackground"] as? String != "rgba(0, 0, 0, 0)" {
                 self.fail("inline math should not render as a filled source block")
+                return
+            }
+            if result["mathInlineContainerColor"] as? String != "rgba(0, 0, 0, 0)" {
+                self.fail("inline math container should hide raw source text")
+                return
+            }
+            if result["mathInlineKatexColor"] as? String == "rgba(0, 0, 0, 0)" {
+                self.fail("inline math rendered KaTeX should remain visible")
                 return
             }
             if (result["mathInlineDirectTextNodes"] as? Int ?? 1) > 0 {

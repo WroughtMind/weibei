@@ -485,7 +485,7 @@
     }
 
     .ProseMirror span[data-type="math_inline"] {
-      color: rgba(33, 27, 23, .90);
+      color: transparent;
       background: transparent !important;
       border: 0;
       box-shadow: none;
@@ -497,9 +497,14 @@
     }
 
     .ProseMirror div[data-type="math_block"] {
-      color: rgba(33, 27, 23, .90);
+      color: transparent;
       background: rgba(63, 105, 82, .06);
       border: 1px solid rgba(63, 105, 82, .12);
+    }
+
+    .ProseMirror span[data-type="math_inline"] > .katex,
+    .ProseMirror div[data-type="math_block"] > .katex {
+      color: rgba(33, 27, 23, .92);
     }
 
     .ProseMirror span[data-type="math_inline"] {
