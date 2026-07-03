@@ -151,14 +151,18 @@ struct WeiBeiApp: App {
 
                 Divider()
 
-                Button("复制引用") { store.copyCurrentReference() }
-                    .keyboardShortcut("c", modifiers: [.command, .shift])
-                Button("搜索当前资料") {
-                    animatePanel {
-                        store.revealReaderSearch()
-                    }
+                if store.selectedItem != nil || store.selectionContext != nil {
+                    Button("复制引用") { store.copyCurrentReference() }
+                        .keyboardShortcut("c", modifiers: [.command, .shift])
                 }
+                if store.selectedItem != nil {
+                    Button("搜索当前资料") {
+                        animatePanel {
+                            store.revealReaderSearch()
+                        }
+                    }
                     .keyboardShortcut("f")
+                }
                 Button(store.selectedItem == nil ? "问当前笔记" : "问当前材料") { Task { await store.askAgent() } }
                     .keyboardShortcut(.return, modifiers: [.command])
             }

@@ -400,6 +400,7 @@ final class WorkspaceStore: ObservableObject {
             case "e":
                 animatePanelChange { applyAgentPatchToEditor() }
             case "c":
+                guard selectedItem != nil || selectionContext != nil else { return false }
                 copyCurrentReference()
             default:
                 return false
@@ -424,6 +425,7 @@ final class WorkspaceStore: ObservableObject {
             case "k":
                 animatePanelChange { commandPalettePresented.toggle() }
             case "f":
+                guard selectedItem != nil else { return false }
                 animatePanelChange { revealReaderSearch() }
             case "return":
                 Task { await askAgent() }
