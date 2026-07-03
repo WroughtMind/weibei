@@ -669,21 +669,16 @@ struct AgentPaneView: View {
             .allowsHitTesting(false)
 
             HStack(alignment: .bottom, spacing: 8) {
-                ZStack(alignment: .leading) {
-                    TextField("", text: $store.agentDraft, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .lineLimit(1...4)
-                        .foregroundColor(WeiBeiTheme.ink)
-                        .focused($draftFocused)
-                        .onSubmit {
-                            Task { await store.askAgent() }
-                        }
-
-                    if store.agentDraft.isEmpty {
-                        WeiBeiInputPrompt(agentPrompt)
+                TextField("", text: $store.agentDraft, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .lineLimit(1...4)
+                    .foregroundColor(WeiBeiTheme.ink)
+                    .focused($draftFocused)
+                    .onSubmit {
+                        Task { await store.askAgent() }
                     }
-                }
                 .weibeiInputSurface(active: draftFocused, height: 34)
+                .weibeiInputPrompt(agentPrompt, visible: store.agentDraft.isEmpty)
 
                 if canSendDraft {
                     Button { Task { await store.askAgent() } } label: {
@@ -863,18 +858,13 @@ struct AgentDrawerView: View {
             }
 
             HStack(spacing: 8) {
-                ZStack(alignment: .leading) {
-                    TextField("", text: $store.agentDraft)
-                        .textFieldStyle(.plain)
-                        .focused($draftFocused)
-                        .foregroundColor(WeiBeiTheme.ink)
-
-                    if store.agentDraft.isEmpty {
-                        WeiBeiInputPrompt(drawerPrompt)
-                    }
-                }
+                TextField("", text: $store.agentDraft)
+                    .textFieldStyle(.plain)
+                    .focused($draftFocused)
+                    .foregroundColor(WeiBeiTheme.ink)
                 .font(.system(size: 13))
                 .weibeiInputSurface(active: draftFocused)
+                .weibeiInputPrompt(drawerPrompt, visible: store.agentDraft.isEmpty)
                 if canSend {
                     Button { Task { await store.askAgent() } } label: {
                         Image(systemName: "paperplane.fill")
@@ -943,18 +933,13 @@ struct CornerAgentView: View {
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
 
             HStack(spacing: 8) {
-                ZStack(alignment: .leading) {
-                    TextField("", text: $store.agentDraft)
-                        .textFieldStyle(.plain)
-                        .focused($draftFocused)
-                        .foregroundColor(WeiBeiTheme.ink)
-
-                    if store.agentDraft.isEmpty {
-                        WeiBeiInputPrompt(agentPrompt)
-                    }
-                }
+                TextField("", text: $store.agentDraft)
+                    .textFieldStyle(.plain)
+                    .focused($draftFocused)
+                    .foregroundColor(WeiBeiTheme.ink)
                 .font(.system(size: 13))
                 .weibeiInputSurface(active: draftFocused, height: 32)
+                .weibeiInputPrompt(agentPrompt, visible: store.agentDraft.isEmpty)
 
                 if canSend {
                     Button {
@@ -1158,18 +1143,12 @@ struct FloatingSelectionAgentView: View {
             .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 6) {
-                ZStack(alignment: .leading) {
-                    TextField("", text: $store.agentDraft)
-                        .textFieldStyle(.plain)
-                        .foregroundColor(WeiBeiTheme.ink)
-                        .focused($draftFocused)
-                        .onSubmit { sendDraft() }
-
-                    if store.agentDraft.isEmpty {
-                        WeiBeiInputPrompt("继续追问")
-                    }
-                }
-                .font(.caption)
+                TextField("", text: $store.agentDraft)
+                    .textFieldStyle(.plain)
+                    .foregroundColor(WeiBeiTheme.ink)
+                    .focused($draftFocused)
+                    .onSubmit { sendDraft() }
+                    .font(.caption)
 
                 if canSendDraft {
                     Button {
@@ -1185,6 +1164,7 @@ struct FloatingSelectionAgentView: View {
             .padding(.horizontal, 8)
             .frame(height: 30)
             .weibeiInputSurface(active: draftFocused)
+            .weibeiInputPrompt("继续追问", visible: store.agentDraft.isEmpty, leading: 18)
         }
         .padding(10)
         .frame(width: 312, alignment: .leading)

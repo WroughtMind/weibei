@@ -36,9 +36,10 @@ struct WeiBeiInputPrompt: View {
         Text(text)
             .foregroundColor(WeiBeiTheme.tertiaryInk)
             .foregroundStyle(WeiBeiTheme.tertiaryInk)
-            .opacity(0.90)
+            .opacity(0.94)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
+            .colorScheme(.light)
     }
 }
 
@@ -319,6 +320,18 @@ extension View {
                     .stroke(active ? WeiBeiTheme.link.opacity(0.45) : WeiBeiTheme.hairline, lineWidth: 1)
             }
             .animation(WeiBeiMotion.reveal, value: active)
+    }
+
+    func weibeiInputPrompt(_ text: String, visible: Bool, leading: CGFloat = 10) -> some View {
+        self
+            .overlay(alignment: .leading) {
+                if visible {
+                    WeiBeiInputPrompt(text)
+                        .padding(.leading, leading)
+                        .transition(.opacity.combined(with: .offset(x: -2)))
+                }
+            }
+            .animation(WeiBeiMotion.micro, value: visible)
     }
 
     func weibeiFloatingPanel(cornerRadius: CGFloat = 8, shadowOpacity: Double = 0.10) -> some View {

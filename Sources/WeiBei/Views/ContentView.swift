@@ -202,18 +202,12 @@ private struct UnifiedTopBarView: View {
             }
 
             if store.showReaderSearch && shouldShowSearchAction {
-                ZStack(alignment: .leading) {
-                    TextField("", text: $store.readerSearch)
-                        .textFieldStyle(.plain)
-                        .focused(searchFocused)
-                        .foregroundColor(primaryText)
-                        .foregroundStyle(primaryText)
-                        .tint(WeiBeiTheme.link)
-
-                    if store.readerSearch.isEmpty {
-                        WeiBeiInputPrompt("当前资料内搜索")
-                    }
-                }
+                TextField("", text: $store.readerSearch)
+                    .textFieldStyle(.plain)
+                    .focused(searchFocused)
+                    .foregroundColor(primaryText)
+                    .foregroundStyle(primaryText)
+                    .tint(WeiBeiTheme.link)
                 .font(.system(size: 12))
                 .padding(.horizontal, 10)
                 .frame(width: 220, height: controlHeight)
@@ -224,6 +218,7 @@ private struct UnifiedTopBarView: View {
                     RoundedRectangle(cornerRadius: 6)
                         .stroke(dividerColor, lineWidth: 1)
                 }
+                .weibeiInputPrompt("当前资料内搜索", visible: store.readerSearch.isEmpty)
                 .onExitCommand {
                     withAnimation(WeiBeiMotion.panel) {
                         store.hideReaderSearch()

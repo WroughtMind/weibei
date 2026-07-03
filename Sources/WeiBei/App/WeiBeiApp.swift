@@ -18,7 +18,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         NSApp.activate(ignoringOtherApps: true)
-        return flag
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -247,18 +247,13 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 10) {
                 sectionTitle("Agent")
 
-                ZStack(alignment: .leading) {
-                    SecureField("", text: $store.openAIAPIKey)
-                        .textFieldStyle(.plain)
-                        .foregroundColor(WeiBeiTheme.ink)
-                        .focused($focusedField, equals: .apiKey)
-
-                    if store.openAIAPIKey.isEmpty {
-                        WeiBeiInputPrompt("OpenAI 密钥")
-                    }
-                }
+                SecureField("", text: $store.openAIAPIKey)
+                    .textFieldStyle(.plain)
+                    .foregroundColor(WeiBeiTheme.ink)
+                    .focused($focusedField, equals: .apiKey)
                 .font(.system(size: 13))
                 .weibeiInputSurface(active: focusedField == .apiKey)
+                .weibeiInputPrompt("OpenAI 密钥", visible: store.openAIAPIKey.isEmpty)
 
                 HStack(spacing: 8) {
                     Button("保存到钥匙串") { store.saveOpenAIAPIKey() }
@@ -281,24 +276,19 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 10) {
                 sectionTitle("模型")
 
-                ZStack(alignment: .leading) {
-                    TextField(
-                        "",
-                        text: Binding(
-                            get: { store.modelName },
-                            set: { store.updateModelName($0) }
-                        )
+                TextField(
+                    "",
+                    text: Binding(
+                        get: { store.modelName },
+                        set: { store.updateModelName($0) }
                     )
-                    .textFieldStyle(.plain)
-                    .foregroundColor(WeiBeiTheme.ink)
-                    .focused($focusedField, equals: .model)
-
-                    if store.modelName.isEmpty {
-                        WeiBeiInputPrompt("模型")
-                    }
-                }
+                )
+                .textFieldStyle(.plain)
+                .foregroundColor(WeiBeiTheme.ink)
+                .focused($focusedField, equals: .model)
                 .font(.system(size: 13))
                 .weibeiInputSurface(active: focusedField == .model)
+                .weibeiInputPrompt("模型", visible: store.modelName.isEmpty)
 
                 Text("本机环境变量 WEIBEI_OPENAI_MODEL 会覆盖这里的模型。")
                     .font(.footnote)
