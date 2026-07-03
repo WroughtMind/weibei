@@ -112,7 +112,6 @@ struct ReaderView: View {
                     Image(systemName: "chevron.left")
                 }
                 .buttonStyle(WeiBeiIconButtonStyle())
-                .disabled(pdfPageIndex <= 0)
                 .keyboardShortcut("[", modifiers: [.command])
                 .accessibilityLabel(Text("上一页"))
                 .help("上一页")
@@ -126,7 +125,6 @@ struct ReaderView: View {
                     Image(systemName: "chevron.right")
                 }
                 .buttonStyle(WeiBeiIconButtonStyle())
-                .disabled(pdfPageIndex >= max(pdfPageCount - 1, 0))
                 .keyboardShortcut("]", modifiers: [.command])
                 .accessibilityLabel(Text("下一页"))
                 .help("下一页")
