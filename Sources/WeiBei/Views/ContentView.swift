@@ -207,15 +207,17 @@ private struct UnifiedTopBarView: View {
                         .textFieldStyle(.plain)
                         .focused(searchFocused)
                         .foregroundColor(primaryText)
+                        .foregroundStyle(primaryText)
+                        .tint(WeiBeiTheme.link)
 
                     if store.readerSearch.isEmpty {
                         WeiBeiInputPrompt("当前资料内搜索")
-                            .foregroundColor(tertiaryText)
                     }
                 }
                 .font(.system(size: 12))
                 .padding(.horizontal, 10)
                 .frame(width: 220, height: controlHeight)
+                .environment(\.colorScheme, .light)
                 .background(controlFill)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
                 .overlay {

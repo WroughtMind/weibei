@@ -174,8 +174,8 @@ let themeSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPa
 let themeSource = (try? String(contentsOf: themeSourceURL, encoding: .utf8)) ?? ""
 expect(themeSource.contains(".fill(.regularMaterial)") && themeSource.contains("paperWashOpacity"), "header glass uses one shared paper material wash")
 expect(themeSource.contains("WeiBeiTheme.glassTint.opacity(0.16 * opacity)") && !themeSource.contains("WeiBeiTheme.paperInset.opacity(0.10 * opacity)"), "header handoff fade avoids a hard paper edge")
-expect(themeSource.contains("struct WeiBeiInputPrompt") && themeSource.contains(".foregroundColor(WeiBeiTheme.tertiaryInk)"), "input placeholders use readable semantic ink")
-expect(themeSource.contains("func weibeiInputSurface") && themeSource.contains(".foregroundColor(WeiBeiTheme.ink)"), "input surfaces force readable text color on paper")
+expect(themeSource.contains("struct WeiBeiInputPrompt") && themeSource.contains(".foregroundStyle(WeiBeiTheme.tertiaryInk)"), "input placeholders use readable semantic ink")
+expect(themeSource.contains("func weibeiInputSurface") && themeSource.contains(".foregroundColor(WeiBeiTheme.ink)") && themeSource.contains(".foregroundStyle(WeiBeiTheme.ink)") && themeSource.contains(".tint(WeiBeiTheme.link)"), "input surfaces force readable text color on paper")
 expect(contentViewSource.contains("ResizableTwoPane<First: View, Second: View>: NSViewRepresentable"), "two-pane layout uses native bridge")
 expect(contentViewSource.contains("ResizableThreePane<First: View, Second: View, Third: View>: NSViewRepresentable"), "three-pane layout uses native bridge")
 expect(contentViewSource.contains("WeiBeiSplitView: NSSplitView"), "content panes use native split view")

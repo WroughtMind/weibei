@@ -34,8 +34,8 @@ struct WeiBeiInputPrompt: View {
 
     var body: some View {
         Text(text)
-            .foregroundColor(WeiBeiTheme.tertiaryInk)
-            .opacity(0.92)
+            .foregroundStyle(WeiBeiTheme.tertiaryInk)
+            .opacity(0.96)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
     }
@@ -306,6 +306,9 @@ extension View {
     func weibeiInputSurface(active: Bool = false, height: CGFloat = WeiBeiMetric.inputHeight) -> some View {
         self
             .foregroundColor(WeiBeiTheme.ink)
+            .foregroundStyle(WeiBeiTheme.ink)
+            .tint(WeiBeiTheme.link)
+            .environment(\.colorScheme, .light)
             .padding(.horizontal, 10)
             .frame(minHeight: height)
             .background(WeiBeiTheme.paperInset.opacity(active ? 0.52 : 0.30))
