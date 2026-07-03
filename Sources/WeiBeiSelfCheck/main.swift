@@ -353,6 +353,8 @@ expect(workspaceStoreSource.contains("阅读线索"), "quiet insight uses margin
 expect(appSource.contains("if store.hasSelectedMaterial || store.selectionContext != nil") && appSource.contains("if store.hasSelectedMaterial") && appSource.contains("Button(\"搜索当前资料\")"), "app menu hides material-only actions when there is no material context")
 expect(appSource.contains("Button(store.hasSelectedMaterial ? \"问当前材料\" : \"问当前笔记\")"), "app command label matches whether a material is selected")
 expect(appSource.contains("Button(store.showLibrary ? \"收起资料\" : \"恢复资料\")") && appSource.contains("Button(store.showRightPane ? \"收起辅助栏\" : \"展开辅助栏\")"), "app menu names pane toggles by current state")
+expect(appSource.contains("Button(\"聚焦资料\") { animateLayout { store.focus(.library) } }")
+    && appSource.contains("Button(\"下一份资料\") { animateLayout { store.selectAdjacentItem(step: 1) } }"), "app menu focus and material navigation use the same layout motion as shortcuts")
 let notesAgentSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/NotesAgentView.swift")
 let notesAgentSource = (try? String(contentsOf: notesAgentSourceURL, encoding: .utf8)) ?? ""

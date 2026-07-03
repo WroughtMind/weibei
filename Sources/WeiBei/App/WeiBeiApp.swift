@@ -57,20 +57,20 @@ struct WeiBeiApp: App {
 
                 Divider()
 
-                Button("聚焦资料") { store.focus(.library) }
+                Button("聚焦资料") { animateLayout { store.focus(.library) } }
                     .keyboardShortcut("1")
-                Button("聚焦阅读") { store.focus(.reader) }
+                Button("聚焦阅读") { animateLayout { store.focus(.reader) } }
                     .keyboardShortcut("2")
-                Button("聚焦笔记") { store.focus(.notes) }
+                Button("聚焦笔记") { animateLayout { store.focus(.notes) } }
                     .keyboardShortcut("3")
-                Button("聚焦 Agent") { store.focus(.agent) }
+                Button("聚焦 Agent") { animateLayout { store.focus(.agent) } }
                     .keyboardShortcut("4")
 
                 Divider()
 
-                Button("上一份资料") { store.selectAdjacentItem(step: -1) }
+                Button("上一份资料") { animateLayout { store.selectAdjacentItem(step: -1) } }
                     .keyboardShortcut(.upArrow, modifiers: [.command, .option])
-                Button("下一份资料") { store.selectAdjacentItem(step: 1) }
+                Button("下一份资料") { animateLayout { store.selectAdjacentItem(step: 1) } }
                     .keyboardShortcut(.downArrow, modifiers: [.command, .option])
 
                 Divider()
