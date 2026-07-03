@@ -380,8 +380,9 @@ expect(workspaceStoreSource.contains("var navigableItems") && workspaceStoreSour
 expect(
     workspaceStoreSource.contains("guard hasSelectedMaterial else")
         && workspaceStoreSource.contains("clearReaderSearchIfNeeded()")
-        && workspaceStoreSource.contains("func revealReaderSearch()"),
-    "reader search reveal refuses notebook-only context"
+        && workspaceStoreSource.contains("if layout == .immersiveConversation || layout == .immersiveWriting")
+        && workspaceStoreSource.contains("setLayout(.immersiveReading)"),
+    "reader search reveal refuses notebook-only context and moves to a visible reader layout"
 )
 expect(
     workspaceStoreSource.contains("clearReaderSearchIfNeeded()")

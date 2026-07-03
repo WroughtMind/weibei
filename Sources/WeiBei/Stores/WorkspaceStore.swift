@@ -304,6 +304,9 @@ final class WorkspaceStore: ObservableObject {
             clearReaderSearchIfNeeded()
             return
         }
+        if layout == .immersiveConversation || layout == .immersiveWriting {
+            setLayout(.immersiveReading)
+        }
         showReaderSearch = true
         focus(.reader)
     }
