@@ -1,0 +1,633 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>魏碑笔记</title>
+  <link rel="stylesheet" href="./editor.css">
+  <style>
+    :root {
+      color-scheme: light;
+      --paper: #f1e4cf;
+      --paper-raised: #f7ecd9;
+      --ink: #1d1814;
+      --muted: rgba(58, 46, 38, .72);
+      --faint: rgba(58, 46, 38, .50);
+      --line: rgba(92, 70, 46, .28);
+      --cinnabar: #91261c;
+      --cinnabar-soft: rgba(145, 38, 28, .10);
+      --cinnabar-line: rgba(145, 38, 28, .26);
+      --ochre: #77582f;
+      --moss: #395f48;
+      --blue-ink: #31566b;
+      --violet-ink: #5d4b6d;
+      --code: rgba(29, 24, 20, .06);
+      --code-paper: rgba(29, 24, 20, .052);
+      --selection: rgba(145, 38, 28, .18);
+    }
+
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: transparent;
+      color: var(--ink);
+      font-family: "Songti SC", "STSong", ui-serif, serif;
+    }
+
+    body {
+      overflow: hidden;
+    }
+
+    #editor {
+      box-sizing: border-box;
+      height: 100vh;
+      overflow: auto;
+      padding: 28px 34px 64px;
+      background: rgba(239, 225, 199, .72);
+    }
+
+    .milkdown {
+      max-width: 760px;
+      min-height: calc(100vh - 92px);
+      margin: 0 auto;
+    }
+
+    #frontmatter-panel {
+      display: none;
+      max-width: 760px;
+      margin: 0 auto 18px;
+      padding: 10px 12px;
+      color: var(--muted);
+      background: rgba(247, 236, 217, .54);
+      border: 1px solid var(--line);
+      border-left: 2px solid rgba(145, 38, 28, .34);
+      font: 12px/1.55 -apple-system, BlinkMacSystemFont, "Songti SC", serif;
+    }
+
+    #frontmatter-panel[data-visible="true"] {
+      display: block;
+    }
+
+    .frontmatter-title {
+      color: var(--faint);
+      font-size: 11px;
+      margin-bottom: 6px;
+    }
+
+    .frontmatter-row {
+      display: flex;
+      gap: 8px;
+      padding: 1px 0;
+    }
+
+    .frontmatter-key {
+      min-width: 72px;
+      color: var(--ochre);
+      font-family: "SF Mono", Menlo, ui-monospace, monospace;
+      font-size: 11px;
+    }
+
+    .ProseMirror {
+      outline: none;
+      min-height: calc(100vh - 92px);
+      font-size: 16px;
+      line-height: 1.82;
+      caret-color: var(--cinnabar);
+      word-break: break-word;
+    }
+
+    .ProseMirror ::selection {
+      background: var(--selection);
+    }
+
+    .ProseMirror h1,
+    .ProseMirror h2,
+    .ProseMirror h3 {
+      font-family: -apple-system, BlinkMacSystemFont, "Songti SC", serif;
+      letter-spacing: 0;
+      line-height: 1.32;
+      margin: 1.15em 0 .55em;
+      font-weight: 650;
+    }
+
+    .ProseMirror h1 { font-size: 1.85rem; }
+    .ProseMirror h2 { font-size: 1.42rem; }
+    .ProseMirror h3 { font-size: 1.16rem; }
+    .ProseMirror p { margin: .55em 0; }
+    .ProseMirror a {
+      color: var(--blue-ink);
+      text-decoration-thickness: 1px;
+      text-underline-offset: .18em;
+    }
+
+    .ProseMirror img {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      margin: 1.1em 0;
+      border: 1px solid var(--line);
+    }
+
+    .ProseMirror ul, .ProseMirror ol {
+      padding-left: 1.45em;
+      margin: .55em 0;
+    }
+
+    .ProseMirror li {
+      margin: .18em 0;
+      padding-left: .1em;
+    }
+
+    .ProseMirror li[data-item-type="task"] {
+      position: relative;
+      list-style: none;
+      padding-left: 1.55em;
+    }
+
+    .ProseMirror li[data-item-type="task"]::before {
+      content: "";
+      position: absolute;
+      left: .05em;
+      top: .62em;
+      width: .82em;
+      height: .82em;
+      box-sizing: border-box;
+      border: 1px solid rgba(57, 95, 72, .34);
+      background: var(--paper-raised);
+    }
+
+    .ProseMirror li[data-item-type="task"][data-checked="true"]::before {
+      background: var(--moss);
+      border-color: var(--moss);
+      box-shadow: inset 0 0 0 2px var(--paper-raised);
+    }
+
+    .ProseMirror li[data-item-type="task"][data-checked="true"] > p,
+    .ProseMirror li[data-item-type="task"][data-checked="true"] {
+      color: var(--faint);
+    }
+
+    .ProseMirror s,
+    .ProseMirror del {
+      color: var(--faint);
+      text-decoration-color: rgba(145, 38, 28, .42);
+      text-decoration-thickness: 1px;
+    }
+
+    .ProseMirror table {
+      width: 100%;
+      margin: 1.05em 0;
+      border-collapse: collapse;
+      table-layout: fixed;
+      font-size: .96em;
+      background: rgba(251, 245, 234, .52);
+    }
+
+    .ProseMirror th,
+    .ProseMirror td {
+      border: 1px solid var(--line);
+      padding: 7px 9px;
+      vertical-align: top;
+    }
+
+    .ProseMirror th {
+      color: var(--ink);
+      background: rgba(92, 70, 46, .075);
+      font-weight: 650;
+    }
+
+    .ProseMirror td > p,
+    .ProseMirror th > p {
+      margin: 0;
+      min-height: 1.55em;
+    }
+
+    .ProseMirror hr {
+      border: 0;
+      border-top: 1px solid var(--line);
+      margin: 1.6em 0;
+    }
+
+    .ProseMirror blockquote {
+      margin: 1em 0;
+      padding: .55em .9em;
+      border-left: 3px solid rgba(92, 70, 46, .36);
+      background: rgba(251, 245, 234, .48);
+      color: var(--muted);
+    }
+
+    .ProseMirror blockquote.weibei-callout {
+      position: relative;
+      padding: .72em 1em .72em 1.05em;
+      border-left-width: 2px;
+      background: var(--paper-raised);
+      box-shadow: inset 0 0 0 1px rgba(92, 70, 46, .12);
+    }
+
+    .ProseMirror blockquote.weibei-callout::before {
+      display: block;
+      margin-bottom: .24em;
+      font-size: .78em;
+      letter-spacing: 0;
+      color: var(--blue-ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Songti SC", serif;
+      font-weight: 650;
+    }
+
+    .ProseMirror blockquote.weibei-callout-note::before { content: "札记"; }
+    .ProseMirror blockquote.weibei-callout-tip,
+    .ProseMirror blockquote.weibei-callout-success {
+      border-left-color: var(--moss);
+      background: rgba(63, 105, 82, .08);
+    }
+    .ProseMirror blockquote.weibei-callout-tip::before { content: "提示"; color: var(--moss); }
+    .ProseMirror blockquote.weibei-callout-success::before { content: "可行"; color: var(--moss); }
+    .ProseMirror blockquote.weibei-callout-important,
+    .ProseMirror blockquote.weibei-callout-question,
+    .ProseMirror blockquote.weibei-callout-example {
+      border-left-color: var(--blue-ink);
+      background: rgba(52, 91, 116, .075);
+    }
+    .ProseMirror blockquote.weibei-callout-important::before { content: "重点"; color: var(--blue-ink); }
+    .ProseMirror blockquote.weibei-callout-question::before { content: "问题"; color: var(--blue-ink); }
+    .ProseMirror blockquote.weibei-callout-example::before { content: "例子"; color: var(--blue-ink); }
+    .ProseMirror blockquote.weibei-callout-warning {
+      border-left-color: var(--ochre);
+      background: rgba(135, 97, 47, .08);
+    }
+    .ProseMirror blockquote.weibei-callout-warning::before {
+      content: "留心";
+      color: var(--ochre);
+    }
+    .ProseMirror blockquote.weibei-callout-summary {
+      border-left-color: var(--moss);
+      background: rgba(63, 105, 82, .08);
+    }
+    .ProseMirror blockquote.weibei-callout-abstract {
+      border-left-color: var(--moss);
+      background: rgba(63, 105, 82, .08);
+    }
+    .ProseMirror blockquote.weibei-callout-summary::before {
+      content: "提要";
+      color: var(--moss);
+    }
+    .ProseMirror blockquote.weibei-callout-abstract::before {
+      content: "摘要";
+      color: var(--moss);
+    }
+    .ProseMirror blockquote.weibei-callout-caution,
+    .ProseMirror blockquote.weibei-callout-danger,
+    .ProseMirror blockquote.weibei-callout-failure,
+    .ProseMirror blockquote.weibei-callout-bug {
+      border-left-color: var(--cinnabar);
+      background: var(--cinnabar-soft);
+    }
+    .ProseMirror blockquote.weibei-callout-caution::before { content: "谨慎"; color: var(--cinnabar); }
+    .ProseMirror blockquote.weibei-callout-danger::before { content: "风险"; color: var(--cinnabar); }
+    .ProseMirror blockquote.weibei-callout-failure::before { content: "失败"; color: var(--cinnabar); }
+    .ProseMirror blockquote.weibei-callout-bug::before { content: "问题"; color: var(--cinnabar); }
+    .ProseMirror blockquote.weibei-callout-quote::before { content: "引文"; }
+    .ProseMirror blockquote.weibei-callout-info::before { content: "信息"; }
+    .ProseMirror blockquote.weibei-callout-todo::before { content: "待办"; }
+
+    .ProseMirror code {
+      font-family: "SF Mono", Menlo, ui-monospace, monospace;
+      background: var(--code);
+      border-radius: 4px;
+      padding: 1px 5px;
+      font-size: .92em;
+    }
+
+    .ProseMirror pre {
+      position: relative;
+      padding: 14px 15px;
+      border: 1px solid var(--line);
+      background: var(--code-paper);
+      overflow: auto;
+      line-height: 1.62;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .30);
+    }
+
+    .ProseMirror pre[data-language]::before {
+      content: attr(data-language);
+      position: absolute;
+      top: 6px;
+      right: 10px;
+      color: var(--faint);
+      font: 10px/1.4 "SF Mono", Menlo, ui-monospace, monospace;
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+
+    .ProseMirror pre[data-language=""]::before {
+      content: none;
+    }
+
+    .ProseMirror pre code {
+      display: block;
+      padding: 0;
+      background: transparent;
+      border-radius: 0;
+      font-size: .88em;
+      color: var(--ink);
+    }
+
+    .ProseMirror pre .token.comment,
+    .ProseMirror pre .token.prolog,
+    .ProseMirror pre .token.doctype,
+    .ProseMirror pre .token.cdata {
+      color: var(--faint);
+    }
+
+    .ProseMirror pre .token.punctuation {
+      color: var(--muted);
+    }
+
+    .ProseMirror pre .token.keyword,
+    .ProseMirror pre .token.operator,
+    .ProseMirror pre .token.atrule {
+      color: var(--cinnabar);
+    }
+
+    .ProseMirror pre .token.string,
+    .ProseMirror pre .token.char,
+    .ProseMirror pre .token.attr-value {
+      color: var(--moss);
+    }
+
+    .ProseMirror pre .token.function,
+    .ProseMirror pre .token.class-name,
+    .ProseMirror pre .token.selector {
+      color: var(--blue-ink);
+    }
+
+    .ProseMirror pre .token.number,
+    .ProseMirror pre .token.boolean,
+    .ProseMirror pre .token.constant,
+    .ProseMirror pre .token.property,
+    .ProseMirror pre .token.symbol {
+      color: var(--ochre);
+    }
+
+    .ProseMirror pre .token.regex,
+    .ProseMirror pre .token.important,
+    .ProseMirror pre .token.variable {
+      color: var(--violet-ink);
+    }
+
+    .ProseMirror sup {
+      color: var(--blue-ink);
+      font-size: .72em;
+    }
+
+    .ProseMirror .footnote-definition,
+    .ProseMirror [data-type="footnote-definition"] {
+      color: var(--muted);
+      font-size: .9em;
+    }
+
+    .weibei-highlight {
+      background: rgba(145, 38, 28, .14);
+      box-shadow: 0 .08em 0 rgba(145, 38, 28, .18);
+      padding: 0 .05em;
+    }
+
+    .weibei-wikilink {
+      color: var(--blue-ink);
+      background: rgba(49, 86, 107, .085);
+      border-bottom: 1px solid rgba(49, 86, 107, .34);
+      padding: 0 .08em;
+      cursor: pointer;
+    }
+
+    .weibei-inline-footnote {
+      color: var(--blue-ink);
+      background: rgba(49, 86, 107, .055);
+      border-bottom: 1px dotted rgba(49, 86, 107, .36);
+      padding: 0 .06em;
+      font-size: .92em;
+      line-height: 1;
+    }
+
+    .weibei-comment {
+      color: var(--faint);
+      background: rgba(92, 70, 46, .06);
+      font-style: italic;
+    }
+
+    body[data-editable="false"] .weibei-comment {
+      display: none;
+    }
+
+    .weibei-tag {
+      color: var(--moss);
+      background: rgba(57, 95, 72, .075);
+      padding: 0 .08em;
+      border-bottom: 1px solid rgba(57, 95, 72, .20);
+    }
+
+    .weibei-block-id {
+      color: var(--faint);
+      font-family: "SF Mono", Menlo, ui-monospace, monospace;
+      font-size: .86em;
+    }
+
+    .weibei-embed-source {
+      color: var(--faint);
+      background: rgba(49, 86, 107, .06);
+    }
+
+    body[data-editable="false"] .weibei-embed-source {
+      display: none;
+    }
+
+    .weibei-embed-preview {
+      display: block;
+      max-width: 100%;
+      margin: .7em 0;
+    }
+
+    .weibei-embed-image {
+      height: auto;
+      border: 1px solid var(--line);
+      background: var(--paper-raised);
+    }
+
+    .weibei-embed-note {
+      display: inline-block;
+      color: var(--blue-ink);
+      border-left: 2px solid rgba(49, 86, 107, .36);
+      background: rgba(49, 86, 107, .07);
+      padding: .35em .65em;
+      font-size: .92em;
+      cursor: pointer;
+    }
+
+    .weibei-embed-note:hover,
+    .weibei-embed-note:focus-visible {
+      background: rgba(49, 86, 107, .11);
+      outline: 1px solid rgba(49, 86, 107, .22);
+      outline-offset: 2px;
+    }
+
+    .weibei-md-marker,
+    .weibei-callout-marker {
+      color: rgba(58, 46, 38, .36);
+      font-size: .86em;
+      user-select: text;
+    }
+
+    body[data-editable="false"] .weibei-md-marker,
+    body[data-editable="false"] .weibei-callout-marker {
+      color: transparent;
+      font-size: 0;
+      user-select: none;
+    }
+
+    .ProseMirror span[data-type="math_inline"] {
+      color: rgba(33, 27, 23, .90);
+      background: transparent !important;
+      border: 0;
+      box-shadow: none;
+    }
+
+    .ProseMirror span[data-type="math_inline"]::before,
+    .ProseMirror span[data-type="math_inline"]::after {
+      content: none !important;
+    }
+
+    .ProseMirror div[data-type="math_block"] {
+      color: rgba(33, 27, 23, .90);
+      background: rgba(63, 105, 82, .06);
+      border: 1px solid rgba(63, 105, 82, .12);
+    }
+
+    .ProseMirror span[data-type="math_inline"] {
+      display: inline;
+      padding: 0 .05em;
+      vertical-align: baseline;
+    }
+
+    .ProseMirror span[data-type="math_inline"] > .katex > .katex-mathml,
+    .ProseMirror div[data-type="math_block"] > .katex > .katex-mathml {
+      position: absolute !important;
+      width: 1px !important;
+      height: 1px !important;
+      overflow: hidden !important;
+      clip: rect(0 0 0 0) !important;
+      clip-path: inset(50%) !important;
+      white-space: nowrap !important;
+      user-select: none;
+      pointer-events: none;
+    }
+
+    .ProseMirror span[data-type="math_inline"].ProseMirror-selectednode {
+      outline: 1px solid rgba(63, 105, 82, .30);
+      outline-offset: 2px;
+      border-radius: 3px;
+    }
+
+    .ProseMirror div[data-type="math_block"] {
+      display: block;
+      margin: .8em 0;
+      padding: .75em 1em;
+      overflow-x: auto;
+      border-left: 2px solid rgba(63, 105, 82, .36);
+    }
+
+    .ProseMirror .katex-error {
+      color: var(--cinnabar);
+      background: var(--cinnabar-soft);
+      border-bottom: 1px solid var(--cinnabar-line);
+      padding: 0 .2em;
+    }
+
+    .ProseMirror .katex-error::after {
+      content: " 公式未解析";
+      color: var(--cinnabar);
+      font: 11px/1.5 -apple-system, BlinkMacSystemFont, "Songti SC", serif;
+      opacity: .74;
+    }
+
+    .weibei-mermaid-block {
+      opacity: .45;
+    }
+
+    .weibei-mermaid-render {
+      margin: .9em 0;
+      padding: 12px;
+      background: var(--paper-raised);
+      border: 1px solid var(--line);
+      overflow-x: auto;
+    }
+
+    .weibei-mermaid-render svg {
+      max-width: 100%;
+      height: auto;
+    }
+
+    .weibei-mermaid-error {
+      color: var(--cinnabar);
+      background: var(--cinnabar-soft);
+      font: 12px/1.55 "SF Mono", Menlo, ui-monospace, monospace;
+      white-space: pre-wrap;
+    }
+
+    .weibei-image {
+      border: 1px solid var(--line);
+      background: rgba(255, 251, 241, .32);
+      padding: 4px;
+    }
+
+    .weibei-uploading {
+      display: inline-block;
+      padding: 2px 7px;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      background: rgba(255, 251, 241, .42);
+      font-size: .88em;
+    }
+
+    .ProseMirror-focused {
+      outline: none;
+    }
+
+    .editor-status {
+      max-width: 760px;
+      margin: 0 auto;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .editor-status.error {
+      color: var(--cinnabar);
+      font-family: "SF Mono", Menlo, ui-monospace, monospace;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <main id="editor">
+    <section id="frontmatter-panel" aria-label="Markdown Properties"></section>
+    <div id="editor-status" class="editor-status">正在载入魏碑写作内核...</div>
+  </main>
+  <script>
+    window.WeiBeiEditorBootFailed = function(error) {
+      var root = document.querySelector('#editor');
+      if (!root) return;
+      var text = error && (error.stack || error.message) ? (error.stack || error.message) : String(error);
+      root.innerHTML = '<pre class="editor-status error">Milkdown 初始化失败\n' + text.replace(/[<>&]/g, function(ch) {
+        return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[ch];
+      }) + '</pre>';
+    };
+    window.addEventListener('error', function(event) {
+      window.WeiBeiEditorBootFailed(event.error || event.message);
+    });
+    window.addEventListener('unhandledrejection', function(event) {
+      window.WeiBeiEditorBootFailed(event.reason);
+    });
+  </script>
+  <script src="./editor.js"></script>
+</body>
+</html>

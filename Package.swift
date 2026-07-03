@@ -1,0 +1,49 @@
+// swift-tools-version: 5.9
+import PackageDescription
+
+let package = Package(
+    name: "WeiBei",
+    platforms: [
+        .macOS(.v14)
+    ],
+    products: [
+        .executable(name: "WeiBei", targets: ["WeiBei"]),
+        .executable(name: "WeiBeiSelfCheck", targets: ["WeiBeiSelfCheck"]),
+        .executable(name: "WeiBeiWebEditorCheck", targets: ["WeiBeiWebEditorCheck"])
+    ],
+    targets: [
+        .target(
+            name: "WeiBeiCore",
+            linkerSettings: [
+                .linkedFramework("Security")
+            ]
+        ),
+        .executableTarget(
+            name: "WeiBei",
+            dependencies: ["WeiBeiCore"],
+            exclude: ["WebEditor"],
+            resources: [
+                .process("Resources")
+            ],
+            linkerSettings: [
+                .linkedFramework("PDFKit"),
+                .linkedFramework("Security"),
+                .linkedFramework("WebKit")
+            ]
+        ),
+        .executableTarget(
+            name: "WeiBeiSelfCheck",
+            dependencies: ["WeiBeiCore"],
+            linkerSettings: [
+                .linkedFramework("Security")
+            ]
+        ),
+        .executableTarget(
+            name: "WeiBeiWebEditorCheck",
+            linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("WebKit")
+            ]
+        )
+    ]
+)

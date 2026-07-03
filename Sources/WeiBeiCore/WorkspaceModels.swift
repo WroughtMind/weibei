@@ -1,0 +1,522 @@
+import Foundation
+
+public enum StudyItemKind: String, Codable, CaseIterable, Identifiable {
+    case html
+    case pdf
+    case markdown
+    case text
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .html: "HTML"
+        case .pdf: "PDF"
+        case .markdown: "Markdown"
+        case .text: "Text"
+        }
+    }
+
+    public var systemImage: String {
+        switch self {
+        case .html: "globe"
+        case .pdf: "doc.richtext"
+        case .markdown: "note.text"
+        case .text: "doc.text"
+        }
+    }
+
+    public static func detect(from url: URL) -> StudyItemKind {
+        switch url.pathExtension.lowercased() {
+        case "html", "htm":
+            return .html
+        case "pdf":
+            return .pdf
+        case "md", "markdown":
+            return .markdown
+        default:
+            return .text
+        }
+    }
+
+}
+
+public enum PaneFocus: String, Codable, Hashable {
+    case library
+    case reader
+    case notes
+    case agent
+}
+
+public enum WikiLink {
+    public static func targetTitle(from rawTitle: String) -> String {
+        let target = splitObsidianFields(rawTitle).first?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let noteTitle = target
+            .split(separator: "#", maxSplits: 1, omittingEmptySubsequences: false)
+            .first
+            .map(String.init)?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return noteTitle.isEmpty ? target : noteTitle
+    }
+
+    private static func splitObsidianFields(_ raw: String) -> [String] {
+        var fields: [String] = []
+        var current = ""
+        var index = raw.startIndex
+        while index < raw.endIndex {
+            let character = raw[index]
+            let nextIndex = raw.index(after: index)
+            if character == "\\",
+               nextIndex < raw.endIndex,
+               raw[nextIndex] == "|" {
+                fields.append(current)
+                current = ""
+                index = raw.index(after: nextIndex)
+                continue
+            }
+            if character == "|" {
+                fields.append(current)
+                current = ""
+                index = nextIndex
+                continue
+            }
+            current.append(character)
+            index = nextIndex
+        }
+        fields.append(current)
+        return fields
+    }
+
+    public static func enclosingTitle(in text: String, cursor utf16Offset: Int) -> String? {
+        let nsText = text as NSString
+        let cursor = max(0, min(utf16Offset, nsText.length))
+        let start = nsText.range(of: "[[", options: .backwards, range: NSRange(location: 0, length: cursor))
+        let end = nsText.range(of: "]]", range: NSRange(location: cursor, length: nsText.length - cursor))
+        guard start.location != NSNotFound,
+              end.location != NSNotFound,
+              start.location + 2 <= end.location else {
+            return nil
+        }
+        let rawTitle = nsText.substring(with: NSRange(location: start.location + 2, length: end.location - start.location - 2))
+        let title = targetTitle(from: rawTitle)
+        return title.isEmpty ? nil : title
+    }
+}
+
+public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable {
+    case documentAgentNotes
+    case documentNotesAgent
+    case documentNotesSplit
+    case immersiveReading
+    case immersiveConversation
+    case immersiveWriting
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .documentAgentNotes:
+            return "文档 Agent 笔记"
+        case .documentNotesAgent:
+            return "文档 笔记 Agent"
+        case .documentNotesSplit:
+            return "文档笔记对半"
+        case .immersiveReading:
+            return "沉浸阅读"
+        case .immersiveConversation:
+            return "沉浸对话"
+        case .immersiveWriting:
+            return "沉浸写笔记"
+        }
+    }
+
+    public var hasCollapsibleRightPane: Bool {
+        switch self {
+        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit, .immersiveConversation, .immersiveWriting:
+            return true
+        case .immersiveReading:
+            return false
+        }
+    }
+
+    public var hasPrimaryAgentPane: Bool {
+        switch self {
+        case .documentAgentNotes, .documentNotesAgent, .immersiveConversation:
+            return true
+        case .documentNotesSplit, .immersiveReading, .immersiveWriting:
+            return false
+        }
+    }
+}
+
+public enum AgentSurface: String, Codable, CaseIterable, Identifiable {
+    case bottomDrawer
+    case cornerPanel
+    case selectionFloat
+    case quietInsight
+    case hidden
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .bottomDrawer:
+            return "底部抽屉"
+        case .cornerPanel:
+            return "右下角小窗"
+        case .selectionFloat:
+            return "划线浮层"
+        case .quietInsight:
+            return "静默洞察"
+        case .hidden:
+            return "隐藏"
+        }
+    }
+}
+
+public enum NoteRenderMode: String, Codable, CaseIterable, Identifiable {
+    case rich
+    case split
+    case source
+    case preview
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .rich:
+            return "写作"
+        case .split:
+            return "对照"
+        case .source:
+            return "源码"
+        case .preview:
+            return "预览"
+        }
+    }
+}
+
+public struct NoteEditorCommand: Identifiable, Hashable {
+    public enum Kind: String, Hashable {
+        case replaceSelection
+        case applyAgentPatch
+        case insertMarkdown
+    }
+
+    public var id: UUID
+    public var kind: Kind
+    public var markdown: String
+
+    public init(id: UUID = UUID(), kind: Kind, markdown: String) {
+        self.id = id
+        self.kind = kind
+        self.markdown = markdown
+    }
+}
+
+public enum SelectionSource: String, Codable, Hashable {
+    case document
+    case note
+}
+
+public struct SelectionContext: Codable, Hashable {
+    public var text: String
+    public var source: SelectionSource
+    public var ownerTitle: String
+    public var isEditable: Bool
+
+    public init(text: String, source: SelectionSource, ownerTitle: String, isEditable: Bool = true) {
+        self.text = text
+        self.source = source
+        self.ownerTitle = ownerTitle
+        self.isEditable = isEditable
+    }
+
+    public var label: String {
+        switch source {
+        case .document:
+            return "文档选区：\(ownerTitle)"
+        case .note:
+            return "笔记选区：\(ownerTitle)"
+        }
+    }
+
+    public var isNoteSelection: Bool {
+        source == .note
+    }
+
+    public var isReplaceableNoteSelection: Bool {
+        source == .note && isEditable
+    }
+}
+
+public struct FloatingAgentCoordinate: Equatable {
+    public var x: Double
+    public var y: Double
+
+    public init(x: Double, y: Double) {
+        self.x = x
+        self.y = y
+    }
+}
+
+public enum SelectionAnchorCoordinate {
+    public static func y(_ contentY: Double, contentHeight: Double, contentViewIsFlipped: Bool) -> Double {
+        contentViewIsFlipped ? contentY : contentHeight - contentY
+    }
+}
+
+public enum SelectionFloatingAgentPlacement {
+    public static func isVisible(
+        surface: AgentSurface,
+        hasSelection: Bool,
+        hasAnchor: Bool,
+        pinned: Bool
+    ) -> Bool {
+        surface == .selectionFloat && hasSelection && (hasAnchor || pinned)
+    }
+
+    public static func position(
+        anchor: FloatingAgentCoordinate?,
+        canvas: FloatingAgentCoordinate,
+        topInset: Double = 0,
+        surfaceHalfWidth: Double = 170
+    ) -> FloatingAgentCoordinate {
+        let edgePadding = 18.0
+        let contentCanvas = FloatingAgentCoordinate(x: canvas.x, y: max(1, canvas.y - topInset))
+        let fallback = FloatingAgentCoordinate(x: contentCanvas.x - 128, y: contentCanvas.y - 124)
+        let anchor = anchor.map { FloatingAgentCoordinate(x: $0.x, y: max(0, $0.y - topInset)) } ?? fallback
+        let anchoredHorizontalOffset = surfaceHalfWidth + 6
+        return FloatingAgentCoordinate(
+            x: clamp(anchor.x + anchoredHorizontalOffset, min: surfaceHalfWidth + edgePadding, max: contentCanvas.x - surfaceHalfWidth - edgePadding),
+            y: clamp(anchor.y + 28, min: 64, max: contentCanvas.y - 92)
+        )
+    }
+
+    private static func clamp(_ value: Double, min minimum: Double, max maximum: Double) -> Double {
+        guard maximum >= minimum else { return (minimum + maximum) / 2 }
+        return Swift.max(minimum, Swift.min(value, maximum))
+    }
+}
+
+public struct StudyItem: Identifiable, Codable, Hashable {
+    public var id: String
+    public var title: String
+    public var subtitle: String
+    public var kind: StudyItemKind
+    public var urlPath: String?
+    public var isSample: Bool
+    public var isNotebookNote: Bool
+
+    public init(id: String, title: String, subtitle: String, kind: StudyItemKind, urlPath: String?, isSample: Bool, isNotebookNote: Bool = false) {
+        self.id = id
+        self.title = title
+        self.subtitle = subtitle
+        self.kind = kind
+        self.urlPath = urlPath
+        self.isSample = isSample
+        self.isNotebookNote = isNotebookNote
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case title
+        case subtitle
+        case kind
+        case urlPath
+        case isSample
+        case isNotebookNote
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        subtitle = try container.decode(String.self, forKey: .subtitle)
+        kind = try container.decode(StudyItemKind.self, forKey: .kind)
+        urlPath = try container.decodeIfPresent(String.self, forKey: .urlPath)
+        isSample = try container.decode(Bool.self, forKey: .isSample)
+        isNotebookNote = try container.decodeIfPresent(Bool.self, forKey: .isNotebookNote) ?? false
+    }
+
+    public var url: URL? {
+        urlPath.map { URL(fileURLWithPath: $0) }
+    }
+
+    public var isImportedMarkdownFile: Bool {
+        !isSample && kind == .markdown && url != nil
+    }
+
+    public var editsBackingMarkdownFile: Bool {
+        isImportedMarkdownFile && isNotebookNote
+    }
+
+    public var canBecomeNotebookNote: Bool {
+        isImportedMarkdownFile && !isNotebookNote
+    }
+}
+
+public enum AgentRole: String, Codable {
+    case user
+    case assistant
+}
+
+public struct AgentMessage: Identifiable, Codable, Hashable {
+    public var id: UUID
+    public var role: AgentRole
+    public var text: String
+    public var source: String?
+    public var createdAt: Date
+
+    public init(id: UUID = UUID(), role: AgentRole, text: String, source: String?, createdAt: Date = Date()) {
+        self.id = id
+        self.role = role
+        self.text = text
+        self.source = source
+        self.createdAt = createdAt
+    }
+
+    public var isUsableAgentAnswer: Bool {
+        role == .assistant
+            && !text.hasPrefix("未配置 OPENAI_API_KEY")
+            && !text.hasPrefix("Agent 请求失败：")
+    }
+}
+
+public struct PersistedWorkspace: Codable {
+    public var importedItems: [StudyItem]
+    public var notesByItemID: [String: String]
+    public var selectedItemID: String?
+    public var modelName: String?
+    public var workspaceLayout: WorkspaceLayout?
+    public var agentSurface: AgentSurface?
+    public var noteRenderMode: NoteRenderMode?
+    public var showLibrary: Bool?
+    public var showRightPane: Bool?
+
+    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], selectedItemID: String? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showRightPane: Bool? = nil) {
+        self.importedItems = importedItems
+        self.notesByItemID = notesByItemID
+        self.selectedItemID = selectedItemID
+        self.modelName = modelName
+        self.workspaceLayout = workspaceLayout
+        self.agentSurface = agentSurface
+        self.noteRenderMode = noteRenderMode
+        self.showLibrary = showLibrary
+        self.showRightPane = showRightPane
+    }
+}
+
+public struct QuietInsight: Hashable {
+    public var body: String
+    public var noteBlock: String
+
+    public init(body: String, noteBlock: String) {
+        self.body = body
+        self.noteBlock = noteBlock
+    }
+
+    public static func agent(materialTitle: String, answer: String) -> QuietInsight? {
+        let body = String(answer.trimmingCharacters(in: .whitespacesAndNewlines).prefix(360))
+        guard !body.isEmpty else { return nil }
+        return QuietInsight(body: body, noteBlock: "- Agent 洞察：\(body)\n  来源：\(materialTitle)")
+    }
+
+    public static func make(materialTitle: String, materialText: String, noteText: String, selectionText: String?) -> QuietInsight {
+        if let selection = selectionText?.trimmingCharacters(in: .whitespacesAndNewlines), !selection.isEmpty {
+            let excerpt = short(selection, count: 54)
+            if !noteText.contains(String(selection.prefix(18))) {
+                let body = "选区还没有进入笔记：\(excerpt)。先收为摘录，再补一句自己的判断。"
+                return QuietInsight(body: body, noteBlock: "- 静默洞察：\(body)\n  来源：\(materialTitle)")
+            }
+            let body = "选区已经出现在笔记里。下一步更适合追问它和当前材料其他段落的关系。"
+            return QuietInsight(body: body, noteBlock: "- 静默洞察：\(body)\n  来源：\(materialTitle)")
+        }
+
+        let candidate = firstUsefulLine(in: materialText)
+        guard !candidate.isEmpty else {
+            let body = "当前没有可读材料。先导入或选择一份 HTML、PDF 或 Markdown。"
+            return QuietInsight(body: body, noteBlock: "- 静默洞察：\(body)")
+        }
+
+        if !noteText.contains(String(candidate.prefix(14))) {
+            let body = "当前材料有一条还没进入笔记：\(short(candidate, count: 58))。建议补到摘录区。"
+            return QuietInsight(body: body, noteBlock: "- 静默洞察：\(body)\n  来源：\(materialTitle)")
+        }
+
+        let body = "当前笔记已经覆盖材料开头。建议检查是否写了来源、例子和待追问。"
+        return QuietInsight(body: body, noteBlock: "- 静默洞察：\(body)\n  来源：\(materialTitle)")
+    }
+
+    private static func firstUsefulLine(in text: String) -> String {
+        text.components(separatedBy: .newlines)
+            .map(cleanMarkdownLine)
+            .flatMap { $0.components(separatedBy: CharacterSet(charactersIn: "。！？.!?")) }
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first(where: isUsefulCandidate) ?? ""
+    }
+
+    private static func cleanMarkdownLine(_ rawLine: String) -> String {
+        var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !line.hasPrefix("```"), !line.hasPrefix("|") else { return "" }
+        line = line.replacingOccurrences(of: #"!\[[^\]]*\]\([^\)]*\)"#, with: " ", options: .regularExpression)
+        line = line.replacingOccurrences(of: #"\[([^\]]+)\]\([^\)]*\)"#, with: "$1", options: .regularExpression)
+        line = line.replacingOccurrences(of: #"\[\[([^\]\|]+)(?:\|[^\]]+)?\]\]"#, with: "$1", options: .regularExpression)
+        line = line.replacingOccurrences(of: #"^#{1,6}\s+"#, with: "", options: .regularExpression)
+        line = line.replacingOccurrences(of: #"^>\s*(?:\[[!][^\]]+\]\s*)?"#, with: "", options: .regularExpression)
+        line = line.replacingOccurrences(of: #"^[-*+]\s+\[[ xX]\]\s+"#, with: "", options: .regularExpression)
+        line = line.replacingOccurrences(of: #"^[-*+]?\s*\d*\.?\s+"#, with: "", options: .regularExpression)
+        line = line.replacingOccurrences(of: #"[*_`~=#]"#, with: "", options: .regularExpression)
+        return line.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func isUsefulCandidate(_ text: String) -> Bool {
+        guard text.count >= 8, !text.contains("|") else { return false }
+        let readableCount = text.unicodeScalars.filter {
+            CharacterSet.alphanumerics.contains($0) || (0x4E00...0x9FFF).contains($0.value)
+        }.count
+        return readableCount >= 6
+    }
+
+    private static func short(_ text: String, count: Int) -> String {
+        text.count > count ? "\(text.prefix(count))..." : text
+    }
+}
+
+public enum PageNavigator {
+    public static func previous(_ index: Int) -> Int {
+        max(index - 1, 0)
+    }
+
+    public static func next(_ index: Int, pageCount: Int) -> Int {
+        min(index + 1, max(pageCount - 1, 0))
+    }
+
+    public static func display(_ index: Int, pageCount: Int) -> String {
+        "\(min(index + 1, max(pageCount, 1))) / \(max(pageCount, 1))"
+    }
+}
+
+public enum ReaderSearch {
+    public static func cleaned(_ query: String) -> String {
+        query.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    public static func firstMatch(in text: String, query: String) -> NSRange? {
+        let query = cleaned(query)
+        guard !query.isEmpty else { return nil }
+        let range = (text as NSString).range(of: query, options: [.caseInsensitive, .diacriticInsensitive])
+        return range.location == NSNotFound ? nil : range
+    }
+}
+
+public enum LibraryNavigator {
+    public static func adjacentID(in ids: [String], selectedID: String?, step: Int) -> String? {
+        guard !ids.isEmpty else { return nil }
+        guard let selectedID, let index = ids.firstIndex(of: selectedID) else {
+            return ids[0]
+        }
+        return ids[(index + step + ids.count) % ids.count]
+    }
+}

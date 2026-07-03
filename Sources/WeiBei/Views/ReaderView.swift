@@ -1,0 +1,760 @@
+import PDFKit
+import SwiftUI
+import WeiBeiCore
+import WebKit
+
+struct ReaderView: View {
+    var isImmersive = false
+
+    @EnvironmentObject private var store: WorkspaceStore
+    @State private var pdfBrowseMode: PDFBrowseMode = .scroll
+    @State private var pdfPageIndex = 0
+    @State private var pdfPageCount = 0
+
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            VStack(spacing: 0) {
+                readerBody
+            }
+
+            if store.selectedItem?.kind == .pdf {
+                pdfFloatingControls
+                    .padding(.bottom, isImmersive ? 20 : 16)
+                    .transition(WeiBeiTransition.drawer)
+            }
+        }
+        .background(WeiBeiTheme.paper)
+        .foregroundStyle(WeiBeiTheme.ink)
+        .environment(\.colorScheme, .light)
+        .animation(WeiBeiMotion.panel, value: pdfBrowseMode)
+        .animation(WeiBeiMotion.panel, value: store.showReaderSearch)
+        .onChange(of: store.selectedItemID) { _, _ in
+            pdfPageIndex = 0
+            pdfPageCount = store.selectedItem?.kind == .pdf && store.selectedItem?.url == nil ? 1 : 0
+        }
+    }
+
+    private var pdfFloatingControls: some View {
+        HStack(spacing: 10) {
+            pdfControls
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(WeiBeiTheme.ink)
+        .padding(.horizontal, 10)
+        .frame(height: 38)
+        .weibeiFloatingPanel()
+    }
+
+    @ViewBuilder
+    private var pdfControls: some View {
+        HStack(spacing: 4) {
+            ForEach(PDFBrowseMode.allCases) { mode in
+                Button(mode.label) {
+                    withAnimation(WeiBeiMotion.panel) {
+                        pdfBrowseMode = mode
+                    }
+                }
+                .buttonStyle(WeiBeiTextActionButtonStyle(active: pdfBrowseMode == mode))
+                .help(mode.help)
+            }
+        }
+        .padding(2)
+        .background(WeiBeiTheme.paperInset.opacity(0.26))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .overlay {
+            RoundedRectangle(cornerRadius: 7)
+                .stroke(WeiBeiTheme.hairline, lineWidth: 1)
+        }
+
+        if pdfBrowseMode == .page, pdfPageCount > 1 {
+            Group {
+                Button { pdfPageIndex = PageNavigator.previous(pdfPageIndex) } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .buttonStyle(WeiBeiIconButtonStyle())
+                .disabled(pdfPageIndex <= 0)
+                .keyboardShortcut("[", modifiers: [.command])
+                .accessibilityLabel(Text("上一页"))
+                .help("上一页")
+
+                Text(PageNavigator.display(pdfPageIndex, pageCount: pdfPageCount))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .frame(width: 64)
+
+                Button { pdfPageIndex = PageNavigator.next(pdfPageIndex, pageCount: pdfPageCount) } label: {
+                    Image(systemName: "chevron.right")
+                }
+                .buttonStyle(WeiBeiIconButtonStyle())
+                .disabled(pdfPageIndex >= max(pdfPageCount - 1, 0))
+                .keyboardShortcut("]", modifiers: [.command])
+                .accessibilityLabel(Text("下一页"))
+                .help("下一页")
+            }
+            .transition(WeiBeiTransition.floating)
+        }
+    }
+
+    @ViewBuilder
+    private var readerBody: some View {
+        if let item = store.selectedItem {
+            switch item.kind {
+            case .pdf:
+                if let url = item.url {
+                    PDFReaderRepresentable(
+                        url: url,
+                        browseMode: pdfBrowseMode,
+                        searchQuery: store.readerSearch,
+                        pageIndex: $pdfPageIndex,
+                        pageCount: $pdfPageCount
+                    ) { text, anchor in
+                        store.updateSelection(text, source: .document, anchor: anchor)
+                    }
+                } else {
+                    SamplePDFView()
+                }
+            case .html:
+                if let url = item.url {
+                    WebReaderRepresentable(url: url, searchQuery: store.readerSearch) { text, anchor in
+                        store.updateSelection(text, source: .document, anchor: anchor)
+                    }
+                } else {
+                    WebReaderRepresentable(html: store.sampleHTML(for: item), searchQuery: store.readerSearch) { text, anchor in
+                        store.updateSelection(text, source: .document, anchor: anchor)
+                    }
+                }
+            case .markdown:
+                if let url = item.url {
+                    if let text = try? String(contentsOf: url, encoding: .utf8) {
+                        markdownReader(markdown: text, markdownBaseURL: url.deletingLastPathComponent())
+                    } else {
+                        MarkdownReadFailureView(fileName: url.lastPathComponent)
+                    }
+                } else {
+                    markdownReader(markdown: store.sampleText(for: item), markdownBaseURL: store.currentMarkdownBaseURL)
+                }
+            case .text:
+                if let url = item.url, let text = try? String(contentsOf: url, encoding: .utf8) {
+                    PlainTextReaderView(text: text, searchQuery: store.readerSearch) { text, anchor in
+                        store.updateSelection(text, source: .document, anchor: anchor)
+                    }
+                } else {
+                    PlainTextReaderView(text: store.sampleText(for: item), searchQuery: store.readerSearch) { text, anchor in
+                        store.updateSelection(text, source: .document, anchor: anchor)
+                    }
+                }
+            }
+        } else {
+            EmptyReaderView()
+        }
+    }
+
+    private func markdownReader(markdown: String, markdownBaseURL: URL?) -> some View {
+        MarkdownDocumentReaderView(
+            markdown: markdown,
+            markdownBaseURL: markdownBaseURL,
+            searchQuery: store.readerSearch,
+            onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
+            onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
+        ) { text, anchor in
+            store.updateSelection(text, source: .document, anchor: anchor)
+        }
+    }
+
+}
+
+private enum PDFBrowseMode: String, CaseIterable, Identifiable {
+    case scroll
+    case page
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .scroll: "连续"
+        case .page: "单页"
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .scroll: "连续滚动浏览 PDF"
+        case .page: "单页翻页浏览 PDF"
+        }
+    }
+}
+
+private struct PDFReaderRepresentable: NSViewRepresentable {
+    var url: URL
+    var browseMode: PDFBrowseMode
+    var searchQuery: String
+    @Binding var pageIndex: Int
+    @Binding var pageCount: Int
+    var onSelectionChange: (String, CGPoint?) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(pageIndex: $pageIndex, pageCount: $pageCount, onSelectionChange: onSelectionChange)
+    }
+
+    func makeNSView(context: Context) -> PDFView {
+        let view = PDFView()
+        view.autoScales = true
+        view.displayDirection = .vertical
+        view.backgroundColor = .clear
+        context.coordinator.observe(view)
+        return view
+    }
+
+    func updateNSView(_ view: PDFView, context: Context) {
+        context.coordinator.pageIndex = $pageIndex
+        context.coordinator.pageCount = $pageCount
+
+        if context.coordinator.loadedURL != url {
+            pageCount = 0
+            pageIndex = 0
+            context.coordinator.load(url, in: view)
+        }
+
+        let mode: PDFDisplayMode = browseMode == .scroll ? .singlePageContinuous : .singlePage
+        if view.displayMode != mode {
+            view.displayMode = mode
+            view.autoScales = true
+        }
+
+        if browseMode == .page,
+           let page = view.document?.page(at: min(pageIndex, max(pageCount - 1, 0))),
+           view.currentPage != page {
+            view.go(to: page)
+        }
+
+        context.coordinator.applySearch(searchQuery, in: view)
+    }
+
+    final class Coordinator: NSObject {
+        var pageIndex: Binding<Int>
+        var pageCount: Binding<Int>
+        var onSelectionChange: (String, CGPoint?) -> Void
+        private weak var observedView: PDFView?
+        private var observer: NSObjectProtocol?
+        private var pageObserver: NSObjectProtocol?
+        private var lastSearchQuery = ""
+        private var loadGeneration = 0
+        private(set) var loadedURL: URL?
+
+        init(pageIndex: Binding<Int>, pageCount: Binding<Int>, onSelectionChange: @escaping (String, CGPoint?) -> Void) {
+            self.pageIndex = pageIndex
+            self.pageCount = pageCount
+            self.onSelectionChange = onSelectionChange
+        }
+
+        func load(_ url: URL, in view: PDFView) {
+            loadGeneration += 1
+            let generation = loadGeneration
+            loadedURL = url
+            view.document = nil
+            lastSearchQuery = ""
+
+            DispatchQueue.global(qos: .userInitiated).async {
+                let document = PDFDocument(url: url)
+                DispatchQueue.main.async { [weak self, weak view] in
+                    guard let self, let view, self.loadGeneration == generation, self.loadedURL == url else { return }
+                    view.document = document
+                    view.autoScales = true
+                    self.pageCount.wrappedValue = document?.pageCount ?? 0
+                    self.pageIndex.wrappedValue = 0
+                }
+            }
+        }
+
+        func observe(_ view: PDFView) {
+            observedView = view
+            observer = NotificationCenter.default.addObserver(
+                forName: Notification.Name.PDFViewSelectionChanged,
+                object: view,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self, let view = self.observedView, let selection = view.currentSelection, let text = selection.string else { return }
+                self.onSelectionChange(text, Self.anchor(for: selection, in: view))
+            }
+            pageObserver = NotificationCenter.default.addObserver(
+                forName: Notification.Name.PDFViewPageChanged,
+                object: view,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self, let view = self.observedView, let document = view.document, let page = view.currentPage else { return }
+                self.pageCount.wrappedValue = document.pageCount
+                self.pageIndex.wrappedValue = document.index(for: page)
+            }
+        }
+
+        private static func anchor(for selection: PDFSelection, in view: PDFView) -> CGPoint? {
+            guard let page = selection.pages.first,
+                  let window = view.window,
+                  let contentView = window.contentView else {
+                return nil
+            }
+            let bounds = selection.bounds(for: page)
+            guard !bounds.isEmpty else { return nil }
+            let localRect = view.convert(bounds, from: page)
+            let localPoint = CGPoint(x: localRect.midX, y: localRect.minY)
+            let windowPoint = view.convert(localPoint, to: nil)
+            let contentPoint = contentView.convert(windowPoint, from: nil)
+            let y = SelectionAnchorCoordinate.y(
+                Double(contentPoint.y),
+                contentHeight: Double(contentView.bounds.height),
+                contentViewIsFlipped: contentView.isFlipped
+            )
+            return CGPoint(x: contentPoint.x, y: y)
+        }
+
+        func applySearch(_ query: String, in view: PDFView) {
+            let query = ReaderSearch.cleaned(query)
+            guard query != lastSearchQuery else { return }
+            lastSearchQuery = query
+
+            guard !query.isEmpty else {
+                view.highlightedSelections = nil
+                view.clearSelection()
+                return
+            }
+
+            let matches = view.document?.findString(query, withOptions: [.caseInsensitive, .diacriticInsensitive]) ?? []
+            view.highlightedSelections = matches
+            if let first = matches.first {
+                view.setCurrentSelection(first, animate: true)
+                view.go(to: first)
+            }
+        }
+
+        deinit {
+            if let observer {
+                NotificationCenter.default.removeObserver(observer)
+            }
+            if let pageObserver {
+                NotificationCenter.default.removeObserver(pageObserver)
+            }
+        }
+    }
+}
+
+struct WebReaderRepresentable: NSViewRepresentable {
+    var html: String?
+    var url: URL?
+    var searchQuery: String
+    var onSelectionChange: (String, CGPoint?) -> Void
+
+    init(html: String, searchQuery: String = "", onSelectionChange: @escaping (String, CGPoint?) -> Void) {
+        self.html = html
+        self.url = nil
+        self.searchQuery = searchQuery
+        self.onSelectionChange = onSelectionChange
+    }
+
+    init(url: URL, searchQuery: String = "", onSelectionChange: @escaping (String, CGPoint?) -> Void) {
+        self.html = nil
+        self.url = url
+        self.searchQuery = searchQuery
+        self.onSelectionChange = onSelectionChange
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onSelectionChange: onSelectionChange)
+    }
+
+    func makeNSView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        let controller = WKUserContentController()
+        controller.add(context.coordinator, name: "selection")
+        controller.addUserScript(WKUserScript(
+            source: Self.selectionScript,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: false
+        ))
+        controller.addUserScript(WKUserScript(
+            source: Self.readerStyleScript,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        ))
+        configuration.userContentController = controller
+
+        let view = WKWebView(frame: .zero, configuration: configuration)
+        view.setValue(false, forKey: "drawsBackground")
+        context.coordinator.webView = view
+        view.navigationDelegate = context.coordinator
+        return view
+    }
+
+    func updateNSView(_ view: WKWebView, context: Context) {
+        context.coordinator.searchQuery = searchQuery
+        if let url {
+            let signature = "file:\(url.path)"
+            if context.coordinator.loadedSignature != signature {
+                context.coordinator.loadedSignature = signature
+                view.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+            } else {
+                context.coordinator.applySearch(in: view)
+            }
+        } else if let html {
+            let signature = "html:\(html.hashValue)"
+            if context.coordinator.loadedSignature != signature {
+                context.coordinator.loadedSignature = signature
+                view.loadHTMLString(html, baseURL: nil)
+            } else {
+                context.coordinator.applySearch(in: view)
+            }
+        }
+    }
+
+    static let selectionScript = """
+    (() => {
+      function reportSelection() {
+        const selection = window.getSelection();
+        const text = selection ? selection.toString().trim() : "";
+        if (!text) { return; }
+        const range = selection.rangeCount ? selection.getRangeAt(0) : null;
+        const rect = range ? range.getBoundingClientRect() : null;
+        window.webkit.messageHandlers.selection.postMessage({
+          text,
+          x: rect ? rect.left + rect.width / 2 : null,
+          y: rect ? rect.bottom : null
+        });
+      }
+      document.addEventListener("mouseup", reportSelection);
+      document.addEventListener("keyup", reportSelection);
+    })();
+    """
+
+    static let readerStyleScript = """
+    (() => {
+      const style = document.createElement("style");
+      style.textContent = `
+        html, body { max-width: 100%; overflow-x: hidden; }
+        body, main, article, section, div { box-sizing: border-box; max-width: 100%; }
+        h1, h2, h3, h4, p, li, blockquote { overflow-wrap: anywhere; word-break: normal; }
+        pre, code { white-space: pre-wrap; overflow-wrap: anywhere; }
+        img, table { max-width: 100%; }
+      `;
+      document.head.appendChild(style);
+    })();
+    """
+
+    final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
+        var onSelectionChange: (String, CGPoint?) -> Void
+        var loadedSignature: String?
+        var searchQuery = ""
+        private var lastAppliedSearchQuery = ""
+        weak var webView: WKWebView?
+
+        init(onSelectionChange: @escaping (String, CGPoint?) -> Void) {
+            self.onSelectionChange = onSelectionChange
+        }
+
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            let text: String
+            let anchor: CGPoint?
+            if let body = message.body as? [String: Any],
+               let bodyText = body["text"] as? String {
+                text = bodyText
+                anchor = Self.anchor(from: body, in: webView)
+            } else if let bodyText = message.body as? String {
+                text = bodyText
+                anchor = nil
+            } else {
+                return
+            }
+            Task { @MainActor in
+                self.onSelectionChange(text, anchor)
+            }
+        }
+
+        private static func anchor(from body: [String: Any], in view: WKWebView?) -> CGPoint? {
+            guard let view,
+                  let window = view.window,
+                  let contentView = window.contentView,
+                  let x = body["x"] as? Double,
+                  let y = body["y"] as? Double else {
+                return nil
+            }
+            let localY = view.isFlipped ? y : Double(view.bounds.height) - y
+            let localPoint = CGPoint(x: x, y: localY)
+            let windowPoint = view.convert(localPoint, to: nil)
+            let contentPoint = contentView.convert(windowPoint, from: nil)
+            let contentY = SelectionAnchorCoordinate.y(
+                Double(contentPoint.y),
+                contentHeight: Double(contentView.bounds.height),
+                contentViewIsFlipped: contentView.isFlipped
+            )
+            return CGPoint(x: contentPoint.x, y: contentY)
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            lastAppliedSearchQuery = ""
+            applySearch(in: webView)
+        }
+
+        func applySearch(in view: WKWebView) {
+            let query = ReaderSearch.cleaned(searchQuery)
+            guard query != lastAppliedSearchQuery else { return }
+            lastAppliedSearchQuery = query
+            let script = """
+            (() => {
+              const query = \(Self.json(query));
+              const selection = window.getSelection();
+              selection?.removeAllRanges();
+              if (!query) return false;
+              return window.find(query, false, false, true, false, true, false);
+            })();
+            """
+            view.evaluateJavaScript(script)
+        }
+
+        private static func json(_ value: String) -> String {
+            let data = (try? JSONEncoder().encode(value)) ?? Data("".utf8)
+            return String(data: data, encoding: .utf8) ?? "\"\""
+        }
+    }
+}
+
+private struct MarkdownDocumentReaderView: View {
+    var markdown: String
+    var markdownBaseURL: URL?
+    var searchQuery: String
+    var onWikiLink: (String) -> Void = { _ in }
+    var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
+    var onSelectionChange: (String, CGPoint?) -> Void
+    @State private var command: NoteEditorCommand?
+
+    var body: some View {
+        RichMarkdownEditorView(
+            markdown: .constant(markdown),
+            command: $command,
+            isEditable: false,
+            markdownBaseURL: markdownBaseURL,
+            searchQuery: searchQuery,
+            onSelectionChange: onSelectionChange,
+            onAskAgentWithSelection: onSelectionChange,
+            onWikiLink: onWikiLink,
+            onAppShortcut: onAppShortcut
+        )
+    }
+}
+
+private struct MarkdownReadFailureView: View {
+    var fileName: String
+
+    var body: some View {
+        ContentUnavailableView(
+            "无法读取 Markdown 文件",
+            systemImage: "exclamationmark.triangle",
+            description: Text(fileName)
+        )
+    }
+}
+
+private struct EmptyReaderView: View {
+    var body: some View {
+        ContentUnavailableView("选择资料", systemImage: "doc.text.magnifyingglass", description: Text("从左侧导入或选择一个 HTML、PDF、Markdown 文件。"))
+    }
+}
+
+private struct PlainTextReaderView: View {
+    var text: String
+    var searchQuery: String
+    var onSelectionChange: (String, CGPoint?) -> Void
+
+    var body: some View {
+        SelectablePlainTextReader(text: text, searchQuery: searchQuery, onSelectionChange: onSelectionChange)
+            .padding(32)
+    }
+}
+
+private struct SelectablePlainTextReader: NSViewRepresentable {
+    var text: String
+    var searchQuery: String
+    var onSelectionChange: (String, CGPoint?) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onSelectionChange: onSelectionChange)
+    }
+
+    func makeNSView(context: Context) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.drawsBackground = false
+
+        let textView = NSTextView()
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isRichText = false
+        textView.font = .monospacedSystemFont(ofSize: 15, weight: .regular)
+        textView.textColor = NSColor(red: 0.115, green: 0.095, blue: 0.080, alpha: 1.0)
+        textView.backgroundColor = .clear
+        textView.string = text
+        textView.delegate = context.coordinator
+        textView.textContainerInset = NSSize(width: 18, height: 18)
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: Context) {
+        guard let textView = scrollView.documentView as? NSTextView else { return }
+        if textView.string != text {
+            textView.string = text
+        }
+        context.coordinator.applySearch(searchQuery, in: textView)
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var onSelectionChange: (String, CGPoint?) -> Void
+        private var lastSearchQuery = ""
+
+        init(onSelectionChange: @escaping (String, CGPoint?) -> Void) {
+            self.onSelectionChange = onSelectionChange
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            let range = textView.selectedRange()
+            guard range.length > 0, let stringRange = Range(range, in: textView.string) else { return }
+            onSelectionChange(String(textView.string[stringRange]), Self.anchor(for: range, in: textView))
+        }
+
+        private static func anchor(for range: NSRange, in textView: NSTextView) -> CGPoint? {
+            guard let window = textView.window, let contentView = window.contentView else { return nil }
+            let rect = textView.firstRect(forCharacterRange: range, actualRange: nil)
+            guard !rect.isEmpty else { return nil }
+            let screenPoint = CGPoint(x: rect.midX, y: rect.minY)
+            let windowPoint = window.convertPoint(fromScreen: screenPoint)
+            let contentPoint = contentView.convert(windowPoint, from: nil)
+            let y = SelectionAnchorCoordinate.y(
+                Double(contentPoint.y),
+                contentHeight: Double(contentView.bounds.height),
+                contentViewIsFlipped: contentView.isFlipped
+            )
+            return CGPoint(x: contentPoint.x, y: y)
+        }
+
+        func applySearch(_ query: String, in textView: NSTextView) {
+            let query = ReaderSearch.cleaned(query)
+            guard query != lastSearchQuery else { return }
+            lastSearchQuery = query
+            guard !query.isEmpty else {
+                textView.setSelectedRange(NSRange(location: 0, length: 0))
+                return
+            }
+            guard let range = ReaderSearch.firstMatch(in: textView.string, query: query) else { return }
+            textView.setSelectedRange(range)
+            textView.scrollRangeToVisible(range)
+        }
+    }
+}
+
+private struct SamplePDFView: View {
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 18) {
+                VStack(alignment: .leading, spacing: 22) {
+                    HStack {
+                        Text("Mishkin 教材样例")
+                        Spacer()
+                        Text("PDF 阅读样例")
+                    }
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
+
+                    Rectangle()
+                        .fill(WeiBeiTheme.hairline)
+                        .frame(height: 1)
+
+                    Text("金融体系的功能")
+                        .font(.system(size: 34, weight: .semibold, design: .serif))
+
+                    Text("金融市场和金融中介能够把储蓄者的资金转移给有投资机会的人。它们降低交易成本，缓解信息不对称，并帮助社会更有效地配置资源。")
+
+                    Text("这一页是内置 PDF 阅读样例。导入真实 PDF 后，中央区域会切换为 PDFKit 阅读器。")
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 13)
+                        .background(WeiBeiTheme.codePaper)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+
+                    Spacer(minLength: 80)
+
+                    HStack {
+                        Text("页 1")
+                        Spacer()
+                        Text("魏碑")
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                }
+                .font(.system(size: 17, design: .serif))
+                .lineSpacing(8)
+                .foregroundStyle(WeiBeiTheme.ink)
+                .padding(.horizontal, 42)
+                .padding(.vertical, 44)
+                .frame(maxWidth: 620, minHeight: 820, alignment: .topLeading)
+                .background(WeiBeiTheme.paperRaised)
+                .clipShape(RoundedRectangle(cornerRadius: 3))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 3)
+                        .stroke(WeiBeiTheme.hairline, lineWidth: 1)
+                }
+                .shadow(color: WeiBeiTheme.ink.opacity(0.075), radius: 16, y: 8)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 28)
+        }
+        .background(WeiBeiTheme.paper)
+    }
+}
+
+struct EscapeKeyBridge: NSViewRepresentable {
+    var onEscape: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onEscape: onEscape)
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        context.coordinator.installMonitor()
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        context.coordinator.onEscape = onEscape
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.removeMonitor()
+    }
+
+    final class Coordinator {
+        var onEscape: () -> Void
+        private var monitor: Any?
+
+        init(onEscape: @escaping () -> Void) {
+            self.onEscape = onEscape
+        }
+
+        func installMonitor() {
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard event.keyCode == 53 else { return event }
+                self?.onEscape()
+                return nil
+            }
+        }
+
+        func removeMonitor() {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
+        }
+    }
+}
