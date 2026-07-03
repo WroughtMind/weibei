@@ -22,6 +22,7 @@ expect(
         && editorIndexSource.contains(".ProseMirror .math-block"),
     "math styling hides raw source for both Milkdown math node class shapes"
 )
+expect(editorIndexSource.contains(".weibei-source-reference") && editorIndexSource.contains("border-bottom: 1px dotted"), "source references have readable link styling")
 
 expect(StudyItemKind.detect(from: URL(fileURLWithPath: "/tmp/a.pdf")) == .pdf, "pdf detection")
 expect(StudyItemKind.detect(from: URL(fileURLWithPath: "/tmp/a.html")) == .html, "html detection")
@@ -169,6 +170,8 @@ let themeSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPa
 let themeSource = (try? String(contentsOf: themeSourceURL, encoding: .utf8)) ?? ""
 expect(themeSource.contains(".fill(.regularMaterial)") && themeSource.contains("paperWashOpacity"), "header glass uses one shared paper material wash")
 expect(themeSource.contains("WeiBeiTheme.glassTint.opacity(0.16 * opacity)") && !themeSource.contains("WeiBeiTheme.paperInset.opacity(0.10 * opacity)"), "header handoff fade avoids a hard paper edge")
+expect(themeSource.contains("struct WeiBeiInputPrompt") && themeSource.contains(".foregroundColor(WeiBeiTheme.tertiaryInk)"), "input placeholders use readable semantic ink")
+expect(themeSource.contains("func weibeiInputSurface") && themeSource.contains(".foregroundColor(WeiBeiTheme.ink)"), "input surfaces force readable text color on paper")
 expect(contentViewSource.contains("ResizableTwoPane<First: View, Second: View>: NSViewRepresentable"), "two-pane layout uses native bridge")
 expect(contentViewSource.contains("ResizableThreePane<First: View, Second: View, Third: View>: NSViewRepresentable"), "three-pane layout uses native bridge")
 expect(contentViewSource.contains("WeiBeiSplitView: NSSplitView"), "content panes use native split view")
@@ -191,7 +194,7 @@ for helperName in ["openReader", "openWriting", "askCurrentSelection", "prepareA
         expect(false, "\(helperName) source is readable")
     }
 }
-expect(contentViewSource.contains("if store.readerSearch.isEmpty") && contentViewSource.contains("Text(\"当前资料内搜索\")") && contentViewSource.contains(".foregroundStyle(tertiaryText)"), "top search placeholder uses readable semantic ink")
+expect(contentViewSource.contains("if store.readerSearch.isEmpty") && contentViewSource.contains("WeiBeiInputPrompt(\"当前资料内搜索\")") && contentViewSource.contains(".foregroundColor(primaryText)"), "top search placeholder uses readable semantic ink above the field")
 expect(contentViewSource.contains("store.hasSelectedMaterial && store.layout != .immersiveConversation"), "top search only appears when a material is selected")
 expect(contentViewSource.contains("layout == store.layout ? \"checkmark\"") && contentViewSource.contains(".accessibilityLabel(Text(\"切换布局\"))"), "layout menu marks current layout and explains itself")
 expect(contentViewSource.contains(": layout.systemImage") && !contentViewSource.contains(": \"rectangle.split.3x1\""), "layout menu avoids repeating one generic icon")
@@ -199,7 +202,7 @@ expect(contentViewSource.contains(".accessibilityLabel(Text(\"更多设置\"))")
 let sidebarSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/SidebarView.swift")
 let sidebarSource = (try? String(contentsOf: sidebarSourceURL, encoding: .utf8)) ?? ""
-expect(sidebarSource.contains("if store.librarySearch.isEmpty") && sidebarSource.contains("Text(\"搜索资料库\")") && sidebarSource.contains(".foregroundStyle(WeiBeiTheme.tertiaryInk)"), "library search placeholder uses readable semantic ink")
+expect(sidebarSource.contains("if store.librarySearch.isEmpty") && sidebarSource.contains("WeiBeiInputPrompt(\"搜索资料库\")") && sidebarSource.contains(".foregroundColor(WeiBeiTheme.ink)"), "library search placeholder uses readable semantic ink above the field")
 expect(!sidebarSource.contains("commandPalettePresented.toggle()") && !sidebarSource.contains("Label(\"命令\", systemImage: \"command\")"), "sidebar does not duplicate the command palette entry")
 expect(sidebarSource.contains("sidebarSection(title: \"导入资料\", items: importedMaterialItems)") && sidebarSource.contains("sidebarSection(title: \"笔记\", items: notebookItems)"), "sidebar separates materials from notebook notes")
 expect(sidebarSource.contains("!$0.isSample && !$0.isNotebookNote") && sidebarSource.contains("store.filteredItems.filter(\\.isNotebookNote)"), "sidebar material list excludes notebook notes without hiding notes")
@@ -233,6 +236,7 @@ expect(readerViewSource.contains(".accessibilityLabel(Text(\"上一页\"))") && 
 expect(readerViewSource.contains("syncReaderLocationTitle") && readerViewSource.contains("第 \\(pdfPageIndex + 1) 页"), "pdf reader page updates feed the shared reference title")
 expect(readerViewSource.contains("var onSelectionChange: (String, CGPoint?, Int) -> Void") && readerViewSource.contains("pageIndex(for: selection, in: view)") && readerViewSource.contains("ownerTitle: ownerTitle"), "pdf selection source uses the selected page, not only the current page")
 expect(readerViewSource.contains("pendingPDFPageIndex") && readerViewSource.contains("applyPendingPDFPageIfReady") && readerViewSource.contains("store.readerTargetPageIndex = nil"), "pdf reader consumes source-jump target pages")
+expect(readerViewSource.contains("onSourceReference: { reference in store.openSourceReference(reference) }"), "markdown reader source references can jump back to material")
 let richEditorSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/RichMarkdownEditorView.swift")
 let richEditorSource = (try? String(contentsOf: richEditorSourceURL, encoding: .utf8)) ?? ""
@@ -256,7 +260,7 @@ expect(appSource.contains("sharedWorkspaceStore"), "main window and settings sha
 expect(!appSource.contains("launchProbe"), "app launch path has no temporary probe logging")
 expect(appSource.contains("addLocalMonitorForEvents(matching: .keyDown)") && appSource.contains("removeMonitor(shortcutMonitor)"), "app-level shortcuts survive focused web editor")
 expect(appSource.contains("return flag"), "reopen does not swallow the system window creation path")
-expect(!appSource.contains("Form {") && appSource.contains("Text(\"OpenAI 密钥\")") && appSource.contains("SecureField(\"\", text: $store.openAIAPIKey)") && appSource.contains(".weibeiInputSurface(active: focusedField == .apiKey)"), "settings key input uses WeiBei input surface instead of the default form field")
+expect(!appSource.contains("Form {") && appSource.contains("WeiBeiInputPrompt(\"OpenAI 密钥\")") && appSource.contains("SecureField(\"\", text: $store.openAIAPIKey)") && appSource.contains(".foregroundColor(WeiBeiTheme.ink)") && appSource.contains(".weibeiInputSurface(active: focusedField == .apiKey)"), "settings key input uses WeiBei input surface instead of the default form field")
 expect(appSource.contains("WeiBeiTextActionButtonStyle(active: true)") && appSource.contains(".background(WeiBeiTheme.paper)"), "settings view uses WeiBei paper and button styles")
 let workspaceStoreSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Stores/WorkspaceStore.swift")
@@ -368,11 +372,12 @@ expect(notesAgentSource.contains("AgentStarterChip") && notesAgentSource.contain
 expect(notesAgentSource.contains("if store.hasSelectedMaterial") && notesAgentSource.contains("starterChip(\"梳理材料\"") && notesAgentSource.contains("starterChip(\"出复习题\""), "agent starter chips hide material actions without a selected material")
 expect(notesAgentSource.contains("canPolishNoteSelection") && notesAgentSource.contains("store.selectionContext?.isNoteSelection == true"), "selection agent only shows polish for note selections")
 expect(notesAgentSource.contains("store.canOpenSelectedSourceReference") && notesAgentSource.contains("Button(\"来源\")") && notesAgentSource.contains("openSourceReference()"), "selection agent exposes a lightweight source jump when the note selection is a reference")
+expect(notesAgentSource.contains("onSourceReference: { reference in store.openSourceReference(reference) }"), "note editor source references can jump back to material")
 expect(notesAgentSource.contains("emptyNoteHintText") && notesAgentSource.contains("store.hasSelectedMaterial ? \"开始记录当前材料\" : \"开始记录当前笔记\"") && notesAgentSource.contains(".allowsHitTesting(false)"), "blank note editor cue matches whether a material is selected")
 expect(notesAgentSource.contains("noteFileStatusColor(for message: String)") && notesAgentSource.contains("message.hasPrefix(\"无法\") ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk"), "note file success statuses do not render as errors")
 expect(notesAgentSource.contains(".help(\"新建独立 Markdown 笔记\")") && notesAgentSource.contains("结合\\(store.agentPromptScope)和当前选区作答") && !notesAgentSource.contains("结合已选择材料、选区和笔记"), "note and floating agent hints avoid fake current material context")
 expect(notesAgentSource.contains("drawerPrompt") && notesAgentSource.contains("return \"问当前选区\"") && !notesAgentSource.contains("问当前选区或当前材料"), "agent drawer placeholder avoids fake material context")
-expect(notesAgentSource.contains("store.hasSelectedMaterial ? \"问当前材料\" : \"问当前笔记\"") && notesAgentSource.contains("if store.agentDraft.isEmpty") && notesAgentSource.contains("Text(agentPrompt)") && notesAgentSource.contains(".foregroundStyle(WeiBeiTheme.tertiaryInk)"), "agent input placeholder matches whether a material is selected")
+expect(notesAgentSource.contains("store.hasSelectedMaterial ? \"问当前材料\" : \"问当前笔记\"") && notesAgentSource.contains("if store.agentDraft.isEmpty") && notesAgentSource.contains("WeiBeiInputPrompt(agentPrompt)") && notesAgentSource.contains(".foregroundColor(WeiBeiTheme.ink)"), "agent input placeholder matches context and stays readable above the field")
 expect(notesAgentSource.contains("store.hasSelectedMaterial ? \"来源\" : \"笔记\"") && notesAgentSource.contains("store.selectedMaterialItem?.title ?? \"当前笔记\""), "agent drawer source row avoids fake current material")
 if let cornerStart = notesAgentSource.range(of: "struct CornerAgentView")?.lowerBound,
    let selectionStart = notesAgentSource.range(of: "struct FloatingSelectionAgentView")?.lowerBound {
@@ -389,6 +394,14 @@ expect(notesAgentSource.contains("if !store.messages.isEmpty {\n                
 expect(notesAgentSource.contains("private func iconButton(_ systemName: String, help: String") && notesAgentSource.contains(".accessibilityLabel(Text(help))"), "floating icon buttons carry semantic labels")
 expect(notesAgentSource.contains(".help(\"收起右下角 Agent\")"), "corner agent close button explains its action")
 expect(commandPaletteSource.contains("插入行内公式") && commandPaletteSource.contains("${{WEIBEI_SELECT_START}}x_i = \\\\frac{a}{b}{{WEIBEI_SELECT_END}}$") && commandPaletteSource.contains("插入矩阵公式"), "markdown command templates keep an editable landing point")
+let editorSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/WebEditor/src/editor.js")
+let editorSource = (try? String(contentsOf: editorSourceURL, encoding: .utf8)) ?? ""
+expect(editorSource.contains("decorateSourceReferences") && editorSource.contains("sourceReferenceActivated") && editorSource.contains("activateSourceReference"), "web editor exposes source references as clickable bridge actions")
+let richMarkdownEditorSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Views/RichMarkdownEditorView.swift")
+let richMarkdownEditorSource = (try? String(contentsOf: richMarkdownEditorSourceURL, encoding: .utf8)) ?? ""
+expect(richMarkdownEditorSource.contains("\"sourceReferenceActivated\"") && richMarkdownEditorSource.contains("onSourceReference(reference)"), "rich editor bridges source-reference clicks into Swift")
 expect(LibraryNavigator.adjacentID(in: [], selectedID: nil, step: 1) == nil, "library navigation empty")
 expect(LibraryNavigator.adjacentID(in: ["a", "b", "c"], selectedID: nil, step: 1) == "a", "library navigation defaults first")
 expect(LibraryNavigator.adjacentID(in: ["a", "b", "c"], selectedID: "b", step: 1) == "c", "library navigation next")

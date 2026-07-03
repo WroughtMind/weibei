@@ -133,6 +133,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     var onSelectionChange: (String, CGPoint?) -> Void
     var onAskAgentWithSelection: (String, CGPoint?) -> Void
     var onWikiLink: (String) -> Void = { _ in }
+    var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
     private static let localImageScheme = "weibeiimage"
 
@@ -150,6 +151,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onAskAgentWithSelection,
             onWikiLink: onWikiLink,
+            onSourceReference: onSourceReference,
             onAppShortcut: onAppShortcut
         )
     }
@@ -251,6 +253,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.isFocused = isFocused
         context.coordinator.focusRequest = focusRequest
         context.coordinator.onWikiLink = onWikiLink
+        context.coordinator.onSourceReference = onSourceReference
         context.coordinator.onAppShortcut = onAppShortcut
         let nextBaseURL = markdownBaseURL?.absoluteString ?? ""
         if context.coordinator.markdownBaseURLString != nextBaseURL {
@@ -288,6 +291,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         "selectionChanged",
         "askAgentWithSelection",
         "wikiLinkActivated",
+        "sourceReferenceActivated",
         "imageAttachmentRequested",
         "appShortcut"
     ]
@@ -304,6 +308,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var onSelectionChange: (String, CGPoint?) -> Void
         var onAskAgentWithSelection: (String, CGPoint?) -> Void
         var onWikiLink: (String) -> Void
+        var onSourceReference: (String) -> Void
         var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool
         weak var webView: WKWebView?
         var isReady = false
@@ -333,6 +338,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onSelectionChange: @escaping (String, CGPoint?) -> Void,
             onAskAgentWithSelection: @escaping (String, CGPoint?) -> Void,
             onWikiLink: @escaping (String) -> Void,
+            onSourceReference: @escaping (String) -> Void,
             onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool
         ) {
             self.documentID = documentID
@@ -347,6 +353,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.onSelectionChange = onSelectionChange
             self.onAskAgentWithSelection = onAskAgentWithSelection
             self.onWikiLink = onWikiLink
+            self.onSourceReference = onSourceReference
             self.onAppShortcut = onAppShortcut
         }
 
@@ -395,6 +402,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 guard let body = message.body as? [String: Any],
                       let title = body["title"] as? String else { return }
                 onWikiLink(title)
+            case "sourceReferenceActivated":
+                guard let body = message.body as? [String: Any],
+                      let reference = body["reference"] as? String else { return }
+                onSourceReference(reference)
             case "imageAttachmentRequested":
                 guard isEditable,
                       let body = message.body as? [String: Any],

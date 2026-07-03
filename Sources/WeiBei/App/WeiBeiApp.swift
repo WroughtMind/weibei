@@ -248,16 +248,14 @@ struct SettingsView: View {
                 sectionTitle("Agent")
 
                 ZStack(alignment: .leading) {
-                    if store.openAIAPIKey.isEmpty {
-                        Text("OpenAI 密钥")
-                            .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                            .allowsHitTesting(false)
-                    }
-
                     SecureField("", text: $store.openAIAPIKey)
                         .textFieldStyle(.plain)
-                        .foregroundStyle(WeiBeiTheme.ink)
+                        .foregroundColor(WeiBeiTheme.ink)
                         .focused($focusedField, equals: .apiKey)
+
+                    if store.openAIAPIKey.isEmpty {
+                        WeiBeiInputPrompt("OpenAI 密钥")
+                    }
                 }
                 .font(.system(size: 13))
                 .weibeiInputSurface(active: focusedField == .apiKey)
@@ -284,12 +282,6 @@ struct SettingsView: View {
                 sectionTitle("模型")
 
                 ZStack(alignment: .leading) {
-                    if store.modelName.isEmpty {
-                        Text("模型")
-                            .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                            .allowsHitTesting(false)
-                    }
-
                     TextField(
                         "",
                         text: Binding(
@@ -298,8 +290,12 @@ struct SettingsView: View {
                         )
                     )
                     .textFieldStyle(.plain)
-                    .foregroundStyle(WeiBeiTheme.ink)
+                    .foregroundColor(WeiBeiTheme.ink)
                     .focused($focusedField, equals: .model)
+
+                    if store.modelName.isEmpty {
+                        WeiBeiInputPrompt("模型")
+                    }
                 }
                 .font(.system(size: 13))
                 .weibeiInputSurface(active: focusedField == .model)

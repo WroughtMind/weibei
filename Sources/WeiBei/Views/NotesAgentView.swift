@@ -118,6 +118,7 @@ struct NotePaneView: View {
                         markdown: store.noteText,
                         markdownBaseURL: store.currentMarkdownBaseURL,
                         onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
+                        onSourceReference: { reference in store.openSourceReference(reference) },
                         onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
                     ) { text, anchor in
                         store.updateSelection(text, source: .note, anchor: anchor, isEditable: false)
@@ -131,6 +132,7 @@ struct NotePaneView: View {
                     markdown: store.noteText,
                     markdownBaseURL: store.currentMarkdownBaseURL,
                     onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
+                    onSourceReference: { reference in store.openSourceReference(reference) },
                     onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
                 ) { text, anchor in
                     store.updateSelection(text, source: .note, anchor: anchor, isEditable: false)
@@ -172,6 +174,8 @@ struct NotePaneView: View {
             Task { await store.askAgent() }
         }, onWikiLink: { title in
             store.openOrCreateWikiNote(title: title)
+        }, onSourceReference: { reference in
+            store.openSourceReference(reference)
         }, onAppShortcut: { key, modifiers in
             store.handleAppShortcut(key: key, modifiers: modifiers)
         })
@@ -522,6 +526,7 @@ struct MarkdownPreviewView: View {
     var markdown: String
     var markdownBaseURL: URL?
     var onWikiLink: (String) -> Void = { _ in }
+    var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
     var onSelectionChange: (String, CGPoint?) -> Void = { _, _ in }
     @State private var command: NoteEditorCommand?
@@ -535,6 +540,7 @@ struct MarkdownPreviewView: View {
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onSelectionChange,
             onWikiLink: onWikiLink,
+            onSourceReference: onSourceReference,
             onAppShortcut: onAppShortcut
         )
         .background(WeiBeiTheme.paper)
@@ -664,20 +670,18 @@ struct AgentPaneView: View {
 
             HStack(alignment: .bottom, spacing: 8) {
                 ZStack(alignment: .leading) {
-                    if store.agentDraft.isEmpty {
-                        Text(agentPrompt)
-                            .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                            .allowsHitTesting(false)
-                    }
-
                     TextField("", text: $store.agentDraft, axis: .vertical)
                         .textFieldStyle(.plain)
                         .lineLimit(1...4)
-                        .foregroundStyle(WeiBeiTheme.ink)
+                        .foregroundColor(WeiBeiTheme.ink)
                         .focused($draftFocused)
                         .onSubmit {
                             Task { await store.askAgent() }
                         }
+
+                    if store.agentDraft.isEmpty {
+                        WeiBeiInputPrompt(agentPrompt)
+                    }
                 }
                 .weibeiInputSurface(active: draftFocused, height: 34)
 
@@ -860,16 +864,14 @@ struct AgentDrawerView: View {
 
             HStack(spacing: 8) {
                 ZStack(alignment: .leading) {
-                    if store.agentDraft.isEmpty {
-                        Text(drawerPrompt)
-                            .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                            .allowsHitTesting(false)
-                    }
-
                     TextField("", text: $store.agentDraft)
                         .textFieldStyle(.plain)
                         .focused($draftFocused)
-                        .foregroundStyle(WeiBeiTheme.ink)
+                        .foregroundColor(WeiBeiTheme.ink)
+
+                    if store.agentDraft.isEmpty {
+                        WeiBeiInputPrompt(drawerPrompt)
+                    }
                 }
                 .font(.system(size: 13))
                 .weibeiInputSurface(active: draftFocused)
@@ -942,16 +944,14 @@ struct CornerAgentView: View {
 
             HStack(spacing: 8) {
                 ZStack(alignment: .leading) {
-                    if store.agentDraft.isEmpty {
-                        Text(agentPrompt)
-                            .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                            .allowsHitTesting(false)
-                    }
-
                     TextField("", text: $store.agentDraft)
                         .textFieldStyle(.plain)
                         .focused($draftFocused)
-                        .foregroundStyle(WeiBeiTheme.ink)
+                        .foregroundColor(WeiBeiTheme.ink)
+
+                    if store.agentDraft.isEmpty {
+                        WeiBeiInputPrompt(agentPrompt)
+                    }
                 }
                 .font(.system(size: 13))
                 .weibeiInputSurface(active: draftFocused, height: 32)
@@ -1159,17 +1159,15 @@ struct FloatingSelectionAgentView: View {
 
             HStack(spacing: 6) {
                 ZStack(alignment: .leading) {
-                    if store.agentDraft.isEmpty {
-                        Text("继续追问")
-                            .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                            .allowsHitTesting(false)
-                    }
-
                     TextField("", text: $store.agentDraft)
                         .textFieldStyle(.plain)
-                        .foregroundStyle(WeiBeiTheme.ink)
+                        .foregroundColor(WeiBeiTheme.ink)
                         .focused($draftFocused)
                         .onSubmit { sendDraft() }
+
+                    if store.agentDraft.isEmpty {
+                        WeiBeiInputPrompt("继续追问")
+                    }
                 }
                 .font(.caption)
 

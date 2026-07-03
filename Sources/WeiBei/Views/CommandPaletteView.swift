@@ -120,16 +120,14 @@ struct CommandPaletteView: View {
                     Image(systemName: "command")
                         .foregroundStyle(WeiBeiTheme.link)
                     ZStack(alignment: .leading) {
-                        if query.isEmpty {
-                            Text("命令")
-                                .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                                .allowsHitTesting(false)
-                        }
-
                         TextField("", text: $query)
                             .textFieldStyle(.plain)
-                            .foregroundStyle(WeiBeiTheme.ink)
+                            .foregroundColor(WeiBeiTheme.ink)
                             .focused($searchFocused)
+
+                        if query.isEmpty {
+                            WeiBeiInputPrompt("命令")
+                        }
                     }
                     .font(.system(size: 18, weight: .semibold, design: .serif))
                 }

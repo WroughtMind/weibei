@@ -25,6 +25,22 @@ enum WeiBeiMetric {
     static let controlRadius: CGFloat = 7
 }
 
+struct WeiBeiInputPrompt: View {
+    var text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .foregroundColor(WeiBeiTheme.tertiaryInk)
+            .opacity(0.92)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
 enum WeiBeiMotion {
     static let press = Animation.interactiveSpring(response: 0.18, dampingFraction: 0.82)
     static let micro = Animation.easeOut(duration: 0.14)
@@ -272,7 +288,7 @@ struct WeiBeiTextActionButtonStyle: ButtonStyle {
 extension View {
     func weibeiPanel() -> some View {
         self
-            .foregroundStyle(WeiBeiTheme.ink)
+            .foregroundColor(WeiBeiTheme.ink)
             .background(WeiBeiTheme.paperRaised.opacity(0.90))
             .overlay(alignment: .top) {
                 LinearGradient(
@@ -289,7 +305,7 @@ extension View {
 
     func weibeiInputSurface(active: Bool = false, height: CGFloat = WeiBeiMetric.inputHeight) -> some View {
         self
-            .foregroundStyle(WeiBeiTheme.ink)
+            .foregroundColor(WeiBeiTheme.ink)
             .padding(.horizontal, 10)
             .frame(minHeight: height)
             .background(WeiBeiTheme.paperInset.opacity(active ? 0.52 : 0.30))
@@ -303,7 +319,7 @@ extension View {
 
     func weibeiFloatingPanel(cornerRadius: CGFloat = 8, shadowOpacity: Double = 0.10) -> some View {
         self
-            .foregroundStyle(WeiBeiTheme.ink)
+            .foregroundColor(WeiBeiTheme.ink)
             .background {
                 ZStack {
                     RoundedRectangle(cornerRadius: cornerRadius)

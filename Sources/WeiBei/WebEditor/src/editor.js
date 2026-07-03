@@ -438,6 +438,20 @@ const decorateWikiLinks = (decorations, text, pos) => {
   }
 };
 
+const decorateSourceReferences = (decorations, text, pos) => {
+  for (const match of text.matchAll(/(?:^|\s)(来源：[^\n]+)/g)) {
+    const prefixLength = match[0].startsWith('来源：') ? 0 : 1;
+    const from = pos + (match.index || 0) + prefixLength;
+    const to = from + match[1].length;
+    addRangeDecoration(decorations, from, to, 'weibei-source-reference', {
+      role: 'link',
+      tabindex: '0',
+      title: `打开来源：${match[1].slice('来源：'.length).trim()}`,
+      'data-source-reference': match[1],
+    });
+  }
+};
+
 const decorateObsidianEmbeds = (decorations, text, pos) => {
   for (const match of text.matchAll(/!\[\[([^\]\n]+)\]\]/g)) {
     const from = pos + (match.index || 0);
@@ -554,6 +568,20 @@ const activateWikiLink = (target) => {
   const title = wikiTitleFromTarget(target);
   if (!title) return false;
   post('wikiLinkActivated', { title });
+  return true;
+};
+
+const sourceReferenceFromTarget = (target) => {
+  const link = target instanceof Element
+    ? target.closest('.weibei-source-reference[data-source-reference]')
+    : null;
+  return link?.getAttribute('data-source-reference') || '';
+};
+
+const activateSourceReference = (target) => {
+  const reference = sourceReferenceFromTarget(target);
+  if (!reference) return false;
+  post('sourceReferenceActivated', { reference });
   return true;
 };
 
@@ -792,10 +820,14 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       return true;
     },
     handleClick(view, pos, event) {
-      return activateWikiLink(event.target);
+      return activateWikiLink(event.target) || activateSourceReference(event.target);
     },
     handleKeyDown(_, event) {
       if (event.key !== 'Enter' && event.key !== ' ') return false;
+      if (activateSourceReference(event.target)) {
+        event.preventDefault();
+        return true;
+      }
       if (!event.metaKey && !event.ctrlKey) return false;
       const title = wikiTitleAtSelection();
       if (!title) return false;
@@ -851,6 +883,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
           decorateComments(decorations, text, textPos, commentState);
           decorateObsidianEmbeds(decorations, text, textPos);
           decorateWikiLinks(decorations, text, textPos);
+          decorateSourceReferences(decorations, text, textPos);
           decorateTagsAndBlocks(decorations, text, textPos);
 
           if (parentName === 'blockquote') {

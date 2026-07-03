@@ -203,16 +203,15 @@ private struct UnifiedTopBarView: View {
 
             if store.showReaderSearch && shouldShowSearchAction {
                 ZStack(alignment: .leading) {
-                    if store.readerSearch.isEmpty {
-                        Text("当前资料内搜索")
-                            .foregroundStyle(tertiaryText)
-                            .allowsHitTesting(false)
-                    }
-
                     TextField("", text: $store.readerSearch)
                         .textFieldStyle(.plain)
                         .focused(searchFocused)
-                        .foregroundStyle(primaryText)
+                        .foregroundColor(primaryText)
+
+                    if store.readerSearch.isEmpty {
+                        WeiBeiInputPrompt("当前资料内搜索")
+                            .foregroundColor(tertiaryText)
+                    }
                 }
                 .font(.system(size: 12))
                 .padding(.horizontal, 10)

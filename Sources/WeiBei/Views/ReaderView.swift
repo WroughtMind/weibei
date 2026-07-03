@@ -199,6 +199,7 @@ struct ReaderView: View {
             markdownBaseURL: markdownBaseURL,
             searchQuery: store.readerSearch,
             onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
+            onSourceReference: { reference in store.openSourceReference(reference) },
             onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
         ) { text, anchor in
             store.updateSelection(text, source: .document, anchor: anchor)
@@ -571,6 +572,7 @@ private struct MarkdownDocumentReaderView: View {
     var markdownBaseURL: URL?
     var searchQuery: String
     var onWikiLink: (String) -> Void = { _ in }
+    var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
     var onSelectionChange: (String, CGPoint?) -> Void
     @State private var command: NoteEditorCommand?
@@ -585,6 +587,7 @@ private struct MarkdownDocumentReaderView: View {
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onSelectionChange,
             onWikiLink: onWikiLink,
+            onSourceReference: onSourceReference,
             onAppShortcut: onAppShortcut
         )
     }
