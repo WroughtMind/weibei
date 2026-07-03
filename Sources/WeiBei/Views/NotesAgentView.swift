@@ -55,7 +55,7 @@ struct NotePaneView: View {
             if let noteFileError = store.noteFileError {
                 Text(noteFileError)
                     .font(.caption)
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .foregroundStyle(noteFileStatusColor(for: noteFileError))
                     .lineLimit(1)
                     .padding(.horizontal, 14)
                     .padding(.bottom, 8)
@@ -94,6 +94,10 @@ struct NotePaneView: View {
             RoundedRectangle(cornerRadius: 7)
                 .stroke(WeiBeiTheme.hairline, lineWidth: 1)
         }
+    }
+
+    private func noteFileStatusColor(for message: String) -> Color {
+        message.hasPrefix("无法") ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk
     }
 
     private var isImmersiveWriting: Bool {
