@@ -838,17 +838,18 @@ private struct LayoutContentView: View {
             ContextRailItem(
                 title: store.selectedItem?.title ?? "当前材料",
                 help: "切回沉浸阅读",
+                systemImage: store.selectedItem?.kind.systemImage ?? "doc.text",
                 emphasized: true
             ) {
                 openReader()
             },
-            ContextRailItem(title: "当前笔记", help: "切回沉浸写作") {
+            ContextRailItem(title: "当前笔记", help: "切回沉浸写作", systemImage: "square.and.pencil") {
                 openWriting()
             }
         ]
         if store.selectionContext != nil {
             items.append(
-                ContextRailItem(title: "选区", help: "用 Agent 追问当前选区") {
+                ContextRailItem(title: "选区", help: "用 Agent 追问当前选区", systemImage: "text.cursor") {
                     askCurrentSelection()
                 }
             )
@@ -858,19 +859,19 @@ private struct LayoutContentView: View {
 
     private var conversationTargetRailItems: [ContextRailItem] {
         var items = [
-            ContextRailItem(title: "当前笔记", help: "打开写作区", emphasized: true) {
+            ContextRailItem(title: "当前笔记", help: "打开写作区", systemImage: "square.and.pencil", emphasized: true) {
                 openWriting()
             }
         ]
         if store.selectionContext != nil {
             items.append(
-                ContextRailItem(title: "摘录区", help: "把当前选区收进笔记") {
+                ContextRailItem(title: "摘录区", help: "把当前选区收进笔记", systemImage: "quote.opening") {
                     appendSelectionAndOpenWriting()
                 }
             )
         }
         items.append(
-            ContextRailItem(title: "问题与结论", help: "让 Agent 整理问题、结论和缺少证据") {
+            ContextRailItem(title: "问题与结论", help: "让 Agent 整理问题、结论和缺少证据", systemImage: "checkmark.circle") {
                 prepareAgentDraft("请根据当前材料和当前笔记，整理出问题、结论和还缺少的证据。")
             }
         )
@@ -882,14 +883,15 @@ private struct LayoutContentView: View {
             ContextRailItem(
                 title: store.selectedItem?.title ?? "当前材料",
                 help: "切回沉浸阅读",
+                systemImage: store.selectedItem?.kind.systemImage ?? "doc.text",
                 emphasized: true
             ) {
                 openReader()
             },
-            ContextRailItem(title: "来源预览", help: "查看当前材料") {
+            ContextRailItem(title: "来源预览", help: "查看当前材料", systemImage: "doc.text.magnifyingglass") {
                 openReader()
             },
-            ContextRailItem(title: "引用", help: "复制当前材料或选区引用") {
+            ContextRailItem(title: "引用", help: "复制当前材料或选区引用", systemImage: "quote.opening") {
                 store.copyCurrentReference()
             }
         ]
@@ -897,13 +899,13 @@ private struct LayoutContentView: View {
 
     private var writingAssistRailItems: [ContextRailItem] {
         [
-            ContextRailItem(title: "大纲建议", help: "让 Agent 生成笔记大纲", emphasized: true) {
+            ContextRailItem(title: "大纲建议", help: "让 Agent 生成笔记大纲", systemImage: "list.bullet.rectangle", emphasized: true) {
                 prepareAgentDraft("请根据当前材料和当前笔记，给出一版更清晰的笔记大纲。")
             },
-            ContextRailItem(title: "补来源", help: "让 Agent 检查笔记缺少来源的位置") {
+            ContextRailItem(title: "补来源", help: "让 Agent 检查笔记缺少来源的位置", systemImage: "link") {
                 prepareAgentDraft("请检查当前笔记缺少来源的位置，并建议应该引用当前材料的哪些部分。")
             },
-            ContextRailItem(title: "润色表达", help: "让 Agent 润色当前笔记") {
+            ContextRailItem(title: "润色表达", help: "让 Agent 润色当前笔记", systemImage: "text.quote") {
                 prepareAgentDraft("请整理和润色当前笔记，保留原意，并标出缺少来源的位置。")
             }
         ]

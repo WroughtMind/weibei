@@ -1440,6 +1440,7 @@ struct QuietInsightView: View {
 struct ContextRailItem: Identifiable {
     var title: String
     var help: String?
+    var systemImage: String?
     var emphasized = false
     var action: (() -> Void)?
 
@@ -1565,6 +1566,12 @@ private struct ContextRailLine: View {
             Capsule()
                 .fill(railMarkColor)
                 .frame(width: 2, height: hovering || item.emphasized ? 15 : 10)
+            if let systemImage = item.systemImage {
+                Image(systemName: systemImage)
+                    .font(.system(size: 11, weight: .semibold))
+                    .frame(width: 14)
+                    .foregroundStyle(iconColor)
+            }
             Text(item.title)
                 .lineLimit(2)
         }
@@ -1583,6 +1590,11 @@ private struct ContextRailLine: View {
         if item.emphasized { return WeiBeiTheme.cinnabar.opacity(hovering ? 0.54 : 0.38) }
         if hovering { return WeiBeiTheme.cinnabar.opacity(0.28) }
         return WeiBeiTheme.hairline.opacity(0.90)
+    }
+
+    private var iconColor: Color {
+        if item.emphasized || hovering { return WeiBeiTheme.cinnabar.opacity(0.74) }
+        return WeiBeiTheme.tertiaryInk
     }
 
     private func setHovering(_ hovering: Bool) {
