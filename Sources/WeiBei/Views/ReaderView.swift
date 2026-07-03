@@ -17,7 +17,7 @@ struct ReaderView: View {
                 readerBody
             }
 
-            if store.selectedItem?.kind == .pdf {
+            if store.selectedMaterialItem?.kind == .pdf {
                 pdfFloatingControls
                     .padding(.bottom, isImmersive ? 20 : 16)
                     .transition(WeiBeiTransition.drawer)
@@ -30,7 +30,7 @@ struct ReaderView: View {
         .animation(WeiBeiMotion.panel, value: store.showReaderSearch)
         .onChange(of: store.selectedItemID) { _, _ in
             pdfPageIndex = 0
-            pdfPageCount = store.selectedItem?.kind == .pdf && store.selectedItem?.url == nil ? 1 : 0
+            pdfPageCount = store.selectedMaterialItem?.kind == .pdf && store.selectedMaterialItem?.url == nil ? 1 : 0
         }
     }
 
@@ -97,7 +97,7 @@ struct ReaderView: View {
 
     @ViewBuilder
     private var readerBody: some View {
-        if let item = store.selectedItem {
+        if let item = store.selectedMaterialItem {
             switch item.kind {
             case .pdf:
                 if let url = item.url {
@@ -144,6 +144,8 @@ struct ReaderView: View {
                     }
                 }
             }
+        } else if store.selectedItem?.isNotebookNote == true {
+            NotebookSelectedReaderView()
         } else {
             EmptyReaderView()
         }
@@ -557,6 +559,16 @@ private struct EmptyReaderView: View {
             title: "选择资料",
             detail: "从资料库打开 HTML、PDF 或 Markdown。",
             systemImage: "doc.text.magnifyingglass"
+        )
+    }
+}
+
+private struct NotebookSelectedReaderView: View {
+    var body: some View {
+        ReaderStateMessage(
+            title: "当前是笔记",
+            detail: "阅读区只显示资料，右侧继续写作当前笔记。",
+            systemImage: "square.and.pencil"
         )
     }
 }

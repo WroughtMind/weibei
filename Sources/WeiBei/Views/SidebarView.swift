@@ -45,7 +45,8 @@ struct SidebarView: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     sidebarSection(title: "样例", items: store.sampleItems)
-                    sidebarSection(title: "导入", items: store.filteredItems.filter { !$0.isSample })
+                    sidebarSection(title: "导入资料", items: importedMaterialItems)
+                    sidebarSection(title: "笔记", items: notebookItems)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 10)
@@ -67,6 +68,14 @@ struct SidebarView: View {
         .onAppear {
             librarySearchFocused = store.focusedPane == .library
         }
+    }
+
+    private var importedMaterialItems: [StudyItem] {
+        store.filteredItems.filter { !$0.isSample && !$0.isNotebookNote }
+    }
+
+    private var notebookItems: [StudyItem] {
+        store.filteredItems.filter(\.isNotebookNote)
     }
 
     @ViewBuilder
