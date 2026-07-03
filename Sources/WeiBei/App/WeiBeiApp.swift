@@ -75,7 +75,7 @@ struct WeiBeiApp: App {
 
                 Divider()
 
-                Button(store.showLibrary ? "收起资料" : "恢复资料") {
+                Button(store.showLibrary ? "收起资料库" : "打开资料库") {
                     animateLayout {
                         store.toggleLibrary()
                     }

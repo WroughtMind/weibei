@@ -182,8 +182,8 @@ private struct UnifiedTopBarView: View {
                 Image(systemName: "sidebar.left")
             }
             .buttonStyle(WeiBeiIconButtonStyle(active: store.showLibrary))
-            .accessibilityLabel(Text(store.showLibrary ? "完全收起资料库" : "恢复资料库"))
-            .help(store.showLibrary ? "完全收起资料库" : "恢复资料库")
+            .accessibilityLabel(Text(store.showLibrary ? "收起资料库" : "打开资料库"))
+            .help(store.showLibrary ? "收起资料库" : "打开资料库")
 
             brandBlock
 
