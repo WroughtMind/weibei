@@ -19,6 +19,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var librarySearch = ""
     @Published var readerSearch = ""
     @Published var showReaderSearch = false
+    @Published var readerLocationTitle: String?
     @Published var focusedPane: PaneFocus = .reader
     @Published var focusRequest = 0
     @Published var layout: WorkspaceLayout = .documentAgentNotes
@@ -136,6 +137,10 @@ final class WorkspaceStore: ObservableObject {
         selectedMaterialItem?.title ?? selectedItem?.title
     }
 
+    var currentReferenceTitle: String {
+        readerLocationTitle ?? selectedMaterialItem?.title ?? selectedItem?.title ?? "当前笔记"
+    }
+
     var agentNoteTitle: String {
         if selectedItem?.isNotebookNote == true {
             return selectedItem?.title ?? "当前笔记"
@@ -212,6 +217,7 @@ final class WorkspaceStore: ObservableObject {
     func select(itemID: String?) {
         persistCurrentNote()
         selectedItemID = itemID
+        readerLocationTitle = selectedMaterialItem?.title
         clearReaderSearchIfNeeded()
         noteText = noteText(for: selectedItem)
         messages = []
@@ -302,6 +308,11 @@ final class WorkspaceStore: ObservableObject {
             agentSurface = .hidden
         }
         focus(.reader)
+    }
+
+    func updateReaderLocationTitle(_ title: String?) {
+        let cleaned = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        readerLocationTitle = cleaned.isEmpty ? selectedMaterialItem?.title : cleaned
     }
 
     func setLayout(_ layout: WorkspaceLayout) {
@@ -694,8 +705,8 @@ final class WorkspaceStore: ObservableObject {
         if let selectionContext, let selection, !selection.isEmpty {
             reference = "> \(selection)\n来源：\(selectionContext.ownerTitle)"
         } else {
-            guard let itemTitle = selectedMaterialItem?.title else { return }
-            reference = "来源：\(itemTitle)"
+            guard selectedMaterialItem != nil || selectedItem?.isNotebookNote == true else { return }
+            reference = "来源：\(currentReferenceTitle)"
         }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(reference, forType: .string)
@@ -721,7 +732,7 @@ final class WorkspaceStore: ObservableObject {
         if source == .note || selectedItem?.isNotebookNote == true {
             return selectedItem?.title ?? "当前笔记"
         }
-        return selectedMaterialItem?.title ?? "当前文档"
+        return currentReferenceTitle
     }
 
     func askToOrganizeNote() {

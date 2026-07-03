@@ -28,10 +28,29 @@ struct ReaderView: View {
         .environment(\.colorScheme, .light)
         .animation(WeiBeiMotion.panel, value: pdfBrowseMode)
         .animation(WeiBeiMotion.panel, value: store.showReaderSearch)
+        .onAppear {
+            syncReaderLocationTitle()
+        }
         .onChange(of: store.selectedItemID) { _, _ in
             pdfPageIndex = 0
             pdfPageCount = store.selectedMaterialItem?.kind == .pdf && store.selectedMaterialItem?.url == nil ? 1 : 0
+            syncReaderLocationTitle()
         }
+        .onChange(of: pdfPageIndex) { _, _ in
+            syncReaderLocationTitle()
+        }
+        .onChange(of: pdfPageCount) { _, _ in
+            syncReaderLocationTitle()
+        }
+    }
+
+    private func syncReaderLocationTitle() {
+        guard let item = store.selectedMaterialItem else {
+            store.updateReaderLocationTitle(nil)
+            return
+        }
+        let title = item.kind == .pdf ? "\(item.title)，第 \(pdfPageIndex + 1) 页" : item.title
+        store.updateReaderLocationTitle(title)
     }
 
     private var pdfFloatingControls: some View {
