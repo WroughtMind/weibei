@@ -342,7 +342,7 @@ expect(notesAgentSource.contains("agentToolButton(\"整理\", help: \"整理笔�
 expect(notesAgentSource.contains("if !store.messages.isEmpty {\n                    agentToolButton(\"整理\""), "agent header avoids duplicating the organize action in the empty state")
 expect(notesAgentSource.contains("private func iconButton(_ systemName: String, help: String") && notesAgentSource.contains(".accessibilityLabel(Text(help))"), "floating icon buttons carry semantic labels")
 expect(notesAgentSource.contains(".help(\"收起右下角 Agent\")"), "corner agent close button explains its action")
-expect(commandPaletteSource.contains("{{WEIBEI_SELECT_START}}") && commandPaletteSource.contains("插入矩阵公式"), "markdown command templates keep an editable landing point")
+expect(commandPaletteSource.contains("插入行内公式") && commandPaletteSource.contains("${{WEIBEI_SELECT_START}}x_i = \\\\frac{a}{b}{{WEIBEI_SELECT_END}}$") && commandPaletteSource.contains("插入矩阵公式"), "markdown command templates keep an editable landing point")
 expect(LibraryNavigator.adjacentID(in: [], selectedID: nil, step: 1) == nil, "library navigation empty")
 expect(LibraryNavigator.adjacentID(in: ["a", "b", "c"], selectedID: nil, step: 1) == "a", "library navigation defaults first")
 expect(LibraryNavigator.adjacentID(in: ["a", "b", "c"], selectedID: "b", step: 1) == "c", "library navigation next")

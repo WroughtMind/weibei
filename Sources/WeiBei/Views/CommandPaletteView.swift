@@ -35,7 +35,7 @@ struct CommandPaletteView: View {
             PaletteCommand(title: "笔记源码对照", shortcut: "⌃⌘2") { store.setNoteRenderMode(.split) },
             PaletteCommand(title: "笔记源码", shortcut: "⌃⌘3") { store.setNoteRenderMode(.source) },
             PaletteCommand(title: "笔记预览", shortcut: "⌃⌘4") { store.setNoteRenderMode(.preview) },
-            PaletteCommand(title: "插入行内公式", shortcut: "") { store.insertMarkdownSnippet("$x_i = \\frac{a}{b}$") },
+            PaletteCommand(title: "插入行内公式", shortcut: "") { store.insertMarkdownSnippet("${{WEIBEI_SELECT_START}}x_i = \\frac{a}{b}{{WEIBEI_SELECT_END}}$") },
             PaletteCommand(title: "插入块级公式", shortcut: "") { store.insertMarkdownSnippet("\n$$\n{{WEIBEI_SELECT_START}}E = mc^2{{WEIBEI_SELECT_END}}\n$$\n") },
             PaletteCommand(title: "插入矩阵公式", shortcut: "") { store.insertMarkdownSnippet("\n$$\n\\begin{bmatrix}\n{{WEIBEI_SELECT_START}}a{{WEIBEI_SELECT_END}} & b \\\\\nc & d\n\\end{bmatrix}\n$$\n") },
             PaletteCommand(title: "插入 Callout", shortcut: "") { store.insertMarkdownSnippet("\n> [!note] 标题\n> {{WEIBEI_SELECT_START}}内容{{WEIBEI_SELECT_END}}\n") },

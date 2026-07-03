@@ -585,6 +585,50 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                     self.fail("insertMarkdown cursor marker did not select the editable placeholder")
                     return
                 }
+                self.validateInlineFormulaCursorMarkerInsertion()
+            }
+        }
+    }
+
+    private func validateInlineFormulaCursorMarkerInsertion() {
+        let snippet = "${{WEIBEI_SELECT_START}}x_i = \\frac{a}{b}{{WEIBEI_SELECT_END}}$"
+        webView.evaluateJavaScript("window.WeiBeiEditor.insertMarkdown(\(json(snippet)))") { [weak self] _, error in
+            guard let self else { return }
+            if let error {
+                self.fail("inline formula marker command threw \(error.localizedDescription)")
+                return
+            }
+            let script = """
+            (() => ({
+              markdown: window.WeiBeiEditor.getMarkdown(),
+              selectedText: window.WeiBeiEditor.selectedTextForCheck()
+            }))()
+            """
+            self.webView.evaluateJavaScript(script) { [weak self] value, error in
+                guard let self else { return }
+                if let error {
+                    self.fail("getMarkdown after inline formula marker insert threw \(error.localizedDescription)")
+                    return
+                }
+                guard let result = value as? [String: Any],
+                      let markdown = result["markdown"] as? String,
+                      let selectedText = result["selectedText"] as? String else {
+                    self.fail("inline formula marker inserted markdown did not return text")
+                    return
+                }
+                if markdown.contains("{{WEIBEI_SELECT_START}}")
+                    || markdown.contains("{{WEIBEI_SELECT_END}}") {
+                    self.fail("inline formula marker leaked into saved markdown")
+                    return
+                }
+                if !markdown.contains("\\frac{a}{b}") || !markdown.contains("$") {
+                    self.fail("inline formula marker command did not keep formula markdown: \(markdown)")
+                    return
+                }
+                if selectedText.trimmingCharacters(in: .whitespacesAndNewlines) != "x_i = \\frac{a}{b}" {
+                    self.fail("inline formula marker did not select the editable formula")
+                    return
+                }
                 self.isDone = true
             }
         }
