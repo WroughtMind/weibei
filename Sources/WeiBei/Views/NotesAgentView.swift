@@ -558,8 +558,10 @@ struct AgentPaneView: View {
                 }
                 Spacer()
 
-                agentToolButton("整理", help: "整理笔记", systemImage: "list.bullet.rectangle") {
-                    store.askToOrganizeNote()
+                if !store.messages.isEmpty {
+                    agentToolButton("整理", help: "整理笔记", systemImage: "list.bullet.rectangle") {
+                        store.askToOrganizeNote()
+                    }
                 }
 
                 if store.canApplyAgentAnswer {

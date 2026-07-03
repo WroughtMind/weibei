@@ -322,6 +322,7 @@ expect(notesAgentSource.contains("private var agentInputTray: some View"), "agen
 expect(notesAgentSource.contains("WeiBeiGlassHeaderBackground(") && notesAgentSource.contains("WeiBeiTheme.glassTint.opacity(0.66)"), "agent input tray uses paper glass fade instead of a hard white strip")
 expect(!notesAgentSource.contains(".disabled(store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)") && !notesAgentSource.contains(".disabled(!canSend)") && !notesAgentSource.contains(".disabled(store.isAskingAgent)"), "agent inputs hide unavailable send actions instead of showing disabled buttons")
 expect(notesAgentSource.contains("agentToolButton(\"整理\", help: \"整理笔记\"") && notesAgentSource.contains("agentToolButton(\"写入\", help: \"写入笔记\""), "agent toolbar uses short readable action labels")
+expect(notesAgentSource.contains("if !store.messages.isEmpty {\n                    agentToolButton(\"整理\""), "agent header avoids duplicating the organize action in the empty state")
 expect(notesAgentSource.contains("private func iconButton(_ systemName: String, help: String") && notesAgentSource.contains(".accessibilityLabel(Text(help))"), "floating icon buttons carry semantic labels")
 expect(notesAgentSource.contains(".help(\"收起右下角 Agent\")"), "corner agent close button explains its action")
 expect(commandPaletteSource.contains("{{WEIBEI_SELECT_START}}") && commandPaletteSource.contains("插入矩阵公式"), "markdown command templates keep an editable landing point")
