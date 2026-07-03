@@ -14,14 +14,14 @@ struct ReaderView: View {
     @State private var pendingPDFPageIndex: Int?
 
     var body: some View {
-        ZStack(alignment: .bottomLeading) {
+        ZStack(alignment: .bottomTrailing) {
             VStack(spacing: 0) {
                 readerBody
             }
 
             if store.selectedMaterialItem?.kind == .pdf {
                 pdfFloatingControls
-                    .padding(.leading, isImmersive ? 28 : 14)
+                    .padding(.trailing, isImmersive ? 28 : 14)
                     .padding(.bottom, isImmersive ? 20 : 16)
                     .transition(WeiBeiTransition.drawer)
             }
@@ -110,20 +110,7 @@ struct ReaderView: View {
 
     @ViewBuilder
     private var pdfControls: some View {
-        HStack(spacing: 2) {
-            ForEach(PDFBrowseMode.allCases) { mode in
-                Button {
-                    withAnimation(WeiBeiMotion.panel) {
-                        pdfBrowseMode = mode
-                    }
-                } label: {
-                    Image(systemName: mode.systemImage)
-                }
-                .buttonStyle(WeiBeiIconButtonStyle(active: pdfBrowseMode == mode, size: 24))
-                .accessibilityLabel(Text(mode.label))
-                .help(mode.help)
-            }
-        }
+        pdfModeMenu
 
         if pdfBrowseMode == .page, pdfPageCount > 1 {
             Group {
@@ -155,6 +142,40 @@ struct ReaderView: View {
             }
             .transition(WeiBeiTransition.floating)
         }
+    }
+
+    private var pdfModeMenu: some View {
+        Menu {
+            ForEach(PDFBrowseMode.allCases) { mode in
+                Button {
+                    withAnimation(WeiBeiMotion.panel) {
+                        pdfBrowseMode = mode
+                    }
+                } label: {
+                    Label(mode.label, systemImage: pdfBrowseMode == mode ? "checkmark" : mode.systemImage)
+                }
+                .accessibilityLabel(Text(mode.label))
+                .help(mode.help)
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: pdfBrowseMode.systemImage)
+                    .font(.system(size: 11, weight: .semibold))
+                Text(pdfBrowseMode.label)
+                    .font(.system(size: 11, weight: .medium))
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
+            }
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .padding(.horizontal, 7)
+            .frame(height: 22)
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .accessibilityLabel(Text("PDF 浏览方式"))
+        .help(pdfBrowseMode.help)
     }
 
     @ViewBuilder
