@@ -25,15 +25,22 @@ public struct OpenAIResponsesClient {
         let trimmedMaterial = String(materialText.prefix(18_000))
         let trimmedNote = String(noteText.prefix(6_000))
         let trimmedSelection = selectionText.map { String($0.prefix(2_000)) } ?? "无"
-        let dialogue = recentMessages.suffix(8).map { message in
-            let role = message.role == .user ? "用户" : "Agent"
-            return "\(role)：\(String(message.text.prefix(1_200)))"
-        }.joined(separator: "\n")
-        let input = """
+        let hasMaterial = !trimmedMaterial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let materialBlock = hasMaterial ? """
         当前材料：\(materialTitle)
 
         材料内容：
         \(trimmedMaterial)
+        """ : "当前材料：无"
+        let dialogue = recentMessages.suffix(8).map { message in
+            let role = message.role == .user ? "用户" : "Agent"
+            return "\(role)：\(String(message.text.prefix(1_200)))"
+        }.joined(separator: "\n")
+        let instructions = hasMaterial
+            ? "你是魏碑里的学习 Agent。只根据当前材料、当前笔记和当前选区回答；没有证据就说未在材料或笔记中确认。回答用中文，先给结论，再列来源依据。"
+            : "你是魏碑里的学习 Agent。只根据当前笔记和当前选区回答；没有证据就说未在笔记或选区中确认。回答用中文，先给结论，再列来源依据。"
+        let input = """
+        \(materialBlock)
 
         当前选区：
         \(trimmedSelection)
@@ -50,7 +57,7 @@ public struct OpenAIResponsesClient {
 
         let body: [String: Any] = [
             "model": model,
-            "instructions": "你是魏碑里的学习 Agent。只根据当前材料和当前笔记回答；没有证据就说未在材料中确认。回答用中文，先给结论，再列来源依据。",
+            "instructions": instructions,
             "input": input
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)

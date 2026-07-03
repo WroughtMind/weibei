@@ -24,6 +24,16 @@ let data = Data("""
 """.utf8)
 let text = try OpenAIResponsesClient.extractText(from: data)
 expect(text == "只根据当前材料回答。", "response parser")
+let openAIClientSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBeiCore/OpenAIResponsesClient.swift")
+let openAIClientSource = (try? String(contentsOf: openAIClientSourceURL, encoding: .utf8)) ?? ""
+expect(
+    openAIClientSource.contains("let hasMaterial = !trimmedMaterial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty")
+        && openAIClientSource.contains(": \"当前材料：无\"")
+        && openAIClientSource.contains("只根据当前笔记和当前选区回答")
+        && !openAIClientSource.contains("只根据当前材料和当前笔记回答"),
+    "agent request prompt switches to note-only context when no material exists"
+)
 expect(OpenAIAPIKeyStore.cleaned("  sk-test\n") == "sk-test", "api key cleaning")
 
 let temporaryKeychainStore = KeychainPasswordStore(
