@@ -764,7 +764,10 @@ final class WorkspaceStore: ObservableObject {
 
     func updateSelection(_ text: String, source: SelectionSource, anchor: CGPoint? = nil, ownerTitle: String? = nil, isEditable: Bool = true) {
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard cleaned.count >= 2 else { return }
+        guard cleaned.count >= 2 else {
+            clearUnpinnedFloatingSelection(keepContext: false)
+            return
+        }
         clearGeneratedQuietInsight()
         let cleanedOwnerTitle = ownerTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedOwnerTitle = (cleanedOwnerTitle?.isEmpty == false ? cleanedOwnerTitle : nil) ?? selectionOwnerTitle(for: source)
