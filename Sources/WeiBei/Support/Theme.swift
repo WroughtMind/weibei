@@ -151,20 +151,30 @@ struct WeiBeiGlassHeaderBackground: View {
     var body: some View {
         ZStack {
             Rectangle()
-                .fill(.ultraThinMaterial)
+                .fill(.regularMaterial)
                 .opacity(materialOpacity)
+
+            Rectangle()
+                .fill(WeiBeiTheme.paperRaised.opacity(paperWashOpacity))
+
             LinearGradient(
                 colors: [
-                    WeiBeiTheme.glassHighlight.opacity(0.30),
-                    WeiBeiTheme.glassTint.opacity(min(0.92, paperOpacity + 0.06)),
-                    WeiBeiTheme.paper.opacity(min(0.86, paperOpacity + 0.02))
+                    WeiBeiTheme.glassHighlight.opacity(0.20),
+                    WeiBeiTheme.glassTint.opacity(0.24),
+                    WeiBeiTheme.paper.opacity(0.13),
+                    WeiBeiTheme.paper.opacity(0.04)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
+
             Rectangle()
-                .fill(WeiBeiTheme.paperInset.opacity(0.06))
+                .fill(WeiBeiTheme.paperInset.opacity(0.018))
         }
+    }
+
+    private var paperWashOpacity: Double {
+        min(0.48, max(0.22, paperOpacity * 0.42))
     }
 }
 
@@ -175,8 +185,9 @@ struct WeiBeiHeaderHandoffFade: View {
     var body: some View {
         LinearGradient(
             colors: [
-                WeiBeiTheme.paperInset.opacity(0.10 * opacity),
-                WeiBeiTheme.paper.opacity(0.20 * opacity),
+                WeiBeiTheme.glassTint.opacity(0.16 * opacity),
+                WeiBeiTheme.paperRaised.opacity(0.13 * opacity),
+                WeiBeiTheme.paper.opacity(0.08 * opacity),
                 .clear
             ],
             startPoint: .top,

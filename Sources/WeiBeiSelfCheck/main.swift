@@ -93,6 +93,11 @@ let contentViewSourceURL = URL(fileURLWithPath: FileManager.default.currentDirec
     .appendingPathComponent("Sources/WeiBei/Views/ContentView.swift")
 let contentViewSource = (try? String(contentsOf: contentViewSourceURL, encoding: .utf8)) ?? ""
 expect(!contentViewSource.isEmpty, "content view source is readable")
+let themeSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Support/Theme.swift")
+let themeSource = (try? String(contentsOf: themeSourceURL, encoding: .utf8)) ?? ""
+expect(themeSource.contains(".fill(.regularMaterial)") && themeSource.contains("paperWashOpacity"), "header glass uses one shared paper material wash")
+expect(themeSource.contains("WeiBeiTheme.glassTint.opacity(0.16 * opacity)") && !themeSource.contains("WeiBeiTheme.paperInset.opacity(0.10 * opacity)"), "header handoff fade avoids a hard paper edge")
 expect(contentViewSource.contains("ResizableTwoPane<First: View, Second: View>: NSViewRepresentable"), "two-pane layout uses native bridge")
 expect(contentViewSource.contains("ResizableThreePane<First: View, Second: View, Third: View>: NSViewRepresentable"), "three-pane layout uses native bridge")
 expect(contentViewSource.contains("WeiBeiSplitView: NSSplitView"), "content panes use native split view")
