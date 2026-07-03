@@ -535,6 +535,7 @@ final class WorkspaceStore: ObservableObject {
                 guard hasSelectedMaterial else { return false }
                 animatePanelChange { revealReaderSearch() }
             case "return":
+                guard !isAskingAgent && !agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
                 Task { await askAgent() }
             default:
                 return false
