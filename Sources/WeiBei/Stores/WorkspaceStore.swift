@@ -79,14 +79,14 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var navigableItems: [StudyItem] {
+        let materialItems = allItems.filter { !$0.isNotebookNote }
         let query = librarySearch.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !query.isEmpty else { return allItems }
-        let filteredImported = importedItems.filter {
+        guard !query.isEmpty else { return materialItems }
+        return materialItems.filter {
             $0.title.localizedCaseInsensitiveContains(query)
                 || $0.subtitle.localizedCaseInsensitiveContains(query)
                 || $0.kind.label.localizedCaseInsensitiveContains(query)
         }
-        return sampleItems + filteredImported
     }
 
     var selectedItem: StudyItem? {
