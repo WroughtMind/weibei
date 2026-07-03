@@ -208,17 +208,10 @@ private struct UnifiedTopBarView: View {
                     .foregroundColor(primaryText)
                     .foregroundStyle(primaryText)
                     .tint(WeiBeiTheme.link)
-                .font(.system(size: 12))
-                .padding(.horizontal, 10)
-                .frame(width: 220, height: controlHeight)
-                .environment(\.colorScheme, .light)
-                .background(controlFill)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(dividerColor, lineWidth: 1)
-                }
-                .weibeiInputPrompt("当前资料内搜索", visible: store.readerSearch.isEmpty, fontSize: 12)
+                    .font(.system(size: 12))
+                    .weibeiInputSurface(active: searchFocused.wrappedValue, height: controlHeight)
+                    .weibeiInputPrompt("当前资料内搜索", visible: store.readerSearch.isEmpty, fontSize: 12)
+                    .frame(width: 220)
                 .onExitCommand {
                     withAnimation(WeiBeiMotion.panel) {
                         store.hideReaderSearch()

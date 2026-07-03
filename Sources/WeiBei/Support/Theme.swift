@@ -93,7 +93,7 @@ final class WeiBeiPromptDrawingView: NSView {
         paragraph.lineBreakMode = .byTruncatingTail
         return [
             .font: font,
-            .foregroundColor: WeiBeiTheme.secondaryInkNS.withAlphaComponent(0.92),
+            .foregroundColor: WeiBeiTheme.secondaryInkNS.withAlphaComponent(0.96),
             .paragraphStyle: paragraph
         ]
     }

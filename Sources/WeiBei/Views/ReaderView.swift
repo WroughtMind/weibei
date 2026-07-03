@@ -77,19 +77,19 @@ struct ReaderView: View {
     }
 
     private var pdfFloatingControls: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 6) {
             pdfControls
         }
         .buttonStyle(.plain)
         .foregroundStyle(WeiBeiTheme.ink)
-        .padding(2)
+        .padding(3)
         .background {
             ZStack {
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(WeiBeiTheme.paperRaised.opacity(pdfControlsHovering ? 0.92 : 0.76))
+                    .fill(WeiBeiTheme.paperRaised.opacity(pdfControlsHovering ? 0.90 : 0.68))
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(.ultraThinMaterial)
-                    .opacity(pdfControlsHovering ? 0.045 : 0.018)
+                    .fill(.regularMaterial)
+                    .opacity(pdfControlsHovering ? 0.035 : 0.012)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -97,8 +97,8 @@ struct ReaderView: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(WeiBeiTheme.hairline.opacity(pdfControlsHovering ? 0.82 : 0.46), lineWidth: 1)
         }
-        .shadow(color: WeiBeiTheme.ink.opacity(pdfControlsHovering ? 0.055 : 0.018), radius: 8, y: 3)
-        .opacity(pdfControlsHovering || pdfBrowseMode == .page ? 1 : 0.58)
+        .shadow(color: WeiBeiTheme.ink.opacity(pdfControlsHovering ? 0.045 : 0.014), radius: 7, y: 3)
+        .opacity(pdfControlsHovering || pdfBrowseMode == .page ? 0.96 : 0.44)
         .offset(y: pdfControlsHovering ? 0 : 1)
         .contentShape(RoundedRectangle(cornerRadius: 8))
         .onHover { hovering in
@@ -150,15 +150,10 @@ struct ReaderView: View {
                 pdfBrowseMode = pdfBrowseMode.toggled
             }
         } label: {
-            HStack(spacing: 5) {
-                Image(systemName: pdfBrowseMode.systemImage)
-                    .font(.system(size: 11, weight: .semibold))
-                Text(pdfBrowseMode.label)
-                    .font(.system(size: 11, weight: .medium))
-            }
+            Image(systemName: pdfBrowseMode.systemImage)
+                .font(.system(size: 12, weight: .semibold))
             .foregroundStyle(WeiBeiTheme.secondaryInk)
-            .padding(.horizontal, 7)
-            .frame(height: 22)
+            .frame(width: 24, height: 24)
             .background(WeiBeiTheme.paperInset.opacity(pdfControlsHovering ? 0.24 : 0.10))
             .contentShape(RoundedRectangle(cornerRadius: 6))
             .clipShape(RoundedRectangle(cornerRadius: 6))
