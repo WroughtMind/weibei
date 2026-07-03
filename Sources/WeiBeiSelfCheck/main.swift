@@ -175,6 +175,7 @@ expect(workspaceStoreSource.contains("animateLayoutChange") && workspaceStoreSou
 expect(workspaceStoreSource.contains("animatePanelChange") && workspaceStoreSource.contains("withAnimation(WeiBeiMotion.panel)"), "app shortcut panel changes stay animated")
 expect(workspaceStoreSource.contains("if modifiers == [.command, .shift]") && workspaceStoreSource.contains("applyLastAgentAnswerToNote()") && workspaceStoreSource.contains("replaceSelectionWithLastAgentAnswer()") && workspaceStoreSource.contains("applyAgentPatchToEditor()"), "app shortcut handler owns command-shift agent write actions")
 expect(workspaceStoreSource.contains("selectAdjacentItem(step: -1)") && workspaceStoreSource.contains("Task { await askAgent() }"), "app shortcut handler covers navigation and agent send")
+expect(workspaceStoreSource.contains("showQuietInsight = agentSurface == .quietInsight") && !workspaceStoreSource.contains("agentSurface = .quietInsight\n            showQuietInsight = true"), "immersive reading preserves the chosen agent surface")
 expect(workspaceStoreSource.contains("func updateNote(_ value: String, for itemID: String?)") && workspaceStoreSource.contains("guard itemID == selectedItemID else { return }"), "note writes are bound to the current selected item")
 expect(workspaceStoreSource.contains("func insertMarkdownSnippet(_ markdown: String)")
     && workspaceStoreSource.contains("layout = .immersiveWriting")

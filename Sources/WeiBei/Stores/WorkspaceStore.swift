@@ -271,8 +271,7 @@ final class WorkspaceStore: ObservableObject {
             .reader
         }
         if layout == .immersiveReading {
-            agentSurface = .quietInsight
-            showQuietInsight = true
+            showQuietInsight = agentSurface == .quietInsight
         }
         if layout == .immersiveConversation {
             showReaderSearch = false
