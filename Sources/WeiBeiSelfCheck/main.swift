@@ -194,6 +194,13 @@ expect(workspaceStoreSource.contains("来源：\\(selectionContext.ownerTitle)")
 expect(workspaceStoreSource.contains("selectionOwnerTitle(for source: SelectionSource)") && workspaceStoreSource.contains("selectedItem?.isNotebookNote == true"), "selection fallback title treats notebook notes as notes")
 expect(workspaceStoreSource.contains("var selectedMaterialItem") && workspaceStoreSource.contains("!item.isNotebookNote"), "selected material excludes notebook notes")
 expect(workspaceStoreSource.contains("var navigableItems") && workspaceStoreSource.contains("let materialItems = allItems.filter { !$0.isNotebookNote }"), "material navigation skips notebook notes")
+expect(
+    workspaceStoreSource.contains("clearReaderSearchIfNeeded()")
+        && workspaceStoreSource.contains("guard !hasSelectedMaterial else { return }")
+        && workspaceStoreSource.contains("showReaderSearch = false")
+        && workspaceStoreSource.contains("readerSearch = \"\""),
+    "material search state clears when selection no longer points to a material"
+)
 expect(workspaceStoreSource.contains("var selectedMaterialTitle") && workspaceStoreSource.contains("selectedMaterialItem?.title ?? \"未选择材料\""), "agent material title does not invent a current material")
 expect(!workspaceStoreSource.contains("selectedItem?.title ?? \"当前材料\"") && !workspaceStoreSource.contains("保存后 Agent 会用当前材料"), "agent context avoids fake material fallback copy")
 expect(workspaceStoreSource.contains("var agentPromptScope") && workspaceStoreSource.contains("var selectionPromptScope") && workspaceStoreSource.contains("var libraryOrganizationScope"), "agent prompt builders share context wording")

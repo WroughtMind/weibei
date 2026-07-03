@@ -198,6 +198,7 @@ final class WorkspaceStore: ObservableObject {
     func select(itemID: String?) {
         persistCurrentNote()
         selectedItemID = itemID
+        clearReaderSearchIfNeeded()
         noteText = noteText(for: selectedItem)
         messages = []
         clearGeneratedQuietInsight()
@@ -469,6 +470,12 @@ final class WorkspaceStore: ObservableObject {
         withAnimation(WeiBeiMotion.panel) {
             action()
         }
+    }
+
+    private func clearReaderSearchIfNeeded() {
+        guard !hasSelectedMaterial else { return }
+        showReaderSearch = false
+        readerSearch = ""
     }
 
     private static func shortcutKey(from event: NSEvent) -> String? {
