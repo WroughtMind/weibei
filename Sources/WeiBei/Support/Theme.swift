@@ -34,14 +34,9 @@ struct WeiBeiInputPrompt: View {
 
     var body: some View {
         Text(text)
-            // macOS vibrancy can lift prompt text toward white inside glass surfaces.
-            // Draw white glyphs, then multiply by semantic ink so the final pixels stay readable.
-            .foregroundColor(.white)
-            .foregroundStyle(.white)
-            .colorMultiply(WeiBeiTheme.tertiaryInk)
-            .compositingGroup()
-            .blendMode(.normal)
-            .opacity(0.96)
+            .foregroundColor(WeiBeiTheme.tertiaryInk)
+            .foregroundStyle(WeiBeiTheme.tertiaryInk)
+            .opacity(0.90)
             .allowsHitTesting(false)
             .accessibilityHidden(true)
     }

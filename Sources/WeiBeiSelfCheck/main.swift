@@ -176,9 +176,12 @@ expect(themeSource.contains(".fill(.regularMaterial)") && themeSource.contains("
 expect(themeSource.contains("WeiBeiTheme.glassTint.opacity(0.16 * opacity)") && !themeSource.contains("WeiBeiTheme.paperInset.opacity(0.10 * opacity)"), "header handoff fade avoids a hard paper edge")
 expect(
     themeSource.contains("struct WeiBeiInputPrompt")
-        && themeSource.contains(".colorMultiply(WeiBeiTheme.tertiaryInk)")
-        && themeSource.contains(".blendMode(.normal)"),
-    "input placeholders force readable semantic ink after glass vibrancy"
+        && themeSource.contains(".foregroundColor(WeiBeiTheme.tertiaryInk)")
+        && themeSource.contains(".foregroundStyle(WeiBeiTheme.tertiaryInk)")
+        && !themeSource.contains(".foregroundColor(.white)")
+        && !themeSource.contains(".foregroundStyle(.white)")
+        && !themeSource.contains(".colorMultiply(WeiBeiTheme.tertiaryInk)"),
+    "input placeholders draw readable semantic ink without white vibrancy hacks"
 )
 expect(themeSource.contains("func weibeiInputSurface") && themeSource.contains(".foregroundColor(WeiBeiTheme.ink)") && themeSource.contains(".foregroundStyle(WeiBeiTheme.ink)") && themeSource.contains(".tint(WeiBeiTheme.link)"), "input surfaces force readable text color on paper")
 expect(contentViewSource.contains("ResizableTwoPane<First: View, Second: View>: NSViewRepresentable"), "two-pane layout uses native bridge")
@@ -343,12 +346,16 @@ expect(workspaceStoreSource.contains("var agentPromptScope") && workspaceStoreSo
 expect(!workspaceStoreSource.contains("请根据当前文档和当前笔记") && !workspaceStoreSource.contains("请根据当前材料和当前笔记") && !workspaceStoreSource.contains("结合当前文档和笔记"), "agent draft presets do not hardcode fake material context")
 expect(workspaceStoreSource.contains("func resetNote()") && workspaceStoreSource.contains("createNotebookNote()") && !workspaceStoreSource.contains("updateNote(defaultNote(for: selectedItem))"), "new note command creates a notebook note instead of overwriting the current material note")
 expect(workspaceStoreSource.contains("isNotebookNote: true") && workspaceStoreSource.contains("nextNotebookNoteURL") && workspaceStoreSource.contains("try defaultNote(for: item).write"), "new notebook notes are backed by local markdown files")
+expect(workspaceStoreSource.contains("importedItems.append(item)\n            revealRichWritingSurface()\n            select(itemID: item.id)"), "new notebook notes reveal the rich writing surface")
 expect(workspaceStoreSource.contains("let title = item?.title ?? \"新笔记\"") && workspaceStoreSource.contains("let excerptSeed = item.map { $0.isNotebookNote ? \"- \" : \"> 来源：\\($0.title)\" } ?? \"- \"") && !workspaceStoreSource.contains("未命名材料"), "standalone note template avoids fake material/source copy")
 expect(workspaceStoreSource.contains("已创建双链笔记：\\(url.lastPathComponent)") && !workspaceStoreSource.contains("已创建双链笔记：\\(url.path)") && !workspaceStoreSource.contains("无法创建双链笔记：\\(url.path)"), "wikilink note statuses avoid exposing full local paths")
-expect(workspaceStoreSource.contains("func insertMarkdownSnippet(_ markdown: String)")
+expect(workspaceStoreSource.contains("private func revealRichWritingSurface()")
     && workspaceStoreSource.contains("layout = .immersiveWriting")
     && workspaceStoreSource.contains("showRightPane = true")
-    && workspaceStoreSource.contains("noteRenderMode = .rich"), "markdown snippet insertion reveals the rich writing surface")
+    && workspaceStoreSource.contains("noteRenderMode = .rich"), "writing actions share one rich writing surface reveal")
+expect(workspaceStoreSource.contains("func insertMarkdownSnippet(_ markdown: String) {\n        revealRichWritingSurface()")
+    && workspaceStoreSource.contains("func useSelectedMarkdownAsNotebookNote()")
+    && workspaceStoreSource.contains("revealRichWritingSurface()\n        focus(.notes)"), "markdown insertion and imported markdown notes reveal the rich writing surface")
 expect(!workspaceStoreSource.contains("当前页提示"), "quiet insight avoids old page alert title")
 expect(workspaceStoreSource.contains("阅读线索"), "quiet insight uses margin-note language")
 expect(appSource.contains("if store.hasSelectedMaterial || store.selectionContext != nil") && appSource.contains("if store.hasSelectedMaterial") && appSource.contains("Button(\"搜索当前资料\")"), "app menu hides material-only actions when there is no material context")

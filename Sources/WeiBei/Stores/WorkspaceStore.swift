@@ -392,7 +392,7 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
-    func insertMarkdownSnippet(_ markdown: String) {
+    private func revealRichWritingSurface() {
         if layout == .immersiveReading || layout == .immersiveConversation {
             layout = .immersiveWriting
         }
@@ -400,6 +400,10 @@ final class WorkspaceStore: ObservableObject {
             showRightPane = true
         }
         noteRenderMode = .rich
+    }
+
+    func insertMarkdownSnippet(_ markdown: String) {
+        revealRichWritingSurface()
         noteEditorCommand = NoteEditorCommand(kind: .insertMarkdown, markdown: markdown)
         focus(.notes)
         save()
@@ -701,7 +705,7 @@ final class WorkspaceStore: ObservableObject {
             )
             try defaultNote(for: item).write(to: url, atomically: true, encoding: .utf8)
             importedItems.append(item)
-            noteRenderMode = .rich
+            revealRichWritingSurface()
             select(itemID: item.id)
             noteFileError = "已创建笔记：\(url.lastPathComponent)"
         } catch {
@@ -715,7 +719,7 @@ final class WorkspaceStore: ObservableObject {
         persistCurrentNote()
         importedItems[index].isNotebookNote = true
         noteText = noteText(for: importedItems[index])
-        noteRenderMode = .rich
+        revealRichWritingSurface()
         focus(.notes)
         save()
     }
