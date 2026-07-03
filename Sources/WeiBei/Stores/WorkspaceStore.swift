@@ -601,12 +601,12 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func copyCurrentReference() {
-        let itemTitle = selectedItem?.title ?? "当前材料"
         let selection = selectionContext?.text.trimmingCharacters(in: .whitespacesAndNewlines)
         let reference: String
-        if let selection, !selection.isEmpty {
-            reference = "> \(selection)\n来源：\(itemTitle)"
+        if let selectionContext, let selection, !selection.isEmpty {
+            reference = "> \(selection)\n来源：\(selectionContext.ownerTitle)"
         } else {
+            guard let itemTitle = selectedItem?.title else { return }
             reference = "来源：\(itemTitle)"
         }
         NSPasteboard.general.clearContents()
@@ -620,7 +620,7 @@ final class WorkspaceStore: ObservableObject {
         selectionContext = SelectionContext(
             text: String(cleaned.prefix(2_000)),
             source: source,
-            ownerTitle: selectedItem?.title ?? "当前材料",
+            ownerTitle: selectedItem?.title ?? (source == .note ? "当前笔记" : "当前文档"),
             isEditable: isEditable
         )
         selectionAnchor = anchor

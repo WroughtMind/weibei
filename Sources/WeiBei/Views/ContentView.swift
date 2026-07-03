@@ -834,19 +834,24 @@ private struct LayoutContentView: View {
     }
 
     private var conversationSourceRailItems: [ContextRailItem] {
-        var items = [
-            ContextRailItem(
-                title: store.selectedItem?.title ?? "当前材料",
-                help: "切回沉浸阅读",
-                systemImage: store.selectedItem?.kind.systemImage ?? "doc.text",
-                emphasized: true
-            ) {
-                openReader()
-            },
+        var items: [ContextRailItem] = []
+        if let item = store.selectedItem {
+            items.append(
+                ContextRailItem(
+                    title: item.title,
+                    help: "切回沉浸阅读",
+                    systemImage: item.kind.systemImage,
+                    emphasized: true
+                ) {
+                    openReader()
+                }
+            )
+        }
+        items.append(
             ContextRailItem(title: "当前笔记", help: "切回沉浸写作", systemImage: "square.and.pencil") {
                 openWriting()
             }
-        ]
+        )
         if store.selectionContext != nil {
             items.append(
                 ContextRailItem(title: "选区", help: "用 Agent 追问当前选区", systemImage: "text.cursor") {
@@ -879,19 +884,27 @@ private struct LayoutContentView: View {
     }
 
     private var writingDocumentRailItems: [ContextRailItem] {
-        [
-            ContextRailItem(
-                title: store.selectedItem?.title ?? "当前材料",
-                help: "切回沉浸阅读",
-                systemImage: store.selectedItem?.kind.systemImage ?? "doc.text",
-                emphasized: true
-            ) {
-                openReader()
-            },
-            ContextRailItem(title: "引用", help: "复制当前材料或选区引用", systemImage: "quote.opening") {
-                store.copyCurrentReference()
-            }
-        ]
+        var items: [ContextRailItem] = []
+        if let item = store.selectedItem {
+            items.append(
+                ContextRailItem(
+                    title: item.title,
+                    help: "切回沉浸阅读",
+                    systemImage: item.kind.systemImage,
+                    emphasized: true
+                ) {
+                    openReader()
+                }
+            )
+        }
+        if store.selectedItem != nil || store.selectionContext != nil {
+            items.append(
+                ContextRailItem(title: "引用", help: "复制当前材料或选区引用", systemImage: "quote.opening") {
+                    store.copyCurrentReference()
+                }
+            )
+        }
+        return items
     }
 
     private var writingAssistRailItems: [ContextRailItem] {
