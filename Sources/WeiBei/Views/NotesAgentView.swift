@@ -752,14 +752,18 @@ struct AgentPaneView: View {
                 .lineLimit(1)
 
             HStack(spacing: 8) {
-                starterChip("梳理材料", systemImage: "text.alignleft") {
-                    askWith("请基于当前材料提炼核心概念、关键公式和需要回看出处的位置。")
+                if store.selectedItem != nil {
+                    starterChip("梳理材料", systemImage: "text.alignleft") {
+                        askWith("请基于当前材料提炼核心概念、关键公式和需要回看出处的位置。")
+                    }
                 }
                 starterChip("整理笔记", systemImage: "list.bullet.rectangle") {
                     store.askToOrganizeNote()
                 }
-                starterChip("出复习题", systemImage: "questionmark.square") {
-                    askWith("请根据当前材料和笔记生成 5 个复习问题，并标出每题依据。")
+                if store.selectedItem != nil {
+                    starterChip("出复习题", systemImage: "questionmark.square") {
+                        askWith("请根据当前材料和笔记生成 5 个复习问题，并标出每题依据。")
+                    }
                 }
             }
         }
@@ -864,8 +868,8 @@ struct AgentDrawerView: View {
             .animation(WeiBeiMotion.micro, value: canSend)
 
             HStack(spacing: 8) {
-                Label("来源", systemImage: "link")
-                Text(store.selectedItem?.title ?? "当前材料")
+                Label(store.selectedItem == nil ? "笔记" : "来源", systemImage: store.selectedItem == nil ? "square.and.pencil" : "link")
+                Text(store.selectedItem?.title ?? "当前笔记")
                     .lineLimit(1)
                 Spacer()
             }
