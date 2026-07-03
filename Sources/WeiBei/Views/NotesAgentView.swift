@@ -35,11 +35,11 @@ struct NotePaneView: View {
                     .buttonStyle(WeiBeiTextActionButtonStyle())
                     .help("新建独立 Markdown 笔记")
                     if store.canUseSelectedMarkdownAsNotebookNote {
-                        Button("写回原 Markdown") {
+                        Button("作为笔记编辑") {
                             store.useSelectedMarkdownAsNotebookNote()
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
-                        .help("把当前 Markdown 文件作为可原地写作的笔记")
+                        .help("把当前 Markdown 文件移到笔记区原地编辑")
                     }
                 }
             }

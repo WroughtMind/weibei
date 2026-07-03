@@ -42,7 +42,7 @@ struct CommandPaletteView: View {
         ]
         if store.canUseSelectedMarkdownAsNotebookNote {
             items.insert(
-                PaletteCommand(title: "写回当前 Markdown 文件", shortcut: "") { store.useSelectedMarkdownAsNotebookNote() },
+                PaletteCommand(title: "作为笔记编辑当前 Markdown", shortcut: "") { store.useSelectedMarkdownAsNotebookNote() },
                 at: 2
             )
         }
