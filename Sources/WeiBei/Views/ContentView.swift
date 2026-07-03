@@ -888,9 +888,6 @@ private struct LayoutContentView: View {
             ) {
                 openReader()
             },
-            ContextRailItem(title: "来源预览", help: "查看当前材料", systemImage: "doc.text.magnifyingglass") {
-                openReader()
-            },
             ContextRailItem(title: "引用", help: "复制当前材料或选区引用", systemImage: "quote.opening") {
                 store.copyCurrentReference()
             }
