@@ -517,6 +517,15 @@ if let cornerStart = notesAgentSource.range(of: "struct CornerAgentView")?.lower
 } else {
     expect(false, "corner agent source is readable")
 }
+if let selectionStart = notesAgentSource.range(of: "struct FloatingSelectionAgentView")?.lowerBound,
+   let contextRailStart = notesAgentSource.range(of: "struct ContextRailItem")?.lowerBound {
+    let floatingSelectionSource = String(notesAgentSource[selectionStart..<contextRailStart])
+    expect(floatingSelectionSource.contains("private var promptSeparator: some View")
+        && floatingSelectionSource.contains("WeiBeiTheme.hairline.opacity(0.78)")
+        && !floatingSelectionSource.contains("Divider()"), "selection floating agent uses WeiBei hairline separators instead of system dividers")
+} else {
+    expect(false, "selection floating agent source is readable")
+}
 expect(notesAgentSource.contains("private var agentInputTray: some View"), "agent pane uses a dedicated input tray")
 expect(notesAgentSource.contains("WeiBeiGlassHeaderBackground(") && notesAgentSource.contains("WeiBeiTheme.glassTint.opacity(0.66)"), "agent input tray uses paper glass fade instead of a hard white strip")
 expect(!notesAgentSource.contains(".disabled(store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)") && !notesAgentSource.contains(".disabled(!canSend)") && !notesAgentSource.contains(".disabled(store.isAskingAgent)"), "agent inputs hide unavailable send actions instead of showing disabled buttons")

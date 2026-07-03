@@ -1039,9 +1039,7 @@ struct FloatingSelectionAgentView: View {
             .foregroundStyle(WeiBeiTheme.link)
 
             if store.canOpenSelectedSourceReference {
-                Divider()
-                    .frame(height: 14)
-                    .padding(.horizontal, 8)
+                promptSeparator
 
                 Button("来源") {
                     openSourceReference()
@@ -1049,9 +1047,7 @@ struct FloatingSelectionAgentView: View {
             }
 
             if store.selectionContext != nil {
-                Divider()
-                    .frame(height: 14)
-                    .padding(.horizontal, 8)
+                promptSeparator
 
                 Button("摘录") {
                     store.appendSelectionToNote()
@@ -1075,6 +1071,13 @@ struct FloatingSelectionAgentView: View {
         .padding(.horizontal, 10)
         .frame(height: 32)
         .fixedSize()
+    }
+
+    private var promptSeparator: some View {
+        Rectangle()
+            .fill(WeiBeiTheme.hairline.opacity(0.78))
+            .frame(width: 1, height: 14)
+            .padding(.horizontal, 8)
     }
 
     private var expandedBody: some View {
