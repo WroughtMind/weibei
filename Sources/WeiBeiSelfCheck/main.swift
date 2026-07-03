@@ -61,6 +61,21 @@ let coveredMaterialInsight = QuietInsight.make(
     selectionText: nil
 )
 expect(coveredMaterialInsight.body.contains("已经覆盖"), "covered material insight")
+let noteOnlyInsight = QuietInsight.make(
+    materialTitle: "新概念笔记",
+    materialText: "",
+    noteText: "实际利率需要区分名义利率和通胀预期。",
+    selectionText: nil
+)
+expect(noteOnlyInsight.body.contains("当前笔记有一条") && !noteOnlyInsight.body.contains("先导入"), "note-only quiet insight uses note context")
+expect(noteOnlyInsight.noteBlock.contains("来源：新概念笔记"), "note-only quiet insight keeps note source")
+let coveredNoteSelectionInsight = QuietInsight.make(
+    materialTitle: "新概念笔记",
+    materialText: "",
+    noteText: "实际利率需要区分名义利率和通胀预期。",
+    selectionText: "实际利率需要区分名义利率和通胀预期。"
+)
+expect(!coveredNoteSelectionInsight.body.contains("当前材料其他段落"), "covered note selection avoids fake material relation")
 let agentInsight = QuietInsight.agent(materialTitle: "利率资料", answer: "这份材料更适合先补通胀预期这一层。")
 expect(agentInsight?.body.contains("通胀预期") == true, "agent insight keeps answer")
 expect(agentInsight?.noteBlock.contains("Agent 洞察") == true, "agent insight writes labeled note block")
@@ -219,6 +234,7 @@ expect(
 )
 expect(workspaceStoreSource.contains("var selectedMaterialTitle") && workspaceStoreSource.contains("selectedMaterialItem?.title ?? \"未选择材料\""), "agent material title does not invent a current material")
 expect(workspaceStoreSource.contains("var agentMessageSourceTitle: String?") && workspaceStoreSource.contains("selectedMaterialItem?.title ?? selectedItem?.title") && !workspaceStoreSource.contains("source: selectedMaterialItem?.title"), "agent message source falls back to the selected note title")
+expect(workspaceStoreSource.contains("private var quietInsightReferenceTitle: String") && workspaceStoreSource.contains("selectionContext?.ownerTitle ?? selectedMaterialItem?.title ?? selectedItem?.title") && workspaceStoreSource.contains("没有证据就说\\(evidenceText)"), "quiet insight uses real note or material source wording")
 expect(!workspaceStoreSource.contains("selectedItem?.title ?? \"当前材料\"") && !workspaceStoreSource.contains("保存后 Agent 会用当前材料") && !workspaceStoreSource.contains("已选择材料、当前选区和右侧笔记"), "agent context avoids fake material fallback copy")
 expect(workspaceStoreSource.contains("var agentPromptScope") && workspaceStoreSource.contains("var selectionPromptScope") && workspaceStoreSource.contains("var libraryOrganizationScope"), "agent prompt builders share context wording")
 expect(!workspaceStoreSource.contains("请根据当前文档和当前笔记") && !workspaceStoreSource.contains("请根据当前材料和当前笔记") && !workspaceStoreSource.contains("结合当前文档和笔记"), "agent draft presets do not hardcode fake material context")

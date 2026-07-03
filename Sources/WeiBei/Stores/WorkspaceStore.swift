@@ -168,7 +168,7 @@ final class WorkspaceStore: ObservableObject {
             return generatedQuietInsight
         }
         return QuietInsight.make(
-            materialTitle: selectedMaterialTitle,
+            materialTitle: quietInsightReferenceTitle,
             materialText: selectedContextText,
             noteText: noteText,
             selectionText: selectionContext?.text
@@ -768,8 +768,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func askQuietInsight() {
+        let evidenceText = hasSelectedMaterial ? "未在材料中确认" : "未在笔记或选区中确认"
         agentDraft = """
-        请根据这条阅读线索继续解释，并结合\(agentPromptScope)回答。没有证据就说未在材料中确认。
+        请根据这条阅读线索继续解释，并结合\(agentPromptScope)回答。没有证据就说\(evidenceText)。
 
         阅读线索：
         \(quietInsight.body)
@@ -780,11 +781,12 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func refreshQuietInsight() async {
-        let materialTitle = selectedMaterialTitle
+        let materialTitle = quietInsightReferenceTitle
         let materialText = selectedContextText
         let currentNoteText = noteText
         let selectionText = selectionContext?.text
         let contextScope = hasSelectedMaterial ? "当前材料、当前选区和当前笔记" : "当前选区和当前笔记"
+        let evidenceText = hasSelectedMaterial ? "如果材料没有证据，就直接说未在材料中确认。" : "如果笔记和选区没有证据，就直接说未在笔记或选区中确认。"
         let signature = makeQuietInsightSignature(materialText: materialText, noteText: currentNoteText, selectionText: selectionText)
         guard signature != quietInsightSignature else { return }
         guard let credential = resolvedOpenAIAPIKey() else {
@@ -798,7 +800,7 @@ final class WorkspaceStore: ObservableObject {
         do {
             let client = OpenAIResponsesClient(apiKey: credential.key, model: resolvedModelName)
             let answer = try await client.ask(
-                question: "请静默阅读\(contextScope)，只输出一条最值得提示给用户的洞察。要温和、短、可执行；如果材料没有证据，就直接说未在材料中确认。",
+                question: "请静默阅读\(contextScope)，只输出一条最值得提示给用户的洞察。要温和、短、可执行；\(evidenceText)",
                 materialTitle: materialTitle,
                 materialText: materialText,
                 noteText: currentNoteText,
@@ -811,6 +813,10 @@ final class WorkspaceStore: ObservableObject {
         } catch {
             generatedQuietInsight = nil
         }
+    }
+
+    private var quietInsightReferenceTitle: String {
+        selectionContext?.ownerTitle ?? selectedMaterialItem?.title ?? selectedItem?.title ?? "当前笔记"
     }
 
     func sortImportedItems() {

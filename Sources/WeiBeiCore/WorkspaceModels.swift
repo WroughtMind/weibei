@@ -441,18 +441,24 @@ public struct QuietInsight: Hashable {
     }
 
     public static func make(materialTitle: String, materialText: String, noteText: String, selectionText: String?) -> QuietInsight {
+        let hasMaterial = !materialText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if let selection = selectionText?.trimmingCharacters(in: .whitespacesAndNewlines), !selection.isEmpty {
             let excerpt = short(selection, count: 54)
             if !noteText.contains(String(selection.prefix(18))) {
                 let body = "选区还没有进入笔记：\(excerpt)。先收为摘录，再补一句自己的判断。"
                 return QuietInsight(body: body, noteBlock: "- 静默洞察：\(body)\n  来源：\(materialTitle)")
             }
-            let body = "选区已经出现在笔记里。下一步更适合追问它和当前材料其他段落的关系。"
+            let body = hasMaterial ? "选区已经出现在笔记里。下一步更适合追问它和当前材料其他段落的关系。" : "选区已经出现在笔记里。下一步更适合追问这段话还能补哪条依据。"
             return QuietInsight(body: body, noteBlock: "- 静默洞察：\(body)\n  来源：\(materialTitle)")
         }
 
         let candidate = firstUsefulLine(in: materialText)
         guard !candidate.isEmpty else {
+            let noteCandidate = firstUsefulLine(in: noteText)
+            if !noteCandidate.isEmpty {
+                let body = "当前笔记有一条可以继续整理：\(short(noteCandidate, count: 58))。建议补来源或写成问题。"
+                return QuietInsight(body: body, noteBlock: "- 静默洞察：\(body)\n  来源：\(materialTitle)")
+            }
             let body = "当前没有可读材料。先导入或选择一份 HTML、PDF 或 Markdown。"
             return QuietInsight(body: body, noteBlock: "- 静默洞察：\(body)")
         }
