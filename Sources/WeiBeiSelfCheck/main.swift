@@ -195,6 +195,12 @@ expect(workspaceStoreSource.contains("selectionOwnerTitle(for source: SelectionS
 expect(workspaceStoreSource.contains("var selectedMaterialItem") && workspaceStoreSource.contains("!item.isNotebookNote"), "selected material excludes notebook notes")
 expect(workspaceStoreSource.contains("var navigableItems") && workspaceStoreSource.contains("let materialItems = allItems.filter { !$0.isNotebookNote }"), "material navigation skips notebook notes")
 expect(
+    workspaceStoreSource.contains("guard hasSelectedMaterial else")
+        && workspaceStoreSource.contains("clearReaderSearchIfNeeded()")
+        && workspaceStoreSource.contains("func revealReaderSearch()"),
+    "reader search reveal refuses notebook-only context"
+)
+expect(
     workspaceStoreSource.contains("clearReaderSearchIfNeeded()")
         && workspaceStoreSource.contains("guard !hasSelectedMaterial else { return }")
         && workspaceStoreSource.contains("showReaderSearch = false")

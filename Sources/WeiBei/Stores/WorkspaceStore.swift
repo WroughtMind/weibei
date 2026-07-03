@@ -268,6 +268,10 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func revealReaderSearch() {
+        guard hasSelectedMaterial else {
+            clearReaderSearchIfNeeded()
+            return
+        }
         showReaderSearch = true
         focus(.reader)
     }
