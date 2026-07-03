@@ -13,6 +13,7 @@ let runScriptURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath
 let runScript = (try? String(contentsOf: runScriptURL, encoding: .utf8)) ?? ""
 expect(runScript.contains("kCGWindowOwnerName") && runScript.contains("\"$APP_DISPLAY_NAME\""), "run script verifies the visible app window by owner name")
 expect(!runScript.contains("pid=\"$(pgrep -x \"$PRODUCT_NAME\""), "run script window verification does not depend on pgrep")
+expect(runScript.contains("visual_verify_window") && runScript.contains("--visual-verify") && runScript.contains("visual_non_black_ratio") && runScript.contains("visual verify failed: captured window is black or empty") && runScript.contains("nonBlackRatio < 0.02"), "run script exposes an explicit visual non-black window check")
 let editorIndexURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Resources/Editor/index.html")
 let editorIndexSource = (try? String(contentsOf: editorIndexURL, encoding: .utf8)) ?? ""
@@ -22,6 +23,9 @@ expect(
         && editorIndexSource.contains(".ProseMirror .math-block"),
     "math styling hides raw source for both Milkdown math node class shapes"
 )
+expect(editorIndexSource.contains(".ProseMirror .math-inline {\n      color: transparent") && editorIndexSource.contains(".ProseMirror .katex-error {\n      color: var(--cinnabar)"), "math styling hides raw source while keeping KaTeX errors readable")
+expect(editorIndexSource.contains("color: rgba(58, 46, 38, .56)") && !editorIndexSource.contains("color: rgba(58, 46, 38, .36)"), "editable markdown markers stay readable on paper")
+expect(editorIndexSource.contains(".frontmatter-title {\n      color: var(--muted)") && editorIndexSource.contains("li[data-item-type=\"task\"][data-checked=\"true\"] {\n      color: var(--muted)"), "small frontmatter and completed task text avoid faint low-contrast ink")
 expect(editorIndexSource.contains(".weibei-source-reference") && editorIndexSource.contains("border-bottom: 1px dotted"), "source references have readable link styling")
 
 expect(StudyItemKind.detect(from: URL(fileURLWithPath: "/tmp/a.pdf")) == .pdf, "pdf detection")
@@ -227,6 +231,7 @@ let readerViewSourceURL = URL(fileURLWithPath: FileManager.default.currentDirect
 let readerViewSource = (try? String(contentsOf: readerViewSourceURL, encoding: .utf8)) ?? ""
 expect(readerViewSource.contains("readerStyleScript"), "html reader injects responsive reading style")
 expect(readerViewSource.contains("overflow-wrap: anywhere"), "html reader prevents narrow-pane clipping")
+expect(readerViewSource.contains("color-scheme: light") && readerViewSource.contains("color: #1d1814 !important") && readerViewSource.contains("a { color: #31566b !important; }"), "html reader forces readable ink over imported white text")
 expect(!readerViewSource.contains("readerHeader") && !readerViewSource.contains("statusBar"), "reader avoids duplicate internal chrome under unified top bar")
 expect(readerViewSource.contains("ReaderStateMessage") && !readerViewSource.contains("ContentUnavailableView("), "reader empty states use WeiBei paper styling")
 expect(readerViewSource.contains("if store.selectedMaterialItem?.kind == .pdf") && readerViewSource.contains("if let item = store.selectedMaterialItem"), "reader renders materials, not notebook notes")

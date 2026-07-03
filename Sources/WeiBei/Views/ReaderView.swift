@@ -480,7 +480,9 @@ struct WebReaderRepresentable: NSViewRepresentable {
     (() => {
       const style = document.createElement("style");
       style.textContent = `
-        html, body { max-width: 100%; overflow-x: hidden; }
+        html, body { max-width: 100%; overflow-x: hidden; color-scheme: light; }
+        body, main, article, section, div, p, li, blockquote, td, th, span { color: #1d1814 !important; }
+        a { color: #31566b !important; }
         body, main, article, section, div { box-sizing: border-box; max-width: 100%; }
         h1, h2, h3, h4, p, li, blockquote { overflow-wrap: anywhere; word-break: normal; }
         pre, code { white-space: pre-wrap; overflow-wrap: anywhere; }

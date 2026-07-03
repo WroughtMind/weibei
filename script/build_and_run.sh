@@ -71,6 +71,10 @@ verify_window() {
   swift -e 'import CoreGraphics; import Foundation; let owner = CommandLine.arguments[1]; func number(_ value: Any?) -> Double { (value as? NSNumber)?.doubleValue ?? 0 }; let windows = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []; let found = windows.contains { window in guard (window[kCGWindowOwnerName as String] as? String) == owner else { return false }; let bounds = window[kCGWindowBounds as String] as? [String: Any]; return number(window[kCGWindowIsOnscreen as String]) == 1 && number(window[kCGWindowLayer as String]) == 0 && number(bounds?["Width"]) >= 600 && number(bounds?["Height"]) >= 400 }; if !found { exit(1) }' "$APP_DISPLAY_NAME"
 }
 
+visual_verify_window() {
+  swift -target arm64-apple-macosx14.0 -e 'import CoreGraphics; import Foundation; let owner = CommandLine.arguments[1]; func number(_ value: Any?) -> Double { (value as? NSNumber)?.doubleValue ?? 0 }; let windows = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []; guard let window = windows.first(where: { window in guard (window[kCGWindowOwnerName as String] as? String) == owner else { return false }; let bounds = window[kCGWindowBounds as String] as? [String: Any]; return number(window[kCGWindowIsOnscreen as String]) == 1 && number(window[kCGWindowLayer as String]) == 0 && number(bounds?["Width"]) >= 600 && number(bounds?["Height"]) >= 400 }), let id = window[kCGWindowNumber as String] as? UInt32 else { exit(1) }; guard let image = CGWindowListCreateImage(.null, .optionIncludingWindow, CGWindowID(id), [.boundsIgnoreFraming]), let cfData = image.dataProvider?.data else { exit(2) }; let data = cfData as Data; let bytes = [UInt8](data); let bpp = max(1, image.bitsPerPixel / 8); let row = image.bytesPerRow; let xStep = max(1, image.width / 80); let yStep = max(1, image.height / 60); var sampled = 0; var visible = 0; for y in stride(from: 0, to: image.height, by: yStep) { for x in stride(from: 0, to: image.width, by: xStep) { let offset = y * row + x * bpp; guard offset + bpp <= bytes.count else { continue }; let count = min(4, bpp); var bright = 0; for channel in 0..<count { if bytes[offset + channel] > 20 { bright += 1 } }; if bright >= 2 { visible += 1 }; sampled += 1 } }; guard sampled > 0 else { exit(3) }; let nonBlackRatio = Double(visible) / Double(sampled); print("visual_non_black_ratio=\(nonBlackRatio)"); if nonBlackRatio < 0.02 { fputs("visual verify failed: captured window is black or empty\n", stderr); exit(4) }' "$APP_DISPLAY_NAME"
+}
+
 case "$MODE" in
   run)
     open_app
@@ -96,8 +100,19 @@ case "$MODE" in
     done
     verify_window
     ;;
+  --visual-verify|visual-verify)
+    open_app
+    for _ in {1..30}; do
+      if verify_window >/dev/null 2>&1; then
+        visual_verify_window
+        exit $?
+      fi
+      sleep 0.2
+    done
+    verify_window
+    ;;
   *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify]" >&2
+    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--visual-verify]" >&2
     exit 2
     ;;
 esac
