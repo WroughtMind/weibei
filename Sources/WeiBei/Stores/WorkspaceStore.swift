@@ -324,9 +324,16 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func setAgentSurface(_ surface: AgentSurface) {
-        agentSurface = surface
-        showQuietInsight = surface == .quietInsight
-        if surface == .quietInsight {
+        let canShowSelectionFloat = SelectionFloatingAgentPlacement.isVisible(
+            surface: .selectionFloat,
+            hasSelection: selectionContext != nil,
+            hasAnchor: selectionAnchor != nil,
+            pinned: pinnedFloatingAgent
+        )
+        let resolvedSurface: AgentSurface = surface == .selectionFloat && !canShowSelectionFloat ? .cornerPanel : surface
+        agentSurface = resolvedSurface
+        showQuietInsight = resolvedSurface == .quietInsight
+        if resolvedSurface == .quietInsight {
             refreshQuietInsightIfNeeded()
         }
         save()
