@@ -201,12 +201,16 @@ struct NotePaneView: View {
     }
 
     private var emptyNoteHint: some View {
-        Text("开始记录当前材料")
+        Text(emptyNoteHintText)
             .font(.system(size: 13, weight: .medium, design: .serif))
             .foregroundStyle(WeiBeiTheme.tertiaryInk.opacity(0.72))
             .padding(.horizontal, 20)
             .padding(.top, 18)
             .allowsHitTesting(false)
+    }
+
+    private var emptyNoteHintText: String {
+        store.selectedItem == nil ? "开始记录当前笔记" : "开始记录当前材料"
     }
 }
 
@@ -847,9 +851,9 @@ struct AgentDrawerView: View {
 
             HStack(spacing: 8) {
                 TextField(
-                    "问当前选区或当前材料",
+                    drawerPrompt,
                     text: $store.agentDraft,
-                    prompt: Text("问当前选区或当前材料").foregroundStyle(WeiBeiTheme.tertiaryInk)
+                    prompt: Text(drawerPrompt).foregroundStyle(WeiBeiTheme.tertiaryInk)
                 )
                     .textFieldStyle(.plain)
                     .focused($draftFocused)
@@ -889,6 +893,13 @@ struct AgentDrawerView: View {
 
     private var canSend: Bool {
         !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var drawerPrompt: String {
+        if store.selectionContext != nil {
+            return "问当前选区"
+        }
+        return store.selectedItem == nil ? "问当前笔记" : "问当前材料"
     }
 }
 
