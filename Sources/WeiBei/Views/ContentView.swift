@@ -881,6 +881,11 @@ private struct LayoutContentView: View {
                 }
             )
         }
+        items.append(
+            ContextRailItem(title: "资料库", help: "打开资料库选择资料", systemImage: "sidebar.left") {
+                openLibrary()
+            }
+        )
         return items
     }
 
@@ -926,13 +931,11 @@ private struct LayoutContentView: View {
                 }
             )
         }
-        if items.isEmpty {
-            items.append(
-                ContextRailItem(title: "资料库", help: "打开资料库选择资料", systemImage: "sidebar.left", emphasized: true) {
-                    openLibrary()
-                }
-            )
-        }
+        items.append(
+            ContextRailItem(title: "资料库", help: "打开资料库选择资料", systemImage: "sidebar.left", emphasized: items.isEmpty) {
+                openLibrary()
+            }
+        )
         return items
     }
 

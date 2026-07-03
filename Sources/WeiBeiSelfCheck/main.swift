@@ -491,9 +491,11 @@ expect(!notesAgentSource.contains(".id(expanded)"), "selection agent expands wit
 expect(contentViewSource.contains("edge: .leading") && contentViewSource.contains("edge: .trailing"), "immersive rails declare their content-facing edge")
 expect(contentViewSource.contains("conversationSourceRailItems") && contentViewSource.contains("conversationTargetRailItems") && contentViewSource.contains("writingAssistRailItems"), "immersive rails wire role-specific actions")
 expect(contentViewSource.contains("systemImage: \"square.and.pencil\"") && contentViewSource.contains("systemImage: \"quote.opening\""), "immersive rail actions use stable semantic icons")
-expect(contentViewSource.contains("ContextRailItem(title: \"资料库\", help: \"打开资料库选择资料\", systemImage: \"sidebar.left\", emphasized: true)")
+expect(contentViewSource.contains("ContextRailItem(title: \"资料库\", help: \"打开资料库选择资料\", systemImage: \"sidebar.left\", emphasized: items.isEmpty)")
     && contentViewSource.contains("private func openLibrary()")
-    && contentViewSource.contains("store.showLibrary = true"), "immersive writing keeps a library entry when no document is selected")
+    && contentViewSource.contains("store.showLibrary = true"), "immersive writing keeps a library entry and emphasizes it only when no document is selected")
+expect(contentViewSource.components(separatedBy: "ContextRailItem(title: \"资料库\", help: \"打开资料库选择资料\", systemImage: \"sidebar.left\"").count >= 3
+    && contentViewSource.contains("emphasized: items.isEmpty"), "immersive rails keep a lightweight library chooser even when a document is already selected")
 expect(contentViewSource.contains("store.selectionPromptScope") && contentViewSource.contains("store.agentPromptScope") && contentViewSource.contains("store.hasSelectedMaterial ? \"请检查当前笔记缺少来源的位置"), "immersive agent rails reuse real context wording")
 expect(contentViewSource.contains(".overlay(alignment: agentAlignment)") && contentViewSource.contains("if store.agentSurface != .quietInsight {\n                        agentOverlay"), "immersive layouts can show the lightweight agent overlay")
 expect(!contentViewSource.contains("来源预览"), "immersive writing document rail avoids duplicate reader entries")
