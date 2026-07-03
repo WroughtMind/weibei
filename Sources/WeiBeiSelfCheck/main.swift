@@ -209,6 +209,7 @@ expect(notesAgentSource.contains("AgentStarterChip") && notesAgentSource.contain
 expect(notesAgentSource.contains("canPolishNoteSelection") && notesAgentSource.contains("store.selectionContext?.isNoteSelection == true"), "selection agent only shows polish for note selections")
 expect(notesAgentSource.contains("emptyNoteHint") && notesAgentSource.contains("开始记录当前材料") && notesAgentSource.contains(".allowsHitTesting(false)"), "blank note editor shows a light nonblocking cue")
 expect(notesAgentSource.contains("prompt: Text(\"问当前材料\").foregroundStyle(WeiBeiTheme.tertiaryInk)"), "corner agent input placeholder stays readable")
+expect(notesAgentSource.contains("cornerToolButton(\"list.bullet.rectangle\", label: \"整理笔记\"") && !notesAgentSource.contains("Button(\"整理笔记\")"), "corner agent uses compact semantic icon tools")
 expect(notesAgentSource.contains("private var agentInputTray: some View"), "agent pane uses a dedicated input tray")
 expect(notesAgentSource.contains("WeiBeiGlassHeaderBackground(") && notesAgentSource.contains("WeiBeiTheme.glassTint.opacity(0.66)"), "agent input tray uses paper glass fade instead of a hard white strip")
 expect(!notesAgentSource.contains(".disabled(store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)") && !notesAgentSource.contains(".disabled(!canSend)"), "agent drawer and corner hide empty send actions instead of showing disabled buttons")
