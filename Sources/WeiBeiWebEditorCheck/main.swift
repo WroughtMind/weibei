@@ -174,6 +174,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           mermaidSvg: document.querySelectorAll('.weibei-mermaid-render svg').length,
           mermaidPlaceholder: document.body.textContent.includes('渲染器未安装完成') ? 1 : 0,
           mermaidText: document.querySelector('.weibei-mermaid-render')?.textContent || '',
+          mermaidSourceOpacity: getComputedStyle(document.querySelector('.weibei-mermaid-block') || document.body).opacity,
           mathInline: document.querySelectorAll('span[data-type="math_inline"], .math-inline, .katex').length,
           mathInlineBackground: getComputedStyle(document.querySelector('span[data-type="math_inline"], .math-inline') || document.body).backgroundColor,
           mathInlineContainerColor: getComputedStyle(document.querySelector('span[data-type="math_inline"], .math-inline') || document.body).color,
@@ -254,6 +255,11 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             if (result["mermaidSvg"] as? Int ?? 0) < 1 || (result["mermaidPlaceholder"] as? Int ?? 0) > 0 {
                 self.fail("Mermaid block did not render to SVG: \(result["mermaidText"] as? String ?? "")")
+                return
+            }
+            if let opacityText = result["mermaidSourceOpacity"] as? String,
+               (Double(opacityText) ?? 0) < 0.7 {
+                self.fail("Mermaid source block is too faint to edit: \(opacityText)")
                 return
             }
             if (result["mathInline"] as? Int ?? 0) < 1 {
