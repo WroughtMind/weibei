@@ -338,12 +338,16 @@ expect(
 expect(workspaceStoreSource.contains("var selectedMaterialTitle") && workspaceStoreSource.contains("selectedMaterialItem?.title ?? \"未选择材料\""), "agent material title does not invent a current material")
 expect(workspaceStoreSource.contains("var agentMessageSourceTitle: String?") && workspaceStoreSource.contains("selectedMaterialItem?.title ?? selectedItem?.title") && !workspaceStoreSource.contains("source: selectedMaterialItem?.title"), "agent message source falls back to the selected note title")
 expect(workspaceStoreSource.contains("private var quietInsightReferenceTitle: String") && workspaceStoreSource.contains("selectionContext?.ownerTitle ?? selectedMaterialItem?.title ?? selectedItem?.title") && workspaceStoreSource.contains("没有证据就说\\(evidenceText)"), "quiet insight uses real note or material source wording")
+expect(workspaceStoreSource.contains("private func clearUnpinnedFloatingSelection(keepContext: Bool = true)") && workspaceStoreSource.contains("guard !pinnedFloatingAgent else { return }") && workspaceStoreSource.contains("if agentSurface == .selectionFloat"), "workspace changes clear stale unpinned selection anchors through one helper")
+expect(workspaceStoreSource.contains("let itemChanged = selectedItemID != itemID") && workspaceStoreSource.contains("clearUnpinnedFloatingSelection(keepContext: false)"), "selecting a different item clears the old selection context")
+expect(workspaceStoreSource.contains("func toggleLibrary() {\n        showLibrary.toggle()\n        clearUnpinnedFloatingSelection()") && workspaceStoreSource.contains("func toggleRightPane() {\n        guard layout.hasCollapsibleRightPane else { return }\n        showRightPane.toggle()\n        clearUnpinnedFloatingSelection()"), "pane visibility changes invalidate stale floating selection anchors")
 expect(workspaceStoreSource.contains("layout == .immersiveReading || layout == .immersiveWriting") && workspaceStoreSource.contains("agentSurface = .cornerPanel") && !workspaceStoreSource.contains("layout = .immersiveConversation\n                showLibrary = false\n                showRightPane = true"), "agent focus in immersive layouts opens an overlay instead of switching layout")
 if let setLayoutStart = workspaceStoreSource.range(of: "func setLayout(_ layout: WorkspaceLayout)")?.lowerBound,
    let setAgentSurfaceStart = workspaceStoreSource.range(of: "func setAgentSurface")?.lowerBound {
     let setLayoutSource = String(workspaceStoreSource[setLayoutStart..<setAgentSurfaceStart])
     expect(!setLayoutSource.contains("showLibrary = false"), "layout switching preserves the current library visibility")
     expect(!setLayoutSource.contains("showRightPane = true"), "layout switching preserves a user-collapsed auxiliary pane")
+    expect(setLayoutSource.contains("clearUnpinnedFloatingSelection()"), "layout switching invalidates stale floating selection anchors")
 } else {
     expect(false, "layout switching source is readable")
 }

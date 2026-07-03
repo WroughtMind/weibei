@@ -213,7 +213,11 @@ final class WorkspaceStore: ObservableObject {
 
     func select(itemID: String?) {
         persistCurrentNote()
+        let itemChanged = selectedItemID != itemID
         selectedItemID = itemID
+        if itemChanged {
+            clearUnpinnedFloatingSelection(keepContext: false)
+        }
         readerLocationTitle = selectedMaterialItem?.title
         clearReaderSearchIfNeeded()
         noteText = noteText(for: selectedItem)
@@ -249,6 +253,9 @@ final class WorkspaceStore: ObservableObject {
 
     func focus(_ pane: PaneFocus) {
         if pane == .library {
+            if !showLibrary {
+                clearUnpinnedFloatingSelection()
+            }
             showLibrary = true
         }
         if pane == .agent {
@@ -269,6 +276,7 @@ final class WorkspaceStore: ObservableObject {
 
     func toggleLibrary() {
         showLibrary.toggle()
+        clearUnpinnedFloatingSelection()
         focus(showLibrary ? .library : .reader)
         save()
     }
@@ -276,12 +284,16 @@ final class WorkspaceStore: ObservableObject {
     func toggleRightPane() {
         guard layout.hasCollapsibleRightPane else { return }
         showRightPane.toggle()
+        clearUnpinnedFloatingSelection()
         focus(showRightPane ? .notes : .reader)
         save()
     }
 
     func revealRightPane(focusing pane: PaneFocus = .notes) {
         guard layout.hasCollapsibleRightPane else { return }
+        if !showRightPane {
+            clearUnpinnedFloatingSelection()
+        }
         showRightPane = true
         focus(pane)
         save()
@@ -333,6 +345,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func setLayout(_ layout: WorkspaceLayout) {
+        if self.layout != layout {
+            clearUnpinnedFloatingSelection()
+        }
         self.layout = layout
         let nextFocus: PaneFocus = switch layout {
         case .immersiveConversation:
@@ -384,9 +399,13 @@ final class WorkspaceStore: ObservableObject {
 
     func setNoteRenderMode(_ mode: NoteRenderMode) {
         if layout == .immersiveReading || layout == .immersiveConversation {
+            clearUnpinnedFloatingSelection()
             layout = .immersiveWriting
         }
         if layout.hasCollapsibleRightPane {
+            if !showRightPane {
+                clearUnpinnedFloatingSelection()
+            }
             showRightPane = true
         }
         noteRenderMode = mode
@@ -396,9 +415,13 @@ final class WorkspaceStore: ObservableObject {
 
     private func revealRichWritingSurface() {
         if layout == .immersiveReading || layout == .immersiveConversation {
+            clearUnpinnedFloatingSelection()
             layout = .immersiveWriting
         }
         if layout.hasCollapsibleRightPane {
+            if !showRightPane {
+                clearUnpinnedFloatingSelection()
+            }
             showRightPane = true
         }
         noteRenderMode = .rich
@@ -1033,6 +1056,17 @@ final class WorkspaceStore: ObservableObject {
     private func clearGeneratedQuietInsight() {
         generatedQuietInsight = nil
         quietInsightSignature = ""
+    }
+
+    private func clearUnpinnedFloatingSelection(keepContext: Bool = true) {
+        guard !pinnedFloatingAgent else { return }
+        if !keepContext {
+            selectionContext = nil
+        }
+        selectionAnchor = nil
+        if agentSurface == .selectionFloat {
+            agentSurface = .hidden
+        }
     }
 
     private func refreshQuietInsightIfNeeded() {
