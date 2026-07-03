@@ -120,7 +120,7 @@ struct CommandPaletteView: View {
             }
 
             VStack(spacing: 0) {
-                HStack {
+                HStack(spacing: 10) {
                     Image(systemName: "command")
                         .foregroundStyle(WeiBeiTheme.link)
                     TextField("", text: $query)
@@ -130,10 +130,13 @@ struct CommandPaletteView: View {
                         .font(.system(size: 18, weight: .semibold, design: .serif))
                         .weibeiInputPrompt("命令", visible: query.isEmpty, leading: 0, fontSize: 18, weight: .semibold)
                 }
-                .padding(.horizontal, 16)
-                .frame(height: 52)
+                .weibeiInputSurface(active: searchFocused, height: 36)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
 
-                Divider()
+                Rectangle()
+                    .fill(WeiBeiTheme.hairline.opacity(0.72))
+                    .frame(height: 1)
 
                 ScrollViewReader { proxy in
                     ScrollView {

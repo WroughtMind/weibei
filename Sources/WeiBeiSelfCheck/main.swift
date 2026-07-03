@@ -249,6 +249,10 @@ expect(contentViewSource.contains("topIconButton(\"command\", help: \"命令面�
 let commandPaletteSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/CommandPaletteView.swift")
 let commandPaletteSource = (try? String(contentsOf: commandPaletteSourceURL, encoding: .utf8)) ?? ""
+expect(commandPaletteSource.contains(".weibeiInputSurface(active: searchFocused, height: 36)")
+    && commandPaletteSource.contains(".weibeiInputPrompt(\"命令\", visible: query.isEmpty")
+    && commandPaletteSource.contains("WeiBeiTheme.hairline.opacity(0.72)")
+    && !commandPaletteSource.contains("Divider()"), "command palette search uses WeiBei input surface and semantic hairline")
 expect(commandPaletteSource.contains("withAnimation(command.animation)") && commandPaletteSource.contains("animation: WeiBeiMotion.layout"), "command palette uses layout motion for layout commands")
 expect(!commandPaletteSource.contains("收起右栏"), "command palette avoids fixed right-pane wording")
 expect(!commandPaletteSource.contains("Agent 整理资料与笔记") && !commandPaletteSource.contains("本地排序资料库"), "command palette avoids half-built library organization shortcuts")
