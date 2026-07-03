@@ -1070,7 +1070,9 @@ struct FloatingSelectionAgentView: View {
                         closeFloatingAgent()
                     }
                 }
-                actionButton("润色") { polishNote() }
+                if canPolishNoteSelection {
+                    actionButton("润色") { polishNote() }
+                }
                 if store.canReplaceNoteSelection {
                     actionButton("替换") {
                         store.replaceSelectionWithLastAgentAnswer()
@@ -1175,6 +1177,10 @@ struct FloatingSelectionAgentView: View {
         }
 
         return result.reversed()
+    }
+
+    private var canPolishNoteSelection: Bool {
+        store.selectionContext?.isNoteSelection == true
     }
 
     private var floatingFeedHeight: CGFloat {

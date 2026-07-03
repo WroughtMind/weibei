@@ -204,6 +204,7 @@ expect(!notesAgentSource.contains("魏碑会优先读取材料"), "agent empty s
 expect(!notesAgentSource.contains("Text(\"当前上下文\")") && !notesAgentSource.contains("contextLine("), "agent empty state avoids diagnostic context rows")
 expect(notesAgentSource.contains("Text(\"已含选区\")"), "agent empty state keeps a compact selection cue")
 expect(notesAgentSource.contains("AgentStarterChip") && notesAgentSource.contains("hovering ? -1 : 0"), "agent starter chips keep subtle hover motion")
+expect(notesAgentSource.contains("canPolishNoteSelection") && notesAgentSource.contains("store.selectionContext?.isNoteSelection == true"), "selection agent only shows polish for note selections")
 expect(notesAgentSource.contains("emptyNoteHint") && notesAgentSource.contains("开始记录当前材料") && notesAgentSource.contains(".allowsHitTesting(false)"), "blank note editor shows a light nonblocking cue")
 expect(notesAgentSource.contains("prompt: Text(\"问当前材料\").foregroundStyle(WeiBeiTheme.tertiaryInk)"), "corner agent input placeholder stays readable")
 expect(notesAgentSource.contains("private var agentInputTray: some View"), "agent pane uses a dedicated input tray")
