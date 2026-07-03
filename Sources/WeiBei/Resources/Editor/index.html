@@ -491,6 +491,7 @@
     }
 
     .ProseMirror span[data-type="math_inline"],
+    .ProseMirror span[data-type="math-inline"],
     .ProseMirror .math-inline {
       color: transparent;
       background: transparent !important;
@@ -500,12 +501,15 @@
 
     .ProseMirror span[data-type="math_inline"]::before,
     .ProseMirror span[data-type="math_inline"]::after,
+    .ProseMirror span[data-type="math-inline"]::before,
+    .ProseMirror span[data-type="math-inline"]::after,
     .ProseMirror .math-inline::before,
     .ProseMirror .math-inline::after {
       content: none !important;
     }
 
     .ProseMirror div[data-type="math_block"],
+    .ProseMirror div[data-type="math-block"],
     .ProseMirror .math-block {
       color: transparent;
       background: rgba(63, 105, 82, .06);
@@ -513,13 +517,16 @@
     }
 
     .ProseMirror span[data-type="math_inline"] > .katex,
+    .ProseMirror span[data-type="math-inline"] > .katex,
     .ProseMirror .math-inline > .katex,
     .ProseMirror div[data-type="math_block"] > .katex,
+    .ProseMirror div[data-type="math-block"] > .katex,
     .ProseMirror .math-block > .katex {
       color: rgba(33, 27, 23, .92);
     }
 
     .ProseMirror span[data-type="math_inline"],
+    .ProseMirror span[data-type="math-inline"],
     .ProseMirror .math-inline {
       display: inline;
       padding: 0 .05em;
@@ -527,15 +534,19 @@
     }
 
     .ProseMirror span[data-type="math_inline"] > :not(.katex),
+    .ProseMirror span[data-type="math-inline"] > :not(.katex),
     .ProseMirror .math-inline > :not(.katex),
     .ProseMirror div[data-type="math_block"] > :not(.katex),
+    .ProseMirror div[data-type="math-block"] > :not(.katex),
     .ProseMirror .math-block > :not(.katex) {
       display: none !important;
     }
 
     .ProseMirror span[data-type="math_inline"] > .katex > .katex-mathml,
+    .ProseMirror span[data-type="math-inline"] > .katex > .katex-mathml,
     .ProseMirror .math-inline > .katex > .katex-mathml,
     .ProseMirror div[data-type="math_block"] > .katex > .katex-mathml,
+    .ProseMirror div[data-type="math-block"] > .katex > .katex-mathml,
     .ProseMirror .math-block > .katex > .katex-mathml {
       position: absolute !important;
       width: 1px !important;
@@ -548,13 +559,15 @@
       pointer-events: none;
     }
 
-    .ProseMirror span[data-type="math_inline"].ProseMirror-selectednode {
+    .ProseMirror span[data-type="math_inline"].ProseMirror-selectednode,
+    .ProseMirror span[data-type="math-inline"].ProseMirror-selectednode {
       outline: 1px solid rgba(63, 105, 82, .30);
       outline-offset: 2px;
       border-radius: 3px;
     }
 
-    .ProseMirror div[data-type="math_block"] {
+    .ProseMirror div[data-type="math_block"],
+    .ProseMirror div[data-type="math-block"] {
       display: block;
       margin: .8em 0;
       padding: .75em 1em;

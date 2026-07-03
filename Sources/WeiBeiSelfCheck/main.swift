@@ -21,9 +21,11 @@ let editorIndexURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPa
 let editorIndexSource = (try? String(contentsOf: editorIndexURL, encoding: .utf8)) ?? ""
 expect(
     editorIndexSource.contains(".ProseMirror span[data-type=\"math_inline\"],")
+        && editorIndexSource.contains(".ProseMirror span[data-type=\"math-inline\"],")
+        && editorIndexSource.contains(".ProseMirror div[data-type=\"math-block\"],")
         && editorIndexSource.contains(".ProseMirror .math-inline")
         && editorIndexSource.contains(".ProseMirror .math-block"),
-    "math styling hides raw source for both Milkdown math node class shapes"
+    "math styling hides raw source for common Milkdown math node attribute and class shapes"
 )
 expect(editorIndexSource.contains(".ProseMirror .math-inline {\n      color: transparent") && editorIndexSource.contains(".ProseMirror .katex-error {\n      color: var(--cinnabar)"), "math styling hides raw source while keeping KaTeX errors readable")
 expect(editorIndexSource.contains("color: rgba(58, 46, 38, .56)") && !editorIndexSource.contains("color: rgba(58, 46, 38, .36)"), "editable markdown markers stay readable on paper")
