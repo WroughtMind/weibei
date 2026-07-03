@@ -119,6 +119,10 @@ final class WorkspaceStore: ObservableObject {
         return sampleText(for: item)
     }
 
+    var selectedMaterialTitle: String {
+        selectedItem?.title ?? "未选择材料"
+    }
+
     var canApplyAgentAnswer: Bool {
         lastUsableAgentAnswer != nil
     }
@@ -133,13 +137,13 @@ final class WorkspaceStore: ObservableObject {
 
     var quietInsight: QuietInsight {
         if isGeneratingQuietInsight {
-            return QuietInsight(body: "Agent 正在静默阅读当前材料和笔记。", noteBlock: "")
+            return QuietInsight(body: selectedItem == nil ? "Agent 正在静默阅读当前笔记。" : "Agent 正在静默阅读当前材料和笔记。", noteBlock: "")
         }
         if let generatedQuietInsight {
             return generatedQuietInsight
         }
         return QuietInsight.make(
-            materialTitle: selectedItem?.title ?? "当前材料",
+            materialTitle: selectedMaterialTitle,
             materialText: selectedContextText,
             noteText: noteText,
             selectionText: selectionContext?.text
@@ -154,6 +158,9 @@ final class WorkspaceStore: ObservableObject {
         if selectionContext != nil {
             return "来自当前选区"
         }
+        if selectedItem == nil {
+            return "来自当前笔记"
+        }
         return generatedQuietInsight == nil ? "来自当前材料" : "来自材料和笔记"
     }
 
@@ -164,7 +171,7 @@ final class WorkspaceStore: ObservableObject {
         if !OpenAIAPIKeyStore.load().isEmpty {
             return "已保存到 macOS 钥匙串。Agent 可在打包应用里直接读取。"
         }
-        return "未保存密钥。保存后 Agent 会用当前材料、当前选区和右侧笔记作答。"
+        return "未保存密钥。保存后 Agent 会用已选择材料、当前选区和右侧笔记作答。"
     }
 
     func select(itemID: String?) {
@@ -689,8 +696,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func askQuietInsight() {
+        let contextScope = selectedItem == nil ? "当前笔记" : "当前材料和笔记"
         agentDraft = """
-        请根据这条阅读线索继续解释，并结合当前材料和笔记回答。没有证据就说未在材料中确认。
+        请根据这条阅读线索继续解释，并结合\(contextScope)回答。没有证据就说未在材料中确认。
 
         阅读线索：
         \(quietInsight.body)
@@ -701,10 +709,11 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func refreshQuietInsight() async {
-        let materialTitle = selectedItem?.title ?? "当前材料"
+        let materialTitle = selectedMaterialTitle
         let materialText = selectedContextText
         let currentNoteText = noteText
         let selectionText = selectionContext?.text
+        let contextScope = selectedItem == nil ? "当前选区和当前笔记" : "当前材料、当前选区和当前笔记"
         let signature = makeQuietInsightSignature(materialText: materialText, noteText: currentNoteText, selectionText: selectionText)
         guard signature != quietInsightSignature else { return }
         guard let credential = resolvedOpenAIAPIKey() else {
@@ -718,7 +727,7 @@ final class WorkspaceStore: ObservableObject {
         do {
             let client = OpenAIResponsesClient(apiKey: credential.key, model: resolvedModelName)
             let answer = try await client.ask(
-                question: "请静默阅读当前材料、当前选区和当前笔记，只输出一条最值得提示给用户的洞察。要温和、短、可执行；如果材料没有证据，就直接说未在材料中确认。",
+                question: "请静默阅读\(contextScope)，只输出一条最值得提示给用户的洞察。要温和、短、可执行；如果材料没有证据，就直接说未在材料中确认。",
                 materialTitle: materialTitle,
                 materialText: materialText,
                 noteText: currentNoteText,
@@ -772,7 +781,7 @@ final class WorkspaceStore: ObservableObject {
         guard !question.isEmpty, !isAskingAgent else { return }
 
         guard let credential = resolvedOpenAIAPIKey() else {
-            let notice = "未配置 OPENAI_API_KEY 或钥匙串密钥。Agent 不会编造回答；设置密钥后会用当前材料、当前选区和右侧笔记作答。"
+            let notice = "未配置 OPENAI_API_KEY 或钥匙串密钥。Agent 不会编造回答；设置密钥后会用已选择材料、当前选区和右侧笔记作答。"
             openAIKeyStatus = notice
             if !messages.contains(where: { $0.role == .assistant && $0.source == "Agent 设置" && $0.text == notice }) {
                 messages.append(AgentMessage(role: .assistant, text: notice, source: "Agent 设置"))
@@ -790,7 +799,7 @@ final class WorkspaceStore: ObservableObject {
             let client = OpenAIResponsesClient(apiKey: credential.key, model: resolvedModelName)
             let answer = try await client.ask(
                 question: question,
-                materialTitle: selectedItem?.title ?? "当前材料",
+                materialTitle: selectedMaterialTitle,
                 materialText: selectedContextText,
                 noteText: noteText,
                 selectionText: selectionContext?.text,

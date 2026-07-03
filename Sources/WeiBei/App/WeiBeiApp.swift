@@ -159,7 +159,7 @@ struct WeiBeiApp: App {
                     }
                 }
                     .keyboardShortcut("f")
-                Button("问当前材料") { Task { await store.askAgent() } }
+                Button(store.selectedItem == nil ? "问当前笔记" : "问当前材料") { Task { await store.askAgent() } }
                     .keyboardShortcut(.return, modifiers: [.command])
             }
         }
