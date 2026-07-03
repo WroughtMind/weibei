@@ -145,7 +145,7 @@ for helperName in ["openReader", "openWriting", "askCurrentSelection", "prepareA
         expect(false, "\(helperName) source is readable")
     }
 }
-expect(contentViewSource.contains("prompt: Text(\"当前资料内搜索\").foregroundStyle(tertiaryText)"), "top search placeholder uses readable semantic ink")
+expect(contentViewSource.contains("if store.readerSearch.isEmpty") && contentViewSource.contains("Text(\"当前资料内搜索\")") && contentViewSource.contains(".foregroundStyle(tertiaryText)"), "top search placeholder uses readable semantic ink")
 expect(contentViewSource.contains("store.hasSelectedMaterial && store.layout != .immersiveConversation"), "top search only appears when a material is selected")
 expect(contentViewSource.contains("layout == store.layout ? \"checkmark\"") && contentViewSource.contains(".accessibilityLabel(Text(\"切换布局\"))"), "layout menu marks current layout and explains itself")
 expect(contentViewSource.contains(": layout.systemImage") && !contentViewSource.contains(": \"rectangle.split.3x1\""), "layout menu avoids repeating one generic icon")
@@ -153,7 +153,7 @@ expect(contentViewSource.contains(".accessibilityLabel(Text(\"更多设置\"))")
 let sidebarSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/SidebarView.swift")
 let sidebarSource = (try? String(contentsOf: sidebarSourceURL, encoding: .utf8)) ?? ""
-expect(sidebarSource.contains("prompt: Text(\"搜索资料库\").foregroundStyle(WeiBeiTheme.tertiaryInk)"), "library search placeholder uses readable semantic ink")
+expect(sidebarSource.contains("if store.librarySearch.isEmpty") && sidebarSource.contains("Text(\"搜索资料库\")") && sidebarSource.contains(".foregroundStyle(WeiBeiTheme.tertiaryInk)"), "library search placeholder uses readable semantic ink")
 expect(!sidebarSource.contains("commandPalettePresented.toggle()") && !sidebarSource.contains("Label(\"命令\", systemImage: \"command\")"), "sidebar does not duplicate the command palette entry")
 expect(sidebarSource.contains("sidebarSection(title: \"导入资料\", items: importedMaterialItems)") && sidebarSource.contains("sidebarSection(title: \"笔记\", items: notebookItems)"), "sidebar separates materials from notebook notes")
 expect(sidebarSource.contains("!$0.isSample && !$0.isNotebookNote") && sidebarSource.contains("store.filteredItems.filter(\\.isNotebookNote)"), "sidebar material list excludes notebook notes without hiding notes")
@@ -206,7 +206,7 @@ expect(appSource.contains("sharedWorkspaceStore"), "main window and settings sha
 expect(!appSource.contains("launchProbe"), "app launch path has no temporary probe logging")
 expect(appSource.contains("addLocalMonitorForEvents(matching: .keyDown)") && appSource.contains("removeMonitor(shortcutMonitor)"), "app-level shortcuts survive focused web editor")
 expect(appSource.contains("return flag"), "reopen does not swallow the system window creation path")
-expect(!appSource.contains("Form {") && appSource.contains("SecureField(\"OpenAI 密钥\"") && appSource.contains(".weibeiInputSurface(active: focusedField == .apiKey)"), "settings key input uses WeiBei input surface instead of the default form field")
+expect(!appSource.contains("Form {") && appSource.contains("Text(\"OpenAI 密钥\")") && appSource.contains("SecureField(\"\", text: $store.openAIAPIKey)") && appSource.contains(".weibeiInputSurface(active: focusedField == .apiKey)"), "settings key input uses WeiBei input surface instead of the default form field")
 expect(appSource.contains("WeiBeiTextActionButtonStyle(active: true)") && appSource.contains(".background(WeiBeiTheme.paper)"), "settings view uses WeiBei paper and button styles")
 let workspaceStoreSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Stores/WorkspaceStore.swift")
@@ -283,6 +283,7 @@ expect(!workspaceStoreSource.contains("当前页提示"), "quiet insight avoids 
 expect(workspaceStoreSource.contains("阅读线索"), "quiet insight uses margin-note language")
 expect(appSource.contains("if store.hasSelectedMaterial || store.selectionContext != nil") && appSource.contains("if store.hasSelectedMaterial") && appSource.contains("Button(\"搜索当前资料\")"), "app menu hides material-only actions when there is no material context")
 expect(appSource.contains("Button(store.hasSelectedMaterial ? \"问当前材料\" : \"问当前笔记\")"), "app command label matches whether a material is selected")
+expect(appSource.contains("Button(store.showLibrary ? \"收起资料\" : \"恢复资料\")") && appSource.contains("Button(store.showRightPane ? \"收起辅助栏\" : \"展开辅助栏\")"), "app menu names pane toggles by current state")
 let notesAgentSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/NotesAgentView.swift")
 let notesAgentSource = (try? String(contentsOf: notesAgentSourceURL, encoding: .utf8)) ?? ""
@@ -316,7 +317,7 @@ expect(notesAgentSource.contains("emptyNoteHintText") && notesAgentSource.contai
 expect(notesAgentSource.contains("noteFileStatusColor(for message: String)") && notesAgentSource.contains("message.hasPrefix(\"无法\") ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk"), "note file success statuses do not render as errors")
 expect(notesAgentSource.contains(".help(\"新建独立 Markdown 笔记\")") && notesAgentSource.contains("结合\\(store.agentPromptScope)和当前选区作答") && !notesAgentSource.contains("结合已选择材料、选区和笔记"), "note and floating agent hints avoid fake current material context")
 expect(notesAgentSource.contains("drawerPrompt") && notesAgentSource.contains("return \"问当前选区\"") && !notesAgentSource.contains("问当前选区或当前材料"), "agent drawer placeholder avoids fake material context")
-expect(notesAgentSource.contains("store.hasSelectedMaterial ? \"问当前材料\" : \"问当前笔记\"") && notesAgentSource.contains("prompt: Text(agentPrompt).foregroundStyle(WeiBeiTheme.tertiaryInk)"), "agent input placeholder matches whether a material is selected")
+expect(notesAgentSource.contains("store.hasSelectedMaterial ? \"问当前材料\" : \"问当前笔记\"") && notesAgentSource.contains("if store.agentDraft.isEmpty") && notesAgentSource.contains("Text(agentPrompt)") && notesAgentSource.contains(".foregroundStyle(WeiBeiTheme.tertiaryInk)"), "agent input placeholder matches whether a material is selected")
 expect(notesAgentSource.contains("store.hasSelectedMaterial ? \"来源\" : \"笔记\"") && notesAgentSource.contains("store.selectedMaterialItem?.title ?? \"当前笔记\""), "agent drawer source row avoids fake current material")
 if let cornerStart = notesAgentSource.range(of: "struct CornerAgentView")?.lowerBound,
    let selectionStart = notesAgentSource.range(of: "struct FloatingSelectionAgentView")?.lowerBound {

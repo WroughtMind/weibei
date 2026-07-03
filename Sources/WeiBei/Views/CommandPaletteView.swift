@@ -116,11 +116,19 @@ struct CommandPaletteView: View {
                 HStack {
                     Image(systemName: "command")
                         .foregroundStyle(WeiBeiTheme.link)
-                    TextField("命令", text: $query, prompt: Text("命令").foregroundStyle(WeiBeiTheme.tertiaryInk))
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 18, weight: .semibold, design: .serif))
-                        .foregroundStyle(WeiBeiTheme.ink)
-                        .focused($searchFocused)
+                    ZStack(alignment: .leading) {
+                        if query.isEmpty {
+                            Text("命令")
+                                .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                                .allowsHitTesting(false)
+                        }
+
+                        TextField("", text: $query)
+                            .textFieldStyle(.plain)
+                            .foregroundStyle(WeiBeiTheme.ink)
+                            .focused($searchFocused)
+                    }
+                    .font(.system(size: 18, weight: .semibold, design: .serif))
                 }
                 .padding(.horizontal, 16)
                 .frame(height: 52)

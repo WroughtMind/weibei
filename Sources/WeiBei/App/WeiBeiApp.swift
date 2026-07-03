@@ -75,13 +75,13 @@ struct WeiBeiApp: App {
 
                 Divider()
 
-                Button("收起或展开资料") {
+                Button(store.showLibrary ? "收起资料" : "恢复资料") {
                     animateLayout {
                         store.toggleLibrary()
                     }
                 }
                     .keyboardShortcut("b")
-                Button("收起或展开右栏") {
+                Button(store.showRightPane ? "收起辅助栏" : "展开辅助栏") {
                     animateLayout {
                         store.toggleRightPane()
                     }
@@ -247,12 +247,20 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 10) {
                 sectionTitle("Agent")
 
-                SecureField("OpenAI 密钥", text: $store.openAIAPIKey)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .foregroundStyle(WeiBeiTheme.ink)
-                    .focused($focusedField, equals: .apiKey)
-                    .weibeiInputSurface(active: focusedField == .apiKey)
+                ZStack(alignment: .leading) {
+                    if store.openAIAPIKey.isEmpty {
+                        Text("OpenAI 密钥")
+                            .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                            .allowsHitTesting(false)
+                    }
+
+                    SecureField("", text: $store.openAIAPIKey)
+                        .textFieldStyle(.plain)
+                        .foregroundStyle(WeiBeiTheme.ink)
+                        .focused($focusedField, equals: .apiKey)
+                }
+                .font(.system(size: 13))
+                .weibeiInputSurface(active: focusedField == .apiKey)
 
                 HStack(spacing: 8) {
                     Button("保存到钥匙串") { store.saveOpenAIAPIKey() }
@@ -275,18 +283,25 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 10) {
                 sectionTitle("模型")
 
-                TextField(
-                    "模型",
-                    text: Binding(
-                        get: { store.modelName },
-                        set: { store.updateModelName($0) }
-                    ),
-                    prompt: Text("模型").foregroundStyle(WeiBeiTheme.tertiaryInk)
-                )
-                .textFieldStyle(.plain)
+                ZStack(alignment: .leading) {
+                    if store.modelName.isEmpty {
+                        Text("模型")
+                            .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                            .allowsHitTesting(false)
+                    }
+
+                    TextField(
+                        "",
+                        text: Binding(
+                            get: { store.modelName },
+                            set: { store.updateModelName($0) }
+                        )
+                    )
+                    .textFieldStyle(.plain)
+                    .foregroundStyle(WeiBeiTheme.ink)
+                    .focused($focusedField, equals: .model)
+                }
                 .font(.system(size: 13))
-                .foregroundStyle(WeiBeiTheme.ink)
-                .focused($focusedField, equals: .model)
                 .weibeiInputSurface(active: focusedField == .model)
 
                 Text("本机环境变量 WEIBEI_OPENAI_MODEL 会覆盖这里的模型。")

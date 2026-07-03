@@ -202,30 +202,34 @@ private struct UnifiedTopBarView: View {
             }
 
             if store.showReaderSearch && shouldShowSearchAction {
-                TextField(
-                    "当前资料内搜索",
-                    text: $store.readerSearch,
-                    prompt: Text("当前资料内搜索").foregroundStyle(tertiaryText)
-                )
-                    .textFieldStyle(.plain)
-                    .focused(searchFocused)
-                    .font(.system(size: 12))
-                    .padding(.horizontal, 10)
-                    .frame(width: 220, height: controlHeight)
-                    .foregroundStyle(primaryText)
-                    .background(controlFill)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(dividerColor, lineWidth: 1)
+                ZStack(alignment: .leading) {
+                    if store.readerSearch.isEmpty {
+                        Text("当前资料内搜索")
+                            .foregroundStyle(tertiaryText)
+                            .allowsHitTesting(false)
                     }
-                    .onExitCommand {
-                        withAnimation(WeiBeiMotion.panel) {
-                            store.hideReaderSearch()
-                            searchFocused.wrappedValue = false
-                        }
+
+                    TextField("", text: $store.readerSearch)
+                        .textFieldStyle(.plain)
+                        .focused(searchFocused)
+                        .foregroundStyle(primaryText)
+                }
+                .font(.system(size: 12))
+                .padding(.horizontal, 10)
+                .frame(width: 220, height: controlHeight)
+                .background(controlFill)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(dividerColor, lineWidth: 1)
+                }
+                .onExitCommand {
+                    withAnimation(WeiBeiMotion.panel) {
+                        store.hideReaderSearch()
+                        searchFocused.wrappedValue = false
                     }
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+                .transition(.move(edge: .trailing).combined(with: .opacity))
             }
 
             if shouldShowSearchAction {
