@@ -140,6 +140,23 @@ public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    public var systemImage: String {
+        switch self {
+        case .documentAgentNotes:
+            return "rectangle.split.3x1"
+        case .documentNotesAgent:
+            return "rectangle.split.3x1.fill"
+        case .documentNotesSplit:
+            return "rectangle.split.2x1"
+        case .immersiveReading:
+            return "doc.text.magnifyingglass"
+        case .immersiveConversation:
+            return "bubble.left.and.text.bubble.right"
+        case .immersiveWriting:
+            return "square.and.pencil"
+        }
+    }
+
     public var hasPrimaryAgentPane: Bool {
         switch self {
         case .documentAgentNotes, .documentNotesAgent, .immersiveConversation:

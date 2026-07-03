@@ -576,7 +576,7 @@ private struct UnifiedTopBarView: View {
                         store.setLayout(layout)
                     }
                 } label: {
-                    Label(layout.label, systemImage: layout == store.layout ? "checkmark" : "rectangle.split.3x1")
+                    Label(layout.label, systemImage: layout == store.layout ? "checkmark" : layout.systemImage)
                 }
             }
         } label: {

@@ -88,6 +88,7 @@ expect(WikiLink.enclosingTitle(in: "没有双链", cursor: 2) == nil, "wikilink 
 expect(WorkspaceLayout.documentAgentNotes.hasCollapsibleRightPane, "three-pane layout can collapse right pane")
 expect(WorkspaceLayout.documentNotesSplit.hasCollapsibleRightPane, "split layout can collapse right pane")
 expect(!WorkspaceLayout.immersiveReading.hasCollapsibleRightPane, "immersive reading has no right pane to collapse")
+expect(WorkspaceLayout.immersiveConversation.systemImage == "bubble.left.and.text.bubble.right" && WorkspaceLayout.immersiveWriting.systemImage == "square.and.pencil", "immersive layouts expose semantic menu icons")
 let contentViewSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/ContentView.swift")
 let contentViewSource = (try? String(contentsOf: contentViewSourceURL, encoding: .utf8)) ?? ""
@@ -106,6 +107,7 @@ expect(!contentViewSource.contains("topBarContentFade"), "top bar avoids a dupli
 expect(!contentViewSource.contains("文代笔") && contentViewSource.contains("Agent中"), "top bar short layout labels avoid cryptic abbreviations")
 expect(contentViewSource.contains("prompt: Text(\"当前资料内搜索\").foregroundStyle(tertiaryText)"), "top search placeholder uses readable semantic ink")
 expect(contentViewSource.contains("layout == store.layout ? \"checkmark\"") && contentViewSource.contains(".accessibilityLabel(Text(\"切换布局\"))"), "layout menu marks current layout and explains itself")
+expect(contentViewSource.contains(": layout.systemImage") && !contentViewSource.contains(": \"rectangle.split.3x1\""), "layout menu avoids repeating one generic icon")
 expect(contentViewSource.contains(".accessibilityLabel(Text(\"更多设置\"))"), "top bar more menu has a readable semantic label")
 let sidebarSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/SidebarView.swift")
