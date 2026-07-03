@@ -126,8 +126,10 @@ struct ReaderView: View {
                         searchQuery: store.readerSearch,
                         pageIndex: $pdfPageIndex,
                         pageCount: $pdfPageCount
-                    ) { text, anchor in
-                        store.updateSelection(text, source: .document, anchor: anchor)
+                    ) { text, anchor, selectionPageIndex in
+                        let ownerTitle = "\(item.title)，第 \(selectionPageIndex + 1) 页"
+                        store.updateReaderLocationTitle(ownerTitle)
+                        store.updateSelection(text, source: .document, anchor: anchor, ownerTitle: ownerTitle)
                     }
                 } else {
                     SamplePDFView()
@@ -211,7 +213,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
     var searchQuery: String
     @Binding var pageIndex: Int
     @Binding var pageCount: Int
-    var onSelectionChange: (String, CGPoint?) -> Void
+    var onSelectionChange: (String, CGPoint?, Int) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(pageIndex: $pageIndex, pageCount: $pageCount, onSelectionChange: onSelectionChange)
@@ -254,7 +256,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
     final class Coordinator: NSObject {
         var pageIndex: Binding<Int>
         var pageCount: Binding<Int>
-        var onSelectionChange: (String, CGPoint?) -> Void
+        var onSelectionChange: (String, CGPoint?, Int) -> Void
         private weak var observedView: PDFView?
         private var observer: NSObjectProtocol?
         private var pageObserver: NSObjectProtocol?
@@ -262,7 +264,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         private var loadGeneration = 0
         private(set) var loadedURL: URL?
 
-        init(pageIndex: Binding<Int>, pageCount: Binding<Int>, onSelectionChange: @escaping (String, CGPoint?) -> Void) {
+        init(pageIndex: Binding<Int>, pageCount: Binding<Int>, onSelectionChange: @escaping (String, CGPoint?, Int) -> Void) {
             self.pageIndex = pageIndex
             self.pageCount = pageCount
             self.onSelectionChange = onSelectionChange
@@ -295,7 +297,8 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                 queue: .main
             ) { [weak self] _ in
                 guard let self, let view = self.observedView, let selection = view.currentSelection, let text = selection.string else { return }
-                self.onSelectionChange(text, Self.anchor(for: selection, in: view))
+                let selectedPageIndex = Self.pageIndex(for: selection, in: view) ?? self.pageIndex.wrappedValue
+                self.onSelectionChange(text, Self.anchor(for: selection, in: view), selectedPageIndex)
             }
             pageObserver = NotificationCenter.default.addObserver(
                 forName: Notification.Name.PDFViewPageChanged,
@@ -326,6 +329,12 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                 contentViewIsFlipped: contentView.isFlipped
             )
             return CGPoint(x: contentPoint.x, y: y)
+        }
+
+        private static func pageIndex(for selection: PDFSelection, in view: PDFView) -> Int? {
+            guard let page = selection.pages.first, let document = view.document else { return nil }
+            let index = document.index(for: page)
+            return index == NSNotFound ? nil : index
         }
 
         func applySearch(_ query: String, in view: PDFView) {

@@ -712,14 +712,16 @@ final class WorkspaceStore: ObservableObject {
         NSPasteboard.general.setString(reference, forType: .string)
     }
 
-    func updateSelection(_ text: String, source: SelectionSource, anchor: CGPoint? = nil, isEditable: Bool = true) {
+    func updateSelection(_ text: String, source: SelectionSource, anchor: CGPoint? = nil, ownerTitle: String? = nil, isEditable: Bool = true) {
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard cleaned.count >= 2 else { return }
         clearGeneratedQuietInsight()
+        let cleanedOwnerTitle = ownerTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedOwnerTitle = (cleanedOwnerTitle?.isEmpty == false ? cleanedOwnerTitle : nil) ?? selectionOwnerTitle(for: source)
         selectionContext = SelectionContext(
             text: String(cleaned.prefix(2_000)),
             source: source,
-            ownerTitle: selectionOwnerTitle(for: source),
+            ownerTitle: resolvedOwnerTitle,
             isEditable: isEditable
         )
         selectionAnchor = anchor

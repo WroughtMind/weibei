@@ -221,6 +221,7 @@ expect(readerViewSource.contains("NotebookSelectedReaderView") && readerViewSour
 expect(readerViewSource.contains("pdfFloatingControls"), "pdf controls stay available as a light floating tray")
 expect(readerViewSource.contains(".accessibilityLabel(Text(\"上一页\"))") && readerViewSource.contains(".accessibilityLabel(Text(\"下一页\"))"), "pdf page controls have readable icon labels")
 expect(readerViewSource.contains("syncReaderLocationTitle") && readerViewSource.contains("第 \\(pdfPageIndex + 1) 页"), "pdf reader page updates feed the shared reference title")
+expect(readerViewSource.contains("var onSelectionChange: (String, CGPoint?, Int) -> Void") && readerViewSource.contains("pageIndex(for: selection, in: view)") && readerViewSource.contains("ownerTitle: ownerTitle"), "pdf selection source uses the selected page, not only the current page")
 let richEditorSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/RichMarkdownEditorView.swift")
 let richEditorSource = (try? String(contentsOf: richEditorSourceURL, encoding: .utf8)) ?? ""
@@ -264,6 +265,7 @@ expect(workspaceStoreSource.contains("selectAdjacentItem(step: -1)") && workspac
 expect(workspaceStoreSource.contains("showQuietInsight = agentSurface == .quietInsight") && !workspaceStoreSource.contains("agentSurface = .quietInsight\n            showQuietInsight = true"), "immersive reading preserves the chosen agent surface")
 expect(workspaceStoreSource.contains("func updateNote(_ value: String, for itemID: String?)") && workspaceStoreSource.contains("guard itemID == selectedItemID else { return }"), "note writes are bound to the current selected item")
 expect(workspaceStoreSource.contains("@Published var readerLocationTitle") && workspaceStoreSource.contains("var currentReferenceTitle"), "store tracks the current reader reference title")
+expect(workspaceStoreSource.contains("ownerTitle: String? = nil") && workspaceStoreSource.contains("let resolvedOwnerTitle"), "selection updates can carry a precise reader source title")
 expect(workspaceStoreSource.contains("来源：\\(selectionContext.ownerTitle)") && workspaceStoreSource.contains("来源：\\(currentReferenceTitle)"), "copy reference uses real selection or current reader source")
 expect(workspaceStoreSource.contains("selectionOwnerTitle(for source: SelectionSource)") && workspaceStoreSource.contains("selectedItem?.isNotebookNote == true"), "selection fallback title treats notebook notes as notes")
 expect(workspaceStoreSource.contains("var selectedMaterialItem") && workspaceStoreSource.contains("!item.isNotebookNote"), "selected material excludes notebook notes")
