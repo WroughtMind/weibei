@@ -41,8 +41,7 @@ struct CommandPaletteView: View {
             PaletteCommand(title: "插入矩阵公式", shortcut: "") { store.insertMarkdownSnippet("\n$$\n\\begin{bmatrix}\n{{WEIBEI_SELECT_START}}a{{WEIBEI_SELECT_END}} & b \\\\\nc & d\n\\end{bmatrix}\n$$\n") },
             PaletteCommand(title: "插入 Callout", shortcut: "") { store.insertMarkdownSnippet("\n> [!note] 标题\n> {{WEIBEI_SELECT_START}}内容{{WEIBEI_SELECT_END}}\n") },
             PaletteCommand(title: "插入表格", shortcut: "") { store.insertMarkdownSnippet("\n| A | B |\n| --- | --- |\n| {{WEIBEI_SELECT_START}}内容{{WEIBEI_SELECT_END}} |  |\n") },
-            PaletteCommand(title: "插入 Mermaid", shortcut: "") { store.insertMarkdownSnippet("\n```mermaid\ngraph TD\n  {{WEIBEI_SELECT_START}}A[开始] --> B[整理]{{WEIBEI_SELECT_END}}\n```\n") },
-            PaletteCommand(title: "问选区 Agent", shortcut: "") { store.askSelection() }
+            PaletteCommand(title: "插入 Mermaid", shortcut: "") { store.insertMarkdownSnippet("\n```mermaid\ngraph TD\n  {{WEIBEI_SELECT_START}}A[开始] --> B[整理]{{WEIBEI_SELECT_END}}\n```\n") }
         ]
         if store.canUseSelectedMarkdownAsNotebookNote {
             items.insert(
@@ -56,6 +55,9 @@ struct CommandPaletteView: View {
         if store.selectedItem != nil {
             items.append(PaletteCommand(title: "复制引用", shortcut: "⌘⇧C") { store.copyCurrentReference() })
             items.append(PaletteCommand(title: "搜索当前资料", shortcut: "⌘F") { store.revealReaderSearch() })
+        }
+        if store.selectionContext != nil {
+            items.append(PaletteCommand(title: "问选区 Agent", shortcut: "") { store.askSelection() })
         }
         if store.canApplyAgentAnswer {
             items.append(PaletteCommand(title: "写入 Agent 回答", shortcut: "⌘⇧A") { store.applyLastAgentAnswerToNote() })
