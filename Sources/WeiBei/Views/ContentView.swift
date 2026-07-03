@@ -181,7 +181,7 @@ private struct UnifiedTopBarView: View {
             } label: {
                 Image(systemName: "sidebar.left")
             }
-            .buttonStyle(WeiBeiIconButtonStyle())
+            .buttonStyle(WeiBeiIconButtonStyle(active: store.showLibrary))
             .accessibilityLabel(Text(store.showLibrary ? "完全收起资料库" : "恢复资料库"))
             .help(store.showLibrary ? "完全收起资料库" : "恢复资料库")
 
