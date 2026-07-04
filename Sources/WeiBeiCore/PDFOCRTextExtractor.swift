@@ -39,7 +39,16 @@ public enum PDFOCRTextExtractor {
         let pageLimit = min(max(document.pageCount, 0), max(maxPages, 0))
         guard pageLimit > 0 else { return [] }
 
-        return (0..<pageLimit).compactMap { index -> PDFOCRPage? in
+        return pages(from: document, pageIndexes: Array(0..<pageLimit))
+    }
+
+    public static func pages(from document: PDFDocument, pageIndexes: [Int]) -> [PDFOCRPage] {
+        let pageCount = max(document.pageCount, 0)
+        let indexes = Array(Set(pageIndexes))
+            .filter { $0 >= 0 && $0 < pageCount }
+            .sorted()
+
+        return indexes.compactMap { index -> PDFOCRPage? in
             guard let page = document.page(at: index),
                   let image = cgImage(for: page) else { return nil }
             let lines = recognizeLines(in: image)

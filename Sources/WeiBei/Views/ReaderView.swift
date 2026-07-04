@@ -14,7 +14,7 @@ struct ReaderView: View {
     @State private var pdfControlsExpanded = false
     @State private var pdfControlsCollapseToken = UUID()
     @State private var pendingPDFPageIndex: Int?
-    @State private var pdfHasTextLayer: Bool?
+    @State private var pdfHasSelectableText: Bool?
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -29,7 +29,7 @@ struct ReaderView: View {
                     .transition(WeiBeiTransition.floating)
             }
 
-            if pdfHasTextLayer == false {
+            if pdfHasSelectableText == false {
                 pdfTextLayerNotice
                     .padding(.leading, isImmersive ? 18 : 14)
                     .padding(.bottom, isImmersive ? 18 : 14)
@@ -41,7 +41,7 @@ struct ReaderView: View {
         .foregroundStyle(WeiBeiTheme.ink)
         .animation(WeiBeiMotion.panel, value: pdfBrowseMode)
         .animation(WeiBeiMotion.panel, value: store.showReaderSearch)
-        .animation(WeiBeiMotion.panel, value: pdfHasTextLayer)
+        .animation(WeiBeiMotion.panel, value: pdfHasSelectableText)
         .onAppear {
             syncReaderLocationTitle()
             pendingPDFPageIndex = store.readerTargetPageIndex
@@ -50,7 +50,7 @@ struct ReaderView: View {
         .onChange(of: store.selectedItemID) { _, _ in
             pdfPageIndex = 0
             pdfPageCount = store.selectedMaterialItem?.kind == .pdf && store.selectedMaterialItem?.url == nil ? 1 : 0
-            pdfHasTextLayer = store.selectedMaterialItem?.kind == .pdf && store.selectedMaterialItem?.url == nil ? true : nil
+            pdfHasSelectableText = store.selectedMaterialItem?.kind == .pdf && store.selectedMaterialItem?.url == nil ? true : nil
             syncReaderLocationTitle()
             pendingPDFPageIndex = store.readerTargetPageIndex
             applyPendingPDFPageIfReady()
@@ -282,7 +282,7 @@ struct ReaderView: View {
                         appearanceMode: store.appearanceMode,
                         pageIndex: $pdfPageIndex,
                         pageCount: $pdfPageCount,
-                        onTextLayerChange: { available in pdfHasTextLayer = available }
+                        onSelectableTextChange: { available in pdfHasSelectableText = available }
                     ) { text, anchor, selectionPageIndex in
                         let ownerTitle = "\(item.title)，第 \(selectionPageIndex + 1) 页"
                         store.updateReaderLocationTitle(ownerTitle)
@@ -401,14 +401,14 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
     var appearanceMode: WeiBeiAppearanceMode
     @Binding var pageIndex: Int
     @Binding var pageCount: Int
-    var onTextLayerChange: (Bool?) -> Void = { _ in }
+    var onSelectableTextChange: (Bool?) -> Void = { _ in }
     var onSelectionChange: (String, CGPoint?, Int) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
             pageIndex: $pageIndex,
             pageCount: $pageCount,
-            onTextLayerChange: onTextLayerChange,
+            onSelectableTextChange: onSelectableTextChange,
             onSelectionChange: onSelectionChange
         )
     }
@@ -438,7 +438,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         context.coordinator.pageIndex = $pageIndex
         context.coordinator.pageCount = $pageCount
         context.coordinator.appearanceMode = appearanceMode
-        context.coordinator.onTextLayerChange = onTextLayerChange
+        context.coordinator.onSelectableTextChange = onSelectableTextChange
         view.backgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
 
         if context.coordinator.loadedURL != url {
@@ -476,23 +476,25 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
     final class Coordinator: NSObject {
         var pageIndex: Binding<Int>
         var pageCount: Binding<Int>
-        var onTextLayerChange: (Bool?) -> Void
+        var onSelectableTextChange: (Bool?) -> Void
         var onSelectionChange: (String, CGPoint?, Int) -> Void
         var appearanceMode: WeiBeiAppearanceMode = .paper
         private weak var observedView: PDFView?
         private var observer: NSObjectProtocol?
         private var pageObserver: NSObjectProtocol?
         private var selectionWork: DispatchWorkItem?
+        private var nativeTextPageIndexes: Set<Int> = []
         private var ocrPagesByPageIndex: [Int: PDFOCRPage] = [:]
+        private var pendingOCRPageIndexes: Set<Int> = []
         private var ocrHighlightedLinesByPageIndex: [Int: Set<Int>] = [:]
         private var lastSearchQuery = ""
         private var loadGeneration = 0
         private(set) var loadedURL: URL?
 
-        init(pageIndex: Binding<Int>, pageCount: Binding<Int>, onTextLayerChange: @escaping (Bool?) -> Void, onSelectionChange: @escaping (String, CGPoint?, Int) -> Void) {
+        init(pageIndex: Binding<Int>, pageCount: Binding<Int>, onSelectableTextChange: @escaping (Bool?) -> Void, onSelectionChange: @escaping (String, CGPoint?, Int) -> Void) {
             self.pageIndex = pageIndex
             self.pageCount = pageCount
-            self.onTextLayerChange = onTextLayerChange
+            self.onSelectableTextChange = onSelectableTextChange
             self.onSelectionChange = onSelectionChange
         }
 
@@ -501,9 +503,10 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             let generation = loadGeneration
             loadedURL = url
             view.document = nil
+            nativeTextPageIndexes = []
             clearOCROverlays(in: view)
             lastSearchQuery = ""
-            onTextLayerChange(nil)
+            onSelectableTextChange(nil)
 
             DispatchQueue.global(qos: .userInitiated).async {
                 let document = PDFDocument(url: url)
@@ -513,9 +516,11 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                     view.autoScales = true
                     self.pageCount.wrappedValue = document?.pageCount ?? 0
                     self.pageIndex.wrappedValue = 0
-                    let hasTextLayer = document.map(Self.hasSelectableText)
-                    self.onTextLayerChange(hasTextLayer)
-                    self.configureOCROverlays(for: document, hasTextLayer: hasTextLayer == true, generation: generation, in: view)
+                    if let document {
+                        self.nativeTextPageIndexes = Self.selectableTextPageIndexes(in: document)
+                    }
+                    self.updateSelectableTextState(in: view)
+                    self.configureOCROverlays(for: document, generation: generation, in: view)
                     if !self.lastSearchQuery.isEmpty {
                         self.applySearch(self.lastSearchQuery, in: view, force: true)
                     }
@@ -524,24 +529,49 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             }
         }
 
-        private static func hasSelectableText(_ document: PDFDocument) -> Bool {
-            document.string?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        private static func selectableTextPageIndexes(in document: PDFDocument) -> Set<Int> {
+            Set((0..<max(document.pageCount, 0)).filter { index in
+                guard let page = document.page(at: index) else { return false }
+                return page.string?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+            })
         }
 
-        private func configureOCROverlays(for document: PDFDocument?, hasTextLayer: Bool, generation: Int, in view: PDFView) {
-            guard let document, !hasTextLayer else {
+        private static func ocrCandidatePageIndexes(in document: PDFDocument, maxPages: Int = 12) -> [Int] {
+            let pageLimit = min(max(document.pageCount, 0), max(maxPages, 0))
+            guard pageLimit > 0 else { return [] }
+            return (0..<pageLimit).filter { index in
+                guard let page = document.page(at: index) else { return false }
+                return page.string?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+            }
+        }
+
+        private func configureOCROverlays(for document: PDFDocument?, generation: Int, in view: PDFView) {
+            guard let document else {
                 clearOCROverlays(in: view)
+                updateSelectableTextState(in: view)
                 return
             }
 
+            let pageIndexes = Self.ocrCandidatePageIndexes(in: document)
+            guard !pageIndexes.isEmpty else {
+                clearOCROverlays(in: view)
+                updateSelectableTextState(in: view)
+                return
+            }
+
+            pendingOCRPageIndexes = Set(pageIndexes)
+            updateSelectableTextState(in: view)
+
             DispatchQueue.global(qos: .userInitiated).async {
-                let pages = PDFOCRTextExtractor.pages(from: document)
+                let pages = PDFOCRTextExtractor.pages(from: document, pageIndexes: pageIndexes)
                 let indexed = Dictionary(uniqueKeysWithValues: pages.map { ($0.pageIndex, $0) })
                 DispatchQueue.main.async { [weak self, weak view] in
                     guard let self, let view, self.loadGeneration == generation else { return }
+                    self.pendingOCRPageIndexes.subtract(pageIndexes)
                     self.ocrPagesByPageIndex = indexed
                     view.pageOverlayViewProvider = indexed.isEmpty ? nil : self
                     view.isInMarkupMode = !indexed.isEmpty
+                    self.updateSelectableTextState(in: view)
                     if self.lastSearchQuery.isEmpty {
                         view.layoutDocumentView()
                     } else {
@@ -553,10 +583,29 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
 
         private func clearOCROverlays(in view: PDFView) {
             ocrPagesByPageIndex = [:]
+            pendingOCRPageIndexes = []
             ocrHighlightedLinesByPageIndex = [:]
             view.pageOverlayViewProvider = nil
             view.isInMarkupMode = false
             view.layoutDocumentView()
+        }
+
+        private func updateSelectableTextState(in view: PDFView) {
+            guard let document = view.document,
+                  let page = view.currentPage else {
+                onSelectableTextChange(nil)
+                return
+            }
+            let index = document.index(for: page)
+            guard index != NSNotFound else {
+                onSelectableTextChange(nil)
+                return
+            }
+            if pendingOCRPageIndexes.contains(index) {
+                onSelectableTextChange(nil)
+                return
+            }
+            onSelectableTextChange(nativeTextPageIndexes.contains(index) || ocrPagesByPageIndex[index] != nil)
         }
 
         func observe(_ view: PDFView) {
@@ -577,6 +626,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                 guard let self, let view = self.observedView, let document = view.document, let page = view.currentPage else { return }
                 self.pageCount.wrappedValue = document.pageCount
                 self.pageIndex.wrappedValue = document.index(for: page)
+                self.updateSelectableTextState(in: view)
             }
         }
 

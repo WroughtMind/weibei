@@ -214,6 +214,10 @@ let ocrText = imageOnlyPDF.flatMap { PDFOCRTextExtractor.text(from: $0, maxPages
 expect(ocrText.contains("INTEREST") && ocrText.contains("OCR") && ocrText.contains("PRICE"), "Vision OCR extracts text from image-only PDF pages")
 let ocrPages = imageOnlyPDF.map { PDFOCRTextExtractor.pages(from: $0, maxPages: 1) } ?? []
 expect(ocrPages.count == 1 && ocrPages[0].lines.contains { $0.text.uppercased().contains("INTEREST") && !$0.boundingBox.isEmpty }, "Vision OCR keeps page text bounds for scanned PDF selection overlays")
+let targetedOCRPages = imageOnlyPDF.map { PDFOCRTextExtractor.pages(from: $0, pageIndexes: [0]) } ?? []
+expect(targetedOCRPages.count == 1 && targetedOCRPages[0].pageIndex == 0, "Vision OCR can target a specific PDF page for mixed text and scanned documents")
+let outOfRangeOCRPages = imageOnlyPDF.map { PDFOCRTextExtractor.pages(from: $0, pageIndexes: [1]) } ?? []
+expect(outOfRangeOCRPages.isEmpty, "targeted OCR ignores pages outside the PDF")
 
 let data = Data("""
 {"output":[{"content":[{"type":"output_text","text":"只根据当前材料回答。"}]}]}
@@ -688,13 +692,18 @@ expect(readerViewSource.contains("private var ocrHighlightedLinesByPageIndex: [I
 expect(readerViewSource.contains("view.highlightedSelections = matches")
     && readerViewSource.contains("view.go(to: first)")
     && !readerViewSource.contains("view.setCurrentSelection(first, animate: true)"), "PDF search highlights and jumps without creating a fake user selection or selection-agent context")
-expect(readerViewSource.contains("@State private var pdfHasTextLayer: Bool?")
-    && readerViewSource.contains("var onTextLayerChange: (Bool?) -> Void")
-    && readerViewSource.contains("private static func hasSelectableText")
-    && readerViewSource.contains("document.string?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false")
+expect(readerViewSource.contains("@State private var pdfHasSelectableText: Bool?")
+    && readerViewSource.contains("var onSelectableTextChange: (Bool?) -> Void")
+    && readerViewSource.contains("private var nativeTextPageIndexes: Set<Int> = []")
+    && readerViewSource.contains("private var pendingOCRPageIndexes: Set<Int> = []")
+    && readerViewSource.contains("private static func selectableTextPageIndexes")
+    && readerViewSource.contains("private static func ocrCandidatePageIndexes")
+    && readerViewSource.contains("PDFOCRTextExtractor.pages(from: document, pageIndexes: pageIndexes)")
+    && readerViewSource.contains("onSelectableTextChange(nativeTextPageIndexes.contains(index) || ocrPagesByPageIndex[index] != nil)")
     && readerViewSource.contains("Text(\"未检测到可选文本层\")")
     && readerViewSource.contains(".frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)")
-    && readerViewSource.contains(".allowsHitTesting(false)"), "pdf reader reports missing text layers with a non-blocking lower-left notice instead of silently failing selection")
+    && readerViewSource.contains(".allowsHitTesting(false)")
+    && !readerViewSource.contains("configureOCROverlays(for: document, hasTextLayer:"), "pdf reader reports selectable text per page so mixed text/scanned PDFs still get OCR overlays")
 expect(readerViewSource.contains("selection.color = WeiBeiNativePalette.selectionFill(for: appearanceMode)"), "pdf reader applies the theme-aware WeiBei cinnabar selection tint to the active PDFKit selection")
 expect(readerViewSource.contains("onSelectionChange(\"\", nil, pageIndex.wrappedValue)"), "pdf reader clears the floating selection agent when PDF selection is removed")
 expect(readerViewSource.contains("private func reportSelectionAfterDragSettles")
