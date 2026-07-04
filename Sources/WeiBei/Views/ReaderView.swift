@@ -427,6 +427,10 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             WeiBeiQuietScrollers.flashRecursively(in: view, repeatCount: 2)
         }
         context.coordinator.observe(view)
+        view.reportCurrentSelection = { [weak coordinator = context.coordinator, weak view] in
+            guard let view else { return }
+            coordinator?.reportCurrentSelection(in: view)
+        }
         return view
     }
 
@@ -563,14 +567,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                 queue: .main
             ) { [weak self] _ in
                 guard let self, let view = self.observedView else { return }
-                guard let selection = view.currentSelection, let text = selection.string, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                    self.selectionWork?.cancel()
-                    self.onSelectionChange("", nil, self.pageIndex.wrappedValue)
-                    return
-                }
-                selection.color = WeiBeiNativePalette.selectionFill(for: self.appearanceMode)
-                let selectedPageIndex = Self.pageIndex(for: selection, in: view) ?? self.pageIndex.wrappedValue
-                self.reportSelectionAfterDragSettles(text: text, anchor: Self.anchor(for: selection, in: view), pageIndex: selectedPageIndex)
+                self.reportCurrentSelection(in: view)
             }
             pageObserver = NotificationCenter.default.addObserver(
                 forName: Notification.Name.PDFViewPageChanged,
@@ -581,6 +578,23 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                 self.pageCount.wrappedValue = document.pageCount
                 self.pageIndex.wrappedValue = document.index(for: page)
             }
+        }
+
+        func reportCurrentSelection(in view: PDFView) {
+            guard let selection = view.currentSelection,
+                  let text = selection.string,
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                selectionWork?.cancel()
+                onSelectionChange("", nil, pageIndex.wrappedValue)
+                return
+            }
+            selection.color = WeiBeiNativePalette.selectionFill(for: appearanceMode)
+            let selectedPageIndex = Self.pageIndex(for: selection, in: view) ?? pageIndex.wrappedValue
+            reportSelectionAfterDragSettles(
+                text: text,
+                anchor: Self.anchor(for: selection, in: view),
+                pageIndex: selectedPageIndex
+            )
         }
 
         private func reportSelectionAfterDragSettles(text: String, anchor: CGPoint?, pageIndex: Int) {
@@ -673,6 +687,8 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
 }
 
 private final class ReaderPDFView: PDFView {
+    var reportCurrentSelection: (() -> Void)?
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
     }
@@ -680,6 +696,16 @@ private final class ReaderPDFView: PDFView {
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         super.mouseDown(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        super.mouseDragged(with: event)
+        reportCurrentSelection?()
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+        reportCurrentSelection?()
     }
 }
 
