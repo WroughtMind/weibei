@@ -1134,6 +1134,11 @@ struct WebReaderRepresentable: NSViewRepresentable {
               const query = \(Self.json(query));
               const selection = window.getSelection();
               selection?.removeAllRanges();
+              window.webkit?.messageHandlers?.selection?.postMessage({
+                text: "",
+                x: null,
+                y: null
+              });
               if (!query) return false;
               return window.find(query, false, false, true, false, true, false);
             })();

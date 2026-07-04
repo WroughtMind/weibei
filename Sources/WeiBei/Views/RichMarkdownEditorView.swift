@@ -543,6 +543,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
               const query = \(Self.json(query));
               const selection = window.getSelection();
               selection?.removeAllRanges();
+              window.webkit?.messageHandlers?.selectionChanged?.postMessage({
+                text: "",
+                rect: null,
+                documentID: window.weiBeiDocumentID || ""
+              });
               if (!query) return false;
               return window.find(query, false, false, true, false, true, false);
             })();
