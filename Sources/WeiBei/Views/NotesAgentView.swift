@@ -36,6 +36,19 @@ private extension View {
             .zIndex(1)
             .animation(WeiBeiMotion.appearance, value: appearanceMode)
     }
+
+    func weibeiFloatingHeaderChrome(appearanceMode: WeiBeiAppearanceMode) -> some View {
+        self
+            .padding(.horizontal, 10)
+            .frame(height: 32)
+            .background(WeiBeiGlassHeaderBackground(paperOpacity: 0.60, materialOpacity: 0.08))
+            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .overlay(alignment: .bottom) {
+                WeiBeiHeaderHandoffFade(height: 10, opacity: 0.22)
+                    .offset(y: 10)
+            }
+            .animation(WeiBeiMotion.appearance, value: appearanceMode)
+    }
 }
 
 struct NotePaneView: View {
@@ -326,6 +339,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
             focusRequest: focusRequest,
             markdownBaseURLString: markdownBaseURL?.absoluteString ?? "",
             attachmentDirectory: attachmentDirectory,
+            appearanceMode: appearanceMode,
             onSelectionChange: onSelectionChange,
             onWikiLink: onWikiLink
         )
@@ -341,10 +355,9 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         textView.isRichText = false
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
-        textView.font = .monospacedSystemFont(ofSize: 15, weight: .regular)
         textView.backgroundColor = .clear
-        applyTheme(to: textView)
         textView.string = text
+        applyTheme(to: textView)
         textView.delegate = context.coordinator
         textView.openWikiLinkAtCursor = { [weak coordinator = context.coordinator, weak textView] in
             guard let textView else { return false }
@@ -376,10 +389,11 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         context.coordinator.onWikiLink = onWikiLink
         context.coordinator.isFocused = isFocused
         context.coordinator.focusRequest = focusRequest
-        applyTheme(to: textView)
+        context.coordinator.appearanceMode = appearanceMode
         if textView.string != text {
             textView.string = text
         }
+        applyTheme(to: textView)
         context.coordinator.applyFocus(in: textView)
         if let command, context.coordinator.lastCommandID != command.id {
             context.coordinator.lastCommandID = command.id
@@ -391,12 +405,56 @@ struct MarkdownSourceEditor: NSViewRepresentable {
     }
 
     private func applyTheme(to textView: NSTextView) {
+        let baseFont = NSFont.monospacedSystemFont(ofSize: 15, weight: .regular)
+        textView.font = baseFont
         textView.textColor = WeiBeiNativePalette.ink(for: appearanceMode)
         textView.insertionPointColor = WeiBeiNativePalette.ink(for: appearanceMode)
         textView.selectedTextAttributes = [
             .backgroundColor: WeiBeiNativePalette.selectionFill(for: appearanceMode),
             .foregroundColor: WeiBeiNativePalette.selectedText(for: appearanceMode)
         ]
+        Self.applySourcePresentation(in: textView, appearanceMode: appearanceMode, baseFont: baseFont)
+    }
+
+    private static func applySourcePresentation(
+        in textView: NSTextView,
+        appearanceMode: WeiBeiAppearanceMode,
+        baseFont: NSFont
+    ) {
+        guard let textStorage = textView.textStorage, textStorage.length > 0 else { return }
+        let fullRange = NSRange(location: 0, length: textStorage.length)
+        let ink = WeiBeiNativePalette.ink(for: appearanceMode)
+        let markerColor = ink.withAlphaComponent(appearanceMode == .inkstone ? 0.36 : 0.44)
+        let quotePrefixColor = ink.withAlphaComponent(appearanceMode == .inkstone ? 0.30 : 0.36)
+        let markerFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        let quotePrefixRegex = try? NSRegularExpression(pattern: #"(?m)^\s*>+\s*"#)
+        let calloutControlRegex = try? NSRegularExpression(
+            pattern: #"(?m)^(\s*>\s*)(\[![A-Za-z][A-Za-z0-9_-]*\][+-]?)"#
+        )
+
+        textView.undoManager?.disableUndoRegistration()
+        textStorage.beginEditing()
+        textStorage.addAttributes([
+            .font: baseFont,
+            .foregroundColor: ink
+        ], range: fullRange)
+
+        quotePrefixRegex?.enumerateMatches(in: textView.string, range: fullRange) { match, _, _ in
+            guard let range = match?.range, range.location != NSNotFound else { return }
+            textStorage.addAttributes([
+                .foregroundColor: quotePrefixColor
+            ], range: range)
+        }
+
+        calloutControlRegex?.enumerateMatches(in: textView.string, range: fullRange) { match, _, _ in
+            guard let markerRange = match?.range(at: 2), markerRange.location != NSNotFound else { return }
+            textStorage.addAttributes([
+                .font: markerFont,
+                .foregroundColor: markerColor
+            ], range: markerRange)
+        }
+        textStorage.endEditing()
+        textView.undoManager?.enableUndoRegistration()
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -408,6 +466,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         var attachmentDirectory: URL?
         var onSelectionChange: (String, CGPoint?) -> Void
         var onWikiLink: (String) -> Void
+        var appearanceMode: WeiBeiAppearanceMode
         var lastCommandID: UUID?
         private var lastAppliedFocusRequest = -1
 
@@ -418,6 +477,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
             focusRequest: Int,
             markdownBaseURLString: String,
             attachmentDirectory: URL?,
+            appearanceMode: WeiBeiAppearanceMode,
             onSelectionChange: @escaping (String, CGPoint?) -> Void,
             onWikiLink: @escaping (String) -> Void
         ) {
@@ -429,10 +489,16 @@ struct MarkdownSourceEditor: NSViewRepresentable {
             self.attachmentDirectory = attachmentDirectory
             self.onSelectionChange = onSelectionChange
             self.onWikiLink = onWikiLink
+            self.appearanceMode = appearanceMode
         }
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
+            MarkdownSourceEditor.applySourcePresentation(
+                in: textView,
+                appearanceMode: appearanceMode,
+                baseFont: .monospacedSystemFont(ofSize: 15, weight: .regular)
+            )
             text.wrappedValue = textView.string
         }
 
@@ -909,11 +975,13 @@ struct AgentDrawerView: View {
             HStack {
                 Text("对话")
                     .font(.system(size: 14, weight: .semibold, design: .serif))
+                    .foregroundStyle(WeiBeiTheme.ink)
                 Spacer()
                 Text("⌘↩")
                     .font(.caption.monospaced())
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
+            .weibeiFloatingHeaderChrome(appearanceMode: store.appearanceMode)
 
             HStack(spacing: 8) {
                 TextField(
@@ -981,6 +1049,7 @@ struct CornerAgentView: View {
             HStack {
                 Text("对话")
                     .font(.system(size: 15, weight: .semibold, design: .serif))
+                    .foregroundStyle(WeiBeiTheme.ink)
                 Spacer()
                 Button { store.setAgentSurface(.hidden) } label: {
                     Image(systemName: "minus")
@@ -989,6 +1058,7 @@ struct CornerAgentView: View {
                 .accessibilityLabel(Text("收起对话浮窗"))
                 .help("收起对话浮窗")
             }
+            .weibeiFloatingHeaderChrome(appearanceMode: store.appearanceMode)
 
             Text(store.selectedMaterialItem?.title ?? "当前笔记")
                 .font(.system(size: 11, weight: .medium))

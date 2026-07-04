@@ -251,12 +251,20 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           })(),
           quoteCalloutTitle: document.querySelector('blockquote.weibei-callout-quote')?.getAttribute('data-callout-title') || '',
           quoteCalloutText: document.querySelector('blockquote.weibei-callout-quote')?.textContent || '',
+          quoteCalloutMarkerVisible: (() => {
+            const marker = document.querySelector('blockquote.weibei-callout-quote .weibei-callout-marker');
+            if (!marker) return true;
+            const style = getComputedStyle(marker);
+            return style.visibility !== 'hidden'
+              || Array.from(marker.getClientRects()).some((rect) => rect.width > 0.5 || rect.height > 0.5);
+          })(),
           quoteCalloutMarkerHidden: (() => {
             const marker = document.querySelector('blockquote.weibei-callout-quote .weibei-callout-marker');
             if (!marker) return false;
             const style = getComputedStyle(marker);
             return style.display === 'inline-block'
               && style.color === 'rgba(0, 0, 0, 0)'
+              && style.visibility === 'hidden'
               && style.fontSize === '0px'
               && style.width === '0px'
               && marker.getBoundingClientRect().width === 0;
@@ -265,12 +273,20 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           customCalloutFold: document.querySelector('blockquote.weibei-callout-custom')?.getAttribute('data-callout-fold') || '',
           customCalloutTitle: document.querySelector('blockquote.weibei-callout-custom')?.getAttribute('data-callout-title') || '',
           customCalloutText: document.querySelector('blockquote.weibei-callout-custom')?.textContent || '',
+          customCalloutMarkerVisible: (() => {
+            const marker = document.querySelector('blockquote.weibei-callout-custom .weibei-callout-marker');
+            if (!marker) return true;
+            const style = getComputedStyle(marker);
+            return style.visibility !== 'hidden'
+              || Array.from(marker.getClientRects()).some((rect) => rect.width > 0.5 || rect.height > 0.5);
+          })(),
           customCalloutMarkerHidden: (() => {
             const marker = document.querySelector('blockquote.weibei-callout-custom .weibei-callout-marker');
             if (!marker) return false;
             const style = getComputedStyle(marker);
             return style.display === 'inline-block'
               && style.color === 'rgba(0, 0, 0, 0)'
+              && style.visibility === 'hidden'
               && style.fontSize === '0px'
               && style.width === '0px'
               && marker.getBoundingClientRect().width === 0;
@@ -400,6 +416,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("quote callout marker should collapse in writing and preview surfaces")
                 return
             }
+            if result["quoteCalloutMarkerVisible"] as? Bool == true {
+                self.fail("quote callout marker should not have visible boxes")
+                return
+            }
             if result["customCalloutType"] as? String != "attention" {
                 self.fail("unknown Obsidian callout type was not recognized")
                 return
@@ -418,6 +438,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             if result["customCalloutMarkerHidden"] as? Bool != true {
                 self.fail("unknown Obsidian callout marker should collapse")
+                return
+            }
+            if result["customCalloutMarkerVisible"] as? Bool == true {
+                self.fail("unknown Obsidian callout marker should not have visible boxes")
                 return
             }
             completion()
