@@ -414,6 +414,13 @@ expect(
         && workspaceStoreSource.contains("readerSearch = \"\""),
     "material search state clears when selection no longer points to a material"
 )
+if let hideReaderSearchStart = workspaceStoreSource.range(of: "func hideReaderSearch()")?.lowerBound,
+   let updateReaderLocationStart = workspaceStoreSource.range(of: "func updateReaderLocationTitle")?.lowerBound {
+    let hideReaderSearchSource = String(workspaceStoreSource[hideReaderSearchStart..<updateReaderLocationStart])
+    expect(hideReaderSearchSource.contains("clearUnpinnedFloatingSelection(keepContext: false)") && !hideReaderSearchSource.contains("selectionContext = nil"), "reader search dismissal preserves pinned selection agents through the shared clear helper")
+} else {
+    expect(false, "reader search dismissal source is readable")
+}
 expect(workspaceStoreSource.contains("var selectedMaterialTitle") && workspaceStoreSource.contains("selectedMaterialItem?.title ?? \"未选择材料\""), "agent material title does not invent a current material")
 expect(workspaceStoreSource.contains("var agentMessageSourceTitle: String?") && workspaceStoreSource.contains("selectedMaterialItem?.title ?? selectedItem?.title") && !workspaceStoreSource.contains("source: selectedMaterialItem?.title"), "agent message source falls back to the selected note title")
 expect(workspaceStoreSource.contains("private var quietInsightReferenceTitle: String") && workspaceStoreSource.contains("selectionContext?.ownerTitle ?? selectedMaterialItem?.title ?? selectedItem?.title") && workspaceStoreSource.contains("没有证据就说\\(evidenceText)"), "quiet insight uses real note or material source wording")

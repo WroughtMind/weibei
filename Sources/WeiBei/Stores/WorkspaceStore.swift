@@ -314,11 +314,7 @@ final class WorkspaceStore: ObservableObject {
     func hideReaderSearch() {
         showReaderSearch = false
         readerSearch = ""
-        selectionContext = nil
-        selectionAnchor = nil
-        if agentSurface == .selectionFloat && !pinnedFloatingAgent {
-            agentSurface = .hidden
-        }
+        clearUnpinnedFloatingSelection(keepContext: false)
         focus(.reader)
     }
 
