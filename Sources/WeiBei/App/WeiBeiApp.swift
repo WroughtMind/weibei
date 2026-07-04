@@ -38,6 +38,7 @@ struct WeiBeiApp: App {
             ContentView()
                 .environmentObject(store)
                 .preferredColorScheme(store.appearanceMode.colorScheme)
+                .modifier(WeiBeiAppearanceTransition(mode: store.appearanceMode))
                 .background(WindowChromeConfigurator(appearanceMode: store.appearanceMode))
                 .onOpenURL { url in
                     store.importFiles([url])
@@ -218,6 +219,27 @@ struct WeiBeiApp: App {
         animatePanel {
             store.setNoteRenderMode(mode)
         }
+    }
+}
+
+private struct WeiBeiAppearanceTransition: ViewModifier {
+    var mode: WeiBeiAppearanceMode
+    @State private var washOpacity = 0.0
+
+    func body(content: Content) -> some View {
+        content
+            .animation(WeiBeiMotion.appearance, value: mode)
+            .overlay {
+                WeiBeiTheme.paper
+                    .opacity(washOpacity)
+                    .allowsHitTesting(false)
+            }
+            .onChange(of: mode) { _, _ in
+                washOpacity = 0.24
+                withAnimation(WeiBeiMotion.appearance) {
+                    washOpacity = 0
+                }
+            }
     }
 }
 

@@ -1180,11 +1180,29 @@ private final class WeiBeiSplitView: NSSplitView {
     }
 
     override func drawDivider(in rect: NSRect) {
-        NSColor.clear.setFill()
+        dividerFill.setFill()
         rect.fill()
-        let line = NSRect(x: rect.midX - 0.5, y: rect.minY + 10, width: 1, height: max(0, rect.height - 20))
-        NSColor(calibratedRed: 0.50, green: 0.38, blue: 0.26, alpha: 0.26).setFill()
+        let line = NSRect(x: rect.midX - 0.5, y: rect.minY + 14, width: 1, height: max(0, rect.height - 28))
+        dividerLine.setFill()
         line.fill()
+    }
+
+    private var dividerFill: NSColor {
+        if isDarkAppearance {
+            return NSColor(calibratedRed: 0.059, green: 0.059, blue: 0.059, alpha: 0.96)
+        }
+        return NSColor(calibratedRed: 0.955, green: 0.918, blue: 0.835, alpha: 0.96)
+    }
+
+    private var dividerLine: NSColor {
+        if isDarkAppearance {
+            return NSColor(calibratedRed: 0.230, green: 0.200, blue: 0.155, alpha: 0.24)
+        }
+        return NSColor(calibratedRed: 0.500, green: 0.380, blue: 0.260, alpha: 0.13)
+    }
+
+    private var isDarkAppearance: Bool {
+        effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
     }
 }
 

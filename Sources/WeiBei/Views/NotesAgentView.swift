@@ -17,6 +17,30 @@ struct NotesAgentView: View {
     }
 }
 
+private struct WeiBeiPaneHeaderBackground: View {
+    var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(WeiBeiTheme.paper.opacity(0.58))
+
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .opacity(0.018)
+
+            LinearGradient(
+                colors: [
+                    WeiBeiTheme.glassHighlight.opacity(0.045),
+                    WeiBeiTheme.glassTint.opacity(0.026),
+                    WeiBeiTheme.paper.opacity(0.008),
+                    .clear
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+    }
+}
+
 struct NotePaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
 
@@ -24,7 +48,7 @@ struct NotePaneView: View {
         VStack(spacing: 0) {
             HStack {
                 Text("笔记")
-                    .font(.system(size: 17, weight: .semibold, design: .serif))
+                    .font(.system(size: 18, weight: .semibold, design: .serif))
                     .foregroundStyle(WeiBeiTheme.ink)
                 Spacer()
                 noteModeControl
@@ -46,17 +70,17 @@ struct NotePaneView: View {
             }
             .padding(.horizontal, 16)
             .frame(height: 54)
-            .background(noteHeaderBackground)
+            .background(WeiBeiPaneHeaderBackground())
             .overlay(alignment: .top) {
                 Rectangle()
-                    .fill(WeiBeiTheme.glassHighlight.opacity(0.18))
+                    .fill(WeiBeiTheme.glassHighlight.opacity(0.06))
                     .frame(height: 1)
             }
             .overlay(alignment: .bottom) {
-                WeiBeiHeaderHandoffFade(height: 28, opacity: 0.46)
+                WeiBeiHeaderHandoffFade(height: 28, opacity: 0.34)
                     .offset(y: 28)
             }
-            .shadow(color: WeiBeiTheme.ink.opacity(0.018), radius: 8, y: 2)
+            .shadow(color: WeiBeiTheme.ink.opacity(0.012), radius: 7, y: 2)
             .zIndex(1)
 
             if let noteFileError = store.noteFileError {
@@ -71,29 +95,8 @@ struct NotePaneView: View {
             noteBody
         }
         .frame(minHeight: 280)
-        .weibeiPanel()
-    }
-
-    private var noteHeaderBackground: some View {
-        ZStack {
-            Rectangle()
-                .fill(WeiBeiTheme.paper.opacity(0.82))
-
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .opacity(0.028)
-
-            LinearGradient(
-                colors: [
-                    WeiBeiTheme.glassHighlight.opacity(0.07),
-                    WeiBeiTheme.glassTint.opacity(0.045),
-                    WeiBeiTheme.paper.opacity(0.015),
-                    .clear
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
+        .foregroundStyle(WeiBeiTheme.ink)
+        .background(WeiBeiTheme.paper)
     }
 
     private var noteModeControl: some View {
@@ -634,13 +637,19 @@ struct AgentPaneView: View {
                     }
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .background(WeiBeiGlassHeaderBackground(paperOpacity: 0.68, materialOpacity: 0.08))
-            .overlay(alignment: .bottom) {
-                WeiBeiHeaderHandoffFade(height: 14, opacity: 0.68)
-                    .offset(y: 14)
+            .padding(.horizontal, 16)
+            .frame(height: 54)
+            .background(WeiBeiPaneHeaderBackground())
+            .overlay(alignment: .top) {
+                Rectangle()
+                    .fill(WeiBeiTheme.glassHighlight.opacity(0.06))
+                    .frame(height: 1)
             }
+            .overlay(alignment: .bottom) {
+                WeiBeiHeaderHandoffFade(height: 28, opacity: 0.34)
+                    .offset(y: 28)
+            }
+            .shadow(color: WeiBeiTheme.ink.opacity(0.012), radius: 7, y: 2)
             .zIndex(1)
 
             ScrollViewReader { proxy in
