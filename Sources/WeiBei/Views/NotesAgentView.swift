@@ -1173,9 +1173,6 @@ struct FloatingSelectionAgentView: View {
                         togglePinnedFloatingAgent()
                     }
                 }
-                iconButton("xmark", help: "关闭选区对话") {
-                    closeFloatingAgent()
-                }
             }
 
             ScrollView(showsIndicators: false) {
