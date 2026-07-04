@@ -54,6 +54,17 @@ expect(
 )
 expect(editorIndexSource.contains("color: rgba(58, 46, 38, .56)") && !editorIndexSource.contains("color: rgba(58, 46, 38, .36)"), "editable markdown markers stay readable on paper")
 expect(editorIndexSource.contains(".frontmatter-title {\n      color: var(--muted)") && editorIndexSource.contains("li[data-item-type=\"task\"][data-checked=\"true\"] {\n      color: var(--muted)"), "small frontmatter and completed task text avoid faint low-contrast ink")
+if let frontmatterStart = editorIndexSource.range(of: ":root[data-weibei-theme=\"inkstone\"] #frontmatter-panel")?.lowerBound,
+   let frontmatterEnd = editorIndexSource[frontmatterStart...].range(of: "\n\n    .ProseMirror")?.lowerBound {
+    let darkFrontmatterSource = String(editorIndexSource[frontmatterStart..<frontmatterEnd])
+    expect(darkFrontmatterSource.contains("background: var(--paper-raised);")
+        && darkFrontmatterSource.contains("border-color: var(--line);")
+        && darkFrontmatterSource.contains("border-left-color: var(--cinnabar-line);")
+        && !darkFrontmatterSource.contains("rgba(28, 28, 28")
+        && !darkFrontmatterSource.contains("border-color: #2d2d2d"), "dark frontmatter panel uses shared theme variables instead of hardcoded ink blocks")
+} else {
+    expect(false, "dark frontmatter panel style is readable")
+}
 expect(editorIndexSource.contains(".weibei-source-reference") && editorIndexSource.contains("border-bottom: 1px dotted"), "source references have readable link styling")
 expect(editorIndexSource.contains("scrollbar-width: thin")
     && editorIndexSource.contains("scrollbar-color: transparent transparent")
