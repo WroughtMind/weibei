@@ -669,14 +669,14 @@ struct AgentPaneView: View {
                     .onSubmit {
                         Task { await store.askAgent() }
                     }
-                .weibeiInputSurface(active: draftFocused, height: 34)
+                .weibeiInputSurface(active: draftFocused, height: 46)
                 .weibeiInputPrompt(agentPrompt, visible: store.agentDraft.isEmpty, fontSize: 14)
 
                 if canSendDraft {
                     Button { Task { await store.askAgent() } } label: {
                         Image(systemName: "paperplane.fill")
                     }
-                    .buttonStyle(WeiBeiIconButtonStyle(active: canSendDraft, size: 28))
+                    .buttonStyle(WeiBeiIconButtonStyle(active: canSendDraft, size: 34))
                     .accessibilityLabel(Text("发送"))
                     .help("发送")
                     .keyboardShortcut(.return, modifiers: [.command])
@@ -686,10 +686,11 @@ struct AgentPaneView: View {
             }
             .font(.system(size: 14))
             .frame(maxWidth: agentInputMaxWidth)
-            .padding(6)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 7)
             .padding(.horizontal, 12)
             .padding(.top, 1)
-            .padding(.bottom, 10)
+            .padding(.bottom, 12)
             .frame(maxWidth: .infinity)
         }
         .background(alignment: .bottom) {
@@ -1630,54 +1631,9 @@ private struct AgentBubble: View {
                 Spacer(minLength: 38)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text(isUser ? "你" : "魏碑")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(isUser ? WeiBeiTheme.link : WeiBeiTheme.cinnabar)
-                    if let source = message.source {
-                        Text(source)
-                            .font(.caption2)
-                            .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                            .lineLimit(1)
-                            .padding(.horizontal, 6)
-                            .frame(height: 18)
-                            .background(WeiBeiTheme.paperInset.opacity(0.24))
-                            .clipShape(RoundedRectangle(cornerRadius: 5))
-                    }
-                    Spacer(minLength: 0)
-                }
-
-                Text(message.text)
-                    .textSelection(.enabled)
-                    .font(.system(size: 14))
-                    .lineSpacing(4)
-                    .foregroundStyle(WeiBeiTheme.ink)
-
-                if message.id == store.lastUsableAgentAnswerID {
-                    HStack(spacing: 6) {
-                        if store.selectionContext != nil {
-                            Button("摘录") {
-                                store.appendSelectionToNote()
-                            }
-                            .buttonStyle(WeiBeiTextActionButtonStyle())
-                        }
-                        Button("写入回答") {
-                            store.applyLastAgentAnswerToNote()
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                        if store.canReplaceNoteSelection {
-                            Button("替换") {
-                                store.replaceSelectionWithLastAgentAnswer()
-                            }
-                            .buttonStyle(WeiBeiTextActionButtonStyle())
-                        }
-                    }
-                    .padding(.top, 2)
-                }
-            }
-            .padding(12)
-            .frame(maxWidth: 560, alignment: .leading)
+            bubbleContent
+            .padding(bubblePadding)
+            .frame(maxWidth: bubbleMaxWidth, alignment: .leading)
             .background(bubbleFill)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay {
@@ -1685,9 +1641,9 @@ private struct AgentBubble: View {
                     .stroke(bubbleStroke, lineWidth: 1)
             }
             .overlay(alignment: .leading) {
-                if !isUser {
+                if !isUser && !isCredentialNotice {
                     Capsule()
-                        .fill(WeiBeiTheme.cinnabar.opacity(0.50))
+                        .fill(assistantMarkColor)
                         .frame(width: 3, height: 28)
                         .padding(.leading, 2)
                 }
@@ -1707,16 +1663,128 @@ private struct AgentBubble: View {
         .animation(WeiBeiMotion.panel, value: message.id)
     }
 
+    @ViewBuilder
+    private var bubbleContent: some View {
+        if isCredentialNotice {
+            credentialNoticeContent
+        } else {
+            regularMessageContent
+        }
+    }
+
+    private var regularMessageContent: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(speakerTitle)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(speakerColor)
+                if let source = message.source {
+                    Text(source)
+                        .font(.caption2)
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        .lineLimit(1)
+                        .padding(.horizontal, 6)
+                        .frame(height: 18)
+                        .background(WeiBeiTheme.paperInset.opacity(0.24))
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                }
+                Spacer(minLength: 0)
+            }
+
+            Text(message.text)
+                .textSelection(.enabled)
+                .font(.system(size: 14))
+                .lineSpacing(4)
+                .foregroundStyle(WeiBeiTheme.ink)
+
+            if message.id == store.lastUsableAgentAnswerID {
+                HStack(spacing: 6) {
+                    if store.selectionContext != nil {
+                        Button("摘录") {
+                            store.appendSelectionToNote()
+                        }
+                        .buttonStyle(WeiBeiTextActionButtonStyle())
+                    }
+                    Button("写入回答") {
+                        store.applyLastAgentAnswerToNote()
+                    }
+                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                    if store.canReplaceNoteSelection {
+                        Button("替换") {
+                            store.replaceSelectionWithLastAgentAnswer()
+                        }
+                        .buttonStyle(WeiBeiTextActionButtonStyle())
+                    }
+                }
+                .padding(.top, 2)
+            }
+        }
+    }
+
+    private var credentialNoticeContent: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Capsule()
+                .fill(WeiBeiTheme.link.opacity(0.34))
+                .frame(width: 2, height: 30)
+                .padding(.top, 1)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text("需要设置密钥")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                Text(displayText)
+                    .textSelection(.enabled)
+                    .font(.system(size: 12.5))
+                    .lineSpacing(3)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+            }
+        }
+    }
+
     private var isUser: Bool {
         message.role == .user
     }
 
+    private var isCredentialNotice: Bool {
+        message.role == .assistant && message.text.hasPrefix("未配置 OPENAI_API_KEY")
+    }
+
+    private var speakerTitle: String {
+        if isUser { return "你" }
+        return isCredentialNotice ? "需要设置密钥" : "魏碑"
+    }
+
+    private var speakerColor: Color {
+        if isUser { return WeiBeiTheme.link }
+        return isCredentialNotice ? WeiBeiTheme.secondaryInk : WeiBeiTheme.cinnabar
+    }
+
+    private var displayText: String {
+        guard isCredentialNotice else { return message.text }
+        return "设置后会结合\(store.agentPromptScope)作答；未配置时不会编造内容。"
+    }
+
+    private var bubblePadding: EdgeInsets {
+        isCredentialNotice
+            ? EdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 12)
+            : EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)
+    }
+
+    private var bubbleMaxWidth: CGFloat {
+        isCredentialNotice ? 360 : 560
+    }
+
+    private var assistantMarkColor: Color {
+        isCredentialNotice ? WeiBeiTheme.link.opacity(0.42) : WeiBeiTheme.cinnabar.opacity(0.50)
+    }
+
     private var bubbleFill: Color {
-        isUser ? WeiBeiTheme.cinnabarSoft : WeiBeiTheme.paperRaised.opacity(0.72)
+        if isUser { return WeiBeiTheme.cinnabarSoft }
+        return WeiBeiTheme.paperRaised.opacity(isCredentialNotice ? 0.34 : 0.72)
     }
 
     private var bubbleStroke: Color {
-        isUser ? WeiBeiTheme.cinnabar.opacity(0.10) : WeiBeiTheme.hairline
+        isUser ? WeiBeiTheme.cinnabar.opacity(0.10) : WeiBeiTheme.hairline.opacity(isCredentialNotice ? 0.50 : 1)
     }
 }
 
