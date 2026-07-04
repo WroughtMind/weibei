@@ -608,6 +608,40 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             onSelectableTextChange(nativeTextPageIndexes.contains(index) || ocrPagesByPageIndex[index] != nil)
         }
 
+        private func ensureOCRForCurrentPage(in view: PDFView) {
+            guard let document = view.document,
+                  let page = view.currentPage else { return }
+            let index = document.index(for: page)
+            guard index != NSNotFound,
+                  !nativeTextPageIndexes.contains(index),
+                  ocrPagesByPageIndex[index] == nil,
+                  !pendingOCRPageIndexes.contains(index),
+                  page.string?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false else { return }
+
+            pendingOCRPageIndexes.insert(index)
+            updateSelectableTextState(in: view)
+            let generation = loadGeneration
+
+            DispatchQueue.global(qos: .userInitiated).async {
+                let pages = PDFOCRTextExtractor.pages(from: document, pageIndexes: [index])
+                DispatchQueue.main.async { [weak self, weak view] in
+                    guard let self, let view, self.loadGeneration == generation else { return }
+                    self.pendingOCRPageIndexes.remove(index)
+                    if let page = pages.first {
+                        self.ocrPagesByPageIndex[page.pageIndex] = page
+                    }
+                    view.pageOverlayViewProvider = self.ocrPagesByPageIndex.isEmpty ? nil : self
+                    view.isInMarkupMode = !self.ocrPagesByPageIndex.isEmpty
+                    self.updateSelectableTextState(in: view)
+                    if self.lastSearchQuery.isEmpty {
+                        view.layoutDocumentView()
+                    } else {
+                        self.applySearch(self.lastSearchQuery, in: view, force: true)
+                    }
+                }
+            }
+        }
+
         func observe(_ view: PDFView) {
             observedView = view
             observer = NotificationCenter.default.addObserver(
@@ -627,6 +661,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                 self.pageCount.wrappedValue = document.pageCount
                 self.pageIndex.wrappedValue = document.index(for: page)
                 self.updateSelectableTextState(in: view)
+                self.ensureOCRForCurrentPage(in: view)
             }
         }
 
