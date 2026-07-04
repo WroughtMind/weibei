@@ -346,6 +346,7 @@ expect(commandPaletteSource.contains(".weibeiInputSurface(active: searchFocused,
     && commandPaletteSource.contains(".weibeiInputPrompt(\"输入命令\", visible: query.isEmpty")
     && commandPaletteSource.contains("WeiBeiTheme.hairline.opacity(0.72)")
     && !commandPaletteSource.contains("Divider()"), "command palette search uses WeiBei input surface and semantic hairline")
+expect(commandPaletteSource.contains("ScrollView(showsIndicators: false)"), "command palette hides system scroll indicators inside the transient floating panel")
 expect(commandPaletteSource.contains("withAnimation(command.animation)") && commandPaletteSource.contains("animation: WeiBeiMotion.layout"), "command palette uses layout motion for layout commands")
 expect(commandPaletteSource.contains("PaletteCommand(title: \"聚焦对话\", shortcut: \"⌘4\"")
     && !commandPaletteSource.contains("PaletteCommand(title: \"聚焦 Agent\""), "command palette names the conversation pane by task language")
@@ -433,6 +434,7 @@ expect(readerViewSource.contains("SelectionAnchorContentPoint.fromLocalPoint(loc
     && !readerViewSource.contains("contentView.convert("), "reader selection anchors route PDF, HTML, and text through the shared coordinate helper")
 expect(readerViewSource.contains("pendingPDFPageIndex") && readerViewSource.contains("applyPendingPDFPageIfReady") && readerViewSource.contains("store.readerTargetPageIndex = nil"), "pdf reader consumes source-jump target pages")
 expect(readerViewSource.contains("onSourceReference: { reference in store.openSourceReference(reference) }"), "markdown reader source references can jump back to material")
+expect(readerViewSource.contains("private struct SamplePDFView") && readerViewSource.contains("ScrollView(showsIndicators: false)"), "sample pdf page avoids a persistent SwiftUI scroll indicator")
 let richEditorSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/RichMarkdownEditorView.swift")
 let richEditorSource = (try? String(contentsOf: richEditorSourceURL, encoding: .utf8)) ?? ""
@@ -749,6 +751,7 @@ if let selectionStart = notesAgentSource.range(of: "struct FloatingSelectionAgen
     expect(false, "selection floating agent source is readable")
 }
 expect(notesAgentSource.contains("private var agentInputTray: some View"), "agent pane uses a dedicated input tray")
+expect(notesAgentSource.components(separatedBy: "ScrollView(showsIndicators: false)").count >= 3, "agent message surfaces hide heavy system scroll indicators")
 expect(notesAgentSource.contains("WeiBeiGlassHeaderBackground(") && notesAgentSource.contains("WeiBeiTheme.glassTint.opacity(0.66)"), "agent input tray uses paper glass fade instead of a hard white strip")
 expect(notesAgentSource.contains(".lineLimit(2...6)")
     && notesAgentSource.contains(".weibeiInputSurface(active: draftFocused, height: 64, horizontalPadding: 14)")

@@ -585,7 +585,7 @@ struct AgentPaneView: View {
             .zIndex(1)
 
             ScrollViewReader { proxy in
-                ScrollView {
+                ScrollView(showsIndicators: false) {
                     LazyVStack(alignment: .leading, spacing: 12) {
                         ForEach(store.messages) { message in
                             AgentBubble(message: message)
@@ -1099,7 +1099,7 @@ struct FloatingSelectionAgentView: View {
                 }
             }
 
-            ScrollView {
+            ScrollView(showsIndicators: false) {
                 LazyVStack(alignment: .leading, spacing: 8) {
                     if let selection = store.selectionContext?.text {
                         Text(selection)

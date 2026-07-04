@@ -786,7 +786,7 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
 
 private struct SamplePDFView: View {
     var body: some View {
-        ScrollView {
+        ScrollView(showsIndicators: false) {
             VStack(spacing: 18) {
                 VStack(alignment: .leading, spacing: 22) {
                     HStack {

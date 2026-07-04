@@ -150,7 +150,7 @@ struct CommandPaletteView: View {
                     .frame(height: 1)
 
                 ScrollViewReader { proxy in
-                    ScrollView {
+                    ScrollView(showsIndicators: false) {
                         LazyVStack(spacing: 3) {
                             if filtered.isEmpty {
                                 Text("没有匹配命令")
