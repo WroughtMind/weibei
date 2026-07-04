@@ -14,6 +14,7 @@ struct ReaderView: View {
     @State private var pdfControlsExpanded = false
     @State private var pdfControlsCollapseToken = UUID()
     @State private var pendingPDFPageIndex: Int?
+    @State private var pdfHasTextLayer: Bool?
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
@@ -27,11 +28,20 @@ struct ReaderView: View {
                     .padding(.bottom, isImmersive ? 18 : 12)
                     .transition(WeiBeiTransition.floating)
             }
+
+            if pdfHasTextLayer == false {
+                pdfTextLayerNotice
+                    .padding(.leading, isImmersive ? 18 : 14)
+                    .padding(.bottom, isImmersive ? 18 : 14)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                    .transition(WeiBeiTransition.floating)
+            }
         }
         .background(WeiBeiTheme.paper)
         .foregroundStyle(WeiBeiTheme.ink)
         .animation(WeiBeiMotion.panel, value: pdfBrowseMode)
         .animation(WeiBeiMotion.panel, value: store.showReaderSearch)
+        .animation(WeiBeiMotion.panel, value: pdfHasTextLayer)
         .onAppear {
             syncReaderLocationTitle()
             pendingPDFPageIndex = store.readerTargetPageIndex
@@ -40,6 +50,7 @@ struct ReaderView: View {
         .onChange(of: store.selectedItemID) { _, _ in
             pdfPageIndex = 0
             pdfPageCount = store.selectedMaterialItem?.kind == .pdf && store.selectedMaterialItem?.url == nil ? 1 : 0
+            pdfHasTextLayer = store.selectedMaterialItem?.kind == .pdf && store.selectedMaterialItem?.url == nil ? true : nil
             syncReaderLocationTitle()
             pendingPDFPageIndex = store.readerTargetPageIndex
             applyPendingPDFPageIfReady()
@@ -116,6 +127,25 @@ struct ReaderView: View {
                 schedulePDFControlsCollapse(after: 0.28)
             }
         }
+    }
+
+    private var pdfTextLayerNotice: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "text.viewfinder")
+                .font(.system(size: 11, weight: .medium))
+            Text("未检测到可选文本层")
+                .font(.system(size: 11, weight: .medium))
+        }
+        .foregroundStyle(WeiBeiTheme.secondaryInk)
+        .padding(.horizontal, 9)
+        .frame(height: 26)
+        .background(WeiBeiTheme.paperRaised.opacity(0.34))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .overlay {
+            RoundedRectangle(cornerRadius: 7)
+                .stroke(WeiBeiTheme.hairline.opacity(0.24), lineWidth: 1)
+        }
+        .allowsHitTesting(false)
     }
 
     @ViewBuilder
@@ -251,7 +281,8 @@ struct ReaderView: View {
                         searchQuery: store.readerSearch,
                         appearanceMode: store.appearanceMode,
                         pageIndex: $pdfPageIndex,
-                        pageCount: $pdfPageCount
+                        pageCount: $pdfPageCount,
+                        onTextLayerChange: { available in pdfHasTextLayer = available }
                     ) { text, anchor, selectionPageIndex in
                         let ownerTitle = "\(item.title)，第 \(selectionPageIndex + 1) 页"
                         store.updateReaderLocationTitle(ownerTitle)
@@ -370,10 +401,16 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
     var appearanceMode: WeiBeiAppearanceMode
     @Binding var pageIndex: Int
     @Binding var pageCount: Int
+    var onTextLayerChange: (Bool?) -> Void = { _ in }
     var onSelectionChange: (String, CGPoint?, Int) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(pageIndex: $pageIndex, pageCount: $pageCount, onSelectionChange: onSelectionChange)
+        Coordinator(
+            pageIndex: $pageIndex,
+            pageCount: $pageCount,
+            onTextLayerChange: onTextLayerChange,
+            onSelectionChange: onSelectionChange
+        )
     }
 
     func makeNSView(context: Context) -> PDFView {
@@ -397,6 +434,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         context.coordinator.pageIndex = $pageIndex
         context.coordinator.pageCount = $pageCount
         context.coordinator.appearanceMode = appearanceMode
+        context.coordinator.onTextLayerChange = onTextLayerChange
         view.backgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
 
         if context.coordinator.loadedURL != url {
@@ -434,6 +472,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
     final class Coordinator: NSObject {
         var pageIndex: Binding<Int>
         var pageCount: Binding<Int>
+        var onTextLayerChange: (Bool?) -> Void
         var onSelectionChange: (String, CGPoint?, Int) -> Void
         var appearanceMode: WeiBeiAppearanceMode = .paper
         private weak var observedView: PDFView?
@@ -444,9 +483,10 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         private var loadGeneration = 0
         private(set) var loadedURL: URL?
 
-        init(pageIndex: Binding<Int>, pageCount: Binding<Int>, onSelectionChange: @escaping (String, CGPoint?, Int) -> Void) {
+        init(pageIndex: Binding<Int>, pageCount: Binding<Int>, onTextLayerChange: @escaping (Bool?) -> Void, onSelectionChange: @escaping (String, CGPoint?, Int) -> Void) {
             self.pageIndex = pageIndex
             self.pageCount = pageCount
+            self.onTextLayerChange = onTextLayerChange
             self.onSelectionChange = onSelectionChange
         }
 
@@ -456,6 +496,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             loadedURL = url
             view.document = nil
             lastSearchQuery = ""
+            onTextLayerChange(nil)
 
             DispatchQueue.global(qos: .userInitiated).async {
                 let document = PDFDocument(url: url)
@@ -465,9 +506,14 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                     view.autoScales = true
                     self.pageCount.wrappedValue = document?.pageCount ?? 0
                     self.pageIndex.wrappedValue = 0
+                    self.onTextLayerChange(document.map(Self.hasSelectableText))
                     WeiBeiQuietScrollers.flashRecursively(in: view, repeatCount: 2)
                 }
             }
+        }
+
+        private static func hasSelectableText(_ document: PDFDocument) -> Bool {
+            document.string?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         }
 
         func observe(_ view: PDFView) {
