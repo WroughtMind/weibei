@@ -246,6 +246,19 @@ expect(groundedPrompt.input.contains("当前笔记：利率笔记"), "agent prom
 expect(groundedPrompt.input.contains("当前选区（来源：Mishkin 教材样例，第 1 页选区）："), "agent prompt includes selection source")
 expect(groundedPrompt.input.contains("用户（来源：利率笔记）：上一问"), "agent prompt keeps recent message source")
 expect(groundedPrompt.instructions.contains("来源依据") && groundedPrompt.instructions.contains("没有用到的来源不要列"), "agent prompt requires grounded source evidence")
+let currentPagePrompt = OpenAIResponsesClient.composePrompt(
+    question: "解释当前页",
+    materialTitle: "Mishkin 教材样例，第 3 页",
+    materialText: "第 1 页\n旧页面内容\n\n第 3 页\n当前页内容\n\n第 4 页\n后续页面内容",
+    noteTitle: "利率笔记",
+    noteText: "",
+    selectionText: nil,
+    recentMessages: []
+)
+expect(currentPagePrompt.input.contains("当前材料：Mishkin 教材样例，第 3 页")
+    && currentPagePrompt.input.contains("第 3 页\n当前页内容")
+    && !currentPagePrompt.input.contains("旧页面内容")
+    && !currentPagePrompt.input.contains("后续页面内容"), "agent prompt focuses PDF material text on the current reader page when the material title has a page reference")
 let noteOnlyPrompt = OpenAIResponsesClient.composePrompt(
     question: "整理这段",
     materialTitle: "未选择材料",

@@ -75,12 +75,12 @@ public struct OpenAIResponsesClient {
             return cleaned.isEmpty ? fallback : cleaned
         }
 
-        let trimmedMaterial = String(materialText.prefix(18_000))
+        let materialLabel = label(materialTitle, fallback: "当前材料")
+        let noteLabel = label(noteTitle, fallback: "当前笔记")
+        let trimmedMaterial = focusedMaterialText(materialText, title: materialLabel, limit: 18_000)
         let trimmedNote = String(noteText.prefix(6_000))
         let trimmedSelection = selectionText.map { String($0.prefix(2_000)) } ?? ""
         let hasMaterial = !trimmedMaterial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let materialLabel = label(materialTitle, fallback: "当前材料")
-        let noteLabel = label(noteTitle, fallback: "当前笔记")
         let selectionLabel = label(selectionTitle, fallback: hasMaterial ? materialLabel : noteLabel)
         let materialBlock = hasMaterial ? """
         当前材料：\(materialLabel)
@@ -122,6 +122,23 @@ public struct OpenAIResponsesClient {
         \(question)
         """
         return AgentPromptPayload(instructions: instructions, input: input)
+    }
+
+    private static func focusedMaterialText(_ text: String, title: String, limit: Int) -> String {
+        let parsed = SourceReferenceTitle.parse(title)
+        guard let pageIndex = parsed.pageIndex else {
+            return String(text.prefix(limit))
+        }
+        let pageNumber = pageIndex + 1
+        let pageHeaderPattern = #"(?m)^第\s*\#(pageNumber)\s*页(?:（OCR）)?\s*$"#
+        guard let pageHeader = text.range(of: pageHeaderPattern, options: .regularExpression) else {
+            return String(text.prefix(limit))
+        }
+        let nextPagePattern = #"(?m)^第\s*\d+\s*页(?:（OCR）)?\s*$"#
+        let searchStart = pageHeader.upperBound
+        let searchRange = searchStart..<text.endIndex
+        let pageEnd = text.range(of: nextPagePattern, options: .regularExpression, range: searchRange)?.lowerBound ?? text.endIndex
+        return String(text[pageHeader.lowerBound..<pageEnd].prefix(limit))
     }
 
     public static func extractText(from data: Data) throws -> String {
