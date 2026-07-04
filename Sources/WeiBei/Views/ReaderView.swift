@@ -1310,12 +1310,14 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var onSelectionChange: (String, CGPoint?) -> Void
         private var lastSearchQuery = ""
+        private var suppressSelectionReport = false
 
         init(onSelectionChange: @escaping (String, CGPoint?) -> Void) {
             self.onSelectionChange = onSelectionChange
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
+            guard !suppressSelectionReport else { return }
             guard let textView = notification.object as? NSTextView else { return }
             let range = textView.selectedRange()
             guard range.length > 0, let stringRange = Range(range, in: textView.string) else {
@@ -1341,8 +1343,11 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
                 textView.setSelectedRange(NSRange(location: 0, length: 0))
                 return
             }
+            onSelectionChange("", nil)
             guard let range = ReaderSearch.firstMatch(in: textView.string, query: query) else { return }
+            suppressSelectionReport = true
             textView.setSelectedRange(range)
+            suppressSelectionReport = false
             textView.scrollRangeToVisible(range)
         }
     }
