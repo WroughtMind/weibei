@@ -294,11 +294,23 @@ extension View {
             .tint(WeiBeiTheme.link)
             .padding(.horizontal, 10)
             .frame(minHeight: height)
-            .background(WeiBeiTheme.paperInset.opacity(active ? 0.52 : 0.30))
+            .background {
+                RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius)
+                    .fill(
+                        LinearGradient(
+                            colors: [
+                                WeiBeiTheme.paperRaised.opacity(active ? 0.70 : 0.58),
+                                WeiBeiTheme.paperInset.opacity(active ? 0.36 : 0.24)
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+            }
             .clipShape(RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius))
             .overlay {
                 RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius)
-                    .stroke(active ? WeiBeiTheme.link.opacity(0.45) : WeiBeiTheme.hairline, lineWidth: 1)
+                    .stroke(active ? WeiBeiTheme.link.opacity(0.30) : WeiBeiTheme.hairline.opacity(0.58), lineWidth: 1)
             }
             .animation(WeiBeiMotion.reveal, value: active)
     }

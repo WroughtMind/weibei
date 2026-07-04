@@ -696,16 +696,16 @@ struct AgentPaneView: View {
             .padding(6)
             .background {
                 RoundedRectangle(cornerRadius: 9)
-                    .fill(WeiBeiTheme.paperRaised.opacity(0.58))
+                    .fill(WeiBeiTheme.paperRaised.opacity(0.46))
                 RoundedRectangle(cornerRadius: 9)
                     .fill(.ultraThinMaterial)
-                    .opacity(0.08)
+                    .opacity(0.05)
             }
             .overlay {
                 RoundedRectangle(cornerRadius: 9)
-                    .stroke(draftFocused ? WeiBeiTheme.link.opacity(0.28) : WeiBeiTheme.hairline.opacity(0.62), lineWidth: 1)
+                    .stroke(draftFocused ? WeiBeiTheme.link.opacity(0.16) : WeiBeiTheme.hairline.opacity(0.34), lineWidth: 1)
             }
-            .shadow(color: WeiBeiTheme.ink.opacity(0.035), radius: 6, y: 2)
+            .shadow(color: WeiBeiTheme.ink.opacity(0.020), radius: 6, y: 2)
             .padding(.horizontal, 12)
             .padding(.top, 1)
             .padding(.bottom, 10)

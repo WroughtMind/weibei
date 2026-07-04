@@ -14,7 +14,7 @@ struct ReaderView: View {
     @State private var pendingPDFPageIndex: Int?
 
     var body: some View {
-        ZStack(alignment: .trailing) {
+        ZStack(alignment: .bottomTrailing) {
             VStack(spacing: 0) {
                 readerBody
             }
@@ -22,6 +22,7 @@ struct ReaderView: View {
             if store.selectedMaterialItem?.kind == .pdf {
                 pdfFloatingControls
                     .padding(.trailing, isImmersive ? 18 : 10)
+                    .padding(.bottom, isImmersive ? 18 : 12)
                     .transition(WeiBeiTransition.floating)
             }
         }
