@@ -169,17 +169,19 @@ struct ReaderView: View {
             revealPDFControls(collapseAfter: 1.6)
         } label: {
             HStack(spacing: showsPDFModeLabel ? 5 : 0) {
-                Image(systemName: pdfBrowseMode.systemImage)
-                    .font(.system(size: 12, weight: .semibold))
                 if showsPDFModeLabel {
+                    Image(systemName: pdfBrowseMode.systemImage)
+                        .font(.system(size: 12, weight: .semibold))
                     Text(pdfBrowseMode.label)
                         .font(.system(size: 11, weight: .medium))
                         .transition(.move(edge: .trailing).combined(with: .opacity))
+                } else {
+                    pdfModeIdleMark
                 }
             }
             .foregroundStyle(pdfModeForeground)
-            .padding(.horizontal, showsPDFModeLabel ? 7 : 0)
-            .frame(width: showsPDFModeLabel ? nil : 24, height: 24)
+            .padding(.horizontal, showsPDFModeLabel ? 7 : 4)
+            .frame(width: showsPDFModeLabel ? nil : 18, height: 24)
             .background(WeiBeiTheme.paperInset.opacity(pdfControlsActive ? 0.16 : 0.0))
             .contentShape(RoundedRectangle(cornerRadius: 6))
             .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -191,6 +193,13 @@ struct ReaderView: View {
         }
         .accessibilityLabel(Text("切换 PDF 浏览方式，当前\(pdfBrowseMode.label)"))
         .help("切换到\(pdfBrowseMode.toggled.help)")
+    }
+
+    private var pdfModeIdleMark: some View {
+        Capsule()
+            .fill(WeiBeiTheme.tertiaryInk.opacity(0.26))
+            .frame(width: 2, height: 13)
+            .accessibilityHidden(true)
     }
 
     private var pdfControlsActive: Bool {

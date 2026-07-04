@@ -661,27 +661,30 @@ struct AgentPaneView: View {
             .frame(height: 18)
             .allowsHitTesting(false)
 
-            HStack(alignment: .bottom, spacing: 10) {
+            ZStack(alignment: .bottomTrailing) {
                 TextField("", text: $store.agentDraft, axis: .vertical)
                     .textFieldStyle(.plain)
-                    .lineLimit(2...6)
+                    .lineLimit(1...6)
                     .foregroundColor(WeiBeiTheme.ink)
                     .focused($draftFocused)
                     .onSubmit {
                         Task { await store.askAgent() }
                     }
                     .padding(.vertical, 8)
-                .weibeiInputSurface(active: draftFocused, height: 64, horizontalPadding: 14)
-                .weibeiInputPrompt(agentPrompt, visible: store.agentDraft.isEmpty, leading: 14, top: 12, fontSize: 14)
+                    .padding(.trailing, canSendDraft ? 44 : 0)
+                    .weibeiInputSurface(active: draftFocused, height: 62, horizontalPadding: 14)
+                    .weibeiInputPrompt(agentPrompt, visible: store.agentDraft.isEmpty, leading: 14, top: 12, fontSize: 14)
 
                 if canSendDraft {
                     Button { Task { await store.askAgent() } } label: {
                         Image(systemName: "paperplane.fill")
                     }
-                    .buttonStyle(WeiBeiIconButtonStyle(active: canSendDraft, size: 38))
+                    .buttonStyle(WeiBeiIconButtonStyle(active: canSendDraft, size: 30))
                     .accessibilityLabel(Text("发送"))
                     .help("发送")
                     .keyboardShortcut(.return, modifiers: [.command])
+                    .padding(.trailing, 8)
+                    .padding(.bottom, 8)
                     .transition(WeiBeiTransition.floating)
                     .animation(WeiBeiMotion.micro, value: canSendDraft)
                 }
