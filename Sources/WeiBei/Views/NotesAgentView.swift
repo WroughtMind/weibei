@@ -585,27 +585,32 @@ struct AgentPaneView: View {
             .zIndex(1)
 
             ScrollViewReader { proxy in
-                ScrollView(showsIndicators: false) {
-                    LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(store.messages) { message in
-                            AgentBubble(message: message)
-                                .id(message.id)
-                                .transition(WeiBeiTransition.message)
+                GeometryReader { geometry in
+                    ScrollView(showsIndicators: false) {
+                        LazyVStack(alignment: .leading, spacing: 12) {
+                            ForEach(store.messages) { message in
+                                AgentBubble(message: message)
+                                    .id(message.id)
+                                    .transition(WeiBeiTransition.message)
+                            }
+                            if store.isAskingAgent {
+                                AgentThinkingIndicator()
+                                    .id("agent-thinking")
+                                    .transition(WeiBeiTransition.message)
+                            }
+                            if store.messages.isEmpty {
+                                emptyAgentState
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .transition(WeiBeiTransition.message)
+                            }
                         }
-                        if store.isAskingAgent {
-                            AgentThinkingIndicator()
-                                .id("agent-thinking")
-                                .transition(WeiBeiTransition.message)
-                        }
-                        if store.messages.isEmpty {
-                            emptyAgentState
-                                .frame(maxWidth: .infinity, alignment: .center)
-                                .padding(.top, 28)
-                                .transition(WeiBeiTransition.message)
-                        }
+                        .padding(14)
+                        .frame(
+                            minHeight: geometry.size.height,
+                            alignment: store.messages.isEmpty ? .bottomLeading : .topLeading
+                        )
+                        .animation(WeiBeiMotion.panel, value: store.messages.count)
                     }
-                    .padding(14)
-                    .animation(WeiBeiMotion.panel, value: store.messages.count)
                 }
                 .onChange(of: store.messages.count) { _, _ in
                     if let last = store.messages.last?.id {
