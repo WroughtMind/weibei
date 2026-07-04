@@ -151,10 +151,18 @@ struct ReaderView: View {
                 pdfBrowseMode = pdfBrowseMode.toggled
             }
         } label: {
-            Image(systemName: pdfBrowseMode.systemImage)
-                .font(.system(size: 12, weight: .semibold))
+            HStack(spacing: showsPDFModeLabel ? 5 : 0) {
+                Image(systemName: pdfBrowseMode.systemImage)
+                    .font(.system(size: 12, weight: .semibold))
+                if showsPDFModeLabel {
+                    Text(pdfBrowseMode.label)
+                        .font(.system(size: 11, weight: .medium))
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                }
+            }
             .foregroundStyle(pdfBrowseMode == .page ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
-            .frame(width: 24, height: 24)
+            .padding(.horizontal, showsPDFModeLabel ? 7 : 0)
+            .frame(width: showsPDFModeLabel ? nil : 24, height: 24)
             .background(WeiBeiTheme.paperInset.opacity(pdfControlsHovering ? 0.20 : 0.06))
             .contentShape(RoundedRectangle(cornerRadius: 6))
             .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -162,9 +170,14 @@ struct ReaderView: View {
                 RoundedRectangle(cornerRadius: 6)
                     .stroke(WeiBeiTheme.hairline.opacity(pdfControlsHovering ? 0.70 : 0.20), lineWidth: 1)
             }
+            .animation(WeiBeiMotion.micro, value: showsPDFModeLabel)
         }
         .accessibilityLabel(Text("切换 PDF 浏览方式，当前\(pdfBrowseMode.label)"))
         .help("切换到\(pdfBrowseMode.toggled.help)")
+    }
+
+    private var showsPDFModeLabel: Bool {
+        pdfControlsHovering || pdfBrowseMode == .page
     }
 
     @ViewBuilder
