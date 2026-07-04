@@ -626,6 +626,15 @@ expect(readerViewSource.contains("PDFPageOverlayViewProvider")
     && readerViewSource.contains("view.isInMarkupMode = !indexed.isEmpty")
     && readerViewSource.contains("view.pageOverlayViewProvider = nil")
     && readerViewSource.contains("view.isInMarkupMode = false"), "scanned PDF OCR overlays are only enabled for image-only PDFs and cleared for native text PDFs")
+if let pageOverlayStart = readerViewSource.range(of: "private final class PDFOCRPageOverlayView")?.lowerBound,
+   let lineTextStart = readerViewSource.range(of: "private final class PDFOCRLineTextView")?.lowerBound {
+    let pageOverlaySource = String(readerViewSource[pageOverlayStart..<lineTextStart])
+    let lineTextSource = String(readerViewSource[lineTextStart...])
+    expect(pageOverlaySource.contains("override var isFlipped: Bool { false }")
+        && !lineTextSource.contains("override var isFlipped"), "PDF OCR page overlay keeps PDF coordinates while line text views keep native NSTextView hit testing")
+} else {
+    expect(false, "PDF OCR overlay source is readable")
+}
 expect(readerViewSource.contains("private class ReaderSelectableTextView: NSTextView")
     && readerViewSource.contains("override func acceptsFirstMouse(for event: NSEvent?) -> Bool")
     && readerViewSource.contains("private final class PDFOCRLineTextView: ReaderSelectableTextView")

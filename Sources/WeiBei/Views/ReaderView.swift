@@ -800,8 +800,6 @@ private final class PDFOCRLineTextView: ReaderSelectableTextView, NSTextViewDele
         nil
     }
 
-    override var isFlipped: Bool { false }
-
     func textViewDidChangeSelection(_ notification: Notification) {
         let range = selectedRange()
         guard range.length > 0, let textRange = Range(range, in: string) else {
