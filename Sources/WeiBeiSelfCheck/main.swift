@@ -116,6 +116,9 @@ let documentTextExtractorURL = URL(fileURLWithPath: FileManager.default.currentD
 let documentTextExtractorSource = (try? String(contentsOf: documentTextExtractorURL, encoding: .utf8)) ?? ""
 expect(documentTextExtractorSource.contains("private static var pdfTextCache")
     && documentTextExtractorSource.contains("return pdfText(url: url)")
+    && documentTextExtractorSource.contains("private static func pagedText(from document: PDFDocument) -> String")
+    && documentTextExtractorSource.contains("return \"第 \\(index + 1) 页\\n\\(text)\"")
+    && !documentTextExtractorSource.contains("let textLayerText = document.string?.trimmingCharacters")
     && documentTextExtractorSource.contains("let text = textLayerText.isEmpty ? PDFOCRTextExtractor.text(from: document) : textLayerText")
     && documentTextExtractorSource.contains("pdfTextCache[cacheKey] = text"), "PDF material extraction uses cached OCR fallback when the native text layer is empty")
 let quietScrollersSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)

@@ -26,13 +26,23 @@ enum DocumentTextExtractor {
         }
 
         guard let document = PDFDocument(url: url) else { return nil }
-        let textLayerText = document.string?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let textLayerText = pagedText(from: document)
         let text = textLayerText.isEmpty ? PDFOCRTextExtractor.text(from: document) : textLayerText
         if let text, !text.isEmpty {
             pdfTextCache[cacheKey] = text
             return text
         }
         return nil
+    }
+
+    private static func pagedText(from document: PDFDocument) -> String {
+        (0..<max(document.pageCount, 0)).compactMap { index in
+            guard let page = document.page(at: index),
+                  let text = page.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty else { return nil }
+            return "第 \(index + 1) 页\n\(text)"
+        }
+        .joined(separator: "\n\n")
     }
 
     private static func pdfCacheKey(for url: URL) -> String {
