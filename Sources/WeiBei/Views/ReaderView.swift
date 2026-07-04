@@ -11,6 +11,8 @@ struct ReaderView: View {
     @State private var pdfPageIndex = 0
     @State private var pdfPageCount = 0
     @State private var pdfControlsHovering = false
+    @State private var pdfControlsExpanded = false
+    @State private var pdfControlsCollapseToken = UUID()
     @State private var pendingPDFPageIndex: Int?
 
     var body: some View {
@@ -106,6 +108,11 @@ struct ReaderView: View {
             withAnimation(WeiBeiMotion.hover) {
                 pdfControlsHovering = hovering
             }
+            if hovering {
+                revealPDFControls()
+            } else {
+                schedulePDFControlsCollapse(after: 0.28)
+            }
         }
     }
 
@@ -113,14 +120,17 @@ struct ReaderView: View {
     private var pdfControls: some View {
         pdfModeToggle
 
-        if pdfBrowseMode == .page, pdfPageCount > 1, pdfControlsHovering {
+        if pdfBrowseMode == .page, pdfPageCount > 1, pdfControlsExpanded {
             Group {
                 Rectangle()
                     .fill(WeiBeiTheme.hairline.opacity(0.55))
                     .frame(width: 1, height: 16)
                     .padding(.horizontal, 2)
 
-                Button { pdfPageIndex = PageNavigator.previous(pdfPageIndex) } label: {
+                Button {
+                    revealPDFControls()
+                    pdfPageIndex = PageNavigator.previous(pdfPageIndex)
+                } label: {
                     Image(systemName: "chevron.left")
                 }
                 .buttonStyle(WeiBeiIconButtonStyle(size: 22))
@@ -133,7 +143,10 @@ struct ReaderView: View {
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .frame(width: 50, height: 22)
 
-                Button { pdfPageIndex = PageNavigator.next(pdfPageIndex, pageCount: pdfPageCount) } label: {
+                Button {
+                    revealPDFControls()
+                    pdfPageIndex = PageNavigator.next(pdfPageIndex, pageCount: pdfPageCount)
+                } label: {
                     Image(systemName: "chevron.right")
                 }
                 .buttonStyle(WeiBeiIconButtonStyle(size: 22))
@@ -150,6 +163,7 @@ struct ReaderView: View {
             withAnimation(WeiBeiMotion.panel) {
                 pdfBrowseMode = pdfBrowseMode.toggled
             }
+            revealPDFControls(collapseAfter: 1.6)
         } label: {
             HStack(spacing: showsPDFModeLabel ? 5 : 0) {
                 Image(systemName: pdfBrowseMode.systemImage)
@@ -177,7 +191,7 @@ struct ReaderView: View {
     }
 
     private var pdfControlsActive: Bool {
-        pdfControlsHovering
+        pdfControlsHovering || pdfControlsExpanded
     }
 
     private var pdfModeForeground: Color {
@@ -188,7 +202,25 @@ struct ReaderView: View {
     }
 
     private var showsPDFModeLabel: Bool {
-        pdfControlsHovering
+        pdfControlsExpanded
+    }
+
+    private func revealPDFControls(collapseAfter delay: TimeInterval = 1.25) {
+        withAnimation(WeiBeiMotion.hover) {
+            pdfControlsExpanded = true
+        }
+        schedulePDFControlsCollapse(after: delay)
+    }
+
+    private func schedulePDFControlsCollapse(after delay: TimeInterval) {
+        let token = UUID()
+        pdfControlsCollapseToken = token
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            guard pdfControlsCollapseToken == token else { return }
+            withAnimation(WeiBeiMotion.hover) {
+                pdfControlsExpanded = false
+            }
+        }
     }
 
     @ViewBuilder
@@ -317,7 +349,11 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         view.displayDirection = .vertical
         view.backgroundColor = .clear
         DispatchQueue.main.async {
-            WeiBeiQuietScrollers.configureRecursively(in: view)
+            WeiBeiQuietScrollers.configureRecursively(
+                in: view,
+                hasVerticalScroller: true,
+                hasHorizontalScroller: false
+            )
         }
         context.coordinator.observe(view)
         return view
@@ -347,7 +383,11 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
 
         context.coordinator.applySearch(searchQuery, in: view)
         DispatchQueue.main.async {
-            WeiBeiQuietScrollers.configureRecursively(in: view)
+            WeiBeiQuietScrollers.configureRecursively(
+                in: view,
+                hasVerticalScroller: true,
+                hasHorizontalScroller: false
+            )
         }
     }
 
