@@ -99,7 +99,8 @@ struct ContentView: View {
             anchor: store.selectionAnchor.map { FloatingAgentCoordinate(x: Double($0.x), y: Double($0.y)) },
             canvas: FloatingAgentCoordinate(x: Double(size.width), y: Double(size.height)),
             topInset: Double(topBarHeight),
-            surfaceHalfWidth: floatingAgentExpanded ? 170 : 82
+            surfaceHalfWidth: floatingAgentExpanded ? 170 : 82,
+            prefersAnchorCenter: !floatingAgentExpanded
         )
         return CGPoint(x: point.x, y: point.y)
     }

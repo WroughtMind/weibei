@@ -658,9 +658,17 @@ expect(topInsetFloatingPoint.x == 500 && topInsetFloatingPoint.y == 176, "select
 let compactEdgeFloatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 12, y: 200),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800),
-    surfaceHalfWidth: 82
+    surfaceHalfWidth: 82,
+    prefersAnchorCenter: true
 )
-expect(compactEdgeFloatingPoint.x == 104 && compactEdgeFloatingPoint.y == 218, "selection prompt stays close to the anchor when compact")
+let compactCenterFloatingPoint = SelectionFloatingAgentPlacement.position(
+    anchor: FloatingAgentCoordinate(x: 320, y: 200),
+    canvas: FloatingAgentCoordinate(x: 1200, y: 800),
+    surfaceHalfWidth: 82,
+    prefersAnchorCenter: true
+)
+expect(compactCenterFloatingPoint.x == 320 && compactCenterFloatingPoint.y == 218, "selection prompt centers on the text anchor when compact")
+expect(compactEdgeFloatingPoint.x == 100 && compactEdgeFloatingPoint.y == 218, "selection prompt clamps only at the edge when compact")
 let edgeFloatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 1160, y: 760),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800)
