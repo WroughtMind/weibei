@@ -480,6 +480,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         private var pageObserver: NSObjectProtocol?
         private var selectionWork: DispatchWorkItem?
         private var ocrPagesByPageIndex: [Int: PDFOCRPage] = [:]
+        private var ocrHighlightedLinesByPageIndex: [Int: Set<Int>] = [:]
         private var lastSearchQuery = ""
         private var loadGeneration = 0
         private(set) var loadedURL: URL?
@@ -511,6 +512,9 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                     let hasTextLayer = document.map(Self.hasSelectableText)
                     self.onTextLayerChange(hasTextLayer)
                     self.configureOCROverlays(for: document, hasTextLayer: hasTextLayer == true, generation: generation, in: view)
+                    if !self.lastSearchQuery.isEmpty {
+                        self.applySearch(self.lastSearchQuery, in: view, force: true)
+                    }
                     WeiBeiQuietScrollers.flashRecursively(in: view, repeatCount: 2)
                 }
             }
@@ -534,13 +538,18 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                     self.ocrPagesByPageIndex = indexed
                     view.pageOverlayViewProvider = indexed.isEmpty ? nil : self
                     view.isInMarkupMode = !indexed.isEmpty
-                    view.layoutDocumentView()
+                    if self.lastSearchQuery.isEmpty {
+                        view.layoutDocumentView()
+                    } else {
+                        self.applySearch(self.lastSearchQuery, in: view, force: true)
+                    }
                 }
             }
         }
 
         private func clearOCROverlays(in view: PDFView) {
             ocrPagesByPageIndex = [:]
+            ocrHighlightedLinesByPageIndex = [:]
             view.pageOverlayViewProvider = nil
             view.isInMarkupMode = false
             view.layoutDocumentView()
@@ -598,22 +607,57 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             return index == NSNotFound ? nil : index
         }
 
-        func applySearch(_ query: String, in view: PDFView) {
+        func applySearch(_ query: String, in view: PDFView, force: Bool = false) {
             let query = ReaderSearch.cleaned(query)
-            guard query != lastSearchQuery else { return }
+            guard force || query != lastSearchQuery else { return }
             lastSearchQuery = query
 
             guard !query.isEmpty else {
                 view.highlightedSelections = nil
                 view.clearSelection()
+                setOCRHighlightedLines([:], in: view)
                 return
             }
 
             let matches = view.document?.findString(query, withOptions: [.caseInsensitive, .diacriticInsensitive]) ?? []
             view.highlightedSelections = matches
             if let first = matches.first {
+                setOCRHighlightedLines([:], in: view)
                 view.setCurrentSelection(first, animate: true)
                 view.go(to: first)
+            } else {
+                applyOCRSearch(query, in: view)
+            }
+        }
+
+        private func applyOCRSearch(_ query: String, in view: PDFView) {
+            var highlightedLines: [Int: Set<Int>] = [:]
+            var firstPageIndex: Int?
+
+            for page in ocrPagesByPageIndex.values.sorted(by: { $0.pageIndex < $1.pageIndex }) {
+                for (lineIndex, line) in page.lines.enumerated() {
+                    guard line.text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil else { continue }
+                    highlightedLines[page.pageIndex, default: []].insert(lineIndex)
+                    if firstPageIndex == nil {
+                        firstPageIndex = page.pageIndex
+                    }
+                }
+            }
+
+            view.clearSelection()
+            setOCRHighlightedLines(highlightedLines, in: view)
+
+            if let firstPageIndex,
+               let page = view.document?.page(at: firstPageIndex) {
+                view.go(to: page)
+            }
+        }
+
+        private func setOCRHighlightedLines(_ highlightedLines: [Int: Set<Int>], in view: PDFView) {
+            guard ocrHighlightedLinesByPageIndex != highlightedLines else { return }
+            ocrHighlightedLinesByPageIndex = highlightedLines
+            if !ocrPagesByPageIndex.isEmpty {
+                view.layoutDocumentView()
             }
         }
 
@@ -636,6 +680,7 @@ extension PDFReaderRepresentable.Coordinator: PDFPageOverlayViewProvider {
         guard index != NSNotFound, let ocrPage = ocrPagesByPageIndex[index] else { return nil }
         return PDFOCRPageOverlayView(
             page: ocrPage,
+            highlightedLineIndexes: ocrHighlightedLinesByPageIndex[index] ?? [],
             appearanceMode: appearanceMode
         ) { [weak self] text, anchor in
             guard let self else { return }
@@ -651,12 +696,14 @@ extension PDFReaderRepresentable.Coordinator: PDFPageOverlayViewProvider {
 
 private final class PDFOCRPageOverlayView: NSView {
     private let page: PDFOCRPage
+    private let highlightedLineIndexes: Set<Int>
     private let appearanceMode: WeiBeiAppearanceMode
     private let onSelectionChange: (String, CGPoint?) -> Void
     private var lineViews: [PDFOCRLineTextView] = []
 
-    init(page: PDFOCRPage, appearanceMode: WeiBeiAppearanceMode, onSelectionChange: @escaping (String, CGPoint?) -> Void) {
+    init(page: PDFOCRPage, highlightedLineIndexes: Set<Int>, appearanceMode: WeiBeiAppearanceMode, onSelectionChange: @escaping (String, CGPoint?) -> Void) {
         self.page = page
+        self.highlightedLineIndexes = highlightedLineIndexes
         self.appearanceMode = appearanceMode
         self.onSelectionChange = onSelectionChange
         super.init(frame: .zero)
@@ -690,10 +737,11 @@ private final class PDFOCRPageOverlayView: NSView {
     }
 
     private func installLineViews() {
-        lineViews = page.lines.map { line in
+        lineViews = page.lines.enumerated().map { lineIndex, line in
             let view = PDFOCRLineTextView(
                 text: line.text,
                 normalizedBoundingBox: line.boundingBox,
+                isSearchHighlighted: highlightedLineIndexes.contains(lineIndex),
                 appearanceMode: appearanceMode,
                 onSelectionChange: onSelectionChange
             )
@@ -710,6 +758,7 @@ private final class PDFOCRLineTextView: NSTextView, NSTextViewDelegate {
     init(
         text: String,
         normalizedBoundingBox: CGRect,
+        isSearchHighlighted: Bool,
         appearanceMode: WeiBeiAppearanceMode,
         onSelectionChange: @escaping (String, CGPoint?) -> Void
     ) {
@@ -719,7 +768,11 @@ private final class PDFOCRLineTextView: NSTextView, NSTextViewDelegate {
         string = text
         isEditable = false
         isSelectable = true
-        drawsBackground = false
+        drawsBackground = isSearchHighlighted
+        backgroundColor = isSearchHighlighted ? WeiBeiNativePalette.selectionFill(for: appearanceMode).withAlphaComponent(0.28) : .clear
+        wantsLayer = true
+        layer?.cornerRadius = 2
+        layer?.masksToBounds = true
         textContainerInset = .zero
         textContainer?.lineFragmentPadding = 0
         textContainer?.widthTracksTextView = true
