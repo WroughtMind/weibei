@@ -136,7 +136,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var agentMessageSourceTitle: String? {
-        selectedMaterialItem?.title ?? selectedItem?.title
+        hasSelectedMaterial ? currentReferenceTitle : selectedItem?.title
     }
 
     var currentReferenceTitle: String {
@@ -1033,7 +1033,7 @@ final class WorkspaceStore: ObservableObject {
             let client = OpenAIResponsesClient(apiKey: credential.key, model: resolvedModelName)
             let answer = try await client.ask(
                 question: question,
-                materialTitle: selectedMaterialTitle,
+                materialTitle: currentReferenceTitle,
                 materialText: selectedContextText,
                 noteTitle: agentNoteTitle,
                 noteText: noteText,

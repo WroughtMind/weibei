@@ -886,7 +886,8 @@ if let hideReaderSearchStart = workspaceStoreSource.range(of: "func hideReaderSe
     expect(false, "reader search dismissal source is readable")
 }
 expect(workspaceStoreSource.contains("var selectedMaterialTitle") && workspaceStoreSource.contains("selectedMaterialItem?.title ?? \"未选择材料\""), "agent material title does not invent a current material")
-expect(workspaceStoreSource.contains("var agentMessageSourceTitle: String?") && workspaceStoreSource.contains("selectedMaterialItem?.title ?? selectedItem?.title") && !workspaceStoreSource.contains("source: selectedMaterialItem?.title"), "agent message source falls back to the selected note title")
+expect(workspaceStoreSource.contains("var agentMessageSourceTitle: String?") && workspaceStoreSource.contains("hasSelectedMaterial ? currentReferenceTitle : selectedItem?.title") && !workspaceStoreSource.contains("source: selectedMaterialItem?.title"), "agent message source uses the current reader location and falls back to the selected note title")
+expect(workspaceStoreSource.contains("materialTitle: currentReferenceTitle"), "agent prompt uses the current reader location title so PDF page context reaches the model")
 expect(workspaceStoreSource.contains("private var quietInsightReferenceTitle: String") && workspaceStoreSource.contains("selectionContext?.ownerTitle ?? selectedMaterialItem?.title ?? selectedItem?.title") && workspaceStoreSource.contains("没有证据就说\\(evidenceText)"), "quiet insight uses real note or material source wording")
 expect(workspaceStoreSource.contains("private func clearUnpinnedFloatingSelection(keepContext: Bool = true)")
     && workspaceStoreSource.contains("selectionContext = nil")
