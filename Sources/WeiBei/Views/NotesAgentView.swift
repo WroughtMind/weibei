@@ -744,7 +744,7 @@ struct AgentPaneView: View {
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .lineLimit(1)
 
-            HStack(spacing: 8) {
+            LazyVGrid(columns: starterChipColumns, alignment: .leading, spacing: 8) {
                 if store.hasSelectedMaterial {
                     starterChip("梳理材料", systemImage: "text.alignleft") {
                         askWith("请基于当前材料提炼核心概念、关键公式和需要回看出处的位置。")
@@ -772,6 +772,10 @@ struct AgentPaneView: View {
 
     private func starterChip(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
         AgentStarterChip(title: title, systemImage: systemImage, action: action)
+    }
+
+    private var starterChipColumns: [GridItem] {
+        [GridItem(.adaptive(minimum: 78), spacing: 8, alignment: .leading)]
     }
 
     private func askWith(_ prompt: String) {
