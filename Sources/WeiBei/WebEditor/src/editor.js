@@ -81,6 +81,8 @@ const calloutLabels = {
   todo: '待办',
 };
 const calloutRegex = new RegExp(`^\\[!(${calloutPattern})\\]([+-]?)(?:[ \\t]+([^\\n]+))?`, 'i');
+const calloutMarkerRegex = new RegExp(`^\\s*\\[!(?:${calloutPattern})\\][+-]?\\s*`, 'i');
+const calloutHeadingRegex = new RegExp(`^\\s*\\[!(?:${calloutPattern})\\][+-]?(?:[ \\t]+[^\\n]+)?$`, 'i');
 const calloutHeaderText = (node) => {
   const text = node.textBetween
     ? node.textBetween(0, node.content.size, '\n')
@@ -944,7 +946,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
           }
         }
 
-        if (typeName === 'paragraph' && parentName === 'blockquote' && node.childCount === 1) {
+        if (typeName === 'paragraph' && parentName === 'blockquote') {
           const calloutHeading = node.textContent.trimStart().match(calloutRegex);
           if (calloutHeading) {
             decorations.push(Decoration.node(pos, pos + node.nodeSize, {
@@ -985,11 +987,11 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
           decorateTagsAndBlocks(decorations, text, textPos);
 
           if (isInsideNode(state, pos, 'blockquote')) {
-            const callout = text.match(new RegExp(`^\\s*\\[!(?:${calloutPattern})\\][+-]?\\s*`, 'i'));
+            const callout = text.match(calloutMarkerRegex);
             if (callout) {
               addRangeDecoration(decorations, textPos, textPos + callout[0].length, 'weibei-callout-marker');
             }
-            const calloutHeading = text.match(new RegExp(`^\\s*\\[!(?:${calloutPattern})\\][+-]?(?:[ \\t]+[^\\n]+)?$`, 'i'));
+            const calloutHeading = text.match(calloutHeadingRegex);
             if (calloutHeading) {
               addRangeDecoration(decorations, textPos, textPos + calloutHeading[0].length, 'weibei-callout-heading-source');
             }

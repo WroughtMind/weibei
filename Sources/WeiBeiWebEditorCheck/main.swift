@@ -40,6 +40,12 @@ tags:
 >
 > 温和洞察应该放在不打断阅读的位置。
 
+> [!quote] 选区摘录
+>
+> 利率是资金使用价格的表达。
+>
+> 来源：Mishkin 教材样例，第 12 页
+
 行内公式 $E = mc^2$、$\\alpha_1 + \\beta^2$、$A^*$，普通金额 $5 不应该被误伤。
 
 Milkdown 公式插件应直接渲染 $text^*$，不能额外生成源码灰块。
@@ -238,6 +244,18 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             if (!marker) return false;
             const style = getComputedStyle(marker);
             return style.color === 'rgba(0, 0, 0, 0)' && style.fontSize === '0px';
+          })(),
+          quoteCalloutTitle: document.querySelector('blockquote.weibei-callout-quote')?.getAttribute('data-callout-title') || '',
+          quoteCalloutText: document.querySelector('blockquote.weibei-callout-quote')?.textContent || '',
+          quoteCalloutMarkerHidden: (() => {
+            const marker = document.querySelector('blockquote.weibei-callout-quote .weibei-callout-marker');
+            if (!marker) return false;
+            const style = getComputedStyle(marker);
+            return style.display === 'inline-block'
+              && style.color === 'rgba(0, 0, 0, 0)'
+              && style.fontSize === '0px'
+              && style.width === '0px'
+              && marker.getBoundingClientRect().width === 0;
           })()
         }))();
         """
@@ -350,6 +368,18 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             if result["calloutMarkerHidden"] as? Bool != true {
                 self.fail("callout source marker should not remain visible in writing mode")
+                return
+            }
+            if result["quoteCalloutTitle"] as? String != "选区摘录" {
+                self.fail("quote callout title should be kept without exposing the source marker")
+                return
+            }
+            if !(result["quoteCalloutText"] as? String ?? "").contains("利率是资金使用价格的表达。") {
+                self.fail("quote callout body text disappeared")
+                return
+            }
+            if result["quoteCalloutMarkerHidden"] as? Bool != true {
+                self.fail("quote callout marker should collapse in writing and preview surfaces")
                 return
             }
             completion()

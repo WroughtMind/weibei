@@ -66,6 +66,10 @@ expect(editorIndexSource.contains(".ProseMirror blockquote.weibei-callout[data-c
     && editorIndexSource.contains("background: rgba(251, 245, 234, .18);")
     && editorIndexSource.contains("box-shadow: none;")
     && editorIndexSource.contains("border-left-color: rgba(145, 38, 28, .28);"), "reading-line callouts render as light margin notes instead of heavy cards")
+expect(editorIndexSource.contains(".ProseMirror blockquote.weibei-callout .weibei-callout-marker")
+    && editorIndexSource.contains("display: inline-block;")
+    && editorIndexSource.contains("width: 0;")
+    && editorIndexSource.contains("overflow: hidden;"), "Obsidian callout source markers collapse inside rendered callouts")
 let editorScriptURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/WebEditor/src/editor.js")
 let editorScriptSource = (try? String(contentsOf: editorScriptURL, encoding: .utf8)) ?? ""
