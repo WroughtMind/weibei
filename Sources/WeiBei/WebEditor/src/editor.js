@@ -89,6 +89,7 @@ const calloutHeaderText = (node) => {
     : (node.textContent || '');
   return (text.split('\n')[0] || '').trimStart();
 };
+const isBlockquoteType = (typeName) => typeName === 'blockquote' || typeName === 'block_quote';
 const decorateCalloutHeadingSource = (decorations, node, pos) => {
   const text = node.textBetween
     ? node.textBetween(0, node.content.size, '')
@@ -953,7 +954,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
         const typeName = node.type.name;
         const parentName = parent?.type?.name || '';
 
-        if (typeName === 'blockquote') {
+        if (isBlockquoteType(typeName)) {
           const match = calloutHeaderText(node).match(calloutRegex);
           if (match) {
             const calloutType = match[1].toLowerCase();
@@ -969,7 +970,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
           }
         }
 
-        if (typeName === 'paragraph' && parentName === 'blockquote') {
+        if (typeName === 'paragraph' && isBlockquoteType(parentName)) {
           const calloutHeading = node.textContent.trimStart().match(calloutRegex);
           if (calloutHeading) {
             decorations.push(Decoration.node(pos, pos + node.nodeSize, {

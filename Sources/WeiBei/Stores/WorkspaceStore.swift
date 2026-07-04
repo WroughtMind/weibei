@@ -815,7 +815,7 @@ final class WorkspaceStore: ObservableObject {
 
     func updateSelection(_ text: String, source: SelectionSource, anchor: CGPoint? = nil, ownerTitle: String? = nil, isEditable: Bool = true) {
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard cleaned.count >= 2 else {
+        guard Self.hasMeaningfulSelectionCharacter(cleaned) else {
             clearUnpinnedFloatingSelection(keepContext: false)
             return
         }
@@ -834,6 +834,14 @@ final class WorkspaceStore: ObservableObject {
             pinnedFloatingAgent = false
             agentSurface = .selectionFloat
             showQuietInsight = false
+        }
+    }
+
+    private static func hasMeaningfulSelectionCharacter(_ text: String) -> Bool {
+        text.unicodeScalars.contains { scalar in
+            !CharacterSet.whitespacesAndNewlines.contains(scalar)
+                && !CharacterSet.punctuationCharacters.contains(scalar)
+                && !CharacterSet.controlCharacters.contains(scalar)
         }
     }
 
