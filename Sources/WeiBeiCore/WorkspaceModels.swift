@@ -213,15 +213,24 @@ public enum AgentSurface: String, Codable, CaseIterable, Identifiable {
     public var label: String {
         switch self {
         case .bottomDrawer:
-            return "底部抽屉"
+            return "底部对话栏"
         case .cornerPanel:
-            return "右下角小窗"
+            return "右下轻问"
         case .selectionFloat:
-            return "划线浮层"
+            return "选区轻提示"
         case .quietInsight:
-            return "静默洞察"
+            return "页边洞察"
         case .hidden:
-            return "隐藏"
+            return "隐藏 Agent"
+        }
+    }
+
+    public var actionLabel: String {
+        switch self {
+        case .hidden:
+            return label
+        default:
+            return "使用\(label)"
         }
     }
 }

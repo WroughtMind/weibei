@@ -210,7 +210,7 @@ private struct UnifiedTopBarView: View {
                     .tint(WeiBeiTheme.link)
                     .font(.system(size: 12))
                     .weibeiInputSurface(active: searchFocused.wrappedValue, height: controlHeight)
-                    .weibeiInputPrompt("当前资料内搜索", visible: store.readerSearch.isEmpty, fontSize: 12)
+                    .weibeiInputPrompt("资料内搜索", visible: store.readerSearch.isEmpty, fontSize: 12)
                     .frame(width: 220)
                 .onExitCommand {
                     withAnimation(WeiBeiMotion.panel) {
@@ -506,9 +506,9 @@ private struct UnifiedTopBarView: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(secondaryText)
-            .help("搜索当前资料")
+            .help("打开资料内搜索")
         } else {
-            topIconButton("magnifyingglass", help: "搜索当前资料") {
+            topIconButton("magnifyingglass", help: "打开资料内搜索") {
                 toggleReaderSearch()
             }
         }
@@ -552,11 +552,23 @@ private struct UnifiedTopBarView: View {
     }
 
     private var agentButtonTitle: String {
-        hasPrimaryAgentPaneAvailable ? "对话" : "问 Agent"
+        if hasPrimaryAgentPaneAvailable {
+            return "打开对话"
+        }
+        if store.selectionContext != nil {
+            return "问选区"
+        }
+        return store.hasSelectedMaterial ? "问资料" : "问笔记"
     }
 
     private var agentButtonHelp: String {
-        hasPrimaryAgentPaneAvailable ? "打开对话区" : "把\(store.selectionPromptScope)交给 Agent"
+        if hasPrimaryAgentPaneAvailable {
+            return "打开 Agent 对话区"
+        }
+        if store.selectionContext != nil {
+            return "让 Agent 回答当前选区"
+        }
+        return store.hasSelectedMaterial ? "让 Agent 基于当前资料回答" : "让 Agent 基于当前笔记回答"
     }
 
     private func activateAgentEntry() {
@@ -615,7 +627,7 @@ private struct UnifiedTopBarView: View {
                 }
             }
 
-            Section("Agent 形态") {
+            Section("Agent 入口") {
                 ForEach(AgentSurface.allCases) { surface in
                     Button(surface.label) {
                         withAnimation(WeiBeiMotion.panel) {

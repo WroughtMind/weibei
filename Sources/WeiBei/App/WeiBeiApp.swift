@@ -107,15 +107,15 @@ struct WeiBeiApp: App {
 
                 Divider()
 
-                Button("Agent 底部抽屉") { setAgentSurface(.bottomDrawer) }
+                Button(AgentSurface.bottomDrawer.actionLabel) { setAgentSurface(.bottomDrawer) }
                     .keyboardShortcut("1", modifiers: [.control, .option])
-                Button("Agent 右下角小窗") { setAgentSurface(.cornerPanel) }
+                Button(AgentSurface.cornerPanel.actionLabel) { setAgentSurface(.cornerPanel) }
                     .keyboardShortcut("2", modifiers: [.control, .option])
-                Button("Agent 划线浮层") { setAgentSurface(.selectionFloat) }
+                Button(AgentSurface.selectionFloat.actionLabel) { setAgentSurface(.selectionFloat) }
                     .keyboardShortcut("3", modifiers: [.control, .option])
-                Button("Agent 静默洞察") { setAgentSurface(.quietInsight) }
+                Button(AgentSurface.quietInsight.actionLabel) { setAgentSurface(.quietInsight) }
                     .keyboardShortcut("4", modifiers: [.control, .option])
-                Button("隐藏 Agent") { setAgentSurface(.hidden) }
+                Button(AgentSurface.hidden.actionLabel) { setAgentSurface(.hidden) }
                     .keyboardShortcut("0", modifiers: [.control, .option])
 
                 Divider()
@@ -158,7 +158,7 @@ struct WeiBeiApp: App {
                         .keyboardShortcut("c", modifiers: [.command, .shift])
                 }
                 if store.hasSelectedMaterial {
-                    Button("搜索当前资料") {
+                    Button("打开资料内搜索") {
                         animatePanel {
                             store.revealReaderSearch()
                         }

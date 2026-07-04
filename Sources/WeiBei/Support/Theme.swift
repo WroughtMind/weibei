@@ -232,7 +232,7 @@ struct WeiBeiIconButtonStyle: ButtonStyle {
     }
 
     private var foreground: Color {
-        guard isEnabled else { return WeiBeiTheme.tertiaryInk.opacity(0.42) }
+        guard isEnabled else { return WeiBeiTheme.tertiaryInk.opacity(0.58) }
         return active ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk
     }
 
@@ -259,7 +259,7 @@ struct WeiBeiTextActionButtonStyle: ButtonStyle {
     }
 
     private var foreground: Color {
-        guard isEnabled else { return WeiBeiTheme.tertiaryInk.opacity(0.45) }
+        guard isEnabled else { return WeiBeiTheme.tertiaryInk.opacity(0.60) }
         return active ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk
     }
 

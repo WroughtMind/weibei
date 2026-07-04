@@ -25,10 +25,10 @@ struct CommandPaletteView: View {
             PaletteCommand(title: "沉浸阅读", shortcut: "⌥⌘R", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveReading) },
             PaletteCommand(title: "沉浸对话", shortcut: "⌥⌘A", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveConversation) },
             PaletteCommand(title: "沉浸写笔记", shortcut: "⌥⌘N", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveWriting) },
-            PaletteCommand(title: "Agent 底部抽屉", shortcut: "⌃⌥1") { store.setAgentSurface(.bottomDrawer) },
-            PaletteCommand(title: "Agent 右下角小窗", shortcut: "⌃⌥2") { store.setAgentSurface(.cornerPanel) },
-            PaletteCommand(title: "Agent 划线浮层", shortcut: "⌃⌥3") { store.setAgentSurface(.selectionFloat) },
-            PaletteCommand(title: "Agent 静默洞察", shortcut: "⌃⌥4") { store.setAgentSurface(.quietInsight) },
+            agentSurfaceCommand(.bottomDrawer, shortcut: "⌃⌥1"),
+            agentSurfaceCommand(.cornerPanel, shortcut: "⌃⌥2"),
+            agentSurfaceCommand(.selectionFloat, shortcut: "⌃⌥3"),
+            agentSurfaceCommand(.quietInsight, shortcut: "⌃⌥4"),
             PaletteCommand(title: "笔记原地写作", shortcut: "⌃⌘1") { store.setNoteRenderMode(.rich) },
             PaletteCommand(title: "笔记源码对照", shortcut: "⌃⌘2") { store.setNoteRenderMode(.split) },
             PaletteCommand(title: "笔记源码", shortcut: "⌃⌘3") { store.setNoteRenderMode(.source) },
@@ -51,28 +51,28 @@ struct CommandPaletteView: View {
         }
         if store.hasSelectedMaterial {
             items.append(PaletteCommand(title: "复制引用", shortcut: "⌘⇧C") { store.copyCurrentReference() })
-            items.append(PaletteCommand(title: "搜索当前资料", shortcut: "⌘F") { store.revealReaderSearch() })
+            items.append(PaletteCommand(title: "打开资料内搜索", shortcut: "⌘F") { store.revealReaderSearch() })
         } else if store.selectionContext != nil {
             items.append(PaletteCommand(title: "复制引用", shortcut: "⌘⇧C") { store.copyCurrentReference() })
         }
         if store.selectionContext != nil {
-            items.append(PaletteCommand(title: "问选区 Agent", shortcut: "") { store.askSelection() })
+            items.append(PaletteCommand(title: "问当前选区", shortcut: "") { store.askSelection() })
         }
         if store.canOpenSelectedSourceReference {
             items.append(PaletteCommand(title: "打开选区来源", shortcut: "") { store.openSelectedSourceReference() })
         }
         if store.agentSurface != .hidden {
-            items.append(PaletteCommand(title: "隐藏 Agent", shortcut: "⌃⌥0") { store.setAgentSurface(.hidden) })
+            items.append(agentSurfaceCommand(.hidden, shortcut: "⌃⌥0"))
         }
         if store.canApplyAgentAnswer {
-            items.append(PaletteCommand(title: "写入 Agent 回答", shortcut: "⌘⇧A") { store.applyLastAgentAnswerToNote() })
-            items.append(PaletteCommand(title: "追加 Agent 整理建议", shortcut: "⌘⇧E") { store.applyAgentPatchToEditor() })
+            items.append(PaletteCommand(title: "写入回答到笔记", shortcut: "⌘⇧A") { store.applyLastAgentAnswerToNote() })
+            items.append(PaletteCommand(title: "追加整理建议", shortcut: "⌘⇧E") { store.applyAgentPatchToEditor() })
         }
         if store.canReplaceNoteSelection {
             items.append(PaletteCommand(title: "替换笔记选区", shortcut: "⌘⇧R") { store.replaceSelectionWithLastAgentAnswer() })
         }
         if canSendAgentDraft {
-            items.append(PaletteCommand(title: "发送 Agent 问题", shortcut: "⌘↩") { Task { await store.askAgent() } })
+            items.append(PaletteCommand(title: "发送当前问题", shortcut: "⌘↩") { Task { await store.askAgent() } })
         }
         return items
     }
@@ -84,6 +84,12 @@ struct CommandPaletteView: View {
     private func markdownInsertCommand(title: String, markdown: String) -> PaletteCommand {
         PaletteCommand(title: title, shortcut: "", animation: WeiBeiMotion.layout) {
             store.insertMarkdownSnippet(markdown)
+        }
+    }
+
+    private func agentSurfaceCommand(_ surface: AgentSurface, shortcut: String) -> PaletteCommand {
+        PaletteCommand(title: surface.actionLabel, shortcut: shortcut) {
+            store.setAgentSurface(surface)
         }
     }
 
@@ -128,7 +134,7 @@ struct CommandPaletteView: View {
                         .foregroundColor(WeiBeiTheme.ink)
                         .focused($searchFocused)
                         .font(.system(size: 18, weight: .semibold, design: .serif))
-                        .weibeiInputPrompt("命令", visible: query.isEmpty, leading: 0, fontSize: 18, weight: .semibold)
+                        .weibeiInputPrompt("输入命令", visible: query.isEmpty, leading: 0, fontSize: 18, weight: .semibold)
                 }
                 .weibeiInputSurface(active: searchFocused, height: 36)
                 .padding(.horizontal, 12)
