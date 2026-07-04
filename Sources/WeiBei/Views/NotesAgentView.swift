@@ -1130,7 +1130,7 @@ struct FloatingSelectionAgentView: View {
                     if store.isAskingAgent {
                         Text("正在读选区...")
                             .font(.caption2)
-                            .foregroundStyle(WeiBeiTheme.cinnabar)
+                            .foregroundStyle(WeiBeiTheme.secondaryInk)
                     }
 
                     ForEach(visibleFloatingMessages) { message in
@@ -1226,8 +1226,11 @@ struct FloatingSelectionAgentView: View {
     }
 
     private func floatingColor(for message: AgentMessage) -> Color {
-        if message.role == .user || message.text.hasPrefix("Agent 请求失败：") {
+        if message.text.hasPrefix("Agent 请求失败：") {
             return WeiBeiTheme.cinnabar
+        }
+        if message.role == .user {
+            return WeiBeiTheme.link
         }
         if isCredentialNotice(message) {
             return WeiBeiTheme.secondaryInk
