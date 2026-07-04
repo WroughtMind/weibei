@@ -181,6 +181,8 @@ let imageOnlyPDF = PDFDocument(url: imageOnlyPDFURL)
 expect(imageOnlyPDF?.string?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false, "image-only PDF has no native text layer")
 let ocrText = imageOnlyPDF.flatMap { PDFOCRTextExtractor.text(from: $0, maxPages: 1) }?.uppercased() ?? ""
 expect(ocrText.contains("INTEREST") && ocrText.contains("OCR") && ocrText.contains("PRICE"), "Vision OCR extracts text from image-only PDF pages")
+let ocrPages = imageOnlyPDF.map { PDFOCRTextExtractor.pages(from: $0, maxPages: 1) } ?? []
+expect(ocrPages.count == 1 && ocrPages[0].lines.contains { $0.text.uppercased().contains("INTEREST") && !$0.boundingBox.isEmpty }, "Vision OCR keeps page text bounds for scanned PDF selection overlays")
 
 let data = Data("""
 {"output":[{"content":[{"type":"output_text","text":"只根据当前材料回答。"}]}]}
@@ -581,6 +583,12 @@ expect(readerViewSource.contains(".accessibilityLabel(Text(\"上一页\"))") && 
 expect(!readerViewSource.contains(".disabled(pdfPageIndex"), "pdf pager keeps arrows visible instead of showing grey dead buttons")
 expect(readerViewSource.contains("syncReaderLocationTitle") && readerViewSource.contains("第 \\(pdfPageIndex + 1) 页"), "pdf reader page updates feed the shared reference title")
 expect(readerViewSource.contains("var onSelectionChange: (String, CGPoint?, Int) -> Void") && readerViewSource.contains("pageIndex(for: selection, in: view)") && readerViewSource.contains("ownerTitle: ownerTitle"), "pdf selection source uses the selected page, not only the current page")
+expect(readerViewSource.contains("PDFPageOverlayViewProvider")
+    && readerViewSource.contains("PDFOCRPageOverlayView")
+    && readerViewSource.contains("view.pageOverlayViewProvider = indexed.isEmpty ? nil : self")
+    && readerViewSource.contains("view.isInMarkupMode = !indexed.isEmpty")
+    && readerViewSource.contains("view.pageOverlayViewProvider = nil")
+    && readerViewSource.contains("view.isInMarkupMode = false"), "scanned PDF OCR overlays are only enabled for image-only PDFs and cleared for native text PDFs")
 expect(readerViewSource.contains("@State private var pdfHasTextLayer: Bool?")
     && readerViewSource.contains("var onTextLayerChange: (Bool?) -> Void")
     && readerViewSource.contains("private static func hasSelectableText")

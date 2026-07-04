@@ -479,6 +479,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         private var observer: NSObjectProtocol?
         private var pageObserver: NSObjectProtocol?
         private var selectionWork: DispatchWorkItem?
+        private var ocrPagesByPageIndex: [Int: PDFOCRPage] = [:]
         private var lastSearchQuery = ""
         private var loadGeneration = 0
         private(set) var loadedURL: URL?
@@ -495,6 +496,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             let generation = loadGeneration
             loadedURL = url
             view.document = nil
+            clearOCROverlays(in: view)
             lastSearchQuery = ""
             onTextLayerChange(nil)
 
@@ -506,7 +508,9 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                     view.autoScales = true
                     self.pageCount.wrappedValue = document?.pageCount ?? 0
                     self.pageIndex.wrappedValue = 0
-                    self.onTextLayerChange(document.map(Self.hasSelectableText))
+                    let hasTextLayer = document.map(Self.hasSelectableText)
+                    self.onTextLayerChange(hasTextLayer)
+                    self.configureOCROverlays(for: document, hasTextLayer: hasTextLayer == true, generation: generation, in: view)
                     WeiBeiQuietScrollers.flashRecursively(in: view, repeatCount: 2)
                 }
             }
@@ -514,6 +518,32 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
 
         private static func hasSelectableText(_ document: PDFDocument) -> Bool {
             document.string?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
+
+        private func configureOCROverlays(for document: PDFDocument?, hasTextLayer: Bool, generation: Int, in view: PDFView) {
+            guard let document, !hasTextLayer else {
+                clearOCROverlays(in: view)
+                return
+            }
+
+            DispatchQueue.global(qos: .userInitiated).async {
+                let pages = PDFOCRTextExtractor.pages(from: document)
+                let indexed = Dictionary(uniqueKeysWithValues: pages.map { ($0.pageIndex, $0) })
+                DispatchQueue.main.async { [weak self, weak view] in
+                    guard let self, let view, self.loadGeneration == generation else { return }
+                    self.ocrPagesByPageIndex = indexed
+                    view.pageOverlayViewProvider = indexed.isEmpty ? nil : self
+                    view.isInMarkupMode = !indexed.isEmpty
+                    view.layoutDocumentView()
+                }
+            }
+        }
+
+        private func clearOCROverlays(in view: PDFView) {
+            ocrPagesByPageIndex = [:]
+            view.pageOverlayViewProvider = nil
+            view.isInMarkupMode = false
+            view.layoutDocumentView()
         }
 
         func observe(_ view: PDFView) {
@@ -596,6 +626,133 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(pageObserver)
             }
         }
+    }
+}
+
+extension PDFReaderRepresentable.Coordinator: PDFPageOverlayViewProvider {
+    func pdfView(_ view: PDFView, overlayViewFor page: PDFPage) -> NSView? {
+        guard let document = view.document else { return nil }
+        let index = document.index(for: page)
+        guard index != NSNotFound, let ocrPage = ocrPagesByPageIndex[index] else { return nil }
+        return PDFOCRPageOverlayView(
+            page: ocrPage,
+            appearanceMode: appearanceMode
+        ) { [weak self] text, anchor in
+            guard let self else { return }
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                self.selectionWork?.cancel()
+                self.onSelectionChange("", nil, index)
+                return
+            }
+            self.reportSelectionAfterDragSettles(text: text, anchor: anchor, pageIndex: index)
+        }
+    }
+}
+
+private final class PDFOCRPageOverlayView: NSView {
+    private let page: PDFOCRPage
+    private let appearanceMode: WeiBeiAppearanceMode
+    private let onSelectionChange: (String, CGPoint?) -> Void
+    private var lineViews: [PDFOCRLineTextView] = []
+
+    init(page: PDFOCRPage, appearanceMode: WeiBeiAppearanceMode, onSelectionChange: @escaping (String, CGPoint?) -> Void) {
+        self.page = page
+        self.appearanceMode = appearanceMode
+        self.onSelectionChange = onSelectionChange
+        super.init(frame: .zero)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.clear.cgColor
+        installLineViews()
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override var isFlipped: Bool { false }
+
+    override func layout() {
+        super.layout()
+        let width = max(bounds.width, 1)
+        let height = max(bounds.height, 1)
+        for lineView in lineViews {
+            let box = lineView.normalizedBoundingBox
+            var frame = CGRect(
+                x: box.minX * width,
+                y: box.minY * height,
+                width: max(box.width * width, 24),
+                height: max(box.height * height, 12)
+            )
+            frame = frame.insetBy(dx: -1.5, dy: -1)
+            lineView.frame = frame
+            lineView.font = NSFont.systemFont(ofSize: max(8, min(22, frame.height * 0.72)))
+        }
+    }
+
+    private func installLineViews() {
+        lineViews = page.lines.map { line in
+            let view = PDFOCRLineTextView(
+                text: line.text,
+                normalizedBoundingBox: line.boundingBox,
+                appearanceMode: appearanceMode,
+                onSelectionChange: onSelectionChange
+            )
+            addSubview(view)
+            return view
+        }
+    }
+}
+
+private final class PDFOCRLineTextView: NSTextView, NSTextViewDelegate {
+    let normalizedBoundingBox: CGRect
+    private let selectionCallback: (String, CGPoint?) -> Void
+
+    init(
+        text: String,
+        normalizedBoundingBox: CGRect,
+        appearanceMode: WeiBeiAppearanceMode,
+        onSelectionChange: @escaping (String, CGPoint?) -> Void
+    ) {
+        self.normalizedBoundingBox = normalizedBoundingBox
+        self.selectionCallback = onSelectionChange
+        super.init(frame: .zero)
+        string = text
+        isEditable = false
+        isSelectable = true
+        drawsBackground = false
+        textContainerInset = .zero
+        textContainer?.lineFragmentPadding = 0
+        textContainer?.widthTracksTextView = true
+        textColor = .clear
+        insertionPointColor = WeiBeiNativePalette.selectionFill(for: appearanceMode)
+        selectedTextAttributes = [
+            .foregroundColor: NSColor.clear,
+            .backgroundColor: WeiBeiNativePalette.selectionFill(for: appearanceMode)
+        ]
+        delegate = self
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override var isFlipped: Bool { false }
+
+    func textViewDidChangeSelection(_ notification: Notification) {
+        let range = selectedRange()
+        guard range.length > 0, let textRange = Range(range, in: string) else {
+            selectionCallback("", nil)
+            return
+        }
+        selectionCallback(String(string[textRange]), Self.anchor(for: range, in: self))
+    }
+
+    private static func anchor(for range: NSRange, in textView: NSTextView) -> CGPoint? {
+        guard let window = textView.window else { return nil }
+        let rect = textView.firstRect(forCharacterRange: range, actualRange: nil)
+        guard !rect.isEmpty else { return nil }
+        let screenPoint = CGPoint(x: rect.midX, y: rect.minY)
+        return SelectionAnchorContentPoint.fromScreenPoint(screenPoint, in: window)
     }
 }
 

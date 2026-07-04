@@ -3,20 +3,48 @@ import Foundation
 import PDFKit
 import Vision
 
+public struct PDFOCRLine: Equatable {
+    public var text: String
+    public var boundingBox: CGRect
+
+    public init(text: String, boundingBox: CGRect) {
+        self.text = text
+        self.boundingBox = boundingBox
+    }
+}
+
+public struct PDFOCRPage: Equatable {
+    public var pageIndex: Int
+    public var lines: [PDFOCRLine]
+
+    public init(pageIndex: Int, lines: [PDFOCRLine]) {
+        self.pageIndex = pageIndex
+        self.lines = lines
+    }
+
+    public var text: String {
+        lines.map(\.text).joined(separator: "\n")
+    }
+}
+
 public enum PDFOCRTextExtractor {
     public static func text(from document: PDFDocument, maxPages: Int = 12) -> String? {
-        let pageLimit = min(max(document.pageCount, 0), max(maxPages, 0))
-        guard pageLimit > 0 else { return nil }
-
-        let pages = (0..<pageLimit).compactMap { index -> String? in
-            guard let page = document.page(at: index),
-                  let image = cgImage(for: page),
-                  let pageText = recognizeText(in: image),
-                  !pageText.isEmpty else { return nil }
-            return "第 \(index + 1) 页（OCR）\n\(pageText)"
-        }
-        let text = pages.joined(separator: "\n\n")
+        let text = pages(from: document, maxPages: maxPages)
+            .map { "第 \($0.pageIndex + 1) 页（OCR）\n\($0.text)" }
+            .joined(separator: "\n\n")
         return text.isEmpty ? nil : text
+    }
+
+    public static func pages(from document: PDFDocument, maxPages: Int = 12) -> [PDFOCRPage] {
+        let pageLimit = min(max(document.pageCount, 0), max(maxPages, 0))
+        guard pageLimit > 0 else { return [] }
+
+        return (0..<pageLimit).compactMap { index -> PDFOCRPage? in
+            guard let page = document.page(at: index),
+                  let image = cgImage(for: page) else { return nil }
+            let lines = recognizeLines(in: image)
+            return lines.isEmpty ? nil : PDFOCRPage(pageIndex: index, lines: lines)
+        }
     }
 
     private static func cgImage(for page: PDFPage) -> CGImage? {
@@ -28,7 +56,7 @@ public enum PDFOCRTextExtractor {
         return page.thumbnail(of: size, for: .mediaBox).cgImage(forProposedRect: &rect, context: nil, hints: nil)
     }
 
-    private static func recognizeText(in image: CGImage) -> String? {
+    private static func recognizeLines(in image: CGImage) -> [PDFOCRLine] {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
@@ -42,19 +70,20 @@ public enum PDFOCRTextExtractor {
         do {
             try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
         } catch {
-            return nil
+            return []
         }
 
-        let lines = (request.results ?? [])
+        return (request.results ?? [])
             .sorted { lhs, rhs in
                 let yDelta = abs(lhs.boundingBox.midY - rhs.boundingBox.midY)
                 return yDelta > 0.02
                     ? lhs.boundingBox.midY > rhs.boundingBox.midY
                     : lhs.boundingBox.minX < rhs.boundingBox.minX
             }
-            .compactMap { $0.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
-
-        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+            .compactMap { observation -> PDFOCRLine? in
+                let text = observation.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                guard !text.isEmpty, !observation.boundingBox.isEmpty else { return nil }
+                return PDFOCRLine(text: text, boundingBox: observation.boundingBox)
+            }
     }
 }
