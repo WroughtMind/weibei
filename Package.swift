@@ -15,7 +15,10 @@ let package = Package(
         .target(
             name: "WeiBeiCore",
             linkerSettings: [
-                .linkedFramework("Security")
+                .linkedFramework("AppKit"),
+                .linkedFramework("PDFKit"),
+                .linkedFramework("Security"),
+                .linkedFramework("Vision")
             ]
         ),
         .executableTarget(

@@ -80,6 +80,13 @@ expect(editorScriptSource.contains("installQuietScrollIndicators")
     && editorScriptSource.contains("weibei-scroll-active")
     && editorScriptSource.contains("window.setTimeout(() =>")
     && editorScriptSource.contains("}, 850)"), "web editor removes internal scroll indicator state after a short idle delay")
+let documentTextExtractorURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Services/DocumentTextExtractor.swift")
+let documentTextExtractorSource = (try? String(contentsOf: documentTextExtractorURL, encoding: .utf8)) ?? ""
+expect(documentTextExtractorSource.contains("private static var pdfTextCache")
+    && documentTextExtractorSource.contains("return pdfText(url: url)")
+    && documentTextExtractorSource.contains("let text = textLayerText.isEmpty ? PDFOCRTextExtractor.text(from: document) : textLayerText")
+    && documentTextExtractorSource.contains("pdfTextCache[cacheKey] = text"), "PDF material extraction uses cached OCR fallback when the native text layer is empty")
 let quietScrollersSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Support/QuietScrollers.swift")
 let quietScrollersSource = (try? String(contentsOf: quietScrollersSourceURL, encoding: .utf8)) ?? ""
@@ -127,6 +134,29 @@ func makeSelectablePDF(at url: URL) {
     expect(data.write(to: url, atomically: true), "write selectable pdf")
 }
 
+func makeImageOnlyPDF(at url: URL) {
+    let image = NSImage(size: NSSize(width: 900, height: 260))
+    image.lockFocus()
+    NSColor.white.setFill()
+    NSRect(origin: .zero, size: image.size).fill()
+    NSString(string: "INTEREST RATE OCR PRICE").draw(
+        at: CGPoint(x: 48, y: 96),
+        withAttributes: [
+            .font: NSFont.boldSystemFont(ofSize: 54),
+            .foregroundColor: NSColor.black
+        ]
+    )
+    image.unlockFocus()
+
+    let document = PDFDocument()
+    guard let page = PDFPage(image: image) else {
+        expect(false, "create image-only pdf page")
+        return
+    }
+    document.insert(page, at: 0)
+    expect(document.write(to: url), "write image-only pdf")
+}
+
 let selectablePDFURL = FileManager.default.temporaryDirectory
     .appendingPathComponent("weibei-selectable-pdf-check-\(UUID().uuidString).pdf")
 makeSelectablePDF(at: selectablePDFURL)
@@ -142,6 +172,15 @@ if let selection = pdfSelections.first, let page = selection.pages.first {
 } else {
     expect(false, "PDFSelection contains page")
 }
+
+let imageOnlyPDFURL = FileManager.default.temporaryDirectory
+    .appendingPathComponent("weibei-image-only-pdf-check-\(UUID().uuidString).pdf")
+makeImageOnlyPDF(at: imageOnlyPDFURL)
+defer { try? FileManager.default.removeItem(at: imageOnlyPDFURL) }
+let imageOnlyPDF = PDFDocument(url: imageOnlyPDFURL)
+expect(imageOnlyPDF?.string?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false, "image-only PDF has no native text layer")
+let ocrText = imageOnlyPDF.flatMap { PDFOCRTextExtractor.text(from: $0, maxPages: 1) }?.uppercased() ?? ""
+expect(ocrText.contains("INTEREST") && ocrText.contains("OCR") && ocrText.contains("PRICE"), "Vision OCR extracts text from image-only PDF pages")
 
 let data = Data("""
 {"output":[{"content":[{"type":"output_text","text":"只根据当前材料回答。"}]}]}
