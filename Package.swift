@@ -35,6 +35,8 @@ let package = Package(
             name: "WeiBeiSelfCheck",
             dependencies: ["WeiBeiCore"],
             linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("PDFKit"),
                 .linkedFramework("Security")
             ]
         ),

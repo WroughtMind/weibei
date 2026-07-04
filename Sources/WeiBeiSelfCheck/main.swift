@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import PDFKit
 import WeiBeiCore
 
 func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
@@ -100,6 +102,46 @@ expect(StudyItemKind.detect(from: URL(fileURLWithPath: "/tmp/a.pdf")) == .pdf, "
 expect(StudyItemKind.detect(from: URL(fileURLWithPath: "/tmp/a.html")) == .html, "html detection")
 expect(StudyItemKind.detect(from: URL(fileURLWithPath: "/tmp/a.md")) == .markdown, "markdown detection")
 expect(StudyItemKind.detect(from: URL(fileURLWithPath: "/tmp/a.txt")) == .text, "text detection")
+
+func makeSelectablePDF(at url: URL) {
+    let data = NSMutableData()
+    var mediaBox = CGRect(x: 0, y: 0, width: 420, height: 260)
+    guard let consumer = CGDataConsumer(data: data as CFMutableData),
+          let context = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else {
+        expect(false, "create pdf context")
+        return
+    }
+    context.beginPDFPage(nil)
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+    NSString(string: "PDF 可选文本层：利率是资金使用价格的表达。").draw(
+        at: CGPoint(x: 42, y: 178),
+        withAttributes: [
+            .font: NSFont.systemFont(ofSize: 16),
+            .foregroundColor: NSColor.black
+        ]
+    )
+    NSGraphicsContext.restoreGraphicsState()
+    context.endPDFPage()
+    context.closePDF()
+    expect(data.write(to: url, atomically: true), "write selectable pdf")
+}
+
+let selectablePDFURL = FileManager.default.temporaryDirectory
+    .appendingPathComponent("weibei-selectable-pdf-check-\(UUID().uuidString).pdf")
+makeSelectablePDF(at: selectablePDFURL)
+defer { try? FileManager.default.removeItem(at: selectablePDFURL) }
+let selectablePDF = PDFDocument(url: selectablePDFURL)
+expect(selectablePDF?.string?.contains("利率是资金使用价格") == true, "PDFKit extracts text from selectable PDF text layer")
+let pdfSelections = selectablePDF?.findString("资金使用价格", withOptions: []) ?? []
+expect(pdfSelections.count == 1, "PDFKit finds selectable text in generated PDF")
+if let selection = pdfSelections.first, let page = selection.pages.first {
+    expect(selection.string == "资金使用价格", "PDFSelection preserves selected text")
+    expect(selectablePDF?.index(for: page) == 0, "PDFSelection resolves selected page index")
+    expect(!selection.bounds(for: page).isEmpty, "PDFSelection exposes non-empty page bounds for floating agent anchor")
+} else {
+    expect(false, "PDFSelection contains page")
+}
 
 let data = Data("""
 {"output":[{"content":[{"type":"output_text","text":"只根据当前材料回答。"}]}]}
