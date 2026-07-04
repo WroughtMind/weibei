@@ -86,21 +86,21 @@ struct ReaderView: View {
         .background {
             ZStack {
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(WeiBeiTheme.paperRaised.opacity(pdfControlsHovering ? 0.88 : 0.78))
+                    .fill(WeiBeiTheme.paperRaised.opacity(pdfControlsActive ? 0.86 : 0.28))
                 RoundedRectangle(cornerRadius: 8)
                     .fill(.regularMaterial)
-                    .opacity(pdfControlsHovering ? 0.055 : 0.018)
+                    .opacity(pdfControlsHovering ? 0.055 : 0.0)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay {
             RoundedRectangle(cornerRadius: 8)
-                .stroke(WeiBeiTheme.hairline.opacity(pdfControlsHovering ? 0.76 : 0.34), lineWidth: 1)
+                .stroke(WeiBeiTheme.hairline.opacity(pdfControlsActive ? 0.64 : 0.18), lineWidth: 1)
         }
-        .shadow(color: WeiBeiTheme.ink.opacity(pdfControlsHovering ? 0.045 : 0.010), radius: 7, y: 3)
-        .opacity(pdfControlsHovering || pdfBrowseMode == .page ? 0.94 : 0.64)
-        .offset(x: pdfControlsHovering || pdfBrowseMode == .page ? 0 : 3)
-        .scaleEffect(pdfControlsHovering ? 1.01 : 1, anchor: .trailing)
+        .shadow(color: WeiBeiTheme.ink.opacity(pdfControlsHovering ? 0.045 : 0.0), radius: 7, y: 3)
+        .opacity(pdfControlsActive ? 0.94 : 0.30)
+        .offset(x: pdfControlsActive ? 0 : 9)
+        .scaleEffect(pdfControlsHovering ? 1.01 : (pdfControlsActive ? 1 : 0.985), anchor: .trailing)
         .contentShape(RoundedRectangle(cornerRadius: 8))
         .onHover { hovering in
             withAnimation(WeiBeiMotion.hover) {
@@ -160,20 +160,31 @@ struct ReaderView: View {
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
-            .foregroundStyle(pdfBrowseMode == .page ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+            .foregroundStyle(pdfModeForeground)
             .padding(.horizontal, showsPDFModeLabel ? 7 : 0)
             .frame(width: showsPDFModeLabel ? nil : 24, height: 24)
-            .background(WeiBeiTheme.paperInset.opacity(pdfControlsHovering ? 0.20 : 0.06))
+            .background(WeiBeiTheme.paperInset.opacity(pdfControlsActive ? 0.16 : 0.0))
             .contentShape(RoundedRectangle(cornerRadius: 6))
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay {
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(WeiBeiTheme.hairline.opacity(pdfControlsHovering ? 0.70 : 0.20), lineWidth: 1)
+                    .stroke(WeiBeiTheme.hairline.opacity(pdfControlsActive ? 0.58 : 0.0), lineWidth: 1)
             }
             .animation(WeiBeiMotion.micro, value: showsPDFModeLabel)
         }
         .accessibilityLabel(Text("切换 PDF 浏览方式，当前\(pdfBrowseMode.label)"))
         .help("切换到\(pdfBrowseMode.toggled.help)")
+    }
+
+    private var pdfControlsActive: Bool {
+        pdfControlsHovering || pdfBrowseMode == .page
+    }
+
+    private var pdfModeForeground: Color {
+        if pdfBrowseMode == .page {
+            return WeiBeiTheme.cinnabar
+        }
+        return pdfControlsHovering ? WeiBeiTheme.secondaryInk : WeiBeiTheme.tertiaryInk
     }
 
     private var showsPDFModeLabel: Bool {
