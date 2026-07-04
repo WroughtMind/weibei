@@ -89,6 +89,22 @@ const calloutHeaderText = (node) => {
     : (node.textContent || '');
   return (text.split('\n')[0] || '').trimStart();
 };
+const firstParagraphText = (node) => {
+  let first = '';
+  node.descendants((child) => {
+    if (first) return false;
+    if (child.type?.name !== 'paragraph') return true;
+    const text = (child.textContent || '').trimStart();
+    if (!text) return true;
+    first = text;
+    return false;
+  });
+  return first;
+};
+const calloutMatchForBlockquote = (node) => (
+  calloutHeaderText(node).match(calloutRegex)
+    || firstParagraphText(node).match(calloutRegex)
+);
 const isBlockquoteType = (typeName) => typeName === 'blockquote' || typeName === 'block_quote';
 const decorateCalloutHeadingSource = (decorations, node, pos) => {
   const text = node.textBetween
@@ -955,7 +971,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
         const parentName = parent?.type?.name || '';
 
         if (isBlockquoteType(typeName)) {
-          const match = calloutHeaderText(node).match(calloutRegex);
+          const match = calloutMatchForBlockquote(node);
           if (match) {
             const calloutType = match[1].toLowerCase();
             const calloutClass = calloutTypes.has(calloutType)

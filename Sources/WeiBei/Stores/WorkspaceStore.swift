@@ -982,7 +982,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private var quietInsightReferenceTitle: String {
-        selectionContext?.ownerTitle ?? selectedMaterialItem?.title ?? selectedItem?.title ?? "当前笔记"
+        selectionContext?.ownerTitle ?? (hasSelectedMaterial ? currentReferenceTitle : selectedItem?.title) ?? "当前笔记"
     }
 
     func applyLastAgentAnswerToNote() {
