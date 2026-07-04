@@ -17,30 +17,6 @@ struct NotesAgentView: View {
     }
 }
 
-private struct WeiBeiPaneHeaderBackground: View {
-    var body: some View {
-        ZStack {
-            Rectangle()
-                .fill(WeiBeiTheme.paper.opacity(0.58))
-
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .opacity(0.018)
-
-            LinearGradient(
-                colors: [
-                    WeiBeiTheme.glassHighlight.opacity(0.045),
-                    WeiBeiTheme.glassTint.opacity(0.026),
-                    WeiBeiTheme.paper.opacity(0.008),
-                    .clear
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
-    }
-}
-
 struct NotePaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
 
@@ -76,7 +52,7 @@ struct NotePaneView: View {
             }
             .padding(.horizontal, 16)
             .frame(height: 54)
-            .background(WeiBeiPaneHeaderBackground())
+            .background(WeiBeiGlassHeaderBackground(paperOpacity: 0.72, materialOpacity: 0.12))
             .overlay(alignment: .top) {
                 Rectangle()
                     .fill(WeiBeiTheme.glassHighlight.opacity(0.06))
@@ -624,6 +600,7 @@ struct AgentPaneView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("对话")
                         .font(.system(size: 18, weight: .semibold, design: .serif))
+                        .foregroundStyle(WeiBeiTheme.ink)
                     Text(store.selectedItem?.title ?? "无上下文")
                         .font(.caption2)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
@@ -651,7 +628,7 @@ struct AgentPaneView: View {
             }
             .padding(.horizontal, 16)
             .frame(height: 54)
-            .background(WeiBeiPaneHeaderBackground())
+            .background(WeiBeiGlassHeaderBackground(paperOpacity: 0.72, materialOpacity: 0.12))
             .overlay(alignment: .top) {
                 Rectangle()
                     .fill(WeiBeiTheme.glassHighlight.opacity(0.06))
