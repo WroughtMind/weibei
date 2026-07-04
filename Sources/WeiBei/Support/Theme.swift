@@ -1,22 +1,210 @@
+import AppKit
 import SwiftUI
 
+enum WeiBeiAppearanceMode: String, CaseIterable, Identifiable {
+    case paper
+    case inkstone
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .paper:
+            return "纸面"
+        case .inkstone:
+            return "墨石"
+        }
+    }
+
+    var actionLabel: String {
+        switch self {
+        case .paper:
+            return "切到墨石暗色"
+        case .inkstone:
+            return "切到纸面亮色"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .paper:
+            return "sun.max"
+        case .inkstone:
+            return "moon.stars"
+        }
+    }
+
+    var colorScheme: ColorScheme {
+        switch self {
+        case .paper:
+            return .light
+        case .inkstone:
+            return .dark
+        }
+    }
+
+    var webThemeName: String {
+        switch self {
+        case .paper:
+            return "paper"
+        case .inkstone:
+            return "inkstone"
+        }
+    }
+
+    var windowBackground: NSColor {
+        switch self {
+        case .paper:
+            return NSColor(calibratedRed: 0.985, green: 0.960, blue: 0.905, alpha: 1.0)
+        case .inkstone:
+            return NSColor(calibratedRed: 0.059, green: 0.059, blue: 0.059, alpha: 1.0)
+        }
+    }
+
+    var toggled: WeiBeiAppearanceMode {
+        switch self {
+        case .paper:
+            return .inkstone
+        case .inkstone:
+            return .paper
+        }
+    }
+}
+
+private struct WeiBeiTone {
+    var red: CGFloat
+    var green: CGFloat
+    var blue: CGFloat
+    var alpha: CGFloat
+
+    init(red: CGFloat, green: CGFloat, blue: CGFloat, alpha: CGFloat = 1) {
+        self.red = red
+        self.green = green
+        self.blue = blue
+        self.alpha = alpha
+    }
+
+    init(hex: Int, alpha: CGFloat = 1) {
+        self.red = CGFloat((hex >> 16) & 0xFF) / 255
+        self.green = CGFloat((hex >> 8) & 0xFF) / 255
+        self.blue = CGFloat(hex & 0xFF) / 255
+        self.alpha = alpha
+    }
+
+    var nsColor: NSColor {
+        NSColor(calibratedRed: red, green: green, blue: blue, alpha: alpha)
+    }
+}
+
+private extension Color {
+    static func weiBei(light: WeiBeiTone, dark: WeiBeiTone) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            return (isDark ? dark : light).nsColor
+        })
+    }
+}
+
 enum WeiBeiTheme {
-    static let paper = Color(red: 0.955, green: 0.918, blue: 0.835)
-    static let paperRaised = Color(red: 0.976, green: 0.944, blue: 0.872)
-    static let paperInset = Color(red: 0.908, green: 0.858, blue: 0.748)
-    static let chrome = Color(red: 0.155, green: 0.145, blue: 0.130)
-    static let ink = Color(red: 0.115, green: 0.095, blue: 0.080)
-    static let secondaryInk = Color(red: 0.335, green: 0.285, blue: 0.245)
-    static let tertiaryInk = Color(red: 0.490, green: 0.430, blue: 0.365)
-    static let hairline = Color(red: 0.500, green: 0.380, blue: 0.260).opacity(0.24)
-    static let cinnabar = Color(red: 0.570, green: 0.150, blue: 0.105)
-    static let cinnabarSoft = Color(red: 0.570, green: 0.150, blue: 0.105).opacity(0.10)
-    static let link = Color(red: 0.190, green: 0.330, blue: 0.410)
-    static let moss = Color(red: 0.230, green: 0.385, blue: 0.300)
-    static let codePaper = Color(red: 0.180, green: 0.145, blue: 0.115).opacity(0.055)
-    static let glassTint = Color(red: 0.982, green: 0.948, blue: 0.875)
-    static let glassHighlight = Color(red: 0.992, green: 0.970, blue: 0.918)
+    static let paper = Color.weiBei(
+        light: WeiBeiTone(red: 0.955, green: 0.918, blue: 0.835),
+        dark: WeiBeiTone(hex: 0x0F0F0F)
+    )
+    static let paperRaised = Color.weiBei(
+        light: WeiBeiTone(red: 0.976, green: 0.944, blue: 0.872),
+        dark: WeiBeiTone(hex: 0x151515)
+    )
+    static let paperInset = Color.weiBei(
+        light: WeiBeiTone(red: 0.908, green: 0.858, blue: 0.748),
+        dark: WeiBeiTone(hex: 0x1C1C1C)
+    )
+    static let chrome = Color.weiBei(
+        light: WeiBeiTone(red: 0.155, green: 0.145, blue: 0.130),
+        dark: WeiBeiTone(hex: 0x0B0B0B)
+    )
+    static let ink = Color.weiBei(
+        light: WeiBeiTone(red: 0.115, green: 0.095, blue: 0.080),
+        dark: WeiBeiTone(hex: 0xD7CBB0)
+    )
+    static let secondaryInk = Color.weiBei(
+        light: WeiBeiTone(red: 0.335, green: 0.285, blue: 0.245),
+        dark: WeiBeiTone(hex: 0x9B9178)
+    )
+    static let tertiaryInk = Color.weiBei(
+        light: WeiBeiTone(red: 0.490, green: 0.430, blue: 0.365),
+        dark: WeiBeiTone(hex: 0x6F6655)
+    )
+    static let hairline = Color.weiBei(
+        light: WeiBeiTone(red: 0.500, green: 0.380, blue: 0.260, alpha: 0.24),
+        dark: WeiBeiTone(hex: 0x3A3328, alpha: 0.72)
+    )
+    static let cinnabar = Color.weiBei(
+        light: WeiBeiTone(red: 0.570, green: 0.150, blue: 0.105),
+        dark: WeiBeiTone(hex: 0xA6362B)
+    )
+    static let cinnabarSoft = Color.weiBei(
+        light: WeiBeiTone(red: 0.570, green: 0.150, blue: 0.105, alpha: 0.10),
+        dark: WeiBeiTone(hex: 0x5C2621, alpha: 0.62)
+    )
+    static let link = Color.weiBei(
+        light: WeiBeiTone(red: 0.190, green: 0.330, blue: 0.410),
+        dark: WeiBeiTone(hex: 0xC8B98A)
+    )
+    static let moss = Color.weiBei(
+        light: WeiBeiTone(red: 0.230, green: 0.385, blue: 0.300),
+        dark: WeiBeiTone(hex: 0xB88A42)
+    )
+    static let codePaper = Color.weiBei(
+        light: WeiBeiTone(red: 0.180, green: 0.145, blue: 0.115, alpha: 0.055),
+        dark: WeiBeiTone(hex: 0x171717, alpha: 0.92)
+    )
+    static let glassTint = Color.weiBei(
+        light: WeiBeiTone(red: 0.982, green: 0.948, blue: 0.875),
+        dark: WeiBeiTone(hex: 0x151515)
+    )
+    static let glassHighlight = Color.weiBei(
+        light: WeiBeiTone(red: 0.992, green: 0.970, blue: 0.918),
+        dark: WeiBeiTone(hex: 0x2D2D2D)
+    )
     static let stone = secondaryInk
+}
+
+enum WeiBeiNativePalette {
+    static func paper(for mode: WeiBeiAppearanceMode) -> NSColor {
+        switch mode {
+        case .paper:
+            return NSColor(calibratedRed: 0.955, green: 0.918, blue: 0.835, alpha: 1.0)
+        case .inkstone:
+            return NSColor(calibratedRed: 0.059, green: 0.059, blue: 0.059, alpha: 1.0)
+        }
+    }
+
+    static func ink(for mode: WeiBeiAppearanceMode) -> NSColor {
+        switch mode {
+        case .paper:
+            return NSColor(calibratedRed: 0.115, green: 0.095, blue: 0.080, alpha: 1.0)
+        case .inkstone:
+            return NSColor(calibratedRed: 0.843, green: 0.796, blue: 0.690, alpha: 1.0)
+        }
+    }
+
+    static func selectedText(for mode: WeiBeiAppearanceMode) -> NSColor {
+        switch mode {
+        case .paper:
+            return ink(for: mode)
+        case .inkstone:
+            return NSColor(calibratedRed: 0.961, green: 0.906, blue: 0.784, alpha: 1.0)
+        }
+    }
+
+    static func selectionFill(for mode: WeiBeiAppearanceMode) -> NSColor {
+        switch mode {
+        case .paper:
+            return NSColor(calibratedRed: 0.570, green: 0.150, blue: 0.105, alpha: 0.20)
+        case .inkstone:
+            return NSColor(calibratedRed: 0.651, green: 0.212, blue: 0.169, alpha: 0.35)
+        }
+    }
 }
 
 enum WeiBeiMetric {
@@ -296,7 +484,6 @@ extension View {
             .foregroundColor(WeiBeiTheme.ink)
             .foregroundStyle(WeiBeiTheme.ink)
             .tint(WeiBeiTheme.link)
-            .environment(\.colorScheme, .light)
             .padding(.horizontal, horizontalPadding)
             .frame(minHeight: height)
             .background {

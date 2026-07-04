@@ -130,6 +130,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     var markdownBaseURL: URL?
     var attachmentDirectory: URL?
     var searchQuery = ""
+    var appearanceMode: WeiBeiAppearanceMode = .paper
     var onSelectionChange: (String, CGPoint?) -> Void
     var onAskAgentWithSelection: (String, CGPoint?) -> Void
     var onWikiLink: (String) -> Void = { _ in }
@@ -148,6 +149,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             markdownBaseURLString: markdownBaseURL?.absoluteString ?? "",
             attachmentDirectory: attachmentDirectory,
             searchQuery: searchQuery,
+            appearanceMode: appearanceMode,
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onAskAgentWithSelection,
             onWikiLink: onWikiLink,
@@ -174,6 +176,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             window.weiBeiMarkdownEditable = \(isEditable ? "true" : "false");
             window.weiBeiMarkdownBaseURL = \(Self.json(markdownBaseURL?.absoluteString ?? ""));
             window.weiBeiLocalImageScheme = \(Self.json(Self.localImageScheme));
+            window.weiBeiTheme = \(Self.json(appearanceMode.webThemeName));
+            document.documentElement.dataset.weibeiTheme = window.weiBeiTheme;
             (() => {
               const appShortcutKey = (event) => {
                 if (/^Digit[0-9]$/.test(event.code)) return event.code.slice(5);
@@ -189,7 +193,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                   return ["0", "1", "2", "3", "4"].includes(key);
                 }
                 if (command && option && !control && !shift) {
-                  return ["1", "2", "3", "a", "n", "r"].includes(key);
+                  return ["1", "2", "3", "a", "n", "r", "t"].includes(key);
                 }
                 if (control && command && !option && !shift) {
                   return ["1", "2", "3", "4"].includes(key);
@@ -252,6 +256,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             attachmentDirectory: attachmentDirectory
         )
         context.coordinator.searchQuery = searchQuery
+        if context.coordinator.appearanceMode != appearanceMode {
+            context.coordinator.appearanceMode = appearanceMode
+            if context.coordinator.isReady {
+                context.coordinator.setTheme(appearanceMode)
+            }
+        }
         context.coordinator.isFocused = isFocused
         context.coordinator.focusRequest = focusRequest
         context.coordinator.onWikiLink = onWikiLink
@@ -320,6 +330,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var markdownBaseURLString: String
         var attachmentDirectory: URL?
         var searchQuery: String
+        var appearanceMode: WeiBeiAppearanceMode
         var webMarkdown = ""
         var pendingExternalMarkdown: String?
         var lastCommandID: UUID?
@@ -337,6 +348,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             markdownBaseURLString: String,
             attachmentDirectory: URL?,
             searchQuery: String,
+            appearanceMode: WeiBeiAppearanceMode,
             onSelectionChange: @escaping (String, CGPoint?) -> Void,
             onAskAgentWithSelection: @escaping (String, CGPoint?) -> Void,
             onWikiLink: @escaping (String) -> Void,
@@ -352,6 +364,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.markdownBaseURLString = markdownBaseURLString
             self.attachmentDirectory = attachmentDirectory
             self.searchQuery = searchQuery
+            self.appearanceMode = appearanceMode
             self.onSelectionChange = onSelectionChange
             self.onAskAgentWithSelection = onAskAgentWithSelection
             self.onWikiLink = onWikiLink
@@ -379,6 +392,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                     webMarkdown = markdown.wrappedValue
                 }
                 applySearch()
+                setTheme(appearanceMode)
                 applyFocus()
                 runPendingCommandIfReady()
             case "markdownChanged":
@@ -474,6 +488,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
         func setMarkdownBaseURL(_ url: String) {
             evaluate("window.WeiBeiEditor?.setMarkdownBaseURL(\(Self.json(url)))")
+        }
+
+        func setTheme(_ mode: WeiBeiAppearanceMode) {
+            evaluate("window.WeiBeiEditor?.setTheme(\(Self.json(mode.webThemeName)))")
         }
 
         func run(_ command: NoteEditorCommand) {

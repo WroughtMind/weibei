@@ -117,6 +117,7 @@ struct NotePaneView: View {
                     MarkdownPreviewView(
                         markdown: store.noteText,
                         markdownBaseURL: store.currentMarkdownBaseURL,
+                        appearanceMode: store.appearanceMode,
                         onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
                         onSourceReference: { reference in store.openSourceReference(reference) },
                         onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
@@ -131,6 +132,7 @@ struct NotePaneView: View {
                 MarkdownPreviewView(
                     markdown: store.noteText,
                     markdownBaseURL: store.currentMarkdownBaseURL,
+                    appearanceMode: store.appearanceMode,
                     onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
                     onSourceReference: { reference in store.openSourceReference(reference) },
                     onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
@@ -165,6 +167,7 @@ struct NotePaneView: View {
         focusRequest: store.focusRequest,
         markdownBaseURL: store.currentMarkdownBaseURL,
         attachmentDirectory: store.currentAttachmentDirectory,
+        appearanceMode: store.appearanceMode,
         onSelectionChange: { text, anchor in
             store.updateSelection(text, source: .note, anchor: anchor)
         }, onAskAgentWithSelection: { text, anchor in
@@ -195,6 +198,7 @@ struct NotePaneView: View {
         focusRequest: store.focusRequest,
         markdownBaseURL: store.currentMarkdownBaseURL,
         attachmentDirectory: store.currentAttachmentDirectory,
+        appearanceMode: store.appearanceMode,
         onSelectionChange: { text, anchor in
             store.updateSelection(text, source: .note, anchor: anchor)
         }, onWikiLink: { title in
@@ -269,6 +273,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
     var focusRequest = 0
     var markdownBaseURL: URL?
     var attachmentDirectory: URL?
+    var appearanceMode: WeiBeiAppearanceMode = .paper
     var onSelectionChange: (String, CGPoint?) -> Void
     var onWikiLink: (String) -> Void = { _ in }
 
@@ -296,8 +301,8 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.font = .monospacedSystemFont(ofSize: 15, weight: .regular)
-        textView.textColor = NSColor(red: 0.115, green: 0.095, blue: 0.080, alpha: 1.0)
         textView.backgroundColor = .clear
+        applyTheme(to: textView)
         textView.string = text
         textView.delegate = context.coordinator
         textView.openWikiLinkAtCursor = { [weak coordinator = context.coordinator, weak textView] in
@@ -330,6 +335,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         context.coordinator.onWikiLink = onWikiLink
         context.coordinator.isFocused = isFocused
         context.coordinator.focusRequest = focusRequest
+        applyTheme(to: textView)
         if textView.string != text {
             textView.string = text
         }
@@ -341,6 +347,15 @@ struct MarkdownSourceEditor: NSViewRepresentable {
                 self.command = nil
             }
         }
+    }
+
+    private func applyTheme(to textView: NSTextView) {
+        textView.textColor = WeiBeiNativePalette.ink(for: appearanceMode)
+        textView.insertionPointColor = WeiBeiNativePalette.ink(for: appearanceMode)
+        textView.selectedTextAttributes = [
+            .backgroundColor: WeiBeiNativePalette.selectionFill(for: appearanceMode),
+            .foregroundColor: WeiBeiNativePalette.selectedText(for: appearanceMode)
+        ]
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -518,6 +533,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
 struct MarkdownPreviewView: View {
     var markdown: String
     var markdownBaseURL: URL?
+    var appearanceMode: WeiBeiAppearanceMode = .paper
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
@@ -530,6 +546,7 @@ struct MarkdownPreviewView: View {
             command: $command,
             isEditable: false,
             markdownBaseURL: markdownBaseURL,
+            appearanceMode: appearanceMode,
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onSelectionChange,
             onWikiLink: onWikiLink,
@@ -635,7 +652,6 @@ struct AgentPaneView: View {
             )
             .frame(height: 10)
         }
-        .environment(\.colorScheme, .light)
         .onChange(of: store.focusRequest) { _, _ in
             draftFocused = store.focusedPane == .agent
         }

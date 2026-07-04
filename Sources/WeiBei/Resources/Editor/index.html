@@ -26,6 +26,26 @@
       --selection: rgba(145, 38, 28, .18);
     }
 
+    :root[data-weibei-theme="inkstone"] {
+      color-scheme: dark;
+      --paper: #0f0f0f;
+      --paper-raised: #151515;
+      --ink: #d7cbb0;
+      --muted: rgba(155, 145, 120, .88);
+      --faint: rgba(111, 102, 85, .86);
+      --line: #2d2d2d;
+      --cinnabar: #a6362b;
+      --cinnabar-soft: rgba(92, 38, 33, .62);
+      --cinnabar-line: rgba(166, 54, 43, .45);
+      --ochre: #8b5e3c;
+      --moss: #b88a42;
+      --blue-ink: #c8b98a;
+      --violet-ink: #b99b72;
+      --code: rgba(255, 255, 255, .05);
+      --code-paper: #171717;
+      --selection: rgba(166, 54, 43, .35);
+    }
+
     html, body {
       margin: 0;
       height: 100%;
@@ -38,6 +58,12 @@
       overflow: hidden;
     }
 
+    :root[data-weibei-theme="inkstone"] body {
+      background:
+        radial-gradient(circle at 20% 10%, rgba(255, 255, 255, .025), transparent 28%),
+        linear-gradient(180deg, #101010 0%, #0b0b0b 100%);
+    }
+
     #editor {
       box-sizing: border-box;
       height: 100vh;
@@ -46,6 +72,10 @@
       scrollbar-color: transparent transparent;
       padding: 28px 34px 64px;
       background: rgba(239, 225, 199, .72);
+    }
+
+    :root[data-weibei-theme="inkstone"] #editor {
+      background: rgba(15, 15, 15, .88);
     }
 
     #editor::-webkit-scrollbar {
@@ -64,6 +94,10 @@
       transition: background-color .18s ease-out;
     }
 
+    :root[data-weibei-theme="inkstone"] #editor::-webkit-scrollbar-thumb {
+      border-color: rgba(15, 15, 15, .88);
+    }
+
     #editor.weibei-scroll-active,
     #editor:hover,
     #editor:focus-within {
@@ -74,6 +108,22 @@
     #editor:hover::-webkit-scrollbar-thumb,
     #editor:focus-within::-webkit-scrollbar-thumb {
       background: rgba(92, 70, 46, .16);
+    }
+
+    :root[data-weibei-theme="inkstone"] #editor.weibei-scroll-active,
+    :root[data-weibei-theme="inkstone"] #editor:hover,
+    :root[data-weibei-theme="inkstone"] #editor:focus-within {
+      scrollbar-color: #3a3328 transparent;
+    }
+
+    :root[data-weibei-theme="inkstone"] #editor.weibei-scroll-active::-webkit-scrollbar-thumb,
+    :root[data-weibei-theme="inkstone"] #editor:hover::-webkit-scrollbar-thumb,
+    :root[data-weibei-theme="inkstone"] #editor:focus-within::-webkit-scrollbar-thumb {
+      background: #3a3328;
+    }
+
+    :root[data-weibei-theme="inkstone"] #editor::-webkit-scrollbar-thumb:hover {
+      background: #5c4331;
     }
 
     #editor::-webkit-scrollbar-thumb:hover {
@@ -100,6 +150,12 @@
       border-radius: 999px;
       background: transparent;
       transition: background-color .18s ease-out;
+    }
+
+    :root[data-weibei-theme="inkstone"] .ProseMirror pre::-webkit-scrollbar-thumb,
+    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math_block"]::-webkit-scrollbar-thumb,
+    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-thumb {
+      border-color: #171717;
     }
 
     .ProseMirror pre.weibei-scroll-active::-webkit-scrollbar-thumb,
@@ -161,6 +217,12 @@
       font-size: 11px;
     }
 
+    :root[data-weibei-theme="inkstone"] #frontmatter-panel {
+      background: rgba(28, 28, 28, .74);
+      border-color: #2d2d2d;
+      border-left-color: rgba(166, 54, 43, .50);
+    }
+
     .ProseMirror {
       outline: none;
       min-height: calc(100vh - 92px);
@@ -188,6 +250,12 @@
     .ProseMirror h2 { font-size: 1.42rem; }
     .ProseMirror h3 { font-size: 1.16rem; }
     .ProseMirror p { margin: .55em 0; }
+
+    :root[data-weibei-theme="inkstone"] .ProseMirror h1,
+    :root[data-weibei-theme="inkstone"] .ProseMirror h2 {
+      color: var(--blue-ink);
+    }
+
     .ProseMirror a {
       color: var(--blue-ink);
       text-decoration-thickness: 1px;
@@ -257,6 +325,10 @@
       background: rgba(251, 245, 234, .52);
     }
 
+    :root[data-weibei-theme="inkstone"] .ProseMirror table {
+      background: rgba(255, 255, 255, .02);
+    }
+
     .ProseMirror th,
     .ProseMirror td {
       border: 1px solid var(--line);
@@ -268,6 +340,11 @@
       color: var(--ink);
       background: rgba(92, 70, 46, .075);
       font-weight: 650;
+    }
+
+    :root[data-weibei-theme="inkstone"] .ProseMirror th {
+      color: var(--blue-ink);
+      background: rgba(200, 185, 138, .08);
     }
 
     .ProseMirror td > p,
@@ -290,12 +367,23 @@
       color: var(--muted);
     }
 
+    :root[data-weibei-theme="inkstone"] .ProseMirror blockquote {
+      border-left-color: rgba(166, 54, 43, .55);
+      background: rgba(166, 54, 43, .08);
+      color: #c9bfa5;
+    }
+
     .ProseMirror blockquote.weibei-callout {
       position: relative;
       padding: .72em 1em .72em 1.05em;
       border-left-width: 2px;
       background: var(--paper-raised);
       box-shadow: inset 0 0 0 1px rgba(92, 70, 46, .12);
+    }
+
+    :root[data-weibei-theme="inkstone"] .ProseMirror blockquote.weibei-callout {
+      background: rgba(255, 255, 255, .035);
+      box-shadow: inset 0 0 0 1px rgba(45, 45, 45, .92);
     }
 
     .ProseMirror blockquote.weibei-callout::before {
@@ -321,6 +409,12 @@
     .ProseMirror blockquote.weibei-callout-example {
       border-left-color: var(--blue-ink);
       background: rgba(52, 91, 116, .075);
+    }
+
+    :root[data-weibei-theme="inkstone"] .ProseMirror blockquote.weibei-callout-important,
+    :root[data-weibei-theme="inkstone"] .ProseMirror blockquote.weibei-callout-question,
+    :root[data-weibei-theme="inkstone"] .ProseMirror blockquote.weibei-callout-example {
+      background: rgba(200, 185, 138, .07);
     }
     .ProseMirror blockquote.weibei-callout-important::before { content: "重点"; color: var(--blue-ink); }
     .ProseMirror blockquote.weibei-callout-question::before { content: "问题"; color: var(--blue-ink); }
@@ -429,6 +523,10 @@
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, .30);
     }
 
+    :root[data-weibei-theme="inkstone"] .ProseMirror pre {
+      box-shadow: none;
+    }
+
     .ProseMirror pre[data-language]::before {
       content: attr(data-language);
       position: absolute;
@@ -513,6 +611,12 @@
       padding: 0 .05em;
     }
 
+    :root[data-weibei-theme="inkstone"] .weibei-highlight {
+      background: rgba(166, 54, 43, .28);
+      box-shadow: 0 .08em 0 rgba(166, 54, 43, .24);
+      color: #f0d6b0;
+    }
+
     .weibei-wikilink {
       color: var(--blue-ink);
       background: rgba(49, 86, 107, .085);
@@ -521,10 +625,21 @@
       cursor: pointer;
     }
 
+    :root[data-weibei-theme="inkstone"] .weibei-wikilink {
+      background: rgba(200, 185, 138, .08);
+      border-bottom-color: rgba(200, 185, 138, .55);
+    }
+
     .weibei-source-reference {
       color: var(--blue-ink);
       border-bottom: 1px dotted rgba(49, 86, 107, .38);
       cursor: pointer;
+    }
+
+    :root[data-weibei-theme="inkstone"] .weibei-source-reference,
+    :root[data-weibei-theme="inkstone"] .weibei-inline-footnote {
+      background: rgba(200, 185, 138, .06);
+      border-bottom-color: rgba(200, 185, 138, .45);
     }
 
     .weibei-inline-footnote {
@@ -551,6 +666,13 @@
       background: rgba(57, 95, 72, .075);
       padding: 0 .08em;
       border-bottom: 1px solid rgba(57, 95, 72, .20);
+    }
+
+    :root[data-weibei-theme="inkstone"] .weibei-tag {
+      color: #d6b17c;
+      background: rgba(166, 54, 43, .16);
+      border: 1px solid rgba(166, 54, 43, .45);
+      padding: 0 .18em;
     }
 
     .weibei-block-id {
@@ -590,6 +712,12 @@
       cursor: pointer;
     }
 
+    :root[data-weibei-theme="inkstone"] .weibei-embed-note {
+      color: var(--blue-ink);
+      border-left-color: rgba(200, 185, 138, .42);
+      background: rgba(200, 185, 138, .07);
+    }
+
     .weibei-embed-note:hover,
     .weibei-embed-note:focus-visible {
       background: rgba(49, 86, 107, .11);
@@ -602,6 +730,11 @@
       color: rgba(58, 46, 38, .56);
       font-size: .86em;
       user-select: text;
+    }
+
+    :root[data-weibei-theme="inkstone"] .weibei-md-marker,
+    :root[data-weibei-theme="inkstone"] .weibei-callout-marker {
+      color: rgba(155, 145, 120, .58);
     }
 
     body[data-editable="false"] .weibei-md-marker,
@@ -650,6 +783,13 @@
       user-select: none;
     }
 
+    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math_block"],
+    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math-block"],
+    :root[data-weibei-theme="inkstone"] .ProseMirror .math-block {
+      background: rgba(184, 138, 66, .08);
+      border-color: rgba(184, 138, 66, .18);
+    }
+
     .ProseMirror span[data-type="math_inline"] > .katex,
     .ProseMirror span[data-type="math-inline"] > .katex,
     .ProseMirror .math-inline > .katex,
@@ -660,6 +800,15 @@
       font-size: 1rem;
       line-height: 1.2;
       user-select: text;
+    }
+
+    :root[data-weibei-theme="inkstone"] .ProseMirror span[data-type="math_inline"] > .katex,
+    :root[data-weibei-theme="inkstone"] .ProseMirror span[data-type="math-inline"] > .katex,
+    :root[data-weibei-theme="inkstone"] .ProseMirror .math-inline > .katex,
+    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math_block"] > .katex,
+    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math-block"] > .katex,
+    :root[data-weibei-theme="inkstone"] .ProseMirror .math-block > .katex {
+      color: #d7cbb0;
     }
 
     .ProseMirror span[data-type="math_inline"],
@@ -738,6 +887,11 @@
       overflow-x: auto;
     }
 
+    :root[data-weibei-theme="inkstone"] .weibei-mermaid-render {
+      background: #151515;
+      border-color: #2d2d2d;
+    }
+
     .weibei-mermaid-render svg {
       max-width: 100%;
       height: auto;
@@ -756,6 +910,10 @@
       padding: 4px;
     }
 
+    :root[data-weibei-theme="inkstone"] .weibei-image {
+      background: rgba(255, 255, 255, .035);
+    }
+
     .weibei-uploading {
       display: inline-block;
       padding: 2px 7px;
@@ -763,6 +921,10 @@
       border: 1px solid var(--line);
       background: rgba(255, 251, 241, .42);
       font-size: .88em;
+    }
+
+    :root[data-weibei-theme="inkstone"] .weibei-uploading {
+      background: rgba(255, 255, 255, .035);
     }
 
     .ProseMirror-focused {

@@ -474,8 +474,9 @@ public struct PersistedWorkspace: Codable {
     public var noteRenderMode: NoteRenderMode?
     public var showLibrary: Bool?
     public var showRightPane: Bool?
+    public var appearanceModeRaw: String?
 
-    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], selectedItemID: String? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showRightPane: Bool? = nil) {
+    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], selectedItemID: String? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showRightPane: Bool? = nil, appearanceModeRaw: String? = nil) {
         self.importedItems = importedItems
         self.notesByItemID = notesByItemID
         self.selectedItemID = selectedItemID
@@ -485,6 +486,7 @@ public struct PersistedWorkspace: Codable {
         self.noteRenderMode = noteRenderMode
         self.showLibrary = showLibrary
         self.showRightPane = showRightPane
+        self.appearanceModeRaw = appearanceModeRaw
     }
 }
 

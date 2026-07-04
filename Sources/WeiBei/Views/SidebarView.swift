@@ -64,7 +64,6 @@ struct SidebarView: View {
             }
         }
         .weibeiPanel()
-        .environment(\.colorScheme, .light)
         .onChange(of: store.focusRequest) { _, _ in
             librarySearchFocused = store.focusedPane == .library
         }

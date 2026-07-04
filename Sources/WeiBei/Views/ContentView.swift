@@ -243,6 +243,8 @@ private struct UnifiedTopBarView: View {
                 agentButton
             }
 
+            appearanceButton
+
             layoutMenu
 
             moreMenu
@@ -506,6 +508,19 @@ private struct UnifiedTopBarView: View {
         }
     }
 
+    @ViewBuilder
+    private var appearanceButton: some View {
+        topIconButton(
+            store.appearanceMode.systemImage,
+            help: store.appearanceMode.actionLabel,
+            active: store.appearanceMode == .inkstone
+        ) {
+            withAnimation(WeiBeiMotion.panel) {
+                store.toggleAppearanceMode()
+            }
+        }
+    }
+
     private var hasPrimaryAgentPaneVisible: Bool {
         hasPrimaryAgentPaneAvailable && store.showRightPane
     }
@@ -580,6 +595,18 @@ private struct UnifiedTopBarView: View {
                 }
             }
 
+            Section("界面") {
+                ForEach(WeiBeiAppearanceMode.allCases) { mode in
+                    Button {
+                        withAnimation(WeiBeiMotion.panel) {
+                            store.setAppearanceMode(mode)
+                        }
+                    } label: {
+                        Label(mode.label, systemImage: mode == store.appearanceMode ? "checkmark" : mode.systemImage)
+                    }
+                }
+            }
+
             Section("对话入口") {
                 ForEach(store.visibleAgentSurfaces) { surface in
                     Button(surface.label) {
@@ -615,12 +642,12 @@ private struct UnifiedTopBarView: View {
         }
     }
 
-    private func topIconButton(_ systemName: String, help: String, action: @escaping () -> Void) -> some View {
+    private func topIconButton(_ systemName: String, help: String, active: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(WeiBeiIconButtonStyle(size: variant == .glyph || variant == .compact ? 24 : WeiBeiMetric.iconButton))
+        .buttonStyle(WeiBeiIconButtonStyle(active: active, size: variant == .glyph || variant == .compact ? 24 : WeiBeiMetric.iconButton))
         .accessibilityLabel(Text(help))
         .help(help)
     }

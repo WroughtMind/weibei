@@ -38,6 +38,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var modelName: String = ProcessInfo.processInfo.environment["WEIBEI_OPENAI_MODEL"] ?? "gpt-5.1"
     @Published var openAIAPIKey: String = OpenAIAPIKeyStore.load()
     @Published var openAIKeyStatus: String?
+    @Published var appearanceMode: WeiBeiAppearanceMode = .paper
 
     private var notesByItemID: [String: String] = [:]
     private let storageURL: URL
@@ -504,6 +505,8 @@ final class WorkspaceStore: ObservableObject {
                 animateLayoutChange { setLayout(.immersiveConversation) }
             case "n":
                 animateLayoutChange { setLayout(.immersiveWriting) }
+            case "t":
+                animatePanelChange { toggleAppearanceMode() }
             case "up":
                 animateLayoutChange { selectAdjacentItem(step: -1) }
             case "down":
@@ -648,6 +651,17 @@ final class WorkspaceStore: ObservableObject {
 
     func updateModelName(_ value: String) {
         modelName = value
+        save()
+    }
+
+    func toggleAppearanceMode() {
+        appearanceMode = appearanceMode.toggled
+        save()
+    }
+
+    func setAppearanceMode(_ mode: WeiBeiAppearanceMode) {
+        guard appearanceMode != mode else { return }
+        appearanceMode = mode
         save()
     }
 
@@ -1218,6 +1232,10 @@ final class WorkspaceStore: ObservableObject {
         if let showRightPane = snapshot.showRightPane {
             self.showRightPane = showRightPane
         }
+        if let appearanceModeRaw = snapshot.appearanceModeRaw,
+           let appearanceMode = WeiBeiAppearanceMode(rawValue: appearanceModeRaw) {
+            self.appearanceMode = appearanceMode
+        }
         noteText = noteText(for: selectedItem)
     }
 
@@ -1251,7 +1269,8 @@ final class WorkspaceStore: ObservableObject {
             agentSurface: agentSurface == .selectionFloat ? .hidden : agentSurface,
             noteRenderMode: noteRenderMode,
             showLibrary: showLibrary,
-            showRightPane: showRightPane
+            showRightPane: showRightPane,
+            appearanceModeRaw: appearanceMode.rawValue
         )
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         try? data.write(to: storageURL, options: [.atomic])

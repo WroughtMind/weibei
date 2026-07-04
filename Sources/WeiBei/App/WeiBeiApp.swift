@@ -37,7 +37,8 @@ struct WeiBeiApp: App {
         WindowGroup("魏碑", id: "main") {
             ContentView()
                 .environmentObject(store)
-                .background(WindowChromeConfigurator())
+                .preferredColorScheme(store.appearanceMode.colorScheme)
+                .background(WindowChromeConfigurator(appearanceMode: store.appearanceMode))
                 .onOpenURL { url in
                     store.importFiles([url])
                 }
@@ -104,6 +105,15 @@ struct WeiBeiApp: App {
                     .keyboardShortcut("a", modifiers: [.command, .option])
                 Button("沉浸写笔记") { setLayout(.immersiveWriting) }
                     .keyboardShortcut("n", modifiers: [.command, .option])
+
+                Divider()
+
+                Button(store.appearanceMode.actionLabel) {
+                    animatePanel {
+                        store.toggleAppearanceMode()
+                    }
+                }
+                    .keyboardShortcut("t", modifiers: [.command, .option])
 
                 Divider()
 
@@ -212,6 +222,8 @@ struct WeiBeiApp: App {
 }
 
 private struct WindowChromeConfigurator: NSViewRepresentable {
+    var appearanceMode: WeiBeiAppearanceMode
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
         DispatchQueue.main.async {
@@ -234,12 +246,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         window.styleMask.insert(.fullSizeContentView)
         window.toolbar = nil
         window.isOpaque = true
-        window.backgroundColor = NSColor(
-            calibratedRed: 0.985,
-            green: 0.960,
-            blue: 0.905,
-            alpha: 1.0
-        )
+        window.backgroundColor = appearanceMode.windowBackground
         window.isMovableByWindowBackground = true
     }
 }
@@ -250,6 +257,25 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 10) {
+                sectionTitle("界面")
+
+                HStack(spacing: 8) {
+                    ForEach(WeiBeiAppearanceMode.allCases) { mode in
+                        Button(mode.label) {
+                            withAnimation(WeiBeiMotion.panel) {
+                                store.setAppearanceMode(mode)
+                            }
+                        }
+                        .buttonStyle(WeiBeiTextActionButtonStyle(active: store.appearanceMode == mode))
+                    }
+                }
+
+                Text("墨石模式使用深色砚台底、纸白正文、砚金链接和克制朱砂选区。")
+                    .font(.footnote)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+            }
+
             VStack(alignment: .leading, spacing: 10) {
                 sectionTitle("对话设置")
 
@@ -312,7 +338,7 @@ struct SettingsView: View {
         .frame(width: 480)
         .background(WeiBeiTheme.paper)
         .foregroundStyle(WeiBeiTheme.ink)
-        .environment(\.colorScheme, .light)
+        .preferredColorScheme(store.appearanceMode.colorScheme)
     }
 
     private enum Field: Hashable {

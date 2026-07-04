@@ -88,11 +88,23 @@ const calloutHeaderText = (node) => {
   return (text.split('\n')[0] || '').trimStart();
 };
 
-mermaid.initialize({
-  startOnLoad: false,
-  securityLevel: 'strict',
-  theme: 'base',
-  themeVariables: {
+const normalizeTheme = (theme) => (theme === 'inkstone' ? 'inkstone' : 'paper');
+let currentTheme = normalizeTheme(window.weiBeiTheme);
+
+const mermaidThemeVariables = () => {
+  if (currentTheme === 'inkstone') {
+    return {
+      background: '#151515',
+      primaryColor: '#1c1c1c',
+      primaryTextColor: '#d7cbb0',
+      primaryBorderColor: '#3a3328',
+      lineColor: '#8b5e3c',
+      secondaryColor: '#222222',
+      tertiaryColor: '#171717',
+      fontFamily: '-apple-system, BlinkMacSystemFont, "Songti SC", serif',
+    };
+  }
+  return {
     background: '#fbf5e8',
     primaryColor: '#f6eddc',
     primaryTextColor: '#2e261f',
@@ -101,8 +113,26 @@ mermaid.initialize({
     secondaryColor: '#efe4d2',
     tertiaryColor: '#f8f0e1',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Songti SC", serif',
-  },
-});
+  };
+};
+
+const initializeMermaid = () => {
+  mermaid.initialize({
+    startOnLoad: false,
+    securityLevel: 'strict',
+    theme: 'base',
+    themeVariables: mermaidThemeVariables(),
+  });
+};
+
+const applyTheme = (theme) => {
+  currentTheme = normalizeTheme(theme);
+  document.documentElement.dataset.weibeiTheme = currentTheme;
+  if (document.body) document.body.dataset.weibeiTheme = currentTheme;
+  initializeMermaid();
+};
+
+applyTheme(currentTheme);
 
 const showFailure = (error) => {
   if (window.WeiBeiEditorBootFailed) {
@@ -1144,6 +1174,14 @@ window.WeiBeiEditor = {
   setMarkdownBaseURL: (next) => {
     markdownBaseURL = next || '';
     refreshRenderedImages();
+  },
+  setTheme: (next) => {
+    applyTheme(next);
+    if (!editor) return;
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      view.dispatch(view.state.tr.setMeta('weibeiThemeChanged', currentTheme));
+    });
   },
 };
 
