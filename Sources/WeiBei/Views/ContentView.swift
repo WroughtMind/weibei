@@ -410,14 +410,6 @@ private struct UnifiedTopBarView: View {
         WeiBeiTheme.paperInset.opacity(variant == .glyph ? 0.30 : 0.38)
     }
 
-    private var agentFill: Color {
-        WeiBeiTheme.cinnabarSoft
-    }
-
-    private var agentText: Color {
-        WeiBeiTheme.cinnabar
-    }
-
     private var topHighlight: Color {
         WeiBeiTheme.glassHighlight.opacity(0.24)
     }
@@ -504,30 +496,8 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var agentButton: some View {
-        if variant == .glyph {
-            topIconButton("bubble.left.and.text.bubble.right", help: agentButtonHelp) {
-                activateAgentEntry()
-            }
-        } else {
-            Button {
-                activateAgentEntry()
-            } label: {
-                HStack(spacing: 5) {
-                    if variant == .reader {
-                        Image(systemName: "bubble.left.and.text.bubble.right")
-                            .font(.system(size: 12, weight: .medium))
-                    }
-                    Text(agentButtonTitle)
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .padding(.horizontal, variant == .compact ? 7 : 8)
-                .frame(height: controlHeight)
-                .background(agentFill)
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(agentText)
-            .help(agentButtonHelp)
+        topIconButton("bubble.left.and.text.bubble.right", help: agentButtonHelp) {
+            activateAgentEntry()
         }
     }
 
@@ -537,16 +507,6 @@ private struct UnifiedTopBarView: View {
 
     private var hasPrimaryAgentPaneAvailable: Bool {
         store.layout.hasPrimaryAgentPane
-    }
-
-    private var agentButtonTitle: String {
-        if hasPrimaryAgentPaneAvailable {
-            return "打开对话"
-        }
-        if store.selectionContext != nil {
-            return "问选区"
-        }
-        return store.hasSelectedMaterial ? "问资料" : "问笔记"
     }
 
     private var agentButtonHelp: String {
