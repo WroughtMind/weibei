@@ -285,6 +285,7 @@ expect(commandPaletteSource.contains("private var canSendAgentDraft: Bool") && c
 expect(commandPaletteSource.contains("if store.canApplyAgentAnswer") && commandPaletteSource.contains("if store.canReplaceNoteSelection") && commandPaletteSource.contains("PaletteCommand(title: \"替换笔记选区\""), "command palette hides agent answer actions until they can work")
 expect(commandPaletteSource.contains("if store.selectionContext != nil") && commandPaletteSource.contains("PaletteCommand(title: \"问当前选区\""), "command palette hides selection actions until a real selection exists")
 expect(commandPaletteSource.contains("if store.canOpenSelectedSourceReference") && commandPaletteSource.contains("PaletteCommand(title: \"打开选区来源\""), "command palette exposes source jump only for parseable note references")
+expect(commandPaletteSource.contains("if store.canUseSelectionAgentSurface") && commandPaletteSource.contains("items.insert(agentSurfaceCommand(.selectionFloat, shortcut: \"⌃⌥3\")"), "command palette only exposes selection-float mode when an anchored selection exists")
 expect(commandPaletteSource.contains("private func agentSurfaceCommand(_ surface: AgentSurface, shortcut: String)")
     && commandPaletteSource.contains("surface.actionLabel")
     && !commandPaletteSource.contains("Agent 底部抽屉")
@@ -457,7 +458,10 @@ if let setNoteModeStart = workspaceStoreSource.range(of: "func setNoteRenderMode
 } else {
     expect(false, "note render mode source is readable")
 }
-expect(workspaceStoreSource.contains("let canShowSelectionFloat = SelectionFloatingAgentPlacement.isVisible") && workspaceStoreSource.contains("surface == .selectionFloat && !canShowSelectionFloat ? .cornerPanel : surface"), "selection-float agent surface falls back to a visible corner panel when no selection can anchor it")
+expect(workspaceStoreSource.contains("var canUseSelectionAgentSurface: Bool")
+    && workspaceStoreSource.contains("var visibleAgentSurfaces: [AgentSurface]")
+    && workspaceStoreSource.contains("guard surface != .selectionFloat || canUseSelectionAgentSurface else { return }")
+    && workspaceStoreSource.contains("case \"3\":\n                guard canUseSelectionAgentSurface else { return false }"), "selection-float agent surface is hidden and rejected until a real anchored selection exists")
 expect(!workspaceStoreSource.contains("selectedItem?.title ?? \"当前材料\"") && !workspaceStoreSource.contains("保存后 Agent 会用当前材料") && !workspaceStoreSource.contains("已选择材料、当前选区和右侧笔记"), "agent context avoids fake material fallback copy")
 expect(workspaceStoreSource.contains("var agentPromptScope") && workspaceStoreSource.contains("var selectionPromptScope") && !workspaceStoreSource.contains("var libraryOrganizationScope"), "agent prompt builders avoid half-built library organization context")
 expect(!workspaceStoreSource.contains("请根据当前文档和当前笔记") && !workspaceStoreSource.contains("请根据当前材料和当前笔记") && !workspaceStoreSource.contains("结合当前文档和笔记"), "agent draft presets do not hardcode fake material context")
@@ -485,6 +489,7 @@ expect(appSource.contains("Button(store.showLibrary ? \"收起资料库\" : \"�
     && appSource.contains("Button(store.showRightPane ? \"收起辅助栏\" : \"展开辅助栏\")"), "app menu names pane toggles by current state")
 expect(appSource.contains("Button(AgentSurface.bottomDrawer.actionLabel)")
     && appSource.contains("Button(AgentSurface.selectionFloat.actionLabel)")
+    && appSource.contains("if store.canUseSelectionAgentSurface")
     && !appSource.contains("Agent 底部抽屉")
     && !appSource.contains("Agent 右下角小窗")
     && !appSource.contains("Agent 划线浮层")

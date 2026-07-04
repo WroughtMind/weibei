@@ -111,8 +111,10 @@ struct WeiBeiApp: App {
                     .keyboardShortcut("1", modifiers: [.control, .option])
                 Button(AgentSurface.cornerPanel.actionLabel) { setAgentSurface(.cornerPanel) }
                     .keyboardShortcut("2", modifiers: [.control, .option])
-                Button(AgentSurface.selectionFloat.actionLabel) { setAgentSurface(.selectionFloat) }
-                    .keyboardShortcut("3", modifiers: [.control, .option])
+                if store.canUseSelectionAgentSurface {
+                    Button(AgentSurface.selectionFloat.actionLabel) { setAgentSurface(.selectionFloat) }
+                        .keyboardShortcut("3", modifiers: [.control, .option])
+                }
                 Button(AgentSurface.quietInsight.actionLabel) { setAgentSurface(.quietInsight) }
                     .keyboardShortcut("4", modifiers: [.control, .option])
                 Button(AgentSurface.hidden.actionLabel) { setAgentSurface(.hidden) }

@@ -628,7 +628,7 @@ private struct UnifiedTopBarView: View {
             }
 
             Section("Agent 入口") {
-                ForEach(AgentSurface.allCases) { surface in
+                ForEach(store.visibleAgentSurfaces) { surface in
                     Button(surface.label) {
                         withAnimation(WeiBeiMotion.panel) {
                             store.setAgentSurface(surface)

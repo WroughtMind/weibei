@@ -264,7 +264,7 @@ final class WorkspaceStore: ObservableObject {
             } else if layout == .immersiveReading || layout == .immersiveWriting {
                 if agentSurface == .hidden
                     || agentSurface == .quietInsight
-                    || (agentSurface == .selectionFloat && selectionContext == nil && !pinnedFloatingAgent) {
+                    || (agentSurface == .selectionFloat && !canUseSelectionAgentSurface) {
                     agentSurface = .cornerPanel
                     showQuietInsight = false
                 }
@@ -374,17 +374,26 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
-    func setAgentSurface(_ surface: AgentSurface) {
-        let canShowSelectionFloat = SelectionFloatingAgentPlacement.isVisible(
+    var canUseSelectionAgentSurface: Bool {
+        SelectionFloatingAgentPlacement.isVisible(
             surface: .selectionFloat,
             hasSelection: selectionContext != nil,
             hasAnchor: selectionAnchor != nil,
             pinned: pinnedFloatingAgent
         )
-        let resolvedSurface: AgentSurface = surface == .selectionFloat && !canShowSelectionFloat ? .cornerPanel : surface
-        agentSurface = resolvedSurface
-        showQuietInsight = resolvedSurface == .quietInsight
-        if resolvedSurface == .quietInsight {
+    }
+
+    var visibleAgentSurfaces: [AgentSurface] {
+        AgentSurface.allCases.filter { surface in
+            surface != .selectionFloat || canUseSelectionAgentSurface
+        }
+    }
+
+    func setAgentSurface(_ surface: AgentSurface) {
+        guard surface != .selectionFloat || canUseSelectionAgentSurface else { return }
+        agentSurface = surface
+        showQuietInsight = surface == .quietInsight
+        if surface == .quietInsight {
             refreshQuietInsightIfNeeded()
         }
         save()
@@ -450,6 +459,7 @@ final class WorkspaceStore: ObservableObject {
             case "2":
                 animatePanelChange { setAgentSurface(.cornerPanel) }
             case "3":
+                guard canUseSelectionAgentSurface else { return false }
                 animatePanelChange { setAgentSurface(.selectionFloat) }
             case "4":
                 animatePanelChange { setAgentSurface(.quietInsight) }

@@ -27,7 +27,6 @@ struct CommandPaletteView: View {
             PaletteCommand(title: "沉浸写笔记", shortcut: "⌥⌘N", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveWriting) },
             agentSurfaceCommand(.bottomDrawer, shortcut: "⌃⌥1"),
             agentSurfaceCommand(.cornerPanel, shortcut: "⌃⌥2"),
-            agentSurfaceCommand(.selectionFloat, shortcut: "⌃⌥3"),
             agentSurfaceCommand(.quietInsight, shortcut: "⌃⌥4"),
             PaletteCommand(title: "笔记原地写作", shortcut: "⌃⌘1") { store.setNoteRenderMode(.rich) },
             PaletteCommand(title: "笔记源码对照", shortcut: "⌃⌘2") { store.setNoteRenderMode(.split) },
@@ -40,6 +39,9 @@ struct CommandPaletteView: View {
             markdownInsertCommand(title: "插入表格", markdown: "\n| A | B |\n| --- | --- |\n| {{WEIBEI_SELECT_START}}内容{{WEIBEI_SELECT_END}} |  |\n"),
             markdownInsertCommand(title: "插入 Mermaid", markdown: "\n```mermaid\ngraph TD\n  {{WEIBEI_SELECT_START}}A[开始] --> B[整理]{{WEIBEI_SELECT_END}}\n```\n")
         ]
+        if store.canUseSelectionAgentSurface {
+            items.insert(agentSurfaceCommand(.selectionFloat, shortcut: "⌃⌥3"), at: min(17, items.count))
+        }
         if store.canUseSelectedMarkdownAsNotebookNote {
             items.insert(
                 PaletteCommand(title: "作为笔记编辑当前 Markdown", shortcut: "") { store.useSelectedMarkdownAsNotebookNote() },
