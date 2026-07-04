@@ -974,32 +974,28 @@ private struct LayoutContentView: View {
 
     private func openReader() {
         withAnimation(WeiBeiMotion.layout) {
-            store.layout = .immersiveReading
-            store.focus(.reader)
+            store.setLayout(.immersiveReading)
         }
     }
 
     private func openWriting() {
         withAnimation(WeiBeiMotion.layout) {
-            store.layout = .immersiveWriting
-            store.showRightPane = true
-            store.focus(.notes)
+            store.setLayout(.immersiveWriting)
+            store.revealRightPane(focusing: .notes)
         }
     }
 
     private func openLibrary() {
         withAnimation(WeiBeiMotion.layout) {
-            store.showLibrary = true
-            store.focus(.library)
+            store.revealLibrary()
         }
     }
 
     private func askCurrentSelection() {
         store.askSelection()
         withAnimation(WeiBeiMotion.layout) {
-            store.layout = .immersiveConversation
-            store.showRightPane = true
-            store.focus(.agent)
+            store.setLayout(.immersiveConversation)
+            store.revealRightPane(focusing: .agent)
         }
     }
 
@@ -1011,9 +1007,8 @@ private struct LayoutContentView: View {
     private func prepareAgentDraft(_ prompt: String) {
         withAnimation(WeiBeiMotion.layout) {
             store.agentDraft = prompt
-            store.layout = .immersiveConversation
-            store.showRightPane = true
-            store.focus(.agent)
+            store.setLayout(.immersiveConversation)
+            store.revealRightPane(focusing: .agent)
         }
     }
 

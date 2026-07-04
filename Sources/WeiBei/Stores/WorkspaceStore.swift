@@ -281,6 +281,15 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
+    func revealLibrary() {
+        if !showLibrary {
+            clearUnpinnedFloatingSelection()
+        }
+        showLibrary = true
+        focus(.library)
+        save()
+    }
+
     func toggleRightPane() {
         guard layout.hasCollapsibleRightPane else { return }
         showRightPane.toggle()

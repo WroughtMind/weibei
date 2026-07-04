@@ -230,11 +230,12 @@ expect(contentViewSource.contains("WeiBeiHeaderHandoffFade(height: 18, opacity: 
     && contentViewSource.contains("paperOpacity: backgroundPaperOpacity - (isImmersiveLayout ? 0.06 : 0)")
     && contentViewSource.contains("materialOpacity: backgroundMaterialOpacity + (isImmersiveLayout ? 0.03 : 0)"), "immersive top bar keeps the same variants while using a lighter glass handoff")
 expect(!contentViewSource.contains("文代笔") && !contentViewSource.contains("Agent中") && contentViewSource.contains("对话中栏") && contentViewSource.contains("对话右栏"), "top bar short layout labels avoid cryptic abbreviations")
-for helperName in ["openReader", "openWriting", "askCurrentSelection", "prepareAgentDraft"] {
+for helperName in ["openReader", "openWriting", "openLibrary", "askCurrentSelection", "prepareAgentDraft"] {
     if let helperStart = contentViewSource.range(of: "private func \(helperName)")?.lowerBound,
        let helperEnd = contentViewSource[helperStart...].range(of: "\n    }\n")?.upperBound {
         let helperSource = String(contentViewSource[helperStart..<helperEnd])
         expect(!helperSource.contains("showLibrary = false"), "\(helperName) keeps a user-opened immersive library visible")
+        expect(!helperSource.contains("store.layout =") && !helperSource.contains("store.showRightPane = true") && !helperSource.contains("store.showLibrary = true"), "\(helperName) routes durable layout changes through WorkspaceStore helpers")
     } else {
         expect(false, "\(helperName) source is readable")
     }
@@ -431,6 +432,9 @@ expect(workspaceStoreSource.contains("private func clearUnpinnedFloatingSelectio
 expect(workspaceStoreSource.contains("guard cleaned.count >= 2 else {\n            clearUnpinnedFloatingSelection(keepContext: false)\n            return\n        }"), "short or cleared selections remove stale unpinned selection floats")
 expect(workspaceStoreSource.contains("let itemChanged = selectedItemID != itemID") && workspaceStoreSource.contains("clearUnpinnedFloatingSelection(keepContext: false)"), "selecting a different item clears the old selection context")
 expect(workspaceStoreSource.contains("func toggleLibrary() {\n        showLibrary.toggle()\n        clearUnpinnedFloatingSelection()") && workspaceStoreSource.contains("func toggleRightPane() {\n        guard layout.hasCollapsibleRightPane else { return }\n        showRightPane.toggle()\n        clearUnpinnedFloatingSelection()"), "pane visibility changes invalidate stale floating selection anchors")
+expect(workspaceStoreSource.contains("func revealLibrary()")
+    && workspaceStoreSource.contains("if !showLibrary {\n            clearUnpinnedFloatingSelection()\n        }")
+    && workspaceStoreSource.contains("focus(.library)\n        save()"), "library reveal uses the shared durable state path")
 expect(workspaceStoreSource.contains("layout == .immersiveReading || layout == .immersiveWriting") && workspaceStoreSource.contains("agentSurface = .cornerPanel") && !workspaceStoreSource.contains("layout = .immersiveConversation\n                showLibrary = false\n                showRightPane = true"), "agent focus in immersive layouts opens an overlay instead of switching layout")
 if let setLayoutStart = workspaceStoreSource.range(of: "func setLayout(_ layout: WorkspaceLayout)")?.lowerBound,
    let setAgentSurfaceStart = workspaceStoreSource.range(of: "func setAgentSurface")?.lowerBound {
@@ -539,7 +543,8 @@ expect(contentViewSource.contains("conversationSourceRailItems") && contentViewS
 expect(contentViewSource.contains("systemImage: \"square.and.pencil\"") && contentViewSource.contains("systemImage: \"quote.opening\""), "immersive rail actions use stable semantic icons")
 expect(contentViewSource.contains("ContextRailItem(title: \"资料库\", help: \"打开资料库选择资料\", systemImage: \"sidebar.left\", emphasized: items.isEmpty)")
     && contentViewSource.contains("private func openLibrary()")
-    && contentViewSource.contains("store.showLibrary = true"), "immersive writing keeps a library entry and emphasizes it only when no document is selected")
+    && contentViewSource.contains("store.revealLibrary()")
+    && workspaceStoreSource.contains("func revealLibrary()"), "immersive writing keeps a library entry and opens it through the shared store helper")
 expect(contentViewSource.components(separatedBy: "ContextRailItem(title: \"资料库\", help: \"打开资料库选择资料\", systemImage: \"sidebar.left\"").count >= 3
     && contentViewSource.contains("emphasized: items.isEmpty"), "immersive rails keep a lightweight library chooser even when a document is already selected")
 expect(contentViewSource.contains("store.agentPromptScope")
