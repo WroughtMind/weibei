@@ -1046,7 +1046,7 @@ struct FloatingSelectionAgentView: View {
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
                     .padding(.leading, 8)
             }
-            .accessibilityLabel(Text("收起选区 Agent"))
+            .accessibilityLabel(Text("关闭选区对话"))
             .help("收起")
         }
         .font(.caption.weight(.medium))
@@ -1094,7 +1094,7 @@ struct FloatingSelectionAgentView: View {
                         togglePinnedFloatingAgent()
                     }
                 }
-                iconButton("xmark", help: "收起选区 Agent") {
+                iconButton("xmark", help: "关闭选区对话") {
                     closeFloatingAgent()
                 }
             }

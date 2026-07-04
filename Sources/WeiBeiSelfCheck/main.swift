@@ -689,6 +689,9 @@ if let selectionStart = notesAgentSource.range(of: "struct FloatingSelectionAgen
         && !floatingSelectionSource.contains("Divider()"), "selection floating agent uses WeiBei hairline separators instead of system dividers")
     expect(floatingSelectionSource.contains(".frame(height: 34)")
         && floatingSelectionSource.contains(".weibeiInputSurface(active: draftFocused, height: 34)"), "expanded selection agent keeps a small but usable follow-up composer")
+    expect(floatingSelectionSource.contains("Text(\"关闭选区对话\")")
+        && floatingSelectionSource.contains("help: \"关闭选区对话\"")
+        && !floatingSelectionSource.contains("收起选区 Agent"), "selection floating close affordances avoid internal agent naming")
 } else {
     expect(false, "selection floating agent source is readable")
 }
