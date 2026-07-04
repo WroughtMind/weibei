@@ -505,18 +505,11 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         }
 
         private static func anchor(for range: NSRange, in textView: NSTextView) -> CGPoint? {
-            guard let window = textView.window, let contentView = window.contentView else { return nil }
+            guard let window = textView.window else { return nil }
             let rect = textView.firstRect(forCharacterRange: range, actualRange: nil)
             guard !rect.isEmpty else { return nil }
             let screenPoint = CGPoint(x: rect.midX, y: rect.minY)
-            let windowPoint = window.convertPoint(fromScreen: screenPoint)
-            let contentPoint = contentView.convert(windowPoint, from: nil)
-            let y = SelectionAnchorCoordinate.y(
-                Double(contentPoint.y),
-                contentHeight: Double(contentView.bounds.height),
-                contentViewIsFlipped: contentView.isFlipped
-            )
-            return CGPoint(x: contentPoint.x, y: y)
+            return SelectionAnchorContentPoint.fromScreenPoint(screenPoint, in: window)
         }
     }
 }

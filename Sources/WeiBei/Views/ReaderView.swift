@@ -380,23 +380,12 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         }
 
         private static func anchor(for selection: PDFSelection, in view: PDFView) -> CGPoint? {
-            guard let page = selection.pages.first,
-                  let window = view.window,
-                  let contentView = window.contentView else {
-                return nil
-            }
+            guard let page = selection.pages.first else { return nil }
             let bounds = selection.bounds(for: page)
             guard !bounds.isEmpty else { return nil }
             let localRect = view.convert(bounds, from: page)
             let localPoint = CGPoint(x: localRect.midX, y: localRect.minY)
-            let windowPoint = view.convert(localPoint, to: nil)
-            let contentPoint = contentView.convert(windowPoint, from: nil)
-            let y = SelectionAnchorCoordinate.y(
-                Double(contentPoint.y),
-                contentHeight: Double(contentView.bounds.height),
-                contentViewIsFlipped: contentView.isFlipped
-            )
-            return CGPoint(x: contentPoint.x, y: y)
+            return SelectionAnchorContentPoint.fromLocalPoint(localPoint, in: view)
         }
 
         private static func pageIndex(for selection: PDFSelection, in view: PDFView) -> Int? {
@@ -569,22 +558,11 @@ struct WebReaderRepresentable: NSViewRepresentable {
 
         private static func anchor(from body: [String: Any], in view: WKWebView?) -> CGPoint? {
             guard let view,
-                  let window = view.window,
-                  let contentView = window.contentView,
                   let x = body["x"] as? Double,
                   let y = body["y"] as? Double else {
                 return nil
             }
-            let localY = view.isFlipped ? y : Double(view.bounds.height) - y
-            let localPoint = CGPoint(x: x, y: localY)
-            let windowPoint = view.convert(localPoint, to: nil)
-            let contentPoint = contentView.convert(windowPoint, from: nil)
-            let contentY = SelectionAnchorCoordinate.y(
-                Double(contentPoint.y),
-                contentHeight: Double(contentView.bounds.height),
-                contentViewIsFlipped: contentView.isFlipped
-            )
-            return CGPoint(x: contentPoint.x, y: contentY)
+            return SelectionAnchorContentPoint.fromWebPoint(x: x, y: y, in: view)
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -764,18 +742,11 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
         }
 
         private static func anchor(for range: NSRange, in textView: NSTextView) -> CGPoint? {
-            guard let window = textView.window, let contentView = window.contentView else { return nil }
+            guard let window = textView.window else { return nil }
             let rect = textView.firstRect(forCharacterRange: range, actualRange: nil)
             guard !rect.isEmpty else { return nil }
             let screenPoint = CGPoint(x: rect.midX, y: rect.minY)
-            let windowPoint = window.convertPoint(fromScreen: screenPoint)
-            let contentPoint = contentView.convert(windowPoint, from: nil)
-            let y = SelectionAnchorCoordinate.y(
-                Double(contentPoint.y),
-                contentHeight: Double(contentView.bounds.height),
-                contentViewIsFlipped: contentView.isFlipped
-            )
-            return CGPoint(x: contentPoint.x, y: y)
+            return SelectionAnchorContentPoint.fromScreenPoint(screenPoint, in: window)
         }
 
         func applySearch(_ query: String, in textView: NSTextView) {

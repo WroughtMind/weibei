@@ -559,23 +559,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
         private func anchor(from rect: [String: Any]?) -> CGPoint? {
             guard let view = webView,
-                  let window = view.window,
-                  let contentView = window.contentView,
                   let rect,
                   let x = rect["x"] as? Double,
                   let y = rect["y"] as? Double else {
                 return nil
             }
-            let localY = view.isFlipped ? y : Double(view.bounds.height) - y
-            let localPoint = CGPoint(x: x, y: localY)
-            let windowPoint = view.convert(localPoint, to: nil)
-            let contentPoint = contentView.convert(windowPoint, from: nil)
-            let contentY = SelectionAnchorCoordinate.y(
-                Double(contentPoint.y),
-                contentHeight: Double(contentView.bounds.height),
-                contentViewIsFlipped: contentView.isFlipped
-            )
-            return CGPoint(x: contentPoint.x, y: contentY)
+            return SelectionAnchorContentPoint.fromWebPoint(x: x, y: y, in: view)
         }
 
         private static func json(_ value: String) -> String {

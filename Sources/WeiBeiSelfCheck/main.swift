@@ -274,6 +274,9 @@ let notesAgentSourceURL = URL(fileURLWithPath: FileManager.default.currentDirect
     .appendingPathComponent("Sources/WeiBei/Views/NotesAgentView.swift")
 let notesAgentSource = (try? String(contentsOf: notesAgentSourceURL, encoding: .utf8)) ?? ""
 expect(notesAgentSource.contains(".weibeiInputPrompt(agentPrompt, visible: store.agentDraft.isEmpty, fontSize: 14)"), "agent tray placeholder uses readable non-vibrant prompt text")
+expect(notesAgentSource.contains("SelectionAnchorContentPoint.fromScreenPoint(screenPoint, in: window)")
+    && !notesAgentSource.contains("SelectionAnchorCoordinate.y(")
+    && !notesAgentSource.contains("contentView.convert("), "note source editor selection anchors use the shared coordinate helper")
 expect(!sidebarSource.contains("commandPalettePresented.toggle()") && !sidebarSource.contains("Label(\"命令\", systemImage: \"command\")"), "sidebar does not duplicate the command palette entry")
 expect(sidebarSource.contains("sidebarSection(title: \"导入资料\", items: importedMaterialItems)") && sidebarSource.contains("sidebarSection(title: \"笔记\", items: notebookItems)"), "sidebar separates materials from notebook notes")
 expect(sidebarSource.contains("!$0.isSample && !$0.isNotebookNote") && sidebarSource.contains("store.filteredItems.filter(\\.isNotebookNote)"), "sidebar material list excludes notebook notes without hiding notes")
@@ -310,6 +313,13 @@ expect(commandPaletteSource.contains("if store.agentSurface != .hidden") && comm
 let readerViewSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/ReaderView.swift")
 let readerViewSource = (try? String(contentsOf: readerViewSourceURL, encoding: .utf8)) ?? ""
+let selectionAnchorContentPointSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Support/SelectionAnchorContentPoint.swift")
+let selectionAnchorContentPointSource = (try? String(contentsOf: selectionAnchorContentPointSourceURL, encoding: .utf8)) ?? ""
+expect(selectionAnchorContentPointSource.contains("static func fromLocalPoint")
+    && selectionAnchorContentPointSource.contains("static func fromWebPoint")
+    && selectionAnchorContentPointSource.contains("static func fromScreenPoint")
+    && selectionAnchorContentPointSource.contains("SelectionAnchorCoordinate.y"), "selection anchors use one AppKit-to-SwiftUI coordinate helper")
 expect(readerViewSource.contains("readerStyleScript"), "html reader injects responsive reading style")
 expect(readerViewSource.contains("overflow-wrap: anywhere"), "html reader prevents narrow-pane clipping")
 expect(readerViewSource.contains("color-scheme: light") && readerViewSource.contains("color: #1d1814 !important") && readerViewSource.contains("a { color: #31566b !important; }"), "html reader forces readable ink over imported white text")
@@ -345,11 +355,19 @@ expect(readerViewSource.contains(".accessibilityLabel(Text(\"上一页\"))") && 
 expect(!readerViewSource.contains(".disabled(pdfPageIndex"), "pdf pager keeps arrows visible instead of showing grey dead buttons")
 expect(readerViewSource.contains("syncReaderLocationTitle") && readerViewSource.contains("第 \\(pdfPageIndex + 1) 页"), "pdf reader page updates feed the shared reference title")
 expect(readerViewSource.contains("var onSelectionChange: (String, CGPoint?, Int) -> Void") && readerViewSource.contains("pageIndex(for: selection, in: view)") && readerViewSource.contains("ownerTitle: ownerTitle"), "pdf selection source uses the selected page, not only the current page")
+expect(readerViewSource.contains("SelectionAnchorContentPoint.fromLocalPoint(localPoint, in: view)")
+    && readerViewSource.contains("SelectionAnchorContentPoint.fromWebPoint(x: x, y: y, in: view)")
+    && readerViewSource.contains("SelectionAnchorContentPoint.fromScreenPoint(screenPoint, in: window)")
+    && !readerViewSource.contains("SelectionAnchorCoordinate.y(")
+    && !readerViewSource.contains("contentView.convert("), "reader selection anchors route PDF, HTML, and text through the shared coordinate helper")
 expect(readerViewSource.contains("pendingPDFPageIndex") && readerViewSource.contains("applyPendingPDFPageIfReady") && readerViewSource.contains("store.readerTargetPageIndex = nil"), "pdf reader consumes source-jump target pages")
 expect(readerViewSource.contains("onSourceReference: { reference in store.openSourceReference(reference) }"), "markdown reader source references can jump back to material")
 let richEditorSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/RichMarkdownEditorView.swift")
 let richEditorSource = (try? String(contentsOf: richEditorSourceURL, encoding: .utf8)) ?? ""
+expect(richEditorSource.contains("SelectionAnchorContentPoint.fromWebPoint(x: x, y: y, in: view)")
+    && !richEditorSource.contains("SelectionAnchorCoordinate.y(")
+    && !richEditorSource.contains("contentView.convert("), "rich markdown editor selection anchors use the shared coordinate helper")
 expect(richEditorSource.contains("var documentID = \"\"") && richEditorSource.contains("var pendingExternalMarkdown: String?"), "rich editor tracks document identity and pending external sync")
 expect(
     richEditorSource.contains("window.weiBeiDocumentID")
