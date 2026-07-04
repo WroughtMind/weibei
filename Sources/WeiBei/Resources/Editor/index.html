@@ -42,8 +42,40 @@
       box-sizing: border-box;
       height: 100vh;
       overflow: auto;
+      scrollbar-color: rgba(92, 70, 46, .14) transparent;
       padding: 28px 34px 64px;
       background: rgba(239, 225, 199, .72);
+    }
+
+    #editor::-webkit-scrollbar,
+    .ProseMirror pre::-webkit-scrollbar,
+    .ProseMirror div[data-type="math_block"]::-webkit-scrollbar,
+    .ProseMirror div[data-type="math-block"]::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+
+    #editor::-webkit-scrollbar-track,
+    .ProseMirror pre::-webkit-scrollbar-track,
+    .ProseMirror div[data-type="math_block"]::-webkit-scrollbar-track,
+    .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    #editor::-webkit-scrollbar-thumb,
+    .ProseMirror pre::-webkit-scrollbar-thumb,
+    .ProseMirror div[data-type="math_block"]::-webkit-scrollbar-thumb,
+    .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-thumb {
+      border: 2px solid rgba(239, 225, 199, .72);
+      border-radius: 999px;
+      background: rgba(92, 70, 46, .14);
+    }
+
+    #editor::-webkit-scrollbar-thumb:hover,
+    .ProseMirror pre::-webkit-scrollbar-thumb:hover,
+    .ProseMirror div[data-type="math_block"]::-webkit-scrollbar-thumb:hover,
+    .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-thumb:hover {
+      background: rgba(92, 70, 46, .28);
     }
 
     .milkdown {

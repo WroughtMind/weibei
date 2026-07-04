@@ -41,6 +41,11 @@ expect(
 expect(editorIndexSource.contains("color: rgba(58, 46, 38, .56)") && !editorIndexSource.contains("color: rgba(58, 46, 38, .36)"), "editable markdown markers stay readable on paper")
 expect(editorIndexSource.contains(".frontmatter-title {\n      color: var(--muted)") && editorIndexSource.contains("li[data-item-type=\"task\"][data-checked=\"true\"] {\n      color: var(--muted)"), "small frontmatter and completed task text avoid faint low-contrast ink")
 expect(editorIndexSource.contains(".weibei-source-reference") && editorIndexSource.contains("border-bottom: 1px dotted"), "source references have readable link styling")
+expect(editorIndexSource.contains("scrollbar-color: rgba(92, 70, 46, .14) transparent")
+    && editorIndexSource.contains("#editor::-webkit-scrollbar-thumb")
+    && editorIndexSource.contains(".ProseMirror pre::-webkit-scrollbar-thumb")
+    && editorIndexSource.contains("width: 5px;")
+    && editorIndexSource.contains("background: rgba(92, 70, 46, .14)"), "web editor scrollbars stay quiet on the WeiBei paper surface")
 
 expect(StudyItemKind.detect(from: URL(fileURLWithPath: "/tmp/a.pdf")) == .pdf, "pdf detection")
 expect(StudyItemKind.detect(from: URL(fileURLWithPath: "/tmp/a.html")) == .html, "html detection")
