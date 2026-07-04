@@ -328,6 +328,9 @@ public enum SelectionAnchorCoordinate {
 }
 
 public enum SelectionFloatingAgentPlacement {
+    public static let expandedHalfWidth = 156.0
+    public static let compactHalfWidth = 82.0
+
     public static func isVisible(
         surface: AgentSurface,
         hasSelection: Bool,
@@ -341,7 +344,7 @@ public enum SelectionFloatingAgentPlacement {
         anchor: FloatingAgentCoordinate?,
         canvas: FloatingAgentCoordinate,
         topInset: Double = 0,
-        surfaceHalfWidth: Double = 170,
+        surfaceHalfWidth: Double = expandedHalfWidth,
         prefersAnchorCenter: Bool = false
     ) -> FloatingAgentCoordinate {
         let edgePadding = 18.0

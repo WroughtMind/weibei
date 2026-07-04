@@ -662,6 +662,12 @@ expect(SelectionAnchorCoordinate.y(20, contentHeight: 100, contentViewIsFlipped:
 expect(SelectionAnchorCoordinate.y(20, contentHeight: 100, contentViewIsFlipped: false) == 80, "non-flipped content view converts selection y")
 expect(!SelectionFloatingAgentPlacement.isVisible(surface: .selectionFloat, hasSelection: true, hasAnchor: false, pinned: false), "selection agent waits for anchor before floating")
 expect(SelectionFloatingAgentPlacement.isVisible(surface: .selectionFloat, hasSelection: true, hasAnchor: true, pinned: false), "selection agent appears when anchored")
+expect(SelectionFloatingAgentPlacement.expandedHalfWidth == 156 && SelectionFloatingAgentPlacement.compactHalfWidth == 82, "selection agent placement constants match the compact and expanded surfaces")
+expect(contentViewSource.contains("SelectionFloatingAgentPlacement.expandedHalfWidth")
+    && contentViewSource.contains("SelectionFloatingAgentPlacement.compactHalfWidth")
+    && !contentViewSource.contains("surfaceHalfWidth: floatingAgentExpanded ? 170 : 82"), "selection agent placement uses shared width constants instead of duplicate magic numbers")
+expect(notesAgentSource.contains(".frame(width: CGFloat(SelectionFloatingAgentPlacement.expandedHalfWidth * 2), alignment: .leading)")
+    && !notesAgentSource.contains(".frame(width: 312, alignment: .leading)"), "expanded selection agent visual width matches placement half-width")
 let floatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 320, y: 200),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800)
@@ -671,18 +677,18 @@ let topInsetFloatingPoint = SelectionFloatingAgentPlacement.position(
     canvas: FloatingAgentCoordinate(x: 1200, y: 800),
     topInset: 42
 )
-expect(floatingPoint.x == 500 && floatingPoint.y == 218, "selection agent opens close beside the text anchor")
-expect(topInsetFloatingPoint.x == 500 && topInsetFloatingPoint.y == 176, "selection agent compensates top bar coordinate space")
+expect(floatingPoint.x == 486 && floatingPoint.y == 218, "selection agent opens close beside the text anchor")
+expect(topInsetFloatingPoint.x == 486 && topInsetFloatingPoint.y == 176, "selection agent compensates top bar coordinate space")
 let compactEdgeFloatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 12, y: 200),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800),
-    surfaceHalfWidth: 82,
+    surfaceHalfWidth: SelectionFloatingAgentPlacement.compactHalfWidth,
     prefersAnchorCenter: true
 )
 let compactCenterFloatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 320, y: 200),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800),
-    surfaceHalfWidth: 82,
+    surfaceHalfWidth: SelectionFloatingAgentPlacement.compactHalfWidth,
     prefersAnchorCenter: true
 )
 expect(compactCenterFloatingPoint.x == 320 && compactCenterFloatingPoint.y == 218, "selection prompt centers on the text anchor when compact")
@@ -691,7 +697,7 @@ let edgeFloatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 1160, y: 760),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800)
 )
-expect(edgeFloatingPoint.x == 980 && edgeFloatingPoint.y == 708, "selection agent flips to the left of text near the window edge")
+expect(edgeFloatingPoint.x == 994 && edgeFloatingPoint.y == 708, "selection agent flips to the left of text near the window edge")
 expect(AgentMessage(role: .assistant, text: "整理完成", source: nil).isUsableAgentAnswer, "usable agent answer")
 expect(!AgentMessage(role: .assistant, text: "未配置 OPENAI_API_KEY。", source: nil).isUsableAgentAnswer, "api key setup message is not writable")
 expect(!AgentMessage(role: .assistant, text: "未配置 OPENAI_API_KEY 或钥匙串密钥。", source: nil).isUsableAgentAnswer, "keychain setup message is not writable")

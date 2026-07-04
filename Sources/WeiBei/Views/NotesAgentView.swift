@@ -1163,7 +1163,7 @@ struct FloatingSelectionAgentView: View {
             .weibeiInputPrompt("继续追问", visible: store.agentDraft.isEmpty, leading: 18, fontSize: 12)
         }
         .padding(10)
-        .frame(width: 312, alignment: .leading)
+        .frame(width: CGFloat(SelectionFloatingAgentPlacement.expandedHalfWidth * 2), alignment: .leading)
         .onAppear {
             draftFocused = true
         }
