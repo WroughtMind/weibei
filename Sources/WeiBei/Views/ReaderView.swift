@@ -751,7 +751,7 @@ private final class PDFOCRPageOverlayView: NSView {
     }
 }
 
-private final class PDFOCRLineTextView: NSTextView, NSTextViewDelegate {
+private final class PDFOCRLineTextView: ReaderSelectableTextView, NSTextViewDelegate {
     let normalizedBoundingBox: CGRect
     private let selectionCallback: (String, CGPoint?) -> Void
 
@@ -1255,7 +1255,7 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
         WeiBeiQuietScrollers.configure(scrollView, hasHorizontalScroller: false)
         scrollView.drawsBackground = false
 
-        let textView = NSTextView()
+        let textView = ReaderSelectableTextView()
         textView.isEditable = false
         textView.isSelectable = true
         textView.isRichText = false
@@ -1368,7 +1368,7 @@ private struct SamplePDFSelectablePageView: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSTextView {
-        let textView = NSTextView()
+        let textView = ReaderSelectableTextView()
         textView.isEditable = false
         textView.isSelectable = true
         textView.drawsBackground = false
@@ -1459,6 +1459,12 @@ private struct SamplePDFSelectablePageView: NSViewRepresentable {
             let screenPoint = CGPoint(x: rect.midX, y: rect.minY)
             return SelectionAnchorContentPoint.fromScreenPoint(screenPoint, in: window)
         }
+    }
+}
+
+private class ReaderSelectableTextView: NSTextView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
     }
 }
 
