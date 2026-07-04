@@ -647,7 +647,7 @@ expect(readerViewSource.contains("selection.color = WeiBeiNativePalette.selectio
 expect(readerViewSource.contains("self.onSelectionChange(\"\", nil, self.pageIndex.wrappedValue)"), "pdf reader clears the floating selection agent when PDF selection is removed")
 expect(readerViewSource.contains("private func reportSelectionAfterDragSettles")
     && readerViewSource.contains("selectionWork?.cancel()")
-    && readerViewSource.contains("DispatchQueue.main.asyncAfter(deadline: .now() + 0.14")
+    && readerViewSource.contains("DispatchQueue.main.asyncAfter(deadline: .now() + 0.06")
     && !readerViewSource.contains("self.onSelectionChange(text, Self.anchor(for: selection, in: view), selectedPageIndex)"), "pdf reader delays the floating agent callback until dragging settles so selection is not interrupted")
 expect(readerViewSource.contains("SamplePDFView(appearanceMode: store.appearanceMode)")
     && readerViewSource.contains("SamplePDFSelectablePageView")

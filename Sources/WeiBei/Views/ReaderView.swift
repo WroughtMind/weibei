@@ -589,7 +589,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                 self?.onSelectionChange(text, anchor, pageIndex)
             }
             selectionWork = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.14, execute: work)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.06, execute: work)
         }
 
         private static func anchor(for selection: PDFSelection, in view: PDFView) -> CGPoint? {
