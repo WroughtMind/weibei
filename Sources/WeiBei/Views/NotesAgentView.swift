@@ -1016,10 +1016,12 @@ struct FloatingSelectionAgentView: View {
 
     private var promptBody: some View {
         HStack(spacing: 0) {
-            Button("问 Agent") {
+            Button("问") {
                 explainSelection()
             }
             .foregroundStyle(WeiBeiTheme.link)
+            .accessibilityLabel(Text("问当前选区"))
+            .help("问当前选区")
 
             if store.canOpenSelectedSourceReference {
                 promptSeparator
@@ -1047,7 +1049,7 @@ struct FloatingSelectionAgentView: View {
                     .padding(.leading, 8)
             }
             .accessibilityLabel(Text("关闭选区对话"))
-            .help("收起")
+            .help("关闭选区对话")
         }
         .font(.caption.weight(.medium))
         .buttonStyle(.plain)
