@@ -1177,7 +1177,7 @@ final class WorkspaceStore: ObservableObject {
             layout = workspaceLayout
         }
         if let agentSurface = snapshot.agentSurface {
-            self.agentSurface = agentSurface
+            self.agentSurface = agentSurface == .selectionFloat ? .hidden : agentSurface
         }
         if let noteRenderMode = snapshot.noteRenderMode {
             self.noteRenderMode = noteRenderMode
@@ -1204,7 +1204,7 @@ final class WorkspaceStore: ObservableObject {
             selectedItemID: selectedItemID,
             modelName: modelName,
             workspaceLayout: layout,
-            agentSurface: agentSurface,
+            agentSurface: agentSurface == .selectionFloat ? .hidden : agentSurface,
             noteRenderMode: noteRenderMode,
             showLibrary: showLibrary,
             showRightPane: showRightPane
