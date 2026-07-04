@@ -667,39 +667,49 @@ struct AgentPaneView: View {
             .allowsHitTesting(false)
 
             ZStack(alignment: .bottomTrailing) {
-                TextField("", text: $store.agentDraft, axis: .vertical)
+                TextField(
+                    "",
+                    text: $store.agentDraft,
+                    prompt: Text(agentPrompt)
+                        .font(.system(size: 15))
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk),
+                    axis: .vertical
+                )
                     .textFieldStyle(.plain)
                     .lineLimit(1...6)
+                    .fixedSize(horizontal: false, vertical: true)
                     .foregroundColor(WeiBeiTheme.ink)
                     .focused($draftFocused)
                     .onSubmit {
                         Task { await store.askAgent() }
                     }
-                    .padding(.vertical, 8)
-                    .padding(.trailing, canSendDraft ? 44 : 0)
-                    .weibeiInputSurface(active: draftFocused, height: 62, horizontalPadding: 14)
-                    .weibeiInputPrompt(agentPrompt, visible: store.agentDraft.isEmpty, leading: 14, top: 12, fontSize: 14)
+                    .padding(.vertical, 10)
+                    .padding(.trailing, canSendDraft ? 40 : 0)
+                    .frame(maxWidth: .infinity, alignment: .bottomLeading)
+                    .weibeiInputSurface(active: draftFocused, height: 56, horizontalPadding: 14)
 
                 if canSendDraft {
                     Button { Task { await store.askAgent() } } label: {
                         Image(systemName: "paperplane.fill")
                     }
-                    .buttonStyle(WeiBeiIconButtonStyle(active: canSendDraft, size: 30))
+                    .buttonStyle(WeiBeiIconButtonStyle(active: true, size: 30))
                     .accessibilityLabel(Text("发送"))
                     .help("发送")
                     .keyboardShortcut(.return, modifiers: [.command])
-                    .padding(.trailing, 8)
-                    .padding(.bottom, 8)
+                    .padding(.trailing, 10)
+                    .padding(.bottom, 10)
                     .transition(WeiBeiTransition.floating)
                     .animation(WeiBeiMotion.micro, value: canSendDraft)
                 }
             }
             .font(.system(size: 15))
+            .frame(minHeight: 56, alignment: .bottom)
             .frame(maxWidth: agentInputMaxWidth)
             .padding(.horizontal, 18)
             .padding(.top, 7)
             .padding(.bottom, 16)
             .frame(maxWidth: .infinity)
+            .animation(WeiBeiMotion.reveal, value: store.agentDraft)
         }
         .background(alignment: .bottom) {
             WeiBeiGlassHeaderBackground(
