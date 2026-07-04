@@ -61,7 +61,7 @@ const calloutTypes = new Set([
   'bug',
   'todo',
 ]);
-const calloutPattern = Array.from(calloutTypes).join('|');
+const calloutTypePattern = '[A-Za-z][A-Za-z0-9_-]*';
 const calloutLabels = {
   note: '札记',
   tip: '提示',
@@ -80,9 +80,9 @@ const calloutLabels = {
   bug: '问题',
   todo: '待办',
 };
-const calloutRegex = new RegExp(`^\\\\?\\[!(${calloutPattern})\\]([+-]?)(?:[ \\t]+([^\\n]+))?`, 'i');
-const calloutMarkerRegex = new RegExp(`^\\s*\\\\?\\[!(?:${calloutPattern})\\][+-]?\\s*`, 'i');
-const calloutHeadingRegex = new RegExp(`^\\s*\\\\?\\[!(?:${calloutPattern})\\][+-]?(?:[ \\t]+[^\\n]+)?$`, 'i');
+const calloutRegex = new RegExp(`^\\\\?\\[!(${calloutTypePattern})\\]([+-]?)(?:[ \\t]+([^\\n]+))?`, 'i');
+const calloutMarkerRegex = new RegExp(`^\\s*\\\\?\\[!(?:${calloutTypePattern})\\][+-]?\\s*`, 'i');
+const calloutHeadingRegex = new RegExp(`^\\s*\\\\?\\[!(?:${calloutTypePattern})\\][+-]?(?:[ \\t]+[^\\n]+)?$`, 'i');
 const calloutHeaderText = (node) => {
   const text = node.textBetween
     ? node.textBetween(0, node.content.size, '\n')
@@ -190,7 +190,7 @@ const normalizeMarkdownOutput = (markdown) => (markdown || '')
   .replace(/\^\\\[/g, '^[')
   .replace(/(^|\s)\\#(?=[\p{L}\p{N}_/-])/gu, '$1#')
   .replace(/\\\$(?=\d)/g, '$')
-  .replace(new RegExp(`^(\\s*>\\s*)\\\\(\\[!(?:${calloutPattern})\\])`, 'gim'), '$1$2');
+  .replace(new RegExp(`^(\\s*>\\s*)\\\\(\\[!(?:${calloutTypePattern})\\])`, 'gim'), '$1$2');
 
 const splitFrontmatter = (markdown) => {
   const source = markdown || '';
@@ -957,8 +957,11 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
           const match = calloutHeaderText(node).match(calloutRegex);
           if (match) {
             const calloutType = match[1].toLowerCase();
+            const calloutClass = calloutTypes.has(calloutType)
+              ? `weibei-callout-${calloutType}`
+              : `weibei-callout-${calloutType} weibei-callout-custom`;
             decorations.push(Decoration.node(pos, pos + node.nodeSize, {
-              class: `weibei-callout weibei-callout-has-heading weibei-callout-${calloutType}`,
+              class: `weibei-callout weibei-callout-has-heading ${calloutClass}`,
               'data-callout': calloutType,
               'data-callout-fold': match[2] || '',
               'data-callout-title': (match[3] || calloutLabels[calloutType] || calloutType).trim(),

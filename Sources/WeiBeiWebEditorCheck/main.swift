@@ -46,6 +46,10 @@ tags:
 >
 > 来源：Mishkin 教材样例，第 12 页
 
+> [!attention]+ 自定义标题
+>
+> 自定义 Callout 不应该漏出源标记。
+
 行内公式 $E = mc^2$、$\\alpha_1 + \\beta^2$、$A^*$，普通金额 $5 不应该被误伤。
 
 Milkdown 公式插件应直接渲染 $text^*$，不能额外生成源码灰块。
@@ -256,6 +260,20 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
               && style.fontSize === '0px'
               && style.width === '0px'
               && marker.getBoundingClientRect().width === 0;
+          })(),
+          customCalloutType: document.querySelector('blockquote.weibei-callout-custom')?.getAttribute('data-callout') || '',
+          customCalloutFold: document.querySelector('blockquote.weibei-callout-custom')?.getAttribute('data-callout-fold') || '',
+          customCalloutTitle: document.querySelector('blockquote.weibei-callout-custom')?.getAttribute('data-callout-title') || '',
+          customCalloutText: document.querySelector('blockquote.weibei-callout-custom')?.textContent || '',
+          customCalloutMarkerHidden: (() => {
+            const marker = document.querySelector('blockquote.weibei-callout-custom .weibei-callout-marker');
+            if (!marker) return false;
+            const style = getComputedStyle(marker);
+            return style.display === 'inline-block'
+              && style.color === 'rgba(0, 0, 0, 0)'
+              && style.fontSize === '0px'
+              && style.width === '0px'
+              && marker.getBoundingClientRect().width === 0;
           })()
         }))();
         """
@@ -380,6 +398,26 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             if result["quoteCalloutMarkerHidden"] as? Bool != true {
                 self.fail("quote callout marker should collapse in writing and preview surfaces")
+                return
+            }
+            if result["customCalloutType"] as? String != "attention" {
+                self.fail("unknown Obsidian callout type was not recognized")
+                return
+            }
+            if result["customCalloutFold"] as? String != "+" {
+                self.fail("unknown Obsidian callout fold marker was not preserved")
+                return
+            }
+            if result["customCalloutTitle"] as? String != "自定义标题" {
+                self.fail("unknown Obsidian callout title was not preserved")
+                return
+            }
+            if !(result["customCalloutText"] as? String ?? "").contains("自定义 Callout 不应该漏出源标记。") {
+                self.fail("unknown Obsidian callout body disappeared")
+                return
+            }
+            if result["customCalloutMarkerHidden"] as? Bool != true {
+                self.fail("unknown Obsidian callout marker should collapse")
                 return
             }
             completion()
