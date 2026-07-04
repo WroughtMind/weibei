@@ -216,7 +216,7 @@ struct ReaderView: View {
         let token = UUID()
         pdfControlsCollapseToken = token
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            guard pdfControlsCollapseToken == token, !pdfControlsHovering else { return }
+            guard pdfControlsCollapseToken == token else { return }
             withAnimation(WeiBeiMotion.hover) {
                 pdfControlsExpanded = false
             }
@@ -354,6 +354,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                 hasVerticalScroller: true,
                 hasHorizontalScroller: false
             )
+            WeiBeiQuietScrollers.flashRecursively(in: view)
         }
         context.coordinator.observe(view)
         return view
@@ -370,7 +371,8 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         }
 
         let mode: PDFDisplayMode = browseMode == .scroll ? .singlePageContinuous : .singlePage
-        if view.displayMode != mode {
+        let modeChanged = view.displayMode != mode
+        if modeChanged {
             view.displayMode = mode
             view.autoScales = true
         }
@@ -388,6 +390,9 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                 hasVerticalScroller: true,
                 hasHorizontalScroller: false
             )
+            if modeChanged {
+                WeiBeiQuietScrollers.flashRecursively(in: view)
+            }
         }
     }
 
@@ -423,6 +428,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                     view.autoScales = true
                     self.pageCount.wrappedValue = document?.pageCount ?? 0
                     self.pageIndex.wrappedValue = 0
+                    WeiBeiQuietScrollers.flashRecursively(in: view)
                 }
             }
         }

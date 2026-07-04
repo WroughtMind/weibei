@@ -8,14 +8,15 @@ enum WeiBeiQuietScrollers {
     ) {
         scrollView.scrollerStyle = .overlay
         scrollView.autohidesScrollers = true
-        scrollView.verticalScroller?.controlSize = .small
-        scrollView.horizontalScroller?.controlSize = .small
         if let hasVerticalScroller {
             scrollView.hasVerticalScroller = hasVerticalScroller
         }
         if let hasHorizontalScroller {
             scrollView.hasHorizontalScroller = hasHorizontalScroller
         }
+        scrollView.verticalScroller?.controlSize = .small
+        scrollView.horizontalScroller?.controlSize = .small
+        scrollView.scrollerKnobStyle = .dark
     }
 
     static func configureRecursively(
@@ -37,5 +38,12 @@ enum WeiBeiQuietScrollers {
                 hasHorizontalScroller: hasHorizontalScroller
             )
         }
+    }
+
+    static func flashRecursively(in view: NSView) {
+        if let scrollView = view as? NSScrollView {
+            scrollView.flashScrollers()
+        }
+        view.subviews.forEach { flashRecursively(in: $0) }
     }
 }

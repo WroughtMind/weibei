@@ -1214,7 +1214,7 @@ struct FloatingSelectionAgentView: View {
     }
 
     private func floatingColor(for message: AgentMessage) -> Color {
-        if message.text.hasPrefix("Agent 请求失败：") {
+        if message.text.hasPrefix("请求失败：") || message.text.hasPrefix("Agent 请求失败：") {
             return WeiBeiTheme.cinnabar
         }
         if message.role == .user {

@@ -1008,7 +1008,7 @@ final class WorkspaceStore: ObservableObject {
             )
             messages.append(AgentMessage(role: .assistant, text: answer, source: sourceTitle))
         } catch {
-            messages.append(AgentMessage(role: .assistant, text: "Agent 请求失败：\(error.localizedDescription)", source: sourceTitle))
+            messages.append(AgentMessage(role: .assistant, text: "请求失败：\(error.localizedDescription)", source: sourceTitle))
         }
 
         isAskingAgent = false
