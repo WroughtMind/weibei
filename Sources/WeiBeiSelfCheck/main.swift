@@ -83,6 +83,16 @@ expect(editorScriptSource.contains("installQuietScrollIndicators")
     && editorScriptSource.contains("weibei-scroll-active")
     && editorScriptSource.contains("window.setTimeout(() =>")
     && editorScriptSource.contains("}, 850)"), "web editor removes internal scroll indicator state after a short idle delay")
+if let mermaidStart = editorIndexSource.range(of: ":root[data-weibei-theme=\"inkstone\"] .weibei-mermaid-render")?.lowerBound,
+   let mermaidEnd = editorIndexSource[mermaidStart...].range(of: "\n    .weibei-mermaid-render svg")?.lowerBound {
+    let darkMermaidSource = String(editorIndexSource[mermaidStart..<mermaidEnd])
+    expect(darkMermaidSource.contains("background: var(--paper-raised);")
+        && darkMermaidSource.contains("border-color: var(--line);")
+        && !darkMermaidSource.contains("background: #151515;")
+        && !darkMermaidSource.contains("border-color: #2d2d2d;"), "dark Mermaid render boxes use shared theme variables instead of hardcoded ink blocks")
+} else {
+    expect(false, "dark Mermaid render style is readable")
+}
 let documentTextExtractorURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Services/DocumentTextExtractor.swift")
 let documentTextExtractorSource = (try? String(contentsOf: documentTextExtractorURL, encoding: .utf8)) ?? ""
