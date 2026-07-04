@@ -1206,7 +1206,7 @@ private final class WeiBeiSplitView: NSSplitView {
         NSColor.clear.setFill()
         rect.fill()
         let line = NSRect(x: rect.midX - 0.5, y: rect.minY + 10, width: 1, height: max(0, rect.height - 20))
-        NSColor(calibratedRed: 0.50, green: 0.38, blue: 0.26, alpha: 0.18).setFill()
+        NSColor(calibratedRed: 0.50, green: 0.38, blue: 0.26, alpha: 0.26).setFill()
         line.fill()
     }
 }

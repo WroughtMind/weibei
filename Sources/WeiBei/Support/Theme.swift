@@ -296,21 +296,22 @@ extension View {
             .frame(minHeight: height)
             .background {
                 RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                WeiBeiTheme.paperRaised.opacity(active ? 0.70 : 0.58),
-                                WeiBeiTheme.paperInset.opacity(active ? 0.36 : 0.24)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
+                    .fill(WeiBeiTheme.paperRaised.opacity(active ? 0.66 : 0.60))
             }
             .clipShape(RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius))
+            .overlay(alignment: .top) {
+                RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius)
+                    .stroke(WeiBeiTheme.glassHighlight.opacity(active ? 0.34 : 0.24), lineWidth: 1)
+                    .padding(1)
+            }
+            .overlay(alignment: .bottom) {
+                RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius)
+                    .stroke(WeiBeiTheme.paperInset.opacity(active ? 0.30 : 0.38), lineWidth: 1)
+                    .padding(0.5)
+            }
             .overlay {
                 RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius)
-                    .stroke(active ? WeiBeiTheme.link.opacity(0.30) : WeiBeiTheme.hairline.opacity(0.58), lineWidth: 1)
+                    .stroke(active ? WeiBeiTheme.link.opacity(0.34) : WeiBeiTheme.hairline.opacity(0.54), lineWidth: 1)
             }
             .animation(WeiBeiMotion.reveal, value: active)
     }

@@ -687,18 +687,6 @@ struct AgentPaneView: View {
             .font(.system(size: 14))
             .frame(maxWidth: agentInputMaxWidth)
             .padding(6)
-            .background {
-                RoundedRectangle(cornerRadius: 9)
-                    .fill(WeiBeiTheme.paperRaised.opacity(0.46))
-                RoundedRectangle(cornerRadius: 9)
-                    .fill(.ultraThinMaterial)
-                    .opacity(0.05)
-            }
-            .overlay {
-                RoundedRectangle(cornerRadius: 9)
-                    .stroke(draftFocused ? WeiBeiTheme.link.opacity(0.16) : WeiBeiTheme.hairline.opacity(0.34), lineWidth: 1)
-            }
-            .shadow(color: WeiBeiTheme.ink.opacity(0.020), radius: 6, y: 2)
             .padding(.horizontal, 12)
             .padding(.top, 1)
             .padding(.bottom, 10)
@@ -1366,24 +1354,11 @@ struct QuietInsightView: View {
         .padding(.horizontal, 9)
         .padding(.vertical, 8)
         .frame(width: 238)
-        .background(compactBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .weibeiAnnotationPanel(cornerRadius: 5)
         .onHover { hovering in
             withAnimation(WeiBeiMotion.hover) {
                 compactHovering = hovering
             }
-        }
-    }
-
-    private var compactBackground: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 5)
-                .fill(WeiBeiTheme.paperRaised.opacity(compactHovering ? 0.82 : 0.68))
-            RoundedRectangle(cornerRadius: 5)
-                .fill(.ultraThinMaterial)
-                .opacity(compactHovering ? 0.06 : 0.03)
-            RoundedRectangle(cornerRadius: 5)
-                .stroke(WeiBeiTheme.hairline.opacity(compactHovering ? 0.58 : 0.38), lineWidth: 1)
         }
     }
 
@@ -1488,7 +1463,7 @@ struct ContextRailView: View {
                     .frame(width: 12, height: 1)
                 Text(title)
                     .font(.system(size: 11, weight: .semibold, design: .serif))
-                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
             .padding(.horizontal, 4)
 
@@ -1542,10 +1517,11 @@ struct ContextRailView: View {
 
     private var railBackground: some View {
         ZStack(alignment: highlightAlignment) {
+            WeiBeiTheme.paperRaised.opacity(0.10)
             LinearGradient(
                 colors: [
-                    WeiBeiTheme.paperRaised.opacity(0.18),
-                    WeiBeiTheme.paper.opacity(0.05),
+                    WeiBeiTheme.paperRaised.opacity(0.26),
+                    WeiBeiTheme.paper.opacity(0.08),
                     .clear
                 ],
                 startPoint: edge == .leading ? .leading : .trailing,
@@ -1736,7 +1712,7 @@ private struct AgentBubble: View {
     }
 
     private var bubbleFill: Color {
-        isUser ? WeiBeiTheme.cinnabarSoft : WeiBeiTheme.paperRaised.opacity(0.54)
+        isUser ? WeiBeiTheme.cinnabarSoft : WeiBeiTheme.paperRaised.opacity(0.72)
     }
 
     private var bubbleStroke: Color {

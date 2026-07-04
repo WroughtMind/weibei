@@ -86,7 +86,7 @@ struct ReaderView: View {
         .background {
             ZStack {
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(WeiBeiTheme.paperRaised.opacity(pdfControlsHovering ? 0.86 : 0.54))
+                    .fill(WeiBeiTheme.paperRaised.opacity(pdfControlsHovering ? 0.88 : 0.78))
                 RoundedRectangle(cornerRadius: 8)
                     .fill(.regularMaterial)
                     .opacity(pdfControlsHovering ? 0.055 : 0.018)
@@ -98,7 +98,7 @@ struct ReaderView: View {
                 .stroke(WeiBeiTheme.hairline.opacity(pdfControlsHovering ? 0.76 : 0.34), lineWidth: 1)
         }
         .shadow(color: WeiBeiTheme.ink.opacity(pdfControlsHovering ? 0.045 : 0.010), radius: 7, y: 3)
-        .opacity(pdfControlsHovering || pdfBrowseMode == .page ? 0.94 : 0.34)
+        .opacity(pdfControlsHovering || pdfBrowseMode == .page ? 0.94 : 0.64)
         .offset(x: pdfControlsHovering || pdfBrowseMode == .page ? 0 : 3)
         .scaleEffect(pdfControlsHovering ? 1.01 : 1, anchor: .trailing)
         .contentShape(RoundedRectangle(cornerRadius: 8))
