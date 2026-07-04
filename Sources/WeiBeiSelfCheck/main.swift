@@ -1018,6 +1018,8 @@ if let selectionStart = notesAgentSource.range(of: "struct FloatingSelectionAgen
 expect(notesAgentSource.contains("private var agentInputTray: some View"), "agent pane uses a dedicated input tray")
 expect(notesAgentSource.components(separatedBy: "ScrollView(showsIndicators: false)").count >= 3, "agent message surfaces hide heavy system scroll indicators")
 expect(notesAgentSource.contains("WeiBeiGlassHeaderBackground(") && notesAgentSource.contains("WeiBeiTheme.glassTint.opacity(0.66)"), "agent input tray uses paper glass fade instead of a hard white strip")
+expect(notesAgentSource.contains("WeiBeiTheme.ink.opacity(0.72), WeiBeiTheme.ink")
+    && !notesAgentSource.contains(".black.opacity(0.72), .black"), "agent input tray fade mask uses semantic ink instead of a fixed black ramp")
 expect(notesAgentSource.contains(".lineLimit(1...6)")
     && notesAgentSource.contains(".fixedSize(horizontal: false, vertical: true)")
     && notesAgentSource.contains(".padding(.trailing, canSendDraft ? 40 : 0)")

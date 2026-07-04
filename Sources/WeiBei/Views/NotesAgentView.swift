@@ -797,7 +797,7 @@ struct AgentPaneView: View {
             )
             .mask(
                 LinearGradient(
-                    colors: [.clear, .black.opacity(0.72), .black],
+                    colors: [.clear, WeiBeiTheme.ink.opacity(0.72), WeiBeiTheme.ink],
                     startPoint: .top,
                     endPoint: .bottom
                 )
