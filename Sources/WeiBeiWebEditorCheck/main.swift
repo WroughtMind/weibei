@@ -167,8 +167,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             self.validate(markdown)
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                 self.validateObsidianDecorations {
-                    self.validateRenderedImageSource {
-                        self.validateWikiLinkActivation()
+                    self.validateReadOnlyInkstoneDecorations {
+                        self.validateRenderedImageSource {
+                            self.validateWikiLinkActivation()
+                        }
                     }
                 }
             }
@@ -467,6 +469,92 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             if result["customCalloutMarkerVisible"] as? Bool == true {
                 self.fail("unknown Obsidian callout marker should not have visible boxes")
+                return
+            }
+            completion()
+        }
+    }
+
+    private func validateReadOnlyInkstoneDecorations(completion: @escaping () -> Void) {
+        let prepare = """
+        window.WeiBeiEditor.setTheme('inkstone');
+        window.WeiBeiEditor.setEditable(false);
+        """
+        webView.evaluateJavaScript(prepare) { [weak self] _, error in
+            guard let self else { return }
+            if let error {
+                self.fail("read-only inkstone setup threw \(error.localizedDescription)")
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                self.inspectReadOnlyInkstone(completion: completion)
+            }
+        }
+    }
+
+    private func inspectReadOnlyInkstone(completion: @escaping () -> Void) {
+        let script = """
+        (() => {
+          const root = document.querySelector('.ProseMirror');
+          const quote = document.querySelector('blockquote.weibei-callout-quote');
+          const marker = quote?.querySelector('.weibei-callout-marker');
+          const heading = quote?.querySelector('.weibei-callout-heading');
+          const textNodeWalker = document.createTreeWalker(root || document.body, NodeFilter.SHOW_TEXT);
+          let visibleBareMarkers = 0;
+          let node;
+          while ((node = textNodeWalker.nextNode())) {
+            if (!/\\[![A-Za-z]/.test(node.nodeValue || '')) continue;
+            const parent = node.parentElement;
+            if (parent?.closest('.weibei-callout-marker')) continue;
+            if (!parent?.closest('blockquote.weibei-callout')) continue;
+            const style = getComputedStyle(parent);
+            const visible = style.display !== 'none'
+              && style.visibility !== 'hidden'
+              && style.opacity !== '0'
+              && style.color !== 'rgba(0, 0, 0, 0)'
+              && parseFloat(style.fontSize || '0') > 0;
+            if (visible) visibleBareMarkers += 1;
+          }
+          const markerStyle = marker ? getComputedStyle(marker) : null;
+          const headingStyle = heading ? getComputedStyle(heading) : null;
+          const sampleText = quote?.querySelector('p:last-child') || quote || root || document.body;
+          const sampleColor = getComputedStyle(sampleText).color;
+          return {
+            editable: document.body.dataset.editable || '',
+            theme: document.documentElement.dataset.weibeiTheme || '',
+            markerHidden: markerStyle
+              ? markerStyle.color === 'rgba(0, 0, 0, 0)' && markerStyle.fontSize === '0px'
+              : false,
+            headingHidden: headingStyle ? headingStyle.display === 'none' : false,
+            visibleBareMarkers,
+            sampleColor
+          };
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            if let error {
+                self.fail("read-only inkstone check threw \(error.localizedDescription)")
+                return
+            }
+            guard let result = value as? [String: Any] else {
+                self.fail("read-only inkstone check returned \(String(describing: value))")
+                return
+            }
+            if result["editable"] as? String != "false" || result["theme"] as? String != "inkstone" {
+                self.fail("read-only inkstone state was not applied: \(result)")
+                return
+            }
+            if result["markerHidden"] as? Bool != true || result["headingHidden"] as? Bool != true {
+                self.fail("read-only callout heading or marker leaked: \(result)")
+                return
+            }
+            if (result["visibleBareMarkers"] as? Int ?? -1) != 0 {
+                self.fail("read-only callout source marker leaked as visible text")
+                return
+            }
+            if (result["sampleColor"] as? String ?? "").contains("255, 255, 255") {
+                self.fail("read-only inkstone text fell back to pure white")
                 return
             }
             completion()
