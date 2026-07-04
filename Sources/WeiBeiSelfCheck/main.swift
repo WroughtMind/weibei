@@ -97,6 +97,8 @@ let quietScrollersAxisBeforeSize = quietScrollersSource.range(of: "scrollView.ha
 } ?? false
 expect(quietScrollersSource.contains("scrollView.scrollerStyle = .overlay")
     && quietScrollersSource.contains("scrollView.autohidesScrollers = true")
+    && quietScrollersSource.contains("scrollView.scrollerKnobStyle = .default")
+    && !quietScrollersSource.contains("scrollView.scrollerKnobStyle = .dark")
     && quietScrollersAxisBeforeSize
     && quietScrollersSource.contains("hasVerticalScroller: Bool? = nil")
     && quietScrollersSource.contains("configureRecursively(\n        in view: NSView,")

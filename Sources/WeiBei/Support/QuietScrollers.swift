@@ -16,7 +16,7 @@ enum WeiBeiQuietScrollers {
         }
         scrollView.verticalScroller?.controlSize = .small
         scrollView.horizontalScroller?.controlSize = .small
-        scrollView.scrollerKnobStyle = .dark
+        scrollView.scrollerKnobStyle = .default
     }
 
     static func configureRecursively(
