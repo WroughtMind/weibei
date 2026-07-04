@@ -320,31 +320,45 @@ extension View {
             .animation(WeiBeiMotion.reveal, value: active)
     }
 
+    @ViewBuilder
     func weibeiInputPrompt(
         _ text: String,
         visible: Bool,
         leading: CGFloat = 10,
+        top: CGFloat? = nil,
         fontSize: CGFloat = 13,
         weight: Font.Weight = .regular
     ) -> some View {
-        self
-            .overlay(alignment: .leading) {
-                if visible {
-                    Text(text)
-                        .font(.system(size: fontSize, weight: weight))
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .frame(height: max(18, fontSize + 6))
-                        .padding(.leading, leading)
-                        .padding(.trailing, 8)
-                        .allowsHitTesting(false)
-                        .zIndex(2)
-                        .transition(.opacity.combined(with: .offset(x: -2)))
+        let prompt = Text(text)
+            .font(.system(size: fontSize, weight: weight))
+            .foregroundStyle(WeiBeiTheme.tertiaryInk)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: max(18, fontSize + 6))
+            .padding(.leading, leading)
+            .padding(.trailing, 8)
+            .allowsHitTesting(false)
+            .zIndex(2)
+            .transition(.opacity.combined(with: .offset(x: -2)))
+
+        if let top {
+            self
+                .overlay(alignment: .topLeading) {
+                    if visible {
+                        prompt.padding(.top, top)
+                    }
                 }
-            }
-            .animation(WeiBeiMotion.micro, value: visible)
+                .animation(WeiBeiMotion.micro, value: visible)
+        } else {
+            self
+                .overlay(alignment: .leading) {
+                    if visible {
+                        prompt
+                    }
+                }
+                .animation(WeiBeiMotion.micro, value: visible)
+        }
     }
 
     func weibeiFloatingPanel(cornerRadius: CGFloat = 8, shadowOpacity: Double = 0.10) -> some View {

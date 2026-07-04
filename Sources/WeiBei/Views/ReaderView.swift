@@ -104,6 +104,9 @@ struct ReaderView: View {
         .offset(x: pdfControlsActive ? 0 : 9)
         .scaleEffect(pdfControlsHovering ? 1.01 : (pdfControlsActive ? 1 : 0.985), anchor: .trailing)
         .contentShape(RoundedRectangle(cornerRadius: 8))
+        .onAppear {
+            schedulePDFControlsCollapse(after: 0.9)
+        }
         .onHover { hovering in
             withAnimation(WeiBeiMotion.hover) {
                 pdfControlsHovering = hovering
@@ -217,9 +220,14 @@ struct ReaderView: View {
         pdfControlsCollapseToken = token
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             guard pdfControlsCollapseToken == token else { return }
-            withAnimation(WeiBeiMotion.hover) {
-                pdfControlsExpanded = false
-            }
+            collapsePDFControls()
+        }
+    }
+
+    private func collapsePDFControls() {
+        withAnimation(WeiBeiMotion.hover) {
+            pdfControlsExpanded = false
+            pdfControlsHovering = false
         }
     }
 
@@ -354,7 +362,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                 hasVerticalScroller: true,
                 hasHorizontalScroller: false
             )
-            WeiBeiQuietScrollers.flashRecursively(in: view)
+            WeiBeiQuietScrollers.flashRecursively(in: view, repeatCount: 2)
         }
         context.coordinator.observe(view)
         return view
@@ -391,7 +399,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                 hasHorizontalScroller: false
             )
             if modeChanged {
-                WeiBeiQuietScrollers.flashRecursively(in: view)
+                WeiBeiQuietScrollers.flashRecursively(in: view, repeatCount: 2)
             }
         }
     }
@@ -428,7 +436,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                     view.autoScales = true
                     self.pageCount.wrappedValue = document?.pageCount ?? 0
                     self.pageIndex.wrappedValue = 0
-                    WeiBeiQuietScrollers.flashRecursively(in: view)
+                    WeiBeiQuietScrollers.flashRecursively(in: view, repeatCount: 2)
                 }
             }
         }

@@ -672,7 +672,7 @@ struct AgentPaneView: View {
                     }
                     .padding(.vertical, 8)
                 .weibeiInputSurface(active: draftFocused, height: 64, horizontalPadding: 14)
-                .weibeiInputPrompt(agentPrompt, visible: store.agentDraft.isEmpty, leading: 14, fontSize: 14)
+                .weibeiInputPrompt(agentPrompt, visible: store.agentDraft.isEmpty, leading: 14, top: 12, fontSize: 14)
 
                 if canSendDraft {
                     Button { Task { await store.askAgent() } } label: {

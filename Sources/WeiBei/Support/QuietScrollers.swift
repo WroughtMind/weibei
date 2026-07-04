@@ -40,10 +40,17 @@ enum WeiBeiQuietScrollers {
         }
     }
 
-    static func flashRecursively(in view: NSView) {
+    static func flashRecursively(in view: NSView, repeatCount: Int = 0) {
+        view.layoutSubtreeIfNeeded()
         if let scrollView = view as? NSScrollView {
             scrollView.flashScrollers()
         }
         view.subviews.forEach { flashRecursively(in: $0) }
+
+        guard repeatCount > 0 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { [weak view] in
+            guard let view else { return }
+            flashRecursively(in: view, repeatCount: repeatCount - 1)
+        }
     }
 }
