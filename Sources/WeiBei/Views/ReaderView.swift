@@ -216,7 +216,7 @@ struct ReaderView: View {
         let token = UUID()
         pdfControlsCollapseToken = token
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-            guard pdfControlsCollapseToken == token else { return }
+            guard pdfControlsCollapseToken == token, !pdfControlsHovering else { return }
             withAnimation(WeiBeiMotion.hover) {
                 pdfControlsExpanded = false
             }
