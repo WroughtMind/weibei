@@ -515,7 +515,7 @@ private struct UnifiedTopBarView: View {
             help: store.appearanceMode.actionLabel,
             active: store.appearanceMode == .inkstone
         ) {
-            withAnimation(WeiBeiMotion.panel) {
+            withAnimation(WeiBeiMotion.appearance) {
                 store.toggleAppearanceMode()
             }
         }

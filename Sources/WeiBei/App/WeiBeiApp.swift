@@ -110,7 +110,7 @@ struct WeiBeiApp: App {
                 Divider()
 
                 Button(store.appearanceMode.actionLabel) {
-                    animatePanel {
+                    animateAppearance {
                         store.toggleAppearanceMode()
                     }
                 }
@@ -203,6 +203,12 @@ struct WeiBeiApp: App {
         }
     }
 
+    private func animateAppearance(_ action: () -> Void) {
+        withAnimation(WeiBeiMotion.appearance) {
+            action()
+        }
+    }
+
     private func setLayout(_ layout: WorkspaceLayout) {
         animateLayout {
             store.setLayout(layout)
@@ -287,7 +293,7 @@ struct SettingsView: View {
                 HStack(spacing: 8) {
                     ForEach(WeiBeiAppearanceMode.allCases) { mode in
                         Button(mode.label) {
-                            withAnimation(WeiBeiMotion.panel) {
+                            withAnimation(WeiBeiMotion.appearance) {
                                 store.setAppearanceMode(mode)
                             }
                         }

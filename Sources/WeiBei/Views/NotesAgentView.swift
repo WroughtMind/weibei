@@ -51,22 +51,37 @@ private extension View {
     }
 }
 
+private struct WeiBeiPaneHeader<Actions: View>: View {
+    var title: String
+    var subtitle: String
+    var appearanceMode: WeiBeiAppearanceMode
+    @ViewBuilder var actions: () -> Actions
+
+    var body: some View {
+        HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 18, weight: .semibold, design: .serif))
+                    .foregroundStyle(WeiBeiTheme.ink)
+                Text(subtitle)
+                    .font(.caption2)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            actions()
+        }
+        .weibeiPaneHeaderChrome(appearanceMode: appearanceMode)
+    }
+}
+
 struct NotePaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("笔记")
-                        .font(.system(size: 18, weight: .semibold, design: .serif))
-                        .foregroundStyle(WeiBeiTheme.ink)
-                    Text(noteHeaderSubtitle)
-                        .font(.caption2)
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .lineLimit(1)
-                }
-                Spacer()
+            WeiBeiPaneHeader(title: "笔记", subtitle: noteHeaderSubtitle, appearanceMode: store.appearanceMode) {
                 noteModeControl
                 if !isImmersiveWriting {
                     Button { store.resetNote() } label: {
@@ -84,7 +99,6 @@ struct NotePaneView: View {
                     }
                 }
             }
-            .weibeiPaneHeaderChrome(appearanceMode: store.appearanceMode)
 
             if let noteFileError = store.noteFileError {
                 Text(noteFileError)
@@ -684,18 +698,7 @@ struct AgentPaneView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("对话")
-                        .font(.system(size: 18, weight: .semibold, design: .serif))
-                        .foregroundStyle(WeiBeiTheme.ink)
-                    Text(store.selectedItem?.title ?? "无上下文")
-                        .font(.caption2)
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .lineLimit(1)
-                }
-                Spacer()
-
+            WeiBeiPaneHeader(title: "对话", subtitle: store.selectedItem?.title ?? "无上下文", appearanceMode: store.appearanceMode) {
                 if !store.messages.isEmpty {
                     agentToolButton("整理", help: "整理笔记", systemImage: "list.bullet.rectangle") {
                         store.askToOrganizeNote()
@@ -714,7 +717,6 @@ struct AgentPaneView: View {
                     }
                 }
             }
-            .weibeiPaneHeaderChrome(appearanceMode: store.appearanceMode)
 
             ScrollViewReader { proxy in
                 GeometryReader { geometry in
