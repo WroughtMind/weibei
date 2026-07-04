@@ -1296,6 +1296,7 @@ struct QuietInsightView: View {
     @EnvironmentObject private var store: WorkspaceStore
     var compact = false
     @State private var compactHovering = false
+    @State private var panelHovering = false
 
     var body: some View {
         if compact {
@@ -1367,7 +1368,7 @@ struct QuietInsightView: View {
         HStack(alignment: .top, spacing: 10) {
             Capsule()
                 .fill(WeiBeiTheme.cinnabar.opacity(0.48))
-                .frame(width: 2, height: 76)
+                .frame(width: 2, height: 58)
 
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -1375,18 +1376,28 @@ struct QuietInsightView: View {
                         .font(.caption2.weight(.medium))
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                     Spacer(minLength: 6)
-                    Button {
-                        withAnimation(WeiBeiMotion.panel) {
-                            store.showQuietInsight = false
+                    if panelHovering {
+                        HStack(spacing: 4) {
+                            if !store.quietInsight.noteBlock.isEmpty {
+                                iconButton("text.badge.plus", help: "收进摘录") {
+                                    withAnimation(WeiBeiMotion.panel) {
+                                        store.acceptQuietInsight()
+                                    }
+                                }
+                            }
+                            iconButton("bubble.left", help: "追问") {
+                                withAnimation(WeiBeiMotion.panel) {
+                                    store.askQuietInsight()
+                                }
+                            }
+                            iconButton("xmark", help: "忽略阅读线索") {
+                                withAnimation(WeiBeiMotion.panel) {
+                                    store.showQuietInsight = false
+                                }
+                            }
                         }
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 11, weight: .medium))
+                        .transition(WeiBeiTransition.floating)
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    .accessibilityLabel(Text("忽略阅读线索"))
-                    .help("忽略阅读线索")
                 }
 
                 Text(store.quietInsight.body)
@@ -1397,35 +1408,17 @@ struct QuietInsightView: View {
                 Text(store.quietInsightSourceLabel)
                     .font(.system(size: 10.5, weight: .medium))
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
-
-                HStack(spacing: 10) {
-                    if !store.quietInsight.noteBlock.isEmpty {
-                        Button("收进摘录") {
-                            withAnimation(WeiBeiMotion.panel) {
-                                store.acceptQuietInsight()
-                            }
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                    }
-                    Button("追问") {
-                        withAnimation(WeiBeiMotion.panel) {
-                            store.askQuietInsight()
-                        }
-                    }
-                    .buttonStyle(WeiBeiTextActionButtonStyle())
-                    Button("忽略") {
-                        withAnimation(WeiBeiMotion.panel) {
-                            store.showQuietInsight = false
-                        }
-                    }
-                    .buttonStyle(WeiBeiTextActionButtonStyle())
-                }
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 9)
         .frame(width: 264)
         .weibeiAnnotationPanel(cornerRadius: 6)
+        .onHover { hovering in
+            withAnimation(WeiBeiMotion.hover) {
+                panelHovering = hovering
+            }
+        }
     }
 
     private func iconButton(_ systemName: String, help: String, action: @escaping () -> Void) -> some View {
