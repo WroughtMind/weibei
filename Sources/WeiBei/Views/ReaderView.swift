@@ -414,7 +414,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> PDFView {
-        let view = PDFView()
+        let view = ReaderPDFView()
         view.autoScales = true
         view.displayDirection = .vertical
         view.backgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
@@ -670,6 +670,17 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(pageObserver)
             }
         }
+    }
+}
+
+private final class ReaderPDFView: PDFView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
+        true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        super.mouseDown(with: event)
     }
 }
 
