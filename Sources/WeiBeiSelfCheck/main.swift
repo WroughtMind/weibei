@@ -319,6 +319,18 @@ let markdownNoiseInsight = QuietInsight.make(
 )
 expect(!markdownNoiseInsight.body.contains("[image]"), "quiet insight ignores markdown image syntax")
 expect(markdownNoiseInsight.body.contains("货币理论"), "quiet insight keeps readable markdown prose")
+let foldedCalloutInsight = QuietInsight.make(
+    materialTitle: "Callout 验收",
+    materialText: """
+    > [!note]-折叠标题不应泄漏控制符
+    >
+    > 利率是资金使用价格的表达。
+    """,
+    noteText: "",
+    selectionText: nil
+)
+expect(!foldedCalloutInsight.body.contains("[!note]")
+    && !foldedCalloutInsight.body.contains("-折叠标题"), "quiet insight removes Obsidian callout control and fold markers")
 
 expect(PageNavigator.previous(0) == 0, "pdf previous clamps first page")
 expect(PageNavigator.next(0, pageCount: 2) == 1, "pdf next advances")
@@ -496,7 +508,13 @@ expect(notesAgentSource.contains("applySourcePresentation(")
     && notesAgentSource.contains("in textView: NSTextView")
     && notesAgentSource.contains("calloutControlRegex")
     && notesAgentSource.contains(#"(?m)^(\s*>\s*)"#)
-    && notesAgentSource.contains(#"(\[![A-Za-z][A-Za-z0-9_-]*\][+-]?)"#), "source and compare mode de-emphasize Obsidian callout control markers without changing saved markdown")
+    && notesAgentSource.contains(#"(\[![A-Za-z][A-Za-z0-9_-]*\][+-]?)"#)
+    && notesAgentSource.contains("let markerColor = NSColor.clear")
+    && notesAgentSource.contains("NSFont.monospacedSystemFont(ofSize: 1"), "source and compare mode hide Obsidian callout control markers without changing saved markdown")
+expect(notesAgentSource.contains("private func refreshSourcePresentation(in textView: NSTextView)")
+    && notesAgentSource.contains("refreshSourcePresentation(in: textView)")
+    && notesAgentSource.contains("case .applyAgentPatch")
+    && notesAgentSource.contains("case .insertMarkdown"), "source editor refreshes callout presentation after agent, command, or attachment insertions")
 expect(!sidebarSource.contains("commandPalettePresented.toggle()") && !sidebarSource.contains("Label(\"命令\", systemImage: \"command\")"), "sidebar does not duplicate the command palette entry")
 expect(sidebarSource.contains("ScrollView(showsIndicators: false)"), "sidebar hides the heavy system scroll indicator that reads as a divider")
 expect(sidebarSource.contains("sidebarSection(title: \"导入资料\", items: importedMaterialItems)") && sidebarSource.contains("sidebarSection(title: \"笔记\", items: notebookItems)"), "sidebar separates materials from notebook notes")

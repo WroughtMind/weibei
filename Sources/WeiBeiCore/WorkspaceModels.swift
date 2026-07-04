@@ -562,7 +562,7 @@ public struct QuietInsight: Hashable {
         line = line.replacingOccurrences(of: #"\[([^\]]+)\]\([^\)]*\)"#, with: "$1", options: .regularExpression)
         line = line.replacingOccurrences(of: #"\[\[([^\]\|]+)(?:\|[^\]]+)?\]\]"#, with: "$1", options: .regularExpression)
         line = line.replacingOccurrences(of: #"^#{1,6}\s+"#, with: "", options: .regularExpression)
-        line = line.replacingOccurrences(of: #"^>\s*(?:\[[!][^\]]+\]\s*)?"#, with: "", options: .regularExpression)
+        line = line.replacingOccurrences(of: #"^>\s*(?:\[[!][^\]]+\][+-]?\s*)?"#, with: "", options: .regularExpression)
         line = line.replacingOccurrences(of: #"^[-*+]\s+\[[ xX]\]\s+"#, with: "", options: .regularExpression)
         line = line.replacingOccurrences(of: #"^[-*+]?\s*\d*\.?\s+"#, with: "", options: .regularExpression)
         line = line.replacingOccurrences(of: #"[*_`~=#]"#, with: "", options: .regularExpression)

@@ -269,6 +269,27 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
               && style.width === '0px'
               && marker.getBoundingClientRect().width === 0;
           })(),
+          visibleBareCalloutMarkers: (() => {
+            const root = document.querySelector('.ProseMirror');
+            if (!root) return -1;
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            let count = 0;
+            let node;
+            while ((node = walker.nextNode())) {
+              if (!/\\[![A-Za-z]/.test(node.nodeValue || '')) continue;
+              const parent = node.parentElement;
+              if (parent?.closest('.weibei-callout-marker')) continue;
+              if (!parent?.closest('blockquote.weibei-callout')) continue;
+              const style = getComputedStyle(parent);
+              const visible = style.display !== 'none'
+                && style.visibility !== 'hidden'
+                && style.opacity !== '0'
+                && style.color !== 'rgba(0, 0, 0, 0)'
+                && parseFloat(style.fontSize || '0') > 0;
+              if (visible) count += 1;
+            }
+            return count;
+          })(),
           customCalloutType: document.querySelector('blockquote.weibei-callout-custom')?.getAttribute('data-callout') || '',
           customCalloutFold: document.querySelector('blockquote.weibei-callout-custom')?.getAttribute('data-callout-fold') || '',
           customCalloutTitle: document.querySelector('blockquote.weibei-callout-custom')?.getAttribute('data-callout-title') || '',
@@ -418,6 +439,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             if result["quoteCalloutMarkerVisible"] as? Bool == true {
                 self.fail("quote callout marker should not have visible boxes")
+                return
+            }
+            if (result["visibleBareCalloutMarkers"] as? Int ?? -1) != 0 {
+                self.fail("callout source markers should not leak as visible bare text")
                 return
             }
             if result["customCalloutType"] as? String != "attention" {

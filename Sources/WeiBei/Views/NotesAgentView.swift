@@ -424,9 +424,9 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         guard let textStorage = textView.textStorage, textStorage.length > 0 else { return }
         let fullRange = NSRange(location: 0, length: textStorage.length)
         let ink = WeiBeiNativePalette.ink(for: appearanceMode)
-        let markerColor = ink.withAlphaComponent(appearanceMode == .inkstone ? 0.36 : 0.44)
         let quotePrefixColor = ink.withAlphaComponent(appearanceMode == .inkstone ? 0.30 : 0.36)
-        let markerFont = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        let markerColor = NSColor.clear
+        let markerFont = NSFont.monospacedSystemFont(ofSize: 1, weight: .regular)
         let quotePrefixRegex = try? NSRegularExpression(pattern: #"(?m)^\s*>+\s*"#)
         let calloutControlRegex = try? NSRegularExpression(
             pattern: #"(?m)^(\s*>\s*)(\[![A-Za-z][A-Za-z0-9_-]*\][+-]?)"#
@@ -538,6 +538,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
             let cursor = range.location + (markdown as NSString).length
             textView.setSelectedRange(NSRange(location: cursor, length: 0))
             text.wrappedValue = textView.string
+            refreshSourcePresentation(in: textView)
         }
 
         private func applyPatch(_ markdown: String, in textView: NSTextView) {
@@ -545,6 +546,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
             textView.string = next
             text.wrappedValue = next
             textView.setSelectedRange(NSRange(location: (next as NSString).length, length: 0))
+            refreshSourcePresentation(in: textView)
         }
 
         func applyFocus(in textView: NSTextView) {
@@ -628,6 +630,15 @@ struct MarkdownSourceEditor: NSViewRepresentable {
             textView.string = result.text
             textView.setSelectedRange(NSRange(location: result.cursor, length: 0))
             text.wrappedValue = result.text
+            refreshSourcePresentation(in: textView)
+        }
+
+        private func refreshSourcePresentation(in textView: NSTextView) {
+            MarkdownSourceEditor.applySourcePresentation(
+                in: textView,
+                appearanceMode: appearanceMode,
+                baseFont: .monospacedSystemFont(ofSize: 15, weight: .regular)
+            )
         }
 
         private static func anchor(for range: NSRange, in textView: NSTextView) -> CGPoint? {
