@@ -292,6 +292,7 @@ for helperName in ["openReader", "openWriting", "openLibrary", "askCurrentSelect
 expect(contentViewSource.contains(".weibeiInputSurface(active: searchFocused.wrappedValue, height: controlHeight)")
     && contentViewSource.contains(".weibeiInputPrompt(\"资料内搜索\", visible: store.readerSearch.isEmpty, fontSize: 12)")
     && contentViewSource.contains("topIconButton(\"magnifyingglass\", help: \"打开资料内搜索\")")
+    && !contentViewSource.contains("Label(\"搜索\", systemImage: \"magnifyingglass\")")
     && contentViewSource.contains(".foregroundColor(WeiBeiTheme.ink)")
     && contentViewSource.contains(".foregroundStyle(WeiBeiTheme.ink)")
     && !contentViewSource.contains(".foregroundColor(primaryText)\n                    .foregroundStyle(primaryText)\n                    .tint(WeiBeiTheme.link)"), "top search uses fixed ink on its paper input surface instead of inheriting top bar chrome text")

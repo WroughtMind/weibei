@@ -497,28 +497,8 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var searchButton: some View {
-        if variant == .reader {
-            Button {
-                toggleReaderSearch()
-            } label: {
-                Label("搜索", systemImage: "magnifyingglass")
-                    .font(.system(size: 12, weight: .medium))
-                    .padding(.horizontal, 8)
-                    .frame(height: controlHeight)
-                    .background(controlFill)
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(dividerColor, lineWidth: 1)
-                    }
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(secondaryText)
-            .help("打开资料内搜索")
-        } else {
-            topIconButton("magnifyingglass", help: "打开资料内搜索") {
-                toggleReaderSearch()
-            }
+        topIconButton("magnifyingglass", help: "打开资料内搜索") {
+            toggleReaderSearch()
         }
     }
 
