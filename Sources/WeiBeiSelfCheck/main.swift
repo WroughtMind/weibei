@@ -91,6 +91,8 @@ expect(editorIndexSource.contains(".ProseMirror blockquote.weibei-callout .weibe
     && editorIndexSource.contains("overflow: hidden;"), "Obsidian callout source markers collapse inside rendered callouts")
 expect(editorIndexSource.contains("body[data-editable=\"true\"] .ProseMirror blockquote.weibei-callout.weibei-callout-has-heading::before")
     && editorIndexSource.contains("body[data-editable=\"false\"] .ProseMirror blockquote.weibei-callout .weibei-callout-heading {\n      display: none;"), "callout headings stay editable while read-only callouts show the rendered title instead of leaking the raw [!type] source line")
+expect(editorIndexSource.contains(".ProseMirror::selection,\n    .ProseMirror ::selection")
+    && editorIndexSource.contains("background: var(--selection);"), "web editor selection highlight covers both root and nested ProseMirror text")
 let editorScriptURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/WebEditor/src/editor.js")
 let editorScriptSource = (try? String(contentsOf: editorScriptURL, encoding: .utf8)) ?? ""
