@@ -1102,7 +1102,7 @@ struct FloatingSelectionAgentView: View {
                     help: store.pinnedFloatingAgent ? "取消固定浮层" : "固定浮层"
                 ) {
                     withAnimation(WeiBeiMotion.micro) {
-                        store.pinnedFloatingAgent.toggle()
+                        togglePinnedFloatingAgent()
                     }
                 }
                 iconButton("xmark", help: "收起选区 Agent") {
@@ -1245,6 +1245,14 @@ struct FloatingSelectionAgentView: View {
             .buttonStyle(WeiBeiTextActionButtonStyle())
             .accessibilityLabel(Text(title))
             .help(title)
+    }
+
+    private func togglePinnedFloatingAgent() {
+        if store.pinnedFloatingAgent {
+            dragOffset = .zero
+            settledOffset = .zero
+        }
+        store.pinnedFloatingAgent.toggle()
     }
 
     private func iconButton(_ systemName: String, help: String, action: @escaping () -> Void) -> some View {
