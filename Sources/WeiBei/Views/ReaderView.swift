@@ -262,11 +262,21 @@ struct ReaderView: View {
                 }
             case .html:
                 if let url = item.url {
-                    WebReaderRepresentable(url: url, searchQuery: store.readerSearch, appearanceMode: store.appearanceMode) { text, anchor in
+                    WebReaderRepresentable(
+                        url: url,
+                        searchQuery: store.readerSearch,
+                        appearanceMode: store.appearanceMode,
+                        onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
+                    ) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
                     }
                 } else {
-                    WebReaderRepresentable(html: store.sampleHTML(for: item), searchQuery: store.readerSearch, appearanceMode: store.appearanceMode) { text, anchor in
+                    WebReaderRepresentable(
+                        html: store.sampleHTML(for: item),
+                        searchQuery: store.readerSearch,
+                        appearanceMode: store.appearanceMode,
+                        onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
+                    ) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
                     }
                 }
@@ -532,32 +542,57 @@ struct WebReaderRepresentable: NSViewRepresentable {
     var url: URL?
     var searchQuery: String
     var appearanceMode: WeiBeiAppearanceMode
+    var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool
     var onSelectionChange: (String, CGPoint?) -> Void
 
-    init(html: String, searchQuery: String = "", appearanceMode: WeiBeiAppearanceMode = .paper, onSelectionChange: @escaping (String, CGPoint?) -> Void) {
+    init(
+        html: String,
+        searchQuery: String = "",
+        appearanceMode: WeiBeiAppearanceMode = .paper,
+        onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false },
+        onSelectionChange: @escaping (String, CGPoint?) -> Void
+    ) {
         self.html = html
         self.url = nil
         self.searchQuery = searchQuery
         self.appearanceMode = appearanceMode
+        self.onAppShortcut = onAppShortcut
         self.onSelectionChange = onSelectionChange
     }
 
-    init(url: URL, searchQuery: String = "", appearanceMode: WeiBeiAppearanceMode = .paper, onSelectionChange: @escaping (String, CGPoint?) -> Void) {
+    init(
+        url: URL,
+        searchQuery: String = "",
+        appearanceMode: WeiBeiAppearanceMode = .paper,
+        onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false },
+        onSelectionChange: @escaping (String, CGPoint?) -> Void
+    ) {
         self.html = nil
         self.url = url
         self.searchQuery = searchQuery
         self.appearanceMode = appearanceMode
+        self.onAppShortcut = onAppShortcut
         self.onSelectionChange = onSelectionChange
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(appearanceMode: appearanceMode, onSelectionChange: onSelectionChange)
+        Coordinator(
+            appearanceMode: appearanceMode,
+            onAppShortcut: onAppShortcut,
+            onSelectionChange: onSelectionChange
+        )
     }
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         let controller = WKUserContentController()
         controller.add(context.coordinator, name: "selection")
+        controller.add(context.coordinator, name: "appShortcut")
+        controller.addUserScript(WKUserScript(
+            source: Self.appShortcutScript,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
         controller.addUserScript(WKUserScript(
             source: Self.selectionScript,
             injectionTime: .atDocumentEnd,
@@ -579,6 +614,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
 
     func updateNSView(_ view: WKWebView, context: Context) {
         context.coordinator.searchQuery = searchQuery
+        context.coordinator.onAppShortcut = onAppShortcut
         if context.coordinator.appearanceMode != appearanceMode {
             context.coordinator.appearanceMode = appearanceMode
             view.evaluateJavaScript(Self.readerStyleScript(for: appearanceMode))
@@ -601,6 +637,44 @@ struct WebReaderRepresentable: NSViewRepresentable {
             }
         }
     }
+
+    static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
+        view.configuration.userContentController.removeScriptMessageHandler(forName: "selection")
+        view.configuration.userContentController.removeScriptMessageHandler(forName: "appShortcut")
+    }
+
+    static let appShortcutScript = """
+    (() => {
+      const keyName = (event) => {
+        if (/^Digit[0-9]$/.test(event.code)) return event.code.slice(5);
+        if (/^Key[A-Z]$/.test(event.code)) return event.code.slice(3).toLowerCase();
+        return String(event.key || "").toLowerCase();
+      };
+      const isWeiBeiShortcut = (key, event) => {
+        const command = event.metaKey;
+        const option = event.altKey;
+        const control = event.ctrlKey;
+        const shift = event.shiftKey;
+        if (command && option && !control && !shift) return ["1", "2", "3", "a", "n", "r", "t"].includes(key);
+        if (command && !option && !control && !shift) return ["1", "2", "3", "4", "b", "j", "k", "f"].includes(key);
+        if (control && option && !command && !shift) return ["0", "1", "2", "3", "4"].includes(key);
+        return false;
+      };
+      window.addEventListener("keydown", (event) => {
+        const key = keyName(event);
+        if (!isWeiBeiShortcut(key, event)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        window.webkit.messageHandlers.appShortcut.postMessage({
+          key,
+          command: event.metaKey,
+          option: event.altKey,
+          control: event.ctrlKey,
+          shift: event.shiftKey
+        });
+      }, true);
+    })();
+    """
 
     static let selectionScript = """
     (() => {
@@ -694,18 +768,31 @@ struct WebReaderRepresentable: NSViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var onSelectionChange: (String, CGPoint?) -> Void
+        var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool
         var loadedSignature: String?
         var searchQuery = ""
         var appearanceMode: WeiBeiAppearanceMode = .paper
         private var lastAppliedSearchQuery = ""
         weak var webView: WKWebView?
 
-        init(appearanceMode: WeiBeiAppearanceMode, onSelectionChange: @escaping (String, CGPoint?) -> Void) {
+        init(
+            appearanceMode: WeiBeiAppearanceMode,
+            onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool,
+            onSelectionChange: @escaping (String, CGPoint?) -> Void
+        ) {
             self.appearanceMode = appearanceMode
+            self.onAppShortcut = onAppShortcut
             self.onSelectionChange = onSelectionChange
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            if message.name == "appShortcut" {
+                guard let body = message.body as? [String: Any],
+                      let key = body["key"] as? String else { return }
+                _ = onAppShortcut(key, Self.modifiers(from: body))
+                return
+            }
+
             let text: String
             let anchor: CGPoint?
             if let body = message.body as? [String: Any],
@@ -721,6 +808,23 @@ struct WebReaderRepresentable: NSViewRepresentable {
             Task { @MainActor in
                 self.onSelectionChange(text, anchor)
             }
+        }
+
+        private static func modifiers(from body: [String: Any]) -> NSEvent.ModifierFlags {
+            var modifiers: NSEvent.ModifierFlags = []
+            if body["command"] as? Bool == true {
+                modifiers.insert(.command)
+            }
+            if body["option"] as? Bool == true {
+                modifiers.insert(.option)
+            }
+            if body["control"] as? Bool == true {
+                modifiers.insert(.control)
+            }
+            if body["shift"] as? Bool == true {
+                modifiers.insert(.shift)
+            }
+            return modifiers
         }
 
         private static func anchor(from body: [String: Any], in view: WKWebView?) -> CGPoint? {

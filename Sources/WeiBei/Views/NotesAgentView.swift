@@ -24,7 +24,8 @@ struct NotePaneView: View {
         VStack(spacing: 0) {
             HStack {
                 Text("笔记")
-                    .font(.system(size: 18, weight: .semibold, design: .serif))
+                    .font(.system(size: 17, weight: .semibold, design: .serif))
+                    .foregroundStyle(WeiBeiTheme.ink)
                 Spacer()
                 noteModeControl
                 if !isImmersiveWriting {
@@ -43,13 +44,19 @@ struct NotePaneView: View {
                     }
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .background(WeiBeiGlassHeaderBackground(paperOpacity: 0.68, materialOpacity: 0.08))
-            .overlay(alignment: .bottom) {
-                WeiBeiHeaderHandoffFade(height: 14, opacity: 0.68)
-                    .offset(y: 14)
+            .padding(.horizontal, 16)
+            .frame(height: 54)
+            .background(noteHeaderBackground)
+            .overlay(alignment: .top) {
+                Rectangle()
+                    .fill(WeiBeiTheme.glassHighlight.opacity(0.18))
+                    .frame(height: 1)
             }
+            .overlay(alignment: .bottom) {
+                WeiBeiHeaderHandoffFade(height: 28, opacity: 0.46)
+                    .offset(y: 28)
+            }
+            .shadow(color: WeiBeiTheme.ink.opacity(0.018), radius: 8, y: 2)
             .zIndex(1)
 
             if let noteFileError = store.noteFileError {
@@ -67,6 +74,28 @@ struct NotePaneView: View {
         .weibeiPanel()
     }
 
+    private var noteHeaderBackground: some View {
+        ZStack {
+            Rectangle()
+                .fill(WeiBeiTheme.paper.opacity(0.82))
+
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .opacity(0.028)
+
+            LinearGradient(
+                colors: [
+                    WeiBeiTheme.glassHighlight.opacity(0.07),
+                    WeiBeiTheme.glassTint.opacity(0.045),
+                    WeiBeiTheme.paper.opacity(0.015),
+                    .clear
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        }
+    }
+
     private var noteModeControl: some View {
         HStack(spacing: 2) {
             ForEach(NoteRenderMode.allCases) { mode in
@@ -79,20 +108,33 @@ struct NotePaneView: View {
                     Text(mode.label)
                         .font(.system(size: 11, weight: selected ? .semibold : .medium))
                         .foregroundStyle(selected ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
-                        .frame(width: 34, height: 24)
-                        .background(selected ? WeiBeiTheme.cinnabarSoft : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
-                    .animation(WeiBeiMotion.micro, value: selected)
+                        .frame(width: 38, height: 24)
+                        .background(selected ? WeiBeiTheme.cinnabarSoft.opacity(0.86) : Color.clear)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .animation(WeiBeiMotion.micro, value: selected)
                 }
                 .buttonStyle(.plain)
             }
         }
-        .padding(2)
-        .background(WeiBeiTheme.paperInset.opacity(0.36))
-        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .padding(3)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(.ultraThinMaterial)
+                    .opacity(0.05)
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(WeiBeiTheme.paperInset.opacity(0.22))
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(alignment: .top) {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(WeiBeiTheme.glassHighlight.opacity(0.18), lineWidth: 1)
+                .padding(0.5)
+        }
         .overlay {
-            RoundedRectangle(cornerRadius: 7)
-                .stroke(WeiBeiTheme.hairline, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(WeiBeiTheme.hairline.opacity(0.62), lineWidth: 1)
         }
     }
 

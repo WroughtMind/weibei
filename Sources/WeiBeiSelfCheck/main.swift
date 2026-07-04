@@ -344,6 +344,13 @@ expect(sidebarSource.contains("prompt: Text(\"搜索资料库\")") && sidebarSou
 let notesAgentSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/NotesAgentView.swift")
 let notesAgentSource = (try? String(contentsOf: notesAgentSourceURL, encoding: .utf8)) ?? ""
+let notePaneHeaderSource: String = {
+    guard let start = notesAgentSource.range(of: "struct NotePaneView: View")?.lowerBound,
+          let end = notesAgentSource.range(of: "private func noteFileStatusColor", range: start..<notesAgentSource.endIndex)?.lowerBound else {
+        return ""
+    }
+    return String(notesAgentSource[start..<end])
+}()
 expect(notesAgentSource.contains("prompt: Text(agentPrompt)")
     && notesAgentSource.contains(".foregroundStyle(WeiBeiTheme.tertiaryInk)"), "agent tray placeholder uses native prompt text so the cursor and text baseline align")
 expect(notesAgentSource.contains("SelectionAnchorContentPoint.fromScreenPoint(screenPoint, in: window)")
@@ -416,6 +423,11 @@ expect(readerViewSource.contains("document.addEventListener(\"selectionchange\",
     && readerViewSource.contains("window.webkit.messageHandlers.selection.postMessage(payload)")
     && readerViewSource.contains("x: rect && text ? rect.left + rect.width / 2 : null")
     && readerViewSource.contains("y: rect && text ? rect.bottom : null"), "html reader reports selection changes live and also clears the floating agent when selection is empty")
+expect(readerViewSource.contains("controller.add(context.coordinator, name: \"appShortcut\")")
+    && readerViewSource.contains("static let appShortcutScript")
+    && readerViewSource.contains("[\"1\", \"2\", \"3\", \"a\", \"n\", \"r\", \"t\"].includes(key)")
+    && readerViewSource.contains("store.handleAppShortcut(key: key, modifiers: modifiers)")
+    && readerViewSource.contains("removeScriptMessageHandler(forName: \"appShortcut\")"), "html reader forwards app keyboard shortcuts while the web document has focus")
 expect(!readerViewSource.contains("readerHeader") && !readerViewSource.contains("statusBar"), "reader avoids duplicate internal chrome under unified top bar")
 expect(readerViewSource.contains("ReaderStateMessage") && !readerViewSource.contains("ContentUnavailableView("), "reader empty states use WeiBei paper styling")
 expect(readerViewSource.contains("if store.selectedMaterialItem?.kind == .pdf") && readerViewSource.contains("if let item = store.selectedMaterialItem"), "reader renders materials, not notebook notes")
@@ -736,6 +748,11 @@ expect(notesAgentSource.contains("@State private var panelHovering = false")
     && !notesAgentSource.contains("Button(\"忽略\")"), "regular quiet insight behaves like a margin note: actions are icon-only and hidden until hover")
 expect(notesAgentSource.contains("let itemID = store.selectedItemID") && notesAgentSource.contains("store.updateNote(value, for: itemID)"), "rich note editor writes through selected item guard")
 expect(notesAgentSource.components(separatedBy: "MarkdownPreviewView(").dropFirst().allSatisfy { $0.contains("appearanceMode: store.appearanceMode") }, "all markdown preview paths inherit the current appearance mode, including split compare")
+expect(notePaneHeaderSource.contains("private var noteHeaderBackground: some View")
+    && notePaneHeaderSource.contains(".fill(.ultraThinMaterial)")
+    && notePaneHeaderSource.contains("WeiBeiHeaderHandoffFade(height: 28, opacity: 0.46)")
+    && notePaneHeaderSource.contains("WeiBeiTheme.cinnabarSoft.opacity(0.86)")
+    && !notePaneHeaderSource.contains("WeiBeiGlassHeaderBackground(paperOpacity: 0.68, materialOpacity: 0.08)"), "note pane header uses a light glass handoff instead of a heavy dark slab")
 expect(notesAgentSource.contains("ContextRailLine") && notesAgentSource.contains(".onHover"), "context rails keep hover motion")
 expect(!notesAgentSource.contains(".id(store.noteRenderMode)"), "note mode changes avoid forced hard view identity resets")
 expect(notesAgentSource.contains("struct ContextRailItem: Identifiable") && notesAgentSource.contains("Button(action: action)"), "context rails expose actionable rows")
