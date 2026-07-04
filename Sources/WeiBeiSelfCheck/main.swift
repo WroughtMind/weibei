@@ -226,6 +226,9 @@ expect(contentViewSource.contains("store.toggleLibrary()")
     && contentViewSource.contains("store.showLibrary ? \"收起资料库\" : \"打开资料库\"")
     && !contentViewSource.contains("恢复资料库")
     && !contentViewSource.contains(".opacity(isImmersiveLayout ? 0.45 : 1)"), "immersive top bar keeps a clear stateful library chooser instead of dimming a live control")
+expect(contentViewSource.contains("WeiBeiHeaderHandoffFade(height: 18, opacity: isImmersiveLayout ? 0.42 : 0.34)")
+    && contentViewSource.contains("paperOpacity: backgroundPaperOpacity - (isImmersiveLayout ? 0.06 : 0)")
+    && contentViewSource.contains("materialOpacity: backgroundMaterialOpacity + (isImmersiveLayout ? 0.03 : 0)"), "immersive top bar keeps the same variants while using a lighter glass handoff")
 expect(!contentViewSource.contains("文代笔") && !contentViewSource.contains("Agent中") && contentViewSource.contains("对话中栏") && contentViewSource.contains("对话右栏"), "top bar short layout labels avoid cryptic abbreviations")
 for helperName in ["openReader", "openWriting", "askCurrentSelection", "prepareAgentDraft"] {
     if let helperStart = contentViewSource.range(of: "private func \(helperName)")?.lowerBound,

@@ -259,7 +259,7 @@ private struct UnifiedTopBarView: View {
                 .frame(height: 1)
         }
         .overlay(alignment: .bottom) {
-            WeiBeiHeaderHandoffFade(height: 18, opacity: 0.34)
+            WeiBeiHeaderHandoffFade(height: 18, opacity: isImmersiveLayout ? 0.42 : 0.34)
                 .offset(y: 18)
             .allowsHitTesting(false)
         }
@@ -416,8 +416,8 @@ private struct UnifiedTopBarView: View {
 
     private var topBarBackground: some View {
         WeiBeiGlassHeaderBackground(
-            paperOpacity: backgroundPaperOpacity,
-            materialOpacity: backgroundMaterialOpacity
+            paperOpacity: backgroundPaperOpacity - (isImmersiveLayout ? 0.06 : 0),
+            materialOpacity: backgroundMaterialOpacity + (isImmersiveLayout ? 0.03 : 0)
         )
     }
 
