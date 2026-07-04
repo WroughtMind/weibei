@@ -40,7 +40,7 @@ struct SidebarView: View {
             }
             .zIndex(1)
 
-            ScrollView {
+            ScrollView(showsIndicators: false) {
                 LazyVStack(alignment: .leading, spacing: 14) {
                     sidebarSection(title: "样例", items: store.sampleItems)
                     sidebarSection(title: "导入资料", items: importedMaterialItems)

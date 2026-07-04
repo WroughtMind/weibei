@@ -297,6 +297,7 @@ expect(notesAgentSource.contains("SelectionAnchorContentPoint.fromScreenPoint(sc
     && !notesAgentSource.contains("SelectionAnchorCoordinate.y(")
     && !notesAgentSource.contains("contentView.convert("), "note source editor selection anchors use the shared coordinate helper")
 expect(!sidebarSource.contains("commandPalettePresented.toggle()") && !sidebarSource.contains("Label(\"命令\", systemImage: \"command\")"), "sidebar does not duplicate the command palette entry")
+expect(sidebarSource.contains("ScrollView(showsIndicators: false)"), "sidebar hides the heavy system scroll indicator that reads as a divider")
 expect(sidebarSource.contains("sidebarSection(title: \"导入资料\", items: importedMaterialItems)") && sidebarSource.contains("sidebarSection(title: \"笔记\", items: notebookItems)"), "sidebar separates materials from notebook notes")
 expect(sidebarSource.contains("!$0.isSample && !$0.isNotebookNote") && sidebarSource.contains("store.filteredItems.filter(\\.isNotebookNote)"), "sidebar material list excludes notebook notes without hiding notes")
 expect(contentViewSource.contains("topIconButton(\"command\", help: \"命令面板\")"), "top bar keeps the command palette entry")
