@@ -825,7 +825,7 @@ const annotateMathErrors = () => {
   });
 };
 
-const quietScrollableSelector = '.ProseMirror pre, .ProseMirror div[data-type="math_block"], .ProseMirror div[data-type="math-block"]';
+const quietScrollableSelector = '#editor, .ProseMirror pre, .ProseMirror div[data-type="math_block"], .ProseMirror div[data-type="math-block"]';
 const scrollFadeTimers = new WeakMap();
 
 const markScrollActive = (element) => {

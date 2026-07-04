@@ -113,7 +113,7 @@ struct ReaderView: View {
     private var pdfControls: some View {
         pdfModeToggle
 
-        if pdfBrowseMode == .page, pdfPageCount > 1 {
+        if pdfBrowseMode == .page, pdfPageCount > 1, pdfControlsHovering {
             Group {
                 Rectangle()
                     .fill(WeiBeiTheme.hairline.opacity(0.55))
@@ -177,7 +177,7 @@ struct ReaderView: View {
     }
 
     private var pdfControlsActive: Bool {
-        pdfControlsHovering || pdfBrowseMode == .page
+        pdfControlsHovering
     }
 
     private var pdfModeForeground: Color {

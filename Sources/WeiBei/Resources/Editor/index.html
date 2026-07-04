@@ -42,15 +42,42 @@
       box-sizing: border-box;
       height: 100vh;
       overflow: auto;
-      scrollbar-width: none;
+      scrollbar-width: thin;
+      scrollbar-color: transparent transparent;
       padding: 28px 34px 64px;
       background: rgba(239, 225, 199, .72);
     }
 
     #editor::-webkit-scrollbar {
-      width: 0;
-      height: 0;
+      width: 6px;
+      height: 6px;
+    }
+
+    #editor::-webkit-scrollbar-track {
       background: transparent;
+    }
+
+    #editor::-webkit-scrollbar-thumb {
+      border: 2px solid rgba(239, 225, 199, .72);
+      border-radius: 999px;
+      background: transparent;
+      transition: background-color .18s ease-out;
+    }
+
+    #editor.weibei-scroll-active,
+    #editor:hover,
+    #editor:focus-within {
+      scrollbar-color: rgba(92, 70, 46, .16) transparent;
+    }
+
+    #editor.weibei-scroll-active::-webkit-scrollbar-thumb,
+    #editor:hover::-webkit-scrollbar-thumb,
+    #editor:focus-within::-webkit-scrollbar-thumb {
+      background: rgba(92, 70, 46, .16);
+    }
+
+    #editor::-webkit-scrollbar-thumb:hover {
+      background: rgba(92, 70, 46, .24);
     }
 
     .ProseMirror pre::-webkit-scrollbar,
