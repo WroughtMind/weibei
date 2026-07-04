@@ -337,11 +337,14 @@ const parseObsidianEmbed = (raw) => {
 };
 
 const missingImageURL = () => {
+  const palette = currentTheme === 'inkstone'
+    ? { background: '#151515', accent: '#a6362b', text: '#d7cbb0' }
+    : { background: '#efe6d8', accent: '#9f3b2f', text: '#6b5148' };
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="156" height="34" viewBox="0 0 156 34">
-  <rect width="156" height="34" rx="3" fill="#efe6d8"/>
-  <path d="M18 22l5-6 4 4 3-3 6 5" fill="none" stroke="#9f3b2f" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-  <rect x="17" y="11" width="20" height="14" rx="2" fill="none" stroke="#9f3b2f" stroke-width="1.2"/>
-  <text x="48" y="22" fill="#6b5148" font-family="-apple-system, BlinkMacSystemFont, 'Songti SC', serif" font-size="13">图片未找到</text>
+  <rect width="156" height="34" rx="3" fill="${palette.background}"/>
+  <path d="M18 22l5-6 4 4 3-3 6 5" fill="none" stroke="${palette.accent}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="17" y="11" width="20" height="14" rx="2" fill="none" stroke="${palette.accent}" stroke-width="1.2"/>
+  <text x="48" y="22" fill="${palette.text}" font-family="-apple-system, BlinkMacSystemFont, 'Songti SC', serif" font-size="13">图片未找到</text>
 </svg>`;
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 };
@@ -987,13 +990,17 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
           decorateTagsAndBlocks(decorations, text, textPos);
 
           if (isInsideNode(state, pos, 'blockquote')) {
-            const callout = text.match(calloutMarkerRegex);
-            if (callout) {
-              addRangeDecoration(decorations, textPos, textPos + callout[0].length, 'weibei-callout-marker');
+            const calloutMarker = text.match(calloutMarkerRegex);
+            if (calloutMarker) {
+              addRangeDecoration(decorations, textPos, textPos + calloutMarker[0].length, 'weibei-callout-marker');
             }
             const calloutHeading = text.match(calloutHeadingRegex);
             if (calloutHeading) {
-              addRangeDecoration(decorations, textPos, textPos + calloutHeading[0].length, 'weibei-callout-heading-source');
+              const titleStart = calloutMarker ? calloutMarker[0].length : 0;
+              const titleEnd = calloutHeading[0].length;
+              if (titleEnd > titleStart) {
+                addRangeDecoration(decorations, textPos + titleStart, textPos + titleEnd, 'weibei-callout-heading-source');
+              }
             }
           }
         }
@@ -1179,6 +1186,9 @@ window.WeiBeiEditor = {
   },
   setTheme: (next) => {
     applyTheme(next);
+    document.querySelectorAll('img[data-weibei-image-placeholder="true"]').forEach((image) => {
+      image.setAttribute('src', missingImageURL());
+    });
     if (!editor) return;
     editor.action((ctx) => {
       const view = ctx.get(editorViewCtx);

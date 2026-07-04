@@ -86,6 +86,8 @@ expect(editorIndexSource.contains(".ProseMirror blockquote.weibei-callout .weibe
     && editorIndexSource.contains("display: inline-block;")
     && editorIndexSource.contains("width: 0;")
     && editorIndexSource.contains("overflow: hidden;"), "Obsidian callout source markers collapse inside rendered callouts")
+expect(editorIndexSource.contains("body[data-editable=\"true\"] .ProseMirror blockquote.weibei-callout.weibei-callout-has-heading::before")
+    && editorIndexSource.contains("body[data-editable=\"false\"] .ProseMirror blockquote.weibei-callout .weibei-callout-heading {\n      display: none;"), "read-only callouts show the rendered title instead of leaking the raw [!type] source line")
 let editorScriptURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/WebEditor/src/editor.js")
 let editorScriptSource = (try? String(contentsOf: editorScriptURL, encoding: .utf8)) ?? ""
@@ -673,6 +675,11 @@ expect(richEditorSource.contains("command && shift && !option && !control") && r
 expect(richEditorSource.contains("runPendingCommandIfReady()")
     && richEditorSource.contains("guard isReady,")
     && richEditorSource.contains("self.command.wrappedValue = nil"), "rich editor does not drop commands before the web editor is ready")
+expect(richEditorSource.contains("var appearanceMode: WeiBeiAppearanceMode = .paper")
+    && richEditorSource.components(separatedBy: "appearanceMode: appearanceMode").count >= 4
+    && richEditorSource.contains("private var missingImageColors: (background: String, accent: String, text: String)")
+    && richEditorSource.contains("case .inkstone:")
+    && richEditorSource.contains("return (\"#151515\", \"#a6362b\", \"#d7cbb0\")"), "native missing-image placeholders follow the current editor theme instead of always using a pale SVG")
 let webEditorSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/WebEditor/src/editor.js")
 let webEditorSource = (try? String(contentsOf: webEditorSourceURL, encoding: .utf8)) ?? ""
@@ -687,6 +694,14 @@ expect(webEditorSource.contains("let lastSelectionReport = { text: null, rectKey
     && webEditorSource.contains("post('selectionChanged', { text: '', rect: null })")
     && webEditorSource.contains("lastSelectionRange = null")
     && webEditorSource.contains("if (text === lastSelectionReport.text && rectKey === lastSelectionReport.rectKey) return"), "web editor reports cleared selections once so floating selection UI and included-selection badges disappear")
+expect(webEditorSource.contains("const palette = currentTheme === 'inkstone'")
+    && webEditorSource.contains("background: '#151515', accent: '#a6362b', text: '#d7cbb0'")
+    && webEditorSource.contains("background: '#efe6d8', accent: '#9f3b2f', text: '#6b5148'")
+    && webEditorSource.contains("img[data-weibei-image-placeholder=\"true\"]")
+    && webEditorSource.contains("image.setAttribute('src', missingImageURL())"), "web missing-image placeholders follow the current theme and refresh after theme switches")
+expect(webEditorSource.contains("const calloutMarker = text.match(calloutMarkerRegex)")
+    && webEditorSource.contains("const titleStart = calloutMarker ? calloutMarker[0].length : 0")
+    && webEditorSource.contains("textPos + titleStart, textPos + titleEnd, 'weibei-callout-heading-source'"), "callout heading decorations leave the raw [!type] marker to the hidden marker path instead of styling the whole source line")
 let appSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/App/WeiBeiApp.swift")
 let appSource = (try? String(contentsOf: appSourceURL, encoding: .utf8)) ?? ""

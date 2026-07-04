@@ -459,7 +459,7 @@
     .ProseMirror blockquote.weibei-callout-todo::before { content: "待办"; }
     .ProseMirror blockquote.weibei-callout::before { content: attr(data-callout-title); }
 
-    .ProseMirror blockquote.weibei-callout.weibei-callout-has-heading::before {
+    body[data-editable="true"] .ProseMirror blockquote.weibei-callout.weibei-callout-has-heading::before {
       display: none;
     }
 
@@ -470,6 +470,10 @@
       font-size: .78em;
       font-weight: 650;
       letter-spacing: 0;
+    }
+
+    body[data-editable="false"] .ProseMirror blockquote.weibei-callout .weibei-callout-heading {
+      display: none;
     }
 
     .ProseMirror blockquote.weibei-callout[data-callout-title="阅读线索"] {

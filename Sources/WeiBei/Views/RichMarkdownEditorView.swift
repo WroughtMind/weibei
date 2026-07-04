@@ -5,10 +5,12 @@ import WeiBeiCore
 fileprivate final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler {
     var markdownBaseURLString = ""
     var attachmentDirectory: URL?
+    var appearanceMode: WeiBeiAppearanceMode = .paper
 
-    func update(markdownBaseURLString: String, attachmentDirectory: URL?) {
+    func update(markdownBaseURLString: String, attachmentDirectory: URL?, appearanceMode: WeiBeiAppearanceMode) {
         self.markdownBaseURLString = markdownBaseURLString
         self.attachmentDirectory = attachmentDirectory
+        self.appearanceMode = appearanceMode
     }
 
     func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
@@ -72,12 +74,13 @@ fileprivate final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler
     }
 
     private func sendMissingImage(for requestURL: URL, task urlSchemeTask: WKURLSchemeTask) {
+        let colors = missingImageColors
         let svg = """
         <svg xmlns="http://www.w3.org/2000/svg" width="156" height="34" viewBox="0 0 156 34">
-          <rect width="156" height="34" rx="3" fill="#efe6d8"/>
-          <path d="M18 22l5-6 4 4 3-3 6 5" fill="none" stroke="#9f3b2f" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-          <rect x="17" y="11" width="20" height="14" rx="2" fill="none" stroke="#9f3b2f" stroke-width="1.2"/>
-          <text x="48" y="22" fill="#6b5148" font-family="-apple-system, BlinkMacSystemFont, 'Songti SC', serif" font-size="13">图片未找到</text>
+          <rect width="156" height="34" rx="3" fill="\(colors.background)"/>
+          <path d="M18 22l5-6 4 4 3-3 6 5" fill="none" stroke="\(colors.accent)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+          <rect x="17" y="11" width="20" height="14" rx="2" fill="none" stroke="\(colors.accent)" stroke-width="1.2"/>
+          <text x="48" y="22" fill="\(colors.text)" font-family="-apple-system, BlinkMacSystemFont, 'Songti SC', serif" font-size="13">图片未找到</text>
         </svg>
         """
         let data = Data(svg.utf8)
@@ -90,6 +93,15 @@ fileprivate final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler
         urlSchemeTask.didReceive(response)
         urlSchemeTask.didReceive(data)
         urlSchemeTask.didFinish()
+    }
+
+    private var missingImageColors: (background: String, accent: String, text: String) {
+        switch appearanceMode {
+        case .paper:
+            return ("#efe6d8", "#9f3b2f", "#6b5148")
+        case .inkstone:
+            return ("#151515", "#a6362b", "#d7cbb0")
+        }
     }
 
     private func mimeType(for fileURL: URL) -> String {
@@ -163,7 +175,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         let controller = WKUserContentController()
         context.coordinator.imageSchemeHandler.update(
             markdownBaseURLString: markdownBaseURL?.absoluteString ?? "",
-            attachmentDirectory: attachmentDirectory
+            attachmentDirectory: attachmentDirectory,
+            appearanceMode: appearanceMode
         )
         configuration.setURLSchemeHandler(context.coordinator.imageSchemeHandler, forURLScheme: Self.localImageScheme)
         for name in Self.scriptMessageNames {
@@ -253,7 +266,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.attachmentDirectory = attachmentDirectory
         context.coordinator.imageSchemeHandler.update(
             markdownBaseURLString: markdownBaseURL?.absoluteString ?? "",
-            attachmentDirectory: attachmentDirectory
+            attachmentDirectory: attachmentDirectory,
+            appearanceMode: appearanceMode
         )
         context.coordinator.searchQuery = searchQuery
         if context.coordinator.appearanceMode != appearanceMode {
