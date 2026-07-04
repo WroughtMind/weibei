@@ -623,7 +623,6 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             view.highlightedSelections = matches
             if let first = matches.first {
                 setOCRHighlightedLines([:], in: view)
-                view.setCurrentSelection(first, animate: true)
                 view.go(to: first)
             } else {
                 applyOCRSearch(query, in: view)
