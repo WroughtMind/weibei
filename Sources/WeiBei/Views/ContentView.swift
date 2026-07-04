@@ -352,7 +352,12 @@ private struct UnifiedTopBarView: View {
     }
 
     private var shouldShowAgentAction: Bool {
-        store.layout != .immersiveConversation && !hasPrimaryAgentPaneVisible
+        switch store.layout {
+        case .immersiveConversation, .immersiveWriting:
+            return false
+        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit, .immersiveReading:
+            return !hasPrimaryAgentPaneVisible
+        }
     }
 
     private var hasReaderScopedTopActions: Bool {
