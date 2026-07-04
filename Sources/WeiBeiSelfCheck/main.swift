@@ -656,7 +656,12 @@ expect(notesAgentSource.contains("store.hasSelectedMaterial ? \"来源\" : \"笔
 if let cornerStart = notesAgentSource.range(of: "struct CornerAgentView")?.lowerBound,
    let selectionStart = notesAgentSource.range(of: "struct FloatingSelectionAgentView")?.lowerBound {
     let cornerAgentSource = String(notesAgentSource[cornerStart..<selectionStart])
-    expect(!cornerAgentSource.contains("cornerToolButton(") && !cornerAgentSource.contains("整理笔记"), "corner agent stays a lightweight prompt surface")
+    expect(!cornerAgentSource.contains("cornerToolButton(")
+        && !cornerAgentSource.contains("整理笔记")
+        && cornerAgentSource.contains("Text(\"对话\")")
+        && !cornerAgentSource.contains("Text(\"Agent\")")
+        && cornerAgentSource.contains(".weibeiInputSurface(active: draftFocused, height: 38)")
+        && cornerAgentSource.contains(".help(\"收起对话浮窗\")"), "corner agent stays a lightweight localized prompt surface")
 } else {
     expect(false, "corner agent source is readable")
 }
@@ -683,7 +688,7 @@ expect(notesAgentSource.contains("private func iconButton(_ systemName: String, 
 expect(notesAgentSource.contains("private func togglePinnedFloatingAgent()")
     && notesAgentSource.contains("if store.pinnedFloatingAgent {\n            dragOffset = .zero\n            settledOffset = .zero\n        }")
     && !notesAgentSource.contains("store.pinnedFloatingAgent.toggle()\n                    }\n                }\n                iconButton(\"xmark\""), "unpinning the selection agent returns it to the current selection anchor")
-expect(notesAgentSource.contains(".help(\"收起右下角 Agent\")"), "corner agent close button explains its action")
+expect(notesAgentSource.contains(".help(\"收起对话浮窗\")") && !notesAgentSource.contains(".help(\"收起右下角 Agent\")"), "corner agent close button explains its action without engineering labels")
 expect(commandPaletteSource.contains("插入行内公式") && commandPaletteSource.contains("${{WEIBEI_SELECT_START}}x_i = \\\\frac{a}{b}{{WEIBEI_SELECT_END}}$") && commandPaletteSource.contains("插入矩阵公式"), "markdown command templates keep an editable landing point")
 expect(commandPaletteSource.contains("private func markdownInsertCommand") && commandPaletteSource.contains("animation: WeiBeiMotion.layout"), "markdown insert commands use layout motion when revealing writing")
 let editorSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)

@@ -898,15 +898,15 @@ struct CornerAgentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack {
-                Text("Agent")
+                Text("对话")
                     .font(.system(size: 15, weight: .semibold, design: .serif))
                 Spacer()
                 Button { store.setAgentSurface(.hidden) } label: {
                     Image(systemName: "minus")
                 }
                 .buttonStyle(WeiBeiIconButtonStyle())
-                .accessibilityLabel(Text("收起右下角 Agent"))
-                .help("收起右下角 Agent")
+                .accessibilityLabel(Text("收起对话浮窗"))
+                .help("收起对话浮窗")
             }
 
             Text(store.selectedMaterialItem?.title ?? "当前笔记")
@@ -920,7 +920,7 @@ struct CornerAgentView: View {
                     .focused($draftFocused)
                     .foregroundColor(WeiBeiTheme.ink)
                 .font(.system(size: 13))
-                .weibeiInputSurface(active: draftFocused, height: 32)
+                .weibeiInputSurface(active: draftFocused, height: 38)
                 .weibeiInputPrompt(agentPrompt, visible: store.agentDraft.isEmpty, fontSize: 13)
 
                 if canSend {
