@@ -89,6 +89,23 @@ const calloutHeaderText = (node) => {
     : (node.textContent || '');
   return (text.split('\n')[0] || '').trimStart();
 };
+const decorateCalloutHeadingSource = (decorations, node, pos) => {
+  const text = node.textBetween
+    ? node.textBetween(0, node.content.size, '')
+    : (node.textContent || '');
+  const marker = text.match(calloutMarkerRegex);
+  if (!marker) return;
+  const contentStart = pos + 1;
+  const markerEnd = contentStart + marker[0].length;
+  addRangeDecoration(decorations, contentStart, markerEnd, 'weibei-callout-marker');
+
+  const heading = text.match(calloutHeadingRegex);
+  if (!heading) return;
+  const titleEnd = contentStart + heading[0].length;
+  if (titleEnd > markerEnd) {
+    addRangeDecoration(decorations, markerEnd, titleEnd, 'weibei-callout-heading-source');
+  }
+};
 
 const normalizeTheme = (theme) => (theme === 'inkstone' ? 'inkstone' : 'paper');
 let currentTheme = normalizeTheme(window.weiBeiTheme);
@@ -955,6 +972,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
             decorations.push(Decoration.node(pos, pos + node.nodeSize, {
               class: 'weibei-callout-heading',
             }));
+            decorateCalloutHeadingSource(decorations, node, pos);
           }
         }
 
@@ -989,20 +1007,6 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
           decorateSourceReferences(decorations, text, textPos);
           decorateTagsAndBlocks(decorations, text, textPos);
 
-          if (isInsideNode(state, pos, 'blockquote')) {
-            const calloutMarker = text.match(calloutMarkerRegex);
-            if (calloutMarker) {
-              addRangeDecoration(decorations, textPos, textPos + calloutMarker[0].length, 'weibei-callout-marker');
-            }
-            const calloutHeading = text.match(calloutHeadingRegex);
-            if (calloutHeading) {
-              const titleStart = calloutMarker ? calloutMarker[0].length : 0;
-              const titleEnd = calloutHeading[0].length;
-              if (titleEnd > titleStart) {
-                addRangeDecoration(decorations, textPos + titleStart, textPos + titleEnd, 'weibei-callout-heading-source');
-              }
-            }
-          }
         }
 
         return true;
