@@ -296,6 +296,7 @@ extension View {
             .foregroundColor(WeiBeiTheme.ink)
             .foregroundStyle(WeiBeiTheme.ink)
             .tint(WeiBeiTheme.link)
+            .environment(\.colorScheme, .light)
             .padding(.horizontal, horizontalPadding)
             .frame(minHeight: height)
             .background {

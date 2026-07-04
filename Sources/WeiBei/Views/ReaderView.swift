@@ -457,7 +457,12 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                 object: view,
                 queue: .main
             ) { [weak self] _ in
-                guard let self, let view = self.observedView, let selection = view.currentSelection, let text = selection.string else { return }
+                guard let self, let view = self.observedView else { return }
+                guard let selection = view.currentSelection, let text = selection.string, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                    self.onSelectionChange("", nil, self.pageIndex.wrappedValue)
+                    return
+                }
+                selection.color = NSColor(red: 0.57, green: 0.15, blue: 0.105, alpha: 0.20)
                 let selectedPageIndex = Self.pageIndex(for: selection, in: view) ?? self.pageIndex.wrappedValue
                 self.onSelectionChange(text, Self.anchor(for: selection, in: view), selectedPageIndex)
             }
@@ -587,20 +592,38 @@ struct WebReaderRepresentable: NSViewRepresentable {
 
     static let selectionScript = """
     (() => {
+      let frame = 0;
+      let lastPayload = { text: "", x: null, y: null };
+
       function reportSelection() {
-        const selection = window.getSelection();
-        const text = selection ? selection.toString().trim() : "";
-        if (!text) { return; }
-        const range = selection.rangeCount ? selection.getRangeAt(0) : null;
-        const rect = range ? range.getBoundingClientRect() : null;
-        window.webkit.messageHandlers.selection.postMessage({
-          text,
-          x: rect ? rect.left + rect.width / 2 : null,
-          y: rect ? rect.bottom : null
+        window.cancelAnimationFrame(frame);
+        frame = window.requestAnimationFrame(() => {
+          const selection = window.getSelection();
+          const text = selection ? selection.toString().trim() : "";
+          const range = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
+          const rect = range ? range.getBoundingClientRect() : null;
+          const payload = {
+            text,
+            x: rect && text ? rect.left + rect.width / 2 : null,
+            y: rect && text ? rect.bottom : null
+          };
+          if (
+            payload.text === lastPayload.text &&
+            payload.x === lastPayload.x &&
+            payload.y === lastPayload.y
+          ) {
+            return;
+          }
+          lastPayload = payload;
+          window.webkit.messageHandlers.selection.postMessage(payload);
         });
       }
+
+      document.addEventListener("selectionchange", reportSelection);
+      document.addEventListener("pointerup", reportSelection);
       document.addEventListener("mouseup", reportSelection);
       document.addEventListener("keyup", reportSelection);
+      document.addEventListener("touchend", reportSelection);
     })();
     """
 
@@ -610,6 +633,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
       style.textContent = `
         html, body { max-width: 100%; overflow-x: hidden; color-scheme: light; }
         body, main, article, section, div, p, li, blockquote, td, th, span { color: #1d1814 !important; }
+        ::selection { background: rgba(145, 38, 27, 0.20); color: #1d1814; }
         a { color: #31566b !important; }
         body, main, article, section, div { box-sizing: border-box; max-width: 100%; }
         h1, h2, h3, h4, p, li, blockquote { overflow-wrap: anywhere; word-break: normal; }
@@ -802,6 +826,10 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
         textView.font = .monospacedSystemFont(ofSize: 15, weight: .regular)
         textView.textColor = NSColor(red: 0.115, green: 0.095, blue: 0.080, alpha: 1.0)
         textView.backgroundColor = .clear
+        textView.selectedTextAttributes = [
+            .backgroundColor: NSColor(red: 0.57, green: 0.15, blue: 0.105, alpha: 0.20),
+            .foregroundColor: NSColor(red: 0.115, green: 0.095, blue: 0.080, alpha: 1.0)
+        ]
         textView.string = text
         textView.delegate = context.coordinator
         textView.textContainerInset = NSSize(width: 18, height: 18)
@@ -831,7 +859,10 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             let range = textView.selectedRange()
-            guard range.length > 0, let stringRange = Range(range, in: textView.string) else { return }
+            guard range.length > 0, let stringRange = Range(range, in: textView.string) else {
+                onSelectionChange("", nil)
+                return
+            }
             onSelectionChange(String(textView.string[stringRange]), Self.anchor(for: range, in: textView))
         }
 

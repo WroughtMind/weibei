@@ -1114,11 +1114,15 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func clearUnpinnedFloatingSelection(keepContext: Bool = true) {
-        guard !pinnedFloatingAgent else { return }
         if !keepContext {
             selectionContext = nil
+            selectionAnchor = nil
+            floatingSelectionPrompt = "当前选区"
         }
-        selectionAnchor = nil
+        guard !pinnedFloatingAgent else { return }
+        if keepContext {
+            selectionAnchor = nil
+        }
         if agentSurface == .selectionFloat {
             agentSurface = .hidden
         }

@@ -30,6 +30,7 @@ const bridge = window.webkit?.messageHandlers;
 let editor;
 let lastMarkdown = '';
 let lastSelectionRange = null;
+let lastSelectionReport = { text: null, rectKey: null };
 let frontmatterBlock = '';
 let isEditable = window.weiBeiMarkdownEditable !== false;
 let currentDocumentID = window.weiBeiDocumentID || '';
@@ -975,9 +976,19 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
 
 const reportSelection = () => {
   const text = selectedText();
-  if (!text) return;
+  const rect = text ? rectFromSelection() : null;
+  const rectKey = rect
+    ? `${Math.round(rect.x)}:${Math.round(rect.y)}:${Math.round(rect.width)}:${Math.round(rect.height)}`
+    : '';
+  if (text === lastSelectionReport.text && rectKey === lastSelectionReport.rectKey) return;
+  lastSelectionReport = { text, rectKey };
+  if (!text) {
+    lastSelectionRange = null;
+    post('selectionChanged', { text: '', rect: null });
+    return;
+  }
   lastSelectionRange = editorSelectionRange();
-  post('selectionChanged', { text, rect: rectFromSelection() });
+  post('selectionChanged', { text, rect });
 };
 
 const ensureEditor = () => {

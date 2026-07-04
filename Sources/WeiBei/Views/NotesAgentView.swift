@@ -1071,17 +1071,6 @@ struct FloatingSelectionAgentView: View {
                     closeFloatingAgent()
                 }
             }
-
-            Button {
-                closeFloatingAgent()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.caption2)
-                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                    .padding(.leading, 8)
-            }
-            .accessibilityLabel(Text("关闭选区对话"))
-            .help("关闭选区对话")
         }
         .font(.caption.weight(.medium))
         .buttonStyle(.plain)
