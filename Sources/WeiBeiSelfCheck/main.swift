@@ -205,7 +205,11 @@ expect(
         && !themeSource.contains("NSColor("),
     "input placeholders use a shared SwiftUI semantic ink overlay without white vibrancy or AppKit drawing"
 )
-expect(themeSource.contains("func weibeiInputSurface") && themeSource.contains(".foregroundColor(WeiBeiTheme.ink)") && themeSource.contains(".foregroundStyle(WeiBeiTheme.ink)") && themeSource.contains(".tint(WeiBeiTheme.link)"), "input surfaces force readable text color on paper")
+expect(themeSource.contains("func weibeiInputSurface")
+    && themeSource.contains(".foregroundColor(WeiBeiTheme.ink)")
+    && themeSource.contains(".foregroundStyle(WeiBeiTheme.ink)")
+    && themeSource.contains(".tint(WeiBeiTheme.link)")
+    && !themeSource.contains(".environment(\\.colorScheme, .light)"), "input surfaces force readable text color without locking the control color scheme")
 expect(themeSource.contains("tertiaryInk.opacity(0.58)") && themeSource.contains("tertiaryInk.opacity(0.60)"), "disabled button text remains legible on light paper surfaces")
 expect(contentViewSource.contains("ResizableTwoPane<First: View, Second: View>: NSViewRepresentable"), "two-pane layout uses native bridge")
 expect(contentViewSource.contains("ResizableThreePane<First: View, Second: View, Third: View>: NSViewRepresentable"), "three-pane layout uses native bridge")

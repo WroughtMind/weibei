@@ -292,7 +292,6 @@ extension View {
             .foregroundColor(WeiBeiTheme.ink)
             .foregroundStyle(WeiBeiTheme.ink)
             .tint(WeiBeiTheme.link)
-            .environment(\.colorScheme, .light)
             .padding(.horizontal, 10)
             .frame(minHeight: height)
             .background(WeiBeiTheme.paperInset.opacity(active ? 0.52 : 0.30))
