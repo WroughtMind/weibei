@@ -130,6 +130,7 @@ let noteOnlyInsight = QuietInsight.make(
 )
 expect(noteOnlyInsight.body.contains("当前笔记有一条") && !noteOnlyInsight.body.contains("先导入"), "note-only quiet insight uses note context")
 expect(noteOnlyInsight.noteBlock.contains("来源：新概念笔记"), "note-only quiet insight keeps note source")
+expect(noteOnlyInsight.noteBlock.contains("> [!note] 阅读线索") && !noteOnlyInsight.noteBlock.contains("静默洞察"), "quiet insight writes as a readable callout instead of a noisy bullet")
 let coveredNoteSelectionInsight = QuietInsight.make(
     materialTitle: "新概念笔记",
     materialText: "",
@@ -139,7 +140,7 @@ let coveredNoteSelectionInsight = QuietInsight.make(
 expect(!coveredNoteSelectionInsight.body.contains("当前材料其他段落"), "covered note selection avoids fake material relation")
 let agentInsight = QuietInsight.agent(materialTitle: "利率资料", answer: "这份材料更适合先补通胀预期这一层。")
 expect(agentInsight?.body.contains("通胀预期") == true, "agent insight keeps answer")
-expect(agentInsight?.noteBlock.contains("Agent 洞察") == true, "agent insight writes labeled note block")
+expect(agentInsight?.noteBlock.contains("> [!note] 阅读线索") == true && agentInsight?.noteBlock.contains("Agent 洞察") == false, "agent insight writes the same quiet reading-line callout")
 expect(QuietInsight.agent(materialTitle: "利率资料", answer: "   \n") == nil, "empty agent insight is ignored")
 let markdownNoiseInsight = QuietInsight.make(
     materialTitle: "Markdown 验收",
