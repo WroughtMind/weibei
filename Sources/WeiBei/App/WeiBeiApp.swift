@@ -63,7 +63,7 @@ struct WeiBeiApp: App {
                     .keyboardShortcut("2")
                 Button("聚焦笔记") { animateLayout { store.focus(.notes) } }
                     .keyboardShortcut("3")
-                Button("聚焦 Agent") { animateLayout { store.focus(.agent) } }
+                Button("聚焦对话") { animateLayout { store.focus(.agent) } }
                     .keyboardShortcut("4")
 
                 Divider()
@@ -137,10 +137,10 @@ struct WeiBeiApp: App {
                     Button("写入回答到笔记") { animatePanel { store.applyLastAgentAnswerToNote() } }
                         .keyboardShortcut("a", modifiers: [.command, .shift])
                     if store.canReplaceNoteSelection {
-                        Button("用 Agent 替换笔记选区") { animatePanel { store.replaceSelectionWithLastAgentAnswer() } }
+                        Button("替换笔记选区") { animatePanel { store.replaceSelectionWithLastAgentAnswer() } }
                             .keyboardShortcut("r", modifiers: [.command, .shift])
                     }
-                    Button("追加 Agent 整理建议") { animatePanel { store.applyAgentPatchToEditor() } }
+                    Button("追加整理建议") { animatePanel { store.applyAgentPatchToEditor() } }
                         .keyboardShortcut("e", modifiers: [.command, .shift])
                 }
 
@@ -251,7 +251,7 @@ struct SettingsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 10) {
-                sectionTitle("Agent")
+                sectionTitle("对话设置")
 
                 SecureField("", text: $store.openAIAPIKey)
                     .textFieldStyle(.plain)

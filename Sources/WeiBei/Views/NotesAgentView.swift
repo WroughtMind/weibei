@@ -845,13 +845,13 @@ struct AgentDrawerView: View {
                     .focused($draftFocused)
                     .foregroundColor(WeiBeiTheme.ink)
                 .font(.system(size: 13))
-                .weibeiInputSurface(active: draftFocused)
+                .weibeiInputSurface(active: draftFocused, height: 42)
                 .weibeiInputPrompt(drawerPrompt, visible: store.agentDraft.isEmpty, fontSize: 13)
                 if canSend {
                     Button { Task { await store.askAgent() } } label: {
                         Image(systemName: "paperplane.fill")
                     }
-                    .buttonStyle(WeiBeiIconButtonStyle(active: true))
+                    .buttonStyle(WeiBeiIconButtonStyle(active: true, size: 34))
                     .accessibilityLabel(Text("发送"))
                     .help("发送")
                     .transition(WeiBeiTransition.floating)
@@ -1147,8 +1147,8 @@ struct FloatingSelectionAgentView: View {
                 }
             }
             .padding(.horizontal, 8)
-            .frame(height: 30)
-            .weibeiInputSurface(active: draftFocused)
+            .frame(height: 34)
+            .weibeiInputSurface(active: draftFocused, height: 34)
             .weibeiInputPrompt("继续追问", visible: store.agentDraft.isEmpty, leading: 18, fontSize: 12)
         }
         .padding(10)

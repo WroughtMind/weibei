@@ -314,7 +314,7 @@ private struct UnifiedTopBarView: View {
     private var controlHeight: CGFloat {
         switch variant {
         case .compact, .glyph:
-            return 24
+            return 28
         case .wide:
             return 28
         default:
@@ -566,12 +566,12 @@ private struct UnifiedTopBarView: View {
 
     private var agentButtonHelp: String {
         if hasPrimaryAgentPaneAvailable {
-            return "打开 Agent 对话区"
+            return "打开对话区"
         }
         if store.selectionContext != nil {
-            return "让 Agent 回答当前选区"
+            return "按当前选区提问"
         }
-        return store.hasSelectedMaterial ? "让 Agent 基于当前资料回答" : "让 Agent 基于当前笔记回答"
+        return store.hasSelectedMaterial ? "按当前资料提问" : "按当前笔记提问"
     }
 
     private func activateAgentEntry() {
@@ -630,7 +630,7 @@ private struct UnifiedTopBarView: View {
                 }
             }
 
-            Section("Agent 入口") {
+            Section("对话入口") {
                 ForEach(store.visibleAgentSurfaces) { surface in
                     Button(surface.label) {
                         withAnimation(WeiBeiMotion.panel) {

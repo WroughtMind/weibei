@@ -15,7 +15,7 @@ struct CommandPaletteView: View {
             PaletteCommand(title: "聚焦资料", shortcut: "⌘1", animation: WeiBeiMotion.layout) { store.focus(.library) },
             PaletteCommand(title: "聚焦阅读", shortcut: "⌘2", animation: WeiBeiMotion.layout) { store.focus(.reader) },
             PaletteCommand(title: "聚焦笔记", shortcut: "⌘3", animation: WeiBeiMotion.layout) { store.focus(.notes) },
-            PaletteCommand(title: "聚焦 Agent", shortcut: "⌘4", animation: WeiBeiMotion.layout) { store.focus(.agent) },
+            PaletteCommand(title: "聚焦对话", shortcut: "⌘4", animation: WeiBeiMotion.layout) { store.focus(.agent) },
             PaletteCommand(title: "上一份资料", shortcut: "⌥⌘↑", animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: -1) },
             PaletteCommand(title: "下一份资料", shortcut: "⌥⌘↓", animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: 1) },
             PaletteCommand(title: store.showLibrary ? "收起资料库" : "打开资料库", shortcut: "⌘B", animation: WeiBeiMotion.layout) { store.toggleLibrary() },
