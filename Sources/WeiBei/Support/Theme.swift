@@ -134,6 +134,10 @@ enum WeiBeiTheme {
         light: WeiBeiTone(red: 0.490, green: 0.430, blue: 0.365),
         dark: WeiBeiTone(hex: 0x6F6655)
     )
+    static let placeholderInk = Color.weiBei(
+        light: WeiBeiTone(red: 0.405, green: 0.345, blue: 0.290),
+        dark: WeiBeiTone(hex: 0xAFA48C)
+    )
     static let hairline = Color.weiBei(
         light: WeiBeiTone(red: 0.500, green: 0.380, blue: 0.260, alpha: 0.24),
         dark: WeiBeiTone(hex: 0x3A3328, alpha: 0.72)

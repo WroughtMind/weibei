@@ -210,7 +210,7 @@ private struct UnifiedTopBarView: View {
                     text: $store.readerSearch,
                     prompt: Text("资料内搜索")
                         .font(.system(size: 12))
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        .foregroundStyle(WeiBeiTheme.placeholderInk)
                 )
                     .textFieldStyle(.plain)
                     .focused(searchFocused)

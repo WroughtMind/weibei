@@ -308,7 +308,7 @@ struct SettingsView: View {
                     text: $store.openAIAPIKey,
                     prompt: Text("OpenAI 密钥")
                         .font(.system(size: 13))
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        .foregroundStyle(WeiBeiTheme.placeholderInk)
                 )
                     .textFieldStyle(.plain)
                     .foregroundColor(WeiBeiTheme.ink)
@@ -345,7 +345,7 @@ struct SettingsView: View {
                     ),
                     prompt: Text("模型")
                         .font(.system(size: 13))
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        .foregroundStyle(WeiBeiTheme.placeholderInk)
                 )
                 .textFieldStyle(.plain)
                 .foregroundColor(WeiBeiTheme.ink)

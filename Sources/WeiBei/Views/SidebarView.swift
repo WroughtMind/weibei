@@ -28,7 +28,7 @@ struct SidebarView: View {
                     text: $store.librarySearch,
                     prompt: Text("搜索资料库")
                         .font(.system(size: 13))
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        .foregroundStyle(WeiBeiTheme.placeholderInk)
                 )
                     .textFieldStyle(.plain)
                     .focused($librarySearchFocused)

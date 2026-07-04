@@ -439,7 +439,10 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
             let range = textView.selectedRange()
-            guard range.length > 0, let stringRange = Range(range, in: textView.string) else { return }
+            guard range.length > 0, let stringRange = Range(range, in: textView.string) else {
+                onSelectionChange("", nil)
+                return
+            }
             onSelectionChange(String(textView.string[stringRange]), Self.anchor(for: range, in: textView))
         }
 
@@ -723,7 +726,7 @@ struct AgentPaneView: View {
                     text: $store.agentDraft,
                     prompt: Text(agentPrompt)
                         .font(.system(size: 15))
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk),
+                        .foregroundStyle(WeiBeiTheme.placeholderInk),
                     axis: .vertical
                 )
                     .textFieldStyle(.plain)
@@ -918,7 +921,7 @@ struct AgentDrawerView: View {
                     text: $store.agentDraft,
                     prompt: Text(drawerPrompt)
                         .font(.system(size: 13))
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        .foregroundStyle(WeiBeiTheme.placeholderInk)
                 )
                     .textFieldStyle(.plain)
                     .focused($draftFocused)
@@ -998,7 +1001,7 @@ struct CornerAgentView: View {
                     text: $store.agentDraft,
                     prompt: Text(agentPrompt)
                         .font(.system(size: 13))
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        .foregroundStyle(WeiBeiTheme.placeholderInk)
                 )
                     .textFieldStyle(.plain)
                     .focused($draftFocused)
@@ -1204,7 +1207,7 @@ struct FloatingSelectionAgentView: View {
                     text: $store.agentDraft,
                     prompt: Text("继续追问")
                         .font(.caption)
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        .foregroundStyle(WeiBeiTheme.placeholderInk)
                 )
                     .textFieldStyle(.plain)
                     .foregroundColor(WeiBeiTheme.ink)

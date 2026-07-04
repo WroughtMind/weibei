@@ -139,7 +139,7 @@ struct CommandPaletteView: View {
                         text: $query,
                         prompt: Text("输入命令")
                             .font(.system(size: 18, weight: .semibold, design: .serif))
-                            .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                            .foregroundStyle(WeiBeiTheme.placeholderInk)
                     )
                         .textFieldStyle(.plain)
                         .foregroundColor(WeiBeiTheme.ink)
