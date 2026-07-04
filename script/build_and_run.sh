@@ -15,6 +15,11 @@ if [[ "$MODE" == "--package" || "$MODE" == "package" ]]; then
   MODE="package"
   PACKAGE_ONLY=true
 fi
+CHECK_ONLY=false
+if [[ "$MODE" == "--check" || "$MODE" == "check" || "$MODE" == "--verify-only" || "$MODE" == "verify-only" ]]; then
+  MODE="check"
+  CHECK_ONLY=true
+fi
 PRODUCT_NAME="WeiBei"
 APP_DISPLAY_NAME="魏碑"
 BUNDLE_ID="com.changfenhuang.weibei"
@@ -28,7 +33,9 @@ APP_MACOS="$APP_CONTENTS/MacOS"
 APP_BINARY="$APP_MACOS/$PRODUCT_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 
-if [[ "$PACKAGE_ONLY" == true ]]; then
+if [[ "$CHECK_ONLY" == true ]]; then
+  :
+elif [[ "$PACKAGE_ONLY" == true ]]; then
   if pgrep -x "$PRODUCT_NAME" >/dev/null; then
     echo "package blocked: $APP_DISPLAY_NAME is running; quit it first so dist can be replaced without touching the active window." >&2
     exit 6
@@ -46,21 +53,23 @@ if [[ -d "$ROOT_DIR/node_modules" ]]; then
 fi
 
 swift build
-BUILD_DIR="$(swift build --show-bin-path)"
-BUILD_BINARY="$BUILD_DIR/$PRODUCT_NAME"
-RESOURCE_BUNDLE="$BUILD_DIR/${PRODUCT_NAME}_${PRODUCT_NAME}.bundle"
 
-rm -rf "$APP_BUNDLE"
-mkdir -p "$APP_MACOS"
-cp "$BUILD_BINARY" "$APP_BINARY"
-chmod +x "$APP_BINARY"
-if [[ -d "$RESOURCE_BUNDLE" ]]; then
-  cp -R "$RESOURCE_BUNDLE" "$APP_BUNDLE/"
-  mkdir -p "$APP_CONTENTS/Resources"
-  cp -R "$RESOURCE_BUNDLE" "$APP_CONTENTS/Resources/"
-fi
+if [[ "$CHECK_ONLY" != true ]]; then
+  BUILD_DIR="$(swift build --show-bin-path)"
+  BUILD_BINARY="$BUILD_DIR/$PRODUCT_NAME"
+  RESOURCE_BUNDLE="$BUILD_DIR/${PRODUCT_NAME}_${PRODUCT_NAME}.bundle"
 
-cat >"$INFO_PLIST" <<PLIST
+  rm -rf "$APP_BUNDLE"
+  mkdir -p "$APP_MACOS"
+  cp "$BUILD_BINARY" "$APP_BINARY"
+  chmod +x "$APP_BINARY"
+  if [[ -d "$RESOURCE_BUNDLE" ]]; then
+    cp -R "$RESOURCE_BUNDLE" "$APP_BUNDLE/"
+    mkdir -p "$APP_CONTENTS/Resources"
+    cp -R "$RESOURCE_BUNDLE" "$APP_CONTENTS/Resources/"
+  fi
+
+  cat >"$INFO_PLIST" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -82,6 +91,7 @@ cat >"$INFO_PLIST" <<PLIST
 </dict>
 </plist>
 PLIST
+fi
 
 open_app() {
   /usr/bin/open -n "$APP_BUNDLE"
@@ -113,6 +123,9 @@ run_verifiers() {
 }
 
 case "$MODE" in
+  check)
+    run_verifiers
+    ;;
   package)
     ;;
   run)
@@ -159,7 +172,7 @@ case "$MODE" in
     verify_window
     ;;
   *)
-    echo "usage: $0 [run|package|--debug|--logs|--telemetry|--verify [--visual-verify]|--visual-verify]" >&2
+    echo "usage: $0 [run|check|package|--debug|--logs|--telemetry|--verify [--visual-verify]|--visual-verify]" >&2
     exit 2
     ;;
 esac
