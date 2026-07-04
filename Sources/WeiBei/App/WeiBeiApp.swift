@@ -225,17 +225,19 @@ struct WeiBeiApp: App {
 private struct WeiBeiAppearanceTransition: ViewModifier {
     var mode: WeiBeiAppearanceMode
     @State private var washOpacity = 0.0
+    @State private var washColor = Color.clear
 
     func body(content: Content) -> some View {
         content
             .animation(WeiBeiMotion.appearance, value: mode)
             .overlay {
-                WeiBeiTheme.paper
+                washColor
                     .opacity(washOpacity)
                     .allowsHitTesting(false)
             }
-            .onChange(of: mode) { _, _ in
-                washOpacity = 0.24
+            .onChange(of: mode) { oldMode, _ in
+                washColor = Color(nsColor: oldMode.windowBackground)
+                washOpacity = 0.92
                 withAnimation(WeiBeiMotion.appearance) {
                     washOpacity = 0
                 }

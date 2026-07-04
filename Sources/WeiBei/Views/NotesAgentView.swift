@@ -46,18 +46,24 @@ struct NotePaneView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("笔记")
-                    .font(.system(size: 18, weight: .semibold, design: .serif))
-                    .foregroundStyle(WeiBeiTheme.ink)
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("笔记")
+                        .font(.system(size: 18, weight: .semibold, design: .serif))
+                        .foregroundStyle(WeiBeiTheme.ink)
+                    Text(noteHeaderSubtitle)
+                        .font(.caption2)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .lineLimit(1)
+                }
                 Spacer()
                 noteModeControl
                 if !isImmersiveWriting {
                     Button { store.resetNote() } label: {
-                        Label("新建", systemImage: "doc.badge.plus")
-                            .labelStyle(.titleAndIcon)
+                        Image(systemName: "doc.badge.plus")
                     }
-                    .buttonStyle(WeiBeiTextActionButtonStyle())
+                    .buttonStyle(WeiBeiIconButtonStyle(size: 24))
+                    .accessibilityLabel(Text("新建独立 Markdown 笔记"))
                     .help("新建独立 Markdown 笔记")
                     if store.canUseSelectedMarkdownAsNotebookNote {
                         Button("作为笔记编辑") {
@@ -139,6 +145,12 @@ struct NotePaneView: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(WeiBeiTheme.hairline.opacity(0.62), lineWidth: 1)
         }
+    }
+
+    private var noteHeaderSubtitle: String {
+        store.selectedItem?.isNotebookNote == true
+            ? (store.selectedItem?.title ?? "当前笔记")
+            : store.agentNoteTitle
     }
 
     private func noteFileStatusColor(for message: String) -> Color {
@@ -1855,7 +1867,8 @@ private struct AgentBubble: View {
 
     private var displayText: String {
         guard isCredentialNotice else { return message.text }
-        return "设置后会结合\(store.agentPromptScope)作答；未配置时不会编造内容。"
+        let scope = store.selectionContext == nil ? store.agentPromptScope : "\(store.agentPromptScope)、当前选区"
+        return "设置后会结合\(scope)作答；未配置时不会编造内容。"
     }
 
     private var bubblePadding: EdgeInsets {

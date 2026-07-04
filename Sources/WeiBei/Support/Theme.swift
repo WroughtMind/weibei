@@ -220,7 +220,7 @@ enum WeiBeiMotion {
     static let reveal = Animation.interactiveSpring(response: 0.24, dampingFraction: 0.88, blendDuration: 0.04)
     static let panel = Animation.interactiveSpring(response: 0.30, dampingFraction: 0.88, blendDuration: 0.06)
     static let layout = Animation.interactiveSpring(response: 0.38, dampingFraction: 0.90, blendDuration: 0.08)
-    static let appearance = Animation.easeInOut(duration: 0.32)
+    static let appearance = Animation.easeInOut(duration: 0.42)
 }
 
 enum WeiBeiTransition {
