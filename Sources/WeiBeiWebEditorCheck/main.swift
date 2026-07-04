@@ -227,11 +227,17 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           })(),
           foldedCallout: document.querySelector('blockquote.weibei-callout')?.getAttribute('data-callout-fold') || '',
           calloutTitle: document.querySelector('blockquote.weibei-callout')?.getAttribute('data-callout-title') || '',
-          calloutSourceHidden: (() => {
-            const source = document.querySelector('blockquote.weibei-callout .weibei-callout-heading-source');
-            if (!source) return false;
-            const style = getComputedStyle(source);
-            return style.opacity === '0' && (style.height === '0px' || style.fontSize === '0px');
+          calloutHeadingVisible: (() => {
+            const heading = document.querySelector('blockquote.weibei-callout .weibei-callout-heading');
+            if (!heading) return false;
+            const style = getComputedStyle(heading);
+            return style.opacity !== '0' && style.fontSize !== '0px' && heading.textContent.includes('可编辑标题');
+          })(),
+          calloutMarkerHidden: (() => {
+            const marker = document.querySelector('blockquote.weibei-callout .weibei-callout-heading .weibei-callout-marker');
+            if (!marker) return false;
+            const style = getComputedStyle(marker);
+            return style.color === 'rgba(0, 0, 0, 0)' && style.fontSize === '0px';
           })()
         }))();
         """
@@ -338,7 +344,11 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("callout title swallowed body text")
                 return
             }
-            if result["calloutSourceHidden"] as? Bool != true {
+            if result["calloutHeadingVisible"] as? Bool != true {
+                self.fail("callout title should stay visible and editable in writing mode")
+                return
+            }
+            if result["calloutMarkerHidden"] as? Bool != true {
                 self.fail("callout source marker should not remain visible in writing mode")
                 return
             }

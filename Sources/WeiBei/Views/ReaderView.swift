@@ -305,6 +305,9 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         view.autoScales = true
         view.displayDirection = .vertical
         view.backgroundColor = .clear
+        DispatchQueue.main.async {
+            WeiBeiQuietScrollers.configureRecursively(in: view)
+        }
         context.coordinator.observe(view)
         return view
     }
@@ -332,6 +335,9 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         }
 
         context.coordinator.applySearch(searchQuery, in: view)
+        DispatchQueue.main.async {
+            WeiBeiQuietScrollers.configureRecursively(in: view)
+        }
     }
 
     final class Coordinator: NSObject {
@@ -712,6 +718,7 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
+        WeiBeiQuietScrollers.configure(scrollView, hasHorizontalScroller: false)
         scrollView.drawsBackground = false
 
         let textView = NSTextView()

@@ -406,6 +406,14 @@ const addRangeDecoration = (decorations, from, to, className, attrs = {}) => {
   decorations.push(Decoration.inline(from, to, { ...attrs, class: className }));
 };
 
+const isInsideNode = (state, pos, typeName) => {
+  const resolved = state.doc.resolve(pos);
+  for (let depth = resolved.depth; depth >= 0; depth -= 1) {
+    if (resolved.node(depth).type.name === typeName) return true;
+  }
+  return false;
+};
+
 const decorateDelimitedInline = (decorations, text, pos, regex, markerSize, className) => {
   for (const match of text.matchAll(regex)) {
     const from = pos + (match.index || 0);
@@ -817,6 +825,29 @@ const annotateMathErrors = () => {
   });
 };
 
+const quietScrollableSelector = '.ProseMirror pre, .ProseMirror div[data-type="math_block"], .ProseMirror div[data-type="math-block"]';
+const scrollFadeTimers = new WeakMap();
+
+const markScrollActive = (element) => {
+  if (!(element instanceof Element)) return;
+  element.classList.add('weibei-scroll-active');
+  const timer = scrollFadeTimers.get(element);
+  if (timer) window.clearTimeout(timer);
+  scrollFadeTimers.set(element, window.setTimeout(() => {
+    element.classList.remove('weibei-scroll-active');
+    scrollFadeTimers.delete(element);
+  }, 850));
+};
+
+const installQuietScrollIndicators = () => {
+  document.addEventListener('scroll', (event) => {
+    const target = event.target instanceof Element
+      ? event.target.closest(quietScrollableSelector)
+      : null;
+    if (target) markScrollActive(target);
+  }, true);
+};
+
 const weiBeiDialectPlugin = $prose(() => new Plugin({
   view(view) {
     scheduleImageResolution(view);
@@ -874,7 +905,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
           if (match) {
             const calloutType = match[1].toLowerCase();
             decorations.push(Decoration.node(pos, pos + node.nodeSize, {
-              class: `weibei-callout weibei-callout-${calloutType}`,
+              class: `weibei-callout weibei-callout-has-heading weibei-callout-${calloutType}`,
               'data-callout': calloutType,
               'data-callout-fold': match[2] || '',
               'data-callout-title': (match[3] || calloutLabels[calloutType] || calloutType).trim(),
@@ -886,7 +917,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
           const calloutHeading = node.textContent.trimStart().match(calloutRegex);
           if (calloutHeading) {
             decorations.push(Decoration.node(pos, pos + node.nodeSize, {
-              class: 'weibei-callout-heading-source',
+              class: 'weibei-callout-heading',
             }));
           }
         }
@@ -922,7 +953,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
           decorateSourceReferences(decorations, text, textPos);
           decorateTagsAndBlocks(decorations, text, textPos);
 
-          if (parentName === 'blockquote') {
+          if (isInsideNode(state, pos, 'blockquote')) {
             const callout = text.match(new RegExp(`^\\s*\\[!(?:${calloutPattern})\\][+-]?\\s*`, 'i'));
             if (callout) {
               addRangeDecoration(decorations, textPos, textPos + callout[0].length, 'weibei-callout-marker');
@@ -1159,6 +1190,7 @@ Editor
   .then((created) => {
     editor = created;
     syncEditableState();
+    installQuietScrollIndicators();
     document.querySelector('#editor-status')?.remove();
     lastMarkdown = getMarkdownInternal();
     document.addEventListener('mouseup', reportSelection);

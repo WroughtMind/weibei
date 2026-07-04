@@ -71,13 +71,26 @@
     .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-thumb {
       border: 2px solid rgba(239, 225, 199, .72);
       border-radius: 999px;
-      background: rgba(92, 70, 46, .14);
+      background: transparent;
+      transition: background-color .18s ease-out;
+    }
+
+    .ProseMirror pre.weibei-scroll-active::-webkit-scrollbar-thumb,
+    .ProseMirror pre:hover::-webkit-scrollbar-thumb,
+    .ProseMirror pre:focus-within::-webkit-scrollbar-thumb,
+    .ProseMirror div[data-type="math_block"].weibei-scroll-active::-webkit-scrollbar-thumb,
+    .ProseMirror div[data-type="math_block"]:hover::-webkit-scrollbar-thumb,
+    .ProseMirror div[data-type="math_block"]:focus-within::-webkit-scrollbar-thumb,
+    .ProseMirror div[data-type="math-block"].weibei-scroll-active::-webkit-scrollbar-thumb,
+    .ProseMirror div[data-type="math-block"]:hover::-webkit-scrollbar-thumb,
+    .ProseMirror div[data-type="math-block"]:focus-within::-webkit-scrollbar-thumb {
+      background: rgba(92, 70, 46, .16);
     }
 
     .ProseMirror pre::-webkit-scrollbar-thumb:hover,
     .ProseMirror div[data-type="math_block"]::-webkit-scrollbar-thumb:hover,
     .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-thumb:hover {
-      background: rgba(92, 70, 46, .28);
+      background: rgba(92, 70, 46, .24);
     }
 
     .milkdown {
@@ -325,16 +338,35 @@
     .ProseMirror blockquote.weibei-callout-todo::before { content: "待办"; }
     .ProseMirror blockquote.weibei-callout::before { content: attr(data-callout-title); }
 
-    .ProseMirror blockquote.weibei-callout .weibei-callout-heading-source {
-      height: 0;
-      margin: 0;
-      overflow: hidden;
-      opacity: 0;
-      color: transparent;
-      font-size: 0;
-      line-height: 0;
-      pointer-events: none;
-      user-select: none;
+    .ProseMirror blockquote.weibei-callout.weibei-callout-has-heading::before {
+      display: none;
+    }
+
+    .ProseMirror blockquote.weibei-callout .weibei-callout-heading {
+      margin: 0 0 .34em;
+      color: var(--blue-ink);
+      font-family: -apple-system, BlinkMacSystemFont, "Songti SC", serif;
+      font-size: .78em;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+
+    .ProseMirror blockquote.weibei-callout-tip .weibei-callout-heading,
+    .ProseMirror blockquote.weibei-callout-success .weibei-callout-heading,
+    .ProseMirror blockquote.weibei-callout-summary .weibei-callout-heading,
+    .ProseMirror blockquote.weibei-callout-abstract .weibei-callout-heading {
+      color: var(--moss);
+    }
+
+    .ProseMirror blockquote.weibei-callout-warning .weibei-callout-heading {
+      color: var(--ochre);
+    }
+
+    .ProseMirror blockquote.weibei-callout-caution .weibei-callout-heading,
+    .ProseMirror blockquote.weibei-callout-danger .weibei-callout-heading,
+    .ProseMirror blockquote.weibei-callout-failure .weibei-callout-heading,
+    .ProseMirror blockquote.weibei-callout-bug .weibei-callout-heading {
+      color: var(--cinnabar);
     }
 
     .ProseMirror code {
@@ -534,6 +566,13 @@
     body[data-editable="false"] .weibei-callout-marker {
       color: transparent;
       font-size: 0;
+      user-select: none;
+    }
+
+    .ProseMirror blockquote.weibei-callout .weibei-callout-heading .weibei-callout-marker {
+      color: transparent;
+      font-size: 0;
+      line-height: 0;
       user-select: none;
     }
 

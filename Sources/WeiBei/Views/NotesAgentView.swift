@@ -288,6 +288,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
+        WeiBeiQuietScrollers.configure(scrollView, hasHorizontalScroller: false)
         scrollView.drawsBackground = false
 
         let textView = MarkdownSourceTextView()
