@@ -711,6 +711,13 @@ expect(contentViewSource.contains("ContextRailItem(title: \"资料库\", help: \
     && workspaceStoreSource.contains("func revealLibrary()"), "immersive writing keeps a library entry and opens it through the shared store helper")
 expect(contentViewSource.components(separatedBy: "ContextRailItem(title: \"资料库\", help: \"打开资料库选择资料\", systemImage: \"sidebar.left\"").count >= 3
     && contentViewSource.contains("emphasized: items.isEmpty"), "immersive rails keep a lightweight library chooser even when a document is already selected")
+expect(contentViewSource.contains("help: \"追问当前选区\"")
+    && contentViewSource.contains("help: \"整理问题、结论和缺少证据\"")
+    && contentViewSource.contains("help: \"生成笔记大纲\"")
+    && contentViewSource.contains("help: \"检查笔记缺少来源的位置\"")
+    && contentViewSource.contains("help: \"润色当前笔记\"")
+    && !contentViewSource.contains("help: \"用 Agent")
+    && !contentViewSource.contains("help: \"让 Agent"), "immersive rail help text uses direct task language instead of internal agent wording")
 expect(contentViewSource.contains("store.agentPromptScope")
     && contentViewSource.contains("store.hasSelectedMaterial ? \"请检查当前笔记缺少来源的位置")
     && contentViewSource.contains("\"请检查当前笔记缺少来源的位置，并标出需要补证据的段落。\""), "immersive agent rails reuse real context wording")

@@ -836,7 +836,7 @@ private struct LayoutContentView: View {
         )
         if store.selectionContext != nil {
             items.append(
-                ContextRailItem(title: "选区", help: "用 Agent 追问当前选区", systemImage: "text.cursor") {
+                ContextRailItem(title: "选区", help: "追问当前选区", systemImage: "text.cursor") {
                     askCurrentSelection()
                 }
             )
@@ -863,7 +863,7 @@ private struct LayoutContentView: View {
             )
         }
         items.append(
-            ContextRailItem(title: "问题与结论", help: "让 Agent 整理问题、结论和缺少证据", systemImage: "checkmark.circle") {
+            ContextRailItem(title: "问题与结论", help: "整理问题、结论和缺少证据", systemImage: "checkmark.circle") {
                 prepareAgentDraft("请根据\(store.agentPromptScope)，整理出问题、结论和还缺少的证据。")
             }
         )
@@ -901,13 +901,13 @@ private struct LayoutContentView: View {
 
     private var writingAssistRailItems: [ContextRailItem] {
         [
-            ContextRailItem(title: "大纲建议", help: "让 Agent 生成笔记大纲", systemImage: "list.bullet.rectangle", emphasized: true) {
+            ContextRailItem(title: "大纲建议", help: "生成笔记大纲", systemImage: "list.bullet.rectangle", emphasized: true) {
                 prepareAgentDraft("请根据\(store.agentPromptScope)，给出一版更清晰的笔记大纲。")
             },
-            ContextRailItem(title: "补来源", help: "让 Agent 检查笔记缺少来源的位置", systemImage: "link") {
+            ContextRailItem(title: "补来源", help: "检查笔记缺少来源的位置", systemImage: "link") {
                 prepareAgentDraft(store.hasSelectedMaterial ? "请检查当前笔记缺少来源的位置，并建议应该引用当前材料的哪些部分。" : "请检查当前笔记缺少来源的位置，并标出需要补证据的段落。")
             },
-            ContextRailItem(title: "润色表达", help: "让 Agent 润色当前笔记", systemImage: "text.quote") {
+            ContextRailItem(title: "润色表达", help: "润色当前笔记", systemImage: "text.quote") {
                 prepareAgentDraft("请整理和润色当前笔记，保留原意，并标出缺少来源的位置。")
             }
         ]
