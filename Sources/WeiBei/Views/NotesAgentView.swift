@@ -1314,17 +1314,15 @@ struct QuietInsightView: View {
 
     private var compactBody: some View {
         HStack(alignment: .top, spacing: 9) {
-            Capsule()
-                .fill(WeiBeiTheme.cinnabar.opacity(0.48))
-                .frame(width: 2, height: 34)
+            Rectangle()
+                .fill(WeiBeiTheme.cinnabar.opacity(compactHovering ? 0.52 : 0.32))
+                .frame(width: 2)
+                .padding(.vertical, 2)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text(store.quietInsightTitle)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
                 Text(store.quietInsight.body)
                     .font(.system(size: 12, weight: .regular))
-                    .lineLimit(2)
+                    .lineLimit(3)
                     .lineSpacing(2)
                     .foregroundStyle(WeiBeiTheme.ink)
                 Text(store.quietInsightSourceLabel)
@@ -1359,10 +1357,18 @@ struct QuietInsightView: View {
                 .transition(WeiBeiTransition.floating)
             }
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 8)
-        .frame(width: 238)
-        .weibeiAnnotationPanel(cornerRadius: 5)
+        .padding(.leading, 7)
+        .padding(.trailing, compactHovering ? 6 : 2)
+        .padding(.vertical, 5)
+        .frame(width: compactHovering ? 244 : 216, alignment: .leading)
+        .background(WeiBeiTheme.paperRaised.opacity(compactHovering ? 0.42 : 0.0))
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(WeiBeiTheme.hairline.opacity(compactHovering ? 0.40 : 0.0))
+                .frame(height: 1)
+        }
+        .offset(x: compactHovering ? 2 : 0)
         .onHover { hovering in
             withAnimation(WeiBeiMotion.hover) {
                 compactHovering = hovering
