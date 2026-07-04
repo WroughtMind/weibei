@@ -294,7 +294,7 @@ final class WorkspaceStore: ObservableObject {
         guard layout.hasCollapsibleRightPane else { return }
         showRightPane.toggle()
         clearUnpinnedFloatingSelection()
-        focus(showRightPane ? .notes : .reader)
+        focus(showRightPane ? rightPaneRevealFocus : .reader)
         save()
     }
 
@@ -1088,6 +1088,15 @@ final class WorkspaceStore: ObservableObject {
     private func clearGeneratedQuietInsight() {
         generatedQuietInsight = nil
         quietInsightSignature = ""
+    }
+
+    private var rightPaneRevealFocus: PaneFocus {
+        switch layout {
+        case .documentNotesAgent, .immersiveConversation:
+            .agent
+        default:
+            .notes
+        }
     }
 
     private func clearUnpinnedFloatingSelection(keepContext: Bool = true) {
