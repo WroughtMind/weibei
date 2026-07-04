@@ -964,6 +964,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
       function reportSelection() {
         window.cancelAnimationFrame(frame);
         frame = window.requestAnimationFrame(() => {
+          if (window.weiBeiSuppressSelectionReport) return;
           const selection = window.getSelection();
           const text = selection ? selection.toString().trim() : "";
           const range = selection && selection.rangeCount ? selection.getRangeAt(0) : null;
@@ -1137,7 +1138,10 @@ struct WebReaderRepresentable: NSViewRepresentable {
                 y: null
               });
               if (!query) return false;
-              return window.find(query, false, false, true, false, true, false);
+              window.weiBeiSuppressSelectionReport = true;
+              const found = window.find(query, false, false, true, false, true, false);
+              window.setTimeout(() => { window.weiBeiSuppressSelectionReport = false; }, 80);
+              return found;
             })();
             """
             view.evaluateJavaScript(script)

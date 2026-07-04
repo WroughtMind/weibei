@@ -1018,6 +1018,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
 }));
 
 const reportSelection = () => {
+  if (window.weiBeiSuppressSelectionReport) return;
   const text = selectedText();
   const rect = text ? rectFromSelection() : null;
   const rectKey = rect

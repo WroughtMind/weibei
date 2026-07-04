@@ -549,7 +549,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 documentID: window.weiBeiDocumentID || ""
               });
               if (!query) return false;
-              return window.find(query, false, false, true, false, true, false);
+              window.weiBeiSuppressSelectionReport = true;
+              const found = window.find(query, false, false, true, false, true, false);
+              window.setTimeout(() => { window.weiBeiSuppressSelectionReport = false; }, 80);
+              return found;
             })();
             """)
         }
