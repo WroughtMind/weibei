@@ -454,7 +454,9 @@ expect(readerViewSource.contains("SelectionAnchorContentPoint.fromLocalPoint(loc
     && !readerViewSource.contains("contentView.convert("), "reader selection anchors route PDF, HTML, and text through the shared coordinate helper")
 expect(readerViewSource.contains("pendingPDFPageIndex") && readerViewSource.contains("applyPendingPDFPageIfReady") && readerViewSource.contains("store.readerTargetPageIndex = nil"), "pdf reader consumes source-jump target pages")
 expect(readerViewSource.contains("onSourceReference: { reference in store.openSourceReference(reference) }"), "markdown reader source references can jump back to material")
-expect(readerViewSource.contains("private struct SamplePDFView") && readerViewSource.contains("ScrollView(showsIndicators: false)"), "sample pdf page avoids a persistent SwiftUI scroll indicator")
+expect(readerViewSource.contains("private struct SamplePDFView")
+    && readerViewSource.contains("ScrollView {")
+    && !readerViewSource.contains("SamplePDFView: View {\n    var body: some View {\n        ScrollView(showsIndicators: false)"), "sample pdf page keeps the system scroll indicator available")
 let richEditorSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/RichMarkdownEditorView.swift")
 let richEditorSource = (try? String(contentsOf: richEditorSourceURL, encoding: .utf8)) ?? ""
