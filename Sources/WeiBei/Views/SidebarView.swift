@@ -23,13 +23,18 @@ struct SidebarView: View {
                 .padding(.top, 14)
                 .padding(.bottom, 10)
 
-                TextField("", text: $store.librarySearch)
+                TextField(
+                    "",
+                    text: $store.librarySearch,
+                    prompt: Text("搜索资料库")
+                        .font(.system(size: 13))
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                )
                     .textFieldStyle(.plain)
                     .focused($librarySearchFocused)
                     .foregroundColor(WeiBeiTheme.ink)
                 .font(.system(size: 13))
                 .weibeiInputSurface(active: librarySearchFocused)
-                .weibeiInputPrompt("搜索资料库", visible: store.librarySearch.isEmpty, fontSize: 13)
                 .padding(.horizontal, 14)
                 .padding(.bottom, 10)
             }

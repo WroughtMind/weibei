@@ -253,13 +253,18 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 10) {
                 sectionTitle("对话设置")
 
-                SecureField("", text: $store.openAIAPIKey)
+                SecureField(
+                    "",
+                    text: $store.openAIAPIKey,
+                    prompt: Text("OpenAI 密钥")
+                        .font(.system(size: 13))
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                )
                     .textFieldStyle(.plain)
                     .foregroundColor(WeiBeiTheme.ink)
                     .focused($focusedField, equals: .apiKey)
                 .font(.system(size: 13))
                 .weibeiInputSurface(active: focusedField == .apiKey)
-                .weibeiInputPrompt("OpenAI 密钥", visible: store.openAIAPIKey.isEmpty, fontSize: 13)
 
                 HStack(spacing: 8) {
                     Button("保存到钥匙串") { store.saveOpenAIAPIKey() }
@@ -287,14 +292,16 @@ struct SettingsView: View {
                     text: Binding(
                         get: { store.modelName },
                         set: { store.updateModelName($0) }
-                    )
+                    ),
+                    prompt: Text("模型")
+                        .font(.system(size: 13))
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
                 )
                 .textFieldStyle(.plain)
                 .foregroundColor(WeiBeiTheme.ink)
                 .focused($focusedField, equals: .model)
                 .font(.system(size: 13))
                 .weibeiInputSurface(active: focusedField == .model)
-                .weibeiInputPrompt("模型", visible: store.modelName.isEmpty, fontSize: 13)
 
                 Text("本机环境变量 WEIBEI_OPENAI_MODEL 会覆盖这里的模型。")
                     .font(.footnote)

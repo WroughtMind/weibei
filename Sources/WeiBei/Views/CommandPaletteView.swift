@@ -134,12 +134,17 @@ struct CommandPaletteView: View {
                 HStack(spacing: 10) {
                     Image(systemName: "command")
                         .foregroundStyle(WeiBeiTheme.link)
-                    TextField("", text: $query)
+                    TextField(
+                        "",
+                        text: $query,
+                        prompt: Text("输入命令")
+                            .font(.system(size: 18, weight: .semibold, design: .serif))
+                            .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                    )
                         .textFieldStyle(.plain)
                         .foregroundColor(WeiBeiTheme.ink)
                         .focused($searchFocused)
                         .font(.system(size: 18, weight: .semibold, design: .serif))
-                        .weibeiInputPrompt("输入命令", visible: query.isEmpty, leading: 0, fontSize: 18, weight: .semibold)
                 }
                 .weibeiInputSurface(active: searchFocused, height: 36)
                 .padding(.horizontal, 12)

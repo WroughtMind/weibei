@@ -862,13 +862,18 @@ struct AgentDrawerView: View {
             }
 
             HStack(spacing: 8) {
-                TextField("", text: $store.agentDraft)
+                TextField(
+                    "",
+                    text: $store.agentDraft,
+                    prompt: Text(drawerPrompt)
+                        .font(.system(size: 13))
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                )
                     .textFieldStyle(.plain)
                     .focused($draftFocused)
                     .foregroundColor(WeiBeiTheme.ink)
                 .font(.system(size: 13))
                 .weibeiInputSurface(active: draftFocused, height: 42)
-                .weibeiInputPrompt(drawerPrompt, visible: store.agentDraft.isEmpty, fontSize: 13)
                 if canSend {
                     Button { Task { await store.askAgent() } } label: {
                         Image(systemName: "paperplane.fill")
@@ -937,13 +942,18 @@ struct CornerAgentView: View {
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
 
             HStack(spacing: 8) {
-                TextField("", text: $store.agentDraft)
+                TextField(
+                    "",
+                    text: $store.agentDraft,
+                    prompt: Text(agentPrompt)
+                        .font(.system(size: 13))
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                )
                     .textFieldStyle(.plain)
                     .focused($draftFocused)
                     .foregroundColor(WeiBeiTheme.ink)
                 .font(.system(size: 13))
                 .weibeiInputSurface(active: draftFocused, height: 38)
-                .weibeiInputPrompt(agentPrompt, visible: store.agentDraft.isEmpty, fontSize: 13)
 
                 if canSend {
                     Button {
@@ -1152,7 +1162,13 @@ struct FloatingSelectionAgentView: View {
             .fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: 6) {
-                TextField("", text: $store.agentDraft)
+                TextField(
+                    "",
+                    text: $store.agentDraft,
+                    prompt: Text("继续追问")
+                        .font(.caption)
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                )
                     .textFieldStyle(.plain)
                     .foregroundColor(WeiBeiTheme.ink)
                     .focused($draftFocused)
@@ -1173,7 +1189,6 @@ struct FloatingSelectionAgentView: View {
             .padding(.horizontal, 8)
             .frame(height: 34)
             .weibeiInputSurface(active: draftFocused, height: 34)
-            .weibeiInputPrompt("继续追问", visible: store.agentDraft.isEmpty, leading: 18, fontSize: 12)
         }
         .padding(10)
         .frame(width: CGFloat(SelectionFloatingAgentPlacement.expandedHalfWidth * 2), alignment: .leading)
