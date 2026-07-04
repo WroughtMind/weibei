@@ -221,7 +221,7 @@ public enum AgentSurface: String, Codable, CaseIterable, Identifiable {
         case .quietInsight:
             return "页边洞察"
         case .hidden:
-            return "隐藏 Agent"
+            return "隐藏对话"
         }
     }
 

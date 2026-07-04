@@ -654,6 +654,8 @@ expect(appSource.contains("Button(store.showLibrary ? \"收起资料库\" : \"�
 expect(appSource.contains("Button(AgentSurface.bottomDrawer.actionLabel)")
     && appSource.contains("Button(AgentSurface.selectionFloat.actionLabel)")
     && appSource.contains("if store.canUseSelectionAgentSurface")
+    && AgentSurface.hidden.label == "隐藏对话"
+    && AgentSurface.hidden.actionLabel == "隐藏对话"
     && !appSource.contains("Agent 底部抽屉")
     && !appSource.contains("Agent 右下角小窗")
     && !appSource.contains("Agent 划线浮层")
