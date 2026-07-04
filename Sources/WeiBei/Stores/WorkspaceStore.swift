@@ -824,7 +824,7 @@ final class WorkspaceStore: ObservableObject {
         let resolvedOwnerTitle = (cleanedOwnerTitle?.isEmpty == false ? cleanedOwnerTitle : nil) ?? selectionOwnerTitle(for: source)
         withAnimation(WeiBeiMotion.panel) {
             selectionContext = SelectionContext(
-                text: String(cleaned.prefix(2_000)),
+                text: Self.boundedSelectionText(cleaned),
                 source: source,
                 ownerTitle: resolvedOwnerTitle,
                 isEditable: isEditable
@@ -842,6 +842,17 @@ final class WorkspaceStore: ObservableObject {
             return selectedItem?.title ?? "当前笔记"
         }
         return currentReferenceTitle
+    }
+
+    private static func boundedSelectionText(_ text: String) -> String {
+        let limit = 2_000
+        guard text.count > limit else { return text }
+        let prefix = text.prefix(limit)
+        if let boundary = prefix.lastIndex(where: { String($0).rangeOfCharacter(from: .whitespacesAndNewlines) != nil }),
+           boundary > prefix.startIndex {
+            return String(prefix[..<boundary]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return String(prefix)
     }
 
     private func sourceReferenceItem(from rawReference: String?) -> StudyItem? {
