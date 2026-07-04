@@ -756,11 +756,14 @@
     .ProseMirror blockquote.weibei-callout .weibei-callout-marker {
       display: inline-block;
       color: transparent;
+      opacity: 0;
       font-size: 0;
       line-height: 0;
       width: 0;
+      max-width: 0;
       overflow: hidden;
       user-select: none;
+      white-space: nowrap;
     }
 
     .ProseMirror span[data-type="math_inline"],

@@ -84,10 +84,12 @@ expect(editorIndexSource.contains(":root[data-weibei-theme=\"inkstone\"] .ProseM
     && editorIndexSource.contains("border-left-color: rgba(166, 54, 43, .38);"), "reading-line callouts use a dark-theme wash instead of a stray pale paper block")
 expect(editorIndexSource.contains(".ProseMirror blockquote.weibei-callout .weibei-callout-marker")
     && editorIndexSource.contains("display: inline-block;")
+    && editorIndexSource.contains("opacity: 0;")
     && editorIndexSource.contains("width: 0;")
+    && editorIndexSource.contains("max-width: 0;")
     && editorIndexSource.contains("overflow: hidden;"), "Obsidian callout source markers collapse inside rendered callouts")
 expect(editorIndexSource.contains("body[data-editable=\"true\"] .ProseMirror blockquote.weibei-callout.weibei-callout-has-heading::before")
-    && editorIndexSource.contains("body[data-editable=\"false\"] .ProseMirror blockquote.weibei-callout .weibei-callout-heading {\n      display: none;"), "read-only callouts show the rendered title instead of leaking the raw [!type] source line")
+    && editorIndexSource.contains("body[data-editable=\"false\"] .ProseMirror blockquote.weibei-callout .weibei-callout-heading {\n      display: none;"), "callout headings stay editable while read-only callouts show the rendered title instead of leaking the raw [!type] source line")
 let editorScriptURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/WebEditor/src/editor.js")
 let editorScriptSource = (try? String(contentsOf: editorScriptURL, encoding: .utf8)) ?? ""
