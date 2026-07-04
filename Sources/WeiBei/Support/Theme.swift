@@ -287,12 +287,16 @@ extension View {
             }
     }
 
-    func weibeiInputSurface(active: Bool = false, height: CGFloat = WeiBeiMetric.inputHeight) -> some View {
+    func weibeiInputSurface(
+        active: Bool = false,
+        height: CGFloat = WeiBeiMetric.inputHeight,
+        horizontalPadding: CGFloat = 10
+    ) -> some View {
         self
             .foregroundColor(WeiBeiTheme.ink)
             .foregroundStyle(WeiBeiTheme.ink)
             .tint(WeiBeiTheme.link)
-            .padding(.horizontal, 10)
+            .padding(.horizontal, horizontalPadding)
             .frame(minHeight: height)
             .background {
                 RoundedRectangle(cornerRadius: WeiBeiMetric.controlRadius)

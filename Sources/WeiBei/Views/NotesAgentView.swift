@@ -660,23 +660,24 @@ struct AgentPaneView: View {
             .frame(height: 18)
             .allowsHitTesting(false)
 
-            HStack(alignment: .bottom, spacing: 8) {
+            HStack(alignment: .bottom, spacing: 10) {
                 TextField("", text: $store.agentDraft, axis: .vertical)
                     .textFieldStyle(.plain)
-                    .lineLimit(1...4)
+                    .lineLimit(2...6)
                     .foregroundColor(WeiBeiTheme.ink)
                     .focused($draftFocused)
                     .onSubmit {
                         Task { await store.askAgent() }
                     }
-                .weibeiInputSurface(active: draftFocused, height: 46)
-                .weibeiInputPrompt(agentPrompt, visible: store.agentDraft.isEmpty, fontSize: 14)
+                    .padding(.vertical, 8)
+                .weibeiInputSurface(active: draftFocused, height: 64, horizontalPadding: 14)
+                .weibeiInputPrompt(agentPrompt, visible: store.agentDraft.isEmpty, leading: 14, fontSize: 14)
 
                 if canSendDraft {
                     Button { Task { await store.askAgent() } } label: {
                         Image(systemName: "paperplane.fill")
                     }
-                    .buttonStyle(WeiBeiIconButtonStyle(active: canSendDraft, size: 34))
+                    .buttonStyle(WeiBeiIconButtonStyle(active: canSendDraft, size: 38))
                     .accessibilityLabel(Text("发送"))
                     .help("发送")
                     .keyboardShortcut(.return, modifiers: [.command])
@@ -684,13 +685,11 @@ struct AgentPaneView: View {
                     .animation(WeiBeiMotion.micro, value: canSendDraft)
                 }
             }
-            .font(.system(size: 14))
+            .font(.system(size: 15))
             .frame(maxWidth: agentInputMaxWidth)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 7)
-            .padding(.horizontal, 12)
-            .padding(.top, 1)
-            .padding(.bottom, 12)
+            .padding(.horizontal, 18)
+            .padding(.top, 7)
+            .padding(.bottom, 16)
             .frame(maxWidth: .infinity)
         }
         .background(alignment: .bottom) {
