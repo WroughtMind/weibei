@@ -17,6 +17,27 @@ struct NotesAgentView: View {
     }
 }
 
+private extension View {
+    func weibeiPaneHeaderChrome(appearanceMode: WeiBeiAppearanceMode) -> some View {
+        self
+            .padding(.horizontal, 16)
+            .frame(height: 54)
+            .background(WeiBeiGlassHeaderBackground(paperOpacity: 0.72, materialOpacity: 0.12))
+            .overlay(alignment: .top) {
+                Rectangle()
+                    .fill(WeiBeiTheme.glassHighlight.opacity(0.06))
+                    .frame(height: 1)
+            }
+            .overlay(alignment: .bottom) {
+                WeiBeiHeaderHandoffFade(height: 28, opacity: 0.34)
+                    .offset(y: 28)
+            }
+            .shadow(color: WeiBeiTheme.ink.opacity(0.012), radius: 7, y: 2)
+            .zIndex(1)
+            .animation(WeiBeiMotion.appearance, value: appearanceMode)
+    }
+}
+
 struct NotePaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
 
@@ -50,20 +71,7 @@ struct NotePaneView: View {
                     }
                 }
             }
-            .padding(.horizontal, 16)
-            .frame(height: 54)
-            .background(WeiBeiGlassHeaderBackground(paperOpacity: 0.72, materialOpacity: 0.12))
-            .overlay(alignment: .top) {
-                Rectangle()
-                    .fill(WeiBeiTheme.glassHighlight.opacity(0.06))
-                    .frame(height: 1)
-            }
-            .overlay(alignment: .bottom) {
-                WeiBeiHeaderHandoffFade(height: 28, opacity: 0.34)
-                    .offset(y: 28)
-            }
-            .shadow(color: WeiBeiTheme.ink.opacity(0.012), radius: 7, y: 2)
-            .zIndex(1)
+            .weibeiPaneHeaderChrome(appearanceMode: store.appearanceMode)
 
             if let noteFileError = store.noteFileError {
                 Text(noteFileError)
@@ -626,20 +634,7 @@ struct AgentPaneView: View {
                     }
                 }
             }
-            .padding(.horizontal, 16)
-            .frame(height: 54)
-            .background(WeiBeiGlassHeaderBackground(paperOpacity: 0.72, materialOpacity: 0.12))
-            .overlay(alignment: .top) {
-                Rectangle()
-                    .fill(WeiBeiTheme.glassHighlight.opacity(0.06))
-                    .frame(height: 1)
-            }
-            .overlay(alignment: .bottom) {
-                WeiBeiHeaderHandoffFade(height: 28, opacity: 0.34)
-                    .offset(y: 28)
-            }
-            .shadow(color: WeiBeiTheme.ink.opacity(0.012), radius: 7, y: 2)
-            .zIndex(1)
+            .weibeiPaneHeaderChrome(appearanceMode: store.appearanceMode)
 
             ScrollViewReader { proxy in
                 GeometryReader { geometry in
