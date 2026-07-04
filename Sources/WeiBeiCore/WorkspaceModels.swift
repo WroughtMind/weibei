@@ -349,7 +349,7 @@ public enum SelectionFloatingAgentPlacement {
     ) -> FloatingAgentCoordinate {
         let edgePadding = 18.0
         let anchorGap = 10.0
-        let verticalGap = 18.0
+        let verticalGap = 8.0
         let contentCanvas = FloatingAgentCoordinate(x: canvas.x, y: max(1, canvas.y - topInset))
         let fallback = FloatingAgentCoordinate(x: contentCanvas.x - 128, y: contentCanvas.y - 124)
         let anchor = anchor.map { FloatingAgentCoordinate(x: $0.x, y: max(0, $0.y - topInset)) } ?? fallback

@@ -716,6 +716,8 @@ expect(webEditorSource.contains("const palette = currentTheme === 'inkstone'")
     && webEditorSource.contains("img[data-weibei-image-placeholder=\"true\"]")
     && webEditorSource.contains("image.setAttribute('src', missingImageURL())"), "web missing-image placeholders follow the current theme and refresh after theme switches")
 expect(webEditorSource.contains("const decorateCalloutHeadingSource = (decorations, node, pos) =>")
+    && webEditorSource.contains(#"^\\\\?\\[!"#)
+    && webEditorSource.contains(#"^\\s*\\\\?\\[!"#)
     && webEditorSource.contains("const contentStart = pos + 1")
     && webEditorSource.contains("addRangeDecoration(decorations, contentStart, markerEnd, 'weibei-callout-marker')")
     && webEditorSource.contains("decorateCalloutHeadingSource(decorations, node, pos);"), "callout heading decorations collapse the raw [!type] marker at paragraph range level so split inline nodes do not leak")
@@ -771,7 +773,9 @@ expect(workspaceStoreSource.contains("withAnimation(WeiBeiMotion.panel) {\n     
     && workspaceStoreSource.contains("agentSurface = .selectionFloat\n            showQuietInsight = false"), "selection updates reveal the floating agent through the shared panel animation")
 expect(workspaceStoreSource.contains("func askSelection()") && workspaceStoreSource.components(separatedBy: "withAnimation(WeiBeiMotion.panel) {").count >= 3, "selection and agent entry paths use shared panel motion")
 expect(workspaceStoreSource.contains("sourceTitle: selectionContext.ownerTitle") && workspaceStoreSource.contains("来源：\\(currentReferenceTitle)"), "copy reference uses real selection or current reader source")
-expect(workspaceStoreSource.contains("private func quotedReferenceBlock") && workspaceStoreSource.contains("> [!quote] 选区摘录") && !workspaceStoreSource.contains("## 选区摘录"), "selection excerpts use the shared quote callout format")
+expect(workspaceStoreSource.contains("private func quotedReferenceBlock")
+    && workspaceStoreSource.contains("> [!quote] 选区摘录\n        >\n        \\(quoted)")
+    && !workspaceStoreSource.contains("## 选区摘录"), "selection excerpts use the shared quote callout format with a separate editable body")
 expect(workspaceStoreSource.contains("selectionOwnerTitle(for source: SelectionSource)") && workspaceStoreSource.contains("selectedItem?.isNotebookNote == true"), "selection fallback title treats notebook notes as notes")
 expect(workspaceStoreSource.contains("var selectedMaterialItem") && workspaceStoreSource.contains("!item.isNotebookNote"), "selected material excludes notebook notes")
 expect(workspaceStoreSource.contains("var navigableItems") && workspaceStoreSource.contains("let materialItems = allItems.filter { !$0.isNotebookNote }"), "material navigation skips notebook notes")
@@ -881,6 +885,7 @@ expect(workspaceStoreSource.contains("return cleanLegacyPlaceholder(notesByItemI
     && workspaceStoreSource.contains("静默洞察|Agent 洞察")
     && workspaceStoreSource.contains("with: \"> [!note] 阅读线索\\n>\\n> $1\\n>\\n> 来源：$2\"")
     && workspaceStoreSource.contains(#"(?m)^> \[!note\] 阅读线索\n> ([^\n])"#)
+    && workspaceStoreSource.contains(#"(?m)^> \[!quote\]([^\n]*)\n> ([^\n])"#)
     && workspaceStoreSource.contains(".replacingOccurrences(of: \"\\n* <br />\\n\", with: \"\\n\")")
     && workspaceStoreSource.contains(".replacingOccurrences(of: \"\\n- <br />\\n\", with: \"\\n\")"), "note loading cleans legacy empty-list placeholders")
 expect(workspaceStoreSource.contains("已创建双链笔记：\\(url.lastPathComponent)") && !workspaceStoreSource.contains("已创建双链笔记：\\(url.path)") && !workspaceStoreSource.contains("无法创建双链笔记：\\(url.path)"), "wikilink note statuses avoid exposing full local paths")
@@ -1138,8 +1143,8 @@ let topInsetFloatingPoint = SelectionFloatingAgentPlacement.position(
     canvas: FloatingAgentCoordinate(x: 1200, y: 800),
     topInset: 42
 )
-expect(floatingPoint.x == 486 && floatingPoint.y == 218, "selection agent opens close beside the text anchor")
-expect(topInsetFloatingPoint.x == 486 && topInsetFloatingPoint.y == 176, "selection agent compensates top bar coordinate space")
+expect(floatingPoint.x == 486 && floatingPoint.y == 208, "selection agent opens close beside the text anchor")
+expect(topInsetFloatingPoint.x == 486 && topInsetFloatingPoint.y == 166, "selection agent compensates top bar coordinate space")
 let compactEdgeFloatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 12, y: 200),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800),
@@ -1152,8 +1157,8 @@ let compactCenterFloatingPoint = SelectionFloatingAgentPlacement.position(
     surfaceHalfWidth: SelectionFloatingAgentPlacement.compactHalfWidth,
     prefersAnchorCenter: true
 )
-expect(compactCenterFloatingPoint.x == 320 && compactCenterFloatingPoint.y == 218, "selection prompt centers on the text anchor when compact")
-expect(compactEdgeFloatingPoint.x == 100 && compactEdgeFloatingPoint.y == 218, "selection prompt clamps only at the edge when compact")
+expect(compactCenterFloatingPoint.x == 320 && compactCenterFloatingPoint.y == 208, "selection prompt centers on the text anchor when compact")
+expect(compactEdgeFloatingPoint.x == 100 && compactEdgeFloatingPoint.y == 208, "selection prompt clamps only at the edge when compact")
 let edgeFloatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 1160, y: 760),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800)

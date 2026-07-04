@@ -898,6 +898,7 @@ final class WorkspaceStore: ObservableObject {
             .joined(separator: "\n")
         return """
         > [!quote] 选区摘录
+        >
         \(quoted)
         >
         > 来源：\(sourceTitle)
@@ -1250,6 +1251,11 @@ final class WorkspaceStore: ObservableObject {
             .replacingOccurrences(
                 of: #"(?m)^> \[!note\] 阅读线索\n> ([^\n])"#,
                 with: "> [!note] 阅读线索\n>\n> $1",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"(?m)^> \[!quote\]([^\n]*)\n> ([^\n])"#,
+                with: "> [!quote]$1\n>\n> $2",
                 options: .regularExpression
             )
             .replacingOccurrences(of: "\n> 待整理摘录：当前选区\n", with: "\n")

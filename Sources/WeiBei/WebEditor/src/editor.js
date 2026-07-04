@@ -80,9 +80,9 @@ const calloutLabels = {
   bug: '问题',
   todo: '待办',
 };
-const calloutRegex = new RegExp(`^\\[!(${calloutPattern})\\]([+-]?)(?:[ \\t]+([^\\n]+))?`, 'i');
-const calloutMarkerRegex = new RegExp(`^\\s*\\[!(?:${calloutPattern})\\][+-]?\\s*`, 'i');
-const calloutHeadingRegex = new RegExp(`^\\s*\\[!(?:${calloutPattern})\\][+-]?(?:[ \\t]+[^\\n]+)?$`, 'i');
+const calloutRegex = new RegExp(`^\\\\?\\[!(${calloutPattern})\\]([+-]?)(?:[ \\t]+([^\\n]+))?`, 'i');
+const calloutMarkerRegex = new RegExp(`^\\s*\\\\?\\[!(?:${calloutPattern})\\][+-]?\\s*`, 'i');
+const calloutHeadingRegex = new RegExp(`^\\s*\\\\?\\[!(?:${calloutPattern})\\][+-]?(?:[ \\t]+[^\\n]+)?$`, 'i');
 const calloutHeaderText = (node) => {
   const text = node.textBetween
     ? node.textBetween(0, node.content.size, '\n')
