@@ -831,6 +831,7 @@ final class WorkspaceStore: ObservableObject {
             )
             selectionAnchor = anchor
             floatingSelectionPrompt = selectionContext?.label ?? "当前选区"
+            pinnedFloatingAgent = false
             agentSurface = .selectionFloat
             showQuietInsight = false
         }
