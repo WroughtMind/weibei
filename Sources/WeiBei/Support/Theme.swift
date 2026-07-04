@@ -328,7 +328,7 @@ extension View {
                 if visible {
                     Text(text)
                         .font(.system(size: fontSize, weight: weight))
-                        .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.72))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.84))
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .frame(maxWidth: .infinity, alignment: .leading)
