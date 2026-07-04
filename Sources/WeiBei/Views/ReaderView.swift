@@ -177,7 +177,7 @@ struct ReaderView: View {
     }
 
     private var showsPDFModeLabel: Bool {
-        pdfControlsHovering || pdfBrowseMode == .page
+        pdfControlsHovering
     }
 
     @ViewBuilder
