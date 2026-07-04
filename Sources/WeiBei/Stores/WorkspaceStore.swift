@@ -1221,7 +1221,12 @@ final class WorkspaceStore: ObservableObject {
         text
             .replacingOccurrences(
                 of: #"(?m)^- (?:静默洞察|Agent 洞察)：(.+)\n  来源：(.+)$"#,
-                with: "> [!note] 阅读线索\n> $1\n>\n> 来源：$2",
+                with: "> [!note] 阅读线索\n>\n> $1\n>\n> 来源：$2",
+                options: .regularExpression
+            )
+            .replacingOccurrences(
+                of: #"(?m)^> \[!note\] 阅读线索\n> ([^\n])"#,
+                with: "> [!note] 阅读线索\n>\n> $1",
                 options: .regularExpression
             )
             .replacingOccurrences(of: "\n> 待整理摘录：当前选区\n", with: "\n")

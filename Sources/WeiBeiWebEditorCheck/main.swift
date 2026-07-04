@@ -37,6 +37,7 @@ tags:
 [^1]: 这是脚注内容。
 
 > [!note]- 可编辑标题
+>
 > 温和洞察应该放在不打断阅读的位置。
 
 行内公式 $E = mc^2$、$\\alpha_1 + \\beta^2$、$A^*$，普通金额 $5 不应该被误伤。
@@ -224,7 +225,14 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             return count;
           })(),
-          foldedCallout: document.querySelector('blockquote.weibei-callout')?.getAttribute('data-callout-fold') || ''
+          foldedCallout: document.querySelector('blockquote.weibei-callout')?.getAttribute('data-callout-fold') || '',
+          calloutTitle: document.querySelector('blockquote.weibei-callout')?.getAttribute('data-callout-title') || '',
+          calloutSourceHidden: (() => {
+            const source = document.querySelector('blockquote.weibei-callout .weibei-callout-heading-source');
+            if (!source) return false;
+            const style = getComputedStyle(source);
+            return style.opacity === '0' && (style.height === '0px' || style.fontSize === '0px');
+          })()
         }))();
         """
         webView.evaluateJavaScript(script) { [weak self] value, error in
@@ -324,6 +332,14 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             if result["foldedCallout"] as? String != "-" {
                 self.fail("callout folded marker was not recognized")
+                return
+            }
+            if result["calloutTitle"] as? String != "可编辑标题" {
+                self.fail("callout title swallowed body text")
+                return
+            }
+            if result["calloutSourceHidden"] as? Bool != true {
+                self.fail("callout source marker should not remain visible in writing mode")
                 return
             }
             completion()
@@ -567,7 +583,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     }
 
     private func validateCursorMarkerInsertion() {
-        let snippet = "\n> [!note] 标题\n> {{WEIBEI_SELECT_START}}内容{{WEIBEI_SELECT_END}}\n"
+        let snippet = "\n> [!note] 标题\n>\n> {{WEIBEI_SELECT_START}}内容{{WEIBEI_SELECT_END}}\n"
         webView.evaluateJavaScript("window.WeiBeiEditor.insertMarkdown(\(json(snippet)))") { [weak self] _, error in
             guard let self else { return }
             if let error {
@@ -598,7 +614,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                     self.fail("insertMarkdown cursor marker leaked into saved markdown")
                     return
                 }
-                if !markdown.contains("> [!note] 标题") || !markdown.contains("> 内容") {
+                if !markdown.contains("> [!note] 标题\n>\n> 内容") {
                     self.fail("insertMarkdown cursor marker command did not keep the callout: \(markdown)")
                     return
                 }

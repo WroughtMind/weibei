@@ -537,6 +537,7 @@ public struct QuietInsight: Hashable {
     private static func noteBlock(body: String, source: String) -> String {
         """
         > [!note] 阅读线索
+        >
         > \(body)
         >
         > 来源：\(source)

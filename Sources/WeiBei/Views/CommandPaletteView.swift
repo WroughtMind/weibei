@@ -35,7 +35,7 @@ struct CommandPaletteView: View {
             markdownInsertCommand(title: "插入行内公式", markdown: "${{WEIBEI_SELECT_START}}x_i = \\frac{a}{b}{{WEIBEI_SELECT_END}}$"),
             markdownInsertCommand(title: "插入块级公式", markdown: "\n$$\n{{WEIBEI_SELECT_START}}E = mc^2{{WEIBEI_SELECT_END}}\n$$\n"),
             markdownInsertCommand(title: "插入矩阵公式", markdown: "\n$$\n\\begin{bmatrix}\n{{WEIBEI_SELECT_START}}a{{WEIBEI_SELECT_END}} & b \\\\\nc & d\n\\end{bmatrix}\n$$\n"),
-            markdownInsertCommand(title: "插入 Callout", markdown: "\n> [!note] 标题\n> {{WEIBEI_SELECT_START}}内容{{WEIBEI_SELECT_END}}\n"),
+            markdownInsertCommand(title: "插入 Callout", markdown: "\n> [!note] 标题\n>\n> {{WEIBEI_SELECT_START}}内容{{WEIBEI_SELECT_END}}\n"),
             markdownInsertCommand(title: "插入表格", markdown: "\n| A | B |\n| --- | --- |\n| {{WEIBEI_SELECT_START}}内容{{WEIBEI_SELECT_END}} |  |\n"),
             markdownInsertCommand(title: "插入 Mermaid", markdown: "\n```mermaid\ngraph TD\n  {{WEIBEI_SELECT_START}}A[开始] --> B[整理]{{WEIBEI_SELECT_END}}\n```\n")
         ]

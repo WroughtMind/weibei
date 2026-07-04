@@ -61,6 +61,31 @@ const calloutTypes = new Set([
   'todo',
 ]);
 const calloutPattern = Array.from(calloutTypes).join('|');
+const calloutLabels = {
+  note: '札记',
+  tip: '提示',
+  important: '重点',
+  warning: '留心',
+  caution: '谨慎',
+  summary: '提要',
+  abstract: '摘要',
+  quote: '引文',
+  question: '问题',
+  example: '例子',
+  info: '信息',
+  success: '可行',
+  failure: '失败',
+  danger: '风险',
+  bug: '问题',
+  todo: '待办',
+};
+const calloutRegex = new RegExp(`^\\[!(${calloutPattern})\\]([+-]?)(?:[ \\t]+([^\\n]+))?`, 'i');
+const calloutHeaderText = (node) => {
+  const text = node.textBetween
+    ? node.textBetween(0, node.content.size, '\n')
+    : (node.textContent || '');
+  return (text.split('\n')[0] || '').trimStart();
+};
 
 mermaid.initialize({
   startOnLoad: false,
@@ -845,13 +870,23 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
         const parentName = parent?.type?.name || '';
 
         if (typeName === 'blockquote') {
-          const match = node.textContent.trimStart().match(new RegExp(`^\\[!(${calloutPattern})\\]([+-]?)(?:[ \\t]+([^\\n]+))?`, 'i'));
+          const match = calloutHeaderText(node).match(calloutRegex);
           if (match) {
+            const calloutType = match[1].toLowerCase();
             decorations.push(Decoration.node(pos, pos + node.nodeSize, {
-              class: `weibei-callout weibei-callout-${match[1].toLowerCase()}`,
-              'data-callout': match[1].toLowerCase(),
+              class: `weibei-callout weibei-callout-${calloutType}`,
+              'data-callout': calloutType,
               'data-callout-fold': match[2] || '',
-              'data-callout-title': (match[3] || '').trim(),
+              'data-callout-title': (match[3] || calloutLabels[calloutType] || calloutType).trim(),
+            }));
+          }
+        }
+
+        if (typeName === 'paragraph' && parentName === 'blockquote' && node.childCount === 1) {
+          const calloutHeading = node.textContent.trimStart().match(calloutRegex);
+          if (calloutHeading) {
+            decorations.push(Decoration.node(pos, pos + node.nodeSize, {
+              class: 'weibei-callout-heading-source',
             }));
           }
         }
@@ -891,6 +926,10 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
             const callout = text.match(new RegExp(`^\\s*\\[!(?:${calloutPattern})\\][+-]?\\s*`, 'i'));
             if (callout) {
               addRangeDecoration(decorations, textPos, textPos + callout[0].length, 'weibei-callout-marker');
+            }
+            const calloutHeading = text.match(new RegExp(`^\\s*\\[!(?:${calloutPattern})\\][+-]?(?:[ \\t]+[^\\n]+)?$`, 'i'));
+            if (calloutHeading) {
+              addRangeDecoration(decorations, textPos, textPos + calloutHeading[0].length, 'weibei-callout-heading-source');
             }
           }
         }

@@ -42,12 +42,17 @@
       box-sizing: border-box;
       height: 100vh;
       overflow: auto;
-      scrollbar-color: rgba(92, 70, 46, .14) transparent;
+      scrollbar-width: none;
       padding: 28px 34px 64px;
       background: rgba(239, 225, 199, .72);
     }
 
-    #editor::-webkit-scrollbar,
+    #editor::-webkit-scrollbar {
+      width: 0;
+      height: 0;
+      background: transparent;
+    }
+
     .ProseMirror pre::-webkit-scrollbar,
     .ProseMirror div[data-type="math_block"]::-webkit-scrollbar,
     .ProseMirror div[data-type="math-block"]::-webkit-scrollbar {
@@ -55,14 +60,12 @@
       height: 5px;
     }
 
-    #editor::-webkit-scrollbar-track,
     .ProseMirror pre::-webkit-scrollbar-track,
     .ProseMirror div[data-type="math_block"]::-webkit-scrollbar-track,
     .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-track {
       background: transparent;
     }
 
-    #editor::-webkit-scrollbar-thumb,
     .ProseMirror pre::-webkit-scrollbar-thumb,
     .ProseMirror div[data-type="math_block"]::-webkit-scrollbar-thumb,
     .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-thumb {
@@ -71,7 +74,6 @@
       background: rgba(92, 70, 46, .14);
     }
 
-    #editor::-webkit-scrollbar-thumb:hover,
     .ProseMirror pre::-webkit-scrollbar-thumb:hover,
     .ProseMirror div[data-type="math_block"]::-webkit-scrollbar-thumb:hover,
     .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-thumb:hover {
@@ -321,6 +323,19 @@
     .ProseMirror blockquote.weibei-callout-quote::before { content: "引文"; }
     .ProseMirror blockquote.weibei-callout-info::before { content: "信息"; }
     .ProseMirror blockquote.weibei-callout-todo::before { content: "待办"; }
+    .ProseMirror blockquote.weibei-callout::before { content: attr(data-callout-title); }
+
+    .ProseMirror blockquote.weibei-callout .weibei-callout-heading-source {
+      height: 0;
+      margin: 0;
+      overflow: hidden;
+      opacity: 0;
+      color: transparent;
+      font-size: 0;
+      line-height: 0;
+      pointer-events: none;
+      user-select: none;
+    }
 
     .ProseMirror code {
       font-family: "SF Mono", Menlo, ui-monospace, monospace;
