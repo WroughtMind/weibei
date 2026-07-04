@@ -101,15 +101,15 @@ enum TopBarVariant: String, CaseIterable, Identifiable {
     var label: String {
         switch self {
         case .balanced:
-            return "甲 纸脊"
+            return "标准"
         case .compact:
-            return "乙 窄栏"
+            return "紧凑"
         case .reader:
-            return "丙 阅读"
+            return "阅读"
         case .glyph:
-            return "丁 图形"
+            return "图标"
         case .wide:
-            return "戊 宽排"
+            return "宽松"
         }
     }
 

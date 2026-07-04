@@ -92,11 +92,11 @@ struct WeiBeiApp: App {
 
                 Divider()
 
-                Button("文档 Agent 笔记") { setLayout(.documentAgentNotes) }
+                Button(WorkspaceLayout.documentAgentNotes.label) { setLayout(.documentAgentNotes) }
                     .keyboardShortcut("1", modifiers: [.command, .option])
-                Button("文档 笔记 Agent") { setLayout(.documentNotesAgent) }
+                Button(WorkspaceLayout.documentNotesAgent.label) { setLayout(.documentNotesAgent) }
                     .keyboardShortcut("2", modifiers: [.command, .option])
-                Button("文档笔记对半") { setLayout(.documentNotesSplit) }
+                Button(WorkspaceLayout.documentNotesSplit.label) { setLayout(.documentNotesSplit) }
                     .keyboardShortcut("3", modifiers: [.command, .option])
                 Button("沉浸阅读") { setLayout(.immersiveReading) }
                     .keyboardShortcut("r", modifiers: [.command, .option])
@@ -134,7 +134,7 @@ struct WeiBeiApp: App {
                 if store.canApplyAgentAnswer {
                     Divider()
 
-                    Button("应用 Agent 到笔记") { animatePanel { store.applyLastAgentAnswerToNote() } }
+                    Button("写入回答到笔记") { animatePanel { store.applyLastAgentAnswerToNote() } }
                         .keyboardShortcut("a", modifiers: [.command, .shift])
                     if store.canReplaceNoteSelection {
                         Button("用 Agent 替换笔记选区") { animatePanel { store.replaceSelectionWithLastAgentAnswer() } }
@@ -155,8 +155,8 @@ struct WeiBeiApp: App {
 
                 Divider()
 
-                if store.hasSelectedMaterial || store.selectionContext != nil {
-                    Button("复制引用") { store.copyCurrentReference() }
+                if store.canCopyReference {
+                    Button(store.copyReferenceActionTitle) { store.copyCurrentReference() }
                         .keyboardShortcut("c", modifiers: [.command, .shift])
                 }
                 if store.hasSelectedMaterial {
@@ -168,7 +168,7 @@ struct WeiBeiApp: App {
                     .keyboardShortcut("f")
                 }
                 if !store.isAskingAgent && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Button(store.hasSelectedMaterial ? "问当前材料" : "问当前笔记") { Task { await store.askAgent() } }
+                    Button(store.sendAgentActionTitle) { Task { await store.askAgent() } }
                         .keyboardShortcut(.return, modifiers: [.command])
                 }
             }

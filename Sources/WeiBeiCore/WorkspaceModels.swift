@@ -151,11 +151,11 @@ public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable {
     public var label: String {
         switch self {
         case .documentAgentNotes:
-            return "文档 Agent 笔记"
+            return "阅读-对话-笔记"
         case .documentNotesAgent:
-            return "文档 笔记 Agent"
+            return "阅读-笔记-对话"
         case .documentNotesSplit:
-            return "文档笔记对半"
+            return "阅读/笔记对半"
         case .immersiveReading:
             return "沉浸阅读"
         case .immersiveConversation:

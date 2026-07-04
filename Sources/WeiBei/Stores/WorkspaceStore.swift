@@ -142,6 +142,20 @@ final class WorkspaceStore: ObservableObject {
         readerLocationTitle ?? selectedMaterialItem?.title ?? selectedItem?.title ?? "当前笔记"
     }
 
+    var canCopyReference: Bool {
+        selectionContext != nil || hasSelectedMaterial || selectedItem?.isNotebookNote == true
+    }
+
+    var copyReferenceActionTitle: String {
+        if selectionContext != nil { return "复制选区引用" }
+        if hasSelectedMaterial { return "复制资料引用" }
+        return "复制笔记引用"
+    }
+
+    var sendAgentActionTitle: String {
+        "发送问题"
+    }
+
     var agentNoteTitle: String {
         if selectedItem?.isNotebookNote == true {
             return selectedItem?.title ?? "当前笔记"
@@ -528,7 +542,7 @@ final class WorkspaceStore: ObservableObject {
                 guard canApplyAgentAnswer else { return false }
                 animatePanelChange { applyAgentPatchToEditor() }
             case "c":
-                guard hasSelectedMaterial || selectionContext != nil else { return false }
+                guard canCopyReference else { return false }
                 copyCurrentReference()
             default:
                 return false

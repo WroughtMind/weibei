@@ -229,7 +229,7 @@ private struct UnifiedTopBarView: View {
             }
 
             if shouldShowReferenceAction {
-                topIconButton("quote.opening", help: "复制引用") {
+                topIconButton("quote.opening", help: store.copyReferenceActionTitle) {
                     store.copyCurrentReference()
                 }
             }
@@ -348,7 +348,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private var shouldShowReferenceAction: Bool {
-        store.hasSelectedMaterial && hasReaderScopedTopActions
+        store.canCopyReference && hasReaderScopedTopActions
     }
 
     private var shouldShowAgentAction: Bool {

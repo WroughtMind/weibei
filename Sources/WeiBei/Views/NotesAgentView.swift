@@ -563,7 +563,7 @@ struct AgentPaneView: View {
                 }
 
                 if store.canApplyAgentAnswer {
-                    agentToolButton("写入", help: "写入笔记", systemImage: "square.and.arrow.down") {
+                    agentToolButton("写入回答", help: "写入回答到笔记", systemImage: "square.and.arrow.down") {
                         store.applyLastAgentAnswerToNote()
                     }
                 }
@@ -1662,7 +1662,7 @@ private struct AgentBubble: View {
                             }
                             .buttonStyle(WeiBeiTextActionButtonStyle())
                         }
-                        Button("写入笔记") {
+                        Button("写入回答") {
                             store.applyLastAgentAnswerToNote()
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle(active: true))

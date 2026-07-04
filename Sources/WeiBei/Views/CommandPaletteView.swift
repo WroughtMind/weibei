@@ -19,9 +19,9 @@ struct CommandPaletteView: View {
             PaletteCommand(title: "上一份资料", shortcut: "⌥⌘↑", animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: -1) },
             PaletteCommand(title: "下一份资料", shortcut: "⌥⌘↓", animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: 1) },
             PaletteCommand(title: store.showLibrary ? "收起资料库" : "打开资料库", shortcut: "⌘B", animation: WeiBeiMotion.layout) { store.toggleLibrary() },
-            PaletteCommand(title: "文档 Agent 笔记", shortcut: "⌥⌘1", animation: WeiBeiMotion.layout) { store.setLayout(.documentAgentNotes) },
-            PaletteCommand(title: "文档 笔记 Agent", shortcut: "⌥⌘2", animation: WeiBeiMotion.layout) { store.setLayout(.documentNotesAgent) },
-            PaletteCommand(title: "文档笔记对半", shortcut: "⌥⌘3", animation: WeiBeiMotion.layout) { store.setLayout(.documentNotesSplit) },
+            PaletteCommand(title: WorkspaceLayout.documentAgentNotes.label, shortcut: "⌥⌘1", animation: WeiBeiMotion.layout) { store.setLayout(.documentAgentNotes) },
+            PaletteCommand(title: WorkspaceLayout.documentNotesAgent.label, shortcut: "⌥⌘2", animation: WeiBeiMotion.layout) { store.setLayout(.documentNotesAgent) },
+            PaletteCommand(title: WorkspaceLayout.documentNotesSplit.label, shortcut: "⌥⌘3", animation: WeiBeiMotion.layout) { store.setLayout(.documentNotesSplit) },
             PaletteCommand(title: "沉浸阅读", shortcut: "⌥⌘R", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveReading) },
             PaletteCommand(title: "沉浸对话", shortcut: "⌥⌘A", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveConversation) },
             PaletteCommand(title: "沉浸写笔记", shortcut: "⌥⌘N", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveWriting) },
@@ -51,14 +51,17 @@ struct CommandPaletteView: View {
         if let rightPaneCommand {
             items.insert(rightPaneCommand, at: 9)
         }
+        if store.canCopyReference {
+            items.append(PaletteCommand(title: store.copyReferenceActionTitle, shortcut: "⌘⇧C") { store.copyCurrentReference() })
+        }
         if store.hasSelectedMaterial {
-            items.append(PaletteCommand(title: "复制引用", shortcut: "⌘⇧C") { store.copyCurrentReference() })
             items.append(PaletteCommand(title: "打开资料内搜索", shortcut: "⌘F") { store.revealReaderSearch() })
-        } else if store.selectionContext != nil {
-            items.append(PaletteCommand(title: "复制引用", shortcut: "⌘⇧C") { store.copyCurrentReference() })
         }
         if store.selectionContext != nil {
-            items.append(PaletteCommand(title: "问当前选区", shortcut: "") { store.askSelection() })
+            items.append(PaletteCommand(title: "问当前选区", shortcut: "") {
+                store.askSelection()
+                Task { await store.askAgent() }
+            })
         }
         if store.canOpenSelectedSourceReference {
             items.append(PaletteCommand(title: "打开选区来源", shortcut: "") { store.openSelectedSourceReference() })
@@ -74,7 +77,7 @@ struct CommandPaletteView: View {
             items.append(PaletteCommand(title: "替换笔记选区", shortcut: "⌘⇧R") { store.replaceSelectionWithLastAgentAnswer() })
         }
         if canSendAgentDraft {
-            items.append(PaletteCommand(title: "发送当前问题", shortcut: "⌘↩") { Task { await store.askAgent() } })
+            items.append(PaletteCommand(title: store.sendAgentActionTitle, shortcut: "⌘↩") { Task { await store.askAgent() } })
         }
         return items
     }
