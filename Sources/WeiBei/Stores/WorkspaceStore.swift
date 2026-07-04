@@ -1180,7 +1180,7 @@ final class WorkspaceStore: ObservableObject {
             self.agentSurface = agentSurface
         }
         if let noteRenderMode = snapshot.noteRenderMode {
-            self.noteRenderMode = noteRenderMode == .source ? .source : .rich
+            self.noteRenderMode = noteRenderMode
         }
         if let showLibrary = snapshot.showLibrary {
             self.showLibrary = showLibrary

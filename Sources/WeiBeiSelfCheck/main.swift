@@ -647,9 +647,12 @@ expect(!notebookMarkdown.canBecomeNotebookNote, "notebook markdown does not offe
 expect(!sampleMarkdown.isImportedMarkdownFile, "sample markdown stays app-owned")
 expect(!sampleMarkdown.canBecomeNotebookNote, "sample markdown cannot become a backing-file note")
 
-let persisted = PersistedWorkspace(showLibrary: false, showRightPane: false)
+let persisted = PersistedWorkspace(noteRenderMode: .preview, showLibrary: false, showRightPane: false)
 let restored = try JSONDecoder().decode(PersistedWorkspace.self, from: try JSONEncoder().encode(persisted))
 expect(restored.showLibrary == false && restored.showRightPane == false, "pane collapse state persists")
+expect(restored.noteRenderMode == .preview, "note render mode persists without collapsing preview or split back to rich")
+expect(workspaceStoreSource.contains("if let noteRenderMode = snapshot.noteRenderMode {\n            self.noteRenderMode = noteRenderMode\n        }")
+    && !workspaceStoreSource.contains("noteRenderMode == .source ? .source : .rich"), "workspace load restores the saved note render mode exactly")
 
 let attachmentRoot = URL(fileURLWithPath: NSTemporaryDirectory())
     .appendingPathComponent("weibei-self-check-\(UUID().uuidString)", isDirectory: true)
