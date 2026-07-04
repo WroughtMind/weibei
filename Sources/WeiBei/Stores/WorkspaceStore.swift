@@ -779,16 +779,18 @@ final class WorkspaceStore: ObservableObject {
         clearGeneratedQuietInsight()
         let cleanedOwnerTitle = ownerTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedOwnerTitle = (cleanedOwnerTitle?.isEmpty == false ? cleanedOwnerTitle : nil) ?? selectionOwnerTitle(for: source)
-        selectionContext = SelectionContext(
-            text: String(cleaned.prefix(2_000)),
-            source: source,
-            ownerTitle: resolvedOwnerTitle,
-            isEditable: isEditable
-        )
-        selectionAnchor = anchor
-        floatingSelectionPrompt = selectionContext?.label ?? "当前选区"
-        agentSurface = .selectionFloat
-        showQuietInsight = false
+        withAnimation(WeiBeiMotion.panel) {
+            selectionContext = SelectionContext(
+                text: String(cleaned.prefix(2_000)),
+                source: source,
+                ownerTitle: resolvedOwnerTitle,
+                isEditable: isEditable
+            )
+            selectionAnchor = anchor
+            floatingSelectionPrompt = selectionContext?.label ?? "当前选区"
+            agentSurface = .selectionFloat
+            showQuietInsight = false
+        }
     }
 
     private func selectionOwnerTitle(for source: SelectionSource) -> String {
@@ -814,20 +816,24 @@ final class WorkspaceStore: ObservableObject {
 
     func askSelection() {
         if let selectionContext {
-            agentSurface = .selectionFloat
-            floatingSelectionPrompt = selectionContext.label
-            agentDraft = """
-            请解释下面选区，并结合\(selectionPromptScope)回答。没有证据就说未在材料中确认。
+            withAnimation(WeiBeiMotion.panel) {
+                agentSurface = .selectionFloat
+                floatingSelectionPrompt = selectionContext.label
+                agentDraft = """
+                请解释下面选区，并结合\(selectionPromptScope)回答。没有证据就说未在材料中确认。
 
-            选区：
-            \(selectionContext.text)
-            """
-        } else {
-            agentDraft = "请根据\(agentPromptScope)，帮我梳理重点和可追问的问题。"
-            if layout == .immersiveReading || layout == .documentNotesSplit {
-                agentSurface = .cornerPanel
+                选区：
+                \(selectionContext.text)
+                """
             }
-            focus(.agent)
+        } else {
+            withAnimation(WeiBeiMotion.panel) {
+                agentDraft = "请根据\(agentPromptScope)，帮我梳理重点和可追问的问题。"
+                if layout == .immersiveReading || layout == .documentNotesSplit {
+                    agentSurface = .cornerPanel
+                }
+                focus(.agent)
+            }
         }
     }
 

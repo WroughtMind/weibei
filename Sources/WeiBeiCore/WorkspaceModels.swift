@@ -335,13 +335,26 @@ public enum SelectionFloatingAgentPlacement {
         surfaceHalfWidth: Double = 170
     ) -> FloatingAgentCoordinate {
         let edgePadding = 18.0
+        let anchorGap = 10.0
+        let verticalGap = 18.0
         let contentCanvas = FloatingAgentCoordinate(x: canvas.x, y: max(1, canvas.y - topInset))
         let fallback = FloatingAgentCoordinate(x: contentCanvas.x - 128, y: contentCanvas.y - 124)
         let anchor = anchor.map { FloatingAgentCoordinate(x: $0.x, y: max(0, $0.y - topInset)) } ?? fallback
-        let anchoredHorizontalOffset = surfaceHalfWidth + 6
+        let minimumX = surfaceHalfWidth + edgePadding
+        let maximumX = contentCanvas.x - surfaceHalfWidth - edgePadding
+        let rightSideX = anchor.x + surfaceHalfWidth + anchorGap
+        let leftSideX = anchor.x - surfaceHalfWidth - anchorGap
+        let preferredX: Double
+        if rightSideX <= maximumX {
+            preferredX = rightSideX
+        } else if leftSideX >= minimumX {
+            preferredX = leftSideX
+        } else {
+            preferredX = anchor.x
+        }
         return FloatingAgentCoordinate(
-            x: clamp(anchor.x + anchoredHorizontalOffset, min: surfaceHalfWidth + edgePadding, max: contentCanvas.x - surfaceHalfWidth - edgePadding),
-            y: clamp(anchor.y + 28, min: 64, max: contentCanvas.y - 92)
+            x: clamp(preferredX, min: minimumX, max: maximumX),
+            y: clamp(anchor.y + verticalGap, min: 64, max: contentCanvas.y - 92)
         )
     }
 

@@ -379,6 +379,9 @@ expect(workspaceStoreSource.contains("func updateNote(_ value: String, for itemI
 expect(workspaceStoreSource.contains("@Published var readerLocationTitle") && workspaceStoreSource.contains("var currentReferenceTitle"), "store tracks the current reader reference title")
 expect(workspaceStoreSource.contains("@Published var readerTargetPageIndex") && workspaceStoreSource.contains("func openSourceReference") && workspaceStoreSource.contains("SourceReferenceTitle.parse"), "store can jump from source reference text to the referenced material")
 expect(workspaceStoreSource.contains("ownerTitle: String? = nil") && workspaceStoreSource.contains("let resolvedOwnerTitle"), "selection updates can carry a precise reader source title")
+expect(workspaceStoreSource.contains("withAnimation(WeiBeiMotion.panel) {\n            selectionContext = SelectionContext")
+    && workspaceStoreSource.contains("agentSurface = .selectionFloat\n            showQuietInsight = false"), "selection updates reveal the floating agent through the shared panel animation")
+expect(workspaceStoreSource.contains("func askSelection()") && workspaceStoreSource.components(separatedBy: "withAnimation(WeiBeiMotion.panel) {").count >= 3, "selection and agent entry paths use shared panel motion")
 expect(workspaceStoreSource.contains("sourceTitle: selectionContext.ownerTitle") && workspaceStoreSource.contains("来源：\\(currentReferenceTitle)"), "copy reference uses real selection or current reader source")
 expect(workspaceStoreSource.contains("private func quotedReferenceBlock") && workspaceStoreSource.contains("> [!quote] 选区摘录") && !workspaceStoreSource.contains("## 选区摘录"), "selection excerpts use the shared quote callout format")
 expect(workspaceStoreSource.contains("selectionOwnerTitle(for source: SelectionSource)") && workspaceStoreSource.contains("selectedItem?.isNotebookNote == true"), "selection fallback title treats notebook notes as notes")
@@ -585,19 +588,19 @@ let topInsetFloatingPoint = SelectionFloatingAgentPlacement.position(
     canvas: FloatingAgentCoordinate(x: 1200, y: 800),
     topInset: 42
 )
-expect(floatingPoint.x == 496 && floatingPoint.y == 228, "selection agent opens beside the text anchor")
-expect(topInsetFloatingPoint.x == 496 && topInsetFloatingPoint.y == 186, "selection agent compensates top bar coordinate space")
+expect(floatingPoint.x == 500 && floatingPoint.y == 218, "selection agent opens close beside the text anchor")
+expect(topInsetFloatingPoint.x == 500 && topInsetFloatingPoint.y == 176, "selection agent compensates top bar coordinate space")
 let compactEdgeFloatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 12, y: 200),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800),
     surfaceHalfWidth: 82
 )
-expect(compactEdgeFloatingPoint.x == 100 && compactEdgeFloatingPoint.y == 228, "selection prompt clamps using compact width")
+expect(compactEdgeFloatingPoint.x == 104 && compactEdgeFloatingPoint.y == 218, "selection prompt stays close to the anchor when compact")
 let edgeFloatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 1160, y: 760),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800)
 )
-expect(edgeFloatingPoint.x == 1012 && edgeFloatingPoint.y == 708, "selection agent clamps near window edge")
+expect(edgeFloatingPoint.x == 980 && edgeFloatingPoint.y == 708, "selection agent flips to the left of text near the window edge")
 expect(AgentMessage(role: .assistant, text: "整理完成", source: nil).isUsableAgentAnswer, "usable agent answer")
 expect(!AgentMessage(role: .assistant, text: "未配置 OPENAI_API_KEY。", source: nil).isUsableAgentAnswer, "api key setup message is not writable")
 expect(!AgentMessage(role: .assistant, text: "未配置 OPENAI_API_KEY 或钥匙串密钥。", source: nil).isUsableAgentAnswer, "keychain setup message is not writable")
