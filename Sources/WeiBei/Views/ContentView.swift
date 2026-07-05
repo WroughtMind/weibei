@@ -246,18 +246,7 @@ private struct UnifiedTopBarView: View {
             Spacer()
                 .frame(width: leftInset)
 
-            navigationButtons
-
-            Button {
-                withAnimation(WeiBeiMotion.layout) {
-                    store.toggleLibrary()
-                }
-            } label: {
-                Image(systemName: "sidebar.left")
-            }
-            .buttonStyle(WeiBeiIconButtonStyle(active: store.showLibrary))
-            .accessibilityLabel(Text(store.showLibrary ? "收起资料库" : "打开资料库"))
-            .help(store.showLibrary ? "收起资料库" : "打开资料库")
+            leftPrimaryControls
 
             brandBlock
 
@@ -314,11 +303,7 @@ private struct UnifiedTopBarView: View {
                 agentButton
             }
 
-            appearanceButton
-
             layoutMenu
-
-            moreMenu
 
             topIconButton("command", help: "命令面板") {
                 withAnimation(WeiBeiMotion.panel) {
@@ -367,13 +352,13 @@ private struct UnifiedTopBarView: View {
         if isFullScreen { return 12 }
         switch variant {
         case .compact, .glyph:
-            return 122
+            return 84
         case .reader:
-            return 126
+            return 88
         case .balanced:
-            return 130
+            return 92
         case .wide:
-            return 136
+            return 98
         }
     }
 
@@ -531,6 +516,17 @@ private struct UnifiedTopBarView: View {
     }
 
     @ViewBuilder
+    private var leftPrimaryControls: some View {
+        HStack(spacing: 5) {
+            libraryButton
+
+            navigationButtons
+
+            settingsMenu
+        }
+    }
+
+    @ViewBuilder
     private var brandBlock: some View {
         switch variant {
         case .glyph:
@@ -586,6 +582,15 @@ private struct UnifiedTopBarView: View {
     }
 
     @ViewBuilder
+    private var libraryButton: some View {
+        topIconButton("sidebar.left", help: store.showLibrary ? "收起资料库" : "打开资料库", active: store.showLibrary) {
+            withAnimation(WeiBeiMotion.layout) {
+                store.toggleLibrary()
+            }
+        }
+    }
+
+    @ViewBuilder
     private var searchButton: some View {
         topIconButton("magnifyingglass", help: "打开资料内搜索") {
             toggleReaderSearch()
@@ -600,16 +605,45 @@ private struct UnifiedTopBarView: View {
     }
 
     @ViewBuilder
-    private var appearanceButton: some View {
-        topIconButton(
-            store.appearanceMode.systemImage,
-            help: store.appearanceMode.actionLabel,
-            active: store.appearanceMode == .inkstone
-        ) {
-            withAnimation(WeiBeiMotion.appearance) {
-                store.toggleAppearanceMode()
+    private var settingsMenu: some View {
+        Menu {
+            Section("界面") {
+                ForEach(WeiBeiAppearanceMode.allCases) { mode in
+                    Button {
+                        withAnimation(WeiBeiMotion.appearance) {
+                            store.setAppearanceMode(mode)
+                        }
+                    } label: {
+                        Label(mode.label, systemImage: mode == store.appearanceMode ? "checkmark" : mode.systemImage)
+                    }
+                }
             }
+
+            Section("顶部栏") {
+                ForEach(TopBarVariant.allCases) { candidate in
+                    Button {
+                        setTopBarVariant(candidate)
+                    } label: {
+                        Label(candidate.label, systemImage: candidate == variant ? "checkmark" : candidate.iconName)
+                    }
+                }
+            }
+
+            Section("对话入口") {
+                ForEach(store.visibleAgentSurfaces) { surface in
+                    Button(surface.label) {
+                        withAnimation(WeiBeiMotion.panel) {
+                            store.setAgentSurface(surface)
+                        }
+                    }
+                }
+            }
+        } label: {
+            Image(systemName: "gearshape")
         }
+        .buttonStyle(WeiBeiIconButtonStyle(active: store.appearanceMode == .inkstone, size: variant == .glyph || variant == .compact ? 24 : WeiBeiMetric.iconButton))
+        .accessibilityLabel(Text("设置"))
+        .help("设置")
     }
 
     private var hasPrimaryAgentPaneVisible: Bool {
@@ -672,47 +706,6 @@ private struct UnifiedTopBarView: View {
         .buttonStyle(.plain)
         .accessibilityLabel(Text("切换布局"))
         .help("切换布局")
-    }
-
-    private var moreMenu: some View {
-        Menu {
-            Section("顶部栏") {
-                ForEach(TopBarVariant.allCases) { candidate in
-                    Button {
-                        setTopBarVariant(candidate)
-                    } label: {
-                        Label(candidate.label, systemImage: candidate == variant ? "checkmark" : candidate.iconName)
-                    }
-                }
-            }
-
-            Section("界面") {
-                ForEach(WeiBeiAppearanceMode.allCases) { mode in
-                    Button {
-                        withAnimation(WeiBeiMotion.appearance) {
-                            store.setAppearanceMode(mode)
-                        }
-                    } label: {
-                        Label(mode.label, systemImage: mode == store.appearanceMode ? "checkmark" : mode.systemImage)
-                    }
-                }
-            }
-
-            Section("对话入口") {
-                ForEach(store.visibleAgentSurfaces) { surface in
-                    Button(surface.label) {
-                        withAnimation(WeiBeiMotion.panel) {
-                            store.setAgentSurface(surface)
-                        }
-                    }
-                }
-            }
-        } label: {
-            Image(systemName: "ellipsis")
-        }
-        .buttonStyle(WeiBeiIconButtonStyle())
-        .accessibilityLabel(Text("更多设置"))
-        .help("更多设置")
     }
 
     private func setTopBarVariant(_ next: TopBarVariant) {
