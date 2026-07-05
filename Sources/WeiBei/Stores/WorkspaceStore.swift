@@ -575,7 +575,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var canShowSelectionPromptSurface: Bool {
-        hasPrimaryConversationPaneVisible || !isConversationSurfaceVisible
+        !isConversationSurfaceVisible
     }
 
     var visibleAgentSurfaces: [AgentSurface] {
@@ -1077,18 +1077,28 @@ final class WorkspaceStore: ObservableObject {
         clearGeneratedQuietInsight()
         let cleanedOwnerTitle = ownerTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedOwnerTitle = (cleanedOwnerTitle?.isEmpty == false ? cleanedOwnerTitle : nil) ?? selectionOwnerTitle(for: source)
+        let nextSelection = SelectionContext(
+            text: Self.boundedSelectionText(cleaned),
+            source: source,
+            ownerTitle: resolvedOwnerTitle,
+            isEditable: isEditable
+        )
+        let shouldAttachToConversation = isConversationSurfaceVisible
         let shouldRevealSelectionPrompt = canShowSelectionPromptSurface
         withAnimation(WeiBeiMotion.panel) {
-            selectionContext = SelectionContext(
-                text: Self.boundedSelectionText(cleaned),
-                source: source,
-                ownerTitle: resolvedOwnerTitle,
-                isEditable: isEditable
-            )
-            selectionAnchor = anchor
-            floatingSelectionPrompt = selectionContext?.label(language: interfaceLanguage) ?? ui("当前选区", "Current selection")
+            selectionContext = nextSelection
+            selectionAnchor = shouldAttachToConversation ? nil : anchor
+            floatingSelectionPrompt = nextSelection.label(language: interfaceLanguage)
             pinnedFloatingAgent = false
-            if shouldRevealSelectionPrompt {
+            if shouldAttachToConversation {
+                addSelectionAttachment(nextSelection)
+                if agentSurface == .selectionFloat {
+                    agentSurface = .hidden
+                }
+                showQuietInsight = false
+                focusedPane = .agent
+                focusRequest += 1
+            } else if shouldRevealSelectionPrompt {
                 agentSurface = .selectionFloat
                 showQuietInsight = false
             } else if agentSurface == .selectionFloat {
