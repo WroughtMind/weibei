@@ -30,7 +30,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var showQuietInsight = true
     @Published var generatedQuietInsight: QuietInsight?
     @Published var isGeneratingQuietInsight = false
-    @Published var floatingSelectionPrompt = "当前选区"
+    @Published var floatingSelectionPrompt = ""
     @Published var pinnedFloatingAgent = false
     @Published var selectionContext: SelectionContext?
     @Published var selectionAttachments: [SelectionContext] = []
@@ -78,6 +78,7 @@ final class WorkspaceStore: ObservableObject {
         storageURL = folder.appendingPathComponent("workspace.json")
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         load()
+        floatingSelectionPrompt = ui("当前选区", "Current selection")
         if selectedItemID == nil {
             select(itemID: sampleItems[0].id)
         }

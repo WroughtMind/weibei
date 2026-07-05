@@ -1154,11 +1154,8 @@ private struct AgentSelectionAttachmentPill: View {
                     }
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 9, weight: .semibold))
-                        .frame(width: 18, height: 18)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                .buttonStyle(WeiBeiIconButtonStyle(size: 20))
                 .accessibilityLabel(Text(store.ui("移除片段 \(index + 1)", "Remove fragment \(index + 1)")))
                 .help(store.ui("移除这个选区片段", "Remove this selected fragment"))
             }
