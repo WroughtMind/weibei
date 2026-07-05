@@ -369,7 +369,7 @@ struct SettingsView: View {
             case .appearance: return store.ui("外观", "Appearance")
             case .reading: return store.ui("阅读", "Reading")
             case .writing: return store.ui("写作", "Writing")
-            case .agent: return store.ui("Agent", "Agent")
+            case .agent: return store.ui("对话", "Chat")
             case .data: return store.ui("资料与数据", "Library & Data")
             case .shortcuts: return store.ui("快捷键", "Shortcuts")
             }
@@ -550,8 +550,8 @@ struct SettingsView: View {
                 }
 
                 settingsRow(
-                    title: store.ui("Agent 上下文", "Agent Context"),
-                    detail: store.hasSelectionAttachments ? store.ui("已选文本片段会作为上下文传给 Agent。", "Selected fragments will be sent to Agent as context.") : store.ui("未附加选区，Agent 会读取当前资料和笔记。", "No selection is attached; Agent will use the current material and note.")
+                    title: store.ui("对话上下文", "Chat Context"),
+                    detail: store.hasSelectionAttachments ? store.ui("已选文本片段会作为对话上下文。", "Selected fragments will be used as chat context.") : store.ui("未附加选区，将读取当前资料和笔记。", "No selection is attached; the current material and note will be used.")
                 ) {
                     settingsPill(
                         title: store.hasSelectionAttachments ? store.ui("\(store.selectionAttachments.count) 个片段", "\(store.selectionAttachments.count) fragments") : store.ui("默认上下文", "Default"),
@@ -568,7 +568,7 @@ struct SettingsView: View {
                     target: .appearance
                 )
                 settingsRouteRow(
-                    title: store.ui("Agent 与 API", "Agent & API"),
+                    title: store.ui("对话与 API", "Chat & API"),
                     detail: store.ui("密钥、模型、对话入口和选区上下文。", "Key, model, chat surface, and selection context."),
                     target: .agent
                 )
@@ -704,7 +704,7 @@ struct SettingsView: View {
 
                 settingsRow(
                     title: store.ui("页边洞察", "Margin Insight"),
-                    detail: store.ui("把 Agent 作为低干扰阅读线索，而不是大弹窗。", "Uses low-distraction reading clues instead of large popovers.")
+                    detail: store.ui("把对话能力作为低干扰阅读线索，而不是大弹窗。", "Uses low-distraction reading clues instead of large popovers.")
                 ) {
                     Button(AgentSurface.quietInsight.label(language: store.interfaceLanguage)) {
                         withAnimation(WeiBeiMotion.panel) {
