@@ -391,7 +391,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private var layoutMenuTitle: String {
-        variant == .glyph || variant == .compact ? shortLayoutLabel : store.layout.label(language: store.interfaceLanguage)
+        shortLayoutLabel
     }
 
     private var shouldShowTopDocumentTitle: Bool {
@@ -547,7 +547,7 @@ private struct UnifiedTopBarView: View {
                 Text(store.brandLatinName)
                     .font(WeiBeiTypography.englishBrandFont(size: variant == .wide ? 15.5 : 14.5, weight: .semibold))
                     .foregroundStyle(primaryText)
-                Text(store.layout.label(language: store.interfaceLanguage))
+                Text(shortLayoutLabel)
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(tertiaryText)
             }
