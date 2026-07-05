@@ -149,6 +149,9 @@ visual_verify_window() {
   fi
   rm -f "$capture_error"
   swift -target arm64-apple-macosx14.0 -e 'import AppKit; import Foundation; let path = CommandLine.arguments[1]; guard let image = NSImage(contentsOf: URL(fileURLWithPath: path)), let data = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: data) else { exit(2) }; let xStep = max(1, bitmap.pixelsWide / 80); let yStep = max(1, bitmap.pixelsHigh / 60); var sampled = 0; var visible = 0; for y in stride(from: 0, to: bitmap.pixelsHigh, by: yStep) { for x in stride(from: 0, to: bitmap.pixelsWide, by: xStep) { guard let color = bitmap.colorAt(x: x, y: y) else { continue }; if color.redComponent > 0.08 || color.greenComponent > 0.08 || color.blueComponent > 0.08 { visible += 1 }; sampled += 1 } }; guard sampled > 0 else { exit(3) }; let nonBlackRatio = Double(visible) / Double(sampled); print("visual_non_black_ratio=\(nonBlackRatio)"); if nonBlackRatio < 0.02 { fputs("visual verify failed: captured window is black or empty\n", stderr); exit(4) }' "$capture_path"
+  local latest_capture_path="${TMPDIR:-/tmp}/weibei-visual-verify-latest.png"
+  cp "$capture_path" "$latest_capture_path"
+  echo "visual_capture_path=$latest_capture_path"
   rm -f "$capture_path"
 }
 
