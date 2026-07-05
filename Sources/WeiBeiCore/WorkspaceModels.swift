@@ -597,6 +597,12 @@ public enum PageNavigator {
     }
 }
 
+public enum TopBarLeadingInset {
+    public static func value(isFullScreen: Bool) -> Double {
+        isFullScreen ? 12 : 136
+    }
+}
+
 public enum PDFModeChipPresentation {
     public static func showsLabel(isExpanded: Bool) -> Bool {
         isExpanded

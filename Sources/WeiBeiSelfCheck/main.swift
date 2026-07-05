@@ -390,6 +390,9 @@ expect(PageNavigator.previous(0) == 0, "pdf previous clamps first page")
 expect(PageNavigator.next(0, pageCount: 2) == 1, "pdf next advances")
 expect(PageNavigator.next(1, pageCount: 2) == 1, "pdf next clamps last page")
 expect(PageNavigator.display(0, pageCount: 0) == "1 / 1", "pdf display empty")
+expect(TopBarLeadingInset.value(isFullScreen: true) == 12, "fullscreen top-left controls start from the left edge")
+expect(TopBarLeadingInset.value(isFullScreen: false) >= 136
+    && TopBarLeadingInset.value(isFullScreen: false) > TopBarLeadingInset.value(isFullScreen: true), "windowed top-left controls clear the traffic-light area")
 expect(!PDFModeChipPresentation.showsLabel(isExpanded: false), "pdf mode chip hides text after collapse")
 expect(PDFModeChipPresentation.showsLabel(isExpanded: true), "pdf mode chip shows text only during transient expansion")
 expect(PDFModeChipPresentation.controlOpacity(isExpanded: false, isHovering: true)
@@ -507,7 +510,7 @@ if let leftControlsStart = contentViewSource.range(of: "private var leftPrimaryC
 }
 expect(contentViewSource.contains("WindowFullScreenReader(isFullScreen: $windowIsFullScreen)")
     && contentViewSource.contains("let isFullScreen: Bool")
-    && contentViewSource.contains("if isFullScreen { return 12 }")
+    && contentViewSource.contains("TopBarLeadingInset.value(isFullScreen: isFullScreen)")
     && contentViewSource.contains("topIconButton(\"arrow.left\", help: \"后退\")")
     && contentViewSource.contains("store.navigateBackInWorkspace()")
     && contentViewSource.contains("topIconButton(\"arrow.right\", help: \"前进\")")

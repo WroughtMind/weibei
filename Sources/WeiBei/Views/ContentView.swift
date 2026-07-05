@@ -349,17 +349,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private var leftInset: CGFloat {
-        if isFullScreen { return 12 }
-        switch variant {
-        case .compact, .glyph:
-            return 84
-        case .reader:
-            return 88
-        case .balanced:
-            return 92
-        case .wide:
-            return 98
-        }
+        CGFloat(TopBarLeadingInset.value(isFullScreen: isFullScreen))
     }
 
     private var topBarSpacing: CGFloat {
