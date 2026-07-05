@@ -515,6 +515,8 @@ private struct UnifiedTopBarView: View {
 
             navigationButtons
 
+            appearanceToggleButton
+
             settingsMenu
         }
     }
@@ -596,6 +598,15 @@ private struct UnifiedTopBarView: View {
     private var agentButton: some View {
         topIconButton("bubble.left.and.text.bubble.right", help: agentButtonHelp) {
             activateAgentEntry()
+        }
+    }
+
+    @ViewBuilder
+    private var appearanceToggleButton: some View {
+        topIconButton(store.appearanceMode.toggled.systemImage, help: store.appearanceMode.actionLabel) {
+            withAnimation(WeiBeiMotion.appearance) {
+                store.toggleAppearanceMode()
+            }
         }
     }
 
