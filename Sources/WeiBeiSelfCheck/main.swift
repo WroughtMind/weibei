@@ -935,7 +935,10 @@ if let pdfViewStart = readerViewSource.range(of: "private final class ReaderPDFV
 }
 expect(readerViewSource.contains("func reportCurrentSelection(in view: PDFView)")
     && readerViewSource.contains("view.reportCurrentSelection = { [weak coordinator = context.coordinator, weak view] in")
-    && readerViewSource.contains("coordinator?.reportCurrentSelection(in: view)"), "PDF selection reporting polls currentSelection after drag gestures instead of relying only on PDFKit notifications")
+    && readerViewSource.contains("coordinator?.reportCurrentSelection(in: view)")
+    && readerViewSource.contains("NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDragged, .leftMouseUp])")
+    && readerViewSource.contains("view.bounds.contains(location)")
+    && readerViewSource.contains("NSEvent.removeMonitor(eventMonitor)"), "PDF selection reporting polls currentSelection after PDFKit internal drag gestures instead of relying only on outer PDFView mouse events")
 expect(readerViewSource.contains("PDFPageOverlayViewProvider")
     && readerViewSource.contains("PDFOCRPageOverlayView")
     && readerViewSource.contains("private func setOCRPageOverlayProvider(_ provider: PDFPageOverlayViewProvider?, in view: PDFView)")

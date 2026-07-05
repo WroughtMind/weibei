@@ -502,6 +502,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         private weak var observedView: PDFView?
         private var observer: NSObjectProtocol?
         private var pageObserver: NSObjectProtocol?
+        private var eventMonitor: Any?
         private var selectionWork: DispatchWorkItem?
         private var nativeTextPageIndexes: Set<Int> = []
         private var ocrPagesByPageIndex: [Int: PDFOCRPage] = [:]
@@ -666,6 +667,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         }
 
         func observe(_ view: PDFView) {
+            removeObservers()
             observedView = view
             observer = NotificationCenter.default.addObserver(
                 forName: Notification.Name.PDFViewSelectionChanged,
@@ -685,6 +687,31 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                 self.pageIndex.wrappedValue = document.index(for: page)
                 self.updateSelectableTextState(in: view)
                 self.ensureOCRForCurrentPage(in: view)
+            }
+            eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDragged, .leftMouseUp]) { [weak self, weak view] event in
+                guard let self, let view, event.window === view.window else { return event }
+                let location = view.convert(event.locationInWindow, from: nil)
+                guard view.bounds.contains(location) else { return event }
+                DispatchQueue.main.async { [weak self, weak view] in
+                    guard let self, let view else { return }
+                    self.reportCurrentSelection(in: view)
+                }
+                return event
+            }
+        }
+
+        private func removeObservers() {
+            if let observer {
+                NotificationCenter.default.removeObserver(observer)
+                self.observer = nil
+            }
+            if let pageObserver {
+                NotificationCenter.default.removeObserver(pageObserver)
+                self.pageObserver = nil
+            }
+            if let eventMonitor {
+                NSEvent.removeMonitor(eventMonitor)
+                self.eventMonitor = nil
             }
         }
 
@@ -784,12 +811,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
 
         deinit {
             selectionWork?.cancel()
-            if let observer {
-                NotificationCenter.default.removeObserver(observer)
-            }
-            if let pageObserver {
-                NotificationCenter.default.removeObserver(pageObserver)
-            }
+            removeObservers()
         }
     }
 }
