@@ -312,6 +312,10 @@ final class WorkspaceStore: ObservableObject {
         ui("魏碑", "WeiBei")
     }
 
+    var brandLatinName: String {
+        "WeiBei"
+    }
+
     func ui(_ chinese: String, _ english: String) -> String {
         interfaceLanguage.text(chinese, english)
     }

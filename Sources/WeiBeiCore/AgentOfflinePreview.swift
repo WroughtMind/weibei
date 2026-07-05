@@ -61,7 +61,7 @@ public enum AgentOfflinePreview {
 
         return input.language.text(
             """
-            未配置密钥，但这次提问已经进入对话。
+            离线预览：这次提问已经进入对话。
 
             问题：\(input.question)
 
@@ -77,7 +77,7 @@ public enum AgentOfflinePreview {
             设置密钥后，再发送同类问题就会基于这些上下文生成正式回答；没有证据时会明确说明。
             """,
             """
-            No key is configured, but this question was still sent into the chat.
+            Offline preview: this question was sent into the chat.
 
             Question: \(input.question)
 

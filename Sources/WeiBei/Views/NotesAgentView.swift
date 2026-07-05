@@ -85,7 +85,7 @@ private struct WeiBeiPaneHeader<Actions: View>: View {
         HStack(spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(title)
-                    .font(.system(size: 18, weight: .semibold, design: .serif))
+                    .font(titleUsesEnglishBrand ? WeiBeiTypography.englishBrandFont(size: 18, weight: .semibold) : .system(size: 18, weight: .semibold, design: .serif))
                     .foregroundStyle(WeiBeiTheme.ink)
                 Text(subtitle)
                     .font(.system(size: 11, weight: .medium))
@@ -97,6 +97,10 @@ private struct WeiBeiPaneHeader<Actions: View>: View {
             actions()
         }
         .weibeiPaneHeaderChrome(appearanceMode: appearanceMode)
+    }
+
+    private var titleUsesEnglishBrand: Bool {
+        title.unicodeScalars.allSatisfy(\.isASCII)
     }
 }
 

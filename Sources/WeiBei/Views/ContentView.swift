@@ -528,30 +528,30 @@ private struct UnifiedTopBarView: View {
                 .foregroundStyle(primaryText)
                 .frame(width: 28, height: controlHeight)
         case .compact:
-            Text(store.appDisplayName)
-                .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 13, weight: .semibold))
+            Text(store.brandLatinName)
+                .font(WeiBeiTypography.englishBrandFont(size: 13.5, weight: .semibold))
                 .foregroundStyle(primaryText)
-                .frame(width: 42, alignment: .leading)
+                .frame(width: 52, alignment: .leading)
         case .reader:
             VStack(alignment: .leading, spacing: 0) {
-                Text(store.appDisplayName)
-                    .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 12, weight: .semibold))
+                Text(store.brandLatinName)
+                    .font(WeiBeiTypography.englishBrandFont(size: 12.5, weight: .semibold))
                     .foregroundStyle(secondaryText)
                 Text(shortLayoutLabel)
                     .font(.system(size: 9, weight: .medium))
                     .foregroundStyle(tertiaryText)
             }
-            .frame(width: 48, alignment: .leading)
+            .frame(width: 56, alignment: .leading)
         case .balanced, .wide:
             VStack(alignment: .leading, spacing: 0) {
-                Text(store.appDisplayName)
-                    .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: variant == .wide ? 15 : 14, weight: .semibold))
+                Text(store.brandLatinName)
+                    .font(WeiBeiTypography.englishBrandFont(size: variant == .wide ? 15.5 : 14.5, weight: .semibold))
                     .foregroundStyle(primaryText)
                 Text(store.layout.label(language: store.interfaceLanguage))
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(tertiaryText)
             }
-            .frame(width: variant == .wide ? 92 : 82, alignment: .leading)
+            .frame(width: variant == .wide ? 96 : 86, alignment: .leading)
         }
     }
 
