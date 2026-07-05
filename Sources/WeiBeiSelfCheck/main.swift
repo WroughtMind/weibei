@@ -1238,6 +1238,7 @@ expect(workspaceStoreSource.contains("@Published var selectionAttachments: [Sele
     && workspaceStoreSource.contains("var agentSelectionTitle: String?")
     && workspaceStoreSource.contains("var agentSelectionText: String?")
     && workspaceStoreSource.contains("func removeSelectionAttachment(id: UUID)")
+    && workspaceStoreSource.contains("if selectionContext?.id == id {\n                clearUnpinnedFloatingSelection(keepContext: false)")
     && workspaceStoreSource.contains("private func addSelectionAttachment(_ selection: SelectionContext)")
     && workspaceStoreSource.contains("let maxAttachments = 8"), "agent selection context uses an explicit removable attachment list instead of a single hidden draft selection")
 expect(workspaceStoreSource.contains("selectionTitle: sentSelectionTitle")

@@ -1099,6 +1099,9 @@ final class WorkspaceStore: ObservableObject {
     func removeSelectionAttachment(id: UUID) {
         withAnimation(WeiBeiMotion.panel) {
             selectionAttachments.removeAll { $0.id == id }
+            if selectionContext?.id == id {
+                clearUnpinnedFloatingSelection(keepContext: false)
+            }
         }
     }
 
