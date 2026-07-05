@@ -242,10 +242,16 @@ private struct WeiBeiAppearanceTransition: ViewModifier {
                     .allowsHitTesting(false)
             }
             .onChange(of: mode) { oldMode, _ in
-                washColor = Color(nsColor: oldMode.windowBackground)
-                washOpacity = 0.36
-                withAnimation(WeiBeiMotion.appearance) {
-                    washOpacity = 0
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    washColor = Color(nsColor: oldMode.windowBackground)
+                    washOpacity = 0.36
+                }
+                DispatchQueue.main.async {
+                    withAnimation(WeiBeiMotion.appearance) {
+                        washOpacity = 0
+                    }
                 }
             }
     }

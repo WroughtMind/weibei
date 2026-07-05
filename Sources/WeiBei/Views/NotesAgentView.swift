@@ -91,10 +91,13 @@ struct NotePaneView: View {
                     .accessibilityLabel(Text("新建独立 Markdown 笔记"))
                     .help("新建独立 Markdown 笔记")
                     if store.canUseSelectedMarkdownAsNotebookNote {
-                        Button("作为笔记编辑") {
+                        Button {
                             store.useSelectedMarkdownAsNotebookNote()
+                        } label: {
+                            Image(systemName: "square.and.pencil")
                         }
-                        .buttonStyle(WeiBeiTextActionButtonStyle())
+                        .buttonStyle(WeiBeiIconButtonStyle(size: 24))
+                        .accessibilityLabel(Text("作为笔记编辑"))
                         .help("把当前 Markdown 文件移到笔记区原地编辑")
                     }
                 }
@@ -938,10 +941,9 @@ struct AgentPaneView: View {
 
     private func agentToolButton(_ title: String, help: String, systemImage: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Label(title, systemImage: systemImage)
-                .labelStyle(.titleAndIcon)
+            Image(systemName: systemImage)
         }
-        .buttonStyle(WeiBeiTextActionButtonStyle())
+        .buttonStyle(WeiBeiIconButtonStyle(size: 24))
         .accessibilityLabel(Text(help))
         .help(help)
     }
