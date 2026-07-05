@@ -783,6 +783,8 @@ private final class ReaderPDFView: PDFView {
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+        clearSelection()
+        reportCurrentSelection?()
         super.mouseDown(with: event)
     }
 
@@ -1101,6 +1103,12 @@ struct WebReaderRepresentable: NSViewRepresentable {
       }
 
       document.addEventListener("selectionchange", reportSelection);
+      document.addEventListener("pointerdown", () => {
+        if (window.weiBeiSuppressSelectionReport) return;
+        window.cancelAnimationFrame(frame);
+        lastPayload = { text: "", x: null, y: null };
+        window.webkit.messageHandlers.selection.postMessage(lastPayload);
+      }, true);
       document.addEventListener("pointerup", reportSelection);
       document.addEventListener("mouseup", reportSelection);
       document.addEventListener("keyup", reportSelection);
