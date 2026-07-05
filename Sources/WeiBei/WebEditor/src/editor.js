@@ -84,6 +84,11 @@ const calloutLabels = {
 const calloutRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(${calloutTypePattern})\\]([+-]?)(?:[ \\t]+([^\\n]+))?`, 'i');
 const calloutMarkerRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(?:${calloutTypePattern})\\][+-]?\\s*`, 'i');
 const calloutHeadingRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(?:${calloutTypePattern})\\][+-]?(?:[ \\t]+[^\\n]+)?$`, 'i');
+const selectedTextCalloutControlRegex = new RegExp(`(^|\\n)\\s*(?:>\\s*)*\\\\?\\[!(?:${calloutTypePattern})\\][+-]?[ \\t]*`, 'gi');
+const cleanSelectedText = (text) => String(text || '')
+  .replace(selectedTextCalloutControlRegex, '$1')
+  .replace(/[ \t]+\n/g, '\n')
+  .trim();
 const calloutHeaderText = (node) => {
   const text = node.textBetween
     ? node.textBetween(0, node.content.size, '\n')
@@ -122,6 +127,14 @@ const decorateCalloutHeadingSource = (decorations, node, pos) => {
   const titleEnd = contentStart + heading[0].length;
   if (titleEnd > markerEnd) {
     addRangeDecoration(decorations, markerEnd, titleEnd, 'weibei-callout-heading-source');
+  }
+};
+const decorateLeakedCalloutControls = (decorations, text, pos) => {
+  for (const match of text.matchAll(selectedTextCalloutControlRegex)) {
+    const lineBreakSize = match[1]?.length || 0;
+    const from = pos + (match.index || 0) + lineBreakSize;
+    const to = pos + (match.index || 0) + match[0].length;
+    addRangeDecoration(decorations, from, to, 'weibei-callout-marker');
   }
 };
 
@@ -466,11 +479,11 @@ const editorSelectedText = () => {
     const { selection } = ctx.get(editorViewCtx).state;
     if (!selection || selection.empty) return '';
     const content = selection.content().content;
-    return content.textBetween(0, content.size, '\n').trim();
+    return cleanSelectedText(content.textBetween(0, content.size, '\n'));
   });
 };
 
-const selectedText = () => window.getSelection()?.toString().trim() || editorSelectedText();
+const selectedText = () => cleanSelectedText(window.getSelection()?.toString() || editorSelectedText());
 
 const addRangeDecoration = (decorations, from, to, className, attrs = {}) => {
   if (to <= from) return;
@@ -1018,6 +1031,8 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
           const textPos = pos;
           const text = node.text || '';
           const hasCodeMark = (node.marks || []).some((mark) => mark.type.name.toLowerCase().includes('code'));
+          const insideBlockquote = isInsideNode(state, textPos, 'blockquote') || isInsideNode(state, textPos, 'block_quote');
+          if (insideBlockquote) decorateLeakedCalloutControls(decorations, text, textPos);
           decorateDelimitedInline(decorations, text, textPos, /==([^=\n]+)==/g, 2, 'weibei-highlight');
           if (!hasCodeMark) {
             decorateInlineFootnotes(decorations, text, textPos);

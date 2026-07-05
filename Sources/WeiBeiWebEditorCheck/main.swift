@@ -46,6 +46,11 @@ tags:
 >
 > 来源：Mishkin 教材样例，第 12 页
 
+> [!quote] 旧摘录
+>
+> [!quote] 旧逻辑泄露
+> 这行旧摘录正文不能带着控制符显示。
+
 > > [!quote] 嵌套摘录
 > >
 > > 嵌套摘录里的控制符不应该露出来。
@@ -317,6 +322,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             return count;
           })(),
+          cleanedCalloutSelection: (() => {
+            if (!window.WeiBeiEditor.selectFirstTextForCheck('[!quote] 选区摘录')) return '__missing__';
+            return window.WeiBeiEditor.selectedTextForCheck();
+          })(),
           customCalloutType: document.querySelector('blockquote.weibei-callout-custom')?.getAttribute('data-callout') || '',
           customCalloutFold: document.querySelector('blockquote.weibei-callout-custom')?.getAttribute('data-callout-fold') || '',
           customCalloutTitle: document.querySelector('blockquote.weibei-callout-custom')?.getAttribute('data-callout-title') || '',
@@ -478,6 +487,13 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             if (result["visibleRawCalloutMarkers"] as? Int ?? -1) != 0 {
                 self.fail("nested callout source markers should not leak as visible text")
+                return
+            }
+            let cleanedCalloutSelection = result["cleanedCalloutSelection"] as? String ?? ""
+            if cleanedCalloutSelection == "__missing__"
+                || cleanedCalloutSelection.contains("[!quote]")
+                || !cleanedCalloutSelection.contains("选区摘录") {
+                self.fail("callout control marker leaked into selected text: \(cleanedCalloutSelection)")
                 return
             }
             if result["customCalloutType"] as? String != "attention" {

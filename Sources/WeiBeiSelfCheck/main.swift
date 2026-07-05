@@ -353,6 +353,18 @@ let foldedCalloutInsight = QuietInsight.make(
 )
 expect(!foldedCalloutInsight.body.contains("[!note]")
     && !foldedCalloutInsight.body.contains("-折叠标题"), "quiet insight removes Obsidian callout control and fold markers")
+let calloutSelectionText = MarkdownSelectionSanitizer.clean("""
+[!quote] 选区摘录
+利率是资金使用价格的表达。
+""")
+expect(calloutSelectionText == "选区摘录\n利率是资金使用价格的表达。", "selection sanitizer removes visible Obsidian callout control markers from rendered selections")
+let quotedCalloutSelectionText = MarkdownSelectionSanitizer.clean("""
+> [!warning]- 风险提示
+> 普通美元 $5 不应被误伤。
+""")
+expect(!quotedCalloutSelectionText.contains("[!warning]")
+    && quotedCalloutSelectionText.contains("风险提示")
+    && quotedCalloutSelectionText.contains("$5"), "selection sanitizer handles quoted and folded callouts without damaging ordinary prose")
 
 expect(PageNavigator.previous(0) == 0, "pdf previous clamps first page")
 expect(PageNavigator.next(0, pageCount: 2) == 1, "pdf next advances")
@@ -816,6 +828,9 @@ expect(webEditorSource.contains("const decorateCalloutHeadingSource = (decoratio
     && webEditorSource.contains("const isBlockquoteType = (typeName) => typeName === 'blockquote' || typeName === 'block_quote'")
     && webEditorSource.contains("const calloutTypePattern = '[A-Za-z][A-Za-z0-9_-]*'")
     && webEditorSource.contains("const calloutPrefixPattern = '(?:\\\\s*>\\\\s*)*\\\\s*'")
+    && webEditorSource.contains("const selectedTextCalloutControlRegex = new RegExp")
+    && webEditorSource.contains("const cleanSelectedText = (text) =>")
+    && webEditorSource.contains("const decorateLeakedCalloutControls = (decorations, text, pos) =>")
     && webEditorSource.contains("weibei-callout-custom")
     && webEditorSource.contains(#"^${calloutPrefixPattern}\\\\?\\[!"#)
     && webEditorSource.contains("const contentStart = pos + 1")
@@ -824,6 +839,9 @@ expect(webEditorSource.contains("const decorateCalloutHeadingSource = (decoratio
     && webEditorSource.contains("const match = calloutMatchForBlockquote(node);")
     && webEditorSource.contains("typeName === 'paragraph' && isBlockquoteType(parentName)")
     && webEditorSource.contains("decorateCalloutHeadingSource(decorations, node, pos);")
+    && webEditorSource.contains("return cleanSelectedText(content.textBetween")
+    && webEditorSource.contains("const selectedText = () => cleanSelectedText")
+    && webEditorSource.contains("if (insideBlockquote) decorateLeakedCalloutControls(decorations, text, textPos);")
     && !webEditorSource.contains("Array.from(calloutTypes).join('|')"), "callout heading decorations collapse the raw [!type] marker at paragraph range level so split inline nodes do not leak")
 let appSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/App/WeiBeiApp.swift")
@@ -879,14 +897,16 @@ expect(workspaceStoreSource.contains("@Published var readerLocationTitle") && wo
 expect(workspaceStoreSource.contains("@Published var readerTargetPageIndex") && workspaceStoreSource.contains("func openSourceReference") && workspaceStoreSource.contains("SourceReferenceTitle.parse"), "store can jump from source reference text to the referenced material")
 expect(workspaceStoreSource.contains("ownerTitle: String? = nil") && workspaceStoreSource.contains("let resolvedOwnerTitle"), "selection updates can carry a precise reader source title")
 expect(workspaceStoreSource.contains("private static func boundedSelectionText")
+    && workspaceStoreSource.contains("let cleaned = MarkdownSelectionSanitizer.clean(text)")
     && workspaceStoreSource.contains("Self.boundedSelectionText(cleaned)")
     && workspaceStoreSource.contains("lastIndex(where:")
-    && !workspaceStoreSource.contains("String(cleaned.prefix(2_000))"), "selection context truncation prefers a word or line boundary instead of cutting Markdown text mid-token")
+    && !workspaceStoreSource.contains("String(cleaned.prefix(2_000))"), "selection context cleans callout control markers and truncates at a word or line boundary")
 expect(workspaceStoreSource.contains("withAnimation(WeiBeiMotion.panel) {\n            selectionContext = SelectionContext")
     && workspaceStoreSource.contains("agentSurface = .selectionFloat\n            showQuietInsight = false"), "selection updates reveal the floating agent through the shared panel animation")
 expect(workspaceStoreSource.contains("func askSelection()") && workspaceStoreSource.components(separatedBy: "withAnimation(WeiBeiMotion.panel) {").count >= 3, "selection and agent entry paths use shared panel motion")
 expect(workspaceStoreSource.contains("sourceTitle: selectionContext.ownerTitle") && workspaceStoreSource.contains("来源：\\(currentReferenceTitle)"), "copy reference uses real selection or current reader source")
 expect(workspaceStoreSource.contains("private func quotedReferenceBlock")
+    && workspaceStoreSource.contains("let quoted = MarkdownSelectionSanitizer.clean(text)")
     && workspaceStoreSource.contains("> [!quote] 选区摘录\n        >\n        \\(quoted)")
     && !workspaceStoreSource.contains("## 选区摘录"), "selection excerpts use the shared quote callout format with a separate editable body")
 expect(workspaceStoreSource.contains("selectionOwnerTitle(for source: SelectionSource)") && workspaceStoreSource.contains("selectedItem?.isNotebookNote == true"), "selection fallback title treats notebook notes as notes")

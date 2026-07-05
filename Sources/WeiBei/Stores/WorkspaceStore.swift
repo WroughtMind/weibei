@@ -814,7 +814,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func updateSelection(_ text: String, source: SelectionSource, anchor: CGPoint? = nil, ownerTitle: String? = nil, isEditable: Bool = true) {
-        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleaned = MarkdownSelectionSanitizer.clean(text)
         guard Self.hasMeaningfulSelectionCharacter(cleaned) else {
             clearUnpinnedFloatingSelection(keepContext: false)
             return
@@ -911,7 +911,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func quotedReferenceBlock(text: String, sourceTitle: String) -> String {
-        let quoted = text
+        let quoted = MarkdownSelectionSanitizer.clean(text)
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { "> \($0)" }
             .joined(separator: "\n")
