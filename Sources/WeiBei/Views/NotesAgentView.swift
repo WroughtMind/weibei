@@ -2145,21 +2145,8 @@ private struct AgentBubble: View {
 
     private var regularMessageContent: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text(speakerTitle)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(speakerColor)
-                if let source = message.source {
-                    Text(source)
-                        .font(.caption2)
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                        .lineLimit(1)
-                        .padding(.horizontal, 6)
-                        .frame(height: 18)
-                        .background(WeiBeiTheme.paperInset.opacity(0.24))
-                        .clipShape(RoundedRectangle(cornerRadius: 5))
-                }
-                Spacer(minLength: 0)
+            if isUser || message.source != nil {
+                messageMetadata
             }
 
             AgentMessageMarkdownText(text: message.text)
@@ -2188,6 +2175,27 @@ private struct AgentBubble: View {
         }
     }
 
+    private var messageMetadata: some View {
+        HStack(spacing: 6) {
+            if isUser {
+                Text(store.ui("你", "You"))
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(WeiBeiTheme.link)
+            }
+            if let source = message.source {
+                Text(source)
+                    .font(.caption2)
+                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                    .lineLimit(1)
+                    .padding(.horizontal, 6)
+                    .frame(height: 18)
+                    .background(WeiBeiTheme.paperInset.opacity(0.24))
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
     private var credentialNoticeContent: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(store.ui("需要设置密钥", "Key Required"))
@@ -2208,16 +2216,6 @@ private struct AgentBubble: View {
     private var isCredentialNotice: Bool {
         message.role == .assistant
             && (message.text.hasPrefix("未配置密钥") || message.text.hasPrefix("未配置 OPENAI_API_KEY") || message.text.hasPrefix("No key is configured"))
-    }
-
-    private var speakerTitle: String {
-        if isUser { return store.ui("你", "You") }
-        return isCredentialNotice ? store.ui("需要设置密钥", "Key Required") : store.appDisplayName
-    }
-
-    private var speakerColor: Color {
-        if isUser { return WeiBeiTheme.link }
-        return isCredentialNotice ? WeiBeiTheme.secondaryInk : WeiBeiTheme.cinnabar
     }
 
     private var displayText: String {
