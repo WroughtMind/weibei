@@ -1046,7 +1046,7 @@ struct AgentDrawerView: View {
                     .transition(WeiBeiTransition.floating)
             }
 
-            HStack(alignment: .bottom, spacing: 8) {
+            ZStack(alignment: .bottomTrailing) {
                 TextField(
                     "",
                     text: $store.agentDraft,
@@ -1061,6 +1061,7 @@ struct AgentDrawerView: View {
                     .focused($draftFocused)
                     .foregroundColor(WeiBeiTheme.ink)
                 .font(.system(size: 13))
+                .padding(.trailing, canSend ? 44 : 0)
                 .weibeiInputSurface(active: draftFocused, height: 46)
                 if canSend {
                     Button { Task { await store.askAgent() } } label: {
@@ -1069,6 +1070,8 @@ struct AgentDrawerView: View {
                     .buttonStyle(WeiBeiIconButtonStyle(active: true, size: 34))
                     .accessibilityLabel(Text("发送"))
                     .help("发送")
+                    .padding(.trailing, 6)
+                    .padding(.bottom, 6)
                     .transition(WeiBeiTransition.floating)
                 }
             }
@@ -1136,7 +1139,7 @@ struct CornerAgentView: View {
                     .transition(WeiBeiTransition.floating)
             }
 
-            HStack(alignment: .bottom, spacing: 8) {
+            ZStack(alignment: .bottomTrailing) {
                 TextField(
                     "",
                     text: $store.agentDraft,
@@ -1151,6 +1154,7 @@ struct CornerAgentView: View {
                     .focused($draftFocused)
                     .foregroundColor(WeiBeiTheme.ink)
                 .font(.system(size: 13))
+                .padding(.trailing, canSend ? 38 : 0)
                 .weibeiInputSurface(active: draftFocused, height: 44)
 
                 if canSend {
@@ -1162,6 +1166,8 @@ struct CornerAgentView: View {
                     .buttonStyle(WeiBeiIconButtonStyle(active: true))
                     .accessibilityLabel(Text("发送"))
                     .help("发送")
+                    .padding(.trailing, 5)
+                    .padding(.bottom, 5)
                     .transition(WeiBeiTransition.floating)
                 }
             }

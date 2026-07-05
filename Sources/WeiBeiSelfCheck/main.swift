@@ -1270,11 +1270,13 @@ expect(notesAgentSource.contains("store.hasSelectedMaterial ? \"来源\" : \"笔
 if let drawerStart = notesAgentSource.range(of: "struct AgentDrawerView")?.lowerBound,
    let cornerStart = notesAgentSource.range(of: "struct CornerAgentView")?.lowerBound {
     let drawerAgentSource = String(notesAgentSource[drawerStart..<cornerStart])
-    expect(drawerAgentSource.contains("HStack(alignment: .bottom, spacing: 8)")
+    expect(drawerAgentSource.contains("ZStack(alignment: .bottomTrailing)")
         && drawerAgentSource.contains("axis: .vertical")
         && drawerAgentSource.contains(".lineLimit(1...4)")
         && drawerAgentSource.contains(".fixedSize(horizontal: false, vertical: true)")
+        && drawerAgentSource.contains(".padding(.trailing, canSend ? 44 : 0)")
         && drawerAgentSource.contains(".weibeiInputSurface(active: draftFocused, height: 46)")
+        && drawerAgentSource.contains(".padding(.bottom, 6)")
         && drawerAgentSource.contains("WeiBeiIconButtonStyle(active: true, size: 34)"), "bottom agent drawer input grows as a compact composer instead of a search strip")
 } else {
     expect(false, "agent drawer source is readable")
@@ -1290,11 +1292,13 @@ if let cornerStart = notesAgentSource.range(of: "struct CornerAgentView")?.lower
         && !cornerAgentSource.contains("整理笔记")
         && cornerAgentSource.contains("Text(\"对话\")")
         && !cornerAgentSource.contains("Text(\"Agent\")")
-        && cornerAgentSource.contains("HStack(alignment: .bottom, spacing: 8)")
+        && cornerAgentSource.contains("ZStack(alignment: .bottomTrailing)")
         && cornerAgentSource.contains("axis: .vertical")
         && cornerAgentSource.contains(".lineLimit(1...4)")
         && cornerAgentSource.contains(".fixedSize(horizontal: false, vertical: true)")
+        && cornerAgentSource.contains(".padding(.trailing, canSend ? 38 : 0)")
         && cornerAgentSource.contains(".weibeiInputSurface(active: draftFocused, height: 44)")
+        && cornerAgentSource.contains(".padding(.bottom, 5)")
         && cornerAgentSource.contains(".help(\"收起对话浮窗\")"), "corner agent stays a lightweight localized prompt surface")
 } else {
     expect(false, "corner agent source is readable")
