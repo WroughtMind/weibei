@@ -2142,14 +2142,14 @@ private struct AgentBubble: View {
             Spacer(minLength: 42)
 
             regularMessageContent
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
+                .padding(.leading, 12)
+                .padding(.trailing, 20)
+                .padding(.vertical, 9)
                 .frame(maxWidth: 520, alignment: .leading)
-                .background(WeiBeiTheme.paperInset.opacity(hovering ? 0.32 : 0.24))
-                .clipShape(RoundedRectangle(cornerRadius: 10))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(WeiBeiTheme.hairline.opacity(hovering ? 0.92 : 0.42), lineWidth: 1)
+                .overlay(alignment: .trailing) {
+                    Capsule()
+                        .fill(WeiBeiTheme.link.opacity(hovering ? 0.58 : 0.34))
+                        .frame(width: 2, height: hovering ? 34 : 24)
                 }
                 .weibeiHoverLift(active: hovering, amount: 1)
         }
@@ -2276,27 +2276,8 @@ private struct AgentBubble: View {
             || message.text.contains("question was sent into the chat")
     }
 
-    private var bubblePadding: EdgeInsets {
-        isCredentialNotice
-            ? EdgeInsets(top: 8, leading: 10, bottom: 8, trailing: 12)
-            : EdgeInsets(top: 12, leading: 12, bottom: 12, trailing: 12)
-    }
-
-    private var bubbleMaxWidth: CGFloat {
-        isCredentialNotice ? 360 : 560
-    }
-
     private var assistantMarkColor: Color {
         isCredentialNotice ? WeiBeiTheme.link.opacity(0.42) : WeiBeiTheme.cinnabar.opacity(0.50)
-    }
-
-    private var bubbleFill: Color {
-        if isUser { return WeiBeiTheme.cinnabarSoft }
-        return WeiBeiTheme.paperRaised.opacity(isCredentialNotice ? 0.34 : 0.72)
-    }
-
-    private var bubbleStroke: Color {
-        isUser ? WeiBeiTheme.cinnabar.opacity(0.10) : WeiBeiTheme.hairline.opacity(isCredentialNotice ? 0.50 : 1)
     }
 }
 
