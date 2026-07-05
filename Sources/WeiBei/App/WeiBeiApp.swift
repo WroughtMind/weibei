@@ -412,12 +412,12 @@ struct SettingsView: View {
                 settingsPill(
                     title: store.interfaceLanguage.settingsLabel,
                     icon: "character.book.closed",
-                    active: true
+                    active: false
                 )
                 settingsPill(
                     title: store.appearanceMode.label(language: store.interfaceLanguage),
                     icon: store.appearanceMode.systemImage,
-                    active: true
+                    active: false
                 )
             }
             .padding(.horizontal, 14)
