@@ -222,7 +222,7 @@ final class WorkspaceStore: ObservableObject {
 
     var quietInsight: QuietInsight {
         if isGeneratingQuietInsight {
-            return QuietInsight(body: hasSelectedMaterial ? "Agent 正在静默阅读当前材料和笔记。" : "Agent 正在静默阅读当前笔记。", noteBlock: "")
+            return QuietInsight(body: hasSelectedMaterial ? "正在静默阅读当前材料和笔记。" : "正在静默阅读当前笔记。", noteBlock: "")
         }
         if let generatedQuietInsight {
             return generatedQuietInsight
@@ -1090,7 +1090,7 @@ final class WorkspaceStore: ObservableObject {
         guard let answer = lastUsableAgentAnswer else { return }
         let block = """
 
-        ## Agent 整理建议
+        ## 整理建议
         \(answer.text)
         """
         updateNote(noteText + block)
@@ -1106,7 +1106,7 @@ final class WorkspaceStore: ObservableObject {
 
     func applyAgentPatchToEditor() {
         guard let answer = lastUsableAgentAnswer else { return }
-        noteEditorCommand = NoteEditorCommand(kind: .applyAgentPatch, markdown: "\n## Agent 整理建议\n\(answer.text)")
+        noteEditorCommand = NoteEditorCommand(kind: .applyAgentPatch, markdown: "\n## 整理建议\n\(answer.text)")
         focus(.notes)
     }
 
