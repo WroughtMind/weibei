@@ -1274,17 +1274,27 @@ expect(notesAgentSource.contains(".accessibilityLabel(Text(\"作为笔记编辑\
     && commandPaletteSource.contains("PaletteCommand(title: \"作为笔记编辑当前 Markdown\"")
     && !notesAgentSource.contains("Button(\"写回原 Markdown\")")
     && !commandPaletteSource.contains("写回当前 Markdown 文件"), "imported markdown conversion is named as editing, not an immediate overwrite")
-expect(notesAgentSource.contains("drawerPrompt") && notesAgentSource.contains("return \"问当前选区\"") && !notesAgentSource.contains("问当前选区或当前材料"), "agent drawer placeholder avoids fake material context")
+expect(notesAgentSource.contains("return \"问当前选区\"") && !notesAgentSource.contains("问当前选区或当前材料"), "agent placeholders avoid fake material context when a selection exists")
 expect(notesAgentSource.contains("func weibeiFloatingHeaderChrome(appearanceMode: WeiBeiAppearanceMode) -> some View")
     && notesAgentSource.contains("WeiBeiHeaderHandoffFade(height: 10, opacity: 0.22)")
     && notesAgentSource.components(separatedBy: ".weibeiFloatingHeaderChrome(appearanceMode: store.appearanceMode)").count == 3, "drawer and corner agent headers share the same light glass chrome")
 expect(notesAgentSource.components(separatedBy: "!store.isAskingAgent && !store.agentDraft.trimmingCharacters").count >= 4, "all agent send affordances hide while a request is running")
 expect(notesAgentSource.contains("store.hasSelectedMaterial ? \"问当前材料\" : \"问当前笔记\"") && notesAgentSource.contains("prompt: Text(agentPrompt)") && notesAgentSource.contains(".foregroundStyle(WeiBeiTheme.placeholderInk)") && notesAgentSource.contains(".foregroundColor(WeiBeiTheme.ink)"), "agent input placeholder matches context and uses native prompt alignment with readable ink")
+if let panePromptStart = notesAgentSource.range(of: "private var agentPrompt: String")?.lowerBound,
+   let panePromptEnd = notesAgentSource[panePromptStart...].range(of: "\n    }\n\n    private var agentInputTray")?.lowerBound {
+    let panePromptSource = String(notesAgentSource[panePromptStart..<panePromptEnd])
+    expect(panePromptSource.contains("if store.selectionContext != nil {\n            return \"问当前选区\"\n        }")
+        && panePromptSource.contains("store.hasSelectedMaterial ? \"问当前材料\" : \"问当前笔记\""), "main agent pane prompt prioritizes the current selection")
+} else {
+    expect(false, "main agent pane prompt is inspectable")
+}
 expect(notesAgentSource.contains("store.hasSelectedMaterial ? \"来源\" : \"笔记\"") && notesAgentSource.contains("store.selectedMaterialItem?.title ?? \"当前笔记\""), "agent drawer source row avoids fake current material")
 if let drawerStart = notesAgentSource.range(of: "struct AgentDrawerView")?.lowerBound,
    let cornerStart = notesAgentSource.range(of: "struct CornerAgentView")?.lowerBound {
     let drawerAgentSource = String(notesAgentSource[drawerStart..<cornerStart])
     expect(drawerAgentSource.contains("ZStack(alignment: .bottomTrailing)")
+        && drawerAgentSource.contains("private var drawerPrompt: String")
+        && drawerAgentSource.contains("if store.selectionContext != nil {\n            return \"问当前选区\"\n        }")
         && drawerAgentSource.contains("axis: .vertical")
         && drawerAgentSource.contains(".lineLimit(1...4)")
         && drawerAgentSource.contains(".fixedSize(horizontal: false, vertical: true)")
@@ -1307,6 +1317,8 @@ if let cornerStart = notesAgentSource.range(of: "struct CornerAgentView")?.lower
         && !cornerAgentSource.contains("整理笔记")
         && cornerAgentSource.contains("Text(\"对话\")")
         && !cornerAgentSource.contains("Text(\"Agent\")")
+        && cornerAgentSource.contains("private var agentPrompt: String")
+        && cornerAgentSource.contains("if store.selectionContext != nil {\n            return \"问当前选区\"\n        }")
         && cornerAgentSource.contains("ZStack(alignment: .bottomTrailing)")
         && cornerAgentSource.contains("axis: .vertical")
         && cornerAgentSource.contains(".lineLimit(1...4)")

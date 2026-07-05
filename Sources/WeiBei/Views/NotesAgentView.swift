@@ -802,7 +802,10 @@ struct AgentPaneView: View {
     }
 
     private var agentPrompt: String {
-        store.hasSelectedMaterial ? "问当前材料" : "问当前笔记"
+        if store.selectionContext != nil {
+            return "问当前选区"
+        }
+        return store.hasSelectedMaterial ? "问当前材料" : "问当前笔记"
     }
 
     private var agentInputTray: some View {
@@ -1196,7 +1199,10 @@ struct CornerAgentView: View {
     }
 
     private var agentPrompt: String {
-        store.hasSelectedMaterial ? "问当前材料" : "问当前笔记"
+        if store.selectionContext != nil {
+            return "问当前选区"
+        }
+        return store.hasSelectedMaterial ? "问当前材料" : "问当前笔记"
     }
 }
 
