@@ -200,8 +200,10 @@ struct ReaderView: View {
             HStack(spacing: showsPDFModeLabel ? 5 : 0) {
                 Image(systemName: pdfBrowseMode.systemImage)
                     .font(.system(size: 12, weight: .semibold))
-                Text(pdfBrowseMode.label)
-                    .font(.system(size: 11, weight: .medium))
+                if showsPDFModeLabel {
+                    Text(pdfBrowseMode.label)
+                        .font(.system(size: 11, weight: .medium))
+                }
             }
             .foregroundStyle(pdfModeForeground)
             .padding(.horizontal, showsPDFModeLabel ? 7 : 4)
@@ -231,7 +233,7 @@ struct ReaderView: View {
     }
 
     private var showsPDFModeLabel: Bool {
-        true
+        pdfControlsActive
     }
 
     private func revealPDFControls(collapseAfter delay: TimeInterval = 1.25) {
