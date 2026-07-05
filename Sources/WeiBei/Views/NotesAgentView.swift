@@ -1215,6 +1215,113 @@ private struct AgentSelectionAttachmentPill: View {
     }
 }
 
+private struct CompactAgentMessagePreviewList: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    var maxMessages: Int
+    var maxHeight: CGFloat
+
+    var body: some View {
+        if !messages.isEmpty || store.isAskingAgent {
+            ScrollView(showsIndicators: false) {
+                LazyVStack(alignment: .leading, spacing: 7) {
+                    ForEach(messages) { message in
+                        CompactAgentMessagePreviewRow(message: message)
+                            .transition(WeiBeiTransition.message)
+                    }
+                    if store.isAskingAgent {
+                        HStack(spacing: 7) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text(store.ui("正在读上下文", "Reading context"))
+                                .font(.system(size: 11.5, weight: .medium))
+                                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                }
+                .padding(1)
+            }
+            .frame(maxHeight: maxHeight)
+            .animation(WeiBeiMotion.panel, value: store.messages.count)
+        }
+    }
+
+    private var messages: [AgentMessage] {
+        Array(store.messages.suffix(maxMessages))
+    }
+}
+
+private struct CompactAgentMessagePreviewRow: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    var message: AgentMessage
+    @State private var hovering = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(speakerTitle)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(speakerColor)
+                if let source = message.source {
+                    Text(source)
+                        .font(.system(size: 10))
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+
+            Text(displayText)
+                .font(.system(size: 12))
+                .foregroundStyle(WeiBeiTheme.ink)
+                .lineSpacing(2)
+                .lineLimit(message.role == .user ? 2 : 5)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 7)
+        .background(rowBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .overlay(alignment: .leading) {
+            Capsule()
+                .fill(speakerColor.opacity(hovering ? 0.66 : 0.38))
+                .frame(width: 2, height: hovering ? 28 : 20)
+                .padding(.leading, 3)
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 7)
+                .stroke(WeiBeiTheme.hairline.opacity(hovering ? 0.56 : 0.26), lineWidth: 1)
+        }
+        .onHover { value in
+            withAnimation(WeiBeiMotion.hover) {
+                hovering = value
+            }
+        }
+    }
+
+    private var speakerTitle: String {
+        message.role == .user ? store.ui("你", "You") : store.appDisplayName
+    }
+
+    private var speakerColor: Color {
+        message.role == .user ? WeiBeiTheme.link : WeiBeiTheme.cinnabar
+    }
+
+    private var displayText: String {
+        message.text
+            .replacingOccurrences(of: "\n\n", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var rowBackground: Color {
+        if message.role == .user {
+            return WeiBeiTheme.paperInset.opacity(hovering ? 0.36 : 0.24)
+        }
+        return WeiBeiTheme.paperRaised.opacity(hovering ? 0.42 : 0.28)
+    }
+}
+
 struct AgentDrawerView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @FocusState private var draftFocused: Bool
@@ -1236,6 +1343,8 @@ struct AgentDrawerView: View {
                 AgentSelectionAttachmentPill()
                     .transition(WeiBeiTransition.floating)
             }
+
+            CompactAgentMessagePreviewList(maxMessages: 2, maxHeight: 168)
 
             AgentComposerField(
                 prompt: drawerPrompt,
@@ -1306,6 +1415,8 @@ struct CornerAgentView: View {
                 AgentSelectionAttachmentPill()
                     .transition(WeiBeiTransition.floating)
             }
+
+            CompactAgentMessagePreviewList(maxMessages: 2, maxHeight: 138)
 
             AgentComposerField(
                 prompt: agentPrompt,
@@ -1601,7 +1712,7 @@ struct FloatingSelectionAgentView: View {
 
     private func isOfflineContextPreview(_ message: AgentMessage) -> Bool {
         message.text.contains("这次提问已经进入对话")
-            || message.text.contains("question was still sent into the chat")
+            || message.text.contains("question was sent into the chat")
     }
 
     private func isGeneratedSelectionPrompt(_ message: AgentMessage) -> Bool {
@@ -2162,7 +2273,7 @@ private struct AgentBubble: View {
 
     private var isOfflineContextPreview: Bool {
         message.text.contains("这次提问已经进入对话")
-            || message.text.contains("question was still sent into the chat")
+            || message.text.contains("question was sent into the chat")
     }
 
     private var bubblePadding: EdgeInsets {

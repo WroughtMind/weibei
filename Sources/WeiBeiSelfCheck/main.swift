@@ -1248,12 +1248,16 @@ expect(workspaceStoreSource.contains("var hasPrimaryConversationPaneVisible: Boo
 expect(workspaceStoreSource.contains("let shouldRevealSelectionPrompt = canShowSelectionPromptSurface")
     && workspaceStoreSource.contains("if shouldRevealSelectionPrompt {\n                agentSurface = .selectionFloat\n                showQuietInsight = false\n            } else if agentSurface == .selectionFloat {\n                agentSurface = .hidden\n            }"), "selection updates show the prompt-only affordance when possible without replacing an open drawer or corner conversation")
 expect(workspaceStoreSource.contains("func askSelection()")
-    && workspaceStoreSource.contains("if isConversationSurfaceVisible {\n                    collapseSelectionFloatIntoConversationIfVisible()\n                    focus(.agent)\n                } else {\n                    agentSurface = .selectionFloat")
+    && workspaceStoreSource.contains("if isConversationSurfaceVisible {\n                routeSelectionToConversation(selectionContext)\n            } else {")
+    && workspaceStoreSource.contains("agentSurface = .selectionFloat")
+    && workspaceStoreSource.contains("func routeSelectionToConversation")
+    && workspaceStoreSource.contains("if agentSurface == .selectionFloat {\n                agentSurface = .hidden\n            }")
     && workspaceStoreSource.components(separatedBy: "withAnimation(WeiBeiMotion.panel) {").count >= 3, "asking a selection uses the open conversation surface before falling back to the floating prompt")
 if let askSelectionStart = workspaceStoreSource.range(of: "func askSelection()")?.lowerBound,
    let appendSelectionStart = workspaceStoreSource.range(of: "func appendSelectionToNote()")?.lowerBound {
     let askSelectionSource = String(workspaceStoreSource[askSelectionStart..<appendSelectionStart])
-    expect(askSelectionSource.contains("addSelectionAttachment(selectionContext)")
+    expect(askSelectionSource.contains("routeSelectionToConversation(selectionContext)")
+        && askSelectionSource.contains("addSelectionAttachment(context)")
         && !askSelectionSource.contains("请解释当前已选文本片段")
         && !askSelectionSource.contains("agentDraft = prompt")
         && !askSelectionSource.contains("selectionContext.text")
@@ -1651,10 +1655,11 @@ expect(notesAgentSource.contains(".accessibilityLabel(Text(store.ui(\"作为笔�
     && !notesAgentSource.contains("Button(\"写回原 Markdown\")")
     && !commandPaletteSource.contains("写回当前 Markdown 文件"), "imported markdown conversion is named as editing, not an immediate overwrite")
 expect(workspaceStoreSource.contains("var agentInputPrompt: String")
-    && workspaceStoreSource.contains("if hasSelectionAttachments {\n            return ui(\"追问已选文本片段\"")
+    && workspaceStoreSource.contains("if hasSelectionAttachments {\n            return ui(\"输入问题\"")
     && workspaceStoreSource.contains("return hasSelectedMaterial ? ui(\"问当前材料\"")
     && workspaceStoreSource.contains(": ui(\"问当前笔记\"")
-    && !notesAgentSource.contains("问当前选区或当前材料"), "agent placeholders come from confirmed attachment state instead of hidden live selection state")
+    && !notesAgentSource.contains("问当前选区或当前材料")
+    && !workspaceStoreSource.contains("追问已选文本片段"), "agent placeholders stay clean once selected fragments are represented by the attachment pill")
 expect(notesAgentSource.contains("func weibeiFloatingHeaderChrome(appearanceMode: WeiBeiAppearanceMode) -> some View")
     && notesAgentSource.contains("WeiBeiHeaderHandoffFade(height: 10, opacity: 0.22)")
     && notesAgentSource.components(separatedBy: ".weibeiFloatingHeaderChrome(appearanceMode: store.appearanceMode)").count == 3, "drawer and corner agent headers share the same light glass chrome")
@@ -1677,6 +1682,7 @@ if let drawerStart = notesAgentSource.range(of: "struct AgentDrawerView")?.lower
    let cornerStart = notesAgentSource.range(of: "struct CornerAgentView")?.lowerBound {
     let drawerAgentSource = String(notesAgentSource[drawerStart..<cornerStart])
     expect(drawerAgentSource.contains("AgentComposerField(")
+        && drawerAgentSource.contains("CompactAgentMessagePreviewList(maxMessages: 2, maxHeight: 168)")
         && drawerAgentSource.contains("private var drawerPrompt: String")
         && drawerAgentSource.contains("store.agentInputPrompt")
         && !drawerAgentSource.contains("return \"问当前选区\"")
@@ -1700,6 +1706,7 @@ if let cornerStart = notesAgentSource.range(of: "struct CornerAgentView")?.lower
         && !cornerAgentSource.contains("整理笔记")
         && cornerAgentSource.contains("Text(store.ui(\"对话\", \"Chat\"))")
         && !cornerAgentSource.contains("Text(\"Agent\")")
+        && cornerAgentSource.contains("CompactAgentMessagePreviewList(maxMessages: 2, maxHeight: 138)")
         && cornerAgentSource.contains("private var agentPrompt: String")
         && cornerAgentSource.contains("store.agentInputPrompt")
         && !cornerAgentSource.contains("return \"问当前选区\"")
@@ -1713,6 +1720,11 @@ if let cornerStart = notesAgentSource.range(of: "struct CornerAgentView")?.lower
 } else {
     expect(false, "corner agent source is readable")
 }
+expect(notesAgentSource.contains("private struct CompactAgentMessagePreviewList")
+    && notesAgentSource.contains("Array(store.messages.suffix(maxMessages))")
+    && notesAgentSource.contains("private struct CompactAgentMessagePreviewRow")
+    && notesAgentSource.contains("question was sent into the chat")
+    && !notesAgentSource.contains("question was still sent into the chat"), "drawer and corner chat surfaces show recent local/offline replies with the current offline-preview detection")
 if let selectionStart = notesAgentSource.range(of: "struct FloatingSelectionAgentView")?.lowerBound,
    let contextRailStart = notesAgentSource.range(of: "struct ContextRailItem")?.lowerBound {
     let floatingSelectionSource = String(notesAgentSource[selectionStart..<contextRailStart])

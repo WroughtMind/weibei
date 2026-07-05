@@ -239,7 +239,7 @@ final class WorkspaceStore: ObservableObject {
 
     var agentInputPrompt: String {
         if hasSelectionAttachments {
-            return ui("追问已选文本片段", "Ask about selected fragments")
+            return ui("输入问题", "Ask a question")
         }
         return hasSelectedMaterial ? ui("问当前材料", "Ask current material") : ui("问当前笔记", "Ask current note")
     }
@@ -1164,13 +1164,12 @@ final class WorkspaceStore: ObservableObject {
 
     func askSelection() {
         if let selectionContext {
-            withAnimation(WeiBeiMotion.panel) {
-                addSelectionAttachment(selectionContext)
-                floatingSelectionPrompt = selectionContext.label(language: interfaceLanguage)
-                if isConversationSurfaceVisible {
-                    collapseSelectionFloatIntoConversationIfVisible()
-                    focus(.agent)
-                } else {
+            if isConversationSurfaceVisible {
+                routeSelectionToConversation(selectionContext)
+            } else {
+                withAnimation(WeiBeiMotion.panel) {
+                    addSelectionAttachment(selectionContext)
+                    floatingSelectionPrompt = selectionContext.label(language: interfaceLanguage)
                     agentSurface = .selectionFloat
                     showQuietInsight = false
                     focus(.agent)
@@ -1187,6 +1186,24 @@ final class WorkspaceStore: ObservableObject {
                 }
                 focus(.agent)
             }
+        }
+    }
+
+    func routeSelectionToConversation(_ selection: SelectionContext? = nil) {
+        let context = selection ?? selectionContext
+        withAnimation(WeiBeiMotion.panel) {
+            if let context {
+                addSelectionAttachment(context)
+                floatingSelectionPrompt = context.label(language: interfaceLanguage)
+            }
+            if agentSurface == .selectionFloat {
+                agentSurface = .hidden
+            }
+            selectionAnchor = nil
+            pinnedFloatingAgent = false
+            showQuietInsight = false
+            focusedPane = .agent
+            focusRequest += 1
         }
     }
 
