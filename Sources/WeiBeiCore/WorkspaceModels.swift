@@ -599,7 +599,7 @@ public enum PageNavigator {
 
 public enum TopBarLeadingInset {
     public static func value(isFullScreen: Bool) -> Double {
-        isFullScreen ? 12 : 136
+        isFullScreen ? 12 : 112
     }
 }
 

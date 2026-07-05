@@ -391,7 +391,7 @@ expect(PageNavigator.next(0, pageCount: 2) == 1, "pdf next advances")
 expect(PageNavigator.next(1, pageCount: 2) == 1, "pdf next clamps last page")
 expect(PageNavigator.display(0, pageCount: 0) == "1 / 1", "pdf display empty")
 expect(TopBarLeadingInset.value(isFullScreen: true) == 12, "fullscreen top-left controls start from the left edge")
-expect(TopBarLeadingInset.value(isFullScreen: false) >= 136
+expect(TopBarLeadingInset.value(isFullScreen: false) >= 112
     && TopBarLeadingInset.value(isFullScreen: false) > TopBarLeadingInset.value(isFullScreen: true), "windowed top-left controls clear the traffic-light area")
 expect(!PDFModeChipPresentation.showsLabel(isExpanded: false), "pdf mode chip hides text after collapse")
 expect(PDFModeChipPresentation.showsLabel(isExpanded: true), "pdf mode chip shows text only during transient expansion")
