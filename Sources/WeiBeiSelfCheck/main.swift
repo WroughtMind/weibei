@@ -754,7 +754,7 @@ let notePaneHeaderSource: String = {
 }()
 let agentPaneHeaderSource: String = {
     guard let start = notesAgentSource.range(of: "struct AgentPaneView: View")?.lowerBound,
-          let end = notesAgentSource.range(of: "private var canSendDraft", range: start..<notesAgentSource.endIndex)?.lowerBound else {
+          let end = notesAgentSource.range(of: "private var agentPrompt", range: start..<notesAgentSource.endIndex)?.lowerBound else {
         return ""
     }
     return String(notesAgentSource[start..<end])
@@ -1592,8 +1592,8 @@ expect(notesAgentSource.contains("func weibeiPaneHeaderChrome(appearanceMode: We
     && notesAgentSource.contains("WeiBeiHeaderHandoffFade(height: 28, opacity: 0.34)")
     && notesAgentSource.contains("func weibeiHeaderAccessoryGroup() -> some View")
     && notePaneHeaderSource.contains(".weibeiHeaderAccessoryGroup()")
-    && agentPaneHeaderSource.contains(".weibeiHeaderAccessoryGroup()")
-    && notesAgentSource.contains("private var hasAgentHeaderActions: Bool")
+    && !agentPaneHeaderSource.contains(".weibeiHeaderAccessoryGroup()")
+    && !notesAgentSource.contains("private var hasAgentHeaderActions: Bool")
     && notesAgentSource.contains(".background(WeiBeiGlassHeaderBackground(paperOpacity: 0.72, materialOpacity: 0.12))")
     && notesAgentSource.contains(".animation(WeiBeiMotion.appearance, value: appearanceMode)")
     && notesAgentSource.components(separatedBy: ".weibeiPaneHeaderChrome(appearanceMode: appearanceMode)").count >= 2
@@ -1608,16 +1608,14 @@ expect(notesAgentSource.contains("func weibeiPaneHeaderChrome(appearanceMode: We
     && notePaneHeaderSource.contains(".buttonStyle(WeiBeiIconButtonStyle(size: 24))")
     && !notePaneHeaderSource.contains("Label(\"新建\", systemImage: \"doc.badge.plus\")")
     && !notePaneHeaderSource.contains("Button(\"作为笔记编辑\")")
-    && agentPaneHeaderSource.contains("agentToolButton(store.ui(\"整理\"")
-    && agentPaneHeaderSource.contains("help: store.ui(\"整理笔记\"")
-    && agentPaneHeaderSource.contains("agentToolButton(store.ui(\"写入回答\"")
-    && agentPaneHeaderSource.contains("help: store.ui(\"写入回答到笔记\"")
-    && agentPaneHeaderSource.contains("agentToolButton(store.ui(\"替换\"")
-    && agentPaneHeaderSource.contains("help: store.ui(\"替换笔记选区\"")
-    && notesAgentSource.contains("Button(action: action) {\n            Image(systemName: systemImage)\n        }\n        .buttonStyle(WeiBeiIconButtonStyle(size: 24))")
+    && agentPaneHeaderSource.contains("EmptyView()")
+    && !agentPaneHeaderSource.contains("agentToolButton(")
+    && !notesAgentSource.contains("private func agentToolButton")
+    && notesAgentSource.contains("Button(store.ui(\"写入回答\", \"Write Answer\"")
+    && notesAgentSource.contains("Button(store.ui(\"替换\", \"Replace\"")
     && !notesAgentSource.contains(".labelStyle(.titleAndIcon)\n        }\n        .buttonStyle(WeiBeiTextActionButtonStyle())")
     && notePaneHeaderSource.contains(".background(WeiBeiTheme.paper)")
-    && notePaneHeaderSource.contains("WeiBeiTheme.cinnabarSoft.opacity(0.86)"), "note and agent pane headers share one glass header component and readable title color")
+    && notePaneHeaderSource.contains("WeiBeiTheme.cinnabarSoft.opacity(0.86)"), "note pane keeps compact header actions while the agent pane header stays context-only")
 expect(notesAgentSource.contains("ContextRailLine") && notesAgentSource.contains(".onHover"), "context rails keep hover motion")
 expect(!notesAgentSource.contains(".id(store.noteRenderMode)"), "note mode changes avoid forced hard view identity resets")
 expect(notesAgentSource.contains("struct ContextRailItem: Identifiable") && notesAgentSource.contains("Button(action: action)"), "context rails expose actionable rows")
@@ -1869,8 +1867,7 @@ expect(!notesAgentSource.contains("RoundedRectangle(cornerRadius: 9)")
     && !notesAgentSource.contains(".stroke(draftFocused ? WeiBeiTheme.link.opacity(0.16) : WeiBeiTheme.hairline.opacity(0.34), lineWidth: 1)")
     && !notesAgentSource.contains("WeiBeiTheme.paperRaised.opacity(0.46)"), "agent input tray avoids a heavy nested form border")
 expect(!notesAgentSource.contains(".disabled(store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)") && !notesAgentSource.contains(".disabled(!canSend)") && !notesAgentSource.contains(".disabled(store.isAskingAgent)"), "agent inputs hide unavailable send actions instead of showing disabled buttons")
-expect(notesAgentSource.contains("agentToolButton(store.ui(\"整理\"") && notesAgentSource.contains("help: store.ui(\"整理笔记\"") && notesAgentSource.contains("agentToolButton(store.ui(\"写入回答\"") && notesAgentSource.contains("help: store.ui(\"写入回答到笔记\""), "agent toolbar uses short readable action labels")
-expect(notesAgentSource.contains("if !store.messages.isEmpty {\n                            agentToolButton(store.ui(\"整理\""), "agent header avoids duplicating the organize action in the empty state")
+expect(!notesAgentSource.contains("agentToolButton(") && !notesAgentSource.contains("help: store.ui(\"整理笔记\""), "main agent header does not become a toolbar")
 expect(notesAgentSource.contains("LazyVGrid(columns: starterChipColumns")
     && notesAgentSource.contains("GridItem(.adaptive(minimum: 56)")
     && !notesAgentSource.contains("HStack(spacing: 8) {\n                if store.hasSelectedMaterial {\n                    starterChip(\"梳理材料\""), "agent empty-state starter actions adapt in narrow panes instead of squeezing into one row")

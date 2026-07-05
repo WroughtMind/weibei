@@ -816,29 +816,7 @@ struct AgentPaneView: View {
                 subtitle: store.selectedItem.map(store.displayTitle) ?? store.ui("无上下文", "No context"),
                 appearanceMode: store.appearanceMode
             ) {
-                if hasAgentHeaderActions {
-                    HStack(spacing: 2) {
-                        if !store.messages.isEmpty {
-                            agentToolButton(store.ui("整理", "Organize"), help: store.ui("整理笔记", "Organize note"), systemImage: "list.bullet.rectangle") {
-                                store.askToOrganizeNote()
-                            }
-                        }
-
-                        if store.canApplyAgentAnswer {
-                            agentToolButton(store.ui("写入回答", "Write Answer"), help: store.ui("写入回答到笔记", "Write answer to note"), systemImage: "square.and.arrow.down") {
-                                store.applyLastAgentAnswerToNote()
-                            }
-                        }
-
-                        if store.canReplaceNoteSelection {
-                            agentToolButton(store.ui("替换", "Replace"), help: store.ui("替换笔记选区", "Replace note selection"), systemImage: "arrow.left.arrow.right") {
-                                store.replaceSelectionWithLastAgentAnswer()
-                            }
-                        }
-                    }
-                    .weibeiHeaderAccessoryGroup()
-                    .transition(WeiBeiTransition.floating)
-                }
+                EmptyView()
             }
 
             ScrollViewReader { proxy in
@@ -899,14 +877,6 @@ struct AgentPaneView: View {
         .onAppear {
             draftFocused = store.focusedPane == .agent
         }
-    }
-
-    private var canSendDraft: Bool {
-        !store.isAskingAgent && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private var hasAgentHeaderActions: Bool {
-        !store.messages.isEmpty || store.canApplyAgentAnswer || store.canReplaceNoteSelection
     }
 
     private var agentPrompt: String {
@@ -1014,14 +984,6 @@ struct AgentPaneView: View {
         Task { await store.askAgent() }
     }
 
-    private func agentToolButton(_ title: String, help: String, systemImage: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-        }
-        .buttonStyle(WeiBeiIconButtonStyle(size: 24))
-        .accessibilityLabel(Text(help))
-        .help(help)
-    }
 }
 
 private struct AgentStarterChip: View {
