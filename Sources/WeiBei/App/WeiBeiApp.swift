@@ -504,7 +504,7 @@ struct SettingsView: View {
         } label: {
             Image(systemName: store.appearanceMode.toggled.systemImage)
         }
-        .buttonStyle(WeiBeiIconButtonStyle(active: store.appearanceMode == .inkstone, size: 30))
+        .buttonStyle(WeiBeiIconButtonStyle(size: 30))
         .accessibilityLabel(Text(store.appearanceMode.actionLabel(language: store.interfaceLanguage)))
         .help(store.appearanceMode.actionLabel(language: store.interfaceLanguage))
     }
