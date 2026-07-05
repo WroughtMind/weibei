@@ -1209,6 +1209,7 @@ struct CornerAgentView: View {
 struct FloatingSelectionAgentView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Binding var expanded: Bool
+    var routesToConversation = false
     @State private var dragOffset = CGSize.zero
     @State private var settledOffset = CGSize.zero
     @FocusState private var draftFocused: Bool
@@ -1216,7 +1217,7 @@ struct FloatingSelectionAgentView: View {
 
     var body: some View {
         Group {
-            if expanded {
+            if showsExpandedBody {
                 expandedBody
             } else {
                 promptBody
@@ -1225,8 +1226,9 @@ struct FloatingSelectionAgentView: View {
         .matchedGeometryEffect(id: "selection-agent-surface", in: floatingNamespace)
         .transition(WeiBeiTransition.floating)
         .weibeiFloatingPanel(cornerRadius: 7)
-        .scaleEffect(expanded ? 1 : 0.985)
+        .scaleEffect(showsExpandedBody ? 1 : 0.985)
         .animation(WeiBeiMotion.panel, value: expanded)
+        .animation(WeiBeiMotion.panel, value: routesToConversation)
         .offset(dragOffset)
         .gesture(
             DragGesture()
@@ -1251,6 +1253,14 @@ struct FloatingSelectionAgentView: View {
                 settledOffset = .zero
             }
         }
+        .onChange(of: routesToConversation) { _, routesToConversation in
+            guard routesToConversation else { return }
+            withAnimation(WeiBeiMotion.panel) {
+                expanded = false
+                dragOffset = .zero
+                settledOffset = .zero
+            }
+        }
         .onChange(of: store.focusRequest) { _, _ in
             draftFocused = store.focusedPane == .agent
         }
@@ -1260,6 +1270,10 @@ struct FloatingSelectionAgentView: View {
         .onExitCommand {
             closeFloatingAgent()
         }
+    }
+
+    private var showsExpandedBody: Bool {
+        expanded && !routesToConversation
     }
 
     private var promptBody: some View {
@@ -1497,7 +1511,11 @@ struct FloatingSelectionAgentView: View {
 
     private func explainSelection() {
         withAnimation(WeiBeiMotion.panel) {
-            expanded = true
+            expanded = !routesToConversation
+            if routesToConversation {
+                dragOffset = .zero
+                settledOffset = .zero
+            }
             store.askSelection()
         }
         Task { await store.askAgent() }

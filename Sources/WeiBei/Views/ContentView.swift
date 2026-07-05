@@ -49,7 +49,10 @@ struct ContentView: View {
                     }
 
                     if showsGlobalFloatingAgent {
-                        FloatingSelectionAgentView(expanded: $floatingAgentExpanded)
+                        FloatingSelectionAgentView(
+                            expanded: $floatingAgentExpanded,
+                            routesToConversation: store.isConversationSurfaceVisible
+                        )
                             .position(floatingAgentPosition(in: geometry.size))
                             .transition(WeiBeiTransition.floating)
                             .zIndex(30)
@@ -86,7 +89,7 @@ struct ContentView: View {
     }
 
     private var showsGlobalFloatingAgent: Bool {
-        SelectionFloatingAgentPlacement.isVisible(
+        store.canShowSelectionPromptSurface && SelectionFloatingAgentPlacement.isVisible(
             surface: store.agentSurface,
             hasSelection: store.selectionContext != nil,
             hasAnchor: store.selectionAnchor != nil,
@@ -560,6 +563,7 @@ private struct UnifiedTopBarView: View {
                     store.navigateBackInWorkspace()
                 }
             }
+            .keyboardShortcut("[", modifiers: [.command])
             .disabled(!store.canNavigateBack)
 
             topIconButton("arrow.right", help: "前进") {
@@ -567,6 +571,7 @@ private struct UnifiedTopBarView: View {
                     store.navigateForwardInWorkspace()
                 }
             }
+            .keyboardShortcut("]", modifiers: [.command])
             .disabled(!store.canNavigateForward)
         }
     }

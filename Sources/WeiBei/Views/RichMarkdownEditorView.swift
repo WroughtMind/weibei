@@ -215,7 +215,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                   return ["a", "r", "e", "c"].includes(key);
                 }
                 if (command && !option && !control && !shift) {
-                  return ["1", "2", "3", "4", "b", "j", "k", "f"].includes(key);
+                  return ["1", "2", "3", "4", "[", "]", "b", "j", "k", "f"].includes(key);
                 }
                 return false;
               };

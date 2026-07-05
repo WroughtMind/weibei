@@ -168,7 +168,7 @@ struct ReaderView: View {
                     Image(systemName: "chevron.left")
                 }
                 .buttonStyle(WeiBeiIconButtonStyle(size: 22))
-                .keyboardShortcut("[", modifiers: [.command])
+                .keyboardShortcut("[", modifiers: [.command, .option])
                 .accessibilityLabel(Text("上一页"))
                 .help("上一页")
 
@@ -187,7 +187,7 @@ struct ReaderView: View {
                     Image(systemName: "chevron.right")
                 }
                 .buttonStyle(WeiBeiIconButtonStyle(size: 22))
-                .keyboardShortcut("]", modifiers: [.command])
+                .keyboardShortcut("]", modifiers: [.command, .option])
                 .accessibilityLabel(Text("下一页"))
                 .help("下一页")
             }
@@ -1047,7 +1047,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
         const control = event.ctrlKey;
         const shift = event.shiftKey;
         if (command && option && !control && !shift) return ["1", "2", "3", "a", "n", "r", "t"].includes(key);
-        if (command && !option && !control && !shift) return ["1", "2", "3", "4", "b", "j", "k", "f"].includes(key);
+        if (command && !option && !control && !shift) return ["1", "2", "3", "4", "[", "]", "b", "j", "k", "f"].includes(key);
         if (control && option && !command && !shift) return ["0", "1", "2", "3", "4"].includes(key);
         return false;
       };

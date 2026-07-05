@@ -325,6 +325,7 @@ final class WorkspaceStore: ObservableObject {
                 }
             }
         }
+        collapseSelectionFloatIntoConversationIfVisible()
         focusedPane = pane
         focusRequest += 1
     }
@@ -461,6 +462,35 @@ final class WorkspaceStore: ObservableObject {
             hasAnchor: selectionAnchor != nil,
             pinned: pinnedFloatingAgent
         )
+    }
+
+    var hasPrimaryConversationPaneVisible: Bool {
+        switch layout {
+        case .documentAgentNotes, .documentNotesAgent:
+            return showRightPane
+        case .immersiveConversation:
+            return true
+        case .documentNotesSplit, .immersiveReading, .immersiveWriting:
+            return false
+        }
+    }
+
+    var isConversationSurfaceVisible: Bool {
+        if hasPrimaryConversationPaneVisible {
+            return true
+        }
+        switch layout {
+        case .documentAgentNotes, .documentNotesAgent:
+            return false
+        case .immersiveConversation:
+            return true
+        case .documentNotesSplit, .immersiveReading, .immersiveWriting:
+            return agentSurface == .bottomDrawer || agentSurface == .cornerPanel
+        }
+    }
+
+    var canShowSelectionPromptSurface: Bool {
+        hasPrimaryConversationPaneVisible || !isConversationSurfaceVisible
     }
 
     var visibleAgentSurfaces: [AgentSurface] {
@@ -670,6 +700,12 @@ final class WorkspaceStore: ObservableObject {
 
         if modifiers == [.command] {
             switch key {
+            case "[":
+                guard canNavigateBack else { return false }
+                animateLayoutChange { navigateBackInWorkspace() }
+            case "]":
+                guard canNavigateForward else { return false }
+                animateLayoutChange { navigateForwardInWorkspace() }
             case "1":
                 animateLayoutChange { focus(.library) }
             case "2":
@@ -747,8 +783,10 @@ final class WorkspaceStore: ObservableObject {
         case 26: return "7"
         case 28: return "8"
         case 29: return "0"
+        case 30: return "]"
         case 31: return "o"
         case 32: return "u"
+        case 33: return "["
         case 34: return "i"
         case 35: return "p"
         case 37: return "l"
@@ -937,6 +975,7 @@ final class WorkspaceStore: ObservableObject {
         clearGeneratedQuietInsight()
         let cleanedOwnerTitle = ownerTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedOwnerTitle = (cleanedOwnerTitle?.isEmpty == false ? cleanedOwnerTitle : nil) ?? selectionOwnerTitle(for: source)
+        let shouldRevealSelectionPrompt = canShowSelectionPromptSurface
         withAnimation(WeiBeiMotion.panel) {
             selectionContext = SelectionContext(
                 text: Self.boundedSelectionText(cleaned),
@@ -947,8 +986,12 @@ final class WorkspaceStore: ObservableObject {
             selectionAnchor = anchor
             floatingSelectionPrompt = selectionContext?.label ?? "当前选区"
             pinnedFloatingAgent = false
-            agentSurface = .selectionFloat
-            showQuietInsight = false
+            if shouldRevealSelectionPrompt {
+                agentSurface = .selectionFloat
+                showQuietInsight = false
+            } else if agentSurface == .selectionFloat {
+                agentSurface = .hidden
+            }
         }
     }
 
@@ -994,15 +1037,22 @@ final class WorkspaceStore: ObservableObject {
 
     func askSelection() {
         if let selectionContext {
-            withAnimation(WeiBeiMotion.panel) {
-                agentSurface = .selectionFloat
-                floatingSelectionPrompt = selectionContext.label
-                agentDraft = """
-                请解释下面选区，并结合\(selectionPromptScope)回答。没有证据就说未在材料中确认。
+            let prompt = """
+            请解释下面选区，并结合\(selectionPromptScope)回答。没有证据就说未在材料中确认。
 
-                选区：
-                \(selectionContext.text)
-                """
+            选区：
+            \(selectionContext.text)
+            """
+            withAnimation(WeiBeiMotion.panel) {
+                floatingSelectionPrompt = selectionContext.label
+                agentDraft = prompt
+                if isConversationSurfaceVisible {
+                    collapseSelectionFloatIntoConversationIfVisible()
+                    focus(.agent)
+                } else {
+                    agentSurface = .selectionFloat
+                    showQuietInsight = false
+                }
             }
         } else {
             withAnimation(WeiBeiMotion.panel) {
@@ -1326,6 +1376,13 @@ final class WorkspaceStore: ObservableObject {
         if agentSurface == .selectionFloat {
             agentSurface = .hidden
         }
+    }
+
+    private func collapseSelectionFloatIntoConversationIfVisible() {
+        guard isConversationSurfaceVisible, agentSurface == .selectionFloat else { return }
+        agentSurface = .hidden
+        selectionAnchor = nil
+        pinnedFloatingAgent = false
     }
 
     private func refreshQuietInsightIfNeeded() {
