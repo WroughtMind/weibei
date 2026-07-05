@@ -24,15 +24,18 @@ let offlineChinesePreview = AgentOfflinePreview.render(
         selectionText: "利率是资金使用价格的表达。"
     )
 )
-expect(offlineChinesePreview.contains("离线草稿：这次提问已经进入对话。")
+expect(offlineChinesePreview.contains("## 离线草稿")
     && !offlineChinesePreview.hasPrefix("未配置密钥")
-    && offlineChinesePreview.contains("问题：解释利率为什么是资金价格")
-    && offlineChinesePreview.contains("资料：Mishkin 教材样例")
-    && offlineChinesePreview.contains("笔记：货币金融学课程 HTML")
-    && offlineChinesePreview.contains("选区：已选文本片段")
-    && offlineChinesePreview.contains("这是一份可写入笔记的本地草稿")
-    && offlineChinesePreview.contains("资料摘录：利率是资金使用价格的表达。金融市场通过利率配置资源。")
-    && offlineChinesePreview.contains("笔记摘录：## 摘录 来源：Mishkin 教材样例"), "offline agent draft renders full Chinese context without API key")
+    && offlineChinesePreview.contains("这次提问已经进入对话；未配置密钥时，魏碑只整理当前可见上下文")
+    && offlineChinesePreview.contains("**问题**：解释利率为什么是资金价格")
+    && offlineChinesePreview.contains("| 上下文 | 内容 |")
+    && offlineChinesePreview.contains("| 资料 | Mishkin 教材样例 |")
+    && offlineChinesePreview.contains("| 笔记 | 货币金融学课程 HTML |")
+    && offlineChinesePreview.contains("| 选区 | 已选文本片段：利率是资金使用价格的表达。 |")
+    && offlineChinesePreview.contains("> 资料摘录：利率是资金使用价格的表达。金融市场通过利率配置资源。")
+    && offlineChinesePreview.contains("> 笔记摘录：## 摘录 来源：Mishkin 教材样例")
+    && offlineChinesePreview.contains("## 整理建议")
+    && offlineChinesePreview.contains("- 先把选区作为可追溯摘录写入笔记。"), "offline agent draft renders full Chinese context as Markdown without API key")
 
 let offlineEnglishPreview = AgentOfflinePreview.render(
     AgentOfflinePreviewInput(
@@ -47,13 +50,16 @@ let offlineEnglishPreview = AgentOfflinePreview.render(
         selectionText: nil
     )
 )
-expect(offlineEnglishPreview.contains("Offline draft: this question was sent into the chat.")
+expect(offlineEnglishPreview.contains("## Offline Draft")
     && !offlineEnglishPreview.hasPrefix("No key is configured")
-    && offlineEnglishPreview.contains("Question: Explain the selected sentence")
-    && offlineEnglishPreview.contains("Material: none")
-    && offlineEnglishPreview.contains("Selection: none")
-    && offlineEnglishPreview.contains("This is a writable local draft")
-    && offlineEnglishPreview.contains("Note excerpt: the current note is empty."), "offline agent draft renders English empty-context state")
+    && offlineEnglishPreview.contains("This question was sent into the chat.")
+    && offlineEnglishPreview.contains("**Question**: Explain the selected sentence")
+    && offlineEnglishPreview.contains("| Context | Content |")
+    && offlineEnglishPreview.contains("| Material | None |")
+    && offlineEnglishPreview.contains("| Selection | None |")
+    && offlineEnglishPreview.contains("> Note excerpt: the current note is empty.")
+    && offlineEnglishPreview.contains("## Organization Suggestions")
+    && offlineEnglishPreview.contains("- Save the selected text as a traceable excerpt first."), "offline agent draft renders English empty-context state as Markdown")
 expect(AgentOfflinePreview.preview("A\nB\tC", limit: 20) == "A B C", "offline agent preview normalizes whitespace")
 
 let offlineTurnMessages = AgentOfflineTurn.messages(
@@ -76,7 +82,8 @@ expect(offlineTurnMessages.count == 2
     && offlineTurnMessages[0].text == "解释当前材料"
     && offlineTurnMessages[0].source == "Mishkin 教材样例"
     && offlineTurnMessages[1].role == .assistant
-    && offlineTurnMessages[1].text.contains("离线草稿：这次提问已经进入对话。")
+    && offlineTurnMessages[1].text.contains("## 离线草稿")
+    && offlineTurnMessages[1].text.contains("这次提问已经进入对话")
     && offlineTurnMessages[1].source == "Mishkin 教材样例"
     && offlineTurnMessages[1].isUsableAgentAnswer, "offline agent turn appends a visible user turn and writable local draft without an API key")
 

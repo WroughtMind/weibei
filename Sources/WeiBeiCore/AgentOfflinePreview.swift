@@ -36,18 +36,18 @@ public struct AgentOfflinePreviewInput: Equatable {
 
 public enum AgentOfflinePreview {
     public static func render(_ input: AgentOfflinePreviewInput) -> String {
-        let materialLine = input.hasMaterial
-            ? input.language.text("资料：\(input.materialTitle)", "Material: \(input.materialTitle)")
-            : input.language.text("资料：未选择", "Material: none")
-        let noteLine = input.language.text("笔记：\(input.noteTitle)", "Note: \(input.noteTitle)")
-        let selectionLine: String
+        let materialValue = input.hasMaterial
+            ? input.materialTitle
+            : input.language.text("未选择", "None")
+        let noteValue = input.noteTitle
+        let selectionValue: String
         if let selectionText = input.selectionText, !selectionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            selectionLine = input.language.text(
-                "选区：\(input.selectionTitle ?? "已选文本片段")\n\(preview(selectionText, limit: 360))",
-                "Selection: \(input.selectionTitle ?? "selected fragments")\n\(preview(selectionText, limit: 360))"
+            selectionValue = input.language.text(
+                "\(input.selectionTitle ?? "已选文本片段")：\(preview(selectionText, limit: 360))",
+                "\(input.selectionTitle ?? "selected fragments"): \(preview(selectionText, limit: 360))"
             )
         } else {
-            selectionLine = input.language.text("选区：无", "Selection: none")
+            selectionValue = input.language.text("无", "None")
         }
 
         let materialPreview = preview(input.materialText, limit: 260)
@@ -61,36 +61,48 @@ public enum AgentOfflinePreview {
 
         return input.language.text(
             """
-            离线草稿：这次提问已经进入对话。
+            ## 离线草稿
 
-            问题：\(input.question)
+            这次提问已经进入对话；未配置密钥时，魏碑只整理当前可见上下文，不补充外部结论。
 
-            当前上下文：
-            - \(materialLine)
-            - \(noteLine)
-            - \(selectionLine)
+            **问题**：\(input.question)
 
-            \(materialBlock)
+            | 上下文 | 内容 |
+            | --- | --- |
+            | 资料 | \(tableCell(materialValue)) |
+            | 笔记 | \(tableCell(noteValue)) |
+            | 选区 | \(tableCell(selectionValue)) |
 
-            \(noteBlock)
+            > \(materialBlock)
 
-            这是一份可写入笔记的本地草稿，只整理当前可见上下文，不补充外部结论。设置密钥后，再发送同类问题会生成正式回答。
+            > \(noteBlock)
+
+            ## 整理建议
+            - 先把选区作为可追溯摘录写入笔记。
+            - 再用资料标题和笔记标题补齐来源位置。
+            - 设置密钥后，可以继续要求魏碑生成正式解释、例题或复习卡片。
             """,
             """
-            Offline draft: this question was sent into the chat.
+            ## Offline Draft
 
-            Question: \(input.question)
+            This question was sent into the chat. Without a configured key, WeiBei only organizes the visible context and does not add outside claims.
 
-            Current context:
-            - \(materialLine)
-            - \(noteLine)
-            - \(selectionLine)
+            **Question**: \(input.question)
 
-            \(materialBlock)
+            | Context | Content |
+            | --- | --- |
+            | Material | \(tableCell(materialValue)) |
+            | Note | \(tableCell(noteValue)) |
+            | Selection | \(tableCell(selectionValue)) |
 
-            \(noteBlock)
+            > \(materialBlock)
 
-            This is a writable local draft that only organizes the visible context and does not add outside claims. After a key is configured, the same kind of question will generate a full answer.
+            > \(noteBlock)
+
+            ## Organization Suggestions
+            - Save the selected text as a traceable excerpt first.
+            - Keep the material title and note title attached to the answer.
+            - After a key is configured, ask WeiBei for a full explanation, practice question, or review card.
             """
         )
     }
@@ -102,5 +114,13 @@ public enum AgentOfflinePreview {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         guard cleaned.count > limit else { return cleaned }
         return String(cleaned.prefix(limit)) + "..."
+    }
+
+    private static func tableCell(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "|", with: "\\|")
+            .replacingOccurrences(of: "\n", with: "<br>")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
