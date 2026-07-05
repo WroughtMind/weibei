@@ -300,6 +300,7 @@ final class WorkspaceStore: ObservableObject {
         selectedItemID = itemID
         if itemChanged {
             clearUnpinnedFloatingSelection(keepContext: false)
+            selectionAttachments = []
             readerPageIndex = 0
         }
         readerLocationTitle = selectedMaterialItem?.title
@@ -1240,7 +1241,14 @@ final class WorkspaceStore: ObservableObject {
         }
 
         persistCurrentNote()
+        let sentSelectionTitle = agentSelectionTitle
+        let sentSelectionText = agentSelectionText
         agentDraft = ""
+        if !selectionAttachments.isEmpty {
+            withAnimation(WeiBeiMotion.panel) {
+                selectionAttachments = []
+            }
+        }
         isAskingAgent = true
         let recentMessages = Array(messages.suffix(8))
         let sourceTitle = agentMessageSourceTitle
@@ -1254,8 +1262,8 @@ final class WorkspaceStore: ObservableObject {
                 materialText: selectedContextText,
                 noteTitle: agentNoteTitle,
                 noteText: noteText,
-                selectionTitle: agentSelectionTitle,
-                selectionText: agentSelectionText,
+                selectionTitle: sentSelectionTitle,
+                selectionText: sentSelectionText,
                 recentMessages: recentMessages
             )
             messages.append(AgentMessage(role: .assistant, text: answer, source: sourceTitle))
