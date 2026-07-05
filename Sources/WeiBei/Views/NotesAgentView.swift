@@ -443,10 +443,10 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         let ink = WeiBeiNativePalette.ink(for: appearanceMode)
         let quotePrefixColor = ink.withAlphaComponent(appearanceMode == .inkstone ? 0.30 : 0.36)
         let markerColor = NSColor.clear
-        let markerFont = NSFont.monospacedSystemFont(ofSize: 1, weight: .regular)
+        let markerFont = NSFont.monospacedSystemFont(ofSize: 0.1, weight: .regular)
         let quotePrefixRegex = try? NSRegularExpression(pattern: #"(?m)^\s*(?:>\s*)+"#)
         let calloutControlRegex = try? NSRegularExpression(
-            pattern: #"(?m)^(\s*(?:>\s*)*)(\\?\[![A-Za-z][A-Za-z0-9_-]*\][+-]?)"#
+            pattern: #"(?m)^(\s*(?:>\s*)*)(\\?\[![A-Za-z][A-Za-z0-9_-]*\][+-]?\s*)"#
         )
 
         textView.undoManager?.disableUndoRegistration()
@@ -467,7 +467,8 @@ struct MarkdownSourceEditor: NSViewRepresentable {
             guard let markerRange = match?.range(at: 2), markerRange.location != NSNotFound else { return }
             textStorage.addAttributes([
                 .font: markerFont,
-                .foregroundColor: markerColor
+                .foregroundColor: markerColor,
+                .baselineOffset: 0
             ], range: markerRange)
         }
         textStorage.endEditing()
