@@ -50,6 +50,7 @@ final class WorkspaceStore: ObservableObject {
     private let storageURL: URL
     private var quietInsightSignature = ""
     private var isRestoringNavigation = false
+    private var didRunVerificationScenario = false
 
     private struct NavigationSnapshot: Equatable {
         var selectedItemID: String?
@@ -1329,6 +1330,26 @@ final class WorkspaceStore: ObservableObject {
         focus(.notes)
     }
 
+    func runVerificationScenarioIfNeeded() async {
+        guard !didRunVerificationScenario,
+              Self.environmentValue("WEIBEI_VERIFY_SCENARIO") == "offline-learning-flow" else { return }
+        didRunVerificationScenario = true
+        layout = .documentAgentNotes
+        showLibrary = true
+        showRightPane = true
+        agentSurface = .hidden
+        select(itemID: "sample-html")
+        updateNote(ui("# 视觉验收笔记\n\n", "# Visual verification note\n\n"))
+        updateSelection(
+            ui("利率是资金使用价格的表达。", "An interest rate is the price paid for using funds."),
+            source: .document,
+            ownerTitle: currentReferenceTitle
+        )
+        agentDraft = ui("解释选区，并整理成可以写入笔记的要点。", "Explain the selection and turn it into note-ready points.")
+        await askAgent()
+        applyLastAgentAnswerToNote()
+    }
+
     func replaceSelectionWithLastAgentAnswer() {
         guard selectionContext?.isReplaceableNoteSelection == true,
               let answer = lastUsableAgentAnswer else { return }
@@ -1739,6 +1760,10 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func resolvedOpenAIAPIKey() -> (key: String, source: String)? {
+        if Self.environmentValue("WEIBEI_FORCE_OFFLINE_AGENT") == "1" {
+            return nil
+        }
+
         let environmentKey = Self.environmentValue("OPENAI_API_KEY")
         if !environmentKey.isEmpty {
             return (environmentKey, ui("本机环境变量", "local environment variable"))

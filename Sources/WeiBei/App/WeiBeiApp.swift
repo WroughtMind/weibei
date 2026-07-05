@@ -56,6 +56,9 @@ struct WeiBeiApp: App {
                 .onOpenURL { url in
                     store.importFiles([url])
                 }
+                .onAppear {
+                    Task { await store.runVerificationScenarioIfNeeded() }
+                }
                 .frame(minWidth: 1120, minHeight: 720)
                 .ignoresSafeArea(.container, edges: .top)
         }
