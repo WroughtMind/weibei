@@ -9,15 +9,15 @@ struct SidebarView: View {
         VStack(spacing: 0) {
             VStack(spacing: 0) {
                 HStack {
-                    Text("资料")
-                        .font(.system(size: 22, weight: .semibold, design: .serif))
+                    Text(store.ui("资料", "Library"))
+                        .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 22, weight: .semibold))
                     Spacer()
                     Button { store.importFilesFromPanel() } label: {
                         Image(systemName: "plus")
                     }
                     .buttonStyle(WeiBeiIconButtonStyle())
-                    .accessibilityLabel(Text("导入资料"))
-                    .help("导入资料")
+                    .accessibilityLabel(Text(store.ui("导入资料", "Import material")))
+                    .help(store.ui("导入资料", "Import material"))
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
@@ -26,7 +26,7 @@ struct SidebarView: View {
                 TextField(
                     "",
                     text: $store.librarySearch,
-                    prompt: Text("搜索资料库")
+                    prompt: Text(store.ui("搜索资料库", "Search library"))
                         .font(.system(size: 13))
                         .foregroundStyle(WeiBeiTheme.placeholderInk)
                 )
@@ -47,9 +47,9 @@ struct SidebarView: View {
 
             ScrollView(showsIndicators: false) {
                 LazyVStack(alignment: .leading, spacing: 14) {
-                    sidebarSection(title: "样例", items: store.sampleItems)
-                    sidebarSection(title: "导入资料", items: importedMaterialItems)
-                    sidebarSection(title: "笔记", items: notebookItems)
+                    sidebarSection(title: store.ui("样例", "Samples"), items: store.sampleItems)
+                    sidebarSection(title: store.ui("导入资料", "Imported"), items: importedMaterialItems)
+                    sidebarSection(title: store.ui("笔记", "Notes"), items: notebookItems)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 10)
@@ -106,6 +106,7 @@ struct SidebarView: View {
 }
 
 private struct LibraryRow: View {
+    @EnvironmentObject private var store: WorkspaceStore
     var item: StudyItem
     var selected: Bool
     @State private var hovering = false
@@ -119,10 +120,10 @@ private struct LibraryRow: View {
                 .opacity(selected || hovering ? 1 : 0.78)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.title)
+                Text(store.displayTitle(for: item))
                     .lineLimit(1)
                     .foregroundStyle(WeiBeiTheme.ink)
-                Text(item.subtitle)
+                Text(store.displaySubtitle(for: item))
                     .font(.caption)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .lineLimit(1)

@@ -10,41 +10,41 @@ struct CommandPaletteView: View {
 
     private var commands: [PaletteCommand] {
         var items = [
-            PaletteCommand(title: "打开资料", shortcut: "⌘O") { store.importFilesFromPanel() },
-            PaletteCommand(title: "新建笔记", shortcut: "⌘N") { store.resetNote() },
-            PaletteCommand(title: "聚焦资料", shortcut: "⌘1", animation: WeiBeiMotion.layout) { store.focus(.library) },
-            PaletteCommand(title: "聚焦阅读", shortcut: "⌘2", animation: WeiBeiMotion.layout) { store.focus(.reader) },
-            PaletteCommand(title: "聚焦笔记", shortcut: "⌘3", animation: WeiBeiMotion.layout) { store.focus(.notes) },
-            PaletteCommand(title: "聚焦对话", shortcut: "⌘4", animation: WeiBeiMotion.layout) { store.focus(.agent) },
-            PaletteCommand(title: "上一份资料", shortcut: "⌥⌘↑", animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: -1) },
-            PaletteCommand(title: "下一份资料", shortcut: "⌥⌘↓", animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: 1) },
-            PaletteCommand(title: store.showLibrary ? "收起资料库" : "打开资料库", shortcut: "⌘B", animation: WeiBeiMotion.layout) { store.toggleLibrary() },
-            PaletteCommand(title: WorkspaceLayout.documentAgentNotes.label, shortcut: "⌥⌘1", animation: WeiBeiMotion.layout) { store.setLayout(.documentAgentNotes) },
-            PaletteCommand(title: WorkspaceLayout.documentNotesAgent.label, shortcut: "⌥⌘2", animation: WeiBeiMotion.layout) { store.setLayout(.documentNotesAgent) },
-            PaletteCommand(title: WorkspaceLayout.documentNotesSplit.label, shortcut: "⌥⌘3", animation: WeiBeiMotion.layout) { store.setLayout(.documentNotesSplit) },
-            PaletteCommand(title: "沉浸阅读", shortcut: "⌥⌘R", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveReading) },
-            PaletteCommand(title: "沉浸对话", shortcut: "⌥⌘A", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveConversation) },
-            PaletteCommand(title: "沉浸写笔记", shortcut: "⌥⌘N", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveWriting) },
+            PaletteCommand(title: store.ui("打开资料", "Open Material"), shortcut: "⌘O") { store.importFilesFromPanel() },
+            PaletteCommand(title: store.ui("新建笔记", "New Note"), shortcut: "⌘N") { store.resetNote() },
+            PaletteCommand(title: store.ui("聚焦资料", "Focus Library"), shortcut: "⌘1", animation: WeiBeiMotion.layout) { store.focus(.library) },
+            PaletteCommand(title: store.ui("聚焦阅读", "Focus Reader"), shortcut: "⌘2", animation: WeiBeiMotion.layout) { store.focus(.reader) },
+            PaletteCommand(title: store.ui("聚焦笔记", "Focus Notes"), shortcut: "⌘3", animation: WeiBeiMotion.layout) { store.focus(.notes) },
+            PaletteCommand(title: store.ui("聚焦对话", "Focus Chat"), shortcut: "⌘4", animation: WeiBeiMotion.layout) { store.focus(.agent) },
+            PaletteCommand(title: store.ui("上一份资料", "Previous Material"), shortcut: "⌥⌘↑", animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: -1) },
+            PaletteCommand(title: store.ui("下一份资料", "Next Material"), shortcut: "⌥⌘↓", animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: 1) },
+            PaletteCommand(title: store.showLibrary ? store.ui("收起资料库", "Hide Library") : store.ui("打开资料库", "Show Library"), shortcut: "⌘B", animation: WeiBeiMotion.layout) { store.toggleLibrary() },
+            PaletteCommand(title: WorkspaceLayout.documentAgentNotes.label(language: store.interfaceLanguage), shortcut: "⌥⌘1", animation: WeiBeiMotion.layout) { store.setLayout(.documentAgentNotes) },
+            PaletteCommand(title: WorkspaceLayout.documentNotesAgent.label(language: store.interfaceLanguage), shortcut: "⌥⌘2", animation: WeiBeiMotion.layout) { store.setLayout(.documentNotesAgent) },
+            PaletteCommand(title: WorkspaceLayout.documentNotesSplit.label(language: store.interfaceLanguage), shortcut: "⌥⌘3", animation: WeiBeiMotion.layout) { store.setLayout(.documentNotesSplit) },
+            PaletteCommand(title: WorkspaceLayout.immersiveReading.label(language: store.interfaceLanguage), shortcut: "⌥⌘R", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveReading) },
+            PaletteCommand(title: WorkspaceLayout.immersiveConversation.label(language: store.interfaceLanguage), shortcut: "⌥⌘A", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveConversation) },
+            PaletteCommand(title: WorkspaceLayout.immersiveWriting.label(language: store.interfaceLanguage), shortcut: "⌥⌘N", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveWriting) },
             agentSurfaceCommand(.bottomDrawer, shortcut: "⌃⌥1"),
             agentSurfaceCommand(.cornerPanel, shortcut: "⌃⌥2"),
             agentSurfaceCommand(.quietInsight, shortcut: "⌃⌥4"),
-            PaletteCommand(title: "笔记原地写作", shortcut: "⌃⌘1") { store.setNoteRenderMode(.rich) },
-            PaletteCommand(title: "笔记源码对照", shortcut: "⌃⌘2") { store.setNoteRenderMode(.split) },
-            PaletteCommand(title: "笔记源码", shortcut: "⌃⌘3") { store.setNoteRenderMode(.source) },
-            PaletteCommand(title: "笔记预览", shortcut: "⌃⌘4") { store.setNoteRenderMode(.preview) },
-            markdownInsertCommand(title: "插入行内公式", markdown: "${{WEIBEI_SELECT_START}}x_i = \\frac{a}{b}{{WEIBEI_SELECT_END}}$"),
-            markdownInsertCommand(title: "插入块级公式", markdown: "\n$$\n{{WEIBEI_SELECT_START}}E = mc^2{{WEIBEI_SELECT_END}}\n$$\n"),
-            markdownInsertCommand(title: "插入矩阵公式", markdown: "\n$$\n\\begin{bmatrix}\n{{WEIBEI_SELECT_START}}a{{WEIBEI_SELECT_END}} & b \\\\\nc & d\n\\end{bmatrix}\n$$\n"),
-            markdownInsertCommand(title: "插入 Callout", markdown: "\n> [!note] 标题\n>\n> {{WEIBEI_SELECT_START}}内容{{WEIBEI_SELECT_END}}\n"),
-            markdownInsertCommand(title: "插入表格", markdown: "\n| A | B |\n| --- | --- |\n| {{WEIBEI_SELECT_START}}内容{{WEIBEI_SELECT_END}} |  |\n"),
-            markdownInsertCommand(title: "插入 Mermaid", markdown: "\n```mermaid\ngraph TD\n  {{WEIBEI_SELECT_START}}A[开始] --> B[整理]{{WEIBEI_SELECT_END}}\n```\n")
+            PaletteCommand(title: store.ui("笔记原地写作", "Live Markdown Writing"), shortcut: "⌃⌘1") { store.setNoteRenderMode(.rich) },
+            PaletteCommand(title: store.ui("笔记源码对照", "Source Compare"), shortcut: "⌃⌘2") { store.setNoteRenderMode(.split) },
+            PaletteCommand(title: store.ui("笔记源码", "Note Source"), shortcut: "⌃⌘3") { store.setNoteRenderMode(.source) },
+            PaletteCommand(title: store.ui("笔记预览", "Note Preview"), shortcut: "⌃⌘4") { store.setNoteRenderMode(.preview) },
+            markdownInsertCommand(title: store.ui("插入行内公式", "Insert inline formula"), markdown: "${{WEIBEI_SELECT_START}}x_i = \\frac{a}{b}{{WEIBEI_SELECT_END}}$"),
+            markdownInsertCommand(title: store.ui("插入块级公式", "Insert block formula"), markdown: "\n$$\n{{WEIBEI_SELECT_START}}E = mc^2{{WEIBEI_SELECT_END}}\n$$\n"),
+            markdownInsertCommand(title: store.ui("插入矩阵公式", "Insert matrix formula"), markdown: "\n$$\n\\begin{bmatrix}\n{{WEIBEI_SELECT_START}}a{{WEIBEI_SELECT_END}} & b \\\\\nc & d\n\\end{bmatrix}\n$$\n"),
+            markdownInsertCommand(title: store.ui("插入 Callout", "Insert callout"), markdown: store.ui("\n> [!note] 标题\n>\n> {{WEIBEI_SELECT_START}}内容{{WEIBEI_SELECT_END}}\n", "\n> [!note] Title\n>\n> {{WEIBEI_SELECT_START}}Content{{WEIBEI_SELECT_END}}\n")),
+            markdownInsertCommand(title: store.ui("插入表格", "Insert table"), markdown: store.ui("\n| A | B |\n| --- | --- |\n| {{WEIBEI_SELECT_START}}内容{{WEIBEI_SELECT_END}} |  |\n", "\n| A | B |\n| --- | --- |\n| {{WEIBEI_SELECT_START}}Content{{WEIBEI_SELECT_END}} |  |\n")),
+            markdownInsertCommand(title: store.ui("插入 Mermaid", "Insert Mermaid"), markdown: store.ui("\n```mermaid\ngraph TD\n  {{WEIBEI_SELECT_START}}A[开始] --> B[整理]{{WEIBEI_SELECT_END}}\n```\n", "\n```mermaid\ngraph TD\n  {{WEIBEI_SELECT_START}}A[Start] --> B[Organize]{{WEIBEI_SELECT_END}}\n```\n"))
         ]
         if store.canUseSelectionAgentSurface {
             items.insert(agentSurfaceCommand(.selectionFloat, shortcut: "⌃⌥3"), at: min(17, items.count))
         }
         if store.canUseSelectedMarkdownAsNotebookNote {
             items.insert(
-                PaletteCommand(title: "作为笔记编辑当前 Markdown", shortcut: "") { store.useSelectedMarkdownAsNotebookNote() },
+                PaletteCommand(title: store.ui("作为笔记编辑当前 Markdown", "Edit current Markdown as note"), shortcut: "") { store.useSelectedMarkdownAsNotebookNote() },
                 at: 2
             )
         }
@@ -55,25 +55,25 @@ struct CommandPaletteView: View {
             items.append(PaletteCommand(title: store.copyReferenceActionTitle, shortcut: "⌘⇧C") { store.copyCurrentReference() })
         }
         if store.hasSelectedMaterial {
-            items.append(PaletteCommand(title: "打开资料内搜索", shortcut: "⌘F") { store.revealReaderSearch() })
+            items.append(PaletteCommand(title: store.ui("打开资料内搜索", "Search in Material"), shortcut: "⌘F") { store.revealReaderSearch() })
         }
         if store.selectionContext != nil {
-            items.append(PaletteCommand(title: "问当前选区", shortcut: "") {
+            items.append(PaletteCommand(title: store.ui("问当前选区", "Ask Current Selection"), shortcut: "") {
                 store.askSelection()
             })
         }
         if store.canOpenSelectedSourceReference {
-            items.append(PaletteCommand(title: "打开选区来源", shortcut: "") { store.openSelectedSourceReference() })
+            items.append(PaletteCommand(title: store.ui("打开选区来源", "Open Selection Source"), shortcut: "") { store.openSelectedSourceReference() })
         }
         if store.agentSurface != .hidden {
             items.append(agentSurfaceCommand(.hidden, shortcut: "⌃⌥0"))
         }
         if store.canApplyAgentAnswer {
-            items.append(PaletteCommand(title: "写入回答到笔记", shortcut: "⌘⇧A") { store.applyLastAgentAnswerToNote() })
-            items.append(PaletteCommand(title: "追加整理建议", shortcut: "⌘⇧E") { store.applyAgentPatchToEditor() })
+            items.append(PaletteCommand(title: store.ui("写入回答到笔记", "Write Answer to Note"), shortcut: "⌘⇧A") { store.applyLastAgentAnswerToNote() })
+            items.append(PaletteCommand(title: store.ui("追加整理建议", "Append Organization Suggestion"), shortcut: "⌘⇧E") { store.applyAgentPatchToEditor() })
         }
         if store.canReplaceNoteSelection {
-            items.append(PaletteCommand(title: "替换笔记选区", shortcut: "⌘⇧R") { store.replaceSelectionWithLastAgentAnswer() })
+            items.append(PaletteCommand(title: store.ui("替换笔记选区", "Replace Note Selection"), shortcut: "⌘⇧R") { store.replaceSelectionWithLastAgentAnswer() })
         }
         if canSendAgentDraft {
             items.append(PaletteCommand(title: store.sendAgentActionTitle, shortcut: "⌘↩") { Task { await store.askAgent() } })
@@ -92,7 +92,7 @@ struct CommandPaletteView: View {
     }
 
     private func agentSurfaceCommand(_ surface: AgentSurface, shortcut: String) -> PaletteCommand {
-        PaletteCommand(title: surface.actionLabel, shortcut: shortcut) {
+        PaletteCommand(title: surface.actionLabel(language: store.interfaceLanguage), shortcut: shortcut) {
             store.setAgentSurface(surface)
         }
     }
@@ -100,7 +100,7 @@ struct CommandPaletteView: View {
     private var rightPaneCommand: PaletteCommand? {
         guard store.layout.hasCollapsibleRightPane else { return nil }
         return PaletteCommand(
-            title: store.showRightPane ? "收起辅助栏" : "展开辅助栏",
+            title: store.showRightPane ? store.ui("收起辅助栏", "Hide Assistant Pane") : store.ui("展开辅助栏", "Show Assistant Pane"),
             shortcut: "⌘J",
             animation: WeiBeiMotion.layout
         ) {
@@ -136,14 +136,14 @@ struct CommandPaletteView: View {
                     TextField(
                         "",
                         text: $query,
-                        prompt: Text("输入命令")
-                            .font(.system(size: 18, weight: .semibold, design: .serif))
+                        prompt: Text(store.ui("输入命令", "Type a command"))
+                            .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 18, weight: .semibold))
                             .foregroundStyle(WeiBeiTheme.placeholderInk)
                     )
                         .textFieldStyle(.plain)
                         .foregroundColor(WeiBeiTheme.ink)
                         .focused($searchFocused)
-                        .font(.system(size: 18, weight: .semibold, design: .serif))
+                        .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 18, weight: .semibold))
                 }
                 .weibeiInputSurface(active: searchFocused, height: 36)
                 .padding(.horizontal, 12)
@@ -157,7 +157,7 @@ struct CommandPaletteView: View {
                     ScrollView(showsIndicators: false) {
                         LazyVStack(spacing: 3) {
                             if filtered.isEmpty {
-                                Text("没有匹配命令")
+                                Text(store.ui("没有匹配命令", "No matching commands"))
                                     .font(.system(size: 13))
                                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
                                     .frame(maxWidth: .infinity, alignment: .leading)

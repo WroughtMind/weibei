@@ -7,7 +7,6 @@ struct ContentView: View {
     @FocusState private var focusedPane: PaneFocus?
     @FocusState private var topSearchFocused: Bool
     @SceneStorage("libraryPaneWidth") private var libraryPaneWidthStorage: Double = 292
-    @AppStorage("topBarVariant") private var topBarVariantRaw = TopBarVariant.balanced.rawValue
     @State private var floatingAgentExpanded = false
     @State private var libraryDragStartWidth: CGFloat?
     @State private var windowIsFullScreen = false
@@ -115,7 +114,7 @@ struct ContentView: View {
     }
 
     private var topBarHeight: CGFloat {
-        (TopBarVariant(rawValue: topBarVariantRaw) ?? .balanced).height
+        store.topBarVariant.height
     }
 
     private func libraryWidth(in totalWidth: CGFloat) -> CGFloat {
@@ -167,7 +166,7 @@ struct ContentView: View {
                         libraryDragStartWidth = nil
                     }
             )
-            .help("拖动调整资料库宽度")
+            .help(store.ui("拖动调整资料库宽度", "Drag to resize the library"))
     }
 
 }
@@ -242,7 +241,6 @@ private struct UnifiedTopBarView: View {
     let isFullScreen: Bool
     var searchFocused: FocusState<Bool>.Binding
     @State private var appeared = false
-    @AppStorage("topBarVariant") private var topBarVariantRaw = TopBarVariant.balanced.rawValue
 
     var body: some View {
         HStack(spacing: topBarSpacing) {
@@ -258,7 +256,7 @@ private struct UnifiedTopBarView: View {
                     .fill(dividerColor.opacity(0.72))
                     .frame(width: 1, height: 18)
 
-                Text(store.selectedMaterialItem?.title ?? "未选择资料")
+                Text(store.selectedMaterialItem.map(store.displayTitle) ?? store.ui("未选择资料", "No material selected"))
                     .font(documentTitleFont)
                     .foregroundStyle(primaryText.opacity(0.82))
                     .lineLimit(1)
@@ -271,7 +269,7 @@ private struct UnifiedTopBarView: View {
                 TextField(
                     "",
                     text: $store.readerSearch,
-                    prompt: Text("资料内搜索")
+                    prompt: Text(store.ui("资料内搜索", "Search in material"))
                         .font(.system(size: 12))
                         .foregroundStyle(WeiBeiTheme.placeholderInk)
                 )
@@ -308,7 +306,7 @@ private struct UnifiedTopBarView: View {
 
             layoutMenu
 
-            topIconButton("command", help: "命令面板") {
+            topIconButton("command", help: store.ui("命令面板", "Command palette")) {
                 withAnimation(WeiBeiMotion.panel) {
                     store.commandPalettePresented.toggle()
                 }
@@ -340,11 +338,11 @@ private struct UnifiedTopBarView: View {
         }
         .animation(WeiBeiMotion.panel, value: store.showReaderSearch)
         .animation(WeiBeiMotion.layout, value: isImmersiveLayout)
-        .animation(WeiBeiMotion.layout, value: topBarVariantRaw)
+        .animation(WeiBeiMotion.layout, value: store.topBarVariant)
     }
 
     private var variant: TopBarVariant {
-        TopBarVariant(rawValue: topBarVariantRaw) ?? .balanced
+        store.topBarVariant
     }
 
     private var barHeight: CGFloat {
@@ -393,7 +391,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private var layoutMenuTitle: String {
-        variant == .glyph || variant == .compact ? shortLayoutLabel : store.layout.label
+        variant == .glyph || variant == .compact ? shortLayoutLabel : store.layout.label(language: store.interfaceLanguage)
     }
 
     private var shouldShowTopDocumentTitle: Bool {
@@ -429,17 +427,17 @@ private struct UnifiedTopBarView: View {
     private var shortLayoutLabel: String {
         switch store.layout {
         case .documentAgentNotes:
-            return "对话中栏"
+            return store.ui("对话中栏", "Chat Center")
         case .documentNotesAgent:
-            return "对话右栏"
+            return store.ui("对话右栏", "Chat Right")
         case .documentNotesSplit:
-            return "文笔对半"
+            return store.ui("文笔对半", "Half Split")
         case .immersiveReading:
-            return "阅读"
+            return store.ui("阅读", "Reading")
         case .immersiveConversation:
-            return "对话"
+            return store.ui("对话", "Chat")
         case .immersiveWriting:
-            return "写作"
+            return store.ui("写作", "Writing")
         }
     }
 
@@ -530,14 +528,14 @@ private struct UnifiedTopBarView: View {
                 .foregroundStyle(primaryText)
                 .frame(width: 28, height: controlHeight)
         case .compact:
-            Text("魏碑")
-                .font(.system(size: 13, weight: .semibold, design: .serif))
+            Text(store.appDisplayName)
+                .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 13, weight: .semibold))
                 .foregroundStyle(primaryText)
                 .frame(width: 42, alignment: .leading)
         case .reader:
             VStack(alignment: .leading, spacing: 0) {
-                Text("魏碑")
-                    .font(.system(size: 12, weight: .semibold, design: .serif))
+                Text(store.appDisplayName)
+                    .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 12, weight: .semibold))
                     .foregroundStyle(secondaryText)
                 Text(shortLayoutLabel)
                     .font(.system(size: 9, weight: .medium))
@@ -546,10 +544,10 @@ private struct UnifiedTopBarView: View {
             .frame(width: 48, alignment: .leading)
         case .balanced, .wide:
             VStack(alignment: .leading, spacing: 0) {
-                Text("魏碑")
-                    .font(.system(size: variant == .wide ? 15 : 14, weight: .semibold, design: .serif))
+                Text(store.appDisplayName)
+                    .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: variant == .wide ? 15 : 14, weight: .semibold))
                     .foregroundStyle(primaryText)
-                Text(store.layout.label)
+                Text(store.layout.label(language: store.interfaceLanguage))
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(tertiaryText)
             }
@@ -560,7 +558,7 @@ private struct UnifiedTopBarView: View {
     @ViewBuilder
     private var navigationButtons: some View {
         HStack(spacing: 3) {
-            topIconButton("arrow.left", help: "后退") {
+            topIconButton("arrow.left", help: store.ui("后退", "Back")) {
                 withAnimation(WeiBeiMotion.layout) {
                     store.navigateBackInWorkspace()
                 }
@@ -568,7 +566,7 @@ private struct UnifiedTopBarView: View {
             .keyboardShortcut("[", modifiers: [.command])
             .disabled(!store.canNavigateBack)
 
-            topIconButton("arrow.right", help: "前进") {
+            topIconButton("arrow.right", help: store.ui("前进", "Forward")) {
                 withAnimation(WeiBeiMotion.layout) {
                     store.navigateForwardInWorkspace()
                 }
@@ -580,7 +578,7 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var libraryButton: some View {
-        topIconButton("sidebar.left", help: store.showLibrary ? "收起资料库" : "打开资料库", active: store.showLibrary) {
+        topIconButton("sidebar.left", help: store.showLibrary ? store.ui("收起资料库", "Hide library") : store.ui("打开资料库", "Show library"), active: store.showLibrary) {
             withAnimation(WeiBeiMotion.layout) {
                 store.toggleLibrary()
             }
@@ -589,7 +587,7 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var searchButton: some View {
-        topIconButton("magnifyingglass", help: "打开资料内搜索") {
+        topIconButton("magnifyingglass", help: store.ui("打开资料内搜索", "Search in material")) {
             toggleReaderSearch()
         }
     }
@@ -603,7 +601,7 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var appearanceToggleButton: some View {
-        topIconButton(store.appearanceMode.toggled.systemImage, help: store.appearanceMode.actionLabel) {
+        topIconButton(store.appearanceMode.toggled.systemImage, help: store.appearanceMode.actionLabel(language: store.interfaceLanguage)) {
             withAnimation(WeiBeiMotion.appearance) {
                 store.toggleAppearanceMode()
             }
@@ -613,31 +611,43 @@ private struct UnifiedTopBarView: View {
     @ViewBuilder
     private var settingsMenu: some View {
         Menu {
-            Section("界面") {
+            Section(store.ui("界面", "Interface")) {
                 ForEach(WeiBeiAppearanceMode.allCases) { mode in
                     Button {
                         withAnimation(WeiBeiMotion.appearance) {
                             store.setAppearanceMode(mode)
                         }
                     } label: {
-                        Label(mode.label, systemImage: mode == store.appearanceMode ? "checkmark" : mode.systemImage)
+                        Label(mode.label(language: store.interfaceLanguage), systemImage: mode == store.appearanceMode ? "checkmark" : mode.systemImage)
                     }
                 }
             }
 
-            Section("顶部栏") {
+            Section(store.ui("语言", "Language")) {
+                ForEach(WeiBeiInterfaceLanguage.allCases) { language in
+                    Button {
+                        withAnimation(WeiBeiMotion.appearance) {
+                            store.setInterfaceLanguage(language)
+                        }
+                    } label: {
+                        Label(language.settingsLabel, systemImage: language == store.interfaceLanguage ? "checkmark" : "character.book.closed")
+                    }
+                }
+            }
+
+            Section(store.ui("顶部栏", "Top Bar")) {
                 ForEach(TopBarVariant.allCases) { candidate in
                     Button {
                         setTopBarVariant(candidate)
                     } label: {
-                        Label(candidate.label, systemImage: candidate == variant ? "checkmark" : candidate.iconName)
+                        Label(candidate.label(language: store.interfaceLanguage), systemImage: candidate == variant ? "checkmark" : candidate.iconName)
                     }
                 }
             }
 
-            Section("对话入口") {
+            Section(store.ui("对话入口", "Chat Entry")) {
                 ForEach(store.visibleAgentSurfaces) { surface in
-                    Button(surface.label) {
+                    Button(surface.label(language: store.interfaceLanguage)) {
                         withAnimation(WeiBeiMotion.panel) {
                             store.setAgentSurface(surface)
                         }
@@ -648,8 +658,8 @@ private struct UnifiedTopBarView: View {
             Image(systemName: "gearshape")
         }
         .buttonStyle(WeiBeiIconButtonStyle(size: variant == .glyph || variant == .compact ? 24 : WeiBeiMetric.iconButton))
-        .accessibilityLabel(Text("设置"))
-        .help("设置")
+        .accessibilityLabel(Text(store.ui("设置", "Settings")))
+        .help(store.ui("设置", "Settings"))
     }
 
     private var hasPrimaryAgentPaneVisible: Bool {
@@ -662,12 +672,12 @@ private struct UnifiedTopBarView: View {
 
     private var agentButtonHelp: String {
         if hasPrimaryAgentPaneAvailable {
-            return "打开对话区"
+            return store.ui("打开对话区", "Open chat pane")
         }
         if store.selectionContext != nil {
-            return "按当前选区提问"
+            return store.ui("按当前选区提问", "Ask about current selection")
         }
-        return store.hasSelectedMaterial ? "按当前资料提问" : "按当前笔记提问"
+        return store.hasSelectedMaterial ? store.ui("按当前资料提问", "Ask about current material") : store.ui("按当前笔记提问", "Ask about current note")
     }
 
     private func activateAgentEntry() {
@@ -688,7 +698,7 @@ private struct UnifiedTopBarView: View {
                         store.setLayout(layout)
                     }
                 } label: {
-                    Label(layout.label, systemImage: layout == store.layout ? "checkmark" : layout.systemImage)
+                    Label(layout.label(language: store.interfaceLanguage), systemImage: layout == store.layout ? "checkmark" : layout.systemImage)
                 }
             }
         } label: {
@@ -710,13 +720,13 @@ private struct UnifiedTopBarView: View {
             }
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(Text("切换布局"))
-        .help("切换布局")
+        .accessibilityLabel(Text(store.ui("切换布局", "Switch layout")))
+        .help(store.ui("切换布局", "Switch layout"))
     }
 
     private func setTopBarVariant(_ next: TopBarVariant) {
         withAnimation(WeiBeiMotion.layout) {
-            topBarVariantRaw = next.rawValue
+            store.setTopBarVariant(next)
         }
     }
 
@@ -837,18 +847,18 @@ private struct LayoutContentView: View {
                         minSecond: 520,
                         minThird: 96
                     ) {
-                        ContextRailView(title: "来源", items: conversationSourceRailItems, edge: .trailing)
+                        ContextRailView(title: store.ui("来源", "Sources"), items: conversationSourceRailItems, edge: .trailing)
                             .transition(WeiBeiTransition.rail)
                     } second: {
                         AgentPaneView()
                     } third: {
-                        ContextRailView(title: "写入目标", items: conversationTargetRailItems, edge: .leading)
+                        ContextRailView(title: store.ui("写入目标", "Write Targets"), items: conversationTargetRailItems, edge: .leading)
                             .transition(WeiBeiTransition.rail)
                     }
                     .transition(WeiBeiTransition.rightPanel)
                 } else {
                     ResizableTwoPane(split: conversationLeftSplit, minFirst: 92, minSecond: 520) {
-                        ContextRailView(title: "来源", items: conversationSourceRailItems, edge: .trailing)
+                        ContextRailView(title: store.ui("来源", "Sources"), items: conversationSourceRailItems, edge: .trailing)
                             .transition(WeiBeiTransition.rail)
                     } second: {
                         AgentPaneView()
@@ -865,18 +875,18 @@ private struct LayoutContentView: View {
                             minSecond: 540,
                             minThird: 104
                         ) {
-                            ContextRailView(title: "文档", items: writingDocumentRailItems, edge: .trailing)
+                            ContextRailView(title: store.ui("文档", "Documents"), items: writingDocumentRailItems, edge: .trailing)
                                 .transition(WeiBeiTransition.rail)
                         } second: {
                             NotePaneView()
                         } third: {
-                            ContextRailView(title: "写作辅助", items: writingAssistRailItems, edge: .leading)
+                            ContextRailView(title: store.ui("写作辅助", "Writing Aids"), items: writingAssistRailItems, edge: .leading)
                                 .transition(WeiBeiTransition.rail)
                         }
                         .transition(WeiBeiTransition.rightPanel)
                     } else {
                         ResizableTwoPane(split: writingLeftSplit, minFirst: 96, minSecond: 540) {
-                            ContextRailView(title: "文档", items: writingDocumentRailItems, edge: .trailing)
+                            ContextRailView(title: store.ui("文档", "Documents"), items: writingDocumentRailItems, edge: .trailing)
                                 .transition(WeiBeiTransition.rail)
                         } second: {
                             NotePaneView()
@@ -942,8 +952,8 @@ private struct LayoutContentView: View {
         if let item = store.selectedMaterialItem {
             items.append(
                 ContextRailItem(
-                    title: item.title,
-                    help: "切回沉浸阅读",
+                    title: store.displayTitle(for: item),
+                    help: store.ui("切回沉浸阅读", "Return to immersive reading"),
                     systemImage: item.kind.systemImage,
                     emphasized: true
                 ) {
@@ -952,19 +962,19 @@ private struct LayoutContentView: View {
             )
         }
         items.append(
-            ContextRailItem(title: "当前笔记", help: "切回沉浸写作", systemImage: "square.and.pencil") {
+            ContextRailItem(title: store.ui("当前笔记", "Current Note"), help: store.ui("切回沉浸写作", "Return to immersive writing"), systemImage: "square.and.pencil") {
                 openWriting()
             }
         )
         if store.selectionContext != nil {
             items.append(
-                ContextRailItem(title: "选区", help: "追问当前选区", systemImage: "text.cursor") {
+                ContextRailItem(title: store.ui("选区", "Selection"), help: store.ui("追问当前选区", "Ask about current selection"), systemImage: "text.cursor") {
                     askCurrentSelection()
                 }
             )
         }
         items.append(
-            ContextRailItem(title: "资料库", help: "打开资料库选择资料", systemImage: "sidebar.left") {
+            ContextRailItem(title: store.ui("资料库", "Library"), help: store.ui("打开资料库选择资料", "Open the library to choose material"), systemImage: "sidebar.left") {
                 openLibrary()
             }
         )
@@ -973,20 +983,20 @@ private struct LayoutContentView: View {
 
     private var conversationTargetRailItems: [ContextRailItem] {
         var items = [
-            ContextRailItem(title: "当前笔记", help: "打开写作区", systemImage: "square.and.pencil", emphasized: true) {
+            ContextRailItem(title: store.ui("当前笔记", "Current Note"), help: store.ui("打开写作区", "Open writing area"), systemImage: "square.and.pencil", emphasized: true) {
                 openWriting()
             }
         ]
         if store.selectionContext != nil {
             items.append(
-                ContextRailItem(title: "摘录区", help: "把当前选区收进笔记", systemImage: "quote.opening") {
+                ContextRailItem(title: store.ui("摘录区", "Excerpt Area"), help: store.ui("把当前选区收进笔记", "Save the current selection to notes"), systemImage: "quote.opening") {
                     appendSelectionAndOpenWriting()
                 }
             )
         }
         items.append(
-            ContextRailItem(title: "问题与结论", help: "整理问题、结论和缺少证据", systemImage: "checkmark.circle") {
-                prepareAgentDraft("请根据\(store.agentPromptScope)，整理出问题、结论和还缺少的证据。")
+            ContextRailItem(title: store.ui("问题与结论", "Questions & Conclusions"), help: store.ui("整理问题、结论和缺少证据", "Organize questions, conclusions, and missing evidence"), systemImage: "checkmark.circle") {
+                prepareAgentDraft(store.ui("请根据\(store.agentPromptScope)，整理出问题、结论和还缺少的证据。", "Use \(store.agentPromptScope) to organize questions, conclusions, and missing evidence."))
             }
         )
         return items
@@ -997,8 +1007,8 @@ private struct LayoutContentView: View {
         if let item = store.selectedMaterialItem {
             items.append(
                 ContextRailItem(
-                    title: item.title,
-                    help: "切回沉浸阅读",
+                    title: store.displayTitle(for: item),
+                    help: store.ui("切回沉浸阅读", "Return to immersive reading"),
                     systemImage: item.kind.systemImage,
                     emphasized: true
                 ) {
@@ -1008,13 +1018,13 @@ private struct LayoutContentView: View {
         }
         if store.hasSelectedMaterial || store.selectionContext != nil {
             items.append(
-                ContextRailItem(title: "引用", help: "复制当前材料或选区引用", systemImage: "quote.opening") {
+                ContextRailItem(title: store.ui("引用", "Reference"), help: store.ui("复制当前材料或选区引用", "Copy current material or selection reference"), systemImage: "quote.opening") {
                     store.copyCurrentReference()
                 }
             )
         }
         items.append(
-            ContextRailItem(title: "资料库", help: "打开资料库选择资料", systemImage: "sidebar.left", emphasized: items.isEmpty) {
+            ContextRailItem(title: store.ui("资料库", "Library"), help: store.ui("打开资料库选择资料", "Open the library to choose material"), systemImage: "sidebar.left", emphasized: items.isEmpty) {
                 openLibrary()
             }
         )
@@ -1023,14 +1033,14 @@ private struct LayoutContentView: View {
 
     private var writingAssistRailItems: [ContextRailItem] {
         [
-            ContextRailItem(title: "大纲建议", help: "生成笔记大纲", systemImage: "list.bullet.rectangle", emphasized: true) {
-                prepareAgentDraft("请根据\(store.agentPromptScope)，给出一版更清晰的笔记大纲。")
+            ContextRailItem(title: store.ui("大纲建议", "Outline"), help: store.ui("生成笔记大纲", "Generate a note outline"), systemImage: "list.bullet.rectangle", emphasized: true) {
+                prepareAgentDraft(store.ui("请根据\(store.agentPromptScope)，给出一版更清晰的笔记大纲。", "Use \(store.agentPromptScope) to produce a clearer note outline."))
             },
-            ContextRailItem(title: "补来源", help: "检查笔记缺少来源的位置", systemImage: "link") {
-                prepareAgentDraft(store.hasSelectedMaterial ? "请检查当前笔记缺少来源的位置，并建议应该引用当前材料的哪些部分。" : "请检查当前笔记缺少来源的位置，并标出需要补证据的段落。")
+            ContextRailItem(title: store.ui("补来源", "Add Sources"), help: store.ui("检查笔记缺少来源的位置", "Find places where notes need sources"), systemImage: "link") {
+                prepareAgentDraft(store.hasSelectedMaterial ? store.ui("请检查当前笔记缺少来源的位置，并建议应该引用当前材料的哪些部分。", "Find where the current note needs sources and suggest which parts of the current material to cite.") : store.ui("请检查当前笔记缺少来源的位置，并标出需要补证据的段落。", "Find where the current note needs sources and mark the paragraphs that need evidence."))
             },
-            ContextRailItem(title: "润色表达", help: "润色当前笔记", systemImage: "text.quote") {
-                prepareAgentDraft("请整理和润色当前笔记，保留原意，并标出缺少来源的位置。")
+            ContextRailItem(title: store.ui("润色表达", "Polish"), help: store.ui("润色当前笔记", "Polish current note"), systemImage: "text.quote") {
+                prepareAgentDraft(store.ui("请整理和润色当前笔记，保留原意，并标出缺少来源的位置。", "Organize and polish the current note, preserve the meaning, and mark where sources are missing."))
             }
         ]
     }

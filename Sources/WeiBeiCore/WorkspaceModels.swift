@@ -1,5 +1,39 @@
 import Foundation
 
+public enum WeiBeiInterfaceLanguage: String, CaseIterable, Identifiable, Codable {
+    case chinese = "zh-Hans"
+    case english = "en"
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .chinese:
+            return "中文"
+        case .english:
+            return "English"
+        }
+    }
+
+    public var settingsLabel: String {
+        switch self {
+        case .chinese:
+            return "中文界面"
+        case .english:
+            return "English interface"
+        }
+    }
+
+    public func text(_ chinese: String, _ english: String) -> String {
+        switch self {
+        case .chinese:
+            return chinese
+        case .english:
+            return english
+        }
+    }
+}
+
 public enum StudyItemKind: String, Codable, CaseIterable, Identifiable {
     case html
     case pdf
@@ -14,6 +48,19 @@ public enum StudyItemKind: String, Codable, CaseIterable, Identifiable {
         case .pdf: "PDF"
         case .markdown: "Markdown"
         case .text: "Text"
+        }
+    }
+
+    public func label(language: WeiBeiInterfaceLanguage) -> String {
+        switch self {
+        case .html:
+            return "HTML"
+        case .pdf:
+            return "PDF"
+        case .markdown:
+            return "Markdown"
+        case .text:
+            return language.text("文本", "Text")
         }
     }
 
@@ -110,7 +157,7 @@ public enum SourceReferenceTitle {
             .components(separatedBy: .newlines)
             .reversed()
             .map(cleanedLine)
-            .first(where: { $0.hasPrefix("来源：") })
+            .first(where: { $0.hasPrefix("来源：") || $0.localizedCaseInsensitiveContains("source:") })
             ?? cleanedLine(raw)
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.hasPrefix(">") {
@@ -118,9 +165,11 @@ public enum SourceReferenceTitle {
         }
         if text.hasPrefix("来源：") {
             text = String(text.dropFirst("来源：".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if text.lowercased().hasPrefix("source:") {
+            text = String(text.dropFirst("source:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
-        guard let range = text.range(of: #"，第\s*\d+\s*页$"#, options: .regularExpression) else {
+        guard let range = text.range(of: #"(?:，第\s*\d+\s*页|,\s*page\s*\d+)$"#, options: [.regularExpression, .caseInsensitive]) else {
             return (text, nil)
         }
         let suffix = text[range]
@@ -162,6 +211,23 @@ public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable {
             return "沉浸对话"
         case .immersiveWriting:
             return "沉浸写笔记"
+        }
+    }
+
+    public func label(language: WeiBeiInterfaceLanguage) -> String {
+        switch self {
+        case .documentAgentNotes:
+            return language.text("阅读-对话-笔记", "Reader-Chat-Notes")
+        case .documentNotesAgent:
+            return language.text("阅读-笔记-对话", "Reader-Notes-Chat")
+        case .documentNotesSplit:
+            return language.text("阅读/笔记对半", "Reader / Notes")
+        case .immersiveReading:
+            return language.text("沉浸阅读", "Immersive Reading")
+        case .immersiveConversation:
+            return language.text("沉浸对话", "Immersive Chat")
+        case .immersiveWriting:
+            return language.text("沉浸写笔记", "Immersive Writing")
         }
     }
 
@@ -225,12 +291,36 @@ public enum AgentSurface: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    public func label(language: WeiBeiInterfaceLanguage) -> String {
+        switch self {
+        case .bottomDrawer:
+            return language.text("底部对话栏", "Bottom Chat")
+        case .cornerPanel:
+            return language.text("右下轻问", "Corner Ask")
+        case .selectionFloat:
+            return language.text("选区轻提示", "Selection Prompt")
+        case .quietInsight:
+            return language.text("页边洞察", "Margin Insight")
+        case .hidden:
+            return language.text("隐藏对话", "Hide Chat")
+        }
+    }
+
     public var actionLabel: String {
         switch self {
         case .hidden:
             return label
         default:
             return "使用\(label)"
+        }
+    }
+
+    public func actionLabel(language: WeiBeiInterfaceLanguage) -> String {
+        switch self {
+        case .hidden:
+            return label(language: language)
+        default:
+            return language.text("使用\(label(language: language))", "Use \(label(language: language))")
         }
     }
 }
@@ -253,6 +343,19 @@ public enum NoteRenderMode: String, Codable, CaseIterable, Identifiable {
             return "源码"
         case .preview:
             return "预览"
+        }
+    }
+
+    public func label(language: WeiBeiInterfaceLanguage) -> String {
+        switch self {
+        case .rich:
+            return language.text("写作", "Write")
+        case .split:
+            return language.text("对照", "Compare")
+        case .source:
+            return language.text("源码", "Source")
+        case .preview:
+            return language.text("预览", "Preview")
         }
     }
 }
@@ -301,6 +404,15 @@ public struct SelectionContext: Identifiable, Codable, Hashable {
             return "文档选区：\(ownerTitle)"
         case .note:
             return "笔记选区：\(ownerTitle)"
+        }
+    }
+
+    public func label(language: WeiBeiInterfaceLanguage) -> String {
+        switch source {
+        case .document:
+            return language.text("文档选区：\(ownerTitle)", "Document selection: \(ownerTitle)")
+        case .note:
+            return language.text("笔记选区：\(ownerTitle)", "Note selection: \(ownerTitle)")
         }
     }
 
@@ -462,8 +574,10 @@ public struct AgentMessage: Identifiable, Codable, Hashable {
         role == .assistant
             && !text.hasPrefix("未配置密钥")
             && !text.hasPrefix("未配置 OPENAI_API_KEY")
+            && !text.hasPrefix("No key is configured")
             && !text.hasPrefix("请求失败：")
             && !text.hasPrefix("Agent 请求失败：")
+            && !text.hasPrefix("Request failed:")
     }
 }
 
@@ -478,8 +592,9 @@ public struct PersistedWorkspace: Codable {
     public var showLibrary: Bool?
     public var showRightPane: Bool?
     public var appearanceModeRaw: String?
+    public var interfaceLanguageRaw: String?
 
-    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], selectedItemID: String? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showRightPane: Bool? = nil, appearanceModeRaw: String? = nil) {
+    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], selectedItemID: String? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showRightPane: Bool? = nil, appearanceModeRaw: String? = nil, interfaceLanguageRaw: String? = nil) {
         self.importedItems = importedItems
         self.notesByItemID = notesByItemID
         self.selectedItemID = selectedItemID
@@ -490,6 +605,7 @@ public struct PersistedWorkspace: Codable {
         self.showLibrary = showLibrary
         self.showRightPane = showRightPane
         self.appearanceModeRaw = appearanceModeRaw
+        self.interfaceLanguageRaw = interfaceLanguageRaw
     }
 }
 
@@ -502,51 +618,53 @@ public struct QuietInsight: Hashable {
         self.noteBlock = noteBlock
     }
 
-    public static func agent(materialTitle: String, answer: String) -> QuietInsight? {
+    public static func agent(materialTitle: String, answer: String, language: WeiBeiInterfaceLanguage = .chinese) -> QuietInsight? {
         let body = String(answer.trimmingCharacters(in: .whitespacesAndNewlines).prefix(360))
         guard !body.isEmpty else { return nil }
-        return QuietInsight(body: body, noteBlock: noteBlock(body: body, source: materialTitle))
+        return QuietInsight(body: body, noteBlock: noteBlock(body: body, source: materialTitle, language: language))
     }
 
-    public static func make(materialTitle: String, materialText: String, noteText: String, selectionText: String?) -> QuietInsight {
+    public static func make(materialTitle: String, materialText: String, noteText: String, selectionText: String?, language: WeiBeiInterfaceLanguage = .chinese) -> QuietInsight {
         let hasMaterial = !materialText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if let selection = selectionText?.trimmingCharacters(in: .whitespacesAndNewlines), !selection.isEmpty {
             let excerpt = short(selection, count: 54)
             if !noteText.contains(String(selection.prefix(18))) {
-                let body = "选区还没有进入笔记：\(excerpt)。先收为摘录，再补一句自己的判断。"
-                return QuietInsight(body: body, noteBlock: noteBlock(body: body, source: materialTitle))
+                let body = language.text("选区还没有进入笔记：\(excerpt)。先收为摘录，再补一句自己的判断。", "The selection is not in the note yet: \(excerpt). Save it as an excerpt, then add one sentence of your own judgment.")
+                return QuietInsight(body: body, noteBlock: noteBlock(body: body, source: materialTitle, language: language))
             }
-            let body = hasMaterial ? "选区已经出现在笔记里。下一步更适合追问它和当前材料其他段落的关系。" : "选区已经出现在笔记里。下一步更适合追问这段话还能补哪条依据。"
-            return QuietInsight(body: body, noteBlock: noteBlock(body: body, source: materialTitle))
+            let body = hasMaterial
+                ? language.text("选区已经出现在笔记里。下一步更适合追问它和当前材料其他段落的关系。", "The selection is already in the note. Next, ask how it relates to other parts of the current material.")
+                : language.text("选区已经出现在笔记里。下一步更适合追问这段话还能补哪条依据。", "The selection is already in the note. Next, ask what evidence could support this passage.")
+            return QuietInsight(body: body, noteBlock: noteBlock(body: body, source: materialTitle, language: language))
         }
 
         let candidate = firstUsefulLine(in: materialText)
         guard !candidate.isEmpty else {
             let noteCandidate = firstUsefulLine(in: noteText)
             if !noteCandidate.isEmpty {
-                let body = "当前笔记有一条可以继续整理：\(short(noteCandidate, count: 58))。建议补来源或写成问题。"
-                return QuietInsight(body: body, noteBlock: noteBlock(body: body, source: materialTitle))
+                let body = language.text("当前笔记有一条可以继续整理：\(short(noteCandidate, count: 58))。建议补来源或写成问题。", "The current note has a line worth organizing: \(short(noteCandidate, count: 58)). Add a source or turn it into a question.")
+                return QuietInsight(body: body, noteBlock: noteBlock(body: body, source: materialTitle, language: language))
             }
-            let body = "当前没有可读材料。先导入或选择一份 HTML、PDF 或 Markdown。"
-            return QuietInsight(body: body, noteBlock: noteBlock(body: body, source: materialTitle))
+            let body = language.text("当前没有可读材料。先导入或选择一份 HTML、PDF 或 Markdown。", "There is no readable material yet. Import or choose an HTML, PDF, or Markdown file first.")
+            return QuietInsight(body: body, noteBlock: noteBlock(body: body, source: materialTitle, language: language))
         }
 
         if !noteText.contains(String(candidate.prefix(14))) {
-            let body = "当前材料有一条还没进入笔记：\(short(candidate, count: 58))。建议补到摘录区。"
-            return QuietInsight(body: body, noteBlock: noteBlock(body: body, source: materialTitle))
+            let body = language.text("当前材料有一条还没进入笔记：\(short(candidate, count: 58))。建议补到摘录区。", "The current material has a line not yet in the note: \(short(candidate, count: 58)). Add it to the excerpts.")
+            return QuietInsight(body: body, noteBlock: noteBlock(body: body, source: materialTitle, language: language))
         }
 
-        let body = "当前笔记已经覆盖材料开头。建议检查是否写了来源、例子和待追问。"
-        return QuietInsight(body: body, noteBlock: noteBlock(body: body, source: materialTitle))
+        let body = language.text("当前笔记已经覆盖材料开头。建议检查是否写了来源、例子和待追问。", "The current note already covers the start of the material. Check whether it includes sources, examples, and follow-up questions.")
+        return QuietInsight(body: body, noteBlock: noteBlock(body: body, source: materialTitle, language: language))
     }
 
-    private static func noteBlock(body: String, source: String) -> String {
+    private static func noteBlock(body: String, source: String, language: WeiBeiInterfaceLanguage) -> String {
         """
-        > [!note] 阅读线索
+        > [!note] \(language.text("阅读线索", "Reading clue"))
         >
         > \(body)
         >
-        > 来源：\(source)
+        > \(language.text("来源", "Source"))：\(source)
         """
     }
 

@@ -1,5 +1,7 @@
 import AppKit
+import CoreText
 import SwiftUI
+import WeiBeiCore
 
 enum WeiBeiAppearanceMode: String, CaseIterable, Identifiable {
     case paper
@@ -16,12 +18,30 @@ enum WeiBeiAppearanceMode: String, CaseIterable, Identifiable {
         }
     }
 
+    func label(language: WeiBeiInterfaceLanguage) -> String {
+        switch self {
+        case .paper:
+            return language.text("纸面", "Paper")
+        case .inkstone:
+            return language.text("墨石", "Inkstone")
+        }
+    }
+
     var actionLabel: String {
         switch self {
         case .paper:
             return "切到墨石暗色"
         case .inkstone:
             return "切到纸面亮色"
+        }
+    }
+
+    func actionLabel(language: WeiBeiInterfaceLanguage) -> String {
+        switch self {
+        case .paper:
+            return language.text("切到墨石暗色", "Switch to Inkstone")
+        case .inkstone:
+            return language.text("切到纸面亮色", "Switch to Paper")
         }
     }
 
@@ -67,6 +87,44 @@ enum WeiBeiAppearanceMode: String, CaseIterable, Identifiable {
             return .inkstone
         case .inkstone:
             return .paper
+        }
+    }
+}
+
+enum WeiBeiTypography {
+    static let englishDisplayFontName = "WeiBeiStele"
+    static let englishMonoFontName = "WeiBeiSteleMono"
+
+    private static var didRegisterBundledFonts = false
+
+    static func registerBundledFonts() {
+        guard !didRegisterBundledFonts else { return }
+        didRegisterBundledFonts = true
+        ["WeiBeiStele", "WeiBeiSteleMono"].forEach { name in
+            guard let url = Bundle.module.url(forResource: name, withExtension: "ttf", subdirectory: "Fonts") else { return }
+            CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+        }
+    }
+
+    static func brandFont(language: WeiBeiInterfaceLanguage, size: CGFloat, weight: Font.Weight = .semibold) -> Font {
+        switch language {
+        case .chinese:
+            return .system(size: size, weight: weight, design: .serif)
+        case .english:
+            return .custom(englishDisplayFontName, size: size).weight(weight)
+        }
+    }
+
+    static func englishBrandFont(size: CGFloat, weight: Font.Weight = .semibold) -> Font {
+        .custom(englishDisplayFontName, size: size).weight(weight)
+    }
+
+    static func monoFont(language: WeiBeiInterfaceLanguage, size: CGFloat) -> Font {
+        switch language {
+        case .chinese:
+            return .system(size: size, design: .monospaced)
+        case .english:
+            return .custom(englishMonoFontName, size: size)
         }
     }
 }
@@ -307,6 +365,21 @@ enum TopBarVariant: String, CaseIterable, Identifiable {
             return "图标"
         case .wide:
             return "宽松"
+        }
+    }
+
+    func label(language: WeiBeiInterfaceLanguage) -> String {
+        switch self {
+        case .balanced:
+            return language.text("标准", "Balanced")
+        case .compact:
+            return language.text("紧凑", "Compact")
+        case .reader:
+            return language.text("阅读", "Reading")
+        case .glyph:
+            return language.text("图标", "Glyph")
+        case .wide:
+            return language.text("宽松", "Wide")
         }
     }
 

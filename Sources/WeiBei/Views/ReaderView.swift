@@ -74,7 +74,10 @@ struct ReaderView: View {
             store.updateReaderLocationTitle(nil)
             return
         }
-        let title = item.kind == .pdf ? "\(item.title)，第 \(pdfPageIndex + 1) 页" : item.title
+        let displayTitle = store.displayTitle(for: item)
+        let title = item.kind == .pdf
+            ? store.ui("\(displayTitle)，第 \(pdfPageIndex + 1) 页", "\(displayTitle), page \(pdfPageIndex + 1)")
+            : displayTitle
         store.updateReaderLocationTitle(title)
     }
 
@@ -132,7 +135,7 @@ struct ReaderView: View {
         HStack(spacing: 7) {
             Image(systemName: "text.viewfinder")
                 .font(.system(size: 11, weight: .medium))
-            Text("未检测到可选文本层")
+            Text(store.ui("未检测到可选文本层", "No selectable text layer"))
                 .font(.system(size: 11, weight: .medium))
         }
         .foregroundStyle(WeiBeiTheme.secondaryInk)
@@ -169,8 +172,8 @@ struct ReaderView: View {
                 }
                 .buttonStyle(WeiBeiIconButtonStyle(size: 22))
                 .keyboardShortcut("[", modifiers: [.command, .option])
-                .accessibilityLabel(Text("上一页"))
-                .help("上一页")
+                .accessibilityLabel(Text(store.ui("上一页", "Previous page")))
+                .help(store.ui("上一页", "Previous page"))
 
                 Text(PageNavigator.display(pdfPageIndex, pageCount: pdfPageCount))
                     .font(.system(size: 11, weight: .medium, design: .monospaced))
@@ -188,8 +191,8 @@ struct ReaderView: View {
                 }
                 .buttonStyle(WeiBeiIconButtonStyle(size: 22))
                 .keyboardShortcut("]", modifiers: [.command, .option])
-                .accessibilityLabel(Text("下一页"))
-                .help("下一页")
+                .accessibilityLabel(Text(store.ui("下一页", "Next page")))
+                .help(store.ui("下一页", "Next page"))
             }
             .transition(WeiBeiTransition.floating)
         }
@@ -206,7 +209,7 @@ struct ReaderView: View {
                 Image(systemName: pdfBrowseMode.systemImage)
                     .font(.system(size: 12, weight: .semibold))
                 if showsPDFModeLabel {
-                    Text(pdfBrowseMode.label)
+                    Text(pdfBrowseMode.label(language: store.interfaceLanguage))
                         .font(.system(size: 11, weight: .medium))
                 }
             }
@@ -222,8 +225,8 @@ struct ReaderView: View {
             }
             .animation(WeiBeiMotion.micro, value: showsPDFModeLabel)
         }
-        .accessibilityLabel(Text("切换 PDF 浏览方式，当前\(pdfBrowseMode.label)"))
-        .help("切换到\(pdfBrowseMode.toggled.help)")
+        .accessibilityLabel(Text(store.ui("切换 PDF 浏览方式，当前\(pdfBrowseMode.label(language: store.interfaceLanguage))", "Switch PDF browsing mode. Current: \(pdfBrowseMode.label(language: store.interfaceLanguage))")))
+        .help(store.ui("切换到\(pdfBrowseMode.toggled.help(language: store.interfaceLanguage))", "Switch to \(pdfBrowseMode.toggled.help(language: store.interfaceLanguage))"))
     }
 
     private var pdfControlsActive: Bool {
@@ -279,13 +282,15 @@ struct ReaderView: View {
                         pageCount: $pdfPageCount,
                         onSelectableTextChange: { available in pdfHasSelectableText = available }
                     ) { text, anchor, selectionPageIndex in
-                        let ownerTitle = "\(item.title)，第 \(selectionPageIndex + 1) 页"
+                        let title = store.displayTitle(for: item)
+                        let ownerTitle = store.ui("\(title)，第 \(selectionPageIndex + 1) 页", "\(title), page \(selectionPageIndex + 1)")
                         store.updateReaderLocationTitle(ownerTitle)
                         store.updateSelection(text, source: .document, anchor: anchor, ownerTitle: ownerTitle)
                     }
                 } else {
-                    SamplePDFView(appearanceMode: store.appearanceMode) { text, anchor in
-                        let ownerTitle = "\(item.title)，第 1 页"
+                    SamplePDFView(appearanceMode: store.appearanceMode, language: store.interfaceLanguage) { text, anchor in
+                        let title = store.displayTitle(for: item)
+                        let ownerTitle = store.ui("\(title)，第 1 页", "\(title), page 1")
                         store.updateReaderLocationTitle(ownerTitle)
                         store.updateSelection(text, source: .document, anchor: anchor, ownerTitle: ownerTitle)
                     }
@@ -344,6 +349,7 @@ struct ReaderView: View {
             markdownBaseURL: markdownBaseURL,
             searchQuery: store.readerSearch,
             appearanceMode: store.appearanceMode,
+            interfaceLanguage: store.interfaceLanguage,
             onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
             onSourceReference: { reference in store.openSourceReference(reference) },
             onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
@@ -367,6 +373,15 @@ private enum PDFBrowseMode: String, CaseIterable, Identifiable {
         }
     }
 
+    func label(language: WeiBeiInterfaceLanguage) -> String {
+        switch self {
+        case .scroll:
+            return language.text("滚动", "Scroll")
+        case .page:
+            return language.text("翻页", "Page")
+        }
+    }
+
     var systemImage: String {
         switch self {
         case .scroll: "arrow.up.and.down"
@@ -385,6 +400,15 @@ private enum PDFBrowseMode: String, CaseIterable, Identifiable {
         switch self {
         case .scroll: "连续滚动浏览 PDF"
         case .page: "单页翻页浏览 PDF"
+        }
+    }
+
+    func help(language: WeiBeiInterfaceLanguage) -> String {
+        switch self {
+        case .scroll:
+            return language.text("连续滚动浏览 PDF", "continuous PDF scrolling")
+        case .page:
+            return language.text("单页翻页浏览 PDF", "single-page PDF browsing")
         }
     }
 }
@@ -1275,6 +1299,7 @@ private struct MarkdownDocumentReaderView: View {
     var markdownBaseURL: URL?
     var searchQuery: String
     var appearanceMode: WeiBeiAppearanceMode = .paper
+    var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
@@ -1289,6 +1314,7 @@ private struct MarkdownDocumentReaderView: View {
             markdownBaseURL: markdownBaseURL,
             searchQuery: searchQuery,
             appearanceMode: appearanceMode,
+            interfaceLanguage: interfaceLanguage,
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onSelectionChange,
             onWikiLink: onWikiLink,
@@ -1299,11 +1325,12 @@ private struct MarkdownDocumentReaderView: View {
 }
 
 private struct MarkdownReadFailureView: View {
+    @EnvironmentObject private var store: WorkspaceStore
     var fileName: String
 
     var body: some View {
         ReaderStateMessage(
-            title: "无法读取 Markdown",
+            title: store.ui("无法读取 Markdown", "Could not read Markdown"),
             detail: fileName,
             systemImage: "exclamationmark.triangle"
         )
@@ -1311,20 +1338,24 @@ private struct MarkdownReadFailureView: View {
 }
 
 private struct EmptyReaderView: View {
+    @EnvironmentObject private var store: WorkspaceStore
+
     var body: some View {
         ReaderStateMessage(
-            title: "选择资料",
-            detail: "从资料库打开 HTML、PDF 或 Markdown。",
+            title: store.ui("选择资料", "Choose Material"),
+            detail: store.ui("从资料库打开 HTML、PDF 或 Markdown。", "Open HTML, PDF, or Markdown from the library."),
             systemImage: "doc.text.magnifyingglass"
         )
     }
 }
 
 private struct NotebookSelectedReaderView: View {
+    @EnvironmentObject private var store: WorkspaceStore
+
     var body: some View {
         ReaderStateMessage(
-            title: "当前是笔记",
-            detail: "阅读区只显示资料，右侧继续写作当前笔记。",
+            title: store.ui("当前是笔记", "This is a note"),
+            detail: store.ui("阅读区只显示资料，右侧继续写作当前笔记。", "The reader shows materials only. Continue writing this note on the side."),
             systemImage: "square.and.pencil"
         )
     }
@@ -1471,6 +1502,7 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
 
 private struct SamplePDFView: View {
     var appearanceMode: WeiBeiAppearanceMode
+    var language: WeiBeiInterfaceLanguage
     var onSelectionChange: (String, CGPoint?) -> Void
 
     var body: some View {
@@ -1478,6 +1510,7 @@ private struct SamplePDFView: View {
             VStack(spacing: 18) {
                 SamplePDFSelectablePageView(
                     appearanceMode: appearanceMode,
+                    language: language,
                     onSelectionChange: onSelectionChange
                 )
                 .frame(maxWidth: 620, minHeight: 820, alignment: .topLeading)
@@ -1499,6 +1532,7 @@ private struct SamplePDFView: View {
 
 private struct SamplePDFSelectablePageView: NSViewRepresentable {
     var appearanceMode: WeiBeiAppearanceMode
+    var language: WeiBeiInterfaceLanguage
     var onSelectionChange: (String, CGPoint?) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -1528,9 +1562,10 @@ private struct SamplePDFSelectablePageView: NSViewRepresentable {
 
     private func applyContent(to textView: NSTextView, coordinator: Coordinator) {
         coordinator.appearanceMode = appearanceMode
-        if coordinator.appliedAppearanceMode != appearanceMode {
-            textView.textStorage?.setAttributedString(Self.attributedText(for: appearanceMode))
+        if coordinator.appliedAppearanceMode != appearanceMode || coordinator.appliedLanguage != language {
+            textView.textStorage?.setAttributedString(Self.attributedText(for: appearanceMode, language: language))
             coordinator.appliedAppearanceMode = appearanceMode
+            coordinator.appliedLanguage = language
         }
         textView.selectedTextAttributes = [
             .foregroundColor: WeiBeiNativePalette.selectedText(for: appearanceMode),
@@ -1538,7 +1573,7 @@ private struct SamplePDFSelectablePageView: NSViewRepresentable {
         ]
     }
 
-    private static func attributedText(for appearanceMode: WeiBeiAppearanceMode) -> NSAttributedString {
+    private static func attributedText(for appearanceMode: WeiBeiAppearanceMode, language: WeiBeiInterfaceLanguage) -> NSAttributedString {
         let output = NSMutableAttributedString()
         let ink = WeiBeiNativePalette.ink(for: appearanceMode)
         let secondary = ink.withAlphaComponent(0.62)
@@ -1563,11 +1598,11 @@ private struct SamplePDFSelectablePageView: NSViewRepresentable {
             ]))
         }
 
-        append("Mishkin 教材样例                                      PDF 阅读样例\n", font: smallFont, color: tertiary, style: paragraph(paragraphSpacing: 20))
-        append("金融体系的功能\n", font: titleFont, color: ink, style: paragraph(paragraphSpacing: 24))
-        append("金融市场和金融中介能够把储蓄者的资金转移给有投资机会的人。它们降低交易成本，缓解信息不对称，并帮助社会更有效地配置资源。\n", font: bodyFont, color: ink, style: paragraph(lineSpacing: 8, paragraphSpacing: 22))
-        append("这一页是内置 PDF 阅读样例。导入真实 PDF 后，中央区域会切换为 PDFKit 阅读器。现在这个样例页也可以像真实 PDF 一样选中文字并唤起选区 Agent。\n", font: bodyFont, color: secondary, style: paragraph(lineSpacing: 8, paragraphSpacing: 240))
-        append("页 1                                                        魏碑", font: footerFont, color: tertiary, style: paragraph())
+        append(language.text("Mishkin 教材样例                                      PDF 阅读样例\n", "Mishkin Textbook Sample                         PDF Reading Sample\n"), font: smallFont, color: tertiary, style: paragraph(paragraphSpacing: 20))
+        append(language.text("金融体系的功能\n", "Functions of the Financial System\n"), font: titleFont, color: ink, style: paragraph(paragraphSpacing: 24))
+        append(language.text("金融市场和金融中介能够把储蓄者的资金转移给有投资机会的人。它们降低交易成本，缓解信息不对称，并帮助社会更有效地配置资源。\n", "Financial markets and intermediaries move funds from savers to people with investment opportunities. They reduce transaction costs, ease information problems, and help allocate resources more effectively.\n"), font: bodyFont, color: ink, style: paragraph(lineSpacing: 8, paragraphSpacing: 22))
+        append(language.text("这一页是内置 PDF 阅读样例。导入真实 PDF 后，中央区域会切换为 PDFKit 阅读器。现在这个样例页也可以像真实 PDF 一样选中文字并唤起选区 Agent。\n", "This page is the built-in PDF reading sample. After you import a real PDF, the center area switches to the PDFKit reader. This sample page also supports text selection and the selection Agent.\n"), font: bodyFont, color: secondary, style: paragraph(lineSpacing: 8, paragraphSpacing: 240))
+        append(language.text("页 1                                                        魏碑", "Page 1                                                     WeiBei"), font: footerFont, color: tertiary, style: paragraph())
         return output
     }
 
@@ -1575,6 +1610,7 @@ private struct SamplePDFSelectablePageView: NSViewRepresentable {
         var onSelectionChange: (String, CGPoint?) -> Void
         var appearanceMode: WeiBeiAppearanceMode = .paper
         var appliedAppearanceMode: WeiBeiAppearanceMode?
+        var appliedLanguage: WeiBeiInterfaceLanguage?
 
         init(onSelectionChange: @escaping (String, CGPoint?) -> Void) {
             self.onSelectionChange = onSelectionChange

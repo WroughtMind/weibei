@@ -23,11 +23,12 @@ public struct OpenAIResponsesClient {
         question: String,
         materialTitle: String,
         materialText: String,
-        noteTitle: String = "当前笔记",
+        noteTitle: String = "",
         noteText: String,
         selectionTitle: String? = nil,
         selectionText: String?,
-        recentMessages: [AgentMessage]
+        recentMessages: [AgentMessage],
+        language: WeiBeiInterfaceLanguage = .chinese
     ) async throws -> String {
         var request = URLRequest(url: URL(string: "https://api.openai.com/v1/responses")!)
         request.httpMethod = "POST"
@@ -42,7 +43,8 @@ public struct OpenAIResponsesClient {
             noteText: noteText,
             selectionTitle: selectionTitle,
             selectionText: selectionText,
-            recentMessages: recentMessages
+            recentMessages: recentMessages,
+            language: language
         )
         let body: [String: Any] = [
             "model": model,
@@ -64,50 +66,65 @@ public struct OpenAIResponsesClient {
         question: String,
         materialTitle: String,
         materialText: String,
-        noteTitle: String = "当前笔记",
+        noteTitle: String = "",
         noteText: String,
         selectionTitle: String? = nil,
         selectionText: String?,
-        recentMessages: [AgentMessage]
+        recentMessages: [AgentMessage],
+        language: WeiBeiInterfaceLanguage = .chinese
     ) -> AgentPromptPayload {
         func label(_ value: String?, fallback: String) -> String {
             let cleaned = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             return cleaned.isEmpty ? fallback : cleaned
         }
 
-        let materialLabel = label(materialTitle, fallback: "当前材料")
-        let noteLabel = label(noteTitle, fallback: "当前笔记")
+        let materialLabel = label(materialTitle, fallback: language.text("当前材料", "Current material"))
+        let noteLabel = label(noteTitle, fallback: language.text("当前笔记", "Current note"))
         let trimmedMaterial = focusedMaterialText(materialText, title: materialLabel, limit: 18_000)
         let trimmedNote = String(noteText.prefix(6_000))
         let trimmedSelection = selectionText.map { String($0.prefix(2_000)) } ?? ""
         let hasMaterial = !trimmedMaterial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let selectionLabel = label(selectionTitle, fallback: hasMaterial ? materialLabel : noteLabel)
+        let colon = language.text("：", ": ")
+        let headingColon = language.text("：", ":")
+        let selectionHeading = language == .chinese
+            ? "\(language.text("当前选区", "Current selection"))（\(language.text("来源", "source"))：\(selectionLabel)）："
+            : "\(language.text("当前选区", "Current selection")) (\(language.text("来源", "source")): \(selectionLabel)):"
         let materialBlock = hasMaterial ? """
-        当前材料：\(materialLabel)
+        \(language.text("当前材料", "Current material"))\(colon)\(materialLabel)
 
-        材料内容：
+        \(language.text("材料内容", "Material content"))\(headingColon)
         \(trimmedMaterial)
-        """ : "当前材料：无"
-        let selectionBlock = trimmedSelection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "当前选区：无" : """
-        当前选区（来源：\(selectionLabel)）：
+        """ : language.text("当前材料：无", "Current material: none")
+        let selectionBlock = trimmedSelection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? language.text("当前选区：无", "Current selection: none") : """
+        \(selectionHeading)
         \(trimmedSelection)
         """
         let noteBlock = """
-        当前笔记：\(noteLabel)
+        \(language.text("当前笔记", "Current note"))\(colon)\(noteLabel)
 
-        笔记内容：
-        \(trimmedNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "无" : trimmedNote)
+        \(language.text("笔记内容", "Note content"))\(headingColon)
+        \(trimmedNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? language.text("无", "none") : trimmedNote)
         """
         let dialogue = recentMessages.suffix(8).map { message in
-            let role = message.role == .user ? "用户" : "助手"
+            let role = message.role == .user ? language.text("用户", "User") : language.text("助手", "Assistant")
             let source = message.source?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let sourceText = source?.isEmpty == false ? "（来源：\(source!)）" : ""
-            return "\(role)\(sourceText)：\(String(message.text.prefix(1_200)))"
+            let sourceText = source?.isEmpty == false ? language.text("（来源：\(source!)）", " (source: \(source!))") : ""
+            return "\(role)\(sourceText)\(colon)\(String(message.text.prefix(1_200)))"
         }.joined(separator: "\n")
-        let sourceRule = "回答末尾用“来源依据”列出真正用到的材料标题、选区来源或笔记标题；没有用到的来源不要列。"
+        let sourceRule = language.text(
+            "回答末尾用“来源依据”列出真正用到的材料标题、选区来源或笔记标题；没有用到的来源不要列。",
+            "At the end, add a 'Sources used' section listing only the material titles, selection sources, or note titles you actually used. Do not list unused sources."
+        )
         let instructions = hasMaterial
-            ? "你是魏碑里的学习助手。只根据当前材料、当前笔记和当前选区回答；没有证据就说未在材料或笔记中确认。回答用中文，先给结论。\(sourceRule)"
-            : "你是魏碑里的学习助手。只根据当前笔记和当前选区回答；没有证据就说未在笔记或选区中确认。回答用中文，先给结论。\(sourceRule)"
+            ? language.text(
+                "你是魏碑里的学习助手。只根据当前材料、当前笔记和当前选区回答；没有证据就说未在材料或笔记中确认。回答用中文，先给结论。\(sourceRule)",
+                "You are the study assistant inside WeiBei. Answer only from the current material, current note, and current selection. If evidence is missing, say it is not confirmed in the material or note. Answer in English and lead with the conclusion. \(sourceRule)"
+            )
+            : language.text(
+                "你是魏碑里的学习助手。只根据当前笔记和当前选区回答；没有证据就说未在笔记或选区中确认。回答用中文，先给结论。\(sourceRule)",
+                "You are the study assistant inside WeiBei. Answer only from the current note and current selection. If evidence is missing, say it is not confirmed in the note or selection. Answer in English and lead with the conclusion. \(sourceRule)"
+            )
         let input = """
         \(materialBlock)
 
@@ -115,10 +132,10 @@ public struct OpenAIResponsesClient {
 
         \(noteBlock)
 
-        最近对话：
-        \(dialogue.isEmpty ? "无" : dialogue)
+        \(language.text("最近对话", "Recent conversation"))\(headingColon)
+        \(dialogue.isEmpty ? language.text("无", "none") : dialogue)
 
-        用户问题：
+        \(language.text("用户问题", "User question"))\(headingColon)
         \(question)
         """
         return AgentPromptPayload(instructions: instructions, input: input)

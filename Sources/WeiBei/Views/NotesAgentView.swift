@@ -105,15 +105,15 @@ struct NotePaneView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            WeiBeiPaneHeader(title: "笔记", subtitle: noteHeaderSubtitle, appearanceMode: store.appearanceMode) {
+            WeiBeiPaneHeader(title: store.ui("笔记", "Notes"), subtitle: noteHeaderSubtitle, appearanceMode: store.appearanceMode) {
                 noteModeControl
                 if !isImmersiveWriting {
                     Button { store.resetNote() } label: {
                         Image(systemName: "doc.badge.plus")
                     }
                     .buttonStyle(WeiBeiIconButtonStyle(size: 24))
-                    .accessibilityLabel(Text("新建独立 Markdown 笔记"))
-                    .help("新建独立 Markdown 笔记")
+                    .accessibilityLabel(Text(store.ui("新建独立 Markdown 笔记", "Create standalone Markdown note")))
+                    .help(store.ui("新建独立 Markdown 笔记", "Create standalone Markdown note"))
                     if store.canUseSelectedMarkdownAsNotebookNote {
                         Button {
                             store.useSelectedMarkdownAsNotebookNote()
@@ -121,8 +121,8 @@ struct NotePaneView: View {
                             Image(systemName: "square.and.pencil")
                         }
                         .buttonStyle(WeiBeiIconButtonStyle(size: 24))
-                        .accessibilityLabel(Text("作为笔记编辑"))
-                        .help("把当前 Markdown 文件移到笔记区原地编辑")
+                        .accessibilityLabel(Text(store.ui("作为笔记编辑", "Edit as note")))
+                        .help(store.ui("把当前 Markdown 文件移到笔记区原地编辑", "Move the current Markdown file into the note editor"))
                     }
                 }
             }
@@ -152,7 +152,7 @@ struct NotePaneView: View {
                         store.setNoteRenderMode(mode)
                     }
                 } label: {
-                    Text(mode.label)
+                    Text(mode.label(language: store.interfaceLanguage))
                         .font(.system(size: 11, weight: selected ? .semibold : .medium))
                         .foregroundStyle(selected ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
                         .frame(width: 38, height: 24)
@@ -168,12 +168,12 @@ struct NotePaneView: View {
 
     private var noteHeaderSubtitle: String {
         store.selectedItem?.isNotebookNote == true
-            ? (store.selectedItem?.title ?? "当前笔记")
+            ? (store.selectedItem.map(store.displayTitle) ?? store.ui("当前笔记", "Current note"))
             : store.agentNoteTitle
     }
 
     private func noteFileStatusColor(for message: String) -> Color {
-        message.hasPrefix("无法") ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk
+        message.hasPrefix("无法") || message.hasPrefix("Could not") ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk
     }
 
     private var isImmersiveWriting: Bool {
@@ -194,6 +194,7 @@ struct NotePaneView: View {
                         markdown: store.noteText,
                         markdownBaseURL: store.currentMarkdownBaseURL,
                         appearanceMode: store.appearanceMode,
+                        interfaceLanguage: store.interfaceLanguage,
                         onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
                         onSourceReference: { reference in store.openSourceReference(reference) },
                         onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
@@ -209,6 +210,7 @@ struct NotePaneView: View {
                     markdown: store.noteText,
                     markdownBaseURL: store.currentMarkdownBaseURL,
                     appearanceMode: store.appearanceMode,
+                    interfaceLanguage: store.interfaceLanguage,
                     onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
                     onSourceReference: { reference in store.openSourceReference(reference) },
                     onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
@@ -244,6 +246,7 @@ struct NotePaneView: View {
         markdownBaseURL: store.currentMarkdownBaseURL,
         attachmentDirectory: store.currentAttachmentDirectory,
         appearanceMode: store.appearanceMode,
+        interfaceLanguage: store.interfaceLanguage,
         onSelectionChange: { text, anchor in
             store.updateSelection(text, source: .note, anchor: anchor)
         }, onAskAgentWithSelection: { text, anchor in
@@ -296,7 +299,7 @@ struct NotePaneView: View {
     }
 
     private var emptyNoteHintText: String {
-        store.hasSelectedMaterial ? "开始记录当前材料" : "开始记录当前笔记"
+        store.hasSelectedMaterial ? store.ui("开始记录当前材料", "Start taking notes on this material") : store.ui("开始记录当前笔记", "Start writing this note")
     }
 }
 
@@ -677,6 +680,7 @@ struct MarkdownPreviewView: View {
     var markdown: String
     var markdownBaseURL: URL?
     var appearanceMode: WeiBeiAppearanceMode = .paper
+    var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
@@ -690,6 +694,7 @@ struct MarkdownPreviewView: View {
             isEditable: false,
             markdownBaseURL: markdownBaseURL,
             appearanceMode: appearanceMode,
+            interfaceLanguage: interfaceLanguage,
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onSelectionChange,
             onWikiLink: onWikiLink,
@@ -706,23 +711,23 @@ struct AgentPaneView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            WeiBeiPaneHeader(title: "对话", subtitle: store.selectedItem?.title ?? "无上下文", appearanceMode: store.appearanceMode) {
+            WeiBeiPaneHeader(title: store.ui("对话", "Chat"), subtitle: store.selectedItem.map(store.displayTitle) ?? store.ui("无上下文", "No context"), appearanceMode: store.appearanceMode) {
                 if hasAgentHeaderActions {
                     HStack(spacing: 2) {
                         if !store.messages.isEmpty {
-                            agentToolButton("整理", help: "整理笔记", systemImage: "list.bullet.rectangle") {
+                            agentToolButton(store.ui("整理", "Organize"), help: store.ui("整理笔记", "Organize note"), systemImage: "list.bullet.rectangle") {
                                 store.askToOrganizeNote()
                             }
                         }
 
                         if store.canApplyAgentAnswer {
-                            agentToolButton("写入回答", help: "写入回答到笔记", systemImage: "square.and.arrow.down") {
+                            agentToolButton(store.ui("写入回答", "Write Answer"), help: store.ui("写入回答到笔记", "Write answer to note"), systemImage: "square.and.arrow.down") {
                                 store.applyLastAgentAnswerToNote()
                             }
                         }
 
                         if store.canReplaceNoteSelection {
-                            agentToolButton("替换", help: "替换笔记选区", systemImage: "arrow.left.arrow.right") {
+                            agentToolButton(store.ui("替换", "Replace"), help: store.ui("替换笔记选区", "Replace note selection"), systemImage: "arrow.left.arrow.right") {
                                 store.replaceSelectionWithLastAgentAnswer()
                             }
                         }
@@ -851,14 +856,18 @@ struct AgentPaneView: View {
                             Image(systemName: "paperplane.fill")
                         }
                         .buttonStyle(WeiBeiIconButtonStyle(size: 30, prominence: .primary))
-                        .accessibilityLabel(Text("发送"))
-                        .help("发送")
+                        .accessibilityLabel(Text(store.ui("发送", "Send")))
+                        .help(store.ui("发送", "Send"))
                         .keyboardShortcut(.return, modifiers: [.command])
                         .padding(.trailing, 10)
                         .padding(.bottom, 10)
                         .transition(WeiBeiTransition.floating)
                         .animation(WeiBeiMotion.micro, value: canSendDraft)
                     }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    draftFocused = true
                 }
             }
             .font(.system(size: 15))
@@ -893,16 +902,16 @@ struct AgentPaneView: View {
         VStack(alignment: .leading, spacing: 8) {
             LazyVGrid(columns: starterChipColumns, alignment: .leading, spacing: 6) {
                 if store.hasSelectedMaterial {
-                    starterChip("梳理", systemImage: "text.alignleft", help: "梳理当前材料") {
-                        askWith("请基于当前材料提炼核心概念、关键公式和需要回看出处的位置。")
+                    starterChip(store.ui("梳理", "Outline"), systemImage: "text.alignleft", help: store.ui("梳理当前材料", "Outline current material")) {
+                        askWith(store.ui("请基于当前材料提炼核心概念、关键公式和需要回看出处的位置。", "Extract the core concepts, key formulas, and places that need source review from the current material."))
                     }
                 }
-                starterChip("整理", systemImage: "list.bullet.rectangle", help: "整理当前笔记") {
+                starterChip(store.ui("整理", "Organize"), systemImage: "list.bullet.rectangle", help: store.ui("整理当前笔记", "Organize current note")) {
                     store.askToOrganizeNote()
                 }
                 if store.hasSelectedMaterial {
-                    starterChip("出题", systemImage: "questionmark.square", help: "生成复习题") {
-                        askWith("请根据当前材料和笔记生成 5 个复习问题，并标出每题依据。")
+                    starterChip(store.ui("出题", "Quiz"), systemImage: "questionmark.square", help: store.ui("生成复习题", "Generate review questions")) {
+                        askWith(store.ui("请根据当前材料和笔记生成 5 个复习问题，并标出每题依据。", "Generate 5 review questions from the current material and note, and cite the evidence for each question."))
                     }
                 }
             }
@@ -983,7 +992,7 @@ private struct AgentSelectionAttachmentPill: View {
             HStack(spacing: 6) {
                 Image(systemName: "text.bubble")
                     .font(.system(size: 11, weight: .medium))
-                Text("\(store.selectionAttachments.count) 个已选文本片段")
+                Text(store.ui("\(store.selectionAttachments.count) 个已选文本片段", "\(store.selectionAttachments.count) selected text fragments"))
                     .font(.system(size: 12, weight: .medium))
             }
             .foregroundStyle(pillHovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
@@ -999,8 +1008,8 @@ private struct AgentSelectionAttachmentPill: View {
             .onHover { value in
                 setPillHovering(value)
             }
-            .accessibilityLabel(Text("\(store.selectionAttachments.count) 个已选文本片段"))
-            .help("悬停查看选区")
+            .accessibilityLabel(Text(store.ui("\(store.selectionAttachments.count) 个已选文本片段", "\(store.selectionAttachments.count) selected text fragments")))
+            .help(store.ui("悬停查看选区", "Hover to preview selections"))
         }
     }
 
@@ -1019,11 +1028,11 @@ private struct AgentSelectionAttachmentPill: View {
     private var popoverContent: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("\(store.selectionAttachments.count) 个已选文本片段")
+                Text(store.ui("\(store.selectionAttachments.count) 个已选文本片段", "\(store.selectionAttachments.count) selected text fragments"))
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(WeiBeiTheme.ink)
                 Spacer()
-                Text("发问时会作为上下文")
+                Text(store.ui("发问时会作为上下文", "Used as context when asking"))
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
             }
@@ -1048,7 +1057,7 @@ private struct AgentSelectionAttachmentPill: View {
     private func selectionAttachmentRow(index: Int, selection: SelectionContext) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Text("片段 \(index + 1)")
+                Text(store.ui("片段 \(index + 1)", "Fragment \(index + 1)"))
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(WeiBeiTheme.ink)
                 Text(selection.ownerTitle)
@@ -1070,8 +1079,8 @@ private struct AgentSelectionAttachmentPill: View {
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                .accessibilityLabel(Text("移除片段 \(index + 1)"))
-                .help("移除这个选区片段")
+                .accessibilityLabel(Text(store.ui("移除片段 \(index + 1)", "Remove fragment \(index + 1)")))
+                .help(store.ui("移除这个选区片段", "Remove this selected fragment"))
             }
 
             Text(selection.text)
@@ -1133,8 +1142,8 @@ struct AgentDrawerView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("对话")
-                    .font(.system(size: 14, weight: .semibold, design: .serif))
+                Text(store.ui("对话", "Chat"))
+                    .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 14, weight: .semibold))
                     .foregroundStyle(WeiBeiTheme.ink)
                 Spacer()
                 Text("⌘↩")
@@ -1173,18 +1182,22 @@ struct AgentDrawerView: View {
                         Image(systemName: "paperplane.fill")
                     }
                     .buttonStyle(WeiBeiIconButtonStyle(size: 34, prominence: .primary))
-                    .accessibilityLabel(Text("发送"))
-                    .help("发送")
+                    .accessibilityLabel(Text(store.ui("发送", "Send")))
+                    .help(store.ui("发送", "Send"))
                     .padding(.trailing, 6)
                     .padding(.bottom, 6)
                     .transition(WeiBeiTransition.floating)
                 }
             }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                draftFocused = true
+            }
             .animation(WeiBeiMotion.micro, value: canSend)
 
             HStack(spacing: 8) {
-                Label(store.hasSelectedMaterial ? "来源" : "笔记", systemImage: store.hasSelectedMaterial ? "link" : "square.and.pencil")
-                Text(store.selectedMaterialItem?.title ?? "当前笔记")
+                Label(store.hasSelectedMaterial ? store.ui("来源", "Source") : store.ui("笔记", "Note"), systemImage: store.hasSelectedMaterial ? "link" : "square.and.pencil")
+                Text(store.selectedMaterialItem.map(store.displayTitle) ?? store.ui("当前笔记", "Current note"))
                     .lineLimit(1)
                 Spacer()
             }
@@ -1218,20 +1231,20 @@ struct CornerAgentView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack {
-                Text("对话")
-                    .font(.system(size: 15, weight: .semibold, design: .serif))
+                Text(store.ui("对话", "Chat"))
+                    .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 15, weight: .semibold))
                     .foregroundStyle(WeiBeiTheme.ink)
                 Spacer()
                 Button { store.setAgentSurface(.hidden) } label: {
                     Image(systemName: "minus")
                 }
                 .buttonStyle(WeiBeiIconButtonStyle())
-                .accessibilityLabel(Text("收起对话浮窗"))
-                .help("收起对话浮窗")
+                .accessibilityLabel(Text(store.ui("收起对话浮窗", "Hide chat popover")))
+                .help(store.ui("收起对话浮窗", "Hide chat popover"))
             }
             .weibeiFloatingHeaderChrome(appearanceMode: store.appearanceMode)
 
-            Text(store.selectedMaterialItem?.title ?? "当前笔记")
+            Text(store.selectedMaterialItem.map(store.displayTitle) ?? store.ui("当前笔记", "Current note"))
                 .font(.system(size: 11, weight: .medium))
                 .lineLimit(1)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
@@ -1269,12 +1282,16 @@ struct CornerAgentView: View {
                         Image(systemName: "paperplane.fill")
                     }
                     .buttonStyle(WeiBeiIconButtonStyle(prominence: .primary))
-                    .accessibilityLabel(Text("发送"))
-                    .help("发送")
+                    .accessibilityLabel(Text(store.ui("发送", "Send")))
+                    .help(store.ui("发送", "Send"))
                     .padding(.trailing, 5)
                     .padding(.bottom, 5)
                     .transition(WeiBeiTransition.floating)
                 }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                draftFocused = true
             }
             .animation(WeiBeiMotion.micro, value: canSend)
 
@@ -1371,17 +1388,17 @@ struct FloatingSelectionAgentView: View {
 
     private var promptBody: some View {
         HStack(spacing: 0) {
-            Button("问") {
+            Button(store.ui("问", "Ask")) {
                 explainSelection()
             }
             .foregroundStyle(WeiBeiTheme.link)
-            .accessibilityLabel(Text("问当前选区"))
-            .help("问当前选区")
+            .accessibilityLabel(Text(store.ui("问当前选区", "Ask current selection")))
+            .help(store.ui("问当前选区", "Ask current selection"))
 
             if store.canOpenSelectedSourceReference {
                 promptSeparator
 
-                Button("来源") {
+                Button(store.ui("来源", "Source")) {
                     openSourceReference()
                 }
             }
@@ -1389,7 +1406,7 @@ struct FloatingSelectionAgentView: View {
             if store.selectionContext != nil {
                 promptSeparator
 
-                Button("摘录") {
+                Button(store.ui("摘录", "Excerpt")) {
                     store.appendSelectionToNote()
                     closeFloatingAgent()
                 }
@@ -1412,21 +1429,21 @@ struct FloatingSelectionAgentView: View {
     private var expandedBody: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 10) {
-                actionButton("解释") { explainSelection() }
+                actionButton(store.ui("解释", "Explain")) { explainSelection() }
                 if store.canOpenSelectedSourceReference {
-                    actionButton("来源") { openSourceReference() }
+                    actionButton(store.ui("来源", "Source")) { openSourceReference() }
                 }
                 if store.selectionContext != nil {
-                    actionButton("摘录") {
+                    actionButton(store.ui("摘录", "Excerpt")) {
                         store.appendSelectionToNote()
                         closeFloatingAgent()
                     }
                 }
                 if canPolishNoteSelection {
-                    actionButton("润色") { polishNote() }
+                    actionButton(store.ui("润色", "Polish")) { polishNote() }
                 }
                 if store.canReplaceNoteSelection {
-                    actionButton("替换") {
+                    actionButton(store.ui("替换", "Replace")) {
                         store.replaceSelectionWithLastAgentAnswer()
                         closeFloatingAgent()
                     }
@@ -1434,7 +1451,7 @@ struct FloatingSelectionAgentView: View {
                 Spacer(minLength: 0)
                 iconButton(
                     store.pinnedFloatingAgent ? "pin.fill" : "pin",
-                    help: store.pinnedFloatingAgent ? "取消固定浮层" : "固定浮层"
+                    help: store.pinnedFloatingAgent ? store.ui("取消固定浮层", "Unpin floating layer") : store.ui("固定浮层", "Pin floating layer")
                 ) {
                     withAnimation(WeiBeiMotion.micro) {
                         togglePinnedFloatingAgent()
@@ -1453,7 +1470,7 @@ struct FloatingSelectionAgentView: View {
                     }
 
                     if store.isAskingAgent {
-                        Text("正在读选区...")
+                        Text(store.ui("正在读选区...", "Reading selection..."))
                             .font(.caption2)
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
                     }
@@ -1474,7 +1491,7 @@ struct FloatingSelectionAgentView: View {
                 TextField(
                     "",
                     text: $store.agentDraft,
-                    prompt: Text("继续追问")
+                    prompt: Text(store.ui("继续追问", "Ask a follow-up"))
                         .font(.caption)
                         .foregroundStyle(WeiBeiTheme.placeholderInk)
                 )
@@ -1491,8 +1508,8 @@ struct FloatingSelectionAgentView: View {
                         Image(systemName: "paperplane.fill")
                     }
                     .buttonStyle(WeiBeiIconButtonStyle(size: 22, prominence: .primary))
-                    .accessibilityLabel(Text("发送"))
-                    .help("发送")
+                    .accessibilityLabel(Text(store.ui("发送", "Send")))
+                    .help(store.ui("发送", "Send"))
                 }
             }
             .padding(.horizontal, 8)
@@ -1550,13 +1567,16 @@ struct FloatingSelectionAgentView: View {
 
     private func floatingText(for message: AgentMessage) -> String {
         if isCredentialNotice(message) {
-            return "未配置密钥。设置后会结合\(store.agentPromptScope)和已选文本片段作答。"
+            if isOfflineContextPreview(message) {
+                return message.text
+            }
+            return store.ui("未配置密钥。设置后会结合\(store.agentPromptScope)和已选文本片段作答。", "No key is configured. After setup, answers will use \(store.agentPromptScope) and selected text fragments.")
         }
         return message.text
     }
 
     private func floatingColor(for message: AgentMessage) -> Color {
-        if message.text.hasPrefix("请求失败：") || message.text.hasPrefix("Agent 请求失败：") {
+        if message.text.hasPrefix("请求失败：") || message.text.hasPrefix("Agent 请求失败：") || message.text.hasPrefix("Request failed:") {
             return WeiBeiTheme.cinnabar
         }
         if message.role == .user {
@@ -1570,7 +1590,12 @@ struct FloatingSelectionAgentView: View {
 
     private func isCredentialNotice(_ message: AgentMessage) -> Bool {
         message.role == .assistant
-            && (message.text.hasPrefix("未配置密钥") || message.text.hasPrefix("未配置 OPENAI_API_KEY"))
+            && (message.text.hasPrefix("未配置密钥") || message.text.hasPrefix("未配置 OPENAI_API_KEY") || message.text.hasPrefix("No key is configured"))
+    }
+
+    private func isOfflineContextPreview(_ message: AgentMessage) -> Bool {
+        message.text.contains("这次提问已经进入对话")
+            || message.text.contains("question was still sent into the chat")
     }
 
     private func isGeneratedSelectionPrompt(_ message: AgentMessage) -> Bool {
@@ -1622,7 +1647,7 @@ struct FloatingSelectionAgentView: View {
     private func polishNote() {
         withAnimation(WeiBeiMotion.panel) {
             expanded = true
-            store.agentDraft = "请整理和润色当前笔记，保留原意，并标出缺少来源的位置。"
+            store.agentDraft = store.ui("请整理和润色当前笔记，保留原意，并标出缺少来源的位置。", "Organize and polish the current note, preserve the meaning, and mark where sources are missing.")
         }
         Task { await store.askAgent() }
     }
@@ -1682,20 +1707,20 @@ struct QuietInsightView: View {
             if compactHovering {
                 HStack(spacing: 4) {
                     if !store.quietInsight.noteBlock.isEmpty {
-                        iconButton("text.badge.plus", help: "收进摘录") {
+                        iconButton("text.badge.plus", help: store.ui("收进摘录", "Save to excerpts")) {
                             withAnimation(WeiBeiMotion.panel) {
                                 store.acceptQuietInsight()
                             }
                         }
                     }
 
-                    iconButton("bubble.left", help: "追问") {
+                    iconButton("bubble.left", help: store.ui("追问", "Ask follow-up")) {
                         withAnimation(WeiBeiMotion.panel) {
                             store.askQuietInsight()
                         }
                     }
 
-                    iconButton("xmark", help: "忽略") {
+                    iconButton("xmark", help: store.ui("忽略", "Dismiss")) {
                         withAnimation(WeiBeiMotion.panel) {
                             store.showQuietInsight = false
                         }
@@ -1738,18 +1763,18 @@ struct QuietInsightView: View {
                     if panelHovering {
                         HStack(spacing: 4) {
                             if !store.quietInsight.noteBlock.isEmpty {
-                                iconButton("text.badge.plus", help: "收进摘录") {
+                                iconButton("text.badge.plus", help: store.ui("收进摘录", "Save to excerpts")) {
                                     withAnimation(WeiBeiMotion.panel) {
                                         store.acceptQuietInsight()
                                     }
                                 }
                             }
-                            iconButton("bubble.left", help: "追问") {
+                            iconButton("bubble.left", help: store.ui("追问", "Ask follow-up")) {
                                 withAnimation(WeiBeiMotion.panel) {
                                     store.askQuietInsight()
                                 }
                             }
-                            iconButton("xmark", help: "忽略阅读线索") {
+                            iconButton("xmark", help: store.ui("忽略阅读线索", "Dismiss reading clue")) {
                                 withAnimation(WeiBeiMotion.panel) {
                                     store.showQuietInsight = false
                                 }
@@ -2066,17 +2091,17 @@ private struct AgentBubble: View {
             if message.id == store.lastUsableAgentAnswerID {
                 HStack(spacing: 6) {
                     if store.selectionContext != nil {
-                        Button("摘录") {
+                        Button(store.ui("摘录", "Excerpt")) {
                             store.appendSelectionToNote()
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
-                    Button("写入回答") {
+                    Button(store.ui("写入回答", "Write Answer")) {
                         store.applyLastAgentAnswerToNote()
                     }
                     .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                     if store.canReplaceNoteSelection {
-                        Button("替换") {
+                        Button(store.ui("替换", "Replace")) {
                             store.replaceSelectionWithLastAgentAnswer()
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
@@ -2089,7 +2114,7 @@ private struct AgentBubble: View {
 
     private var credentialNoticeContent: some View {
         VStack(alignment: .leading, spacing: 3) {
-            Text("需要设置密钥")
+            Text(store.ui("需要设置密钥", "Key Required"))
                 .font(.system(size: 11.5, weight: .semibold))
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
             Text(displayText)
@@ -2106,12 +2131,12 @@ private struct AgentBubble: View {
 
     private var isCredentialNotice: Bool {
         message.role == .assistant
-            && (message.text.hasPrefix("未配置密钥") || message.text.hasPrefix("未配置 OPENAI_API_KEY"))
+            && (message.text.hasPrefix("未配置密钥") || message.text.hasPrefix("未配置 OPENAI_API_KEY") || message.text.hasPrefix("No key is configured"))
     }
 
     private var speakerTitle: String {
-        if isUser { return "你" }
-        return isCredentialNotice ? "需要设置密钥" : "魏碑"
+        if isUser { return store.ui("你", "You") }
+        return isCredentialNotice ? store.ui("需要设置密钥", "Key Required") : store.appDisplayName
     }
 
     private var speakerColor: Color {
@@ -2121,8 +2146,16 @@ private struct AgentBubble: View {
 
     private var displayText: String {
         guard isCredentialNotice else { return message.text }
-        let scope = store.hasSelectionAttachments ? "\(store.agentPromptScope)、已选文本片段" : store.agentPromptScope
-        return "设置后会结合\(scope)作答；未配置时不会编造内容。"
+        if isOfflineContextPreview {
+            return message.text
+        }
+        let scope = store.hasSelectionAttachments ? store.ui("\(store.agentPromptScope)、已选文本片段", "\(store.agentPromptScope) and selected text fragments") : store.agentPromptScope
+        return store.ui("设置后会结合\(scope)作答；未配置时不会编造内容。", "After setup, answers will use \(scope). Without a key, WeiBei will not invent content.")
+    }
+
+    private var isOfflineContextPreview: Bool {
+        message.text.contains("这次提问已经进入对话")
+            || message.text.contains("question was still sent into the chat")
     }
 
     private var bubblePadding: EdgeInsets {
@@ -2166,6 +2199,7 @@ private struct AgentMessageMarkdownText: View {
 }
 
 private struct AgentThinkingIndicator: View {
+    @EnvironmentObject private var store: WorkspaceStore
     @State private var pulse = false
 
     var body: some View {
@@ -2185,7 +2219,7 @@ private struct AgentThinkingIndicator: View {
                         )
                 }
             }
-            Text("正在读取上下文")
+            Text(store.ui("正在读取上下文", "Reading context"))
                 .font(.caption)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
         }

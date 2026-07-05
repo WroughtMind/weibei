@@ -6,11 +6,13 @@ fileprivate final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler
     var markdownBaseURLString = ""
     var attachmentDirectory: URL?
     var appearanceMode: WeiBeiAppearanceMode = .paper
+    var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
 
-    func update(markdownBaseURLString: String, attachmentDirectory: URL?, appearanceMode: WeiBeiAppearanceMode) {
+    func update(markdownBaseURLString: String, attachmentDirectory: URL?, appearanceMode: WeiBeiAppearanceMode, interfaceLanguage: WeiBeiInterfaceLanguage) {
         self.markdownBaseURLString = markdownBaseURLString
         self.attachmentDirectory = attachmentDirectory
         self.appearanceMode = appearanceMode
+        self.interfaceLanguage = interfaceLanguage
     }
 
     func webView(_ webView: WKWebView, start urlSchemeTask: WKURLSchemeTask) {
@@ -20,7 +22,7 @@ fileprivate final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler
             urlSchemeTask.didFailWithError(NSError(
                 domain: "WeiBei.MarkdownImageScheme",
                 code: 1,
-                userInfo: [NSLocalizedDescriptionKey: "图片无法读取"]
+                userInfo: [NSLocalizedDescriptionKey: interfaceLanguage.text("图片无法读取", "Image could not be read")]
             ))
             return
         }
@@ -80,7 +82,7 @@ fileprivate final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler
           <rect width="156" height="34" rx="3" fill="\(colors.background)"/>
           <path d="M18 22l5-6 4 4 3-3 6 5" fill="none" stroke="\(colors.accent)" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
           <rect x="17" y="11" width="20" height="14" rx="2" fill="none" stroke="\(colors.accent)" stroke-width="1.2"/>
-          <text x="48" y="22" fill="\(colors.text)" font-family="-apple-system, BlinkMacSystemFont, 'Songti SC', serif" font-size="13">图片未找到</text>
+          <text x="48" y="22" fill="\(colors.text)" font-family="-apple-system, BlinkMacSystemFont, 'Songti SC', serif" font-size="13">\(interfaceLanguage.text("图片未找到", "Image missing"))</text>
         </svg>
         """
         let data = Data(svg.utf8)
@@ -143,6 +145,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     var attachmentDirectory: URL?
     var searchQuery = ""
     var appearanceMode: WeiBeiAppearanceMode = .paper
+    var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     var onSelectionChange: (String, CGPoint?) -> Void
     var onAskAgentWithSelection: (String, CGPoint?) -> Void
     var onWikiLink: (String) -> Void = { _ in }
@@ -162,6 +165,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             attachmentDirectory: attachmentDirectory,
             searchQuery: searchQuery,
             appearanceMode: appearanceMode,
+            interfaceLanguage: interfaceLanguage,
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onAskAgentWithSelection,
             onWikiLink: onWikiLink,
@@ -176,7 +180,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.imageSchemeHandler.update(
             markdownBaseURLString: markdownBaseURL?.absoluteString ?? "",
             attachmentDirectory: attachmentDirectory,
-            appearanceMode: appearanceMode
+            appearanceMode: appearanceMode,
+            interfaceLanguage: interfaceLanguage
         )
         configuration.setURLSchemeHandler(context.coordinator.imageSchemeHandler, forURLScheme: Self.localImageScheme)
         for name in Self.scriptMessageNames {
@@ -252,7 +257,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         if let url = Bundle.module.url(forResource: "index", withExtension: "html") {
             view.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
         } else {
-            view.loadHTMLString("<p>编辑器资源缺失。</p>", baseURL: nil)
+            view.loadHTMLString("<p>\(interfaceLanguage.text("编辑器资源缺失。", "Editor resources are missing."))</p>", baseURL: nil)
         }
         return view
     }
@@ -269,7 +274,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.imageSchemeHandler.update(
             markdownBaseURLString: markdownBaseURL?.absoluteString ?? "",
             attachmentDirectory: attachmentDirectory,
-            appearanceMode: appearanceMode
+            appearanceMode: appearanceMode,
+            interfaceLanguage: interfaceLanguage
         )
         context.coordinator.searchQuery = searchQuery
         if context.coordinator.appearanceMode != appearanceMode {
@@ -278,6 +284,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 context.coordinator.setTheme(appearanceMode)
             }
         }
+        context.coordinator.interfaceLanguage = interfaceLanguage
         context.coordinator.isFocused = isFocused
         context.coordinator.focusRequest = focusRequest
         context.coordinator.onWikiLink = onWikiLink
@@ -352,6 +359,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var attachmentDirectory: URL?
         var searchQuery: String
         var appearanceMode: WeiBeiAppearanceMode
+        var interfaceLanguage: WeiBeiInterfaceLanguage
         var webMarkdown = ""
         var pendingExternalMarkdown: String?
         var lastCommandID: UUID?
@@ -370,6 +378,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             attachmentDirectory: URL?,
             searchQuery: String,
             appearanceMode: WeiBeiAppearanceMode,
+            interfaceLanguage: WeiBeiInterfaceLanguage,
             onSelectionChange: @escaping (String, CGPoint?) -> Void,
             onAskAgentWithSelection: @escaping (String, CGPoint?) -> Void,
             onWikiLink: @escaping (String) -> Void,
@@ -386,6 +395,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.attachmentDirectory = attachmentDirectory
             self.searchQuery = searchQuery
             self.appearanceMode = appearanceMode
+            self.interfaceLanguage = interfaceLanguage
             self.onSelectionChange = onSelectionChange
             self.onAskAgentWithSelection = onAskAgentWithSelection
             self.onWikiLink = onWikiLink
@@ -457,7 +467,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                     )
                     """)
                 } else {
-                    evaluate("window.WeiBeiEditor?.rejectAttachment(\(Self.json(id)), \"图片无法写入本地附件目录\")")
+                    evaluate("window.WeiBeiEditor?.rejectAttachment(\(Self.json(id)), \(Self.json(interfaceLanguage.text("图片无法写入本地附件目录", "Image could not be written to the local attachments folder")))")
                 }
             case "appShortcut":
                 guard let body = message.body as? [String: Any],

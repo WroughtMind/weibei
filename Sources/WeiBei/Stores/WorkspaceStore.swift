@@ -41,6 +41,8 @@ final class WorkspaceStore: ObservableObject {
     @Published var openAIAPIKey: String = OpenAIAPIKeyStore.load()
     @Published var openAIKeyStatus: String?
     @Published var appearanceMode: WeiBeiAppearanceMode = .paper
+    @Published var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
+    @Published var topBarVariant: TopBarVariant = TopBarVariant(rawValue: UserDefaults.standard.string(forKey: "topBarVariant") ?? "") ?? .balanced
     @Published private var backNavigationStack: [NavigationSnapshot] = []
     @Published private var forwardNavigationStack: [NavigationSnapshot] = []
 
@@ -89,9 +91,9 @@ final class WorkspaceStore: ObservableObject {
         let query = librarySearch.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return allItems }
         return allItems.filter {
-            $0.title.localizedCaseInsensitiveContains(query)
-                || $0.subtitle.localizedCaseInsensitiveContains(query)
-                || $0.kind.label.localizedCaseInsensitiveContains(query)
+            displayTitle(for: $0).localizedCaseInsensitiveContains(query)
+                || displaySubtitle(for: $0).localizedCaseInsensitiveContains(query)
+                || $0.kind.label(language: interfaceLanguage).localizedCaseInsensitiveContains(query)
         }
     }
 
@@ -100,9 +102,9 @@ final class WorkspaceStore: ObservableObject {
         let query = librarySearch.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return materialItems }
         return materialItems.filter {
-            $0.title.localizedCaseInsensitiveContains(query)
-                || $0.subtitle.localizedCaseInsensitiveContains(query)
-                || $0.kind.label.localizedCaseInsensitiveContains(query)
+            displayTitle(for: $0).localizedCaseInsensitiveContains(query)
+                || displaySubtitle(for: $0).localizedCaseInsensitiveContains(query)
+                || $0.kind.label(language: interfaceLanguage).localizedCaseInsensitiveContains(query)
         }
     }
 
@@ -168,15 +170,15 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var selectedMaterialTitle: String {
-        selectedMaterialItem?.title ?? "未选择材料"
+        selectedMaterialItem.map(displayTitle) ?? ui("未选择材料", "No material selected")
     }
 
     var agentMessageSourceTitle: String? {
-        hasSelectedMaterial ? currentReferenceTitle : selectedItem?.title
+        hasSelectedMaterial ? currentReferenceTitle : selectedItem.map(displayTitle)
     }
 
     var currentReferenceTitle: String {
-        readerLocationTitle ?? selectedMaterialItem?.title ?? selectedItem?.title ?? "当前笔记"
+        readerLocationTitle ?? selectedMaterialItem.map(displayTitle) ?? selectedItem.map(displayTitle) ?? ui("当前笔记", "Current note")
     }
 
     var hasSelectionAttachments: Bool {
@@ -188,16 +190,22 @@ final class WorkspaceStore: ObservableObject {
         if selectionAttachments.count == 1 {
             return selectionAttachments[0].ownerTitle
         }
-        return "\(selectionAttachments.count) 个已选文本片段"
+        return ui("\(selectionAttachments.count) 个已选文本片段", "\(selectionAttachments.count) selected text fragments")
     }
 
     var agentSelectionText: String? {
         guard !selectionAttachments.isEmpty else { return nil }
         return selectionAttachments.enumerated().map { index, selection in
-            """
-            片段 \(index + 1)（来源：\(selection.ownerTitle)）：
-            \(selection.text)
-            """
+            ui(
+                """
+                片段 \(index + 1)（来源：\(selection.ownerTitle)）：
+                \(selection.text)
+                """,
+                """
+                Fragment \(index + 1) (source: \(selection.ownerTitle)):
+                \(selection.text)
+                """
+            )
         }.joined(separator: "\n\n")
     }
 
@@ -206,38 +214,38 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var copyReferenceActionTitle: String {
-        if hasSelectionAttachments || selectionContext != nil { return "复制选区引用" }
-        if hasSelectedMaterial { return "复制资料引用" }
-        return "复制笔记引用"
+        if hasSelectionAttachments || selectionContext != nil { return ui("复制选区引用", "Copy selection reference") }
+        if hasSelectedMaterial { return ui("复制资料引用", "Copy material reference") }
+        return ui("复制笔记引用", "Copy note reference")
     }
 
     var sendAgentActionTitle: String {
-        "发送问题"
+        ui("发送问题", "Send question")
     }
 
     var agentNoteTitle: String {
         if selectedItem?.isNotebookNote == true {
-            return selectedItem?.title ?? "当前笔记"
+            return selectedItem.map(displayTitle) ?? ui("当前笔记", "Current note")
         }
-        if let title = selectedMaterialItem?.title {
-            return "\(title) 的笔记"
+        if let item = selectedMaterialItem {
+            return ui("\(displayTitle(for: item)) 的笔记", "Notes for \(displayTitle(for: item))")
         }
-        return "当前笔记"
+        return ui("当前笔记", "Current note")
     }
 
     var agentPromptScope: String {
-        hasSelectedMaterial ? "当前材料和当前笔记" : "当前笔记"
+        hasSelectedMaterial ? ui("当前材料和当前笔记", "the current material and current note") : ui("当前笔记", "the current note")
     }
 
     var agentInputPrompt: String {
         if hasSelectionAttachments {
-            return "追问已选文本片段"
+            return ui("追问已选文本片段", "Ask about selected fragments")
         }
-        return hasSelectedMaterial ? "问当前材料" : "问当前笔记"
+        return hasSelectedMaterial ? ui("问当前材料", "Ask current material") : ui("问当前笔记", "Ask current note")
     }
 
     var selectionPromptScope: String {
-        selectionContext?.source == .note ? "当前笔记" : agentPromptScope
+        selectionContext?.source == .note ? ui("当前笔记", "the current note") : agentPromptScope
     }
 
     var canApplyAgentAnswer: Bool {
@@ -254,7 +262,12 @@ final class WorkspaceStore: ObservableObject {
 
     var quietInsight: QuietInsight {
         if isGeneratingQuietInsight {
-            return QuietInsight(body: hasSelectedMaterial ? "正在静默阅读当前材料和笔记。" : "正在静默阅读当前笔记。", noteBlock: "")
+            return QuietInsight(
+                body: hasSelectedMaterial
+                    ? ui("正在静默阅读当前材料和笔记。", "Reading the current material and note in the background.")
+                    : ui("正在静默阅读当前笔记。", "Reading the current note in the background."),
+                noteBlock: ""
+            )
         }
         if let generatedQuietInsight {
             return generatedQuietInsight
@@ -263,32 +276,68 @@ final class WorkspaceStore: ObservableObject {
             materialTitle: quietInsightReferenceTitle,
             materialText: selectedContextText,
             noteText: noteText,
-            selectionText: selectionContext?.text
+            selectionText: selectionContext?.text,
+            language: interfaceLanguage
         )
     }
 
     var quietInsightTitle: String {
-        return "阅读线索"
+        return ui("阅读线索", "Reading clue")
     }
 
     var quietInsightSourceLabel: String {
         if selectionContext != nil {
-            return "来自当前选区"
+            return ui("来自当前选区", "From current selection")
         }
         if !hasSelectedMaterial {
-            return "来自当前笔记"
+            return ui("来自当前笔记", "From current note")
         }
-        return generatedQuietInsight == nil ? "来自当前材料" : "来自材料和笔记"
+        return generatedQuietInsight == nil ? ui("来自当前材料", "From current material") : ui("来自材料和笔记", "From material and note")
     }
 
     var openAIKeyHelpText: String {
         if !Self.environmentValue("OPENAI_API_KEY").isEmpty {
-            return "正在使用本机环境密钥。保存的密钥会在没有环境密钥时接管。"
+            return ui("正在使用本机环境密钥。保存的密钥会在没有环境密钥时接管。", "Using the local environment key. The saved key is used only when no environment key is present.")
         }
         if !OpenAIAPIKeyStore.load().isEmpty {
-            return "密钥已保存，可直接用于对话。"
+            return ui("密钥已保存，可直接用于对话。", "Key saved. Chat is ready.")
         }
-        return "未保存密钥。保存后对话会结合\(agentPromptScope)，并在有已选文本片段时一并作答。"
+        return ui(
+            "未保存密钥。保存后对话会结合\(agentPromptScope)，并在有已选文本片段时一并作答。",
+            "No key saved. After saving, chat will use \(agentPromptScope) and any selected text fragments."
+        )
+    }
+
+    var appDisplayName: String {
+        ui("魏碑", "WeiBei")
+    }
+
+    func ui(_ chinese: String, _ english: String) -> String {
+        interfaceLanguage.text(chinese, english)
+    }
+
+    func displayTitle(for item: StudyItem) -> String {
+        switch item.id {
+        case "sample-html":
+            return ui("货币金融学课程 HTML", "Money and Banking HTML")
+        case "sample-pdf":
+            return ui("Mishkin 教材样例", "Mishkin Textbook Sample")
+        case "sample-md":
+            return ui("课堂笔记样例", "Class Notes Sample")
+        default:
+            return item.title
+        }
+    }
+
+    func displaySubtitle(for item: StudyItem) -> String {
+        switch item.id {
+        case "sample-html":
+            return ui("HTML 教程", "HTML lesson")
+        case "sample-pdf":
+            return ui("PDF 阅读", "PDF reading")
+        default:
+            return item.subtitle
+        }
     }
 
     func select(itemID: String?) {
@@ -303,7 +352,7 @@ final class WorkspaceStore: ObservableObject {
             selectionAttachments = []
             readerPageIndex = 0
         }
-        readerLocationTitle = selectedMaterialItem?.title
+        readerLocationTitle = selectedMaterialItem.map(displayTitle)
         clearReaderSearchIfNeeded()
         noteText = noteText(for: selectedItem)
         messages = []
@@ -426,7 +475,7 @@ final class WorkspaceStore: ObservableObject {
 
     func updateReaderLocationTitle(_ title: String?) {
         let cleaned = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        readerLocationTitle = cleaned.isEmpty ? selectedMaterialItem?.title : cleaned
+        readerLocationTitle = cleaned.isEmpty ? selectedMaterialItem.map(displayTitle) : cleaned
     }
 
     func updateReaderPageIndex(_ index: Int) {
@@ -625,7 +674,7 @@ final class WorkspaceStore: ObservableObject {
         readerPageIndex = snapshot.readerPageIndex
         focusedPane = snapshot.focusedPane
         noteText = noteText(for: selectedItem)
-        readerLocationTitle = selectedMaterialItem?.title
+        readerLocationTitle = selectedMaterialItem.map(displayTitle)
         readerTargetPageIndex = selectedMaterialItem?.kind == .pdf ? snapshot.readerPageIndex : nil
         messages = []
         showQuietInsight = agentSurface == .quietInsight
@@ -849,14 +898,27 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
+    func setTopBarVariant(_ variant: TopBarVariant) {
+        guard topBarVariant != variant else { return }
+        topBarVariant = variant
+        UserDefaults.standard.set(variant.rawValue, forKey: "topBarVariant")
+    }
+
+    func setInterfaceLanguage(_ language: WeiBeiInterfaceLanguage) {
+        guard interfaceLanguage != language else { return }
+        interfaceLanguage = language
+        floatingSelectionPrompt = ui("当前选区", "Current selection")
+        save()
+    }
+
     func saveOpenAIAPIKey() {
         do {
             let cleanedKey = OpenAIAPIKeyStore.cleaned(openAIAPIKey)
             try OpenAIAPIKeyStore.save(cleanedKey)
             openAIAPIKey = cleanedKey
-            openAIKeyStatus = cleanedKey.isEmpty ? "已清除密钥。" : "密钥已保存。"
+            openAIKeyStatus = cleanedKey.isEmpty ? ui("已清除密钥。", "Key cleared.") : ui("密钥已保存。", "Key saved.")
         } catch {
-            openAIKeyStatus = "保存失败：\(error.localizedDescription)"
+            openAIKeyStatus = ui("保存失败：\(error.localizedDescription)", "Save failed: \(error.localizedDescription)")
         }
     }
 
@@ -867,7 +929,7 @@ final class WorkspaceStore: ObservableObject {
 
     func importFilesFromPanel() {
         let panel = NSOpenPanel()
-        panel.title = "选择学习资料"
+        panel.title = ui("选择学习资料", "Choose study materials")
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         panel.allowedContentTypes = [
@@ -910,13 +972,13 @@ final class WorkspaceStore: ObservableObject {
         guard !title.isEmpty else { return }
 
         let notesDirectory = appOwnedFilesDirectory().appendingPathComponent("Notes", isDirectory: true)
-        let fileName = "\(Self.safeFileStem(title)).md"
+        let fileName = "\(safeFileStem(title)).md"
         let url = notesDirectory.appendingPathComponent(fileName)
 
         if let index = importedItems.firstIndex(where: { $0.urlPath == url.path }) {
             importedItems[index].isNotebookNote = true
             select(itemID: importedItems[index].id)
-            noteFileError = "已打开双链笔记：\(importedItems[index].subtitle)"
+            noteFileError = ui("已打开双链笔记：\(importedItems[index].subtitle)", "Opened wiki note: \(importedItems[index].subtitle)")
             save()
             return
         }
@@ -940,15 +1002,15 @@ final class WorkspaceStore: ObservableObject {
                 importedItems.append(item)
             }
             select(itemID: item.id)
-            noteFileError = "已创建双链笔记：\(url.lastPathComponent)"
+            noteFileError = ui("已创建双链笔记：\(url.lastPathComponent)", "Created wiki note: \(url.lastPathComponent)")
         } catch {
-            noteFileError = "无法创建双链笔记：\(error.localizedDescription)"
+            noteFileError = ui("无法创建双链笔记：\(error.localizedDescription)", "Could not create wiki note: \(error.localizedDescription)")
         }
     }
 
     private func createNotebookNote() {
         persistCurrentNote()
-        let title = "新笔记"
+        let title = ui("新笔记", "New Note")
         let notesDirectory = appOwnedFilesDirectory().appendingPathComponent("Notes", isDirectory: true)
 
         do {
@@ -967,9 +1029,9 @@ final class WorkspaceStore: ObservableObject {
             importedItems.append(item)
             revealRichWritingSurface()
             select(itemID: item.id)
-            noteFileError = "已创建笔记：\(url.lastPathComponent)"
+            noteFileError = ui("已创建笔记：\(url.lastPathComponent)", "Created note: \(url.lastPathComponent)")
         } catch {
-            noteFileError = "无法创建笔记：\(error.localizedDescription)"
+            noteFileError = ui("无法创建笔记：\(error.localizedDescription)", "Could not create note: \(error.localizedDescription)")
         }
     }
 
@@ -995,7 +1057,7 @@ final class WorkspaceStore: ObservableObject {
             reference = quotedReferenceBlock(text: selection, sourceTitle: selectionContext.ownerTitle)
         } else {
             guard selectedMaterialItem != nil || selectedItem?.isNotebookNote == true else { return }
-            reference = "来源：\(currentReferenceTitle)"
+            reference = ui("来源：\(currentReferenceTitle)", "Source: \(currentReferenceTitle)")
         }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(reference, forType: .string)
@@ -1019,7 +1081,7 @@ final class WorkspaceStore: ObservableObject {
                 isEditable: isEditable
             )
             selectionAnchor = anchor
-            floatingSelectionPrompt = selectionContext?.label ?? "当前选区"
+            floatingSelectionPrompt = selectionContext?.label(language: interfaceLanguage) ?? ui("当前选区", "Current selection")
             pinnedFloatingAgent = false
             if shouldRevealSelectionPrompt {
                 agentSurface = .selectionFloat
@@ -1063,7 +1125,7 @@ final class WorkspaceStore: ObservableObject {
 
     private func selectionOwnerTitle(for source: SelectionSource) -> String {
         if source == .note || selectedItem?.isNotebookNote == true {
-            return selectedItem?.title ?? "当前笔记"
+            return selectedItem.map(displayTitle) ?? ui("当前笔记", "Current note")
         }
         return currentReferenceTitle
     }
@@ -1089,7 +1151,10 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func askToOrganizeNote() {
-        agentDraft = "请根据\(agentPromptScope)，把笔记整理成更清晰的大纲，保留来源信息，并标出缺少证据的位置。"
+        agentDraft = ui(
+            "请根据\(agentPromptScope)，把笔记整理成更清晰的大纲，保留来源信息，并标出缺少证据的位置。",
+            "Use \(agentPromptScope) to organize the note into a clearer outline, keep source references, and mark places where evidence is missing."
+        )
         Task { await askAgent() }
     }
 
@@ -1097,7 +1162,7 @@ final class WorkspaceStore: ObservableObject {
         if let selectionContext {
             withAnimation(WeiBeiMotion.panel) {
                 addSelectionAttachment(selectionContext)
-                floatingSelectionPrompt = selectionContext.label
+                floatingSelectionPrompt = selectionContext.label(language: interfaceLanguage)
                 if isConversationSurfaceVisible {
                     collapseSelectionFloatIntoConversationIfVisible()
                     focus(.agent)
@@ -1109,7 +1174,10 @@ final class WorkspaceStore: ObservableObject {
             }
         } else {
             withAnimation(WeiBeiMotion.panel) {
-                agentDraft = "请根据\(agentPromptScope)，帮我梳理重点和可追问的问题。"
+                agentDraft = ui(
+                    "请根据\(agentPromptScope)，帮我梳理重点和可追问的问题。",
+                    "Use \(agentPromptScope) to summarize key points and follow-up questions."
+                )
                 if layout == .immersiveReading || layout == .documentNotesSplit {
                     agentSurface = .cornerPanel
                 }
@@ -1133,13 +1201,22 @@ final class WorkspaceStore: ObservableObject {
             .split(separator: "\n", omittingEmptySubsequences: false)
             .map { "> \($0)" }
             .joined(separator: "\n")
-        return """
-        > [!quote] 选区摘录
-        >
-        \(quoted)
-        >
-        > 来源：\(sourceTitle)
-        """
+        return ui(
+            """
+            > [!quote] 选区摘录
+            >
+            \(quoted)
+            >
+            > 来源：\(sourceTitle)
+            """,
+            """
+            > [!quote] Selection excerpt
+            >
+            \(quoted)
+            >
+            > Source: \(sourceTitle)
+            """
+        )
     }
 
     func acceptQuietInsight() {
@@ -1150,11 +1227,11 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func askQuietInsight() {
-        let evidenceText = hasSelectedMaterial ? "未在材料中确认" : "未在笔记或选区中确认"
+        let evidenceText = hasSelectedMaterial ? ui("未在材料中确认", "not confirmed in the material") : ui("未在笔记或选区中确认", "not confirmed in the note or selection")
         agentDraft = """
-        请根据这条阅读线索继续解释，并结合\(agentPromptScope)回答。没有证据就说\(evidenceText)。
+        \(ui("请根据这条阅读线索继续解释，并结合\(agentPromptScope)回答。没有证据就说\(evidenceText)。", "Continue from this reading clue and answer using \(agentPromptScope). If there is no evidence, say \(evidenceText)."))
 
-        阅读线索：
+        \(ui("阅读线索", "Reading clue")):
         \(quietInsight.body)
         """
         showQuietInsight = false
@@ -1167,8 +1244,8 @@ final class WorkspaceStore: ObservableObject {
         let materialText = selectedContextText
         let currentNoteText = noteText
         let selectionText = selectionContext?.text
-        let contextScope = hasSelectedMaterial ? "当前材料、当前选区和当前笔记" : "当前选区和当前笔记"
-        let evidenceText = hasSelectedMaterial ? "如果材料没有证据，就直接说未在材料中确认。" : "如果笔记和选区没有证据，就直接说未在笔记或选区中确认。"
+        let contextScope = hasSelectedMaterial ? ui("当前材料、当前选区和当前笔记", "the current material, current selection, and current note") : ui("当前选区和当前笔记", "the current selection and current note")
+        let evidenceText = hasSelectedMaterial ? ui("如果材料没有证据，就直接说未在材料中确认。", "If the material has no evidence, say it is not confirmed in the material.") : ui("如果笔记和选区没有证据，就直接说未在笔记或选区中确认。", "If the note and selection have no evidence, say it is not confirmed in the note or selection.")
         let signature = makeQuietInsightSignature(materialText: materialText, noteText: currentNoteText, selectionText: selectionText)
         guard signature != quietInsightSignature else { return }
         guard let credential = resolvedOpenAIAPIKey() else {
@@ -1182,17 +1259,21 @@ final class WorkspaceStore: ObservableObject {
         do {
             let client = OpenAIResponsesClient(apiKey: credential.key, model: resolvedModelName)
             let answer = try await client.ask(
-                question: "请静默阅读\(contextScope)，只输出一条最值得提示给用户的洞察。要温和、短、可执行；\(evidenceText)",
+                question: ui(
+                    "请静默阅读\(contextScope)，只输出一条最值得提示给用户的洞察。要温和、短、可执行；\(evidenceText)",
+                    "Read \(contextScope) quietly and output only the single most useful insight for the user. Keep it gentle, short, and actionable. \(evidenceText)"
+                ),
                 materialTitle: materialTitle,
                 materialText: materialText,
                 noteTitle: agentNoteTitle,
                 noteText: currentNoteText,
                 selectionTitle: selectionContext?.ownerTitle,
                 selectionText: selectionText,
-                recentMessages: []
+                recentMessages: [],
+                language: interfaceLanguage
             )
             guard signature == makeQuietInsightSignature(materialText: selectedContextText, noteText: noteText, selectionText: selectionContext?.text) else { return }
-            generatedQuietInsight = QuietInsight.agent(materialTitle: materialTitle, answer: answer)
+            generatedQuietInsight = QuietInsight.agent(materialTitle: materialTitle, answer: answer, language: interfaceLanguage)
             quietInsightSignature = signature
         } catch {
             generatedQuietInsight = nil
@@ -1200,14 +1281,14 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private var quietInsightReferenceTitle: String {
-        selectionContext?.ownerTitle ?? (hasSelectedMaterial ? currentReferenceTitle : selectedItem?.title) ?? "当前笔记"
+        selectionContext?.ownerTitle ?? (hasSelectedMaterial ? currentReferenceTitle : selectedItem.map(displayTitle)) ?? ui("当前笔记", "Current note")
     }
 
     func applyLastAgentAnswerToNote() {
         guard let answer = lastUsableAgentAnswer else { return }
         let block = """
 
-        ## 整理建议
+        ## \(ui("整理建议", "Organization suggestion"))
         \(answer.text)
         """
         updateNote(noteText + block)
@@ -1223,7 +1304,7 @@ final class WorkspaceStore: ObservableObject {
 
     func applyAgentPatchToEditor() {
         guard let answer = lastUsableAgentAnswer else { return }
-        noteEditorCommand = NoteEditorCommand(kind: .applyAgentPatch, markdown: "\n## 整理建议\n\(answer.text)")
+        noteEditorCommand = NoteEditorCommand(kind: .applyAgentPatch, markdown: "\n## \(ui("整理建议", "Organization suggestion"))\n\(answer.text)")
         focus(.notes)
     }
 
@@ -1231,28 +1312,38 @@ final class WorkspaceStore: ObservableObject {
         let question = agentDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isAskingAgent else { return }
 
-        guard let credential = resolvedOpenAIAPIKey() else {
-            let notice = "未配置密钥。当前不会编造回答；设置密钥后会结合\(agentPromptScope)，并在有已选文本片段时一并作答。"
-            openAIKeyStatus = notice
-            if !messages.contains(where: { $0.role == .assistant && $0.source == "设置" && $0.text == notice }) {
-                messages.append(AgentMessage(role: .assistant, text: notice, source: "设置"))
-            }
-            return
-        }
-
         persistCurrentNote()
         let sentSelectionTitle = agentSelectionTitle
         let sentSelectionText = agentSelectionText
+        let recentMessages = Array(messages.suffix(8))
+        let sourceTitle = agentMessageSourceTitle
         agentDraft = ""
         if !selectionAttachments.isEmpty {
             withAnimation(WeiBeiMotion.panel) {
                 selectionAttachments = []
             }
         }
-        isAskingAgent = true
-        let recentMessages = Array(messages.suffix(8))
-        let sourceTitle = agentMessageSourceTitle
         messages.append(AgentMessage(role: .user, text: question, source: sourceTitle))
+
+        guard let credential = resolvedOpenAIAPIKey() else {
+            let notice = ui(
+                "未配置密钥。当前用离线模式回显上下文；设置密钥后会结合\(agentPromptScope)，并在有已选文本片段时一并作答。",
+                "No key is configured. WeiBei is showing an offline context preview. After setup, answers will use \(agentPromptScope) and any selected text fragments."
+            )
+            openAIKeyStatus = notice
+            messages.append(AgentMessage(
+                role: .assistant,
+                text: offlineAgentPreview(
+                    question: question,
+                    selectionTitle: sentSelectionTitle,
+                    selectionText: sentSelectionText
+                ),
+                source: sourceTitle ?? ui("离线模式", "Offline mode")
+            ))
+            return
+        }
+
+        isAskingAgent = true
 
         do {
             let client = OpenAIResponsesClient(apiKey: credential.key, model: resolvedModelName)
@@ -1264,21 +1355,48 @@ final class WorkspaceStore: ObservableObject {
                 noteText: noteText,
                 selectionTitle: sentSelectionTitle,
                 selectionText: sentSelectionText,
-                recentMessages: recentMessages
+                recentMessages: recentMessages,
+                language: interfaceLanguage
             )
             messages.append(AgentMessage(role: .assistant, text: answer, source: sourceTitle))
         } catch {
-            messages.append(AgentMessage(role: .assistant, text: "请求失败：\(error.localizedDescription)", source: sourceTitle))
+            messages.append(AgentMessage(role: .assistant, text: ui("请求失败：\(error.localizedDescription)", "Request failed: \(error.localizedDescription)"), source: sourceTitle))
         }
 
         isAskingAgent = false
     }
 
+    private func offlineAgentPreview(question: String, selectionTitle: String?, selectionText: String?) -> String {
+        AgentOfflinePreview.render(
+            AgentOfflinePreviewInput(
+                language: interfaceLanguage,
+                question: question,
+                hasMaterial: hasSelectedMaterial,
+                materialTitle: currentReferenceTitle,
+                materialText: selectedContextText,
+                noteTitle: agentNoteTitle,
+                noteText: noteText,
+                selectionTitle: selectionTitle,
+                selectionText: selectionText
+            )
+        )
+    }
+
     func sampleHTML(for item: StudyItem?) -> String {
         guard item?.id == "sample-html" else { return sampleMarkdownHTML(for: item) }
+        let htmlLanguage = ui("zh-CN", "en")
+        let title = ui("利率的含义与分类", "Meaning and Types of Interest Rates")
+        let intro = ui("利率是资金使用价格的表达，也是金融市场配置资源时最敏感的信号之一。", "An interest rate is the price paid for using funds, and one of the most sensitive signals in financial resource allocation.")
+        let nominalTitle = ui("名义利率与实际利率", "Nominal and Real Interest Rates")
+        let nominalBody = ui("名义利率以货币单位表示，实际利率扣除了通货膨胀后的购买力变化。", "A nominal interest rate is expressed in money terms; a real interest rate adjusts for purchasing power changes caused by inflation.")
+        let quote = ui("学习时要同时记录概念、公式、例子和材料出处，避免只留下孤立结论。", "When studying, record concepts, formulas, examples, and sources together so conclusions do not stand alone.")
+        let termTitle = ui("短期利率与长期利率", "Short-Term and Long-Term Interest Rates")
+        let termBody = ui("短期利率通常受流动性和政策操作影响，长期利率更能反映期限溢价与未来预期。", "Short-term rates are often shaped by liquidity and policy operations; long-term rates reflect term premiums and expectations.")
+        let reviewTitle = ui("复习问题", "Review Question")
+        let reviewQuestion = ui("为什么通货膨胀预期上升时，名义利率通常会上行？", "Why do nominal interest rates usually rise when expected inflation increases?")
         return """
         <!doctype html>
-        <html lang="zh-CN">
+        <html lang="\(htmlLanguage)">
         <head>
         <meta charset="utf-8">
         <style>
@@ -1292,15 +1410,15 @@ final class WorkspaceStore: ObservableObject {
         </head>
         <body>
         <main>
-        <h1>利率的含义与分类</h1>
-        <p>利率是资金使用价格的表达，也是金融市场配置资源时最敏感的信号之一。</p>
-        <h2>名义利率与实际利率</h2>
-        <p>名义利率以货币单位表示，实际利率扣除了通货膨胀后的购买力变化。</p>
-        <blockquote>学习时要同时记录概念、公式、例子和材料出处，避免只留下孤立结论。</blockquote>
-        <h2>短期利率与长期利率</h2>
-        <p>短期利率通常受流动性和政策操作影响，长期利率更能反映期限溢价与未来预期。</p>
-        <h2>复习问题</h2>
-        <p>为什么通货膨胀预期上升时，名义利率通常会上行？</p>
+        <h1>\(title)</h1>
+        <p>\(intro)</p>
+        <h2>\(nominalTitle)</h2>
+        <p>\(nominalBody)</p>
+        <blockquote>\(quote)</blockquote>
+        <h2>\(termTitle)</h2>
+        <p>\(termBody)</p>
+        <h2>\(reviewTitle)</h2>
+        <p>\(reviewQuestion)</p>
         </main>
         </body>
         </html>
@@ -1310,9 +1428,9 @@ final class WorkspaceStore: ObservableObject {
     func sampleText(for item: StudyItem?) -> String {
         switch item?.id {
         case "sample-html":
-            return "利率是资金使用价格的表达。名义利率以货币单位表示，实际利率扣除了通货膨胀后的购买力变化。"
+            return ui("利率是资金使用价格的表达。名义利率以货币单位表示，实际利率扣除了通货膨胀后的购买力变化。", "An interest rate is the price paid for using funds. A nominal rate is expressed in money terms; a real rate adjusts for inflation.")
         case "sample-pdf":
-            return "Mishkin 教材样例：金融体系通过降低交易成本和信息成本来改善资源配置。"
+            return ui("Mishkin 教材样例：金融体系通过降低交易成本和信息成本来改善资源配置。", "Mishkin textbook sample: the financial system improves resource allocation by reducing transaction and information costs.")
         case "sample-md":
             return noteText
         default:
@@ -1368,7 +1486,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func sampleMarkdownHTML(for item: StudyItem?) -> String {
-        let title = item?.title ?? "课堂笔记样例"
+        let title = item.map(displayTitle) ?? ui("课堂笔记样例", "Class Notes Sample")
         let escaped = (notesByItemID[item?.id ?? ""] ?? defaultNote(for: item))
             .replacingOccurrences(of: "&", with: "&amp;")
             .replacingOccurrences(of: "<", with: "&lt;")
@@ -1391,12 +1509,12 @@ final class WorkspaceStore: ObservableObject {
         return directory
     }
 
-    private static func safeFileStem(_ value: String) -> String {
-        MarkdownAttachmentStore.safeFileStem(value, fallback: "未命名", limit: 80)
+    private func safeFileStem(_ value: String) -> String {
+        MarkdownAttachmentStore.safeFileStem(value, fallback: ui("未命名", "Untitled"), limit: 80)
     }
 
     private func nextNotebookNoteURL(in directory: URL, title: String) -> URL {
-        let stem = Self.safeFileStem(title)
+        let stem = safeFileStem(title)
         var index = 1
         var url = directory.appendingPathComponent("\(stem).md")
         while FileManager.default.fileExists(atPath: url.path) {
@@ -1424,7 +1542,7 @@ final class WorkspaceStore: ObservableObject {
         if !keepContext {
             selectionContext = nil
             selectionAnchor = nil
-            floatingSelectionPrompt = "当前选区"
+            floatingSelectionPrompt = ui("当前选区", "Current selection")
             pinnedFloatingAgent = false
             if agentSurface == .selectionFloat {
                 agentSurface = .hidden
@@ -1460,17 +1578,17 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func defaultNote(for item: StudyItem?) -> String {
-        let title = item?.title ?? "新笔记"
-        let excerptSeed = item.map { $0.isNotebookNote ? "" : "> 来源：\($0.title)\n" } ?? ""
+        let title = item.map(displayTitle) ?? ui("新笔记", "New Note")
+        let excerptSeed = item.map { $0.isNotebookNote ? "" : ui("> 来源：\(displayTitle(for: $0))\n", "> Source: \(displayTitle(for: $0))\n") } ?? ""
         return """
         # \(title)
 
-        ## 核心要点
+        ## \(ui("核心要点", "Key Points"))
 
-        ## 摘录
+        ## \(ui("摘录", "Excerpts"))
         \(excerptSeed)
 
-        ## 待追问
+        ## \(ui("待追问", "Follow-up Questions"))
         """
     }
 
@@ -1487,7 +1605,7 @@ final class WorkspaceStore: ObservableObject {
             noteFileError = nil
             return cleanLegacyPlaceholder(try String(contentsOf: url, encoding: .utf8))
         } catch {
-            noteFileError = "无法读取原 Markdown：\(url.lastPathComponent)"
+            noteFileError = ui("无法读取原 Markdown：\(url.lastPathComponent)", "Could not read original Markdown: \(url.lastPathComponent)")
             return cleanLegacyPlaceholder(notesByItemID[item.id] ?? defaultNote(for: item))
         }
     }
@@ -1502,7 +1620,7 @@ final class WorkspaceStore: ObservableObject {
                 noteFileError = nil
             } catch {
                 notesByItemID[selectedItemID] = noteText
-                noteFileError = "无法写回原 Markdown：\(url.lastPathComponent)"
+                noteFileError = ui("无法写回原 Markdown：\(url.lastPathComponent)", "Could not write original Markdown: \(url.lastPathComponent)")
             }
             return
         }
@@ -1538,6 +1656,10 @@ final class WorkspaceStore: ObservableObject {
         if let appearanceModeRaw = snapshot.appearanceModeRaw,
            let appearanceMode = WeiBeiAppearanceMode(rawValue: appearanceModeRaw) {
             self.appearanceMode = appearanceMode
+        }
+        if let interfaceLanguageRaw = snapshot.interfaceLanguageRaw,
+           let interfaceLanguage = WeiBeiInterfaceLanguage(rawValue: interfaceLanguageRaw) {
+            self.interfaceLanguage = interfaceLanguage
         }
         noteText = noteText(for: selectedItem)
     }
@@ -1578,7 +1700,8 @@ final class WorkspaceStore: ObservableObject {
             noteRenderMode: noteRenderMode,
             showLibrary: showLibrary,
             showRightPane: showRightPane,
-            appearanceModeRaw: appearanceMode.rawValue
+            appearanceModeRaw: appearanceMode.rawValue,
+            interfaceLanguageRaw: interfaceLanguage.rawValue
         )
         guard let data = try? JSONEncoder().encode(snapshot) else { return }
         try? data.write(to: storageURL, options: [.atomic])
@@ -1587,12 +1710,12 @@ final class WorkspaceStore: ObservableObject {
     private func resolvedOpenAIAPIKey() -> (key: String, source: String)? {
         let environmentKey = Self.environmentValue("OPENAI_API_KEY")
         if !environmentKey.isEmpty {
-            return (environmentKey, "本机环境变量")
+            return (environmentKey, ui("本机环境变量", "local environment variable"))
         }
 
         let savedKey = OpenAIAPIKeyStore.load()
         if !savedKey.isEmpty {
-            return (savedKey, "macOS 钥匙串")
+            return (savedKey, ui("macOS 钥匙串", "macOS Keychain"))
         }
 
         return nil
