@@ -1,4 +1,5 @@
 import AppKit
+import CoreText
 import Foundation
 import PDFKit
 import WeiBeiCore
@@ -52,6 +53,15 @@ expect(offlineEnglishPreview.contains("Offline preview: this question was sent i
     && offlineEnglishPreview.contains("Selection: none")
     && offlineEnglishPreview.contains("Note excerpt: the current note is empty."), "offline agent preview renders English empty-context state")
 expect(AgentOfflinePreview.preview("A\nB\tC", limit: 20) == "A B C", "offline agent preview normalizes whitespace")
+
+let fontDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Resources/Fonts")
+let displayFontURL = fontDirectoryURL.appendingPathComponent("WeiBeiStele.ttf")
+let monoFontURL = fontDirectoryURL.appendingPathComponent("WeiBeiSteleMono.ttf")
+CTFontManagerRegisterFontsForURL(displayFontURL as CFURL, .process, nil)
+CTFontManagerRegisterFontsForURL(monoFontURL as CFURL, .process, nil)
+expect(NSFont(name: "WeiBeiStele-Regular", size: 18) != nil
+    && NSFont(name: "WeiBeiSteleMono-Regular", size: 13) != nil, "bundled WeiBei English fonts register under their PostScript names")
 
 let runScriptURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("script/build_and_run.sh")
@@ -1114,7 +1124,7 @@ let workspaceStoreSourceURL = URL(fileURLWithPath: FileManager.default.currentDi
     .appendingPathComponent("Sources/WeiBei/Stores/WorkspaceStore.swift")
 let workspaceStoreSource = (try? String(contentsOf: workspaceStoreSourceURL, encoding: .utf8)) ?? ""
 expect(workspaceStoreSource.contains("var brandLatinName: String")
-    && workspaceStoreSource.contains("\"WeiBei\"")
+    && workspaceStoreSource.contains("\"WEIBEI\"")
     && contentViewSource.contains("Text(store.brandLatinName)")
     && contentViewSource.contains("WeiBeiTypography.englishBrandFont(size: variant == .wide ? 15.5 : 14.5")
     && appSource.contains("Text(store.brandLatinName)")

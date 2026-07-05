@@ -313,7 +313,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var brandLatinName: String {
-        "WeiBei"
+        "WEIBEI"
     }
 
     func ui(_ chinese: String, _ english: String) -> String {
