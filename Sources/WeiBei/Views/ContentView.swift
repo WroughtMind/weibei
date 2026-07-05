@@ -645,7 +645,7 @@ private struct UnifiedTopBarView: View {
                 }
             }
 
-            Section(store.ui("对话入口", "Chat Entry")) {
+            Section(store.ui("对话形态", "Chat Surface")) {
                 ForEach(store.visibleAgentSurfaces) { surface in
                     Button(surface.label(language: store.interfaceLanguage)) {
                         withAnimation(WeiBeiMotion.panel) {

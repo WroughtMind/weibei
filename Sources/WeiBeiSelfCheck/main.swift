@@ -726,7 +726,7 @@ expect(contentViewSource.contains("topIconButton(\"bubble.left.and.text.bubble.r
     && contentViewSource.contains("return store.ui(\"按当前选区提问\"")
     && contentViewSource.contains("按当前资料提问")
     && contentViewSource.contains("按当前笔记提问")
-    && contentViewSource.contains("Section(store.ui(\"对话入口\"")
+    && contentViewSource.contains("Section(store.ui(\"对话形态\", \"Chat Surface\")")
     && !contentViewSource.contains("Section(\"Agent 入口\")")
     && !contentViewSource.contains("打开 Agent 对话区"), "top bar names conversation entry by the actual action instead of a generic agent label")
 expect(contentViewSource.contains("private var showsGlobalFloatingAgent: Bool")
