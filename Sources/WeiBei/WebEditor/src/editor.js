@@ -63,24 +63,47 @@ const calloutTypes = new Set([
 ]);
 const calloutTypePattern = '[A-Za-z][A-Za-z0-9_-]*';
 const calloutPrefixPattern = '(?:\\s*>\\s*)*\\s*';
+const normalizeInterfaceLanguage = (value) => (value === 'en' ? 'en' : 'zh-Hans');
+let currentLanguage = normalizeInterfaceLanguage(window.weiBeiInterfaceLanguage);
 const calloutLabels = {
-  note: '札记',
-  tip: '提示',
-  important: '重点',
-  warning: '留心',
-  caution: '谨慎',
-  summary: '提要',
-  abstract: '摘要',
-  quote: '引文',
-  question: '问题',
-  example: '例子',
-  info: '信息',
-  success: '可行',
-  failure: '失败',
-  danger: '风险',
-  bug: '问题',
-  todo: '待办',
+  'zh-Hans': {
+    note: '札记',
+    tip: '提示',
+    important: '重点',
+    warning: '留心',
+    caution: '谨慎',
+    summary: '提要',
+    abstract: '摘要',
+    quote: '引文',
+    question: '问题',
+    example: '例子',
+    info: '信息',
+    success: '可行',
+    failure: '失败',
+    danger: '风险',
+    bug: '问题',
+    todo: '待办',
+  },
+  en: {
+    note: 'Note',
+    tip: 'Tip',
+    important: 'Important',
+    warning: 'Warning',
+    caution: 'Caution',
+    summary: 'Summary',
+    abstract: 'Abstract',
+    quote: 'Quote',
+    question: 'Question',
+    example: 'Example',
+    info: 'Info',
+    success: 'Success',
+    failure: 'Failure',
+    danger: 'Danger',
+    bug: 'Bug',
+    todo: 'Todo',
+  },
 };
+const calloutLabel = (type) => calloutLabels[currentLanguage]?.[type] || calloutLabels['zh-Hans'][type] || type;
 const calloutRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(${calloutTypePattern})\\]([+-]?)(?:[ \\t]+([^\\n]+))?`, 'i');
 const calloutMarkerRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(?:${calloutTypePattern})\\][+-]?\\s*`, 'i');
 const calloutHeadingRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(?:${calloutTypePattern})\\][+-]?(?:[ \\t]+[^\\n]+)?$`, 'i');
@@ -995,7 +1018,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
               class: `weibei-callout weibei-callout-has-heading ${calloutClass}`,
               'data-callout': calloutType,
               'data-callout-fold': match[2] || '',
-              'data-callout-title': (match[3] || calloutLabels[calloutType] || calloutType).trim(),
+              'data-callout-title': (match[3] || calloutLabel(calloutType)).trim(),
             }));
           }
         }
@@ -1234,6 +1257,15 @@ window.WeiBeiEditor = {
     editor.action((ctx) => {
       const view = ctx.get(editorViewCtx);
       view.dispatch(view.state.tr.setMeta('weibeiThemeChanged', currentTheme));
+    });
+  },
+  setInterfaceLanguage: (next) => {
+    currentLanguage = normalizeInterfaceLanguage(next);
+    document.documentElement.dataset.weibeiLanguage = currentLanguage;
+    if (!editor) return;
+    editor.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      view.dispatch(view.state.tr.setMeta('weibeiLanguageChanged', currentLanguage));
     });
   },
 };

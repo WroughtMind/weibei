@@ -195,7 +195,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             window.weiBeiMarkdownBaseURL = \(Self.json(markdownBaseURL?.absoluteString ?? ""));
             window.weiBeiLocalImageScheme = \(Self.json(Self.localImageScheme));
             window.weiBeiTheme = \(Self.json(appearanceMode.webThemeName));
+            window.weiBeiInterfaceLanguage = \(Self.json(interfaceLanguage.rawValue));
             document.documentElement.dataset.weibeiTheme = window.weiBeiTheme;
+            document.documentElement.dataset.weibeiLanguage = window.weiBeiInterfaceLanguage;
             (() => {
               const appShortcutKey = (event) => {
                 if (/^Digit[0-9]$/.test(event.code)) return event.code.slice(5);
@@ -285,7 +287,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 context.coordinator.setTheme(appearanceMode)
             }
         }
-        context.coordinator.interfaceLanguage = interfaceLanguage
+        if context.coordinator.interfaceLanguage != interfaceLanguage {
+            context.coordinator.interfaceLanguage = interfaceLanguage
+            if context.coordinator.isReady {
+                context.coordinator.setInterfaceLanguage(interfaceLanguage)
+            }
+        }
         context.coordinator.isFocused = isFocused
         context.coordinator.focusRequest = focusRequest
         context.coordinator.onWikiLink = onWikiLink
@@ -524,6 +531,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
         func setTheme(_ mode: WeiBeiAppearanceMode) {
             evaluate("window.WeiBeiEditor?.setTheme(\(Self.json(mode.webThemeName)))")
+        }
+
+        func setInterfaceLanguage(_ language: WeiBeiInterfaceLanguage) {
+            evaluate("window.WeiBeiEditor?.setInterfaceLanguage(\(Self.json(language.rawValue)))")
         }
 
         func run(_ command: NoteEditorCommand) {

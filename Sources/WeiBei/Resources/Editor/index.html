@@ -396,14 +396,13 @@
       font-weight: 650;
     }
 
-    .ProseMirror blockquote.weibei-callout-note::before { content: "札记"; }
     .ProseMirror blockquote.weibei-callout-tip,
     .ProseMirror blockquote.weibei-callout-success {
       border-left-color: var(--moss);
       background: rgba(63, 105, 82, .08);
     }
-    .ProseMirror blockquote.weibei-callout-tip::before { content: "提示"; color: var(--moss); }
-    .ProseMirror blockquote.weibei-callout-success::before { content: "可行"; color: var(--moss); }
+    .ProseMirror blockquote.weibei-callout-tip::before { color: var(--moss); }
+    .ProseMirror blockquote.weibei-callout-success::before { color: var(--moss); }
     .ProseMirror blockquote.weibei-callout-important,
     .ProseMirror blockquote.weibei-callout-question,
     .ProseMirror blockquote.weibei-callout-example {
@@ -416,15 +415,14 @@
     :root[data-weibei-theme="inkstone"] .ProseMirror blockquote.weibei-callout-example {
       background: rgba(200, 185, 138, .07);
     }
-    .ProseMirror blockquote.weibei-callout-important::before { content: "重点"; color: var(--blue-ink); }
-    .ProseMirror blockquote.weibei-callout-question::before { content: "问题"; color: var(--blue-ink); }
-    .ProseMirror blockquote.weibei-callout-example::before { content: "例子"; color: var(--blue-ink); }
+    .ProseMirror blockquote.weibei-callout-important::before { color: var(--blue-ink); }
+    .ProseMirror blockquote.weibei-callout-question::before { color: var(--blue-ink); }
+    .ProseMirror blockquote.weibei-callout-example::before { color: var(--blue-ink); }
     .ProseMirror blockquote.weibei-callout-warning {
       border-left-color: var(--ochre);
       background: rgba(135, 97, 47, .08);
     }
     .ProseMirror blockquote.weibei-callout-warning::before {
-      content: "留心";
       color: var(--ochre);
     }
     .ProseMirror blockquote.weibei-callout-summary {
@@ -436,11 +434,9 @@
       background: rgba(63, 105, 82, .08);
     }
     .ProseMirror blockquote.weibei-callout-summary::before {
-      content: "提要";
       color: var(--moss);
     }
     .ProseMirror blockquote.weibei-callout-abstract::before {
-      content: "摘要";
       color: var(--moss);
     }
     .ProseMirror blockquote.weibei-callout-caution,
@@ -450,13 +446,10 @@
       border-left-color: var(--cinnabar);
       background: var(--cinnabar-soft);
     }
-    .ProseMirror blockquote.weibei-callout-caution::before { content: "谨慎"; color: var(--cinnabar); }
-    .ProseMirror blockquote.weibei-callout-danger::before { content: "风险"; color: var(--cinnabar); }
-    .ProseMirror blockquote.weibei-callout-failure::before { content: "失败"; color: var(--cinnabar); }
-    .ProseMirror blockquote.weibei-callout-bug::before { content: "问题"; color: var(--cinnabar); }
-    .ProseMirror blockquote.weibei-callout-quote::before { content: "引文"; }
-    .ProseMirror blockquote.weibei-callout-info::before { content: "信息"; }
-    .ProseMirror blockquote.weibei-callout-todo::before { content: "待办"; }
+    .ProseMirror blockquote.weibei-callout-caution::before { color: var(--cinnabar); }
+    .ProseMirror blockquote.weibei-callout-danger::before { color: var(--cinnabar); }
+    .ProseMirror blockquote.weibei-callout-failure::before { color: var(--cinnabar); }
+    .ProseMirror blockquote.weibei-callout-bug::before { color: var(--cinnabar); }
     .ProseMirror blockquote.weibei-callout::before { content: attr(data-callout-title); }
 
     body[data-editable="true"] .ProseMirror blockquote.weibei-callout.weibei-callout-has-heading::before {
