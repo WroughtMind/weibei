@@ -10,12 +10,14 @@ struct ContentView: View {
     @AppStorage("topBarVariant") private var topBarVariantRaw = TopBarVariant.balanced.rawValue
     @State private var floatingAgentExpanded = false
     @State private var libraryDragStartWidth: CGFloat?
+    @State private var windowIsFullScreen = false
 
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing: 0) {
                 UnifiedTopBarView(
                     isImmersiveLayout: isImmersiveLayout,
+                    isFullScreen: windowIsFullScreen,
                     searchFocused: $topSearchFocused
                 )
 
@@ -70,6 +72,7 @@ struct ContentView: View {
                 }
             }
         }
+        .background(WindowFullScreenReader(isFullScreen: $windowIsFullScreen))
         .onChange(of: store.focusedPane) { _, value in
             focusedPane = value
         }
@@ -166,9 +169,74 @@ struct ContentView: View {
 
 }
 
+private struct WindowFullScreenReader: NSViewRepresentable {
+    @Binding var isFullScreen: Bool
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(isFullScreen: $isFullScreen)
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        context.coordinator.attach(to: view)
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        context.coordinator.isFullScreen = $isFullScreen
+        context.coordinator.attach(to: view)
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.stopObserving()
+    }
+
+    final class Coordinator {
+        var isFullScreen: Binding<Bool>
+        private weak var view: NSView?
+        private weak var observedWindow: NSWindow?
+        private var observers: [NSObjectProtocol] = []
+
+        init(isFullScreen: Binding<Bool>) {
+            self.isFullScreen = isFullScreen
+        }
+
+        func attach(to view: NSView) {
+            self.view = view
+            DispatchQueue.main.async { [weak self] in
+                self?.observeWindowIfReady()
+            }
+        }
+
+        func stopObserving() {
+            observers.forEach(NotificationCenter.default.removeObserver)
+            observers.removeAll()
+            observedWindow = nil
+        }
+
+        private func observeWindowIfReady() {
+            guard let window = view?.window else { return }
+            isFullScreen.wrappedValue = window.styleMask.contains(.fullScreen)
+            guard observedWindow !== window else { return }
+            stopObserving()
+            observedWindow = window
+            let names: [NSNotification.Name] = [
+                NSWindow.didEnterFullScreenNotification,
+                NSWindow.didExitFullScreenNotification
+            ]
+            observers = names.map { name in
+                NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self, weak window] _ in
+                    self?.isFullScreen.wrappedValue = window?.styleMask.contains(.fullScreen) == true
+                }
+            }
+        }
+    }
+}
+
 private struct UnifiedTopBarView: View {
     @EnvironmentObject private var store: WorkspaceStore
     let isImmersiveLayout: Bool
+    let isFullScreen: Bool
     var searchFocused: FocusState<Bool>.Binding
     @State private var appeared = false
     @AppStorage("topBarVariant") private var topBarVariantRaw = TopBarVariant.balanced.rawValue
@@ -177,6 +245,8 @@ private struct UnifiedTopBarView: View {
         HStack(spacing: topBarSpacing) {
             Spacer()
                 .frame(width: leftInset)
+
+            navigationButtons
 
             Button {
                 withAnimation(WeiBeiMotion.layout) {
@@ -294,15 +364,16 @@ private struct UnifiedTopBarView: View {
     }
 
     private var leftInset: CGFloat {
+        if isFullScreen { return 12 }
         switch variant {
         case .compact, .glyph:
-            return 54
+            return 122
         case .reader:
-            return 60
+            return 126
         case .balanced:
-            return 64
+            return 130
         case .wide:
-            return 70
+            return 136
         }
     }
 
@@ -492,6 +563,25 @@ private struct UnifiedTopBarView: View {
                     .foregroundStyle(tertiaryText)
             }
             .frame(width: variant == .wide ? 92 : 82, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder
+    private var navigationButtons: some View {
+        HStack(spacing: 3) {
+            topIconButton("arrow.left", help: "后退") {
+                withAnimation(WeiBeiMotion.layout) {
+                    store.navigateBackInWorkspace()
+                }
+            }
+            .disabled(!store.canNavigateBack)
+
+            topIconButton("arrow.right", help: "前进") {
+                withAnimation(WeiBeiMotion.layout) {
+                    store.navigateForwardInWorkspace()
+                }
+            }
+            .disabled(!store.canNavigateForward)
         }
     }
 

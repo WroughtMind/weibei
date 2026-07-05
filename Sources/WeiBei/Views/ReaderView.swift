@@ -98,7 +98,7 @@ struct ReaderView: View {
         .background {
             ZStack {
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(WeiBeiTheme.paperRaised.opacity(pdfControlsActive ? 0.86 : 0.28))
+                    .fill(WeiBeiTheme.paperRaised.opacity(pdfControlsActive ? 0.86 : 0.62))
                 RoundedRectangle(cornerRadius: 8)
                     .fill(.regularMaterial)
                     .opacity(pdfControlsHovering ? 0.055 : 0.0)
@@ -110,8 +110,8 @@ struct ReaderView: View {
                 .stroke(WeiBeiTheme.hairline.opacity(pdfControlsActive ? 0.64 : 0.18), lineWidth: 1)
         }
         .shadow(color: WeiBeiTheme.ink.opacity(pdfControlsHovering ? 0.045 : 0.0), radius: 7, y: 3)
-        .opacity(pdfControlsActive ? 0.94 : 0.30)
-        .offset(x: pdfControlsActive ? 0 : 9)
+        .opacity(pdfControlsActive ? 0.94 : 0.78)
+        .offset(x: 0)
         .scaleEffect(pdfControlsHovering ? 1.01 : (pdfControlsActive ? 1 : 0.985), anchor: .trailing)
         .contentShape(RoundedRectangle(cornerRadius: 8))
         .onAppear {
@@ -198,15 +198,10 @@ struct ReaderView: View {
             revealPDFControls(collapseAfter: 1.6)
         } label: {
             HStack(spacing: showsPDFModeLabel ? 5 : 0) {
-                if showsPDFModeLabel {
-                    Image(systemName: pdfBrowseMode.systemImage)
-                        .font(.system(size: 12, weight: .semibold))
-                    Text(pdfBrowseMode.label)
-                        .font(.system(size: 11, weight: .medium))
-                        .transition(.move(edge: .trailing).combined(with: .opacity))
-                } else {
-                    pdfModeIdleMark
-                }
+                Image(systemName: pdfBrowseMode.systemImage)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(pdfBrowseMode.label)
+                    .font(.system(size: 11, weight: .medium))
             }
             .foregroundStyle(pdfModeForeground)
             .padding(.horizontal, showsPDFModeLabel ? 7 : 4)
@@ -224,13 +219,6 @@ struct ReaderView: View {
         .help("切换到\(pdfBrowseMode.toggled.help)")
     }
 
-    private var pdfModeIdleMark: some View {
-        Capsule()
-            .fill(WeiBeiTheme.tertiaryInk.opacity(0.26))
-            .frame(width: 2, height: 13)
-            .accessibilityHidden(true)
-    }
-
     private var pdfControlsActive: Bool {
         pdfControlsHovering || pdfControlsExpanded
     }
@@ -243,7 +231,7 @@ struct ReaderView: View {
     }
 
     private var showsPDFModeLabel: Bool {
-        pdfControlsExpanded
+        true
     }
 
     private func revealPDFControls(collapseAfter delay: TimeInterval = 1.25) {

@@ -819,40 +819,47 @@ struct AgentPaneView: View {
             .frame(height: 18)
             .allowsHitTesting(false)
 
-            ZStack(alignment: .bottomTrailing) {
-                TextField(
-                    "",
-                    text: $store.agentDraft,
-                    prompt: Text(agentPrompt)
-                        .font(.system(size: 15))
-                        .foregroundStyle(WeiBeiTheme.placeholderInk),
-                    axis: .vertical
-                )
-                    .textFieldStyle(.plain)
-                    .lineLimit(1...6)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .foregroundColor(WeiBeiTheme.ink)
-                    .focused($draftFocused)
-                    .onSubmit {
-                        Task { await store.askAgent() }
-                    }
-                    .padding(.vertical, 10)
-                    .padding(.trailing, canSendDraft ? 40 : 0)
-                    .frame(maxWidth: .infinity, alignment: .bottomLeading)
-                    .weibeiInputSurface(active: draftFocused, height: 56, horizontalPadding: 14)
+            VStack(alignment: .leading, spacing: 8) {
+                if store.selectionContext != nil {
+                    AgentSelectionAttachmentPill()
+                        .transition(WeiBeiTransition.floating)
+                }
 
-                if canSendDraft {
-                    Button { Task { await store.askAgent() } } label: {
-                        Image(systemName: "paperplane.fill")
+                ZStack(alignment: .bottomTrailing) {
+                    TextField(
+                        "",
+                        text: $store.agentDraft,
+                        prompt: Text(agentPrompt)
+                            .font(.system(size: 15))
+                            .foregroundStyle(WeiBeiTheme.placeholderInk),
+                        axis: .vertical
+                    )
+                        .textFieldStyle(.plain)
+                        .lineLimit(1...6)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .foregroundColor(WeiBeiTheme.ink)
+                        .focused($draftFocused)
+                        .onSubmit {
+                            Task { await store.askAgent() }
+                        }
+                        .padding(.vertical, 10)
+                        .padding(.trailing, canSendDraft ? 40 : 0)
+                        .frame(maxWidth: .infinity, alignment: .bottomLeading)
+                        .weibeiInputSurface(active: draftFocused, height: 56, horizontalPadding: 14)
+
+                    if canSendDraft {
+                        Button { Task { await store.askAgent() } } label: {
+                            Image(systemName: "paperplane.fill")
+                        }
+                        .buttonStyle(WeiBeiIconButtonStyle(active: true, size: 30))
+                        .accessibilityLabel(Text("发送"))
+                        .help("发送")
+                        .keyboardShortcut(.return, modifiers: [.command])
+                        .padding(.trailing, 10)
+                        .padding(.bottom, 10)
+                        .transition(WeiBeiTransition.floating)
+                        .animation(WeiBeiMotion.micro, value: canSendDraft)
                     }
-                    .buttonStyle(WeiBeiIconButtonStyle(active: true, size: 30))
-                    .accessibilityLabel(Text("发送"))
-                    .help("发送")
-                    .keyboardShortcut(.return, modifiers: [.command])
-                    .padding(.trailing, 10)
-                    .padding(.bottom, 10)
-                    .transition(WeiBeiTransition.floating)
-                    .animation(WeiBeiMotion.micro, value: canSendDraft)
                 }
             }
             .font(.system(size: 15))
@@ -885,16 +892,6 @@ struct AgentPaneView: View {
 
     private var emptyAgentState: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if store.selectionContext != nil {
-                Text("已含选区")
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
-                    .padding(.horizontal, 6)
-                    .frame(height: 18)
-                    .background(WeiBeiTheme.cinnabarSoft.opacity(0.74))
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
-            }
-
             LazyVGrid(columns: starterChipColumns, alignment: .leading, spacing: 6) {
                 if store.hasSelectedMaterial {
                     starterChip("梳理", systemImage: "text.alignleft", help: "梳理当前材料") {
@@ -976,6 +973,57 @@ private struct AgentStarterChip: View {
     }
 }
 
+private struct AgentSelectionAttachmentPill: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @State private var hovering = false
+
+    var body: some View {
+        if let selection = store.selectionContext {
+            HStack(spacing: 6) {
+                Image(systemName: "text.bubble")
+                    .font(.system(size: 11, weight: .medium))
+                Text("1 个已选文本片段")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .foregroundStyle(hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background(WeiBeiTheme.paperRaised.opacity(hovering ? 0.72 : 0.54))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(WeiBeiTheme.hairline.opacity(hovering ? 0.68 : 0.38), lineWidth: 1)
+            }
+            .popover(isPresented: $hovering, arrowEdge: .bottom) {
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(selection.ownerTitle)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .lineLimit(1)
+                    ScrollView {
+                        Text(selection.text)
+                            .font(.system(size: 12))
+                            .foregroundStyle(WeiBeiTheme.ink)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+                    .frame(maxHeight: 180)
+                }
+                .padding(12)
+                .frame(width: 320, alignment: .leading)
+                .background(WeiBeiTheme.paperRaised)
+            }
+            .onHover { value in
+                withAnimation(WeiBeiMotion.hover) {
+                    hovering = value
+                }
+            }
+            .accessibilityLabel(Text("1 个已选文本片段"))
+            .help("悬停查看选区")
+        }
+    }
+}
+
 struct AgentDrawerView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @FocusState private var draftFocused: Bool
@@ -992,6 +1040,11 @@ struct AgentDrawerView: View {
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
             .weibeiFloatingHeaderChrome(appearanceMode: store.appearanceMode)
+
+            if store.selectionContext != nil {
+                AgentSelectionAttachmentPill()
+                    .transition(WeiBeiTransition.floating)
+            }
 
             HStack(spacing: 8) {
                 TextField(
@@ -1074,6 +1127,11 @@ struct CornerAgentView: View {
                 .font(.system(size: 11, weight: .medium))
                 .lineLimit(1)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
+
+            if store.selectionContext != nil {
+                AgentSelectionAttachmentPill()
+                    .transition(WeiBeiTransition.floating)
+            }
 
             HStack(spacing: 8) {
                 TextField(

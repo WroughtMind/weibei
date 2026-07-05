@@ -39,10 +39,25 @@ final class WorkspaceStore: ObservableObject {
     @Published var openAIAPIKey: String = OpenAIAPIKeyStore.load()
     @Published var openAIKeyStatus: String?
     @Published var appearanceMode: WeiBeiAppearanceMode = .paper
+    @Published private var backNavigationStack: [NavigationSnapshot] = []
+    @Published private var forwardNavigationStack: [NavigationSnapshot] = []
 
     private var notesByItemID: [String: String] = [:]
     private let storageURL: URL
     private var quietInsightSignature = ""
+    private var isRestoringNavigation = false
+
+    private struct NavigationSnapshot: Equatable {
+        var selectedItemID: String?
+        var layout: WorkspaceLayout
+        var showLibrary: Bool
+        var showRightPane: Bool
+        var agentSurface: AgentSurface
+        var noteRenderMode: NoteRenderMode
+        var showReaderSearch: Bool
+        var readerSearch: String
+        var focusedPane: PaneFocus
+    }
 
     private var lastUsableAgentAnswer: AgentMessage? {
         messages.last { $0.isUsableAgentAnswer }
@@ -99,6 +114,28 @@ final class WorkspaceStore: ObservableObject {
 
     var hasSelectedMaterial: Bool {
         selectedMaterialItem != nil
+    }
+
+    var canNavigateBack: Bool {
+        !backNavigationStack.isEmpty
+    }
+
+    var canNavigateForward: Bool {
+        !forwardNavigationStack.isEmpty
+    }
+
+    func navigateBackInWorkspace() {
+        guard let previous = backNavigationStack.popLast() else { return }
+        persistCurrentNote()
+        forwardNavigationStack.append(navigationSnapshot())
+        applyNavigationSnapshot(previous)
+    }
+
+    func navigateForwardInWorkspace() {
+        guard let next = forwardNavigationStack.popLast() else { return }
+        persistCurrentNote()
+        backNavigationStack.append(navigationSnapshot())
+        applyNavigationSnapshot(next)
     }
 
     var canUseSelectedMarkdownAsNotebookNote: Bool {
@@ -225,6 +262,9 @@ final class WorkspaceStore: ObservableObject {
     func select(itemID: String?) {
         persistCurrentNote()
         let itemChanged = selectedItemID != itemID
+        if itemChanged && selectedItemID != nil {
+            recordNavigationPoint()
+        }
         selectedItemID = itemID
         if itemChanged {
             clearUnpinnedFloatingSelection(keepContext: false)
@@ -265,6 +305,7 @@ final class WorkspaceStore: ObservableObject {
     func focus(_ pane: PaneFocus) {
         if pane == .library {
             if !showLibrary {
+                recordNavigationPoint()
                 clearUnpinnedFloatingSelection()
             }
             showLibrary = true
@@ -286,6 +327,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func toggleLibrary() {
+        recordNavigationPoint()
         showLibrary.toggle()
         clearUnpinnedFloatingSelection()
         focus(showLibrary ? .library : .reader)
@@ -294,6 +336,7 @@ final class WorkspaceStore: ObservableObject {
 
     func revealLibrary() {
         if !showLibrary {
+            recordNavigationPoint()
             clearUnpinnedFloatingSelection()
         }
         showLibrary = true
@@ -303,6 +346,7 @@ final class WorkspaceStore: ObservableObject {
 
     func toggleRightPane() {
         guard layout.hasCollapsibleRightPane else { return }
+        recordNavigationPoint()
         showRightPane.toggle()
         clearUnpinnedFloatingSelection()
         focus(showRightPane ? rightPaneRevealFocus : .reader)
@@ -312,6 +356,7 @@ final class WorkspaceStore: ObservableObject {
     func revealRightPane(focusing pane: PaneFocus = .notes) {
         guard layout.hasCollapsibleRightPane else { return }
         if !showRightPane {
+            recordNavigationPoint()
             clearUnpinnedFloatingSelection()
         }
         showRightPane = true
@@ -324,6 +369,9 @@ final class WorkspaceStore: ObservableObject {
             clearReaderSearchIfNeeded()
             return
         }
+        if !showReaderSearch || layout == .immersiveConversation || layout == .immersiveWriting {
+            recordNavigationPoint()
+        }
         if layout == .immersiveConversation || layout == .immersiveWriting {
             setLayout(.immersiveReading)
         }
@@ -332,6 +380,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func hideReaderSearch() {
+        if showReaderSearch || !readerSearch.isEmpty {
+            recordNavigationPoint()
+        }
         showReaderSearch = false
         readerSearch = ""
         clearUnpinnedFloatingSelection(keepContext: false)
@@ -365,6 +416,7 @@ final class WorkspaceStore: ObservableObject {
 
     func setLayout(_ layout: WorkspaceLayout) {
         if self.layout != layout {
+            recordNavigationPoint()
             clearUnpinnedFloatingSelection()
         }
         self.layout = layout
@@ -407,6 +459,8 @@ final class WorkspaceStore: ObservableObject {
 
     func setAgentSurface(_ surface: AgentSurface) {
         guard surface != .selectionFloat || canUseSelectionAgentSurface else { return }
+        guard agentSurface != surface else { return }
+        recordNavigationPoint()
         agentSurface = surface
         showQuietInsight = surface == .quietInsight
         if surface == .quietInsight {
@@ -426,6 +480,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func setNoteRenderMode(_ mode: NoteRenderMode) {
+        if noteRenderMode != mode || layout == .immersiveReading || layout == .immersiveConversation || (layout.hasCollapsibleRightPane && !showRightPane) {
+            recordNavigationPoint()
+        }
         if layout == .immersiveReading || layout == .immersiveConversation {
             clearUnpinnedFloatingSelection()
             layout = .immersiveWriting
@@ -453,6 +510,54 @@ final class WorkspaceStore: ObservableObject {
             showRightPane = true
         }
         noteRenderMode = .rich
+    }
+
+    private func recordNavigationPoint() {
+        guard !isRestoringNavigation else { return }
+        let snapshot = navigationSnapshot()
+        guard backNavigationStack.last != snapshot else { return }
+        backNavigationStack.append(snapshot)
+        if backNavigationStack.count > 80 {
+            backNavigationStack.removeFirst(backNavigationStack.count - 80)
+        }
+        forwardNavigationStack.removeAll()
+    }
+
+    private func navigationSnapshot() -> NavigationSnapshot {
+        NavigationSnapshot(
+            selectedItemID: selectedItemID,
+            layout: layout,
+            showLibrary: showLibrary,
+            showRightPane: showRightPane,
+            agentSurface: agentSurface == .selectionFloat ? .hidden : agentSurface,
+            noteRenderMode: noteRenderMode,
+            showReaderSearch: showReaderSearch,
+            readerSearch: readerSearch,
+            focusedPane: focusedPane
+        )
+    }
+
+    private func applyNavigationSnapshot(_ snapshot: NavigationSnapshot) {
+        isRestoringNavigation = true
+        defer { isRestoringNavigation = false }
+        selectedItemID = snapshot.selectedItemID
+        layout = snapshot.layout
+        showLibrary = snapshot.showLibrary
+        showRightPane = snapshot.showRightPane
+        agentSurface = snapshot.agentSurface == .selectionFloat ? .hidden : snapshot.agentSurface
+        noteRenderMode = snapshot.noteRenderMode
+        showReaderSearch = snapshot.showReaderSearch
+        readerSearch = snapshot.readerSearch
+        focusedPane = snapshot.focusedPane
+        noteText = noteText(for: selectedItem)
+        readerLocationTitle = selectedMaterialItem?.title
+        readerTargetPageIndex = nil
+        messages = []
+        showQuietInsight = agentSurface == .quietInsight
+        clearUnpinnedFloatingSelection(keepContext: false)
+        clearReaderSearchIfNeeded()
+        refreshQuietInsightIfNeeded()
+        save()
     }
 
     func insertMarkdownSnippet(_ markdown: String) {
