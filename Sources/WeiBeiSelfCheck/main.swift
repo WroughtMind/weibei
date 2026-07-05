@@ -1039,6 +1039,15 @@ expect(workspaceStoreSource.contains("let shouldRevealSelectionPrompt = canShowS
 expect(workspaceStoreSource.contains("func askSelection()")
     && workspaceStoreSource.contains("if isConversationSurfaceVisible {\n                    collapseSelectionFloatIntoConversationIfVisible()\n                    focus(.agent)\n                } else {\n                    agentSurface = .selectionFloat")
     && workspaceStoreSource.components(separatedBy: "withAnimation(WeiBeiMotion.panel) {").count >= 3, "asking a selection uses the open conversation surface before falling back to the floating prompt")
+if let askSelectionStart = workspaceStoreSource.range(of: "func askSelection()")?.lowerBound,
+   let appendSelectionStart = workspaceStoreSource.range(of: "func appendSelectionToNote()")?.lowerBound {
+    let askSelectionSource = String(workspaceStoreSource[askSelectionStart..<appendSelectionStart])
+    expect(askSelectionSource.contains("请解释当前已选文本片段")
+        && !askSelectionSource.contains("selectionContext.text")
+        && !askSelectionSource.contains("选区："), "selection question draft stays clean; the attachment pill and agent context carry the selected text")
+} else {
+    expect(false, "askSelection source is readable")
+}
 expect(workspaceStoreSource.contains("sourceTitle: selectionContext.ownerTitle") && workspaceStoreSource.contains("来源：\\(currentReferenceTitle)"), "copy reference uses real selection or current reader source")
 expect(workspaceStoreSource.contains("private func quotedReferenceBlock")
     && workspaceStoreSource.contains("let quoted = MarkdownSelectionSanitizer.clean(text)")
@@ -1438,6 +1447,8 @@ if let selectionStart = notesAgentSource.range(of: "struct FloatingSelectionAgen
         && floatingSelectionSource.contains("if showsExpandedBody")
         && floatingSelectionSource.contains(".onChange(of: routesToConversation)")
         && floatingSelectionSource.contains("expanded = !routesToConversation"), "selection prompt stays prompt-only and routes into the open conversation surface when one is already visible")
+    expect(floatingSelectionSource.contains("message.text.hasPrefix(\"请解释当前已选文本片段\")")
+        && floatingSelectionSource.contains("message.text.hasPrefix(\"请解释下面选区\")"), "selection floating feed hides generated selection prompts from both current and legacy drafts")
     expect(!floatingSelectionSource.contains("accessibilityLabel(Text(\"关闭选区对话\"))")
         && !floatingSelectionSource.contains(".help(\"关闭选区对话\")")
         && !floatingSelectionSource.contains("iconButton(\"xmark\", help: \"关闭选区对话\")")

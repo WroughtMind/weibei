@@ -1037,12 +1037,7 @@ final class WorkspaceStore: ObservableObject {
 
     func askSelection() {
         if let selectionContext {
-            let prompt = """
-            请解释下面选区，并结合\(selectionPromptScope)回答。没有证据就说未在材料中确认。
-
-            选区：
-            \(selectionContext.text)
-            """
+            let prompt = "请解释当前已选文本片段，并结合\(selectionPromptScope)回答。没有证据就说未在材料中确认。"
             withAnimation(WeiBeiMotion.panel) {
                 floatingSelectionPrompt = selectionContext.label
                 agentDraft = prompt

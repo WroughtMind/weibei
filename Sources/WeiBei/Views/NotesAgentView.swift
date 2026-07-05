@@ -1482,7 +1482,8 @@ struct FloatingSelectionAgentView: View {
 
     private func isGeneratedSelectionPrompt(_ message: AgentMessage) -> Bool {
         message.role == .user
-            && message.text.hasPrefix("请解释下面选区")
+            && (message.text.hasPrefix("请解释当前已选文本片段")
+                || message.text.hasPrefix("请解释下面选区"))
     }
 
     private func actionButton(_ title: String, action: @escaping () -> Void) -> some View {
