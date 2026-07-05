@@ -1115,7 +1115,7 @@ final class WorkspaceStore: ObservableObject {
         guard !question.isEmpty, !isAskingAgent else { return }
 
         guard let credential = resolvedOpenAIAPIKey() else {
-            let notice = "未配置 OPENAI_API_KEY 或钥匙串密钥。当前不会编造回答；设置密钥后会结合\(agentPromptScope)，并在有选区时结合当前选区作答。"
+            let notice = "未配置密钥。当前不会编造回答；设置密钥后会结合\(agentPromptScope)，并在有选区时结合当前选区作答。"
             openAIKeyStatus = notice
             if !messages.contains(where: { $0.role == .assistant && $0.source == "设置" && $0.text == notice }) {
                 messages.append(AgentMessage(role: .assistant, text: notice, source: "设置"))

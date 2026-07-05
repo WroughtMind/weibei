@@ -458,6 +458,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable {
 
     public var isUsableAgentAnswer: Bool {
         role == .assistant
+            && !text.hasPrefix("未配置密钥")
             && !text.hasPrefix("未配置 OPENAI_API_KEY")
             && !text.hasPrefix("请求失败：")
             && !text.hasPrefix("Agent 请求失败：")

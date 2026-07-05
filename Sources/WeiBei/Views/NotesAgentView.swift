@@ -1462,7 +1462,8 @@ struct FloatingSelectionAgentView: View {
     }
 
     private func isCredentialNotice(_ message: AgentMessage) -> Bool {
-        message.role == .assistant && message.text.hasPrefix("未配置 OPENAI_API_KEY")
+        message.role == .assistant
+            && (message.text.hasPrefix("未配置密钥") || message.text.hasPrefix("未配置 OPENAI_API_KEY"))
     }
 
     private func isGeneratedSelectionPrompt(_ message: AgentMessage) -> Bool {
@@ -1986,7 +1987,8 @@ private struct AgentBubble: View {
     }
 
     private var isCredentialNotice: Bool {
-        message.role == .assistant && message.text.hasPrefix("未配置 OPENAI_API_KEY")
+        message.role == .assistant
+            && (message.text.hasPrefix("未配置密钥") || message.text.hasPrefix("未配置 OPENAI_API_KEY"))
     }
 
     private var speakerTitle: String {
