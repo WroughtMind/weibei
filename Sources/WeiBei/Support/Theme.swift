@@ -92,8 +92,8 @@ enum WeiBeiAppearanceMode: String, CaseIterable, Identifiable {
 }
 
 enum WeiBeiTypography {
-    static let englishDisplayFontName = "WeiBeiStele"
-    static let englishMonoFontName = "WeiBeiSteleMono"
+    static let englishDisplayFontName = "WeiBeiStele-Regular"
+    static let englishMonoFontName = "WeiBeiSteleMono-Regular"
 
     private static var didRegisterBundledFonts = false
 

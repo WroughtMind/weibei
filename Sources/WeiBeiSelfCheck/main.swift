@@ -254,7 +254,7 @@ if let selection = pdfSelections.first, let page = selection.pages.first {
     let ownerTitle = "Mishkin 教材样例，第 \((selectedPDFPageIndex ?? 0) + 1) 页"
     let context = SelectionContext(text: selection.string ?? "", source: .document, ownerTitle: ownerTitle)
     let reference = SourceReferenceTitle.parse("来源：\(context.ownerTitle)")
-    expect(context.label == "文档选区：Mishkin 教材样例，第 1 页", "PDF selection context carries the selected page label into the floating agent")
+    expect(context.label(language: .chinese) == "文档选区：Mishkin 教材样例，第 1 页", "PDF selection context carries the selected page label into the floating agent")
     expect(reference.title == "Mishkin 教材样例" && reference.pageIndex == 0, "PDF selection reference can jump back to the selected page")
 } else {
     expect(false, "PDFSelection contains page")
@@ -496,9 +496,10 @@ expect(WikiLink.enclosingTitle(in: "没有双链", cursor: 2) == nil, "wikilink 
 expect(WorkspaceLayout.documentAgentNotes.hasCollapsibleRightPane, "three-pane layout can collapse right pane")
 expect(WorkspaceLayout.documentNotesSplit.hasCollapsibleRightPane, "split layout can collapse right pane")
 expect(!WorkspaceLayout.immersiveReading.hasCollapsibleRightPane, "immersive reading has no right pane to collapse")
-expect(WorkspaceLayout.documentAgentNotes.label == "阅读-对话-笔记"
-    && WorkspaceLayout.documentNotesAgent.label == "阅读-笔记-对话"
-    && WorkspaceLayout.documentNotesSplit.label == "阅读/笔记对半", "layout labels use task language instead of internal pane names")
+expect(WorkspaceLayout.documentAgentNotes.label(language: .chinese) == "阅读-对话-笔记"
+    && WorkspaceLayout.documentAgentNotes.label(language: .english) == "Reader-Chat-Notes"
+    && WorkspaceLayout.documentNotesAgent.label(language: .chinese) == "阅读-笔记-对话"
+    && WorkspaceLayout.documentNotesSplit.label(language: .english) == "Reader / Notes", "layout labels use localized task language instead of internal pane names")
 expect(WorkspaceLayout.immersiveConversation.systemImage == "bubble.left.and.text.bubble.right" && WorkspaceLayout.immersiveWriting.systemImage == "square.and.pencil", "immersive layouts expose semantic menu icons")
 let contentViewSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/ContentView.swift")
@@ -544,6 +545,10 @@ expect(themeSource.contains("enum WeiBeiAppearanceMode")
     && themeSource.contains("static func weiBei(light:"), "theme exposes a persisted paper/inkstone appearance mode and native AppKit palette")
 expect(themeSource.contains("static let appearance = Animation.easeInOut(duration: 0.42)"), "appearance changes use a dedicated smooth theme transition")
 expect(themeSource.contains("tertiaryInk.opacity(0.58)") && themeSource.contains("tertiaryInk.opacity(0.60)"), "disabled button text remains legible on light paper surfaces")
+expect(themeSource.contains("englishDisplayFontName = \"WeiBeiStele-Regular\"")
+    && themeSource.contains("englishMonoFontName = \"WeiBeiSteleMono-Regular\"")
+    && !themeSource.contains("englishDisplayFontName = \"WeiBeiStele\"")
+    && !themeSource.contains("englishMonoFontName = \"WeiBeiSteleMono\""), "bundled English fonts use registered PostScript names instead of resource filenames")
 expect(contentViewSource.contains("ResizableTwoPane<First: View, Second: View>: NSViewRepresentable"), "two-pane layout uses native bridge")
 expect(contentViewSource.contains("ResizableThreePane<First: View, Second: View, Third: View>: NSViewRepresentable"), "three-pane layout uses native bridge")
 expect(contentViewSource.contains("WeiBeiSplitView: NSSplitView"), "content panes use native split view")
@@ -1388,8 +1393,9 @@ expect(appSource.contains("Button(store.showLibrary ? store.ui(\"收起资料库
 expect(appSource.contains("Button(AgentSurface.bottomDrawer.actionLabel(language: store.interfaceLanguage))")
     && appSource.contains("Button(AgentSurface.selectionFloat.actionLabel(language: store.interfaceLanguage))")
     && appSource.contains("if store.canUseSelectionAgentSurface")
-    && AgentSurface.hidden.label == "隐藏对话"
-    && AgentSurface.hidden.actionLabel == "隐藏对话"
+    && AgentSurface.hidden.label(language: .chinese) == "隐藏对话"
+    && AgentSurface.hidden.label(language: .english) == "Hide Chat"
+    && AgentSurface.hidden.actionLabel(language: .english) == "Hide Chat"
     && !appSource.contains("Agent 底部抽屉")
     && !appSource.contains("Agent 右下角小窗")
     && !appSource.contains("Agent 划线浮层")

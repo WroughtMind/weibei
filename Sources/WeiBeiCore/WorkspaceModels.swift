@@ -42,15 +42,6 @@ public enum StudyItemKind: String, Codable, CaseIterable, Identifiable {
 
     public var id: String { rawValue }
 
-    public var label: String {
-        switch self {
-        case .html: "HTML"
-        case .pdf: "PDF"
-        case .markdown: "Markdown"
-        case .text: "Text"
-        }
-    }
-
     public func label(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
         case .html:
@@ -197,23 +188,6 @@ public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable {
 
     public var id: String { rawValue }
 
-    public var label: String {
-        switch self {
-        case .documentAgentNotes:
-            return "阅读-对话-笔记"
-        case .documentNotesAgent:
-            return "阅读-笔记-对话"
-        case .documentNotesSplit:
-            return "阅读/笔记对半"
-        case .immersiveReading:
-            return "沉浸阅读"
-        case .immersiveConversation:
-            return "沉浸对话"
-        case .immersiveWriting:
-            return "沉浸写笔记"
-        }
-    }
-
     public func label(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
         case .documentAgentNotes:
@@ -276,21 +250,6 @@ public enum AgentSurface: String, Codable, CaseIterable, Identifiable {
 
     public var id: String { rawValue }
 
-    public var label: String {
-        switch self {
-        case .bottomDrawer:
-            return "底部对话栏"
-        case .cornerPanel:
-            return "右下轻问"
-        case .selectionFloat:
-            return "选区轻提示"
-        case .quietInsight:
-            return "页边洞察"
-        case .hidden:
-            return "隐藏对话"
-        }
-    }
-
     public func label(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
         case .bottomDrawer:
@@ -303,15 +262,6 @@ public enum AgentSurface: String, Codable, CaseIterable, Identifiable {
             return language.text("页边洞察", "Margin Insight")
         case .hidden:
             return language.text("隐藏对话", "Hide Chat")
-        }
-    }
-
-    public var actionLabel: String {
-        switch self {
-        case .hidden:
-            return label
-        default:
-            return "使用\(label)"
         }
     }
 
@@ -332,19 +282,6 @@ public enum NoteRenderMode: String, Codable, CaseIterable, Identifiable {
     case preview
 
     public var id: String { rawValue }
-
-    public var label: String {
-        switch self {
-        case .rich:
-            return "写作"
-        case .split:
-            return "对照"
-        case .source:
-            return "源码"
-        case .preview:
-            return "预览"
-        }
-    }
 
     public func label(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
@@ -396,15 +333,6 @@ public struct SelectionContext: Identifiable, Codable, Hashable {
         self.source = source
         self.ownerTitle = ownerTitle
         self.isEditable = isEditable
-    }
-
-    public var label: String {
-        switch source {
-        case .document:
-            return "文档选区：\(ownerTitle)"
-        case .note:
-            return "笔记选区：\(ownerTitle)"
-        }
     }
 
     public func label(language: WeiBeiInterfaceLanguage) -> String {
