@@ -98,7 +98,7 @@ struct ReaderView: View {
         .background {
             ZStack {
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(WeiBeiTheme.paperRaised.opacity(pdfControlsActive ? 0.86 : 0.62))
+                    .fill(WeiBeiTheme.paperRaised.opacity(pdfControlsActive ? 0.86 : 0.72))
                 RoundedRectangle(cornerRadius: 8)
                     .fill(.regularMaterial)
                     .opacity(pdfControlsHovering ? 0.055 : 0.0)
@@ -107,12 +107,12 @@ struct ReaderView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay {
             RoundedRectangle(cornerRadius: 8)
-                .stroke(WeiBeiTheme.hairline.opacity(pdfControlsActive ? 0.64 : 0.18), lineWidth: 1)
+                .stroke(WeiBeiTheme.hairline.opacity(pdfControlsActive ? 0.64 : 0.30), lineWidth: 1)
         }
         .shadow(color: WeiBeiTheme.ink.opacity(pdfControlsHovering ? 0.045 : 0.0), radius: 7, y: 3)
-        .opacity(pdfControlsActive ? 0.94 : 0.78)
+        .opacity(pdfControlsActive ? 0.94 : 0.90)
         .offset(x: 0)
-        .scaleEffect(pdfControlsHovering ? 1.01 : (pdfControlsActive ? 1 : 0.985), anchor: .trailing)
+        .scaleEffect(pdfControlsHovering ? 1.01 : (pdfControlsActive ? 1 : 0.995), anchor: .trailing)
         .contentShape(RoundedRectangle(cornerRadius: 8))
         .onAppear {
             schedulePDFControlsCollapse(after: 0.9)
@@ -206,12 +206,12 @@ struct ReaderView: View {
             .foregroundStyle(pdfModeForeground)
             .padding(.horizontal, showsPDFModeLabel ? 7 : 4)
             .frame(width: showsPDFModeLabel ? nil : 18, height: 24)
-            .background(WeiBeiTheme.paperInset.opacity(pdfControlsActive ? 0.16 : 0.0))
+            .background(WeiBeiTheme.paperInset.opacity(pdfControlsActive ? 0.16 : 0.08))
             .contentShape(RoundedRectangle(cornerRadius: 6))
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay {
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(WeiBeiTheme.hairline.opacity(pdfControlsActive ? 0.58 : 0.0), lineWidth: 1)
+                    .stroke(WeiBeiTheme.hairline.opacity(pdfControlsActive ? 0.58 : 0.18), lineWidth: 1)
             }
             .animation(WeiBeiMotion.micro, value: showsPDFModeLabel)
         }
@@ -227,7 +227,7 @@ struct ReaderView: View {
         if pdfBrowseMode == .page {
             return WeiBeiTheme.cinnabar
         }
-        return pdfControlsHovering ? WeiBeiTheme.secondaryInk : WeiBeiTheme.tertiaryInk
+        return WeiBeiTheme.secondaryInk
     }
 
     private var showsPDFModeLabel: Bool {
