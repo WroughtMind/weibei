@@ -1046,19 +1046,22 @@ struct AgentDrawerView: View {
                     .transition(WeiBeiTransition.floating)
             }
 
-            HStack(spacing: 8) {
+            HStack(alignment: .bottom, spacing: 8) {
                 TextField(
                     "",
                     text: $store.agentDraft,
                     prompt: Text(drawerPrompt)
                         .font(.system(size: 13))
-                        .foregroundStyle(WeiBeiTheme.placeholderInk)
+                        .foregroundStyle(WeiBeiTheme.placeholderInk),
+                    axis: .vertical
                 )
                     .textFieldStyle(.plain)
+                    .lineLimit(1...4)
+                    .fixedSize(horizontal: false, vertical: true)
                     .focused($draftFocused)
                     .foregroundColor(WeiBeiTheme.ink)
                 .font(.system(size: 13))
-                .weibeiInputSurface(active: draftFocused, height: 42)
+                .weibeiInputSurface(active: draftFocused, height: 46)
                 if canSend {
                     Button { Task { await store.askAgent() } } label: {
                         Image(systemName: "paperplane.fill")
@@ -1133,19 +1136,22 @@ struct CornerAgentView: View {
                     .transition(WeiBeiTransition.floating)
             }
 
-            HStack(spacing: 8) {
+            HStack(alignment: .bottom, spacing: 8) {
                 TextField(
                     "",
                     text: $store.agentDraft,
                     prompt: Text(agentPrompt)
                         .font(.system(size: 13))
-                        .foregroundStyle(WeiBeiTheme.placeholderInk)
+                        .foregroundStyle(WeiBeiTheme.placeholderInk),
+                    axis: .vertical
                 )
                     .textFieldStyle(.plain)
+                    .lineLimit(1...4)
+                    .fixedSize(horizontal: false, vertical: true)
                     .focused($draftFocused)
                     .foregroundColor(WeiBeiTheme.ink)
                 .font(.system(size: 13))
-                .weibeiInputSurface(active: draftFocused, height: 38)
+                .weibeiInputSurface(active: draftFocused, height: 44)
 
                 if canSend {
                     Button {

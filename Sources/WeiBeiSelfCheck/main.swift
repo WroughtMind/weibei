@@ -1267,8 +1267,18 @@ expect(notesAgentSource.contains("func weibeiFloatingHeaderChrome(appearanceMode
 expect(notesAgentSource.components(separatedBy: "!store.isAskingAgent && !store.agentDraft.trimmingCharacters").count >= 4, "all agent send affordances hide while a request is running")
 expect(notesAgentSource.contains("store.hasSelectedMaterial ? \"问当前材料\" : \"问当前笔记\"") && notesAgentSource.contains("prompt: Text(agentPrompt)") && notesAgentSource.contains(".foregroundStyle(WeiBeiTheme.placeholderInk)") && notesAgentSource.contains(".foregroundColor(WeiBeiTheme.ink)"), "agent input placeholder matches context and uses native prompt alignment with readable ink")
 expect(notesAgentSource.contains("store.hasSelectedMaterial ? \"来源\" : \"笔记\"") && notesAgentSource.contains("store.selectedMaterialItem?.title ?? \"当前笔记\""), "agent drawer source row avoids fake current material")
-expect(notesAgentSource.contains(".weibeiInputSurface(active: draftFocused, height: 42)")
-    && notesAgentSource.contains("WeiBeiIconButtonStyle(active: true, size: 34)"), "bottom agent drawer input reads as a compact composer instead of a search strip")
+if let drawerStart = notesAgentSource.range(of: "struct AgentDrawerView")?.lowerBound,
+   let cornerStart = notesAgentSource.range(of: "struct CornerAgentView")?.lowerBound {
+    let drawerAgentSource = String(notesAgentSource[drawerStart..<cornerStart])
+    expect(drawerAgentSource.contains("HStack(alignment: .bottom, spacing: 8)")
+        && drawerAgentSource.contains("axis: .vertical")
+        && drawerAgentSource.contains(".lineLimit(1...4)")
+        && drawerAgentSource.contains(".fixedSize(horizontal: false, vertical: true)")
+        && drawerAgentSource.contains(".weibeiInputSurface(active: draftFocused, height: 46)")
+        && drawerAgentSource.contains("WeiBeiIconButtonStyle(active: true, size: 34)"), "bottom agent drawer input grows as a compact composer instead of a search strip")
+} else {
+    expect(false, "agent drawer source is readable")
+}
 expect(notesAgentSource.contains(".frame(width: compactHovering ? 244 : 216, alignment: .leading)")
     && notesAgentSource.contains(".background(WeiBeiTheme.paperRaised.opacity(compactHovering ? 0.42 : 0.0))")
     && notesAgentSource.contains(".offset(x: compactHovering ? 2 : 0)")
@@ -1280,7 +1290,11 @@ if let cornerStart = notesAgentSource.range(of: "struct CornerAgentView")?.lower
         && !cornerAgentSource.contains("整理笔记")
         && cornerAgentSource.contains("Text(\"对话\")")
         && !cornerAgentSource.contains("Text(\"Agent\")")
-        && cornerAgentSource.contains(".weibeiInputSurface(active: draftFocused, height: 38)")
+        && cornerAgentSource.contains("HStack(alignment: .bottom, spacing: 8)")
+        && cornerAgentSource.contains("axis: .vertical")
+        && cornerAgentSource.contains(".lineLimit(1...4)")
+        && cornerAgentSource.contains(".fixedSize(horizontal: false, vertical: true)")
+        && cornerAgentSource.contains(".weibeiInputSurface(active: draftFocused, height: 44)")
         && cornerAgentSource.contains(".help(\"收起对话浮窗\")"), "corner agent stays a lightweight localized prompt surface")
 } else {
     expect(false, "corner agent source is readable")
