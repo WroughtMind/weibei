@@ -1153,11 +1153,14 @@ final class WorkspaceStore: ObservableObject {
             selectionContext = nil
             selectionAnchor = nil
             floatingSelectionPrompt = "当前选区"
+            pinnedFloatingAgent = false
+            if agentSurface == .selectionFloat {
+                agentSurface = .hidden
+            }
+            return
         }
         guard !pinnedFloatingAgent else { return }
-        if keepContext {
-            selectionAnchor = nil
-        }
+        selectionAnchor = nil
         if agentSurface == .selectionFloat {
             agentSurface = .hidden
         }

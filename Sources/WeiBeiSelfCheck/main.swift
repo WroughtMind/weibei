@@ -920,6 +920,8 @@ expect(workspaceStoreSource.contains("private func clearUnpinnedFloatingSelectio
     && workspaceStoreSource.contains("selectionContext = nil")
     && workspaceStoreSource.contains("selectionAnchor = nil")
     && workspaceStoreSource.contains("floatingSelectionPrompt = \"当前选区\"")
+    && workspaceStoreSource.contains("pinnedFloatingAgent = false")
+    && workspaceStoreSource.contains("if agentSurface == .selectionFloat {\n                agentSurface = .hidden\n            }\n            return")
     && workspaceStoreSource.contains("guard !pinnedFloatingAgent else { return }")
     && workspaceStoreSource.contains("if agentSurface == .selectionFloat"), "cleared selections remove stale context badges before preserving any pinned floating window")
 expect(workspaceStoreSource.contains("guard Self.hasMeaningfulSelectionCharacter(cleaned) else {\n            clearUnpinnedFloatingSelection(keepContext: false)\n            return\n        }")
