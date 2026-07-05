@@ -407,6 +407,10 @@ let contentViewSourceURL = URL(fileURLWithPath: FileManager.default.currentDirec
     .appendingPathComponent("Sources/WeiBei/Views/ContentView.swift")
 let contentViewSource = (try? String(contentsOf: contentViewSourceURL, encoding: .utf8)) ?? ""
 expect(!contentViewSource.isEmpty, "content view source is readable")
+expect(contentViewSource.contains("case .immersiveReading:\n                ZStack(alignment: .topTrailing)")
+    && contentViewSource.contains("QuietInsightView(compact: true)")
+    && contentViewSource.contains(".padding(.top, 24)")
+    && !contentViewSource.contains("QuietInsightView(compact: true)\n                            .padding(.trailing, 28)\n                            .padding(.bottom, 28)"), "immersive reading keeps quiet insight on the upper side edge so it does not cover PDF page controls")
 let themeSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Support/Theme.swift")
 let themeSource = (try? String(contentsOf: themeSourceURL, encoding: .utf8)) ?? ""

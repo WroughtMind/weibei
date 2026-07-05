@@ -808,12 +808,12 @@ private struct LayoutContentView: View {
                         .transition(WeiBeiTransition.layout)
                 }
             case .immersiveReading:
-                ZStack(alignment: .bottomTrailing) {
+                ZStack(alignment: .topTrailing) {
                     ReaderView(isImmersive: true)
                     if store.showQuietInsight && store.agentSurface != .hidden {
                         QuietInsightView(compact: true)
                             .padding(.trailing, 28)
-                            .padding(.bottom, 28)
+                            .padding(.top, 24)
                             .transition(WeiBeiTransition.rightPanel)
                     }
                 }
