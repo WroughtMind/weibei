@@ -1358,26 +1358,25 @@ final class WorkspaceStore: ObservableObject {
                 selectionAttachments = []
             }
         }
-        messages.append(AgentMessage(role: .user, text: question, source: sourceTitle))
-
         guard let credential = resolvedOpenAIAPIKey() else {
             let notice = ui(
                 "未配置密钥。当前用离线模式回显上下文；设置密钥后会结合\(agentPromptScope)，并在有已选文本片段时一并作答。",
                 "No key is configured. WeiBei is showing an offline context preview. After setup, answers will use \(agentPromptScope) and any selected text fragments."
             )
             openAIKeyStatus = notice
-            messages.append(AgentMessage(
-                role: .assistant,
-                text: offlineAgentPreview(
+            messages.append(contentsOf: AgentOfflineTurn.messages(
+                question: question,
+                sourceTitle: sourceTitle,
+                input: offlineAgentInput(
                     question: question,
                     selectionTitle: sentSelectionTitle,
                     selectionText: sentSelectionText
-                ),
-                source: sourceTitle ?? ui("离线模式", "Offline mode")
+                )
             ))
             return
         }
 
+        messages.append(AgentMessage(role: .user, text: question, source: sourceTitle))
         isAskingAgent = true
 
         do {
@@ -1401,19 +1400,17 @@ final class WorkspaceStore: ObservableObject {
         isAskingAgent = false
     }
 
-    private func offlineAgentPreview(question: String, selectionTitle: String?, selectionText: String?) -> String {
-        AgentOfflinePreview.render(
-            AgentOfflinePreviewInput(
-                language: interfaceLanguage,
-                question: question,
-                hasMaterial: hasSelectedMaterial,
-                materialTitle: currentReferenceTitle,
-                materialText: selectedContextText,
-                noteTitle: agentNoteTitle,
-                noteText: noteText,
-                selectionTitle: selectionTitle,
-                selectionText: selectionText
-            )
+    private func offlineAgentInput(question: String, selectionTitle: String?, selectionText: String?) -> AgentOfflinePreviewInput {
+        AgentOfflinePreviewInput(
+            language: interfaceLanguage,
+            question: question,
+            hasMaterial: hasSelectedMaterial,
+            materialTitle: currentReferenceTitle,
+            materialText: selectedContextText,
+            noteTitle: agentNoteTitle,
+            noteText: noteText,
+            selectionTitle: selectionTitle,
+            selectionText: selectionText
         )
     }
 

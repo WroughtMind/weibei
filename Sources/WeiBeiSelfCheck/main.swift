@@ -54,6 +54,30 @@ expect(offlineEnglishPreview.contains("Offline preview: this question was sent i
     && offlineEnglishPreview.contains("Note excerpt: the current note is empty."), "offline agent preview renders English empty-context state")
 expect(AgentOfflinePreview.preview("A\nB\tC", limit: 20) == "A B C", "offline agent preview normalizes whitespace")
 
+let offlineTurnMessages = AgentOfflineTurn.messages(
+    question: "解释当前材料",
+    sourceTitle: "Mishkin 教材样例",
+    input: AgentOfflinePreviewInput(
+        language: .chinese,
+        question: "解释当前材料",
+        hasMaterial: true,
+        materialTitle: "Mishkin 教材样例",
+        materialText: "利率是资金使用价格的表达。",
+        noteTitle: "货币金融学课程 HTML",
+        noteText: "## 摘录",
+        selectionTitle: nil,
+        selectionText: nil
+    )
+)
+expect(offlineTurnMessages.count == 2
+    && offlineTurnMessages[0].role == .user
+    && offlineTurnMessages[0].text == "解释当前材料"
+    && offlineTurnMessages[0].source == "Mishkin 教材样例"
+    && offlineTurnMessages[1].role == .assistant
+    && offlineTurnMessages[1].text.contains("离线预览：这次提问已经进入对话。")
+    && offlineTurnMessages[1].source == "Mishkin 教材样例"
+    && !offlineTurnMessages[1].isUsableAgentAnswer, "offline agent turn appends a visible user turn and non-writable context preview without an API key")
+
 let fontDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Resources/Fonts")
 let displayFontURL = fontDirectoryURL.appendingPathComponent("WeiBeiStele.ttf")
@@ -1420,8 +1444,8 @@ expect(!workspaceStoreSource.contains("selectedItem?.title ?? \"当前材料\"")
     && workspaceStoreSource.contains("请求失败：\\(error.localizedDescription)")
     && !workspaceStoreSource.contains("Agent 设置")
     && workspaceStoreSource.contains("未配置密钥。当前用离线模式回显上下文")
-    && workspaceStoreSource.contains("offlineAgentPreview(")
-    && workspaceStoreSource.contains("AgentOfflinePreview.render(")
+    && workspaceStoreSource.contains("AgentOfflineTurn.messages(")
+    && workspaceStoreSource.contains("offlineAgentInput(")
     && workspaceStoreSource.contains("AgentOfflinePreviewInput(")
     && workspaceStoreSource.contains("messages.append(AgentMessage(role: .user, text: question, source: sourceTitle))")
     && !workspaceStoreSource.contains("未配置 OPENAI_API_KEY 或钥匙串密钥")
@@ -1435,16 +1459,18 @@ expect(!workspaceStoreSource.contains("selectedItem?.title ?? \"当前材料\"")
     && !workspaceStoreSource.contains("已保存到 macOS 钥匙串。")
     && !workspaceStoreSource.contains("已选择材料、当前选区和右侧笔记"), "agent context and setup notices avoid fake material fallback copy and visible internal agent labels")
 if let askAgentStart = workspaceStoreSource.range(of: "func askAgent() async")?.lowerBound,
-   let offlinePreviewStart = workspaceStoreSource.range(of: "private func offlineAgentPreview")?.lowerBound {
-    let askAgentSource = String(workspaceStoreSource[askAgentStart..<offlinePreviewStart])
+   let offlineInputStart = workspaceStoreSource.range(of: "private func offlineAgentInput")?.lowerBound {
+    let askAgentSource = String(workspaceStoreSource[askAgentStart..<offlineInputStart])
+    let credentialRange = askAgentSource.range(of: "guard let credential = resolvedOpenAIAPIKey()")!
     expect(askAgentSource.range(of: "agentDraft = \"\"") != nil
         && askAgentSource.range(of: "selectionAttachments = []") != nil
+        && askAgentSource.range(of: "messages.append(contentsOf: AgentOfflineTurn.messages(") != nil
         && askAgentSource.range(of: "messages.append(AgentMessage(role: .user, text: question, source: sourceTitle))") != nil
-        && askAgentSource.range(of: "guard let credential = resolvedOpenAIAPIKey()") != nil
-        && askAgentSource.range(of: "messages.append(AgentMessage(role: .user, text: question, source: sourceTitle))")!.lowerBound < askAgentSource.range(of: "guard let credential = resolvedOpenAIAPIKey()")!.lowerBound
-        && askAgentSource.range(of: "agentDraft = \"\"")!.lowerBound < askAgentSource.range(of: "guard let credential = resolvedOpenAIAPIKey()")!.lowerBound
-        && askAgentSource.range(of: "selectionAttachments = []")!.lowerBound < askAgentSource.range(of: "guard let credential = resolvedOpenAIAPIKey()")!.lowerBound,
-        "agent send appends the user turn, clears the composer, and removes selection chips before API-key validation")
+        && askAgentSource.range(of: "agentDraft = \"\"")!.lowerBound < credentialRange.lowerBound
+        && askAgentSource.range(of: "selectionAttachments = []")!.lowerBound < credentialRange.lowerBound
+        && askAgentSource.range(of: "messages.append(contentsOf: AgentOfflineTurn.messages(")!.lowerBound > credentialRange.lowerBound
+        && askAgentSource.range(of: "messages.append(AgentMessage(role: .user, text: question, source: sourceTitle))")!.lowerBound > credentialRange.lowerBound,
+        "agent send clears the composer before key validation and uses the offline turn helper when no API key exists")
 } else {
     expect(false, "askAgent source is readable")
 }
