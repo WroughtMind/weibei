@@ -546,7 +546,7 @@ private struct WeiBeiIconButtonBody: View {
     private func foreground(isPressed: Bool) -> Color {
         guard isEnabled else { return WeiBeiTheme.tertiaryInk.opacity(0.58) }
         if prominence == .primary {
-            return colorScheme == .dark ? WeiBeiTheme.onCinnabar.opacity(isPressed ? 1 : 0.94) : WeiBeiTheme.onCinnabar
+            return (isPressed || hovering) ? WeiBeiTheme.onCinnabar : WeiBeiTheme.cinnabar
         }
         if active { return WeiBeiTheme.cinnabar }
         if isPressed || hovering { return WeiBeiTheme.ink }
@@ -556,10 +556,12 @@ private struct WeiBeiIconButtonBody: View {
     private func background(isPressed: Bool) -> Color {
         guard isEnabled else { return Color.clear }
         if prominence == .primary {
-            if colorScheme == .dark {
-                return WeiBeiTheme.cinnabarSoft.opacity(primaryOpacity(isPressed: isPressed))
+            if isPressed || hovering {
+                return WeiBeiTheme.cinnabar.opacity(primaryOpacity(isPressed: isPressed))
             }
-            return WeiBeiTheme.cinnabar.opacity(primaryOpacity(isPressed: isPressed))
+            return colorScheme == .dark
+                ? WeiBeiTheme.paperInset.opacity(0.58)
+                : WeiBeiTheme.cinnabarSoft.opacity(0.72)
         }
         if active {
             return WeiBeiTheme.cinnabarSoft.opacity(activeOpacity(isPressed: isPressed))
@@ -572,7 +574,12 @@ private struct WeiBeiIconButtonBody: View {
     private var border: Color {
         guard isEnabled else { return Color.clear }
         if prominence == .primary {
-            return WeiBeiTheme.cinnabar.opacity(hovering ? (colorScheme == .dark ? 0.62 : 0.34) : (colorScheme == .dark ? 0.42 : 0.16))
+            if configuration.isPressed || hovering {
+                return WeiBeiTheme.cinnabar.opacity(colorScheme == .dark ? 0.62 : 0.42)
+            }
+            return colorScheme == .dark
+                ? WeiBeiTheme.hairline.opacity(0.76)
+                : WeiBeiTheme.cinnabar.opacity(0.18)
         }
         if active {
             return WeiBeiTheme.cinnabar.opacity(hovering ? (colorScheme == .dark ? 0.50 : 0.42) : (colorScheme == .dark ? 0.34 : 0.25))
@@ -582,9 +589,9 @@ private struct WeiBeiIconButtonBody: View {
 
     private func primaryOpacity(isPressed: Bool) -> Double {
         if colorScheme == .dark {
-            return isPressed ? 0.98 : hovering ? 0.84 : 0.68
+            return isPressed ? 0.88 : 0.70
         }
-        return isPressed ? 0.98 : hovering ? 0.90 : 0.82
+        return isPressed ? 0.90 : 0.78
     }
 
     private func activeOpacity(isPressed: Bool) -> Double {
