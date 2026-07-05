@@ -56,6 +56,7 @@ struct ReaderView: View {
             applyPendingPDFPageIfReady()
         }
         .onChange(of: pdfPageIndex) { _, _ in
+            store.updateReaderPageIndex(pdfPageIndex)
             syncReaderLocationTitle()
         }
         .onChange(of: pdfPageCount) { _, _ in
@@ -161,7 +162,10 @@ struct ReaderView: View {
 
                 Button {
                     revealPDFControls()
-                    pdfPageIndex = PageNavigator.previous(pdfPageIndex)
+                    let next = PageNavigator.previous(pdfPageIndex)
+                    guard next != pdfPageIndex else { return }
+                    store.recordReaderPageNavigationPoint()
+                    pdfPageIndex = next
                 } label: {
                     Image(systemName: "chevron.left")
                 }
@@ -177,7 +181,10 @@ struct ReaderView: View {
 
                 Button {
                     revealPDFControls()
-                    pdfPageIndex = PageNavigator.next(pdfPageIndex, pageCount: pdfPageCount)
+                    let next = PageNavigator.next(pdfPageIndex, pageCount: pdfPageCount)
+                    guard next != pdfPageIndex else { return }
+                    store.recordReaderPageNavigationPoint()
+                    pdfPageIndex = next
                 } label: {
                     Image(systemName: "chevron.right")
                 }

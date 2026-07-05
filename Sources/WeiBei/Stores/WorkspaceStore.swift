@@ -20,6 +20,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var readerSearch = ""
     @Published var showReaderSearch = false
     @Published var readerLocationTitle: String?
+    @Published var readerPageIndex = 0
     @Published var readerTargetPageIndex: Int?
     @Published var focusedPane: PaneFocus = .reader
     @Published var focusRequest = 0
@@ -56,6 +57,7 @@ final class WorkspaceStore: ObservableObject {
         var noteRenderMode: NoteRenderMode
         var showReaderSearch: Bool
         var readerSearch: String
+        var readerPageIndex: Int
         var focusedPane: PaneFocus
     }
 
@@ -268,6 +270,7 @@ final class WorkspaceStore: ObservableObject {
         selectedItemID = itemID
         if itemChanged {
             clearUnpinnedFloatingSelection(keepContext: false)
+            readerPageIndex = 0
         }
         readerLocationTitle = selectedMaterialItem?.title
         clearReaderSearchIfNeeded()
@@ -392,6 +395,15 @@ final class WorkspaceStore: ObservableObject {
     func updateReaderLocationTitle(_ title: String?) {
         let cleaned = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         readerLocationTitle = cleaned.isEmpty ? selectedMaterialItem?.title : cleaned
+    }
+
+    func updateReaderPageIndex(_ index: Int) {
+        readerPageIndex = max(index, 0)
+    }
+
+    func recordReaderPageNavigationPoint() {
+        guard selectedMaterialItem?.kind == .pdf else { return }
+        recordNavigationPoint()
     }
 
     var canOpenSelectedSourceReference: Bool {
@@ -533,6 +545,7 @@ final class WorkspaceStore: ObservableObject {
             noteRenderMode: noteRenderMode,
             showReaderSearch: showReaderSearch,
             readerSearch: readerSearch,
+            readerPageIndex: readerPageIndex,
             focusedPane: focusedPane
         )
     }
@@ -548,10 +561,11 @@ final class WorkspaceStore: ObservableObject {
         noteRenderMode = snapshot.noteRenderMode
         showReaderSearch = snapshot.showReaderSearch
         readerSearch = snapshot.readerSearch
+        readerPageIndex = snapshot.readerPageIndex
         focusedPane = snapshot.focusedPane
         noteText = noteText(for: selectedItem)
         readerLocationTitle = selectedMaterialItem?.title
-        readerTargetPageIndex = nil
+        readerTargetPageIndex = selectedMaterialItem?.kind == .pdf ? snapshot.readerPageIndex : nil
         messages = []
         showQuietInsight = agentSurface == .quietInsight
         clearUnpinnedFloatingSelection(keepContext: false)
