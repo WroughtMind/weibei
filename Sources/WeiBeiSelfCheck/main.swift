@@ -203,8 +203,14 @@ let pdfSelections = selectablePDF?.findString("资金使用价格", withOptions:
 expect(pdfSelections.count == 1, "PDFKit finds selectable text in generated PDF")
 if let selection = pdfSelections.first, let page = selection.pages.first {
     expect(selection.string == "资金使用价格", "PDFSelection preserves selected text")
-    expect(selectablePDF?.index(for: page) == 0, "PDFSelection resolves selected page index")
+    let selectedPDFPageIndex = selectablePDF?.index(for: page)
+    expect(selectedPDFPageIndex == 0, "PDFSelection resolves selected page index")
     expect(!selection.bounds(for: page).isEmpty, "PDFSelection exposes non-empty page bounds for floating agent anchor")
+    let ownerTitle = "Mishkin 教材样例，第 \((selectedPDFPageIndex ?? 0) + 1) 页"
+    let context = SelectionContext(text: selection.string ?? "", source: .document, ownerTitle: ownerTitle)
+    let reference = SourceReferenceTitle.parse("来源：\(context.ownerTitle)")
+    expect(context.label == "文档选区：Mishkin 教材样例，第 1 页", "PDF selection context carries the selected page label into the floating agent")
+    expect(reference.title == "Mishkin 教材样例" && reference.pageIndex == 0, "PDF selection reference can jump back to the selected page")
 } else {
     expect(false, "PDFSelection contains page")
 }
