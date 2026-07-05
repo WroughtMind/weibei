@@ -849,9 +849,11 @@ struct AgentPaneView: View {
                         }
                         .padding(14)
                         .padding(.top, store.messages.isEmpty ? 22 : 0)
+                        .frame(maxWidth: agentContentMaxWidth, alignment: .leading)
                         .frame(
+                            maxWidth: .infinity,
                             minHeight: geometry.size.height,
-                            alignment: .topLeading
+                            alignment: .top
                         )
                         .animation(WeiBeiMotion.panel, value: store.messages.count)
                     }
@@ -954,6 +956,10 @@ struct AgentPaneView: View {
 
     private var agentInputMaxWidth: CGFloat? {
         store.layout == .immersiveConversation ? 680 : nil
+    }
+
+    private var agentContentMaxWidth: CGFloat? {
+        store.layout == .immersiveConversation ? 760 : nil
     }
 
     private var emptyAgentState: some View {

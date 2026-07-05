@@ -1331,11 +1331,12 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func runVerificationScenarioIfNeeded() async {
-        guard !didRunVerificationScenario,
-              Self.environmentValue("WEIBEI_VERIFY_SCENARIO") == "offline-learning-flow" else { return }
+        guard !didRunVerificationScenario else { return }
+        let scenario = Self.environmentValue("WEIBEI_VERIFY_SCENARIO")
+        guard scenario == "offline-learning-flow" || scenario == "immersive-conversation-flow" else { return }
         didRunVerificationScenario = true
-        layout = .documentAgentNotes
-        showLibrary = true
+        layout = scenario == "immersive-conversation-flow" ? .immersiveConversation : .documentAgentNotes
+        showLibrary = scenario != "immersive-conversation-flow"
         showRightPane = true
         agentSurface = .hidden
         select(itemID: "sample-html")
