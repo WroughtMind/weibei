@@ -2171,8 +2171,7 @@ private struct AgentBubble: View {
                 .padding(.leading, 20)
                 .padding(.trailing, 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(WeiBeiTheme.paperRaised.opacity(hovering ? 0.14 : 0.0))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .contentShape(Rectangle())
                 .overlay(alignment: .leading) {
                     Capsule()
                         .fill(assistantMarkColor.opacity(hovering ? 1.0 : 0.72))
