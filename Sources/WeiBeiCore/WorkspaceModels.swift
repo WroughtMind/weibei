@@ -597,6 +597,27 @@ public enum PageNavigator {
     }
 }
 
+public enum PDFModeChipPresentation {
+    public static func showsLabel(isExpanded: Bool) -> Bool {
+        isExpanded
+    }
+
+    public static func fillOpacity(isExpanded: Bool, isHovering: Bool) -> Double {
+        if isExpanded { return 0.86 }
+        return isHovering ? 0.78 : 0.66
+    }
+
+    public static func strokeOpacity(isExpanded: Bool, isHovering: Bool) -> Double {
+        if isExpanded { return 0.58 }
+        return isHovering ? 0.34 : 0.18
+    }
+
+    public static func controlOpacity(isExpanded: Bool, isHovering: Bool) -> Double {
+        if isExpanded { return 0.94 }
+        return isHovering ? 0.84 : 0.70
+    }
+}
+
 public enum ReaderSearch {
     public static func cleaned(_ query: String) -> String {
         query.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -252,6 +252,20 @@ expect(groundedPrompt.input.contains("当前笔记：利率笔记"), "agent prom
 expect(groundedPrompt.input.contains("当前选区（来源：Mishkin 教材样例，第 1 页选区）："), "agent prompt includes selection source")
 expect(groundedPrompt.input.contains("用户（来源：利率笔记）：上一问"), "agent prompt keeps recent message source")
 expect(groundedPrompt.instructions.contains("来源依据") && groundedPrompt.instructions.contains("没有用到的来源不要列"), "agent prompt requires grounded source evidence")
+expect(groundedPrompt.instructions.contains("学习助手") && !groundedPrompt.instructions.contains("学习 Agent"), "agent prompt speaks as a study assistant instead of internal agent copy")
+let assistantDialoguePrompt = OpenAIResponsesClient.composePrompt(
+    question: "继续解释",
+    materialTitle: "Mishkin 教材样例",
+    materialText: "金融体系把储蓄者的资金转移给有投资机会的人。",
+    noteTitle: "利率笔记",
+    noteText: "",
+    selectionText: nil,
+    recentMessages: [
+        AgentMessage(role: .assistant, text: "上一答", source: nil)
+    ]
+)
+expect(assistantDialoguePrompt.input.contains("助手：上一答")
+    && !assistantDialoguePrompt.input.contains("Agent：上一答"), "assistant dialogue turns avoid internal agent labels")
 let currentPagePrompt = OpenAIResponsesClient.composePrompt(
     question: "解释当前页",
     materialTitle: "Mishkin 教材样例，第 3 页",
@@ -376,6 +390,10 @@ expect(PageNavigator.previous(0) == 0, "pdf previous clamps first page")
 expect(PageNavigator.next(0, pageCount: 2) == 1, "pdf next advances")
 expect(PageNavigator.next(1, pageCount: 2) == 1, "pdf next clamps last page")
 expect(PageNavigator.display(0, pageCount: 0) == "1 / 1", "pdf display empty")
+expect(!PDFModeChipPresentation.showsLabel(isExpanded: false), "pdf mode chip hides text after collapse")
+expect(PDFModeChipPresentation.showsLabel(isExpanded: true), "pdf mode chip shows text only during transient expansion")
+expect(PDFModeChipPresentation.controlOpacity(isExpanded: false, isHovering: true)
+    < PDFModeChipPresentation.controlOpacity(isExpanded: true, isHovering: true), "pdf mode chip fades back even when hover state lingers")
 expect(ReaderSearch.cleaned("  利率\n") == "利率", "reader search trims query")
 expect(ReaderSearch.firstMatch(in: "实际利率与名义利率", query: "名义")?.location == 5, "reader search finds first match")
 expect(ReaderSearch.firstMatch(in: "Money and Banking", query: "money")?.location == 0, "reader search ignores case")
@@ -695,25 +713,26 @@ expect(readerViewSource.contains("pdfControlsHovering")
     && readerViewSource.contains("pdfControlsExpanded")
     && readerViewSource.contains("pdfControlsCollapseToken")
     && readerViewSource.contains("private var pdfControlsActive: Bool")
-    && readerViewSource.contains("private var pdfControlsActive: Bool {\n        pdfControlsHovering || pdfControlsExpanded\n    }")
+    && readerViewSource.contains("private var pdfControlsActive: Bool {\n        pdfControlsExpanded\n    }")
     && readerViewSource.contains(".onAppear {\n            schedulePDFControlsCollapse(after: 0.9)\n        }")
-    && readerViewSource.contains("WeiBeiTheme.paperRaised.opacity(pdfControlsActive ? 0.86 : 0.72)")
-    && readerViewSource.contains(".opacity(pdfControlsActive ? 0.94 : 0.90)")
+    && readerViewSource.contains("PDFModeChipPresentation.fillOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering)")
+    && readerViewSource.contains("PDFModeChipPresentation.controlOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering)")
     && readerViewSource.contains(".offset(x: 0)")
-    && readerViewSource.contains(".scaleEffect(pdfControlsHovering ? 1.01 : (pdfControlsActive ? 1 : 0.995), anchor: .trailing)")
+    && readerViewSource.contains(".scaleEffect(pdfControlsExpanded ? 1 : 0.985, anchor: .trailing)")
     && readerViewSource.contains(".onHover")
     && readerViewSource.contains("schedulePDFControlsCollapse(after: 0.28)")
     && readerViewSource.contains("private func collapsePDFControls()")
     && readerViewSource.contains("pdfControlsHovering = false")
     && readerViewSource.contains("guard pdfControlsCollapseToken == token else { return }")
-    && !readerViewSource.contains("guard pdfControlsCollapseToken == token, !pdfControlsHovering else { return }"), "pdf controls stay low-distraction and collapse after pointer idle instead of sticking open")
+    && !readerViewSource.contains("guard pdfControlsCollapseToken == token, !pdfControlsHovering else { return }")
+    && !readerViewSource.contains("pdfControlsHovering || pdfControlsExpanded"), "pdf controls stay low-distraction and collapse after pointer idle instead of sticking open")
 expect(readerViewSource.contains("case .scroll: \"滚动\"")
     && readerViewSource.contains("case .page: \"翻页\"")
     && readerViewSource.contains("case .scroll: \"arrow.up.and.down\"")
     && readerViewSource.contains("case .page: \"rectangle.portrait\"")
     && readerViewSource.contains("private var pdfModeToggle: some View")
     && readerViewSource.contains("private var showsPDFModeLabel: Bool")
-    && readerViewSource.contains("private var showsPDFModeLabel: Bool {\n        pdfControlsActive\n    }")
+    && readerViewSource.contains("PDFModeChipPresentation.showsLabel(isExpanded: pdfControlsExpanded)")
     && readerViewSource.contains("if pdfBrowseMode == .page, pdfPageCount > 1")
     && readerViewSource.contains("private func revealPDFControls")
     && readerViewSource.contains("DispatchQueue.main.asyncAfter")

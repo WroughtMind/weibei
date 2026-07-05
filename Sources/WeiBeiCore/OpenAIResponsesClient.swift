@@ -99,15 +99,15 @@ public struct OpenAIResponsesClient {
         \(trimmedNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "无" : trimmedNote)
         """
         let dialogue = recentMessages.suffix(8).map { message in
-            let role = message.role == .user ? "用户" : "Agent"
+            let role = message.role == .user ? "用户" : "助手"
             let source = message.source?.trimmingCharacters(in: .whitespacesAndNewlines)
             let sourceText = source?.isEmpty == false ? "（来源：\(source!)）" : ""
             return "\(role)\(sourceText)：\(String(message.text.prefix(1_200)))"
         }.joined(separator: "\n")
         let sourceRule = "回答末尾用“来源依据”列出真正用到的材料标题、选区来源或笔记标题；没有用到的来源不要列。"
         let instructions = hasMaterial
-            ? "你是魏碑里的学习 Agent。只根据当前材料、当前笔记和当前选区回答；没有证据就说未在材料或笔记中确认。回答用中文，先给结论。\(sourceRule)"
-            : "你是魏碑里的学习 Agent。只根据当前笔记和当前选区回答；没有证据就说未在笔记或选区中确认。回答用中文，先给结论。\(sourceRule)"
+            ? "你是魏碑里的学习助手。只根据当前材料、当前笔记和当前选区回答；没有证据就说未在材料或笔记中确认。回答用中文，先给结论。\(sourceRule)"
+            : "你是魏碑里的学习助手。只根据当前笔记和当前选区回答；没有证据就说未在笔记或选区中确认。回答用中文，先给结论。\(sourceRule)"
         let input = """
         \(materialBlock)
 

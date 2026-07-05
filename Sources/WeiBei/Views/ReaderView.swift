@@ -98,21 +98,21 @@ struct ReaderView: View {
         .background {
             ZStack {
                 RoundedRectangle(cornerRadius: 8)
-                    .fill(WeiBeiTheme.paperRaised.opacity(pdfControlsActive ? 0.86 : 0.72))
+                    .fill(WeiBeiTheme.paperRaised.opacity(PDFModeChipPresentation.fillOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering)))
                 RoundedRectangle(cornerRadius: 8)
                     .fill(.regularMaterial)
-                    .opacity(pdfControlsHovering ? 0.055 : 0.0)
+                    .opacity(pdfControlsExpanded ? 0.055 : 0.0)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay {
             RoundedRectangle(cornerRadius: 8)
-                .stroke(WeiBeiTheme.hairline.opacity(pdfControlsActive ? 0.64 : 0.30), lineWidth: 1)
+                .stroke(WeiBeiTheme.hairline.opacity(PDFModeChipPresentation.strokeOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering)), lineWidth: 1)
         }
-        .shadow(color: WeiBeiTheme.ink.opacity(pdfControlsHovering ? 0.045 : 0.0), radius: 7, y: 3)
-        .opacity(pdfControlsActive ? 0.94 : 0.90)
+        .shadow(color: WeiBeiTheme.ink.opacity(pdfControlsExpanded ? 0.045 : 0.0), radius: 7, y: 3)
+        .opacity(PDFModeChipPresentation.controlOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering))
         .offset(x: 0)
-        .scaleEffect(pdfControlsHovering ? 1.01 : (pdfControlsActive ? 1 : 0.995), anchor: .trailing)
+        .scaleEffect(pdfControlsExpanded ? 1 : 0.985, anchor: .trailing)
         .contentShape(RoundedRectangle(cornerRadius: 8))
         .onAppear {
             schedulePDFControlsCollapse(after: 0.9)
@@ -222,7 +222,7 @@ struct ReaderView: View {
     }
 
     private var pdfControlsActive: Bool {
-        pdfControlsHovering || pdfControlsExpanded
+        pdfControlsExpanded
     }
 
     private var pdfModeForeground: Color {
@@ -233,7 +233,7 @@ struct ReaderView: View {
     }
 
     private var showsPDFModeLabel: Bool {
-        pdfControlsActive
+        PDFModeChipPresentation.showsLabel(isExpanded: pdfControlsExpanded)
     }
 
     private func revealPDFControls(collapseAfter delay: TimeInterval = 1.25) {
