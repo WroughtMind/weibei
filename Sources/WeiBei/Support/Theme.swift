@@ -9,30 +9,12 @@ enum WeiBeiAppearanceMode: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var label: String {
-        switch self {
-        case .paper:
-            return "纸面"
-        case .inkstone:
-            return "墨石"
-        }
-    }
-
     func label(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
         case .paper:
             return language.text("纸面", "Paper")
         case .inkstone:
             return language.text("墨石", "Inkstone")
-        }
-    }
-
-    var actionLabel: String {
-        switch self {
-        case .paper:
-            return "切到墨石暗色"
-        case .inkstone:
-            return "切到纸面亮色"
         }
     }
 
@@ -357,21 +339,6 @@ enum TopBarVariant: String, CaseIterable, Identifiable {
     case wide
 
     var id: String { rawValue }
-
-    var label: String {
-        switch self {
-        case .balanced:
-            return "标准"
-        case .compact:
-            return "紧凑"
-        case .reader:
-            return "阅读"
-        case .glyph:
-            return "图标"
-        case .wide:
-            return "宽松"
-        }
-    }
 
     func label(language: WeiBeiInterfaceLanguage) -> String {
         switch self {

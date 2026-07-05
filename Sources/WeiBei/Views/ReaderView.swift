@@ -367,13 +367,6 @@ private enum PDFBrowseMode: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var label: String {
-        switch self {
-        case .scroll: "滚动"
-        case .page: "翻页"
-        }
-    }
-
     func label(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
         case .scroll:
@@ -394,13 +387,6 @@ private enum PDFBrowseMode: String, CaseIterable, Identifiable {
         switch self {
         case .scroll: .page
         case .page: .scroll
-        }
-    }
-
-    var help: String {
-        switch self {
-        case .scroll: "连续滚动浏览 PDF"
-        case .page: "单页翻页浏览 PDF"
         }
     }
 
