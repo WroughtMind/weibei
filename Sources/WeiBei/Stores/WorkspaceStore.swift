@@ -73,8 +73,7 @@ final class WorkspaceStore: ObservableObject {
     let sampleItems: [StudyItem] = WorkspaceStore.makeSampleItems()
 
     init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let folder = appSupport.appendingPathComponent("WeiBei", isDirectory: true)
+        let folder = Self.workspaceRootDirectory() ?? FileManager.default.temporaryDirectory.appendingPathComponent("WeiBei", isDirectory: true)
         storageURL = folder.appendingPathComponent("workspace.json")
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         load()
@@ -1479,8 +1478,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private static func samplePDFURL() -> URL? {
-        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
-        let directory = appSupport.appendingPathComponent("WeiBei/Samples", isDirectory: true)
+        guard let root = workspaceRootDirectory() else { return nil }
+        let directory = root.appendingPathComponent("Samples", isDirectory: true)
         let url = directory.appendingPathComponent("mishkin-sample.pdf")
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return writeSamplePDF(to: url) ? url : nil
@@ -1535,8 +1534,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func appOwnedFilesDirectory() -> URL {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let directory = appSupport.appendingPathComponent("WeiBei/Files", isDirectory: true)
+        let root = Self.workspaceRootDirectory() ?? FileManager.default.temporaryDirectory.appendingPathComponent("WeiBei", isDirectory: true)
+        let directory = root.appendingPathComponent("Files", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
     }
@@ -1760,5 +1759,14 @@ final class WorkspaceStore: ObservableObject {
 
     private static func environmentValue(_ name: String) -> String {
         OpenAIAPIKeyStore.cleaned(ProcessInfo.processInfo.environment[name] ?? "")
+    }
+
+    private static func workspaceRootDirectory() -> URL? {
+        let override = environmentValue("WEIBEI_WORKSPACE_DIR")
+        if !override.isEmpty {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("WeiBei", isDirectory: true)
     }
 }

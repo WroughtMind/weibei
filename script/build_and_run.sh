@@ -41,6 +41,7 @@ APP_MACOS="$APP_CONTENTS/MacOS"
 APP_BINARY="$APP_MACOS/$PRODUCT_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 VERIFY_PID=""
+VERIFY_DATA_DIR="$DIST_DIR/Data"
 
 if [[ "$CHECK_ONLY" == true ]]; then
   :
@@ -117,7 +118,9 @@ cleanup_verify_app() {
 open_app_for_verify() {
   local before_pids
   before_pids="$(pgrep -x "$PRODUCT_NAME" || true)"
-  /usr/bin/open -n -g --env WEIBEI_SUPPRESS_ACTIVATION=1 "$APP_BUNDLE"
+  rm -rf "$VERIFY_DATA_DIR"
+  mkdir -p "$VERIFY_DATA_DIR"
+  /usr/bin/open -n -g --env WEIBEI_SUPPRESS_ACTIVATION=1 --env "WEIBEI_WORKSPACE_DIR=$VERIFY_DATA_DIR" "$APP_BUNDLE"
   for _ in {1..50}; do
     local newest_pid
     newest_pid="$(pgrep -nx "$PRODUCT_NAME" || true)"
