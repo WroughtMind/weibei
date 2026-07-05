@@ -406,6 +406,10 @@ let themeSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPa
 let themeSource = (try? String(contentsOf: themeSourceURL, encoding: .utf8)) ?? ""
 expect(themeSource.contains(".fill(.regularMaterial)") && themeSource.contains("paperWashOpacity"), "header glass uses one shared paper material wash")
 expect(themeSource.contains("WeiBeiTheme.glassTint.opacity(0.16 * opacity)") && !themeSource.contains("WeiBeiTheme.paperInset.opacity(0.10 * opacity)"), "header handoff fade avoids a hard paper edge")
+expect(themeSource.contains("dark: WeiBeiTone(hex: 0x1A1814)")
+    && themeSource.contains("dark: WeiBeiTone(hex: 0x3A3328)")
+    && themeSource.contains("colorScheme == .dark ? 0.12 : 0.20")
+    && themeSource.contains("colorScheme == .dark ? 0.16 : 0.24"), "dark glass headers use warm inkstone wash instead of hard black blocks")
 expect(themeSource.contains("paperRaised.opacity(0.985)")
     && themeSource.contains(".opacity(0.015)")
     && !themeSource.contains("paperRaised.opacity(0.92)"), "floating panels stay readable without losing the light glass surface")
@@ -720,6 +724,8 @@ if let pageOverlayStart = readerViewSource.range(of: "private final class PDFOCR
 }
 expect(readerViewSource.contains("private class ReaderSelectableTextView: NSTextView")
     && readerViewSource.contains("override func acceptsFirstMouse(for event: NSEvent?) -> Bool")
+    && readerViewSource.contains("override func mouseDown(with event: NSEvent)")
+    && readerViewSource.contains("window?.makeFirstResponder(self)")
     && readerViewSource.contains("private final class PDFOCRLineTextView: ReaderSelectableTextView")
     && readerViewSource.components(separatedBy: "let textView = ReaderSelectableTextView()").count >= 3
     && !readerViewSource.contains("let textView = NSTextView()"), "PDF OCR, sample PDF, and plain text readers accept first mouse for immediate drag selection")
@@ -742,6 +748,7 @@ expect(readerViewSource.contains("@State private var pdfHasSelectableText: Bool?
     && readerViewSource.contains("PDFOCRTextExtractor.pages(from: document, pageIndexes: pageIndexes)")
     && readerViewSource.contains("private func ensureOCRForCurrentPage(in view: PDFView)")
     && readerViewSource.contains("PDFOCRTextExtractor.pages(from: document, pageIndexes: [index])")
+    && readerViewSource.contains("self.configureOCROverlays(for: document, generation: generation, in: view)\n                    self.ensureOCRForCurrentPage(in: view)")
     && readerViewSource.contains("self.ensureOCRForCurrentPage(in: view)")
     && readerViewSource.contains("onSelectableTextChange(nativeTextPageIndexes.contains(index) || ocrPagesByPageIndex[index] != nil)")
     && readerViewSource.contains("Text(\"未检测到可选文本层\")")
@@ -1101,8 +1108,10 @@ expect(notesAgentSource.contains("func weibeiPaneHeaderChrome(appearanceMode: We
     && notesAgentSource.contains("private struct WeiBeiPaneHeader<Actions: View>: View")
     && notesAgentSource.contains("var title: String")
     && notesAgentSource.contains("var subtitle: String")
+    && notesAgentSource.contains("HStack(alignment: .firstTextBaseline, spacing: 8)")
     && notesAgentSource.contains("Text(title)")
     && notesAgentSource.contains("Text(subtitle)")
+    && !notesAgentSource.contains("VStack(alignment: .leading, spacing: 2) {\n                Text(title)")
     && notesAgentSource.contains("WeiBeiHeaderHandoffFade(height: 28, opacity: 0.34)")
     && notesAgentSource.contains("func weibeiHeaderAccessoryGroup() -> some View")
     && notePaneHeaderSource.contains(".weibeiHeaderAccessoryGroup()")

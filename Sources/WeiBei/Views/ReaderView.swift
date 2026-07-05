@@ -521,6 +521,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                     }
                     self.updateSelectableTextState(in: view)
                     self.configureOCROverlays(for: document, generation: generation, in: view)
+                    self.ensureOCRForCurrentPage(in: view)
                     if !self.lastSearchQuery.isEmpty {
                         self.applySearch(self.lastSearchQuery, in: view, force: true)
                     }
@@ -1600,6 +1601,11 @@ private struct SamplePDFSelectablePageView: NSViewRepresentable {
 private class ReaderSelectableTextView: NSTextView {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        super.mouseDown(with: event)
     }
 }
 

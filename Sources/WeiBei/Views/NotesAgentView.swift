@@ -83,12 +83,12 @@ private struct WeiBeiPaneHeader<Actions: View>: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(title)
                     .font(.system(size: 18, weight: .semibold, design: .serif))
                     .foregroundStyle(WeiBeiTheme.ink)
                 Text(subtitle)
-                    .font(.caption2)
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .lineLimit(1)
             }

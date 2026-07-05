@@ -164,11 +164,11 @@ enum WeiBeiTheme {
     )
     static let glassTint = Color.weiBei(
         light: WeiBeiTone(red: 0.982, green: 0.948, blue: 0.875),
-        dark: WeiBeiTone(hex: 0x151515)
+        dark: WeiBeiTone(hex: 0x1A1814)
     )
     static let glassHighlight = Color.weiBei(
         light: WeiBeiTone(red: 0.992, green: 0.970, blue: 0.918),
-        dark: WeiBeiTone(hex: 0x2D2D2D)
+        dark: WeiBeiTone(hex: 0x3A3328)
     )
     static let stone = secondaryInk
 }
@@ -340,6 +340,7 @@ enum TopBarVariant: String, CaseIterable, Identifiable {
 struct WeiBeiGlassHeaderBackground: View {
     var paperOpacity: Double = 0.72
     var materialOpacity: Double = 0.14
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         ZStack {
@@ -352,10 +353,10 @@ struct WeiBeiGlassHeaderBackground: View {
 
             LinearGradient(
                 colors: [
-                    WeiBeiTheme.glassHighlight.opacity(0.20),
-                    WeiBeiTheme.glassTint.opacity(0.24),
-                    WeiBeiTheme.paper.opacity(0.13),
-                    WeiBeiTheme.paper.opacity(0.04)
+                    WeiBeiTheme.glassHighlight.opacity(colorScheme == .dark ? 0.12 : 0.20),
+                    WeiBeiTheme.glassTint.opacity(colorScheme == .dark ? 0.16 : 0.24),
+                    WeiBeiTheme.paperRaised.opacity(colorScheme == .dark ? 0.12 : 0.13),
+                    WeiBeiTheme.paper.opacity(colorScheme == .dark ? 0.10 : 0.04)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -367,7 +368,8 @@ struct WeiBeiGlassHeaderBackground: View {
     }
 
     private var paperWashOpacity: Double {
-        min(0.48, max(0.22, paperOpacity * 0.42))
+        let factor = colorScheme == .dark ? 0.30 : 0.42
+        return min(colorScheme == .dark ? 0.34 : 0.48, max(0.20, paperOpacity * factor))
     }
 }
 
