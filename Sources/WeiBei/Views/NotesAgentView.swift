@@ -49,6 +49,30 @@ private extension View {
             }
             .animation(WeiBeiMotion.appearance, value: appearanceMode)
     }
+
+    func weibeiHeaderAccessoryGroup() -> some View {
+        self
+            .padding(3)
+            .background {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(.ultraThinMaterial)
+                        .opacity(0.05)
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(WeiBeiTheme.paperInset.opacity(0.22))
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(alignment: .top) {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(WeiBeiTheme.glassHighlight.opacity(0.18), lineWidth: 1)
+                    .padding(0.5)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(WeiBeiTheme.hairline.opacity(0.62), lineWidth: 1)
+            }
+    }
 }
 
 private struct WeiBeiPaneHeader<Actions: View>: View {
@@ -139,26 +163,7 @@ struct NotePaneView: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(3)
-        .background {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(.ultraThinMaterial)
-                    .opacity(0.05)
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(WeiBeiTheme.paperInset.opacity(0.22))
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(alignment: .top) {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(WeiBeiTheme.glassHighlight.opacity(0.18), lineWidth: 1)
-                .padding(0.5)
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(WeiBeiTheme.hairline.opacity(0.62), lineWidth: 1)
-        }
+        .weibeiHeaderAccessoryGroup()
     }
 
     private var noteHeaderSubtitle: String {
@@ -703,22 +708,28 @@ struct AgentPaneView: View {
     var body: some View {
         VStack(spacing: 0) {
             WeiBeiPaneHeader(title: "对话", subtitle: store.selectedItem?.title ?? "无上下文", appearanceMode: store.appearanceMode) {
-                if !store.messages.isEmpty {
-                    agentToolButton("整理", help: "整理笔记", systemImage: "list.bullet.rectangle") {
-                        store.askToOrganizeNote()
-                    }
-                }
+                if hasAgentHeaderActions {
+                    HStack(spacing: 2) {
+                        if !store.messages.isEmpty {
+                            agentToolButton("整理", help: "整理笔记", systemImage: "list.bullet.rectangle") {
+                                store.askToOrganizeNote()
+                            }
+                        }
 
-                if store.canApplyAgentAnswer {
-                    agentToolButton("写入回答", help: "写入回答到笔记", systemImage: "square.and.arrow.down") {
-                        store.applyLastAgentAnswerToNote()
-                    }
-                }
+                        if store.canApplyAgentAnswer {
+                            agentToolButton("写入回答", help: "写入回答到笔记", systemImage: "square.and.arrow.down") {
+                                store.applyLastAgentAnswerToNote()
+                            }
+                        }
 
-                if store.canReplaceNoteSelection {
-                    agentToolButton("替换", help: "替换笔记选区", systemImage: "arrow.left.arrow.right") {
-                        store.replaceSelectionWithLastAgentAnswer()
+                        if store.canReplaceNoteSelection {
+                            agentToolButton("替换", help: "替换笔记选区", systemImage: "arrow.left.arrow.right") {
+                                store.replaceSelectionWithLastAgentAnswer()
+                            }
+                        }
                     }
+                    .weibeiHeaderAccessoryGroup()
+                    .transition(WeiBeiTransition.floating)
                 }
             }
 
@@ -783,6 +794,10 @@ struct AgentPaneView: View {
 
     private var canSendDraft: Bool {
         !store.isAskingAgent && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var hasAgentHeaderActions: Bool {
+        !store.messages.isEmpty || store.canApplyAgentAnswer || store.canReplaceNoteSelection
     }
 
     private var agentPrompt: String {

@@ -79,6 +79,7 @@ struct ContentView: View {
         .onAppear {
             focusedPane = store.focusedPane
         }
+        .animation(WeiBeiMotion.appearance, value: store.appearanceMode)
     }
 
     private var showsGlobalFloatingAgent: Bool {
@@ -598,7 +599,7 @@ private struct UnifiedTopBarView: View {
             Section("界面") {
                 ForEach(WeiBeiAppearanceMode.allCases) { mode in
                     Button {
-                        withAnimation(WeiBeiMotion.panel) {
+                        withAnimation(WeiBeiMotion.appearance) {
                             store.setAppearanceMode(mode)
                         }
                     } label: {
