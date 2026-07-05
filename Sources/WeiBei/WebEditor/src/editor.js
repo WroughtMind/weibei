@@ -62,6 +62,7 @@ const calloutTypes = new Set([
   'todo',
 ]);
 const calloutTypePattern = '[A-Za-z][A-Za-z0-9_-]*';
+const calloutPrefixPattern = '(?:\\s*>\\s*)*\\s*';
 const calloutLabels = {
   note: '札记',
   tip: '提示',
@@ -80,9 +81,9 @@ const calloutLabels = {
   bug: '问题',
   todo: '待办',
 };
-const calloutRegex = new RegExp(`^\\\\?\\[!(${calloutTypePattern})\\]([+-]?)(?:[ \\t]+([^\\n]+))?`, 'i');
-const calloutMarkerRegex = new RegExp(`^\\s*\\\\?\\[!(?:${calloutTypePattern})\\][+-]?\\s*`, 'i');
-const calloutHeadingRegex = new RegExp(`^\\s*\\\\?\\[!(?:${calloutTypePattern})\\][+-]?(?:[ \\t]+[^\\n]+)?$`, 'i');
+const calloutRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(${calloutTypePattern})\\]([+-]?)(?:[ \\t]+([^\\n]+))?`, 'i');
+const calloutMarkerRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(?:${calloutTypePattern})\\][+-]?\\s*`, 'i');
+const calloutHeadingRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(?:${calloutTypePattern})\\][+-]?(?:[ \\t]+[^\\n]+)?$`, 'i');
 const calloutHeaderText = (node) => {
   const text = node.textBetween
     ? node.textBetween(0, node.content.size, '\n')
@@ -207,7 +208,7 @@ const normalizeMarkdownOutput = (markdown) => (markdown || '')
   .replace(/\^\\\[/g, '^[')
   .replace(/(^|\s)\\#(?=[\p{L}\p{N}_/-])/gu, '$1#')
   .replace(/\\\$(?=\d)/g, '$')
-  .replace(new RegExp(`^(\\s*>\\s*)\\\\(\\[!(?:${calloutTypePattern})\\])`, 'gim'), '$1$2');
+  .replace(new RegExp(`^(\\s*(?:>\\s*)*)\\\\(\\[!(?:${calloutTypePattern})\\])`, 'gim'), '$1$2');
 
 const splitFrontmatter = (markdown) => {
   const source = markdown || '';

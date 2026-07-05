@@ -441,9 +441,9 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         let quotePrefixColor = ink.withAlphaComponent(appearanceMode == .inkstone ? 0.30 : 0.36)
         let markerColor = NSColor.clear
         let markerFont = NSFont.monospacedSystemFont(ofSize: 1, weight: .regular)
-        let quotePrefixRegex = try? NSRegularExpression(pattern: #"(?m)^\s*>+\s*"#)
+        let quotePrefixRegex = try? NSRegularExpression(pattern: #"(?m)^\s*(?:>\s*)+"#)
         let calloutControlRegex = try? NSRegularExpression(
-            pattern: #"(?m)^(\s*(?:>\s*)?)(\\?\[![A-Za-z][A-Za-z0-9_-]*\][+-]?)"#
+            pattern: #"(?m)^(\s*(?:>\s*)*)(\\?\[![A-Za-z][A-Za-z0-9_-]*\][+-]?)"#
         )
 
         textView.undoManager?.disableUndoRegistration()

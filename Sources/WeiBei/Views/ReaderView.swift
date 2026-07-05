@@ -569,8 +569,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                     guard let self, let view, self.loadGeneration == generation else { return }
                     self.pendingOCRPageIndexes.subtract(pageIndexes)
                     self.ocrPagesByPageIndex = indexed
-                    view.pageOverlayViewProvider = indexed.isEmpty ? nil : self
-                    view.isInMarkupMode = !indexed.isEmpty
+                    self.setOCRPageOverlayProvider(indexed.isEmpty ? nil : self, in: view)
                     self.updateSelectableTextState(in: view)
                     if self.lastSearchQuery.isEmpty {
                         view.layoutDocumentView()
@@ -585,8 +584,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             ocrPagesByPageIndex = [:]
             pendingOCRPageIndexes = []
             ocrHighlightedLinesByPageIndex = [:]
-            view.pageOverlayViewProvider = nil
-            view.isInMarkupMode = false
+            setOCRPageOverlayProvider(nil, in: view)
             view.layoutDocumentView()
         }
 
@@ -606,6 +604,11 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                 return
             }
             onSelectableTextChange(nativeTextPageIndexes.contains(index) || ocrPagesByPageIndex[index] != nil)
+        }
+
+        private func setOCRPageOverlayProvider(_ provider: PDFPageOverlayViewProvider?, in view: PDFView) {
+            view.pageOverlayViewProvider = provider
+            view.isInMarkupMode = false
         }
 
         private func ensureOCRForCurrentPage(in view: PDFView) {
@@ -630,8 +633,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                     if let page = pages.first {
                         self.ocrPagesByPageIndex[page.pageIndex] = page
                     }
-                    view.pageOverlayViewProvider = self.ocrPagesByPageIndex.isEmpty ? nil : self
-                    view.isInMarkupMode = !self.ocrPagesByPageIndex.isEmpty
+                    self.setOCRPageOverlayProvider(self.ocrPagesByPageIndex.isEmpty ? nil : self, in: view)
                     self.updateSelectableTextState(in: view)
                     if self.lastSearchQuery.isEmpty {
                         view.layoutDocumentView()

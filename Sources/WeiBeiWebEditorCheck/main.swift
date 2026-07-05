@@ -46,6 +46,10 @@ tags:
 >
 > 来源：Mishkin 教材样例，第 12 页
 
+> > [!quote] 嵌套摘录
+> >
+> > 嵌套摘录里的控制符不应该露出来。
+
 > [!attention]+ 自定义标题
 >
 > 自定义 Callout 不应该漏出源标记。
@@ -253,6 +257,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           })(),
           quoteCalloutTitle: document.querySelector('blockquote.weibei-callout-quote')?.getAttribute('data-callout-title') || '',
           quoteCalloutText: document.querySelector('blockquote.weibei-callout-quote')?.textContent || '',
+          quoteCalloutCount: document.querySelectorAll('blockquote.weibei-callout-quote').length,
           quoteCalloutMarkerVisible: (() => {
             const marker = document.querySelector('blockquote.weibei-callout-quote .weibei-callout-marker');
             if (!marker) return true;
@@ -282,6 +287,26 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
               const parent = node.parentElement;
               if (parent?.closest('.weibei-callout-marker')) continue;
               if (!parent?.closest('blockquote.weibei-callout')) continue;
+              const style = getComputedStyle(parent);
+              const visible = style.display !== 'none'
+                && style.visibility !== 'hidden'
+                && style.opacity !== '0'
+                && style.color !== 'rgba(0, 0, 0, 0)'
+                && parseFloat(style.fontSize || '0') > 0;
+              if (visible) count += 1;
+            }
+            return count;
+          })(),
+          visibleRawCalloutMarkers: (() => {
+            const root = document.querySelector('.ProseMirror');
+            if (!root) return -1;
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+            let count = 0;
+            let node;
+            while ((node = walker.nextNode())) {
+              if (!/\\[![A-Za-z]/.test(node.nodeValue || '')) continue;
+              const parent = node.parentElement;
+              if (parent?.closest('.weibei-callout-marker')) continue;
               const style = getComputedStyle(parent);
               const visible = style.display !== 'none'
                 && style.visibility !== 'hidden'
@@ -435,6 +460,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("quote callout body text disappeared")
                 return
             }
+            if (result["quoteCalloutCount"] as? Int ?? 0) < 2 {
+                self.fail("nested quote callout was not recognized")
+                return
+            }
             if result["quoteCalloutMarkerHidden"] as? Bool != true {
                 self.fail("quote callout marker should collapse in writing and preview surfaces")
                 return
@@ -445,6 +474,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             if (result["visibleBareCalloutMarkers"] as? Int ?? -1) != 0 {
                 self.fail("callout source markers should not leak as visible bare text")
+                return
+            }
+            if (result["visibleRawCalloutMarkers"] as? Int ?? -1) != 0 {
+                self.fail("nested callout source markers should not leak as visible text")
                 return
             }
             if result["customCalloutType"] as? String != "attention" {
