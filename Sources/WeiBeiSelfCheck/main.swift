@@ -534,6 +534,13 @@ let agentPaneHeaderSource: String = {
     }
     return String(notesAgentSource[start..<end])
 }()
+let emptyAgentStateSource: String = {
+    guard let start = notesAgentSource.range(of: "private var emptyAgentState: some View")?.lowerBound,
+          let end = notesAgentSource.range(of: "private func starterChip", range: start..<notesAgentSource.endIndex)?.lowerBound else {
+        return ""
+    }
+    return String(notesAgentSource[start..<end])
+}()
 expect(notesAgentSource.contains("prompt: Text(agentPrompt)")
     && notesAgentSource.contains(".foregroundStyle(WeiBeiTheme.placeholderInk)"), "agent tray placeholder uses native prompt text so the cursor and text baseline align")
 expect(notesAgentSource.contains("SelectionAnchorContentPoint.fromScreenPoint(screenPoint, in: window)")
@@ -1160,8 +1167,16 @@ expect(!notesAgentSource.contains("Agent 只在右下角待命"), "corner agent 
 expect(!notesAgentSource.contains("魏碑会优先读取材料"), "agent empty state avoids product-explainer copy")
 expect(!notesAgentSource.contains("Text(\"当前上下文\")") && !notesAgentSource.contains("contextLine("), "agent empty state avoids diagnostic context rows")
 expect(notesAgentSource.contains("Text(\"已含选区\")"), "agent empty state keeps a compact selection cue")
+expect(!emptyAgentStateSource.isEmpty
+    && !emptyAgentStateSource.contains("noteContextTitle")
+    && !emptyAgentStateSource.contains("Text(store.selectedMaterialItem?.title ?? \"当前笔记\")")
+    && !emptyAgentStateSource.contains(".fill(WeiBeiTheme.cinnabar.opacity(0.34))"), "agent empty state avoids a repeated title card and heavy cinnabar rule")
 expect(notesAgentSource.contains("AgentStarterChip") && notesAgentSource.contains("hovering ? -1 : 0"), "agent starter chips keep subtle hover motion")
-expect(notesAgentSource.contains("if store.hasSelectedMaterial") && notesAgentSource.contains("starterChip(\"梳理材料\"") && notesAgentSource.contains("starterChip(\"出复习题\""), "agent starter chips hide material actions without a selected material")
+expect(notesAgentSource.contains("if store.hasSelectedMaterial")
+    && notesAgentSource.contains("starterChip(\"梳理\", systemImage: \"text.alignleft\", help: \"梳理当前材料\"")
+    && notesAgentSource.contains("starterChip(\"出题\", systemImage: \"questionmark.square\", help: \"生成复习题\"")
+    && !notesAgentSource.contains("starterChip(\"梳理材料\"")
+    && !notesAgentSource.contains("starterChip(\"出复习题\""), "agent starter chips hide material actions without a selected material and avoid clipped long labels")
 expect(notesAgentSource.contains("GeometryReader { geometry in")
     && notesAgentSource.contains(".frame(\n                            minHeight: geometry.size.height,\n                            alignment: store.messages.isEmpty ? .bottomLeading : .topLeading\n                        )")
     && !notesAgentSource.contains(".padding(.top, 28)"), "agent empty state sits near the composer instead of floating high above a blank panel")
@@ -1255,7 +1270,7 @@ expect(!notesAgentSource.contains(".disabled(store.agentDraft.trimmingCharacters
 expect(notesAgentSource.contains("agentToolButton(\"整理\", help: \"整理笔记\"") && notesAgentSource.contains("agentToolButton(\"写入回答\", help: \"写入回答到笔记\""), "agent toolbar uses short readable action labels")
 expect(notesAgentSource.contains("if !store.messages.isEmpty {\n                            agentToolButton(\"整理\""), "agent header avoids duplicating the organize action in the empty state")
 expect(notesAgentSource.contains("LazyVGrid(columns: starterChipColumns")
-    && notesAgentSource.contains("GridItem(.adaptive(minimum: 78)")
+    && notesAgentSource.contains("GridItem(.adaptive(minimum: 56)")
     && !notesAgentSource.contains("HStack(spacing: 8) {\n                if store.hasSelectedMaterial {\n                    starterChip(\"梳理材料\""), "agent empty-state starter actions adapt in narrow panes instead of squeezing into one row")
 expect(notesAgentSource.contains("private func iconButton(_ systemName: String, help: String") && notesAgentSource.contains(".accessibilityLabel(Text(help))"), "floating icon buttons carry semantic labels")
 expect(notesAgentSource.contains("private func togglePinnedFloatingAgent()")

@@ -882,70 +882,43 @@ struct AgentPaneView: View {
         store.layout == .immersiveConversation ? 680 : nil
     }
 
-    private var noteContextTitle: String {
-        let firstLine = store.noteText
-            .split(whereSeparator: \.isNewline)
-            .first
-            .map(String.init)?
-            .trimmingCharacters(in: CharacterSet(charactersIn: "#* ").union(.whitespacesAndNewlines)) ?? ""
-        return firstLine.isEmpty ? "当前笔记" : firstLine
-    }
-
     private var emptyAgentState: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(store.selectedMaterialItem?.title ?? "当前笔记")
-                    .font(.system(size: 15, weight: .semibold, design: .serif))
-                    .foregroundStyle(WeiBeiTheme.ink)
-                    .lineLimit(1)
-                if store.selectionContext != nil {
-                    Text("已含选区")
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(WeiBeiTheme.cinnabar)
-                        .padding(.horizontal, 6)
-                        .frame(height: 18)
-                        .background(WeiBeiTheme.cinnabarSoft)
-                        .clipShape(RoundedRectangle(cornerRadius: 5))
-                }
+        VStack(alignment: .leading, spacing: 8) {
+            if store.selectionContext != nil {
+                Text("已含选区")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .padding(.horizontal, 6)
+                    .frame(height: 18)
+                    .background(WeiBeiTheme.cinnabarSoft.opacity(0.74))
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
             }
 
-            Text(noteContextTitle)
-                .font(.system(size: 11.5, weight: .medium))
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                .lineLimit(1)
-
-            LazyVGrid(columns: starterChipColumns, alignment: .leading, spacing: 8) {
+            LazyVGrid(columns: starterChipColumns, alignment: .leading, spacing: 6) {
                 if store.hasSelectedMaterial {
-                    starterChip("梳理材料", systemImage: "text.alignleft") {
+                    starterChip("梳理", systemImage: "text.alignleft", help: "梳理当前材料") {
                         askWith("请基于当前材料提炼核心概念、关键公式和需要回看出处的位置。")
                     }
                 }
-                starterChip("整理笔记", systemImage: "list.bullet.rectangle") {
+                starterChip("整理", systemImage: "list.bullet.rectangle", help: "整理当前笔记") {
                     store.askToOrganizeNote()
                 }
                 if store.hasSelectedMaterial {
-                    starterChip("出复习题", systemImage: "questionmark.square") {
+                    starterChip("出题", systemImage: "questionmark.square", help: "生成复习题") {
                         askWith("请根据当前材料和笔记生成 5 个复习问题，并标出每题依据。")
                     }
                 }
             }
         }
-        .padding(.leading, 14)
-        .padding(.vertical, 8)
-        .frame(maxWidth: 520, alignment: .leading)
-        .overlay(alignment: .leading) {
-            Rectangle()
-                .fill(WeiBeiTheme.cinnabar.opacity(0.34))
-                .frame(width: 2)
-        }
+        .frame(maxWidth: 300, alignment: .leading)
     }
 
-    private func starterChip(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
-        AgentStarterChip(title: title, systemImage: systemImage, action: action)
+    private func starterChip(_ title: String, systemImage: String, help: String, action: @escaping () -> Void) -> some View {
+        AgentStarterChip(title: title, systemImage: systemImage, help: help, action: action)
     }
 
     private var starterChipColumns: [GridItem] {
-        [GridItem(.adaptive(minimum: 78), spacing: 8, alignment: .leading)]
+        [GridItem(.adaptive(minimum: 56), spacing: 6, alignment: .leading)]
     }
 
     private func askWith(_ prompt: String) {
@@ -968,6 +941,7 @@ struct AgentPaneView: View {
 private struct AgentStarterChip: View {
     var title: String
     var systemImage: String
+    var help: String
     var action: () -> Void
     @State private var hovering = false
 
@@ -977,18 +951,22 @@ private struct AgentStarterChip: View {
                 .labelStyle(.titleAndIcon)
                 .font(.system(size: 11.5, weight: .medium))
                 .symbolRenderingMode(.hierarchical)
-                .padding(.horizontal, 7)
-                .frame(height: 24)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .padding(.horizontal, 8)
+                .frame(height: 26)
         }
         .buttonStyle(.plain)
         .foregroundStyle(hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
-        .background(WeiBeiTheme.paperInset.opacity(hovering ? 0.22 : 0.0))
+        .background(WeiBeiTheme.paperInset.opacity(hovering ? 0.18 : 0.0))
         .clipShape(RoundedRectangle(cornerRadius: 5))
         .overlay {
             RoundedRectangle(cornerRadius: 5)
-                .stroke(hovering ? WeiBeiTheme.hairline.opacity(0.78) : WeiBeiTheme.hairline.opacity(0.0), lineWidth: 1)
+                .stroke(hovering ? WeiBeiTheme.hairline.opacity(0.56) : WeiBeiTheme.hairline.opacity(0.0), lineWidth: 1)
         }
         .offset(y: hovering ? -1 : 0)
+        .accessibilityLabel(Text(help))
+        .help(help)
         .onHover { value in
             withAnimation(WeiBeiMotion.hover) {
                 hovering = value
