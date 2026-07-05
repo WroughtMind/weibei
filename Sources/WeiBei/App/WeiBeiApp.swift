@@ -483,12 +483,7 @@ struct SettingsView: View {
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
             Spacer()
-            Button(store.appearanceMode.actionLabel(language: store.interfaceLanguage)) {
-                withAnimation(WeiBeiMotion.appearance) {
-                    store.toggleAppearanceMode()
-                }
-            }
-            .buttonStyle(WeiBeiTextActionButtonStyle())
+            settingsAppearanceToggleButton
         }
         .padding(.horizontal, 28)
         .padding(.top, 20)
@@ -499,6 +494,19 @@ struct SettingsView: View {
                 WeiBeiHeaderHandoffFade(height: 12, opacity: 0.22)
             }
         }
+    }
+
+    private var settingsAppearanceToggleButton: some View {
+        Button {
+            withAnimation(WeiBeiMotion.appearance) {
+                store.toggleAppearanceMode()
+            }
+        } label: {
+            Image(systemName: store.appearanceMode.toggled.systemImage)
+        }
+        .buttonStyle(WeiBeiIconButtonStyle(active: store.appearanceMode == .inkstone, size: 30))
+        .accessibilityLabel(Text(store.appearanceMode.actionLabel(language: store.interfaceLanguage)))
+        .help(store.appearanceMode.actionLabel(language: store.interfaceLanguage))
     }
 
     private var sectionSubtitle: String {
