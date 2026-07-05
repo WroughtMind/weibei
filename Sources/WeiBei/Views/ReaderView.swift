@@ -1145,22 +1145,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
 
     static func readerStyleScript(for mode: WeiBeiAppearanceMode) -> String {
         let css: String
-        let fontURL = Bundle.module.url(forResource: "WeiBeiStele", withExtension: "ttf")
-        let fontSource: String
-        if let fontURL, let fontData = try? Data(contentsOf: fontURL) {
-            fontSource = "data:font/truetype;base64,\(fontData.base64EncodedString())"
-        } else {
-            fontSource = fontURL?.absoluteString ?? ""
-        }
-        let fontFaceCSS = fontSource.isEmpty ? "" : """
-        @font-face {
-          font-family: "WeiBeiStele";
-          src: url("\(fontSource)") format("truetype");
-          font-weight: 400;
-          font-style: normal;
-          font-display: swap;
-        }
-        """
         switch mode {
         case .paper:
             css = """
@@ -1187,10 +1171,9 @@ struct WebReaderRepresentable: NSViewRepresentable {
             table, th, td { border-color: #2D2D2D !important; }
             """
         }
-        let injectedCSS = "\(fontFaceCSS)\n\(css)"
         return """
         (() => {
-          const css = \(Self.json(injectedCSS));
+          const css = \(Self.json(css));
           let style = document.getElementById("weibei-reader-style");
           if (!style) {
             style = document.createElement("style");
@@ -1200,7 +1183,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
           document.documentElement.dataset.weibeiTheme = \(Self.json(mode.webThemeName));
           style.textContent = `${css}
             body, main, article, section, div { box-sizing: border-box; max-width: 100%; }
-            h1, h2, h3 { font-family: "WeiBeiStele", -apple-system, BlinkMacSystemFont, "Songti SC", serif !important; }
             h1, h2, h3, h4, p, li, blockquote { overflow-wrap: anywhere; word-break: normal; }
             pre, code { white-space: pre-wrap; overflow-wrap: anywhere; }
             img, table { max-width: 100%; }

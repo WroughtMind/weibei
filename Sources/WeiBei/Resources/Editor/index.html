@@ -6,26 +6,8 @@
   <title>魏碑笔记</title>
   <link rel="stylesheet" href="./editor.css">
   <style>
-    @font-face {
-      font-family: "WeiBeiStele";
-      src: url("WeiBeiStele.ttf") format("truetype");
-      font-weight: 400;
-      font-style: normal;
-      font-display: swap;
-    }
-
-    @font-face {
-      font-family: "WeiBeiSteleMono";
-      src: url("WeiBeiSteleMono.ttf") format("truetype");
-      font-weight: 400;
-      font-style: normal;
-      font-display: swap;
-    }
-
     :root {
       color-scheme: light;
-      --font-brand-latin: "WeiBeiStele", "Songti SC", "STSong", ui-serif, serif;
-      --font-brand-mono: "WeiBeiSteleMono", "SF Mono", Menlo, ui-monospace, monospace;
       --paper: #f1e4cf;
       --paper-raised: #f7ecd9;
       --ink: #1d1814;
@@ -258,7 +240,6 @@
     .ProseMirror h1,
     .ProseMirror h2,
     .ProseMirror h3 {
-      font-family: var(--font-brand-latin);
       letter-spacing: 0;
       line-height: 1.32;
       margin: 1.15em 0 .55em;
@@ -485,7 +466,6 @@
     .ProseMirror blockquote.weibei-callout .weibei-callout-heading {
       margin: 0 0 .34em;
       color: var(--blue-ink);
-      font-family: var(--font-brand-latin);
       font-size: .78em;
       font-weight: 650;
       letter-spacing: 0;
