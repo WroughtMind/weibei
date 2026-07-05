@@ -111,12 +111,12 @@ enum WeiBeiTypography {
         case .chinese:
             return .system(size: size, weight: weight, design: .serif)
         case .english:
-            return .custom(englishDisplayFontName, size: size).weight(weight)
+            return .custom(englishDisplayFontName, size: size)
         }
     }
 
     static func englishBrandFont(size: CGFloat, weight: Font.Weight = .semibold) -> Font {
-        .custom(englishDisplayFontName, size: size).weight(weight)
+        .custom(englishDisplayFontName, size: size)
     }
 
     static func monoFont(language: WeiBeiInterfaceLanguage, size: CGFloat) -> Font {

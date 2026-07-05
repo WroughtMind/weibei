@@ -77,6 +77,7 @@ private extension View {
 
 private struct WeiBeiPaneHeader<Actions: View>: View {
     var title: String
+    var latinMark: String? = nil
     var subtitle: String
     var appearanceMode: WeiBeiAppearanceMode
     @ViewBuilder var actions: () -> Actions
@@ -87,6 +88,13 @@ private struct WeiBeiPaneHeader<Actions: View>: View {
                 Text(title)
                     .font(titleUsesEnglishBrand ? WeiBeiTypography.englishBrandFont(size: 18, weight: .semibold) : .system(size: 18, weight: .semibold, design: .serif))
                     .foregroundStyle(WeiBeiTheme.ink)
+                if let latinMark {
+                    Text(latinMark)
+                        .font(WeiBeiTypography.englishBrandFont(size: 9.5, weight: .semibold))
+                        .tracking(0.8)
+                        .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.78))
+                        .baselineOffset(1)
+                }
                 Text(subtitle)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
@@ -104,12 +112,81 @@ private struct WeiBeiPaneHeader<Actions: View>: View {
     }
 }
 
+private struct AgentComposerField: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    var prompt: String
+    var focused: FocusState<Bool>.Binding
+    var font: Font
+    var promptFont: Font
+    var lineLimit: ClosedRange<Int>
+    var height: CGFloat
+    var sendButtonSize: CGFloat
+    var trailingPadding: CGFloat
+    var sendTrailing: CGFloat
+    var sendBottom: CGFloat
+    var horizontalPadding: CGFloat = 10
+    var verticalPadding: CGFloat = 0
+    var submit: () -> Void
+
+    private var canSend: Bool {
+        !store.isAskingAgent && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            TextField(
+                "",
+                text: $store.agentDraft,
+                prompt: Text(prompt)
+                    .font(promptFont)
+                    .foregroundStyle(WeiBeiTheme.placeholderInk),
+                axis: .vertical
+            )
+            .textFieldStyle(.plain)
+            .lineLimit(lineLimit)
+            .fixedSize(horizontal: false, vertical: true)
+            .font(font)
+            .foregroundColor(WeiBeiTheme.ink)
+            .focused(focused)
+            .onSubmit(submit)
+            .padding(.vertical, verticalPadding)
+            .padding(.trailing, canSend ? trailingPadding : 0)
+            .frame(maxWidth: .infinity, alignment: .bottomLeading)
+            .weibeiInputSurface(active: focused.wrappedValue, height: height, horizontalPadding: horizontalPadding)
+
+            if canSend {
+                Button(action: submit) {
+                    Image(systemName: "paperplane.fill")
+                }
+                .buttonStyle(WeiBeiIconButtonStyle(size: sendButtonSize, prominence: .primary))
+                .accessibilityLabel(Text(store.ui("发送", "Send")))
+                .help(store.ui("发送", "Send"))
+                .keyboardShortcut(.return, modifiers: [.command])
+                .padding(.trailing, sendTrailing)
+                .padding(.bottom, sendBottom)
+                .transition(WeiBeiTransition.floating)
+                .animation(WeiBeiMotion.micro, value: canSend)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            focused.wrappedValue = true
+        }
+        .animation(WeiBeiMotion.micro, value: canSend)
+    }
+}
+
 struct NotePaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
 
     var body: some View {
         VStack(spacing: 0) {
-            WeiBeiPaneHeader(title: store.ui("笔记", "Notes"), subtitle: noteHeaderSubtitle, appearanceMode: store.appearanceMode) {
+            WeiBeiPaneHeader(
+                title: store.ui("笔记", "Notes"),
+                latinMark: store.interfaceLanguage == .chinese ? "NOTES" : nil,
+                subtitle: noteHeaderSubtitle,
+                appearanceMode: store.appearanceMode
+            ) {
                 noteModeControl
                 if !isImmersiveWriting {
                     Button { store.resetNote() } label: {
@@ -715,7 +792,12 @@ struct AgentPaneView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            WeiBeiPaneHeader(title: store.ui("对话", "Chat"), subtitle: store.selectedItem.map(store.displayTitle) ?? store.ui("无上下文", "No context"), appearanceMode: store.appearanceMode) {
+            WeiBeiPaneHeader(
+                title: store.ui("对话", "Chat"),
+                latinMark: store.interfaceLanguage == .chinese ? "CHAT" : nil,
+                subtitle: store.selectedItem.map(store.displayTitle) ?? store.ui("无上下文", "No context"),
+                appearanceMode: store.appearanceMode
+            ) {
                 if hasAgentHeaderActions {
                     HStack(spacing: 2) {
                         if !store.messages.isEmpty {
@@ -833,45 +915,21 @@ struct AgentPaneView: View {
                         .transition(WeiBeiTransition.floating)
                 }
 
-                ZStack(alignment: .bottomTrailing) {
-                    TextField(
-                        "",
-                        text: $store.agentDraft,
-                        prompt: Text(agentPrompt)
-                            .font(.system(size: 15))
-                            .foregroundStyle(WeiBeiTheme.placeholderInk),
-                        axis: .vertical
-                    )
-                        .textFieldStyle(.plain)
-                        .lineLimit(1...6)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .foregroundColor(WeiBeiTheme.ink)
-                        .focused($draftFocused)
-                        .onSubmit {
-                            Task { await store.askAgent() }
-                        }
-                        .padding(.vertical, 10)
-                        .padding(.trailing, canSendDraft ? 40 : 0)
-                        .frame(maxWidth: .infinity, alignment: .bottomLeading)
-                        .weibeiInputSurface(active: draftFocused, height: 56, horizontalPadding: 14)
-
-                    if canSendDraft {
-                        Button { Task { await store.askAgent() } } label: {
-                            Image(systemName: "paperplane.fill")
-                        }
-                        .buttonStyle(WeiBeiIconButtonStyle(size: 30, prominence: .primary))
-                        .accessibilityLabel(Text(store.ui("发送", "Send")))
-                        .help(store.ui("发送", "Send"))
-                        .keyboardShortcut(.return, modifiers: [.command])
-                        .padding(.trailing, 10)
-                        .padding(.bottom, 10)
-                        .transition(WeiBeiTransition.floating)
-                        .animation(WeiBeiMotion.micro, value: canSendDraft)
-                    }
-                }
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    draftFocused = true
+                AgentComposerField(
+                    prompt: agentPrompt,
+                    focused: $draftFocused,
+                    font: .system(size: 15),
+                    promptFont: .system(size: 15),
+                    lineLimit: 1...6,
+                    height: 56,
+                    sendButtonSize: 30,
+                    trailingPadding: 40,
+                    sendTrailing: 10,
+                    sendBottom: 10,
+                    horizontalPadding: 14,
+                    verticalPadding: 10
+                ) {
+                    Task { await store.askAgent() }
                 }
             }
             .font(.system(size: 15))
@@ -1161,43 +1219,20 @@ struct AgentDrawerView: View {
                     .transition(WeiBeiTransition.floating)
             }
 
-            ZStack(alignment: .bottomTrailing) {
-                TextField(
-                    "",
-                    text: $store.agentDraft,
-                    prompt: Text(drawerPrompt)
-                        .font(.system(size: 13))
-                        .foregroundStyle(WeiBeiTheme.placeholderInk),
-                    axis: .vertical
-                )
-                    .textFieldStyle(.plain)
-                    .lineLimit(1...4)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .focused($draftFocused)
-                    .foregroundColor(WeiBeiTheme.ink)
-                    .onSubmit {
-                        Task { await store.askAgent() }
-                    }
-                .font(.system(size: 13))
-                .padding(.trailing, canSend ? 44 : 0)
-                .weibeiInputSurface(active: draftFocused, height: 46)
-                if canSend {
-                    Button { Task { await store.askAgent() } } label: {
-                        Image(systemName: "paperplane.fill")
-                    }
-                    .buttonStyle(WeiBeiIconButtonStyle(size: 34, prominence: .primary))
-                    .accessibilityLabel(Text(store.ui("发送", "Send")))
-                    .help(store.ui("发送", "Send"))
-                    .padding(.trailing, 6)
-                    .padding(.bottom, 6)
-                    .transition(WeiBeiTransition.floating)
-                }
+            AgentComposerField(
+                prompt: drawerPrompt,
+                focused: $draftFocused,
+                font: .system(size: 13),
+                promptFont: .system(size: 13),
+                lineLimit: 1...4,
+                height: 46,
+                sendButtonSize: 34,
+                trailingPadding: 44,
+                sendTrailing: 6,
+                sendBottom: 6
+            ) {
+                Task { await store.askAgent() }
             }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                draftFocused = true
-            }
-            .animation(WeiBeiMotion.micro, value: canSend)
 
             HStack(spacing: 8) {
                 Label(store.hasSelectedMaterial ? store.ui("来源", "Source") : store.ui("笔记", "Note"), systemImage: store.hasSelectedMaterial ? "link" : "square.and.pencil")
@@ -1217,10 +1252,6 @@ struct AgentDrawerView: View {
         .onAppear {
             draftFocused = store.focusedPane == .agent
         }
-    }
-
-    private var canSend: Bool {
-        !store.isAskingAgent && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var drawerPrompt: String {
@@ -1258,46 +1289,20 @@ struct CornerAgentView: View {
                     .transition(WeiBeiTransition.floating)
             }
 
-            ZStack(alignment: .bottomTrailing) {
-                TextField(
-                    "",
-                    text: $store.agentDraft,
-                    prompt: Text(agentPrompt)
-                        .font(.system(size: 13))
-                        .foregroundStyle(WeiBeiTheme.placeholderInk),
-                    axis: .vertical
-                )
-                    .textFieldStyle(.plain)
-                    .lineLimit(1...4)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .focused($draftFocused)
-                    .foregroundColor(WeiBeiTheme.ink)
-                    .onSubmit {
-                        Task { await store.askAgent() }
-                    }
-                .font(.system(size: 13))
-                .padding(.trailing, canSend ? 38 : 0)
-                .weibeiInputSurface(active: draftFocused, height: 44)
-
-                if canSend {
-                    Button {
-                        Task { await store.askAgent() }
-                    } label: {
-                        Image(systemName: "paperplane.fill")
-                    }
-                    .buttonStyle(WeiBeiIconButtonStyle(prominence: .primary))
-                    .accessibilityLabel(Text(store.ui("发送", "Send")))
-                    .help(store.ui("发送", "Send"))
-                    .padding(.trailing, 5)
-                    .padding(.bottom, 5)
-                    .transition(WeiBeiTransition.floating)
-                }
+            AgentComposerField(
+                prompt: agentPrompt,
+                focused: $draftFocused,
+                font: .system(size: 13),
+                promptFont: .system(size: 13),
+                lineLimit: 1...4,
+                height: 44,
+                sendButtonSize: WeiBeiMetric.iconButton,
+                trailingPadding: 38,
+                sendTrailing: 5,
+                sendBottom: 5
+            ) {
+                Task { await store.askAgent() }
             }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                draftFocused = true
-            }
-            .animation(WeiBeiMotion.micro, value: canSend)
 
         }
         .padding(12)
@@ -1309,10 +1314,6 @@ struct CornerAgentView: View {
         .onAppear {
             draftFocused = store.focusedPane == .agent
         }
-    }
-
-    private var canSend: Bool {
-        !store.isAskingAgent && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var agentPrompt: String {
@@ -1491,44 +1492,27 @@ struct FloatingSelectionAgentView: View {
             .frame(maxHeight: floatingFeedHeight)
             .fixedSize(horizontal: false, vertical: true)
 
-            HStack(spacing: 6) {
-                TextField(
-                    "",
-                    text: $store.agentDraft,
-                    prompt: Text(store.ui("继续追问", "Ask a follow-up"))
-                        .font(.caption)
-                        .foregroundStyle(WeiBeiTheme.placeholderInk)
-                )
-                    .textFieldStyle(.plain)
-                    .foregroundColor(WeiBeiTheme.ink)
-                    .focused($draftFocused)
-                    .onSubmit { sendDraft() }
-                    .font(.caption)
-
-                if canSendDraft {
-                    Button {
-                        sendDraft()
-                    } label: {
-                        Image(systemName: "paperplane.fill")
-                    }
-                    .buttonStyle(WeiBeiIconButtonStyle(size: 22, prominence: .primary))
-                    .accessibilityLabel(Text(store.ui("发送", "Send")))
-                    .help(store.ui("发送", "Send"))
-                }
+            AgentComposerField(
+                prompt: store.ui("继续追问", "Ask a follow-up"),
+                focused: $draftFocused,
+                font: .caption,
+                promptFont: .caption,
+                lineLimit: 1...2,
+                height: 34,
+                sendButtonSize: 22,
+                trailingPadding: 30,
+                sendTrailing: 6,
+                sendBottom: 6,
+                horizontalPadding: 8
+            ) {
+                sendDraft()
             }
-            .padding(.horizontal, 8)
-            .frame(height: 34)
-            .weibeiInputSurface(active: draftFocused, height: 34)
         }
         .padding(10)
         .frame(width: CGFloat(SelectionFloatingAgentPlacement.expandedHalfWidth * 2), alignment: .leading)
         .onAppear {
             draftFocused = true
         }
-    }
-
-    private var canSendDraft: Bool {
-        !store.isAskingAgent && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var visibleFloatingMessages: [AgentMessage] {
@@ -1657,7 +1641,8 @@ struct FloatingSelectionAgentView: View {
     }
 
     private func sendDraft() {
-        guard canSendDraft else { return }
+        guard !store.isAskingAgent,
+              !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         withAnimation(WeiBeiMotion.panel) {
             expanded = true
         }

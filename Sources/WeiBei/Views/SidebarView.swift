@@ -8,9 +8,15 @@ struct SidebarView: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 0) {
-                HStack {
-                    Text(store.ui("资料", "Library"))
-                        .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 22, weight: .semibold))
+                HStack(alignment: .firstTextBaseline) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(store.ui("资料", "Library"))
+                            .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 22, weight: .semibold))
+                        Text(store.interfaceLanguage == .chinese ? "WEIBEI LIBRARY" : "WEIBEI")
+                            .font(WeiBeiTypography.englishBrandFont(size: 8.5, weight: .semibold))
+                            .tracking(0.9)
+                            .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.74))
+                    }
                     Spacer()
                     Button { store.importFilesFromPanel() } label: {
                         Image(systemName: "plus")
