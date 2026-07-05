@@ -249,7 +249,6 @@ struct NotePaneView: View {
         }, onAskAgentWithSelection: { text, anchor in
             store.updateSelection(text, source: .note, anchor: anchor)
             store.askSelection()
-            Task { await store.askAgent() }
         }, onWikiLink: { title in
             store.openOrCreateWikiNote(title: title)
         }, onSourceReference: { reference in
@@ -802,10 +801,7 @@ struct AgentPaneView: View {
     }
 
     private var agentPrompt: String {
-        if store.selectionContext != nil {
-            return "问当前选区"
-        }
-        return store.hasSelectedMaterial ? "问当前材料" : "问当前笔记"
+        store.agentInputPrompt
     }
 
     private var agentInputTray: some View {
@@ -823,7 +819,7 @@ struct AgentPaneView: View {
             .allowsHitTesting(false)
 
             VStack(alignment: .leading, spacing: 8) {
-                if store.selectionContext != nil {
+                if store.hasSelectionAttachments {
                     AgentSelectionAttachmentPill()
                         .transition(WeiBeiTransition.floating)
                 }
@@ -978,51 +974,154 @@ private struct AgentStarterChip: View {
 
 private struct AgentSelectionAttachmentPill: View {
     @EnvironmentObject private var store: WorkspaceStore
-    @State private var hovering = false
+    @State private var pillHovering = false
+    @State private var popoverHovering = false
+    @State private var closeToken = UUID()
 
     var body: some View {
-        if let selection = store.selectionContext {
+        if store.hasSelectionAttachments {
             HStack(spacing: 6) {
                 Image(systemName: "text.bubble")
                     .font(.system(size: 11, weight: .medium))
-                Text("1 个已选文本片段")
+                Text("\(store.selectionAttachments.count) 个已选文本片段")
                     .font(.system(size: 12, weight: .medium))
             }
-            .foregroundStyle(hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
+            .foregroundStyle(pillHovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
             .padding(.horizontal, 10)
             .frame(height: 28)
-            .background(WeiBeiTheme.paperRaised.opacity(hovering ? 0.72 : 0.54))
+            .background(WeiBeiTheme.paperRaised.opacity(pillHovering ? 0.72 : 0.54))
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay {
                 RoundedRectangle(cornerRadius: 8)
-                    .stroke(WeiBeiTheme.hairline.opacity(hovering ? 0.68 : 0.38), lineWidth: 1)
+                    .stroke(WeiBeiTheme.hairline.opacity(pillHovering ? 0.68 : 0.38), lineWidth: 1)
             }
-            .popover(isPresented: $hovering, arrowEdge: .bottom) {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text(selection.ownerTitle)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .lineLimit(1)
-                    ScrollView {
-                        Text(selection.text)
-                            .font(.system(size: 12))
-                            .foregroundStyle(WeiBeiTheme.ink)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                    }
-                    .frame(maxHeight: 180)
-                }
-                .padding(12)
-                .frame(width: 320, alignment: .leading)
-                .background(WeiBeiTheme.paperRaised)
-            }
+            .popover(isPresented: popoverPresented, arrowEdge: .bottom) { popoverContent }
             .onHover { value in
-                withAnimation(WeiBeiMotion.hover) {
-                    hovering = value
+                setPillHovering(value)
+            }
+            .accessibilityLabel(Text("\(store.selectionAttachments.count) 个已选文本片段"))
+            .help("悬停查看选区")
+        }
+    }
+
+    private var popoverPresented: Binding<Bool> {
+        Binding(
+            get: { pillHovering || popoverHovering },
+            set: { presented in
+                if !presented {
+                    pillHovering = false
+                    popoverHovering = false
                 }
             }
-            .accessibilityLabel(Text("1 个已选文本片段"))
-            .help("悬停查看选区")
+        )
+    }
+
+    private var popoverContent: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("\(store.selectionAttachments.count) 个已选文本片段")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.ink)
+                Spacer()
+                Text("发问时会作为上下文")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
+            }
+
+            ScrollView(showsIndicators: false) {
+                LazyVStack(alignment: .leading, spacing: 9) {
+                    ForEach(Array(store.selectionAttachments.enumerated()), id: \.element.id) { index, selection in
+                        selectionAttachmentRow(index: index, selection: selection)
+                    }
+                }
+            }
+            .frame(maxHeight: 260)
+        }
+        .padding(12)
+        .frame(width: 360, alignment: .leading)
+        .background(WeiBeiTheme.paperRaised)
+        .onHover { value in
+            setPopoverHovering(value)
+        }
+    }
+
+    private func selectionAttachmentRow(index: Int, selection: SelectionContext) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("片段 \(index + 1)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.ink)
+                Text(selection.ownerTitle)
+                    .font(.system(size: 10, weight: .medium))
+                    .lineLimit(1)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                Spacer(minLength: 8)
+                Button {
+                    let shouldClose = store.selectionAttachments.count == 1
+                    store.removeSelectionAttachment(id: selection.id)
+                    if shouldClose {
+                        pillHovering = false
+                        popoverHovering = false
+                    }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .semibold))
+                        .frame(width: 18, height: 18)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                .accessibilityLabel(Text("移除片段 \(index + 1)"))
+                .help("移除这个选区片段")
+            }
+
+            Text(selection.text)
+                .font(.system(size: 12))
+                .lineSpacing(3)
+                .lineLimit(5)
+                .foregroundStyle(WeiBeiTheme.ink)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, 1)
+        }
+        .padding(9)
+        .background(WeiBeiTheme.paperInset.opacity(0.32))
+        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .overlay {
+            RoundedRectangle(cornerRadius: 7)
+                .stroke(WeiBeiTheme.hairline.opacity(0.36), lineWidth: 1)
+        }
+    }
+
+    private func setPillHovering(_ value: Bool) {
+        if value {
+            closeToken = UUID()
+            withAnimation(WeiBeiMotion.hover) {
+                pillHovering = true
+            }
+        } else {
+            schedulePopoverClose()
+        }
+    }
+
+    private func setPopoverHovering(_ value: Bool) {
+        if value {
+            closeToken = UUID()
+            popoverHovering = true
+        } else {
+            popoverHovering = false
+            schedulePopoverClose()
+        }
+    }
+
+    private func schedulePopoverClose() {
+        let token = UUID()
+        closeToken = token
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) {
+            guard closeToken == token, !popoverHovering else { return }
+            withAnimation(WeiBeiMotion.hover) {
+                pillHovering = false
+                popoverHovering = false
+            }
         }
     }
 }
@@ -1044,7 +1143,7 @@ struct AgentDrawerView: View {
             }
             .weibeiFloatingHeaderChrome(appearanceMode: store.appearanceMode)
 
-            if store.selectionContext != nil {
+            if store.hasSelectionAttachments {
                 AgentSelectionAttachmentPill()
                     .transition(WeiBeiTransition.floating)
             }
@@ -1108,10 +1207,7 @@ struct AgentDrawerView: View {
     }
 
     private var drawerPrompt: String {
-        if store.selectionContext != nil {
-            return "问当前选区"
-        }
-        return store.hasSelectedMaterial ? "问当前材料" : "问当前笔记"
+        store.agentInputPrompt
     }
 }
 
@@ -1140,7 +1236,7 @@ struct CornerAgentView: View {
                 .lineLimit(1)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
 
-            if store.selectionContext != nil {
+            if store.hasSelectionAttachments {
                 AgentSelectionAttachmentPill()
                     .transition(WeiBeiTransition.floating)
             }
@@ -1199,10 +1295,7 @@ struct CornerAgentView: View {
     }
 
     private var agentPrompt: String {
-        if store.selectionContext != nil {
-            return "问当前选区"
-        }
-        return store.hasSelectedMaterial ? "问当前材料" : "问当前笔记"
+        store.agentInputPrompt
     }
 }
 
@@ -1457,7 +1550,7 @@ struct FloatingSelectionAgentView: View {
 
     private func floatingText(for message: AgentMessage) -> String {
         if isCredentialNotice(message) {
-            return "未配置密钥。设置后会结合\(store.agentPromptScope)和当前选区作答。"
+            return "未配置密钥。设置后会结合\(store.agentPromptScope)和已选文本片段作答。"
         }
         return message.text
     }
@@ -1519,7 +1612,6 @@ struct FloatingSelectionAgentView: View {
             }
             store.askSelection()
         }
-        Task { await store.askAgent() }
     }
 
     private func openSourceReference() {
@@ -2022,7 +2114,7 @@ private struct AgentBubble: View {
 
     private var displayText: String {
         guard isCredentialNotice else { return message.text }
-        let scope = store.selectionContext == nil ? store.agentPromptScope : "\(store.agentPromptScope)、当前选区"
+        let scope = store.hasSelectionAttachments ? "\(store.agentPromptScope)、已选文本片段" : store.agentPromptScope
         return "设置后会结合\(scope)作答；未配置时不会编造内容。"
     }
 

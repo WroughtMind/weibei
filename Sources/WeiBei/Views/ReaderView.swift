@@ -778,9 +778,8 @@ private final class ReaderPDFView: PDFView {
 
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
-        clearSelection()
-        reportCurrentSelection?()
         super.mouseDown(with: event)
+        reportCurrentSelection?()
     }
 
     override func mouseDragged(with event: NSEvent) {

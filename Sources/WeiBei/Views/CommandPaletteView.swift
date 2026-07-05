@@ -60,7 +60,6 @@ struct CommandPaletteView: View {
         if store.selectionContext != nil {
             items.append(PaletteCommand(title: "问当前选区", shortcut: "") {
                 store.askSelection()
-                Task { await store.askAgent() }
             })
         }
         if store.canOpenSelectedSourceReference {

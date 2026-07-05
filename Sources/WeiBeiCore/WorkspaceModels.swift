@@ -280,13 +280,15 @@ public enum SelectionSource: String, Codable, Hashable {
     case note
 }
 
-public struct SelectionContext: Codable, Hashable {
+public struct SelectionContext: Identifiable, Codable, Hashable {
+    public var id: UUID
     public var text: String
     public var source: SelectionSource
     public var ownerTitle: String
     public var isEditable: Bool
 
-    public init(text: String, source: SelectionSource, ownerTitle: String, isEditable: Bool = true) {
+    public init(id: UUID = UUID(), text: String, source: SelectionSource, ownerTitle: String, isEditable: Bool = true) {
+        self.id = id
         self.text = text
         self.source = source
         self.ownerTitle = ownerTitle

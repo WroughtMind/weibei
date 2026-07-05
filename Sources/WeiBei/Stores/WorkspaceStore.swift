@@ -33,6 +33,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var floatingSelectionPrompt = "当前选区"
     @Published var pinnedFloatingAgent = false
     @Published var selectionContext: SelectionContext?
+    @Published var selectionAttachments: [SelectionContext] = []
     @Published var selectionAnchor: CGPoint?
     @Published var noteEditorCommand: NoteEditorCommand?
     @Published var noteFileError: String?
@@ -178,12 +179,34 @@ final class WorkspaceStore: ObservableObject {
         readerLocationTitle ?? selectedMaterialItem?.title ?? selectedItem?.title ?? "当前笔记"
     }
 
+    var hasSelectionAttachments: Bool {
+        !selectionAttachments.isEmpty
+    }
+
+    var agentSelectionTitle: String? {
+        guard !selectionAttachments.isEmpty else { return nil }
+        if selectionAttachments.count == 1 {
+            return selectionAttachments[0].ownerTitle
+        }
+        return "\(selectionAttachments.count) 个已选文本片段"
+    }
+
+    var agentSelectionText: String? {
+        guard !selectionAttachments.isEmpty else { return nil }
+        return selectionAttachments.enumerated().map { index, selection in
+            """
+            片段 \(index + 1)（来源：\(selection.ownerTitle)）：
+            \(selection.text)
+            """
+        }.joined(separator: "\n\n")
+    }
+
     var canCopyReference: Bool {
-        selectionContext != nil || hasSelectedMaterial || selectedItem?.isNotebookNote == true
+        hasSelectionAttachments || selectionContext != nil || hasSelectedMaterial || selectedItem?.isNotebookNote == true
     }
 
     var copyReferenceActionTitle: String {
-        if selectionContext != nil { return "复制选区引用" }
+        if hasSelectionAttachments || selectionContext != nil { return "复制选区引用" }
         if hasSelectedMaterial { return "复制资料引用" }
         return "复制笔记引用"
     }
@@ -204,6 +227,13 @@ final class WorkspaceStore: ObservableObject {
 
     var agentPromptScope: String {
         hasSelectedMaterial ? "当前材料和当前笔记" : "当前笔记"
+    }
+
+    var agentInputPrompt: String {
+        if hasSelectionAttachments {
+            return "追问已选文本片段"
+        }
+        return hasSelectedMaterial ? "问当前材料" : "问当前笔记"
     }
 
     var selectionPromptScope: String {
@@ -258,7 +288,7 @@ final class WorkspaceStore: ObservableObject {
         if !OpenAIAPIKeyStore.load().isEmpty {
             return "密钥已保存，可直接用于对话。"
         }
-        return "未保存密钥。保存后对话会结合\(agentPromptScope)，并在有选区时结合当前选区作答。"
+        return "未保存密钥。保存后对话会结合\(agentPromptScope)，并在有已选文本片段时一并作答。"
     }
 
     func select(itemID: String?) {
@@ -956,7 +986,11 @@ final class WorkspaceStore: ObservableObject {
     func copyCurrentReference() {
         let selection = selectionContext?.text.trimmingCharacters(in: .whitespacesAndNewlines)
         let reference: String
-        if let selectionContext, let selection, !selection.isEmpty {
+        if !selectionAttachments.isEmpty {
+            reference = selectionAttachments
+                .map { quotedReferenceBlock(text: $0.text, sourceTitle: $0.ownerTitle) }
+                .joined(separator: "\n\n")
+        } else if let selectionContext, let selection, !selection.isEmpty {
             reference = quotedReferenceBlock(text: selection, sourceTitle: selectionContext.ownerTitle)
         } else {
             guard selectedMaterialItem != nil || selectedItem?.isNotebookNote == true else { return }
@@ -992,6 +1026,29 @@ final class WorkspaceStore: ObservableObject {
             } else if agentSurface == .selectionFloat {
                 agentSurface = .hidden
             }
+        }
+    }
+
+    func removeSelectionAttachment(id: UUID) {
+        withAnimation(WeiBeiMotion.panel) {
+            selectionAttachments.removeAll { $0.id == id }
+        }
+    }
+
+    private func addSelectionAttachment(_ selection: SelectionContext) {
+        let cleanedText = selection.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Self.hasMeaningfulSelectionCharacter(cleanedText) else { return }
+        if let existingIndex = selectionAttachments.firstIndex(where: {
+            $0.ownerTitle == selection.ownerTitle
+                && $0.source == selection.source
+                && $0.text.trimmingCharacters(in: .whitespacesAndNewlines) == cleanedText
+        }) {
+            selectionAttachments.remove(at: existingIndex)
+        }
+        selectionAttachments.append(selection)
+        let maxAttachments = 8
+        if selectionAttachments.count > maxAttachments {
+            selectionAttachments.removeFirst(selectionAttachments.count - maxAttachments)
         }
     }
 
@@ -1037,16 +1094,16 @@ final class WorkspaceStore: ObservableObject {
 
     func askSelection() {
         if let selectionContext {
-            let prompt = "请解释当前已选文本片段，并结合\(selectionPromptScope)回答。没有证据就说未在材料中确认。"
             withAnimation(WeiBeiMotion.panel) {
+                addSelectionAttachment(selectionContext)
                 floatingSelectionPrompt = selectionContext.label
-                agentDraft = prompt
                 if isConversationSurfaceVisible {
                     collapseSelectionFloatIntoConversationIfVisible()
                     focus(.agent)
                 } else {
                     agentSurface = .selectionFloat
                     showQuietInsight = false
+                    focus(.agent)
                 }
             }
         } else {
@@ -1174,7 +1231,7 @@ final class WorkspaceStore: ObservableObject {
         guard !question.isEmpty, !isAskingAgent else { return }
 
         guard let credential = resolvedOpenAIAPIKey() else {
-            let notice = "未配置密钥。当前不会编造回答；设置密钥后会结合\(agentPromptScope)，并在有选区时结合当前选区作答。"
+            let notice = "未配置密钥。当前不会编造回答；设置密钥后会结合\(agentPromptScope)，并在有已选文本片段时一并作答。"
             openAIKeyStatus = notice
             if !messages.contains(where: { $0.role == .assistant && $0.source == "设置" && $0.text == notice }) {
                 messages.append(AgentMessage(role: .assistant, text: notice, source: "设置"))
@@ -1197,8 +1254,8 @@ final class WorkspaceStore: ObservableObject {
                 materialText: selectedContextText,
                 noteTitle: agentNoteTitle,
                 noteText: noteText,
-                selectionTitle: selectionContext?.ownerTitle,
-                selectionText: selectionContext?.text,
+                selectionTitle: agentSelectionTitle,
+                selectionText: agentSelectionText,
                 recentMessages: recentMessages
             )
             messages.append(AgentMessage(role: .assistant, text: answer, source: sourceTitle))

@@ -253,6 +253,25 @@ expect(groundedPrompt.input.contains("当前选区（来源：Mishkin 教材样�
 expect(groundedPrompt.input.contains("用户（来源：利率笔记）：上一问"), "agent prompt keeps recent message source")
 expect(groundedPrompt.instructions.contains("来源依据") && groundedPrompt.instructions.contains("没有用到的来源不要列"), "agent prompt requires grounded source evidence")
 expect(groundedPrompt.instructions.contains("学习助手") && !groundedPrompt.instructions.contains("学习 Agent"), "agent prompt speaks as a study assistant instead of internal agent copy")
+let multiSelectionPrompt = OpenAIResponsesClient.composePrompt(
+    question: "比较这些片段",
+    materialTitle: "Mishkin 教材样例",
+    materialText: "金融体系与利率。",
+    noteTitle: "利率笔记",
+    noteText: "",
+    selectionTitle: "2 个已选文本片段",
+    selectionText: """
+    片段 1（来源：Mishkin 教材样例，第 1 页）：
+    金融体系转移资金。
+
+    片段 2（来源：利率笔记）：
+    利率是资金使用价格。
+    """,
+    recentMessages: []
+)
+expect(multiSelectionPrompt.input.contains("当前选区（来源：2 个已选文本片段）：")
+    && multiSelectionPrompt.input.contains("片段 1（来源：Mishkin 教材样例，第 1 页）：")
+    && multiSelectionPrompt.input.contains("片段 2（来源：利率笔记）："), "agent prompt can carry multiple selected text attachments with source labels")
 let assistantDialoguePrompt = OpenAIResponsesClient.composePrompt(
     question: "继续解释",
     materialTitle: "Mishkin 教材样例",
@@ -660,9 +679,15 @@ expect(appSource.contains("Button(store.copyReferenceActionTitle) { store.copyCu
     && contentViewSource.contains("topIconButton(\"quote.opening\", help: store.copyReferenceActionTitle)"), "top bar and app menu share the same copy-reference wording")
 expect(commandPaletteSource.contains("private var canSendAgentDraft: Bool") && commandPaletteSource.contains("PaletteCommand(title: store.sendAgentActionTitle"), "command palette hides the agent send command until a draft exists")
 expect(commandPaletteSource.contains("if store.canApplyAgentAnswer") && commandPaletteSource.contains("if store.canReplaceNoteSelection") && commandPaletteSource.contains("PaletteCommand(title: \"替换笔记选区\""), "command palette hides agent answer actions until they can work")
-expect(commandPaletteSource.contains("if store.selectionContext != nil")
-    && commandPaletteSource.contains("PaletteCommand(title: \"问当前选区\"")
-    && commandPaletteSource.contains("Task { await store.askAgent() }"), "command palette selection action sends the selection question instead of only preparing a draft")
+if let selectionCommandStart = commandPaletteSource.range(of: "PaletteCommand(title: \"问当前选区\"")?.lowerBound,
+   let selectionCommandEnd = commandPaletteSource[selectionCommandStart...].range(of: "\n            })")?.upperBound {
+    let selectionCommandSource = String(commandPaletteSource[selectionCommandStart..<selectionCommandEnd])
+    expect(commandPaletteSource.contains("if store.selectionContext != nil")
+        && selectionCommandSource.contains("store.askSelection()")
+        && !selectionCommandSource.contains("askAgent()"), "command palette selection action attaches the selection without auto-sending a generated prompt")
+} else {
+    expect(false, "command palette selection command is inspectable")
+}
 expect(commandPaletteSource.contains("if store.canOpenSelectedSourceReference") && commandPaletteSource.contains("PaletteCommand(title: \"打开选区来源\""), "command palette exposes source jump only for parseable note references")
 expect(commandPaletteSource.contains("if store.canUseSelectionAgentSurface") && commandPaletteSource.contains("items.insert(agentSurfaceCommand(.selectionFloat, shortcut: \"⌃⌥3\")"), "command palette only exposes selection-float mode when an anchored selection exists")
 expect(commandPaletteSource.contains("private func agentSurfaceCommand(_ surface: AgentSurface, shortcut: String)")
@@ -774,11 +799,18 @@ expect(readerViewSource.contains("var onSelectionChange: (String, CGPoint?, Int)
 expect(readerViewSource.contains("private final class ReaderPDFView: PDFView")
     && readerViewSource.contains("override func acceptsFirstMouse(for event: NSEvent?) -> Bool")
     && readerViewSource.contains("window?.makeFirstResponder(self)")
-    && readerViewSource.contains("clearSelection()")
     && readerViewSource.contains("var reportCurrentSelection: (() -> Void)?")
     && readerViewSource.contains("override func mouseDragged(with event: NSEvent)")
     && readerViewSource.contains("override func mouseUp(with event: NSEvent)")
     && readerViewSource.contains("let view = ReaderPDFView()"), "native PDF text selection accepts first drag and focuses the PDF view instead of losing the first gesture")
+if let pdfViewStart = readerViewSource.range(of: "private final class ReaderPDFView: PDFView")?.lowerBound,
+   let pdfViewEnd = readerViewSource[pdfViewStart...].range(of: "\n}\n\nextension PDFReaderRepresentable.Coordinator")?.upperBound {
+    let readerPDFViewSource = String(readerViewSource[pdfViewStart..<pdfViewEnd])
+    expect(readerPDFViewSource.contains("super.mouseDown(with: event)\n        reportCurrentSelection?()")
+        && !readerPDFViewSource.contains("clearSelection()"), "PDF mouse down lets PDFKit handle native text selection before reporting instead of clearing the selection first")
+} else {
+    expect(false, "ReaderPDFView source is inspectable")
+}
 expect(readerViewSource.contains("func reportCurrentSelection(in view: PDFView)")
     && readerViewSource.contains("view.reportCurrentSelection = { [weak coordinator = context.coordinator, weak view] in")
     && readerViewSource.contains("coordinator?.reportCurrentSelection(in: view)"), "PDF selection reporting polls currentSelection after drag gestures instead of relying only on PDFKit notifications")
@@ -990,7 +1022,8 @@ expect(workspaceStoreSource.contains("case \"[\":\n                guard canNavi
     && workspaceStoreSource.contains("case \"]\":\n                guard canNavigateForward else { return false }\n                animateLayoutChange { navigateForwardInWorkspace() }"), "command-bracket shortcuts drive workspace back and forward")
 expect(workspaceStoreSource.contains("var canCopyReference: Bool")
     && workspaceStoreSource.contains("var copyReferenceActionTitle: String")
-    && workspaceStoreSource.contains("if selectionContext != nil { return \"复制选区引用\" }")
+    && workspaceStoreSource.contains("hasSelectionAttachments || selectionContext != nil")
+    && workspaceStoreSource.contains("if hasSelectionAttachments || selectionContext != nil { return \"复制选区引用\" }")
     && workspaceStoreSource.contains("if hasSelectedMaterial { return \"复制资料引用\" }")
     && workspaceStoreSource.contains("guard canCopyReference else { return false }")
     && workspaceStoreSource.contains("guard hasSelectedMaterial else { return false }"), "app shortcuts and menus name copy-reference by the actual current target")
@@ -1022,6 +1055,15 @@ expect(workspaceStoreSource.contains("let sampleItems: [StudyItem] = WorkspaceSt
     && workspaceStoreSource.contains("利率是资金使用价格的表达。")
     && !workspaceStoreSource.contains("StudyItem(id: \"sample-pdf\", title: \"Mishkin 教材样例\", subtitle: \"PDF 阅读\", kind: .pdf, urlPath: nil, isSample: true)"), "sample PDF item points at a generated selectable PDF file instead of the fake PDF fallback")
 expect(workspaceStoreSource.contains("ownerTitle: String? = nil") && workspaceStoreSource.contains("let resolvedOwnerTitle"), "selection updates can carry a precise reader source title")
+expect(workspaceStoreSource.contains("@Published var selectionAttachments: [SelectionContext] = []")
+    && workspaceStoreSource.contains("var agentSelectionTitle: String?")
+    && workspaceStoreSource.contains("var agentSelectionText: String?")
+    && workspaceStoreSource.contains("func removeSelectionAttachment(id: UUID)")
+    && workspaceStoreSource.contains("private func addSelectionAttachment(_ selection: SelectionContext)")
+    && workspaceStoreSource.contains("let maxAttachments = 8"), "agent selection context uses an explicit removable attachment list instead of a single hidden draft selection")
+expect(workspaceStoreSource.contains("selectionTitle: agentSelectionTitle")
+    && workspaceStoreSource.contains("selectionText: agentSelectionText")
+    && !workspaceStoreSource.contains("selectionText: selectionContext?.text,\n                recentMessages: recentMessages"), "agent requests use confirmed selection attachments instead of the transient live selection")
 expect(workspaceStoreSource.contains("private static func boundedSelectionText")
     && workspaceStoreSource.contains("let cleaned = MarkdownSelectionSanitizer.clean(text)")
     && workspaceStoreSource.contains("Self.boundedSelectionText(cleaned)")
@@ -1042,13 +1084,17 @@ expect(workspaceStoreSource.contains("func askSelection()")
 if let askSelectionStart = workspaceStoreSource.range(of: "func askSelection()")?.lowerBound,
    let appendSelectionStart = workspaceStoreSource.range(of: "func appendSelectionToNote()")?.lowerBound {
     let askSelectionSource = String(workspaceStoreSource[askSelectionStart..<appendSelectionStart])
-    expect(askSelectionSource.contains("请解释当前已选文本片段")
+    expect(askSelectionSource.contains("addSelectionAttachment(selectionContext)")
+        && !askSelectionSource.contains("请解释当前已选文本片段")
+        && !askSelectionSource.contains("agentDraft = prompt")
         && !askSelectionSource.contains("selectionContext.text")
-        && !askSelectionSource.contains("选区："), "selection question draft stays clean; the attachment pill and agent context carry the selected text")
+        && !askSelectionSource.contains("选区："), "selection question action only attaches the selection and focuses the composer; the user writes the prompt")
 } else {
     expect(false, "askSelection source is readable")
 }
-expect(workspaceStoreSource.contains("sourceTitle: selectionContext.ownerTitle") && workspaceStoreSource.contains("来源：\\(currentReferenceTitle)"), "copy reference uses real selection or current reader source")
+expect(workspaceStoreSource.contains("selectionAttachments\n                .map { quotedReferenceBlock(text: $0.text, sourceTitle: $0.ownerTitle) }")
+    && workspaceStoreSource.contains("sourceTitle: selectionContext.ownerTitle")
+    && workspaceStoreSource.contains("来源：\\(currentReferenceTitle)"), "copy reference uses attached selections, the live selection, or the current reader source")
 expect(workspaceStoreSource.contains("private func quotedReferenceBlock")
     && workspaceStoreSource.contains("let quoted = MarkdownSelectionSanitizer.clean(text)")
     && workspaceStoreSource.contains("> [!quote] 选区摘录\n        >\n        \\(quoted)")
@@ -1328,12 +1374,24 @@ expect(!notesAgentSource.contains("魏碑会优先读取材料"), "agent empty s
 expect(!notesAgentSource.contains("Text(\"当前上下文\")") && !notesAgentSource.contains("contextLine("), "agent empty state avoids diagnostic context rows")
 expect(notesAgentSource.contains("private struct AgentSelectionAttachmentPill")
     && notesAgentSource.contains("Image(systemName: \"text.bubble\")")
-    && notesAgentSource.contains("Text(\"1 个已选文本片段\")")
-    && notesAgentSource.contains(".popover(isPresented: $hovering, arrowEdge: .bottom)")
-    && notesAgentSource.contains("Text(selection.ownerTitle)")
-    && notesAgentSource.contains("Text(selection.text)")
+    && notesAgentSource.contains("Text(\"\\(store.selectionAttachments.count) 个已选文本片段\")")
+    && notesAgentSource.contains(".popover(isPresented: popoverPresented, arrowEdge: .bottom)")
+    && notesAgentSource.contains("ForEach(Array(store.selectionAttachments.enumerated()), id: \\.element.id)")
+    && notesAgentSource.contains("store.removeSelectionAttachment(id: selection.id)")
+    && notesAgentSource.contains("Image(systemName: \"xmark\")")
+    && notesAgentSource.contains("selectionAttachmentRow(index: index, selection: selection)")
     && notesAgentSource.components(separatedBy: "AgentSelectionAttachmentPill()").count >= 4
+    && !notesAgentSource.contains("Text(\"1 个已选文本片段\")")
     && !notesAgentSource.contains("Text(\"已含选区\")"), "agent selection context renders as a hoverable attachment pill near composers instead of text inside the empty state")
+if let noteBridgeStart = notesAgentSource.range(of: "onAskAgentWithSelection: { text, anchor in")?.lowerBound,
+   let wikiLinkStart = notesAgentSource[noteBridgeStart...].range(of: "}, onWikiLink:")?.lowerBound {
+    let noteSelectionBridgeSource = String(notesAgentSource[noteBridgeStart..<wikiLinkStart])
+    expect(noteSelectionBridgeSource.contains("store.updateSelection(text, source: .note, anchor: anchor)")
+        && noteSelectionBridgeSource.contains("store.askSelection()")
+        && !noteSelectionBridgeSource.contains("askAgent()"), "rich markdown selection ask action attaches the selection without auto-sending a generated prompt")
+} else {
+    expect(false, "rich markdown selection ask bridge is inspectable")
+}
 expect(!emptyAgentStateSource.isEmpty
     && !emptyAgentStateSource.contains("noteContextTitle")
     && !emptyAgentStateSource.contains("Text(store.selectedMaterialItem?.title ?? \"当前笔记\")")
@@ -1357,9 +1415,8 @@ expect(notesAgentSource.contains("Text(\"正在读选区...\")")
 expect(notesAgentSource.contains("private var isCredentialNotice: Bool")
     && notesAgentSource.contains("message.text.hasPrefix(\"未配置密钥\")")
     && notesAgentSource.contains("message.text.hasPrefix(\"未配置 OPENAI_API_KEY\")")
-    && notesAgentSource.contains("credentialNoticeContent")
     && notesAgentSource.contains("Text(\"需要设置密钥\")")
-    && notesAgentSource.contains("let scope = store.selectionContext == nil ? store.agentPromptScope : \"\\(store.agentPromptScope)、当前选区\"")
+    && notesAgentSource.contains("let scope = store.hasSelectionAttachments ? \"\\(store.agentPromptScope)、已选文本片段\" : store.agentPromptScope")
     && notesAgentSource.contains("设置后会结合\\(scope)作答；未配置时不会编造内容。")
     && notesAgentSource.contains("isCredentialNotice ? 360 : 560")
     && notesAgentSource.contains("if !isUser && !isCredentialNotice"), "agent credential notice renders as a compact setup hint instead of a raw chat/error bubble")
@@ -1367,23 +1424,26 @@ expect(notesAgentSource.contains("store.canOpenSelectedSourceReference") && note
 expect(notesAgentSource.contains("onSourceReference: { reference in store.openSourceReference(reference) }"), "note editor source references can jump back to material")
 expect(notesAgentSource.contains("emptyNoteHintText") && notesAgentSource.contains("store.hasSelectedMaterial ? \"开始记录当前材料\" : \"开始记录当前笔记\"") && notesAgentSource.contains(".allowsHitTesting(false)"), "blank note editor cue matches whether a material is selected")
 expect(notesAgentSource.contains("noteFileStatusColor(for message: String)") && notesAgentSource.contains("message.hasPrefix(\"无法\") ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk"), "note file success statuses do not render as errors")
-expect(notesAgentSource.contains(".help(\"新建独立 Markdown 笔记\")") && notesAgentSource.contains("结合\\(store.agentPromptScope)和当前选区作答") && !notesAgentSource.contains("结合已选择材料、选区和笔记"), "note and floating agent hints avoid fake current material context")
+expect(notesAgentSource.contains(".help(\"新建独立 Markdown 笔记\")") && notesAgentSource.contains("结合\\(store.agentPromptScope)和已选文本片段作答") && !notesAgentSource.contains("结合已选择材料、选区和笔记"), "note and floating agent hints avoid fake current material context")
 expect(notesAgentSource.contains(".accessibilityLabel(Text(\"作为笔记编辑\"))")
     && notesAgentSource.contains(".help(\"把当前 Markdown 文件移到笔记区原地编辑\")")
     && commandPaletteSource.contains("PaletteCommand(title: \"作为笔记编辑当前 Markdown\"")
     && !notesAgentSource.contains("Button(\"写回原 Markdown\")")
     && !commandPaletteSource.contains("写回当前 Markdown 文件"), "imported markdown conversion is named as editing, not an immediate overwrite")
-expect(notesAgentSource.contains("return \"问当前选区\"") && !notesAgentSource.contains("问当前选区或当前材料"), "agent placeholders avoid fake material context when a selection exists")
+expect(workspaceStoreSource.contains("var agentInputPrompt: String")
+    && workspaceStoreSource.contains("if hasSelectionAttachments {\n            return \"追问已选文本片段\"\n        }")
+    && workspaceStoreSource.contains("return hasSelectedMaterial ? \"问当前材料\" : \"问当前笔记\"")
+    && !notesAgentSource.contains("问当前选区或当前材料"), "agent placeholders come from confirmed attachment state instead of hidden live selection state")
 expect(notesAgentSource.contains("func weibeiFloatingHeaderChrome(appearanceMode: WeiBeiAppearanceMode) -> some View")
     && notesAgentSource.contains("WeiBeiHeaderHandoffFade(height: 10, opacity: 0.22)")
     && notesAgentSource.components(separatedBy: ".weibeiFloatingHeaderChrome(appearanceMode: store.appearanceMode)").count == 3, "drawer and corner agent headers share the same light glass chrome")
 expect(notesAgentSource.components(separatedBy: "!store.isAskingAgent && !store.agentDraft.trimmingCharacters").count >= 4, "all agent send affordances hide while a request is running")
-expect(notesAgentSource.contains("store.hasSelectedMaterial ? \"问当前材料\" : \"问当前笔记\"") && notesAgentSource.contains("prompt: Text(agentPrompt)") && notesAgentSource.contains(".foregroundStyle(WeiBeiTheme.placeholderInk)") && notesAgentSource.contains(".foregroundColor(WeiBeiTheme.ink)"), "agent input placeholder matches context and uses native prompt alignment with readable ink")
+expect(notesAgentSource.contains("store.agentInputPrompt") && notesAgentSource.contains("prompt: Text(agentPrompt)") && notesAgentSource.contains(".foregroundStyle(WeiBeiTheme.placeholderInk)") && notesAgentSource.contains(".foregroundColor(WeiBeiTheme.ink)"), "agent input placeholder matches context and uses native prompt alignment with readable ink")
 if let panePromptStart = notesAgentSource.range(of: "private var agentPrompt: String")?.lowerBound,
    let panePromptEnd = notesAgentSource[panePromptStart...].range(of: "\n    }\n\n    private var agentInputTray")?.lowerBound {
     let panePromptSource = String(notesAgentSource[panePromptStart..<panePromptEnd])
-    expect(panePromptSource.contains("if store.selectionContext != nil {\n            return \"问当前选区\"\n        }")
-        && panePromptSource.contains("store.hasSelectedMaterial ? \"问当前材料\" : \"问当前笔记\""), "main agent pane prompt prioritizes the current selection")
+    expect(panePromptSource.contains("store.agentInputPrompt")
+        && !panePromptSource.contains("selectionContext != nil"), "main agent pane prompt uses the shared attachment-aware placeholder")
 } else {
     expect(false, "main agent pane prompt is inspectable")
 }
@@ -1393,7 +1453,8 @@ if let drawerStart = notesAgentSource.range(of: "struct AgentDrawerView")?.lower
     let drawerAgentSource = String(notesAgentSource[drawerStart..<cornerStart])
     expect(drawerAgentSource.contains("ZStack(alignment: .bottomTrailing)")
         && drawerAgentSource.contains("private var drawerPrompt: String")
-        && drawerAgentSource.contains("if store.selectionContext != nil {\n            return \"问当前选区\"\n        }")
+        && drawerAgentSource.contains("store.agentInputPrompt")
+        && !drawerAgentSource.contains("return \"问当前选区\"")
         && drawerAgentSource.contains("axis: .vertical")
         && drawerAgentSource.contains(".lineLimit(1...4)")
         && drawerAgentSource.contains(".fixedSize(horizontal: false, vertical: true)")
@@ -1417,7 +1478,8 @@ if let cornerStart = notesAgentSource.range(of: "struct CornerAgentView")?.lower
         && cornerAgentSource.contains("Text(\"对话\")")
         && !cornerAgentSource.contains("Text(\"Agent\")")
         && cornerAgentSource.contains("private var agentPrompt: String")
-        && cornerAgentSource.contains("if store.selectionContext != nil {\n            return \"问当前选区\"\n        }")
+        && cornerAgentSource.contains("store.agentInputPrompt")
+        && !cornerAgentSource.contains("return \"问当前选区\"")
         && cornerAgentSource.contains("ZStack(alignment: .bottomTrailing)")
         && cornerAgentSource.contains("axis: .vertical")
         && cornerAgentSource.contains(".lineLimit(1...4)")
@@ -1441,6 +1503,14 @@ if let selectionStart = notesAgentSource.range(of: "struct FloatingSelectionAgen
     expect(floatingSelectionSource.contains("Button(\"问\")")
         && floatingSelectionSource.contains(".help(\"问当前选区\")")
         && !floatingSelectionSource.contains("Button(\"问 Agent\")"), "compact selection prompt uses short task language instead of a visible internal agent label")
+    if let explainStart = floatingSelectionSource.range(of: "private func explainSelection()")?.lowerBound,
+       let openSourceStart = floatingSelectionSource.range(of: "private func openSourceReference()")?.lowerBound {
+        let explainSelectionSource = String(floatingSelectionSource[explainStart..<openSourceStart])
+        expect(explainSelectionSource.contains("store.askSelection()")
+            && !explainSelectionSource.contains("askAgent()"), "selection prompt attaches the current selection and focuses the composer without auto-sending a generated question")
+    } else {
+        expect(false, "floating selection explain action is inspectable")
+    }
     expect(floatingSelectionSource.contains("var routesToConversation = false")
         && floatingSelectionSource.contains("private var showsExpandedBody: Bool")
         && floatingSelectionSource.contains("expanded && !routesToConversation")
