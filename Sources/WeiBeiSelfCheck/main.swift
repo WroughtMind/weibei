@@ -473,6 +473,20 @@ expect(contentViewSource.contains("store.toggleLibrary()")
     && contentViewSource.contains("store.showLibrary ? \"收起资料库\" : \"打开资料库\"")
     && !contentViewSource.contains("恢复资料库")
     && !contentViewSource.contains(".opacity(isImmersiveLayout ? 0.45 : 1)"), "immersive top bar keeps a clear stateful library chooser instead of dimming a live control")
+if let leftControlsStart = contentViewSource.range(of: "private var leftPrimaryControls: some View")?.lowerBound,
+   let leftControlsEnd = contentViewSource[leftControlsStart...].range(of: "\n    }\n\n    @ViewBuilder\n    private var brandBlock")?.lowerBound {
+    let leftControlsSource = String(contentViewSource[leftControlsStart..<leftControlsEnd])
+    if let libraryRange = leftControlsSource.range(of: "libraryButton"),
+       let navigationRange = leftControlsSource.range(of: "navigationButtons"),
+       let settingsRange = leftControlsSource.range(of: "settingsMenu") {
+        expect(libraryRange.lowerBound < navigationRange.lowerBound
+            && navigationRange.lowerBound < settingsRange.lowerBound, "top-left controls keep library first, then back/forward, then settings")
+    } else {
+        expect(false, "top-left controls expose library, navigation, and settings controls")
+    }
+} else {
+    expect(false, "top-left controls block is inspectable")
+}
 expect(contentViewSource.contains("WindowFullScreenReader(isFullScreen: $windowIsFullScreen)")
     && contentViewSource.contains("let isFullScreen: Bool")
     && contentViewSource.contains("if isFullScreen { return 12 }")
