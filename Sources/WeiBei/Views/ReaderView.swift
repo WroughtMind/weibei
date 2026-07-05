@@ -122,9 +122,7 @@ struct ReaderView: View {
             withAnimation(WeiBeiMotion.hover) {
                 pdfControlsHovering = hovering
             }
-            if hovering {
-                revealPDFControls()
-            } else {
+            if !hovering {
                 schedulePDFControlsCollapse(after: 0.28)
             }
         }
@@ -202,7 +200,7 @@ struct ReaderView: View {
             withAnimation(WeiBeiMotion.panel) {
                 pdfBrowseMode = pdfBrowseMode.toggled
             }
-            revealPDFControls(collapseAfter: 1.6)
+            revealPDFControls(collapseAfter: 0.85)
         } label: {
             HStack(spacing: showsPDFModeLabel ? 5 : 0) {
                 Image(systemName: pdfBrowseMode.systemImage)
