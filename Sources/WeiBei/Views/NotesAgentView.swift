@@ -1060,6 +1060,9 @@ struct AgentDrawerView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .focused($draftFocused)
                     .foregroundColor(WeiBeiTheme.ink)
+                    .onSubmit {
+                        Task { await store.askAgent() }
+                    }
                 .font(.system(size: 13))
                 .padding(.trailing, canSend ? 44 : 0)
                 .weibeiInputSurface(active: draftFocused, height: 46)
@@ -1153,6 +1156,9 @@ struct CornerAgentView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .focused($draftFocused)
                     .foregroundColor(WeiBeiTheme.ink)
+                    .onSubmit {
+                        Task { await store.askAgent() }
+                    }
                 .font(.system(size: 13))
                 .padding(.trailing, canSend ? 38 : 0)
                 .weibeiInputSurface(active: draftFocused, height: 44)
