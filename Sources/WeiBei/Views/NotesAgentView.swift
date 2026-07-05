@@ -754,9 +754,10 @@ struct AgentPaneView: View {
                             }
                         }
                         .padding(14)
+                        .padding(.top, store.messages.isEmpty ? 22 : 0)
                         .frame(
                             minHeight: geometry.size.height,
-                            alignment: store.messages.isEmpty ? .bottomLeading : .topLeading
+                            alignment: .topLeading
                         )
                         .animation(WeiBeiMotion.panel, value: store.messages.count)
                     }
