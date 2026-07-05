@@ -241,6 +241,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
         let view = MarkdownWebView(frame: .zero, configuration: configuration)
         view.setValue(false, forKey: "drawsBackground")
+        Self.applyWebAppearance(to: view, appearanceMode: appearanceMode)
         view.pasteImageFromClipboard = { [weak coordinator = context.coordinator] in
             coordinator?.pasteImageFromClipboard() ?? false
         }
@@ -257,6 +258,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
+        Self.applyWebAppearance(to: view, appearanceMode: appearanceMode)
         context.coordinator.markdown = $markdown
         context.coordinator.command = $command
         if context.coordinator.documentID != documentID {
@@ -321,6 +323,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         "imageAttachmentRequested",
         "appShortcut"
     ]
+
+    private static func applyWebAppearance(to view: WKWebView, appearanceMode: WeiBeiAppearanceMode) {
+        view.underPageBackgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
+        view.appearance = NSAppearance(named: appearanceMode == .inkstone ? .darkAqua : .aqua)
+    }
 
     private static func json(_ value: String) -> String {
         let data = (try? JSONEncoder().encode(value)) ?? Data("".utf8)
