@@ -503,8 +503,6 @@ public struct AgentMessage: Identifiable, Codable, Hashable {
             && !text.hasPrefix("未配置密钥")
             && !text.hasPrefix("未配置 OPENAI_API_KEY")
             && !text.hasPrefix("No key is configured")
-            && !text.hasPrefix("离线预览：")
-            && !text.hasPrefix("Offline preview:")
             && !text.hasPrefix("请求失败：")
             && !text.hasPrefix("Agent 请求失败：")
             && !text.hasPrefix("Request failed:")

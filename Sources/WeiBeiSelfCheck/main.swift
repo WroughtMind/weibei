@@ -24,14 +24,15 @@ let offlineChinesePreview = AgentOfflinePreview.render(
         selectionText: "利率是资金使用价格的表达。"
     )
 )
-expect(offlineChinesePreview.contains("离线预览：这次提问已经进入对话。")
+expect(offlineChinesePreview.contains("离线草稿：这次提问已经进入对话。")
     && !offlineChinesePreview.hasPrefix("未配置密钥")
     && offlineChinesePreview.contains("问题：解释利率为什么是资金价格")
     && offlineChinesePreview.contains("资料：Mishkin 教材样例")
     && offlineChinesePreview.contains("笔记：货币金融学课程 HTML")
     && offlineChinesePreview.contains("选区：已选文本片段")
+    && offlineChinesePreview.contains("这是一份可写入笔记的本地草稿")
     && offlineChinesePreview.contains("资料摘录：利率是资金使用价格的表达。金融市场通过利率配置资源。")
-    && offlineChinesePreview.contains("笔记摘录：## 摘录 来源：Mishkin 教材样例"), "offline agent preview renders full Chinese context without API key")
+    && offlineChinesePreview.contains("笔记摘录：## 摘录 来源：Mishkin 教材样例"), "offline agent draft renders full Chinese context without API key")
 
 let offlineEnglishPreview = AgentOfflinePreview.render(
     AgentOfflinePreviewInput(
@@ -46,12 +47,13 @@ let offlineEnglishPreview = AgentOfflinePreview.render(
         selectionText: nil
     )
 )
-expect(offlineEnglishPreview.contains("Offline preview: this question was sent into the chat.")
+expect(offlineEnglishPreview.contains("Offline draft: this question was sent into the chat.")
     && !offlineEnglishPreview.hasPrefix("No key is configured")
     && offlineEnglishPreview.contains("Question: Explain the selected sentence")
     && offlineEnglishPreview.contains("Material: none")
     && offlineEnglishPreview.contains("Selection: none")
-    && offlineEnglishPreview.contains("Note excerpt: the current note is empty."), "offline agent preview renders English empty-context state")
+    && offlineEnglishPreview.contains("This is a writable local draft")
+    && offlineEnglishPreview.contains("Note excerpt: the current note is empty."), "offline agent draft renders English empty-context state")
 expect(AgentOfflinePreview.preview("A\nB\tC", limit: 20) == "A B C", "offline agent preview normalizes whitespace")
 
 let offlineTurnMessages = AgentOfflineTurn.messages(
@@ -74,9 +76,9 @@ expect(offlineTurnMessages.count == 2
     && offlineTurnMessages[0].text == "解释当前材料"
     && offlineTurnMessages[0].source == "Mishkin 教材样例"
     && offlineTurnMessages[1].role == .assistant
-    && offlineTurnMessages[1].text.contains("离线预览：这次提问已经进入对话。")
+    && offlineTurnMessages[1].text.contains("离线草稿：这次提问已经进入对话。")
     && offlineTurnMessages[1].source == "Mishkin 教材样例"
-    && !offlineTurnMessages[1].isUsableAgentAnswer, "offline agent turn appends a visible user turn and non-writable context preview without an API key")
+    && offlineTurnMessages[1].isUsableAgentAnswer, "offline agent turn appends a visible user turn and writable local draft without an API key")
 
 let fontDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Resources/Fonts")
@@ -1456,7 +1458,7 @@ expect(!workspaceStoreSource.contains("selectedItem?.title ?? \"当前材料\"")
     && !workspaceStoreSource.contains("Agent 请求失败：")
     && workspaceStoreSource.contains("请求失败：\\(error.localizedDescription)")
     && !workspaceStoreSource.contains("Agent 设置")
-    && workspaceStoreSource.contains("未配置密钥。当前用离线模式回显上下文")
+    && workspaceStoreSource.contains("未配置密钥。当前用离线模式生成草稿")
     && workspaceStoreSource.contains("AgentOfflineTurn.messages(")
     && workspaceStoreSource.contains("offlineAgentInput(")
     && workspaceStoreSource.contains("AgentOfflinePreviewInput(")
@@ -1945,8 +1947,8 @@ expect(AgentMessage(role: .assistant, text: "整理完成", source: nil).isUsabl
 expect(!AgentMessage(role: .assistant, text: "未配置密钥。", source: nil).isUsableAgentAnswer, "credential setup message is not writable")
 expect(!AgentMessage(role: .assistant, text: "未配置 OPENAI_API_KEY。", source: nil).isUsableAgentAnswer, "api key setup message is not writable")
 expect(!AgentMessage(role: .assistant, text: "未配置 OPENAI_API_KEY 或钥匙串密钥。", source: nil).isUsableAgentAnswer, "keychain setup message is not writable")
-expect(!AgentMessage(role: .assistant, text: offlineChinesePreview, source: nil).isUsableAgentAnswer, "offline preview is visible in chat but not writable as an answer")
-expect(!AgentMessage(role: .assistant, text: offlineEnglishPreview, source: nil).isUsableAgentAnswer, "English offline preview is visible in chat but not writable as an answer")
+expect(AgentMessage(role: .assistant, text: offlineChinesePreview, source: nil).isUsableAgentAnswer, "offline draft is visible in chat and writable to notes")
+expect(AgentMessage(role: .assistant, text: offlineEnglishPreview, source: nil).isUsableAgentAnswer, "English offline draft is visible in chat and writable to notes")
 expect(!AgentMessage(role: .assistant, text: "请求失败：网络错误", source: nil).isUsableAgentAnswer, "agent error is not writable")
 expect(!AgentMessage(role: .assistant, text: "Agent 请求失败：网络错误", source: nil).isUsableAgentAnswer, "legacy agent error is not writable")
 

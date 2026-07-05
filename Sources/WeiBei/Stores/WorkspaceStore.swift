@@ -1360,8 +1360,8 @@ final class WorkspaceStore: ObservableObject {
         }
         guard let credential = resolvedOpenAIAPIKey() else {
             let notice = ui(
-                "未配置密钥。当前用离线模式回显上下文；设置密钥后会结合\(agentPromptScope)，并在有已选文本片段时一并作答。",
-                "No key is configured. WeiBei is showing an offline context preview. After setup, answers will use \(agentPromptScope) and any selected text fragments."
+                "未配置密钥。当前用离线模式生成草稿；设置密钥后会结合\(agentPromptScope)，并在有已选文本片段时一并作答。",
+                "No key is configured. WeiBei is generating an offline draft. After setup, answers will use \(agentPromptScope) and any selected text fragments."
             )
             openAIKeyStatus = notice
             messages.append(contentsOf: AgentOfflineTurn.messages(

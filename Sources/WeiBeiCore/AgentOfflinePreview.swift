@@ -61,11 +61,11 @@ public enum AgentOfflinePreview {
 
         return input.language.text(
             """
-            离线预览：这次提问已经进入对话。
+            离线草稿：这次提问已经进入对话。
 
             问题：\(input.question)
 
-            当前会传给 Agent 的上下文：
+            当前上下文：
             - \(materialLine)
             - \(noteLine)
             - \(selectionLine)
@@ -74,14 +74,14 @@ public enum AgentOfflinePreview {
 
             \(noteBlock)
 
-            设置密钥后，再发送同类问题就会基于这些上下文生成正式回答；没有证据时会明确说明。
+            这是一份可写入笔记的本地草稿，只整理当前可见上下文，不补充外部结论。设置密钥后，再发送同类问题会生成正式回答。
             """,
             """
-            Offline preview: this question was sent into the chat.
+            Offline draft: this question was sent into the chat.
 
             Question: \(input.question)
 
-            Context that would be sent to Agent:
+            Current context:
             - \(materialLine)
             - \(noteLine)
             - \(selectionLine)
@@ -90,7 +90,7 @@ public enum AgentOfflinePreview {
 
             \(noteBlock)
 
-            After a key is configured, the same kind of question will generate a grounded answer from this context. Missing evidence will be called out.
+            This is a writable local draft that only organizes the visible context and does not add outside claims. After a key is configured, the same kind of question will generate a full answer.
             """
         )
     }
