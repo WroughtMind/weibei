@@ -850,7 +850,7 @@ struct AgentPaneView: View {
                         Button { Task { await store.askAgent() } } label: {
                             Image(systemName: "paperplane.fill")
                         }
-                        .buttonStyle(WeiBeiIconButtonStyle(active: true, size: 30))
+                        .buttonStyle(WeiBeiIconButtonStyle(size: 30, prominence: .primary))
                         .accessibilityLabel(Text("发送"))
                         .help("发送")
                         .keyboardShortcut(.return, modifiers: [.command])
@@ -1172,7 +1172,7 @@ struct AgentDrawerView: View {
                     Button { Task { await store.askAgent() } } label: {
                         Image(systemName: "paperplane.fill")
                     }
-                    .buttonStyle(WeiBeiIconButtonStyle(active: true, size: 34))
+                    .buttonStyle(WeiBeiIconButtonStyle(size: 34, prominence: .primary))
                     .accessibilityLabel(Text("发送"))
                     .help("发送")
                     .padding(.trailing, 6)
@@ -1268,7 +1268,7 @@ struct CornerAgentView: View {
                     } label: {
                         Image(systemName: "paperplane.fill")
                     }
-                    .buttonStyle(WeiBeiIconButtonStyle(active: true))
+                    .buttonStyle(WeiBeiIconButtonStyle(prominence: .primary))
                     .accessibilityLabel(Text("发送"))
                     .help("发送")
                     .padding(.trailing, 5)
@@ -1490,7 +1490,7 @@ struct FloatingSelectionAgentView: View {
                     } label: {
                         Image(systemName: "paperplane.fill")
                     }
-                    .buttonStyle(WeiBeiIconButtonStyle(active: true, size: 22))
+                    .buttonStyle(WeiBeiIconButtonStyle(size: 22, prominence: .primary))
                     .accessibilityLabel(Text("发送"))
                     .help("发送")
                 }
@@ -1978,35 +1978,13 @@ private struct AgentBubble: View {
     @State private var hovering = false
 
     var body: some View {
-        HStack(alignment: .top) {
+        Group {
             if isUser {
-                Spacer(minLength: 38)
-            }
-
-            bubbleContent
-            .padding(bubblePadding)
-            .frame(maxWidth: bubbleMaxWidth, alignment: .leading)
-            .background(bubbleFill)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(bubbleStroke, lineWidth: 1)
-            }
-            .overlay(alignment: .leading) {
-                if !isUser && !isCredentialNotice {
-                    Capsule()
-                        .fill(assistantMarkColor)
-                        .frame(width: 3, height: 28)
-                        .padding(.leading, 2)
-                }
-            }
-            .weibeiHoverLift(active: hovering, amount: 1)
-
-            if !isUser {
-                Spacer(minLength: 38)
+                userTurn
+            } else {
+                assistantTurn
             }
         }
-        .frame(maxWidth: .infinity, alignment: isUser ? .trailing : .leading)
         .onHover { hovering in
             withAnimation(WeiBeiMotion.hover) {
                 self.hovering = hovering
@@ -2016,11 +1994,51 @@ private struct AgentBubble: View {
     }
 
     @ViewBuilder
-    private var bubbleContent: some View {
+    private var userTurn: some View {
+        HStack(alignment: .top) {
+            Spacer(minLength: 42)
+
+            regularMessageContent
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .frame(maxWidth: 520, alignment: .leading)
+                .background(WeiBeiTheme.paperInset.opacity(hovering ? 0.32 : 0.24))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 10)
+                        .stroke(WeiBeiTheme.hairline.opacity(hovering ? 0.92 : 0.42), lineWidth: 1)
+                }
+                .weibeiHoverLift(active: hovering, amount: 1)
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    @ViewBuilder
+    private var assistantTurn: some View {
         if isCredentialNotice {
             credentialNoticeContent
+                .padding(.vertical, 8)
+                .padding(.leading, 18)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .overlay(alignment: .leading) {
+                    Capsule()
+                        .fill(WeiBeiTheme.link.opacity(hovering ? 0.50 : 0.34))
+                        .frame(width: 2, height: 30)
+                }
         } else {
             regularMessageContent
+                .padding(.vertical, 10)
+                .padding(.leading, 20)
+                .padding(.trailing, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(WeiBeiTheme.paperRaised.opacity(hovering ? 0.14 : 0.0))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay(alignment: .leading) {
+                    Capsule()
+                        .fill(assistantMarkColor.opacity(hovering ? 1.0 : 0.72))
+                        .frame(width: 2, height: hovering ? 34 : 24)
+                        .padding(.leading, 4)
+                }
         }
     }
 
@@ -2043,11 +2061,7 @@ private struct AgentBubble: View {
                 Spacer(minLength: 0)
             }
 
-            Text(message.text)
-                .textSelection(.enabled)
-                .font(.system(size: 14))
-                .lineSpacing(4)
-                .foregroundStyle(WeiBeiTheme.ink)
+            AgentMessageMarkdownText(text: message.text)
 
             if message.id == store.lastUsableAgentAnswerID {
                 HStack(spacing: 6) {
@@ -2074,22 +2088,15 @@ private struct AgentBubble: View {
     }
 
     private var credentialNoticeContent: some View {
-        HStack(alignment: .top, spacing: 9) {
-            Capsule()
-                .fill(WeiBeiTheme.link.opacity(0.34))
-                .frame(width: 2, height: 30)
-                .padding(.top, 1)
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text("需要设置密钥")
-                    .font(.system(size: 11.5, weight: .semibold))
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                Text(displayText)
-                    .textSelection(.enabled)
-                    .font(.system(size: 12.5))
-                    .lineSpacing(3)
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-            }
+        VStack(alignment: .leading, spacing: 3) {
+            Text("需要设置密钥")
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+            Text(displayText)
+                .textSelection(.enabled)
+                .font(.system(size: 12.5))
+                .lineSpacing(3)
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
         }
     }
 
@@ -2139,6 +2146,22 @@ private struct AgentBubble: View {
 
     private var bubbleStroke: Color {
         isUser ? WeiBeiTheme.cinnabar.opacity(0.10) : WeiBeiTheme.hairline.opacity(isCredentialNotice ? 0.50 : 1)
+    }
+}
+
+private struct AgentMessageMarkdownText: View {
+    var text: String
+
+    var body: some View {
+        Text(renderedText)
+            .textSelection(.enabled)
+            .font(.system(size: 14))
+            .lineSpacing(4)
+            .foregroundStyle(WeiBeiTheme.ink)
+    }
+
+    private var renderedText: AttributedString {
+        (try? AttributedString(markdown: text)) ?? AttributedString(text)
     }
 }
 

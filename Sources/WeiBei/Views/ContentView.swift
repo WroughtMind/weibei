@@ -636,7 +636,7 @@ private struct UnifiedTopBarView: View {
         } label: {
             Image(systemName: "gearshape")
         }
-        .buttonStyle(WeiBeiIconButtonStyle(active: store.appearanceMode == .inkstone, size: variant == .glyph || variant == .compact ? 24 : WeiBeiMetric.iconButton))
+        .buttonStyle(WeiBeiIconButtonStyle(size: variant == .glyph || variant == .compact ? 24 : WeiBeiMetric.iconButton))
         .accessibilityLabel(Text("设置"))
         .help("设置")
     }
