@@ -50,11 +50,7 @@ final class WorkspaceStore: ObservableObject {
 
     private static let shortcutModifierMask: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
 
-    let sampleItems: [StudyItem] = [
-        StudyItem(id: "sample-html", title: "货币金融学课程 HTML", subtitle: "HTML 教程", kind: .html, urlPath: nil, isSample: true),
-        StudyItem(id: "sample-pdf", title: "Mishkin 教材样例", subtitle: "PDF 阅读", kind: .pdf, urlPath: nil, isSample: true),
-        StudyItem(id: "sample-md", title: "课堂笔记样例", subtitle: "Markdown", kind: .markdown, urlPath: nil, isSample: true)
-    ]
+    let sampleItems: [StudyItem] = WorkspaceStore.makeSampleItems()
 
     init() {
         let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
@@ -1093,6 +1089,53 @@ final class WorkspaceStore: ObservableObject {
         default:
             return ""
         }
+    }
+
+    private static func makeSampleItems() -> [StudyItem] {
+        [
+            StudyItem(id: "sample-html", title: "货币金融学课程 HTML", subtitle: "HTML 教程", kind: .html, urlPath: nil, isSample: true),
+            StudyItem(id: "sample-pdf", title: "Mishkin 教材样例", subtitle: "PDF 阅读", kind: .pdf, urlPath: samplePDFURL()?.path, isSample: true),
+            StudyItem(id: "sample-md", title: "课堂笔记样例", subtitle: "Markdown", kind: .markdown, urlPath: nil, isSample: true)
+        ]
+    }
+
+    private static func samplePDFURL() -> URL? {
+        guard let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else { return nil }
+        let directory = appSupport.appendingPathComponent("WeiBei/Samples", isDirectory: true)
+        let url = directory.appendingPathComponent("mishkin-sample.pdf")
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return writeSamplePDF(to: url) ? url : nil
+    }
+
+    private static func writeSamplePDF(to url: URL) -> Bool {
+        let data = NSMutableData()
+        var mediaBox = CGRect(x: 0, y: 0, width: 560, height: 780)
+        guard let consumer = CGDataConsumer(data: data as CFMutableData),
+              let context = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else {
+            return false
+        }
+
+        context.beginPDFPage(nil)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+
+        func draw(_ text: String, at point: CGPoint, font: NSFont, color: NSColor = .black) {
+            NSString(string: text).draw(at: point, withAttributes: [
+                .font: font,
+                .foregroundColor: color
+            ])
+        }
+
+        draw("金融体系的功能", at: CGPoint(x: 72, y: 650), font: .boldSystemFont(ofSize: 30))
+        draw("金融市场和金融中介能够把储蓄者的资金转移给有投资机会的人。", at: CGPoint(x: 72, y: 598), font: .systemFont(ofSize: 16))
+        draw("它们降低交易成本，缓解信息不对称，并帮助社会更有效地配置资源。", at: CGPoint(x: 72, y: 570), font: .systemFont(ofSize: 16))
+        draw("利率是资金使用价格的表达。", at: CGPoint(x: 72, y: 516), font: .systemFont(ofSize: 18))
+        draw("页 1", at: CGPoint(x: 72, y: 76), font: .systemFont(ofSize: 14), color: .darkGray)
+
+        NSGraphicsContext.restoreGraphicsState()
+        context.endPDFPage()
+        context.closePDF()
+        return data.write(to: url, atomically: true)
     }
 
     private func sampleMarkdownHTML(for item: StudyItem?) -> String {
