@@ -146,8 +146,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     var searchQuery = ""
     var appearanceMode: WeiBeiAppearanceMode = .paper
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
+    var isCompactPreview = false
     var onSelectionChange: (String, CGPoint?) -> Void
     var onAskAgentWithSelection: (String, CGPoint?) -> Void
+    var onContentHeightChange: (CGFloat) -> Void = { _ in }
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
@@ -166,6 +168,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             searchQuery: searchQuery,
             appearanceMode: appearanceMode,
             interfaceLanguage: interfaceLanguage,
+            onContentHeightChange: onContentHeightChange,
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onAskAgentWithSelection,
             onWikiLink: onWikiLink,
@@ -196,8 +199,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             window.weiBeiLocalImageScheme = \(Self.json(Self.localImageScheme));
             window.weiBeiTheme = \(Self.json(appearanceMode.webThemeName));
             window.weiBeiInterfaceLanguage = \(Self.json(interfaceLanguage.rawValue));
+            window.weiBeiMarkdownCompactPreview = \(isCompactPreview ? "true" : "false");
             document.documentElement.dataset.weibeiTheme = window.weiBeiTheme;
             document.documentElement.dataset.weibeiLanguage = window.weiBeiInterfaceLanguage;
+            document.documentElement.dataset.weibeiCompactPreview = window.weiBeiMarkdownCompactPreview ? "true" : "false";
             (() => {
               const appShortcutKey = (event) => {
                 if (/^Digit[0-9]$/.test(event.code)) return event.code.slice(5);
@@ -309,6 +314,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
         context.coordinator.onSelectionChange = onSelectionChange
         context.coordinator.onAskAgentWithSelection = onAskAgentWithSelection
+        context.coordinator.onContentHeightChange = onContentHeightChange
 
         if context.coordinator.isReady, context.coordinator.webMarkdown != markdown {
             context.coordinator.setMarkdown(markdown)
@@ -336,6 +342,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         "wikiLinkActivated",
         "sourceReferenceActivated",
         "imageAttachmentRequested",
+        "contentHeightChanged",
         "appShortcut"
     ]
 
@@ -355,6 +362,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var documentID: String
         var onSelectionChange: (String, CGPoint?) -> Void
         var onAskAgentWithSelection: (String, CGPoint?) -> Void
+        var onContentHeightChange: (CGFloat) -> Void
         var onWikiLink: (String) -> Void
         var onSourceReference: (String) -> Void
         var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool
@@ -387,6 +395,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             searchQuery: String,
             appearanceMode: WeiBeiAppearanceMode,
             interfaceLanguage: WeiBeiInterfaceLanguage,
+            onContentHeightChange: @escaping (CGFloat) -> Void,
             onSelectionChange: @escaping (String, CGPoint?) -> Void,
             onAskAgentWithSelection: @escaping (String, CGPoint?) -> Void,
             onWikiLink: @escaping (String) -> Void,
@@ -404,6 +413,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.searchQuery = searchQuery
             self.appearanceMode = appearanceMode
             self.interfaceLanguage = interfaceLanguage
+            self.onContentHeightChange = onContentHeightChange
             self.onSelectionChange = onSelectionChange
             self.onAskAgentWithSelection = onAskAgentWithSelection
             self.onWikiLink = onWikiLink
@@ -481,6 +491,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 guard let body = message.body as? [String: Any],
                       let key = body["key"] as? String else { return }
                 _ = handleAppShortcut(key: key, modifiers: modifiers(from: body))
+            case "contentHeightChanged":
+                guard let body = message.body as? [String: Any],
+                      let height = body["height"] as? Double else { return }
+                onContentHeightChange(CGFloat(height))
             default:
                 break
             }

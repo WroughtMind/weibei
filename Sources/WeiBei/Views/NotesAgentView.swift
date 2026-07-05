@@ -780,11 +780,13 @@ struct MarkdownPreviewView: View {
     var markdownBaseURL: URL?
     var appearanceMode: WeiBeiAppearanceMode = .paper
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
+    var compact = false
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
     var onSelectionChange: (String, CGPoint?) -> Void = { _, _ in }
     @State private var command: NoteEditorCommand?
+    @State private var contentHeight: CGFloat = 44
 
     var body: some View {
         RichMarkdownEditorView(
@@ -794,13 +796,19 @@ struct MarkdownPreviewView: View {
             markdownBaseURL: markdownBaseURL,
             appearanceMode: appearanceMode,
             interfaceLanguage: interfaceLanguage,
+            isCompactPreview: compact,
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onSelectionChange,
+            onContentHeightChange: { height in
+                guard compact else { return }
+                contentHeight = height
+            },
             onWikiLink: onWikiLink,
             onSourceReference: onSourceReference,
             onAppShortcut: onAppShortcut
         )
         .background(WeiBeiTheme.paper)
+        .frame(height: compact ? max(contentHeight, 44) : nil)
     }
 }
 
@@ -2149,7 +2157,7 @@ private struct AgentBubble: View {
                 messageMetadata
             }
 
-            AgentMessageMarkdownText(text: message.text)
+            AgentMessageMarkdownText(text: message.text, rendersRichMarkdown: !isUser)
 
             if message.id == store.lastUsableAgentAnswerID {
                 HStack(spacing: 6) {
@@ -2238,14 +2246,30 @@ private struct AgentBubble: View {
 }
 
 private struct AgentMessageMarkdownText: View {
+    @EnvironmentObject private var store: WorkspaceStore
     var text: String
+    var rendersRichMarkdown: Bool
 
     var body: some View {
-        Text(renderedText)
-            .textSelection(.enabled)
-            .font(.system(size: 14))
-            .lineSpacing(4)
-            .foregroundStyle(WeiBeiTheme.ink)
+        if rendersRichMarkdown {
+            MarkdownPreviewView(
+                markdown: text,
+                markdownBaseURL: store.currentMarkdownBaseURL,
+                appearanceMode: store.appearanceMode,
+                interfaceLanguage: store.interfaceLanguage,
+                compact: true,
+                onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
+                onSourceReference: { reference in store.openSourceReference(reference) },
+                onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            Text(renderedText)
+                .textSelection(.enabled)
+                .font(.system(size: 14))
+                .lineSpacing(4)
+                .foregroundStyle(WeiBeiTheme.ink)
+        }
     }
 
     private var renderedText: AttributedString {

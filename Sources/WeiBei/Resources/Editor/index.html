@@ -74,6 +74,14 @@
       background: rgba(239, 225, 199, .72);
     }
 
+    :root[data-weibei-compact-preview="true"] #editor {
+      height: auto;
+      min-height: 0;
+      overflow: hidden;
+      padding: 0;
+      background: transparent;
+    }
+
     :root[data-weibei-theme="inkstone"] #editor {
       background: rgba(15, 15, 15, .88);
     }
@@ -182,6 +190,12 @@
       margin: 0 auto;
     }
 
+    :root[data-weibei-compact-preview="true"] .milkdown {
+      max-width: none;
+      min-height: 0;
+      margin: 0;
+    }
+
     #frontmatter-panel {
       display: none;
       max-width: 760px;
@@ -232,6 +246,12 @@
       word-break: break-word;
     }
 
+    :root[data-weibei-compact-preview="true"] .ProseMirror {
+      min-height: 0;
+      font-size: 14px;
+      line-height: 1.68;
+    }
+
     .ProseMirror::selection,
     .ProseMirror ::selection {
       background: var(--selection);
@@ -244,6 +264,12 @@
       line-height: 1.32;
       margin: 1.15em 0 .55em;
       font-weight: 650;
+    }
+
+    :root[data-weibei-compact-preview="true"] .ProseMirror h1,
+    :root[data-weibei-compact-preview="true"] .ProseMirror h2,
+    :root[data-weibei-compact-preview="true"] .ProseMirror h3 {
+      margin: .55em 0 .25em;
     }
 
     .ProseMirror h1 { font-size: 1.85rem; }

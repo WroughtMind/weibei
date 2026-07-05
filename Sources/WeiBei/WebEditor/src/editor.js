@@ -33,6 +33,7 @@ let lastSelectionRange = null;
 let lastSelectionReport = { text: null, rectKey: null };
 let frontmatterBlock = '';
 let isEditable = window.weiBeiMarkdownEditable !== false;
+const isCompactPreview = window.weiBeiMarkdownCompactPreview === true;
 let currentDocumentID = window.weiBeiDocumentID || '';
 let markdownBaseURL = window.weiBeiMarkdownBaseURL || '';
 const localImageScheme = window.weiBeiLocalImageScheme || 'weibeiimage';
@@ -222,6 +223,40 @@ window.addEventListener('unhandledrejection', (event) => showFailure(event.reaso
 
 const post = (name, body = {}) => {
   bridge?.[name]?.postMessage({ ...body, documentID: currentDocumentID });
+};
+
+document.documentElement.dataset.weibeiCompactPreview = isCompactPreview ? 'true' : 'false';
+
+let contentHeightFrame = 0;
+let lastReportedContentHeight = 0;
+
+const reportContentHeight = () => {
+  if (!isCompactPreview) return;
+  window.cancelAnimationFrame(contentHeightFrame);
+  contentHeightFrame = window.requestAnimationFrame(() => {
+    const editorRoot = document.querySelector('#editor');
+    const milkdownRoot = document.querySelector('.milkdown');
+    const proseMirror = document.querySelector('.ProseMirror');
+    const height = Math.ceil(Math.max(
+      1,
+      editorRoot?.scrollHeight || 0,
+      milkdownRoot?.scrollHeight || 0,
+      proseMirror?.scrollHeight || 0
+    ));
+    if (Math.abs(height - lastReportedContentHeight) < 1) return;
+    lastReportedContentHeight = height;
+    post('contentHeightChanged', { height });
+  });
+};
+
+const installContentHeightObserver = () => {
+  if (!isCompactPreview || !window.ResizeObserver) return;
+  const observer = new ResizeObserver(reportContentHeight);
+  const editorRoot = document.querySelector('#editor');
+  const proseMirror = document.querySelector('.ProseMirror');
+  if (editorRoot) observer.observe(editorRoot);
+  if (proseMirror) observer.observe(proseMirror);
+  reportContentHeight();
 };
 
 const rectFromSelection = () => {
@@ -1104,6 +1139,7 @@ const setMarkdownInternal = (markdown) => {
   frontmatterBlock = document.frontmatter;
   editor.action(replaceAll(document.body || ''));
   lastMarkdown = withFrontmatter(document.body);
+  reportContentHeight();
 };
 
 const getMarkdownInternal = () => {
@@ -1342,6 +1378,8 @@ Editor
     document.addEventListener('keyup', (event) => {
       reportSelection();
     });
+    installContentHeightObserver();
     post('editorReady', { markdown: lastMarkdown });
+    reportContentHeight();
   })
   .catch(showFailure);
