@@ -318,7 +318,7 @@ struct SettingsView: View {
                 SecureField(
                     "",
                     text: $store.openAIAPIKey,
-                    prompt: Text("OpenAI 密钥")
+                    prompt: Text("对话密钥")
                         .font(.system(size: 13))
                         .foregroundStyle(WeiBeiTheme.placeholderInk)
                 )
@@ -329,7 +329,7 @@ struct SettingsView: View {
                 .weibeiInputSurface(active: focusedField == .apiKey)
 
                 HStack(spacing: 8) {
-                    Button("保存到钥匙串") { store.saveOpenAIAPIKey() }
+                    Button("保存密钥") { store.saveOpenAIAPIKey() }
                         .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                     Button("清除") { store.clearOpenAIAPIKey() }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
@@ -365,7 +365,7 @@ struct SettingsView: View {
                 .font(.system(size: 13))
                 .weibeiInputSurface(active: focusedField == .model)
 
-                Text("本机环境变量 WEIBEI_OPENAI_MODEL 会覆盖这里的模型。")
+                Text("本机环境里的模型设置会覆盖这里。")
                     .font(.footnote)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }

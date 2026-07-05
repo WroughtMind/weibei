@@ -251,10 +251,10 @@ final class WorkspaceStore: ObservableObject {
 
     var openAIKeyHelpText: String {
         if !Self.environmentValue("OPENAI_API_KEY").isEmpty {
-            return "正在使用本机环境变量 OPENAI_API_KEY。钥匙串密钥会在没有环境变量时接管。"
+            return "正在使用本机环境密钥。保存的密钥会在没有环境密钥时接管。"
         }
         if !OpenAIAPIKeyStore.load().isEmpty {
-            return "已保存到 macOS 钥匙串。打包应用可直接读取。"
+            return "密钥已保存，可直接用于对话。"
         }
         return "未保存密钥。保存后对话会结合\(agentPromptScope)，并在有选区时结合当前选区作答。"
     }
@@ -771,7 +771,7 @@ final class WorkspaceStore: ObservableObject {
             let cleanedKey = OpenAIAPIKeyStore.cleaned(openAIAPIKey)
             try OpenAIAPIKeyStore.save(cleanedKey)
             openAIAPIKey = cleanedKey
-            openAIKeyStatus = cleanedKey.isEmpty ? "已清除钥匙串密钥。" : "已保存到 macOS 钥匙串。"
+            openAIKeyStatus = cleanedKey.isEmpty ? "已清除密钥。" : "密钥已保存。"
         } catch {
             openAIKeyStatus = "保存失败：\(error.localizedDescription)"
         }
