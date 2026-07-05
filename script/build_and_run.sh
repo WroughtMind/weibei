@@ -142,7 +142,7 @@ verify_window() {
 
 visual_verify_window() {
   if [[ -n "$VERIFY_SCENARIO" ]]; then
-    sleep 0.8
+    sleep 2.6
   fi
   local window_id
   window_id="$(swift -target arm64-apple-macosx14.0 -e 'import CoreGraphics; import Foundation; let owner = CommandLine.arguments[1]; let targetPID = CommandLine.arguments.count > 2 ? Int(CommandLine.arguments[2]) : nil; func number(_ value: Any?) -> Double { (value as? NSNumber)?.doubleValue ?? 0 }; let windows = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []; guard let window = windows.first(where: { window in guard (window[kCGWindowOwnerName as String] as? String) == owner else { return false }; if let targetPID, (window[kCGWindowOwnerPID as String] as? NSNumber)?.intValue != targetPID { return false }; let bounds = window[kCGWindowBounds as String] as? [String: Any]; let isOnscreen = window[kCGWindowIsOnscreen as String] as? NSNumber; let visibleEnough = isOnscreen == nil || isOnscreen?.intValue != 0; return visibleEnough && number(window[kCGWindowLayer as String]) == 0 && number(bounds?["Width"]) >= 600 && number(bounds?["Height"]) >= 400 }), let id = window[kCGWindowNumber as String] as? UInt32 else { exit(1) }; print(id)' "$APP_DISPLAY_NAME" "$VERIFY_PID")"

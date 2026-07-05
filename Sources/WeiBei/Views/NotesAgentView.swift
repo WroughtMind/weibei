@@ -955,11 +955,11 @@ struct AgentPaneView: View {
     }
 
     private var agentInputMaxWidth: CGFloat? {
-        store.layout == .immersiveConversation ? 680 : nil
+        680
     }
 
     private var agentContentMaxWidth: CGFloat? {
-        store.layout == .immersiveConversation ? 760 : nil
+        760
     }
 
     private var emptyAgentState: some View {
