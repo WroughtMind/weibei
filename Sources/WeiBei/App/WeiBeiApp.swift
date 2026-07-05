@@ -356,7 +356,7 @@ struct SettingsView: View {
             case .appearance: return "LOOK"
             case .reading: return "READ"
             case .writing: return "NOTE"
-            case .agent: return "ASK"
+            case .agent: return "CHAT"
             case .data: return "DATA"
             case .shortcuts: return "KEYS"
             }
@@ -561,15 +561,15 @@ struct SettingsView: View {
                 }
             }
 
-            settingsGroup(store.ui("进入设置", "Go To")) {
+            settingsGroup(store.ui("快速进入", "Jump To")) {
                 settingsRouteRow(
                     title: store.ui("外观与语言", "Appearance & Language"),
                     detail: store.ui("字体、明暗模式、顶部栏、布局。", "Fonts, theme mode, top bar, and layout."),
                     target: .appearance
                 )
                 settingsRouteRow(
-                    title: store.ui("对话与 API", "Chat & API"),
-                    detail: store.ui("密钥、模型、对话入口和选区上下文。", "Key, model, chat surface, and selection context."),
+                    title: store.ui("对话设置", "Chat Settings"),
+                    detail: store.ui("密钥、模型、显示形态和选区上下文。", "Key, model, surface, and selection context."),
                     target: .agent
                 )
                 settingsRouteRow(
@@ -771,7 +771,7 @@ struct SettingsView: View {
 
     private var agentSettings: some View {
         VStack(alignment: .leading, spacing: 16) {
-            settingsGroup(store.ui("API", "API")) {
+            settingsGroup(store.ui("密钥与模型", "Key & Model")) {
                 settingsRow(
                     title: store.ui("对话密钥", "Chat API Key"),
                     detail: store.openAIKeyHelpText
@@ -827,9 +827,9 @@ struct SettingsView: View {
                 }
             }
 
-            settingsGroup(store.ui("对话入口", "Chat Entry")) {
+            settingsGroup(store.ui("对话形态", "Chat Surface")) {
                 settingsRow(
-                    title: store.ui("默认形态", "Default Surface"),
+                    title: store.ui("默认显示", "Default Surface"),
                     detail: store.ui("完整对话区保留，小选区浮层只作为临时入口。", "The full chat area stays; the selection layer is only a temporary entry.")
                 ) {
                     compactMenu(store.agentSurface.label(language: store.interfaceLanguage)) {
