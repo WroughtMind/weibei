@@ -97,6 +97,10 @@ open_app() {
   /usr/bin/open -n "$APP_BUNDLE"
 }
 
+open_app_for_verify() {
+  /usr/bin/open -n -g --env WEIBEI_SUPPRESS_ACTIVATION=1 "$APP_BUNDLE"
+}
+
 verify_window() {
   swift -e 'import CoreGraphics; import Foundation; let owner = CommandLine.arguments[1]; func number(_ value: Any?) -> Double { (value as? NSNumber)?.doubleValue ?? 0 }; let windows = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []; let found = windows.contains { window in guard (window[kCGWindowOwnerName as String] as? String) == owner else { return false }; let bounds = window[kCGWindowBounds as String] as? [String: Any]; let isOnscreen = window[kCGWindowIsOnscreen as String] as? NSNumber; let visibleEnough = isOnscreen == nil || isOnscreen?.intValue != 0; return visibleEnough && number(window[kCGWindowLayer as String]) == 0 && number(bounds?["Width"]) >= 600 && number(bounds?["Height"]) >= 400 }; if !found { exit(1) }' "$APP_DISPLAY_NAME"
 }
@@ -144,7 +148,7 @@ case "$MODE" in
     ;;
   --verify|verify)
     run_verifiers
-    open_app
+    open_app_for_verify
     for _ in {1..30}; do
       if verify_window >/dev/null 2>&1; then
         if [[ "$RUN_VISUAL_VERIFY" == true ]]; then
@@ -161,7 +165,7 @@ case "$MODE" in
     ;;
   --visual-verify|visual-verify)
     run_verifiers
-    open_app
+    open_app_for_verify
     for _ in {1..30}; do
       if verify_window >/dev/null 2>&1; then
         visual_verify_window

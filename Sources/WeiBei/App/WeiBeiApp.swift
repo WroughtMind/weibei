@@ -11,14 +11,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         WeiBeiTypography.registerBundledFonts()
         NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        if shouldActivateOnLaunch {
+            NSApp.activate(ignoringOtherApps: true)
+        }
         shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             sharedWorkspaceStore.handleAppShortcut(event) ? nil : event
         }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        NSApp.activate(ignoringOtherApps: true)
+        if shouldActivateOnLaunch {
+            NSApp.activate(ignoringOtherApps: true)
+        }
         return true
     }
 
@@ -26,6 +30,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let shortcutMonitor {
             NSEvent.removeMonitor(shortcutMonitor)
         }
+    }
+
+    private var shouldActivateOnLaunch: Bool {
+        ProcessInfo.processInfo.environment["WEIBEI_SUPPRESS_ACTIVATION"] != "1"
     }
 }
 
