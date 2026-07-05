@@ -101,7 +101,9 @@ enum WeiBeiTypography {
         guard !didRegisterBundledFonts else { return }
         didRegisterBundledFonts = true
         ["WeiBeiStele", "WeiBeiSteleMono"].forEach { name in
-            guard let url = Bundle.module.url(forResource: name, withExtension: "ttf", subdirectory: "Fonts") else { return }
+            guard let url = Bundle.module.url(forResource: name, withExtension: "ttf")
+                ?? Bundle.module.url(forResource: name, withExtension: "ttf", subdirectory: "Fonts")
+            else { return }
             CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
         }
     }
@@ -111,12 +113,14 @@ enum WeiBeiTypography {
         case .chinese:
             return .system(size: size, weight: weight, design: .serif)
         case .english:
+            registerBundledFonts()
             return .custom(englishDisplayFontName, size: size)
         }
     }
 
     static func englishBrandFont(size: CGFloat, weight: Font.Weight = .semibold) -> Font {
-        .custom(englishDisplayFontName, size: size)
+        registerBundledFonts()
+        return .custom(englishDisplayFontName, size: size)
     }
 
     static func monoFont(language: WeiBeiInterfaceLanguage, size: CGFloat) -> Font {
@@ -124,6 +128,7 @@ enum WeiBeiTypography {
         case .chinese:
             return .system(size: size, design: .monospaced)
         case .english:
+            registerBundledFonts()
             return .custom(englishMonoFontName, size: size)
         }
     }

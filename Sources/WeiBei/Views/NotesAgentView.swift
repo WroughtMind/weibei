@@ -233,7 +233,7 @@ struct NotePaneView: View {
                         store.setNoteRenderMode(mode)
                     }
                 } label: {
-                    Text(mode.label(language: store.interfaceLanguage))
+                    Text(compactModeLabel(for: mode))
                         .font(.system(size: 11, weight: selected ? .semibold : .medium))
                         .foregroundStyle(selected ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
                         .frame(width: 38, height: 24)
@@ -242,9 +242,27 @@ struct NotePaneView: View {
                         .animation(WeiBeiMotion.micro, value: selected)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(Text(mode.label(language: store.interfaceLanguage)))
+                .help(mode.label(language: store.interfaceLanguage))
             }
         }
         .weibeiHeaderAccessoryGroup()
+    }
+
+    private func compactModeLabel(for mode: NoteRenderMode) -> String {
+        guard store.interfaceLanguage == .english else {
+            return mode.label(language: store.interfaceLanguage)
+        }
+        switch mode {
+        case .rich:
+            return "Write"
+        case .split:
+            return "Diff"
+        case .source:
+            return "Src"
+        case .preview:
+            return "View"
+        }
     }
 
     private var noteHeaderSubtitle: String {

@@ -42,6 +42,10 @@ struct WeiBeiApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var store = sharedWorkspaceStore
 
+    init() {
+        WeiBeiTypography.registerBundledFonts()
+    }
+
     var body: some Scene {
         WindowGroup("魏碑", id: "main") {
             ContentView()

@@ -255,7 +255,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
         context.coordinator.webView = view
         if let url = Bundle.module.url(forResource: "index", withExtension: "html") {
-            view.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+            let editorDirectory = url.deletingLastPathComponent()
+            view.loadFileURL(url, allowingReadAccessTo: editorDirectory.deletingLastPathComponent())
         } else {
             view.loadHTMLString("<p>\(interfaceLanguage.text("编辑器资源缺失。", "Editor resources are missing."))</p>", baseURL: nil)
         }
