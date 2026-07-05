@@ -2233,7 +2233,7 @@ private struct AgentBubble: View {
     }
 
     private var assistantMarkColor: Color {
-        isCredentialNotice ? WeiBeiTheme.link.opacity(0.42) : WeiBeiTheme.cinnabar.opacity(0.50)
+        (isCredentialNotice || isOfflineContextPreview) ? WeiBeiTheme.link.opacity(0.42) : WeiBeiTheme.cinnabar.opacity(0.50)
     }
 }
 
