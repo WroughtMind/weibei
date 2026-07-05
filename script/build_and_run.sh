@@ -20,20 +20,31 @@ if [[ "$MODE" == "--check" || "$MODE" == "check" || "$MODE" == "--verify-only" |
   MODE="check"
   CHECK_ONLY=true
 fi
+VERIFY_MODE=false
+if [[ "$MODE" == "--verify" || "$MODE" == "verify" || "$MODE" == "--visual-verify" || "$MODE" == "visual-verify" ]]; then
+  VERIFY_MODE=true
+fi
 PRODUCT_NAME="WeiBei"
 APP_DISPLAY_NAME="魏碑"
 BUNDLE_ID="com.changfenhuang.weibei"
 MIN_SYSTEM_VERSION="14.0"
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DIST_DIR="$ROOT_DIR/dist"
+if [[ "$VERIFY_MODE" == true ]]; then
+  DIST_DIR="${TMPDIR:-/tmp}/weibei-verify-$UID"
+else
+  DIST_DIR="$ROOT_DIR/dist"
+fi
 APP_BUNDLE="$DIST_DIR/$APP_DISPLAY_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
 APP_BINARY="$APP_MACOS/$PRODUCT_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
+VERIFY_PID=""
 
 if [[ "$CHECK_ONLY" == true ]]; then
+  :
+elif [[ "$VERIFY_MODE" == true ]]; then
   :
 elif [[ "$PACKAGE_ONLY" == true ]]; then
   if pgrep -x "$PRODUCT_NAME" >/dev/null; then
@@ -97,17 +108,37 @@ open_app() {
   /usr/bin/open -n "$APP_BUNDLE"
 }
 
+cleanup_verify_app() {
+  if [[ "$VERIFY_MODE" == true && -n "${VERIFY_PID:-}" ]]; then
+    kill "$VERIFY_PID" >/dev/null 2>&1 || true
+  fi
+}
+
 open_app_for_verify() {
+  local before_pids
+  before_pids="$(pgrep -x "$PRODUCT_NAME" || true)"
   /usr/bin/open -n -g --env WEIBEI_SUPPRESS_ACTIVATION=1 "$APP_BUNDLE"
+  for _ in {1..50}; do
+    local newest_pid
+    newest_pid="$(pgrep -nx "$PRODUCT_NAME" || true)"
+    if [[ -n "$newest_pid" ]] && [[ $'\n'"$before_pids"$'\n' != *$'\n'"$newest_pid"$'\n'* ]]; then
+      VERIFY_PID="$newest_pid"
+      trap cleanup_verify_app EXIT
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "verify launch failed: could not isolate a background $APP_DISPLAY_NAME process." >&2
+  return 1
 }
 
 verify_window() {
-  swift -e 'import CoreGraphics; import Foundation; let owner = CommandLine.arguments[1]; func number(_ value: Any?) -> Double { (value as? NSNumber)?.doubleValue ?? 0 }; let windows = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []; let found = windows.contains { window in guard (window[kCGWindowOwnerName as String] as? String) == owner else { return false }; let bounds = window[kCGWindowBounds as String] as? [String: Any]; let isOnscreen = window[kCGWindowIsOnscreen as String] as? NSNumber; let visibleEnough = isOnscreen == nil || isOnscreen?.intValue != 0; return visibleEnough && number(window[kCGWindowLayer as String]) == 0 && number(bounds?["Width"]) >= 600 && number(bounds?["Height"]) >= 400 }; if !found { exit(1) }' "$APP_DISPLAY_NAME"
+  swift -e 'import CoreGraphics; import Foundation; let owner = CommandLine.arguments[1]; let targetPID = CommandLine.arguments.count > 2 ? Int(CommandLine.arguments[2]) : nil; func number(_ value: Any?) -> Double { (value as? NSNumber)?.doubleValue ?? 0 }; let windows = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []; let found = windows.contains { window in guard (window[kCGWindowOwnerName as String] as? String) == owner else { return false }; if let targetPID, (window[kCGWindowOwnerPID as String] as? NSNumber)?.intValue != targetPID { return false }; let bounds = window[kCGWindowBounds as String] as? [String: Any]; let isOnscreen = window[kCGWindowIsOnscreen as String] as? NSNumber; let visibleEnough = isOnscreen == nil || isOnscreen?.intValue != 0; return visibleEnough && number(window[kCGWindowLayer as String]) == 0 && number(bounds?["Width"]) >= 600 && number(bounds?["Height"]) >= 400 }; if !found { exit(1) }' "$APP_DISPLAY_NAME" "$VERIFY_PID"
 }
 
 visual_verify_window() {
   local window_id
-  window_id="$(swift -target arm64-apple-macosx14.0 -e 'import CoreGraphics; import Foundation; let owner = CommandLine.arguments[1]; func number(_ value: Any?) -> Double { (value as? NSNumber)?.doubleValue ?? 0 }; let windows = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []; guard let window = windows.first(where: { window in guard (window[kCGWindowOwnerName as String] as? String) == owner else { return false }; let bounds = window[kCGWindowBounds as String] as? [String: Any]; let isOnscreen = window[kCGWindowIsOnscreen as String] as? NSNumber; let visibleEnough = isOnscreen == nil || isOnscreen?.intValue != 0; return visibleEnough && number(window[kCGWindowLayer as String]) == 0 && number(bounds?["Width"]) >= 600 && number(bounds?["Height"]) >= 400 }), let id = window[kCGWindowNumber as String] as? UInt32 else { exit(1) }; print(id)' "$APP_DISPLAY_NAME")"
+  window_id="$(swift -target arm64-apple-macosx14.0 -e 'import CoreGraphics; import Foundation; let owner = CommandLine.arguments[1]; let targetPID = CommandLine.arguments.count > 2 ? Int(CommandLine.arguments[2]) : nil; func number(_ value: Any?) -> Double { (value as? NSNumber)?.doubleValue ?? 0 }; let windows = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []; guard let window = windows.first(where: { window in guard (window[kCGWindowOwnerName as String] as? String) == owner else { return false }; if let targetPID, (window[kCGWindowOwnerPID as String] as? NSNumber)?.intValue != targetPID { return false }; let bounds = window[kCGWindowBounds as String] as? [String: Any]; let isOnscreen = window[kCGWindowIsOnscreen as String] as? NSNumber; let visibleEnough = isOnscreen == nil || isOnscreen?.intValue != 0; return visibleEnough && number(window[kCGWindowLayer as String]) == 0 && number(bounds?["Width"]) >= 600 && number(bounds?["Height"]) >= 400 }), let id = window[kCGWindowNumber as String] as? UInt32 else { exit(1) }; print(id)' "$APP_DISPLAY_NAME" "$VERIFY_PID")"
   local capture_path="${TMPDIR:-/tmp}/weibei-visual-verify-$window_id.png"
   local capture_error="${TMPDIR:-/tmp}/weibei-visual-verify-$window_id.err"
   if ! /usr/sbin/screencapture -x -l "$window_id" "$capture_path" 2>"$capture_error"; then
