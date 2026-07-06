@@ -81,6 +81,13 @@ let note = "魏碑"
 print(note)
 ```
 
+行内代码 `<br />` 不应被当成换行。
+双反引号 ``内部 ` <br />`` 也要保留源码。
+
+```html
+<span>保留<br />源码</span>
+```
+
 ```mermaid
 graph TD
   A[阅读] --> B[整理]
@@ -1084,6 +1091,9 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             ("tag", "#nested/tag"),
             ("frontmatter", "course: 货币金融学"),
             ("code fence", "```swift"),
+            ("inline html break code", "`<br />`"),
+            ("double backtick html break code", "``内部 ` <br />``"),
+            ("code block html break", "<span>保留<br />源码</span>"),
             ("image size", "![魏碑测试图|100x80](assets/weibei.svg)")
         ]
         for (name, fragment) in checks {

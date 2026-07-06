@@ -301,8 +301,62 @@ const normalizeMarkdownOutput = (markdown) => (markdown || '')
   .replace(/\\\$(?=\d)/g, '$')
   .replace(new RegExp(`^(\\s*(?:>\\s*)*)\\\\(\\[!(?:${calloutTypePattern})\\])`, 'gim'), '$1$2');
 
-const normalizeHtmlBreaks = (markdown) => String(markdown || '')
-  .replace(/<br\s*\/?>[ \t]*(?:\r?\n)?/gi, '  \n');
+const normalizeHtmlBreaksInLine = (line) => {
+  const source = String(line || '');
+  let result = '';
+  let cursor = 0;
+  while (cursor < source.length) {
+    const tick = source.indexOf('`', cursor);
+    if (tick < 0) {
+      result += source.slice(cursor).replace(/<br\s*\/?>[ \t]*/gi, '  \n');
+      break;
+    }
+    result += source.slice(cursor, tick).replace(/<br\s*\/?>[ \t]*/gi, '  \n');
+    const marker = source.slice(tick).match(/^`+/)?.[0] || '`';
+    const close = source.indexOf(marker, tick + marker.length);
+    if (close < 0) {
+      result += source.slice(tick).replace(/<br\s*\/?>[ \t]*/gi, '  \n');
+      break;
+    }
+    result += source.slice(tick, close + marker.length);
+    cursor = close + marker.length;
+  }
+  return result;
+};
+
+// ponytail: line scanner skips code fences/backtick spans; use a Markdown AST only if more HTML rewrites are added.
+const normalizeHtmlBreaks = (markdown) => {
+  const parts = String(markdown || '').split(/(\r?\n)/);
+  let inFence = false;
+  let fenceMarker = '';
+  let fenceLength = 0;
+  let result = '';
+  for (let index = 0; index < parts.length; index += 2) {
+    const line = parts[index] || '';
+    const newline = parts[index + 1] || '';
+    const fence = line.match(/^\s*(`{3,}|~{3,})/);
+    if (fence) {
+      if (!inFence) {
+        inFence = true;
+        fenceMarker = fence[1][0];
+        fenceLength = fence[1].length;
+      } else if (fence[1][0] === fenceMarker && fence[1].length >= fenceLength) {
+        inFence = false;
+        fenceLength = 0;
+      }
+      result += line + newline;
+      continue;
+    }
+    if (inFence) {
+      result += line + newline;
+      continue;
+    }
+    const normalizedLine = normalizeHtmlBreaksInLine(line);
+    result += normalizedLine;
+    if (!(normalizedLine.endsWith('\n') && newline)) result += newline;
+  }
+  return result;
+};
 
 const splitFrontmatter = (markdown) => {
   const source = markdown || '';
