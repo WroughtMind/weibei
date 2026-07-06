@@ -452,22 +452,11 @@ private struct NotebookCreationPanel: View {
     }
 
     var body: some View {
-        HStack(spacing: 9) {
-            Rectangle()
-                .fill(WeiBeiTheme.cinnabar.opacity(0.64))
-                .frame(width: 2, height: 22)
-                .clipShape(Capsule())
-
-            Text(draft.kind == .blank ? store.ui("命名空白笔记", "Name Blank Note") : store.ui("命名资料笔记", "Name Material Note"))
-                .font(.system(size: 11.5, weight: .semibold))
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-
+        HStack(spacing: 7) {
             TextField(
                 "",
                 text: $title,
-                prompt: Text(store.ui("笔记名", "Note title"))
+                prompt: Text(draft.kind == .blank ? store.ui("新笔记名称", "New note title") : store.ui("资料笔记名称", "Material note title"))
                     .foregroundStyle(WeiBeiTheme.placeholderInk)
             )
             .textFieldStyle(.plain)
@@ -494,15 +483,15 @@ private struct NotebookCreationPanel: View {
             .accessibilityLabel(Text(store.ui("取消", "Cancel")))
             .help(store.ui("取消新建笔记", "Cancel note creation"))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
         .background {
-            WeiBeiTheme.paperRaised.opacity(0.18)
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .fill(WeiBeiTheme.paperInset.opacity(0.28))
         }
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(WeiBeiTheme.hairline.opacity(0.34))
-                .frame(height: 1)
+        .overlay {
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(WeiBeiTheme.hairline.opacity(focused ? 0.58 : 0.30), lineWidth: 1)
         }
         .onExitCommand(perform: cancel)
         .onAppear {
