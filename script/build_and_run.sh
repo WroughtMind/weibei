@@ -174,17 +174,16 @@ verify_learning_flow_persistence() {
   local workspace_file="$VERIFY_DATA_DIR/workspace.json"
   for _ in {1..30}; do
     if [[ -f "$workspace_file" ]] \
-      && /usr/bin/grep -q "## 离线草稿" "$workspace_file" \
-      && /usr/bin/grep -q "## 可确认" "$workspace_file" \
-      && /usr/bin/grep -q "## 建议写入" "$workspace_file" \
-      && /usr/bin/grep -q "未配置密钥；这里只整理当前可见内容" "$workspace_file" \
-      && /usr/bin/grep -q "利率是资金使用价格的表达" "$workspace_file"; then
+      && /usr/bin/grep -q "## 整理建议" "$workspace_file" \
+      && /usr/bin/grep -q "把可确认依据写入笔记" "$workspace_file" \
+      && ! /usr/bin/grep -q "## 离线草稿" "$workspace_file" \
+      && ! /usr/bin/grep -q "## 可确认" "$workspace_file"; then
       return 0
     fi
     sleep 0.2
   done
 
-  echo "verify failed: offline learning flow did not persist the agent answer into workspace.json." >&2
+  echo "verify failed: offline learning flow did not persist a note-ready agent suggestion into workspace.json." >&2
   if [[ -f "$workspace_file" ]]; then
     /usr/bin/sed -n '1,80p' "$workspace_file" >&2
   else

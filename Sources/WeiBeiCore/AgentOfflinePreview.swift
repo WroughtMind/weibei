@@ -35,6 +35,19 @@ public struct AgentOfflinePreviewInput: Equatable {
 }
 
 public enum AgentOfflinePreview {
+    public static func suggestedNoteBlock(from answer: String, language: WeiBeiInterfaceLanguage) -> String? {
+        let text = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        for heading in ["## 建议写入", "## Suggested Note"] {
+            guard let headingRange = text.range(of: heading) else { continue }
+            let remainder = text[headingRange.upperBound...]
+            let nextHeading = remainder.range(of: "\n## ")?.lowerBound ?? remainder.endIndex
+            let body = remainder[..<nextHeading].trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !body.isEmpty else { continue }
+            return language.text("## 整理建议\n\(body)", "## Organization suggestion\n\(body)")
+        }
+        return nil
+    }
+
     public static func render(_ input: AgentOfflinePreviewInput) -> String {
         let materialValue = input.hasMaterial
             ? input.materialTitle

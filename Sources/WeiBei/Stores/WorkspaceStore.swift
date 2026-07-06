@@ -1670,6 +1670,9 @@ final class WorkspaceStore: ObservableObject {
 
     private func noteBlockForAgentAnswer(_ answer: String) -> String {
         let text = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let suggestedNoteBlock = AgentOfflinePreview.suggestedNoteBlock(from: text, language: interfaceLanguage) {
+            return suggestedNoteBlock
+        }
         guard !text.hasPrefix("#") else { return text }
         return "## \(ui("整理建议", "Organization suggestion"))\n\(text)"
     }
