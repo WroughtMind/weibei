@@ -32,6 +32,8 @@ tags:
 #finance #nested/tag
 重点段落 ^rate-block
 
+HTML 换行第一行<br />第二行，选区应读作两行。
+
 脚注引用[^1]，行内脚注^[行内脚注内容]。
 
 [^1]: 这是脚注内容。
@@ -196,6 +198,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           tags: document.querySelectorAll('.weibei-tag').length,
           blockIds: document.querySelectorAll('.weibei-block-id').length,
           embeds: document.querySelectorAll('.weibei-embed-preview').length,
+          hardBreaks: document.querySelectorAll('.ProseMirror br').length,
           noteEmbedLinks: document.querySelectorAll('.weibei-embed-note[role="link"][tabindex="0"][data-wikilink-title]').length,
           mermaid: document.querySelectorAll('.weibei-mermaid-render').length,
           mermaidSvg: document.querySelectorAll('.weibei-mermaid-render svg').length,
@@ -377,6 +380,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             if (result["comments"] as? Int ?? 0) < 2 {
                 self.fail("block comment was not decorated")
+                return
+            }
+            if (result["hardBreaks"] as? Int ?? 0) < 1 {
+                self.fail("HTML break syntax was not normalized into a real editor line break")
                 return
             }
             if (result["noteEmbedLinks"] as? Int ?? 0) < 1 {
@@ -1004,6 +1011,46 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("typed inline formula should not look like a filled source chip")
                 return
             }
+            self.validateTypedHtmlBreak()
+        }
+    }
+
+    private func validateTypedHtmlBreak() {
+        let script = """
+        window.WeiBeiEditor.insertMarkdown("\\n\\n{{WEIBEI_CURSOR}}");
+        if (!window.WeiBeiEditor.typeTextForCheck('手动换行第一行<br />第二行')) {
+          throw new Error('typeTextForCheck unavailable');
+        }
+        window.WeiBeiEditor.getMarkdown();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            if let error {
+                self.fail("typed HTML break check threw \(error.localizedDescription)")
+                return
+            }
+            guard let markdown = value as? String else {
+                self.fail("typed HTML break check did not return markdown")
+                return
+            }
+            guard let range = markdown.range(of: "手动换行第一行") else {
+                self.fail("typed HTML break text did not serialize")
+                return
+            }
+            let suffix = String(markdown[range.upperBound...])
+            if !suffix.hasPrefix("  \n第二行")
+                && !suffix.hasPrefix("  \n> 第二行")
+                && !suffix.hasPrefix("\\\n第二行")
+                && !suffix.hasPrefix("\\\n> 第二行")
+                && !suffix.hasPrefix("\n第二行")
+                && !suffix.hasPrefix("\n> 第二行") {
+                self.fail("typed HTML break did not become a Markdown hard break: \(markdown)")
+                return
+            }
+            if markdown.contains("手动换行第一行<br") {
+                self.fail("typed HTML break leaked raw HTML syntax into saved markdown")
+                return
+            }
             self.isDone = true
         }
     }
@@ -1044,6 +1091,19 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 fail("missing \(name): \(fragment)\n--- markdown ---\n\(markdown)")
                 return
             }
+        }
+        guard let htmlBreakRange = markdown.range(of: "HTML 换行第一行") else {
+            fail("missing html break prefix\n--- markdown ---\n\(markdown)")
+            return
+        }
+        let htmlBreakSuffix = String(markdown[htmlBreakRange.upperBound...])
+        if !htmlBreakSuffix.hasPrefix("  \n第二行") && !htmlBreakSuffix.hasPrefix("\\\n第二行") && !htmlBreakSuffix.hasPrefix("\n第二行") {
+            fail("HTML break was swallowed instead of becoming a Markdown hard break\n--- markdown ---\n\(markdown)")
+            return
+        }
+        if markdown.contains("HTML 换行第一行第二行") || markdown.contains("HTML 换行第一行<br") {
+            fail("HTML break serialized as joined text or raw HTML\n--- markdown ---\n\(markdown)")
+            return
         }
     }
 

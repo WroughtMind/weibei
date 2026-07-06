@@ -109,9 +109,29 @@ const calloutRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(${calloutType
 const calloutMarkerRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(?:${calloutTypePattern})\\][+-]?\\s*`, 'i');
 const calloutHeadingRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(?:${calloutTypePattern})\\][+-]?(?:[ \\t]+[^\\n]+)?$`, 'i');
 const selectedTextCalloutControlRegex = new RegExp(`(^|\\n)\\s*(?:>\\s*)*\\\\?\\[!(?:${calloutTypePattern})\\][+-]?[ \\t]*`, 'gi');
+const htmlBreakPattern = /<br\s*\/?>/gi;
 const cleanSelectedText = (text) => String(text || '')
+  .replace(htmlBreakPattern, '\n')
+  .replace(/%%[\s\S]*?%%\n?/g, '')
+  .replace(/!\[\[([^\]\n]+)\]\]/g, (_, raw) => {
+    const embed = parseObsidianEmbed(raw);
+    return embed.label || embed.target;
+  })
+  .replace(/\[\[([^\]\n]+)\]\]/g, (_, raw) => {
+    const target = parseObsidianTarget(raw);
+    return target.display || target.target;
+  })
+  .replace(/!\[([^\]\n]*)\]\([^\)\n]+\)/g, (_, alt) => parseMarkdownImageAlt(alt).alt || '')
+  .replace(/\[([^\]\n]+)\]\([^\)\n]+\)/g, '$1')
+  .replace(/==([^=\n]+)==/g, '$1')
+  .replace(/~~([^~\n]+)~~/g, '$1')
+  .replace(/`([^`\n]+)`/g, '$1')
+  .replace(/\^\[([^\]\n]+)\]/g, '$1')
   .replace(selectedTextCalloutControlRegex, '$1')
+  .replace(/(^|\n)\s*>\s?/g, '$1')
+  .replace(/(^|\n)\s*[-*+]\s+\[[ xX]\]\s*/g, '$1')
   .replace(/[ \t]+\n/g, '\n')
+  .replace(/\n{2,}/g, '\n')
   .trim();
 const calloutHeaderText = (node) => {
   const text = node.textBetween
@@ -280,6 +300,9 @@ const normalizeMarkdownOutput = (markdown) => (markdown || '')
   .replace(/(^|\s)\\#(?=[\p{L}\p{N}_/-])/gu, '$1#')
   .replace(/\\\$(?=\d)/g, '$')
   .replace(new RegExp(`^(\\s*(?:>\\s*)*)\\\\(\\[!(?:${calloutTypePattern})\\])`, 'gim'), '$1$2');
+
+const normalizeHtmlBreaks = (markdown) => String(markdown || '')
+  .replace(/<br\s*\/?>[ \t]*(?:\r?\n)?/gi, '  \n');
 
 const splitFrontmatter = (markdown) => {
   const source = markdown || '';
@@ -699,6 +722,19 @@ const decorateTagsAndBlocks = (decorations, text, pos) => {
   }
 };
 
+const decorateHtmlBreaks = (decorations, text, pos) => {
+  for (const match of text.matchAll(/<br\s*\/?>/gi)) {
+    const from = pos + (match.index || 0);
+    const to = from + match[0].length;
+    addRangeDecoration(decorations, from, to, 'weibei-html-break-source');
+    decorations.push(Decoration.widget(to, () => {
+      const node = document.createElement('br');
+      node.className = 'weibei-html-break-preview';
+      return node;
+    }, { side: 1 }));
+  }
+};
+
 const mermaidWidget = (source) => {
   const container = document.createElement('div');
   container.className = 'weibei-mermaid-render';
@@ -1018,6 +1054,22 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       insertImageFiles(files).catch(showFailure);
       return true;
     },
+    handleTextInput(view, from, to, text) {
+      if (!isEditable) return false;
+      const incoming = String(text || '');
+      if (!incoming) return false;
+      const lookBehindSize = Math.min(12, from);
+      const before = view.state.doc.textBetween(from - lookBehindSize, from, '\n', '\n');
+      const match = `${before}${incoming}`.match(/<br\s*\/?>$/i);
+      if (!match) return false;
+      const hardbreak = view.state.schema.nodes.hardbreak || view.state.schema.nodes.hard_break;
+      if (!hardbreak) return false;
+      const start = from - (match[0].length - incoming.length);
+      const tr = view.state.tr.replaceWith(start, to, hardbreak.create()).scrollIntoView();
+      tr.setSelection(TextSelection.create(tr.doc, Math.min(start + 1, tr.doc.content.size)));
+      view.dispatch(tr);
+      return true;
+    },
     handleClick(view, pos, event) {
       return activateWikiLink(event.target) || activateSourceReference(event.target);
     },
@@ -1094,6 +1146,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
           decorateDelimitedInline(decorations, text, textPos, /==([^=\n]+)==/g, 2, 'weibei-highlight');
           if (!hasCodeMark) {
             decorateInlineFootnotes(decorations, text, textPos);
+            decorateHtmlBreaks(decorations, text, textPos);
           }
           decorateComments(decorations, text, textPos, commentState);
           decorateObsidianEmbeds(decorations, text, textPos);
@@ -1136,9 +1189,10 @@ const ensureEditor = () => {
 const setMarkdownInternal = (markdown) => {
   ensureEditor();
   const document = splitFrontmatter(markdown || '');
+  const body = normalizeHtmlBreaks(document.body);
   frontmatterBlock = document.frontmatter;
-  editor.action(replaceAll(document.body || ''));
-  lastMarkdown = withFrontmatter(document.body);
+  editor.action(replaceAll(body));
+  lastMarkdown = withFrontmatter(body);
   reportContentHeight();
 };
 
@@ -1149,11 +1203,12 @@ const getMarkdownInternal = () => {
 
 const replaceSelectionInternal = (markdown) => {
   ensureEditor();
+  const insertion = normalizeHtmlBreaks(markdown || '');
   const range = lastSelectionRange || editorSelectionRange();
   if (range) {
-    editor.action(replaceRange(markdown || '', range));
+    editor.action(replaceRange(insertion, range));
   } else {
-    editor.action(insert(markdown || ''));
+    editor.action(insert(insertion));
   }
   const next = getMarkdownInternal();
   lastMarkdown = next;
@@ -1164,7 +1219,7 @@ const replaceSelectionInternal = (markdown) => {
 const insertMarkdownInternal = (markdown) => {
   ensureEditor();
   const range = editorSelectionRange();
-  const insertion = normalizeMarkdownInsertion(markdown);
+  const insertion = normalizeMarkdownInsertion(normalizeHtmlBreaks(markdown));
   if (range) {
     editor.action(replaceRange(insertion, range));
   } else {
@@ -1313,6 +1368,7 @@ if (window.weiBeiEditorCheckMode) {
 }
 
 const initialDocument = splitFrontmatter(window.initialMarkdown || '');
+initialDocument.body = normalizeHtmlBreaks(initialDocument.body);
 frontmatterBlock = initialDocument.frontmatter;
 
 Editor

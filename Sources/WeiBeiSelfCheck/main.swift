@@ -557,6 +557,26 @@ let quotedCalloutSelectionText = MarkdownSelectionSanitizer.clean("""
 expect(!quotedCalloutSelectionText.contains("[!warning]")
     && quotedCalloutSelectionText.contains("风险提示")
     && quotedCalloutSelectionText.contains("$5"), "selection sanitizer handles quoted and folded callouts without damaging ordinary prose")
+let readableMarkdownSelectionText = MarkdownSelectionSanitizer.clean("""
+==重点==<br />
+[[货币理论|理论别名]]
+[[货币理论\\|表格别名]]
+![曲线图|120x80](assets/curve.png)
+![[assets/curve.png|180]]
+~~删除线~~、`代码`、^[脚注说明]
+%%内部注释%%
+- [x] 已完成项
+""")
+let expectedReadableMarkdownSelectionText = """
+重点
+理论别名
+表格别名
+曲线图
+assets/curve.png
+删除线、代码、脚注说明
+已完成项
+"""
+expect(readableMarkdownSelectionText == expectedReadableMarkdownSelectionText, "selection sanitizer turns common Markdown and Obsidian writing syntax into readable text for Agent context")
 
 expect(PageNavigator.previous(0) == 0, "pdf previous clamps first page")
 expect(PageNavigator.next(0, pageCount: 2) == 1, "pdf next advances")
@@ -1233,6 +1253,18 @@ expect(webEditorSource.contains("const normalizeInterfaceLanguage")
     && webEditorSource.contains("note: 'Note'")
     && webEditorSource.contains("'data-callout-title': (match[3] || calloutLabel(calloutType)).trim()")
     && webEditorSource.contains("setInterfaceLanguage: (next) =>"), "web editor callout fallback labels follow the current interface language")
+expect(webEditorSource.contains(#"const htmlBreakPattern = /<br\s*\/?>/gi;"#)
+    && webEditorSource.contains(#".replace(htmlBreakPattern, '\n')"#)
+    && webEditorSource.contains("const normalizeHtmlBreaks = (markdown) =>")
+    && webEditorSource.contains(#".replace(/<br\s*\/?>[ \t]*(?:\r?\n)?/gi, '  \n')"#)
+    && webEditorSource.contains("const decorateHtmlBreaks = (decorations, text, pos) =>")
+    && webEditorSource.contains("weibei-html-break-source")
+    && webEditorSource.contains("decorateHtmlBreaks(decorations, text, textPos)")
+    && webEditorSource.contains("handleTextInput(view, from, to, text)")
+    && webEditorSource.contains("view.state.schema.nodes.hardbreak || view.state.schema.nodes.hard_break")
+    && webEditorSource.contains(#".replace(/!\[\[([^\]\n]+)\]\]/g, (_, raw) =>"#)
+    && webEditorSource.contains(#".replace(/==([^=\n]+)==/g, '$1')"#)
+    && webEditorSource.contains(#".replace(/%%[\s\S]*?%%\n?/g, '')"#), "web editor cleans common Markdown and Obsidian source markers from selected Agent context and renders HTML breaks softly")
 let appSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/App/WeiBeiApp.swift")
 let appSource = (try? String(contentsOf: appSourceURL, encoding: .utf8)) ?? ""
