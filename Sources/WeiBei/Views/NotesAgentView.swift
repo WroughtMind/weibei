@@ -188,42 +188,17 @@ struct NotePaneView: View {
                 appearanceMode: store.appearanceMode
             ) {
                 noteModeControl
-                Menu {
-                    Button {
-                        withAnimation(WeiBeiMotion.panel) {
-                            store.promptCreateBlankNotebookNote()
-                        }
-                    } label: {
-                        Label(store.ui("新建空白笔记", "New Blank Note"), systemImage: "doc")
-                    }
-
-                    if store.hasSelectedMaterial {
-                        Button {
-                            withAnimation(WeiBeiMotion.panel) {
-                                store.promptCreateNotebookNoteFromCurrentMaterial()
-                            }
-                        } label: {
-                            Label(store.ui("从当前资料开笔记", "Note from Current Material"), systemImage: "link")
-                        }
-                    }
-
-                    if store.canUseSelectedMarkdownAsNotebookNote {
-                        Divider()
-                        Button {
-                            withAnimation(WeiBeiMotion.panel) {
-                                store.useSelectedMarkdownAsNotebookNote()
-                            }
-                        } label: {
-                            Label(store.ui("把当前 Markdown 作为笔记", "Use Current Markdown as Note"), systemImage: "square.and.pencil")
-                        }
-                    }
+                Button {
+                    startNotebookCreation()
                 } label: {
                     Image(systemName: "doc.badge.plus")
                 }
-                .menuStyle(.borderlessButton)
                 .buttonStyle(WeiBeiIconButtonStyle(size: 24))
-                .accessibilityLabel(Text(store.ui("新建笔记", "New Note")))
-                .help(store.ui("新建空白笔记，或从当前资料开一份带来源的笔记", "Create a blank note or start one from the current material"))
+                .accessibilityLabel(Text(store.ui("新建课程笔记", "New Course Note")))
+                .help(store.hasSelectedMaterial
+                    ? store.ui("为当前资料新建或打开课程笔记", "Create or open a course note for the current material")
+                    : store.ui("新建空白课程笔记", "Create a blank course note")
+                )
             }
 
             if let noteFileError = store.noteFileError {
@@ -310,6 +285,16 @@ struct NotePaneView: View {
 
     private var noteHeaderSubtitle: String {
         store.agentNoteTitle
+    }
+
+    private func startNotebookCreation() {
+        withAnimation(WeiBeiMotion.panel) {
+            if store.hasSelectedMaterial {
+                store.promptCreateNotebookNoteFromCurrentMaterial()
+            } else {
+                store.promptCreateBlankNotebookNote()
+            }
+        }
     }
 
     private func noteFileStatusColor(for message: String) -> Color {
