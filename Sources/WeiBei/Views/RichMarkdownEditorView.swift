@@ -151,7 +151,9 @@ final class MarkdownWebView: WKWebView {
             return
         }
 
-        forwardVerticalScroll(event)
+        if !forwardVerticalScroll(event) {
+            super.scrollWheel(with: event)
+        }
     }
 
     private func nearestSuperviewScrollView() -> NSScrollView? {
@@ -175,8 +177,7 @@ final class MarkdownWebView: WKWebView {
             guard let self, self.shouldForwardVerticalScroll(event) else {
                 return event
             }
-            self.forwardVerticalScroll(event)
-            return nil
+            return self.forwardVerticalScroll(event) ? nil : event
         }
     }
 
@@ -197,24 +198,29 @@ final class MarkdownWebView: WKWebView {
         return bounds.contains(localPoint)
     }
 
-    private func forwardVerticalScroll(_ event: NSEvent) {
-        if let outerScrollView = nearestSuperviewScrollView() {
-            outerScrollView.scrollWheel(with: event)
-        } else {
-            nextResponder?.scrollWheel(with: event)
-        }
+    @discardableResult
+    private func forwardVerticalScroll(_ event: NSEvent) -> Bool {
+        scrollOuterSuperview(deltaY: normalizedVerticalDelta(for: event))
     }
 
-    func scrollOuterSuperview(deltaY: CGFloat) {
+    private func normalizedVerticalDelta(for event: NSEvent) -> CGFloat {
+        let deltaY = event.scrollingDeltaY
+        return event.isDirectionInvertedFromDevice ? deltaY : -deltaY
+    }
+
+    @discardableResult
+    func scrollOuterSuperview(deltaY: CGFloat) -> Bool {
         guard passesVerticalScrollToSuperview,
               let outerScrollView = nearestSuperviewScrollView(),
-              let documentView = outerScrollView.documentView else { return }
+              let documentView = outerScrollView.documentView else { return false }
         let clipView = outerScrollView.contentView
         let maxY = max(0, documentView.bounds.height - clipView.bounds.height)
         let direction: CGFloat = documentView.isFlipped ? 1 : -1
         let nextY = min(max(clipView.bounds.origin.y + deltaY * direction, 0), maxY)
+        guard abs(nextY - clipView.bounds.origin.y) > 0.01 else { return false }
         clipView.scroll(to: CGPoint(x: clipView.bounds.origin.x, y: nextY))
         outerScrollView.reflectScrolledClipView(clipView)
+        return true
     }
 
     private static let shortcutModifierMask: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
