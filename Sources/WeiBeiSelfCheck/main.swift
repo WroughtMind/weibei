@@ -1874,7 +1874,7 @@ expect(contentViewSource.contains("case .documentAgentNotes, .documentNotesAgent
     && contentViewSource.contains("reorderablePaneView(for: order[0])")
     && contentViewSource.contains("paneView(for: drag.role, reorderable: false)")
     && contentViewSource.contains(".opacity(drag?.role == role ? 0.22 : 1)")
-    && contentViewSource.contains(".opacity(0.44)")
+    && contentViewSource.contains(".opacity(0.34)")
     && contentViewSource.contains("ReaderPaneView(reorderRole: reorderable ? .reader : nil)")
     && contentViewSource.contains("AgentPaneView(reorderRole: reorderable ? .agent : nil)")
     && contentViewSource.contains("NotePaneView(reorderRole: reorderable ? .notes : nil)")

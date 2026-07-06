@@ -1009,7 +1009,7 @@ private struct LayoutContentView: View {
                     .frame(width: sourceFrame.width, height: sourceFrame.height)
                     .clipped()
                     .allowsHitTesting(false)
-                    .opacity(0.44)
+                    .opacity(0.34)
                     .overlay {
                         Rectangle()
                             .stroke(WeiBeiTheme.cinnabar.opacity(0.30), lineWidth: 1)
