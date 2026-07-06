@@ -1082,6 +1082,51 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("typed HTML break leaked raw HTML syntax into saved markdown")
                 return
             }
+            self.validateTypedMarkdownShortcuts()
+        }
+    }
+
+    private func validateTypedMarkdownShortcuts() {
+        let script = """
+        (() => {
+        const cases = [
+          ['## 现场标题', 'h2', '## 现场标题'],
+          ['- 现场条目', 'li', '现场条目'],
+          ['- [ ] 现场待办', 'li[data-item-type="task"], li', '现场待办']
+        ];
+        for (const [typed, selector, expectedMarkdown] of cases) {
+          window.WeiBeiEditor.setMarkdown('# 输入语法验收\\n');
+          window.WeiBeiEditor.insertMarkdown('\\n\\n{{WEIBEI_CURSOR}}');
+          if (!window.WeiBeiEditor.typeTextForCheck(typed)) {
+            return { ok: false, reason: 'typeTextForCheck unavailable for ' + typed };
+          }
+          const markdown = window.WeiBeiEditor.getMarkdown();
+          const node = document.querySelector(selector);
+          if (!markdown.includes(expectedMarkdown) || !node || !node.textContent.includes(expectedMarkdown.replace(/^## /, ''))) {
+            return { ok: false, reason: 'typed Markdown shortcut did not render in place: ' + typed, markdown, html: document.querySelector('.ProseMirror')?.innerHTML || '' };
+          }
+        }
+        return { ok: true, markdown: window.WeiBeiEditor.getMarkdown() };
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            if let error {
+                self.fail("typed Markdown shortcut check threw \(error.localizedDescription)")
+                return
+            }
+            guard let result = value as? [String: Any] else {
+                self.fail("typed Markdown shortcut check did not return result")
+                return
+            }
+            if result["ok"] as? Bool != true {
+                self.fail("typed Markdown shortcut check failed: \(result)")
+                return
+            }
+            guard let markdown = result["markdown"] as? String, markdown.contains("现场待办") else {
+                self.fail("typed Markdown shortcut check did not finish: \(result)")
+                return
+            }
             self.validateBlockEnterExit()
         }
     }
