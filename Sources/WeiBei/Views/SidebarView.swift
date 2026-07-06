@@ -96,24 +96,94 @@ struct SidebarView: View {
                     .padding(.horizontal, 8)
 
                 ForEach(items) { item in
-                    Button {
-                        withAnimation(WeiBeiMotion.panel) {
-                            store.select(itemID: item.id)
+                    if store.notebookRenameDraft?.itemID == item.id {
+                        NotebookRenameRow(item: item, selected: item.isNotebookNote ? store.activeNotebookItemID == item.id : store.selectedItemID == item.id)
+                            .transition(WeiBeiTransition.message)
+                    } else {
+                        Button {
+                            withAnimation(WeiBeiMotion.panel) {
+                                store.select(itemID: item.id)
+                            }
+                        } label: {
+                            LibraryRow(item: item, selected: item.isNotebookNote ? store.activeNotebookItemID == item.id : store.selectedItemID == item.id)
                         }
-                    } label: {
-                        LibraryRow(item: item, selected: item.isNotebookNote ? store.activeNotebookItemID == item.id : store.selectedItemID == item.id)
-                    }
-                    .buttonStyle(.plain)
-                    .contextMenu {
-                        if item.isNotebookNote {
-                            Button(store.ui("重命名笔记", "Rename Note")) {
-                                store.promptRenameNotebookNote(itemID: item.id)
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            if item.isNotebookNote {
+                                Button(store.ui("重命名笔记", "Rename Note")) {
+                                    store.promptRenameNotebookNote(itemID: item.id)
+                                }
                             }
                         }
+                        .transition(WeiBeiTransition.message)
                     }
-                    .transition(WeiBeiTransition.message)
                 }
             }
+        }
+    }
+}
+
+private struct NotebookRenameRow: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    var item: StudyItem
+    var selected: Bool
+    @FocusState private var focused: Bool
+
+    private var title: Binding<String> {
+        Binding(
+            get: { store.notebookRenameDraft?.title ?? "" },
+            set: { store.notebookRenameDraft?.title = $0 }
+        )
+    }
+
+    private var canRename: Bool {
+        !title.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: item.kind.systemImage)
+                .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.78))
+                .frame(width: 18)
+
+            TextField(
+                "",
+                text: title,
+                prompt: Text(store.ui("笔记名", "Note title"))
+                    .foregroundStyle(WeiBeiTheme.placeholderInk)
+            )
+            .textFieldStyle(.plain)
+            .focused($focused)
+            .font(.system(size: 13, weight: .medium))
+            .foregroundColor(WeiBeiTheme.ink)
+            .onSubmit {
+                if canRename {
+                    store.confirmRenameNotebookNote()
+                }
+            }
+
+            Button {
+                store.cancelRenameNotebookNote()
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(WeiBeiIconButtonStyle(size: 20))
+            .keyboardShortcut(.cancelAction)
+            .accessibilityLabel(Text(store.ui("取消", "Cancel")))
+        }
+        .padding(.horizontal, 9)
+        .frame(height: 48)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(WeiBeiTheme.paperInset.opacity(selected ? 0.74 : 0.44))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay(alignment: .leading) {
+            Capsule()
+                .fill(WeiBeiTheme.cinnabar.opacity(canRename ? 0.72 : 0.34))
+                .frame(width: 3, height: 24)
+                .padding(.leading, 2)
+        }
+        .onAppear {
+            focused = true
         }
     }
 }

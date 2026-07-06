@@ -17,6 +17,12 @@ struct NotebookCreationDraft: Identifiable, Equatable {
     var title: String
 }
 
+struct NotebookRenameDraft: Identifiable, Equatable {
+    let id = UUID()
+    var itemID: String
+    var title: String
+}
+
 @MainActor
 final class WorkspaceStore: ObservableObject {
     @Published var importedItems: [StudyItem] = []
@@ -51,6 +57,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var noteEditorCommand: NoteEditorCommand?
     @Published var noteFileError: String?
     @Published var notebookCreationDraft: NotebookCreationDraft?
+    @Published var notebookRenameDraft: NotebookRenameDraft?
     @Published var modelName: String = ProcessInfo.processInfo.environment["WEIBEI_OPENAI_MODEL"] ?? "gpt-5.1"
     @Published var openAIAPIKey: String = OpenAIAPIKeyStore.load()
     @Published var openAIKeyStatus: String?
@@ -387,6 +394,7 @@ final class WorkspaceStore: ObservableObject {
     func select(itemID: String?) {
         persistCurrentNote()
         notebookCreationDraft = nil
+        notebookRenameDraft = nil
         if let itemID,
            let item = allItems.first(where: { $0.id == itemID && $0.isNotebookNote }) {
             activeNotebookItemID = item.id
@@ -1082,18 +1090,19 @@ final class WorkspaceStore: ObservableObject {
 
     func promptRenameNotebookNote(itemID: String) {
         guard let item = allItems.first(where: { $0.id == itemID && $0.isNotebookNote }) else { return }
-        let input = NSTextField(string: displayTitle(for: item))
-        input.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
+        notebookCreationDraft = nil
+        notebookRenameDraft = NotebookRenameDraft(itemID: item.id, title: displayTitle(for: item))
+        showLibrary = true
+        focus(.library)
+    }
 
-        let alert = NSAlert()
-        alert.messageText = ui("重命名笔记", "Rename Note")
-        alert.informativeText = ui("会同时更新资料库标题和本地 Markdown 文件名。", "This updates the library title and local Markdown filename.")
-        alert.accessoryView = input
-        alert.addButton(withTitle: ui("重命名", "Rename"))
-        alert.addButton(withTitle: ui("取消", "Cancel"))
+    func cancelRenameNotebookNote() {
+        notebookRenameDraft = nil
+    }
 
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        renameNotebookNote(itemID: itemID, to: input.stringValue)
+    func confirmRenameNotebookNote() {
+        guard let draft = notebookRenameDraft else { return }
+        renameNotebookNote(itemID: draft.itemID, to: draft.title)
     }
 
     func renameNotebookNote(itemID: String, to rawTitle: String) {
@@ -1138,6 +1147,7 @@ final class WorkspaceStore: ObservableObject {
             }
             replaceNavigationItemID(oldID, with: newID)
             save()
+            notebookRenameDraft = nil
             showTransientNoteStatus(ui("已重命名为：\(newURL.lastPathComponent)", "Renamed to: \(newURL.lastPathComponent)"))
         } catch {
             noteFileError = ui("无法重命名笔记：\(error.localizedDescription)", "Could not rename note: \(error.localizedDescription)")
