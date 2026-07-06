@@ -781,20 +781,7 @@ private struct LayoutContentView: View {
             case .documentAgentNotes, .documentNotesAgent:
                 if store.showRightPane {
                     let order = store.normalizedThreePaneOrder
-                    ResizableThreePane(
-                        firstSplit: firstSplit,
-                        secondSplit: secondSplit,
-                        minFirst: minimumWidth(for: order[0]),
-                        minSecond: minimumWidth(for: order[1]),
-                        minThird: minimumWidth(for: order[2])
-                    ) {
-                        paneView(for: order[0])
-                    } second: {
-                        paneView(for: order[1])
-                    } third: {
-                        paneView(for: order[2])
-                    }
-                    .transition(WeiBeiTransition.rightPanel)
+                    documentThreePaneView(order: order)
                 } else {
                     ReaderPaneView()
                         .transition(WeiBeiTransition.layout)
@@ -948,15 +935,107 @@ private struct LayoutContentView: View {
     }
 
     @ViewBuilder
+    private func documentThreePaneView(order: [WorkspacePaneRole]) -> some View {
+        GeometryReader { geometry in
+            ZStack {
+                ResizableThreePane(
+                    firstSplit: firstSplit,
+                    secondSplit: secondSplit,
+                    minFirst: minimumWidth(for: order[0]),
+                    minSecond: minimumWidth(for: order[1]),
+                    minThird: minimumWidth(for: order[2])
+                ) {
+                    reorderablePaneView(for: order[0])
+                } second: {
+                    reorderablePaneView(for: order[1])
+                } third: {
+                    reorderablePaneView(for: order[2])
+                }
+
+                threePaneReorderOverlay(order: order, size: geometry.size)
+            }
+        }
+        .transition(WeiBeiTransition.rightPanel)
+    }
+
+    @ViewBuilder
+    private func reorderablePaneView(for role: WorkspacePaneRole) -> some View {
+        let drag = store.threePaneReorderDrag
+        paneView(for: role)
+            .opacity(drag?.role == role ? 0.32 : 1)
+            .overlay {
+                if drag?.targetIndex == store.normalizedThreePaneOrder.firstIndex(of: role), drag?.role != role {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(WeiBeiTheme.cinnabar.opacity(0.22), lineWidth: 1)
+                        .background {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(WeiBeiTheme.cinnabarSoft.opacity(0.10))
+                        }
+                        .padding(8)
+                        .transition(WeiBeiTransition.floating)
+                }
+            }
+            .animation(WeiBeiMotion.micro, value: drag)
+    }
+
+    @ViewBuilder
     private func paneView(for role: WorkspacePaneRole) -> some View {
         switch role {
         case .reader:
-            ReaderPaneView()
+            ReaderPaneView(reorderRole: .reader)
         case .agent:
             AgentPaneView(reorderRole: .agent)
         case .notes:
             NotePaneView(reorderRole: .notes)
         }
+    }
+
+    @ViewBuilder
+    private func threePaneReorderOverlay(order: [WorkspacePaneRole], size: CGSize) -> some View {
+        if let drag = store.threePaneReorderDrag,
+           let sourceIndex = order.firstIndex(of: drag.role) {
+            let frames = threePaneFrames(order: order, size: size)
+            if frames.indices.contains(sourceIndex) {
+                let sourceFrame = frames[sourceIndex]
+                if let targetIndex = drag.targetIndex, frames.indices.contains(targetIndex) {
+                    PaneDropTargetView(role: order[targetIndex])
+                        .frame(width: frames[targetIndex].width, height: frames[targetIndex].height)
+                        .position(x: frames[targetIndex].midX, y: frames[targetIndex].midY)
+                        .transition(WeiBeiTransition.floating)
+                }
+
+                PaneReorderGhostView(role: drag.role)
+                    .frame(width: sourceFrame.width, height: sourceFrame.height)
+                    .position(
+                        x: sourceFrame.midX + clamped(drag.translation, min: -size.width, max: size.width),
+                        y: sourceFrame.midY
+                    )
+                    .transition(WeiBeiTransition.floating)
+                    .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode == .inkstone ? 0.38 : 0.14), radius: 22, y: 12)
+                    .zIndex(8)
+            }
+        }
+    }
+
+    private func threePaneFrames(order: [WorkspacePaneRole], size: CGSize) -> [CGRect] {
+        let divider = WeiBeiSplitView.thickness
+        let usable = max(size.width - 2 * divider, 1)
+        let firstMinimum = minimumWidth(for: order[0])
+        let secondMinimum = minimumWidth(for: order[1])
+        let thirdMinimum = minimumWidth(for: order[2])
+        let firstWidth = clamped(firstSplit.wrappedValue * usable, min: firstMinimum, max: usable - secondMinimum - thirdMinimum)
+        let secondWidth = clamped((secondSplit.wrappedValue - firstSplit.wrappedValue) * usable, min: secondMinimum, max: usable - firstWidth - thirdMinimum)
+        let thirdWidth = max(thirdMinimum, usable - firstWidth - secondWidth)
+        let height = max(size.height, 1)
+        return [
+            CGRect(x: 0, y: 0, width: firstWidth, height: height),
+            CGRect(x: firstWidth + divider, y: 0, width: secondWidth, height: height),
+            CGRect(x: firstWidth + divider + secondWidth + divider, y: 0, width: thirdWidth, height: height)
+        ]
+    }
+
+    private func clamped(_ value: CGFloat, min: CGFloat, max: CGFloat) -> CGFloat {
+        Swift.min(Swift.max(value, min), Swift.max(min, max))
     }
 
     private var conversationSourceRailItems: [ContextRailItem] {
@@ -1126,6 +1205,98 @@ private struct LayoutContentView: View {
         case .hidden:
             EmptyView()
         }
+    }
+}
+
+private struct PaneReorderGhostView: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    var role: WorkspacePaneRole
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Image(systemName: role.systemImage)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .frame(width: 26, height: 26)
+                    .background(WeiBeiTheme.cinnabarSoft.opacity(0.18), in: RoundedRectangle(cornerRadius: 7))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(role.label(language: store.interfaceLanguage))
+                        .font(.system(size: 20, weight: .semibold, design: .serif))
+                        .foregroundStyle(WeiBeiTheme.ink)
+                    Text(store.ui("拖动整栏重排", "Reorder pane"))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                }
+            }
+            .padding(.top, 24)
+            .padding(.horizontal, 22)
+
+            VStack(alignment: .leading, spacing: 11) {
+                ForEach(0..<8, id: \.self) { index in
+                    Capsule()
+                        .fill(WeiBeiTheme.hairline.opacity(index == 0 ? 0.48 : 0.24))
+                        .frame(width: lineWidth(for: index), height: 2)
+                }
+            }
+            .padding(.horizontal, 24)
+
+            Spacer(minLength: 0)
+        }
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(WeiBeiTheme.paperRaised.opacity(store.appearanceMode == .inkstone ? 0.92 : 0.86))
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(.ultraThinMaterial)
+                    .opacity(store.appearanceMode == .inkstone ? 0.10 : 0.06)
+            }
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(WeiBeiTheme.cinnabar.opacity(0.30), lineWidth: 1)
+        }
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(WeiBeiTheme.cinnabar.opacity(0.68))
+                .frame(width: 2)
+                .padding(.vertical, 18)
+        }
+        .scaleEffect(0.985)
+        .allowsHitTesting(false)
+    }
+
+    private func lineWidth(for index: Int) -> CGFloat {
+        [0.78, 0.58, 0.70, 0.44, 0.66, 0.52, 0.74, 0.48][index] * 180
+    }
+}
+
+private struct PaneDropTargetView: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    var role: WorkspacePaneRole
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 10)
+            .fill(WeiBeiTheme.cinnabarSoft.opacity(store.appearanceMode == .inkstone ? 0.16 : 0.12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(WeiBeiTheme.cinnabar.opacity(0.30), lineWidth: 1)
+                    .padding(8)
+            }
+            .overlay(alignment: .topLeading) {
+                HStack(spacing: 7) {
+                    Image(systemName: role.systemImage)
+                        .font(.system(size: 12, weight: .semibold))
+                    Text(role.label(language: store.interfaceLanguage))
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(WeiBeiTheme.paperRaised.opacity(0.72), in: Capsule())
+                .padding(14)
+            }
+            .allowsHitTesting(false)
     }
 }
 

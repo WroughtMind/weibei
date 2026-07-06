@@ -23,6 +23,12 @@ struct NotebookRenameDraft: Identifiable, Equatable {
     var title: String
 }
 
+struct ThreePaneReorderDrag: Equatable {
+    var role: WorkspacePaneRole
+    var translation: CGFloat
+    var targetIndex: Int?
+}
+
 @MainActor
 final class WorkspaceStore: ObservableObject {
     @Published var importedItems: [StudyItem] = []
@@ -45,6 +51,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var focusRequest = 0
     @Published var layout: WorkspaceLayout = .documentAgentNotes
     @Published var threePaneOrder: [WorkspacePaneRole] = WorkspacePaneRole.defaultThreePaneOrder
+    @Published var threePaneReorderDrag: ThreePaneReorderDrag?
     @Published var agentSurface: AgentSurface = .bottomDrawer
     @Published var noteRenderMode: NoteRenderMode = .rich
     @Published var showQuietInsight = true
@@ -681,7 +688,6 @@ final class WorkspaceStore: ObservableObject {
 
     func swapThreePaneRoles(_ dragged: WorkspacePaneRole, over target: WorkspacePaneRole) {
         guard dragged != target else { return }
-        guard dragged != .reader, target != .reader else { return }
         guard layout.isDocumentThreePane else { return }
         var order = normalizedThreePaneOrder
         guard let draggedIndex = order.firstIndex(of: dragged),
@@ -700,25 +706,58 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func moveThreePaneRole(_ role: WorkspacePaneRole, horizontalDelta: CGFloat) {
-        let threshold: CGFloat = 72
-        guard role != .reader else { return }
-        guard abs(horizontalDelta) >= threshold else { return }
         guard layout.isDocumentThreePane else { return }
         var order = normalizedThreePaneOrder
-        guard let currentIndex = order.firstIndex(of: role) else { return }
-        let targetIndex = horizontalDelta < 0 ? currentIndex - 1 : currentIndex + 1
-        guard order.indices.contains(targetIndex) else { return }
-        order.swapAt(currentIndex, targetIndex)
+        guard let targetIndex = threePaneReorderTargetIndex(for: role, horizontalDelta: horizontalDelta),
+              let currentIndex = order.firstIndex(of: role),
+              currentIndex != targetIndex else { return }
+        order.remove(at: currentIndex)
+        order.insert(role, at: min(targetIndex, order.count))
         applyThreePaneOrder(order, focus: role.focus)
+    }
+
+    func beginThreePaneReorder(_ role: WorkspacePaneRole) {
+        guard layout.isDocumentThreePane else { return }
+        threePaneReorderDrag = ThreePaneReorderDrag(role: role, translation: 0, targetIndex: nil)
+    }
+
+    func updateThreePaneReorder(_ role: WorkspacePaneRole, horizontalDelta: CGFloat) {
+        guard layout.isDocumentThreePane else { return }
+        threePaneReorderDrag = ThreePaneReorderDrag(
+            role: role,
+            translation: horizontalDelta,
+            targetIndex: threePaneReorderTargetIndex(for: role, horizontalDelta: horizontalDelta)
+        )
+    }
+
+    func finishThreePaneReorder(_ role: WorkspacePaneRole, horizontalDelta: CGFloat) {
+        defer { threePaneReorderDrag = nil }
+        moveThreePaneRole(role, horizontalDelta: horizontalDelta)
+    }
+
+    func cancelThreePaneReorder() {
+        threePaneReorderDrag = nil
     }
 
     private func applyThreePaneOrder(_ order: [WorkspacePaneRole], focus nextFocus: PaneFocus) {
         recordNavigationPoint()
         clearUnpinnedFloatingSelection()
+        threePaneReorderDrag = nil
         threePaneOrder = order
         layout = layoutMatchingThreePaneOrder(order)
         focus(nextFocus)
         save()
+    }
+
+    private func threePaneReorderTargetIndex(for role: WorkspacePaneRole, horizontalDelta: CGFloat) -> Int? {
+        let threshold: CGFloat = 84
+        guard abs(horizontalDelta) >= threshold else { return nil }
+        let order = normalizedThreePaneOrder
+        guard let currentIndex = order.firstIndex(of: role) else { return nil }
+        let direction = horizontalDelta < 0 ? -1 : 1
+        let steps = max(1, min(2, Int((abs(horizontalDelta) - threshold) / 180) + 1))
+        let targetIndex = min(max(currentIndex + direction * steps, 0), order.count - 1)
+        return targetIndex == currentIndex ? nil : targetIndex
     }
 
     var canUseSelectionAgentSurface: Bool {

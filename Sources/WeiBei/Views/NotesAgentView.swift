@@ -117,7 +117,6 @@ struct WeiBeiPaneHeader<Actions: View>: View {
 private struct PaneHeaderReorderModifier: ViewModifier {
     @EnvironmentObject private var store: WorkspaceStore
     @State private var dragActive = false
-    @State private var dragOffset: CGFloat = 0
     @State private var hovering = false
     @State private var cursorPushed = false
 
@@ -126,8 +125,6 @@ private struct PaneHeaderReorderModifier: ViewModifier {
     func body(content: Content) -> some View {
         if let role {
             content
-                .offset(x: dragOffset)
-                .scaleEffect(dragActive ? 0.992 : 1)
                 .overlay {
                     if hovering || dragActive {
                         Rectangle()
@@ -140,11 +137,11 @@ private struct PaneHeaderReorderModifier: ViewModifier {
                 .overlay {
                     if dragActive {
                         HStack {
-                            if dragOffset >= 0 { Spacer(minLength: 0) }
+                            Spacer(minLength: 0)
                             Capsule()
                                 .fill(WeiBeiTheme.cinnabar.opacity(0.62))
                                 .frame(width: 2, height: 28)
-                            if dragOffset < 0 { Spacer(minLength: 0) }
+                            Spacer(minLength: 0)
                         }
                         .padding(.horizontal, 6)
                         .transition(WeiBeiTransition.floating)
@@ -157,17 +154,19 @@ private struct PaneHeaderReorderModifier: ViewModifier {
                         .onChanged { value in
                             guard abs(value.translation.width) > 2 else { return }
                             withAnimation(WeiBeiMotion.micro) {
+                                if !dragActive {
+                                    store.beginThreePaneReorder(role)
+                                }
                                 dragActive = true
-                                dragOffset = min(18, max(-18, value.translation.width * 0.08))
                             }
+                            store.updateThreePaneReorder(role, horizontalDelta: value.translation.width)
                         }
                         .onEnded { value in
                             withAnimation(WeiBeiMotion.layout) {
-                                store.moveThreePaneRole(role, horizontalDelta: value.translation.width)
+                                store.finishThreePaneReorder(role, horizontalDelta: value.translation.width)
                             }
                             withAnimation(WeiBeiMotion.micro) {
                                 dragActive = false
-                                dragOffset = 0
                             }
                         }
                 )
@@ -181,14 +180,15 @@ private struct PaneHeaderReorderModifier: ViewModifier {
                     if dragActive {
                         withAnimation(WeiBeiMotion.micro) {
                             dragActive = false
-                            dragOffset = 0
                         }
                     }
                 }
                 .onDisappear {
+                    if dragActive {
+                        store.cancelThreePaneReorder()
+                    }
                     popCursorIfNeeded()
                 }
-                .animation(WeiBeiMotion.hover, value: dragOffset)
                 .animation(WeiBeiMotion.hover, value: hovering)
                 .help(store.ui("拖动标题栏重排三栏", "Drag the pane header to reorder panes"))
         } else {

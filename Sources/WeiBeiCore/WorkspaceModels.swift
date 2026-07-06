@@ -142,14 +142,14 @@ public enum WorkspacePaneRole: String, Codable, CaseIterable, Identifiable, Hash
     }
 
     public static func normalized(_ roles: [WorkspacePaneRole]) -> [WorkspacePaneRole] {
-        var trailing: [WorkspacePaneRole] = []
-        for role in roles where role != .reader && !trailing.contains(role) {
-            trailing.append(role)
+        var ordered: [WorkspacePaneRole] = []
+        for role in roles where !ordered.contains(role) {
+            ordered.append(role)
         }
-        for role in [WorkspacePaneRole.agent, .notes] where !trailing.contains(role) {
-            trailing.append(role)
+        for role in WorkspacePaneRole.defaultThreePaneOrder where !ordered.contains(role) {
+            ordered.append(role)
         }
-        return [.reader] + trailing
+        return Array(ordered.prefix(3))
     }
 }
 
