@@ -117,12 +117,15 @@ struct WeiBeiPaneHeader<Actions: View>: View {
 private struct PaneHeaderReorderModifier: ViewModifier {
     @EnvironmentObject private var store: WorkspaceStore
     @State private var dragActive = false
+    @State private var dragOffset: CGFloat = 0
 
     var role: WorkspacePaneRole?
 
     func body(content: Content) -> some View {
         if let role {
             content
+                .offset(x: dragOffset)
+                .scaleEffect(dragActive ? 0.992 : 1)
                 .overlay {
                     if dragActive {
                         Rectangle()
@@ -130,6 +133,19 @@ private struct PaneHeaderReorderModifier: ViewModifier {
                             .padding(.horizontal, 4)
                             .padding(.vertical, 5)
                             .transition(WeiBeiTransition.floating)
+                    }
+                }
+                .overlay {
+                    if dragActive {
+                        HStack {
+                            if dragOffset >= 0 { Spacer(minLength: 0) }
+                            Capsule()
+                                .fill(WeiBeiTheme.cinnabar.opacity(0.62))
+                                .frame(width: 2, height: 28)
+                            if dragOffset < 0 { Spacer(minLength: 0) }
+                        }
+                        .padding(.horizontal, 6)
+                        .transition(WeiBeiTransition.floating)
                     }
                 }
                 .contentShape(Rectangle())
@@ -140,6 +156,7 @@ private struct PaneHeaderReorderModifier: ViewModifier {
                             guard abs(value.translation.width) > 2 else { return }
                             withAnimation(WeiBeiMotion.micro) {
                                 dragActive = true
+                                dragOffset = min(18, max(-18, value.translation.width * 0.08))
                             }
                         }
                         .onEnded { value in
@@ -148,6 +165,7 @@ private struct PaneHeaderReorderModifier: ViewModifier {
                             }
                             withAnimation(WeiBeiMotion.micro) {
                                 dragActive = false
+                                dragOffset = 0
                             }
                         }
                 )
@@ -155,9 +173,11 @@ private struct PaneHeaderReorderModifier: ViewModifier {
                     if dragActive {
                         withAnimation(WeiBeiMotion.micro) {
                             dragActive = false
+                            dragOffset = 0
                         }
                     }
                 }
+                .animation(WeiBeiMotion.hover, value: dragOffset)
                 .help(store.ui("拖动标题栏重排三栏", "Drag the pane header to reorder panes"))
         } else {
             content
