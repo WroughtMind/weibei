@@ -291,15 +291,26 @@ struct NotePaneView: View {
                 reorderRole: reorderRole
             ) {
                 noteModeControl
-                Button {
-                    startNotebookCreation()
+                Menu {
+                    Button(store.ui("空白课程笔记", "Blank Course Note")) {
+                        withAnimation(WeiBeiMotion.panel) {
+                            store.promptCreateBlankNotebookNote()
+                        }
+                    }
+                    if store.hasSelectedMaterial {
+                        Button(store.ui("当前资料笔记", "Current Material Note")) {
+                            withAnimation(WeiBeiMotion.panel) {
+                                store.promptCreateNotebookNoteFromCurrentMaterial()
+                            }
+                        }
+                    }
                 } label: {
                     Image(systemName: "doc.badge.plus")
                 }
                 .buttonStyle(WeiBeiIconButtonStyle(size: 24))
                 .accessibilityLabel(Text(store.ui("新建课程笔记", "New Course Note")))
                 .help(store.hasSelectedMaterial
-                    ? store.ui("为当前资料新建或打开课程笔记", "Create or open a course note for the current material")
+                    ? store.ui("选择新建空白笔记或资料笔记", "Choose a blank note or material note")
                     : store.ui("新建空白课程笔记", "Create a blank course note")
                 )
             }
@@ -388,16 +399,6 @@ struct NotePaneView: View {
 
     private var noteHeaderSubtitle: String {
         store.agentNoteTitle
-    }
-
-    private func startNotebookCreation() {
-        withAnimation(WeiBeiMotion.panel) {
-            if store.hasSelectedMaterial {
-                store.promptCreateNotebookNoteFromCurrentMaterial()
-            } else {
-                store.promptCreateBlankNotebookNote()
-            }
-        }
     }
 
     private func noteFileStatusColor(for message: String) -> Color {
