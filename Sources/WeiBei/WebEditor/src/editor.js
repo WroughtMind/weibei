@@ -292,30 +292,21 @@ const rectFromSelection = () => {
   };
 };
 
-const normalizeMarkdownOutput = (markdown) => (markdown || '')
-  .replace(/\\\[\\\[/g, '[[')
-  .replace(/\\\]\\\]/g, ']]')
-  .replace(/\\=\\=([^=\n]+?)\\=\\=/g, '==$1==')
-  .replace(/\^\\\[/g, '^[')
-  .replace(/(^|\s)\\#(?=[\p{L}\p{N}_/-])/gu, '$1#')
-  .replace(/\\\$(?=\d)/g, '$')
-  .replace(new RegExp(`^(\\s*(?:>\\s*)*)\\\\(\\[!(?:${calloutTypePattern})\\])`, 'gim'), '$1$2');
-
-const normalizeHtmlBreaksInLine = (line) => {
+const mapMarkdownOutsideBackticks = (line, transform) => {
   const source = String(line || '');
   let result = '';
   let cursor = 0;
   while (cursor < source.length) {
     const tick = source.indexOf('`', cursor);
     if (tick < 0) {
-      result += source.slice(cursor).replace(/<br\s*\/?>[ \t]*/gi, '  \n');
+      result += transform(source.slice(cursor));
       break;
     }
-    result += source.slice(cursor, tick).replace(/<br\s*\/?>[ \t]*/gi, '  \n');
+    result += transform(source.slice(cursor, tick));
     const marker = source.slice(tick).match(/^`+/)?.[0] || '`';
     const close = source.indexOf(marker, tick + marker.length);
     if (close < 0) {
-      result += source.slice(tick).replace(/<br\s*\/?>[ \t]*/gi, '  \n');
+      result += source.slice(tick);
       break;
     }
     result += source.slice(tick, close + marker.length);
@@ -324,8 +315,16 @@ const normalizeHtmlBreaksInLine = (line) => {
   return result;
 };
 
-// ponytail: line scanner skips code fences/backtick spans; use a Markdown AST only if more HTML rewrites are added.
-const normalizeHtmlBreaks = (markdown) => {
+const normalizeMarkdownOutputSegment = (text) => String(text || '')
+  .replace(/\\\[\\\[/g, '[[')
+  .replace(/\\\]\\\]/g, ']]')
+  .replace(/\\=\\=([^=\n]+?)\\=\\=/g, '==$1==')
+  .replace(/\^\\\[/g, '^[')
+  .replace(/(^|\s)\\#(?=[\p{L}\p{N}_/-])/gu, '$1#')
+  .replace(/\\\$(?=\d)/g, '$')
+  .replace(new RegExp(`^(\\s*(?:>\\s*)*)\\\\(\\[!(?:${calloutTypePattern})\\])`, 'gim'), '$1$2');
+
+const mapMarkdownOutsideCode = (markdown, transform) => {
   const parts = String(markdown || '').split(/(\r?\n)/);
   let inFence = false;
   let fenceMarker = '';
@@ -351,12 +350,19 @@ const normalizeHtmlBreaks = (markdown) => {
       result += line + newline;
       continue;
     }
-    const normalizedLine = normalizeHtmlBreaksInLine(line);
+    const normalizedLine = mapMarkdownOutsideBackticks(line, transform);
     result += normalizedLine;
     if (!(normalizedLine.endsWith('\n') && newline)) result += newline;
   }
   return result;
 };
+
+// ponytail: line scanner skips code fences/backtick spans; use a Markdown AST only if more rewrites are added.
+const normalizeMarkdownOutput = (markdown) => mapMarkdownOutsideCode(markdown, normalizeMarkdownOutputSegment);
+
+const normalizeHtmlBreaksInLine = (line) => String(line || '').replace(/<br\s*\/?>[ \t]*/gi, '  \n');
+
+const normalizeHtmlBreaks = (markdown) => mapMarkdownOutsideCode(markdown, normalizeHtmlBreaksInLine);
 
 const splitFrontmatter = (markdown) => {
   const source = markdown || '';

@@ -84,9 +84,14 @@ print(note)
 行内代码 `<br />` 不应被当成换行。
 双反引号 ``内部 ` <br />`` 也要保留源码。
 行内代码 `[[不是链接]] ==不是高亮== %%不是注释%% #not-tag <br />` 不应触发魏碑语法装饰。
+行内代码 `\\#literal \\[[x]] \\==x\\== \\$5 \\[!note]` 保存时不能被清理反斜杠。
 
 ```html
 <span>保留<br />源码</span>
+```
+
+```txt
+\\#literal \\[[x]] \\==x\\== \\$5 \\[!note]
 ```
 
 ```mermaid
@@ -301,6 +306,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             while ((node = walker.nextNode())) {
               if (!/\\[![A-Za-z]/.test(node.nodeValue || '')) continue;
               const parent = node.parentElement;
+              if (parent?.closest('code, pre')) continue;
               if (parent?.closest('.weibei-callout-marker')) continue;
               if (!parent?.closest('blockquote.weibei-callout')) continue;
               const style = getComputedStyle(parent);
@@ -322,6 +328,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             while ((node = walker.nextNode())) {
               if (!/\\[![A-Za-z]/.test(node.nodeValue || '')) continue;
               const parent = node.parentElement;
+              if (parent?.closest('code, pre')) continue;
               if (parent?.closest('.weibei-callout-marker')) continue;
               const style = getComputedStyle(parent);
               const visible = style.display !== 'none'
@@ -1104,7 +1111,9 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             ("inline html break code", "`<br />`"),
             ("double backtick html break code", "``内部 ` <br />``"),
             ("inline code markdown syntax", "`[[不是链接]] ==不是高亮== %%不是注释%% #not-tag <br />`"),
+            ("inline code escaped syntax", "`\\#literal \\[[x]] \\==x\\== \\$5 \\[!note]`"),
             ("code block html break", "<span>保留<br />源码</span>"),
+            ("code block escaped syntax", "\\#literal \\[[x]] \\==x\\== \\$5 \\[!note]"),
             ("image size", "![魏碑测试图|100x80](assets/weibei.svg)")
         ]
         for (name, fragment) in checks {
