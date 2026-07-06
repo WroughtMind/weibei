@@ -961,7 +961,7 @@ private struct LayoutContentView: View {
     @ViewBuilder
     private func reorderablePaneView(for role: WorkspacePaneRole) -> some View {
         let drag = store.threePaneReorderDrag
-        paneView(for: role)
+        paneView(for: role, reorderable: true)
             .opacity(drag?.role == role ? 0.32 : 1)
             .overlay {
                 if drag?.targetIndex == store.normalizedThreePaneOrder.firstIndex(of: role), drag?.role != role {
@@ -979,14 +979,14 @@ private struct LayoutContentView: View {
     }
 
     @ViewBuilder
-    private func paneView(for role: WorkspacePaneRole) -> some View {
+    private func paneView(for role: WorkspacePaneRole, reorderable: Bool) -> some View {
         switch role {
         case .reader:
-            ReaderPaneView(reorderRole: .reader)
+            ReaderPaneView(reorderRole: reorderable ? .reader : nil)
         case .agent:
-            AgentPaneView(reorderRole: .agent)
+            AgentPaneView(reorderRole: reorderable ? .agent : nil)
         case .notes:
-            NotePaneView(reorderRole: .notes)
+            NotePaneView(reorderRole: reorderable ? .notes : nil)
         }
     }
 
@@ -1004,8 +1004,15 @@ private struct LayoutContentView: View {
                         .transition(WeiBeiTransition.floating)
                 }
 
-                PaneReorderGhostView(role: drag.role)
+                paneView(for: drag.role, reorderable: false)
                     .frame(width: sourceFrame.width, height: sourceFrame.height)
+                    .clipped()
+                    .allowsHitTesting(false)
+                    .opacity(0.96)
+                    .overlay {
+                        Rectangle()
+                            .stroke(WeiBeiTheme.cinnabar.opacity(0.30), lineWidth: 1)
+                    }
                     .position(
                         x: sourceFrame.midX + clamped(drag.translation, min: -size.width, max: size.width),
                         y: sourceFrame.midY
@@ -1205,69 +1212,6 @@ private struct LayoutContentView: View {
         case .hidden:
             EmptyView()
         }
-    }
-}
-
-private struct PaneReorderGhostView: View {
-    @EnvironmentObject private var store: WorkspaceStore
-    var role: WorkspacePaneRole
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                Image(systemName: role.systemImage)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
-                    .frame(width: 26, height: 26)
-                    .background(WeiBeiTheme.cinnabarSoft.opacity(0.18), in: RoundedRectangle(cornerRadius: 7))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(role.label(language: store.interfaceLanguage))
-                        .font(.system(size: 20, weight: .semibold, design: .serif))
-                        .foregroundStyle(WeiBeiTheme.ink)
-                    Text(store.ui("拖动整栏重排", "Reorder pane"))
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                }
-            }
-            .padding(.top, 24)
-            .padding(.horizontal, 22)
-
-            VStack(alignment: .leading, spacing: 11) {
-                ForEach(0..<8, id: \.self) { index in
-                    Capsule()
-                        .fill(WeiBeiTheme.hairline.opacity(index == 0 ? 0.48 : 0.24))
-                        .frame(width: lineWidth(for: index), height: 2)
-                }
-            }
-            .padding(.horizontal, 24)
-
-            Spacer(minLength: 0)
-        }
-        .background {
-            ZStack {
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(WeiBeiTheme.paperRaised.opacity(store.appearanceMode == .inkstone ? 0.92 : 0.86))
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(.ultraThinMaterial)
-                    .opacity(store.appearanceMode == .inkstone ? 0.10 : 0.06)
-            }
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(WeiBeiTheme.cinnabar.opacity(0.30), lineWidth: 1)
-        }
-        .overlay(alignment: .leading) {
-            Rectangle()
-                .fill(WeiBeiTheme.cinnabar.opacity(0.68))
-                .frame(width: 2)
-                .padding(.vertical, 18)
-        }
-        .scaleEffect(0.985)
-        .allowsHitTesting(false)
-    }
-
-    private func lineWidth(for index: Int) -> CGFloat {
-        [0.78, 0.58, 0.70, 0.44, 0.66, 0.52, 0.74, 0.48][index] * 180
     }
 }
 

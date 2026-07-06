@@ -705,10 +705,14 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                 self.updateSelectableTextState(in: view)
                 self.ensureOCRForCurrentPage(in: view)
             }
-            eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDragged, .leftMouseUp]) { [weak self, weak view] event in
+            eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self, weak view] event in
                 guard let self, let view, event.window === view.window else { return event }
                 let location = view.convert(event.locationInWindow, from: nil)
                 guard view.bounds.contains(location) else { return event }
+                if event.type == .leftMouseDown {
+                    view.window?.makeFirstResponder(view)
+                    return event
+                }
                 DispatchQueue.main.async { [weak self, weak view] in
                     guard let self, let view else { return }
                     self.reportCurrentSelection(in: view)
