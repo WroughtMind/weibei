@@ -1082,6 +1082,52 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("typed HTML break leaked raw HTML syntax into saved markdown")
                 return
             }
+            self.validateBulletListEnterExit()
+        }
+    }
+
+    private func validateBulletListEnterExit() {
+        let script = """
+        window.WeiBeiEditor.insertMarkdown("\\n\\n- 项目{{WEIBEI_CURSOR}}");
+        if (!window.WeiBeiEditor.pressKeyForCheck('Enter')) {
+          throw new Error('pressKeyForCheck unavailable for first Enter');
+        }
+        if (!window.WeiBeiEditor.pressKeyForCheck('Enter')) {
+          throw new Error('pressKeyForCheck unavailable for second Enter');
+        }
+        if (!window.WeiBeiEditor.typeTextForCheck('退出列表')) {
+          throw new Error('typeTextForCheck unavailable after list exit');
+        }
+        window.WeiBeiEditor.getMarkdown();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            if let error {
+                self.fail("bullet list Enter exit check threw \(error.localizedDescription)")
+                return
+            }
+            guard let markdown = value as? String else {
+                self.fail("bullet list Enter exit check did not return markdown")
+                return
+            }
+            guard let itemRange = markdown.range(of: "项目", options: .backwards) else {
+                self.fail("bullet list Enter exit check did not serialize the list item: \(markdown)")
+                return
+            }
+            let tail = String(markdown[itemRange.lowerBound...])
+            if !tail.contains("退出列表") {
+                self.fail("bullet list Enter exit check did not serialize following paragraph: \(markdown)")
+                return
+            }
+            if tail.contains("\n- 退出列表")
+                || tail.contains("\n* 退出列表")
+                || tail.contains("\n+ 退出列表")
+                || tail.contains("\n- \n- 退出列表")
+                || tail.contains("\n* \n* 退出列表")
+                || tail.contains("\n+ \n+ 退出列表") {
+                self.fail("empty bullet Enter did not exit the list before typing following text: \(markdown)")
+                return
+            }
             self.isDone = true
         }
     }

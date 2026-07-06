@@ -4,6 +4,7 @@ import { gfm } from '@milkdown/kit/preset/gfm';
 import { listener, listenerCtx } from '@milkdown/kit/plugin/listener';
 import { readImageAsBase64, upload, uploadConfig } from '@milkdown/kit/plugin/upload';
 import { Plugin, TextSelection } from '@milkdown/kit/prose/state';
+import { liftListItem } from '@milkdown/kit/prose/schema-list';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
 import { getMarkdown as readMarkdown, insert, replaceAll, replaceRange, $prose } from '@milkdown/kit/utils';
 import { katexOptionsCtx, math } from '@milkdown/plugin-math';
@@ -1102,6 +1103,27 @@ const installQuietScrollIndicators = () => {
   }, true);
 };
 
+const listItemTypeNames = new Set(['list_item', 'task_list_item']);
+
+const emptyListItemTypeAtSelection = (state) => {
+  const { selection } = state;
+  if (!selection.empty) return null;
+  const { $from } = selection;
+  for (let depth = $from.depth; depth > 0; depth -= 1) {
+    const node = $from.node(depth);
+    if (!listItemTypeNames.has(node.type.name)) continue;
+    if (node.textContent.trim().length > 0) return null;
+    return node.type;
+  }
+  return null;
+};
+
+const exitEmptyListItem = (view) => {
+  const listItemType = emptyListItemTypeAtSelection(view.state);
+  if (!listItemType) return false;
+  return liftListItem(listItemType)(view.state, view.dispatch, view);
+};
+
 const weiBeiDialectPlugin = $prose(() => new Plugin({
   view(view) {
     scheduleImageResolution(view);
@@ -1149,7 +1171,17 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
     handleClick(view, pos, event) {
       return activateWikiLink(event.target) || activateSourceReference(event.target);
     },
-    handleKeyDown(_, event) {
+    handleKeyDown(view, event) {
+      if (isEditable
+          && event.key === 'Enter'
+          && !event.shiftKey
+          && !event.altKey
+          && !event.metaKey
+          && !event.ctrlKey
+          && exitEmptyListItem(view)) {
+        event.preventDefault();
+        return true;
+      }
       if (event.key !== 'Enter' && event.key !== ' ') return false;
       if (activateSourceReference(event.target)) {
         event.preventDefault();
@@ -1351,6 +1383,26 @@ const typeTextForCheck = (text) => {
   });
 };
 
+const pressKeyForCheck = (key, options = {}) => {
+  ensureEditor();
+  if (!window.weiBeiEditorCheckMode) return false;
+  return editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    view.focus();
+    const event = new KeyboardEvent('keydown', {
+      key,
+      bubbles: true,
+      cancelable: true,
+      shiftKey: options.shiftKey === true,
+      altKey: options.altKey === true,
+      metaKey: options.metaKey === true,
+      ctrlKey: options.ctrlKey === true,
+    });
+    view.dom.dispatchEvent(event);
+    return true;
+  });
+};
+
 window.WeiBeiEditor = {
   getMarkdown: getMarkdownInternal,
   setMarkdown: setMarkdownInternal,
@@ -1440,6 +1492,7 @@ if (window.weiBeiEditorCheckMode) {
   window.WeiBeiEditor.selectFirstTextForCheck = selectFirstTextForCheck;
   window.WeiBeiEditor.selectedTextForCheck = editorSelectedText;
   window.WeiBeiEditor.typeTextForCheck = typeTextForCheck;
+  window.WeiBeiEditor.pressKeyForCheck = pressKeyForCheck;
 }
 
 const initialDocument = splitFrontmatter(window.initialMarkdown || '');
