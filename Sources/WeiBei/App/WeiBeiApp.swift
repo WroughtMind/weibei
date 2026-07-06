@@ -115,12 +115,10 @@ struct WeiBeiApp: App {
 
                 Divider()
 
-                Button(WorkspaceLayout.documentAgentNotes.label(language: store.interfaceLanguage)) { setLayout(.documentAgentNotes) }
+                Button(store.ui("三栏工作台", "Three-Pane Workspace")) { setLayout(.documentAgentNotes) }
                     .keyboardShortcut("1", modifiers: [.command, .option])
-                Button(WorkspaceLayout.documentNotesAgent.label(language: store.interfaceLanguage)) { setLayout(.documentNotesAgent) }
-                    .keyboardShortcut("2", modifiers: [.command, .option])
                 Button(WorkspaceLayout.documentNotesSplit.label(language: store.interfaceLanguage)) { setLayout(.documentNotesSplit) }
-                    .keyboardShortcut("3", modifiers: [.command, .option])
+                    .keyboardShortcut("2", modifiers: [.command, .option])
                 Button(WorkspaceLayout.immersiveReading.label(language: store.interfaceLanguage)) { setLayout(.immersiveReading) }
                     .keyboardShortcut("r", modifiers: [.command, .option])
                 Button(WorkspaceLayout.immersiveConversation.label(language: store.interfaceLanguage)) { setLayout(.immersiveConversation) }
