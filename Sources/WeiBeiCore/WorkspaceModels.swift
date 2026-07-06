@@ -461,6 +461,13 @@ public enum SelectionAttachmentMerge {
         text.split(whereSeparator: { $0.isWhitespace }).joined()
     }
 
+    public static func containsSelection(_ container: String, fragment: String) -> Bool {
+        let normalizedContainer = normalized(container)
+        let normalizedFragment = normalized(fragment)
+        guard !normalizedContainer.isEmpty, !normalizedFragment.isEmpty else { return false }
+        return normalizedContainer.contains(normalizedFragment)
+    }
+
     private static func overlappedText(_ existing: String, _ incoming: String) -> String? {
         let maxLength = min(existing.count, incoming.count)
         guard maxLength > 0 else { return nil }

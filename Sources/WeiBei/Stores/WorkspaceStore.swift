@@ -1493,12 +1493,18 @@ final class WorkspaceStore: ObservableObject {
         )
         let now = Date()
         defer { lastSelectionAttachmentDate = now }
-        if let existingIndex = selectionAttachments.firstIndex(where: {
-            $0.ownerTitle == cleanedSelection.ownerTitle
-                && $0.source == cleanedSelection.source
-                && $0.text.trimmingCharacters(in: .whitespacesAndNewlines) == cleanedText
+        let sameSelectionSource: (SelectionContext) -> Bool = {
+            $0.ownerTitle == cleanedSelection.ownerTitle && $0.source == cleanedSelection.source
+        }
+        if selectionAttachments.contains(where: {
+            sameSelectionSource($0)
+                && SelectionAttachmentMerge.containsSelection($0.text, fragment: cleanedText)
         }) {
-            selectionAttachments.remove(at: existingIndex)
+            return
+        }
+        selectionAttachments.removeAll {
+            sameSelectionSource($0)
+                && SelectionAttachmentMerge.containsSelection(cleanedText, fragment: $0.text)
         }
         if let mergeIndex = selectionAttachments.indices.reversed().first(where: {
             shouldMergeSelectionAttachment(selectionAttachments[$0], with: cleanedSelection, at: now)
