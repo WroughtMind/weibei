@@ -118,6 +118,8 @@ private struct PaneHeaderReorderModifier: ViewModifier {
     @EnvironmentObject private var store: WorkspaceStore
     @State private var dragActive = false
     @State private var dragOffset: CGFloat = 0
+    @State private var hovering = false
+    @State private var cursorPushed = false
 
     var role: WorkspacePaneRole?
 
@@ -127,9 +129,9 @@ private struct PaneHeaderReorderModifier: ViewModifier {
                 .offset(x: dragOffset)
                 .scaleEffect(dragActive ? 0.992 : 1)
                 .overlay {
-                    if dragActive {
+                    if hovering || dragActive {
                         Rectangle()
-                            .stroke(WeiBeiTheme.cinnabar.opacity(0.46), lineWidth: 1)
+                            .stroke(WeiBeiTheme.cinnabar.opacity(dragActive ? 0.46 : 0.16), lineWidth: 1)
                             .padding(.horizontal, 4)
                             .padding(.vertical, 5)
                             .transition(WeiBeiTransition.floating)
@@ -169,6 +171,12 @@ private struct PaneHeaderReorderModifier: ViewModifier {
                             }
                         }
                 )
+                .onHover { value in
+                    withAnimation(WeiBeiMotion.hover) {
+                        hovering = value
+                    }
+                    updateCursor(isHovering: value)
+                }
                 .onChange(of: store.normalizedThreePaneOrder) { _, _ in
                     if dragActive {
                         withAnimation(WeiBeiMotion.micro) {
@@ -177,10 +185,30 @@ private struct PaneHeaderReorderModifier: ViewModifier {
                         }
                     }
                 }
+                .onDisappear {
+                    popCursorIfNeeded()
+                }
                 .animation(WeiBeiMotion.hover, value: dragOffset)
+                .animation(WeiBeiMotion.hover, value: hovering)
                 .help(store.ui("拖动标题栏重排三栏", "Drag the pane header to reorder panes"))
         } else {
             content
+        }
+    }
+
+    private func updateCursor(isHovering: Bool) {
+        if isHovering, !cursorPushed {
+            NSCursor.openHand.push()
+            cursorPushed = true
+        } else if !isHovering {
+            popCursorIfNeeded()
+        }
+    }
+
+    private func popCursorIfNeeded() {
+        if cursorPushed {
+            NSCursor.pop()
+            cursorPushed = false
         }
     }
 }
