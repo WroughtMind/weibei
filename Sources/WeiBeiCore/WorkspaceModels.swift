@@ -453,6 +453,7 @@ public enum SelectionAttachmentMerge {
         if let merged = overlappedText(existingText, incomingText) {
             return merged
         }
+        guard canStitchAdjacentText(existingText, incomingText) else { return nil }
         return existingText + incomingText
     }
 
@@ -476,6 +477,15 @@ public enum SelectionAttachmentMerge {
             }
         }
         return nil
+    }
+
+    private static func canStitchAdjacentText(_ existing: String, _ incoming: String) -> Bool {
+        let blockedPrefixes = ["#", ">", "-", "*", "|", "```", "$$", "!["]
+        guard !blockedPrefixes.contains(where: incoming.hasPrefix) else { return false }
+        guard !existing.hasSuffix("\n"), !incoming.hasPrefix("\n") else { return false }
+        let terminal = CharacterSet(charactersIn: "。！？!?；;：:")
+        guard let last = existing.unicodeScalars.last else { return false }
+        return !terminal.contains(last)
     }
 }
 

@@ -81,7 +81,8 @@ final class WorkspaceStore: ObservableObject {
     private var isRestoringNavigation = false
     private var didRunVerificationScenario = false
     private var lastSelectionAttachmentDate: Date?
-    private let selectionAttachmentMergeWindow: TimeInterval = 0.9
+    private let selectionAttachmentMergeWindow: TimeInterval = 1.8
+    private var threePaneReorderFrames: [WorkspacePaneRole: CGRect] = [:]
 
     private struct NavigationSnapshot: Equatable {
         var selectedItemID: String?
@@ -721,6 +722,11 @@ final class WorkspaceStore: ObservableObject {
         threePaneReorderDrag = ThreePaneReorderDrag(role: role, translation: 0, targetIndex: nil)
     }
 
+    func updateThreePaneReorderFrames(order: [WorkspacePaneRole], frames: [CGRect]) {
+        guard order.count == frames.count else { return }
+        threePaneReorderFrames = Dictionary(uniqueKeysWithValues: zip(order, frames))
+    }
+
     func updateThreePaneReorder(_ role: WorkspacePaneRole, horizontalDelta: CGFloat) {
         guard layout.isDocumentThreePane else { return }
         threePaneReorderDrag = ThreePaneReorderDrag(
@@ -750,10 +756,22 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func threePaneReorderTargetIndex(for role: WorkspacePaneRole, horizontalDelta: CGFloat) -> Int? {
-        let threshold: CGFloat = 84
-        guard abs(horizontalDelta) >= threshold else { return nil }
         let order = normalizedThreePaneOrder
         guard let currentIndex = order.firstIndex(of: role) else { return nil }
+        if let sourceFrame = threePaneReorderFrames[role] {
+            let draggedCenterX = sourceFrame.midX + horizontalDelta
+            let targetIndex = order.enumerated().first { _, role in
+                threePaneReorderFrames[role]?.contains(CGPoint(x: draggedCenterX, y: sourceFrame.midY)) == true
+            }?.offset ?? order.enumerated().min { left, right in
+                let leftDistance = abs((threePaneReorderFrames[left.element]?.midX ?? sourceFrame.midX) - draggedCenterX)
+                let rightDistance = abs((threePaneReorderFrames[right.element]?.midX ?? sourceFrame.midX) - draggedCenterX)
+                return leftDistance < rightDistance
+            }?.offset
+            return targetIndex == currentIndex ? nil : targetIndex
+        }
+
+        let threshold: CGFloat = 84
+        guard abs(horizontalDelta) >= threshold else { return nil }
         let direction = horizontalDelta < 0 ? -1 : 1
         let steps = max(1, min(2, Int((abs(horizontalDelta) - threshold) / 180) + 1))
         let targetIndex = min(max(currentIndex + direction * steps, 0), order.count - 1)
@@ -1487,9 +1505,10 @@ final class WorkspaceStore: ObservableObject {
         }) {
             selectionAttachments.remove(at: existingIndex)
         }
-        if let lastIndex = selectionAttachments.indices.last,
-           shouldMergeSelectionAttachment(selectionAttachments[lastIndex], with: cleanedSelection, at: now) {
-            selectionAttachments[lastIndex] = mergedSelectionAttachment(selectionAttachments[lastIndex], with: cleanedSelection)
+        if let mergeIndex = selectionAttachments.indices.reversed().first(where: {
+            shouldMergeSelectionAttachment(selectionAttachments[$0], with: cleanedSelection, at: now)
+        }) {
+            selectionAttachments[mergeIndex] = mergedSelectionAttachment(selectionAttachments[mergeIndex], with: cleanedSelection)
             return
         }
         selectionAttachments.append(cleanedSelection)

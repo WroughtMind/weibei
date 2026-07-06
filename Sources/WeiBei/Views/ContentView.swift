@@ -937,6 +937,7 @@ private struct LayoutContentView: View {
     @ViewBuilder
     private func documentThreePaneView(order: [WorkspacePaneRole]) -> some View {
         GeometryReader { geometry in
+            let frames = threePaneFrames(order: order, size: geometry.size)
             ZStack {
                 ResizableThreePane(
                     firstSplit: firstSplit,
@@ -952,8 +953,9 @@ private struct LayoutContentView: View {
                     reorderablePaneView(for: order[2])
                 }
 
-                threePaneReorderOverlay(order: order, size: geometry.size)
+                threePaneReorderOverlay(order: order, size: geometry.size, frames: frames)
             }
+            .background(ThreePaneReorderFrameReporter(order: order, frames: frames))
         }
         .transition(WeiBeiTransition.rightPanel)
     }
@@ -991,10 +993,9 @@ private struct LayoutContentView: View {
     }
 
     @ViewBuilder
-    private func threePaneReorderOverlay(order: [WorkspacePaneRole], size: CGSize) -> some View {
+    private func threePaneReorderOverlay(order: [WorkspacePaneRole], size: CGSize, frames: [CGRect]) -> some View {
         if let drag = store.threePaneReorderDrag,
            let sourceIndex = order.firstIndex(of: drag.role) {
-            let frames = threePaneFrames(order: order, size: size)
             if frames.indices.contains(sourceIndex) {
                 let sourceFrame = frames[sourceIndex]
                 if let targetIndex = drag.targetIndex, frames.indices.contains(targetIndex) {
@@ -1043,6 +1044,23 @@ private struct LayoutContentView: View {
 
     private func clamped(_ value: CGFloat, min: CGFloat, max: CGFloat) -> CGFloat {
         Swift.min(Swift.max(value, min), Swift.max(min, max))
+    }
+
+    private struct ThreePaneReorderFrameReporter: View {
+        @EnvironmentObject private var store: WorkspaceStore
+        let order: [WorkspacePaneRole]
+        let frames: [CGRect]
+
+        var body: some View {
+            Color.clear
+                .onAppear(perform: report)
+                .onChange(of: order) { _, _ in report() }
+                .onChange(of: frames) { _, _ in report() }
+        }
+
+        private func report() {
+            store.updateThreePaneReorderFrames(order: order, frames: frames)
+        }
     }
 
     private var conversationSourceRailItems: [ContextRailItem] {
