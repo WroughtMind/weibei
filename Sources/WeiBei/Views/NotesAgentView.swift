@@ -458,29 +458,17 @@ private struct NotebookCreationPanel: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: draft.kind == .blank ? "doc" : "link")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
-                    .frame(width: 22, height: 22)
-                    .background(WeiBeiTheme.cinnabarSoft.opacity(0.42))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(draft.kind == .blank ? store.ui("新建空白笔记", "New Blank Note") : store.ui("从当前资料开笔记", "Note from Current Material"))
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(WeiBeiTheme.ink)
-                    Text(store.ui("命名后创建本地 Markdown", "Name it before creating Markdown"))
-                        .font(.system(size: 10.5, weight: .medium))
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                }
-                .fixedSize(horizontal: true, vertical: false)
-            }
-
+        HStack(spacing: 9) {
             Rectangle()
-                .fill(WeiBeiTheme.hairline.opacity(0.64))
-                .frame(width: 1, height: 24)
+                .fill(WeiBeiTheme.cinnabar.opacity(0.64))
+                .frame(width: 2, height: 22)
+                .clipShape(Capsule())
+
+            Text(draft.kind == .blank ? store.ui("命名空白笔记", "Name Blank Note") : store.ui("命名资料笔记", "Name Material Note"))
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
 
             TextField(
                 "",
@@ -493,16 +481,16 @@ private struct NotebookCreationPanel: View {
             .foregroundColor(WeiBeiTheme.ink)
             .focused($focused)
             .onSubmit(confirm)
-            .weibeiInputSurface(active: focused, height: 34, horizontalPadding: 10)
+            .weibeiInputSurface(active: focused, height: 32, horizontalPadding: 10)
 
             Button(action: confirm) {
-                Text(store.ui("创建", "Create"))
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(height: 28)
+                Image(systemName: "checkmark")
             }
-            .buttonStyle(WeiBeiTextActionButtonStyle(active: canCreate))
+            .buttonStyle(WeiBeiIconButtonStyle(size: 24, prominence: .primary))
             .disabled(!canCreate)
             .keyboardShortcut(.defaultAction)
+            .accessibilityLabel(Text(store.ui("创建笔记", "Create Note")))
+            .help(store.ui("创建笔记", "Create Note"))
 
             Button(action: cancel) {
                 Image(systemName: "xmark")
@@ -512,24 +500,15 @@ private struct NotebookCreationPanel: View {
             .accessibilityLabel(Text(store.ui("取消", "Cancel")))
             .help(store.ui("取消新建笔记", "Cancel note creation"))
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
         .background {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(WeiBeiTheme.paperInset.opacity(0.50))
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(WeiBeiTheme.paperRaised.opacity(0.20))
-            }
+            WeiBeiTheme.paperRaised.opacity(0.18)
         }
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(WeiBeiTheme.hairline.opacity(0.54), lineWidth: 1)
-        }
-        .overlay(alignment: .top) {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(WeiBeiTheme.glassHighlight.opacity(0.16), lineWidth: 1)
-                .padding(0.5)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(WeiBeiTheme.hairline.opacity(0.34))
+                .frame(height: 1)
         }
         .onExitCommand(perform: cancel)
         .onAppear {

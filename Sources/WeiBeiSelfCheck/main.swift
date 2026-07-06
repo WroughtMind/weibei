@@ -1333,7 +1333,9 @@ expect(workspaceStoreSource.contains("let sampleItems: [StudyItem] = WorkspaceSt
     && workspaceStoreSource.contains("private var didRunVerificationScenario = false")
     && workspaceStoreSource.contains("func runVerificationScenarioIfNeeded() async")
     && workspaceStoreSource.contains("let scenario = Self.environmentValue(\"WEIBEI_VERIFY_SCENARIO\")")
-    && workspaceStoreSource.contains("scenario == \"offline-learning-flow\" || scenario == \"immersive-conversation-flow\"")
+    && workspaceStoreSource.contains("scenario == \"offline-learning-flow\"")
+    && workspaceStoreSource.contains("scenario == \"immersive-conversation-flow\"")
+    && workspaceStoreSource.contains("scenario == \"notebook-creation-flow\"")
     && workspaceStoreSource.contains("layout = scenario == \"immersive-conversation-flow\" ? .immersiveConversation : .documentAgentNotes")
     && workspaceStoreSource.contains("showLibrary = scenario != \"immersive-conversation-flow\"")
     && workspaceStoreSource.contains("updateSelection(\n            ui(\"利率是资金使用价格的表达。\"")
@@ -1542,10 +1544,14 @@ if let askAgentStart = workspaceStoreSource.range(of: "func askAgent() async")?.
     let credentialRange = askAgentSource.range(of: "guard let credential = resolvedOpenAIAPIKey()")!
     expect(askAgentSource.range(of: "agentDraft = \"\"") != nil
         && askAgentSource.range(of: "selectionAttachments = []") != nil
+        && askAgentSource.range(of: "let shouldClearSentDocumentSelection = sentSelectionText != nil && selectionContext?.source == .document") != nil
+        && askAgentSource.range(of: "clearUnpinnedFloatingSelection(keepContext: false)") != nil
         && askAgentSource.range(of: "messages.append(contentsOf: AgentOfflineTurn.messages(") != nil
         && askAgentSource.range(of: "messages.append(AgentMessage(role: .user, text: question, source: sourceTitle))") != nil
+        && askAgentSource.range(of: "let shouldClearSentDocumentSelection")!.lowerBound > askAgentSource.range(of: "let sentSelectionText = agentSelectionText")!.lowerBound
         && askAgentSource.range(of: "agentDraft = \"\"")!.lowerBound < credentialRange.lowerBound
         && askAgentSource.range(of: "selectionAttachments = []")!.lowerBound < credentialRange.lowerBound
+        && askAgentSource.range(of: "clearUnpinnedFloatingSelection(keepContext: false)")!.lowerBound < credentialRange.lowerBound
         && askAgentSource.range(of: "messages.append(contentsOf: AgentOfflineTurn.messages(")!.lowerBound > credentialRange.lowerBound
         && askAgentSource.range(of: "messages.append(AgentMessage(role: .user, text: question, source: sourceTitle))")!.lowerBound > credentialRange.lowerBound,
         "agent send clears the composer before key validation and uses the offline turn helper when no API key exists")
@@ -1557,6 +1563,8 @@ expect(!workspaceStoreSource.contains("请根据当前文档和当前笔记") &&
 expect(workspaceStoreSource.contains("正在静默阅读当前材料和笔记。")
     && workspaceStoreSource.contains("正在静默阅读当前笔记。")
     && !workspaceStoreSource.contains("Agent 正在静默阅读"), "quiet insight progress copy avoids a visible internal agent label")
+expect(workspaceStoreSource.contains("scenario == \"notebook-creation-flow\"")
+    && workspaceStoreSource.contains("promptCreateBlankNotebookNote()\n            return"), "visual verification can open the inline notebook creation strip without creating a file")
 expect(workspaceStoreSource.contains("private func noteBlockForAgentAnswer")
     && workspaceStoreSource.contains("guard !text.hasPrefix(\"#\") else { return text }")
     && workspaceStoreSource.contains("return \"## \\(ui(\"整理建议\", \"Organization suggestion\"))\\n\\(text)\"")
@@ -1724,11 +1732,16 @@ expect(notesAgentSource.contains("func weibeiPaneHeaderChrome(appearanceMode: We
     && notePaneHeaderSource.contains("if let draft = store.notebookCreationDraft")
     && notesAgentSource.contains("private struct NotebookCreationPanel")
     && notesAgentSource.contains("private var canCreate: Bool")
-    && notesAgentSource.contains(".weibeiInputSurface(active: focused, height: 34")
+    && notesAgentSource.contains("store.ui(\"命名空白笔记\"")
+    && notesAgentSource.contains("store.ui(\"命名资料笔记\"")
+    && notesAgentSource.contains(".weibeiInputSurface(active: focused, height: 32")
     && notesAgentSource.contains(".disabled(!canCreate)")
     && notesAgentSource.contains(".keyboardShortcut(.cancelAction)")
     && notesAgentSource.contains(".keyboardShortcut(.defaultAction)")
     && notesAgentSource.contains(".onExitCommand(perform: cancel)")
+    && !notesAgentSource.contains(".alert(")
+    && !notesAgentSource.contains("NSAlert()")
+    && !notesAgentSource.contains("store.ui(\"先命名，再创建本地 Markdown\"")
     && notePaneHeaderSource.contains(".transition(WeiBeiTransition.message)")
     && !notePaneHeaderSource.contains(".padding(.top, 50)")
     && !notePaneHeaderSource.contains(".transition(WeiBeiTransition.floating)")

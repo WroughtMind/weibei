@@ -1570,13 +1570,19 @@ final class WorkspaceStore: ObservableObject {
     func runVerificationScenarioIfNeeded() async {
         guard !didRunVerificationScenario else { return }
         let scenario = Self.environmentValue("WEIBEI_VERIFY_SCENARIO")
-        guard scenario == "offline-learning-flow" || scenario == "immersive-conversation-flow" else { return }
+        guard scenario == "offline-learning-flow"
+            || scenario == "immersive-conversation-flow"
+            || scenario == "notebook-creation-flow" else { return }
         didRunVerificationScenario = true
         layout = scenario == "immersive-conversation-flow" ? .immersiveConversation : .documentAgentNotes
         showLibrary = scenario != "immersive-conversation-flow"
         showRightPane = true
         agentSurface = .hidden
         select(itemID: "sample-html")
+        if scenario == "notebook-creation-flow" {
+            promptCreateBlankNotebookNote()
+            return
+        }
         updateNote(ui("# 视觉验收笔记\n\n", "# Visual verification note\n\n"))
         updateSelection(
             ui("利率是资金使用价格的表达。", "An interest rate is the price paid for using funds."),
@@ -1614,6 +1620,7 @@ final class WorkspaceStore: ObservableObject {
         persistCurrentNote()
         let sentSelectionTitle = agentSelectionTitle
         let sentSelectionText = agentSelectionText
+        let shouldClearSentDocumentSelection = sentSelectionText != nil && selectionContext?.source == .document
         let recentMessages = Array(messages.suffix(8))
         let sourceTitle = agentMessageSourceTitle
         agentDraft = ""
@@ -1621,6 +1628,9 @@ final class WorkspaceStore: ObservableObject {
             withAnimation(WeiBeiMotion.panel) {
                 selectionAttachments = []
             }
+        }
+        if shouldClearSentDocumentSelection {
+            clearUnpinnedFloatingSelection(keepContext: false)
         }
         guard let credential = resolvedOpenAIAPIKey() else {
             let notice = ui(
