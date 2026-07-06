@@ -175,6 +175,7 @@ verify_learning_flow_persistence() {
   for _ in {1..30}; do
     if [[ -f "$workspace_file" ]] \
       && /usr/bin/grep -q "## 离线草稿" "$workspace_file" \
+      && /usr/bin/grep -q "## 选区理解" "$workspace_file" \
       && /usr/bin/grep -q "## 整理建议" "$workspace_file" \
       && /usr/bin/grep -q "| 上下文 | 内容 |" "$workspace_file" \
       && /usr/bin/grep -q "利率是资金使用价格的表达" "$workspace_file"; then

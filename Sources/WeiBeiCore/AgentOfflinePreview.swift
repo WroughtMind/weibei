@@ -40,13 +40,16 @@ public enum AgentOfflinePreview {
             ? input.materialTitle
             : input.language.text("未选择", "None")
         let noteValue = input.noteTitle
+        let selectionPreview: String
         let selectionValue: String
         if let selectionText = input.selectionText, !selectionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            selectionPreview = preview(selectionText, limit: 360)
             selectionValue = input.language.text(
-                "\(input.selectionTitle ?? "已选文本片段")：\(preview(selectionText, limit: 360))",
-                "\(input.selectionTitle ?? "selected fragments"): \(preview(selectionText, limit: 360))"
+                "\(input.selectionTitle ?? "已选文本片段")：\(selectionPreview)",
+                "\(input.selectionTitle ?? "selected fragments"): \(selectionPreview)"
             )
         } else {
+            selectionPreview = ""
             selectionValue = input.language.text("无", "None")
         }
 
@@ -58,6 +61,20 @@ public enum AgentOfflinePreview {
         let noteBlock = notePreview.isEmpty
             ? input.language.text("笔记摘要：当前笔记为空。", "Note excerpt: the current note is empty.")
             : input.language.text("笔记摘录：\(notePreview)", "Note excerpt: \(notePreview)")
+        let selectionSection = selectionPreview.isEmpty ? "" : input.language.text(
+            """
+
+            ## 选区理解
+            - 选区原文：\(selectionPreview)
+            - 当前可确认的是：这段文字可以作为回答的直接依据，写入笔记时应保留来源。
+            """,
+            """
+
+            ## Selection Reading
+            - Selected text: \(selectionPreview)
+            - What can be confirmed now: this text can be used as direct evidence, and the source should stay attached when it is written into notes.
+            """
+        )
 
         return input.language.text(
             """
@@ -76,6 +93,7 @@ public enum AgentOfflinePreview {
             > \(materialBlock)
 
             > \(noteBlock)
+            \(selectionSection)
 
             ## 整理建议
             - 先把选区作为可追溯摘录写入笔记。
