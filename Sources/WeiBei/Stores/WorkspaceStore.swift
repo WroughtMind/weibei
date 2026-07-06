@@ -770,12 +770,7 @@ final class WorkspaceStore: ObservableObject {
             return targetIndex == currentIndex ? nil : targetIndex
         }
 
-        let threshold: CGFloat = 84
-        guard abs(horizontalDelta) >= threshold else { return nil }
-        let direction = horizontalDelta < 0 ? -1 : 1
-        let steps = max(1, min(2, Int((abs(horizontalDelta) - threshold) / 180) + 1))
-        let targetIndex = min(max(currentIndex + direction * steps, 0), order.count - 1)
-        return targetIndex == currentIndex ? nil : targetIndex
+        return nil
     }
 
     var canUseSelectionAgentSurface: Bool {

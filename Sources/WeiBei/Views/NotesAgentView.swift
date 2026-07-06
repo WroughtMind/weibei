@@ -190,7 +190,6 @@ private struct PaneHeaderReorderModifier: ViewModifier {
                     popCursorIfNeeded()
                 }
                 .animation(WeiBeiMotion.hover, value: hovering)
-                .help(store.ui("拖动标题栏重排三栏", "Drag the pane header to reorder panes"))
         } else {
             content
         }
