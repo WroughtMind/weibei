@@ -205,6 +205,18 @@ final class MarkdownWebView: WKWebView {
         }
     }
 
+    func scrollOuterSuperview(deltaY: CGFloat) {
+        guard passesVerticalScrollToSuperview,
+              let outerScrollView = nearestSuperviewScrollView(),
+              let documentView = outerScrollView.documentView else { return }
+        let clipView = outerScrollView.contentView
+        let maxY = max(0, documentView.bounds.height - clipView.bounds.height)
+        let direction: CGFloat = documentView.isFlipped ? 1 : -1
+        let nextY = min(max(clipView.bounds.origin.y + deltaY * direction, 0), maxY)
+        clipView.scroll(to: CGPoint(x: clipView.bounds.origin.x, y: nextY))
+        outerScrollView.reflectScrolledClipView(clipView)
+    }
+
     private static let shortcutModifierMask: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
 }
 
@@ -318,6 +330,16 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                   shift: event.shiftKey
                 });
               }, true);
+              if (window.weiBeiMarkdownCompactPreview) {
+                window.addEventListener("wheel", (event) => {
+                  if (Math.abs(event.deltaY) < Math.abs(event.deltaX)) return;
+                  event.preventDefault();
+                  window.webkit?.messageHandlers?.compactPreviewWheel?.postMessage({
+                    documentID: window.weiBeiDocumentID || "",
+                    deltaY: event.deltaY
+                  });
+                }, { capture: true, passive: false });
+              }
             })();
             """,
             injectionTime: .atDocumentStart,
@@ -419,6 +441,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         "sourceReferenceActivated",
         "imageAttachmentRequested",
         "contentHeightChanged",
+        "compactPreviewWheel",
         "appShortcut"
     ]
 
@@ -571,6 +594,10 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 guard let body = message.body as? [String: Any],
                       let height = body["height"] as? Double else { return }
                 onContentHeightChange(CGFloat(height))
+            case "compactPreviewWheel":
+                guard let body = message.body as? [String: Any],
+                      let deltaY = body["deltaY"] as? Double else { return }
+                (webView as? MarkdownWebView)?.scrollOuterSuperview(deltaY: CGFloat(deltaY))
             default:
                 break
             }
