@@ -162,6 +162,43 @@ visual_verify_window() {
   rm -f "$capture_path"
 }
 
+verify_learning_flow_persistence() {
+  case "$VERIFY_SCENARIO" in
+    offline-learning-flow|immersive-conversation-flow)
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+
+  local workspace_file="$VERIFY_DATA_DIR/workspace.json"
+  for _ in {1..30}; do
+    if [[ -f "$workspace_file" ]] \
+      && /usr/bin/grep -q "## 离线草稿" "$workspace_file" \
+      && /usr/bin/grep -q "## 整理建议" "$workspace_file" \
+      && /usr/bin/grep -q "| 上下文 | 内容 |" "$workspace_file" \
+      && /usr/bin/grep -q "利率是资金使用价格的表达" "$workspace_file"; then
+      return 0
+    fi
+    sleep 0.2
+  done
+
+  echo "verify failed: offline learning flow did not persist the agent answer into workspace.json." >&2
+  if [[ -f "$workspace_file" ]]; then
+    /usr/bin/sed -n '1,80p' "$workspace_file" >&2
+  else
+    echo "missing workspace file: $workspace_file" >&2
+  fi
+  return 1
+}
+
+finish_verify_window() {
+  if [[ "$RUN_VISUAL_VERIFY" == true ]]; then
+    visual_verify_window
+  fi
+  verify_learning_flow_persistence
+}
+
 run_verifiers() {
   swift run WeiBeiSelfCheck
   swift run WeiBeiWebEditorCheck
@@ -192,29 +229,26 @@ case "$MODE" in
     open_app_for_verify
     for _ in {1..30}; do
       if verify_window >/dev/null 2>&1; then
-        if [[ "$RUN_VISUAL_VERIFY" == true ]]; then
-          visual_verify_window
-        fi
+        finish_verify_window
         exit 0
       fi
       sleep 0.2
     done
     verify_window
-    if [[ "$RUN_VISUAL_VERIFY" == true ]]; then
-      visual_verify_window
-    fi
+    finish_verify_window
     ;;
   --visual-verify|visual-verify)
     run_verifiers
     open_app_for_verify
     for _ in {1..30}; do
       if verify_window >/dev/null 2>&1; then
-        visual_verify_window
+        finish_verify_window
         exit $?
       fi
       sleep 0.2
     done
     verify_window
+    finish_verify_window
     ;;
   *)
     echo "usage: $0 [run|check|package|--debug|--logs|--telemetry|--verify [--visual-verify]|--visual-verify]" >&2
