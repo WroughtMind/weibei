@@ -1082,18 +1082,21 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("typed HTML break leaked raw HTML syntax into saved markdown")
                 return
             }
-            self.validateListEnterExit()
+            self.validateBlockEnterExit()
         }
     }
 
-    private func validateListEnterExit() {
+    private func validateBlockEnterExit() {
         let script = """
         const cases = [
           ['\\n\\n- 项目{{WEIBEI_CURSOR}}', '退出无序列表'],
           ['\\n\\n1. 项目{{WEIBEI_CURSOR}}', '退出有序列表'],
-          ['\\n\\n- [ ] 待办{{WEIBEI_CURSOR}}', '退出任务列表']
+          ['\\n\\n- [ ] 待办{{WEIBEI_CURSOR}}', '退出任务列表'],
+          ['\\n\\n> 引用{{WEIBEI_CURSOR}}', '退出引用'],
+          ['\\n\\n> [!note] 标题\\n>\\n> 内容{{WEIBEI_CURSOR}}', '退出 Callout']
         ];
         for (const [markdown, text] of cases) {
+          window.WeiBeiEditor.setMarkdown('# 块退出验收\\n');
           window.WeiBeiEditor.insertMarkdown(markdown);
           if (!window.WeiBeiEditor.pressKeyForCheck('Enter')) {
             throw new Error('pressKeyForCheck unavailable for first Enter');
@@ -1103,6 +1106,16 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           }
           if (!window.WeiBeiEditor.typeTextForCheck(text)) {
             throw new Error('typeTextForCheck unavailable after list exit');
+          }
+          const current = window.WeiBeiEditor.getMarkdown();
+          if (current.includes('\\n- ' + text)
+              || current.includes('\\n* ' + text)
+              || current.includes('\\n+ ' + text)
+              || current.includes('\\n1. ' + text)
+              || current.includes('\\n2. ' + text)
+              || current.includes('\\n- [ ] ' + text)
+              || current.includes('\\n> ' + text)) {
+            throw new Error('empty block Enter kept following text in the block: ' + text + '\\n' + current);
           }
         }
         window.WeiBeiEditor.getMarkdown();
@@ -1117,23 +1130,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("list Enter exit check did not return markdown")
                 return
             }
-            guard let bulletRange = markdown.range(of: "退出无序列表", options: .backwards),
-                  let orderedRange = markdown.range(of: "退出有序列表", options: .backwards),
-                  let taskRange = markdown.range(of: "退出任务列表", options: .backwards) else {
-                self.fail("list Enter exit check did not serialize following paragraphs: \(markdown)")
-                return
-            }
-            let bulletTail = String(markdown[..<bulletRange.upperBound])
-            let orderedTail = String(markdown[..<orderedRange.upperBound])
-            let taskTail = String(markdown[..<taskRange.upperBound])
-            if bulletTail.contains("\n- 退出无序列表")
-                || bulletTail.contains("\n* 退出无序列表")
-                || bulletTail.contains("\n+ 退出无序列表")
-                || orderedTail.contains("\n1. 退出有序列表")
-                || orderedTail.contains("\n2. 退出有序列表")
-                || taskTail.contains("\n- [ ] 退出任务列表")
-                || taskTail.contains("\n- 退出任务列表") {
-                self.fail("empty list Enter did not exit before typing following text: \(markdown)")
+            if !markdown.contains("退出 Callout") {
+                self.fail("block Enter exit check did not finish all isolated cases: \(markdown)")
                 return
             }
             self.isDone = true
