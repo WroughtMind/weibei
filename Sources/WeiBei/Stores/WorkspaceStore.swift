@@ -9,6 +9,7 @@ import WeiBeiCore
 final class WorkspaceStore: ObservableObject {
     @Published var importedItems: [StudyItem] = []
     @Published var selectedItemID: String?
+    @Published var activeNotebookItemID: String?
     @Published var noteText = ""
     @Published var agentDraft = ""
     @Published var messages: [AgentMessage] = []
@@ -54,6 +55,7 @@ final class WorkspaceStore: ObservableObject {
 
     private struct NavigationSnapshot: Equatable {
         var selectedItemID: String?
+        var activeNotebookItemID: String?
         var layout: WorkspaceLayout
         var showLibrary: Bool
         var showRightPane: Bool
@@ -118,6 +120,18 @@ final class WorkspaceStore: ObservableObject {
         return item
     }
 
+    var activeNoteItem: StudyItem? {
+        if let activeNotebookItemID,
+           let item = allItems.first(where: { $0.id == activeNotebookItemID && $0.isNotebookNote }) {
+            return item
+        }
+        return selectedItem
+    }
+
+    var activeNoteItemID: String? {
+        activeNoteItem?.id
+    }
+
     var hasSelectedMaterial: Bool {
         selectedMaterialItem != nil
     }
@@ -149,14 +163,14 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var currentMarkdownBaseURL: URL? {
-        if let url = selectedItem?.url {
+        if let url = activeNoteItem?.url {
             return url.deletingLastPathComponent()
         }
         return appOwnedFilesDirectory()
     }
 
     var currentAttachmentDirectory: URL? {
-        if let url = selectedItem?.url {
+        if let url = activeNoteItem?.url {
             return url.deletingLastPathComponent().appendingPathComponent(".weibei-assets", isDirectory: true)
         }
         return appOwnedFilesDirectory().appendingPathComponent("Attachments", isDirectory: true)
@@ -175,11 +189,11 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var agentMessageSourceTitle: String? {
-        hasSelectedMaterial ? currentReferenceTitle : selectedItem.map(displayTitle)
+        hasSelectedMaterial ? currentReferenceTitle : activeNoteItem.map(displayTitle)
     }
 
     var currentReferenceTitle: String {
-        readerLocationTitle ?? selectedMaterialItem.map(displayTitle) ?? selectedItem.map(displayTitle) ?? ui("当前笔记", "Current note")
+        readerLocationTitle ?? selectedMaterialItem.map(displayTitle) ?? activeNoteItem.map(displayTitle) ?? ui("当前笔记", "Current note")
     }
 
     var hasSelectionAttachments: Bool {
@@ -211,7 +225,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var canCopyReference: Bool {
-        hasSelectionAttachments || selectionContext != nil || hasSelectedMaterial || selectedItem?.isNotebookNote == true
+        hasSelectionAttachments || selectionContext != nil || hasSelectedMaterial || activeNoteItem?.isNotebookNote == true
     }
 
     var copyReferenceActionTitle: String {
@@ -225,13 +239,20 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var agentNoteTitle: String {
-        if selectedItem?.isNotebookNote == true {
-            return selectedItem.map(displayTitle) ?? ui("当前笔记", "Current note")
+        if activeNoteItem?.isNotebookNote == true {
+            return activeNoteItem.map(displayTitle) ?? ui("当前笔记", "Current note")
         }
         if let item = selectedMaterialItem {
             return ui("\(displayTitle(for: item)) 的笔记", "Notes for \(displayTitle(for: item))")
         }
         return ui("当前笔记", "Current note")
+    }
+
+    var agentConversationSubtitle: String {
+        if let item = selectedMaterialItem {
+            return displayTitle(for: item)
+        }
+        return activeNoteItem.map(displayTitle) ?? ui("无上下文", "No context")
     }
 
     var agentPromptScope: String {
@@ -347,19 +368,29 @@ final class WorkspaceStore: ObservableObject {
 
     func select(itemID: String?) {
         persistCurrentNote()
+        if let itemID,
+           let item = allItems.first(where: { $0.id == itemID && $0.isNotebookNote }) {
+            activeNotebookItemID = item.id
+            noteText = noteText(for: item)
+            revealRichWritingSurface()
+            focus(.notes)
+            save()
+            return
+        }
         let itemChanged = selectedItemID != itemID
         if itemChanged && selectedItemID != nil {
             recordNavigationPoint()
         }
         selectedItemID = itemID
         if itemChanged {
+            activeNotebookItemID = nil
             clearUnpinnedFloatingSelection(keepContext: false)
             selectionAttachments = []
             readerPageIndex = 0
         }
         readerLocationTitle = selectedMaterialItem.map(displayTitle)
         clearReaderSearchIfNeeded()
-        noteText = noteText(for: selectedItem)
+        noteText = noteText(for: activeNoteItem)
         messages = []
         clearGeneratedQuietInsight()
         refreshQuietInsightIfNeeded()
@@ -381,7 +412,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func updateNote(_ value: String, for itemID: String?) {
-        guard itemID == selectedItemID else { return }
+        guard itemID == activeNoteItemID else { return }
         updateNote(value)
     }
 
@@ -653,6 +684,7 @@ final class WorkspaceStore: ObservableObject {
     private func navigationSnapshot() -> NavigationSnapshot {
         NavigationSnapshot(
             selectedItemID: selectedItemID,
+            activeNotebookItemID: activeNotebookItemID,
             layout: layout,
             showLibrary: showLibrary,
             showRightPane: showRightPane,
@@ -669,6 +701,7 @@ final class WorkspaceStore: ObservableObject {
         isRestoringNavigation = true
         defer { isRestoringNavigation = false }
         selectedItemID = snapshot.selectedItemID
+        activeNotebookItemID = snapshot.activeNotebookItemID
         layout = snapshot.layout
         showLibrary = snapshot.showLibrary
         showRightPane = snapshot.showRightPane
@@ -678,7 +711,7 @@ final class WorkspaceStore: ObservableObject {
         readerSearch = snapshot.readerSearch
         readerPageIndex = snapshot.readerPageIndex
         focusedPane = snapshot.focusedPane
-        noteText = noteText(for: selectedItem)
+        noteText = noteText(for: activeNoteItem)
         readerLocationTitle = selectedMaterialItem.map(displayTitle)
         readerTargetPageIndex = selectedMaterialItem?.kind == .pdf ? snapshot.readerPageIndex : nil
         messages = []
@@ -1032,8 +1065,11 @@ final class WorkspaceStore: ObservableObject {
             )
             try defaultNote(for: item).write(to: url, atomically: true, encoding: .utf8)
             importedItems.append(item)
+            activeNotebookItemID = item.id
+            noteText = noteText(for: item)
             revealRichWritingSurface()
-            select(itemID: item.id)
+            focus(.notes)
+            save()
             noteFileError = ui("已创建笔记：\(url.lastPathComponent)", "Created note: \(url.lastPathComponent)")
         } catch {
             noteFileError = ui("无法创建笔记：\(error.localizedDescription)", "Could not create note: \(error.localizedDescription)")
@@ -1045,6 +1081,11 @@ final class WorkspaceStore: ObservableObject {
               let index = importedItems.firstIndex(where: { $0.id == selectedItemID && $0.canBecomeNotebookNote }) else { return }
         persistCurrentNote()
         importedItems[index].isNotebookNote = true
+        activeNotebookItemID = importedItems[index].id
+        if selectedItemID == importedItems[index].id {
+            self.selectedItemID = sampleItems.first?.id
+            readerLocationTitle = selectedMaterialItem.map(displayTitle)
+        }
         noteText = noteText(for: importedItems[index])
         revealRichWritingSurface()
         focus(.notes)
@@ -1061,7 +1102,7 @@ final class WorkspaceStore: ObservableObject {
         } else if let selectionContext, let selection, !selection.isEmpty {
             reference = quotedReferenceBlock(text: selection, sourceTitle: selectionContext.ownerTitle)
         } else {
-            guard selectedMaterialItem != nil || selectedItem?.isNotebookNote == true else { return }
+            guard selectedMaterialItem != nil || activeNoteItem?.isNotebookNote == true else { return }
             reference = ui("来源：\(currentReferenceTitle)", "Source: \(currentReferenceTitle)")
         }
         NSPasteboard.general.clearContents()
@@ -1142,8 +1183,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func selectionOwnerTitle(for source: SelectionSource) -> String {
-        if source == .note || selectedItem?.isNotebookNote == true {
-            return selectedItem.map(displayTitle) ?? ui("当前笔记", "Current note")
+        if source == .note || activeNoteItem?.isNotebookNote == true {
+            return activeNoteItem.map(displayTitle) ?? ui("当前笔记", "Current note")
         }
         return currentReferenceTitle
     }
@@ -1316,7 +1357,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private var quietInsightReferenceTitle: String {
-        selectionContext?.ownerTitle ?? (hasSelectedMaterial ? currentReferenceTitle : selectedItem.map(displayTitle)) ?? ui("当前笔记", "Current note")
+        selectionContext?.ownerTitle ?? (hasSelectedMaterial ? currentReferenceTitle : activeNoteItem.map(displayTitle)) ?? ui("当前笔记", "Current note")
     }
 
     func applyLastAgentAnswerToNote() {
@@ -1664,20 +1705,20 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func persistCurrentNote() {
-        guard let selectedItemID,
-              let item = allItems.first(where: { $0.id == selectedItemID }) else { return }
+        guard let item = activeNoteItem else { return }
+        let noteItemID = item.id
         if item.editsBackingMarkdownFile, let url = item.url {
             do {
                 try noteText.write(to: url, atomically: true, encoding: .utf8)
-                notesByItemID.removeValue(forKey: selectedItemID)
+                notesByItemID.removeValue(forKey: noteItemID)
                 noteFileError = nil
             } catch {
-                notesByItemID[selectedItemID] = noteText
+                notesByItemID[noteItemID] = noteText
                 noteFileError = ui("无法写回原 Markdown：\(url.lastPathComponent)", "Could not write original Markdown: \(url.lastPathComponent)")
             }
             return
         }
-        notesByItemID[selectedItemID] = noteText
+        notesByItemID[noteItemID] = noteText
     }
 
     private func load() {
@@ -1688,6 +1729,15 @@ final class WorkspaceStore: ObservableObject {
         importedItems = snapshot.importedItems
         notesByItemID = snapshot.notesByItemID.mapValues(cleanLegacyPlaceholder)
         selectedItemID = snapshot.selectedItemID
+        activeNotebookItemID = snapshot.activeNotebookItemID
+        if selectedItem?.isNotebookNote == true {
+            activeNotebookItemID = selectedItemID
+            selectedItemID = sampleItems.first?.id
+        }
+        if let activeNotebookItemID,
+           !allItems.contains(where: { $0.id == activeNotebookItemID && $0.isNotebookNote }) {
+            self.activeNotebookItemID = nil
+        }
         if let modelName = snapshot.modelName {
             self.modelName = modelName
         }
@@ -1714,7 +1764,7 @@ final class WorkspaceStore: ObservableObject {
            let interfaceLanguage = WeiBeiInterfaceLanguage(rawValue: interfaceLanguageRaw) {
             self.interfaceLanguage = interfaceLanguage
         }
-        noteText = noteText(for: selectedItem)
+        noteText = noteText(for: activeNoteItem)
     }
 
     private func cleanLegacyPlaceholder(_ text: String) -> String {
@@ -1747,6 +1797,7 @@ final class WorkspaceStore: ObservableObject {
             importedItems: importedItems,
             notesByItemID: notesByItemID,
             selectedItemID: selectedItemID,
+            activeNotebookItemID: activeNotebookItemID,
             modelName: modelName,
             workspaceLayout: layout,
             agentSurface: agentSurface == .selectionFloat ? .hidden : agentSurface,

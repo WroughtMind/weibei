@@ -513,6 +513,7 @@ public struct PersistedWorkspace: Codable {
     public var importedItems: [StudyItem]
     public var notesByItemID: [String: String]
     public var selectedItemID: String?
+    public var activeNotebookItemID: String?
     public var modelName: String?
     public var workspaceLayout: WorkspaceLayout?
     public var agentSurface: AgentSurface?
@@ -522,10 +523,11 @@ public struct PersistedWorkspace: Codable {
     public var appearanceModeRaw: String?
     public var interfaceLanguageRaw: String?
 
-    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], selectedItemID: String? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showRightPane: Bool? = nil, appearanceModeRaw: String? = nil, interfaceLanguageRaw: String? = nil) {
+    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], selectedItemID: String? = nil, activeNotebookItemID: String? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showRightPane: Bool? = nil, appearanceModeRaw: String? = nil, interfaceLanguageRaw: String? = nil) {
         self.importedItems = importedItems
         self.notesByItemID = notesByItemID
         self.selectedItemID = selectedItemID
+        self.activeNotebookItemID = activeNotebookItemID
         self.modelName = modelName
         self.workspaceLayout = workspaceLayout
         self.agentSurface = agentSurface

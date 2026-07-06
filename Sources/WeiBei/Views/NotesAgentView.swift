@@ -266,9 +266,7 @@ struct NotePaneView: View {
     }
 
     private var noteHeaderSubtitle: String {
-        store.selectedItem?.isNotebookNote == true
-            ? (store.selectedItem.map(store.displayTitle) ?? store.ui("当前笔记", "Current note"))
-            : store.agentNoteTitle
+        store.agentNoteTitle
     }
 
     private func noteFileStatusColor(for message: String) -> Color {
@@ -329,7 +327,7 @@ struct NotePaneView: View {
     }
 
     private var richEditor: some View {
-        let itemID = store.selectedItemID
+        let itemID = store.activeNoteItemID
         return RichMarkdownEditorView(documentID: itemID ?? "", markdown: Binding(get: {
             store.noteText
         }, set: { value in
@@ -821,7 +819,7 @@ struct AgentPaneView: View {
             WeiBeiPaneHeader(
                 title: store.ui("对话", "Chat"),
                 latinMark: store.interfaceLanguage == .chinese ? "CHAT" : nil,
-                subtitle: store.selectedItem.map(store.displayTitle) ?? store.ui("无上下文", "No context"),
+                subtitle: store.agentConversationSubtitle,
                 appearanceMode: store.appearanceMode
             ) {
                 EmptyView()
