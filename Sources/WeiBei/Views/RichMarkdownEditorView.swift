@@ -117,6 +117,7 @@ fileprivate final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler
 final class MarkdownWebView: WKWebView {
     var pasteImageFromClipboard: (() -> Bool)?
     var handleAppShortcut: ((String, NSEvent.ModifierFlags) -> Bool)?
+    var passesVerticalScrollToSuperview = false
 
     override func keyDown(with event: NSEvent) {
         if event.modifierFlags.contains(.command),
@@ -129,6 +130,31 @@ final class MarkdownWebView: WKWebView {
             return
         }
         super.keyDown(with: event)
+    }
+
+    override func scrollWheel(with event: NSEvent) {
+        guard passesVerticalScrollToSuperview,
+              abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX) else {
+            super.scrollWheel(with: event)
+            return
+        }
+
+        if let outerScrollView = nearestSuperviewScrollView() {
+            outerScrollView.scrollWheel(with: event)
+        } else {
+            nextResponder?.scrollWheel(with: event)
+        }
+    }
+
+    private func nearestSuperviewScrollView() -> NSScrollView? {
+        var candidate = superview
+        while let view = candidate {
+            if let scrollView = view as? NSScrollView {
+                return scrollView
+            }
+            candidate = view.superview
+        }
+        return nil
     }
 
     private static let shortcutModifierMask: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
@@ -253,6 +279,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
         let view = MarkdownWebView(frame: .zero, configuration: configuration)
         view.setValue(false, forKey: "drawsBackground")
+        view.passesVerticalScrollToSuperview = isCompactPreview
         Self.applyWebAppearance(to: view, appearanceMode: appearanceMode)
         view.pasteImageFromClipboard = { [weak coordinator = context.coordinator] in
             coordinator?.pasteImageFromClipboard() ?? false
@@ -271,6 +298,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
+        (view as? MarkdownWebView)?.passesVerticalScrollToSuperview = isCompactPreview
         Self.applyWebAppearance(to: view, appearanceMode: appearanceMode)
         context.coordinator.markdown = $markdown
         context.coordinator.command = $command

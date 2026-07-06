@@ -437,42 +437,52 @@ private struct NotebookCreationPanel: View {
     }
 
     var body: some View {
-        HStack(spacing: 7) {
-            TextField(
-                "",
-                text: $title,
-                prompt: Text(draft.kind == .blank ? store.ui("新笔记名称", "New note title") : store.ui("资料笔记名称", "Material note title"))
-                    .foregroundStyle(WeiBeiTheme.placeholderInk)
-            )
-            .textFieldStyle(.plain)
-            .font(.system(size: 13, weight: .medium))
-            .foregroundColor(WeiBeiTheme.ink)
-            .focused($focused)
-            .onSubmit(confirm)
-            .weibeiInputSurface(active: focused, height: 32, horizontalPadding: 10)
-
-            Button(action: confirm) {
-                Image(systemName: "checkmark")
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Text(panelEyebrow)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                Spacer()
+                Button(store.ui("取消", "Cancel"), action: cancel)
+                    .buttonStyle(WeiBeiTextActionButtonStyle())
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityLabel(Text(store.ui("取消", "Cancel")))
+                    .help(store.ui("取消新建笔记", "Cancel note creation"))
             }
-            .buttonStyle(WeiBeiIconButtonStyle(size: 24, prominence: .primary))
-            .disabled(!canCreate)
-            .keyboardShortcut(.defaultAction)
-            .accessibilityLabel(Text(store.ui("创建笔记", "Create Note")))
-            .help(store.ui("创建笔记", "Create Note"))
 
-            Button(action: cancel) {
-                Image(systemName: "xmark")
+            HStack(spacing: 8) {
+                TextField(
+                    "",
+                    text: $title,
+                    prompt: Text(draft.kind == .blank ? store.ui("命名课程笔记", "Name this course note") : store.ui("命名资料笔记", "Name this material note"))
+                        .foregroundStyle(WeiBeiTheme.placeholderInk)
+                )
+                .textFieldStyle(.plain)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundColor(WeiBeiTheme.ink)
+                .focused($focused)
+                .onSubmit(confirm)
+                .weibeiInputSurface(active: focused, height: 38, horizontalPadding: 12)
+
+                Button(store.ui("创建", "Create"), action: confirm)
+                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                    .disabled(!canCreate)
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityLabel(Text(store.ui("创建笔记", "Create Note")))
+                    .help(store.ui("创建笔记", "Create Note"))
             }
-            .buttonStyle(WeiBeiIconButtonStyle(size: 22))
-            .keyboardShortcut(.cancelAction)
-            .accessibilityLabel(Text(store.ui("取消", "Cancel")))
-            .help(store.ui("取消新建笔记", "Cancel note creation"))
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
         .background {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(WeiBeiTheme.paperInset.opacity(0.28))
+                .fill(WeiBeiTheme.paperRaised.opacity(0.44))
+        }
+        .overlay(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(WeiBeiTheme.cinnabar.opacity(0.54))
+                .frame(width: 2)
+                .padding(.vertical, 12)
         }
         .overlay {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
@@ -482,6 +492,12 @@ private struct NotebookCreationPanel: View {
         .onAppear {
             focused = true
         }
+    }
+
+    private var panelEyebrow: String {
+        draft.kind == .blank
+            ? store.ui("新建空白课程笔记", "New blank course note")
+            : store.ui("新建当前资料笔记", "New note for current material")
     }
 }
 
@@ -899,6 +915,8 @@ struct AgentPaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @FocusState private var draftFocused: Bool
 
+    private let agentBottomAnchorID = "agentConversationBottom"
+
     var body: some View {
         VStack(spacing: 0) {
             WeiBeiPaneHeader(
@@ -912,7 +930,7 @@ struct AgentPaneView: View {
 
             ScrollViewReader { proxy in
                 GeometryReader { geometry in
-                    ScrollView(showsIndicators: false) {
+                    ScrollView(showsIndicators: true) {
                         LazyVStack(alignment: .leading, spacing: 12) {
                             ForEach(store.messages) { message in
                                 AgentBubble(message: message)
@@ -929,6 +947,9 @@ struct AgentPaneView: View {
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .transition(WeiBeiTransition.message)
                             }
+                            Color.clear
+                                .frame(height: 1)
+                                .id(agentBottomAnchorID)
                         }
                         .padding(14)
                         .padding(.top, store.messages.isEmpty ? 22 : 0)
@@ -942,9 +963,7 @@ struct AgentPaneView: View {
                     }
                 }
                 .onChange(of: store.messages.count) { _, _ in
-                    if let last = store.messages.last?.id {
-                        proxy.scrollTo(last, anchor: .bottom)
-                    }
+                    scrollAgentToBottom(proxy)
                 }
             }
 
@@ -1079,6 +1098,14 @@ struct AgentPaneView: View {
             store.agentDraft = prompt
         }
         Task { await store.askAgent() }
+    }
+
+    private func scrollAgentToBottom(_ proxy: ScrollViewProxy) {
+        DispatchQueue.main.async {
+            withAnimation(WeiBeiMotion.panel) {
+                proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)
+            }
+        }
     }
 
 }
