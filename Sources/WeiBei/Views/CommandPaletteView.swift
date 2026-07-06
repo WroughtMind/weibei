@@ -11,7 +11,7 @@ struct CommandPaletteView: View {
     private var commands: [PaletteCommand] {
         var items = [
             PaletteCommand(title: store.ui("打开资料", "Open Material"), shortcut: "⌘O") { store.importFilesFromPanel() },
-            PaletteCommand(title: store.ui("新建空白笔记", "New Blank Note"), shortcut: "⌘N") { store.createBlankNotebookNote() },
+            PaletteCommand(title: store.ui("新建空白笔记", "New Blank Note"), shortcut: "⌘N") { store.promptCreateBlankNotebookNote() },
             PaletteCommand(title: store.ui("聚焦资料", "Focus Library"), shortcut: "⌘1", animation: WeiBeiMotion.layout) { store.focus(.library) },
             PaletteCommand(title: store.ui("聚焦阅读", "Focus Reader"), shortcut: "⌘2", animation: WeiBeiMotion.layout) { store.focus(.reader) },
             PaletteCommand(title: store.ui("聚焦笔记", "Focus Notes"), shortcut: "⌘3", animation: WeiBeiMotion.layout) { store.focus(.notes) },
@@ -44,7 +44,7 @@ struct CommandPaletteView: View {
         }
         if store.hasSelectedMaterial {
             items.insert(
-                PaletteCommand(title: store.ui("从当前资料开笔记", "Note from Current Material"), shortcut: "", animation: WeiBeiMotion.layout) { store.createNotebookNoteFromCurrentMaterial() },
+                PaletteCommand(title: store.ui("从当前资料开笔记", "Note from Current Material"), shortcut: "", animation: WeiBeiMotion.layout) { store.promptCreateNotebookNoteFromCurrentMaterial() },
                 at: 2
             )
         }

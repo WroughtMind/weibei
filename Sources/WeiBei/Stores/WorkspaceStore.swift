@@ -5,6 +5,18 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WeiBeiCore
 
+enum NotebookCreationKind: String {
+    case blank
+    case currentMaterial
+}
+
+struct NotebookCreationDraft: Identifiable, Equatable {
+    let id = UUID()
+    var kind: NotebookCreationKind
+    var sourceItemID: String?
+    var title: String
+}
+
 @MainActor
 final class WorkspaceStore: ObservableObject {
     @Published var importedItems: [StudyItem] = []
@@ -38,6 +50,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var selectionAnchor: CGPoint?
     @Published var noteEditorCommand: NoteEditorCommand?
     @Published var noteFileError: String?
+    @Published var notebookCreationDraft: NotebookCreationDraft?
     @Published var modelName: String = ProcessInfo.processInfo.environment["WEIBEI_OPENAI_MODEL"] ?? "gpt-5.1"
     @Published var openAIAPIKey: String = OpenAIAPIKeyStore.load()
     @Published var openAIKeyStatus: String?
@@ -431,6 +444,49 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         createNotebookNote(seed: .currentMaterial(selectedMaterialItem))
+    }
+
+    func promptCreateBlankNotebookNote() {
+        notebookCreationDraft = NotebookCreationDraft(
+            kind: .blank,
+            sourceItemID: nil,
+            title: suggestedNotebookTitle(for: .blank)
+        )
+        focus(.notes)
+    }
+
+    func promptCreateNotebookNoteFromCurrentMaterial() {
+        guard let selectedMaterialItem else {
+            promptCreateBlankNotebookNote()
+            return
+        }
+        notebookCreationDraft = NotebookCreationDraft(
+            kind: .currentMaterial,
+            sourceItemID: selectedMaterialItem.id,
+            title: suggestedNotebookTitle(for: .currentMaterial(selectedMaterialItem))
+        )
+        focus(.notes)
+    }
+
+    func cancelNotebookNoteCreation() {
+        notebookCreationDraft = nil
+    }
+
+    func confirmNotebookNoteCreation() {
+        guard let draft = notebookCreationDraft else { return }
+        let title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else {
+            noteFileError = ui("笔记名不能为空。", "Note name cannot be empty.")
+            return
+        }
+        notebookCreationDraft = nil
+        if draft.kind == .currentMaterial,
+           let sourceItemID = draft.sourceItemID,
+           let item = allItems.first(where: { $0.id == sourceItemID && !$0.isNotebookNote }) {
+            createNotebookNote(seed: .currentMaterial(item), title: title)
+        } else {
+            createNotebookNote(seed: .blank, title: title)
+        }
     }
 
     func focus(_ pane: PaneFocus) {
@@ -1122,18 +1178,22 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func createNotebookNote(seed: NotebookNoteSeed) {
-        persistCurrentNote()
+    private func createNotebookNote(seed: NotebookNoteSeed, title rawTitle: String? = nil) {
         let sourceItem: StudyItem?
-        let title: String
+        let defaultTitle = suggestedNotebookTitle(for: seed)
         switch seed {
         case .blank:
             sourceItem = nil
-            title = ui("新笔记", "New Note")
         case .currentMaterial(let item):
             sourceItem = item
-            title = ui("\(displayTitle(for: item)) 笔记", "\(displayTitle(for: item)) Notes")
         }
+        let title = (rawTitle ?? defaultTitle).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else {
+            noteFileError = ui("笔记名不能为空。", "Note name cannot be empty.")
+            return
+        }
+
+        persistCurrentNote()
         let notesDirectory = appOwnedFilesDirectory().appendingPathComponent("Notes", isDirectory: true)
 
         do {
@@ -1162,6 +1222,15 @@ final class WorkspaceStore: ObservableObject {
             showTransientNoteStatus(status)
         } catch {
             noteFileError = ui("无法创建笔记：\(error.localizedDescription)", "Could not create note: \(error.localizedDescription)")
+        }
+    }
+
+    private func suggestedNotebookTitle(for seed: NotebookNoteSeed) -> String {
+        switch seed {
+        case .blank:
+            return ui("新笔记", "New Note")
+        case .currentMaterial(let item):
+            return ui("\(displayTitle(for: item)) 笔记", "\(displayTitle(for: item)) Notes")
         }
     }
 

@@ -70,11 +70,11 @@ struct WeiBeiApp: App {
                 Button(store.ui("打开资料", "Open Material")) { store.importFilesFromPanel() }
                     .keyboardShortcut("o")
 
-                Button(store.ui("新建空白笔记", "New Blank Note")) { animateLayout { store.createBlankNotebookNote() } }
+                Button(store.ui("新建空白笔记", "New Blank Note")) { animateLayout { store.promptCreateBlankNotebookNote() } }
                     .keyboardShortcut("n")
                 if store.hasSelectedMaterial {
                     Button(store.ui("从当前资料开笔记", "Note from Current Material")) {
-                        animateLayout { store.createNotebookNoteFromCurrentMaterial() }
+                        animateLayout { store.promptCreateNotebookNoteFromCurrentMaterial() }
                     }
                 }
 
@@ -748,7 +748,7 @@ struct SettingsView: View {
                     HStack(spacing: 8) {
                         Button(store.ui("空白", "Blank")) {
                             withAnimation(WeiBeiMotion.panel) {
-                                store.createBlankNotebookNote()
+                                store.promptCreateBlankNotebookNote()
                             }
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
@@ -756,7 +756,7 @@ struct SettingsView: View {
                         if store.hasSelectedMaterial {
                             Button(store.ui("当前资料", "Current Material")) {
                                 withAnimation(WeiBeiMotion.panel) {
-                                    store.createNotebookNoteFromCurrentMaterial()
+                                    store.promptCreateNotebookNoteFromCurrentMaterial()
                                 }
                             }
                             .buttonStyle(WeiBeiTextActionButtonStyle())
