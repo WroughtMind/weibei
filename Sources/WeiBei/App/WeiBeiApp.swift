@@ -938,7 +938,7 @@ struct SettingsView: View {
                 ) {
                     if store.hasSelectionAttachments {
                         Button(store.ui("清空片段", "Clear Fragments")) {
-                            store.selectionAttachments = []
+                            store.clearSelectionAttachments()
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
                     } else {

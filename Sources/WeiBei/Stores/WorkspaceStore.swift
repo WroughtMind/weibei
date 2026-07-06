@@ -1360,6 +1360,13 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    func clearSelectionAttachments() {
+        withAnimation(WeiBeiMotion.panel) {
+            selectionAttachments = []
+            clearUnpinnedFloatingSelection(keepContext: false)
+        }
+    }
+
     private func addSelectionAttachment(_ selection: SelectionContext) {
         let cleanedText = selection.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard Self.hasMeaningfulSelectionCharacter(cleanedText) else { return }

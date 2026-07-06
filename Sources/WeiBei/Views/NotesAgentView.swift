@@ -1189,6 +1189,13 @@ private struct AgentSelectionAttachmentPill: View {
                 Text(store.ui("发问时会作为上下文", "Used as context when asking"))
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                Button(store.ui("清空", "Clear")) {
+                    store.clearSelectionAttachments()
+                    pillHovering = false
+                    popoverHovering = false
+                }
+                .buttonStyle(WeiBeiTextActionButtonStyle())
+                .help(store.ui("清空全部选区片段", "Clear all selected fragments"))
             }
 
             ScrollView(showsIndicators: false) {
