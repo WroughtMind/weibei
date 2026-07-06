@@ -83,6 +83,7 @@ print(note)
 
 行内代码 `<br />` 不应被当成换行。
 双反引号 ``内部 ` <br />`` 也要保留源码。
+行内代码 `[[不是链接]] ==不是高亮== %%不是注释%% #not-tag <br />` 不应触发魏碑语法装饰。
 
 ```html
 <span>保留<br />源码</span>
@@ -357,7 +358,11 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
               && style.fontSize === '0px'
               && style.width === '0px'
               && marker.getBoundingClientRect().width === 0;
-          })()
+          })(),
+          inlineCodeSyntaxDecorations: document.querySelectorAll('code .weibei-wikilink, code .weibei-highlight, code .weibei-comment, code .weibei-tag, code .weibei-html-break-source').length,
+          inlineCodeSyntaxText: Array.from(document.querySelectorAll('code'))
+            .map((node) => node.textContent || '')
+            .find((text) => text.includes('[[不是链接]]')) || ''
         }))();
         """
         webView.evaluateJavaScript(script) { [weak self] value, error in
@@ -532,6 +537,11 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             if result["customCalloutMarkerVisible"] as? Bool == true {
                 self.fail("unknown Obsidian callout marker should not have visible boxes")
+                return
+            }
+            if (result["inlineCodeSyntaxDecorations"] as? Int ?? -1) != 0
+                || !(result["inlineCodeSyntaxText"] as? String ?? "").contains("[[不是链接]] ==不是高亮== %%不是注释%% #not-tag <br />") {
+                self.fail("inline code should not receive WeiBei Markdown syntax decorations")
                 return
             }
             completion()
@@ -1093,6 +1103,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             ("code fence", "```swift"),
             ("inline html break code", "`<br />`"),
             ("double backtick html break code", "``内部 ` <br />``"),
+            ("inline code markdown syntax", "`[[不是链接]] ==不是高亮== %%不是注释%% #not-tag <br />`"),
             ("code block html break", "<span>保留<br />源码</span>"),
             ("image size", "![魏碑测试图|100x80](assets/weibei.svg)")
         ]

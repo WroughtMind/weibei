@@ -1195,13 +1195,12 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
           const textPos = pos;
           const text = node.text || '';
           const hasCodeMark = (node.marks || []).some((mark) => mark.type.name.toLowerCase().includes('code'));
+          if (hasCodeMark) return true;
           const insideBlockquote = isInsideNode(state, textPos, 'blockquote') || isInsideNode(state, textPos, 'block_quote');
           if (insideBlockquote) decorateLeakedCalloutControls(decorations, text, textPos);
           decorateDelimitedInline(decorations, text, textPos, /==([^=\n]+)==/g, 2, 'weibei-highlight');
-          if (!hasCodeMark) {
-            decorateInlineFootnotes(decorations, text, textPos);
-            decorateHtmlBreaks(decorations, text, textPos);
-          }
+          decorateInlineFootnotes(decorations, text, textPos);
+          decorateHtmlBreaks(decorations, text, textPos);
           decorateComments(decorations, text, textPos, commentState);
           decorateObsidianEmbeds(decorations, text, textPos);
           decorateWikiLinks(decorations, text, textPos);
