@@ -453,6 +453,10 @@ private struct NotebookCreationPanel: View {
     var cancel: () -> Void
     @FocusState private var focused: Bool
 
+    private var canCreate: Bool {
+        !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
@@ -498,8 +502,11 @@ private struct NotebookCreationPanel: View {
                 Spacer()
                 Button(store.ui("取消", "Cancel"), action: cancel)
                     .buttonStyle(WeiBeiTextActionButtonStyle())
+                    .keyboardShortcut(.cancelAction)
                 Button(store.ui("创建", "Create"), action: confirm)
-                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                    .buttonStyle(WeiBeiTextActionButtonStyle(active: canCreate))
+                    .disabled(!canCreate)
+                    .keyboardShortcut(.defaultAction)
             }
         }
         .padding(12)

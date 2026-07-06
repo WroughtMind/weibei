@@ -386,6 +386,7 @@ final class WorkspaceStore: ObservableObject {
 
     func select(itemID: String?) {
         persistCurrentNote()
+        notebookCreationDraft = nil
         if let itemID,
            let item = allItems.first(where: { $0.id == itemID && $0.isNotebookNote }) {
             activeNotebookItemID = item.id
