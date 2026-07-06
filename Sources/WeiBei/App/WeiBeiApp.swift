@@ -119,6 +119,14 @@ struct WeiBeiApp: App {
                     .keyboardShortcut("1", modifiers: [.command, .option])
                 Button(WorkspaceLayout.documentNotesSplit.label(language: store.interfaceLanguage)) { setLayout(.documentNotesSplit) }
                     .keyboardShortcut("2", modifiers: [.command, .option])
+                if store.layout.isDocumentThreePane {
+                    Button(store.ui("交换笔记与对话", "Swap Notes and Chat")) {
+                        animateLayout {
+                            store.swapThreePaneSecondaryPanes()
+                        }
+                    }
+                    .keyboardShortcut("s", modifiers: [.command, .option])
+                }
                 Button(WorkspaceLayout.immersiveReading.label(language: store.interfaceLanguage)) { setLayout(.immersiveReading) }
                     .keyboardShortcut("r", modifiers: [.command, .option])
                 Button(WorkspaceLayout.immersiveConversation.label(language: store.interfaceLanguage)) { setLayout(.immersiveConversation) }

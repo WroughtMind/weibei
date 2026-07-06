@@ -686,13 +686,17 @@ final class WorkspaceStore: ObservableObject {
         var order = normalizedThreePaneOrder
         guard let draggedIndex = order.firstIndex(of: dragged),
               let targetIndex = order.firstIndex(of: target) else { return }
-        recordNavigationPoint()
-        clearUnpinnedFloatingSelection()
         order.swapAt(draggedIndex, targetIndex)
-        threePaneOrder = order
-        layout = layoutMatchingThreePaneOrder(order)
-        focus(dragged.focus)
-        save()
+        applyThreePaneOrder(order, focus: dragged.focus)
+    }
+
+    func swapThreePaneSecondaryPanes() {
+        guard layout.isDocumentThreePane else { return }
+        var order = normalizedThreePaneOrder
+        guard let notesIndex = order.firstIndex(of: .notes),
+              let agentIndex = order.firstIndex(of: .agent) else { return }
+        order.swapAt(notesIndex, agentIndex)
+        applyThreePaneOrder(order, focus: focusedPane)
     }
 
     func moveThreePaneRole(_ role: WorkspacePaneRole, horizontalDelta: CGFloat) {
@@ -704,12 +708,16 @@ final class WorkspaceStore: ObservableObject {
         guard let currentIndex = order.firstIndex(of: role) else { return }
         let targetIndex = horizontalDelta < 0 ? currentIndex - 1 : currentIndex + 1
         guard order.indices.contains(targetIndex) else { return }
+        order.swapAt(currentIndex, targetIndex)
+        applyThreePaneOrder(order, focus: role.focus)
+    }
+
+    private func applyThreePaneOrder(_ order: [WorkspacePaneRole], focus nextFocus: PaneFocus) {
         recordNavigationPoint()
         clearUnpinnedFloatingSelection()
-        order.swapAt(currentIndex, targetIndex)
         threePaneOrder = order
         layout = layoutMatchingThreePaneOrder(order)
-        focus(role.focus)
+        focus(nextFocus)
         save()
     }
 
@@ -903,9 +911,10 @@ final class WorkspaceStore: ObservableObject {
             case "1":
                 animateLayoutChange { setLayout(.documentAgentNotes) }
             case "2":
-                animateLayoutChange { setLayout(.documentNotesAgent) }
-            case "3":
                 animateLayoutChange { setLayout(.documentNotesSplit) }
+            case "s":
+                guard layout.isDocumentThreePane else { return false }
+                animateLayoutChange { swapThreePaneSecondaryPanes() }
             case "r":
                 animateLayoutChange { setLayout(.immersiveReading) }
             case "a":

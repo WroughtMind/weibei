@@ -56,6 +56,12 @@ struct CommandPaletteView: View {
         if let rightPaneCommand {
             items.insert(rightPaneCommand, at: 9)
         }
+        if store.layout.isDocumentThreePane {
+            items.insert(
+                PaletteCommand(title: store.ui("交换笔记与对话", "Swap Notes and Chat"), shortcut: "⌥⌘S", animation: WeiBeiMotion.layout) { store.swapThreePaneSecondaryPanes() },
+                at: 11
+            )
+        }
         if store.canCopyReference {
             items.append(PaletteCommand(title: store.copyReferenceActionTitle, shortcut: "⌘⇧C") { store.copyCurrentReference() })
         }
