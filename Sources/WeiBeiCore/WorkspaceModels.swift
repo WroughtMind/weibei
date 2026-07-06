@@ -450,11 +450,32 @@ public enum SelectionAttachmentMerge {
         if normalizedExisting.contains(normalizedIncoming) { return existingText }
         if normalizedIncoming.contains(normalizedExisting) { return incomingText }
         guard withinSelectionGesture else { return nil }
-        return normalizedIncoming.count >= normalizedExisting.count ? incomingText : existingText
+        if let merged = overlappedText(existingText, incomingText) {
+            return merged
+        }
+        return existingText + incomingText
     }
 
     public static func normalized(_ text: String) -> String {
         text.split(whereSeparator: { $0.isWhitespace }).joined()
+    }
+
+    private static func overlappedText(_ existing: String, _ incoming: String) -> String? {
+        let maxLength = min(existing.count, incoming.count)
+        guard maxLength > 0 else { return nil }
+        for length in stride(from: maxLength, through: 1, by: -1) {
+            let suffix = existing.suffix(length)
+            let prefix = incoming.prefix(length)
+            if suffix == prefix {
+                return existing + incoming.dropFirst(length)
+            }
+            let incomingSuffix = incoming.suffix(length)
+            let existingPrefix = existing.prefix(length)
+            if incomingSuffix == existingPrefix {
+                return incoming + existing.dropFirst(length)
+            }
+        }
+        return nil
     }
 }
 
