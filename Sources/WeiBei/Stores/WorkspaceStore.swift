@@ -1501,27 +1501,22 @@ final class WorkspaceStore: ObservableObject {
 
     private func shouldMergeSelectionAttachment(_ existing: SelectionContext, with incoming: SelectionContext, at now: Date) -> Bool {
         guard existing.source == incoming.source, existing.ownerTitle == incoming.ownerTitle else { return false }
-        let existingText = Self.normalizedSelectionAttachmentText(existing.text)
-        let incomingText = Self.normalizedSelectionAttachmentText(incoming.text)
-        guard !existingText.isEmpty, !incomingText.isEmpty else { return false }
-        if existingText.contains(incomingText) || incomingText.contains(existingText) { return true }
-        guard let lastSelectionAttachmentDate else { return false }
-        return now.timeIntervalSince(lastSelectionAttachmentDate) <= selectionAttachmentMergeWindow
+        let withinSelectionGesture = lastSelectionAttachmentDate.map {
+            now.timeIntervalSince($0) <= selectionAttachmentMergeWindow
+        } ?? false
+        return SelectionAttachmentMerge.mergedText(
+            existing: existing.text,
+            incoming: incoming.text,
+            withinSelectionGesture: withinSelectionGesture
+        ) != nil
     }
 
     private func mergedSelectionAttachment(_ existing: SelectionContext, with incoming: SelectionContext) -> SelectionContext {
-        let existingText = existing.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let incomingText = incoming.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        let normalizedExisting = Self.normalizedSelectionAttachmentText(existingText)
-        let normalizedIncoming = Self.normalizedSelectionAttachmentText(incomingText)
-        let mergedText: String
-        if normalizedExisting.contains(normalizedIncoming) {
-            mergedText = existingText
-        } else if normalizedIncoming.contains(normalizedExisting) {
-            mergedText = incomingText
-        } else {
-            mergedText = "\(existingText)\n\(incomingText)"
-        }
+        let mergedText = SelectionAttachmentMerge.mergedText(
+            existing: existing.text,
+            incoming: incoming.text,
+            withinSelectionGesture: true
+        ) ?? incoming.text
         return SelectionContext(
             id: existing.id,
             text: Self.boundedSelectionText(mergedText),
@@ -1529,10 +1524,6 @@ final class WorkspaceStore: ObservableObject {
             ownerTitle: existing.ownerTitle,
             isEditable: incoming.isEditable
         )
-    }
-
-    private static func normalizedSelectionAttachmentText(_ text: String) -> String {
-        text.split(whereSeparator: { $0.isWhitespace }).joined()
     }
 
     private static func hasMeaningfulSelectionCharacter(_ text: String) -> Bool {

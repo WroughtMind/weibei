@@ -440,6 +440,24 @@ public struct SelectionContext: Identifiable, Codable, Hashable {
     }
 }
 
+public enum SelectionAttachmentMerge {
+    public static func mergedText(existing: String, incoming: String, withinSelectionGesture: Bool) -> String? {
+        let existingText = existing.trimmingCharacters(in: .whitespacesAndNewlines)
+        let incomingText = incoming.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedExisting = normalized(existingText)
+        let normalizedIncoming = normalized(incomingText)
+        guard !normalizedExisting.isEmpty, !normalizedIncoming.isEmpty else { return nil }
+        if normalizedExisting.contains(normalizedIncoming) { return existingText }
+        if normalizedIncoming.contains(normalizedExisting) { return incomingText }
+        guard withinSelectionGesture else { return nil }
+        return normalizedIncoming.count >= normalizedExisting.count ? incomingText : existingText
+    }
+
+    public static func normalized(_ text: String) -> String {
+        text.split(whereSeparator: { $0.isWhitespace }).joined()
+    }
+}
+
 public struct FloatingAgentCoordinate: Equatable {
     public var x: Double
     public var y: Double
