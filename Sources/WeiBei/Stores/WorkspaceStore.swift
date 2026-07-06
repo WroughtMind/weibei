@@ -1578,6 +1578,9 @@ final class WorkspaceStore: ObservableObject {
             || scenario == "notebook-creation-flow" else { return }
         didRunVerificationScenario = true
         layout = scenario == "immersive-conversation-flow" ? .immersiveConversation : .documentAgentNotes
+        if scenario == "notebook-creation-flow" {
+            layout = .immersiveWriting
+        }
         showLibrary = scenario != "immersive-conversation-flow"
         showRightPane = true
         agentSurface = .hidden

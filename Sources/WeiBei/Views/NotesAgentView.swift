@@ -188,44 +188,42 @@ struct NotePaneView: View {
                 appearanceMode: store.appearanceMode
             ) {
                 noteModeControl
-                if !isImmersiveWriting {
-                    Menu {
-                        Button {
-                            withAnimation(WeiBeiMotion.panel) {
-                                store.promptCreateBlankNotebookNote()
-                            }
-                        } label: {
-                            Label(store.ui("新建空白笔记", "New Blank Note"), systemImage: "doc")
-                        }
-
-                        if store.hasSelectedMaterial {
-                            Button {
-                                withAnimation(WeiBeiMotion.panel) {
-                                    store.promptCreateNotebookNoteFromCurrentMaterial()
-                                }
-                            } label: {
-                                Label(store.ui("从当前资料开笔记", "Note from Current Material"), systemImage: "link")
-                            }
-                        }
-
-                        if store.canUseSelectedMarkdownAsNotebookNote {
-                            Divider()
-                            Button {
-                                withAnimation(WeiBeiMotion.panel) {
-                                    store.useSelectedMarkdownAsNotebookNote()
-                                }
-                            } label: {
-                                Label(store.ui("把当前 Markdown 作为笔记", "Use Current Markdown as Note"), systemImage: "square.and.pencil")
-                            }
+                Menu {
+                    Button {
+                        withAnimation(WeiBeiMotion.panel) {
+                            store.promptCreateBlankNotebookNote()
                         }
                     } label: {
-                        Image(systemName: "doc.badge.plus")
+                        Label(store.ui("新建空白笔记", "New Blank Note"), systemImage: "doc")
                     }
-                    .menuStyle(.borderlessButton)
-                    .buttonStyle(WeiBeiIconButtonStyle(size: 24))
-                    .accessibilityLabel(Text(store.ui("新建笔记", "New Note")))
-                    .help(store.ui("新建空白笔记，或从当前资料开一份带来源的笔记", "Create a blank note or start one from the current material"))
+
+                    if store.hasSelectedMaterial {
+                        Button {
+                            withAnimation(WeiBeiMotion.panel) {
+                                store.promptCreateNotebookNoteFromCurrentMaterial()
+                            }
+                        } label: {
+                            Label(store.ui("从当前资料开笔记", "Note from Current Material"), systemImage: "link")
+                        }
+                    }
+
+                    if store.canUseSelectedMarkdownAsNotebookNote {
+                        Divider()
+                        Button {
+                            withAnimation(WeiBeiMotion.panel) {
+                                store.useSelectedMarkdownAsNotebookNote()
+                            }
+                        } label: {
+                            Label(store.ui("把当前 Markdown 作为笔记", "Use Current Markdown as Note"), systemImage: "square.and.pencil")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "doc.badge.plus")
                 }
+                .menuStyle(.borderlessButton)
+                .buttonStyle(WeiBeiIconButtonStyle(size: 24))
+                .accessibilityLabel(Text(store.ui("新建笔记", "New Note")))
+                .help(store.ui("新建空白笔记，或从当前资料开一份带来源的笔记", "Create a blank note or start one from the current material"))
             }
 
             if let noteFileError = store.noteFileError {
@@ -316,10 +314,6 @@ struct NotePaneView: View {
 
     private func noteFileStatusColor(for message: String) -> Color {
         message.hasPrefix("无法") || message.hasPrefix("Could not") ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk
-    }
-
-    private var isImmersiveWriting: Bool {
-        store.layout == .immersiveWriting
     }
 
     @ViewBuilder
