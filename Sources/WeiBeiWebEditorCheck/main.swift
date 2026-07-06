@@ -1082,50 +1082,58 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("typed HTML break leaked raw HTML syntax into saved markdown")
                 return
             }
-            self.validateBulletListEnterExit()
+            self.validateListEnterExit()
         }
     }
 
-    private func validateBulletListEnterExit() {
+    private func validateListEnterExit() {
         let script = """
-        window.WeiBeiEditor.insertMarkdown("\\n\\n- 项目{{WEIBEI_CURSOR}}");
-        if (!window.WeiBeiEditor.pressKeyForCheck('Enter')) {
-          throw new Error('pressKeyForCheck unavailable for first Enter');
-        }
-        if (!window.WeiBeiEditor.pressKeyForCheck('Enter')) {
-          throw new Error('pressKeyForCheck unavailable for second Enter');
-        }
-        if (!window.WeiBeiEditor.typeTextForCheck('退出列表')) {
-          throw new Error('typeTextForCheck unavailable after list exit');
+        const cases = [
+          ['\\n\\n- 项目{{WEIBEI_CURSOR}}', '退出无序列表'],
+          ['\\n\\n1. 项目{{WEIBEI_CURSOR}}', '退出有序列表'],
+          ['\\n\\n- [ ] 待办{{WEIBEI_CURSOR}}', '退出任务列表']
+        ];
+        for (const [markdown, text] of cases) {
+          window.WeiBeiEditor.insertMarkdown(markdown);
+          if (!window.WeiBeiEditor.pressKeyForCheck('Enter')) {
+            throw new Error('pressKeyForCheck unavailable for first Enter');
+          }
+          if (!window.WeiBeiEditor.pressKeyForCheck('Enter')) {
+            throw new Error('pressKeyForCheck unavailable for second Enter');
+          }
+          if (!window.WeiBeiEditor.typeTextForCheck(text)) {
+            throw new Error('typeTextForCheck unavailable after list exit');
+          }
         }
         window.WeiBeiEditor.getMarkdown();
         """
         webView.evaluateJavaScript(script) { [weak self] value, error in
             guard let self else { return }
             if let error {
-                self.fail("bullet list Enter exit check threw \(error.localizedDescription)")
+                self.fail("list Enter exit check threw \(error.localizedDescription)")
                 return
             }
             guard let markdown = value as? String else {
-                self.fail("bullet list Enter exit check did not return markdown")
+                self.fail("list Enter exit check did not return markdown")
                 return
             }
-            guard let itemRange = markdown.range(of: "项目", options: .backwards) else {
-                self.fail("bullet list Enter exit check did not serialize the list item: \(markdown)")
+            guard let bulletRange = markdown.range(of: "退出无序列表", options: .backwards),
+                  let orderedRange = markdown.range(of: "退出有序列表", options: .backwards),
+                  let taskRange = markdown.range(of: "退出任务列表", options: .backwards) else {
+                self.fail("list Enter exit check did not serialize following paragraphs: \(markdown)")
                 return
             }
-            let tail = String(markdown[itemRange.lowerBound...])
-            if !tail.contains("退出列表") {
-                self.fail("bullet list Enter exit check did not serialize following paragraph: \(markdown)")
-                return
-            }
-            if tail.contains("\n- 退出列表")
-                || tail.contains("\n* 退出列表")
-                || tail.contains("\n+ 退出列表")
-                || tail.contains("\n- \n- 退出列表")
-                || tail.contains("\n* \n* 退出列表")
-                || tail.contains("\n+ \n+ 退出列表") {
-                self.fail("empty bullet Enter did not exit the list before typing following text: \(markdown)")
+            let bulletTail = String(markdown[..<bulletRange.upperBound])
+            let orderedTail = String(markdown[..<orderedRange.upperBound])
+            let taskTail = String(markdown[..<taskRange.upperBound])
+            if bulletTail.contains("\n- 退出无序列表")
+                || bulletTail.contains("\n* 退出无序列表")
+                || bulletTail.contains("\n+ 退出无序列表")
+                || orderedTail.contains("\n1. 退出有序列表")
+                || orderedTail.contains("\n2. 退出有序列表")
+                || taskTail.contains("\n- [ ] 退出任务列表")
+                || taskTail.contains("\n- 退出任务列表") {
+                self.fail("empty list Enter did not exit before typing following text: \(markdown)")
                 return
             }
             self.isDone = true
