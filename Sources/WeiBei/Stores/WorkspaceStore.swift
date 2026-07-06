@@ -72,6 +72,8 @@ final class WorkspaceStore: ObservableObject {
     private var quietInsightSignature = ""
     private var isRestoringNavigation = false
     private var didRunVerificationScenario = false
+    private var lastSelectionAttachmentDate: Date?
+    private let selectionAttachmentMergeWindow: TimeInterval = 0.9
 
     private struct NavigationSnapshot: Equatable {
         var selectedItemID: String?
@@ -413,6 +415,7 @@ final class WorkspaceStore: ObservableObject {
             activeNotebookItemID = nil
             clearUnpinnedFloatingSelection(keepContext: false)
             selectionAttachments = []
+            lastSelectionAttachmentDate = nil
             readerPageIndex = 0
         }
         readerLocationTitle = selectedMaterialItem.map(displayTitle)
@@ -1357,6 +1360,7 @@ final class WorkspaceStore: ObservableObject {
     func clearSelectionAttachments() {
         withAnimation(WeiBeiMotion.panel) {
             selectionAttachments = []
+            lastSelectionAttachmentDate = nil
             clearUnpinnedFloatingSelection(keepContext: false)
         }
     }
@@ -1364,18 +1368,68 @@ final class WorkspaceStore: ObservableObject {
     private func addSelectionAttachment(_ selection: SelectionContext) {
         let cleanedText = selection.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard Self.hasMeaningfulSelectionCharacter(cleanedText) else { return }
+        let cleanedSelection = SelectionContext(
+            id: selection.id,
+            text: cleanedText,
+            source: selection.source,
+            ownerTitle: selection.ownerTitle,
+            isEditable: selection.isEditable
+        )
+        let now = Date()
+        defer { lastSelectionAttachmentDate = now }
         if let existingIndex = selectionAttachments.firstIndex(where: {
-            $0.ownerTitle == selection.ownerTitle
-                && $0.source == selection.source
+            $0.ownerTitle == cleanedSelection.ownerTitle
+                && $0.source == cleanedSelection.source
                 && $0.text.trimmingCharacters(in: .whitespacesAndNewlines) == cleanedText
         }) {
             selectionAttachments.remove(at: existingIndex)
         }
-        selectionAttachments.append(selection)
+        if let lastIndex = selectionAttachments.indices.last,
+           shouldMergeSelectionAttachment(selectionAttachments[lastIndex], with: cleanedSelection, at: now) {
+            selectionAttachments[lastIndex] = mergedSelectionAttachment(selectionAttachments[lastIndex], with: cleanedSelection)
+            return
+        }
+        selectionAttachments.append(cleanedSelection)
         let maxAttachments = 8
         if selectionAttachments.count > maxAttachments {
             selectionAttachments.removeFirst(selectionAttachments.count - maxAttachments)
         }
+    }
+
+    private func shouldMergeSelectionAttachment(_ existing: SelectionContext, with incoming: SelectionContext, at now: Date) -> Bool {
+        guard existing.source == incoming.source, existing.ownerTitle == incoming.ownerTitle else { return false }
+        let existingText = Self.normalizedSelectionAttachmentText(existing.text)
+        let incomingText = Self.normalizedSelectionAttachmentText(incoming.text)
+        guard !existingText.isEmpty, !incomingText.isEmpty else { return false }
+        if existingText.contains(incomingText) || incomingText.contains(existingText) { return true }
+        guard let lastSelectionAttachmentDate else { return false }
+        return now.timeIntervalSince(lastSelectionAttachmentDate) <= selectionAttachmentMergeWindow
+    }
+
+    private func mergedSelectionAttachment(_ existing: SelectionContext, with incoming: SelectionContext) -> SelectionContext {
+        let existingText = existing.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let incomingText = incoming.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedExisting = Self.normalizedSelectionAttachmentText(existingText)
+        let normalizedIncoming = Self.normalizedSelectionAttachmentText(incomingText)
+        let mergedText: String
+        if normalizedExisting.contains(normalizedIncoming) {
+            mergedText = existingText
+        } else if normalizedIncoming.contains(normalizedExisting) {
+            mergedText = incomingText
+        } else {
+            mergedText = "\(existingText)\n\(incomingText)"
+        }
+        return SelectionContext(
+            id: existing.id,
+            text: Self.boundedSelectionText(mergedText),
+            source: existing.source,
+            ownerTitle: existing.ownerTitle,
+            isEditable: incoming.isEditable
+        )
+    }
+
+    private static func normalizedSelectionAttachmentText(_ text: String) -> String {
+        text.split(whereSeparator: { $0.isWhitespace }).joined()
     }
 
     private static func hasMeaningfulSelectionCharacter(_ text: String) -> Bool {
@@ -1634,6 +1688,7 @@ final class WorkspaceStore: ObservableObject {
         if !selectionAttachments.isEmpty {
             withAnimation(WeiBeiMotion.panel) {
                 selectionAttachments = []
+                lastSelectionAttachmentDate = nil
             }
         }
         if shouldClearSentDocumentSelection {
