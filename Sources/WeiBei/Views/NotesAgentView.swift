@@ -1148,6 +1148,17 @@ private struct AgentSelectionAttachmentPill: View {
                     .font(.system(size: 11, weight: .medium))
                 Text(store.ui("\(store.selectionAttachments.count) 个已选文本片段", "\(store.selectionAttachments.count) selected text fragments"))
                     .font(.system(size: 12, weight: .medium))
+                Button {
+                    store.clearSelectionAttachments()
+                    pillHovering = false
+                    popoverHovering = false
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 9, weight: .semibold))
+                }
+                .buttonStyle(WeiBeiIconButtonStyle(size: 18))
+                .accessibilityLabel(Text(store.ui("清空已选文本片段", "Clear selected text fragments")))
+                .help(store.ui("清空已选文本片段", "Clear selected text fragments"))
             }
             .foregroundStyle(pillHovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
             .padding(.horizontal, 10)

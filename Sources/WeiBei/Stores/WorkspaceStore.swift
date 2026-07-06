@@ -1327,21 +1327,15 @@ final class WorkspaceStore: ObservableObject {
             ownerTitle: resolvedOwnerTitle,
             isEditable: isEditable
         )
-        let shouldAttachToConversation = isConversationSurfaceVisible
+        let shouldRouteToConversation = isConversationSurfaceVisible
         let shouldRevealSelectionPrompt = canShowSelectionPromptSurface
         withAnimation(WeiBeiMotion.panel) {
             selectionContext = nextSelection
-            selectionAnchor = shouldAttachToConversation ? nil : anchor
+            selectionAnchor = anchor
             floatingSelectionPrompt = nextSelection.label(language: interfaceLanguage)
             pinnedFloatingAgent = false
-            if shouldAttachToConversation {
-                addSelectionAttachment(nextSelection)
-                if agentSurface == .selectionFloat {
-                    agentSurface = .hidden
-                }
+            if shouldRouteToConversation {
                 showQuietInsight = false
-                focusedPane = .agent
-                focusRequest += 1
             } else if shouldRevealSelectionPrompt {
                 agentSurface = .selectionFloat
                 showQuietInsight = false

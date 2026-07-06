@@ -80,7 +80,7 @@ struct WeiBeiApp: App {
 
                 Divider()
 
-                Button(store.ui("聚焦资料", "Focus Library")) { animateLayout { store.focus(.library) } }
+                Button(store.ui("聚焦课程目录", "Focus Course Index")) { animateLayout { store.focus(.library) } }
                     .keyboardShortcut("1")
                 Button(store.ui("聚焦阅读", "Focus Reader")) { animateLayout { store.focus(.reader) } }
                     .keyboardShortcut("2")
@@ -98,7 +98,7 @@ struct WeiBeiApp: App {
 
                 Divider()
 
-                Button(store.showLibrary ? store.ui("收起资料库", "Hide Library") : store.ui("打开资料库", "Show Library")) {
+                Button(store.showLibrary ? store.ui("收起课程目录", "Hide Course Index") : store.ui("打开课程目录", "Show Course Index")) {
                     animateLayout {
                         store.toggleLibrary()
                     }
@@ -653,8 +653,8 @@ struct SettingsView: View {
                 }
 
                 settingsRow(
-                    title: store.ui("资料库", "Library"),
-                    detail: store.ui("沉浸模式也保留资料库入口，便于随时换材料。", "Immersive modes keep the library entry so you can switch material anytime.")
+                    title: store.ui("课程目录", "Course Index"),
+                    detail: store.ui("沉浸模式也保留课程目录入口，便于随时换材料。", "Immersive modes keep the course index entry so you can switch material anytime.")
                 ) {
                     Button(store.showLibrary ? store.ui("收起", "Hide") : store.ui("打开", "Show")) {
                         withAnimation(WeiBeiMotion.layout) {
@@ -890,7 +890,7 @@ struct SettingsView: View {
     private var shortcutRows: [(String, String, String)] {
         [
             (store.ui("命令面板", "Command Palette"), "⌘K", store.ui("搜索并执行魏碑动作。", "Search and run WeiBei actions.")),
-            (store.ui("资料库", "Library"), "⌘B", store.ui("打开或收起资料库。", "Show or hide the library.")),
+            (store.ui("课程目录", "Course Index"), "⌘B", store.ui("打开或收起课程目录。", "Show or hide the course index.")),
             (store.ui("资料内搜索", "Search in Material"), "⌘F", store.ui("搜索当前打开的资料。", "Search the current material.")),
             (store.ui("聚焦阅读", "Focus Reader"), "⌘2", store.ui("把键盘焦点交给阅读区。", "Move keyboard focus to the reader.")),
             (store.ui("聚焦笔记", "Focus Notes"), "⌘3", store.ui("把键盘焦点交给笔记区。", "Move keyboard focus to notes.")),
@@ -901,7 +901,7 @@ struct SettingsView: View {
 
     private var dataSettings: some View {
         VStack(alignment: .leading, spacing: 16) {
-            settingsGroup(store.ui("资料库", "Library")) {
+            settingsGroup(store.ui("课程目录", "Course Index")) {
                 settingsRow(
                     title: store.ui("导入资料", "Import Material"),
                     detail: store.ui("导入 HTML、PDF、Markdown 或文本文件。", "Import HTML, PDF, Markdown, or text files.")

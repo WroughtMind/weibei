@@ -88,7 +88,10 @@ struct ContentView: View {
     }
 
     private var showsGlobalFloatingAgent: Bool {
-        store.canShowSelectionPromptSurface && SelectionFloatingAgentPlacement.isVisible(
+        if store.isConversationSurfaceVisible {
+            return store.selectionContext != nil && store.selectionAnchor != nil
+        }
+        return store.canShowSelectionPromptSurface && SelectionFloatingAgentPlacement.isVisible(
             surface: store.agentSurface,
             hasSelection: store.selectionContext != nil,
             hasAnchor: store.selectionAnchor != nil,
@@ -166,7 +169,7 @@ struct ContentView: View {
                         libraryDragStartWidth = nil
                     }
             )
-            .help(store.ui("拖动调整资料库宽度", "Drag to resize the library"))
+            .help(store.ui("拖动调整课程目录宽度", "Drag to resize the course index"))
     }
 
 }
@@ -587,7 +590,7 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var libraryButton: some View {
-        topIconButton("sidebar.left", help: store.showLibrary ? store.ui("收起资料库", "Hide library") : store.ui("打开资料库", "Show library"), active: store.showLibrary) {
+        topIconButton("sidebar.left", help: store.showLibrary ? store.ui("收起课程目录", "Hide course index") : store.ui("打开课程目录", "Show course index"), active: store.showLibrary) {
             withAnimation(WeiBeiMotion.layout) {
                 store.toggleLibrary()
             }
@@ -983,7 +986,7 @@ private struct LayoutContentView: View {
             )
         }
         items.append(
-            ContextRailItem(title: store.ui("资料库", "Library"), help: store.ui("打开资料库选择资料", "Open the library to choose material"), systemImage: "sidebar.left") {
+            ContextRailItem(title: store.ui("课程目录", "Course Index"), help: store.ui("打开课程目录选择资料", "Open the course index to choose material"), systemImage: "sidebar.left") {
                 openLibrary()
             }
         )
@@ -1033,7 +1036,7 @@ private struct LayoutContentView: View {
             )
         }
         items.append(
-            ContextRailItem(title: store.ui("资料库", "Library"), help: store.ui("打开资料库选择资料", "Open the library to choose material"), systemImage: "sidebar.left", emphasized: items.isEmpty) {
+            ContextRailItem(title: store.ui("课程目录", "Course Index"), help: store.ui("打开课程目录选择资料", "Open the course index to choose material"), systemImage: "sidebar.left", emphasized: items.isEmpty) {
                 openLibrary()
             }
         )
