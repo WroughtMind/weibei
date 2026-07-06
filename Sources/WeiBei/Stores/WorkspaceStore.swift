@@ -1005,6 +1005,70 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    func promptRenameNotebookNote(itemID: String) {
+        guard let item = allItems.first(where: { $0.id == itemID && $0.isNotebookNote }) else { return }
+        let input = NSTextField(string: displayTitle(for: item))
+        input.frame = NSRect(x: 0, y: 0, width: 260, height: 24)
+
+        let alert = NSAlert()
+        alert.messageText = ui("重命名笔记", "Rename Note")
+        alert.informativeText = ui("会同时更新资料库标题和本地 Markdown 文件名。", "This updates the library title and local Markdown filename.")
+        alert.accessoryView = input
+        alert.addButton(withTitle: ui("重命名", "Rename"))
+        alert.addButton(withTitle: ui("取消", "Cancel"))
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        renameNotebookNote(itemID: itemID, to: input.stringValue)
+    }
+
+    func renameNotebookNote(itemID: String, to rawTitle: String) {
+        let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else {
+            noteFileError = ui("笔记名不能为空。", "Note name cannot be empty.")
+            return
+        }
+        guard let index = importedItems.firstIndex(where: { $0.id == itemID && $0.isNotebookNote }),
+              let oldURL = importedItems[index].url else { return }
+
+        persistCurrentNote()
+        let oldItem = importedItems[index]
+        let oldID = oldItem.id
+        let oldTitle = displayTitle(for: oldItem)
+        let newURL = renamedNotebookURL(in: oldURL.deletingLastPathComponent(), title: title, currentURL: oldURL)
+
+        do {
+            if oldURL.path != newURL.path {
+                try FileManager.default.moveItem(at: oldURL, to: newURL)
+            }
+            let newID = "file:\(newURL.path)"
+            importedItems[index].id = newID
+            importedItems[index].title = newURL.deletingPathExtension().lastPathComponent
+            importedItems[index].subtitle = newURL.lastPathComponent
+            importedItems[index].urlPath = newURL.path
+            if activeNotebookItemID == oldID {
+                activeNotebookItemID = newID
+                noteText = retitledMarkdown(noteText, from: oldTitle, to: importedItems[index].title)
+                persistCurrentNote()
+            } else if let markdown = try? String(contentsOf: newURL, encoding: .utf8) {
+                let updated = retitledMarkdown(markdown, from: oldTitle, to: importedItems[index].title)
+                if updated != markdown {
+                    try updated.write(to: newURL, atomically: true, encoding: .utf8)
+                }
+            }
+            if let cached = notesByItemID.removeValue(forKey: oldID) {
+                notesByItemID[newID] = retitledMarkdown(cached, from: oldTitle, to: importedItems[index].title)
+            }
+            if selectedItemID == oldID {
+                selectedItemID = newID
+            }
+            replaceNavigationItemID(oldID, with: newID)
+            save()
+            showTransientNoteStatus(ui("已重命名为：\(newURL.lastPathComponent)", "Renamed to: \(newURL.lastPathComponent)"))
+        } catch {
+            noteFileError = ui("无法重命名笔记：\(error.localizedDescription)", "Could not rename note: \(error.localizedDescription)")
+        }
+    }
+
     func openOrCreateWikiNote(title rawTitle: String) {
         let title = WikiLink.targetTitle(from: rawTitle)
         guard !title.isEmpty else { return }
@@ -1616,6 +1680,38 @@ final class WorkspaceStore: ObservableObject {
             url = directory.appendingPathComponent("\(stem) \(index).md")
         }
         return url
+    }
+
+    private func renamedNotebookURL(in directory: URL, title: String, currentURL: URL) -> URL {
+        let stem = safeFileStem(title)
+        var index = 1
+        var url = directory.appendingPathComponent("\(stem).md")
+        while FileManager.default.fileExists(atPath: url.path) && url.path != currentURL.path {
+            index += 1
+            url = directory.appendingPathComponent("\(stem) \(index).md")
+        }
+        return url
+    }
+
+    private func retitledMarkdown(_ markdown: String, from oldTitle: String, to newTitle: String) -> String {
+        let prefix = "# \(oldTitle)\n"
+        guard markdown.hasPrefix(prefix) else { return markdown }
+        return "# \(newTitle)\n" + String(markdown.dropFirst(prefix.count))
+    }
+
+    private func replaceNavigationItemID(_ oldID: String, with newID: String) {
+        backNavigationStack = backNavigationStack.map { snapshot in
+            var copy = snapshot
+            if copy.selectedItemID == oldID { copy.selectedItemID = newID }
+            if copy.activeNotebookItemID == oldID { copy.activeNotebookItemID = newID }
+            return copy
+        }
+        forwardNavigationStack = forwardNavigationStack.map { snapshot in
+            var copy = snapshot
+            if copy.selectedItemID == oldID { copy.selectedItemID = newID }
+            if copy.activeNotebookItemID == oldID { copy.activeNotebookItemID = newID }
+            return copy
+        }
     }
 
     private func showTransientNoteStatus(_ message: String) {

@@ -104,6 +104,13 @@ struct SidebarView: View {
                         LibraryRow(item: item, selected: item.isNotebookNote ? store.activeNotebookItemID == item.id : store.selectedItemID == item.id)
                     }
                     .buttonStyle(.plain)
+                    .contextMenu {
+                        if item.isNotebookNote {
+                            Button(store.ui("重命名笔记", "Rename Note")) {
+                                store.promptRenameNotebookNote(itemID: item.id)
+                            }
+                        }
+                    }
                     .transition(WeiBeiTransition.message)
                 }
             }
