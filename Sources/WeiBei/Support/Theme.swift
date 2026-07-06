@@ -96,13 +96,13 @@ enum WeiBeiTypography {
             return .system(size: size, weight: weight, design: .serif)
         case .english:
             registerBundledFonts()
-            return .custom(englishDisplayFontName, size: size)
+            return .custom(englishDisplayFontName, size: size).weight(weight)
         }
     }
 
     static func englishBrandFont(size: CGFloat, weight: Font.Weight = .semibold) -> Font {
         registerBundledFonts()
-        return .custom(englishDisplayFontName, size: size)
+        return .custom(englishDisplayFontName, size: size).weight(weight)
     }
 
     static func monoFont(language: WeiBeiInterfaceLanguage, size: CGFloat) -> Font {
@@ -349,7 +349,7 @@ enum TopBarVariant: String, CaseIterable, Identifiable {
         case .reader:
             return language.text("阅读", "Reading")
         case .glyph:
-            return language.text("图标", "Glyph")
+            return language.text("印记", "Mark")
         case .wide:
             return language.text("宽松", "Wide")
         }

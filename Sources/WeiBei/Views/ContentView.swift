@@ -523,19 +523,27 @@ private struct UnifiedTopBarView: View {
     private var brandBlock: some View {
         switch variant {
         case .glyph:
-            Image(systemName: "seal")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(primaryText)
-                .frame(width: 28, height: controlHeight)
+            HStack(spacing: 5) {
+                Image(systemName: "seal")
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(primaryText.opacity(0.82))
+                Text(store.brandLatinName)
+                    .font(WeiBeiTypography.englishBrandFont(size: 14.2, weight: .semibold))
+                    .tracking(0.15)
+                    .foregroundStyle(primaryText)
+            }
+            .frame(width: 78, height: controlHeight, alignment: .leading)
         case .compact:
             Text(store.brandLatinName)
-                .font(WeiBeiTypography.englishBrandFont(size: 13.5, weight: .semibold))
+                .font(WeiBeiTypography.englishBrandFont(size: 15.5, weight: .semibold))
+                .tracking(0.15)
                 .foregroundStyle(primaryText)
-                .frame(width: 52, alignment: .leading)
+                .frame(width: 62, alignment: .leading)
         case .reader:
             VStack(alignment: .leading, spacing: 0) {
                 Text(store.brandLatinName)
-                    .font(WeiBeiTypography.englishBrandFont(size: 12.5, weight: .semibold))
+                    .font(WeiBeiTypography.englishBrandFont(size: 14, weight: .semibold))
+                    .tracking(0.15)
                     .foregroundStyle(secondaryText)
                 Text(shortLayoutLabel)
                     .font(.system(size: 9, weight: .medium))
@@ -545,7 +553,8 @@ private struct UnifiedTopBarView: View {
         case .balanced, .wide:
             VStack(alignment: .leading, spacing: 0) {
                 Text(store.brandLatinName)
-                    .font(WeiBeiTypography.englishBrandFont(size: variant == .wide ? 15.5 : 14.5, weight: .semibold))
+                    .font(WeiBeiTypography.englishBrandFont(size: variant == .wide ? 17 : 16, weight: .semibold))
+                    .tracking(0.15)
                     .foregroundStyle(primaryText)
                 Text(shortLayoutLabel)
                     .font(.system(size: 10, weight: .medium))
