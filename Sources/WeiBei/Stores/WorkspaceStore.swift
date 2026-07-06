@@ -444,6 +444,9 @@ final class WorkspaceStore: ObservableObject {
             createBlankNotebookNote()
             return
         }
+        if openExistingNotebookNote(for: selectedMaterialItem) {
+            return
+        }
         createNotebookNote(seed: .currentMaterial(selectedMaterialItem))
     }
 
@@ -459,6 +462,9 @@ final class WorkspaceStore: ObservableObject {
     func promptCreateNotebookNoteFromCurrentMaterial() {
         guard let selectedMaterialItem else {
             promptCreateBlankNotebookNote()
+            return
+        }
+        if openExistingNotebookNote(for: selectedMaterialItem) {
             return
         }
         notebookCreationDraft = NotebookCreationDraft(
@@ -1223,6 +1229,31 @@ final class WorkspaceStore: ObservableObject {
             showTransientNoteStatus(status)
         } catch {
             noteFileError = ui("无法创建笔记：\(error.localizedDescription)", "Could not create note: \(error.localizedDescription)")
+        }
+    }
+
+    @discardableResult
+    private func openExistingNotebookNote(for material: StudyItem) -> Bool {
+        guard let item = existingNotebookNote(for: material) else { return false }
+        activeNotebookItemID = item.id
+        noteText = noteText(for: item)
+        notebookCreationDraft = nil
+        revealRichWritingSurface()
+        focus(.notes)
+        save()
+        showTransientNoteStatus(ui("已打开现有资料笔记：\(item.subtitle)", "Opened existing material note: \(item.subtitle)"))
+        return true
+    }
+
+    private func existingNotebookNote(for material: StudyItem) -> StudyItem? {
+        let currentTitle = suggestedNotebookTitle(for: .currentMaterial(material))
+        let chineseTitle = "\(material.title) 笔记"
+        let englishTitle = "\(material.title) Notes"
+        let displayChineseTitle = "\(displayTitle(for: material)) 笔记"
+        let displayEnglishTitle = "\(displayTitle(for: material)) Notes"
+        let titles = Set([currentTitle, chineseTitle, englishTitle, displayChineseTitle, displayEnglishTitle])
+        return allItems.first { item in
+            item.isNotebookNote && titles.contains(item.title)
         }
     }
 
