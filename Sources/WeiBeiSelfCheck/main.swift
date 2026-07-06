@@ -1954,6 +1954,9 @@ if let cornerStart = notesAgentSource.range(of: "struct CornerAgentView")?.lower
 expect(notesAgentSource.contains("private struct CompactAgentMessagePreviewList")
     && notesAgentSource.contains("Array(store.messages.suffix(maxMessages))")
     && notesAgentSource.contains("private struct CompactAgentMessagePreviewRow")
+    && notesAgentSource.contains("private var renderedText: AttributedString")
+    && notesAgentSource.contains("(try? AttributedString(markdown: displayText)) ?? AttributedString(displayText)")
+    && notesAgentSource.contains("Text(renderedText)")
     && notesAgentSource.contains("question was sent into the chat")
     && !notesAgentSource.contains("question was still sent into the chat"), "drawer and corner chat surfaces show recent local/offline replies with the current offline-preview detection")
 if let selectionStart = notesAgentSource.range(of: "struct FloatingSelectionAgentView")?.lowerBound,

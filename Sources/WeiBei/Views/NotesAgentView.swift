@@ -1353,7 +1353,7 @@ private struct CompactAgentMessagePreviewRow: View {
                 Spacer(minLength: 0)
             }
 
-            Text(displayText)
+            Text(renderedText)
                 .font(.system(size: 12))
                 .foregroundStyle(WeiBeiTheme.ink)
                 .lineSpacing(2)
@@ -1394,6 +1394,10 @@ private struct CompactAgentMessagePreviewRow: View {
         message.text
             .replacingOccurrences(of: "\n\n", with: "\n")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var renderedText: AttributedString {
+        (try? AttributedString(markdown: displayText)) ?? AttributedString(displayText)
     }
 
     private var rowBackground: Color {
