@@ -1364,6 +1364,13 @@ Editor
     document.querySelector('#editor-status')?.remove();
     lastMarkdown = getMarkdownInternal();
     document.addEventListener('mouseup', reportSelection);
+    document.addEventListener('pointerdown', () => {
+      if (window.weiBeiSuppressSelectionReport) return;
+      lastSelectionRange = null;
+      lastSelectionReport.text = '';
+      lastSelectionReport.rectKey = '';
+      post('selectionChanged', { text: '', rect: null });
+    }, true);
     document.addEventListener('click', (event) => {
       if (!activateWikiLink(event.target)) return;
       event.preventDefault();
