@@ -835,7 +835,6 @@ final class WorkspaceStore: ObservableObject {
         selectionContext = nil
         selectionAnchor = nil
         pinnedFloatingAgent = false
-        agentDraft = ""
         save()
     }
 

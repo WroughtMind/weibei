@@ -1523,6 +1523,13 @@ expect(workspaceStoreSource.contains("private func clearUnpinnedFloatingSelectio
     && workspaceStoreSource.contains("if agentSurface == .selectionFloat {\n                agentSurface = .hidden\n            }\n            return")
     && workspaceStoreSource.contains("guard !pinnedFloatingAgent else { return }")
     && workspaceStoreSource.contains("if agentSurface == .selectionFloat"), "cleared selections remove stale context badges before preserving any pinned floating window")
+if let dismissFloatingStart = workspaceStoreSource.range(of: "func dismissFloatingSelectionAgent()")?.lowerBound,
+   let setNoteRenderModeStart = workspaceStoreSource.range(of: "func setNoteRenderMode")?.lowerBound {
+    let dismissFloatingSource = String(workspaceStoreSource[dismissFloatingStart..<setNoteRenderModeStart])
+    expect(!dismissFloatingSource.contains("agentDraft = \"\""), "dismissing the selection float does not erase text already typed in the shared agent composer")
+} else {
+    expect(false, "floating selection dismissal source is readable")
+}
 expect(workspaceStoreSource.contains("guard Self.hasMeaningfulSelectionCharacter(cleaned) else {\n            clearUnpinnedFloatingSelection(keepContext: false)\n            return\n        }")
     && workspaceStoreSource.contains("private static func hasMeaningfulSelectionCharacter(_ text: String) -> Bool")
     && workspaceStoreSource.contains("!CharacterSet.whitespacesAndNewlines.contains(scalar)")
