@@ -951,7 +951,7 @@ private struct LayoutContentView: View {
     private func paneView(for role: WorkspacePaneRole) -> some View {
         switch role {
         case .reader:
-            ReaderPaneView(reorderRole: .reader)
+            ReaderPaneView()
         case .agent:
             AgentPaneView(reorderRole: .agent)
         case .notes:

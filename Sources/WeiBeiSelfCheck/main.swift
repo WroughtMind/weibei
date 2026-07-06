@@ -595,7 +595,7 @@ expect(WorkspaceLayout.documentAgentNotes.isDocumentThreePane
     && !WorkspaceLayout.documentNotesSplit.isDocumentThreePane, "only full document layouts participate in three-pane reordering")
 expect(WorkspaceLayout.documentAgentNotes.defaultThreePaneOrder == [.reader, .agent, .notes]
     && WorkspaceLayout.documentNotesAgent.defaultThreePaneOrder == [.reader, .notes, .agent], "legacy three-pane layout presets map to pane role order")
-expect(WorkspacePaneRole.normalized([.notes, .notes]) == [.notes, .reader, .agent], "pane role order normalization removes duplicates and restores missing panes")
+expect(WorkspacePaneRole.normalized([.notes, .reader, .notes]) == [.reader, .notes, .agent], "pane role order normalization keeps the document pane locked left and restores missing panes")
 expect(WorkspacePaneRole.agent.focus == .agent
     && WorkspacePaneRole.reader.shortLabel(language: .chinese) == "文"
     && WorkspacePaneRole.notes.label(language: .english) == "Notes", "pane roles expose focus and localized labels")
@@ -1843,7 +1843,8 @@ expect(contentViewSource.contains("systemImage: \"square.and.pencil\"") && conte
 expect(contentViewSource.contains("case .documentAgentNotes, .documentNotesAgent:")
     && contentViewSource.contains("let order = store.normalizedThreePaneOrder")
     && contentViewSource.contains("paneView(for: order[0])")
-    && contentViewSource.contains("ReaderPaneView(reorderRole: .reader)")
+    && contentViewSource.contains("ReaderPaneView()")
+    && !contentViewSource.contains("ReaderPaneView(reorderRole: .reader)")
     && contentViewSource.contains("AgentPaneView(reorderRole: .agent)")
     && contentViewSource.contains("NotePaneView(reorderRole: .notes)")
     && !contentViewSource.contains("case .documentAgentNotes:\n                if store.showRightPane"), "document three-pane layouts render from one draggable pane role order instead of two hard-coded branches")
@@ -1860,6 +1861,8 @@ expect(readerViewSource.contains("struct ReaderPaneView")
 expect(workspaceStoreSource.contains("@Published var threePaneOrder")
     && workspaceStoreSource.contains("func swapThreePaneRoles")
     && workspaceStoreSource.contains("func moveThreePaneRole")
+    && workspaceStoreSource.contains("guard dragged != .reader, target != .reader else { return }")
+    && workspaceStoreSource.contains("guard role != .reader else { return }")
     && workspaceStoreSource.contains("layoutMatchingThreePaneOrder")
     && workspaceStoreSource.contains("threePaneOrder: normalizedThreePaneOrder"), "workspace store owns, swaps, and persists custom three-pane order")
 expect(!contentViewSource.contains("ContextRailItem(title: store.ui(\"课程目录\"")

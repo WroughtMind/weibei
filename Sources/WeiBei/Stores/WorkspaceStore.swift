@@ -681,6 +681,7 @@ final class WorkspaceStore: ObservableObject {
 
     func swapThreePaneRoles(_ dragged: WorkspacePaneRole, over target: WorkspacePaneRole) {
         guard dragged != target else { return }
+        guard dragged != .reader, target != .reader else { return }
         guard layout.isDocumentThreePane else { return }
         var order = normalizedThreePaneOrder
         guard let draggedIndex = order.firstIndex(of: dragged),
@@ -696,6 +697,7 @@ final class WorkspaceStore: ObservableObject {
 
     func moveThreePaneRole(_ role: WorkspacePaneRole, horizontalDelta: CGFloat) {
         let threshold: CGFloat = 72
+        guard role != .reader else { return }
         guard abs(horizontalDelta) >= threshold else { return }
         guard layout.isDocumentThreePane else { return }
         var order = normalizedThreePaneOrder
