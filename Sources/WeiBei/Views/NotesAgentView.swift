@@ -884,6 +884,7 @@ struct MarkdownPreviewView: View {
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
     var onSelectionChange: (String, CGPoint?) -> Void = { _, _ in }
+    var onContentHeightChange: () -> Void = {}
     @State private var command: NoteEditorCommand?
     @State private var contentHeight: CGFloat = 44
 
@@ -901,6 +902,7 @@ struct MarkdownPreviewView: View {
             onContentHeightChange: { height in
                 guard compact else { return }
                 contentHeight = height
+                onContentHeightChange()
             },
             onWikiLink: onWikiLink,
             onSourceReference: onSourceReference,
@@ -933,7 +935,12 @@ struct AgentPaneView: View {
                     ScrollView(showsIndicators: true) {
                         LazyVStack(alignment: .leading, spacing: 12) {
                             ForEach(store.messages) { message in
-                                AgentBubble(message: message)
+                                AgentBubble(
+                                    message: message,
+                                    onMarkdownHeightChange: message.id == store.messages.last?.id ? {
+                                        scrollAgentToBottom(proxy)
+                                    } : {}
+                                )
                                     .id(message.id)
                                     .transition(WeiBeiTransition.message)
                             }
@@ -2223,6 +2230,7 @@ private struct ContextRailLine: View {
 private struct AgentBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
     var message: AgentMessage
+    var onMarkdownHeightChange: () -> Void = {}
     @State private var hovering = false
 
     var body: some View {
@@ -2295,7 +2303,11 @@ private struct AgentBubble: View {
                 messageMetadata
             }
 
-            AgentMessageMarkdownText(text: message.text, rendersRichMarkdown: !isUser)
+            AgentMessageMarkdownText(
+                text: message.text,
+                rendersRichMarkdown: !isUser,
+                onContentHeightChange: onMarkdownHeightChange
+            )
 
             if message.id == store.lastUsableAgentAnswerID {
                 HStack(spacing: 6) {
@@ -2387,6 +2399,7 @@ private struct AgentMessageMarkdownText: View {
     @EnvironmentObject private var store: WorkspaceStore
     var text: String
     var rendersRichMarkdown: Bool
+    var onContentHeightChange: () -> Void = {}
 
     var body: some View {
         if rendersRichMarkdown {
@@ -2398,7 +2411,8 @@ private struct AgentMessageMarkdownText: View {
                 compact: true,
                 onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
                 onSourceReference: { reference in store.openSourceReference(reference) },
-                onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
+                onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) },
+                onContentHeightChange: onContentHeightChange
             )
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
