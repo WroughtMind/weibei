@@ -505,8 +505,12 @@ private struct WeiBeiIconButtonBody: View {
             .animation(WeiBeiMotion.press, value: configuration.isPressed)
             .animation(WeiBeiMotion.hover, value: hovering)
             .onHover { isHovering in
-                guard isEnabled else { return }
-                hovering = isHovering
+                hovering = isEnabled && isHovering
+            }
+            .onChange(of: isEnabled) { _, enabled in
+                if !enabled {
+                    hovering = false
+                }
             }
     }
 
