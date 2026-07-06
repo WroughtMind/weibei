@@ -85,6 +85,7 @@ print(note)
 双反引号 ``内部 ` <br />`` 也要保留源码。
 行内代码 `[[不是链接]] ==不是高亮== %%不是注释%% #not-tag <br />` 不应触发魏碑语法装饰。
 行内代码 `\\#literal \\[[x]] \\==x\\== \\$5 \\[!note]` 保存时不能被清理反斜杠。
+转义反引号 \\` 后面的 \\[\\[转义双链\\]\\] \\#escaped-tag \\$5 仍应按正文保存。
 
 ```html
 <span>保留<br />源码</span>
@@ -1112,6 +1113,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             ("double backtick html break code", "``内部 ` <br />``"),
             ("inline code markdown syntax", "`[[不是链接]] ==不是高亮== %%不是注释%% #not-tag <br />`"),
             ("inline code escaped syntax", "`\\#literal \\[[x]] \\==x\\== \\$5 \\[!note]`"),
+            ("escaped backtick prose syntax", "转义反引号 \\` 后面的 [[转义双链]] #escaped-tag $5"),
             ("code block html break", "<span>保留<br />源码</span>"),
             ("code block escaped syntax", "\\#literal \\[[x]] \\==x\\== \\$5 \\[!note]"),
             ("image size", "![魏碑测试图|100x80](assets/weibei.svg)")

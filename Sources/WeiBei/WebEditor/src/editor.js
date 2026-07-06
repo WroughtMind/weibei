@@ -292,19 +292,35 @@ const rectFromSelection = () => {
   };
 };
 
+const isEscapedMarkdownPosition = (source, index) => {
+  let slashCount = 0;
+  for (let cursor = index - 1; cursor >= 0 && source[cursor] === '\\'; cursor -= 1) {
+    slashCount += 1;
+  }
+  return slashCount % 2 === 1;
+};
+
+const findUnescapedMarkdownMarker = (source, marker, from) => {
+  let index = source.indexOf(marker, from);
+  while (index >= 0 && isEscapedMarkdownPosition(source, index)) {
+    index = source.indexOf(marker, index + marker.length);
+  }
+  return index;
+};
+
 const mapMarkdownOutsideBackticks = (line, transform) => {
   const source = String(line || '');
   let result = '';
   let cursor = 0;
   while (cursor < source.length) {
-    const tick = source.indexOf('`', cursor);
+    const tick = findUnescapedMarkdownMarker(source, '`', cursor);
     if (tick < 0) {
       result += transform(source.slice(cursor));
       break;
     }
     result += transform(source.slice(cursor, tick));
     const marker = source.slice(tick).match(/^`+/)?.[0] || '`';
-    const close = source.indexOf(marker, tick + marker.length);
+    const close = findUnescapedMarkdownMarker(source, marker, tick + marker.length);
     if (close < 0) {
       result += source.slice(tick);
       break;
