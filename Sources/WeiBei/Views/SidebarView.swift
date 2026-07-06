@@ -101,7 +101,7 @@ struct SidebarView: View {
                             store.select(itemID: item.id)
                         }
                     } label: {
-                        LibraryRow(item: item, selected: store.selectedItemID == item.id)
+                        LibraryRow(item: item, selected: item.isNotebookNote ? store.activeNotebookItemID == item.id : store.selectedItemID == item.id)
                     }
                     .buttonStyle(.plain)
                     .transition(WeiBeiTransition.message)

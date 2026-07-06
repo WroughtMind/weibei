@@ -1016,7 +1016,7 @@ final class WorkspaceStore: ObservableObject {
         if let index = importedItems.firstIndex(where: { $0.urlPath == url.path }) {
             importedItems[index].isNotebookNote = true
             select(itemID: importedItems[index].id)
-            noteFileError = ui("已打开双链笔记：\(importedItems[index].subtitle)", "Opened wiki note: \(importedItems[index].subtitle)")
+            showTransientNoteStatus(ui("已打开双链笔记：\(importedItems[index].subtitle)", "Opened wiki note: \(importedItems[index].subtitle)"))
             save()
             return
         }
@@ -1040,7 +1040,7 @@ final class WorkspaceStore: ObservableObject {
                 importedItems.append(item)
             }
             select(itemID: item.id)
-            noteFileError = ui("已创建双链笔记：\(url.lastPathComponent)", "Created wiki note: \(url.lastPathComponent)")
+            showTransientNoteStatus(ui("已创建双链笔记：\(url.lastPathComponent)", "Created wiki note: \(url.lastPathComponent)"))
         } catch {
             noteFileError = ui("无法创建双链笔记：\(error.localizedDescription)", "Could not create wiki note: \(error.localizedDescription)")
         }
@@ -1070,7 +1070,7 @@ final class WorkspaceStore: ObservableObject {
             revealRichWritingSurface()
             focus(.notes)
             save()
-            noteFileError = ui("已创建笔记：\(url.lastPathComponent)", "Created note: \(url.lastPathComponent)")
+            showTransientNoteStatus(ui("已创建笔记：\(url.lastPathComponent)", "Created note: \(url.lastPathComponent)"))
         } catch {
             noteFileError = ui("无法创建笔记：\(error.localizedDescription)", "Could not create note: \(error.localizedDescription)")
         }
@@ -1616,6 +1616,16 @@ final class WorkspaceStore: ObservableObject {
             url = directory.appendingPathComponent("\(stem) \(index).md")
         }
         return url
+    }
+
+    private func showTransientNoteStatus(_ message: String) {
+        noteFileError = message
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_200_000_000)
+            if self?.noteFileError == message {
+                self?.noteFileError = nil
+            }
+        }
     }
 
     private func clearGeneratedQuietInsight() {
