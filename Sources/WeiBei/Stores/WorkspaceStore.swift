@@ -459,6 +459,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func promptCreateBlankNotebookNote() {
+        noteFileError = nil
         notebookCreationDraft = NotebookCreationDraft(
             kind: .blank,
             sourceItemID: nil,
@@ -475,6 +476,7 @@ final class WorkspaceStore: ObservableObject {
         if openExistingNotebookNote(for: selectedMaterialItem) {
             return
         }
+        noteFileError = nil
         notebookCreationDraft = NotebookCreationDraft(
             kind: .currentMaterial,
             sourceItemID: selectedMaterialItem.id,
@@ -485,6 +487,7 @@ final class WorkspaceStore: ObservableObject {
 
     func cancelNotebookNoteCreation() {
         notebookCreationDraft = nil
+        noteFileError = nil
     }
 
     func confirmNotebookNoteCreation() {
