@@ -985,11 +985,6 @@ private struct LayoutContentView: View {
                 }
             )
         }
-        items.append(
-            ContextRailItem(title: store.ui("课程目录", "Course Index"), help: store.ui("打开课程目录选择资料", "Open the course index to choose material"), systemImage: "sidebar.left") {
-                openLibrary()
-            }
-        )
         return items
     }
 
@@ -1035,11 +1030,6 @@ private struct LayoutContentView: View {
                 }
             )
         }
-        items.append(
-            ContextRailItem(title: store.ui("课程目录", "Course Index"), help: store.ui("打开课程目录选择资料", "Open the course index to choose material"), systemImage: "sidebar.left", emphasized: items.isEmpty) {
-                openLibrary()
-            }
-        )
         return items
     }
 
@@ -1074,12 +1064,6 @@ private struct LayoutContentView: View {
         withAnimation(WeiBeiMotion.layout) {
             store.setLayout(.immersiveWriting)
             store.revealRightPane(focusing: .notes)
-        }
-    }
-
-    private func openLibrary() {
-        withAnimation(WeiBeiMotion.layout) {
-            store.revealLibrary()
         }
     }
 

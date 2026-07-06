@@ -40,87 +40,61 @@ public enum AgentOfflinePreview {
             ? input.materialTitle
             : input.language.text("未选择", "None")
         let noteValue = input.noteTitle
-        let selectionPreview: String
         let selectionValue: String
+        let selectionPreview: String
         if let selectionText = input.selectionText, !selectionText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            selectionPreview = preview(selectionText, limit: 360)
+            selectionPreview = preview(selectionText, limit: 220)
             selectionValue = input.language.text(
-                "\(input.selectionTitle ?? "已选文本片段")：\(selectionPreview)",
-                "\(input.selectionTitle ?? "selected fragments"): \(selectionPreview)"
+                input.selectionTitle ?? "已选文本片段",
+                input.selectionTitle ?? "selected fragments"
             )
         } else {
             selectionPreview = ""
             selectionValue = input.language.text("无", "None")
         }
 
-        let materialPreview = preview(input.materialText, limit: 260)
-        let notePreview = preview(input.noteText, limit: 260)
-        let materialBlock = materialPreview.isEmpty
-            ? input.language.text("资料摘要：暂无可读文本。", "Material excerpt: no readable text yet.")
-            : input.language.text("资料摘录：\(materialPreview)", "Material excerpt: \(materialPreview)")
-        let noteBlock = notePreview.isEmpty
-            ? input.language.text("笔记摘要：当前笔记为空。", "Note excerpt: the current note is empty.")
-            : input.language.text("笔记摘录：\(notePreview)", "Note excerpt: \(notePreview)")
-        let selectionSection = selectionPreview.isEmpty ? "" : input.language.text(
-            """
-
-            ## 选区理解
-            - 选区原文：\(selectionPreview)
-            - 当前可确认的是：这段文字可以作为回答的直接依据，写入笔记时应保留来源。
-            """,
-            """
-
-            ## Selection Reading
-            - Selected text: \(selectionPreview)
-            - What can be confirmed now: this text can be used as direct evidence, and the source should stay attached when it is written into notes.
-            """
+        let materialPreview = preview(input.materialText, limit: 180)
+        let notePreview = preview(input.noteText, limit: 90)
+        let evidence = evidenceLines(
+            input: input,
+            materialPreview: materialPreview,
+            notePreview: notePreview,
+            selectionPreview: selectionPreview,
+            materialValue: materialValue
         )
 
         return input.language.text(
             """
             ## 离线草稿
 
-            这次提问已经进入对话；未配置密钥时，魏碑只整理当前可见上下文，不补充外部结论。
+            未配置密钥；这里只整理当前可见内容，不补充外部结论。
 
             **问题**：\(input.question)
 
-            | 上下文 | 内容 |
-            | --- | --- |
-            | 资料 | \(tableCell(materialValue)) |
-            | 笔记 | \(tableCell(noteValue)) |
-            | 选区 | \(tableCell(selectionValue)) |
+            **上下文**：资料：\(inline(materialValue)) · 笔记：\(inline(noteValue)) · 选区：\(inline(selectionValue))
 
-            > \(materialBlock)
+            ## 可确认
+            \(evidence)
 
-            > \(noteBlock)
-            \(selectionSection)
-
-            ## 整理建议
-            - 先把选区作为可追溯摘录写入笔记。
-            - 再用资料标题和笔记标题补齐来源位置。
-            - 设置密钥后，可以继续要求魏碑生成正式解释、例题或复习卡片。
+            ## 建议写入
+            - 把可确认依据写入笔记，并保留来源。
+            - 设置密钥后再生成解释、例题或复习卡片。
             """,
             """
             ## Offline Draft
 
-            This question was sent into the chat. Without a configured key, WeiBei only organizes the visible context and does not add outside claims.
+            No key is configured; this only organizes visible context and does not add outside claims.
 
             **Question**: \(input.question)
 
-            | Context | Content |
-            | --- | --- |
-            | Material | \(tableCell(materialValue)) |
-            | Note | \(tableCell(noteValue)) |
-            | Selection | \(tableCell(selectionValue)) |
+            **Context**: Material: \(inline(materialValue)) · Note: \(inline(noteValue)) · Selection: \(inline(selectionValue))
 
-            > \(materialBlock)
+            ## Confirmed
+            \(evidence)
 
-            > \(noteBlock)
-
-            ## Organization Suggestions
-            - Save the selected text as a traceable excerpt first.
-            - Keep the material title and note title attached to the answer.
-            - After a key is configured, ask WeiBei for a full explanation, practice question, or review card.
+            ## Suggested Note
+            - Write the confirmed evidence into the note and keep the source attached.
+            - Configure a key before asking for a full explanation, practice question, or review card.
             """
         )
     }
@@ -134,11 +108,35 @@ public enum AgentOfflinePreview {
         return String(cleaned.prefix(limit)) + "..."
     }
 
-    private static func tableCell(_ text: String) -> String {
+    private static func evidenceLines(
+        input: AgentOfflinePreviewInput,
+        materialPreview: String,
+        notePreview: String,
+        selectionPreview: String,
+        materialValue: String
+    ) -> String {
+        var lines: [String] = []
+        if !selectionPreview.isEmpty {
+            lines.append(input.language.text("- 选区依据：\(selectionPreview)", "- Selection evidence: \(selectionPreview)"))
+        }
+        if !materialPreview.isEmpty {
+            lines.append(input.language.text("- 资料依据：\(materialPreview)", "- Material evidence: \(materialPreview)"))
+        } else if input.hasMaterial {
+            lines.append(input.language.text("- 资料依据：\(materialValue) 暂无可读文本。", "- Material evidence: \(materialValue) has no readable text yet."))
+        }
+        if notePreview.isEmpty {
+            lines.append(input.language.text("- 笔记状态：当前笔记为空。", "- Note state: the current note is empty."))
+        } else {
+            lines.append(input.language.text("- 笔记线索：\(notePreview)", "- Note clue: \(notePreview)"))
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func inline(_ text: String) -> String {
         text
             .replacingOccurrences(of: "\\", with: "\\\\")
             .replacingOccurrences(of: "|", with: "\\|")
-            .replacingOccurrences(of: "\n", with: "<br>")
+            .replacingOccurrences(of: "\n", with: " ")
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

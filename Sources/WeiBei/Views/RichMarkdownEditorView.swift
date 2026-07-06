@@ -117,7 +117,19 @@ fileprivate final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler
 final class MarkdownWebView: WKWebView {
     var pasteImageFromClipboard: (() -> Bool)?
     var handleAppShortcut: ((String, NSEvent.ModifierFlags) -> Bool)?
-    var passesVerticalScrollToSuperview = false
+    var passesVerticalScrollToSuperview = false {
+        didSet { updateScrollWheelMonitor() }
+    }
+    private var scrollWheelMonitor: Any?
+
+    deinit {
+        removeScrollWheelMonitor()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        updateScrollWheelMonitor()
+    }
 
     override func keyDown(with event: NSEvent) {
         if event.modifierFlags.contains(.command),
@@ -139,11 +151,7 @@ final class MarkdownWebView: WKWebView {
             return
         }
 
-        if let outerScrollView = nearestSuperviewScrollView() {
-            outerScrollView.scrollWheel(with: event)
-        } else {
-            nextResponder?.scrollWheel(with: event)
-        }
+        forwardVerticalScroll(event)
     }
 
     private func nearestSuperviewScrollView() -> NSScrollView? {
@@ -155,6 +163,46 @@ final class MarkdownWebView: WKWebView {
             candidate = view.superview
         }
         return nil
+    }
+
+    private func updateScrollWheelMonitor() {
+        guard passesVerticalScrollToSuperview, window != nil else {
+            removeScrollWheelMonitor()
+            return
+        }
+        guard scrollWheelMonitor == nil else { return }
+        scrollWheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self, self.shouldForwardVerticalScroll(event) else {
+                return event
+            }
+            self.forwardVerticalScroll(event)
+            return nil
+        }
+    }
+
+    private func removeScrollWheelMonitor() {
+        if let scrollWheelMonitor {
+            NSEvent.removeMonitor(scrollWheelMonitor)
+            self.scrollWheelMonitor = nil
+        }
+    }
+
+    private func shouldForwardVerticalScroll(_ event: NSEvent) -> Bool {
+        guard passesVerticalScrollToSuperview,
+              event.window === window,
+              abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX) else {
+            return false
+        }
+        let localPoint = convert(event.locationInWindow, from: nil)
+        return bounds.contains(localPoint)
+    }
+
+    private func forwardVerticalScroll(_ event: NSEvent) {
+        if let outerScrollView = nearestSuperviewScrollView() {
+            outerScrollView.scrollWheel(with: event)
+        } else {
+            nextResponder?.scrollWheel(with: event)
+        }
     }
 
     private static let shortcutModifierMask: NSEvent.ModifierFlags = [.command, .option, .control, .shift]

@@ -1816,8 +1816,8 @@ struct FloatingSelectionAgentView: View {
     }
 
     private func isOfflineContextPreview(_ message: AgentMessage) -> Bool {
-        message.text.contains("这次提问已经进入对话")
-            || message.text.contains("question was sent into the chat")
+        message.text.contains("## 离线草稿")
+            || message.text.contains("## Offline Draft")
     }
 
     private func isGeneratedSelectionPrompt(_ message: AgentMessage) -> Bool {
@@ -2374,8 +2374,8 @@ private struct AgentBubble: View {
     }
 
     private var isOfflineContextPreview: Bool {
-        message.text.contains("这次提问已经进入对话")
-            || message.text.contains("question was sent into the chat")
+        message.text.contains("## 离线草稿")
+            || message.text.contains("## Offline Draft")
     }
 
     private var assistantMarkColor: Color {
