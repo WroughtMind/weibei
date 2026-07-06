@@ -1562,11 +1562,7 @@ final class WorkspaceStore: ObservableObject {
 
     func applyLastAgentAnswerToNote() {
         guard let answer = lastUsableAgentAnswer else { return }
-        let block = """
-
-        ## \(ui("整理建议", "Organization suggestion"))
-        \(answer.text)
-        """
+        let block = "\n\n\(noteBlockForAgentAnswer(answer.text))"
         updateNote(noteText + block)
         focus(.notes)
     }
@@ -1601,8 +1597,14 @@ final class WorkspaceStore: ObservableObject {
 
     func applyAgentPatchToEditor() {
         guard let answer = lastUsableAgentAnswer else { return }
-        noteEditorCommand = NoteEditorCommand(kind: .applyAgentPatch, markdown: "\n## \(ui("整理建议", "Organization suggestion"))\n\(answer.text)")
+        noteEditorCommand = NoteEditorCommand(kind: .applyAgentPatch, markdown: "\n\(noteBlockForAgentAnswer(answer.text))")
         focus(.notes)
+    }
+
+    private func noteBlockForAgentAnswer(_ answer: String) -> String {
+        let text = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.hasPrefix("#") else { return text }
+        return "## \(ui("整理建议", "Organization suggestion"))\n\(text)"
     }
 
     func askAgent() async {
