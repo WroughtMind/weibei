@@ -107,7 +107,7 @@ PLIST
 fi
 
 open_app() {
-  /usr/bin/open -n "$APP_BUNDLE"
+  /usr/bin/open "$APP_BUNDLE"
 }
 
 cleanup_verify_app() {

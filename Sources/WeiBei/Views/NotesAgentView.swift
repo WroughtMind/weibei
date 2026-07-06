@@ -189,22 +189,42 @@ struct NotePaneView: View {
             ) {
                 noteModeControl
                 if !isImmersiveWriting {
-                    Button { store.resetNote() } label: {
+                    Menu {
+                        Button {
+                            withAnimation(WeiBeiMotion.panel) {
+                                store.createBlankNotebookNote()
+                            }
+                        } label: {
+                            Label(store.ui("新建空白笔记", "New Blank Note"), systemImage: "doc")
+                        }
+
+                        if store.hasSelectedMaterial {
+                            Button {
+                                withAnimation(WeiBeiMotion.panel) {
+                                    store.createNotebookNoteFromCurrentMaterial()
+                                }
+                            } label: {
+                                Label(store.ui("从当前资料开笔记", "Note from Current Material"), systemImage: "link")
+                            }
+                        }
+
+                        if store.canUseSelectedMarkdownAsNotebookNote {
+                            Divider()
+                            Button {
+                                withAnimation(WeiBeiMotion.panel) {
+                                    store.useSelectedMarkdownAsNotebookNote()
+                                }
+                            } label: {
+                                Label(store.ui("把当前 Markdown 作为笔记", "Use Current Markdown as Note"), systemImage: "square.and.pencil")
+                            }
+                        }
+                    } label: {
                         Image(systemName: "doc.badge.plus")
                     }
+                    .menuStyle(.borderlessButton)
                     .buttonStyle(WeiBeiIconButtonStyle(size: 24))
-                    .accessibilityLabel(Text(store.ui("新建独立 Markdown 笔记", "Create standalone Markdown note")))
-                    .help(store.ui("新建独立 Markdown 笔记", "Create standalone Markdown note"))
-                    if store.canUseSelectedMarkdownAsNotebookNote {
-                        Button {
-                            store.useSelectedMarkdownAsNotebookNote()
-                        } label: {
-                            Image(systemName: "square.and.pencil")
-                        }
-                        .buttonStyle(WeiBeiIconButtonStyle(size: 24))
-                        .accessibilityLabel(Text(store.ui("作为笔记编辑", "Edit as note")))
-                        .help(store.ui("把当前 Markdown 文件移到笔记区原地编辑", "Move the current Markdown file into the note editor"))
-                    }
+                    .accessibilityLabel(Text(store.ui("新建笔记", "New Note")))
+                    .help(store.ui("新建空白笔记，或从当前资料开一份带来源的笔记", "Create a blank note or start one from the current material"))
                 }
             }
 

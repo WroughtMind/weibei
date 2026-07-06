@@ -70,8 +70,13 @@ struct WeiBeiApp: App {
                 Button(store.ui("打开资料", "Open Material")) { store.importFilesFromPanel() }
                     .keyboardShortcut("o")
 
-                Button(store.ui("新建笔记", "New Note")) { animateLayout { store.resetNote() } }
+                Button(store.ui("新建空白笔记", "New Blank Note")) { animateLayout { store.createBlankNotebookNote() } }
                     .keyboardShortcut("n")
+                if store.hasSelectedMaterial {
+                    Button(store.ui("从当前资料开笔记", "Note from Current Material")) {
+                        animateLayout { store.createNotebookNoteFromCurrentMaterial() }
+                    }
+                }
 
                 Divider()
 
@@ -738,14 +743,25 @@ struct SettingsView: View {
 
                 settingsRow(
                     title: store.ui("新建笔记", "New Note"),
-                    detail: store.ui("创建当前工作区的新 Markdown 笔记。", "Create a new Markdown note in the current workspace.")
+                    detail: store.ui("空白笔记和资料笔记分开创建，避免误改当前材料或当前笔记。", "Create blank notes and material-based notes separately to avoid changing the current material or note by accident.")
                 ) {
-                    Button(store.ui("新建", "New")) {
-                        withAnimation(WeiBeiMotion.panel) {
-                            store.resetNote()
+                    HStack(spacing: 8) {
+                        Button(store.ui("空白", "Blank")) {
+                            withAnimation(WeiBeiMotion.panel) {
+                                store.createBlankNotebookNote()
+                            }
+                        }
+                        .buttonStyle(WeiBeiTextActionButtonStyle())
+
+                        if store.hasSelectedMaterial {
+                            Button(store.ui("当前资料", "Current Material")) {
+                                withAnimation(WeiBeiMotion.panel) {
+                                    store.createNotebookNoteFromCurrentMaterial()
+                                }
+                            }
+                            .buttonStyle(WeiBeiTextActionButtonStyle())
                         }
                     }
-                    .buttonStyle(WeiBeiTextActionButtonStyle())
                 }
 
                 if store.canUseSelectedMarkdownAsNotebookNote {

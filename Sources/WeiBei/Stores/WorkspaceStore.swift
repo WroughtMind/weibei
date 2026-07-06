@@ -67,6 +67,11 @@ final class WorkspaceStore: ObservableObject {
         var focusedPane: PaneFocus
     }
 
+    private enum NotebookNoteSeed {
+        case blank
+        case currentMaterial(StudyItem)
+    }
+
     private var lastUsableAgentAnswer: AgentMessage? {
         messages.last { $0.isUsableAgentAnswer }
     }
@@ -416,9 +421,16 @@ final class WorkspaceStore: ObservableObject {
         updateNote(value)
     }
 
-    func resetNote() {
-        createNotebookNote()
-        focus(.notes)
+    func createBlankNotebookNote() {
+        createNotebookNote(seed: .blank)
+    }
+
+    func createNotebookNoteFromCurrentMaterial() {
+        guard let selectedMaterialItem else {
+            createBlankNotebookNote()
+            return
+        }
+        createNotebookNote(seed: .currentMaterial(selectedMaterialItem))
     }
 
     func focus(_ pane: PaneFocus) {
@@ -1110,9 +1122,18 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func createNotebookNote() {
+    private func createNotebookNote(seed: NotebookNoteSeed) {
         persistCurrentNote()
-        let title = ui("新笔记", "New Note")
+        let sourceItem: StudyItem?
+        let title: String
+        switch seed {
+        case .blank:
+            sourceItem = nil
+            title = ui("新笔记", "New Note")
+        case .currentMaterial(let item):
+            sourceItem = item
+            title = ui("\(displayTitle(for: item)) 笔记", "\(displayTitle(for: item)) Notes")
+        }
         let notesDirectory = appOwnedFilesDirectory().appendingPathComponent("Notes", isDirectory: true)
 
         do {
@@ -1127,14 +1148,18 @@ final class WorkspaceStore: ObservableObject {
                 isSample: false,
                 isNotebookNote: true
             )
-            try defaultNote(for: item).write(to: url, atomically: true, encoding: .utf8)
+            let markdown = defaultNotebookNote(title: item.title, sourceItem: sourceItem)
+            try markdown.write(to: url, atomically: true, encoding: .utf8)
             importedItems.append(item)
             activeNotebookItemID = item.id
-            noteText = noteText(for: item)
+            noteText = markdown
             revealRichWritingSurface()
             focus(.notes)
             save()
-            showTransientNoteStatus(ui("已创建笔记：\(url.lastPathComponent)", "Created note: \(url.lastPathComponent)"))
+            let status = sourceItem == nil
+                ? ui("已新建空白笔记：\(url.lastPathComponent)", "Created blank note: \(url.lastPathComponent)")
+                : ui("已为当前资料新建笔记：\(url.lastPathComponent)", "Created note from current material: \(url.lastPathComponent)")
+            showTransientNoteStatus(status)
         } catch {
             noteFileError = ui("无法创建笔记：\(error.localizedDescription)", "Could not create note: \(error.localizedDescription)")
         }
@@ -1779,7 +1804,12 @@ final class WorkspaceStore: ObservableObject {
 
     private func defaultNote(for item: StudyItem?) -> String {
         let title = item.map(displayTitle) ?? ui("新笔记", "New Note")
-        let excerptSeed = item.map { $0.isNotebookNote ? "" : ui("> 来源：\(displayTitle(for: $0))\n", "> Source: \(displayTitle(for: $0))\n") } ?? ""
+        let sourceItem = item?.isNotebookNote == true ? nil : item
+        return defaultNotebookNote(title: title, sourceItem: sourceItem)
+    }
+
+    private func defaultNotebookNote(title: String, sourceItem: StudyItem?) -> String {
+        let excerptSeed = sourceItem.map { ui("> 来源：\(displayTitle(for: $0))\n", "> Source: \(displayTitle(for: $0))\n") } ?? ""
         return """
         # \(title)
 
