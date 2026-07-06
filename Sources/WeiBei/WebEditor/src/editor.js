@@ -349,7 +349,7 @@ const mapMarkdownOutsideCode = (markdown, transform) => {
   for (let index = 0; index < parts.length; index += 2) {
     const line = parts[index] || '';
     const newline = parts[index + 1] || '';
-    const fence = line.match(/^\s*(`{3,}|~{3,})/);
+    const fence = line.match(/^\s*(?:>\s*)*(`{3,}|~{3,})/);
     if (fence) {
       if (!inFence) {
         inFence = true;

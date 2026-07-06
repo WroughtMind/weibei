@@ -61,6 +61,12 @@ HTML 换行第一行<br />第二行，选区应读作两行。
 >
 > 自定义 Callout 不应该漏出源标记。
 
+> 引用里的代码块：
+>
+> ```txt
+> \\#quoted-code \\$5 \\[!note] <br />
+> ```
+
 行内公式 $E = mc^2$、$\\alpha_1 + \\beta^2$、$A^*$，普通金额 $5 不应该被误伤。
 
 Milkdown 公式插件应直接渲染 $text^*$，不能额外生成源码灰块。
@@ -1108,6 +1114,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             ("block comment", "%%\n这是一段块注释\n跨行也应该弱显示\n%%"),
             ("tag", "#nested/tag"),
             ("frontmatter", "course: 货币金融学"),
+            ("quoted code block", "> \\#quoted-code \\$5 \\[!note] <br />"),
             ("code fence", "```swift"),
             ("inline html break code", "`<br />`"),
             ("double backtick html break code", "``内部 ` <br />``"),
