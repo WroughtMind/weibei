@@ -4,6 +4,37 @@ import SwiftUI
 import WeiBeiCore
 import WebKit
 
+struct ReaderPaneView: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    var reorderRole: WorkspacePaneRole? = nil
+
+    var body: some View {
+        VStack(spacing: 0) {
+            WeiBeiPaneHeader(
+                title: store.ui("文档", "Document"),
+                latinMark: store.interfaceLanguage == .chinese ? "DOC" : nil,
+                subtitle: readerSubtitle,
+                appearanceMode: store.appearanceMode,
+                reorderRole: reorderRole
+            ) {
+                EmptyView()
+            }
+
+            ReaderView()
+        }
+        .frame(minHeight: 280)
+        .foregroundStyle(WeiBeiTheme.ink)
+        .background(WeiBeiTheme.paper)
+    }
+
+    private var readerSubtitle: String {
+        if let title = store.readerLocationTitle, !title.isEmpty {
+            return title
+        }
+        return store.selectedMaterialItem.map { store.displayTitle(for: $0) } ?? store.ui("未选择资料", "No material selected")
+    }
+}
+
 struct ReaderView: View {
     var isImmersive = false
 

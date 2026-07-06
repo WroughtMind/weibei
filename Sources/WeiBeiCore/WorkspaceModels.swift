@@ -86,6 +86,73 @@ public enum PaneFocus: String, Codable, Hashable {
     case agent
 }
 
+public enum WorkspacePaneRole: String, Codable, CaseIterable, Identifiable, Hashable {
+    case reader
+    case agent
+    case notes
+
+    public var id: String { rawValue }
+
+    public func label(language: WeiBeiInterfaceLanguage) -> String {
+        switch self {
+        case .reader:
+            return language.text("文档", "Document")
+        case .agent:
+            return language.text("对话", "Chat")
+        case .notes:
+            return language.text("笔记", "Notes")
+        }
+    }
+
+    public func shortLabel(language: WeiBeiInterfaceLanguage) -> String {
+        switch self {
+        case .reader:
+            return language.text("文", "Doc")
+        case .agent:
+            return language.text("对", "Chat")
+        case .notes:
+            return language.text("笔", "Notes")
+        }
+    }
+
+    public var focus: PaneFocus {
+        switch self {
+        case .reader:
+            return .reader
+        case .agent:
+            return .agent
+        case .notes:
+            return .notes
+        }
+    }
+
+    public var systemImage: String {
+        switch self {
+        case .reader:
+            return "doc.text.magnifyingglass"
+        case .agent:
+            return "bubble.left.and.text.bubble.right"
+        case .notes:
+            return "square.and.pencil"
+        }
+    }
+
+    public static var defaultThreePaneOrder: [WorkspacePaneRole] {
+        [.reader, .agent, .notes]
+    }
+
+    public static func normalized(_ roles: [WorkspacePaneRole]) -> [WorkspacePaneRole] {
+        var result: [WorkspacePaneRole] = []
+        for role in roles where !result.contains(role) {
+            result.append(role)
+        }
+        for role in allCases where !result.contains(role) {
+            result.append(role)
+        }
+        return Array(result.prefix(allCases.count))
+    }
+}
+
 public enum WikiLink {
     public static func targetTitle(from rawTitle: String) -> String {
         let target = splitObsidianFields(rawTitle).first?
@@ -211,6 +278,26 @@ public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable {
             return true
         case .immersiveReading:
             return false
+        }
+    }
+
+    public var isDocumentThreePane: Bool {
+        switch self {
+        case .documentAgentNotes, .documentNotesAgent:
+            return true
+        case .documentNotesSplit, .immersiveReading, .immersiveConversation, .immersiveWriting:
+            return false
+        }
+    }
+
+    public var defaultThreePaneOrder: [WorkspacePaneRole]? {
+        switch self {
+        case .documentAgentNotes:
+            return [.reader, .agent, .notes]
+        case .documentNotesAgent:
+            return [.reader, .notes, .agent]
+        case .documentNotesSplit, .immersiveReading, .immersiveConversation, .immersiveWriting:
+            return nil
         }
     }
 
@@ -516,6 +603,7 @@ public struct PersistedWorkspace: Codable {
     public var activeNotebookItemID: String?
     public var modelName: String?
     public var workspaceLayout: WorkspaceLayout?
+    public var threePaneOrder: [WorkspacePaneRole]?
     public var agentSurface: AgentSurface?
     public var noteRenderMode: NoteRenderMode?
     public var showLibrary: Bool?
@@ -523,13 +611,14 @@ public struct PersistedWorkspace: Codable {
     public var appearanceModeRaw: String?
     public var interfaceLanguageRaw: String?
 
-    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], selectedItemID: String? = nil, activeNotebookItemID: String? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showRightPane: Bool? = nil, appearanceModeRaw: String? = nil, interfaceLanguageRaw: String? = nil) {
+    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], selectedItemID: String? = nil, activeNotebookItemID: String? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, threePaneOrder: [WorkspacePaneRole]? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showRightPane: Bool? = nil, appearanceModeRaw: String? = nil, interfaceLanguageRaw: String? = nil) {
         self.importedItems = importedItems
         self.notesByItemID = notesByItemID
         self.selectedItemID = selectedItemID
         self.activeNotebookItemID = activeNotebookItemID
         self.modelName = modelName
         self.workspaceLayout = workspaceLayout
+        self.threePaneOrder = threePaneOrder
         self.agentSurface = agentSurface
         self.noteRenderMode = noteRenderMode
         self.showLibrary = showLibrary

@@ -429,10 +429,8 @@ private struct UnifiedTopBarView: View {
 
     private var shortLayoutLabel: String {
         switch store.layout {
-        case .documentAgentNotes:
-            return store.ui("对话中栏", "Chat Center")
-        case .documentNotesAgent:
-            return store.ui("对话右栏", "Chat Right")
+        case .documentAgentNotes, .documentNotesAgent:
+            return store.threePaneOrderLabel(compact: true)
         case .documentNotesSplit:
             return store.ui("文笔对半", "Half Split")
         case .immersiveReading:
@@ -780,44 +778,25 @@ private struct LayoutContentView: View {
     var body: some View {
         Group {
             switch store.layout {
-            case .documentAgentNotes:
+            case .documentAgentNotes, .documentNotesAgent:
                 if store.showRightPane {
+                    let order = store.normalizedThreePaneOrder
                     ResizableThreePane(
                         firstSplit: firstSplit,
                         secondSplit: secondSplit,
-                        minFirst: 320,
-                        minSecond: normalSidePaneMinimum,
-                        minThird: normalSidePaneMinimum
+                        minFirst: minimumWidth(for: order[0]),
+                        minSecond: minimumWidth(for: order[1]),
+                        minThird: minimumWidth(for: order[2])
                     ) {
-                        ReaderView()
+                        paneView(for: order[0])
                     } second: {
-                        AgentPaneView()
+                        paneView(for: order[1])
                     } third: {
-                        NotePaneView()
+                        paneView(for: order[2])
                     }
                     .transition(WeiBeiTransition.rightPanel)
                 } else {
-                    ReaderView()
-                        .transition(WeiBeiTransition.layout)
-                }
-            case .documentNotesAgent:
-                if store.showRightPane {
-                    ResizableThreePane(
-                        firstSplit: firstSplit,
-                        secondSplit: secondSplit,
-                        minFirst: 320,
-                        minSecond: normalSidePaneMinimum,
-                        minThird: normalSidePaneMinimum
-                    ) {
-                        ReaderView()
-                    } second: {
-                        NotePaneView()
-                    } third: {
-                        AgentPaneView()
-                    }
-                    .transition(WeiBeiTransition.rightPanel)
-                } else {
-                    ReaderView()
+                    ReaderPaneView()
                         .transition(WeiBeiTransition.layout)
                 }
             case .documentNotesSplit:
@@ -957,6 +936,27 @@ private struct LayoutContentView: View {
 
     private var normalSidePaneMinimum: CGFloat {
         store.showLibrary ? 220 : 260
+    }
+
+    private func minimumWidth(for role: WorkspacePaneRole) -> CGFloat {
+        switch role {
+        case .reader:
+            return 320
+        case .agent, .notes:
+            return normalSidePaneMinimum
+        }
+    }
+
+    @ViewBuilder
+    private func paneView(for role: WorkspacePaneRole) -> some View {
+        switch role {
+        case .reader:
+            ReaderPaneView(reorderRole: .reader)
+        case .agent:
+            AgentPaneView(reorderRole: .agent)
+        case .notes:
+            NotePaneView(reorderRole: .notes)
+        }
     }
 
     private var conversationSourceRailItems: [ContextRailItem] {

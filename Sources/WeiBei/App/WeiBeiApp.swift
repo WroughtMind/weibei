@@ -652,17 +652,6 @@ struct SettingsView: View {
                     }
                 }
 
-                settingsRow(
-                    title: store.ui("课程目录", "Course Index"),
-                    detail: store.ui("沉浸模式也保留课程目录入口，便于随时换材料。", "Immersive modes keep the course index entry so you can switch material anytime.")
-                ) {
-                    Button(store.showLibrary ? store.ui("收起", "Hide") : store.ui("打开", "Show")) {
-                        withAnimation(WeiBeiMotion.layout) {
-                            store.toggleLibrary()
-                        }
-                    }
-                    .buttonStyle(WeiBeiTextActionButtonStyle(active: store.showLibrary))
-                }
             }
         }
     }

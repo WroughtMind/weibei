@@ -75,11 +75,12 @@ private extension View {
     }
 }
 
-private struct WeiBeiPaneHeader<Actions: View>: View {
+struct WeiBeiPaneHeader<Actions: View>: View {
     var title: String
     var latinMark: String? = nil
     var subtitle: String
     var appearanceMode: WeiBeiAppearanceMode
+    var reorderRole: WorkspacePaneRole? = nil
     @ViewBuilder var actions: () -> Actions
 
     var body: some View {
@@ -105,10 +106,62 @@ private struct WeiBeiPaneHeader<Actions: View>: View {
             actions()
         }
         .weibeiPaneHeaderChrome(appearanceMode: appearanceMode)
+        .modifier(PaneHeaderReorderModifier(role: reorderRole))
     }
 
     private var titleUsesEnglishBrand: Bool {
         title.unicodeScalars.allSatisfy(\.isASCII)
+    }
+}
+
+private struct PaneHeaderReorderModifier: ViewModifier {
+    @EnvironmentObject private var store: WorkspaceStore
+    @State private var dragActive = false
+
+    var role: WorkspacePaneRole?
+
+    func body(content: Content) -> some View {
+        if let role {
+            content
+                .overlay {
+                    if dragActive {
+                        Rectangle()
+                            .stroke(WeiBeiTheme.cinnabar.opacity(0.46), lineWidth: 1)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 5)
+                            .transition(WeiBeiTransition.floating)
+                    }
+                }
+                .contentShape(Rectangle())
+                .textSelection(.disabled)
+                .highPriorityGesture(
+                    DragGesture(minimumDistance: 12, coordinateSpace: .global)
+                        .onChanged { value in
+                            guard abs(value.translation.width) > 2 else { return }
+                            withAnimation(WeiBeiMotion.micro) {
+                                dragActive = true
+                            }
+                        }
+                        .onEnded { value in
+                            withAnimation(WeiBeiMotion.layout) {
+                                store.moveThreePaneRole(role, horizontalDelta: value.translation.width)
+                            }
+                            withAnimation(WeiBeiMotion.micro) {
+                                dragActive = false
+                            }
+                        }
+                )
+                .onChange(of: store.normalizedThreePaneOrder) { _, _ in
+                    if dragActive {
+                        withAnimation(WeiBeiMotion.micro) {
+                            dragActive = false
+                        }
+                    }
+                }
+                .help(store.ui("拖动标题栏重排三栏", "Drag the pane header to reorder panes"))
+        } else {
+            content
+        }
     }
 }
 
@@ -178,6 +231,7 @@ private struct AgentComposerField: View {
 
 struct NotePaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
+    var reorderRole: WorkspacePaneRole? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -185,7 +239,8 @@ struct NotePaneView: View {
                 title: store.ui("笔记", "Notes"),
                 latinMark: store.interfaceLanguage == .chinese ? "NOTES" : nil,
                 subtitle: noteHeaderSubtitle,
-                appearanceMode: store.appearanceMode
+                appearanceMode: store.appearanceMode,
+                reorderRole: reorderRole
             ) {
                 noteModeControl
                 Button {
@@ -915,6 +970,7 @@ struct MarkdownPreviewView: View {
 
 struct AgentPaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
+    var reorderRole: WorkspacePaneRole? = nil
     @FocusState private var draftFocused: Bool
 
     private let agentBottomAnchorID = "agentConversationBottom"
@@ -925,7 +981,8 @@ struct AgentPaneView: View {
                 title: store.ui("对话", "Chat"),
                 latinMark: store.interfaceLanguage == .chinese ? "CHAT" : nil,
                 subtitle: store.agentConversationSubtitle,
-                appearanceMode: store.appearanceMode
+                appearanceMode: store.appearanceMode,
+                reorderRole: reorderRole
             ) {
                 EmptyView()
             }

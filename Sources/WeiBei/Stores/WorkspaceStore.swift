@@ -44,6 +44,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var focusedPane: PaneFocus = .reader
     @Published var focusRequest = 0
     @Published var layout: WorkspaceLayout = .documentAgentNotes
+    @Published var threePaneOrder: [WorkspacePaneRole] = WorkspacePaneRole.defaultThreePaneOrder
     @Published var agentSurface: AgentSurface = .bottomDrawer
     @Published var noteRenderMode: NoteRenderMode = .rich
     @Published var showQuietInsight = true
@@ -87,6 +88,7 @@ final class WorkspaceStore: ObservableObject {
         var readerSearch: String
         var readerPageIndex: Int
         var focusedPane: PaneFocus
+        var threePaneOrder: [WorkspacePaneRole]
     }
 
     private enum NotebookNoteSeed {
@@ -633,11 +635,16 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func setLayout(_ layout: WorkspaceLayout) {
-        if self.layout != layout {
+        let presetOrder = layout.defaultThreePaneOrder
+        let orderWillChange = presetOrder.map { WorkspacePaneRole.normalized($0) != normalizedThreePaneOrder } ?? false
+        if self.layout != layout || orderWillChange {
             recordNavigationPoint()
             clearUnpinnedFloatingSelection()
         }
         self.layout = layout
+        if let order = presetOrder {
+            threePaneOrder = order
+        }
         let nextFocus: PaneFocus = switch layout {
         case .immersiveConversation:
             .agent
@@ -657,6 +664,50 @@ final class WorkspaceStore: ObservableObject {
         }
         focus(nextFocus)
         refreshQuietInsightIfNeeded()
+        save()
+    }
+
+    var normalizedThreePaneOrder: [WorkspacePaneRole] {
+        WorkspacePaneRole.normalized(threePaneOrder)
+    }
+
+    func threePaneOrderLabel(compact: Bool = false) -> String {
+        let order = normalizedThreePaneOrder
+        let labels = order.map { role in
+            compact ? role.shortLabel(language: interfaceLanguage) : role.label(language: interfaceLanguage)
+        }
+        return labels.joined(separator: "-")
+    }
+
+    func swapThreePaneRoles(_ dragged: WorkspacePaneRole, over target: WorkspacePaneRole) {
+        guard dragged != target else { return }
+        guard layout.isDocumentThreePane else { return }
+        var order = normalizedThreePaneOrder
+        guard let draggedIndex = order.firstIndex(of: dragged),
+              let targetIndex = order.firstIndex(of: target) else { return }
+        recordNavigationPoint()
+        clearUnpinnedFloatingSelection()
+        order.swapAt(draggedIndex, targetIndex)
+        threePaneOrder = order
+        layout = layoutMatchingThreePaneOrder(order)
+        focus(dragged.focus)
+        save()
+    }
+
+    func moveThreePaneRole(_ role: WorkspacePaneRole, horizontalDelta: CGFloat) {
+        let threshold: CGFloat = 72
+        guard abs(horizontalDelta) >= threshold else { return }
+        guard layout.isDocumentThreePane else { return }
+        var order = normalizedThreePaneOrder
+        guard let currentIndex = order.firstIndex(of: role) else { return }
+        let targetIndex = horizontalDelta < 0 ? currentIndex - 1 : currentIndex + 1
+        guard order.indices.contains(targetIndex) else { return }
+        recordNavigationPoint()
+        clearUnpinnedFloatingSelection()
+        order.swapAt(currentIndex, targetIndex)
+        threePaneOrder = order
+        layout = layoutMatchingThreePaneOrder(order)
+        focus(role.focus)
         save()
     }
 
@@ -782,7 +833,8 @@ final class WorkspaceStore: ObservableObject {
             showReaderSearch: showReaderSearch,
             readerSearch: readerSearch,
             readerPageIndex: readerPageIndex,
-            focusedPane: focusedPane
+            focusedPane: focusedPane,
+            threePaneOrder: normalizedThreePaneOrder
         )
     }
 
@@ -800,6 +852,7 @@ final class WorkspaceStore: ObservableObject {
         readerSearch = snapshot.readerSearch
         readerPageIndex = snapshot.readerPageIndex
         focusedPane = snapshot.focusedPane
+        threePaneOrder = WorkspacePaneRole.normalized(snapshot.threePaneOrder)
         noteText = noteText(for: activeNoteItem)
         readerLocationTitle = selectedMaterialItem.map(displayTitle)
         readerTargetPageIndex = selectedMaterialItem?.kind == .pdf ? snapshot.readerPageIndex : nil
@@ -1942,12 +1995,23 @@ final class WorkspaceStore: ObservableObject {
         quietInsightSignature = ""
     }
 
+    private func layoutMatchingThreePaneOrder(_ order: [WorkspacePaneRole]) -> WorkspaceLayout {
+        let normalized = WorkspacePaneRole.normalized(order)
+        if normalized == [.reader, .notes, .agent] {
+            return .documentNotesAgent
+        }
+        return .documentAgentNotes
+    }
+
     private var rightPaneRevealFocus: PaneFocus {
+        if layout.isDocumentThreePane {
+            return normalizedThreePaneOrder.last?.focus ?? .notes
+        }
         switch layout {
         case .documentNotesAgent, .immersiveConversation:
-            .agent
+            return .agent
         default:
-            .notes
+            return .notes
         }
     }
 
@@ -2067,6 +2131,12 @@ final class WorkspaceStore: ObservableObject {
         }
         if let workspaceLayout = snapshot.workspaceLayout {
             layout = workspaceLayout
+            if let order = workspaceLayout.defaultThreePaneOrder {
+                threePaneOrder = order
+            }
+        }
+        if let threePaneOrder = snapshot.threePaneOrder {
+            self.threePaneOrder = WorkspacePaneRole.normalized(threePaneOrder)
         }
         if let agentSurface = snapshot.agentSurface {
             self.agentSurface = agentSurface == .selectionFloat ? .hidden : agentSurface
@@ -2124,6 +2194,7 @@ final class WorkspaceStore: ObservableObject {
             activeNotebookItemID: activeNotebookItemID,
             modelName: modelName,
             workspaceLayout: layout,
+            threePaneOrder: normalizedThreePaneOrder,
             agentSurface: agentSurface == .selectionFloat ? .hidden : agentSurface,
             noteRenderMode: noteRenderMode,
             showLibrary: showLibrary,
