@@ -1396,7 +1396,7 @@ private struct AgentSelectionAttachmentPill: View {
                 .lineSpacing(3)
                 .lineLimit(5)
                 .foregroundStyle(WeiBeiTheme.ink)
-                .textSelection(.enabled)
+                .allowsHitTesting(false)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 1)
         }
@@ -1504,7 +1504,7 @@ private struct CompactAgentMessagePreviewRow: View {
                 .foregroundStyle(WeiBeiTheme.ink)
                 .lineSpacing(2)
                 .lineLimit(message.role == .user ? 2 : 5)
-                .textSelection(.enabled)
+                .allowsHitTesting(false)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, 9)
@@ -2480,10 +2480,10 @@ private struct AgentBubble: View {
                 .font(.system(size: 11.5, weight: .semibold))
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
             Text(displayText)
-                .textSelection(.enabled)
                 .font(.system(size: 12.5))
                 .lineSpacing(3)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .allowsHitTesting(false)
         }
     }
 
@@ -2537,10 +2537,10 @@ private struct AgentMessageMarkdownText: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             Text(renderedText)
-                .textSelection(.enabled)
                 .font(.system(size: 14))
                 .lineSpacing(4)
                 .foregroundStyle(WeiBeiTheme.ink)
+                .allowsHitTesting(false)
         }
     }
 

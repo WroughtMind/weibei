@@ -2043,6 +2043,15 @@ expect(notesAgentSource.contains("private struct AgentSelectionAttachmentPill")
     && notesAgentSource.components(separatedBy: "AgentSelectionAttachmentPill()").count >= 4
     && !notesAgentSource.contains("Text(\"1 个已选文本片段\")")
     && !notesAgentSource.contains("Text(\"已含选区\")"), "agent selection context renders as a hoverable attachment pill near composers instead of text inside the empty state")
+if let attachmentRowStart = notesAgentSource.range(of: "private func selectionAttachmentRow")?.lowerBound,
+   let attachmentHoverStart = notesAgentSource[attachmentRowStart...].range(of: "private func setPillHovering")?.lowerBound {
+    let attachmentRowSource = String(notesAgentSource[attachmentRowStart..<attachmentHoverStart])
+    expect(attachmentRowSource.contains("Text(selection.text)")
+        && attachmentRowSource.contains(".allowsHitTesting(false)")
+        && !attachmentRowSource.contains(".textSelection(.enabled)"), "selected text attachment popover previews do not trap scroll or text drag events")
+} else {
+    expect(false, "selected text attachment row source is inspectable")
+}
 if let noteBridgeStart = notesAgentSource.range(of: "onAskAgentWithSelection: { text, anchor in")?.lowerBound,
    let wikiLinkStart = notesAgentSource[noteBridgeStart...].range(of: "}, onWikiLink:")?.lowerBound {
     let noteSelectionBridgeSource = String(notesAgentSource[noteBridgeStart..<wikiLinkStart])
@@ -2102,6 +2111,33 @@ expect(notesAgentSource.contains("private var isCredentialNotice: Bool")
     && !notesAgentSource.contains(".frame(maxWidth: bubbleMaxWidth, alignment: .leading)")
     && !notesAgentSource.contains("private var bubbleFill")
     && !notesAgentSource.contains("RoundedRectangle(cornerRadius: 10)"), "main agent conversation renders as an open sidebar stream with markdown text instead of boxed chat bubbles")
+if let credentialStart = notesAgentSource.range(of: "private var credentialNoticeContent")?.lowerBound,
+   let isUserStart = notesAgentSource[credentialStart...].range(of: "private var isUser")?.lowerBound {
+    let credentialSource = String(notesAgentSource[credentialStart..<isUserStart])
+    expect(credentialSource.contains("Text(displayText)")
+        && credentialSource.contains(".allowsHitTesting(false)")
+        && !credentialSource.contains(".textSelection(.enabled)"), "agent credential notice text lets wheel events pass to the conversation scroll")
+} else {
+    expect(false, "agent credential notice source is inspectable")
+}
+if let messageTextStart = notesAgentSource.range(of: "private struct AgentMessageMarkdownText")?.lowerBound,
+   let thinkingStart = notesAgentSource[messageTextStart...].range(of: "private struct AgentThinkingIndicator")?.lowerBound {
+    let messageTextSource = String(notesAgentSource[messageTextStart..<thinkingStart])
+    expect(messageTextSource.contains("Text(renderedText)")
+        && messageTextSource.contains(".allowsHitTesting(false)")
+        && !messageTextSource.contains(".textSelection(.enabled)"), "plain agent message text does not trap scrolling over user turns")
+} else {
+    expect(false, "agent message text source is inspectable")
+}
+if let compactRowStart = notesAgentSource.range(of: "private struct CompactAgentMessagePreviewRow")?.lowerBound,
+   let speakerTitleStart = notesAgentSource[compactRowStart...].range(of: "private var speakerTitle")?.lowerBound {
+    let compactRowSource = String(notesAgentSource[compactRowStart..<speakerTitleStart])
+    expect(compactRowSource.contains("Text(renderedText)")
+        && compactRowSource.contains(".allowsHitTesting(false)")
+        && !compactRowSource.contains(".textSelection(.enabled)"), "compact agent preview rows keep hover and scroll responsive over text")
+} else {
+    expect(false, "compact agent preview row source is inspectable")
+}
 expect(notesAgentSource.contains("store.canOpenSelectedSourceReference") && notesAgentSource.contains("Button(store.ui(\"来源\", \"Source\"))") && notesAgentSource.contains("openSourceReference()"), "selection agent exposes a lightweight source jump when the note selection is a reference")
 expect(notesAgentSource.contains("onSourceReference: { reference in store.openSourceReference(reference) }"), "note editor source references can jump back to material")
 expect(notesAgentSource.contains("emptyNoteHintText") && notesAgentSource.contains("store.hasSelectedMaterial ? store.ui(\"开始记录当前材料\"") && notesAgentSource.contains("store.ui(\"开始记录当前笔记\"") && notesAgentSource.contains(".allowsHitTesting(false)"), "blank note editor cue matches whether a material is selected")
