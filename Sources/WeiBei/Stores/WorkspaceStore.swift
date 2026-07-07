@@ -81,6 +81,7 @@ final class WorkspaceStore: ObservableObject {
     private var isRestoringNavigation = false
     private var didRunVerificationScenario = false
     private var lastSelectionAttachmentDate: Date?
+    private var pendingSelectionAttachmentTask: Task<Void, Never>?
     private let selectionAttachmentMergeWindow: TimeInterval = 1.8
     private var threePaneReorderFrames: [WorkspacePaneRole: CGRect] = [:]
 
@@ -1470,7 +1471,7 @@ final class WorkspaceStore: ObservableObject {
             floatingSelectionPrompt = nextSelection.label(language: interfaceLanguage)
             pinnedFloatingAgent = false
             if shouldRouteToConversation {
-                addSelectionAttachment(nextSelection)
+                scheduleSelectionAttachment(nextSelection)
                 showQuietInsight = false
             } else if shouldRevealSelectionPrompt {
                 agentSurface = .selectionFloat
@@ -1492,10 +1493,29 @@ final class WorkspaceStore: ObservableObject {
 
     func clearSelectionAttachments() {
         withAnimation(WeiBeiMotion.panel) {
+            cancelPendingSelectionAttachment()
             selectionAttachments = []
             lastSelectionAttachmentDate = nil
             clearUnpinnedFloatingSelection(keepContext: false)
         }
+    }
+
+    private func scheduleSelectionAttachment(_ selection: SelectionContext) {
+        pendingSelectionAttachmentTask?.cancel()
+        pendingSelectionAttachmentTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 220_000_000)
+            guard !Task.isCancelled else { return }
+            guard self?.selectionContext?.id == selection.id else { return }
+            withAnimation(WeiBeiMotion.panel) {
+                self?.addSelectionAttachment(selection)
+            }
+            self?.pendingSelectionAttachmentTask = nil
+        }
+    }
+
+    private func cancelPendingSelectionAttachment() {
+        pendingSelectionAttachmentTask?.cancel()
+        pendingSelectionAttachmentTask = nil
     }
 
     private func addSelectionAttachment(_ selection: SelectionContext) {
@@ -1613,6 +1633,7 @@ final class WorkspaceStore: ObservableObject {
                 routeSelectionToConversation(selectionContext)
             } else {
                 withAnimation(WeiBeiMotion.panel) {
+                    cancelPendingSelectionAttachment()
                     addSelectionAttachment(selectionContext)
                     floatingSelectionPrompt = selectionContext.label(language: interfaceLanguage)
                     agentSurface = .selectionFloat
@@ -1638,6 +1659,7 @@ final class WorkspaceStore: ObservableObject {
         let context = selection ?? selectionContext
         withAnimation(WeiBeiMotion.panel) {
             if let context {
+                cancelPendingSelectionAttachment()
                 addSelectionAttachment(context)
                 floatingSelectionPrompt = context.label(language: interfaceLanguage)
             }
@@ -1814,6 +1836,10 @@ final class WorkspaceStore: ObservableObject {
         guard !question.isEmpty, !isAskingAgent else { return }
 
         persistCurrentNote()
+        if selectionAttachments.isEmpty, let selectionContext, isConversationSurfaceVisible {
+            cancelPendingSelectionAttachment()
+            addSelectionAttachment(selectionContext)
+        }
         let sentSelectionTitle = agentSelectionTitle
         let sentSelectionText = agentSelectionText
         let shouldClearSentDocumentSelection = sentSelectionText != nil && selectionContext?.source == .document
@@ -1822,6 +1848,7 @@ final class WorkspaceStore: ObservableObject {
         agentDraft = ""
         if !selectionAttachments.isEmpty {
             withAnimation(WeiBeiMotion.panel) {
+                cancelPendingSelectionAttachment()
                 selectionAttachments = []
                 lastSelectionAttachmentDate = nil
             }
@@ -2096,6 +2123,7 @@ final class WorkspaceStore: ObservableObject {
 
     private func clearUnpinnedFloatingSelection(keepContext: Bool = true) {
         if !keepContext {
+            cancelPendingSelectionAttachment()
             selectionContext = nil
             selectionAnchor = nil
             floatingSelectionPrompt = ui("当前选区", "Current selection")
