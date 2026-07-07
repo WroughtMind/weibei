@@ -215,6 +215,16 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           inlineFootnoteText: document.querySelector('.weibei-inline-footnote')?.textContent || '',
           inlineFootnotes: document.querySelectorAll('.weibei-inline-footnote').length,
           comments: document.querySelectorAll('.weibei-comment').length,
+          commentsWeak: (() => {
+            const comments = Array.from(document.querySelectorAll('.weibei-comment'));
+            if (comments.length < 1) return false;
+            return comments.every((comment) => {
+              const style = getComputedStyle(comment);
+              return parseFloat(style.opacity || '1') <= 0.72
+                || style.color === 'rgba(0, 0, 0, 0)'
+                || parseFloat(style.fontSize || '16') <= 12;
+            });
+          })(),
           tags: document.querySelectorAll('.weibei-tag').length,
           blockIds: document.querySelectorAll('.weibei-block-id').length,
           embeds: document.querySelectorAll('.weibei-embed-preview').length,
@@ -406,6 +416,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             if (result["comments"] as? Int ?? 0) < 2 {
                 self.fail("block comment was not decorated")
+                return
+            }
+            if result["commentsWeak"] as? Bool != true {
+                self.fail("Obsidian comments should be weakly visible, not compete with body text")
                 return
             }
             if (result["hardBreaks"] as? Int ?? 0) < 1 {
