@@ -356,7 +356,7 @@ struct NotePaneView: View {
     }
 
     private var noteModeControl: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: 0) {
             ForEach(NoteRenderMode.visibleCases) { mode in
                 let selected = store.noteRenderMode == mode
                 Button {
@@ -365,33 +365,44 @@ struct NotePaneView: View {
                     }
                 } label: {
                     Text(compactModeLabel(for: mode))
-                        .font(.system(size: 11.5, weight: selected ? .semibold : .medium))
-                        .foregroundStyle(selected ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
-                        .frame(width: store.interfaceLanguage == .english ? 56 : 42, height: 26)
-                        .background {
-                            RoundedRectangle(cornerRadius: 7)
-                                .fill(selected ? WeiBeiTheme.paperRaised.opacity(0.72) : Color.clear)
-                        }
+                        .font(.system(size: 11.5, weight: selected ? .semibold : .medium, design: .serif))
+                        .foregroundStyle(selected ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
+                        .padding(.horizontal, store.interfaceLanguage == .english ? 9 : 8)
+                        .frame(height: 27)
                         .overlay(alignment: .bottom) {
                             if selected {
                                 Capsule()
-                                    .fill(WeiBeiTheme.cinnabar.opacity(0.58))
-                                    .frame(width: 15, height: 1)
-                                    .padding(.bottom, 2)
+                                    .fill(WeiBeiTheme.cinnabar.opacity(0.64))
+                                    .frame(width: 18, height: 1.5)
                             }
                         }
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 7)
-                                .stroke(selected ? WeiBeiTheme.cinnabar.opacity(0.18) : Color.clear, lineWidth: 1)
-                        }
+                        .contentShape(Rectangle())
                         .animation(WeiBeiMotion.micro, value: selected)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text(mode.label(language: store.interfaceLanguage)))
                 .help(mode.label(language: store.interfaceLanguage))
+                if mode.id != NoteRenderMode.visibleCases.last?.id {
+                    Rectangle()
+                        .fill(WeiBeiTheme.hairline.opacity(0.30))
+                        .frame(width: 1, height: 12)
+                        .padding(.horizontal, 2)
+                }
             }
         }
-        .weibeiHeaderAccessoryGroup()
+        .padding(.horizontal, 7)
+        .frame(height: 31)
+        .background {
+            Capsule()
+                .fill(WeiBeiTheme.paperRaised.opacity(0.22))
+        }
+        .overlay(alignment: .bottom) {
+            Capsule()
+                .fill(WeiBeiTheme.hairline.opacity(0.30))
+                .frame(height: 1)
+                .padding(.horizontal, 8)
+        }
+        .animation(WeiBeiMotion.appearance, value: store.appearanceMode)
     }
 
     private func compactModeLabel(for mode: NoteRenderMode) -> String {
