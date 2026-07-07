@@ -532,56 +532,67 @@ private struct NotebookCreationPanel: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text(panelEyebrow)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                Spacer()
-                Button(store.ui("取消", "Cancel"), action: cancel)
-                    .buttonStyle(WeiBeiTextActionButtonStyle())
-                    .keyboardShortcut(.cancelAction)
-                    .accessibilityLabel(Text(store.ui("取消", "Cancel")))
-                    .help(store.ui("取消新建笔记", "Cancel note creation"))
+        HStack(spacing: 9) {
+            Capsule()
+                .fill(WeiBeiTheme.cinnabar.opacity(0.56))
+                .frame(width: 2, height: 20)
+
+            Text(panelEyebrow)
+                .font(.system(size: 11, weight: .semibold, design: .serif))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .lineLimit(1)
+                .frame(minWidth: 84, alignment: .leading)
+
+            TextField(
+                "",
+                text: $title,
+                prompt: Text(inputPrompt)
+                    .foregroundStyle(WeiBeiTheme.placeholderInk)
+            )
+            .textFieldStyle(.plain)
+            .font(.system(size: 13, weight: .medium))
+            .foregroundColor(WeiBeiTheme.ink)
+            .focused($focused)
+            .onSubmit(confirm)
+            .padding(.horizontal, 9)
+            .frame(height: 32)
+            .background {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(WeiBeiTheme.paperRaised.opacity(focused ? 0.50 : 0.34))
+            }
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(focused ? WeiBeiTheme.link.opacity(0.42) : WeiBeiTheme.hairline.opacity(0.48))
+                    .frame(height: 1)
+                    .padding(.horizontal, 6)
             }
 
-            HStack(spacing: 8) {
-                TextField(
-                    "",
-                    text: $title,
-                    prompt: Text(draft.kind == .blank ? store.ui("命名课程笔记", "Name this course note") : store.ui("命名资料笔记", "Name this material note"))
-                        .foregroundStyle(WeiBeiTheme.placeholderInk)
-                )
-                .textFieldStyle(.plain)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(WeiBeiTheme.ink)
-                .focused($focused)
-                .onSubmit(confirm)
-                .weibeiInputSurface(active: focused, height: 38, horizontalPadding: 12)
+            Button(store.ui("创建", "Create"), action: confirm)
+                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                .disabled(!canCreate)
+                .keyboardShortcut(.defaultAction)
+                .accessibilityLabel(Text(store.ui("创建笔记", "Create Note")))
+                .help(store.ui("创建笔记", "Create Note"))
 
-                Button(store.ui("创建", "Create"), action: confirm)
-                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                    .disabled(!canCreate)
-                    .keyboardShortcut(.defaultAction)
-                    .accessibilityLabel(Text(store.ui("创建笔记", "Create Note")))
-                    .help(store.ui("创建笔记", "Create Note"))
+            Button(action: cancel) {
+                Image(systemName: "xmark")
             }
+            .buttonStyle(WeiBeiIconButtonStyle(size: 22))
+            .keyboardShortcut(.cancelAction)
+            .accessibilityLabel(Text(store.ui("取消", "Cancel")))
+            .help(store.ui("取消新建笔记", "Cancel note creation"))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
         .background {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(WeiBeiTheme.paperRaised.opacity(0.44))
-        }
-        .overlay(alignment: .leading) {
-            RoundedRectangle(cornerRadius: 1.5)
-                .fill(WeiBeiTheme.cinnabar.opacity(0.54))
-                .frame(width: 2)
-                .padding(.vertical, 12)
+                .fill(WeiBeiTheme.paperInset.opacity(0.14))
+            WeiBeiGlassHeaderBackground(paperOpacity: 0.46, materialOpacity: 0.07)
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .overlay {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(WeiBeiTheme.hairline.opacity(focused ? 0.58 : 0.30), lineWidth: 1)
+                .stroke(WeiBeiTheme.hairline.opacity(focused ? 0.62 : 0.34), lineWidth: 1)
         }
         .onExitCommand(perform: cancel)
         .onAppear {
@@ -593,6 +604,12 @@ private struct NotebookCreationPanel: View {
         draft.kind == .blank
             ? store.ui("新建空白课程笔记", "New blank course note")
             : store.ui("新建当前资料笔记", "New note for current material")
+    }
+
+    private var inputPrompt: String {
+        draft.kind == .blank
+            ? store.ui("笔记名", "Note name")
+            : store.ui("资料笔记名", "Material note name")
     }
 }
 
