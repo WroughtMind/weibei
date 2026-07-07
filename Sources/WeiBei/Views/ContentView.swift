@@ -967,7 +967,7 @@ private struct LayoutContentView: View {
     private func reorderablePaneView(for role: WorkspacePaneRole) -> some View {
         let drag = store.threePaneReorderDrag
         paneView(for: role, reorderable: true)
-            .opacity(drag?.role == role ? 0.12 : 1)
+            .opacity(drag?.role == role ? 0.08 : 1)
             .overlay {
                 if drag?.targetIndex == store.normalizedThreePaneOrder.firstIndex(of: role), drag?.role != role {
                     RoundedRectangle(cornerRadius: 8)
@@ -1012,7 +1012,7 @@ private struct LayoutContentView: View {
                     .frame(width: sourceFrame.width, height: sourceFrame.height)
                     .clipped()
                     .allowsHitTesting(false)
-                    .opacity(0.24)
+                    .opacity(0.16)
                     .overlay {
                         Rectangle()
                             .stroke(WeiBeiTheme.cinnabar.opacity(0.22), lineWidth: 1)
