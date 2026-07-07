@@ -356,7 +356,7 @@ struct NotePaneView: View {
     }
 
     private var noteModeControl: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 4) {
             ForEach(NoteRenderMode.visibleCases) { mode in
                 let selected = store.noteRenderMode.visibleMode == mode
                 Button {
@@ -365,21 +365,12 @@ struct NotePaneView: View {
                     }
                 } label: {
                     Text(mode.label(language: store.interfaceLanguage))
-                        .font(.system(size: 12, weight: selected ? .semibold : .medium, design: .serif))
-                        .foregroundStyle(selected ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
-                        .padding(.horizontal, 7)
-                        .frame(height: 28)
-                        .background {
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(WeiBeiTheme.paperRaised.opacity(selected ? 0.22 : 0.0))
-                        }
-                        .overlay(alignment: .bottom) {
-                            if selected {
-                                Capsule()
-                                    .fill(WeiBeiTheme.cinnabar.opacity(0.62))
-                                    .frame(width: 16, height: 1.5)
-                            }
-                        }
+                        .font(.system(size: 11.5, weight: selected ? .semibold : .medium))
+                        .foregroundStyle(selected ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+                        .padding(.horizontal, 9)
+                        .frame(height: 24)
+                        .background(selected ? WeiBeiTheme.cinnabarSoft.opacity(0.82) : Color.clear)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
                         .contentShape(Rectangle())
                         .animation(WeiBeiMotion.micro, value: selected)
                 }
@@ -388,12 +379,13 @@ struct NotePaneView: View {
                 .help(mode.label(language: store.interfaceLanguage))
             }
         }
-        .padding(.horizontal, 2)
-        .frame(height: 32)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(WeiBeiTheme.hairline.opacity(0.24))
-                .frame(height: 1)
+        .padding(.horizontal, 3)
+        .padding(.vertical, 3)
+        .background(WeiBeiTheme.paperInset.opacity(0.16))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(WeiBeiTheme.hairline.opacity(0.20), lineWidth: 1)
         }
         .animation(WeiBeiMotion.appearance, value: store.appearanceMode)
     }
