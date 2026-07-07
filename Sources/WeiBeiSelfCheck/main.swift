@@ -627,6 +627,14 @@ expect(WorkspacePaneRole.normalized([.notes, .reader, .notes]) == [.notes, .read
 expect(WorkspacePaneRole.agent.focus == .agent
     && WorkspacePaneRole.reader.shortLabel(language: .chinese) == "文"
     && WorkspacePaneRole.notes.label(language: .english) == "Notes", "pane roles expose focus and localized labels")
+let reorderOrder: [WorkspacePaneRole] = [.reader, .agent, .notes]
+let reorderFrames: [WorkspacePaneRole: CGRect] = [
+    .reader: CGRect(x: 0, y: 0, width: 320, height: 600),
+    .agent: CGRect(x: 330, y: 0, width: 620, height: 600),
+    .notes: CGRect(x: 960, y: 0, width: 360, height: 600)
+]
+expect(ThreePaneReorderTargeting.targetIndex(order: reorderOrder, frames: reorderFrames, role: .reader, horizontalDelta: 180) == 1, "pane reorder target follows real resized pane overlap instead of fixed thirds")
+expect(ThreePaneReorderTargeting.targetIndex(order: reorderOrder, frames: reorderFrames, role: .notes, horizontalDelta: -420) == 1, "pane reorder target works from either edge using the current pane widths")
 expect(NoteRenderMode.visibleCases == [.rich, .split, .source]
     && NoteRenderMode.preview.visibleMode == .rich
     && NoteRenderMode.source.visibleMode == .source, "note render modes keep legacy preview data readable while hiding preview from the writing controls")
@@ -2018,8 +2026,9 @@ expect(workspaceStoreSource.contains("@Published var threePaneOrder")
     && workspaceStoreSource.contains("func updateThreePaneReorderFrames")
     && workspaceStoreSource.contains("func updateThreePaneReorder")
     && workspaceStoreSource.contains("func finishThreePaneReorder")
-    && workspaceStoreSource.contains("threePaneReorderFrames[role]")
-    && workspaceStoreSource.contains("contains(CGPoint(x: draggedCenterX")
+    && workspaceStoreSource.contains("ThreePaneReorderTargeting.targetIndex(")
+    && workspaceStoreSource.contains("frames: threePaneReorderFrames")
+    && !workspaceStoreSource.contains("contains(CGPoint(x: draggedCenterX")
     && !workspaceStoreSource.contains("let threshold: CGFloat = 84")
     && workspaceStoreSource.contains("private func threePaneReorderTargetIndex")
     && workspaceStoreSource.contains("private func applyThreePaneOrder")

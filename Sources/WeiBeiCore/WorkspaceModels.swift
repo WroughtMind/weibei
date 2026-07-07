@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 public enum WeiBeiInterfaceLanguage: String, CaseIterable, Identifiable, Codable {
@@ -150,6 +151,46 @@ public enum WorkspacePaneRole: String, Codable, CaseIterable, Identifiable, Hash
             ordered.append(role)
         }
         return Array(ordered.prefix(3))
+    }
+}
+
+public enum ThreePaneReorderTargeting {
+    public static func targetIndex(
+        order rawOrder: [WorkspacePaneRole],
+        frames: [WorkspacePaneRole: CGRect],
+        role: WorkspacePaneRole,
+        horizontalDelta: CGFloat
+    ) -> Int? {
+        let order = WorkspacePaneRole.normalized(rawOrder)
+        guard let currentIndex = order.firstIndex(of: role),
+              let sourceFrame = frames[role] else { return nil }
+        let draggedFrame = sourceFrame.offsetBy(dx: horizontalDelta, dy: 0)
+        let draggedCenterX = draggedFrame.midX
+
+        let overlapTarget = order.enumerated().compactMap { offset, role -> (offset: Int, overlap: CGFloat, distance: CGFloat)? in
+            guard let frame = frames[role] else { return nil }
+            let overlap = horizontalOverlap(draggedFrame, frame)
+            guard overlap > 0.5 else { return nil }
+            return (offset, overlap, abs(frame.midX - draggedCenterX))
+        }
+        .max { left, right in
+            if abs(left.overlap - right.overlap) > 0.5 {
+                return left.overlap < right.overlap
+            }
+            return left.distance > right.distance
+        }?.offset
+
+        let targetIndex = overlapTarget ?? order.enumerated().compactMap { offset, role -> (offset: Int, distance: CGFloat)? in
+            guard let frame = frames[role] else { return nil }
+            return (offset, abs(frame.midX - draggedCenterX))
+        }
+        .min { $0.distance < $1.distance }?.offset
+
+        return targetIndex == currentIndex ? nil : targetIndex
+    }
+
+    private static func horizontalOverlap(_ lhs: CGRect, _ rhs: CGRect) -> CGFloat {
+        Swift.max(0, Swift.min(lhs.maxX, rhs.maxX) - Swift.max(lhs.minX, rhs.minX))
     }
 }
 

@@ -765,21 +765,12 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func threePaneReorderTargetIndex(for role: WorkspacePaneRole, horizontalDelta: CGFloat) -> Int? {
-        let order = normalizedThreePaneOrder
-        guard let currentIndex = order.firstIndex(of: role) else { return nil }
-        if let sourceFrame = threePaneReorderFrames[role] {
-            let draggedCenterX = sourceFrame.midX + horizontalDelta
-            let targetIndex = order.enumerated().first { _, role in
-                threePaneReorderFrames[role]?.contains(CGPoint(x: draggedCenterX, y: sourceFrame.midY)) == true
-            }?.offset ?? order.enumerated().min { left, right in
-                let leftDistance = abs((threePaneReorderFrames[left.element]?.midX ?? sourceFrame.midX) - draggedCenterX)
-                let rightDistance = abs((threePaneReorderFrames[right.element]?.midX ?? sourceFrame.midX) - draggedCenterX)
-                return leftDistance < rightDistance
-            }?.offset
-            return targetIndex == currentIndex ? nil : targetIndex
-        }
-
-        return nil
+        ThreePaneReorderTargeting.targetIndex(
+            order: normalizedThreePaneOrder,
+            frames: threePaneReorderFrames,
+            role: role,
+            horizontalDelta: horizontalDelta
+        )
     }
 
     private func sameReorderFrames(_ lhs: [WorkspacePaneRole: CGRect], _ rhs: [WorkspacePaneRole: CGRect]) -> Bool {
