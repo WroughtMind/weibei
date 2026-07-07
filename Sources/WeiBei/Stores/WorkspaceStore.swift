@@ -81,6 +81,7 @@ final class WorkspaceStore: ObservableObject {
     private var isRestoringNavigation = false
     private var didRunVerificationScenario = false
     private var lastSelectionAttachmentDate: Date?
+    private var lastSelectionUpdateDate: Date?
     private var pendingSelectionAttachmentTask: Task<Void, Never>?
     private let selectionAttachmentMergeWindow: TimeInterval = 1.8
     private var threePaneReorderFrames: [WorkspacePaneRole: CGRect] = [:]
@@ -1451,9 +1452,15 @@ final class WorkspaceStore: ObservableObject {
     func updateSelection(_ text: String, source: SelectionSource, anchor: CGPoint? = nil, ownerTitle: String? = nil, isEditable: Bool = true) {
         let cleaned = MarkdownSelectionSanitizer.clean(text)
         guard Self.hasMeaningfulSelectionCharacter(cleaned) else {
+            lastSelectionUpdateDate = nil
             clearUnpinnedFloatingSelection(keepContext: false)
             return
         }
+        let now = Date()
+        let withinSelectionGesture = lastSelectionUpdateDate.map {
+            now.timeIntervalSince($0) <= selectionAttachmentMergeWindow
+        } ?? false
+        lastSelectionUpdateDate = now
         clearGeneratedQuietInsight()
         let cleanedOwnerTitle = ownerTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedOwnerTitle = (cleanedOwnerTitle?.isEmpty == false ? cleanedOwnerTitle : nil) ?? selectionOwnerTitle(for: source)
@@ -1471,7 +1478,7 @@ final class WorkspaceStore: ObservableObject {
             floatingSelectionPrompt = nextSelection.label(language: interfaceLanguage)
             pinnedFloatingAgent = false
             if shouldRouteToConversation {
-                scheduleSelectionAttachment(nextSelection)
+                scheduleSelectionAttachment(nextSelection, withinSelectionGesture: withinSelectionGesture)
                 showQuietInsight = false
             } else if shouldRevealSelectionPrompt {
                 agentSurface = .selectionFloat
@@ -1496,18 +1503,19 @@ final class WorkspaceStore: ObservableObject {
             cancelPendingSelectionAttachment()
             selectionAttachments = []
             lastSelectionAttachmentDate = nil
+            lastSelectionUpdateDate = nil
             clearUnpinnedFloatingSelection(keepContext: false)
         }
     }
 
-    private func scheduleSelectionAttachment(_ selection: SelectionContext) {
+    private func scheduleSelectionAttachment(_ selection: SelectionContext, withinSelectionGesture: Bool) {
         pendingSelectionAttachmentTask?.cancel()
         pendingSelectionAttachmentTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 220_000_000)
             guard !Task.isCancelled else { return }
             guard self?.selectionContext?.id == selection.id else { return }
             withAnimation(WeiBeiMotion.panel) {
-                self?.addSelectionAttachment(selection)
+                self?.addSelectionAttachment(selection, withinSelectionGesture: withinSelectionGesture)
             }
             self?.pendingSelectionAttachmentTask = nil
         }
@@ -1518,7 +1526,7 @@ final class WorkspaceStore: ObservableObject {
         pendingSelectionAttachmentTask = nil
     }
 
-    private func addSelectionAttachment(_ selection: SelectionContext) {
+    private func addSelectionAttachment(_ selection: SelectionContext, withinSelectionGesture: Bool = false) {
         let cleanedText = selection.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard Self.hasMeaningfulSelectionCharacter(cleanedText) else { return }
         let cleanedSelection = SelectionContext(
@@ -1545,7 +1553,7 @@ final class WorkspaceStore: ObservableObject {
         }
         var nextSelection = cleanedSelection
         while let mergeIndex = selectionAttachments.indices.reversed().first(where: {
-            shouldMergeSelectionAttachment(selectionAttachments[$0], with: nextSelection, at: now)
+            shouldMergeSelectionAttachment(selectionAttachments[$0], with: nextSelection, at: now, withinSelectionGestureHint: withinSelectionGesture)
         }) {
             nextSelection = mergedSelectionAttachment(selectionAttachments[mergeIndex], with: nextSelection)
             selectionAttachments.remove(at: mergeIndex)
@@ -1557,7 +1565,7 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func shouldMergeSelectionAttachment(_ existing: SelectionContext, with incoming: SelectionContext, at now: Date) -> Bool {
+    private func shouldMergeSelectionAttachment(_ existing: SelectionContext, with incoming: SelectionContext, at now: Date, withinSelectionGestureHint: Bool) -> Bool {
         guard existing.source == incoming.source, existing.ownerTitle == incoming.ownerTitle else { return false }
         let withinSelectionGesture = lastSelectionAttachmentDate.map {
             now.timeIntervalSince($0) <= selectionAttachmentMergeWindow
@@ -1565,7 +1573,7 @@ final class WorkspaceStore: ObservableObject {
         return SelectionAttachmentMerge.mergedText(
             existing: existing.text,
             incoming: incoming.text,
-            withinSelectionGesture: withinSelectionGesture
+            withinSelectionGesture: withinSelectionGesture || withinSelectionGestureHint
         ) != nil
     }
 
@@ -1851,6 +1859,7 @@ final class WorkspaceStore: ObservableObject {
                 cancelPendingSelectionAttachment()
                 selectionAttachments = []
                 lastSelectionAttachmentDate = nil
+                lastSelectionUpdateDate = nil
             }
         }
         if shouldClearSentDocumentSelection {
