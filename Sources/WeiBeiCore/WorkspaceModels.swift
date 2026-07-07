@@ -497,7 +497,7 @@ public enum SelectionAttachmentMerge {
         guard !existing.hasSuffix("\n"), !incoming.hasPrefix("\n") else { return false }
         let terminal = CharacterSet(charactersIn: "。！？!?；;：:")
         guard let last = existing.unicodeScalars.last else { return false }
-        return !terminal.contains(last)
+        return !terminal.contains(last) || incoming.count <= 12
     }
 }
 

@@ -1470,6 +1470,7 @@ final class WorkspaceStore: ObservableObject {
             floatingSelectionPrompt = nextSelection.label(language: interfaceLanguage)
             pinnedFloatingAgent = false
             if shouldRouteToConversation {
+                addSelectionAttachment(nextSelection)
                 showQuietInsight = false
             } else if shouldRevealSelectionPrompt {
                 agentSurface = .selectionFloat
@@ -1522,13 +1523,14 @@ final class WorkspaceStore: ObservableObject {
             sameSelectionSource($0)
                 && SelectionAttachmentMerge.containsSelection(cleanedText, fragment: $0.text)
         }
-        if let mergeIndex = selectionAttachments.indices.reversed().first(where: {
-            shouldMergeSelectionAttachment(selectionAttachments[$0], with: cleanedSelection, at: now)
+        var nextSelection = cleanedSelection
+        while let mergeIndex = selectionAttachments.indices.reversed().first(where: {
+            shouldMergeSelectionAttachment(selectionAttachments[$0], with: nextSelection, at: now)
         }) {
-            selectionAttachments[mergeIndex] = mergedSelectionAttachment(selectionAttachments[mergeIndex], with: cleanedSelection)
-            return
+            nextSelection = mergedSelectionAttachment(selectionAttachments[mergeIndex], with: nextSelection)
+            selectionAttachments.remove(at: mergeIndex)
         }
-        selectionAttachments.append(cleanedSelection)
+        selectionAttachments.append(nextSelection)
         let maxAttachments = 8
         if selectionAttachments.count > maxAttachments {
             selectionAttachments.removeFirst(selectionAttachments.count - maxAttachments)
