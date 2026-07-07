@@ -369,6 +369,11 @@ public enum NoteRenderMode: String, Codable, CaseIterable, Identifiable {
     case preview
 
     public var id: String { rawValue }
+    public static let visibleCases: [NoteRenderMode] = [.rich, .split, .source]
+
+    public var visibleMode: NoteRenderMode {
+        self == .preview ? .rich : self
+    }
 
     public func label(language: WeiBeiInterfaceLanguage) -> String {
         switch self {

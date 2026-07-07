@@ -839,7 +839,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func setNoteRenderMode(_ mode: NoteRenderMode) {
-        if noteRenderMode != mode || layout == .immersiveReading || layout == .immersiveConversation || (layout.hasCollapsibleRightPane && !showRightPane) {
+        let nextMode = mode.visibleMode
+        if noteRenderMode != nextMode || layout == .immersiveReading || layout == .immersiveConversation || (layout.hasCollapsibleRightPane && !showRightPane) {
             recordNavigationPoint()
         }
         if layout == .immersiveReading || layout == .immersiveConversation {
@@ -852,7 +853,7 @@ final class WorkspaceStore: ObservableObject {
             }
             showRightPane = true
         }
-        noteRenderMode = mode
+        noteRenderMode = nextMode
         focus(.notes)
         save()
     }
@@ -908,7 +909,7 @@ final class WorkspaceStore: ObservableObject {
         showLibrary = snapshot.showLibrary
         showRightPane = snapshot.showRightPane
         agentSurface = snapshot.agentSurface == .selectionFloat ? .hidden : snapshot.agentSurface
-        noteRenderMode = snapshot.noteRenderMode
+        noteRenderMode = snapshot.noteRenderMode.visibleMode
         showReaderSearch = snapshot.showReaderSearch
         readerSearch = snapshot.readerSearch
         readerPageIndex = snapshot.readerPageIndex
@@ -992,8 +993,6 @@ final class WorkspaceStore: ObservableObject {
                 animatePanelChange { setNoteRenderMode(.split) }
             case "3":
                 animatePanelChange { setNoteRenderMode(.source) }
-            case "4":
-                animatePanelChange { setNoteRenderMode(.preview) }
             default:
                 return false
             }
@@ -2202,7 +2201,7 @@ final class WorkspaceStore: ObservableObject {
             self.agentSurface = agentSurface == .selectionFloat ? .hidden : agentSurface
         }
         if let noteRenderMode = snapshot.noteRenderMode {
-            self.noteRenderMode = noteRenderMode
+            self.noteRenderMode = noteRenderMode.visibleMode
         }
         if let showLibrary = snapshot.showLibrary {
             self.showLibrary = showLibrary

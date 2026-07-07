@@ -627,6 +627,9 @@ expect(WorkspacePaneRole.normalized([.notes, .reader, .notes]) == [.notes, .read
 expect(WorkspacePaneRole.agent.focus == .agent
     && WorkspacePaneRole.reader.shortLabel(language: .chinese) == "文"
     && WorkspacePaneRole.notes.label(language: .english) == "Notes", "pane roles expose focus and localized labels")
+expect(NoteRenderMode.visibleCases == [.rich, .split, .source]
+    && NoteRenderMode.preview.visibleMode == .rich
+    && NoteRenderMode.source.visibleMode == .source, "note render modes keep legacy preview data readable while hiding preview from the writing controls")
 expect(WorkspaceLayout.documentAgentNotes.label(language: .chinese) == "阅读-对话-笔记"
     && WorkspaceLayout.documentAgentNotes.label(language: .english) == "Reader-Chat-Notes"
     && WorkspaceLayout.documentNotesAgent.label(language: .chinese) == "阅读-笔记-对话"
@@ -1363,6 +1366,13 @@ expect(!appSource.contains("Form {")
     && appSource.contains("store.setTopBarVariant(variant)"), "settings center uses categorized WeiBei chrome and real bound controls instead of the default form field")
 expect(appSource.contains("settingsPill(\n                    title: store.interfaceLanguage.settingsLabel,\n                    icon: \"character.book.closed\",\n                    active: false")
     && appSource.contains("settingsPill(\n                    title: store.appearanceMode.label(language: store.interfaceLanguage),\n                    icon: store.appearanceMode.systemImage,\n                    active: false"), "settings sidebar summary pills stay neutral instead of looking permanently selected")
+expect(appSource.contains("segmented(NoteRenderMode.visibleCases, active: store.noteRenderMode.visibleMode)")
+    && !appSource.contains("笔记预览")
+    && !appSource.contains("Note Preview")
+    && !appSource.contains("setNoteRenderMode(.preview)")
+    && !commandPaletteSource.contains("笔记预览")
+    && !commandPaletteSource.contains("Note Preview")
+    && !commandPaletteSource.contains("setNoteRenderMode(.preview)"), "note preview is removed from settings, menus, and command palette while visible modes stay normalized")
 let interactiveInputSources = [contentViewSource, sidebarSource, commandPaletteSource, notesAgentSource, appSource].joined(separator: "\n")
 expect(!interactiveInputSources.contains(".weibeiInputPrompt("), "interactive input placeholders stay on native prompts instead of overlay text")
 expect(appSource.contains("WeiBeiTextActionButtonStyle(active: true)") && appSource.contains(".background(WeiBeiTheme.paper)") && appSource.contains("WeiBeiGlassHeaderBackground(paperOpacity: 0.66"), "settings view uses WeiBei paper, glass header, and button styles")
@@ -1382,11 +1392,13 @@ expect(workspaceStoreSource.contains("var brandLatinName: String")
     && notesAgentSource.contains("latinMark: store.interfaceLanguage == .chinese ? \"NOTES\" : nil")
     && notesAgentSource.contains("latinMark: store.interfaceLanguage == .chinese ? \"CHAT\" : nil"), "custom English font has visible Latin brand marks in the top bar, settings, library, and pane headers")
 expect(notesAgentSource.contains("private func compactModeLabel(for mode: NoteRenderMode) -> String")
+    && notesAgentSource.contains("ForEach(NoteRenderMode.visibleCases)")
+    && notesAgentSource.contains("switch store.noteRenderMode.visibleMode")
+    && !notesAgentSource.contains("ForEach(NoteRenderMode.allCases)")
     && notesAgentSource.contains("return \"Diff\"")
     && notesAgentSource.contains("return \"Src\"")
-    && notesAgentSource.contains("return \"View\"")
     && notesAgentSource.contains(".accessibilityLabel(Text(mode.label(language: store.interfaceLanguage)))")
-    && notesAgentSource.contains(".help(mode.label(language: store.interfaceLanguage))"), "note pane header uses compact English mode labels without losing full accessibility/help text")
+    && notesAgentSource.contains(".help(mode.label(language: store.interfaceLanguage))"), "note pane header exposes only writing, compare, and source with compact labels and full accessibility/help text")
 expect(
     workspaceStoreSource.contains("shortcutKey(from event: NSEvent)")
         && workspaceStoreSource.contains("case 0: return \"a\"")
@@ -1632,11 +1644,12 @@ if let setNoteModeStart = workspaceStoreSource.range(of: "func setNoteRenderMode
    let revealStart = workspaceStoreSource.range(of: "private func revealRichWritingSurface")?.lowerBound {
     let setNoteModeSource = String(workspaceStoreSource[setNoteModeStart..<revealStart])
     expect(
-        setNoteModeSource.contains("layout = .immersiveWriting")
+        setNoteModeSource.contains("let nextMode = mode.visibleMode")
+            && setNoteModeSource.contains("layout = .immersiveWriting")
             && setNoteModeSource.contains("showRightPane = true")
-            && setNoteModeSource.contains("noteRenderMode = mode")
+            && setNoteModeSource.contains("noteRenderMode = nextMode")
             && setNoteModeSource.contains("focus(.notes)"),
-        "note render mode commands reveal and focus the writing surface"
+        "note render mode commands normalize legacy preview, reveal, and focus the writing surface"
     )
 } else {
     expect(false, "note render mode source is readable")
@@ -1910,7 +1923,9 @@ expect(notesAgentSource.contains("func weibeiPaneHeaderChrome(appearanceMode: We
     && notesAgentSource.contains("Button(store.ui(\"替换\", \"Replace\"")
     && !notesAgentSource.contains(".labelStyle(.titleAndIcon)\n        }\n        .buttonStyle(WeiBeiTextActionButtonStyle())")
     && notePaneHeaderSource.contains(".background(WeiBeiTheme.paper)")
-    && notePaneHeaderSource.contains("WeiBeiTheme.cinnabarSoft.opacity(0.86)"), "note pane keeps compact header actions while the agent pane header stays context-only")
+    && notePaneHeaderSource.contains("NoteRenderMode.visibleCases")
+    && notePaneHeaderSource.contains("WeiBeiTheme.paperRaised.opacity(0.72)")
+    && notePaneHeaderSource.contains("WeiBeiTheme.cinnabar.opacity(0.58)"), "note pane keeps compact refined header actions while the agent pane header stays context-only")
 expect(notesAgentSource.contains("ContextRailLine") && notesAgentSource.contains(".onHover"), "context rails keep hover motion")
 expect(!notesAgentSource.contains(".id(store.noteRenderMode)"), "note mode changes avoid forced hard view identity resets")
 expect(notesAgentSource.contains("struct ContextRailItem: Identifiable") && notesAgentSource.contains("Button(action: action)"), "context rails expose actionable rows")
@@ -2344,10 +2359,12 @@ expect(!sampleMarkdown.canBecomeNotebookNote, "sample markdown cannot become a b
 let persisted = PersistedWorkspace(threePaneOrder: [.agent, .reader, .notes], noteRenderMode: .preview, showLibrary: false, showRightPane: false)
 let restored = try JSONDecoder().decode(PersistedWorkspace.self, from: try JSONEncoder().encode(persisted))
 expect(restored.showLibrary == false && restored.showRightPane == false, "pane collapse state persists")
-expect(restored.noteRenderMode == .preview, "note render mode persists without collapsing preview or split back to rich")
+expect(restored.noteRenderMode == .preview, "legacy preview note mode remains decodable for old workspace snapshots")
 expect(restored.threePaneOrder == [.agent, .reader, .notes], "custom three-pane order persists")
-expect(workspaceStoreSource.contains("if let noteRenderMode = snapshot.noteRenderMode {\n            self.noteRenderMode = noteRenderMode\n        }")
-    && !workspaceStoreSource.contains("noteRenderMode == .source ? .source : .rich"), "workspace load restores the saved note render mode exactly")
+expect(workspaceStoreSource.contains("if let noteRenderMode = snapshot.noteRenderMode {\n            self.noteRenderMode = noteRenderMode.visibleMode\n        }")
+    && workspaceStoreSource.contains("noteRenderMode = snapshot.noteRenderMode.visibleMode")
+    && workspaceStoreSource.contains("let nextMode = mode.visibleMode")
+    && !workspaceStoreSource.contains("noteRenderMode == .source ? .source : .rich"), "workspace load and navigation normalize legacy preview mode back to writing")
 
 let attachmentRoot = URL(fileURLWithPath: NSTemporaryDirectory())
     .appendingPathComponent("weibei-self-check-\(UUID().uuidString)", isDirectory: true)

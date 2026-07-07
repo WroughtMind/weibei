@@ -356,8 +356,8 @@ struct NotePaneView: View {
     }
 
     private var noteModeControl: some View {
-        HStack(spacing: 2) {
-            ForEach(NoteRenderMode.allCases) { mode in
+        HStack(spacing: 3) {
+            ForEach(NoteRenderMode.visibleCases) { mode in
                 let selected = store.noteRenderMode == mode
                 Button {
                     withAnimation(WeiBeiMotion.layout) {
@@ -365,11 +365,25 @@ struct NotePaneView: View {
                     }
                 } label: {
                     Text(compactModeLabel(for: mode))
-                        .font(.system(size: 11, weight: selected ? .semibold : .medium))
+                        .font(.system(size: 11.5, weight: selected ? .semibold : .medium))
                         .foregroundStyle(selected ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
-                        .frame(width: 38, height: 24)
-                        .background(selected ? WeiBeiTheme.cinnabarSoft.opacity(0.86) : Color.clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .frame(width: store.interfaceLanguage == .english ? 56 : 42, height: 26)
+                        .background {
+                            RoundedRectangle(cornerRadius: 7)
+                                .fill(selected ? WeiBeiTheme.paperRaised.opacity(0.72) : Color.clear)
+                        }
+                        .overlay(alignment: .bottom) {
+                            if selected {
+                                Capsule()
+                                    .fill(WeiBeiTheme.cinnabar.opacity(0.58))
+                                    .frame(width: 15, height: 1)
+                                    .padding(.bottom, 2)
+                            }
+                        }
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 7)
+                                .stroke(selected ? WeiBeiTheme.cinnabar.opacity(0.18) : Color.clear, lineWidth: 1)
+                        }
                         .animation(WeiBeiMotion.micro, value: selected)
                 }
                 .buttonStyle(.plain)
@@ -392,7 +406,7 @@ struct NotePaneView: View {
         case .source:
             return "Src"
         case .preview:
-            return "View"
+            return "Write"
         }
     }
 
@@ -407,7 +421,7 @@ struct NotePaneView: View {
     @ViewBuilder
     private var noteBody: some View {
         Group {
-            switch store.noteRenderMode {
+            switch store.noteRenderMode.visibleMode {
             case .rich:
                 richEditor
             case .split:
@@ -430,21 +444,11 @@ struct NotePaneView: View {
             case .source:
                 noteEditor
             case .preview:
-                MarkdownPreviewView(
-                    markdown: store.noteText,
-                    markdownBaseURL: store.currentMarkdownBaseURL,
-                    appearanceMode: store.appearanceMode,
-                    interfaceLanguage: store.interfaceLanguage,
-                    onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
-                    onSourceReference: { reference in store.openSourceReference(reference) },
-                    onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
-                ) { text, anchor in
-                    store.updateSelection(text, source: .note, anchor: anchor, isEditable: false)
-                }
+                richEditor
             }
         }
         .transition(WeiBeiTransition.layout)
-        .animation(WeiBeiMotion.layout, value: store.noteRenderMode)
+        .animation(WeiBeiMotion.layout, value: store.noteRenderMode.visibleMode)
         .overlay(alignment: .topLeading) {
             if noteIsEmpty {
                 emptyNoteHint

@@ -166,8 +166,6 @@ struct WeiBeiApp: App {
                     .keyboardShortcut("2", modifiers: [.control, .command])
                 Button(store.ui("笔记源码", "Note Source")) { setNoteRenderMode(.source) }
                     .keyboardShortcut("3", modifiers: [.control, .command])
-                Button(store.ui("笔记预览", "Note Preview")) { setNoteRenderMode(.preview) }
-                    .keyboardShortcut("4", modifiers: [.control, .command])
 
                 if store.canApplyAgentAnswer {
                     Divider()
@@ -725,9 +723,9 @@ struct SettingsView: View {
             settingsGroup(store.ui("Markdown", "Markdown")) {
                 settingsRow(
                     title: store.ui("笔记模式", "Note Mode"),
-                    detail: store.ui("主模式是原地 Markdown 写作，源码和预览作为辅助。", "Live Markdown writing is primary; source and preview stay available as aids.")
+                    detail: store.ui("主模式是原地 Markdown 写作，源码只作为辅助检查。", "Live Markdown writing is primary; source is only for checking.")
                 ) {
-                    segmented(NoteRenderMode.allCases, active: store.noteRenderMode) { mode in
+                    segmented(NoteRenderMode.visibleCases, active: store.noteRenderMode.visibleMode) { mode in
                         mode.label(language: store.interfaceLanguage)
                     } action: { mode in
                         withAnimation(WeiBeiMotion.panel) {

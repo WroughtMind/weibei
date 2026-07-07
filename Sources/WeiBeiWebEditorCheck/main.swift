@@ -1090,11 +1090,15 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         let script = """
         (() => {
         const cases = [
-          ['## 现场标题', 'h2', '## 现场标题'],
-          ['- 现场条目', 'li', '现场条目'],
-          ['- [ ] 现场待办', 'li[data-item-type="task"], li', '现场待办']
+          ['## 现场标题', 'h2', '## 现场标题', '现场标题'],
+          ['- 现场条目', 'li', '现场条目', '现场条目'],
+          ['- [ ] 现场待办', 'li[data-item-type="task"], li', '现场待办', '现场待办'],
+          ['**现场加粗**', 'strong', '**现场加粗**', '现场加粗'],
+          ['~~现场删除~~', 's, del', '~~现场删除~~', '现场删除'],
+          ['==现场高亮==', '.weibei-highlight', '==现场高亮==', '现场高亮'],
+          ['[[现场概念|显示名]]', '.weibei-wikilink[data-wikilink-target="现场概念"]', '[[现场概念|显示名]]', '显示名']
         ];
-        for (const [typed, selector, expectedMarkdown] of cases) {
+        for (const [typed, selector, expectedMarkdown, visibleText] of cases) {
           window.WeiBeiEditor.setMarkdown('# 输入语法验收\\n');
           window.WeiBeiEditor.insertMarkdown('\\n\\n{{WEIBEI_CURSOR}}');
           if (!window.WeiBeiEditor.typeTextForCheck(typed)) {
@@ -1102,7 +1106,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           }
           const markdown = window.WeiBeiEditor.getMarkdown();
           const node = document.querySelector(selector);
-          if (!markdown.includes(expectedMarkdown) || !node || !node.textContent.includes(expectedMarkdown.replace(/^## /, ''))) {
+          if (!markdown.includes(expectedMarkdown) || !node || !node.textContent.includes(visibleText)) {
             return { ok: false, reason: 'typed Markdown shortcut did not render in place: ' + typed, markdown, html: document.querySelector('.ProseMirror')?.innerHTML || '' };
           }
         }
@@ -1123,7 +1127,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("typed Markdown shortcut check failed: \(result)")
                 return
             }
-            guard let markdown = result["markdown"] as? String, markdown.contains("现场待办") else {
+            guard let markdown = result["markdown"] as? String, markdown.contains("[[现场概念|显示名]]") else {
                 self.fail("typed Markdown shortcut check did not finish: \(result)")
                 return
             }
