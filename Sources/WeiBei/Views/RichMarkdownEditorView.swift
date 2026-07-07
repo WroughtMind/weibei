@@ -156,6 +156,13 @@ final class MarkdownWebView: WKWebView {
         }
     }
 
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        if passesVerticalScrollToSuperview, NSApp.currentEvent?.type == .scrollWheel {
+            return nil
+        }
+        return super.hitTest(point)
+    }
+
     private func nearestSuperviewScrollView() -> NSScrollView? {
         var candidate = superview
         while let view = candidate {

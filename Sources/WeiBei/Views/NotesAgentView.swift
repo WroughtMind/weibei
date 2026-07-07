@@ -2521,7 +2521,6 @@ private struct AgentMessageMarkdownText: View {
                 onContentHeightChange: onContentHeightChange
             )
             .frame(maxWidth: .infinity, alignment: .leading)
-            .allowsHitTesting(false)
         } else {
             Text(renderedText)
                 .font(.system(size: 14))
