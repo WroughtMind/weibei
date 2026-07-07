@@ -1119,9 +1119,23 @@ const emptyListItemTypeAtSelection = (state) => {
   return null;
 };
 
+const clearInvisibleCurrentTextblock = (view) => {
+  const { state } = view;
+  const { $from } = state.selection;
+  const node = $from.parent;
+  if (node?.isTextblock !== true || !node.textContent || meaningfulListText(node).length > 0) return;
+  const from = $from.start();
+  const to = $from.end();
+  const tr = state.tr.delete(from, to);
+  tr.setSelection(TextSelection.create(tr.doc, Math.min(from, tr.doc.content.size)));
+  view.dispatch(tr);
+};
+
 const exitEmptyListItem = (view) => {
-  const listItemType = emptyListItemTypeAtSelection(view.state);
+  let listItemType = emptyListItemTypeAtSelection(view.state);
   if (!listItemType) return false;
+  clearInvisibleCurrentTextblock(view);
+  listItemType = emptyListItemTypeAtSelection(view.state) || listItemType;
   return liftListItem(listItemType)(view.state, view.dispatch, view);
 };
 

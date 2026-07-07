@@ -1177,6 +1177,9 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           if ((expectedBeforeOptions.length > 0 && !expectedBeforeOptions.some((expectedBefore) => current.includes(expectedBefore))) || !current.includes(expectedAfter)) {
             throw new Error('empty block Enter did not create a normal paragraph after the block: ' + text + '\\n' + current);
           }
+          if (current.includes('\\u200B')) {
+            throw new Error('empty block Enter left invisible list placeholder in markdown: ' + text + '\\n' + current);
+          }
           if (current.includes('\\n- ' + text)
               || current.includes('\\n* ' + text)
               || current.includes('\\n+ ' + text)
