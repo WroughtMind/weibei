@@ -1137,14 +1137,17 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
 
     private func validateBlockEnterExit() {
         let script = """
+        (() => {
+        try {
         const cases = [
-          ['\\n\\n- 项目{{WEIBEI_CURSOR}}', '退出无序列表'],
-          ['\\n\\n1. 项目{{WEIBEI_CURSOR}}', '退出有序列表'],
-          ['\\n\\n- [ ] 待办{{WEIBEI_CURSOR}}', '退出任务列表'],
-          ['\\n\\n> 引用{{WEIBEI_CURSOR}}', '退出引用'],
-          ['\\n\\n> [!note] 标题\\n>\\n> 内容{{WEIBEI_CURSOR}}', '退出 Callout']
+          ['\\n\\n- 项目{{WEIBEI_CURSOR}}', '退出无序列表', ['- 项目', '* 项目', '+ 项目'], '\\n\\n退出无序列表'],
+          ['\\n\\n- \u{200B}{{WEIBEI_CURSOR}}', '退出视觉空白无序列表', [], '\\n\\n退出视觉空白无序列表'],
+          ['\\n\\n1. 项目{{WEIBEI_CURSOR}}', '退出有序列表', ['1. 项目'], '\\n\\n退出有序列表'],
+          ['\\n\\n- [ ] 待办{{WEIBEI_CURSOR}}', '退出任务列表', ['- [ ] 待办', '* [ ] 待办', '+ [ ] 待办'], '\\n\\n退出任务列表'],
+          ['\\n\\n> 引用{{WEIBEI_CURSOR}}', '退出引用', ['> 引用'], '\\n\\n退出引用'],
+          ['\\n\\n> [!note] 标题\\n>\\n> 内容{{WEIBEI_CURSOR}}', '退出 Callout', ['> 内容'], '\\n\\n退出 Callout']
         ];
-        for (const [markdown, text] of cases) {
+        for (const [markdown, text, expectedBeforeOptions, expectedAfter] of cases) {
           window.WeiBeiEditor.setMarkdown('# 块退出验收\\n');
           window.WeiBeiEditor.insertMarkdown(markdown);
           if (!window.WeiBeiEditor.pressKeyForCheck('Enter')) {
@@ -1157,6 +1160,9 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             throw new Error('typeTextForCheck unavailable after list exit');
           }
           const current = window.WeiBeiEditor.getMarkdown();
+          if ((expectedBeforeOptions.length > 0 && !expectedBeforeOptions.some((expectedBefore) => current.includes(expectedBefore))) || !current.includes(expectedAfter)) {
+            throw new Error('empty block Enter did not create a normal paragraph after the block: ' + text + '\\n' + current);
+          }
           if (current.includes('\\n- ' + text)
               || current.includes('\\n* ' + text)
               || current.includes('\\n+ ' + text)
@@ -1167,7 +1173,33 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             throw new Error('empty block Enter kept following text in the block: ' + text + '\\n' + current);
           }
         }
-        window.WeiBeiEditor.getMarkdown();
+        window.WeiBeiEditor.setMarkdown('# 块退出验收\\n');
+        window.WeiBeiEditor.insertMarkdown('\\n\\n{{WEIBEI_CURSOR}}');
+        if (!window.WeiBeiEditor.typeTextForCheck('- 手写项目')) {
+          throw new Error('typeTextForCheck unavailable for typed bullet');
+        }
+        if (!window.WeiBeiEditor.pressKeyForCheck('Enter')) {
+          throw new Error('pressKeyForCheck unavailable for typed bullet first Enter');
+        }
+        if (!window.WeiBeiEditor.pressKeyForCheck('Enter')) {
+          throw new Error('pressKeyForCheck unavailable for typed bullet second Enter');
+        }
+        if (!window.WeiBeiEditor.typeTextForCheck('手写退出列表')) {
+          throw new Error('typeTextForCheck unavailable after typed bullet exit');
+        }
+        const typedMarkdown = window.WeiBeiEditor.getMarkdown();
+        if (!['- 手写项目', '* 手写项目', '+ 手写项目'].some((marker) => typedMarkdown.includes(marker))
+            || !typedMarkdown.includes('\\n\\n手写退出列表')
+            || typedMarkdown.includes('\\n- 手写退出列表')
+            || typedMarkdown.includes('\\n* 手写退出列表')
+            || typedMarkdown.includes('\\n+ 手写退出列表')) {
+          throw new Error('typed bullet Enter did not exit to a normal paragraph\\n' + typedMarkdown);
+        }
+        return { ok: true, markdown: window.WeiBeiEditor.getMarkdown() };
+        } catch (error) {
+          return { ok: false, reason: String(error?.message || error), stack: String(error?.stack || '') };
+        }
+        })();
         """
         webView.evaluateJavaScript(script) { [weak self] value, error in
             guard let self else { return }
@@ -1175,11 +1207,19 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("list Enter exit check threw \(error.localizedDescription)")
                 return
             }
-            guard let markdown = value as? String else {
-                self.fail("list Enter exit check did not return markdown")
+            guard let result = value as? [String: Any] else {
+                self.fail("list Enter exit check did not return result")
                 return
             }
-            if !markdown.contains("退出 Callout") {
+            if let ok = result["ok"] as? Bool, ok == false {
+                self.fail("list Enter exit check failed: \(result)")
+                return
+            }
+            guard let markdown = result["markdown"] as? String else {
+                self.fail("list Enter exit check did not return markdown: \(result)")
+                return
+            }
+            if !markdown.contains("手写退出列表") {
                 self.fail("block Enter exit check did not finish all isolated cases: \(markdown)")
                 return
             }

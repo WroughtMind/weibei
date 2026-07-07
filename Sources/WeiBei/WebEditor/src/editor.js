@@ -1104,6 +1104,7 @@ const installQuietScrollIndicators = () => {
 };
 
 const listItemTypeNames = new Set(['list_item', 'task_list_item']);
+const meaningfulListText = (node) => (node.textContent || '').replace(/[\u200B\uFEFF]/g, '').trim();
 
 const emptyListItemTypeAtSelection = (state) => {
   const { selection } = state;
@@ -1112,7 +1113,7 @@ const emptyListItemTypeAtSelection = (state) => {
   for (let depth = $from.depth; depth > 0; depth -= 1) {
     const node = $from.node(depth);
     if (!listItemTypeNames.has(node.type.name)) continue;
-    if (node.textContent.trim().length > 0) return null;
+    if (meaningfulListText(node).length > 0) return null;
     return node.type;
   }
   return null;
