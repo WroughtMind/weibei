@@ -1524,11 +1524,11 @@ Editor
       trust: false,
     });
   })
+  .use(weiBeiDialectPlugin)
   .use(commonmark)
   .use(gfm)
   .use(math)
   .use(upload)
-  .use(weiBeiDialectPlugin)
   .use(listener)
   .config((ctx) => {
     ctx.get(listenerCtx).markdownUpdated((_, markdown) => {

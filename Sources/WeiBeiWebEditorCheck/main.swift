@@ -1195,6 +1195,31 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             || typedMarkdown.includes('\\n+ 手写退出列表')) {
           throw new Error('typed bullet Enter did not exit to a normal paragraph\\n' + typedMarkdown);
         }
+        if (Array.from(document.querySelectorAll('.ProseMirror li')).some((item) => item.textContent.includes('手写退出列表'))) {
+          throw new Error('typed bullet exit kept following text inside a list item\\n' + document.querySelector('.ProseMirror')?.innerHTML);
+        }
+        window.WeiBeiEditor.setMarkdown('# 块退出验收\\n');
+        window.WeiBeiEditor.insertMarkdown('\\n\\n{{WEIBEI_CURSOR}}');
+        if (!window.WeiBeiEditor.typeTextForCheck('- ')) {
+          throw new Error('typeTextForCheck unavailable for empty bullet shortcut');
+        }
+        if (!document.querySelector('.ProseMirror li')) {
+          throw new Error('empty bullet shortcut did not create a real list item');
+        }
+        if (!window.WeiBeiEditor.pressKeyForCheck('Enter')) {
+          throw new Error('pressKeyForCheck unavailable for empty bullet exit');
+        }
+        if (!window.WeiBeiEditor.typeTextForCheck('空项目退出列表')) {
+          throw new Error('typeTextForCheck unavailable after empty bullet exit');
+        }
+        const emptyShortcutMarkdown = window.WeiBeiEditor.getMarkdown();
+        if (!emptyShortcutMarkdown.includes('\\n\\n空项目退出列表')
+            || emptyShortcutMarkdown.includes('\\n- 空项目退出列表')
+            || emptyShortcutMarkdown.includes('\\n* 空项目退出列表')
+            || emptyShortcutMarkdown.includes('\\n+ 空项目退出列表')
+            || Array.from(document.querySelectorAll('.ProseMirror li')).some((item) => item.textContent.includes('空项目退出列表'))) {
+          throw new Error('empty bullet shortcut Enter did not exit to a normal paragraph\\n' + emptyShortcutMarkdown + '\\n' + document.querySelector('.ProseMirror')?.innerHTML);
+        }
         return { ok: true, markdown: window.WeiBeiEditor.getMarkdown() };
         } catch (error) {
           return { ok: false, reason: String(error?.message || error), stack: String(error?.stack || '') };
@@ -1219,7 +1244,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("list Enter exit check did not return markdown: \(result)")
                 return
             }
-            if !markdown.contains("手写退出列表") {
+            if !markdown.contains("空项目退出列表") {
                 self.fail("block Enter exit check did not finish all isolated cases: \(markdown)")
                 return
             }
