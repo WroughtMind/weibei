@@ -724,7 +724,14 @@ final class WorkspaceStore: ObservableObject {
 
     func updateThreePaneReorderFrames(order: [WorkspacePaneRole], frames: [CGRect]) {
         guard order.count == frames.count else { return }
-        threePaneReorderFrames = Dictionary(uniqueKeysWithValues: zip(order, frames))
+        let nextFrames = Dictionary(uniqueKeysWithValues: zip(order, frames))
+        guard !sameReorderFrames(nextFrames, threePaneReorderFrames) else { return }
+        threePaneReorderFrames = nextFrames
+    }
+
+    func threePaneReorderFrameList(order: [WorkspacePaneRole], fallback: [CGRect]) -> [CGRect] {
+        let frames = order.compactMap { threePaneReorderFrames[$0] }
+        return frames.count == order.count ? frames : fallback
     }
 
     func updateThreePaneReorder(_ role: WorkspacePaneRole, horizontalDelta: CGFloat) {
@@ -771,6 +778,17 @@ final class WorkspaceStore: ObservableObject {
         }
 
         return nil
+    }
+
+    private func sameReorderFrames(_ lhs: [WorkspacePaneRole: CGRect], _ rhs: [WorkspacePaneRole: CGRect]) -> Bool {
+        guard Set(lhs.keys) == Set(rhs.keys) else { return false }
+        return lhs.allSatisfy { role, frame in
+            guard let other = rhs[role] else { return false }
+            return abs(frame.minX - other.minX) < 0.5
+                && abs(frame.minY - other.minY) < 0.5
+                && abs(frame.width - other.width) < 0.5
+                && abs(frame.height - other.height) < 0.5
+        }
     }
 
     var canUseSelectionAgentSurface: Bool {

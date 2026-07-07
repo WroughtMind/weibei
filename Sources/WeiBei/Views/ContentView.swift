@@ -937,7 +937,8 @@ private struct LayoutContentView: View {
     @ViewBuilder
     private func documentThreePaneView(order: [WorkspacePaneRole]) -> some View {
         GeometryReader { geometry in
-            let frames = threePaneFrames(order: order, size: geometry.size)
+            let estimatedFrames = threePaneFrames(order: order, size: geometry.size)
+            let frames = store.threePaneReorderFrameList(order: order, fallback: estimatedFrames)
             ZStack {
                 ResizableThreePane(
                     firstSplit: firstSplit,
@@ -951,11 +952,13 @@ private struct LayoutContentView: View {
                     reorderablePaneView(for: order[1])
                 } third: {
                     reorderablePaneView(for: order[2])
+                } onFramesChange: { frames in
+                    store.updateThreePaneReorderFrames(order: order, frames: frames)
                 }
 
                 threePaneReorderOverlay(order: order, size: geometry.size, frames: frames)
             }
-            .background(ThreePaneReorderFrameReporter(order: order, frames: frames))
+            .background(ThreePaneReorderFrameReporter(order: order, frames: estimatedFrames))
         }
         .transition(WeiBeiTransition.rightPanel)
     }
@@ -964,7 +967,7 @@ private struct LayoutContentView: View {
     private func reorderablePaneView(for role: WorkspacePaneRole) -> some View {
         let drag = store.threePaneReorderDrag
         paneView(for: role, reorderable: true)
-            .opacity(drag?.role == role ? 0.22 : 1)
+            .opacity(drag?.role == role ? 0.12 : 1)
             .overlay {
                 if drag?.targetIndex == store.normalizedThreePaneOrder.firstIndex(of: role), drag?.role != role {
                     RoundedRectangle(cornerRadius: 8)
@@ -1009,10 +1012,10 @@ private struct LayoutContentView: View {
                     .frame(width: sourceFrame.width, height: sourceFrame.height)
                     .clipped()
                     .allowsHitTesting(false)
-                    .opacity(0.34)
+                    .opacity(0.24)
                     .overlay {
                         Rectangle()
-                            .stroke(WeiBeiTheme.cinnabar.opacity(0.30), lineWidth: 1)
+                            .stroke(WeiBeiTheme.cinnabar.opacity(0.22), lineWidth: 1)
                     }
                     .position(
                         x: sourceFrame.midX + clamped(drag.translation, min: -size.width, max: size.width),
@@ -1327,6 +1330,7 @@ private struct ResizableThreePane<First: View, Second: View, Third: View>: NSVie
     var minFirst: CGFloat = 320
     var minSecond: CGFloat = 260
     var minThird: CGFloat = 260
+    var onFramesChange: (([CGRect]) -> Void)? = nil
     private let first: First
     private let second: Second
     private let third: Third
@@ -1339,20 +1343,22 @@ private struct ResizableThreePane<First: View, Second: View, Third: View>: NSVie
         minThird: CGFloat = 260,
         @ViewBuilder first: () -> First,
         @ViewBuilder second: () -> Second,
-        @ViewBuilder third: () -> Third
+        @ViewBuilder third: () -> Third,
+        onFramesChange: (([CGRect]) -> Void)? = nil
     ) {
         _firstSplit = firstSplit
         _secondSplit = secondSplit
         self.minFirst = minFirst
         self.minSecond = minSecond
         self.minThird = minThird
+        self.onFramesChange = onFramesChange
         self.first = first()
         self.second = second()
         self.third = third()
     }
 
     func makeCoordinator() -> NativeSplitCoordinator {
-        NativeSplitCoordinator(kind: .three(first: $firstSplit, second: $secondSplit), minimums: [minFirst, minSecond, minThird])
+        NativeSplitCoordinator(kind: .three(first: $firstSplit, second: $secondSplit), minimums: [minFirst, minSecond, minThird], onFramesChange: onFramesChange)
     }
 
     func makeNSView(context: Context) -> WeiBeiSplitView {
@@ -1368,6 +1374,7 @@ private struct ResizableThreePane<First: View, Second: View, Third: View>: NSVie
     func updateNSView(_ splitView: WeiBeiSplitView, context: Context) {
         context.coordinator.kind = .three(first: $firstSplit, second: $secondSplit)
         context.coordinator.minimums = [minFirst, minSecond, minThird]
+        context.coordinator.onFramesChange = onFramesChange
         updateHost(at: 0, in: splitView, with: first)
         updateHost(at: 1, in: splitView, with: second)
         updateHost(at: 2, in: splitView, with: third)
@@ -1443,14 +1450,16 @@ private final class NativeSplitCoordinator: NSObject, NSSplitViewDelegate {
 
     var kind: Kind
     var minimums: [CGFloat]
+    var onFramesChange: (([CGRect]) -> Void)?
     private var isDragging = false
     private var isApplyingStoredPositions = false
     private var lastAppliedWidth: CGFloat = 0
     private var saveWork: DispatchWorkItem?
 
-    init(kind: Kind, minimums: [CGFloat]) {
+    init(kind: Kind, minimums: [CGFloat], onFramesChange: (([CGRect]) -> Void)? = nil) {
         self.kind = kind
         self.minimums = minimums
+        self.onFramesChange = onFramesChange
     }
 
     func install(_ splitView: WeiBeiSplitView) {
@@ -1465,9 +1474,14 @@ private final class NativeSplitCoordinator: NSObject, NSSplitViewDelegate {
             guard let self, let splitView else { return }
             self.isDragging = false
             self.saveRatios(from: splitView)
+            self.reportFrames(from: splitView)
         }
         splitView.onLayout = { [weak self] splitView in
-            self?.applyStoredPositionsWhenNeeded(in: splitView)
+            guard let self else { return }
+            self.applyStoredPositionsWhenNeeded(in: splitView)
+            if !self.isDragging {
+                self.reportFrames(from: splitView)
+            }
         }
     }
 
@@ -1503,6 +1517,7 @@ private final class NativeSplitCoordinator: NSObject, NSSplitViewDelegate {
         }
 
         lastAppliedWidth = splitView.bounds.width
+        reportFrames(from: splitView)
     }
 
     func splitViewDidResizeSubviews(_ notification: Notification) {
@@ -1543,6 +1558,15 @@ private final class NativeSplitCoordinator: NSObject, NSSplitViewDelegate {
             second.wrappedValue = clamped((widths[0] + widths[1]) / usable, min: 0, max: 1)
         }
         lastAppliedWidth = splitView.bounds.width
+        reportFrames(from: splitView)
+    }
+
+    private func reportFrames(from splitView: NSSplitView) {
+        guard onFramesChange != nil, splitView.arrangedSubviews.count > 0 else { return }
+        let frames = splitView.arrangedSubviews.map(\.frame)
+        DispatchQueue.main.async { [weak self] in
+            self?.onFramesChange?(frames)
+        }
     }
 
     private func clamped(_ value: CGFloat, min: CGFloat, max: CGFloat) -> CGFloat {
