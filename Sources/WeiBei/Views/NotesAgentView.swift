@@ -580,6 +580,8 @@ private struct NotebookCreationPanel: View {
     var confirm: () -> Void
     var cancel: () -> Void
     @FocusState private var focused: Bool
+    @State private var hoveredConfirm = false
+    @State private var hoveredCancel = false
 
     private var canCreate: Bool {
         !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -623,11 +625,18 @@ private struct NotebookCreationPanel: View {
             }
             .buttonStyle(.plain)
             .font(.system(size: 16, weight: .semibold))
-            .foregroundStyle(canCreate ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk)
+            .foregroundStyle(confirmColor)
             .frame(width: 28, height: 26)
             .contentShape(Rectangle())
+            .scaleEffect(hoveredConfirm && canCreate ? 1.08 : 1)
+            .opacity(canCreate ? 1 : 0.42)
             .disabled(!canCreate)
             .keyboardShortcut(.defaultAction)
+            .onHover { hovering in
+                withAnimation(WeiBeiMotion.hover) {
+                    hoveredConfirm = hovering
+                }
+            }
             .accessibilityLabel(Text(store.ui("创建笔记", "Create Note")))
             .help(store.ui("创建笔记", "Create Note"))
 
@@ -636,9 +645,15 @@ private struct NotebookCreationPanel: View {
             }
             .buttonStyle(.plain)
             .font(.system(size: 15, weight: .semibold))
-            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .foregroundStyle(cancelColor)
             .frame(width: 28, height: 26)
             .contentShape(Rectangle())
+            .scaleEffect(hoveredCancel ? 1.08 : 1)
+            .onHover { hovering in
+                withAnimation(WeiBeiMotion.hover) {
+                    hoveredCancel = hovering
+                }
+            }
             .keyboardShortcut(.cancelAction)
             .accessibilityLabel(Text(store.ui("取消", "Cancel")))
             .help(store.ui("取消新建笔记", "Cancel note creation"))
@@ -650,6 +665,15 @@ private struct NotebookCreationPanel: View {
         .onAppear {
             focused = true
         }
+    }
+
+    private var confirmColor: Color {
+        guard canCreate else { return WeiBeiTheme.tertiaryInk }
+        return hoveredConfirm ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk
+    }
+
+    private var cancelColor: Color {
+        hoveredCancel ? WeiBeiTheme.cinnabar.opacity(0.72) : WeiBeiTheme.secondaryInk
     }
 }
 
