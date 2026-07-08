@@ -278,6 +278,7 @@ private struct AgentComposerField: View {
 
 struct NotePaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @State private var hoveredNoteMode: NoteRenderMode?
     var reorderRole: WorkspacePaneRole? = nil
 
     var body: some View {
@@ -364,20 +365,17 @@ struct NotePaneView: View {
     }
 
     private var noteModeControl: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 10) {
             ForEach(NoteRenderMode.visibleCases) { mode in
                 noteModeButton(for: mode)
             }
         }
-        .padding(.horizontal, 4)
-        .padding(.vertical, 2)
-        .background {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(WeiBeiTheme.paperRaised.opacity(store.appearanceMode == .inkstone ? 0.18 : 0.34))
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(WeiBeiTheme.hairline.opacity(0.14), lineWidth: 1)
+        .padding(.horizontal, 2)
+        .frame(height: 30)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(WeiBeiTheme.hairline.opacity(store.appearanceMode == .inkstone ? 0.42 : 0.28))
+                .frame(height: 1)
         }
         .animation(WeiBeiMotion.appearance, value: store.appearanceMode)
     }
@@ -390,46 +388,38 @@ struct NotePaneView: View {
                 store.setNoteRenderMode(mode)
             }
         } label: {
-            noteModeButtonLabel(mode: mode, label: label, selected: selected)
+            noteModeButtonLabel(label: label, selected: selected, hovering: hoveredNoteMode == mode)
         }
         .buttonStyle(.plain)
+        .onHover { hovering in
+            withAnimation(WeiBeiMotion.hover) {
+                hoveredNoteMode = hovering ? mode : (hoveredNoteMode == mode ? nil : hoveredNoteMode)
+            }
+        }
         .accessibilityLabel(Text(label))
         .help(label)
     }
 
-    private func noteModeButtonLabel(mode: NoteRenderMode, label: String, selected: Bool) -> some View {
-        HStack(spacing: 5) {
-            Image(systemName: noteModeSystemImage(for: mode))
-                .font(.system(size: 11, weight: selected ? .semibold : .medium))
+    private func noteModeButtonLabel(label: String, selected: Bool, hovering: Bool) -> some View {
+        VStack(spacing: 3) {
             Text(label)
-                .font(.system(size: 11.5, weight: selected ? .semibold : .medium))
-        }
-        .foregroundStyle(selected ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
-        .padding(.horizontal, 8)
-        .frame(height: 26)
-        .background {
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(selected ? WeiBeiTheme.cinnabarSoft.opacity(store.appearanceMode == .inkstone ? 0.22 : 0.48) : Color.clear)
-        }
-        .overlay(alignment: .bottom) {
+                .font(.system(size: 12, weight: selected ? .semibold : .medium))
+                .foregroundStyle(selected ? WeiBeiTheme.cinnabar : hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
+
             Capsule()
-                .fill(selected ? WeiBeiTheme.cinnabar.opacity(store.appearanceMode == .inkstone ? 0.82 : 0.70) : Color.clear)
-                .frame(width: 18, height: 1.4)
-                .offset(y: -2)
+                .fill(selected ? WeiBeiTheme.cinnabar.opacity(store.appearanceMode == .inkstone ? 0.84 : 0.74) : Color.clear)
+                .frame(width: 16, height: 2)
+        }
+        .padding(.horizontal, 3)
+        .frame(minWidth: store.interfaceLanguage == .english ? 54 : 34)
+        .frame(height: 28)
+        .background {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(hovering && !selected ? WeiBeiTheme.paperInset.opacity(store.appearanceMode == .inkstone ? 0.18 : 0.14) : Color.clear)
         }
         .contentShape(Rectangle())
         .animation(WeiBeiMotion.micro, value: selected)
-    }
-
-    private func noteModeSystemImage(for mode: NoteRenderMode) -> String {
-        switch mode {
-        case .rich, .preview:
-            return "pencil.line"
-        case .split:
-            return "rectangle.split.2x1"
-        case .source:
-            return "chevron.left.forwardslash.chevron.right"
-        }
+        .animation(WeiBeiMotion.hover, value: hovering)
     }
 
     private var noteHeaderSubtitle: String {

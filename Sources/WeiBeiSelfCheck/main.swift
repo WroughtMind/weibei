@@ -851,6 +851,13 @@ let notePaneHeaderSource: String = {
     }
     return String(notesAgentSource[start..<end])
 }()
+let noteModeControlSource: String = {
+    guard let start = notesAgentSource.range(of: "private var noteModeControl: some View")?.lowerBound,
+          let end = notesAgentSource.range(of: "private var noteHeaderSubtitle", range: start..<notesAgentSource.endIndex)?.lowerBound else {
+        return ""
+    }
+    return String(notesAgentSource[start..<end])
+}()
 let agentPaneHeaderSource: String = {
     guard let start = notesAgentSource.range(of: "struct AgentPaneView: View")?.lowerBound,
           let end = notesAgentSource.range(of: "private var agentPrompt", range: start..<notesAgentSource.endIndex)?.lowerBound else {
@@ -1913,8 +1920,6 @@ expect(notesAgentSource.contains("func weibeiPaneHeaderChrome(appearanceMode: We
     && !notesAgentSource.contains("VStack(alignment: .leading, spacing: 2) {\n                Text(title)")
     && notesAgentSource.contains("WeiBeiHeaderHandoffFade(height: 28, opacity: 0.34)")
     && notesAgentSource.contains("func weibeiHeaderAccessoryGroup() -> some View")
-    && notePaneHeaderSource.contains("selected ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk")
-    && notePaneHeaderSource.contains("WeiBeiTheme.paperRaised.opacity(store.appearanceMode == .inkstone ? 0.18 : 0.34)")
     && !notePaneHeaderSource.contains(".weibeiHeaderAccessoryGroup()")
     && !agentPaneHeaderSource.contains(".weibeiHeaderAccessoryGroup()")
     && !notesAgentSource.contains("private var hasAgentHeaderActions: Bool")
@@ -1977,19 +1982,20 @@ expect(notesAgentSource.contains("func weibeiPaneHeaderChrome(appearanceMode: We
     && notesAgentSource.contains("Button(store.ui(\"替换\", \"Replace\"")
     && !notesAgentSource.contains(".labelStyle(.titleAndIcon)\n        }\n        .buttonStyle(WeiBeiTextActionButtonStyle())")
     && notePaneHeaderSource.contains(".background(WeiBeiTheme.paper)")
-    && notePaneHeaderSource.contains("NoteRenderMode.visibleCases")
-    && notePaneHeaderSource.contains("HStack(spacing: 2)")
-    && notePaneHeaderSource.contains("Image(systemName: noteModeSystemImage(for: mode))")
-    && notesAgentSource.contains("private func noteModeSystemImage(for mode: NoteRenderMode) -> String")
-    && notesAgentSource.contains("return \"pencil.line\"")
-    && notesAgentSource.contains("return \"rectangle.split.2x1\"")
-    && notesAgentSource.contains("return \"chevron.left.forwardslash.chevron.right\"")
-    && notePaneHeaderSource.contains("selected ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk")
-    && notePaneHeaderSource.contains("WeiBeiTheme.cinnabarSoft.opacity(store.appearanceMode == .inkstone ? 0.22 : 0.48)")
-    && notePaneHeaderSource.contains("Capsule()")
-    && notePaneHeaderSource.contains("WeiBeiTheme.paperRaised.opacity(store.appearanceMode == .inkstone ? 0.18 : 0.34)")
-    && notePaneHeaderSource.contains(".stroke(WeiBeiTheme.hairline.opacity(0.14), lineWidth: 1)")
-    && !notePaneHeaderSource.contains("mode.id != NoteRenderMode.visibleCases.last?.id"), "note pane keeps a light three-mode writing rail while the agent pane header stays context-only")
+    && !notePaneHeaderSource.contains("mode.id != NoteRenderMode.visibleCases.last?.id"), "note pane creation and agent header stay custom, light, and context-only")
+expect(noteModeControlSource.contains("NoteRenderMode.visibleCases")
+    && notePaneHeaderSource.contains("@State private var hoveredNoteMode: NoteRenderMode?")
+    && noteModeControlSource.contains("HStack(spacing: 10)")
+    && noteModeControlSource.contains("Text(label)")
+    && noteModeControlSource.contains("hoveredNoteMode == mode")
+    && noteModeControlSource.contains("hoveredNoteMode = hovering ? mode")
+    && !noteModeControlSource.contains("Image(systemName: noteModeSystemImage(for: mode))")
+    && !notesAgentSource.contains("private func noteModeSystemImage(for mode: NoteRenderMode) -> String")
+    && noteModeControlSource.contains("selected ? WeiBeiTheme.cinnabar : hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk")
+    && noteModeControlSource.contains("Capsule()")
+    && noteModeControlSource.contains("WeiBeiTheme.hairline.opacity(store.appearanceMode == .inkstone ? 0.42 : 0.28)")
+    && !noteModeControlSource.contains("WeiBeiTheme.paperRaised.opacity(store.appearanceMode == .inkstone ? 0.18 : 0.34)")
+    && !noteModeControlSource.contains(".stroke(WeiBeiTheme.hairline.opacity(0.14), lineWidth: 1)"), "note mode control is a three-mode text rail without preview, icon clutter, or the old capsule shell")
 expect(notesAgentSource.contains("ContextRailLine") && notesAgentSource.contains(".onHover"), "context rails keep hover motion")
 expect(!notesAgentSource.contains(".id(store.noteRenderMode)"), "note mode changes avoid forced hard view identity resets")
 expect(notesAgentSource.contains("struct ContextRailItem: Identifiable") && notesAgentSource.contains("Button(action: action)"), "context rails expose actionable rows")
