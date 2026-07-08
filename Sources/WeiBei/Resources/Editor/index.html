@@ -478,6 +478,18 @@
     .ProseMirror blockquote.weibei-callout-bug::before { color: var(--cinnabar); }
     .ProseMirror blockquote.weibei-callout::before { content: attr(data-callout-title); }
 
+    body[data-editable="false"] .ProseMirror blockquote.weibei-callout[data-callout-fold="-"] {
+      cursor: pointer;
+    }
+
+    body[data-editable="false"] .ProseMirror blockquote.weibei-callout[data-callout-fold="-"] > * {
+      display: none;
+    }
+
+    body[data-editable="false"] .ProseMirror blockquote.weibei-callout[data-callout-fold="-"].weibei-callout-open > * {
+      display: revert;
+    }
+
     body[data-editable="true"] .ProseMirror blockquote.weibei-callout.weibei-callout-has-heading::before {
       display: none;
     }
@@ -491,6 +503,10 @@
     }
 
     body[data-editable="false"] .ProseMirror blockquote.weibei-callout .weibei-callout-heading {
+      display: none;
+    }
+
+    body[data-editable="false"] .ProseMirror blockquote.weibei-callout[data-callout-fold="-"].weibei-callout-open > .weibei-callout-heading {
       display: none;
     }
 

@@ -875,6 +875,14 @@ const activateSourceReference = (target) => {
   return true;
 };
 
+const toggleFoldedCallout = (target) => {
+  if (isEditable || !(target instanceof Element)) return false;
+  const callout = target.closest('blockquote.weibei-callout[data-callout-fold="-"]');
+  if (!callout) return false;
+  callout.classList.toggle('weibei-callout-open');
+  return true;
+};
+
 const normalizeLanguage = (language) => {
   const key = (language || '').trim().toLowerCase();
   const aliases = {
@@ -1195,7 +1203,9 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       return true;
     },
     handleClick(view, pos, event) {
-      return activateWikiLink(event.target) || activateSourceReference(event.target);
+      return activateWikiLink(event.target)
+        || activateSourceReference(event.target)
+        || toggleFoldedCallout(event.target);
     },
     handleKeyDown(view, event) {
       if (event.key !== 'Enter' && event.key !== ' ') return false;
@@ -1576,7 +1586,9 @@ Editor
       post('selectionChanged', { text: '', rect: null });
     }, true);
     document.addEventListener('click', (event) => {
-      if (!activateWikiLink(event.target)) return;
+      if (!activateWikiLink(event.target)
+          && !activateSourceReference(event.target)
+          && !toggleFoldedCallout(event.target)) return;
       event.preventDefault();
       event.stopPropagation();
     }, true);

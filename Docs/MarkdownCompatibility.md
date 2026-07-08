@@ -18,7 +18,7 @@
 | `![[Note]]` / `![[Note#Heading]]` | 部分支持 | 显示嵌入占位，完整笔记片段渲染后续补 |
 | `![alt|100](url)` / `![alt|100x145](url)` | 支持 | 图片按 alt 尺寸约束显示，原 Markdown 保留 |
 | Obsidian Callout 类型 | 支持 | note/tip/important/warning/caution/summary/abstract/info/success/failure/danger/bug/example/question/quote/todo |
-| Callout `+` / `-` 折叠标记 | 部分支持 | 识别并保留；折叠交互后续补 |
+| Callout `+` / `-` 折叠标记 | 支持 | `-` 在只读阅读/预览中默认折叠并可点击展开；写作态保留正文可编辑 |
 | `$...$` / `$$...$$` 数学 | 支持 | KaTeX 渲染；错误以 KaTeX 错误样式显示 |
 | 数学插入命令 | 支持 | 命令面板插入行内/块级/矩阵公式，块级公式按块结构落位 |
 | 普通金额 `$5` | 支持 | 验收样例覆盖，不应误伤 |

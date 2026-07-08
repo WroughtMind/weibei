@@ -651,6 +651,17 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           const headingStyle = heading ? getComputedStyle(heading) : null;
           const sampleText = quote?.querySelector('p:last-child') || quote || root || document.body;
           const sampleColor = getComputedStyle(sampleText).color;
+          const folded = document.querySelector('blockquote.weibei-callout[data-callout-fold="-"]');
+          const visibleFoldChildren = () => Array.from(folded?.children || []).filter((child) => {
+            const style = getComputedStyle(child);
+            return style.display !== 'none'
+              && style.visibility !== 'hidden'
+              && style.opacity !== '0'
+              && child.getBoundingClientRect().height > 0.5;
+          }).length;
+          const foldedVisibleBefore = visibleFoldChildren();
+          folded?.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+          const foldedVisibleAfter = visibleFoldChildren();
           return {
             editable: document.body.dataset.editable || '',
             theme: document.documentElement.dataset.weibeiTheme || '',
@@ -659,7 +670,9 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
               : false,
             headingHidden: headingStyle ? headingStyle.display === 'none' : false,
             visibleBareMarkers,
-            sampleColor
+            sampleColor,
+            foldedVisibleBefore,
+            foldedVisibleAfter
           };
         })();
         """
@@ -683,6 +696,11 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             if (result["visibleBareMarkers"] as? Int ?? -1) != 0 {
                 self.fail("read-only callout source marker leaked as visible text")
+                return
+            }
+            if (result["foldedVisibleBefore"] as? Int ?? -1) != 0
+                || (result["foldedVisibleAfter"] as? Int ?? 0) < 1 {
+                self.fail("read-only folded callout should start collapsed and expand on click: \(result)")
                 return
             }
             if (result["sampleColor"] as? String ?? "").contains("255, 255, 255") {
