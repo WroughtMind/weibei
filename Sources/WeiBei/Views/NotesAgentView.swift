@@ -1155,13 +1155,13 @@ struct AgentPaneView: View {
             LinearGradient(
                 colors: [
                     .clear,
-                    WeiBeiTheme.paper.opacity(0.34),
-                    WeiBeiTheme.glassTint.opacity(0.66)
+                    WeiBeiTheme.paper.opacity(0.18),
+                    WeiBeiTheme.glassTint.opacity(0.34)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
-            .frame(height: 18)
+            .frame(height: 22)
             .allowsHitTesting(false)
 
             VStack(alignment: .leading, spacing: 8) {
@@ -1191,19 +1191,19 @@ struct AgentPaneView: View {
             .frame(minHeight: 56, alignment: .bottom)
             .frame(maxWidth: agentInputMaxWidth)
             .padding(.horizontal, 18)
-            .padding(.top, 7)
+            .padding(.top, 4)
             .padding(.bottom, 16)
             .frame(maxWidth: .infinity)
             .animation(WeiBeiMotion.reveal, value: store.agentDraft)
         }
         .background(alignment: .bottom) {
             WeiBeiGlassHeaderBackground(
-                paperOpacity: store.layout == .immersiveConversation ? 0.50 : 0.56,
-                materialOpacity: store.layout == .immersiveConversation ? 0.06 : 0.05
+                paperOpacity: store.layout == .immersiveConversation ? 0.28 : 0.34,
+                materialOpacity: 0.04
             )
             .mask(
                 LinearGradient(
-                    colors: [.clear, WeiBeiTheme.ink.opacity(0.72), WeiBeiTheme.ink],
+                    colors: [.clear, WeiBeiTheme.ink.opacity(0.42), WeiBeiTheme.ink.opacity(0.78)],
                     startPoint: .top,
                     endPoint: .bottom
                 )
@@ -1237,7 +1237,7 @@ struct AgentPaneView: View {
                 }
             }
         }
-        .frame(maxWidth: 300, alignment: .leading)
+        .frame(maxWidth: 420, alignment: .leading)
     }
 
     private func starterChip(_ title: String, systemImage: String, help: String, action: @escaping () -> Void) -> some View {

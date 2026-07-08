@@ -872,6 +872,13 @@ let emptyAgentStateSource: String = {
     }
     return String(notesAgentSource[start..<end])
 }()
+let railBackgroundSource: String = {
+    guard let start = notesAgentSource.range(of: "private var railBackground: some View")?.lowerBound,
+          let end = notesAgentSource.range(of: "private var separatorAlignment", range: start..<notesAgentSource.endIndex)?.lowerBound else {
+        return ""
+    }
+    return String(notesAgentSource[start..<end])
+}()
 expect(notesAgentSource.contains("private struct AgentComposerField")
     && notesAgentSource.contains("prompt: Text(prompt)")
     && notesAgentSource.contains(".foregroundStyle(WeiBeiTheme.placeholderInk)"), "agent tray placeholder uses native prompt text so the cursor and text baseline align")
@@ -1979,12 +1986,12 @@ expect(notesAgentSource.contains("struct ContextRailItem: Identifiable") && note
 expect(notesAgentSource.contains("var systemImage: String?") && notesAgentSource.contains("Image(systemName: systemImage)"), "context rail rows support semantic icons")
 expect(notesAgentSource.contains(".accessibilityLabel(Text(item.help ?? item.title))") && notesAgentSource.contains(".help(item.help ?? item.title)"), "context rail actions explain their intent")
 expect(notesAgentSource.contains("var edge: HorizontalEdge = .trailing") && notesAgentSource.contains("edge == .leading ? -3 : 3"), "context rails move inward from either side")
-expect(notesAgentSource.contains("private var railBackground: some View")
-    && notesAgentSource.contains("WeiBeiTheme.paperRaised.opacity(0.10)")
-    && notesAgentSource.contains("WeiBeiTheme.paperRaised.opacity(0.26)")
-    && notesAgentSource.contains(".frame(width: 22)")
-    && !notesAgentSource.contains("WeiBeiTheme.paper.opacity(0.18)")
-    && !notesAgentSource.contains("WeiBeiTheme.paperRaised.opacity(0.40),\n                    WeiBeiTheme.paper.opacity(0.42),\n                    WeiBeiTheme.paper.opacity(0.28)"), "immersive context rails avoid full-height heavy background bands")
+expect(!railBackgroundSource.isEmpty
+    && railBackgroundSource.contains("WeiBeiTheme.paperRaised.opacity(0.10)")
+    && railBackgroundSource.contains("WeiBeiTheme.paperRaised.opacity(0.26)")
+    && railBackgroundSource.contains(".frame(width: 22)")
+    && !railBackgroundSource.contains("WeiBeiTheme.paper.opacity(0.18)")
+    && !railBackgroundSource.contains("WeiBeiTheme.paperRaised.opacity(0.40),\n                    WeiBeiTheme.paper.opacity(0.42),\n                    WeiBeiTheme.paper.opacity(0.28)"), "immersive context rails avoid full-height heavy background bands")
 expect(!notesAgentSource.contains(".id(expanded)"), "selection agent expands without forcing a hard view identity reset")
 expect(contentViewSource.contains("edge: .leading") && contentViewSource.contains("edge: .trailing"), "immersive rails declare their content-facing edge")
 expect(contentViewSource.contains("conversationSourceRailItems") && contentViewSource.contains("conversationTargetRailItems") && contentViewSource.contains("writingAssistRailItems"), "immersive rails wire role-specific actions")
@@ -2327,8 +2334,8 @@ expect(notesAgentSource.contains("ScrollView(showsIndicators: true)")
     && notesAgentSource.components(separatedBy: "ScrollView(showsIndicators: false)").count >= 3
     && notesAgentSource.contains("onMarkdownHeightChange: message.id == store.messages.last?.id")
     && notesAgentSource.contains("onContentHeightChange: onMarkdownHeightChange"), "agent conversation keeps a light scroll affordance and follows the last Markdown answer after it finishes measuring")
-expect(notesAgentSource.contains("WeiBeiGlassHeaderBackground(") && notesAgentSource.contains("WeiBeiTheme.glassTint.opacity(0.66)"), "agent input tray uses paper glass fade instead of a hard white strip")
-expect(notesAgentSource.contains("WeiBeiTheme.ink.opacity(0.72), WeiBeiTheme.ink")
+expect(notesAgentSource.contains("WeiBeiGlassHeaderBackground(") && notesAgentSource.contains("WeiBeiTheme.glassTint.opacity(0.34)"), "agent input tray uses paper glass fade instead of a hard white strip")
+expect(notesAgentSource.contains("WeiBeiTheme.ink.opacity(0.42), WeiBeiTheme.ink.opacity(0.78)")
     && !notesAgentSource.contains(".black.opacity(0.72), .black"), "agent input tray fade mask uses semantic ink instead of a fixed black ramp")
 expect(notesAgentSource.contains("lineLimit: 1...6")
     && notesAgentSource.contains(".fixedSize(horizontal: false, vertical: true)")
