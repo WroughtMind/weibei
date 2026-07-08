@@ -332,11 +332,36 @@ struct NotePaneView: View {
                     .padding(.bottom, 8)
             }
 
+            if let draft = store.notebookCreationDraft {
+                NotebookCreationPanel(
+                    draft: draft,
+                    title: Binding(
+                        get: { store.notebookCreationDraft?.title ?? "" },
+                        set: { store.notebookCreationDraft?.title = $0 }
+                    ),
+                    confirm: {
+                        withAnimation(WeiBeiMotion.panel) {
+                            store.confirmNotebookNoteCreation()
+                        }
+                    },
+                    cancel: {
+                        withAnimation(WeiBeiMotion.panel) {
+                            store.cancelNotebookNoteCreation()
+                        }
+                    }
+                )
+                .padding(.horizontal, 14)
+                .padding(.top, 8)
+                .padding(.bottom, 6)
+                .transition(WeiBeiTransition.message)
+            }
+
             noteBody
         }
         .frame(minHeight: 280)
         .foregroundStyle(WeiBeiTheme.ink)
         .background(WeiBeiTheme.paper)
+        .animation(WeiBeiMotion.panel, value: store.notebookCreationDraft?.id)
     }
 
     private var noteModeControl: some View {
@@ -529,6 +554,78 @@ struct NotePaneView: View {
 
     private var emptyNoteHintText: String {
         store.hasSelectedMaterial ? store.ui("开始记录当前材料", "Start taking notes on this material") : store.ui("开始记录当前笔记", "Start writing this note")
+    }
+}
+
+private struct NotebookCreationPanel: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    var draft: NotebookCreationDraft
+    @Binding var title: String
+    var confirm: () -> Void
+    var cancel: () -> Void
+    @FocusState private var focused: Bool
+
+    private var canCreate: Bool {
+        !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Rectangle()
+                .fill(WeiBeiTheme.cinnabar.opacity(0.64))
+                .frame(width: 2, height: 22)
+                .clipShape(Capsule())
+
+            Text(draft.kind == .blank ? store.ui("命名空白笔记", "Name Blank Note") : store.ui("命名资料笔记", "Name Material Note"))
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+
+            TextField(
+                "",
+                text: $title,
+                prompt: Text(store.ui("笔记名", "Note title"))
+                    .foregroundStyle(WeiBeiTheme.placeholderInk)
+            )
+            .textFieldStyle(.plain)
+            .font(.system(size: 13, weight: .medium))
+            .foregroundColor(WeiBeiTheme.ink)
+            .focused($focused)
+            .onSubmit(confirm)
+            .weibeiInputSurface(active: focused, height: 32, horizontalPadding: 10)
+
+            Button(action: confirm) {
+                Image(systemName: "checkmark")
+            }
+            .buttonStyle(WeiBeiIconButtonStyle(size: 24, prominence: .primary))
+            .disabled(!canCreate)
+            .keyboardShortcut(.defaultAction)
+            .accessibilityLabel(Text(store.ui("创建笔记", "Create Note")))
+            .help(store.ui("创建笔记", "Create Note"))
+
+            Button(action: cancel) {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(WeiBeiIconButtonStyle(size: 22))
+            .keyboardShortcut(.cancelAction)
+            .accessibilityLabel(Text(store.ui("取消", "Cancel")))
+            .help(store.ui("取消新建笔记", "Cancel note creation"))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background {
+            WeiBeiTheme.paperRaised.opacity(0.18)
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(WeiBeiTheme.hairline.opacity(0.34))
+                .frame(height: 1)
+        }
+        .onExitCommand(perform: cancel)
+        .onAppear {
+            focused = true
+        }
     }
 }
 
