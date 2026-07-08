@@ -84,6 +84,7 @@ final class WorkspaceStore: ObservableObject {
     private var lastSelectionUpdateDate: Date?
     private var pendingSelectionAttachmentTask: Task<Void, Never>?
     private let selectionAttachmentMergeWindow: TimeInterval = 1.8
+    private let selectionAttachmentDebounceDelay: UInt64 = 520_000_000
     private var threePaneReorderFrames: [WorkspacePaneRole: CGRect] = [:]
 
     private struct NavigationSnapshot: Equatable {
@@ -1502,7 +1503,7 @@ final class WorkspaceStore: ObservableObject {
     private func scheduleSelectionAttachment(_ selection: SelectionContext, withinSelectionGesture: Bool) {
         pendingSelectionAttachmentTask?.cancel()
         pendingSelectionAttachmentTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 220_000_000)
+            try? await Task.sleep(nanoseconds: self?.selectionAttachmentDebounceDelay ?? 520_000_000)
             guard !Task.isCancelled else { return }
             guard self?.selectionContext?.id == selection.id else { return }
             withAnimation(WeiBeiMotion.panel) {
