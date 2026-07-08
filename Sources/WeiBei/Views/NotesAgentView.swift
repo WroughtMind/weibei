@@ -365,16 +365,16 @@ struct NotePaneView: View {
     }
 
     private var noteModeControl: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 4) {
             ForEach(NoteRenderMode.visibleCases) { mode in
                 noteModeButton(for: mode)
             }
         }
-        .padding(.horizontal, 2)
+        .padding(.horizontal, 1)
         .frame(height: 30)
         .overlay(alignment: .bottom) {
             Rectangle()
-                .fill(WeiBeiTheme.hairline.opacity(store.appearanceMode == .inkstone ? 0.42 : 0.28))
+                .fill(WeiBeiTheme.hairline.opacity(store.appearanceMode == .inkstone ? 0.34 : 0.20))
                 .frame(height: 1)
         }
         .animation(WeiBeiMotion.appearance, value: store.appearanceMode)
@@ -401,25 +401,44 @@ struct NotePaneView: View {
     }
 
     private func noteModeButtonLabel(label: String, selected: Bool, hovering: Bool) -> some View {
-        VStack(spacing: 3) {
-            Text(label)
-                .font(.system(size: 12, weight: selected ? .semibold : .medium))
-                .foregroundStyle(selected ? WeiBeiTheme.cinnabar : hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
+        Text(label)
+            .font(.system(size: 12, weight: selected ? .semibold : .medium))
+            .foregroundStyle(selected ? WeiBeiTheme.cinnabar : hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
+            .padding(.horizontal, store.interfaceLanguage == .english ? 9 : 8)
+            .frame(minWidth: store.interfaceLanguage == .english ? 58 : 38)
+            .frame(height: 26)
+            .background {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(noteModeButtonFill(selected: selected, hovering: hovering))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .stroke(noteModeButtonStroke(selected: selected, hovering: hovering), lineWidth: selected ? 0.7 : 0.45)
+            }
+            .scaleEffect(hovering && !selected ? 1.012 : 1)
+            .contentShape(Rectangle())
+            .animation(WeiBeiMotion.micro, value: selected)
+            .animation(WeiBeiMotion.hover, value: hovering)
+    }
 
-            Capsule()
-                .fill(selected ? WeiBeiTheme.cinnabar.opacity(store.appearanceMode == .inkstone ? 0.84 : 0.74) : Color.clear)
-                .frame(width: 16, height: 2)
+    private func noteModeButtonFill(selected: Bool, hovering: Bool) -> Color {
+        if selected {
+            return WeiBeiTheme.cinnabarSoft.opacity(store.appearanceMode == .inkstone ? 0.72 : 0.86)
         }
-        .padding(.horizontal, 3)
-        .frame(minWidth: store.interfaceLanguage == .english ? 54 : 34)
-        .frame(height: 28)
-        .background {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(hovering && !selected ? WeiBeiTheme.paperInset.opacity(store.appearanceMode == .inkstone ? 0.18 : 0.14) : Color.clear)
+        if hovering {
+            return WeiBeiTheme.paperInset.opacity(store.appearanceMode == .inkstone ? 0.18 : 0.12)
         }
-        .contentShape(Rectangle())
-        .animation(WeiBeiMotion.micro, value: selected)
-        .animation(WeiBeiMotion.hover, value: hovering)
+        return Color.clear
+    }
+
+    private func noteModeButtonStroke(selected: Bool, hovering: Bool) -> Color {
+        if selected {
+            return WeiBeiTheme.cinnabar.opacity(store.appearanceMode == .inkstone ? 0.34 : 0.24)
+        }
+        if hovering {
+            return WeiBeiTheme.hairline.opacity(store.appearanceMode == .inkstone ? 0.30 : 0.18)
+        }
+        return Color.clear
     }
 
     private var noteHeaderSubtitle: String {
