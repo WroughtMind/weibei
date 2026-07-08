@@ -7,6 +7,7 @@ import WeiBeiCore
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var shortcutMonitor: Any?
+    var reopenMainWindow: (() -> Void)?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         WeiBeiTypography.registerBundledFonts()
@@ -20,10 +21,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            if let window = sender.windows.first(where: { $0.canBecomeKey }) {
+                window.deminiaturize(nil)
+                window.makeKeyAndOrderFront(nil)
+            } else {
+                reopenMainWindow?()
+            }
+        }
         if shouldActivateOnLaunch {
             NSApp.activate(ignoringOtherApps: true)
         }
-        return true
+        return false
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -53,6 +62,7 @@ struct WeiBeiApp: App {
                 .preferredColorScheme(store.appearanceMode.colorScheme)
                 .modifier(WeiBeiAppearanceTransition(mode: store.appearanceMode))
                 .background(WindowChromeConfigurator(appearanceMode: store.appearanceMode))
+                .background(MainWindowReopenBridge(appDelegate: appDelegate))
                 .onOpenURL { url in
                     store.importFiles([url])
                 }
@@ -250,6 +260,21 @@ struct WeiBeiApp: App {
         animatePanel {
             store.setNoteRenderMode(mode)
         }
+    }
+}
+
+private struct MainWindowReopenBridge: View {
+    @Environment(\.openWindow) private var openWindow
+    weak var appDelegate: AppDelegate?
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onAppear {
+                appDelegate?.reopenMainWindow = {
+                    openWindow(id: "main")
+                }
+            }
     }
 }
 
