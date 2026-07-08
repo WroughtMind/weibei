@@ -370,13 +370,8 @@ struct NotePaneView: View {
                 noteModeButton(for: mode)
             }
         }
-        .padding(.horizontal, 1)
-        .frame(height: 30)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(WeiBeiTheme.hairline.opacity(store.appearanceMode == .inkstone ? 0.34 : 0.20))
-                .frame(height: 1)
-        }
+        .frame(height: 28)
+        .weibeiHeaderAccessoryGroup()
         .animation(WeiBeiMotion.appearance, value: store.appearanceMode)
     }
 
@@ -402,17 +397,17 @@ struct NotePaneView: View {
 
     private func noteModeButtonLabel(label: String, selected: Bool, hovering: Bool) -> some View {
         Text(label)
-            .font(.system(size: 12, weight: selected ? .semibold : .medium))
+            .font(.system(size: 11.5, weight: selected ? .semibold : .medium))
             .foregroundStyle(selected ? WeiBeiTheme.cinnabar : hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
-            .padding(.horizontal, store.interfaceLanguage == .english ? 9 : 8)
-            .frame(minWidth: store.interfaceLanguage == .english ? 58 : 38)
-            .frame(height: 26)
+            .padding(.horizontal, store.interfaceLanguage == .english ? 10 : 9)
+            .frame(minWidth: store.interfaceLanguage == .english ? 60 : 40)
+            .frame(height: 24)
             .background {
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(noteModeButtonFill(selected: selected, hovering: hovering))
             }
             .overlay {
-                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .stroke(noteModeButtonStroke(selected: selected, hovering: hovering), lineWidth: selected ? 0.7 : 0.45)
             }
             .scaleEffect(hovering && !selected ? 1.012 : 1)
@@ -423,10 +418,10 @@ struct NotePaneView: View {
 
     private func noteModeButtonFill(selected: Bool, hovering: Bool) -> Color {
         if selected {
-            return WeiBeiTheme.cinnabarSoft.opacity(store.appearanceMode == .inkstone ? 0.72 : 0.86)
+            return WeiBeiTheme.cinnabarSoft.opacity(store.appearanceMode == .inkstone ? 0.44 : 0.62)
         }
         if hovering {
-            return WeiBeiTheme.paperInset.opacity(store.appearanceMode == .inkstone ? 0.18 : 0.12)
+            return WeiBeiTheme.paperRaised.opacity(store.appearanceMode == .inkstone ? 0.16 : 0.20)
         }
         return Color.clear
     }
