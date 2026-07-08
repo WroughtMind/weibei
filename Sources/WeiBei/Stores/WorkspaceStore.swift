@@ -398,6 +398,11 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    func displayTags(for item: StudyItem, limit: Int = 3) -> [String] {
+        guard item.isNotebookNote else { return [] }
+        return Array(MarkdownTagSearch.tags(in: noteMarkdownText(for: item)).prefix(limit))
+    }
+
     private func itemMatchesLibrarySearch(_ item: StudyItem, query: String) -> Bool {
         displayTitle(for: item).localizedCaseInsensitiveContains(query)
             || displaySubtitle(for: item).localizedCaseInsensitiveContains(query)
@@ -407,17 +412,20 @@ final class WorkspaceStore: ObservableObject {
 
     private func noteTagsMatchLibrarySearch(_ item: StudyItem, query: String) -> Bool {
         guard item.isNotebookNote else { return false }
-        let text: String
+        return MarkdownTagSearch.matches(query: query, in: noteMarkdownText(for: item))
+    }
+
+    private func noteMarkdownText(for item: StudyItem) -> String {
         if item.id == activeNoteItemID {
-            text = noteText
-        } else if let cached = notesByItemID[item.id] {
-            text = cached
-        } else if item.editsBackingMarkdownFile, let url = item.url {
-            text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
-        } else {
-            text = ""
+            return noteText
         }
-        return MarkdownTagSearch.matches(query: query, in: text)
+        if let cached = notesByItemID[item.id] {
+            return cached
+        }
+        if item.editsBackingMarkdownFile, let url = item.url {
+            return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        }
+        return ""
     }
 
     func select(itemID: String?) {

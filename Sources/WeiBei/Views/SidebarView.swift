@@ -194,6 +194,10 @@ private struct LibraryRow: View {
     var selected: Bool
     @State private var hovering = false
 
+    private var tags: [String] {
+        store.displayTags(for: item)
+    }
+
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: item.kind.systemImage)
@@ -210,10 +214,16 @@ private struct LibraryRow: View {
                     .font(.caption)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .lineLimit(1)
+                if !tags.isEmpty {
+                    Text(tags.joined(separator: " "))
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.72))
+                        .lineLimit(1)
+                }
             }
         }
         .padding(.horizontal, 9)
-        .frame(height: 48)
+        .frame(height: tags.isEmpty ? 48 : 58)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(rowBackground)
         .offset(x: selected || hovering ? 2 : 0)
