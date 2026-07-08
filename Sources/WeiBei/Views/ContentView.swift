@@ -88,9 +88,6 @@ struct ContentView: View {
     }
 
     private var showsGlobalFloatingAgent: Bool {
-        if store.isConversationSurfaceVisible {
-            return false
-        }
         return store.canShowSelectionPromptSurface && SelectionFloatingAgentPlacement.isVisible(
             surface: store.agentSurface,
             hasSelection: store.selectionContext != nil,

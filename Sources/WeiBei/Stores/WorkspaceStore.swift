@@ -5,18 +5,6 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WeiBeiCore
 
-enum NotebookCreationKind: String {
-    case blank
-    case currentMaterial
-}
-
-struct NotebookCreationDraft: Identifiable, Equatable {
-    let id = UUID()
-    var kind: NotebookCreationKind
-    var sourceItemID: String?
-    var title: String
-}
-
 struct NotebookRenameDraft: Identifiable, Equatable {
     let id = UUID()
     var itemID: String
@@ -64,7 +52,6 @@ final class WorkspaceStore: ObservableObject {
     @Published var selectionAnchor: CGPoint?
     @Published var noteEditorCommand: NoteEditorCommand?
     @Published var noteFileError: String?
-    @Published var notebookCreationDraft: NotebookCreationDraft?
     @Published var notebookRenameDraft: NotebookRenameDraft?
     @Published var modelName: String = ProcessInfo.processInfo.environment["WEIBEI_OPENAI_MODEL"] ?? "gpt-5.1"
     @Published var openAIAPIKey: String = OpenAIAPIKeyStore.load()
@@ -438,7 +425,6 @@ final class WorkspaceStore: ObservableObject {
 
     func select(itemID: String?) {
         persistCurrentNote()
-        notebookCreationDraft = nil
         notebookRenameDraft = nil
         if let itemID,
            let item = allItems.first(where: { $0.id == itemID && $0.isNotebookNote }) {
@@ -509,52 +495,11 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func promptCreateBlankNotebookNote() {
-        noteFileError = nil
-        notebookCreationDraft = NotebookCreationDraft(
-            kind: .blank,
-            sourceItemID: nil,
-            title: suggestedNotebookTitle(for: .blank)
-        )
-        focus(.notes)
+        createBlankNotebookNote()
     }
 
     func promptCreateNotebookNoteFromCurrentMaterial() {
-        guard let selectedMaterialItem else {
-            promptCreateBlankNotebookNote()
-            return
-        }
-        if openExistingNotebookNote(for: selectedMaterialItem) {
-            return
-        }
-        noteFileError = nil
-        notebookCreationDraft = NotebookCreationDraft(
-            kind: .currentMaterial,
-            sourceItemID: selectedMaterialItem.id,
-            title: suggestedNotebookTitle(for: .currentMaterial(selectedMaterialItem))
-        )
-        focus(.notes)
-    }
-
-    func cancelNotebookNoteCreation() {
-        notebookCreationDraft = nil
-        noteFileError = nil
-    }
-
-    func confirmNotebookNoteCreation() {
-        guard let draft = notebookCreationDraft else { return }
-        let title = draft.title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty else {
-            noteFileError = ui("笔记名不能为空。", "Note name cannot be empty.")
-            return
-        }
-        notebookCreationDraft = nil
-        if draft.kind == .currentMaterial,
-           let sourceItemID = draft.sourceItemID,
-           let item = allItems.first(where: { $0.id == sourceItemID && !$0.isNotebookNote }) {
-            createNotebookNote(seed: .currentMaterial(item), title: title)
-        } else {
-            createNotebookNote(seed: .blank, title: title)
-        }
+        createNotebookNoteFromCurrentMaterial()
     }
 
     func focus(_ pane: PaneFocus) {
@@ -854,7 +799,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var canShowSelectionPromptSurface: Bool {
-        !isConversationSurfaceVisible
+        true
     }
 
     var visibleAgentSurfaces: [AgentSurface] {
@@ -1256,7 +1201,6 @@ final class WorkspaceStore: ObservableObject {
 
     func promptRenameNotebookNote(itemID: String) {
         guard let item = allItems.first(where: { $0.id == itemID && $0.isNotebookNote }) else { return }
-        notebookCreationDraft = nil
         notebookRenameDraft = NotebookRenameDraft(itemID: item.id, title: displayTitle(for: item))
         showLibrary = true
         focus(.library)
@@ -1413,7 +1357,6 @@ final class WorkspaceStore: ObservableObject {
         guard let item = existingNotebookNote(for: material) else { return false }
         activeNotebookItemID = item.id
         noteText = noteText(for: item)
-        notebookCreationDraft = nil
         revealRichWritingSurface()
         focus(.notes)
         save()
@@ -1485,11 +1428,7 @@ final class WorkspaceStore: ObservableObject {
             clearUnpinnedFloatingSelection(keepContext: false)
             return
         }
-        let now = Date()
-        let withinSelectionGesture = lastSelectionUpdateDate.map {
-            now.timeIntervalSince($0) <= selectionAttachmentMergeWindow
-        } ?? false
-        lastSelectionUpdateDate = now
+        lastSelectionUpdateDate = Date()
         clearGeneratedQuietInsight()
         let cleanedOwnerTitle = ownerTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedOwnerTitle = (cleanedOwnerTitle?.isEmpty == false ? cleanedOwnerTitle : nil) ?? selectionOwnerTitle(for: source)
@@ -1499,17 +1438,14 @@ final class WorkspaceStore: ObservableObject {
             ownerTitle: resolvedOwnerTitle,
             isEditable: isEditable
         )
-        let shouldRouteToConversation = isConversationSurfaceVisible
-        let shouldRevealSelectionPrompt = canShowSelectionPromptSurface
+        let shouldRevealSelectionPrompt = anchor != nil || pinnedFloatingAgent
         withAnimation(WeiBeiMotion.panel) {
             selectionContext = nextSelection
             selectionAnchor = anchor
             floatingSelectionPrompt = nextSelection.label(language: interfaceLanguage)
             pinnedFloatingAgent = false
-            if shouldRouteToConversation {
-                scheduleSelectionAttachment(nextSelection, withinSelectionGesture: withinSelectionGesture)
-                showQuietInsight = false
-            } else if shouldRevealSelectionPrompt {
+            cancelPendingSelectionAttachment()
+            if shouldRevealSelectionPrompt {
                 agentSurface = .selectionFloat
                 showQuietInsight = false
             } else if agentSurface == .selectionFloat {
@@ -1873,10 +1809,6 @@ final class WorkspaceStore: ObservableObject {
         guard !question.isEmpty, !isAskingAgent else { return }
 
         persistCurrentNote()
-        if selectionAttachments.isEmpty, let selectionContext, isConversationSurfaceVisible {
-            cancelPendingSelectionAttachment()
-            addSelectionAttachment(selectionContext)
-        }
         let sentSelectionTitle = agentSelectionTitle
         let sentSelectionText = agentSelectionText
         let shouldClearSentDocumentSelection = sentSelectionText != nil && selectionContext?.source == .document

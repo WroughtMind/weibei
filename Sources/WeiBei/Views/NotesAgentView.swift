@@ -332,36 +332,11 @@ struct NotePaneView: View {
                     .padding(.bottom, 8)
             }
 
-            if let draft = store.notebookCreationDraft {
-                NotebookCreationPanel(
-                    draft: draft,
-                    title: Binding(
-                        get: { store.notebookCreationDraft?.title ?? "" },
-                        set: { store.notebookCreationDraft?.title = $0 }
-                    ),
-                    confirm: {
-                        withAnimation(WeiBeiMotion.panel) {
-                            store.confirmNotebookNoteCreation()
-                        }
-                    },
-                    cancel: {
-                        withAnimation(WeiBeiMotion.panel) {
-                            store.cancelNotebookNoteCreation()
-                        }
-                    }
-                )
-                .padding(.horizontal, 14)
-                .padding(.top, 8)
-                .padding(.bottom, 6)
-                .transition(WeiBeiTransition.message)
-            }
-
             noteBody
         }
         .frame(minHeight: 280)
         .foregroundStyle(WeiBeiTheme.ink)
         .background(WeiBeiTheme.paper)
-        .animation(WeiBeiMotion.panel, value: store.notebookCreationDraft?.id)
     }
 
     private var noteModeControl: some View {
@@ -554,99 +529,6 @@ struct NotePaneView: View {
 
     private var emptyNoteHintText: String {
         store.hasSelectedMaterial ? store.ui("开始记录当前材料", "Start taking notes on this material") : store.ui("开始记录当前笔记", "Start writing this note")
-    }
-}
-
-private struct NotebookCreationPanel: View {
-    @EnvironmentObject private var store: WorkspaceStore
-    var draft: NotebookCreationDraft
-    @Binding var title: String
-    var confirm: () -> Void
-    var cancel: () -> Void
-    @FocusState private var focused: Bool
-
-    private var canCreate: Bool {
-        !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    var body: some View {
-        HStack(spacing: 9) {
-            Text(panelEyebrow)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(WeiBeiTheme.cinnabar)
-                .lineLimit(1)
-                .padding(.horizontal, 7)
-                .frame(height: 24)
-                .background(WeiBeiTheme.cinnabarSoft.opacity(store.appearanceMode == .inkstone ? 0.32 : 0.46))
-                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-
-            TextField(
-                "",
-                text: $title,
-                prompt: Text(inputPrompt)
-                    .foregroundStyle(WeiBeiTheme.placeholderInk)
-            )
-            .textFieldStyle(.plain)
-            .font(.system(size: 13, weight: .medium))
-            .foregroundColor(WeiBeiTheme.ink)
-            .focused($focused)
-            .onSubmit(confirm)
-            .padding(.horizontal, 9)
-            .frame(height: 32)
-            .background {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(WeiBeiTheme.paperRaised.opacity(focused ? 0.50 : 0.34))
-            }
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(focused ? WeiBeiTheme.link.opacity(0.42) : WeiBeiTheme.hairline.opacity(0.48))
-                    .frame(height: 1)
-                    .padding(.horizontal, 6)
-            }
-
-            Button(store.ui("创建", "Create"), action: confirm)
-                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                .disabled(!canCreate)
-                .keyboardShortcut(.defaultAction)
-                .accessibilityLabel(Text(store.ui("创建笔记", "Create Note")))
-                .help(store.ui("创建笔记", "Create Note"))
-
-            Button(action: cancel) {
-                Image(systemName: "xmark")
-            }
-            .buttonStyle(WeiBeiIconButtonStyle(size: 22))
-            .keyboardShortcut(.cancelAction)
-            .accessibilityLabel(Text(store.ui("取消", "Cancel")))
-            .help(store.ui("取消新建笔记", "Cancel note creation"))
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(WeiBeiTheme.paperInset.opacity(0.10))
-            WeiBeiGlassHeaderBackground(paperOpacity: 0.46, materialOpacity: 0.07)
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .stroke(WeiBeiTheme.hairline.opacity(focused ? 0.62 : 0.34), lineWidth: 1)
-        }
-        .onExitCommand(perform: cancel)
-        .onAppear {
-            focused = true
-        }
-    }
-
-    private var panelEyebrow: String {
-        draft.kind == .blank
-            ? store.ui("空白", "Blank")
-            : store.ui("资料", "Material")
-    }
-
-    private var inputPrompt: String {
-        draft.kind == .blank
-            ? store.ui("笔记名", "Note name")
-            : store.ui("资料笔记名", "Material note name")
     }
 }
 
