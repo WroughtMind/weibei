@@ -1478,7 +1478,10 @@ final class WorkspaceStore: ObservableObject {
     func updateSelection(_ text: String, source: SelectionSource, anchor: CGPoint? = nil, ownerTitle: String? = nil, isEditable: Bool = true) {
         let cleaned = MarkdownSelectionSanitizer.clean(text)
         guard Self.hasMeaningfulSelectionCharacter(cleaned) else {
-            lastSelectionUpdateDate = nil
+            let now = Date()
+            if lastSelectionUpdateDate.map({ now.timeIntervalSince($0) > selectionAttachmentMergeWindow }) ?? true {
+                lastSelectionUpdateDate = nil
+            }
             clearUnpinnedFloatingSelection(keepContext: false)
             return
         }
