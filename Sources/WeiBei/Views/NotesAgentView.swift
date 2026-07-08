@@ -295,12 +295,12 @@ struct NotePaneView: View {
                     Menu {
                         Button(store.ui("空白课程笔记", "Blank Course Note")) {
                             withAnimation(WeiBeiMotion.layout) {
-                                store.createBlankNotebookNote()
+                                store.promptCreateBlankNotebookNote()
                             }
                         }
                         Button(store.ui("当前资料笔记", "Current Material Note")) {
                             withAnimation(WeiBeiMotion.layout) {
-                                store.createNotebookNoteFromCurrentMaterial()
+                                store.promptCreateNotebookNoteFromCurrentMaterial()
                             }
                         }
                     } label: {
@@ -312,7 +312,7 @@ struct NotePaneView: View {
                 } else {
                     Button {
                         withAnimation(WeiBeiMotion.layout) {
-                            store.createBlankNotebookNote()
+                            store.promptCreateBlankNotebookNote()
                         }
                     } label: {
                         Image(systemName: "doc.badge.plus")
