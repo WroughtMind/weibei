@@ -9,7 +9,7 @@
 | 导入 HTML / PDF / Markdown / Text | 已做 |
 | 中央阅读器 | HTML 用 WebKit；PDF 用 PDFKit，支持连续滑动和单页翻页，单页模式可用 `⌘[` / `⌘]` 翻页；Markdown 资料用渲染阅读 |
 | 右侧笔记 | 按资料绑定并保存到本机应用支持目录 |
-| Markdown 原地写作 | 默认使用 WKWebView 内嵌 Milkdown / ProseMirror，同一编辑区里输入 Markdown 并实时排版；源码、预览、对照模式保留为辅助 |
+| Markdown 原地写作 | 默认使用 WKWebView 内嵌 Milkdown / ProseMirror，同一编辑区里输入 Markdown 并实时排版；源码、对照模式保留为辅助 |
 | 选区 Agent | HTML、PDF、Markdown/Text 文档和笔记编辑器选中内容后，可唤起带真实摘录的划线浮层；浮层会尽量靠近选区并可拖动固定，Agent 可替换当前笔记选区 |
 | Agent | 读取 `OPENAI_API_KEY`，固定携带当前材料、当前选区、当前笔记和最近对话作答 |
 | 全键盘 | `⌘1` 到 `⌘4` 聚焦，`⌘B` 收起资料库，`⌘K` 命令面板；命令面板支持上下键、回车和 Esc |

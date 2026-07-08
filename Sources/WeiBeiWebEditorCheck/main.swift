@@ -1190,30 +1190,35 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             throw new Error('empty block Enter kept following text in the block: ' + text + '\\n' + current);
           }
         }
-        window.WeiBeiEditor.setMarkdown('# 块退出验收\\n');
-        window.WeiBeiEditor.insertMarkdown('\\n\\n{{WEIBEI_CURSOR}}');
-        if (!window.WeiBeiEditor.typeTextForCheck('- 手写项目')) {
-          throw new Error('typeTextForCheck unavailable for typed bullet');
-        }
-        if (!window.WeiBeiEditor.pressKeyForCheck('Enter')) {
-          throw new Error('pressKeyForCheck unavailable for typed bullet first Enter');
-        }
-        if (!window.WeiBeiEditor.pressKeyForCheck('Enter')) {
-          throw new Error('pressKeyForCheck unavailable for typed bullet second Enter');
-        }
-        if (!window.WeiBeiEditor.typeTextForCheck('手写退出列表')) {
-          throw new Error('typeTextForCheck unavailable after typed bullet exit');
-        }
-        const typedMarkdown = window.WeiBeiEditor.getMarkdown();
-        if (!['- 手写项目', '* 手写项目', '+ 手写项目'].some((marker) => typedMarkdown.includes(marker))
-            || !typedMarkdown.includes('\\n\\n手写退出列表')
-            || typedMarkdown.includes('\\n- 手写退出列表')
-            || typedMarkdown.includes('\\n* 手写退出列表')
-            || typedMarkdown.includes('\\n+ 手写退出列表')) {
-          throw new Error('typed bullet Enter did not exit to a normal paragraph\\n' + typedMarkdown);
-        }
-        if (Array.from(document.querySelectorAll('.ProseMirror li')).some((item) => item.textContent.includes('手写退出列表'))) {
-          throw new Error('typed bullet exit kept following text inside a list item\\n' + document.querySelector('.ProseMirror')?.innerHTML);
+        const typedListCases = [
+          ['- 手写项目', '手写退出无序列表', ['- 手写项目', '* 手写项目', '+ 手写项目'], ['\\n- 手写退出无序列表', '\\n* 手写退出无序列表', '\\n+ 手写退出无序列表']],
+          ['1. 手写项目', '手写退出有序列表', ['1. 手写项目'], ['\\n1. 手写退出有序列表', '\\n2. 手写退出有序列表']],
+          ['- [ ] 手写待办', '手写退出任务列表', ['- [ ] 手写待办', '* [ ] 手写待办', '+ [ ] 手写待办'], ['\\n- [ ] 手写退出任务列表', '\\n* [ ] 手写退出任务列表', '\\n+ [ ] 手写退出任务列表']]
+        ];
+        for (const [typed, after, expectedMarkers, forbiddenMarkers] of typedListCases) {
+          window.WeiBeiEditor.setMarkdown('# 块退出验收\\n');
+          window.WeiBeiEditor.insertMarkdown('\\n\\n{{WEIBEI_CURSOR}}');
+          if (!window.WeiBeiEditor.typeTextForCheck(typed)) {
+            throw new Error('typeTextForCheck unavailable for typed list: ' + typed);
+          }
+          if (!window.WeiBeiEditor.pressKeyForCheck('Enter')) {
+            throw new Error('pressKeyForCheck unavailable for typed list first Enter: ' + typed);
+          }
+          if (!window.WeiBeiEditor.pressKeyForCheck('Enter')) {
+            throw new Error('pressKeyForCheck unavailable for typed list second Enter: ' + typed);
+          }
+          if (!window.WeiBeiEditor.typeTextForCheck(after)) {
+            throw new Error('typeTextForCheck unavailable after typed list exit: ' + typed);
+          }
+          const typedMarkdown = window.WeiBeiEditor.getMarkdown();
+          if (!expectedMarkers.some((marker) => typedMarkdown.includes(marker))
+              || !typedMarkdown.includes('\\n\\n' + after)
+              || forbiddenMarkers.some((marker) => typedMarkdown.includes(marker))) {
+            throw new Error('typed list Enter did not exit to a normal paragraph: ' + typed + '\\n' + typedMarkdown);
+          }
+          if (Array.from(document.querySelectorAll('.ProseMirror li')).some((item) => item.textContent.includes(after))) {
+            throw new Error('typed list exit kept following text inside a list item: ' + typed + '\\n' + document.querySelector('.ProseMirror')?.innerHTML);
+          }
         }
         window.WeiBeiEditor.setMarkdown('# 块退出验收\\n');
         window.WeiBeiEditor.insertMarkdown('\\n\\n{{WEIBEI_CURSOR}}');
