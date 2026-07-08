@@ -571,15 +571,14 @@ private struct NotebookCreationPanel: View {
 
     var body: some View {
         HStack(spacing: 9) {
-            Capsule()
-                .fill(WeiBeiTheme.cinnabar.opacity(0.56))
-                .frame(width: 2, height: 20)
-
             Text(panelEyebrow)
-                .font(.system(size: 11, weight: .semibold, design: .serif))
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.cinnabar)
                 .lineLimit(1)
-                .frame(minWidth: 84, alignment: .leading)
+                .padding(.horizontal, 7)
+                .frame(height: 24)
+                .background(WeiBeiTheme.cinnabarSoft.opacity(store.appearanceMode == .inkstone ? 0.32 : 0.46))
+                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
 
             TextField(
                 "",
@@ -624,7 +623,7 @@ private struct NotebookCreationPanel: View {
         .padding(.vertical, 7)
         .background {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(WeiBeiTheme.paperInset.opacity(0.14))
+                .fill(WeiBeiTheme.paperInset.opacity(0.10))
             WeiBeiGlassHeaderBackground(paperOpacity: 0.46, materialOpacity: 0.07)
                 .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
@@ -640,8 +639,8 @@ private struct NotebookCreationPanel: View {
 
     private var panelEyebrow: String {
         draft.kind == .blank
-            ? store.ui("新建空白课程笔记", "New blank course note")
-            : store.ui("新建当前资料笔记", "New note for current material")
+            ? store.ui("空白", "Blank")
+            : store.ui("资料", "Material")
     }
 
     private var inputPrompt: String {
