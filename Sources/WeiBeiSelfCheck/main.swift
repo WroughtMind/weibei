@@ -589,6 +589,12 @@ assets/curve.png
 """
 expect(readableMarkdownSelectionText == expectedReadableMarkdownSelectionText, "selection sanitizer turns common Markdown and Obsidian writing syntax into readable text for Agent context")
 let searchableTags = MarkdownTagSearch.tags(in: """
+---
+tags:
+  - property/rate
+  - "#quoted-tag"
+---
+
 # 标题不是标签
 正文标签 #finance/rate 和 #nested/tag
 行内代码 `#not-tag` 不应该进入标签
@@ -597,8 +603,10 @@ let searchableTags = MarkdownTagSearch.tags(in: """
 let tag = "#code-tag"
 ```
 """)
-expect(searchableTags == ["#finance/rate", "#nested/tag"], "markdown tag search extracts only real prose tags")
+expect(searchableTags == ["#finance/rate", "#nested/tag", "#property/rate", "#quoted-tag"], "markdown tag search extracts real prose and frontmatter property tags")
+expect(MarkdownTagSearch.tags(in: "---\ntags: [banking, #macro/rate]\n---\n正文") == ["#banking", "#macro/rate"], "markdown tag search reads inline frontmatter tag arrays")
 expect(MarkdownTagSearch.matches(query: "finance", in: "#finance/rate")
+    && MarkdownTagSearch.matches(query: "macro", in: "---\ntags: [banking, macro/rate]\n---")
     && MarkdownTagSearch.matches(query: "#nested", in: "#nested/tag")
     && !MarkdownTagSearch.matches(query: "code-tag", in: "`#code-tag`"), "markdown tag search supports library queries without indexing code")
 
