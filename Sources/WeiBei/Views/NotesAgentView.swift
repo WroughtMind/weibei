@@ -290,28 +290,36 @@ struct NotePaneView: View {
                 reorderRole: reorderRole
             ) {
                 noteModeControl
-                Menu {
-                    Button(store.ui("空白课程笔记", "Blank Course Note")) {
-                        withAnimation(WeiBeiMotion.panel) {
-                            store.promptCreateBlankNotebookNote()
-                        }
-                    }
-                    if store.hasSelectedMaterial {
-                        Button(store.ui("当前资料笔记", "Current Material Note")) {
-                            withAnimation(WeiBeiMotion.panel) {
-                                store.promptCreateNotebookNoteFromCurrentMaterial()
+                if store.hasSelectedMaterial {
+                    Menu {
+                        Button(store.ui("空白课程笔记", "Blank Course Note")) {
+                            withAnimation(WeiBeiMotion.layout) {
+                                store.createBlankNotebookNote()
                             }
                         }
+                        Button(store.ui("当前资料笔记", "Current Material Note")) {
+                            withAnimation(WeiBeiMotion.layout) {
+                                store.createNotebookNoteFromCurrentMaterial()
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "doc.badge.plus")
                     }
-                } label: {
-                    Image(systemName: "doc.badge.plus")
+                    .buttonStyle(WeiBeiIconButtonStyle(size: 24))
+                    .accessibilityLabel(Text(store.ui("新建课程笔记", "New Course Note")))
+                    .help(store.ui("新建空白笔记或当前资料笔记", "Create a blank note or a note for the current material"))
+                } else {
+                    Button {
+                        withAnimation(WeiBeiMotion.layout) {
+                            store.createBlankNotebookNote()
+                        }
+                    } label: {
+                        Image(systemName: "doc.badge.plus")
+                    }
+                    .buttonStyle(WeiBeiIconButtonStyle(size: 24))
+                    .accessibilityLabel(Text(store.ui("新建空白课程笔记", "New Blank Course Note")))
+                    .help(store.ui("新建空白课程笔记", "Create a blank course note"))
                 }
-                .buttonStyle(WeiBeiIconButtonStyle(size: 24))
-                .accessibilityLabel(Text(store.ui("新建课程笔记", "New Course Note")))
-                .help(store.hasSelectedMaterial
-                    ? store.ui("选择新建空白笔记或资料笔记", "Choose a blank note or material note")
-                    : store.ui("新建空白课程笔记", "Create a blank course note")
-                )
             }
 
             if let noteFileError = store.noteFileError {
@@ -356,38 +364,72 @@ struct NotePaneView: View {
     }
 
     private var noteModeControl: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 2) {
             ForEach(NoteRenderMode.visibleCases) { mode in
-                let selected = store.noteRenderMode.visibleMode == mode
-                Button {
-                    withAnimation(WeiBeiMotion.layout) {
-                        store.setNoteRenderMode(mode)
-                    }
-                } label: {
-                    Text(mode.label(language: store.interfaceLanguage))
-                        .font(.system(size: 11.5, weight: selected ? .semibold : .medium))
-                        .foregroundStyle(selected ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
-                        .padding(.horizontal, 9)
-                        .frame(height: 24)
-                        .background(selected ? WeiBeiTheme.cinnabarSoft.opacity(0.82) : Color.clear)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                        .contentShape(Rectangle())
-                        .animation(WeiBeiMotion.micro, value: selected)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel(Text(mode.label(language: store.interfaceLanguage)))
-                .help(mode.label(language: store.interfaceLanguage))
+                noteModeButton(for: mode)
             }
         }
-        .padding(.horizontal, 3)
-        .padding(.vertical, 3)
-        .background(WeiBeiTheme.paperInset.opacity(0.16))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2)
+        .background {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(WeiBeiTheme.paperRaised.opacity(store.appearanceMode == .inkstone ? 0.18 : 0.34))
+        }
         .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(WeiBeiTheme.hairline.opacity(0.20), lineWidth: 1)
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(WeiBeiTheme.hairline.opacity(0.14), lineWidth: 1)
         }
         .animation(WeiBeiMotion.appearance, value: store.appearanceMode)
+    }
+
+    private func noteModeButton(for mode: NoteRenderMode) -> some View {
+        let selected = store.noteRenderMode.visibleMode == mode
+        let label = mode.label(language: store.interfaceLanguage)
+        return Button {
+            withAnimation(WeiBeiMotion.layout) {
+                store.setNoteRenderMode(mode)
+            }
+        } label: {
+            noteModeButtonLabel(mode: mode, label: label, selected: selected)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(label))
+        .help(label)
+    }
+
+    private func noteModeButtonLabel(mode: NoteRenderMode, label: String, selected: Bool) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: noteModeSystemImage(for: mode))
+                .font(.system(size: 11, weight: selected ? .semibold : .medium))
+            Text(label)
+                .font(.system(size: 11.5, weight: selected ? .semibold : .medium))
+        }
+        .foregroundStyle(selected ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+        .padding(.horizontal, 8)
+        .frame(height: 26)
+        .background {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(selected ? WeiBeiTheme.cinnabarSoft.opacity(store.appearanceMode == .inkstone ? 0.22 : 0.48) : Color.clear)
+        }
+        .overlay(alignment: .bottom) {
+            Capsule()
+                .fill(selected ? WeiBeiTheme.cinnabar.opacity(store.appearanceMode == .inkstone ? 0.82 : 0.70) : Color.clear)
+                .frame(width: 18, height: 1.4)
+                .offset(y: -2)
+        }
+        .contentShape(Rectangle())
+        .animation(WeiBeiMotion.micro, value: selected)
+    }
+
+    private func noteModeSystemImage(for mode: NoteRenderMode) -> String {
+        switch mode {
+        case .rich, .preview:
+            return "pencil.line"
+        case .split:
+            return "rectangle.split.2x1"
+        case .source:
+            return "chevron.left.forwardslash.chevron.right"
+        }
     }
 
     private var noteHeaderSubtitle: String {
