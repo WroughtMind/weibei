@@ -577,6 +577,32 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("inline code should not receive WeiBei Markdown syntax decorations")
                 return
             }
+            self.validateFrontmatterLanguageCycle(completion: completion)
+        }
+    }
+
+    private func validateFrontmatterLanguageCycle(completion: @escaping () -> Void) {
+        let script = """
+        (() => {
+          const read = () => document.querySelector('.frontmatter-title')?.textContent || '';
+          const initial = read();
+          window.WeiBeiEditor.setInterfaceLanguage('en');
+          const english = read();
+          window.WeiBeiEditor.setInterfaceLanguage('zh-Hans');
+          const restored = read();
+          return [initial, english, restored].join('|');
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            if let error {
+                self.fail("frontmatter language switch check threw \(error.localizedDescription)")
+                return
+            }
+            guard value as? String == "属性|Properties|属性" else {
+                self.fail("frontmatter panel title should refresh when switching interface languages: \(String(describing: value))")
+                return
+            }
             completion()
         }
     }
