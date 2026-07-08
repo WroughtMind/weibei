@@ -39,7 +39,9 @@ final class WorkspaceStore: ObservableObject {
     @Published var messages: [AgentMessage] = []
     @Published var isAskingAgent = false
     @Published var showLibrary = true
-    @Published var showRightPane = true
+    @Published var showReader = true
+    @Published var showAgent = true
+    @Published var showNotes = true
     @Published var commandPalettePresented = false
     @Published var librarySearch = ""
     @Published var readerSearch = ""
@@ -90,12 +92,22 @@ final class WorkspaceStore: ObservableObject {
     private var pendingNotePersistenceTasks: [String: Task<Void, Never>] = [:]
     private let notePersistenceDebounceDelay: UInt64 = 420_000_000
 
+    var showRightPane: Bool {
+        get { showNotes || showAgent }
+        set {
+            showNotes = newValue
+            showAgent = newValue
+        }
+    }
+
     private struct NavigationSnapshot: Equatable {
         var selectedItemID: String?
         var activeNotebookItemID: String?
         var layout: WorkspaceLayout
         var showLibrary: Bool
-        var showRightPane: Bool
+        var showReader: Bool
+        var showAgent: Bool
+        var showNotes: Bool
         var agentSurface: AgentSurface
         var noteRenderMode: NoteRenderMode
         var showReaderSearch: Bool
@@ -182,6 +194,34 @@ final class WorkspaceStore: ObservableObject {
 
     var canNavigateForward: Bool {
         !forwardNavigationStack.isEmpty
+    }
+
+    var visibleDocumentPaneOrder: [WorkspacePaneRole] {
+        normalizedThreePaneOrder.filter(isPaneVisible)
+    }
+
+    func isPaneVisible(_ role: WorkspacePaneRole) -> Bool {
+        switch role {
+        case .reader:
+            return showReader
+        case .agent:
+            return showAgent
+        case .notes:
+            return showNotes
+        }
+    }
+
+    func isPaneToggleActive(_ role: WorkspacePaneRole) -> Bool {
+        switch layout {
+        case .immersiveReading:
+            return role == .reader
+        case .immersiveConversation:
+            return role == .agent
+        case .immersiveWriting:
+            return role == .notes
+        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+            return isPaneVisible(role)
+        }
     }
 
     func navigateBackInWorkspace() {
@@ -568,7 +608,7 @@ final class WorkspaceStore: ObservableObject {
             showLibrary = true
         }
         if pane == .agent {
-            if layout == .documentNotesSplit, agentSurface == .hidden {
+            if layout == .documentNotesSplit, !showAgent, agentSurface == .hidden {
                 agentSurface = .bottomDrawer
             } else if layout == .immersiveReading || layout == .immersiveWriting {
                 if agentSurface == .hidden
@@ -602,24 +642,139 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
+    func toggleReader() {
+        toggleDocumentPane(.reader)
+    }
+
+    func toggleAgent() {
+        if selectionContext != nil {
+            recordNavigationPoint()
+            revealDocumentPane(.agent, clearSelection: false)
+            routeSelectionToConversation()
+            save()
+            return
+        }
+        toggleDocumentPane(.agent)
+    }
+
+    func toggleNotes() {
+        toggleDocumentPane(.notes)
+    }
+
     func toggleRightPane() {
         guard layout.hasCollapsibleRightPane else { return }
         recordNavigationPoint()
         showRightPane.toggle()
         clearUnpinnedFloatingSelection()
-        focus(showRightPane ? rightPaneRevealFocus : .reader)
+        focus(showRightPane ? rightPaneRevealFocus : fallbackDocumentPaneFocus())
         save()
     }
 
     func revealRightPane(focusing pane: PaneFocus = .notes) {
         guard layout.hasCollapsibleRightPane else { return }
-        if !showRightPane {
+        let targetVisible = pane == .agent ? showAgent : pane == .notes ? showNotes : showRightPane
+        if !targetVisible {
             recordNavigationPoint()
             clearUnpinnedFloatingSelection()
         }
-        showRightPane = true
+        switch pane {
+        case .agent:
+            showAgent = true
+        case .notes:
+            showNotes = true
+        default:
+            showRightPane = true
+        }
         focus(pane)
         save()
+    }
+
+    private func toggleDocumentPane(_ role: WorkspacePaneRole) {
+        recordNavigationPoint()
+        clearUnpinnedFloatingSelection()
+        if layoutIsImmersive {
+            toggleDocumentPaneFromImmersive(role)
+        } else {
+            setDocumentPane(!isPaneVisible(role), role)
+            layout = layoutMatchingThreePaneOrder(normalizedThreePaneOrder)
+        }
+        focus(isPaneVisible(role) ? role.focus : fallbackDocumentPaneFocus())
+        save()
+    }
+
+    private func revealDocumentPane(_ role: WorkspacePaneRole, clearSelection: Bool = true) {
+        if clearSelection {
+            clearUnpinnedFloatingSelection()
+        }
+        if layoutIsImmersive {
+            setDocumentPaneSet(immersivePaneSet().union([role]))
+        } else {
+            setDocumentPane(true, role)
+        }
+        layout = layoutMatchingThreePaneOrder(normalizedThreePaneOrder)
+        focus(role.focus)
+    }
+
+    private var layoutIsImmersive: Bool {
+        switch layout {
+        case .immersiveReading, .immersiveConversation, .immersiveWriting:
+            return true
+        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+            return false
+        }
+    }
+
+    private func toggleDocumentPaneFromImmersive(_ role: WorkspacePaneRole) {
+        var visible = immersivePaneSet()
+        if visible.contains(role) {
+            visible.remove(role)
+        } else {
+            visible.insert(role)
+        }
+        setDocumentPaneSet(visible)
+        layout = layoutMatchingThreePaneOrder(normalizedThreePaneOrder)
+    }
+
+    private func immersivePaneSet() -> Set<WorkspacePaneRole> {
+        switch layout {
+        case .immersiveReading:
+            return [.reader]
+        case .immersiveConversation:
+            return [.agent]
+        case .immersiveWriting:
+            return [.notes]
+        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+            return Set(visibleDocumentPaneOrder)
+        }
+    }
+
+    private func setDocumentPaneSet(_ roles: Set<WorkspacePaneRole>) {
+        showReader = roles.contains(.reader)
+        showAgent = roles.contains(.agent)
+        showNotes = roles.contains(.notes)
+        if !showReader {
+            showReaderSearch = false
+            readerSearch = ""
+        }
+    }
+
+    private func setDocumentPane(_ visible: Bool, _ role: WorkspacePaneRole) {
+        switch role {
+        case .reader:
+            showReader = visible
+            if !visible {
+                showReaderSearch = false
+                readerSearch = ""
+            }
+        case .agent:
+            showAgent = visible
+        case .notes:
+            showNotes = visible
+        }
+    }
+
+    private func fallbackDocumentPaneFocus() -> PaneFocus {
+        visibleDocumentPaneOrder.first?.focus ?? .reader
     }
 
     func revealReaderSearch() {
@@ -832,11 +987,11 @@ final class WorkspaceStore: ObservableObject {
 
     var hasPrimaryConversationPaneVisible: Bool {
         switch layout {
-        case .documentAgentNotes, .documentNotesAgent:
-            return showRightPane
+        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+            return showAgent
         case .immersiveConversation:
             return true
-        case .documentNotesSplit, .immersiveReading, .immersiveWriting:
+        case .immersiveReading, .immersiveWriting:
             return false
         }
     }
@@ -846,11 +1001,11 @@ final class WorkspaceStore: ObservableObject {
             return true
         }
         switch layout {
-        case .documentAgentNotes, .documentNotesAgent:
+        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
             return false
         case .immersiveConversation:
             return true
-        case .documentNotesSplit, .immersiveReading, .immersiveWriting:
+        case .immersiveReading, .immersiveWriting:
             return agentSurface == .bottomDrawer || agentSurface == .cornerPanel
         }
     }
@@ -888,18 +1043,16 @@ final class WorkspaceStore: ObservableObject {
 
     func setNoteRenderMode(_ mode: NoteRenderMode) {
         let nextMode = mode.visibleMode
-        if noteRenderMode != nextMode || layout == .immersiveReading || layout == .immersiveConversation || (layout.hasCollapsibleRightPane && !showRightPane) {
+        if noteRenderMode != nextMode || layout == .immersiveReading || layout == .immersiveConversation || !showNotes {
             recordNavigationPoint()
         }
         if layout == .immersiveReading || layout == .immersiveConversation {
             clearUnpinnedFloatingSelection()
             layout = .immersiveWriting
         }
-        if layout.hasCollapsibleRightPane {
-            if !showRightPane {
-                clearUnpinnedFloatingSelection()
-            }
-            showRightPane = true
+        if !showNotes {
+            clearUnpinnedFloatingSelection()
+            showNotes = true
         }
         noteRenderMode = nextMode
         focus(.notes)
@@ -911,11 +1064,9 @@ final class WorkspaceStore: ObservableObject {
             clearUnpinnedFloatingSelection()
             layout = .immersiveWriting
         }
-        if layout.hasCollapsibleRightPane {
-            if !showRightPane {
-                clearUnpinnedFloatingSelection()
-            }
-            showRightPane = true
+        if !showNotes {
+            clearUnpinnedFloatingSelection()
+            showNotes = true
         }
         noteRenderMode = .rich
     }
@@ -937,7 +1088,9 @@ final class WorkspaceStore: ObservableObject {
             activeNotebookItemID: activeNotebookItemID,
             layout: layout,
             showLibrary: showLibrary,
-            showRightPane: showRightPane,
+            showReader: showReader,
+            showAgent: showAgent,
+            showNotes: showNotes,
             agentSurface: agentSurface == .selectionFloat ? .hidden : agentSurface,
             noteRenderMode: noteRenderMode,
             showReaderSearch: showReaderSearch,
@@ -955,7 +1108,9 @@ final class WorkspaceStore: ObservableObject {
         activeNotebookItemID = snapshot.activeNotebookItemID
         layout = snapshot.layout
         showLibrary = snapshot.showLibrary
-        showRightPane = snapshot.showRightPane
+        showReader = snapshot.showReader
+        showAgent = snapshot.showAgent
+        showNotes = snapshot.showNotes
         agentSurface = snapshot.agentSurface == .selectionFloat ? .hidden : snapshot.agentSurface
         noteRenderMode = snapshot.noteRenderMode.visibleMode
         showReaderSearch = snapshot.showReaderSearch
@@ -1822,7 +1977,9 @@ final class WorkspaceStore: ObservableObject {
             layout = .immersiveWriting
         }
         showLibrary = scenario != "immersive-conversation-flow"
-        showRightPane = true
+        showReader = true
+        showAgent = true
+        showNotes = true
         agentSurface = .hidden
         select(itemID: "sample-html")
         if scenario == "notebook-creation-flow" {
@@ -2316,9 +2473,10 @@ final class WorkspaceStore: ObservableObject {
         if let showLibrary = snapshot.showLibrary {
             self.showLibrary = showLibrary
         }
-        if let showRightPane = snapshot.showRightPane {
-            self.showRightPane = showRightPane
-        }
+        let legacyRightPane = snapshot.showRightPane
+        showReader = snapshot.showReader ?? true
+        showAgent = snapshot.showAgent ?? legacyRightPane ?? true
+        showNotes = snapshot.showNotes ?? legacyRightPane ?? true
         if let appearanceModeRaw = snapshot.appearanceModeRaw,
            let appearanceMode = WeiBeiAppearanceMode(rawValue: appearanceModeRaw) {
             self.appearanceMode = appearanceMode
@@ -2367,6 +2525,9 @@ final class WorkspaceStore: ObservableObject {
             agentSurface: agentSurface == .selectionFloat ? .hidden : agentSurface,
             noteRenderMode: noteRenderMode,
             showLibrary: showLibrary,
+            showReader: showReader,
+            showAgent: showAgent,
+            showNotes: showNotes,
             showRightPane: showRightPane,
             appearanceModeRaw: appearanceMode.rawValue,
             interfaceLanguageRaw: interfaceLanguage.rawValue

@@ -251,19 +251,7 @@ private struct UnifiedTopBarView: View {
 
             brandBlock
 
-            if variant != .glyph, shouldShowTopDocumentTitle {
-                Rectangle()
-                    .fill(dividerColor.opacity(0.72))
-                    .frame(width: 1, height: 18)
-
-                Text(store.selectedMaterialItem.map(store.displayTitle) ?? store.ui("未选择资料", "No material selected"))
-                    .font(documentTitleFont)
-                    .foregroundStyle(primaryText.opacity(0.82))
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                Spacer(minLength: 0)
-            }
+            Spacer(minLength: 0)
 
             if store.showReaderSearch && shouldShowSearchAction {
                 TextField(
@@ -300,10 +288,6 @@ private struct UnifiedTopBarView: View {
                 }
             }
 
-            if shouldShowAgentAction {
-                agentButton
-            }
-
             layoutMenu
 
             topIconButton("command", help: store.ui("命令面板", "Command palette")) {
@@ -318,6 +302,9 @@ private struct UnifiedTopBarView: View {
         .foregroundStyle(secondaryText)
         .frame(height: barHeight)
         .background(topBarBackground)
+        .overlay {
+            paneToggleCluster
+        }
         .opacity(appeared ? 1 : 0)
         .offset(y: appeared ? 0 : -5)
         .overlay(alignment: .top) {
@@ -394,10 +381,6 @@ private struct UnifiedTopBarView: View {
         shortLayoutLabel
     }
 
-    private var shouldShowTopDocumentTitle: Bool {
-        store.hasSelectedMaterial && hasReaderScopedTopActions
-    }
-
     private var shouldShowSearchAction: Bool {
         store.hasSelectedMaterial && hasReaderScopedTopActions
     }
@@ -406,22 +389,8 @@ private struct UnifiedTopBarView: View {
         store.canCopyReference && hasReaderScopedTopActions
     }
 
-    private var shouldShowAgentAction: Bool {
-        switch store.layout {
-        case .immersiveConversation, .immersiveWriting:
-            return false
-        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit, .immersiveReading:
-            return !hasPrimaryAgentPaneVisible
-        }
-    }
-
     private var hasReaderScopedTopActions: Bool {
-        switch store.layout {
-        case .immersiveConversation, .immersiveWriting:
-            return false
-        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit, .immersiveReading:
-            return true
-        }
+        store.isPaneToggleActive(.reader)
     }
 
     private var shortLayoutLabel: String {
@@ -437,10 +406,6 @@ private struct UnifiedTopBarView: View {
         case .immersiveWriting:
             return store.ui("写作", "Writing")
         }
-    }
-
-    private var documentTitleFont: Font {
-        variant == .reader ? .system(size: 14, weight: .semibold) : .system(size: 13, weight: .medium)
     }
 
     private var primaryText: Color {
@@ -583,6 +548,57 @@ private struct UnifiedTopBarView: View {
         }
     }
 
+    private var paneToggleCluster: some View {
+        HStack(spacing: max(5, topBarSpacing - 1)) {
+            topIconButton(
+                "doc.text",
+                help: store.isPaneToggleActive(.reader) ? store.ui("隐藏文稿", "Hide document") : store.ui("显示文稿", "Show document"),
+                active: store.isPaneToggleActive(.reader)
+            ) {
+                withAnimation(WeiBeiMotion.layout) {
+                    store.toggleReader()
+                }
+            }
+
+            topIconButton(
+                "bubble.left.and.text.bubble.right",
+                help: agentPaneToggleHelp,
+                active: store.isPaneToggleActive(.agent)
+            ) {
+                withAnimation(WeiBeiMotion.layout) {
+                    store.toggleAgent()
+                }
+            }
+
+            topIconButton(
+                "note.text",
+                help: store.isPaneToggleActive(.notes) ? store.ui("隐藏笔记", "Hide notes") : store.ui("显示笔记", "Show notes"),
+                active: store.isPaneToggleActive(.notes)
+            ) {
+                withAnimation(WeiBeiMotion.layout) {
+                    store.toggleNotes()
+                }
+            }
+        }
+        .padding(.horizontal, 4)
+        .frame(height: controlHeight)
+        .background {
+            Capsule()
+                .fill(controlFill.opacity(0.62))
+                .overlay {
+                    Capsule()
+                        .stroke(WeiBeiTheme.glassHighlight.opacity(0.16), lineWidth: 1)
+                }
+        }
+    }
+
+    private var agentPaneToggleHelp: String {
+        if store.selectionContext != nil {
+            return store.ui("用当前选区打开对话", "Open chat with current selection")
+        }
+        return store.isPaneToggleActive(.agent) ? store.ui("隐藏对话", "Hide chat") : store.ui("显示对话", "Show chat")
+    }
+
     @ViewBuilder
     private var libraryButton: some View {
         topIconButton("sidebar.left", help: store.showLibrary ? store.ui("收起课程目录", "Hide course index") : store.ui("打开课程目录", "Show course index"), active: store.showLibrary) {
@@ -596,13 +612,6 @@ private struct UnifiedTopBarView: View {
     private var searchButton: some View {
         topIconButton("magnifyingglass", help: store.ui("打开资料内搜索", "Search in material")) {
             toggleReaderSearch()
-        }
-    }
-
-    @ViewBuilder
-    private var agentButton: some View {
-        topIconButton("bubble.left.and.text.bubble.right", help: agentButtonHelp) {
-            activateAgentEntry()
         }
     }
 
@@ -667,34 +676,6 @@ private struct UnifiedTopBarView: View {
         .buttonStyle(WeiBeiIconButtonStyle(size: variant == .glyph || variant == .compact ? 24 : WeiBeiMetric.iconButton))
         .accessibilityLabel(Text(store.ui("设置", "Settings")))
         .help(store.ui("设置", "Settings"))
-    }
-
-    private var hasPrimaryAgentPaneVisible: Bool {
-        hasPrimaryAgentPaneAvailable && store.showRightPane
-    }
-
-    private var hasPrimaryAgentPaneAvailable: Bool {
-        store.layout.hasPrimaryAgentPane
-    }
-
-    private var agentButtonHelp: String {
-        if hasPrimaryAgentPaneAvailable {
-            return store.ui("打开对话区", "Open chat pane")
-        }
-        if store.selectionContext != nil {
-            return store.ui("按当前选区提问", "Ask about current selection")
-        }
-        return store.hasSelectedMaterial ? store.ui("按当前资料提问", "Ask about current material") : store.ui("按当前笔记提问", "Ask about current note")
-    }
-
-    private func activateAgentEntry() {
-        if hasPrimaryAgentPaneAvailable {
-            withAnimation(WeiBeiMotion.panel) {
-                store.revealRightPane(focusing: .agent)
-            }
-        } else {
-            store.askSelection()
-        }
     }
 
     private var layoutMenu: some View {
@@ -776,28 +757,9 @@ private struct LayoutContentView: View {
         Group {
             switch store.layout {
             case .documentAgentNotes, .documentNotesAgent:
-                if store.showRightPane {
-                    let order = store.normalizedThreePaneOrder
-                    documentThreePaneView(order: order)
-                } else {
-                    ReaderPaneView()
-                        .transition(WeiBeiTransition.layout)
-                }
+                documentPaneLayoutView()
             case .documentNotesSplit:
-                if store.showRightPane {
-                    ZStack(alignment: agentAlignment) {
-                        ResizableTwoPane(split: halfSplit) {
-                            ReaderView()
-                        } second: {
-                            NotePaneView()
-                        }
-                        agentOverlay
-                    }
-                    .transition(WeiBeiTransition.rightPanel)
-                } else {
-                    ReaderView()
-                        .transition(WeiBeiTransition.layout)
-                }
+                documentPaneLayoutView()
             case .immersiveReading:
                 ZStack(alignment: .topTrailing) {
                     ReaderView(isImmersive: true)
@@ -878,6 +840,9 @@ private struct LayoutContentView: View {
         .transition(WeiBeiTransition.layout)
         .animation(WeiBeiMotion.layout, value: store.layout)
         .animation(WeiBeiMotion.panel, value: store.showRightPane)
+        .animation(WeiBeiMotion.panel, value: store.showReader)
+        .animation(WeiBeiMotion.panel, value: store.showAgent)
+        .animation(WeiBeiMotion.panel, value: store.showNotes)
         .animation(WeiBeiMotion.panel, value: store.agentSurface)
         .animation(WeiBeiMotion.panel, value: store.showQuietInsight)
     }
@@ -922,6 +887,23 @@ private struct LayoutContentView: View {
         store.showLibrary ? 220 : 260
     }
 
+    @ViewBuilder
+    private func documentPaneLayoutView() -> some View {
+        let order = store.visibleDocumentPaneOrder
+        switch order.count {
+        case 0:
+            EmptyWorkspaceView()
+                .transition(WeiBeiTransition.layout)
+        case 1:
+            paneView(for: order[0], reorderable: false)
+                .transition(WeiBeiTransition.layout)
+        case 2:
+            documentTwoPaneView(order: order)
+        default:
+            documentThreePaneView(order: Array(order.prefix(3)))
+        }
+    }
+
     private func minimumWidth(for role: WorkspacePaneRole) -> CGFloat {
         switch role {
         case .reader:
@@ -929,6 +911,28 @@ private struct LayoutContentView: View {
         case .agent, .notes:
             return normalSidePaneMinimum
         }
+    }
+
+    @ViewBuilder
+    private func documentTwoPaneView(order: [WorkspacePaneRole]) -> some View {
+        GeometryReader { geometry in
+            let frames = twoPaneFrames(order: order, size: geometry.size)
+            ZStack {
+                ResizableTwoPane(
+                    split: halfSplit,
+                    minFirst: minimumWidth(for: order[0]),
+                    minSecond: minimumWidth(for: order[1])
+                ) {
+                    reorderablePaneView(for: order[0])
+                } second: {
+                    reorderablePaneView(for: order[1])
+                }
+
+                threePaneReorderOverlay(order: order, size: geometry.size, frames: frames)
+            }
+            .background(ThreePaneReorderFrameReporter(order: order, frames: frames))
+        }
+        .transition(WeiBeiTransition.rightPanel)
     }
 
     @ViewBuilder
@@ -1039,6 +1043,20 @@ private struct LayoutContentView: View {
             CGRect(x: 0, y: 0, width: firstWidth, height: height),
             CGRect(x: firstWidth + divider, y: 0, width: secondWidth, height: height),
             CGRect(x: firstWidth + divider + secondWidth + divider, y: 0, width: thirdWidth, height: height)
+        ]
+    }
+
+    private func twoPaneFrames(order: [WorkspacePaneRole], size: CGSize) -> [CGRect] {
+        let divider = WeiBeiSplitView.thickness
+        let usable = max(size.width - divider, 1)
+        let firstMinimum = minimumWidth(for: order[0])
+        let secondMinimum = minimumWidth(for: order[1])
+        let firstWidth = clamped(halfSplit.wrappedValue * usable, min: firstMinimum, max: usable - secondMinimum)
+        let secondWidth = max(secondMinimum, usable - firstWidth)
+        let height = max(size.height, 1)
+        return [
+            CGRect(x: 0, y: 0, width: firstWidth, height: height),
+            CGRect(x: firstWidth + divider, y: 0, width: secondWidth, height: height)
         ]
     }
 
@@ -1229,6 +1247,25 @@ private struct LayoutContentView: View {
                 .zIndex(4)
         case .hidden:
             EmptyView()
+        }
+    }
+}
+
+private struct EmptyWorkspaceView: View {
+    @EnvironmentObject private var store: WorkspaceStore
+
+    var body: some View {
+        ZStack {
+            WeiBeiTheme.paper
+            VStack(spacing: 14) {
+                Image(systemName: "seal")
+                    .font(.system(size: 34, weight: .regular))
+                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(store.appearanceMode == .inkstone ? 0.12 : 0.08))
+                Text(store.ui("在顶栏点亮一个板块开始", "Light up a pane above to begin"))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+            }
+            .padding(.bottom, 18)
         }
     }
 }
