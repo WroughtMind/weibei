@@ -36,6 +36,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        sharedWorkspaceStore.flushPendingNotePersistence()
         if let shortcutMonitor {
             NSEvent.removeMonitor(shortcutMonitor)
         }

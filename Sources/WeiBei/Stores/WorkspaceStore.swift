@@ -86,6 +86,9 @@ final class WorkspaceStore: ObservableObject {
     private let selectionAttachmentMergeWindow: TimeInterval = 1.8
     private let selectionAttachmentDebounceDelay: UInt64 = 520_000_000
     private var threePaneReorderFrames: [WorkspacePaneRole: CGRect] = [:]
+    private var pendingNotePersistenceByItemID: [String: PendingNotePersistence] = [:]
+    private var pendingNotePersistenceTasks: [String: Task<Void, Never>] = [:]
+    private let notePersistenceDebounceDelay: UInt64 = 420_000_000
 
     private struct NavigationSnapshot: Equatable {
         var selectedItemID: String?
@@ -105,6 +108,11 @@ final class WorkspaceStore: ObservableObject {
     private enum NotebookNoteSeed {
         case blank
         case currentMaterial(StudyItem)
+    }
+
+    private struct PendingNotePersistence {
+        var item: StudyItem
+        var markdown: String
     }
 
     private var lastUsableAgentAnswer: AgentMessage? {
@@ -470,10 +478,14 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func updateNote(_ value: String) {
+        guard noteText != value else { return }
         noteText = value
         clearGeneratedQuietInsight()
-        persistCurrentNote()
-        save()
+        guard let item = activeNoteItem else { return }
+        if !item.editsBackingMarkdownFile {
+            notesByItemID[item.id] = value
+        }
+        scheduleNotePersistence(value, for: item)
     }
 
     func updateNote(_ value: String, for itemID: String?) {
@@ -2224,19 +2236,53 @@ final class WorkspaceStore: ObservableObject {
 
     private func persistCurrentNote() {
         guard let item = activeNoteItem else { return }
+        cancelPendingNotePersistence(for: item.id)
+        persistNote(noteText, for: item)
+    }
+
+    func flushPendingNotePersistence() {
+        let itemIDs = Array(pendingNotePersistenceByItemID.keys)
+        itemIDs.forEach { flushPendingNotePersistence(for: $0) }
+    }
+
+    private func scheduleNotePersistence(_ markdown: String, for item: StudyItem) {
+        pendingNotePersistenceByItemID[item.id] = PendingNotePersistence(item: item, markdown: markdown)
+        pendingNotePersistenceTasks[item.id]?.cancel()
+        let itemID = item.id
+        let delay = notePersistenceDebounceDelay
+        pendingNotePersistenceTasks[itemID] = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: delay)
+            guard !Task.isCancelled else { return }
+            self?.flushPendingNotePersistence(for: itemID)
+        }
+    }
+
+    private func flushPendingNotePersistence(for itemID: String) {
+        cancelPendingNotePersistence(for: itemID)
+        guard let pending = pendingNotePersistenceByItemID.removeValue(forKey: itemID) else { return }
+        persistNote(pending.markdown, for: pending.item)
+        save()
+    }
+
+    private func cancelPendingNotePersistence(for itemID: String) {
+        pendingNotePersistenceTasks[itemID]?.cancel()
+        pendingNotePersistenceTasks[itemID] = nil
+    }
+
+    private func persistNote(_ markdown: String, for item: StudyItem) {
         let noteItemID = item.id
         if item.editsBackingMarkdownFile, let url = item.url {
             do {
-                try noteText.write(to: url, atomically: true, encoding: .utf8)
+                try markdown.write(to: url, atomically: true, encoding: .utf8)
                 notesByItemID.removeValue(forKey: noteItemID)
                 noteFileError = nil
             } catch {
-                notesByItemID[noteItemID] = noteText
+                notesByItemID[noteItemID] = markdown
                 noteFileError = ui("无法写回原 Markdown：\(url.lastPathComponent)", "Could not write original Markdown: \(url.lastPathComponent)")
             }
             return
         }
-        notesByItemID[noteItemID] = noteText
+        notesByItemID[noteItemID] = markdown
     }
 
     private func load() {
