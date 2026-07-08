@@ -6,7 +6,7 @@ import { readImageAsBase64, upload, uploadConfig } from '@milkdown/kit/plugin/up
 import { Plugin, TextSelection } from '@milkdown/kit/prose/state';
 import { liftListItem } from '@milkdown/kit/prose/schema-list';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
-import { getMarkdown as readMarkdown, insert, replaceAll, replaceRange, $prose } from '@milkdown/kit/utils';
+import { getMarkdown as readMarkdown, insert, replaceAll, replaceRange, $prose, $useKeymap } from '@milkdown/kit/utils';
 import { katexOptionsCtx, math } from '@milkdown/plugin-math';
 import 'katex/dist/katex.css';
 import mermaid from 'mermaid';
@@ -1139,6 +1139,16 @@ const exitEmptyListItem = (view) => {
   return liftListItem(listItemType)(view.state, view.dispatch, view);
 };
 
+const weiBeiListKeymap = $useKeymap('weiBeiListKeymap', {
+  ExitEmptyListItem: {
+    shortcuts: 'Enter',
+    priority: 100,
+    command: () => (_state, _dispatch, view) => (
+      isEditable && view ? exitEmptyListItem(view) : false
+    ),
+  },
+});
+
 const weiBeiDialectPlugin = $prose(() => new Plugin({
   view(view) {
     scheduleImageResolution(view);
@@ -1187,16 +1197,6 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
       return activateWikiLink(event.target) || activateSourceReference(event.target);
     },
     handleKeyDown(view, event) {
-      if (isEditable
-          && event.key === 'Enter'
-          && !event.shiftKey
-          && !event.altKey
-          && !event.metaKey
-          && !event.ctrlKey
-          && exitEmptyListItem(view)) {
-        event.preventDefault();
-        return true;
-      }
       if (event.key !== 'Enter' && event.key !== ' ') return false;
       if (activateSourceReference(event.target)) {
         event.preventDefault();
@@ -1538,6 +1538,7 @@ Editor
       trust: false,
     });
   })
+  .use(weiBeiListKeymap)
   .use(weiBeiDialectPlugin)
   .use(commonmark)
   .use(gfm)
