@@ -283,45 +283,7 @@ struct NotePaneView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            WeiBeiPaneHeader(
-                title: store.ui("笔记", "Notes"),
-                latinMark: store.interfaceLanguage == .chinese ? "NOTES" : nil,
-                subtitle: noteHeaderSubtitle,
-                appearanceMode: store.appearanceMode,
-                reorderRole: reorderRole
-            ) {
-                noteModeControl
-                if store.hasSelectedMaterial {
-                    Menu {
-                        Button(store.ui("空白课程笔记", "Blank Course Note")) {
-                            withAnimation(WeiBeiMotion.layout) {
-                                store.promptCreateBlankNotebookNote()
-                            }
-                        }
-                        Button(store.ui("当前资料笔记", "Current Material Note")) {
-                            withAnimation(WeiBeiMotion.layout) {
-                                store.promptCreateNotebookNoteFromCurrentMaterial()
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "doc.badge.plus")
-                    }
-                    .buttonStyle(WeiBeiIconButtonStyle(size: 24))
-                    .accessibilityLabel(Text(store.ui("新建课程笔记", "New Course Note")))
-                    .help(store.ui("新建空白笔记或当前资料笔记", "Create a blank note or a note for the current material"))
-                } else {
-                    Button {
-                        withAnimation(WeiBeiMotion.layout) {
-                            store.promptCreateBlankNotebookNote()
-                        }
-                    } label: {
-                        Image(systemName: "doc.badge.plus")
-                    }
-                    .buttonStyle(WeiBeiIconButtonStyle(size: 24))
-                    .accessibilityLabel(Text(store.ui("新建空白课程笔记", "New Blank Course Note")))
-                    .help(store.ui("新建空白课程笔记", "Create a blank course note"))
-                }
-            }
+            noteHeader
 
             if let noteFileError = store.noteFileError {
                 Text(noteFileError)
@@ -332,36 +294,90 @@ struct NotePaneView: View {
                     .padding(.bottom, 8)
             }
 
-            if let draft = store.notebookCreationDraft {
-                NotebookCreationPanel(
-                    draft: draft,
-                    title: Binding(
-                        get: { store.notebookCreationDraft?.title ?? "" },
-                        set: { store.notebookCreationDraft?.title = $0 }
-                    ),
-                    confirm: {
-                        withAnimation(WeiBeiMotion.panel) {
-                            store.confirmNotebookNoteCreation()
-                        }
-                    },
-                    cancel: {
-                        withAnimation(WeiBeiMotion.panel) {
-                            store.cancelNotebookNoteCreation()
-                        }
-                    }
-                )
-                .padding(.horizontal, 14)
-                .padding(.top, 8)
-                .padding(.bottom, 6)
-                .transition(WeiBeiTransition.message)
-            }
-
             noteBody
         }
         .frame(minHeight: 280)
         .foregroundStyle(WeiBeiTheme.ink)
         .background(WeiBeiTheme.paper)
         .animation(WeiBeiMotion.panel, value: store.notebookCreationDraft?.id)
+    }
+
+    @ViewBuilder
+    private var noteHeader: some View {
+        if let draft = store.notebookCreationDraft {
+            NotebookCreationPanel(
+                draft: draft,
+                title: Binding(
+                    get: { store.notebookCreationDraft?.title ?? "" },
+                    set: { store.notebookCreationDraft?.title = $0 }
+                ),
+                confirm: {
+                    withAnimation(WeiBeiMotion.panel) {
+                        store.confirmNotebookNoteCreation()
+                    }
+                },
+                cancel: {
+                    withAnimation(WeiBeiMotion.panel) {
+                        store.cancelNotebookNoteCreation()
+                    }
+                }
+            )
+            .weibeiPaneHeaderChrome(appearanceMode: store.appearanceMode)
+            .modifier(PaneHeaderReorderModifier(role: reorderRole))
+            .transition(.asymmetric(
+                insertion: .move(edge: .leading).combined(with: .opacity),
+                removal: .move(edge: .leading).combined(with: .opacity)
+            ))
+        } else {
+            WeiBeiPaneHeader(
+                title: store.ui("笔记", "Notes"),
+                latinMark: store.interfaceLanguage == .chinese ? "NOTES" : nil,
+                subtitle: noteHeaderSubtitle,
+                appearanceMode: store.appearanceMode,
+                reorderRole: reorderRole
+            ) {
+                noteModeControl
+                newNoteControl
+            }
+            .transition(.asymmetric(
+                insertion: .move(edge: .trailing).combined(with: .opacity),
+                removal: .move(edge: .trailing).combined(with: .opacity)
+            ))
+        }
+    }
+
+    @ViewBuilder
+    private var newNoteControl: some View {
+        if store.hasSelectedMaterial {
+            Menu {
+                Button(store.ui("空白课程笔记", "Blank Course Note")) {
+                    withAnimation(WeiBeiMotion.panel) {
+                        store.promptCreateBlankNotebookNote()
+                    }
+                }
+                Button(store.ui("当前资料笔记", "Current Material Note")) {
+                    withAnimation(WeiBeiMotion.panel) {
+                        store.promptCreateNotebookNoteFromCurrentMaterial()
+                    }
+                }
+            } label: {
+                Image(systemName: "doc.badge.plus")
+            }
+            .buttonStyle(WeiBeiIconButtonStyle(size: 24))
+            .accessibilityLabel(Text(store.ui("新建课程笔记", "New Course Note")))
+            .help(store.ui("新建空白笔记或当前资料笔记", "Create a blank note or a note for the current material"))
+        } else {
+            Button {
+                withAnimation(WeiBeiMotion.panel) {
+                    store.promptCreateBlankNotebookNote()
+                }
+            } label: {
+                Image(systemName: "doc.badge.plus")
+            }
+            .buttonStyle(WeiBeiIconButtonStyle(size: 24))
+            .accessibilityLabel(Text(store.ui("新建空白课程笔记", "New Blank Course Note")))
+            .help(store.ui("新建空白课程笔记", "Create a blank course note"))
+        }
     }
 
     private var noteModeControl: some View {
@@ -570,14 +586,14 @@ private struct NotebookCreationPanel: View {
     }
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 12) {
             Rectangle()
                 .fill(WeiBeiTheme.cinnabar.opacity(0.64))
-                .frame(width: 2, height: 22)
+                .frame(width: 2, height: 28)
                 .clipShape(Capsule())
 
-            Text(draft.kind == .blank ? store.ui("命名空白笔记", "Name Blank Note") : store.ui("命名资料笔记", "Name Material Note"))
-                .font(.system(size: 11.5, weight: .semibold))
+            Text(draft.kind == .blank ? store.ui("新建笔记", "New Note") : store.ui("资料笔记", "Material Note"))
+                .font(.system(size: 13, weight: .semibold, design: .serif))
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
@@ -589,16 +605,17 @@ private struct NotebookCreationPanel: View {
                     .foregroundStyle(WeiBeiTheme.placeholderInk)
             )
             .textFieldStyle(.plain)
-            .font(.system(size: 13, weight: .medium))
+            .font(.system(size: 15, weight: .medium))
             .foregroundColor(WeiBeiTheme.ink)
             .focused($focused)
             .onSubmit(confirm)
+            .frame(maxWidth: .infinity)
             .weibeiInputSurface(active: focused, height: 32, horizontalPadding: 10)
 
             Button(action: confirm) {
                 Image(systemName: "checkmark")
             }
-            .buttonStyle(WeiBeiIconButtonStyle(size: 24, prominence: .primary))
+            .buttonStyle(WeiBeiIconButtonStyle(size: 30, prominence: .primary))
             .disabled(!canCreate)
             .keyboardShortcut(.defaultAction)
             .accessibilityLabel(Text(store.ui("创建笔记", "Create Note")))
@@ -607,21 +624,14 @@ private struct NotebookCreationPanel: View {
             Button(action: cancel) {
                 Image(systemName: "xmark")
             }
-            .buttonStyle(WeiBeiIconButtonStyle(size: 22))
+            .buttonStyle(WeiBeiIconButtonStyle(size: 28))
             .keyboardShortcut(.cancelAction)
             .accessibilityLabel(Text(store.ui("取消", "Cancel")))
             .help(store.ui("取消新建笔记", "Cancel note creation"))
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .background {
-            WeiBeiTheme.paperRaised.opacity(0.18)
-        }
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(WeiBeiTheme.hairline.opacity(0.34))
-                .frame(height: 1)
-        }
+        .frame(maxWidth: .infinity)
+        .frame(height: 38)
+        .weibeiHeaderAccessoryGroup()
         .onExitCommand(perform: cancel)
         .onAppear {
             focused = true
