@@ -106,6 +106,7 @@ const calloutLabels = {
   },
 };
 const calloutLabel = (type) => calloutLabels[currentLanguage]?.[type] || calloutLabels['zh-Hans'][type] || type;
+const frontmatterLabel = () => (currentLanguage === 'en' ? 'Properties' : '属性');
 const calloutRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(${calloutTypePattern})\\]([+-]?)(?:[ \\t]+([^\\n]+))?`, 'i');
 const calloutMarkerRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(?:${calloutTypePattern})\\][+-]?\\s*`, 'i');
 const calloutHeadingRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(?:${calloutTypePattern})\\][+-]?(?:[ \\t]+[^\\n]+)?$`, 'i');
@@ -416,7 +417,7 @@ const syncFrontmatterPanel = () => {
   const rows = frontmatterRows(frontmatterBlock);
   panel.dataset.visible = rows.length > 0 ? 'true' : 'false';
   panel.innerHTML = rows.length > 0
-    ? `<div class="frontmatter-title">Properties</div>${rows.map((row) => (
+    ? `<div class="frontmatter-title">${frontmatterLabel()}</div>${rows.map((row) => (
       `<div class="frontmatter-row"><span class="frontmatter-key">${escapeHTML(row.key)}</span><span>${escapeHTML(row.value)}</span></div>`
     )).join('')}`
     : '';
@@ -1313,6 +1314,7 @@ const setMarkdownInternal = (markdown) => {
   const document = splitFrontmatter(markdown || '');
   const body = normalizeHtmlBreaks(document.body);
   frontmatterBlock = document.frontmatter;
+  syncFrontmatterPanel();
   editor.action(replaceAll(body));
   lastMarkdown = withFrontmatter(body);
   reportContentHeight();
@@ -1495,6 +1497,7 @@ window.WeiBeiEditor = {
   setInterfaceLanguage: (next) => {
     currentLanguage = normalizeInterfaceLanguage(next);
     document.documentElement.dataset.weibeiLanguage = currentLanguage;
+    syncFrontmatterPanel();
     if (!editor) return;
     editor.action((ctx) => {
       const view = ctx.get(editorViewCtx);
@@ -1513,6 +1516,7 @@ if (window.weiBeiEditorCheckMode) {
 const initialDocument = splitFrontmatter(window.initialMarkdown || '');
 initialDocument.body = normalizeHtmlBreaks(initialDocument.body);
 frontmatterBlock = initialDocument.frontmatter;
+syncFrontmatterPanel();
 
 Editor
   .make()

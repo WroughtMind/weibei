@@ -227,6 +227,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           })(),
           tags: document.querySelectorAll('.weibei-tag').length,
           blockIds: document.querySelectorAll('.weibei-block-id').length,
+          frontmatterTitle: document.querySelector('.frontmatter-title')?.textContent || '',
           embeds: document.querySelectorAll('.weibei-embed-preview').length,
           hardBreaks: document.querySelectorAll('.ProseMirror br').length,
           noteEmbedLinks: document.querySelectorAll('.weibei-embed-note[role="link"][tabindex="0"][data-wikilink-title]').length,
@@ -420,6 +421,10 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             if result["commentsWeak"] as? Bool != true {
                 self.fail("Obsidian comments should be weakly visible, not compete with body text")
+                return
+            }
+            if result["frontmatterTitle"] as? String != "属性" {
+                self.fail("frontmatter panel title should follow the current Chinese interface language: \(result["frontmatterTitle"] as? String ?? "__missing__")")
                 return
             }
             if (result["hardBreaks"] as? Int ?? 0) < 1 {

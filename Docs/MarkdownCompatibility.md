@@ -23,6 +23,6 @@
 | 数学插入命令 | 支持 | 命令面板插入行内/块级/矩阵公式，块级公式按块结构落位 |
 | 普通金额 `$5` | 支持 | 验收样例覆盖，不应误伤 |
 | Mermaid 代码块 | 支持 | `mermaid` 渲染为 SVG；源码保留可编辑，解析错误显示可见提示 |
-| Frontmatter / Properties | 部分支持 | 保存不丢；属性面板后续补 |
+| Frontmatter / Properties | 部分支持 | 保存不丢；显示本地化只读属性条；可编辑属性面板后续补 |
 | `#tag` / `#nested/tag` | 部分支持 | 标签样式识别；资料库索引后续补 |
 | HTML | 部分支持 | 按 Markdown 内联 HTML 能力保留；不承诺在 HTML 内继续解析 Markdown |
