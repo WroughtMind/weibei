@@ -133,22 +133,14 @@ final class WorkspaceStore: ObservableObject {
     var filteredItems: [StudyItem] {
         let query = librarySearch.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return allItems }
-        return allItems.filter {
-            displayTitle(for: $0).localizedCaseInsensitiveContains(query)
-                || displaySubtitle(for: $0).localizedCaseInsensitiveContains(query)
-                || $0.kind.label(language: interfaceLanguage).localizedCaseInsensitiveContains(query)
-        }
+        return allItems.filter { itemMatchesLibrarySearch($0, query: query) }
     }
 
     var navigableItems: [StudyItem] {
         let materialItems = allItems.filter { !$0.isNotebookNote }
         let query = librarySearch.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return materialItems }
-        return materialItems.filter {
-            displayTitle(for: $0).localizedCaseInsensitiveContains(query)
-                || displaySubtitle(for: $0).localizedCaseInsensitiveContains(query)
-                || $0.kind.label(language: interfaceLanguage).localizedCaseInsensitiveContains(query)
-        }
+        return materialItems.filter { itemMatchesLibrarySearch($0, query: query) }
     }
 
     var selectedItem: StudyItem? {
@@ -404,6 +396,28 @@ final class WorkspaceStore: ObservableObject {
         default:
             return item.subtitle
         }
+    }
+
+    private func itemMatchesLibrarySearch(_ item: StudyItem, query: String) -> Bool {
+        displayTitle(for: item).localizedCaseInsensitiveContains(query)
+            || displaySubtitle(for: item).localizedCaseInsensitiveContains(query)
+            || item.kind.label(language: interfaceLanguage).localizedCaseInsensitiveContains(query)
+            || noteTagsMatchLibrarySearch(item, query: query)
+    }
+
+    private func noteTagsMatchLibrarySearch(_ item: StudyItem, query: String) -> Bool {
+        guard item.isNotebookNote else { return false }
+        let text: String
+        if item.id == activeNoteItemID {
+            text = noteText
+        } else if let cached = notesByItemID[item.id] {
+            text = cached
+        } else if item.editsBackingMarkdownFile, let url = item.url {
+            text = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        } else {
+            text = ""
+        }
+        return MarkdownTagSearch.matches(query: query, in: text)
     }
 
     func select(itemID: String?) {

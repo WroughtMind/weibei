@@ -588,6 +588,19 @@ assets/curve.png
 已完成项
 """
 expect(readableMarkdownSelectionText == expectedReadableMarkdownSelectionText, "selection sanitizer turns common Markdown and Obsidian writing syntax into readable text for Agent context")
+let searchableTags = MarkdownTagSearch.tags(in: """
+# 标题不是标签
+正文标签 #finance/rate 和 #nested/tag
+行内代码 `#not-tag` 不应该进入标签
+
+```swift
+let tag = "#code-tag"
+```
+""")
+expect(searchableTags == ["#finance/rate", "#nested/tag"], "markdown tag search extracts only real prose tags")
+expect(MarkdownTagSearch.matches(query: "finance", in: "#finance/rate")
+    && MarkdownTagSearch.matches(query: "#nested", in: "#nested/tag")
+    && !MarkdownTagSearch.matches(query: "code-tag", in: "`#code-tag`"), "markdown tag search supports library queries without indexing code")
 
 expect(PageNavigator.previous(0) == 0, "pdf previous clamps first page")
 expect(PageNavigator.next(0, pageCount: 2) == 1, "pdf next advances")
@@ -1471,6 +1484,11 @@ expect(workspaceStoreSource.contains("var canCopyReference: Bool")
     && workspaceStoreSource.contains("guard canCopyReference else { return false }")
     && workspaceStoreSource.contains("guard hasSelectedMaterial else { return false }"), "app shortcuts and menus name copy-reference by the actual current target")
 expect(workspaceStoreSource.contains("selectAdjacentItem(step: -1)") && workspaceStoreSource.contains("Task { await askAgent() }"), "app shortcut handler covers navigation and agent send")
+expect(workspaceStoreSource.contains("return allItems.filter { itemMatchesLibrarySearch($0, query: query) }")
+    && workspaceStoreSource.contains("return materialItems.filter { itemMatchesLibrarySearch($0, query: query) }")
+    && workspaceStoreSource.contains("private func noteTagsMatchLibrarySearch(_ item: StudyItem, query: String) -> Bool")
+    && workspaceStoreSource.contains("MarkdownTagSearch.matches(query: query, in: text)")
+    && workspaceStoreSource.contains("item.id == activeNoteItemID"), "course index search includes active and cached notebook Markdown tags without indexing all notes separately")
 expect(workspaceStoreSource.contains("backNavigationStack: [NavigationSnapshot]")
     && workspaceStoreSource.contains("forwardNavigationStack: [NavigationSnapshot]")
     && workspaceStoreSource.contains("func navigateBackInWorkspace()")
