@@ -627,8 +627,16 @@ private struct NotebookCreationPanel: View {
             .font(.system(size: 16, weight: .semibold))
             .foregroundStyle(confirmColor)
             .frame(width: 28, height: 26)
-            .contentShape(Rectangle())
-            .scaleEffect(hoveredConfirm && canCreate ? 1.08 : 1)
+            .background {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(confirmBackground)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(confirmBorder, lineWidth: 1)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .scaleEffect(hoveredConfirm && canCreate ? 1.04 : 1)
             .opacity(canCreate ? 1 : 0.42)
             .disabled(!canCreate)
             .keyboardShortcut(.defaultAction)
@@ -647,8 +655,16 @@ private struct NotebookCreationPanel: View {
             .font(.system(size: 15, weight: .semibold))
             .foregroundStyle(cancelColor)
             .frame(width: 28, height: 26)
-            .contentShape(Rectangle())
-            .scaleEffect(hoveredCancel ? 1.08 : 1)
+            .background {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(cancelBackground)
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(cancelBorder, lineWidth: 1)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .scaleEffect(hoveredCancel ? 1.04 : 1)
             .onHover { hovering in
                 withAnimation(WeiBeiMotion.hover) {
                     hoveredCancel = hovering
@@ -669,11 +685,29 @@ private struct NotebookCreationPanel: View {
 
     private var confirmColor: Color {
         guard canCreate else { return WeiBeiTheme.tertiaryInk }
-        return hoveredConfirm ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk
+        return hoveredConfirm ? WeiBeiTheme.onCinnabar : WeiBeiTheme.secondaryInk
+    }
+
+    private var confirmBackground: Color {
+        guard canCreate, hoveredConfirm else { return Color.clear }
+        return WeiBeiTheme.cinnabar.opacity(0.88)
+    }
+
+    private var confirmBorder: Color {
+        guard canCreate, hoveredConfirm else { return Color.clear }
+        return WeiBeiTheme.cinnabar.opacity(0.48)
     }
 
     private var cancelColor: Color {
         hoveredCancel ? WeiBeiTheme.cinnabar.opacity(0.72) : WeiBeiTheme.secondaryInk
+    }
+
+    private var cancelBackground: Color {
+        hoveredCancel ? WeiBeiTheme.cinnabarSoft.opacity(0.68) : Color.clear
+    }
+
+    private var cancelBorder: Color {
+        hoveredCancel ? WeiBeiTheme.cinnabar.opacity(0.22) : Color.clear
     }
 }
 
