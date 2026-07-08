@@ -207,12 +207,9 @@ final class MarkdownWebView: WKWebView {
 
     @discardableResult
     private func forwardVerticalScroll(_ event: NSEvent) -> Bool {
-        scrollOuterSuperview(deltaY: normalizedVerticalDelta(for: event))
-    }
-
-    private func normalizedVerticalDelta(for event: NSEvent) -> CGFloat {
-        let deltaY = event.scrollingDeltaY
-        return event.isDirectionInvertedFromDevice ? deltaY : -deltaY
+        guard let outerScrollView = nearestSuperviewScrollView() else { return false }
+        outerScrollView.scrollWheel(with: event)
+        return true
     }
 
     @discardableResult
