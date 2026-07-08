@@ -610,12 +610,22 @@ private struct NotebookCreationPanel: View {
             .focused($focused)
             .onSubmit(confirm)
             .frame(maxWidth: .infinity)
-            .weibeiInputSurface(active: focused, height: 32, horizontalPadding: 10)
+            .frame(height: 26)
+            .padding(.horizontal, 8)
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(focused ? WeiBeiTheme.cinnabar.opacity(0.36) : WeiBeiTheme.hairline.opacity(0.42))
+                    .frame(height: 1)
+            }
 
             Button(action: confirm) {
                 Image(systemName: "checkmark")
             }
-            .buttonStyle(WeiBeiIconButtonStyle(size: 30, prominence: .primary))
+            .buttonStyle(.plain)
+            .font(.system(size: 16, weight: .semibold))
+            .foregroundStyle(canCreate ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk)
+            .frame(width: 28, height: 26)
+            .contentShape(Rectangle())
             .disabled(!canCreate)
             .keyboardShortcut(.defaultAction)
             .accessibilityLabel(Text(store.ui("创建笔记", "Create Note")))
@@ -624,7 +634,11 @@ private struct NotebookCreationPanel: View {
             Button(action: cancel) {
                 Image(systemName: "xmark")
             }
-            .buttonStyle(WeiBeiIconButtonStyle(size: 28))
+            .buttonStyle(.plain)
+            .font(.system(size: 15, weight: .semibold))
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .frame(width: 28, height: 26)
+            .contentShape(Rectangle())
             .keyboardShortcut(.cancelAction)
             .accessibilityLabel(Text(store.ui("取消", "Cancel")))
             .help(store.ui("取消新建笔记", "Cancel note creation"))

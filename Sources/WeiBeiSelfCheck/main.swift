@@ -2000,7 +2000,7 @@ expect(notesAgentSource.contains("func weibeiPaneHeaderChrome(appearanceMode: We
     && notesAgentSource.contains("private var canCreate: Bool")
     && notesAgentSource.contains("store.ui(\"新建笔记\"")
     && notesAgentSource.contains("Image(systemName: \"checkmark\")")
-    && notesAgentSource.contains(".buttonStyle(WeiBeiIconButtonStyle(size: 30, prominence: .primary))")
+    && notesAgentSource.contains(".foregroundStyle(canCreate ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk)")
     && notesAgentSource.contains(".weibeiHeaderAccessoryGroup()")
     && notesAgentSource.contains("store.confirmNotebookNoteCreation()")
     && notesAgentSource.contains("store.cancelNotebookNoteCreation()")
