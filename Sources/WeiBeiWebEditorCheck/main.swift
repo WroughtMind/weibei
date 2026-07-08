@@ -47,6 +47,8 @@ HTML 换行第一行<br />第二行，选区应读作两行。
 > 利率是资金使用价格的表达。
 >
 > 来源：Mishkin 教材样例，第 12 页
+>
+> Source: Mishkin sample, page 13
 
 > [!quote] 旧摘录
 >
@@ -229,6 +231,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           blockIds: document.querySelectorAll('.weibei-block-id').length,
           frontmatterTitle: document.querySelector('.frontmatter-title')?.textContent || '',
           embeds: document.querySelectorAll('.weibei-embed-preview').length,
+          sourceReferences: document.querySelectorAll('.weibei-source-reference').length,
+          sourceReferenceTitle: document.querySelector('.weibei-source-reference')?.getAttribute('title') || '',
           hardBreaks: document.querySelectorAll('.ProseMirror br').length,
           noteEmbedLinks: document.querySelectorAll('.weibei-embed-note[role="link"][tabindex="0"][data-wikilink-title]').length,
           mermaid: document.querySelectorAll('.weibei-mermaid-render').length,
@@ -409,11 +413,15 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("inline footnote was not decorated")
                 return
             }
-            for key in ["comments", "tags", "blockIds", "embeds", "mermaid"] {
+            for key in ["comments", "tags", "blockIds", "embeds", "sourceReferences", "mermaid"] {
                 if (result[key] as? Int ?? 0) < 1 {
                     self.fail("missing Obsidian decoration: \(key)")
                     return
                 }
+            }
+            if !(result["sourceReferenceTitle"] as? String ?? "").hasPrefix("打开来源：") {
+                self.fail("source reference title should be localized in Chinese mode")
+                return
             }
             if (result["comments"] as? Int ?? 0) < 2 {
                 self.fail("block comment was not decorated")
@@ -584,7 +592,14 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     private func validateFrontmatterLanguageCycle(completion: @escaping () -> Void) {
         let script = """
         (() => {
-          const read = () => document.querySelector('.frontmatter-title')?.textContent || '';
+          const read = () => [
+            document.querySelector('.frontmatter-title')?.textContent || '',
+            document.querySelector('.weibei-inline-footnote')?.getAttribute('title') || '',
+            document.querySelector('.weibei-wikilink')?.getAttribute('title') || '',
+            document.querySelector('.weibei-embed-note')?.textContent || '',
+            document.querySelector('.weibei-embed-note')?.getAttribute('title') || '',
+            document.querySelector('.weibei-source-reference')?.getAttribute('title') || ''
+          ].join('::');
           const initial = read();
           window.WeiBeiEditor.setInterfaceLanguage('en');
           const english = read();
@@ -599,8 +614,21 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 self.fail("frontmatter language switch check threw \(error.localizedDescription)")
                 return
             }
-            guard value as? String == "属性|Properties|属性" else {
+            guard let raw = value as? String else {
                 self.fail("frontmatter panel title should refresh when switching interface languages: \(String(describing: value))")
+                return
+            }
+            let phases = raw.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+            guard phases.count == 3,
+                  phases[0].hasPrefix("属性::行内脚注："),
+                  phases[1].hasPrefix("Properties::Inline footnote:"),
+                  phases[1].contains("::Open or create note:"),
+                  phases[1].contains("::Embed:"),
+                  phases[1].contains("::Open source:"),
+                  phases[2].hasPrefix("属性::行内脚注："),
+                  phases[2].contains("::嵌入："),
+                  phases[2].contains("::打开来源：") else {
+                self.fail("web editor chrome labels should refresh when switching interface languages: \(raw)")
                 return
             }
             completion()

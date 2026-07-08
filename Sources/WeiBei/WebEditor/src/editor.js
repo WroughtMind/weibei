@@ -106,7 +106,42 @@ const calloutLabels = {
   },
 };
 const calloutLabel = (type) => calloutLabels[currentLanguage]?.[type] || calloutLabels['zh-Hans'][type] || type;
-const frontmatterLabel = () => (currentLanguage === 'en' ? 'Properties' : '属性');
+const editorLabels = {
+  'zh-Hans': {
+    properties: '属性',
+    bootFailed: 'Milkdown 初始化失败',
+    imageMissing: '图片未找到',
+    inlineFootnote: '行内脚注：{value}',
+    openOrCreateNote: '打开或创建笔记：{value}',
+    openSource: '打开来源：{value}',
+    embed: '嵌入：{value}',
+    mermaidRendering: '正在渲染 Mermaid 图表...',
+    mermaidFailed: 'Mermaid 图表未解析\n{value}',
+    mathError: '公式没有通过 KaTeX 解析。常用写法：x_i、x^{2}、\\frac{a}{b}、\\begin{bmatrix}...\\end{bmatrix}',
+    uploadingImage: '正在收纳图片...',
+  },
+  en: {
+    properties: 'Properties',
+    bootFailed: 'Milkdown failed to initialize',
+    imageMissing: 'Image not found',
+    inlineFootnote: 'Inline footnote: {value}',
+    openOrCreateNote: 'Open or create note: {value}',
+    openSource: 'Open source: {value}',
+    embed: 'Embed: {value}',
+    mermaidRendering: 'Rendering Mermaid diagram...',
+    mermaidFailed: 'Mermaid diagram did not parse\n{value}',
+    mathError: 'KaTeX could not parse this formula. Common forms: x_i, x^{2}, \\frac{a}{b}, \\begin{bmatrix}...\\end{bmatrix}',
+    uploadingImage: 'Saving image...',
+  },
+};
+const editorLabel = (key, values = {}) => {
+  let text = editorLabels[currentLanguage]?.[key] || editorLabels['zh-Hans'][key] || key;
+  for (const [name, value] of Object.entries(values)) {
+    text = text.split(`{${name}}`).join(String(value));
+  }
+  return text;
+};
+const frontmatterLabel = () => editorLabel('properties');
 const calloutRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(${calloutTypePattern})\\]([+-]?)(?:[ \\t]+([^\\n]+))?`, 'i');
 const calloutMarkerRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(?:${calloutTypePattern})\\][+-]?\\s*`, 'i');
 const calloutHeadingRegex = new RegExp(`^${calloutPrefixPattern}\\\\?\\[!(?:${calloutTypePattern})\\][+-]?(?:[ \\t]+[^\\n]+)?$`, 'i');
@@ -237,7 +272,7 @@ const showFailure = (error) => {
   }
   const root = document.querySelector('#editor');
   if (!root) return;
-  root.innerHTML = `<pre style="white-space:pre-wrap;color:#9f3427;padding:24px;font:13px/1.5 SFMono-Regular,Menlo,monospace;">Milkdown 初始化失败\n${String(error?.stack || error)}</pre>`;
+  root.innerHTML = `<pre style="white-space:pre-wrap;color:#9f3427;padding:24px;font:13px/1.5 SFMono-Regular,Menlo,monospace;">${editorLabel('bootFailed')}\n${String(error?.stack || error)}</pre>`;
 };
 
 window.addEventListener('error', (event) => showFailure(event.error || event.message));
@@ -551,7 +586,7 @@ const missingImageURL = () => {
   <rect width="156" height="34" rx="3" fill="${palette.background}"/>
   <path d="M18 22l5-6 4 4 3-3 6 5" fill="none" stroke="${palette.accent}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
   <rect x="17" y="11" width="20" height="14" rx="2" fill="none" stroke="${palette.accent}" stroke-width="1.2"/>
-  <text x="48" y="22" fill="${palette.text}" font-family="-apple-system, BlinkMacSystemFont, 'Songti SC', serif" font-size="13">图片未找到</text>
+  <text x="48" y="22" fill="${palette.text}" font-family="-apple-system, BlinkMacSystemFont, 'Songti SC', serif" font-size="13">${escapeHTML(editorLabel('imageMissing'))}</text>
 </svg>`;
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 };
@@ -675,8 +710,8 @@ const decorateInlineFootnotes = (decorations, text, pos) => {
     const to = from + match[0].length - prefixLength;
     addRangeDecoration(decorations, from, from + 2, 'weibei-md-marker');
     addRangeDecoration(decorations, from + 2, to - 1, 'weibei-inline-footnote', {
-      title: `行内脚注：${content}`,
-      'aria-label': `行内脚注：${content}`,
+      title: editorLabel('inlineFootnote', { value: content }),
+      'aria-label': editorLabel('inlineFootnote', { value: content }),
     });
     addRangeDecoration(decorations, to - 1, to, 'weibei-md-marker');
   }
@@ -697,7 +732,7 @@ const decorateWikiLinks = (decorations, text, pos) => {
       addRangeDecoration(decorations, from + 2 + parsed.aliasRange.start, from + 2 + parsed.aliasRange.end, 'weibei-wikilink', {
         role: 'link',
         tabindex: '0',
-        title: `打开或创建笔记：${title}`,
+        title: editorLabel('openOrCreateNote', { value: title }),
         'data-wikilink-target': parsed.target,
         'data-wikilink-title': bridgeTitle,
       });
@@ -706,7 +741,7 @@ const decorateWikiLinks = (decorations, text, pos) => {
       addRangeDecoration(decorations, from + 2, to - 2, 'weibei-wikilink', {
         role: 'link',
         tabindex: '0',
-        title: `打开或创建笔记：${title}`,
+        title: editorLabel('openOrCreateNote', { value: title }),
         'data-wikilink-target': parsed.target,
         'data-wikilink-title': bridgeTitle,
       });
@@ -716,14 +751,15 @@ const decorateWikiLinks = (decorations, text, pos) => {
 };
 
 const decorateSourceReferences = (decorations, text, pos) => {
-  for (const match of text.matchAll(/(?:^|\s)(来源：[^\n]+)/g)) {
-    const prefixLength = match[0].startsWith('来源：') ? 0 : 1;
+  for (const match of text.matchAll(/(?:^|\s)((?:来源：|Source:)[^\n]+)/g)) {
+    const prefixLength = match[0].startsWith(match[1]) ? 0 : 1;
+    const sourcePrefix = match[1].startsWith('来源：') ? '来源：' : 'Source:';
     const from = pos + (match.index || 0) + prefixLength;
     const to = from + match[1].length;
     addRangeDecoration(decorations, from, to, 'weibei-source-reference', {
       role: 'link',
       tabindex: '0',
-      title: `打开来源：${match[1].slice('来源：'.length).trim()}`,
+      title: editorLabel('openSource', { value: match[1].slice(sourcePrefix.length).trim() }),
       'data-source-reference': match[1],
     });
   }
@@ -750,10 +786,10 @@ const decorateObsidianEmbeds = (decorations, text, pos) => {
       }
       const chip = document.createElement('span');
       chip.className = 'weibei-embed-preview weibei-embed-note';
-      chip.textContent = `嵌入：${embed.label || embed.target}`;
+      chip.textContent = editorLabel('embed', { value: embed.label || embed.target });
       chip.setAttribute('role', 'link');
       chip.setAttribute('tabindex', '0');
-      chip.setAttribute('title', `打开或创建笔记：${embed.target}`);
+      chip.setAttribute('title', editorLabel('openOrCreateNote', { value: embed.target }));
       chip.dataset.wikilinkTarget = embed.target;
       chip.dataset.wikilinkTitle = embed.target;
       return chip;
@@ -816,7 +852,7 @@ const decorateHtmlBreaks = (decorations, text, pos) => {
 const mermaidWidget = (source) => {
   const container = document.createElement('div');
   container.className = 'weibei-mermaid-render';
-  container.textContent = '正在渲染 Mermaid 图表...';
+  container.textContent = editorLabel('mermaidRendering');
   window.setTimeout(async () => {
     try {
       const id = `weibei-mermaid-${mermaidRenderID += 1}`;
@@ -826,7 +862,7 @@ const mermaidWidget = (source) => {
       container.dataset.rendered = 'true';
     } catch (error) {
       container.classList.add('weibei-mermaid-error');
-      container.textContent = `Mermaid 图表未解析\n${String(error?.message || error)}`;
+      container.textContent = editorLabel('mermaidFailed', { value: String(error?.message || error) });
     }
   }, 0);
   return container;
@@ -1084,7 +1120,7 @@ const annotateMathErrors = () => {
   window.requestAnimationFrame(() => {
     document.querySelectorAll('.ProseMirror .katex-error').forEach((element) => {
       if (element.getAttribute('title')) return;
-      element.setAttribute('title', '公式没有通过 KaTeX 解析。常用写法：x_i、x^{2}、\\frac{a}{b}、\\begin{bmatrix}...\\end{bmatrix}');
+      element.setAttribute('title', editorLabel('mathError'));
     });
   });
 };
@@ -1542,7 +1578,7 @@ Editor
       uploadWidgetFactory: (pos, spec) => {
         const widget = document.createElement('span');
         widget.className = 'weibei-uploading';
-        widget.textContent = '正在收纳图片...';
+        widget.textContent = editorLabel('uploadingImage');
         return Decoration.widget(pos, widget, spec);
       },
     });
