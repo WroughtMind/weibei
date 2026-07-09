@@ -114,7 +114,7 @@ struct WeiBeiPaneHeader<Actions: View>: View {
     }
 }
 
-private struct PaneHeaderReorderModifier: ViewModifier {
+struct PaneHeaderReorderModifier: ViewModifier {
     @EnvironmentObject private var store: WorkspaceStore
     @State private var dragActive = false
     @State private var hovering = false
@@ -125,15 +125,6 @@ private struct PaneHeaderReorderModifier: ViewModifier {
     func body(content: Content) -> some View {
         if let role {
             content
-                .overlay {
-                    if hovering || dragActive {
-                        Rectangle()
-                            .stroke(WeiBeiTheme.cinnabar.opacity(dragActive ? 0.46 : 0.16), lineWidth: 1)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 5)
-                            .transition(WeiBeiTransition.floating)
-                    }
-                }
                 .overlay {
                     if dragActive {
                         HStack {
@@ -148,6 +139,8 @@ private struct PaneHeaderReorderModifier: ViewModifier {
                     }
                 }
                 .contentShape(Rectangle())
+                .offset(y: hovering || dragActive ? -1 : 0)
+                .scaleEffect(dragActive ? 1.01 : hovering ? 1.004 : 1, anchor: .top)
                 .textSelection(.disabled)
                 .highPriorityGesture(
                     DragGesture(minimumDistance: 12, coordinateSpace: .global)
@@ -379,7 +372,8 @@ struct NotePaneView: View {
                 title: noteHeaderSubtitle,
                 appearanceMode: store.appearanceMode,
                 isPinned: store.notebookCreationDraft != nil,
-                actionsAlignedTrailing: true
+                actionsAlignedTrailing: true,
+                reorderRole: reorderRole
             ) {
                 noteModeControl
                 newNoteControl
@@ -388,16 +382,7 @@ struct NotePaneView: View {
             if let draft = store.notebookCreationDraft {
                 notebookCreationPanel(draft: draft)
                     .padding(.horizontal, 10)
-                    .frame(width: 560, height: 42)
-                    .background {
-                        RoundedRectangle(cornerRadius: 7)
-                            .fill(WeiBeiTheme.paperRaised.opacity(store.appearanceMode == .inkstone ? 0.34 : 0.72))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 7)
-                                    .stroke(WeiBeiTheme.hairline.opacity(store.appearanceMode == .inkstone ? 0.30 : 0.42), lineWidth: 1)
-                            }
-                    }
-                    .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode == .inkstone ? 0.24 : 0.07), radius: 9, y: 4)
+                    .frame(width: 420, height: 34)
                     .padding(.top, 42)
                     .transition(WeiBeiTransition.floating)
             }
@@ -459,11 +444,12 @@ struct NotePaneView: View {
     }
 
     private var noteModeControl: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 3) {
             ForEach(NoteRenderMode.visibleCases) { mode in
                 noteModeButton(for: mode)
             }
         }
+        .fixedSize(horizontal: true, vertical: false)
         .frame(height: 28)
         .weibeiHeaderAccessoryGroup()
         .animation(WeiBeiMotion.appearance, value: store.appearanceMode)
@@ -477,7 +463,7 @@ struct NotePaneView: View {
                 store.setNoteRenderMode(mode)
             }
         } label: {
-            noteModeButtonLabel(label: label, selected: selected, hovering: hoveredNoteMode == mode)
+            noteModeButtonLabel(mode: mode, selected: selected, hovering: hoveredNoteMode == mode)
         }
         .buttonStyle(.plain)
         .onHover { hovering in
@@ -489,13 +475,12 @@ struct NotePaneView: View {
         .help(label)
     }
 
-    private func noteModeButtonLabel(label: String, selected: Bool, hovering: Bool) -> some View {
-        Text(label)
-            .font(.system(size: 11.5, weight: selected ? .semibold : .medium))
-            .foregroundStyle(selected ? WeiBeiTheme.cinnabar : hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
-            .padding(.horizontal, store.interfaceLanguage == .english ? 10 : 9)
-            .frame(minWidth: store.interfaceLanguage == .english ? 60 : 40)
-            .frame(height: 24)
+    private func noteModeButtonLabel(mode: NoteRenderMode, selected: Bool, hovering: Bool) -> some View {
+        let foreground = selected ? WeiBeiTheme.cinnabar : hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk
+        return Image(systemName: noteModeIcon(for: mode))
+            .font(.system(size: 11.6, weight: selected ? .semibold : .medium))
+            .frame(width: 28, height: 24)
+            .foregroundStyle(foreground)
             .background {
                 RoundedRectangle(cornerRadius: 6, style: .continuous)
                     .fill(noteModeButtonFill(selected: selected, hovering: hovering))
@@ -508,6 +493,19 @@ struct NotePaneView: View {
             .contentShape(Rectangle())
             .animation(WeiBeiMotion.micro, value: selected)
             .animation(WeiBeiMotion.hover, value: hovering)
+    }
+
+    private func noteModeIcon(for mode: NoteRenderMode) -> String {
+        switch mode {
+        case .rich:
+            return "square.and.pencil"
+        case .split:
+            return "rectangle.split.2x1"
+        case .source:
+            return "chevron.left.forwardslash.chevron.right"
+        case .preview:
+            return "eye"
+        }
     }
 
     private func noteModeButtonFill(selected: Bool, hovering: Bool) -> Color {
@@ -553,6 +551,8 @@ struct NotePaneView: View {
                         markdownBaseURL: store.currentMarkdownBaseURL,
                         appearanceMode: store.appearanceMode,
                         interfaceLanguage: store.interfaceLanguage,
+                        compact: true,
+                        fitsContentHeight: false,
                         onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
                         onSourceReference: { reference in store.openSourceReference(reference) },
                         onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
@@ -717,15 +717,10 @@ private struct NotebookCreationPanel: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
-            Rectangle()
-                .fill(WeiBeiTheme.cinnabar.opacity(0.64))
-                .frame(width: 2, height: 28)
-                .clipShape(Capsule())
-
+        HStack(spacing: 9) {
             Text(draft.kind == .blank ? store.ui("新建笔记", "New Note") : store.ui("资料笔记", "Material Note"))
-                .font(.system(size: 13, weight: .semibold, design: .serif))
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .font(.system(size: 12.5, weight: .semibold, design: .serif))
+                .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.86))
                 .lineLimit(1)
                 .fixedSize(horizontal: true, vertical: false)
 
@@ -736,18 +731,12 @@ private struct NotebookCreationPanel: View {
                     .foregroundStyle(WeiBeiTheme.placeholderInk)
             )
             .textFieldStyle(.plain)
-            .font(.system(size: 15, weight: .medium))
+            .font(.system(size: 14.5, weight: .medium))
             .foregroundColor(WeiBeiTheme.ink)
             .focused($focused)
             .onSubmit(confirm)
             .frame(maxWidth: .infinity)
-            .frame(height: 26)
-            .padding(.horizontal, 8)
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(focused ? WeiBeiTheme.cinnabar.opacity(0.36) : WeiBeiTheme.hairline.opacity(0.42))
-                    .frame(height: 1)
-            }
+            .frame(height: 24)
 
             Button(action: confirm) {
                 Image(systemName: "checkmark")
@@ -803,9 +792,17 @@ private struct NotebookCreationPanel: View {
             .accessibilityLabel(Text(store.ui("取消", "Cancel")))
             .help(store.ui("取消新建笔记", "Cancel note creation"))
         }
+        .padding(.horizontal, 10)
         .frame(maxWidth: .infinity)
-        .frame(height: 38)
-        .weibeiHeaderAccessoryGroup()
+        .frame(height: 30)
+        .background {
+            RoundedRectangle(cornerRadius: 7)
+                .fill(WeiBeiTheme.paperInset.opacity(0.24))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 7)
+                .stroke(WeiBeiTheme.hairline.opacity(0.34), lineWidth: 1)
+        }
         .onExitCommand(perform: cancel)
         .onAppear {
             focused = true
@@ -1219,6 +1216,7 @@ struct MarkdownPreviewView: View {
     var appearanceMode: WeiBeiAppearanceMode = .paper
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     var compact = false
+    var fitsContentHeight = true
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
@@ -1239,7 +1237,7 @@ struct MarkdownPreviewView: View {
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onSelectionChange,
             onContentHeightChange: { height in
-                guard compact else { return }
+                guard compact && fitsContentHeight else { return }
                 contentHeight = height
                 onContentHeightChange()
             },
@@ -1248,7 +1246,7 @@ struct MarkdownPreviewView: View {
             onAppShortcut: onAppShortcut
         )
         .background(compact ? Color.clear : WeiBeiTheme.paper)
-        .frame(height: compact ? max(contentHeight, 44) : nil)
+        .frame(height: compact && fitsContentHeight ? max(contentHeight, 44) : nil)
     }
 }
 
@@ -1329,7 +1327,7 @@ struct AgentPaneView: View {
                 }
 
                 if !showsPaneHeader {
-                    ImmersiveHoverTitleView(mark: "CHAT", title: store.agentConversationSubtitle, appearanceMode: store.appearanceMode)
+                    ImmersiveHoverTitleView(mark: "CHAT", title: store.agentConversationSubtitle, appearanceMode: store.appearanceMode, reorderRole: reorderRole)
                 }
             }
         }

@@ -288,8 +288,6 @@ private struct UnifiedTopBarView: View {
                 }
             }
 
-            layoutMenu
-
             topIconButton("command", help: store.ui("命令面板", "Command palette")) {
                 withAnimation(WeiBeiMotion.panel) {
                     store.commandPalettePresented.toggle()
@@ -364,23 +362,6 @@ private struct UnifiedTopBarView: View {
         }
     }
 
-    private var layoutMenuWidth: CGFloat {
-        switch variant {
-        case .compact:
-            return 104
-        case .glyph:
-            return 84
-        case .wide:
-            return 138
-        default:
-            return 126
-        }
-    }
-
-    private var layoutMenuTitle: String {
-        shortLayoutLabel
-    }
-
     private var shouldShowSearchAction: Bool {
         store.hasSelectedMaterial && hasReaderScopedTopActions
     }
@@ -418,10 +399,6 @@ private struct UnifiedTopBarView: View {
 
     private var tertiaryText: Color {
         WeiBeiTheme.tertiaryInk
-    }
-
-    private var dividerColor: Color {
-        WeiBeiTheme.hairline
     }
 
     private var controlFill: Color {
@@ -639,6 +616,17 @@ private struct UnifiedTopBarView: View {
                 }
             }
 
+            Section(store.ui("文稿", "Document")) {
+                Toggle(
+                    isOn: Binding(
+                        get: { store.adaptImportedDocumentColors },
+                        set: { store.setImportedDocumentColorAdaptation($0) }
+                    )
+                ) {
+                    Label(store.ui("导入文稿适配", "Adapt Imported Documents"), systemImage: "eyeglasses")
+                }
+            }
+
             Section(store.ui("语言", "Language")) {
                 ForEach(WeiBeiInterfaceLanguage.allCases) { language in
                     Button {
@@ -678,40 +666,6 @@ private struct UnifiedTopBarView: View {
         .help(store.ui("设置", "Settings"))
     }
 
-    private var layoutMenu: some View {
-        Menu {
-            ForEach(WorkspaceLayout.allCases) { layout in
-                Button {
-                    withAnimation(WeiBeiMotion.layout) {
-                        store.setLayout(layout)
-                    }
-                } label: {
-                    Label(layout.label(language: store.interfaceLanguage), systemImage: layout == store.layout ? "checkmark" : layout.systemImage)
-                }
-            }
-        } label: {
-            HStack(spacing: 5) {
-                Text(layoutMenuTitle)
-                    .font(.system(size: 12, weight: .medium))
-                    .lineLimit(1)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
-            }
-            .foregroundStyle(secondaryText)
-            .padding(.horizontal, 9)
-            .frame(width: layoutMenuWidth, height: controlHeight)
-            .background(controlFill.opacity(0.82))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .overlay {
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(dividerColor, lineWidth: 1)
-            }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(Text(store.ui("切换布局", "Switch layout")))
-        .help(store.ui("切换布局", "Switch layout"))
-    }
-
     private func setTopBarVariant(_ next: TopBarVariant) {
         withAnimation(WeiBeiMotion.layout) {
             store.setTopBarVariant(next)
@@ -743,6 +697,7 @@ private struct UnifiedTopBarView: View {
 
 private struct LayoutContentView: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @StateObject private var paneHostRegistry = PersistentPaneHostRegistry()
     @SceneStorage("documentThreePaneFirstSplit") private var firstSplitStorage: Double = 0.34
     @SceneStorage("documentThreePaneSecondSplit") private var secondSplitStorage: Double = 0.67
     @SceneStorage("documentNotesHalfSplit") private var halfSplitStorage: Double = 0.50
@@ -762,7 +717,7 @@ private struct LayoutContentView: View {
                 documentPaneLayoutView()
             case .immersiveReading:
                 ZStack(alignment: .topTrailing) {
-                    ReaderView(isImmersive: true, showsFloatingTitle: true)
+                    PersistentPaneHost(role: .reader, registry: paneHostRegistry)
                     if store.showQuietInsight && store.agentSurface != .hidden {
                         QuietInsightView(compact: true)
                             .padding(.trailing, 28)
@@ -776,7 +731,7 @@ private struct LayoutContentView: View {
                     }
                 }
             case .immersiveConversation:
-                AgentPaneView(showsPaneHeader: false)
+                PersistentPaneHost(role: .agent, registry: paneHostRegistry)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .transition(WeiBeiTransition.layout)
             case .immersiveWriting:
@@ -792,7 +747,7 @@ private struct LayoutContentView: View {
                             ContextRailView(title: store.ui("文档", "Documents"), items: writingDocumentRailItems, edge: .trailing)
                                 .transition(WeiBeiTransition.rail)
                         } second: {
-                            NotePaneView(showsPaneHeader: false)
+                            PersistentPaneHost(role: .notes, registry: paneHostRegistry)
                         } third: {
                             ContextRailView(title: store.ui("写作辅助", "Writing Aids"), items: writingAssistRailItems, edge: .leading)
                                 .transition(WeiBeiTransition.rail)
@@ -803,7 +758,7 @@ private struct LayoutContentView: View {
                             ContextRailView(title: store.ui("文档", "Documents"), items: writingDocumentRailItems, edge: .trailing)
                                 .transition(WeiBeiTransition.rail)
                         } second: {
-                            NotePaneView(showsPaneHeader: false)
+                            PersistentPaneHost(role: .notes, registry: paneHostRegistry)
                         }
                         .transition(WeiBeiTransition.layout)
                     }
@@ -872,7 +827,7 @@ private struct LayoutContentView: View {
             EmptyWorkspaceView()
                 .transition(WeiBeiTransition.layout)
         case 1:
-            paneView(for: order[0], reorderable: false)
+            paneView(for: order[0])
                 .transition(WeiBeiTransition.layout)
         case 2:
             documentTwoPaneView(order: order)
@@ -944,7 +899,7 @@ private struct LayoutContentView: View {
     @ViewBuilder
     private func reorderablePaneView(for role: WorkspacePaneRole) -> some View {
         let drag = store.threePaneReorderDrag
-        paneView(for: role, reorderable: true)
+        paneView(for: role)
             .opacity(drag?.role == role ? 0.08 : 1)
             .overlay {
                 if drag?.targetIndex == store.normalizedThreePaneOrder.firstIndex(of: role), drag?.role != role {
@@ -962,15 +917,8 @@ private struct LayoutContentView: View {
     }
 
     @ViewBuilder
-    private func paneView(for role: WorkspacePaneRole, reorderable: Bool) -> some View {
-        switch role {
-        case .reader:
-            ReaderPaneView(reorderRole: reorderable ? .reader : nil)
-        case .agent:
-            AgentPaneView(showsPaneHeader: reorderable, reorderRole: reorderable ? .agent : nil)
-        case .notes:
-            NotePaneView(showsPaneHeader: reorderable, reorderRole: reorderable ? .notes : nil)
-        }
+    private func paneView(for role: WorkspacePaneRole) -> some View {
+        PersistentPaneHost(role: role, registry: paneHostRegistry)
     }
 
     @ViewBuilder
@@ -986,7 +934,7 @@ private struct LayoutContentView: View {
                         .transition(WeiBeiTransition.floating)
                 }
 
-                paneView(for: drag.role, reorderable: false)
+                PaneReorderPreviewView(role: drag.role)
                     .frame(width: sourceFrame.width, height: sourceFrame.height)
                     .clipped()
                     .allowsHitTesting(false)
@@ -1224,6 +1172,200 @@ private struct LayoutContentView: View {
                 .zIndex(4)
         case .hidden:
             EmptyView()
+        }
+    }
+}
+
+private struct OwnerToken: Equatable {
+    let role: WorkspacePaneRole
+    let generation: Int
+}
+
+private final class PersistentPaneHostRegistry: ObservableObject {
+    private var hosts: [WorkspacePaneRole: NSHostingView<AnyView>] = [:]
+    private var latestOwnerGeneration: [WorkspacePaneRole: Int] = [:]
+    private var activeOwners: [WorkspacePaneRole: OwnerToken] = [:]
+    private var nextOwnerGeneration = 0
+
+    func registerOwner(for role: WorkspacePaneRole) -> OwnerToken {
+        nextOwnerGeneration += 1
+        let owner = OwnerToken(role: role, generation: nextOwnerGeneration)
+        latestOwnerGeneration[role] = owner.generation
+        return owner
+    }
+
+    func attach(_ role: WorkspacePaneRole, to container: NSView, store: WorkspaceStore, owner: OwnerToken) {
+        guard owner.role == role else { return }
+        guard latestOwnerGeneration[role] == owner.generation else { return }
+        let host = host(for: role, store: store)
+        activeOwners[role] = owner
+        guard host.superview !== container else {
+            host.frame = container.bounds
+            return
+        }
+
+        host.removeFromSuperview()
+        host.frame = container.bounds
+        host.autoresizingMask = [.width, .height]
+        container.addSubview(host)
+    }
+
+    func detach(_ role: WorkspacePaneRole, from container: NSView, owner: OwnerToken) {
+        guard let host = hosts[role] else { return }
+        guard activeOwners[role] == owner, host.superview === container else { return }
+        host.removeFromSuperview()
+        activeOwners[role] = nil
+    }
+
+    private func host(for role: WorkspacePaneRole, store: WorkspaceStore) -> NSHostingView<AnyView> {
+        if let host = hosts[role] {
+            return host
+        }
+
+        let root = PersistentPaneRoot(role: role)
+            .environmentObject(store)
+        let host = NSHostingView(rootView: AnyView(root))
+        host.identifier = NSUserInterfaceItemIdentifier("persistent-pane-\(role.rawValue)")
+        host.autoresizingMask = [.width, .height]
+        hosts[role] = host
+        return host
+    }
+}
+
+private final class PersistentPaneContainerView: NSView {
+    var onWindowChange: ((PersistentPaneContainerView) -> Void)?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        onWindowChange?(self)
+    }
+}
+
+private struct PersistentPaneHost: NSViewRepresentable {
+    @EnvironmentObject private var store: WorkspaceStore
+    let role: WorkspacePaneRole
+    let registry: PersistentPaneHostRegistry
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(role: role, registry: registry)
+    }
+
+    func makeNSView(context: Context) -> PersistentPaneContainerView {
+        let container = PersistentPaneContainerView()
+        container.onWindowChange = { [weak coordinator = context.coordinator] container in
+            coordinator?.windowChanged(container)
+        }
+        context.coordinator.update(role: role, registry: registry, store: store, container: container)
+        return container
+    }
+
+    func updateNSView(_ container: PersistentPaneContainerView, context: Context) {
+        context.coordinator.update(role: role, registry: registry, store: store, container: container)
+    }
+
+    static func dismantleNSView(_ container: PersistentPaneContainerView, coordinator: Coordinator) {
+        container.onWindowChange = nil
+        coordinator.detach(from: container)
+    }
+
+    final class Coordinator {
+        private var role: WorkspacePaneRole
+        private var registry: PersistentPaneHostRegistry
+        private var owner: OwnerToken?
+        private weak var store: WorkspaceStore?
+
+        init(role: WorkspacePaneRole, registry: PersistentPaneHostRegistry) {
+            self.role = role
+            self.registry = registry
+        }
+
+        func update(role: WorkspacePaneRole, registry: PersistentPaneHostRegistry, store: WorkspaceStore, container: PersistentPaneContainerView) {
+            if self.role != role || self.registry !== registry {
+                detach(from: container)
+                self.role = role
+                self.registry = registry
+            }
+            self.store = store
+            attachIfVisible(to: container)
+        }
+
+        func windowChanged(_ container: PersistentPaneContainerView) {
+            guard container.window != nil else {
+                detach(from: container)
+                return
+            }
+            owner = nil
+            attachIfVisible(to: container)
+        }
+
+        private func attachIfVisible(to container: PersistentPaneContainerView) {
+            guard container.window != nil else { return }
+            guard let store else { return }
+            if owner == nil {
+                owner = registry.registerOwner(for: role)
+            }
+            guard let owner else { return }
+            registry.attach(role, to: container, store: store, owner: owner)
+        }
+
+        func detach(from container: NSView) {
+            guard let owner else { return }
+            registry.detach(role, from: container, owner: owner)
+            self.owner = nil
+        }
+    }
+}
+
+private struct PersistentPaneRoot: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let role: WorkspacePaneRole
+
+    @ViewBuilder
+    var body: some View {
+        switch role {
+        case .reader:
+            ReaderView(
+                isImmersive: store.layout == .immersiveReading,
+                showsFloatingTitle: true,
+                floatingTitleReorderRole: reorderRole
+            )
+            .frame(minHeight: 280)
+            .foregroundStyle(WeiBeiTheme.ink)
+            .background(WeiBeiTheme.paper)
+        case .agent:
+            AgentPaneView(showsPaneHeader: false, reorderRole: reorderRole)
+        case .notes:
+            NotePaneView(showsPaneHeader: false, reorderRole: reorderRole)
+        }
+    }
+
+    private var reorderRole: WorkspacePaneRole? {
+        guard store.visibleDocumentPaneOrder.count > 1 else { return nil }
+        switch store.layout {
+        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+            return role
+        case .immersiveReading, .immersiveConversation, .immersiveWriting:
+            return nil
+        }
+    }
+}
+
+private struct PaneReorderPreviewView: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let role: WorkspacePaneRole
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            WeiBeiTheme.paper
+            HStack(spacing: 7) {
+                Image(systemName: role.systemImage)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(role.label(language: store.interfaceLanguage))
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .padding(.horizontal, 12)
+            .frame(height: 34)
         }
     }
 }

@@ -72,6 +72,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var openAIAPIKey: String = OpenAIAPIKeyStore.load()
     @Published var openAIKeyStatus: String?
     @Published var appearanceMode: WeiBeiAppearanceMode = .paper
+    @Published var adaptImportedDocumentColors = true
     @Published var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     @Published var topBarVariant: TopBarVariant = TopBarVariant(rawValue: UserDefaults.standard.string(forKey: "topBarVariant") ?? "") ?? .balanced
     @Published private var backNavigationStack: [NavigationSnapshot] = []
@@ -1360,6 +1361,16 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
+    func toggleImportedDocumentColorAdaptation() {
+        setImportedDocumentColorAdaptation(!adaptImportedDocumentColors)
+    }
+
+    func setImportedDocumentColorAdaptation(_ enabled: Bool) {
+        guard adaptImportedDocumentColors != enabled else { return }
+        adaptImportedDocumentColors = enabled
+        save()
+    }
+
     func setTopBarVariant(_ variant: TopBarVariant) {
         guard topBarVariant != variant else { return }
         topBarVariant = variant
@@ -2561,6 +2572,7 @@ final class WorkspaceStore: ObservableObject {
            let appearanceMode = WeiBeiAppearanceMode(rawValue: appearanceModeRaw) {
             self.appearanceMode = appearanceMode
         }
+        adaptImportedDocumentColors = snapshot.adaptImportedDocumentColors ?? true
         if let interfaceLanguageRaw = snapshot.interfaceLanguageRaw,
            let interfaceLanguage = WeiBeiInterfaceLanguage(rawValue: interfaceLanguageRaw) {
             self.interfaceLanguage = interfaceLanguage
@@ -2610,6 +2622,7 @@ final class WorkspaceStore: ObservableObject {
             showNotes: showNotes,
             showRightPane: showRightPane,
             appearanceModeRaw: appearanceMode.rawValue,
+            adaptImportedDocumentColors: adaptImportedDocumentColors,
             interfaceLanguageRaw: interfaceLanguage.rawValue
         )
         guard let data = try? JSONEncoder().encode(snapshot) else { return }

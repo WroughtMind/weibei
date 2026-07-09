@@ -4,49 +4,13 @@ import SwiftUI
 import WeiBeiCore
 import WebKit
 
-struct ReaderPaneView: View {
-    @EnvironmentObject private var store: WorkspaceStore
-    var reorderRole: WorkspacePaneRole? = nil
-
-    var body: some View {
-        VStack(spacing: 0) {
-            if showsPaneHeader {
-                WeiBeiPaneHeader(
-                    title: store.ui("文档", "Document"),
-                    latinMark: store.interfaceLanguage == .chinese ? "DOC" : nil,
-                    subtitle: readerSubtitle,
-                    appearanceMode: store.appearanceMode,
-                    reorderRole: reorderRole
-                ) {
-                    EmptyView()
-                }
-            }
-
-            ReaderView(showsFloatingTitle: !showsPaneHeader)
-        }
-        .frame(minHeight: 280)
-        .foregroundStyle(WeiBeiTheme.ink)
-        .background(WeiBeiTheme.paper)
-    }
-
-    private var showsPaneHeader: Bool {
-        reorderRole != nil
-    }
-
-    private var readerSubtitle: String {
-        if let title = store.readerLocationTitle, !title.isEmpty {
-            return title
-        }
-        return store.selectedMaterialItem.map { store.displayTitle(for: $0) } ?? store.ui("未选择资料", "No material selected")
-    }
-}
-
 struct ImmersiveHoverTitleView<Actions: View>: View {
     let mark: String
     let title: String
     let appearanceMode: WeiBeiAppearanceMode
     var isPinned = false
     var actionsAlignedTrailing = false
+    var reorderRole: WorkspacePaneRole?
     @ViewBuilder var actions: () -> Actions
 
     @State private var visible = false
@@ -58,6 +22,7 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
         appearanceMode: WeiBeiAppearanceMode,
         isPinned: Bool = false,
         actionsAlignedTrailing: Bool = false,
+        reorderRole: WorkspacePaneRole? = nil,
         @ViewBuilder actions: @escaping () -> Actions
     ) {
         self.mark = mark
@@ -65,35 +30,40 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
         self.appearanceMode = appearanceMode
         self.isPinned = isPinned
         self.actionsAlignedTrailing = actionsAlignedTrailing
+        self.reorderRole = reorderRole
         self.actions = actions
     }
 
     var body: some View {
         ZStack(alignment: .top) {
             Color.clear
-                .frame(width: 560, height: 30)
+                .frame(maxWidth: .infinity)
+                .frame(height: 30)
 
             if visible || isPinned {
                 HStack(alignment: .center, spacing: actionsAlignedTrailing ? 10 : 8) {
-                    HStack(alignment: .firstTextBaseline, spacing: 9) {
-                        Text(mark)
-                            .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
-                            .tracking(1.15)
-                            .baselineOffset(0.7)
-                            .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.82))
-                        Text(title)
-                            .font(.system(size: 11.8, weight: .medium))
-                            .lineLimit(1)
-                            .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .firstTextBaseline, spacing: 9) {
+                            hoverMark
+                            Text(title)
+                                .font(.system(size: 11.8, weight: .medium))
+                                .lineLimit(1)
+                                .truncationMode(.tail)
+                                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                                .layoutPriority(-1)
+                        }
+                        .fixedSize(horizontal: true, vertical: false)
+
+                        hoverMark
                     }
-                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(minWidth: 0, alignment: .leading)
                     if actionsAlignedTrailing {
                         Spacer(minLength: 14)
                     }
                     actions()
                 }
                 .padding(.horizontal, actionsAlignedTrailing ? 14 : 12)
-                .frame(width: actionsAlignedTrailing ? 560 : nil, alignment: .leading)
+                .frame(maxWidth: actionsAlignedTrailing ? .infinity : nil, alignment: .leading)
                 .frame(minHeight: 30)
                 .background {
                     RoundedRectangle(cornerRadius: 7)
@@ -104,7 +74,9 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
                         }
                 }
                 .shadow(color: WeiBeiTheme.ink.opacity(appearanceMode == .inkstone ? 0.24 : 0.07), radius: 9, y: 4)
+                .padding(.horizontal, actionsAlignedTrailing ? 14 : 0)
                 .padding(.top, 7)
+                .modifier(PaneHeaderReorderModifier(role: reorderRole))
                 .transition(WeiBeiTransition.floating)
             }
         }
@@ -133,13 +105,24 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
         hideTask = task
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: task)
     }
+
+    private var hoverMark: some View {
+        Text(mark)
+            .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
+            .tracking(1.15)
+            .baselineOffset(0.7)
+            .lineLimit(1)
+            .fixedSize(horizontal: true, vertical: false)
+            .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.82))
+    }
 }
 
 extension ImmersiveHoverTitleView where Actions == EmptyView {
-    init(mark: String, title: String, appearanceMode: WeiBeiAppearanceMode) {
+    init(mark: String, title: String, appearanceMode: WeiBeiAppearanceMode, reorderRole: WorkspacePaneRole? = nil) {
         self.mark = mark
         self.title = title
         self.appearanceMode = appearanceMode
+        self.reorderRole = reorderRole
         self.actions = { EmptyView() }
     }
 }
@@ -147,6 +130,7 @@ extension ImmersiveHoverTitleView where Actions == EmptyView {
 struct ReaderView: View {
     var isImmersive = false
     var showsFloatingTitle = false
+    var floatingTitleReorderRole: WorkspacePaneRole? = nil
 
     @EnvironmentObject private var store: WorkspaceStore
     @State private var pdfBrowseMode: PDFBrowseMode = .scroll
@@ -181,7 +165,14 @@ struct ReaderView: View {
         }
         .overlay(alignment: .top) {
             if showsFloatingTitle {
-                ImmersiveHoverTitleView(mark: "DOC", title: floatingTitle, appearanceMode: store.appearanceMode)
+                ImmersiveHoverTitleView(
+                    mark: "DOC",
+                    title: floatingTitle,
+                    appearanceMode: store.appearanceMode,
+                    reorderRole: floatingTitleReorderRole
+                ) {
+                    importedDocumentAdaptationControl
+                }
             }
         }
         .background(WeiBeiTheme.paper)
@@ -230,6 +221,34 @@ struct ReaderView: View {
 
     private var floatingTitle: String {
         store.currentReferenceTitle
+    }
+
+    @ViewBuilder
+    private var importedDocumentAdaptationControl: some View {
+        if supportsImportedDocumentColorAdaptation {
+            Button {
+                withAnimation(WeiBeiMotion.appearance) {
+                    store.toggleImportedDocumentColorAdaptation()
+                }
+            } label: {
+                Image(systemName: "eyeglasses")
+            }
+            .buttonStyle(WeiBeiIconButtonStyle(active: store.adaptImportedDocumentColors, size: 22))
+            .accessibilityLabel(Text(importedDocumentAdaptationLabel))
+            .help(importedDocumentAdaptationLabel)
+        }
+    }
+
+    private var supportsImportedDocumentColorAdaptation: Bool {
+        guard let item = store.selectedMaterialItem, item.url != nil else { return false }
+        return item.kind == .pdf || item.kind == .html
+    }
+
+    private var importedDocumentAdaptationLabel: String {
+        if store.adaptImportedDocumentColors {
+            return store.ui("显示导入文稿原始色彩", "Show Original Document Colors")
+        }
+        return store.ui("让导入文稿跟随魏碑阅读环境", "Adapt Document to WeiBei Reading")
     }
 
     private func applyPendingPDFPageIfReady() {
@@ -429,6 +448,7 @@ struct ReaderView: View {
                         browseMode: pdfBrowseMode,
                         searchQuery: store.readerSearch,
                         appearanceMode: store.appearanceMode,
+                        adaptsDocumentColors: store.adaptImportedDocumentColors,
                         pageIndex: $pdfPageIndex,
                         pageCount: $pdfPageCount,
                         onSelectableTextChange: { available in pdfHasSelectableText = available }
@@ -452,6 +472,7 @@ struct ReaderView: View {
                         url: url,
                         searchQuery: store.readerSearch,
                         appearanceMode: store.appearanceMode,
+                        adaptsDocumentColors: store.adaptImportedDocumentColors,
                         onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
                     ) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
@@ -461,6 +482,7 @@ struct ReaderView: View {
                         html: store.sampleHTML(for: item),
                         searchQuery: store.readerSearch,
                         appearanceMode: store.appearanceMode,
+                        adaptsDocumentColors: true,
                         onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
                     ) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
@@ -555,6 +577,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
     var browseMode: PDFBrowseMode
     var searchQuery: String
     var appearanceMode: WeiBeiAppearanceMode
+    var adaptsDocumentColors: Bool
     @Binding var pageIndex: Int
     @Binding var pageCount: Int
     var onSelectableTextChange: (Bool?) -> Void = { _ in }
@@ -569,11 +592,12 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         )
     }
 
-    func makeNSView(context: Context) -> PDFView {
+    func makeNSView(context: Context) -> ReaderPDFView {
         let view = ReaderPDFView()
         view.autoScales = true
         view.displayDirection = .vertical
         view.backgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
+        view.configureDocumentColorAdaptation(enabled: adaptsDocumentColors, appearanceMode: appearanceMode)
         DispatchQueue.main.async {
             WeiBeiQuietScrollers.configureRecursively(
                 in: view,
@@ -590,12 +614,13 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         return view
     }
 
-    func updateNSView(_ view: PDFView, context: Context) {
+    func updateNSView(_ view: ReaderPDFView, context: Context) {
         context.coordinator.pageIndex = $pageIndex
         context.coordinator.pageCount = $pageCount
         context.coordinator.appearanceMode = appearanceMode
         context.coordinator.onSelectableTextChange = onSelectableTextChange
         view.backgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
+        view.configureDocumentColorAdaptation(enabled: adaptsDocumentColors, appearanceMode: appearanceMode)
 
         if context.coordinator.loadedURL != url {
             pageCount = 0
@@ -958,6 +983,29 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
 
 private final class ReaderPDFView: PDFView {
     var reportCurrentSelection: (() -> Void)?
+    private var adaptsDocumentColors = true
+    private var documentAppearanceMode: WeiBeiAppearanceMode = .paper
+
+    func configureDocumentColorAdaptation(enabled: Bool, appearanceMode: WeiBeiAppearanceMode) {
+        guard adaptsDocumentColors != enabled || documentAppearanceMode != appearanceMode else { return }
+        adaptsDocumentColors = enabled
+        documentAppearanceMode = appearanceMode
+        invalidatePageRendering()
+    }
+
+    override func draw(_ page: PDFPage, to context: CGContext) {
+        guard adaptsDocumentColors else {
+            super.draw(page, to: context)
+            return
+        }
+
+        context.saveGState()
+        context.setFillColor(adaptedPaperColor.cgColor)
+        context.fill(page.bounds(for: displayBox))
+        context.setBlendMode(.multiply)
+        page.draw(with: displayBox, to: context)
+        context.restoreGState()
+    }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool {
         true
@@ -977,6 +1025,29 @@ private final class ReaderPDFView: PDFView {
     override func mouseUp(with event: NSEvent) {
         super.mouseUp(with: event)
         reportCurrentSelection?()
+    }
+
+    private var adaptedPaperColor: NSColor {
+        switch documentAppearanceMode {
+        case .paper:
+            return WeiBeiNativePalette.paper(for: .paper)
+        case .inkstone:
+            return NSColor(calibratedRed: 0.66, green: 0.61, blue: 0.50, alpha: 1.0)
+        }
+    }
+
+    private func invalidatePageRendering() {
+        layoutDocumentView()
+        Self.markNeedsDisplay(self)
+        if let documentView {
+            Self.markNeedsDisplay(documentView)
+        }
+    }
+
+    private static func markNeedsDisplay(_ view: NSView) {
+        view.needsDisplay = true
+        view.layer?.setNeedsDisplay()
+        view.subviews.forEach(markNeedsDisplay)
     }
 }
 
@@ -1119,6 +1190,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
     var url: URL?
     var searchQuery: String
     var appearanceMode: WeiBeiAppearanceMode
+    var adaptsDocumentColors: Bool
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool
     var onSelectionChange: (String, CGPoint?) -> Void
 
@@ -1126,6 +1198,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
         html: String,
         searchQuery: String = "",
         appearanceMode: WeiBeiAppearanceMode = .paper,
+        adaptsDocumentColors: Bool = true,
         onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false },
         onSelectionChange: @escaping (String, CGPoint?) -> Void
     ) {
@@ -1133,6 +1206,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
         self.url = nil
         self.searchQuery = searchQuery
         self.appearanceMode = appearanceMode
+        self.adaptsDocumentColors = adaptsDocumentColors
         self.onAppShortcut = onAppShortcut
         self.onSelectionChange = onSelectionChange
     }
@@ -1141,6 +1215,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
         url: URL,
         searchQuery: String = "",
         appearanceMode: WeiBeiAppearanceMode = .paper,
+        adaptsDocumentColors: Bool = true,
         onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false },
         onSelectionChange: @escaping (String, CGPoint?) -> Void
     ) {
@@ -1148,6 +1223,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
         self.url = url
         self.searchQuery = searchQuery
         self.appearanceMode = appearanceMode
+        self.adaptsDocumentColors = adaptsDocumentColors
         self.onAppShortcut = onAppShortcut
         self.onSelectionChange = onSelectionChange
     }
@@ -1155,6 +1231,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
     func makeCoordinator() -> Coordinator {
         Coordinator(
             appearanceMode: appearanceMode,
+            adaptsDocumentColors: adaptsDocumentColors,
             onAppShortcut: onAppShortcut,
             onSelectionChange: onSelectionChange
         )
@@ -1176,7 +1253,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
             forMainFrameOnly: false
         ))
         controller.addUserScript(WKUserScript(
-            source: Self.readerStyleScript(for: appearanceMode),
+            source: Self.readerStyleScript(for: appearanceMode, adaptsDocumentColors: adaptsDocumentColors),
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true
         ))
@@ -1192,9 +1269,11 @@ struct WebReaderRepresentable: NSViewRepresentable {
     func updateNSView(_ view: WKWebView, context: Context) {
         context.coordinator.searchQuery = searchQuery
         context.coordinator.onAppShortcut = onAppShortcut
-        if context.coordinator.appearanceMode != appearanceMode {
+        if context.coordinator.appearanceMode != appearanceMode
+            || context.coordinator.adaptsDocumentColors != adaptsDocumentColors {
             context.coordinator.appearanceMode = appearanceMode
-            view.evaluateJavaScript(Self.readerStyleScript(for: appearanceMode))
+            context.coordinator.adaptsDocumentColors = adaptsDocumentColors
+            view.evaluateJavaScript(Self.readerStyleScript(for: appearanceMode, adaptsDocumentColors: adaptsDocumentColors))
         }
         if let url {
             let signature = "file:\(url.path)"
@@ -1297,24 +1376,34 @@ struct WebReaderRepresentable: NSViewRepresentable {
     })();
     """
 
-    static func readerStyleScript(for mode: WeiBeiAppearanceMode) -> String {
-        let css: String
+    static func readerStyleScript(for mode: WeiBeiAppearanceMode, adaptsDocumentColors: Bool = true) -> String {
+        let selectionCSS: String
         switch mode {
         case .paper:
-            css = """
+            selectionCSS = "::selection { background: rgba(145, 38, 27, 0.20); color: #1d1814; }"
+        case .inkstone:
+            selectionCSS = "::selection { background: rgba(166, 54, 43, 0.35); color: #F5E7C8; }"
+        }
+
+        let adaptiveCSS: String
+        if !adaptsDocumentColors {
+            adaptiveCSS = ""
+        } else {
+            switch mode {
+            case .paper:
+                adaptiveCSS = """
             html, body { max-width: 100%; overflow-x: hidden; color-scheme: light; background: transparent !important; }
             body, main, article, section, div, p, li, blockquote, td, th, span { color: #1d1814 !important; }
-            ::selection { background: rgba(145, 38, 27, 0.20); color: #1d1814; }
+            [data-weibei-paper-surface] { background-color: transparent !important; }
             a { color: #31566b !important; }
             code { background: rgba(29, 24, 20, .06) !important; color: #5d4b33 !important; }
             pre { background: rgba(29, 24, 20, .052) !important; border-color: rgba(92, 70, 46, .28) !important; }
             table, th, td { border-color: rgba(92, 70, 46, .28) !important; }
             """
-        case .inkstone:
-            css = """
+            case .inkstone:
+                adaptiveCSS = """
             html, body { max-width: 100%; overflow-x: hidden; color-scheme: dark; background: transparent !important; }
             body, main, article, section, div, p, li, blockquote, td, th, span { color: #D7CBB0 !important; background-color: transparent !important; }
-            ::selection { background: rgba(166, 54, 43, 0.35); color: #F5E7C8; }
             a { color: #C8B98A !important; text-decoration-color: rgba(200, 185, 138, .55) !important; }
             h1, h2, h3 { color: #C8B98A !important; }
             blockquote { border-left: 3px solid rgba(166, 54, 43, .62) !important; background: rgba(166, 54, 43, .08) !important; color: #C9BFA5 !important; }
@@ -1324,23 +1413,53 @@ struct WebReaderRepresentable: NSViewRepresentable {
             th { color: #C8B98A !important; background: rgba(200, 185, 138, .08) !important; }
             table, th, td { border-color: #2D2D2D !important; }
             """
+            }
         }
+
+        let css = selectionCSS + "\n" + adaptiveCSS
         return """
         (() => {
           const css = \(Self.json(css));
+          const adaptsDocumentColors = \(adaptsDocumentColors ? "true" : "false");
+          const appearance = \(Self.json(mode.webThemeName));
           let style = document.getElementById("weibei-reader-style");
           if (!style) {
             style = document.createElement("style");
             style.id = "weibei-reader-style";
             document.head.appendChild(style);
           }
-          document.documentElement.dataset.weibeiTheme = \(Self.json(mode.webThemeName));
+          document.documentElement.dataset.weibeiTheme = adaptsDocumentColors ? appearance : "original";
           style.textContent = `${css}
             body, main, article, section, div { box-sizing: border-box; max-width: 100%; }
             h1, h2, h3, h4, p, li, blockquote { overflow-wrap: anywhere; word-break: normal; }
             pre, code { white-space: pre-wrap; overflow-wrap: anywhere; }
             img, table { max-width: 100%; }
           `;
+
+          document.querySelectorAll("[data-weibei-paper-surface]").forEach((element) => {
+            element.removeAttribute("data-weibei-paper-surface");
+          });
+          if (adaptsDocumentColors && appearance === "paper") {
+            const candidates = Array.from(document.querySelectorAll(
+              "main, article, section, div, aside, header, footer, table, thead, tbody, tr, td, th"
+            )).slice(0, 2500);
+            candidates.forEach((element) => {
+              const values = (getComputedStyle(element).backgroundColor.match(/[\\d.]+/g) || []).map(Number);
+              if (values.length < 3) return;
+              const rgb = values.slice(0, 3);
+              if (Math.max(...rgb) <= 1.01) {
+                rgb[0] *= 255;
+                rgb[1] *= 255;
+                rgb[2] *= 255;
+              }
+              const alpha = values.length > 3 ? values[3] : 1;
+              const minimum = Math.min(...rgb);
+              const spread = Math.max(...rgb) - minimum;
+              if (alpha > 0.05 && minimum >= 238 && spread <= 18) {
+                element.setAttribute("data-weibei-paper-surface", "");
+              }
+            });
+          }
         })();
         """
     }
@@ -1356,15 +1475,18 @@ struct WebReaderRepresentable: NSViewRepresentable {
         var loadedSignature: String?
         var searchQuery = ""
         var appearanceMode: WeiBeiAppearanceMode = .paper
+        var adaptsDocumentColors = true
         private var lastAppliedSearchQuery = ""
         weak var webView: WKWebView?
 
         init(
             appearanceMode: WeiBeiAppearanceMode,
+            adaptsDocumentColors: Bool,
             onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool,
             onSelectionChange: @escaping (String, CGPoint?) -> Void
         ) {
             self.appearanceMode = appearanceMode
+            self.adaptsDocumentColors = adaptsDocumentColors
             self.onAppShortcut = onAppShortcut
             self.onSelectionChange = onSelectionChange
         }
@@ -1422,7 +1544,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             lastAppliedSearchQuery = ""
-            webView.evaluateJavaScript(WebReaderRepresentable.readerStyleScript(for: appearanceMode))
+            webView.evaluateJavaScript(WebReaderRepresentable.readerStyleScript(for: appearanceMode, adaptsDocumentColors: adaptsDocumentColors))
             applySearch(in: webView)
         }
 
