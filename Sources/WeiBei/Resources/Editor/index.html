@@ -64,6 +64,10 @@
         linear-gradient(180deg, #101010 0%, #0b0b0b 100%);
     }
 
+    :root[data-weibei-compact-preview="true"][data-weibei-theme="inkstone"] body {
+      background: transparent;
+    }
+
     #editor {
       box-sizing: border-box;
       height: 100vh;
@@ -84,6 +88,10 @@
 
     :root[data-weibei-theme="inkstone"] #editor {
       background: rgba(15, 15, 15, .88);
+    }
+
+    :root[data-weibei-compact-preview="true"][data-weibei-theme="inkstone"] #editor {
+      background: transparent;
     }
 
     #editor::-webkit-scrollbar {

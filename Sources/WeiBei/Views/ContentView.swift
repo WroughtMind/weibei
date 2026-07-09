@@ -762,7 +762,7 @@ private struct LayoutContentView: View {
                 documentPaneLayoutView()
             case .immersiveReading:
                 ZStack(alignment: .topTrailing) {
-                    ReaderView(isImmersive: true)
+                    ReaderView(isImmersive: true, showsFloatingTitle: true)
                     if store.showQuietInsight && store.agentSurface != .hidden {
                         QuietInsightView(compact: true)
                             .padding(.trailing, 28)
@@ -776,32 +776,9 @@ private struct LayoutContentView: View {
                     }
                 }
             case .immersiveConversation:
-                if store.showRightPane {
-                    ResizableThreePane(
-                        firstSplit: conversationFirstSplit,
-                        secondSplit: conversationSecondSplit,
-                        minFirst: 92,
-                        minSecond: 520,
-                        minThird: 96
-                    ) {
-                        ContextRailView(title: store.ui("来源", "Sources"), items: conversationSourceRailItems, edge: .trailing)
-                            .transition(WeiBeiTransition.rail)
-                    } second: {
-                        AgentPaneView()
-                    } third: {
-                        ContextRailView(title: store.ui("写入目标", "Write Targets"), items: conversationTargetRailItems, edge: .leading)
-                            .transition(WeiBeiTransition.rail)
-                    }
-                    .transition(WeiBeiTransition.rightPanel)
-                } else {
-                    ResizableTwoPane(split: conversationLeftSplit, minFirst: 92, minSecond: 520) {
-                        ContextRailView(title: store.ui("来源", "Sources"), items: conversationSourceRailItems, edge: .trailing)
-                            .transition(WeiBeiTransition.rail)
-                    } second: {
-                        AgentPaneView()
-                    }
+                AgentPaneView(showsPaneHeader: false)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .transition(WeiBeiTransition.layout)
-                }
             case .immersiveWriting:
                 ZStack(alignment: agentAlignment) {
                     if store.showRightPane {
@@ -815,7 +792,7 @@ private struct LayoutContentView: View {
                             ContextRailView(title: store.ui("文档", "Documents"), items: writingDocumentRailItems, edge: .trailing)
                                 .transition(WeiBeiTransition.rail)
                         } second: {
-                            NotePaneView()
+                            NotePaneView(showsPaneHeader: false)
                         } third: {
                             ContextRailView(title: store.ui("写作辅助", "Writing Aids"), items: writingAssistRailItems, edge: .leading)
                                 .transition(WeiBeiTransition.rail)
@@ -826,7 +803,7 @@ private struct LayoutContentView: View {
                             ContextRailView(title: store.ui("文档", "Documents"), items: writingDocumentRailItems, edge: .trailing)
                                 .transition(WeiBeiTransition.rail)
                         } second: {
-                            NotePaneView()
+                            NotePaneView(showsPaneHeader: false)
                         }
                         .transition(WeiBeiTransition.layout)
                     }
@@ -990,9 +967,9 @@ private struct LayoutContentView: View {
         case .reader:
             ReaderPaneView(reorderRole: reorderable ? .reader : nil)
         case .agent:
-            AgentPaneView(reorderRole: reorderable ? .agent : nil)
+            AgentPaneView(showsPaneHeader: reorderable, reorderRole: reorderable ? .agent : nil)
         case .notes:
-            NotePaneView(reorderRole: reorderable ? .notes : nil)
+            NotePaneView(showsPaneHeader: reorderable, reorderRole: reorderable ? .notes : nil)
         }
     }
 

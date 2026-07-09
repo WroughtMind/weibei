@@ -10,21 +10,27 @@ struct ReaderPaneView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            WeiBeiPaneHeader(
-                title: store.ui("文档", "Document"),
-                latinMark: store.interfaceLanguage == .chinese ? "DOC" : nil,
-                subtitle: readerSubtitle,
-                appearanceMode: store.appearanceMode,
-                reorderRole: reorderRole
-            ) {
-                EmptyView()
+            if showsPaneHeader {
+                WeiBeiPaneHeader(
+                    title: store.ui("文档", "Document"),
+                    latinMark: store.interfaceLanguage == .chinese ? "DOC" : nil,
+                    subtitle: readerSubtitle,
+                    appearanceMode: store.appearanceMode,
+                    reorderRole: reorderRole
+                ) {
+                    EmptyView()
+                }
             }
 
-            ReaderView()
+            ReaderView(showsFloatingTitle: !showsPaneHeader)
         }
         .frame(minHeight: 280)
         .foregroundStyle(WeiBeiTheme.ink)
         .background(WeiBeiTheme.paper)
+    }
+
+    private var showsPaneHeader: Bool {
+        reorderRole != nil
     }
 
     private var readerSubtitle: String {
@@ -35,8 +41,112 @@ struct ReaderPaneView: View {
     }
 }
 
+struct ImmersiveHoverTitleView<Actions: View>: View {
+    let mark: String
+    let title: String
+    let appearanceMode: WeiBeiAppearanceMode
+    var isPinned = false
+    var actionsAlignedTrailing = false
+    @ViewBuilder var actions: () -> Actions
+
+    @State private var visible = false
+    @State private var hideTask: DispatchWorkItem?
+
+    init(
+        mark: String,
+        title: String,
+        appearanceMode: WeiBeiAppearanceMode,
+        isPinned: Bool = false,
+        actionsAlignedTrailing: Bool = false,
+        @ViewBuilder actions: @escaping () -> Actions
+    ) {
+        self.mark = mark
+        self.title = title
+        self.appearanceMode = appearanceMode
+        self.isPinned = isPinned
+        self.actionsAlignedTrailing = actionsAlignedTrailing
+        self.actions = actions
+    }
+
+    var body: some View {
+        ZStack(alignment: .top) {
+            Color.clear
+                .frame(width: 560, height: 30)
+
+            if visible || isPinned {
+                HStack(alignment: .center, spacing: actionsAlignedTrailing ? 10 : 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 9) {
+                        Text(mark)
+                            .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
+                            .tracking(1.15)
+                            .baselineOffset(0.7)
+                            .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.82))
+                        Text(title)
+                            .font(.system(size: 11.8, weight: .medium))
+                            .lineLimit(1)
+                            .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    if actionsAlignedTrailing {
+                        Spacer(minLength: 14)
+                    }
+                    actions()
+                }
+                .padding(.horizontal, actionsAlignedTrailing ? 14 : 12)
+                .frame(width: actionsAlignedTrailing ? 560 : nil, alignment: .leading)
+                .frame(minHeight: 30)
+                .background {
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(WeiBeiTheme.paperRaised.opacity(appearanceMode == .inkstone ? 0.34 : 0.72))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 7)
+                                .stroke(WeiBeiTheme.hairline.opacity(appearanceMode == .inkstone ? 0.30 : 0.42), lineWidth: 1)
+                        }
+                }
+                .shadow(color: WeiBeiTheme.ink.opacity(appearanceMode == .inkstone ? 0.24 : 0.07), radius: 9, y: 4)
+                .padding(.top, 7)
+                .transition(WeiBeiTransition.floating)
+            }
+        }
+        .contentShape(Rectangle())
+        .onHover(perform: updateVisibility)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .onDisappear {
+            hideTask?.cancel()
+        }
+    }
+
+    private func updateVisibility(_ hovering: Bool) {
+        hideTask?.cancel()
+        if hovering {
+            withAnimation(WeiBeiMotion.panel) {
+                visible = true
+            }
+            return
+        }
+
+        let task = DispatchWorkItem {
+            withAnimation(WeiBeiMotion.panel) {
+                visible = false
+            }
+        }
+        hideTask = task
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: task)
+    }
+}
+
+extension ImmersiveHoverTitleView where Actions == EmptyView {
+    init(mark: String, title: String, appearanceMode: WeiBeiAppearanceMode) {
+        self.mark = mark
+        self.title = title
+        self.appearanceMode = appearanceMode
+        self.actions = { EmptyView() }
+    }
+}
+
 struct ReaderView: View {
     var isImmersive = false
+    var showsFloatingTitle = false
 
     @EnvironmentObject private var store: WorkspaceStore
     @State private var pdfBrowseMode: PDFBrowseMode = .scroll
@@ -67,6 +177,11 @@ struct ReaderView: View {
                     .padding(.bottom, isImmersive ? 18 : 14)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
                     .transition(WeiBeiTransition.floating)
+                }
+        }
+        .overlay(alignment: .top) {
+            if showsFloatingTitle {
+                ImmersiveHoverTitleView(mark: "DOC", title: floatingTitle, appearanceMode: store.appearanceMode)
             }
         }
         .background(WeiBeiTheme.paper)
@@ -111,6 +226,10 @@ struct ReaderView: View {
             ? store.ui("\(displayTitle)，第 \(pdfPageIndex + 1) 页", "\(displayTitle), page \(pdfPageIndex + 1)")
             : displayTitle
         store.updateReaderLocationTitle(title)
+    }
+
+    private var floatingTitle: String {
+        store.currentReferenceTitle
     }
 
     private func applyPendingPDFPageIfReady() {

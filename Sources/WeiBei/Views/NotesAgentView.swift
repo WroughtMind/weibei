@@ -279,11 +279,14 @@ private struct AgentComposerField: View {
 struct NotePaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @State private var hoveredNoteMode: NoteRenderMode?
+    var showsPaneHeader = true
     var reorderRole: WorkspacePaneRole? = nil
 
     var body: some View {
         VStack(spacing: 0) {
-            noteHeader
+            if showsPaneHeader {
+                noteHeader
+            }
 
             if let noteFileError = store.noteFileError {
                 Text(noteFileError)
@@ -299,29 +302,18 @@ struct NotePaneView: View {
         .frame(minHeight: 280)
         .foregroundStyle(WeiBeiTheme.ink)
         .background(WeiBeiTheme.paper)
+        .overlay(alignment: .top) {
+            if !showsPaneHeader {
+                immersiveNoteHeader
+            }
+        }
         .animation(WeiBeiMotion.panel, value: store.notebookCreationDraft?.id)
     }
 
     @ViewBuilder
     private var noteHeader: some View {
         if let draft = store.notebookCreationDraft {
-            NotebookCreationPanel(
-                draft: draft,
-                title: Binding(
-                    get: { store.notebookCreationDraft?.title ?? "" },
-                    set: { store.notebookCreationDraft?.title = $0 }
-                ),
-                confirm: {
-                    withAnimation(WeiBeiMotion.panel) {
-                        store.confirmNotebookNoteCreation()
-                    }
-                },
-                cancel: {
-                    withAnimation(WeiBeiMotion.panel) {
-                        store.cancelNotebookNoteCreation()
-                    }
-                }
-            )
+            notebookCreationPanel(draft: draft)
             .weibeiPaneHeaderChrome(appearanceMode: store.appearanceMode)
             .modifier(PaneHeaderReorderModifier(role: reorderRole))
             .transition(.asymmetric(
@@ -344,6 +336,58 @@ struct NotePaneView: View {
                 removal: .move(edge: .trailing).combined(with: .opacity)
             ))
         }
+    }
+
+    private var immersiveNoteHeader: some View {
+        ZStack(alignment: .top) {
+            ImmersiveHoverTitleView(
+                mark: "NOTES",
+                title: noteHeaderSubtitle,
+                appearanceMode: store.appearanceMode,
+                isPinned: store.notebookCreationDraft != nil,
+                actionsAlignedTrailing: true
+            ) {
+                noteModeControl
+                newNoteControl
+            }
+
+            if let draft = store.notebookCreationDraft {
+                notebookCreationPanel(draft: draft)
+                    .padding(.horizontal, 10)
+                    .frame(width: 560, height: 42)
+                    .background {
+                        RoundedRectangle(cornerRadius: 7)
+                            .fill(WeiBeiTheme.paperRaised.opacity(store.appearanceMode == .inkstone ? 0.34 : 0.72))
+                            .overlay {
+                                RoundedRectangle(cornerRadius: 7)
+                                    .stroke(WeiBeiTheme.hairline.opacity(store.appearanceMode == .inkstone ? 0.30 : 0.42), lineWidth: 1)
+                            }
+                    }
+                    .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode == .inkstone ? 0.24 : 0.07), radius: 9, y: 4)
+                    .padding(.top, 42)
+                    .transition(WeiBeiTransition.floating)
+            }
+        }
+    }
+
+    private func notebookCreationPanel(draft: NotebookCreationDraft) -> some View {
+        NotebookCreationPanel(
+            draft: draft,
+            title: Binding(
+                get: { store.notebookCreationDraft?.title ?? "" },
+                set: { store.notebookCreationDraft?.title = $0 }
+            ),
+            confirm: {
+                withAnimation(WeiBeiMotion.panel) {
+                    store.confirmNotebookNoteCreation()
+                }
+            },
+            cancel: {
+                withAnimation(WeiBeiMotion.panel) {
+                    store.cancelNotebookNoteCreation()
+                }
+            }
+        )
     }
 
     @ViewBuilder
@@ -1118,13 +1162,14 @@ struct MarkdownPreviewView: View {
             onSourceReference: onSourceReference,
             onAppShortcut: onAppShortcut
         )
-        .background(WeiBeiTheme.paper)
+        .background(compact ? Color.clear : WeiBeiTheme.paper)
         .frame(height: compact ? max(contentHeight, 44) : nil)
     }
 }
 
 struct AgentPaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
+    var showsPaneHeader = true
     var reorderRole: WorkspacePaneRole? = nil
     @FocusState private var draftFocused: Bool
 
@@ -1132,29 +1177,26 @@ struct AgentPaneView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            WeiBeiPaneHeader(
-                title: store.ui("对话", "Chat"),
-                latinMark: store.interfaceLanguage == .chinese ? "CHAT" : nil,
-                subtitle: store.agentConversationSubtitle,
-                appearanceMode: store.appearanceMode,
-                reorderRole: reorderRole
-            ) {
-                EmptyView()
+            if showsPaneHeader {
+                WeiBeiPaneHeader(
+                    title: store.ui("对话", "Chat"),
+                    latinMark: store.interfaceLanguage == .chinese ? "CHAT" : nil,
+                    subtitle: store.agentConversationSubtitle,
+                    appearanceMode: store.appearanceMode,
+                    reorderRole: reorderRole
+                ) {
+                    EmptyView()
+                }
             }
 
             ScrollViewReader { proxy in
                 GeometryReader { geometry in
+                    let contentWidth = min(max(geometry.size.width - 36, 320), agentContentMaxWidth ?? 760)
+
                     ScrollView(showsIndicators: true) {
                         LazyVStack(alignment: .leading, spacing: 12) {
                             ForEach(store.messages) { message in
-                                AgentBubble(
-                                    message: message,
-                                    onMarkdownHeightChange: message.id == store.messages.last?.id ? {
-                                        scrollAgentToBottom(proxy)
-                                    } : {}
-                                )
-                                    .id(message.id)
-                                    .transition(WeiBeiTransition.message)
+                                agentMessageRow(message: message, geometryWidth: geometry.size.width, contentWidth: contentWidth, proxy: proxy)
                             }
                             if store.isAskingAgent {
                                 AgentThinkingIndicator()
@@ -1172,12 +1214,8 @@ struct AgentPaneView: View {
                         }
                         .padding(14)
                         .padding(.top, store.messages.isEmpty ? 22 : 0)
-                        .frame(maxWidth: agentContentMaxWidth, alignment: .leading)
-                        .frame(
-                            maxWidth: .infinity,
-                            minHeight: geometry.size.height,
-                            alignment: .top
-                        )
+                        .frame(width: geometry.size.width, alignment: .topLeading)
+                        .frame(minHeight: geometry.size.height, alignment: .topLeading)
                         .animation(WeiBeiMotion.panel, value: store.messages.count)
                     }
                 }
@@ -1190,17 +1228,25 @@ struct AgentPaneView: View {
         }
         .frame(minHeight: 260)
         .foregroundStyle(WeiBeiTheme.ink)
-        .background(WeiBeiTheme.paper)
+        .background(showsPaneHeader ? WeiBeiTheme.paper : Color.clear)
         .overlay(alignment: .top) {
-            LinearGradient(
-                colors: [
-                    WeiBeiTheme.glassHighlight.opacity(0.18),
-                    .clear
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: 10)
+            ZStack(alignment: .top) {
+                if showsPaneHeader {
+                    LinearGradient(
+                        colors: [
+                            WeiBeiTheme.glassHighlight.opacity(0.18),
+                            .clear
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 10)
+                }
+
+                if !showsPaneHeader {
+                    ImmersiveHoverTitleView(mark: "CHAT", title: store.agentConversationSubtitle, appearanceMode: store.appearanceMode)
+                }
+            }
         }
         .onChange(of: store.focusRequest) { _, _ in
             draftFocused = store.focusedPane == .agent
@@ -1208,6 +1254,26 @@ struct AgentPaneView: View {
         .onAppear {
             draftFocused = store.focusedPane == .agent
         }
+    }
+
+    private func agentMessageRow(message: AgentMessage, geometryWidth: CGFloat, contentWidth: CGFloat, proxy: ScrollViewProxy) -> some View {
+        let isUser = message.role == .user
+        // Both roles share one centered reading column. User bubbles trail inside the
+        // column (Codex-style), not against the window's right edge.
+        let readingWidth = max(contentWidth - 28, 240)
+        let readingLeadingInset = max((geometryWidth - contentWidth) / 2, 0)
+
+        return AgentBubble(
+            message: message,
+            onMarkdownHeightChange: message.id == store.messages.last?.id ? {
+                scrollAgentToBottom(proxy)
+            } : {}
+        )
+        .frame(maxWidth: readingWidth, alignment: isUser ? .trailing : .leading)
+        .padding(.leading, readingLeadingInset)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .id(message.id)
+        .transition(WeiBeiTransition.message)
     }
 
     private var agentPrompt: String {
@@ -1262,8 +1328,8 @@ struct AgentPaneView: View {
         }
         .background(alignment: .bottom) {
             WeiBeiGlassHeaderBackground(
-                paperOpacity: store.layout == .immersiveConversation ? 0.28 : 0.34,
-                materialOpacity: 0.04
+                paperOpacity: showsPaneHeader ? 0.34 : 0.14,
+                materialOpacity: showsPaneHeader ? 0.04 : 0.02
             )
             .mask(
                 LinearGradient(
@@ -2463,22 +2529,54 @@ private struct AgentBubble: View {
 
     @ViewBuilder
     private var userTurn: some View {
-        HStack(alignment: .top) {
-            Spacer(minLength: 42)
+        // Quiet paper chip on the right edge: role is encoded by position + surface,
+        // so no "你" label, no accent rail, no messenger chrome.
+        VStack(alignment: .trailing, spacing: 5) {
+            if let source = message.source {
+                Text(source)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(WeiBeiTheme.tertiaryInk.opacity(0.86))
+                    .lineLimit(1)
+                    .padding(.trailing, 2)
+            }
 
-            regularMessageContent
-                .padding(.leading, 12)
-                .padding(.trailing, 20)
-                .padding(.vertical, 9)
-                .frame(maxWidth: 520, alignment: .leading)
-                .overlay(alignment: .trailing) {
-                    Capsule()
-                        .fill(WeiBeiTheme.link.opacity(hovering ? 0.58 : 0.34))
-                        .frame(width: 2, height: hovering ? 34 : 24)
-                }
-                .weibeiHoverLift(active: hovering, amount: 1)
+            AgentMessageMarkdownText(
+                text: message.text,
+                rendersRichMarkdown: false,
+                onContentHeightChange: onMarkdownHeightChange
+            )
+            .padding(.horizontal, 13)
+            .padding(.vertical, 9)
+            .background {
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .fill(userBubbleFill)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .strokeBorder(userBubbleStroke, lineWidth: 1)
+                    }
+                    .shadow(
+                        color: WeiBeiTheme.ink.opacity(store.appearanceMode == .inkstone ? 0.0 : (hovering ? 0.055 : 0.035)),
+                        radius: hovering ? 5 : 3.5,
+                        y: hovering ? 1.5 : 1
+                    )
+            }
+            .frame(maxWidth: 520, alignment: .trailing)
         }
+        .weibeiHoverLift(active: hovering, amount: 0.6)
         .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    private var userBubbleFill: Color {
+        // Same paper family as chips/panels: a slightly raised slip of paper, not a tinted chat blob.
+        store.appearanceMode == .inkstone
+            ? WeiBeiTheme.paperRaised.opacity(hovering ? 0.58 : 0.46)
+            : WeiBeiTheme.paperRaised.opacity(hovering ? 1.0 : 0.96)
+    }
+
+    private var userBubbleStroke: Color {
+        store.appearanceMode == .inkstone
+            ? WeiBeiTheme.hairline.opacity(hovering ? 0.58 : 0.42)
+            : WeiBeiTheme.hairline.opacity(hovering ? 0.52 : 0.38)
     }
 
     @ViewBuilder
@@ -2511,13 +2609,11 @@ private struct AgentBubble: View {
 
     private var regularMessageContent: some View {
         VStack(alignment: .leading, spacing: 8) {
-            if isUser || message.source != nil {
-                messageMetadata
-            }
+            messageMetadata
 
             AgentMessageMarkdownText(
                 text: message.text,
-                rendersRichMarkdown: !isUser,
+                rendersRichMarkdown: true,
                 onContentHeightChange: onMarkdownHeightChange
             )
 
@@ -2547,11 +2643,9 @@ private struct AgentBubble: View {
 
     private var messageMetadata: some View {
         HStack(spacing: 6) {
-            if isUser {
-                Text(store.ui("你", "You"))
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(WeiBeiTheme.link)
-            }
+            Text("WeiBei")
+                .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.76))
             if let source = message.source {
                 Text(source)
                     .font(.caption2)
