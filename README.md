@@ -1,43 +1,65 @@
 # 魏碑
 
-macOS 原生学习工作台：读本地资料、写 Markdown 笔记、就着当前材料提问。
+> 方笔入纸，有据可查。
 
-左边管资料库，中间阅读 HTML / PDF / Markdown，右边记笔记；Agent 只回答和当前材料、选区、笔记相关的事，不编造没有依据的内容。
+魏碑是 macOS 上的**本地学习工作台**——不是又一个聊天壳，也不是云笔记的薄包装。
 
-界面走纸墨气质——纸面与墨石两套外观，字体为项目自有。
+名字取自北朝碑刻书风：结体方峻、用笔有骨。产品也按这个脾气做：界面是纸与墨，对话要带出处，笔记写在材料边上，不把学习拆成「读一个 App、聊一个 App、记一个 App」。
 
-## 适合谁
+```text
+  资料库          阅读 / 碑面                笔记
+ ────────    ─────────────────────    ──────────
+  本地文件   HTML · PDF · Markdown     当场写回
+             划线即问 · 有据回答         双链 · 公式
+```
 
-- 需要对照课件 / PDF / 网页材料记笔记的人
-- 希望划线提问、把回答写回笔记，而不是另开一个聊天窗口的人
-- 更习惯键盘与本地文件，而不是云端笔记同步的人
+两套外观：**纸面**（暖纸、浓墨、朱砂点到为止）与 **墨石**（近黑底、碑面冷光）。品牌字体为作者自有，随仓库分发，不套系统默认「AI 产品脸」。
 
-## 能力
+设计参考见 [`DesignReferences/`](DesignReferences/)——那是视觉系统，不是营销海报。
 
-| 模块 | 说明 |
+---
+
+## 它坚持什么
+
+**材料在场。** Agent 固定带着当前文档、选区、笔记与最近对话；没有 key 时给离线整理稿，不装成无所不知。
+
+**出处优先。** 回答里能回指来源段落；划线浮层带真实摘录，可以写进笔记或替换选区——聊天记录不是终点，笔记才是。
+
+**沉浸减负。** 阅读、对话、写笔记各有沉浸布局：只留当前任务该在的东西。对话里用户句是列内一角纸笺，助手句是正文，不堆聊天气泡墙。
+
+**键盘先于鼠标。** `⌘1`–`⌘4` 切栏，`⌘B` 资料库，`⌘K` 命令面板；命令面板能插公式、Callout、Mermaid，不靠功能海。
+
+**本地为家。** 笔记在本机 Application Support；Key 在本机配置。仓库不收你的课与密钥。
+
+---
+
+## 现在能做什么
+
+| | |
 | --- | --- |
-| 资料库 | 导入 HTML、PDF、Markdown、纯文本；本地索引与切换 |
-| 阅读 | HTML（WebKit）、PDF（PDFKit，连续滑动 / 单页，`⌘[` `⌘]` 翻页）、Markdown 渲染阅读 |
-| 笔记 | 按资料绑定，保存在本机 Application Support；Milkdown / ProseMirror 原地排版，源码与对照模式可切换 |
-| 选区 Agent | 在文档或笔记中划线后唤起浮层，带真实摘录；可拖动固定，可写回或替换笔记选区 |
-| 对话 Agent | 读取本机配置的 API Key；上下文固定为当前材料、选区、笔记与最近对话 |
-| 布局 | 文档·对话·笔记三栏可调；文档笔记对半；沉浸阅读 / 沉浸对话 / 沉浸写笔记 |
-| Agent 形态 | 固定列、底部抽屉、右下角小窗、划线浮层、静默洞察、隐藏 |
-| 键盘 | `⌘1`–`⌘4` 聚焦栏位，`⌘B` 资料库，`⌘K` 命令面板 |
+| **读** | HTML（WebKit）、PDF（PDFKit，连续 / 单页，`⌘[` `⌘]`）、Markdown 渲染阅读 |
+| **写** | Milkdown / ProseMirror 原地排版；源码与对照可切换；绑定当前资料 |
+| **问** | 栏内对话、划线浮层、抽屉 / 小窗 / 静默洞察；上下文不漂移 |
+| **排** | 文·话·笔三栏可调序；文档笔记对半；沉浸阅读 / 对话 / 写作 |
+| **貌** | 纸面 · 墨石；朱砂作强调与选区，不用通用蓝紫渐变 |
 
-### 设计边界
+尚在磨的：静默洞察要从「本地提示」长成真正的页级判断。那之前，宁可安静，不装聪明。
 
-沉浸模式只保留当前任务必要的界面：阅读时以文档为主，对话以轻浮层或静默洞察出现；写笔记时以编辑区为主。用户消息在对话列内右对齐为纸面气泡，助手回答保持正文阅读式排版。
+---
 
-静默洞察目前偏本地提示；页级真实判断仍在演进。
+## 谁会对上脾气
 
-## 环境要求
+- 对着课件、论文 PDF、导出的 HTML 记笔记，而不是从零开空白页  
+- 划一句就要解释，并希望解释**写回**笔记，而不是沉在聊天记录里  
+- 受不了默认「大模型产品」配色与圆角糖果，更想要一张能久坐的书桌  
 
-- macOS 14 或更高
-- Xcode Command Line Tools（提供 `swift`）
-- 可选：Node.js（修改 Web 编辑器源码时需要重新打包资源）
+若你要的是多智能体编排平台或云端第二大脑——魏碑不是那条路。
 
-## 运行
+---
+
+## 跑起来
+
+**环境：** macOS 14+，`swift`（Xcode CLT）。改 Web 编辑器源码时需要 Node。
 
 ```bash
 git clone https://github.com/taekchef/weibei.git
@@ -45,51 +67,38 @@ cd weibei
 ./script/build_and_run.sh
 ```
 
-脚本会：
-
-1. 若存在 `node_modules`，执行编辑器 bundle（`npm run build:editor`）
-2. `swift build`
-3. 打包到 `dist/魏碑.app` 并启动
-
-其它常用命令：
-
 ```bash
-./script/build_and_run.sh check      # 自检（SelfCheck + WebEditorCheck）
-./script/build_and_run.sh package    # 只打包，不启动
-./script/build_and_run.sh --verify   # 构建 + 自检 + 场景验证
+./script/build_and_run.sh check      # 自检
+./script/build_and_run.sh package    # 只打 dist/魏碑.app
+./script/build_and_run.sh --verify   # 自检 + 场景
 ```
 
-## Agent 配置
+### Agent
 
-魏碑不会内置云端账号。在设置里填写 API Key，或使用环境变量：
+自备 Key，魏碑不代管账号。
 
-| 变量 | 作用 | 默认 |
+| 变量 | 含义 | 默认 |
 | --- | --- | --- |
-| `OPENAI_API_KEY` | 调用模型 | 无（未配置时离线预览，不编造答案） |
+| `OPENAI_API_KEY` | 模型调用 | 无 → 离线预览，不编造 |
 | `WEIBEI_OPENAI_MODEL` | 模型名 | `gpt-5.1` |
 
-Key 保存在本机钥匙串相关存储中，不会写入仓库。
+也可在应用设置里填写；不入库、不进 git。
 
-## 项目结构
+---
+
+## 仓库怎么长
 
 ```text
-Sources/
-  WeiBei/           # App 壳、界面、编辑器资源
-  WeiBeiCore/       # 工作区模型、Agent、密钥与 PDF OCR 等
-  WeiBeiSelfCheck/  # 源码与行为自检
-  WeiBeiWebEditorCheck/
+Sources/WeiBei/        界面、沉浸布局、编辑器壳
+Sources/WeiBeiCore/    工作区、Agent、密钥、PDF OCR
+Sources/WeiBeiSelfCheck/
+Sources/WeiBei/WebEditor/     笔记编辑器源码
+Sources/WeiBei/Resources/     字体、打包后的 editor
+DesignReferences/             纸 · 墨 · 石 · 朱砂 视觉稿
 script/build_and_run.sh
-DesignReferences/   # 视觉参考（设计稿截图）
 ```
 
-编辑器前端源码在 `Sources/WeiBei/WebEditor/`，构建产物进 `Sources/WeiBei/Resources/Editor/`。
-
-## 开发说明
-
-- 主栈：Swift 5.9、SwiftUI / AppKit、PDFKit、WebKit
-- 笔记编辑：Milkdown + ProseMirror（经 esbuild 打包）
-- 外观：纸面（亮）/ 墨石（暗）；品牌字体为作者自有，随仓库分发
-- 自检偏「源码契约 + 场景」：改布局或对话结构时请同步 `WeiBeiSelfCheck`
+主栈是 Swift 5.9 + SwiftUI/AppKit + PDFKit + WebKit。改对话栏、布局契约时，请顺手过 `WeiBeiSelfCheck`——这里用源码断言护着脾气，免得一改就滑成普通 Chat UI。
 
 ```bash
 swift build
@@ -97,10 +106,24 @@ swift run WeiBeiSelfCheck
 swift run WeiBeiWebEditorCheck
 ```
 
-## 状态
+---
 
-积极开发中。接口、布局与 Agent 行为仍可能调整；欢迎开 issue 讨论方向，合并前请跑通 `./script/build_and_run.sh check`。
+## 字与色
 
-## 许可
+| 系统 | 角色 |
+| --- | --- |
+| **纸** | 纸张主色 / 次色——长时间阅读的底 |
+| **墨** | 正文、次级、淡注 |
+| **石** | 青灰结构、分割与静物 |
+| **朱砂** | 强调、选区、少量动作——克制使用 |
+| **字体** | 作者自研魏碑风格字体，正文与标题分级 |
 
-开源许可待定。在添加 `LICENSE` 之前，请勿默认视为可任意再分发；使用与贡献约定将在正式开源时写明。
+不是「换了个中文字体的 Notion」，也不是套了宣纸贴图的 ChatGPT。碑在于骨：方、稳、有来处。
+
+---
+
+## 状态与许可
+
+仍在打磨。布局、Agent 形态、沉浸细节都可能继续收。提 issue 前请先跑 `./script/build_and_run.sh check`。
+
+开源许可待定。在 `LICENSE` 落地前，请勿默认可以任意再分发。字体为作者所有，随项目使用；若单独抽离字体，请先问。
