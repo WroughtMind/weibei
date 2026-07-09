@@ -28,6 +28,10 @@ PRODUCT_NAME="WeiBei"
 APP_DISPLAY_NAME="魏碑"
 BUNDLE_ID="com.changfenhuang.weibei"
 MIN_SYSTEM_VERSION="14.0"
+BUILD_CONFIGURATION="release"
+if [[ "$MODE" == "check" || "$MODE" == "--debug" || "$MODE" == "debug" ]]; then
+  BUILD_CONFIGURATION="debug"
+fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [[ "$VERIFY_MODE" == true ]]; then
@@ -65,10 +69,10 @@ if [[ -d "$ROOT_DIR/node_modules" ]]; then
   npm run build:editor >/dev/null
 fi
 
-swift build
+swift build -c "$BUILD_CONFIGURATION"
 
 if [[ "$CHECK_ONLY" != true ]]; then
-  BUILD_DIR="$(swift build --show-bin-path)"
+  BUILD_DIR="$(swift build -c "$BUILD_CONFIGURATION" --show-bin-path)"
   BUILD_BINARY="$BUILD_DIR/$PRODUCT_NAME"
   RESOURCE_BUNDLE="$BUILD_DIR/${PRODUCT_NAME}_${PRODUCT_NAME}.bundle"
 
@@ -200,8 +204,8 @@ finish_verify_window() {
 }
 
 run_verifiers() {
-  swift run WeiBeiSelfCheck
-  swift run WeiBeiWebEditorCheck
+  swift run -c "$BUILD_CONFIGURATION" WeiBeiSelfCheck
+  swift run -c "$BUILD_CONFIGURATION" WeiBeiWebEditorCheck
 }
 
 case "$MODE" in
