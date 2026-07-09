@@ -1701,8 +1701,19 @@ expect(workspaceStoreSource.contains("guard Self.hasMeaningfulSelectionCharacter
     && workspaceStoreSource.contains("!CharacterSet.whitespacesAndNewlines.contains(scalar)")
     && workspaceStoreSource.contains("!CharacterSet.punctuationCharacters.contains(scalar)")
     && workspaceStoreSource.contains("!CharacterSet.controlCharacters.contains(scalar)"), "empty, whitespace, punctuation, or control-only selections clear the prompt without breaking a live drag-selection gesture")
-expect(workspaceStoreSource.contains("floatingSelectionPrompt = nextSelection.label(language: interfaceLanguage)")
-    && workspaceStoreSource.contains("pinnedFloatingAgent = false\n            cancelPendingSelectionAttachment()\n            if shouldRevealSelectionPrompt"), "new selections reset pinned floating state and keep the local selection capsule as the only intake")
+if let updateSelectionStart = workspaceStoreSource.range(of: "func updateSelection(_ text: String")?.lowerBound,
+   let removeSelectionStart = workspaceStoreSource.range(of: "func removeSelectionAttachment")?.lowerBound {
+    let liveSelectionUpdateSource = String(workspaceStoreSource[updateSelectionStart..<removeSelectionStart])
+    expect(liveSelectionUpdateSource.contains("floatingSelectionPrompt = nextSelection.label(language: interfaceLanguage)")
+        && liveSelectionUpdateSource.contains("pinnedFloatingAgent = false")
+        && liveSelectionUpdateSource.contains("cancelPendingSelectionAttachment()")
+        && liveSelectionUpdateSource.contains("if shouldRevealSelectionPrompt {")
+        && liveSelectionUpdateSource.contains("anchorsApproximatelyEqual")
+        && !liveSelectionUpdateSource.contains("withAnimation(WeiBeiMotion.panel) {\n            selectionContext = nextSelection")
+        && !liveSelectionUpdateSource.contains("withAnimation(WeiBeiMotion.panel) {\n            selectionContext = nextSelection\n            selectionAnchor = anchor"), "new selections reset pinned floating state; continuous selection fields update without a panel spring, and only surface show/hide may animate")
+} else {
+    expect(false, "updateSelection animation policy source is readable")
+}
 expect(workspaceStoreSource.contains("let itemChanged = selectedItemID != itemID") && workspaceStoreSource.contains("clearUnpinnedFloatingSelection(keepContext: false)"), "selecting a different item clears the old selection context")
 expect(workspaceStoreSource.contains("func toggleLibrary() {\n        recordNavigationPoint()\n        showLibrary.toggle()\n        clearUnpinnedFloatingSelection()")
     && workspaceStoreSource.contains("func toggleRightPane() {\n        guard layout.hasCollapsibleRightPane else { return }\n        recordNavigationPoint()\n        showRightPane.toggle()\n        clearUnpinnedFloatingSelection()"), "pane visibility changes record navigation and invalidate stale floating selection anchors")

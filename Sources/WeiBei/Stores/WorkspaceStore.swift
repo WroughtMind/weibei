@@ -529,8 +529,26 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func updateNote(_ value: String, for itemID: String?) {
+        guard let itemID else {
+            updateNote(value)
+            return
+        }
+        // Local editor draft may flush after a note switch; persist that item without touching active noteText.
+        if itemID != activeNoteItemID {
+            commitInactiveNoteDraft(value, itemID: itemID)
+            return
+        }
         guard itemID == activeNoteItemID else { return }
         updateNote(value)
+    }
+
+    /// Persist a draft for a note that is no longer active (does not mutate active `noteText`).
+    private func commitInactiveNoteDraft(_ value: String, itemID: String) {
+        guard let item = allItems.first(where: { $0.id == itemID }) else { return }
+        if !item.editsBackingMarkdownFile {
+            notesByItemID[item.id] = value
+        }
+        scheduleNotePersistence(value, for: item)
     }
 
     func createBlankNotebookNote() {
@@ -1642,48 +1660,108 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         lastSelectionUpdateDate = Date()
-        clearGeneratedQuietInsight()
         let cleanedOwnerTitle = ownerTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedOwnerTitle = (cleanedOwnerTitle?.isEmpty == false ? cleanedOwnerTitle : nil) ?? selectionOwnerTitle(for: source)
+        let boundedText = Self.boundedSelectionText(cleaned)
+        let shouldRevealSelectionPrompt = anchor != nil || pinnedFloatingAgent
+        let contentMatches = selectionContext.map {
+            $0.text == boundedText
+                && $0.source == source
+                && $0.ownerTitle == resolvedOwnerTitle
+                && $0.isEditable == isEditable
+        } ?? false
+
+        // Drag stream: same text, only anchor moves — no spring, no new SelectionContext id.
+        if contentMatches {
+            let anchorUnchanged = Self.anchorsApproximatelyEqual(selectionAnchor, anchor)
+            let surfaceAlreadyCorrect = shouldRevealSelectionPrompt
+                ? agentSurface == .selectionFloat
+                : agentSurface != .selectionFloat
+            if anchorUnchanged, !pinnedFloatingAgent, surfaceAlreadyCorrect {
+                return
+            }
+            if !anchorUnchanged {
+                selectionAnchor = anchor
+            }
+            pinnedFloatingAgent = false
+            cancelPendingSelectionAttachment()
+            if shouldRevealSelectionPrompt {
+                if agentSurface != .selectionFloat {
+                    withAnimation(WeiBeiMotion.panel) {
+                        agentSurface = .selectionFloat
+                        showQuietInsight = false
+                    }
+                } else {
+                    showQuietInsight = false
+                }
+            } else if agentSurface == .selectionFloat {
+                withAnimation(WeiBeiMotion.panel) {
+                    agentSurface = .hidden
+                }
+            }
+            return
+        }
+
+        clearGeneratedQuietInsight()
         let nextSelection = SelectionContext(
-            text: Self.boundedSelectionText(cleaned),
+            text: boundedText,
             source: source,
             ownerTitle: resolvedOwnerTitle,
             isEditable: isEditable
         )
-        let shouldRevealSelectionPrompt = anchor != nil || pinnedFloatingAgent
-        withAnimation(WeiBeiMotion.panel) {
-            selectionContext = nextSelection
-            selectionAnchor = anchor
-            floatingSelectionPrompt = nextSelection.label(language: interfaceLanguage)
-            pinnedFloatingAgent = false
-            cancelPendingSelectionAttachment()
-            if shouldRevealSelectionPrompt {
-                agentSurface = .selectionFloat
+        // Continuous fields update immediately so the capsule tracks like a native selection tool.
+        // Only agentSurface show/hide keeps a one-shot panel spring.
+        selectionContext = nextSelection
+        selectionAnchor = anchor
+        floatingSelectionPrompt = nextSelection.label(language: interfaceLanguage)
+        pinnedFloatingAgent = false
+        cancelPendingSelectionAttachment()
+        if shouldRevealSelectionPrompt {
+            if agentSurface != .selectionFloat {
+                withAnimation(WeiBeiMotion.panel) {
+                    agentSurface = .selectionFloat
+                    showQuietInsight = false
+                }
+            } else {
                 showQuietInsight = false
-            } else if agentSurface == .selectionFloat {
+            }
+        } else if agentSurface == .selectionFloat {
+            withAnimation(WeiBeiMotion.panel) {
                 agentSurface = .hidden
             }
         }
     }
 
+    private static func anchorsApproximatelyEqual(_ lhs: CGPoint?, _ rhs: CGPoint?, epsilon: CGFloat = 0.5) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil):
+            return true
+        case let (left?, right?):
+            return abs(left.x - right.x) < epsilon && abs(left.y - right.y) < epsilon
+        default:
+            return false
+        }
+    }
+
     func removeSelectionAttachment(id: UUID) {
-        withAnimation(WeiBeiMotion.panel) {
-            selectionAttachments.removeAll { $0.id == id }
-            if selectionContext?.id == id {
+        // Instant remove — animation here made the chip absorb the first click while hover/popover settled.
+        cancelPendingSelectionAttachment()
+        let removed = selectionAttachments.first(where: { $0.id == id })
+        selectionAttachments.removeAll { $0.id == id }
+        if selectionContext?.id == id {
                 clearUnpinnedFloatingSelection(keepContext: false)
-            }
+        } else if selectionAttachments.isEmpty || removed.map({ selectionContext?.text == $0.text }) == true {
+            clearUnpinnedFloatingSelection(keepContext: false)
         }
     }
 
     func clearSelectionAttachments() {
-        withAnimation(WeiBeiMotion.panel) {
-            cancelPendingSelectionAttachment()
-            selectionAttachments = []
-            lastSelectionAttachmentDate = nil
-            lastSelectionUpdateDate = nil
-            clearUnpinnedFloatingSelection(keepContext: false)
-        }
+        // Instant clear so one click always wins over hover-popover dismissal races.
+        cancelPendingSelectionAttachment()
+        selectionAttachments = []
+        lastSelectionAttachmentDate = nil
+        lastSelectionUpdateDate = nil
+        clearUnpinnedFloatingSelection(keepContext: false)
     }
 
     private func scheduleSelectionAttachment(_ selection: SelectionContext, withinSelectionGesture: Bool) {
@@ -2282,7 +2360,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func clearGeneratedQuietInsight() {
-        generatedQuietInsight = nil
+        if generatedQuietInsight != nil {
+            generatedQuietInsight = nil
+        }
         quietInsightSignature = ""
     }
 

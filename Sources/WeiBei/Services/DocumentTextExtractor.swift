@@ -5,6 +5,7 @@ import WeiBeiCore
 
 enum DocumentTextExtractor {
     private static var pdfTextCache: [String: String] = [:]
+    private static var fileTextCache: [String: String] = [:]
 
     static func text(for item: StudyItem) -> String? {
         guard let url = item.url else { return nil }
@@ -13,14 +14,16 @@ enum DocumentTextExtractor {
         case .pdf:
             return pdfText(url: url)
         case .html:
-            return htmlText(url: url)
+            return cachedFileText(url: url, load: htmlText)
         case .markdown, .text:
-            return try? String(contentsOf: url, encoding: .utf8)
+            return cachedFileText(url: url) { fileURL in
+                try? String(contentsOf: fileURL, encoding: .utf8)
+            }
         }
     }
 
     private static func pdfText(url: URL) -> String? {
-        let cacheKey = pdfCacheKey(for: url)
+        let cacheKey = fileCacheKey(for: url)
         if let cached = pdfTextCache[cacheKey] {
             return cached
         }
@@ -45,10 +48,22 @@ enum DocumentTextExtractor {
         .joined(separator: "\n\n")
     }
 
-    private static func pdfCacheKey(for url: URL) -> String {
+    private static func fileCacheKey(for url: URL) -> String {
         let modified = (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date)?
             .timeIntervalSince1970 ?? 0
         return "\(url.path)#\(modified)"
+    }
+
+    private static func cachedFileText(url: URL, load: (URL) -> String?) -> String? {
+        let cacheKey = fileCacheKey(for: url)
+        if let cached = fileTextCache[cacheKey] {
+            return cached
+        }
+        guard let text = load(url) else { return nil }
+        if !text.isEmpty {
+            fileTextCache[cacheKey] = text
+        }
+        return text
     }
 
     private static func htmlText(url: URL) -> String? {

@@ -279,8 +279,15 @@ private struct AgentComposerField: View {
 struct NotePaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @State private var hoveredNoteMode: NoteRenderMode?
+    /// Local typing buffer so each keystroke does not republish WorkspaceStore.noteText to the whole tree.
+    @State private var draftNoteText = ""
+    @State private var draftNoteItemID: String?
+    @State private var isApplyingExternalNote = false
+    @State private var noteDraftFlushTask: Task<Void, Never>?
     var showsPaneHeader = true
     var reorderRole: WorkspacePaneRole? = nil
+
+    private let noteDraftFlushDelayNanoseconds: UInt64 = 220_000_000
 
     var body: some View {
         VStack(spacing: 0) {
@@ -308,6 +315,33 @@ struct NotePaneView: View {
             }
         }
         .animation(WeiBeiMotion.panel, value: store.notebookCreationDraft?.id)
+        .onAppear {
+            pullExternalNoteText()
+        }
+        .onDisappear {
+            flushNoteDraft(immediate: true)
+        }
+        .onChange(of: store.activeNoteItemID) { previousID, _ in
+            if let previousID, previousID == draftNoteItemID {
+                flushNoteDraft(for: previousID, immediate: true)
+            }
+            pullExternalNoteText()
+        }
+        .onChange(of: store.noteText) { _, newValue in
+            guard !isApplyingExternalNote else { return }
+            // External writers (agent insert, wiki open, import) win over a stale draft.
+            if newValue != draftNoteText {
+                noteDraftFlushTask?.cancel()
+                noteDraftFlushTask = nil
+                draftNoteText = newValue
+                draftNoteItemID = store.activeNoteItemID
+            }
+        }
+        .onChange(of: store.focusedPane) { _, pane in
+            if pane != .notes {
+                flushNoteDraft(immediate: true)
+            }
+        }
     }
 
     @ViewBuilder
@@ -515,7 +549,7 @@ struct NotePaneView: View {
                     noteEditor
                         .frame(minWidth: 220)
                     MarkdownPreviewView(
-                        markdown: store.noteText,
+                        markdown: draftNoteText,
                         markdownBaseURL: store.currentMarkdownBaseURL,
                         appearanceMode: store.appearanceMode,
                         interfaceLanguage: store.interfaceLanguage,
@@ -543,13 +577,21 @@ struct NotePaneView: View {
         }
     }
 
+    private var noteMarkdownBinding: Binding<String> {
+        Binding(
+            get: { draftNoteText },
+            set: { value in
+                guard value != draftNoteText else { return }
+                draftNoteText = value
+                draftNoteItemID = store.activeNoteItemID
+                scheduleNoteDraftFlush()
+            }
+        )
+    }
+
     private var richEditor: some View {
         let itemID = store.activeNoteItemID
-        return RichMarkdownEditorView(documentID: itemID ?? "", markdown: Binding(get: {
-            store.noteText
-        }, set: { value in
-            store.updateNote(value, for: itemID)
-        }), command: Binding(get: {
+        return RichMarkdownEditorView(documentID: itemID ?? "", markdown: noteMarkdownBinding, command: Binding(get: {
             store.noteEditorCommand
         }, set: { value in
             store.noteEditorCommand = value
@@ -564,24 +606,26 @@ struct NotePaneView: View {
         onSelectionChange: { text, anchor in
             store.updateSelection(text, source: .note, anchor: anchor)
         }, onAskAgentWithSelection: { text, anchor in
+            flushNoteDraft(immediate: true)
             store.updateSelection(text, source: .note, anchor: anchor)
             store.askSelection()
         }, onWikiLink: { title in
+            flushNoteDraft(immediate: true)
             store.openOrCreateWikiNote(title: title)
         }, onSourceReference: { reference in
+            flushNoteDraft(immediate: true)
             store.openSourceReference(reference)
         }, onAppShortcut: { key, modifiers in
-            store.handleAppShortcut(key: key, modifiers: modifiers)
+            if modifiers.contains(.command) {
+                flushNoteDraft(immediate: true)
+            }
+            return store.handleAppShortcut(key: key, modifiers: modifiers)
         })
         .background(WeiBeiTheme.paper)
     }
 
     private var noteEditor: some View {
-        MarkdownSourceEditor(text: Binding(get: {
-            store.noteText
-        }, set: { value in
-            store.updateNote(value)
-        }), command: Binding(get: {
+        MarkdownSourceEditor(text: noteMarkdownBinding, command: Binding(get: {
             store.noteEditorCommand
         }, set: { value in
             store.noteEditorCommand = value
@@ -594,13 +638,54 @@ struct NotePaneView: View {
         onSelectionChange: { text, anchor in
             store.updateSelection(text, source: .note, anchor: anchor)
         }, onWikiLink: { title in
+            flushNoteDraft(immediate: true)
             store.openOrCreateWikiNote(title: title)
         })
         .background(WeiBeiTheme.paper)
     }
 
     private var noteIsEmpty: Bool {
-        store.noteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        draftNoteText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func pullExternalNoteText() {
+        isApplyingExternalNote = true
+        draftNoteItemID = store.activeNoteItemID
+        draftNoteText = store.noteText
+        isApplyingExternalNote = false
+    }
+
+    private func scheduleNoteDraftFlush() {
+        noteDraftFlushTask?.cancel()
+        let itemID = draftNoteItemID ?? store.activeNoteItemID
+        let snapshot = draftNoteText
+        noteDraftFlushTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: noteDraftFlushDelayNanoseconds)
+            guard !Task.isCancelled else { return }
+            guard draftNoteText == snapshot else { return }
+            flushNoteDraft(for: itemID, immediate: true)
+        }
+    }
+
+    private func flushNoteDraft(immediate: Bool = false) {
+        flushNoteDraft(for: draftNoteItemID ?? store.activeNoteItemID, immediate: immediate)
+    }
+
+    private func flushNoteDraft(for itemID: String?, immediate: Bool) {
+        noteDraftFlushTask?.cancel()
+        noteDraftFlushTask = nil
+        guard let itemID else { return }
+        let value = (itemID == draftNoteItemID) ? draftNoteText : draftNoteText
+        if itemID == store.activeNoteItemID {
+            if store.noteText == value { return }
+            isApplyingExternalNote = true
+            store.updateNote(value, for: itemID)
+            isApplyingExternalNote = false
+            return
+        }
+        // Inactive flush after note switch.
+        store.updateNote(value, for: itemID)
+        _ = immediate
     }
 
     private var emptyNoteHint: some View {
@@ -1440,16 +1525,22 @@ private struct AgentSelectionAttachmentPill: View {
 
     var body: some View {
         if store.hasSelectionAttachments {
-            HStack(spacing: 6) {
-                Image(systemName: "text.bubble")
-                    .font(.system(size: 11, weight: .medium))
-                Text(store.ui("\(store.selectionAttachments.count) 个已选文本片段", "\(store.selectionAttachments.count) selected text fragments"))
-                    .font(.system(size: 12, weight: .medium))
-                Button {
-                    store.clearSelectionAttachments()
-                    pillHovering = false
-                    popoverHovering = false
-                } label: {
+            HStack(spacing: 4) {
+                // Popover anchor is only the label — keep the clear button outside so the first
+                // click is not eaten by hover-popover dismissal.
+                HStack(spacing: 6) {
+                    Image(systemName: "text.bubble")
+                        .font(.system(size: 11, weight: .medium))
+                    Text(store.ui("\(store.selectionAttachments.count) 个已选文本片段", "\(store.selectionAttachments.count) selected text fragments"))
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .contentShape(Rectangle())
+                .onHover { value in
+                    setPillHovering(value)
+                }
+                .popover(isPresented: popoverPresented, arrowEdge: .bottom) { popoverContent }
+
+                Button(action: clearAllAttachments) {
                     Image(systemName: "xmark")
                         .font(.system(size: 9, weight: .semibold))
                 }
@@ -1458,7 +1549,8 @@ private struct AgentSelectionAttachmentPill: View {
                 .help(store.ui("清空已选文本片段", "Clear selected text fragments"))
             }
             .foregroundStyle(pillHovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
-            .padding(.horizontal, 10)
+            .padding(.leading, 10)
+            .padding(.trailing, 6)
             .frame(height: 28)
             .background(WeiBeiTheme.paperRaised.opacity(pillHovering ? 0.72 : 0.54))
             .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -1466,13 +1558,16 @@ private struct AgentSelectionAttachmentPill: View {
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(WeiBeiTheme.hairline.opacity(pillHovering ? 0.68 : 0.38), lineWidth: 1)
             }
-            .popover(isPresented: popoverPresented, arrowEdge: .bottom) { popoverContent }
-            .onHover { value in
-                setPillHovering(value)
-            }
             .accessibilityLabel(Text(store.ui("\(store.selectionAttachments.count) 个已选文本片段", "\(store.selectionAttachments.count) selected text fragments")))
             .help(store.ui("悬停查看选区", "Hover to preview selections"))
         }
+    }
+
+    private func clearAllAttachments() {
+        closeToken = UUID()
+        pillHovering = false
+        popoverHovering = false
+        store.clearSelectionAttachments()
     }
 
     private var popoverPresented: Binding<Bool> {
@@ -1498,9 +1593,7 @@ private struct AgentSelectionAttachmentPill: View {
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
                 Button(store.ui("清空", "Clear")) {
-                    store.clearSelectionAttachments()
-                    pillHovering = false
-                    popoverHovering = false
+                    clearAllAttachments()
                 }
                 .buttonStyle(WeiBeiTextActionButtonStyle())
                 .help(store.ui("清空全部选区片段", "Clear all selected fragments"))
@@ -1535,7 +1628,8 @@ private struct AgentSelectionAttachmentPill: View {
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                 Spacer(minLength: 8)
                 Button {
-                    let shouldClose = store.selectionAttachments.count == 1
+                    let shouldClose = store.selectionAttachments.count <= 1
+                    closeToken = UUID()
                     store.removeSelectionAttachment(id: selection.id)
                     if shouldClose {
                         pillHovering = false
@@ -1879,8 +1973,14 @@ struct FloatingSelectionAgentView: View {
                     }
                 }
         )
-        .onChange(of: store.selectionContext) { _, _ in
+        .onChange(of: store.selectionContext) { previous, next in
             guard !store.pinnedFloatingAgent else { return }
+            // Same content with a new id (or drag ticks) must not re-spring the capsule.
+            let sameContent = previous?.text == next?.text
+                && previous?.source == next?.source
+                && previous?.ownerTitle == next?.ownerTitle
+                && previous?.isEditable == next?.isEditable
+            guard !sameContent else { return }
             withAnimation(WeiBeiMotion.panel) {
                 expanded = false
                 dragOffset = .zero
