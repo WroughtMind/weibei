@@ -1,25 +1,27 @@
 # 魏碑
 
-macOS 本地学习工作台：读资料、写笔记、基于当前材料提问。
+本地学习用的 macOS 工作台。
 
-三栏默认布局——资料库 / 阅读 / 笔记与对话。材料、选区、笔记在同一窗口里完成，不拆到多个 App。外观是纸面与墨石两套，字体为作者自有。
+读 HTML / PDF / Markdown，在材料边上写笔记，按**当前资料、选区、笔记**提问。三栏在同一窗口里切换，不把「读 / 记 / 问」拆成三个 App。
+
+界面两套：**纸面**、**墨石**。配色是纸、墨、石青、朱砂；正文字体是作者做的魏碑风格字体，跟仓库一起走。名字借的是书体，产品也按这个方向收——方一点、少一点装饰、回答尽量带出处。
+
+设计稿在 [`DesignReferences/`](DesignReferences/)。
 
 ## 功能
 
 | | |
 | --- | --- |
 | 资料 | 导入 HTML、PDF、Markdown、纯文本 |
-| 阅读 | HTML（WebKit）、PDF（PDFKit，连续或单页，`⌘[` / `⌘]` 翻页）、Markdown 渲染 |
-| 笔记 | 按资料绑定，存本机；Milkdown 原地编辑，可切源码 / 对照 |
-| 划线提问 | 文档或笔记选区可唤起浮层，带摘录，可写入或替换笔记 |
-| 对话 | 上下文为当前材料、选区、笔记、最近对话；无 Key 时离线预览，不编造 |
+| 阅读 | HTML（WebKit）、PDF（PDFKit，连续或单页，`⌘[` / `⌘]`）、Markdown 渲染 |
+| 笔记 | 绑当前资料，存本机；Milkdown 原地编辑，可切源码 / 对照 |
+| 划线 | 选区浮层带摘录，可写入或替换笔记 |
+| 对话 | 上下文固定为当前材料与笔记；无 Key 时离线预览，不编造 |
 | 布局 | 三栏可调；文档笔记对半；沉浸阅读 / 对话 / 写作 |
-| Agent 形态 | 固定列、抽屉、小窗、划线浮层、静默洞察、隐藏 |
-| 快捷键 | `⌘1`–`⌘4` 聚焦，`⌘B` 资料库，`⌘K` 命令面板 |
+| Agent | 固定列、抽屉、小窗、划线浮层、静默洞察、隐藏 |
+| 键位 | `⌘1`–`⌘4` 聚焦，`⌘B` 资料库，`⌘K` 命令面板 |
 
-沉浸对话里，用户消息在居中对话列内右对齐（纸面气泡），助手消息按正文排。静默洞察仍偏本地提示，页级判断未完成。
-
-视觉参考图在 `DesignReferences/`。
+沉浸对话：用户句在居中列里右对齐（浅色纸面气泡），助手句按正文排。静默洞察仍是本地提示为主。
 
 ## 要求
 
@@ -36,30 +38,30 @@ cd weibei
 ```
 
 ```bash
-./script/build_and_run.sh check      # SelfCheck + WebEditorCheck
-./script/build_and_run.sh package    # 生成 dist/魏碑.app
+./script/build_and_run.sh check
+./script/build_and_run.sh package
 ./script/build_and_run.sh --verify
 ```
 
 ## Agent
 
-不提供托管账号。在设置里填 Key，或用环境变量：
+自备 API Key（设置页或环境变量），应用不托管账号。
 
 | 变量 | 说明 | 默认 |
 | --- | --- | --- |
 | `OPENAI_API_KEY` | API Key | 无 |
 | `WEIBEI_OPENAI_MODEL` | 模型 | `gpt-5.1` |
 
-Key 只在本机，不进仓库。
+Key 只在本机。
 
 ## 目录
 
 ```text
-Sources/WeiBei/              App 与界面
-Sources/WeiBeiCore/          工作区、Agent、密钥、PDF OCR
+Sources/WeiBei/           App、界面、编辑器资源
+Sources/WeiBeiCore/       工作区、Agent、密钥、PDF OCR
 Sources/WeiBeiSelfCheck/
-Sources/WeiBei/WebEditor/    编辑器源码（esbuild → Resources/Editor）
-DesignReferences/            设计参考图
+Sources/WeiBei/WebEditor/ 编辑器源码 → Resources/Editor
+DesignReferences/         纸 / 墨 / 石 / 朱砂参考
 script/build_and_run.sh
 ```
 
@@ -69,13 +71,8 @@ swift run WeiBeiSelfCheck
 swift run WeiBeiWebEditorCheck
 ```
 
-改布局或对话结构时，请同步自检里的源码断言。
-
-## 字体与外观
-
-- 纸面 / 墨石两套配色（纸、墨、石青、朱砂）
-- 品牌字体由作者制作，随仓库提供
+动布局或对话结构时，把 SelfCheck 里的断言一并改掉。
 
 ## 状态
 
-开发中，接口与布局可能变。开源许可未定；有 `LICENSE` 之前请勿默认可任意再分发。
+开发中。许可未定；有 `LICENSE` 之前请勿默认可任意再分发。字体归作者，随项目使用。
