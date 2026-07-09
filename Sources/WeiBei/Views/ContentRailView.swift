@@ -31,7 +31,7 @@ struct ContentRailItem: Identifiable {
 }
 
 enum ContentRailMetrics {
-    static let normalWidth: CGFloat = 28
+    static let normalWidth: CGFloat = 16
     static let railOnlyWidth: CGFloat = 88
     static let railOnlyThreshold: CGFloat = 150
     static let snapThreshold: CGFloat = 160
@@ -111,12 +111,6 @@ struct ContentRailView: View {
         ZStack(alignment: .topLeading) {
             railBackground
 
-            Rectangle()
-                .fill(WeiBeiTheme.hairline.opacity(isRailOnly ? 0.54 : 0.30))
-                .frame(width: 1)
-                .frame(maxWidth: .infinity, alignment: .trailing)
-                .allowsHitTesting(false)
-
             if items.isEmpty {
                 emptyOriginMark
                     .position(
@@ -139,6 +133,17 @@ struct ContentRailView: View {
             }
         }
         .frame(width: railWidth, height: height)
+        .contentShape(Rectangle())
+        .onContinuousHover { phase in
+            switch phase {
+            case .active(let location):
+                guard let item = nearestItem(to: location.y, height: height) else { return }
+                beginHover(item)
+            case .ended:
+                hoveredID = nil
+                schedulePreviewClose()
+            }
+        }
     }
 
     private var railBackground: some View {
@@ -172,8 +177,8 @@ struct ContentRailView: View {
                 Rectangle()
                     .fill(tickColor(itemID: item.id, active: active))
                     .frame(
-                        width: tickLength(level: item.level, active: active),
-                        height: active ? 2.5 : 1.5
+                        width: tickLength(for: item, active: active),
+                        height: tickThickness(for: item, active: active)
                     )
                 Spacer(minLength: 0)
             }
@@ -195,13 +200,6 @@ struct ContentRailView: View {
                 .frame(width: previewWidth)
                 .padding(4)
         }
-        .onHover { hovering in
-            if hovering {
-                beginHover(item)
-            } else {
-                endHover(item)
-            }
-        }
         .animation(WeiBeiMotion.micro, value: activeID)
         .animation(WeiBeiMotion.hover, value: hoveredID)
     }
@@ -209,21 +207,6 @@ struct ContentRailView: View {
     private func denseRailPointerSurface(height: CGFloat) -> some View {
         Color.clear
             .contentShape(Rectangle())
-            .onContinuousHover { phase in
-                switch phase {
-                case .active(let location):
-                    if let item = nearestItem(to: location.y, height: height) {
-                        beginHover(item)
-                    }
-                case .ended:
-                    if let hoveredID,
-                       let item = items.first(where: { $0.id == hoveredID }) {
-                        endHover(item)
-                    } else {
-                        schedulePreviewClose()
-                    }
-                }
-            }
             .gesture(
                 SpatialTapGesture()
                     .onEnded { value in
@@ -236,16 +219,39 @@ struct ContentRailView: View {
     }
 
     private var tickHorizontalInset: CGFloat {
-        isRailOnly ? 16 : 4
+        isRailOnly ? 16 : 2
     }
 
-    private func tickLength(level: Int, active: Bool) -> CGFloat {
-        if active {
-            return isRailOnly ? 56 : 20
+    private func tickLength(for item: ContentRailItem, active: Bool) -> CGFloat {
+        let base: CGFloat = isRailOnly ? 34 : 8
+        let minimum: CGFloat = isRailOnly ? 10 : 4
+        let resting = active
+            ? (isRailOnly ? 48 : 10)
+            : max(minimum, base - CGFloat(min(item.level, 4)) * (isRailOnly ? 6 : 1))
+        let influence = hoverInfluence(for: item.id)
+        let hoveredLength: CGFloat = isRailOnly ? 56 : 12
+        return resting + (hoveredLength - resting) * influence
+    }
+
+    private func tickThickness(for item: ContentRailItem, active: Bool) -> CGFloat {
+        let resting: CGFloat = active ? 2.5 : 1.5
+        return resting + (2.8 - resting) * hoverInfluence(for: item.id)
+    }
+
+    private func hoverInfluence(for itemID: String) -> CGFloat {
+        guard let hoveredID,
+              let hoveredIndex = items.firstIndex(where: { $0.id == hoveredID }),
+              let itemIndex = items.firstIndex(where: { $0.id == itemID }) else { return 0 }
+        switch abs(hoveredIndex - itemIndex) {
+        case 0:
+            return 1
+        case 1:
+            return 0.52
+        case 2:
+            return 0.22
+        default:
+            return 0
         }
-        let base: CGFloat = isRailOnly ? 34 : 14
-        let minimum: CGFloat = isRailOnly ? 10 : 6
-        return max(minimum, base - CGFloat(min(level, 4)) * (isRailOnly ? 6 : 2))
     }
 
     private func tickColor(itemID: String, active: Bool) -> Color {
@@ -254,6 +260,9 @@ struct ContentRailView: View {
         }
         if hoveredID == itemID {
             return WeiBeiTheme.secondaryInk.opacity(0.72)
+        }
+        if hoverInfluence(for: itemID) > 0 {
+            return WeiBeiTheme.hairline.opacity(0.98)
         }
         return WeiBeiTheme.hairline.opacity(0.86)
     }

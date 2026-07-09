@@ -303,7 +303,6 @@ struct NotePaneView: View {
                     }
 
                     noteBody
-                        .padding(.leading, ContentRailMetrics.normalWidth)
                 }
                 .opacity(railOnly ? 0 : 1)
                 .allowsHitTesting(!railOnly)
@@ -1374,13 +1373,12 @@ struct AgentPaneView: View {
                         }
 
                         GeometryReader { geometry in
-                            let availableWidth = max(geometry.size.width - ContentRailMetrics.normalWidth, 1)
-                            let contentWidth = min(max(availableWidth - 36, 320), agentContentMaxWidth ?? 760)
+                            let contentWidth = min(max(geometry.size.width - 36, 320), agentContentMaxWidth ?? 760)
 
                             ScrollView(showsIndicators: true) {
                                 LazyVStack(alignment: .leading, spacing: 12) {
                                     ForEach(store.messages) { message in
-                                        agentMessageRow(message: message, geometryWidth: availableWidth, contentWidth: contentWidth, proxy: proxy)
+                                        agentMessageRow(message: message, geometryWidth: geometry.size.width, contentWidth: contentWidth, proxy: proxy)
                                     }
                                     if store.isAskingAgent {
                                         AgentThinkingIndicator()
@@ -1399,12 +1397,11 @@ struct AgentPaneView: View {
                                 .scrollTargetLayout()
                                 .padding(14)
                                 .padding(.top, store.messages.isEmpty ? 22 : 0)
-                                .frame(width: availableWidth, alignment: .topLeading)
+                                .frame(width: geometry.size.width, alignment: .topLeading)
                                 .frame(minHeight: geometry.size.height, alignment: .topLeading)
                                 .animation(WeiBeiMotion.panel, value: store.messages.count)
                             }
                             .scrollPosition(id: $visibleAgentMessageID, anchor: .center)
-                            .padding(.leading, ContentRailMetrics.normalWidth)
                         }
 
                         agentInputTray
