@@ -47,6 +47,9 @@ INFO_PLIST="$APP_CONTENTS/Info.plist"
 VERIFY_PID=""
 VERIFY_DATA_DIR="$DIST_DIR/Data"
 VERIFY_SCENARIO="${WEIBEI_VERIFY_SCENARIO:-offline-learning-flow}"
+VERIFY_WINDOW_SIZE="${WEIBEI_VERIFY_WINDOW_SIZE:-}"
+VERIFY_INSPIRATION_ID="${WEIBEI_VERIFY_INSPIRATION_ID:-}"
+VERIFY_CAPTURE_PATH="${TMPDIR:-/tmp}/weibei-self-capture-$UID-$VERIFY_SCENARIO.png"
 
 if [[ "$CHECK_ONLY" == true ]]; then
   :
@@ -125,7 +128,8 @@ open_app_for_verify() {
   before_pids="$(pgrep -x "$PRODUCT_NAME" || true)"
   rm -rf "$VERIFY_DATA_DIR"
   mkdir -p "$VERIFY_DATA_DIR"
-  /usr/bin/open -n -g --env WEIBEI_SUPPRESS_ACTIVATION=1 --env WEIBEI_FORCE_OFFLINE_AGENT=1 --env "WEIBEI_WORKSPACE_DIR=$VERIFY_DATA_DIR" --env "WEIBEI_VERIFY_SCENARIO=$VERIFY_SCENARIO" "$APP_BUNDLE"
+  rm -f "$VERIFY_CAPTURE_PATH"
+  /usr/bin/open -n -g --env WEIBEI_SUPPRESS_ACTIVATION=1 --env WEIBEI_FORCE_OFFLINE_AGENT=1 --env "WEIBEI_WORKSPACE_DIR=$VERIFY_DATA_DIR" --env "WEIBEI_VERIFY_SCENARIO=$VERIFY_SCENARIO" --env "WEIBEI_VERIFY_WINDOW_SIZE=$VERIFY_WINDOW_SIZE" --env "WEIBEI_VERIFY_INSPIRATION_ID=$VERIFY_INSPIRATION_ID" --env "WEIBEI_VERIFY_CAPTURE_PATH=$VERIFY_CAPTURE_PATH" "$APP_BUNDLE"
   for _ in {1..50}; do
     local newest_pid
     newest_pid="$(pgrep -nx "$PRODUCT_NAME" || true)"
@@ -148,21 +152,26 @@ visual_verify_window() {
   if [[ -n "$VERIFY_SCENARIO" ]]; then
     sleep 2.6
   fi
-  local window_id
-  window_id="$(swift -target arm64-apple-macosx14.0 -e 'import CoreGraphics; import Foundation; let owner = CommandLine.arguments[1]; let targetPID = CommandLine.arguments.count > 2 ? Int(CommandLine.arguments[2]) : nil; func number(_ value: Any?) -> Double { (value as? NSNumber)?.doubleValue ?? 0 }; let windows = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []; guard let window = windows.first(where: { window in guard (window[kCGWindowOwnerName as String] as? String) == owner else { return false }; if let targetPID, (window[kCGWindowOwnerPID as String] as? NSNumber)?.intValue != targetPID { return false }; let bounds = window[kCGWindowBounds as String] as? [String: Any]; let isOnscreen = window[kCGWindowIsOnscreen as String] as? NSNumber; let visibleEnough = isOnscreen == nil || isOnscreen?.intValue != 0; return visibleEnough && number(window[kCGWindowLayer as String]) == 0 && number(bounds?["Width"]) >= 600 && number(bounds?["Height"]) >= 400 }), let id = window[kCGWindowNumber as String] as? UInt32 else { exit(1) }; print(id)' "$APP_DISPLAY_NAME" "$VERIFY_PID")"
-  local capture_path="${TMPDIR:-/tmp}/weibei-visual-verify-$window_id.png"
-  local capture_error="${TMPDIR:-/tmp}/weibei-visual-verify-$window_id.err"
-  if ! /usr/sbin/screencapture -x -l "$window_id" "$capture_path" 2>"$capture_error"; then
-    cat "$capture_error" >&2
-    echo "visual verify blocked: macOS refused window capture for $APP_DISPLAY_NAME. Grant Screen Recording permission to this terminal/Codex host, then rerun --visual-verify." >&2
-    rm -f "$capture_path" "$capture_error"
-    exit 5
+  local capture_path="$VERIFY_CAPTURE_PATH"
+  if [[ ! -s "$capture_path" ]]; then
+    local window_id
+    window_id="$(swift -target arm64-apple-macosx14.0 -e 'import CoreGraphics; import Foundation; let owner = CommandLine.arguments[1]; let targetPID = CommandLine.arguments.count > 2 ? Int(CommandLine.arguments[2]) : nil; func number(_ value: Any?) -> Double { (value as? NSNumber)?.doubleValue ?? 0 }; let windows = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []; guard let window = windows.first(where: { window in guard (window[kCGWindowOwnerName as String] as? String) == owner else { return false }; if let targetPID, (window[kCGWindowOwnerPID as String] as? NSNumber)?.intValue != targetPID { return false }; let bounds = window[kCGWindowBounds as String] as? [String: Any]; let isOnscreen = window[kCGWindowIsOnscreen as String] as? NSNumber; let visibleEnough = isOnscreen == nil || isOnscreen?.intValue != 0; return visibleEnough && number(window[kCGWindowLayer as String]) == 0 && number(bounds?["Width"]) >= 600 && number(bounds?["Height"]) >= 400 }), let id = window[kCGWindowNumber as String] as? UInt32 else { exit(1) }; print(id)' "$APP_DISPLAY_NAME" "$VERIFY_PID")"
+    capture_path="${TMPDIR:-/tmp}/weibei-visual-verify-$window_id.png"
+    local capture_error="${TMPDIR:-/tmp}/weibei-visual-verify-$window_id.err"
+    if ! /usr/sbin/screencapture -x -l "$window_id" "$capture_path" 2>"$capture_error"; then
+      cat "$capture_error" >&2
+      echo "visual verify blocked: both the app-owned capture and macOS window capture failed for $APP_DISPLAY_NAME. Grant Screen Recording permission to this terminal/Codex host, then rerun --visual-verify." >&2
+      rm -f "$capture_path" "$capture_error"
+      exit 5
+    fi
+    rm -f "$capture_error"
   fi
-  rm -f "$capture_error"
   swift -target arm64-apple-macosx14.0 -e 'import AppKit; import Foundation; let path = CommandLine.arguments[1]; guard let image = NSImage(contentsOf: URL(fileURLWithPath: path)), let data = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: data) else { exit(2) }; let xStep = max(1, bitmap.pixelsWide / 80); let yStep = max(1, bitmap.pixelsHigh / 60); var sampled = 0; var visible = 0; for y in stride(from: 0, to: bitmap.pixelsHigh, by: yStep) { for x in stride(from: 0, to: bitmap.pixelsWide, by: xStep) { guard let color = bitmap.colorAt(x: x, y: y) else { continue }; if color.redComponent > 0.08 || color.greenComponent > 0.08 || color.blueComponent > 0.08 { visible += 1 }; sampled += 1 } }; guard sampled > 0 else { exit(3) }; let nonBlackRatio = Double(visible) / Double(sampled); print("visual_non_black_ratio=\(nonBlackRatio)"); if nonBlackRatio < 0.02 { fputs("visual verify failed: captured window is black or empty\n", stderr); exit(4) }' "$capture_path"
   local latest_capture_path="${TMPDIR:-/tmp}/weibei-visual-verify-latest.png"
+  local scenario_capture_path="${TMPDIR:-/tmp}/weibei-visual-verify-$VERIFY_SCENARIO.png"
   cp "$capture_path" "$latest_capture_path"
-  echo "visual_capture_path=$latest_capture_path"
+  cp "$capture_path" "$scenario_capture_path"
+  echo "visual_capture_path=$scenario_capture_path"
   rm -f "$capture_path"
 }
 
@@ -196,11 +205,66 @@ verify_learning_flow_persistence() {
   return 1
 }
 
+verify_empty_workspace_state() {
+  case "$VERIFY_SCENARIO" in
+    empty-workspace-*)
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+
+  local workspace_file="$VERIFY_DATA_DIR/workspace.json"
+  local expected_reader=false
+  local expected_agent=false
+  local expected_notes=false
+  local expected_inspiration=true
+  case "$VERIFY_SCENARIO" in
+    empty-workspace-open-doc)
+      expected_reader=true
+      ;;
+    empty-workspace-open-chat)
+      expected_agent=true
+      ;;
+    empty-workspace-open-notes)
+      expected_notes=true
+      ;;
+    empty-workspace-inspiration-off)
+      expected_inspiration=false
+      ;;
+  esac
+
+  for _ in {1..30}; do
+    if [[ -f "$workspace_file" ]] \
+      && /usr/bin/grep -q "\"showReader\":$expected_reader" "$workspace_file" \
+      && /usr/bin/grep -q "\"showAgent\":$expected_agent" "$workspace_file" \
+      && /usr/bin/grep -q "\"showNotes\":$expected_notes" "$workspace_file" \
+      && /usr/bin/grep -q "\"showDailyInspiration\":$expected_inspiration" "$workspace_file"; then
+      if [[ "$VERIFY_SCENARIO" == empty-workspace-open-* ]] \
+        && ! /usr/bin/grep -q "Empty workspace entry state marker" "$workspace_file"; then
+        sleep 0.2
+        continue
+      fi
+      return 0
+    fi
+    sleep 0.2
+  done
+
+  echo "verify failed: empty-workspace pane or inspiration state was not persisted for $VERIFY_SCENARIO." >&2
+  if [[ -f "$workspace_file" ]]; then
+    /usr/bin/sed -n '1,80p' "$workspace_file" >&2
+  else
+    echo "missing workspace file: $workspace_file" >&2
+  fi
+  return 1
+}
+
 finish_verify_window() {
   if [[ "$RUN_VISUAL_VERIFY" == true ]]; then
     visual_verify_window
   fi
   verify_learning_flow_persistence
+  verify_empty_workspace_state
 }
 
 run_verifiers() {

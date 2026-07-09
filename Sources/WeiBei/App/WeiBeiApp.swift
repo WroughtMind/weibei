@@ -335,6 +335,45 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         window.isOpaque = true
         window.backgroundColor = appearanceMode.windowBackground
         window.isMovableByWindowBackground = true
+        applyVerificationWindowSize(to: window)
+        captureVerificationWindowIfRequested(window)
+    }
+
+    private func applyVerificationWindowSize(to window: NSWindow) {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1",
+              let rawSize = environment["WEIBEI_VERIFY_WINDOW_SIZE"] else { return }
+        let parts = rawSize.lowercased().split(separator: "x", maxSplits: 1)
+        guard parts.count == 2,
+              let width = Double(parts[0]),
+              let height = Double(parts[1]),
+              width >= 600,
+              height >= 400 else { return }
+
+        let target = NSSize(width: width, height: height)
+        let current = window.contentLayoutRect.size
+        guard abs(current.width - target.width) > 1 || abs(current.height - target.height) > 1 else { return }
+        window.setContentSize(target)
+        window.center()
+    }
+
+    private func captureVerificationWindowIfRequested(_ window: NSWindow) {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1",
+              let capturePath = environment["WEIBEI_VERIFY_CAPTURE_PATH"],
+              !capturePath.isEmpty else { return }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            guard !FileManager.default.fileExists(atPath: capturePath),
+                  let contentView = window.contentView else { return }
+            let bounds = contentView.bounds
+            guard bounds.width >= 600,
+                  bounds.height >= 400,
+                  let bitmap = contentView.bitmapImageRepForCachingDisplay(in: bounds) else { return }
+            contentView.cacheDisplay(in: bounds, to: bitmap)
+            guard let png = bitmap.representation(using: .png, properties: [:]) else { return }
+            try? png.write(to: URL(fileURLWithPath: capturePath), options: .atomic)
+        }
     }
 }
 
@@ -682,6 +721,22 @@ struct SettingsView: View {
                     }
                 }
 
+                settingsRow(
+                    title: store.ui("每日灵感", "Daily Inspiration"),
+                    detail: store.ui("只控制空工作区里的出处内容；文稿、对话和笔记入口始终保留。", "Controls sourced material on the empty workspace only; document, chat, and notes entries always remain.")
+                ) {
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { store.showDailyInspiration },
+                            set: { store.setDailyInspirationEnabled($0) }
+                        )
+                    )
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .tint(WeiBeiTheme.cinnabar)
+                    .accessibilityLabel(Text(store.ui("显示每日灵感", "Show Daily Inspiration")))
+                }
             }
         }
     }

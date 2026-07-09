@@ -723,11 +723,12 @@ public struct PersistedWorkspace: Codable {
     public var showAgent: Bool?
     public var showNotes: Bool?
     public var showRightPane: Bool?
+    public var showDailyInspiration: Bool?
     public var appearanceModeRaw: String?
     public var adaptImportedDocumentColors: Bool?
     public var interfaceLanguageRaw: String?
 
-    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], selectedItemID: String? = nil, activeNotebookItemID: String? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, threePaneOrder: [WorkspacePaneRole]? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showReader: Bool? = nil, showAgent: Bool? = nil, showNotes: Bool? = nil, showRightPane: Bool? = nil, appearanceModeRaw: String? = nil, adaptImportedDocumentColors: Bool? = nil, interfaceLanguageRaw: String? = nil) {
+    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], selectedItemID: String? = nil, activeNotebookItemID: String? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, threePaneOrder: [WorkspacePaneRole]? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showReader: Bool? = nil, showAgent: Bool? = nil, showNotes: Bool? = nil, showRightPane: Bool? = nil, showDailyInspiration: Bool? = nil, appearanceModeRaw: String? = nil, adaptImportedDocumentColors: Bool? = nil, interfaceLanguageRaw: String? = nil) {
         self.importedItems = importedItems
         self.notesByItemID = notesByItemID
         self.selectedItemID = selectedItemID
@@ -742,6 +743,7 @@ public struct PersistedWorkspace: Codable {
         self.showAgent = showAgent
         self.showNotes = showNotes
         self.showRightPane = showRightPane
+        self.showDailyInspiration = showDailyInspiration
         self.appearanceModeRaw = appearanceModeRaw
         self.adaptImportedDocumentColors = adaptImportedDocumentColors
         self.interfaceLanguageRaw = interfaceLanguageRaw
