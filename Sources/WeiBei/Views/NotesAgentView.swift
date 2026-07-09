@@ -277,27 +277,48 @@ struct NotePaneView: View {
     @State private var draftNoteItemID: String?
     @State private var isApplyingExternalNote = false
     @State private var noteDraftFlushTask: Task<Void, Never>?
+    @State private var activeNoteRailID: String?
     var showsPaneHeader = true
     var reorderRole: WorkspacePaneRole? = nil
 
     private let noteDraftFlushDelayNanoseconds: UInt64 = 220_000_000
 
     var body: some View {
-        VStack(spacing: 0) {
-            if showsPaneHeader {
-                noteHeader
-            }
+        GeometryReader { geometry in
+            let railOnly = store.layout.allowsRailOnlyPanes && geometry.size.width < ContentRailMetrics.railOnlyThreshold
+            let railItems = noteRailItems
+            ZStack(alignment: .topLeading) {
+                VStack(spacing: 0) {
+                    if showsPaneHeader {
+                        noteHeader
+                    }
 
-            if let noteFileError = store.noteFileError {
-                Text(noteFileError)
-                    .font(.caption)
-                    .foregroundStyle(noteFileStatusColor(for: noteFileError))
-                    .lineLimit(1)
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 8)
-            }
+                    if let noteFileError = store.noteFileError {
+                        Text(noteFileError)
+                            .font(.caption)
+                            .foregroundStyle(noteFileStatusColor(for: noteFileError))
+                            .lineLimit(1)
+                            .padding(.horizontal, 14)
+                            .padding(.bottom, 8)
+                    }
 
-            noteBody
+                    noteBody
+                        .padding(.leading, ContentRailMetrics.normalWidth)
+                }
+                .opacity(railOnly ? 0 : 1)
+                .allowsHitTesting(!railOnly)
+
+                ContentRailView(
+                    label: store.ui("文稿目录", "Draft outline"),
+                    items: railItems,
+                    activeID: activeNoteRailID ?? railItems.first?.id,
+                    appearanceMode: store.appearanceMode,
+                    isRailOnly: railOnly,
+                    topInset: railOnly ? 0 : (showsPaneHeader ? 44 : 34),
+                    onActivate: { activateNoteRailItem($0, railOnly: railOnly) }
+                )
+                .zIndex(4)
+            }
         }
         .frame(minHeight: 280)
         .foregroundStyle(WeiBeiTheme.ink)
@@ -589,6 +610,56 @@ struct NotePaneView: View {
         )
     }
 
+    private var noteRailItems: [ContentRailItem] {
+        let lines = draftNoteText.components(separatedBy: .newlines)
+        let headings = lines.enumerated().compactMap { offset, line -> (line: Int, level: Int, title: String)? in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let level = trimmed.prefix { $0 == "#" }.count
+            guard (1...4).contains(level) else { return nil }
+            let markerEnd = trimmed.index(trimmed.startIndex, offsetBy: level)
+            guard markerEnd < trimmed.endIndex, trimmed[markerEnd].isWhitespace else { return nil }
+            let title = trimmed[markerEnd...].trimmingCharacters(in: .whitespaces)
+            guard !title.isEmpty else { return nil }
+            return (offset, level, title)
+        }
+
+        return headings.enumerated().map { index, heading in
+            let nextLine = index + 1 < headings.count ? headings[index + 1].line : lines.count
+            let excerpt = lines[(heading.line + 1)..<max(heading.line + 1, nextLine)]
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+            let position = lines.count > 1 ? CGFloat(heading.line) / CGFloat(lines.count - 1) : 0
+            return ContentRailItem(
+                id: "note-heading-\(index)",
+                position: position,
+                level: heading.level - 1,
+                title: heading.title,
+                excerpt: railPreviewText(excerpt),
+                metadata: store.ui("第 \(index + 1) / \(headings.count) 节 · H\(heading.level)", "Section \(index + 1) / \(headings.count) · H\(heading.level)")
+            )
+        }
+    }
+
+    private func activateNoteRailItem(_ item: ContentRailItem, railOnly: Bool) {
+        guard let index = Int(item.id.replacingOccurrences(of: "note-heading-", with: "")) else { return }
+        activeNoteRailID = item.id
+        let navigate = {
+            store.noteEditorCommand = NoteEditorCommand(kind: .scrollToHeading, markdown: String(index))
+        }
+        if railOnly {
+            store.requestPaneExpansion(.notes)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.24, execute: navigate)
+        } else {
+            navigate()
+        }
+    }
+
+    private func railPreviewText(_ value: String) -> String {
+        let collapsed = value.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        return String(collapsed.prefix(180))
+    }
+
     private var richEditor: some View {
         let itemID = store.activeNoteItemID
         return RichMarkdownEditorView(documentID: itemID ?? "", markdown: noteMarkdownBinding, command: Binding(get: {
@@ -609,6 +680,8 @@ struct NotePaneView: View {
             flushNoteDraft(immediate: true)
             store.updateSelection(text, source: .note, anchor: anchor)
             store.askSelection()
+        }, onActiveHeadingChange: { index in
+            activeNoteRailID = index.map { "note-heading-\($0)" }
         }, onWikiLink: { title in
             flushNoteDraft(immediate: true)
             store.openOrCreateWikiNote(title: title)
@@ -1079,7 +1152,19 @@ struct MarkdownSourceEditor: NSViewRepresentable {
                 applyPatch(command.markdown, in: textView)
             case .insertMarkdown:
                 insertMarkdown(command.markdown, in: textView)
+            case .scrollToHeading:
+                scrollToHeading(command.markdown, in: textView)
             }
+        }
+
+        private func scrollToHeading(_ rawIndex: String, in textView: NSTextView) {
+            guard let targetIndex = Int(rawIndex), targetIndex >= 0 else { return }
+            let pattern = #"(?m)^#{1,4}[\t ]+.+$"#
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
+            let fullRange = NSRange(location: 0, length: (textView.string as NSString).length)
+            let matches = regex.matches(in: textView.string, range: fullRange)
+            guard matches.indices.contains(targetIndex) else { return }
+            textView.scrollRangeToVisible(matches[targetIndex].range)
         }
 
         private func replaceSelection(with markdown: String, in textView: NSTextView) {
@@ -1250,64 +1335,102 @@ struct MarkdownPreviewView: View {
     }
 }
 
+private struct AgentRailTurn {
+    var id: UUID
+    var startMessageID: UUID
+    var startIndex: Int
+    var question: String
+    var answer: String
+}
+
 struct AgentPaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
     var showsPaneHeader = true
     var reorderRole: WorkspacePaneRole? = nil
     @FocusState private var draftFocused: Bool
+    @State private var visibleAgentMessageID: UUID?
+    @State private var activeAgentRailID: String?
+    @State private var agentFollowsLatest = true
 
     private let agentBottomAnchorID = "agentConversationBottom"
 
     var body: some View {
-        VStack(spacing: 0) {
-            if showsPaneHeader {
-                WeiBeiPaneHeader(
-                    title: store.ui("对话", "Chat"),
-                    latinMark: store.interfaceLanguage == .chinese ? "CHAT" : nil,
-                    subtitle: store.agentConversationSubtitle,
-                    appearanceMode: store.appearanceMode,
-                    reorderRole: reorderRole
-                ) {
-                    EmptyView()
-                }
-            }
-
+        GeometryReader { paneGeometry in
+            let railOnly = store.layout.allowsRailOnlyPanes && paneGeometry.size.width < ContentRailMetrics.railOnlyThreshold
+            let railItems = agentRailItems
             ScrollViewReader { proxy in
-                GeometryReader { geometry in
-                    let contentWidth = min(max(geometry.size.width - 36, 320), agentContentMaxWidth ?? 760)
-
-                    ScrollView(showsIndicators: true) {
-                        LazyVStack(alignment: .leading, spacing: 12) {
-                            ForEach(store.messages) { message in
-                                agentMessageRow(message: message, geometryWidth: geometry.size.width, contentWidth: contentWidth, proxy: proxy)
+                ZStack(alignment: .topLeading) {
+                    VStack(spacing: 0) {
+                        if showsPaneHeader {
+                            WeiBeiPaneHeader(
+                                title: store.ui("对话", "Chat"),
+                                latinMark: store.interfaceLanguage == .chinese ? "CHAT" : nil,
+                                subtitle: store.agentConversationSubtitle,
+                                appearanceMode: store.appearanceMode,
+                                reorderRole: reorderRole
+                            ) {
+                                EmptyView()
                             }
-                            if store.isAskingAgent {
-                                AgentThinkingIndicator()
-                                    .id("agent-thinking")
-                                    .transition(WeiBeiTransition.message)
-                            }
-                            if store.messages.isEmpty {
-                                emptyAgentState
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .transition(WeiBeiTransition.message)
-                            }
-                            Color.clear
-                                .frame(height: 1)
-                                .id(agentBottomAnchorID)
                         }
-                        .padding(14)
-                        .padding(.top, store.messages.isEmpty ? 22 : 0)
-                        .frame(width: geometry.size.width, alignment: .topLeading)
-                        .frame(minHeight: geometry.size.height, alignment: .topLeading)
-                        .animation(WeiBeiMotion.panel, value: store.messages.count)
+
+                        GeometryReader { geometry in
+                            let availableWidth = max(geometry.size.width - ContentRailMetrics.normalWidth, 1)
+                            let contentWidth = min(max(availableWidth - 36, 320), agentContentMaxWidth ?? 760)
+
+                            ScrollView(showsIndicators: true) {
+                                LazyVStack(alignment: .leading, spacing: 12) {
+                                    ForEach(store.messages) { message in
+                                        agentMessageRow(message: message, geometryWidth: availableWidth, contentWidth: contentWidth, proxy: proxy)
+                                    }
+                                    if store.isAskingAgent {
+                                        AgentThinkingIndicator()
+                                            .id("agent-thinking")
+                                            .transition(WeiBeiTransition.message)
+                                    }
+                                    if store.messages.isEmpty {
+                                        emptyAgentState
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .transition(WeiBeiTransition.message)
+                                    }
+                                    Color.clear
+                                        .frame(height: 1)
+                                        .id(agentBottomAnchorID)
+                                }
+                                .scrollTargetLayout()
+                                .padding(14)
+                                .padding(.top, store.messages.isEmpty ? 22 : 0)
+                                .frame(width: availableWidth, alignment: .topLeading)
+                                .frame(minHeight: geometry.size.height, alignment: .topLeading)
+                                .animation(WeiBeiMotion.panel, value: store.messages.count)
+                            }
+                            .scrollPosition(id: $visibleAgentMessageID, anchor: .center)
+                            .padding(.leading, ContentRailMetrics.normalWidth)
+                        }
+
+                        agentInputTray
                     }
+                    .opacity(railOnly ? 0 : 1)
+                    .allowsHitTesting(!railOnly)
+
+                    ContentRailView(
+                        label: store.ui("对话轨道", "Conversation rail"),
+                        items: railItems,
+                        activeID: activeAgentRailID ?? railItems.first?.id,
+                        appearanceMode: store.appearanceMode,
+                        isRailOnly: railOnly,
+                        topInset: railOnly ? 0 : (showsPaneHeader ? 44 : 34),
+                        bottomInset: railOnly ? 0 : 108,
+                        onActivate: { activateAgentRailItem($0, railOnly: railOnly, proxy: proxy) }
+                    )
+                    .zIndex(4)
                 }
                 .onChange(of: store.messages.count) { _, _ in
                     scrollAgentToBottom(proxy)
                 }
+                .onChange(of: visibleAgentMessageID) { _, messageID in
+                    updateAgentRailPosition(for: messageID)
+                }
             }
-
-            agentInputTray
         }
         .frame(minHeight: 260)
         .foregroundStyle(WeiBeiTheme.ink)
@@ -1357,6 +1480,84 @@ struct AgentPaneView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .id(message.id)
         .transition(WeiBeiTransition.message)
+    }
+
+    private var agentRailTurns: [AgentRailTurn] {
+        var turns: [AgentRailTurn] = []
+        for (index, message) in store.messages.enumerated() {
+            switch message.role {
+            case .user:
+                turns.append(AgentRailTurn(
+                    id: message.id,
+                    startMessageID: message.id,
+                    startIndex: index,
+                    question: message.text,
+                    answer: ""
+                ))
+            case .assistant:
+                if turns.isEmpty {
+                    turns.append(AgentRailTurn(
+                        id: message.id,
+                        startMessageID: message.id,
+                        startIndex: index,
+                        question: store.ui("对话回复", "Response"),
+                        answer: message.text
+                    ))
+                } else if turns[turns.count - 1].answer.isEmpty {
+                    turns[turns.count - 1].answer = message.text
+                } else {
+                    turns[turns.count - 1].answer += "\n\n" + message.text
+                }
+            }
+        }
+        return turns
+    }
+
+    private var agentRailItems: [ContentRailItem] {
+        let turns = agentRailTurns
+        return turns.enumerated().map { index, turn in
+            ContentRailItem(
+                id: "chat-turn-\(turn.id.uuidString)",
+                position: turns.count > 1 ? CGFloat(index) / CGFloat(turns.count - 1) : 0,
+                title: railText(turn.question, fallback: store.ui("第 \(index + 1) 轮对话", "Conversation \(index + 1)")),
+                excerpt: railText(turn.answer, fallback: store.ui("等待回复", "Waiting for response")),
+                metadata: store.ui("第 \(index + 1) / \(turns.count) 轮", "Turn \(index + 1) / \(turns.count)")
+            )
+        }
+    }
+
+    private func activateAgentRailItem(_ item: ContentRailItem, railOnly: Bool, proxy: ScrollViewProxy) {
+        guard let turn = agentRailTurns.first(where: { "chat-turn-\($0.id.uuidString)" == item.id }) else { return }
+        activeAgentRailID = item.id
+        agentFollowsLatest = false
+        let navigate = {
+            withAnimation(WeiBeiMotion.panel) {
+                proxy.scrollTo(turn.startMessageID, anchor: .center)
+            }
+        }
+        if railOnly {
+            store.requestPaneExpansion(.agent)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.24, execute: navigate)
+        } else {
+            navigate()
+        }
+    }
+
+    private func updateAgentRailPosition(for messageID: UUID?) {
+        guard let messageID,
+              let visibleIndex = store.messages.firstIndex(where: { $0.id == messageID }) else { return }
+        agentFollowsLatest = messageID == store.messages.last?.id
+        if let turn = agentRailTurns.last(where: { $0.startIndex <= visibleIndex }) {
+            activeAgentRailID = "chat-turn-\(turn.id.uuidString)"
+        }
+    }
+
+    private func railText(_ value: String, fallback: String) -> String {
+        let collapsed = value
+            .replacingOccurrences(of: #"[`*_>#\[\]()]"#, with: "", options: .regularExpression)
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        return collapsed.isEmpty ? fallback : String(collapsed.prefix(180))
     }
 
     private var agentPrompt: String {
@@ -1469,6 +1670,7 @@ struct AgentPaneView: View {
     }
 
     private func scrollAgentToBottom(_ proxy: ScrollViewProxy) {
+        guard agentFollowsLatest else { return }
         DispatchQueue.main.async {
             withAnimation(WeiBeiMotion.panel) {
                 proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)

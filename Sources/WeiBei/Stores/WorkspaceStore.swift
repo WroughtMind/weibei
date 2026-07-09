@@ -29,6 +29,11 @@ struct ThreePaneReorderDrag: Equatable {
     var targetIndex: Int?
 }
 
+struct PaneExpansionRequest: Equatable {
+    let id = UUID()
+    let role: WorkspacePaneRole
+}
+
 @MainActor
 final class WorkspaceStore: ObservableObject {
     @Published var importedItems: [StudyItem] = []
@@ -54,6 +59,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var layout: WorkspaceLayout = .documentAgentNotes
     @Published var threePaneOrder: [WorkspacePaneRole] = WorkspacePaneRole.defaultThreePaneOrder
     @Published var threePaneReorderDrag: ThreePaneReorderDrag?
+    @Published private(set) var paneExpansionRequest: PaneExpansionRequest?
     @Published var agentSurface: AgentSurface = .bottomDrawer
     @Published var noteRenderMode: NoteRenderMode = .rich
     @Published var showQuietInsight = true
@@ -940,6 +946,15 @@ final class WorkspaceStore: ObservableObject {
         let nextFrames = Dictionary(uniqueKeysWithValues: zip(order, frames))
         guard !sameReorderFrames(nextFrames, threePaneReorderFrames) else { return }
         threePaneReorderFrames = nextFrames
+    }
+
+    func requestPaneExpansion(_ role: WorkspacePaneRole) {
+        paneExpansionRequest = PaneExpansionRequest(role: role)
+    }
+
+    func completePaneExpansionRequest(_ id: UUID) {
+        guard paneExpansionRequest?.id == id else { return }
+        paneExpansionRequest = nil
     }
 
     func threePaneReorderFrameList(order: [WorkspacePaneRole], fallback: [CGRect]) -> [CGRect] {

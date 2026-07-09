@@ -331,6 +331,15 @@ public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    public var allowsRailOnlyPanes: Bool {
+        switch self {
+        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+            return true
+        case .immersiveReading, .immersiveConversation, .immersiveWriting:
+            return false
+        }
+    }
+
     public var defaultThreePaneOrder: [WorkspacePaneRole]? {
         switch self {
         case .documentAgentNotes:
@@ -435,6 +444,7 @@ public struct NoteEditorCommand: Identifiable, Hashable {
         case replaceSelection
         case applyAgentPatch
         case insertMarkdown
+        case scrollToHeading
     }
 
     public var id: UUID

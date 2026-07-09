@@ -815,10 +815,6 @@ private struct LayoutContentView: View {
         numericBinding($writingLeftSplitStorage)
     }
 
-    private var normalSidePaneMinimum: CGFloat {
-        store.showLibrary ? 220 : 260
-    }
-
     @ViewBuilder
     private func documentPaneLayoutView() -> some View {
         let order = store.visibleDocumentPaneOrder
@@ -836,13 +832,8 @@ private struct LayoutContentView: View {
         }
     }
 
-    private func minimumWidth(for role: WorkspacePaneRole) -> CGFloat {
-        switch role {
-        case .reader:
-            return 320
-        case .agent, .notes:
-            return normalSidePaneMinimum
-        }
+    private func minimumWidth(for _: WorkspacePaneRole) -> CGFloat {
+        ContentRailMetrics.railOnlyWidth
     }
 
     @ViewBuilder
@@ -853,7 +844,9 @@ private struct LayoutContentView: View {
                 ResizableTwoPane(
                     split: halfSplit,
                     minFirst: minimumWidth(for: order[0]),
-                    minSecond: minimumWidth(for: order[1])
+                    minSecond: minimumWidth(for: order[1]),
+                    roles: order,
+                    allowRailSnapping: true
                 ) {
                     reorderablePaneView(for: order[0])
                 } second: {
@@ -878,7 +871,9 @@ private struct LayoutContentView: View {
                     secondSplit: secondSplit,
                     minFirst: minimumWidth(for: order[0]),
                     minSecond: minimumWidth(for: order[1]),
-                    minThird: minimumWidth(for: order[2])
+                    minThird: minimumWidth(for: order[2]),
+                    roles: order,
+                    allowRailSnapping: true
                 ) {
                     reorderablePaneView(for: order[0])
                 } second: {
@@ -1423,6 +1418,8 @@ private struct ResizableTwoPane<First: View, Second: View>: NSViewRepresentable 
     @Binding var split: CGFloat
     var minFirst: CGFloat = 320
     var minSecond: CGFloat = 320
+    var roles: [WorkspacePaneRole] = []
+    var allowRailSnapping = false
     private let first: First
     private let second: Second
 
@@ -1430,18 +1427,27 @@ private struct ResizableTwoPane<First: View, Second: View>: NSViewRepresentable 
         split: Binding<CGFloat>,
         minFirst: CGFloat = 320,
         minSecond: CGFloat = 320,
+        roles: [WorkspacePaneRole] = [],
+        allowRailSnapping: Bool = false,
         @ViewBuilder first: () -> First,
         @ViewBuilder second: () -> Second
     ) {
         _split = split
         self.minFirst = minFirst
         self.minSecond = minSecond
+        self.roles = roles
+        self.allowRailSnapping = allowRailSnapping
         self.first = first()
         self.second = second()
     }
 
     func makeCoordinator() -> NativeSplitCoordinator {
-        NativeSplitCoordinator(kind: .two(split: $split), minimums: [minFirst, minSecond])
+        NativeSplitCoordinator(
+            kind: .two(split: $split),
+            minimums: [minFirst, minSecond],
+            roles: roles,
+            allowRailSnapping: allowRailSnapping
+        )
     }
 
     func makeNSView(context: Context) -> WeiBeiSplitView {
@@ -1454,11 +1460,18 @@ private struct ResizableTwoPane<First: View, Second: View>: NSViewRepresentable 
     }
 
     func updateNSView(_ splitView: WeiBeiSplitView, context: Context) {
+        context.coordinator.captureReadableWidths(in: splitView)
         context.coordinator.kind = .two(split: $split)
         context.coordinator.minimums = [minFirst, minSecond]
+        context.coordinator.roles = roles
+        context.coordinator.allowRailSnapping = allowRailSnapping
+        context.coordinator.onExpansionRequestHandled = { requestID in
+            store.completePaneExpansionRequest(requestID)
+        }
         updateHost(at: 0, in: splitView, with: first)
         updateHost(at: 1, in: splitView, with: second)
         context.coordinator.applyStoredPositionsWhenNeeded(in: splitView)
+        context.coordinator.handleExpansionRequest(store.paneExpansionRequest, in: splitView)
     }
 
     private func nativeHost<V: View>(_ view: V) -> NSHostingView<AnyView> {
@@ -1483,6 +1496,8 @@ private struct ResizableThreePane<First: View, Second: View, Third: View>: NSVie
     var minFirst: CGFloat = 320
     var minSecond: CGFloat = 260
     var minThird: CGFloat = 260
+    var roles: [WorkspacePaneRole] = []
+    var allowRailSnapping = false
     var onFramesChange: (([CGRect]) -> Void)? = nil
     private let first: First
     private let second: Second
@@ -1494,6 +1509,8 @@ private struct ResizableThreePane<First: View, Second: View, Third: View>: NSVie
         minFirst: CGFloat = 320,
         minSecond: CGFloat = 260,
         minThird: CGFloat = 260,
+        roles: [WorkspacePaneRole] = [],
+        allowRailSnapping: Bool = false,
         @ViewBuilder first: () -> First,
         @ViewBuilder second: () -> Second,
         @ViewBuilder third: () -> Third,
@@ -1504,6 +1521,8 @@ private struct ResizableThreePane<First: View, Second: View, Third: View>: NSVie
         self.minFirst = minFirst
         self.minSecond = minSecond
         self.minThird = minThird
+        self.roles = roles
+        self.allowRailSnapping = allowRailSnapping
         self.onFramesChange = onFramesChange
         self.first = first()
         self.second = second()
@@ -1511,7 +1530,13 @@ private struct ResizableThreePane<First: View, Second: View, Third: View>: NSVie
     }
 
     func makeCoordinator() -> NativeSplitCoordinator {
-        NativeSplitCoordinator(kind: .three(first: $firstSplit, second: $secondSplit), minimums: [minFirst, minSecond, minThird], onFramesChange: onFramesChange)
+        NativeSplitCoordinator(
+            kind: .three(first: $firstSplit, second: $secondSplit),
+            minimums: [minFirst, minSecond, minThird],
+            roles: roles,
+            allowRailSnapping: allowRailSnapping,
+            onFramesChange: onFramesChange
+        )
     }
 
     func makeNSView(context: Context) -> WeiBeiSplitView {
@@ -1525,13 +1550,20 @@ private struct ResizableThreePane<First: View, Second: View, Third: View>: NSVie
     }
 
     func updateNSView(_ splitView: WeiBeiSplitView, context: Context) {
+        context.coordinator.captureReadableWidths(in: splitView)
         context.coordinator.kind = .three(first: $firstSplit, second: $secondSplit)
         context.coordinator.minimums = [minFirst, minSecond, minThird]
+        context.coordinator.roles = roles
+        context.coordinator.allowRailSnapping = allowRailSnapping
         context.coordinator.onFramesChange = onFramesChange
+        context.coordinator.onExpansionRequestHandled = { requestID in
+            store.completePaneExpansionRequest(requestID)
+        }
         updateHost(at: 0, in: splitView, with: first)
         updateHost(at: 1, in: splitView, with: second)
         updateHost(at: 2, in: splitView, with: third)
         context.coordinator.applyStoredPositionsWhenNeeded(in: splitView)
+        context.coordinator.handleExpansionRequest(store.paneExpansionRequest, in: splitView)
     }
 
     private func nativeHost<V: View>(_ view: V) -> NSHostingView<AnyView> {
@@ -1603,15 +1635,33 @@ private final class NativeSplitCoordinator: NSObject, NSSplitViewDelegate {
 
     var kind: Kind
     var minimums: [CGFloat]
+    var roles: [WorkspacePaneRole]
+    var allowRailSnapping: Bool
     var onFramesChange: (([CGRect]) -> Void)?
+    var onExpansionRequestHandled: ((UUID) -> Void)?
     private var isDragging = false
     private var isApplyingStoredPositions = false
     private var lastAppliedWidth: CGFloat = 0
     private var saveWork: DispatchWorkItem?
+    private var recentReadableWidths: [WorkspacePaneRole: CGFloat] = [:]
+    private var handledExpansionRequestID: UUID?
 
-    init(kind: Kind, minimums: [CGFloat], onFramesChange: (([CGRect]) -> Void)? = nil) {
+    private let railWidth = ContentRailMetrics.railOnlyWidth
+    private let railSnapThreshold = ContentRailMetrics.snapThreshold
+    private let readableWidthThreshold = ContentRailMetrics.readableWidth
+    private let defaultReadableWidth = ContentRailMetrics.defaultReadableWidth
+
+    init(
+        kind: Kind,
+        minimums: [CGFloat],
+        roles: [WorkspacePaneRole] = [],
+        allowRailSnapping: Bool = false,
+        onFramesChange: (([CGRect]) -> Void)? = nil
+    ) {
         self.kind = kind
         self.minimums = minimums
+        self.roles = roles
+        self.allowRailSnapping = allowRailSnapping
         self.onFramesChange = onFramesChange
     }
 
@@ -1619,13 +1669,20 @@ private final class NativeSplitCoordinator: NSObject, NSSplitViewDelegate {
         splitView.isVertical = true
         splitView.dividerStyle = .thin
         splitView.delegate = self
-        splitView.onDragStart = { [weak self] in
-            self?.isDragging = true
-            self?.saveWork?.cancel()
+        splitView.onDragStart = { [weak self, weak splitView] in
+            guard let self else { return }
+            if let splitView {
+                self.captureReadableWidths(in: splitView)
+            }
+            self.isDragging = true
+            self.saveWork?.cancel()
         }
         splitView.onDragEnd = { [weak self, weak splitView] in
             guard let self, let splitView else { return }
             self.isDragging = false
+            if self.allowRailSnapping {
+                self.snapRailWidthsIfNeeded(in: splitView)
+            }
             self.saveRatios(from: splitView)
             self.reportFrames(from: splitView)
         }
@@ -1669,8 +1726,37 @@ private final class NativeSplitCoordinator: NSObject, NSSplitViewDelegate {
             splitView.setPosition(actualFirstWidth + splitView.dividerThickness + secondWidth, ofDividerAt: 1)
         }
 
-        lastAppliedWidth = splitView.bounds.width
-        reportFrames(from: splitView)
+        if allowRailSnapping {
+            snapRailWidthsIfNeeded(in: splitView)
+        }
+
+        saveRatios(from: splitView)
+    }
+
+    func captureReadableWidths(in splitView: NSSplitView) {
+        guard allowRailSnapping, roles.count == splitView.arrangedSubviews.count else { return }
+        for (role, view) in zip(roles, splitView.arrangedSubviews) where view.frame.width >= readableWidthThreshold {
+            recentReadableWidths[role] = view.frame.width
+        }
+    }
+
+    func handleExpansionRequest(_ request: PaneExpansionRequest?, in splitView: NSSplitView) {
+        guard allowRailSnapping,
+              let request,
+              request.id != handledExpansionRequestID,
+              roles.count == splitView.arrangedSubviews.count,
+              let requestedIndex = roles.firstIndex(of: request.role) else { return }
+
+        handledExpansionRequestID = request.id
+        expandPane(at: requestedIndex, role: request.role, in: splitView)
+        snapRailWidthsIfNeeded(in: splitView)
+        saveRatios(from: splitView)
+        splitView.needsLayout = true
+        splitView.layoutSubtreeIfNeeded()
+
+        DispatchQueue.main.async { [weak self] in
+            self?.onExpansionRequestHandled?(request.id)
+        }
     }
 
     func splitViewDidResizeSubviews(_ notification: Notification) {
@@ -1710,8 +1796,99 @@ private final class NativeSplitCoordinator: NSObject, NSSplitViewDelegate {
             first.wrappedValue = clamped(widths[0] / usable, min: 0, max: 1)
             second.wrappedValue = clamped((widths[0] + widths[1]) / usable, min: 0, max: 1)
         }
+        captureReadableWidths(in: splitView)
         lastAppliedWidth = splitView.bounds.width
         reportFrames(from: splitView)
+    }
+
+    private func snapRailWidthsIfNeeded(in splitView: NSSplitView) {
+        let widths = splitView.arrangedSubviews.map(\.frame.width)
+        guard widths.count >= 2 else { return }
+
+        let snapIndices = widths.indices.filter { widths[$0] < railSnapThreshold }
+        guard snapIndices.contains(where: { abs(widths[$0] - railWidth) > 0.5 }) else { return }
+
+        var targetWidths = widths
+        for index in snapIndices {
+            targetWidths[index] = railWidth
+        }
+
+        let readableIndices = widths.indices.filter { !snapIndices.contains($0) }
+        let fallbackRecipient = widths.indices.max { widths[$0] < widths[$1] }
+        for index in snapIndices {
+            let releasedWidth = widths[index] - railWidth
+            guard releasedWidth > 0.5 else { continue }
+            let recipient = readableIndices.min { lhs, rhs in
+                let lhsDistance = abs(lhs - index)
+                let rhsDistance = abs(rhs - index)
+                if lhsDistance == rhsDistance {
+                    return widths[lhs] > widths[rhs]
+                }
+                return lhsDistance < rhsDistance
+            } ?? fallbackRecipient
+            if let recipient {
+                targetWidths[recipient] += releasedWidth
+            }
+        }
+
+        applyPaneWidths(targetWidths, in: splitView)
+    }
+
+    private func expandPane(at requestedIndex: Int, role: WorkspacePaneRole, in splitView: NSSplitView) {
+        let widths = splitView.arrangedSubviews.map(\.frame.width)
+        guard widths.indices.contains(requestedIndex) else { return }
+        let usable = max(
+            splitView.bounds.width - CGFloat(widths.count - 1) * splitView.dividerThickness,
+            1
+        )
+        let otherIndices = widths.indices.filter { $0 != requestedIndex }
+        let otherMinimumTotal = otherIndices.reduce(CGFloat(0)) { partial, index in
+            partial + (minimums[safe: index] ?? railWidth)
+        }
+        let requestedMinimum = minimums[safe: requestedIndex] ?? railWidth
+        let desiredWidth = max(recentReadableWidths[role] ?? defaultReadableWidth, readableWidthThreshold)
+        let requestedWidth = clamped(
+            desiredWidth,
+            min: requestedMinimum,
+            max: max(requestedMinimum, usable - otherMinimumTotal)
+        )
+
+        var targetWidths = Array(repeating: CGFloat(0), count: widths.count)
+        targetWidths[requestedIndex] = requestedWidth
+        let remainingWidth = max(0, usable - requestedWidth)
+        let extraAvailable = max(0, remainingWidth - otherMinimumTotal)
+        let currentExtras = otherIndices.map { index in
+            max(0, widths[index] - (minimums[safe: index] ?? railWidth))
+        }
+        let currentExtraTotal = currentExtras.reduce(0, +)
+
+        for (offset, index) in otherIndices.enumerated() {
+            let minimum = minimums[safe: index] ?? railWidth
+            let share: CGFloat
+            if currentExtraTotal > 0.5 {
+                share = extraAvailable * currentExtras[offset] / currentExtraTotal
+            } else {
+                share = extraAvailable / CGFloat(max(otherIndices.count, 1))
+            }
+            targetWidths[index] = minimum + share
+        }
+
+        if let correctionIndex = otherIndices.last {
+            targetWidths[correctionIndex] += usable - targetWidths.reduce(0, +)
+        }
+        applyPaneWidths(targetWidths, in: splitView)
+    }
+
+    private func applyPaneWidths(_ widths: [CGFloat], in splitView: NSSplitView) {
+        guard widths.count == splitView.arrangedSubviews.count, widths.count >= 2 else { return }
+        var leadingWidth: CGFloat = 0
+        for dividerIndex in 0..<(widths.count - 1) {
+            leadingWidth += widths[dividerIndex]
+            splitView.setPosition(
+                leadingWidth + CGFloat(dividerIndex) * splitView.dividerThickness,
+                ofDividerAt: dividerIndex
+            )
+        }
     }
 
     private func reportFrames(from splitView: NSSplitView) {
