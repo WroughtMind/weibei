@@ -40,6 +40,16 @@ enum ContentRailMetrics {
     static let defaultReadableWidth: CGFloat = 420
 }
 
+enum ContentRailWaveMetrics {
+    static let peakLength: CGFloat = 28
+    static let influences: [CGFloat] = [1, 0.70, 0.41, 0.20]
+
+    static func length(normal: CGFloat, stepDistance: Int) -> CGFloat {
+        guard influences.indices.contains(stepDistance) else { return normal }
+        return normal + (peakLength - normal) * influences[stepDistance]
+    }
+}
+
 struct ContentRailView: View {
     let label: String
     let items: [ContentRailItem]
@@ -96,7 +106,7 @@ struct ContentRailView: View {
                    let width = previewWidth(in: geometry.size.width) {
                     previewCard(for: items[previewIndex], width: width)
                         .position(
-                            x: compactWidth + 12 + width / 2,
+                            x: previewLeadingX + width / 2,
                             y: previewY(
                                 index: previewIndex,
                                 railHeight: height,
@@ -140,6 +150,10 @@ struct ContentRailView: View {
         isRailOnly ? 4 : 3
     }
 
+    private var previewLeadingX: CGFloat {
+        tickLeadingInset + ContentRailWaveMetrics.peakLength + 8
+    }
+
     private var resolvedActiveID: String? {
         activeID ?? items.first?.id
     }
@@ -165,6 +179,7 @@ struct ContentRailView: View {
                 ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                     railButton(
                         for: item,
+                        index: index,
                         hitHeight: hitHeight
                     )
                     .position(
@@ -211,9 +226,9 @@ struct ContentRailView: View {
 
     private func previewWidth(in totalWidth: CGFloat) -> CGFloat? {
         guard !isRailOnly else { return nil }
-        let available = totalWidth - compactWidth - 20
+        let available = totalWidth - previewLeadingX - 8
         guard available >= 220 else { return nil }
-        return min(336, available)
+        return min(360, available)
     }
 
     private func previewY(index: Int, railHeight: CGFloat, totalHeight: CGFloat) -> CGFloat {
@@ -226,6 +241,7 @@ struct ContentRailView: View {
 
     private func railButton(
         for item: ContentRailItem,
+        index: Int,
         hitHeight: CGFloat
     ) -> some View {
         let active = item.id == resolvedActiveID
@@ -236,7 +252,7 @@ struct ContentRailView: View {
             Rectangle()
                 .fill(tickColor(for: item, active: active))
                 .frame(
-                    width: tickLength(for: item, active: active),
+                    width: tickLength(for: item, index: index, active: active),
                     height: active ? 2 : 1.5
                 )
                 .frame(width: compactWidth - tickLeadingInset, height: hitHeight, alignment: .leading)
@@ -282,14 +298,21 @@ struct ContentRailView: View {
             .accessibilityHidden(true)
     }
 
-    private func tickLength(for item: ContentRailItem, active: Bool) -> CGFloat {
+    private func tickLength(for item: ContentRailItem, index: Int, active: Bool) -> CGFloat {
         let normal: CGFloat = active ? 8 : (item.level == 0 ? 7 : 6)
-        return item.id == emphasizedID ? 34 : normal
+        guard let emphasizedID,
+              let emphasizedIndex = items.firstIndex(where: { $0.id == emphasizedID }) else {
+            return normal
+        }
+        return ContentRailWaveMetrics.length(
+            normal: normal,
+            stepDistance: abs(index - emphasizedIndex)
+        )
     }
 
     private func tickColor(for item: ContentRailItem, active: Bool) -> Color {
         if item.id == highlightedID {
-            return appearanceMode == .inkstone ? WeiBeiTheme.onCinnabar : WeiBeiTheme.cinnabar
+            return WeiBeiTheme.cinnabar
         }
         return WeiBeiTheme.secondaryInk.opacity(appearanceMode == .inkstone ? 0.78 : 0.58)
     }
