@@ -47,6 +47,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var showReader = true
     @Published var showAgent = true
     @Published var showNotes = true
+    @Published var showDailyInspiration = true
     @Published var commandPalettePresented = false
     @Published var librarySearch = ""
     @Published var readerSearch = ""
@@ -1376,6 +1377,12 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
+    func setDailyInspirationEnabled(_ enabled: Bool) {
+        guard showDailyInspiration != enabled else { return }
+        showDailyInspiration = enabled
+        save()
+    }
+
     func toggleImportedDocumentColorAdaptation() {
         setImportedDocumentColorAdaptation(!adaptImportedDocumentColors)
     }
@@ -2071,11 +2078,29 @@ final class WorkspaceStore: ObservableObject {
 
     func runVerificationScenarioIfNeeded() async {
         guard !didRunVerificationScenario else { return }
+        guard Self.environmentValue("WEIBEI_SUPPRESS_ACTIVATION") == "1" else { return }
         let scenario = Self.environmentValue("WEIBEI_VERIFY_SCENARIO")
+        let emptyWorkspaceScenarios: Set<String> = [
+            "empty-workspace-light-wide",
+            "empty-workspace-light-narrow",
+            "empty-workspace-dark-wide",
+            "empty-workspace-dark-narrow",
+            "empty-workspace-calligraphy-light",
+            "empty-workspace-calligraphy-dark",
+            "empty-workspace-inspiration-off",
+            "empty-workspace-open-doc",
+            "empty-workspace-open-chat",
+            "empty-workspace-open-notes",
+        ]
         guard scenario == "offline-learning-flow"
             || scenario == "immersive-conversation-flow"
-            || scenario == "notebook-creation-flow" else { return }
+            || scenario == "notebook-creation-flow"
+            || emptyWorkspaceScenarios.contains(scenario) else { return }
         didRunVerificationScenario = true
+        if emptyWorkspaceScenarios.contains(scenario) {
+            configureEmptyWorkspaceVerificationScenario(scenario)
+            return
+        }
         layout = scenario == "immersive-conversation-flow" ? .immersiveConversation : .documentAgentNotes
         if scenario == "notebook-creation-flow" {
             layout = .immersiveWriting
@@ -2099,6 +2124,34 @@ final class WorkspaceStore: ObservableObject {
         agentDraft = ui("解释选区，并整理成可以写入笔记的要点。", "Explain the selection and turn it into note-ready points.")
         await askAgent()
         applyLastAgentAnswerToNote()
+    }
+
+    private func configureEmptyWorkspaceVerificationScenario(_ scenario: String) {
+        layout = .documentAgentNotes
+        showLibrary = false
+        agentSurface = .hidden
+        appearanceMode = scenario.contains("dark") ? .inkstone : .paper
+        showDailyInspiration = scenario != "empty-workspace-inspiration-off"
+
+        if scenario.hasPrefix("empty-workspace-open-") {
+            select(itemID: "sample-html")
+            updateNote("# Empty workspace entry state marker\n\nPane toggles must preserve this note.\n")
+        }
+
+        showReader = false
+        showAgent = false
+        showNotes = false
+
+        switch scenario {
+        case "empty-workspace-open-doc":
+            toggleReader()
+        case "empty-workspace-open-chat":
+            toggleAgent()
+        case "empty-workspace-open-notes":
+            toggleNotes()
+        default:
+            save()
+        }
     }
 
     func replaceSelectionWithLastAgentAnswer() {
@@ -2583,6 +2636,7 @@ final class WorkspaceStore: ObservableObject {
         showReader = snapshot.showReader ?? true
         showAgent = snapshot.showAgent ?? legacyRightPane ?? true
         showNotes = snapshot.showNotes ?? legacyRightPane ?? true
+        showDailyInspiration = snapshot.showDailyInspiration ?? true
         if let appearanceModeRaw = snapshot.appearanceModeRaw,
            let appearanceMode = WeiBeiAppearanceMode(rawValue: appearanceModeRaw) {
             self.appearanceMode = appearanceMode
@@ -2636,6 +2690,7 @@ final class WorkspaceStore: ObservableObject {
             showAgent: showAgent,
             showNotes: showNotes,
             showRightPane: showRightPane,
+            showDailyInspiration: showDailyInspiration,
             appearanceModeRaw: appearanceMode.rawValue,
             adaptImportedDocumentColors: adaptImportedDocumentColors,
             interfaceLanguageRaw: interfaceLanguage.rawValue

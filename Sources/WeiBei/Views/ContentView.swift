@@ -820,7 +820,7 @@ private struct LayoutContentView: View {
         let order = store.visibleDocumentPaneOrder
         switch order.count {
         case 0:
-            EmptyWorkspaceView()
+            EmptyWorkspaceLauncherView()
                 .transition(WeiBeiTransition.layout)
         case 1:
             paneView(for: order[0])
