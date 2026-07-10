@@ -313,6 +313,7 @@ struct NotePaneView: View {
                     activeID: activeNoteRailID ?? railItems.first?.id,
                     appearanceMode: store.appearanceMode,
                     isRailOnly: railOnly,
+                    availableWidth: geometry.size.width,
                     topInset: railOnly ? 0 : (showsPaneHeader ? 44 : 34),
                     onActivate: { activateNoteRailItem($0, railOnly: railOnly) }
                 )
@@ -1416,6 +1417,7 @@ struct AgentPaneView: View {
                         activeID: activeAgentRailID ?? railItems.first?.id,
                         appearanceMode: store.appearanceMode,
                         isRailOnly: railOnly,
+                        availableWidth: paneGeometry.size.width,
                         topInset: railOnly ? 0 : (showsPaneHeader ? 44 : 34),
                         bottomInset: railOnly ? 0 : 108,
                         onActivate: { activateAgentRailItem($0, railOnly: railOnly, proxy: proxy) }

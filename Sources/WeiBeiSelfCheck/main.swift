@@ -906,6 +906,12 @@ let inspirationCatalogSource = (try? String(contentsOf: inspirationCatalogSource
 let contentRailSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/ContentRailView.swift")
 let contentRailSource = (try? String(contentsOf: contentRailSourceURL, encoding: .utf8)) ?? ""
+let contentRailReaderSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Views/ReaderView.swift")
+let contentRailReaderSource = (try? String(contentsOf: contentRailReaderSourceURL, encoding: .utf8)) ?? ""
+let contentRailPaneSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Views/NotesAgentView.swift")
+let contentRailPaneSource = (try? String(contentsOf: contentRailPaneSourceURL, encoding: .utf8)) ?? ""
 let contentRailGeometrySource: String = {
     guard let start = contentRailSource.range(of: "private func compactRail(height: CGFloat)")?.lowerBound,
           let end = contentRailSource.range(of: "private func previewCard", range: start..<contentRailSource.endIndex)?.lowerBound else {
@@ -916,6 +922,10 @@ let contentRailGeometrySource: String = {
 expect(contentRailSource.contains("struct ContentRailView: View")
     && contentRailSource.contains("static let railOnlyWidth: CGFloat = 88")
     && contentRailSource.contains("static let normalWidth: CGFloat = 40")
+    && contentRailSource.contains("let availableWidth: CGFloat?")
+    && contentRailSource.contains("availableWidth: CGFloat? = nil")
+    && contentRailSource.contains("previewWidth(in: availableWidth ?? geometry.size.width)")
+    && contentRailSource.contains(".frame(width: railWidth)")
     && contentRailSource.contains("private func compactHeight(in totalHeight: CGFloat)")
     && contentRailSource.contains("private func compactCenterY(in totalHeight: CGFloat)")
     && contentRailSource.contains("let desiredHeight = max(20, 14 + CGFloat(max(items.count - 1, 0)) * 8)")
@@ -956,6 +966,10 @@ expect(contentRailSource.contains("struct ContentRailView: View")
     && !contentRailSource.contains("pointerY")
     && contentRailSource.contains("SpatialTapGesture()")
     && contentRailSource.contains("private func nearestItem"), "shared content rail left-aligns a short Codex-like distance wave with equal spacing, keeps mode-aware gray ticks visible, places a wider non-interactive preview directly after the peak, and preserves one-click dense mapping, reduced motion, and real image previews")
+expect(contentRailReaderSource.contains("contentRail(isRailOnly: railOnly, availableWidth: geometry.size.width)")
+    && contentRailReaderSource.contains("availableWidth: availableWidth")
+    && contentRailPaneSource.components(separatedBy: "availableWidth:").count >= 3,
+    "content rails keep a narrow hit surface while receiving real pane width only for preview layout")
 expect(stableDocumentSource.contains("EmptyWorkspaceLauncherView().environmentObject(store)")
     && emptyWorkspaceSource.contains("Text(title)")
     && emptyWorkspaceSource.contains("title: \"DOC\"")

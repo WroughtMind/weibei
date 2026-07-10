@@ -56,6 +56,7 @@ struct ContentRailView: View {
     let activeID: String?
     let appearanceMode: WeiBeiAppearanceMode
     let isRailOnly: Bool
+    let availableWidth: CGFloat?
     let topInset: CGFloat
     let bottomInset: CGFloat
     let onActivate: (ContentRailItem) -> Void
@@ -75,6 +76,7 @@ struct ContentRailView: View {
         activeID: String? = nil,
         appearanceMode: WeiBeiAppearanceMode,
         isRailOnly: Bool = false,
+        availableWidth: CGFloat? = nil,
         topInset: CGFloat = 0,
         bottomInset: CGFloat = 0,
         onActivate: @escaping (ContentRailItem) -> Void,
@@ -85,6 +87,7 @@ struct ContentRailView: View {
         self.activeID = activeID
         self.appearanceMode = appearanceMode
         self.isRailOnly = isRailOnly
+        self.availableWidth = availableWidth
         self.topInset = topInset
         self.bottomInset = bottomInset
         self.onActivate = onActivate
@@ -103,7 +106,7 @@ struct ContentRailView: View {
 
                 if let previewID,
                    let previewIndex = items.firstIndex(where: { $0.id == previewID }),
-                   let width = previewWidth(in: geometry.size.width) {
+                   let width = previewWidth(in: availableWidth ?? geometry.size.width) {
                     previewCard(for: items[previewIndex], width: width)
                         .position(
                             x: previewLeadingX + width / 2,
@@ -119,6 +122,7 @@ struct ContentRailView: View {
                 }
             }
         }
+        .frame(width: railWidth)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(label))
         .animation(WeiBeiMotion.panel, value: isRailOnly)
@@ -144,6 +148,10 @@ struct ContentRailView: View {
 
     private var compactWidth: CGFloat {
         isRailOnly ? 42 : 40
+    }
+
+    private var railWidth: CGFloat {
+        isRailOnly ? ContentRailMetrics.railOnlyWidth : ContentRailMetrics.normalWidth
     }
 
     private var tickLeadingInset: CGFloat {
