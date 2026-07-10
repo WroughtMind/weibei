@@ -186,6 +186,7 @@ private final class StableDocumentDividerView: NSView {
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { false }
+    override var mouseDownCanMoveWindow: Bool { false }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)

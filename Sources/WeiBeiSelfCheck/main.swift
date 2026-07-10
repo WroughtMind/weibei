@@ -978,6 +978,9 @@ expect(stableDocumentSource.contains("EmptyWorkspaceLauncherView().environmentOb
     && emptyWorkspaceSource.contains("action: store.toggleReader")
     && emptyWorkspaceSource.contains("action: store.toggleAgent")
     && emptyWorkspaceSource.contains("action: store.toggleNotes"), "empty workspace exposes direct document, chat, and notes entries through the existing pane toggles")
+expect(stableDocumentSource.contains("override var mouseDownCanMoveWindow: Bool { false }")
+    && stableDocumentSource.contains("override func mouseDragged(with event: NSEvent)"),
+    "stable pane dividers resize panes instead of being claimed by movable window background dragging")
 expect(emptyWorkspaceSource.contains("WeiBeiTypography.englishBrandFont")
     && emptyWorkspaceSource.contains("entryDivider")
     && emptyWorkspaceSource.contains("Rectangle()")
