@@ -303,7 +303,6 @@ struct NotePaneView: View {
                     }
 
                     noteBody
-                        .padding(.leading, ContentRailMetrics.normalWidth)
                 }
                 .opacity(railOnly ? 0 : 1)
                 .allowsHitTesting(!railOnly)
@@ -1374,7 +1373,7 @@ struct AgentPaneView: View {
                         }
 
                         GeometryReader { geometry in
-                            let availableWidth = max(geometry.size.width - ContentRailMetrics.normalWidth, 1)
+                            let availableWidth = max(geometry.size.width, 1)
                             let contentWidth = min(max(availableWidth - 36, 320), agentContentMaxWidth ?? 760)
 
                             ScrollView(showsIndicators: true) {
@@ -1404,7 +1403,6 @@ struct AgentPaneView: View {
                                 .animation(WeiBeiMotion.panel, value: store.messages.count)
                             }
                             .scrollPosition(id: $visibleAgentMessageID, anchor: .center)
-                            .padding(.leading, ContentRailMetrics.normalWidth)
                         }
 
                         agentInputTray

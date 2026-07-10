@@ -1,5 +1,6 @@
 import AppKit
 import CoreText
+import CryptoKit
 import Foundation
 import PDFKit
 import Security
@@ -86,14 +87,24 @@ expect(EmptyWorkspaceDayPeriod.morning.greeting(language: .chinese).contains("�
     && !EmptyWorkspaceDayPeriod.morning.greeting(language: .english).isEmpty, "empty workspace greetings stay localized and non-empty")
 
 let inspirationItems = EmptyWorkspaceInspirationCatalog.items
-expect(inspirationItems.count >= 6
+let rotationItems = EmptyWorkspaceInspirationCatalog.rotationItems
+let inspirationLanguageTags = Set(inspirationItems.filter { $0.presentation != .formula }.map(\.languageTag))
+expect(inspirationItems.count >= 16
     && EmptyWorkspaceInspirationCatalog.validationErrors.isEmpty
+    && Set(inspirationItems.map(\.category)) == Set(EmptyWorkspaceInspirationCategory.allCases)
+    && Set(["zh-Hant", "ja", "en", "de", "fr"]).isSubset(of: inspirationLanguageTags)
     && inspirationItems.contains(where: { if case .calligraphy = $0.presentation { return true }; return false })
     && inspirationItems.contains(where: { $0.presentation == .quotation })
-    && inspirationItems.contains(where: { $0.presentation == .formula }), "daily inspiration catalog contains validated calligraphy, original-language quotation, and formulas")
+    && inspirationItems.contains(where: { $0.presentation == .formula }), "daily inspiration catalog contains every supported field, at least five original languages, verified calligraphy, quotations, and formulas")
+expect(rotationItems.count == inspirationItems.count
+    && Set(rotationItems.map(\.id)) == Set(inspirationItems.map(\.id))
+    && rotationItems.enumerated().allSatisfy { index, item in
+        item.category != rotationItems[(index + 1) % rotationItems.count].category
+    }, "daily and manual inspiration rotation interleaves fields without losing catalog entries")
 expect(inspirationItems.allSatisfy { item in
     !item.text.isEmpty
         && !item.credit.isEmpty
+        && !item.languageTag.isEmpty
         && item.sourceURL?.scheme == "https"
         && !item.rightsLabel.isEmpty
         && item.rightsURL?.scheme == "https"
@@ -233,24 +244,45 @@ func inspectCalligraphyAsset(_ url: URL) throws -> (width: Int, height: Int, vis
 
 let calligraphyDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Resources/Inspiration/Calligraphy", isDirectory: true)
-let clearBreezeStats = try inspectCalligraphyAsset(calligraphyDirectoryURL.appendingPathComponent("lanting-clear-breeze.png"))
-let universeStats = try inspectCalligraphyAsset(calligraphyDirectoryURL.appendingPathComponent("lanting-universe.png"))
-expect(clearBreezeStats.width == 856 && clearBreezeStats.height == 132
-    && universeStats.width == 624 && universeStats.height == 132
-    && clearBreezeStats.visible > 1_000 && universeStats.visible > 1_000
-    && clearBreezeStats.transparent > clearBreezeStats.visible
-    && universeStats.transparent > universeStats.visible
-    && clearBreezeStats.opaqueWhite == 0 && universeStats.opaqueWhite == 0
-    && clearBreezeStats.outerInk == 0 && universeStats.outerInk == 0, "bundled Lanting calligraphy masks are transparent, uncropped, and free of hard white backgrounds")
+let expectedCalligraphyAssets: [String: (width: Int, height: Int, sha256: String)] = [
+    "lanting-clear-breeze": (856, 132, "b30c54279d2e0b5c7b8221369962ba3a3c0e16b264808332da38cb1b8e63d936"),
+    "lanting-universe": (624, 132, "a915d1e460c68a0634c2cfaad90f802fda04ea8c25227632cd4812c51647df22"),
+    "lanting-observe-kinds": (624, 132, "1c7965b6447392a874ed75adb1ce5703f26b562b8fc5fd6f380d1fdde0621379"),
+]
+let catalogCalligraphyAssets = Set(inspirationItems.compactMap { item -> String? in
+    if case let .calligraphy(assetName) = item.presentation { return assetName }
+    return nil
+})
+expect(catalogCalligraphyAssets == Set(expectedCalligraphyAssets.keys), "every catalog calligraphy item has one reviewed bundled asset and no unreferenced calligraphy asset is accepted")
+
+func sha256Hex(of url: URL) throws -> String {
+    SHA256.hash(data: try Data(contentsOf: url))
+        .map { String(format: "%02x", $0) }
+        .joined()
+}
+
+for (assetName, expected) in expectedCalligraphyAssets {
+    let assetURL = calligraphyDirectoryURL.appendingPathComponent("\(assetName).png")
+    let stats = try inspectCalligraphyAsset(assetURL)
+    let actualSHA256 = try sha256Hex(of: assetURL)
+    expect(stats.width == expected.width && stats.height == expected.height
+        && stats.visible > 1_000
+        && stats.transparent > stats.visible
+        && stats.opaqueWhite == 0
+        && stats.outerInk == 0
+        && actualSHA256 == expected.sha256, "reviewed calligraphy asset \(assetName) retains its approved hash, transparent background, and safe outer margin")
+}
 
 let inspirationSourcesURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Resources/Inspiration/SOURCES.md")
 let inspirationSources = (try? String(contentsOf: inspirationSourcesURL, encoding: .utf8)) ?? ""
 expect(inspirationSources.contains("a133647a8695cd06d0f5c6215d66e0b8b8d93d56")
-    && inspirationSources.contains("e5c6827f44b22f5441bb208b1770103da8a076564b52f41e64f77b0da7e1835c")
+    && inspirationSources.contains("b30c54279d2e0b5c7b8221369962ba3a3c0e16b264808332da38cb1b8e63d936")
     && inspirationSources.contains("a915d1e460c68a0634c2cfaad90f802fda04ea8c25227632cd4812c51647df22")
+    && inspirationSources.contains("1c7965b6447392a874ed75adb1ce5703f26b562b8fc5fd6f380d1fdde0621379")
     && inspirationSources.contains("Public Domain Mark 1.0")
     && inspirationSources.contains("故00002597")
+    && inspirationSources.contains("at least five source languages")
     && inspirationSources.contains("were rejected")
     && inspirationSources.contains("No NC, ND")
     && inspirationSources.contains("No generative fill, vector tracing, or font substitution"), "inspiration resource documentation preserves source hashes, public-domain status, provenance, exclusions, and transformation limits")
@@ -876,12 +908,26 @@ let contentRailSourceURL = URL(fileURLWithPath: FileManager.default.currentDirec
 let contentRailSource = (try? String(contentsOf: contentRailSourceURL, encoding: .utf8)) ?? ""
 expect(contentRailSource.contains("struct ContentRailView: View")
     && contentRailSource.contains("static let railOnlyWidth: CGFloat = 88")
-    && contentRailSource.contains("static let normalWidth: CGFloat = 28")
+    && contentRailSource.contains("static let normalWidth: CGFloat = 40")
+    && contentRailSource.contains("private func compactHeight(in totalHeight: CGFloat)")
+    && contentRailSource.contains("private func compactCenterY(in totalHeight: CGFloat)")
+    && contentRailSource.contains("return min(max(72, countDrivenHeight), min(160, available))")
+    && contentRailSource.contains("private func tickLength(for item: ContentRailItem, active: Bool, railHeight: CGFloat)")
+    && contentRailSource.contains("let influenceRadius: CGFloat = 48")
+    && contentRailSource.contains("guard distance < influenceRadius else { return normal }")
+    && contentRailSource.contains("return normal + (34 - normal) * influence")
+    && contentRailSource.contains("@Environment(\\.accessibilityReduceMotion)")
+    && contentRailSource.contains("ForEach(items) { item in")
+    && !contentRailSource.contains("private var collapsedHandle")
+    && !contentRailSource.contains("private var isExpanded")
+    && !contentRailSource.contains("LinearGradient(")
+    && !contentRailSource.contains("private var railBackground")
+    && !contentRailSource.contains("private var railAtmosphere")
     && contentRailSource.contains("DispatchQueue.main.asyncAfter(deadline: .now() + 0.10")
     && contentRailSource.contains("previewImage: NSImage?")
     && contentRailSource.contains(".popover(")
     && contentRailSource.contains("SpatialTapGesture()")
-    && contentRailSource.contains("private func nearestItem"), "shared content rail supports normal, rail-only, delayed unclipped hover, dense-track mapping, and real image previews")
+    && contentRailSource.contains("private func nearestItem"), "shared content rail stays compact at the content edge, keeps every real tick, magnifies only the pointer neighborhood, and preserves rail-only, reduced-motion, delayed preview, dense mapping, and real image previews")
 expect(stableDocumentSource.contains("EmptyWorkspaceLauncherView().environmentObject(store)")
     && emptyWorkspaceSource.contains("Text(title)")
     && emptyWorkspaceSource.contains("title: \"DOC\"")
@@ -1120,6 +1166,25 @@ expect(notesAgentSource.contains("private var noteRailItems: [ContentRailItem]")
     && notesAgentSource.contains("private var agentRailItems: [ContentRailItem]")
     && notesAgentSource.contains("store.requestPaneExpansion(.agent)")
     && notesAgentSource.components(separatedBy: "let railOnly = store.layout.allowsRailOnlyPanes").count >= 3, "notes and conversation share the content rail and navigate after restoring a narrow pane")
+let agentRailSource: String = {
+    guard let start = notesAgentSource.range(of: "private var agentRailTurns: [AgentRailTurn]")?.lowerBound,
+          let end = notesAgentSource.range(of: "private var agentPrompt", range: start..<notesAgentSource.endIndex)?.lowerBound else {
+        return ""
+    }
+    return String(notesAgentSource[start..<end])
+}()
+expect(!agentRailSource.isEmpty
+    && agentRailSource.contains("case .user:")
+    && agentRailSource.contains("turns.append(AgentRailTurn(")
+    && agentRailSource.contains("startMessageID: message.id")
+    && agentRailSource.contains("startIndex: index")
+    && agentRailSource.contains("case .assistant:")
+    && agentRailSource.contains("turns[turns.count - 1].answer = message.text")
+    && agentRailSource.contains("turns[turns.count - 1].answer += \"\\n\\n\" + message.text")
+    && agentRailSource.contains("title: railText(turn.question")
+    && agentRailSource.contains("excerpt: railText(turn.answer, fallback: store.ui(\"等待回复\", \"Waiting for response\"))")
+    && agentRailSource.contains("proxy.scrollTo(turn.startMessageID, anchor: .center)")
+    && agentRailSource.contains("$0.startIndex <= visibleIndex"), "conversation rail keeps one point per user-led turn, previews the whole question-and-answer pair, keeps pending turns visible, and navigates by the user message anchor")
 let notePaneHeaderSource: String = {
     guard let start = notesAgentSource.range(of: "struct NotePaneView: View")?.lowerBound,
           let end = notesAgentSource.range(of: "private func noteFileStatusColor", range: start..<notesAgentSource.endIndex)?.lowerBound else {
@@ -2603,13 +2668,14 @@ expect(notesAgentSource.contains("if store.hasSelectedMaterial")
     && !notesAgentSource.contains("starterChip(\"梳理材料\"")
     && !notesAgentSource.contains("starterChip(\"出复习题\""), "agent starter chips hide material actions without a selected material and avoid clipped long labels")
 expect(notesAgentSource.contains("GeometryReader { geometry in")
-    && notesAgentSource.contains("let availableWidth = max(geometry.size.width - ContentRailMetrics.normalWidth, 1)")
+    && notesAgentSource.contains("let availableWidth = max(geometry.size.width, 1)")
     && notesAgentSource.contains("let contentWidth = min(max(availableWidth - 36, 320), agentContentMaxWidth ?? 760)")
     && notesAgentSource.contains("agentMessageRow(message: message, geometryWidth: availableWidth, contentWidth: contentWidth, proxy: proxy)")
     && notesAgentSource.contains("private func agentMessageRow(message: AgentMessage, geometryWidth: CGFloat, contentWidth: CGFloat, proxy: ScrollViewProxy) -> some View")
     && notesAgentSource.contains(".padding(.top, store.messages.isEmpty ? 22 : 0)")
     && notesAgentSource.contains(".frame(width: availableWidth, alignment: .topLeading)")
     && notesAgentSource.contains(".frame(minHeight: geometry.size.height, alignment: .topLeading)")
+    && !notesAgentSource.contains(".padding(.leading, ContentRailMetrics.normalWidth)")
     && !notesAgentSource.contains("alignment: store.messages.isEmpty ? .bottomLeading : .topLeading"), "agent empty state starts in the content area instead of being pinned to the composer")
 expect(notesAgentSource.contains("canPolishNoteSelection") && notesAgentSource.contains("store.selectionContext?.isNoteSelection == true"), "selection agent only shows polish for note selections")
 expect(notesAgentSource.contains("Text(store.ui(\"正在读选区...\", \"Reading selection...\"))")
