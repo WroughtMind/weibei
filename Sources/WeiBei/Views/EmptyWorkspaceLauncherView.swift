@@ -6,7 +6,7 @@ struct EmptyWorkspaceLauncherView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    @State private var inspirationOffset = 0
+    @State private var selectedInspirationID: String?
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { timeline in
@@ -33,10 +33,8 @@ struct EmptyWorkspaceLauncherView: View {
 
                             EmptyWorkspaceInspirationView(
                                 inspiration: currentInspiration,
-                                position: inspirationPosition(currentInspiration),
-                                total: EmptyWorkspaceInspirationCatalog.rotationItems.count,
                                 compact: compact,
-                                onAdvance: advanceInspiration
+                                onAdvance: { advanceInspiration(from: currentInspiration.id) }
                             )
                             .transition(.opacity)
                         }
@@ -78,12 +76,8 @@ struct EmptyWorkspaceLauncherView: View {
 
     private func inspiration(at date: Date) -> EmptyWorkspaceInspiration {
         let baseInspiration = dailyInspiration(at: date)
-        let items = EmptyWorkspaceInspirationCatalog.rotationItems
-        guard !items.isEmpty,
-              let baseIndex = items.firstIndex(where: { $0.id == baseInspiration.id })
-        else { return baseInspiration }
-
-        return items[(baseIndex + inspirationOffset) % items.count]
+        guard let selectedInspirationID else { return baseInspiration }
+        return EmptyWorkspaceInspirationCatalog.rotationItems.first(where: { $0.id == selectedInspirationID }) ?? baseInspiration
     }
 
     private func dailyInspiration(at date: Date) -> EmptyWorkspaceInspiration {
@@ -106,17 +100,15 @@ struct EmptyWorkspaceLauncherView: View {
         return EmptyWorkspaceInspirationCatalog.item(for: date)
     }
 
-    private func inspirationPosition(_ inspiration: EmptyWorkspaceInspiration) -> Int {
-        (EmptyWorkspaceInspirationCatalog.rotationItems.firstIndex(where: { $0.id == inspiration.id }) ?? 0) + 1
-    }
-
-    private func advanceInspiration() {
+    private func advanceInspiration(from currentID: String) {
         guard !EmptyWorkspaceInspirationCatalog.rotationItems.isEmpty else { return }
+        var generator = SystemRandomNumberGenerator()
+        let nextID = EmptyWorkspaceInspirationCatalog.randomItem(excludingID: currentID, using: &generator).id
         if reduceMotion {
-            inspirationOffset = (inspirationOffset + 1) % EmptyWorkspaceInspirationCatalog.rotationItems.count
+            selectedInspirationID = nextID
         } else {
             withAnimation(.easeInOut(duration: 0.24)) {
-                inspirationOffset = (inspirationOffset + 1) % EmptyWorkspaceInspirationCatalog.rotationItems.count
+                selectedInspirationID = nextID
             }
         }
     }
@@ -267,8 +259,6 @@ private struct EmptyWorkspaceInspirationView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let inspiration: EmptyWorkspaceInspiration
-    let position: Int
-    let total: Int
     let compact: Bool
     let onAdvance: () -> Void
 
@@ -279,8 +269,6 @@ private struct EmptyWorkspaceInspirationView: View {
         VStack(spacing: compact ? 7 : 9) {
             Button(action: onAdvance) {
                 VStack(spacing: compact ? 8 : 11) {
-                    inspirationCounter
-
                     inspirationContent
 
                     Text(inspiration.credit)
@@ -303,7 +291,7 @@ private struct EmptyWorkspaceInspirationView: View {
             .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: focused)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(Text("\(inspiration.text)，\(inspiration.credit)"))
-            .accessibilityHint(Text(store.ui("切换到下一则灵感", "Show the next inspiration")))
+            .accessibilityHint(Text(store.ui("随机换一则灵感", "Show a random inspiration")))
             .accessibilityIdentifier("empty-workspace-inspiration-next")
 
             sourceAndRights
@@ -313,28 +301,9 @@ private struct EmptyWorkspaceInspirationView: View {
         .accessibilityIdentifier("empty-workspace-inspiration-\(inspiration.id)")
     }
 
-    private var inspirationCounter: some View {
-        HStack(spacing: 8) {
-            Rectangle()
-                .fill(WeiBeiTheme.hairline.opacity(hovering || focused ? 0.72 : 0.48))
-                .frame(width: hovering || focused ? 28 : 18, height: 1)
-
-            Text(String(format: "%02d / %02d", position, total))
-                .font(.system(size: compact ? 8.5 : 9, weight: .medium, design: .monospaced))
-                .tracking(1.1)
-                .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                .monospacedDigit()
-
-            Rectangle()
-                .fill(WeiBeiTheme.hairline.opacity(hovering || focused ? 0.72 : 0.48))
-                .frame(width: hovering || focused ? 28 : 18, height: 1)
-        }
-        .accessibilityHidden(true)
-    }
-
     private var advanceLabel: some View {
         HStack(spacing: 6) {
-            Text(store.ui("点击换一则", "NEXT"))
+            Text(store.ui("随机换一则", "RANDOM"))
             Text("→")
                 .offset(x: hovering && !reduceMotion ? 2 : 0)
         }

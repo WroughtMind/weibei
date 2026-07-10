@@ -89,13 +89,17 @@ expect(EmptyWorkspaceDayPeriod.morning.greeting(language: .chinese).contains("�
 let inspirationItems = EmptyWorkspaceInspirationCatalog.items
 let rotationItems = EmptyWorkspaceInspirationCatalog.rotationItems
 let inspirationLanguageTags = Set(inspirationItems.filter { $0.presentation != .formula }.map(\.languageTag))
-expect(inspirationItems.count >= 16
+expect(inspirationItems.count == 50
     && EmptyWorkspaceInspirationCatalog.validationErrors.isEmpty
     && Set(inspirationItems.map(\.category)) == Set(EmptyWorkspaceInspirationCategory.allCases)
     && Set(["zh-Hant", "ja", "en", "de", "fr"]).isSubset(of: inspirationLanguageTags)
     && inspirationItems.contains(where: { if case .calligraphy = $0.presentation { return true }; return false })
     && inspirationItems.contains(where: { $0.presentation == .quotation })
-    && inspirationItems.contains(where: { $0.presentation == .formula }), "daily inspiration catalog contains every supported field, at least five original languages, verified calligraphy, quotations, and formulas")
+    && inspirationItems.contains(where: { $0.presentation == .formula })
+    && inspirationItems.contains(where: { $0.id == "mao-serve-the-people" })
+    && inspirationItems.contains(where: { $0.id == "mao-seek-truth" })
+    && inspirationItems.contains(where: { $0.id == "mao-single-spark" })
+    && inspirationItems.contains(where: { $0.id == "mao-double-hundred" }), "daily inspiration catalog contains exactly fifty source-backed entries across every field, original languages, verified calligraphy, quotations, formulas, and rights-safe historical slogans")
 expect(rotationItems.count == inspirationItems.count
     && Set(rotationItems.map(\.id)) == Set(inspirationItems.map(\.id))
     && rotationItems.enumerated().allSatisfy { index, item in
@@ -115,6 +119,11 @@ let inspirationDayOne = inspirationCalendar.date(from: DateComponents(year: 2026
 let inspirationDayTwo = inspirationCalendar.date(byAdding: .day, value: 1, to: inspirationDayOne)!
 expect(EmptyWorkspaceInspirationCatalog.item(for: inspirationDayOne, calendar: inspirationCalendar).id
     != EmptyWorkspaceInspirationCatalog.item(for: inspirationDayTwo, calendar: inspirationCalendar).id, "daily inspiration rotates deterministically from one local day to the next")
+var inspirationRandomGenerator = SystemRandomNumberGenerator()
+let excludedInspirationID = inspirationItems[0].id
+expect((0..<100).allSatisfy { _ in
+    EmptyWorkspaceInspirationCatalog.randomItem(excludingID: excludedInspirationID, using: &inspirationRandomGenerator).id != excludedInspirationID
+}, "manual inspiration switching is random and never immediately repeats the current entry")
 
 let offlineChinesePreview = AgentOfflinePreview.render(
     AgentOfflinePreviewInput(
@@ -282,7 +291,8 @@ expect(inspirationSources.contains("a133647a8695cd06d0f5c6215d66e0b8b8d93d56")
     && inspirationSources.contains("1c7965b6447392a874ed75adb1ce5703f26b562b8fc5fd6f380d1fdde0621379")
     && inspirationSources.contains("Public Domain Mark 1.0")
     && inspirationSources.contains("故00002597")
-    && inspirationSources.contains("at least five source languages")
+    && inspirationSources.contains("exactly 50 entries across six fields")
+    && inspirationSources.contains("Classical Chinese, Japanese, English, German, French, Italian, Spanish, Latin, and Portuguese")
     && inspirationSources.contains("were rejected")
     && inspirationSources.contains("No NC, ND")
     && inspirationSources.contains("No generative fill, vector tracing, or font substitution"), "inspiration resource documentation preserves source hashes, public-domain status, provenance, exclusions, and transformation limits")
@@ -992,6 +1002,12 @@ expect(emptyWorkspaceSource.contains("TimelineView(.periodic(from: .now, by: 60)
     && emptyWorkspaceSource.contains("geometry.size.width < 760 || geometry.size.height < 620")
     && emptyWorkspaceSource.contains("min(116, max(76")
     && emptyWorkspaceSource.contains("minimumScaleFactor(0.78)"), "empty workspace greeting updates with time and its entry and inspiration typography adapt to compact windows")
+expect(emptyWorkspaceSource.contains("selectedInspirationID")
+    && emptyWorkspaceSource.contains("randomItem(excludingID: currentID")
+    && emptyWorkspaceSource.contains("随机换一则")
+    && !emptyWorkspaceSource.contains("inspirationCounter")
+    && !emptyWorkspaceSource.contains("%02d / %02d")
+    && !emptyWorkspaceSource.contains("inspirationOffset"), "empty workspace inspiration switches randomly without repeating the current item or showing catalog counters")
 expect(emptyWorkspaceSource.contains("if store.showDailyInspiration")
     && emptyWorkspaceSource.contains("EmptyWorkspaceInspirationCatalog.item")
     && emptyWorkspaceSource.contains("case \"empty-workspace-calligraphy-light\":")

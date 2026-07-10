@@ -355,27 +355,223 @@ public enum EmptyWorkspaceInspirationCatalog {
             rightsURLString: "https://www.copyright.gov/circs/circ33.pdf",
             presentation: .formula
         ),
+        EmptyWorkspaceInspiration(
+            id: "analects-three-companions", text: "三人行，必有我師焉。", credit: "孔子《論語·述而》",
+            category: .chineseClassics, languageTag: "zh-Hant", rightsBasis: .ccBySA4,
+            sourceLabel: "維基文庫《論語·述而第七》", sourceURLString: "https://zh.wikisource.org/zh-hant/%E8%AB%96%E8%AA%9E/%E8%BF%B0%E8%80%8C%E7%AC%AC%E4%B8%83",
+            rightsLabel: "先秦原文公版 · Wikisource CC BY-SA 4.0", rightsURLString: "https://creativecommons.org/licenses/by-sa/4.0/", presentation: .quotation
+        ),
+        EmptyWorkspaceInspiration(
+            id: "yijing-self-renewal", text: "天行健，君子以自強不息。", credit: "《周易·乾卦》",
+            category: .chineseClassics, languageTag: "zh-Hant", rightsBasis: .ccBySA4,
+            sourceLabel: "維基文庫《易經》", sourceURLString: "https://zh.wikisource.org/zh-hant/%E6%98%93%E7%B6%93",
+            rightsLabel: "古代原文公版 · Wikisource CC BY-SA 4.0", rightsURLString: "https://creativecommons.org/licenses/by-sa/4.0/", presentation: .quotation
+        ),
+        EmptyWorkspaceInspiration(
+            id: "tao-peach-blossom", text: "採菊東籬下，悠然見南山。", credit: "陶淵明《飲酒·其五》",
+            category: .chineseClassics, languageTag: "zh-Hant", rightsBasis: .ccBySA4,
+            sourceLabel: "維基文庫《飲酒二十首》", sourceURLString: "https://zh.wikisource.org/zh-hant/%E9%A3%B2%E9%85%92%E4%BA%8C%E5%8D%81%E9%A6%96",
+            rightsLabel: "古代原文公版 · Wikisource CC BY-SA 4.0", rightsURLString: "https://creativecommons.org/licenses/by-sa/4.0/", presentation: .quotation
+        ),
+        EmptyWorkspaceInspiration(
+            id: "dante-midway", text: "Nel mezzo del cammin di nostra vita\nmi ritrovai per una selva oscura,", credit: "Dante Alighieri · Inferno, Canto I",
+            category: .worldLiterature, languageTag: "it", rightsBasis: .publicDomain,
+            sourceLabel: "Project Gutenberg eBook 1000", sourceURLString: "https://www.gutenberg.org/ebooks/1000",
+            rightsLabel: "原作公版 · Project Gutenberg 标记美国公版", rightsURLString: "https://www.gutenberg.org/policy/permission.html", presentation: .quotation
+        ),
+        EmptyWorkspaceInspiration(
+            id: "cervantes-la-mancha", text: "En un lugar de la Mancha, de cuyo nombre no quiero acordarme…", credit: "Miguel de Cervantes · Don Quijote de la Mancha, I.1",
+            category: .worldLiterature, languageTag: "es", rightsBasis: .publicDomain,
+            sourceLabel: "Project Gutenberg eBook 2000", sourceURLString: "https://www.gutenberg.org/ebooks/2000",
+            rightsLabel: "原作公版 · Project Gutenberg 标记美国公版", rightsURLString: "https://www.gutenberg.org/policy/permission.html", presentation: .quotation
+        ),
+        EmptyWorkspaceInspiration(
+            id: "virgil-arms-man", text: "Arma virumque cano, Troiae qui primus ab oris…", credit: "Vergilius · Aeneis, Liber I",
+            category: .worldLiterature, languageTag: "la", rightsBasis: .publicDomain,
+            sourceLabel: "Project Gutenberg eBook 227", sourceURLString: "https://www.gutenberg.org/ebooks/227",
+            rightsLabel: "古典原文公版 · Project Gutenberg 标记美国公版", rightsURLString: "https://www.gutenberg.org/policy/permission.html", presentation: .quotation
+        ),
+        EmptyWorkspaceInspiration(
+            id: "rilke-change-life", text: "Du mußt dein Leben ändern.", credit: "Rainer Maria Rilke · Archaïscher Torso Apollos · 1908",
+            category: .worldLiterature, languageTag: "de", rightsBasis: .ccBySA4,
+            sourceLabel: "Deutsche Wikisource · 1918 版", sourceURLString: "https://de.wikisource.org/wiki/Archa%C3%AFscher_Torso_Apollos",
+            rightsLabel: "原文公版 · Wikisource CC BY-SA 4.0", rightsURLString: "https://creativecommons.org/licenses/by-sa/4.0/", presentation: .quotation
+        ),
+        EmptyWorkspaceInspiration(
+            id: "pessoa-poet-feigns", text: "O poeta é um fingidor.", credit: "Fernando Pessoa · Autopsicografia · 1931",
+            category: .worldLiterature, languageTag: "pt", rightsBasis: .ccBySA4,
+            sourceLabel: "Wikisource《Autopsicografia》", sourceURLString: "https://pt.wikisource.org/wiki/Autopsicografia",
+            rightsLabel: "原文公版 · Wikisource CC BY-SA 4.0", rightsURLString: "https://creativecommons.org/licenses/by-sa/4.0/", presentation: .quotation
+        ),
+        EmptyWorkspaceInspiration(
+            id: "quadratic-formula", text: "x = (−b ± √(b² − 4ac)) / 2a", credit: "二次方程求根公式 · 现代记法",
+            category: .mathematics, languageTag: "zxx", rightsBasis: .uncopyrightableFact,
+            sourceLabel: "U.S. Copyright Office Circular 33", sourceURLString: "https://www.copyright.gov/circs/circ33.pdf",
+            rightsLabel: "数学公式 / 事实 · 不主张版权", rightsURLString: "https://www.copyright.gov/circs/circ33.pdf", presentation: .formula
+        ),
+        EmptyWorkspaceInspiration(
+            id: "newton-leibniz", text: "∫ₐᵇ f′(x) dx = f(b) − f(a)", credit: "Newton–Leibniz formula · 现代记法",
+            category: .mathematics, languageTag: "zxx", rightsBasis: .uncopyrightableFact,
+            sourceLabel: "U.S. Copyright Office Circular 33", sourceURLString: "https://www.copyright.gov/circs/circ33.pdf",
+            rightsLabel: "数学公式 / 事实 · 不主张版权", rightsURLString: "https://www.copyright.gov/circs/circ33.pdf", presentation: .formula
+        ),
+        EmptyWorkspaceInspiration(
+            id: "fourier-transform", text: "F(ω) = ∫₋∞∞ f(t)e⁻ⁱωᵗ dt", credit: "Joseph Fourier · Théorie analytique de la chaleur, 1822 · 现代记法",
+            category: .mathematics, languageTag: "zxx", rightsBasis: .uncopyrightableFact,
+            sourceLabel: "Bibliothèque nationale de France · Gallica", sourceURLString: "https://gallica.bnf.fr/ark:/12148/bpt6k33707",
+            rightsLabel: "数学公式 / 事实 · 不主张版权", rightsURLString: "https://www.copyright.gov/circs/circ33.pdf", presentation: .formula
+        ),
+        EmptyWorkspaceInspiration(
+            id: "shannon-entropy", text: "H = −Σ pᵢ log₂ pᵢ", credit: "Claude E. Shannon · A Mathematical Theory of Communication, 1948",
+            category: .mathematics, languageTag: "zxx", rightsBasis: .uncopyrightableFact,
+            sourceLabel: "Bell System Technical Journal · DOI", sourceURLString: "https://doi.org/10.1002/j.1538-7305.1948.tb01338.x",
+            rightsLabel: "数学公式 / 事实 · 不主张版权", rightsURLString: "https://www.copyright.gov/circs/circ33.pdf", presentation: .formula
+        ),
+        EmptyWorkspaceInspiration(
+            id: "newton-second-law", text: "F = ma", credit: "Isaac Newton · Philosophiæ Naturalis Principia Mathematica · 现代记法",
+            category: .physics, languageTag: "zxx", rightsBasis: .uncopyrightableFact,
+            sourceLabel: "Project Gutenberg eBook 28233", sourceURLString: "https://www.gutenberg.org/ebooks/28233",
+            rightsLabel: "物理公式 / 事实 · 不主张版权", rightsURLString: "https://www.copyright.gov/circs/circ33.pdf", presentation: .formula
+        ),
+        EmptyWorkspaceInspiration(
+            id: "maxwell-gauss-law", text: "∇ · E = ρ / ε₀", credit: "James Clerk Maxwell · A Dynamical Theory of the Electromagnetic Field, 1865 · 现代记法",
+            category: .physics, languageTag: "zxx", rightsBasis: .uncopyrightableFact,
+            sourceLabel: "Royal Society · DOI 10.1098/rstl.1865.0008", sourceURLString: "https://doi.org/10.1098/rstl.1865.0008",
+            rightsLabel: "物理公式 / 事实 · 不主张版权", rightsURLString: "https://www.copyright.gov/circs/circ33.pdf", presentation: .formula
+        ),
+        EmptyWorkspaceInspiration(
+            id: "planck-relation", text: "E = hν", credit: "Max Planck · 1901 · 现代记法",
+            category: .physics, languageTag: "zxx", rightsBasis: .uncopyrightableFact,
+            sourceLabel: "Annalen der Physik · DOI", sourceURLString: "https://doi.org/10.1002/andp.19013090310",
+            rightsLabel: "物理公式 / 事实 · 不主张版权", rightsURLString: "https://www.copyright.gov/circs/circ33.pdf", presentation: .formula
+        ),
+        EmptyWorkspaceInspiration(
+            id: "boltzmann-entropy", text: "S = k log W", credit: "Ludwig Boltzmann · 1877 · 现代记法",
+            category: .physics, languageTag: "zxx", rightsBasis: .uncopyrightableFact,
+            sourceLabel: "Wiener Berichte · DOI", sourceURLString: "https://doi.org/10.1007/BF01517726",
+            rightsLabel: "物理公式 / 事实 · 不主张版权", rightsURLString: "https://www.copyright.gov/circs/circ33.pdf", presentation: .formula
+        ),
+        EmptyWorkspaceInspiration(
+            id: "uncertainty-principle", text: "Δx Δp ≥ ℏ / 2", credit: "Werner Heisenberg · 1927 · 现代记法",
+            category: .physics, languageTag: "zxx", rightsBasis: .uncopyrightableFact,
+            sourceLabel: "Zeitschrift für Physik · DOI", sourceURLString: "https://doi.org/10.1007/BF01397280",
+            rightsLabel: "物理公式 / 事实 · 不主张版权", rightsURLString: "https://www.copyright.gov/circs/circ33.pdf", presentation: .formula
+        ),
+        EmptyWorkspaceInspiration(
+            id: "de-broglie-wave", text: "λ = h / p", credit: "Louis de Broglie · Recherches sur la théorie des quanta, 1924 · 现代记法",
+            category: .physics, languageTag: "zxx", rightsBasis: .uncopyrightableFact,
+            sourceLabel: "HAL theses · tel-00006807", sourceURLString: "https://theses.hal.science/tel-00006807",
+            rightsLabel: "物理公式 / 事实 · 不主张版权", rightsURLString: "https://www.copyright.gov/circs/circ33.pdf", presentation: .formula
+        ),
+        EmptyWorkspaceInspiration(
+            id: "national-income-identity", text: "Y = C + I + G + NX", credit: "National income accounting identity · 现代记法",
+            category: .economics, languageTag: "zxx", rightsBasis: .uncopyrightableFact,
+            sourceLabel: "U.S. Bureau of Economic Analysis · NIPA Handbook", sourceURLString: "https://www.bea.gov/resources/methodologies/nipa-handbook",
+            rightsLabel: "经济学恒等式 / 事实 · 不主张版权", rightsURLString: "https://www.copyright.gov/circs/circ33.pdf", presentation: .formula
+        ),
+        EmptyWorkspaceInspiration(
+            id: "price-elasticity", text: "ε = (dQ / Q) / (dP / P)", credit: "Alfred Marshall · Principles of Economics, 1890 · 现代记法",
+            category: .economics, languageTag: "zxx", rightsBasis: .uncopyrightableFact,
+            sourceLabel: "Project Gutenberg eBook 3375", sourceURLString: "https://www.gutenberg.org/ebooks/3375",
+            rightsLabel: "经济学公式 / 事实 · 不主张版权", rightsURLString: "https://www.copyright.gov/circs/circ33.pdf", presentation: .formula
+        ),
+        EmptyWorkspaceInspiration(
+            id: "present-value", text: "PV = Σₜ CFₜ / (1 + r)ᵗ", credit: "Present value relation · 现代记法",
+            category: .economics, languageTag: "zxx", rightsBasis: .uncopyrightableFact,
+            sourceLabel: "U.S. SEC Investor.gov", sourceURLString: "https://www.investor.gov/introduction-investing/investing-basics/glossary/present-value",
+            rightsLabel: "金融公式 / 事实 · 不主张版权", rightsURLString: "https://www.copyright.gov/circs/circ33.pdf", presentation: .formula
+        ),
+        EmptyWorkspaceInspiration(
+            id: "keynes-multiplier", text: "k = 1 / (1 − c)", credit: "John Maynard Keynes · The General Theory, 1936 · 简化乘数记法",
+            category: .economics, languageTag: "zxx", rightsBasis: .uncopyrightableFact,
+            sourceLabel: "Internet Archive · The General Theory", sourceURLString: "https://archive.org/details/in.ernet.dli.2015.50092",
+            rightsLabel: "经济学公式 / 事实 · 不主张版权", rightsURLString: "https://www.copyright.gov/circs/circ33.pdf", presentation: .formula
+        ),
+        EmptyWorkspaceInspiration(
+            id: "black-scholes-pde", text: "∂V/∂t + ½σ²S²∂²V/∂S² + rS∂V/∂S − rV = 0", credit: "Fischer Black & Myron Scholes · The Pricing of Options and Corporate Liabilities, 1973",
+            category: .economics, languageTag: "zxx", rightsBasis: .uncopyrightableFact,
+            sourceLabel: "Journal of Political Economy · DOI", sourceURLString: "https://doi.org/10.1086/260062",
+            rightsLabel: "金融公式 / 事实 · 不主张版权", rightsURLString: "https://www.copyright.gov/circs/circ33.pdf", presentation: .formula
+        ),
+        EmptyWorkspaceInspiration(
+            id: "descartes-cogito", text: "Je pense, donc je suis.", credit: "René Descartes · Discours de la méthode, IV · 1637",
+            category: .philosophy, languageTag: "fr", rightsBasis: .ccBySA4,
+            sourceLabel: "Wikisource《Discours de la méthode》", sourceURLString: "https://fr.wikisource.org/wiki/Discours_de_la_m%C3%A9thode",
+            rightsLabel: "原文公版 · Wikisource CC BY-SA 4.0", rightsURLString: "https://creativecommons.org/licenses/by-sa/4.0/", presentation: .quotation
+        ),
+        EmptyWorkspaceInspiration(
+            id: "kant-sapere-aude", text: "Sapere aude! Habe Muth dich deines eigenen Verstandes zu bedienen!", credit: "Immanuel Kant · Beantwortung der Frage: Was ist Aufklärung? · 1784",
+            category: .philosophy, languageTag: "de", rightsBasis: .ccBySA4,
+            sourceLabel: "Deutsche Wikisource · Berlinische Monatsschrift", sourceURLString: "https://de.wikisource.org/wiki/Beantwortung_der_Frage%3A_Was_ist_Aufkl%C3%A4rung%3F",
+            rightsLabel: "原文公版 · Wikisource CC BY-SA 4.0", rightsURLString: "https://creativecommons.org/licenses/by-sa/4.0/", presentation: .quotation
+        ),
+        EmptyWorkspaceInspiration(
+            id: "spinoza-nature", text: "Deus sive Natura.", credit: "Baruch Spinoza · Ethica · 1677",
+            category: .philosophy, languageTag: "la", rightsBasis: .ccBySA4,
+            sourceLabel: "Latin Wikisource《Ethica》", sourceURLString: "https://la.wikisource.org/wiki/Ethica",
+            rightsLabel: "原文公版 · Wikisource CC BY-SA 4.0", rightsURLString: "https://creativecommons.org/licenses/by-sa/4.0/", presentation: .quotation
+        ),
+        EmptyWorkspaceInspiration(
+            id: "hume-reason-passions", text: "Reason is, and ought only to be the slave of the passions.", credit: "David Hume · A Treatise of Human Nature, II.iii.3 · 1739",
+            category: .philosophy, languageTag: "en", rightsBasis: .publicDomain,
+            sourceLabel: "Project Gutenberg eBook 4705", sourceURLString: "https://www.gutenberg.org/ebooks/4705",
+            rightsLabel: "原文公版 · Project Gutenberg 标记美国公版", rightsURLString: "https://www.gutenberg.org/policy/permission.html", presentation: .quotation
+        ),
+        EmptyWorkspaceInspiration(
+            id: "mao-serve-the-people", text: "為人民服務", credit: "毛澤東《為人民服務》 · 1944",
+            category: .philosophy, languageTag: "zh-Hant", rightsBasis: .uncopyrightableFact,
+            sourceLabel: "人民網黨史頻道 · 從提出到寫入黨章", sourceURLString: "https://dangshi.people.com.cn/n1/2020/0407/c85037-31663260.html",
+            rightsLabel: "極短歷史口號 · 不收錄仍在保護期內的文章正文", rightsURLString: "https://www.npc.gov.cn/c2/c30834/202011/t20201119_308796.html", presentation: .quotation
+        ),
+        EmptyWorkspaceInspiration(
+            id: "mao-seek-truth", text: "實事求是", credit: "毛澤東倡導的思想路線 · 語出《漢書·河間獻王傳》",
+            category: .philosophy, languageTag: "zh-Hant", rightsBasis: .uncopyrightableFact,
+            sourceLabel: "中國共產黨新聞網 · 實事求是是最大的黨性", sourceURLString: "https://cpc.people.com.cn/n1/2022/0922/c443712-32531434.html",
+            rightsLabel: "古代成語與極短歷史口號 · 不收錄現代受保護正文", rightsURLString: "https://www.npc.gov.cn/c2/c30834/202011/t20201119_308796.html", presentation: .quotation
+        ),
+        EmptyWorkspaceInspiration(
+            id: "mao-single-spark", text: "星星之火，可以燎原", credit: "毛澤東《星星之火，可以燎原》 · 1930",
+            category: .philosophy, languageTag: "zh-Hant", rightsBasis: .uncopyrightableFact,
+            sourceLabel: "中國共產黨新聞網 · 1930年1月5日黨史記錄", sourceURLString: "https://cpc.people.com.cn/BIG5/64162/64165/76621/76627/5231445.html",
+            rightsLabel: "極短歷史口號 / 文章標題 · 不收錄仍在保護期內的正文", rightsURLString: "https://www.npc.gov.cn/c2/c30834/202011/t20201119_308796.html", presentation: .quotation
+        ),
+        EmptyWorkspaceInspiration(
+            id: "mao-double-hundred", text: "百花齊放，百家爭鳴", credit: "毛澤東提出的“雙百方針” · 1956",
+            category: .philosophy, languageTag: "zh-Hant", rightsBasis: .uncopyrightableFact,
+            sourceLabel: "中國共產黨新聞網 · 雙百方針史料", sourceURLString: "https://cpc.people.com.cn/GB/33837/2534760.html",
+            rightsLabel: "傳統成語構成的極短歷史口號 · 不收錄現代受保護正文", rightsURLString: "https://www.npc.gov.cn/c2/c30834/202011/t20201119_308796.html", presentation: .quotation
+        ),
     ]
 
-    /// Interleave fields so successive days and manual advances reveal the catalog's breadth.
+    /// Interleave fields so successive days reveal the catalog's breadth.
     public static let rotationItems: [EmptyWorkspaceInspiration] = {
-        let categoryOrder: [EmptyWorkspaceInspirationCategory] = [
-            .chineseClassics, .worldLiterature, .mathematics,
-            .chineseClassics, .physics, .worldLiterature,
-            .chineseClassics, .economics, .mathematics,
-            .chineseClassics, .philosophy, .worldLiterature,
-            .chineseClassics, .physics, .economics,
-            .chineseClassics, .worldLiterature, .chineseClassics, .mathematics,
-        ]
+        let categoryOrder = EmptyWorkspaceInspirationCategory.allCases
         var consumed: [EmptyWorkspaceInspirationCategory: Int] = [:]
-        return categoryOrder.compactMap { category in
-            let categoryItems = items.filter { $0.category == category }
-            let index = consumed[category, default: 0]
-            guard categoryItems.indices.contains(index) else { return nil }
-            consumed[category] = index + 1
-            return categoryItems[index]
+        var result: [EmptyWorkspaceInspiration] = []
+        while result.count < items.count {
+            for category in categoryOrder {
+                let categoryItems = items.filter { $0.category == category }
+                let index = consumed[category, default: 0]
+                guard categoryItems.indices.contains(index) else { continue }
+                consumed[category] = index + 1
+                result.append(categoryItems[index])
+            }
         }
+        if result.first?.category == result.last?.category,
+           let last = result.popLast(),
+           let insertion = result.indices.dropFirst().first(where: {
+               result[$0 - 1].category != last.category && result[$0].category != last.category
+           }) {
+            result.insert(last, at: insertion)
+        }
+        return result
     }()
+
+    public static func randomItem<R: RandomNumberGenerator>(excludingID: String?, using generator: inout R) -> EmptyWorkspaceInspiration {
+        precondition(!rotationItems.isEmpty)
+        let candidates = rotationItems.filter { $0.id != excludingID }
+        return candidates.randomElement(using: &generator) ?? rotationItems[0]
+    }
 
     public static func item(for date: Date, calendar: Calendar = .current) -> EmptyWorkspaceInspiration {
         precondition(!rotationItems.isEmpty)

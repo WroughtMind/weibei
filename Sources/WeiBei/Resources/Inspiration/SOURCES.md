@@ -2,7 +2,7 @@
 
 WeiBei bundles the text, formulas, and three verified calligraphy alpha masks in this directory so the empty workspace works without a network connection. Source links are visible for traceability but are never required for rendering.
 
-The first offline catalog contains 19 entries across six fields: Chinese classics, world literature, mathematics, physics, economics, and philosophy. It preserves at least five source languages: Classical Chinese, Japanese, English, German, and French. Formula-only entries use the BCP 47 `zxx` tag because they contain no linguistic text.
+The offline catalog contains exactly 50 entries across six fields: Chinese classics, world literature, mathematics, physics, economics, and philosophy. It preserves Classical Chinese, Japanese, English, German, French, Italian, Spanish, Latin, and Portuguese. Formula-only entries use the BCP 47 `zxx` tag because they contain no linguistic text. The machine-readable ledger in `EmptyWorkspaceInspiration.swift` stores the exact source URL, rights URL, rights basis, language tag, author/work credit, and presentation mode for every entry.
 
 No NC, ND, modern calligraphy font, license-unclear dataset, translation, or generated quotation is included. Formula and foreign-language entries are typeset normally and are never presented as calligraphy. WeiBei claims no copyright in mathematical, physical, economic, or logical facts.
 
@@ -29,6 +29,17 @@ No NC, ND, modern calligraphy font, license-unclear dataset, translation, or gen
 | `cobb-douglas-production` | Economics | `P = bLᵏC¹⁻ᵏ` | Charles W. Cobb and Paul H. Douglas, “A Theory of Production,” 1928 | [The American Economic Review 18(1), JSTOR stable record](https://www.jstor.org/stable/1811556) | Economic formula / fact; no article text is bundled and no copyright is claimed in the expression. Circular 33. |
 | `fisher-exchange` | Economics | `MV + M′V′ = ΣpQ` | Irving Fisher, *The Purchasing Power of Money*, 1911 | [FRASER full text, Federal Reserve Bank of St. Louis](https://fraser.stlouisfed.org/title/purchasing-power-money-3610/fulltext) | Economic formula / fact; no source-book prose is bundled and no copyright is claimed in the expression. Circular 33. |
 | `aristotle-non-contradiction` | Philosophy / logic | `¬(p ∧ ¬p)` | Aristotle, *Metaphysics* IV.3, 1005b19–20; modern logical notation | [MIT Internet Classics Archive, W. D. Ross source passage](https://classics.mit.edu/Aristotle/metaphysics.4.iv.html) | Logical principle / fact; the symbolic expression is a modern notation and no copyright is claimed. Circular 33. |
+
+## Expanded 31-entry ledger
+
+- Chinese classics: `analects-three-companions`, `yijing-self-renewal`, and `tao-peach-blossom` use ancient public-domain originals transcribed by Chinese Wikisource under CC BY-SA 4.0.
+- World originals: `dante-midway`, `cervantes-la-mancha`, and `virgil-arms-man` use Project Gutenberg public-domain editions; `rilke-change-life` and `pessoa-poet-feigns` use proofread Wikisource originals under CC BY-SA 4.0. No translations are bundled.
+- Mathematics: `quadratic-formula`, `newton-leibniz`, `fourier-transform`, and `shannon-entropy` are formula/fact entries. Sources are Circular 33, BnF Gallica, and the original Shannon-paper DOI.
+- Physics: `newton-second-law`, `maxwell-gauss-law`, `planck-relation`, `boltzmann-entropy`, `uncertainty-principle`, and `de-broglie-wave` cite Project Gutenberg, original-paper DOIs, or the HAL thesis record. Only modern formula notation is bundled.
+- Economics: `national-income-identity`, `price-elasticity`, `present-value`, `keynes-multiplier`, and `black-scholes-pde` cite BEA, Project Gutenberg, Investor.gov, original-paper DOI records, or the scanned original book. Only formula/fact expressions are bundled.
+- Philosophy: `descartes-cogito`, `kant-sapere-aude`, `spinoza-nature`, and `hume-reason-passions` use public-domain original-language texts from Wikisource or Project Gutenberg. `mao-serve-the-people`, `mao-seek-truth`, `mao-single-spark`, and `mao-double-hundred` are extremely short historical slogans or a title with People/CPC history sources; no protected poem, essay passage, translation, or *Selected Works* excerpt is bundled.
+
+Mao Zedong died in 1976. Article 23 of the current [Copyright Law of the People's Republic of China](https://www.npc.gov.cn/c2/c30834/202011/t20201119_308796.html) protects a natural person's economic rights through 31 December of the fiftieth year after death. Therefore Mao's poems and prose remain excluded from this 2026 package absent permission; the catalog may reconsider public-domain originals from 2027 onward.
 
 ## Calligraphy transformation
 
