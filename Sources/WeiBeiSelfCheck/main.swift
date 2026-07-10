@@ -2,6 +2,7 @@ import AppKit
 import CoreText
 import Foundation
 import PDFKit
+import Security
 import WeiBeiCore
 
 func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
@@ -69,6 +70,40 @@ expect(!paneToggleClusterSource.isEmpty
     && paneToggleClusterSource.contains("store.toggleReader()")
     && paneToggleClusterSource.contains("store.toggleAgent()")
     && paneToggleClusterSource.contains("store.toggleNotes()"), "top-bar pane switches update visibility without wrapping the container replacement in an animation transaction")
+
+expect(EmptyWorkspaceDayPeriod(hour: 5) == .morning
+    && EmptyWorkspaceDayPeriod(hour: 10) == .morning
+    && EmptyWorkspaceDayPeriod(hour: 11) == .midday
+    && EmptyWorkspaceDayPeriod(hour: 16) == .midday
+    && EmptyWorkspaceDayPeriod(hour: 17) == .evening
+    && EmptyWorkspaceDayPeriod(hour: 22) == .evening
+    && EmptyWorkspaceDayPeriod(hour: 23) == .lateNight
+    && EmptyWorkspaceDayPeriod(hour: 4) == .lateNight, "empty workspace greeting follows morning, midday, evening, and late-night boundaries")
+expect(EmptyWorkspaceDayPeriod.morning.greeting(language: .chinese).contains("早安")
+    && EmptyWorkspaceDayPeriod.midday.greeting(language: .chinese).contains("午安")
+    && EmptyWorkspaceDayPeriod.evening.greeting(language: .chinese).contains("晚安")
+    && EmptyWorkspaceDayPeriod.lateNight.greeting(language: .chinese).contains("夜深")
+    && !EmptyWorkspaceDayPeriod.morning.greeting(language: .english).isEmpty, "empty workspace greetings stay localized and non-empty")
+
+let inspirationItems = EmptyWorkspaceInspirationCatalog.items
+expect(inspirationItems.count >= 6
+    && EmptyWorkspaceInspirationCatalog.validationErrors.isEmpty
+    && inspirationItems.contains(where: { if case .calligraphy = $0.presentation { return true }; return false })
+    && inspirationItems.contains(where: { $0.presentation == .quotation })
+    && inspirationItems.contains(where: { $0.presentation == .formula }), "daily inspiration catalog contains validated calligraphy, original-language quotation, and formulas")
+expect(inspirationItems.allSatisfy { item in
+    !item.text.isEmpty
+        && !item.credit.isEmpty
+        && item.sourceURL?.scheme == "https"
+        && !item.rightsLabel.isEmpty
+        && item.rightsURL?.scheme == "https"
+}, "every daily inspiration keeps text, author/work credit, a reliable source, and rights metadata")
+var inspirationCalendar = Calendar(identifier: .gregorian)
+inspirationCalendar.timeZone = TimeZone(secondsFromGMT: 0)!
+let inspirationDayOne = inspirationCalendar.date(from: DateComponents(year: 2026, month: 7, day: 10, hour: 12))!
+let inspirationDayTwo = inspirationCalendar.date(byAdding: .day, value: 1, to: inspirationDayOne)!
+expect(EmptyWorkspaceInspirationCatalog.item(for: inspirationDayOne, calendar: inspirationCalendar).id
+    != EmptyWorkspaceInspirationCatalog.item(for: inspirationDayTwo, calendar: inspirationCalendar).id, "daily inspiration rotates deterministically from one local day to the next")
 
 let offlineChinesePreview = AgentOfflinePreview.render(
     AgentOfflinePreviewInput(
@@ -165,6 +200,61 @@ CTFontManagerRegisterFontsForURL(monoFontURL as CFURL, .process, nil)
 expect(NSFont(name: "WeiBeiStele-Regular", size: 18) != nil
     && NSFont(name: "WeiBeiSteleMono-Regular", size: 13) != nil, "bundled WeiBei English fonts register under their PostScript names")
 
+func inspectCalligraphyAsset(_ url: URL) throws -> (width: Int, height: Int, visible: Int, transparent: Int, opaqueWhite: Int, outerInk: Int) {
+    let data = try Data(contentsOf: url)
+    guard let bitmap = NSBitmapImageRep(data: data) else {
+        throw NSError(domain: "WeiBeiSelfCheck", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unreadable calligraphy PNG: \(url.path)"])
+    }
+    var visible = 0
+    var transparent = 0
+    var opaqueWhite = 0
+    var outerInk = 0
+    for y in 0..<bitmap.pixelsHigh {
+        for x in 0..<bitmap.pixelsWide {
+            guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+            if color.alphaComponent > 0.05 {
+                visible += 1
+                if x < 2 || y < 2 || x >= bitmap.pixelsWide - 2 || y >= bitmap.pixelsHigh - 2 {
+                    outerInk += 1
+                }
+            } else {
+                transparent += 1
+            }
+            if color.alphaComponent > 0.95
+                && color.redComponent > 0.95
+                && color.greenComponent > 0.95
+                && color.blueComponent > 0.95 {
+                opaqueWhite += 1
+            }
+        }
+    }
+    return (bitmap.pixelsWide, bitmap.pixelsHigh, visible, transparent, opaqueWhite, outerInk)
+}
+
+let calligraphyDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Resources/Inspiration/Calligraphy", isDirectory: true)
+let clearBreezeStats = try inspectCalligraphyAsset(calligraphyDirectoryURL.appendingPathComponent("lanting-clear-breeze.png"))
+let universeStats = try inspectCalligraphyAsset(calligraphyDirectoryURL.appendingPathComponent("lanting-universe.png"))
+expect(clearBreezeStats.width == 856 && clearBreezeStats.height == 132
+    && universeStats.width == 624 && universeStats.height == 132
+    && clearBreezeStats.visible > 1_000 && universeStats.visible > 1_000
+    && clearBreezeStats.transparent > clearBreezeStats.visible
+    && universeStats.transparent > universeStats.visible
+    && clearBreezeStats.opaqueWhite == 0 && universeStats.opaqueWhite == 0
+    && clearBreezeStats.outerInk == 0 && universeStats.outerInk == 0, "bundled Lanting calligraphy masks are transparent, uncropped, and free of hard white backgrounds")
+
+let inspirationSourcesURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Resources/Inspiration/SOURCES.md")
+let inspirationSources = (try? String(contentsOf: inspirationSourcesURL, encoding: .utf8)) ?? ""
+expect(inspirationSources.contains("a133647a8695cd06d0f5c6215d66e0b8b8d93d56")
+    && inspirationSources.contains("e5c6827f44b22f5441bb208b1770103da8a076564b52f41e64f77b0da7e1835c")
+    && inspirationSources.contains("a915d1e460c68a0634c2cfaad90f802fda04ea8c25227632cd4812c51647df22")
+    && inspirationSources.contains("Public Domain Mark 1.0")
+    && inspirationSources.contains("故00002597")
+    && inspirationSources.contains("were rejected")
+    && inspirationSources.contains("No NC, ND")
+    && inspirationSources.contains("No generative fill, vector tracing, or font substitution"), "inspiration resource documentation preserves source hashes, public-domain status, provenance, exclusions, and transformation limits")
+
 let runScriptURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("script/build_and_run.sh")
 let runScript = (try? String(contentsOf: runScriptURL, encoding: .utf8)) ?? ""
@@ -178,8 +268,12 @@ expect(runScript.contains("kCGWindowOwnerName") && runScript.contains("\"$APP_DI
 expect(runScript.contains("let isOnscreen = window[kCGWindowIsOnscreen as String] as? NSNumber") && runScript.contains("let visibleEnough = isOnscreen == nil || isOnscreen?.intValue != 0"), "run script tolerates missing onscreen metadata when the window is otherwise capturable")
 expect(!runScript.contains("pid=\"$(pgrep -x \"$PRODUCT_NAME\""), "run script window verification does not depend on pgrep")
 expect(runScript.contains("visual_verify_window") && runScript.contains("--visual-verify") && runScript.contains("visual_non_black_ratio") && runScript.contains("visual verify failed: captured window is black or empty") && runScript.contains("nonBlackRatio < 0.02"), "run script exposes an explicit visual non-black window check")
-expect(runScript.contains("weibei-visual-verify-latest.png") && runScript.contains("visual_capture_path=$latest_capture_path"), "visual verification leaves one latest screenshot path for review")
-expect(runScript.contains("visual verify blocked: macOS refused window capture") && runScript.contains("Grant Screen Recording permission"), "visual verification reports capture-permission failures instead of looking like an app rendering failure")
+expect(runScript.contains("weibei-visual-verify-latest.png") && runScript.contains("cp \"$capture_path\" \"$latest_capture_path\""), "visual verification leaves one latest screenshot path for review")
+expect(runScript.contains("weibei-visual-verify-$VERIFY_SCENARIO.png")
+    && runScript.contains("visual_capture_path=$scenario_capture_path"), "visual verification preserves a separate screenshot for every empty-workspace theme and width scenario")
+expect(runScript.contains("WEIBEI_VERIFY_CAPTURE_PATH")
+    && runScript.contains("app-owned capture and macOS window capture failed")
+    && runScript.contains("Grant Screen Recording permission"), "visual verification prefers an app-owned capture and reports when both capture paths fail")
 expect(runScript.contains("open_app() {\n  /usr/bin/open \"$APP_BUNDLE\"\n}")
     && !runScript.contains("open_app() {\n  /usr/bin/open -n \"$APP_BUNDLE\"\n}"), "regular run opens WeiBei without forcing a second app instance")
 expect(runScript.contains("RUN_VISUAL_VERIFY=false")
@@ -190,8 +284,11 @@ expect(runScript.contains("RUN_VISUAL_VERIFY=false")
 expect(runScript.contains("open_app_for_verify()")
     && runScript.contains("VERIFY_DATA_DIR=\"$DIST_DIR/Data\"")
     && runScript.contains("VERIFY_SCENARIO=\"${WEIBEI_VERIFY_SCENARIO:-offline-learning-flow}\"")
+    && runScript.contains("VERIFY_WINDOW_SIZE=\"${WEIBEI_VERIFY_WINDOW_SIZE:-}\"")
+    && runScript.contains("VERIFY_INSPIRATION_ID=\"${WEIBEI_VERIFY_INSPIRATION_ID:-}\"")
     && runScript.contains("rm -rf \"$VERIFY_DATA_DIR\"")
     && runScript.contains("--env WEIBEI_SUPPRESS_ACTIVATION=1 --env WEIBEI_FORCE_OFFLINE_AGENT=1 --env \"WEIBEI_WORKSPACE_DIR=$VERIFY_DATA_DIR\" --env \"WEIBEI_VERIFY_SCENARIO=$VERIFY_SCENARIO\"")
+    && runScript.contains("--env \"WEIBEI_VERIFY_WINDOW_SIZE=$VERIFY_WINDOW_SIZE\"")
     && runScript.contains("if [[ -n \"$VERIFY_SCENARIO\" ]]; then\n    sleep 2.6\n  fi")
     && runScript.contains("--verify|verify)\n    run_verifiers\n    open_app_for_verify")
     && runScript.contains("--visual-verify|visual-verify)\n    run_verifiers\n    open_app_for_verify"), "verify modes launch the app in the background with an isolated offline learning-flow workspace")
@@ -201,6 +298,15 @@ expect(runScript.contains("verify_learning_flow_persistence()")
     && runScript.contains("把可确认依据写入笔记")
     && runScript.contains("! /usr/bin/grep -q \"## 离线草稿\"")
     && runScript.contains("! /usr/bin/grep -q \"## 可确认\""), "verify mode checks that the offline learning flow persists only the note-ready agent suggestion into the note workspace")
+expect(runScript.contains("verify_empty_workspace_state()")
+    && runScript.contains("empty-workspace-open-doc")
+    && runScript.contains("empty-workspace-open-chat")
+    && runScript.contains("empty-workspace-open-notes")
+    && runScript.contains("\\\"showReader\\\":$expected_reader")
+    && runScript.contains("\\\"showAgent\\\":$expected_agent")
+    && runScript.contains("\\\"showNotes\\\":$expected_notes")
+    && runScript.contains("\\\"showDailyInspiration\\\":$expected_inspiration")
+    && runScript.contains("Empty workspace entry state marker"), "verify mode proves each empty-workspace entry opens the requested pane while preserving existing note state")
 expect(runScript.contains("VERIFY_MODE=true")
     && runScript.contains("DIST_DIR=\"${TMPDIR:-/tmp}/weibei-verify-$UID\"")
     && runScript.contains("elif [[ \"$VERIFY_MODE\" == true ]]; then\n  :")
@@ -549,15 +655,33 @@ expect(
 )
 expect(OpenAIAPIKeyStore.cleaned("  sk-test\n") == "sk-test", "api key cleaning")
 
-let temporaryKeychainStore = KeychainPasswordStore(
-    service: "com.changfenhuang.weibei.selfcheck.\(UUID().uuidString)",
-    account: "OPENAI_API_KEY"
-)
-try? temporaryKeychainStore.delete()
-try temporaryKeychainStore.save("  sk-selfcheck\n")
-expect(temporaryKeychainStore.load() == "sk-selfcheck", "keychain save and load")
-try temporaryKeychainStore.delete()
-expect(temporaryKeychainStore.load().isEmpty, "keychain delete")
+do {
+    let temporaryKeychainURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("weibei-selfcheck-\(UUID().uuidString).keychain-db")
+    let temporaryKeychainPassword = Data("weibei-selfcheck-only".utf8)
+    var temporaryKeychain: SecKeychain?
+    let createStatus = temporaryKeychainURL.path.withCString { path in
+        temporaryKeychainPassword.withUnsafeBytes { password in
+            SecKeychainCreate(path, UInt32(password.count), password.baseAddress, false, nil, &temporaryKeychain)
+        }
+    }
+    expect(createStatus == errSecSuccess && temporaryKeychain != nil, "isolated self-check keychain is created without changing the user's default keychain")
+    guard let temporaryKeychain else { exit(1) }
+    defer {
+        SecKeychainDelete(temporaryKeychain)
+    }
+
+    let temporaryKeychainStore = KeychainPasswordStore(
+        service: "com.changfenhuang.weibei.selfcheck.\(UUID().uuidString)",
+        account: "OPENAI_API_KEY",
+        keychain: temporaryKeychain
+    )
+    try? temporaryKeychainStore.delete()
+    try temporaryKeychainStore.save("  sk-selfcheck\n")
+    expect(temporaryKeychainStore.load() == "sk-selfcheck", "keychain save and load")
+    try temporaryKeychainStore.delete()
+    expect(temporaryKeychainStore.load().isEmpty, "keychain delete")
+}
 
 let missingSelectionInsight = QuietInsight.make(
     materialTitle: "利率资料",
@@ -741,6 +865,12 @@ let contentViewSourceURL = URL(fileURLWithPath: FileManager.default.currentDirec
     .appendingPathComponent("Sources/WeiBei/Views/ContentView.swift")
 let contentViewSource = (try? String(contentsOf: contentViewSourceURL, encoding: .utf8)) ?? ""
 expect(!contentViewSource.isEmpty, "content view source is readable")
+let emptyWorkspaceSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Views/EmptyWorkspaceLauncherView.swift")
+let emptyWorkspaceSource = (try? String(contentsOf: emptyWorkspaceSourceURL, encoding: .utf8)) ?? ""
+let inspirationCatalogSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBeiCore/EmptyWorkspaceInspiration.swift")
+let inspirationCatalogSource = (try? String(contentsOf: inspirationCatalogSourceURL, encoding: .utf8)) ?? ""
 let contentRailSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/ContentRailView.swift")
 let contentRailSource = (try? String(contentsOf: contentRailSourceURL, encoding: .utf8)) ?? ""
@@ -752,6 +882,40 @@ expect(contentRailSource.contains("struct ContentRailView: View")
     && contentRailSource.contains(".popover(")
     && contentRailSource.contains("SpatialTapGesture()")
     && contentRailSource.contains("private func nearestItem"), "shared content rail supports normal, rail-only, delayed unclipped hover, dense-track mapping, and real image previews")
+expect(stableDocumentSource.contains("EmptyWorkspaceLauncherView().environmentObject(store)")
+    && emptyWorkspaceSource.contains("Text(title)")
+    && emptyWorkspaceSource.contains("title: \"DOC\"")
+    && emptyWorkspaceSource.contains("title: \"CHAT\"")
+    && emptyWorkspaceSource.contains("title: \"NOTES\"")
+    && emptyWorkspaceSource.contains("action: store.toggleReader")
+    && emptyWorkspaceSource.contains("action: store.toggleAgent")
+    && emptyWorkspaceSource.contains("action: store.toggleNotes"), "empty workspace exposes direct document, chat, and notes entries through the existing pane toggles")
+expect(emptyWorkspaceSource.contains("WeiBeiTypography.englishBrandFont")
+    && emptyWorkspaceSource.contains("entryDivider")
+    && emptyWorkspaceSource.contains("Rectangle()")
+    && !emptyWorkspaceSource.contains("RoundedRectangle")
+    && !emptyWorkspaceSource.contains("Capsule()")
+    && !emptyWorkspaceSource.contains("stroke(WeiBeiTheme.cinnabar"), "empty workspace entry uses WeiBei English lettering, hairlines, and whitespace without cards, pills, or red outlines")
+expect(emptyWorkspaceSource.contains("TimelineView(.periodic(from: .now, by: 60))")
+    && emptyWorkspaceSource.contains("EmptyWorkspaceDayPeriod.current(at:")
+    && emptyWorkspaceSource.contains("geometry.size.width < 760 || geometry.size.height < 620")
+    && emptyWorkspaceSource.contains("min(116, max(76")
+    && emptyWorkspaceSource.contains("minimumScaleFactor(0.78)"), "empty workspace greeting updates with time and its entry and inspiration typography adapt to compact windows")
+expect(emptyWorkspaceSource.contains("if store.showDailyInspiration")
+    && emptyWorkspaceSource.contains("EmptyWorkspaceInspirationCatalog.item")
+    && emptyWorkspaceSource.contains("case \"empty-workspace-calligraphy-light\":")
+    && emptyWorkspaceSource.contains("forcedID = \"lanting-clear-breeze\"")
+    && emptyWorkspaceSource.contains("case \"empty-workspace-calligraphy-dark\":")
+    && emptyWorkspaceSource.contains("forcedID = \"lanting-universe\"")
+    && emptyWorkspaceSource.contains("Link(inspiration.sourceLabel")
+    && emptyWorkspaceSource.contains("Link(inspiration.rightsLabel")
+    && emptyWorkspaceSource.contains("Bundle.module.url(forResource:")
+    && !emptyWorkspaceSource.contains("URLSession")
+    && !inspirationCatalogSource.contains("URLSession"), "daily inspiration is bundled for offline use while retaining visible source and rights links")
+expect(emptyWorkspaceSource.contains("empty-workspace-entry-doc")
+    && emptyWorkspaceSource.contains("empty-workspace-entry-chat")
+    && emptyWorkspaceSource.contains("empty-workspace-entry-notes")
+    && emptyWorkspaceSource.contains("accessibilityLabel"), "empty workspace entries remain individually named and reachable to accessibility automation")
 expect(contentViewSource.contains("case .immersiveReading:\n                ZStack(alignment: .topTrailing)")
     && contentViewSource.contains("QuietInsightView(compact: true)")
     && contentViewSource.contains(".padding(.top, 24)")
@@ -1474,7 +1638,15 @@ expect(appSource.contains("private var shouldActivateOnLaunch: Bool")
     && appSource.contains("WEIBEI_SUPPRESS_ACTIVATION")
     && appSource.contains("Task { await store.runVerificationScenarioIfNeeded() }")
     && appSource.contains("if shouldActivateOnLaunch {\n            NSApp.activate(ignoringOtherApps: true)\n        }"), "app activation is skipped during non-invasive verification launches")
+expect(appSource.contains("applyVerificationWindowSize(to: window)")
+    && appSource.contains("environment[\"WEIBEI_SUPPRESS_ACTIVATION\"] == \"1\"")
+    && appSource.contains("environment[\"WEIBEI_VERIFY_WINDOW_SIZE\"]")
+    && appSource.contains("window.setContentSize(target)")
+    && appSource.contains("window.center()"), "verification-only window sizing supports real wide and narrow screenshots without changing normal launch behavior")
 expect(appSource.contains("window.isOpaque = true"), "main window declares opaque paper backing for stable capture")
+expect(appSource.contains("environment[\"WEIBEI_VERIFY_CAPTURE_PATH\"]")
+    && appSource.contains("bitmapImageRepForCachingDisplay")
+    && appSource.contains("cacheDisplay(in: bounds, to: bitmap)"), "isolated verification app can capture its own rendered content without Screen Recording permission")
 expect(appSource.contains("sharedWorkspaceStore"), "main window and settings share one workspace store")
 expect(!appSource.contains("launchProbe"), "app launch path has no temporary probe logging")
 expect(appSource.contains("WeiBeiAppearanceTransition")
@@ -1555,6 +1727,11 @@ expect(!appSource.contains("Form {")
     && appSource.contains("store.setTopBarVariant(variant)"), "settings center uses categorized WeiBei chrome and real bound controls instead of the default form field")
 expect(appSource.contains("settingsPill(\n                    title: store.interfaceLanguage.settingsLabel,\n                    icon: \"character.book.closed\",\n                    active: false")
     && appSource.contains("settingsPill(\n                    title: store.appearanceMode.label(language: store.interfaceLanguage),\n                    icon: store.appearanceMode.systemImage,\n                    active: false"), "settings sidebar summary pills stay neutral instead of looking permanently selected")
+expect(appSource.contains("title: store.ui(\"每日灵感\", \"Daily Inspiration\")")
+    && appSource.contains("get: { store.showDailyInspiration }")
+    && appSource.contains("set: { store.setDailyInspirationEnabled($0) }")
+    && appSource.contains("文稿、对话和笔记入口始终保留")
+    && appSource.contains(".accessibilityLabel(Text(store.ui(\"显示每日灵感\""), "settings explicitly toggles daily inspiration without implying that the three work entries disappear")
 expect(appSource.contains("segmented(NoteRenderMode.visibleCases, active: store.noteRenderMode.visibleMode)")
     && !appSource.contains("笔记预览")
     && !appSource.contains("Note Preview")
@@ -1569,6 +1746,10 @@ expect(appSource.contains("init() {\n        WeiBeiTypography.registerBundledFon
 let workspaceStoreSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Stores/WorkspaceStore.swift")
 let workspaceStoreSource = (try? String(contentsOf: workspaceStoreSourceURL, encoding: .utf8)) ?? ""
+expect(workspaceStoreSource.contains("@Published var showDailyInspiration = true")
+    && workspaceStoreSource.contains("func setDailyInspirationEnabled(_ enabled: Bool)")
+    && workspaceStoreSource.contains("showDailyInspiration = snapshot.showDailyInspiration ?? true")
+    && workspaceStoreSource.contains("showDailyInspiration: showDailyInspiration"), "daily inspiration preference persists in the isolated workspace file and older workspaces default to enabled")
 expect(workspaceStoreSource.contains("var brandLatinName: String")
     && workspaceStoreSource.contains("\"WeiBei\"")
     && contentViewSource.contains("Text(store.brandLatinName)")
@@ -1693,6 +1874,22 @@ expect(workspaceStoreSource.contains("let sampleItems: [StudyItem] = WorkspaceSt
     && workspaceStoreSource.contains("CGDataConsumer(data: data as CFMutableData)")
     && workspaceStoreSource.contains("利率是资金使用价格的表达。")
     && !workspaceStoreSource.contains("StudyItem(id: \"sample-pdf\", title: \"Mishkin 教材样例\", subtitle: \"PDF 阅读\", kind: .pdf, urlPath: nil, isSample: true)"), "sample PDF item points at a generated selectable PDF file instead of the fake PDF fallback")
+expect(workspaceStoreSource.contains("empty-workspace-light-wide")
+    && workspaceStoreSource.contains("empty-workspace-light-narrow")
+    && workspaceStoreSource.contains("empty-workspace-calligraphy-light")
+    && workspaceStoreSource.contains("empty-workspace-calligraphy-dark")
+    && workspaceStoreSource.contains("empty-workspace-dark-wide")
+    && workspaceStoreSource.contains("empty-workspace-dark-narrow")
+    && workspaceStoreSource.contains("empty-workspace-inspiration-off")
+    && workspaceStoreSource.contains("configureEmptyWorkspaceVerificationScenario")
+    && workspaceStoreSource.contains("guard Self.environmentValue(\"WEIBEI_SUPPRESS_ACTIVATION\") == \"1\" else { return }")
+    && workspaceStoreSource.contains("showReader = false")
+    && workspaceStoreSource.contains("showAgent = false")
+    && workspaceStoreSource.contains("showNotes = false")
+    && workspaceStoreSource.contains("case \"empty-workspace-open-doc\":\n            toggleReader()")
+    && workspaceStoreSource.contains("case \"empty-workspace-open-chat\":\n            toggleAgent()")
+    && workspaceStoreSource.contains("case \"empty-workspace-open-notes\":\n            toggleNotes()")
+    && workspaceStoreSource.contains("Empty workspace entry state marker"), "verification scenarios cover empty light and dark wide and narrow windows plus all three preserved-state entry paths")
 expect(workspaceStoreSource.contains("ownerTitle: String? = nil") && workspaceStoreSource.contains("let resolvedOwnerTitle"), "selection updates can carry a precise reader source title")
 expect(workspaceStoreSource.contains("@Published var selectionAttachments: [SelectionContext] = []")
     && workspaceStoreSource.contains("@Published var floatingSelectionPrompt = \"\"")
@@ -2261,7 +2458,7 @@ expect(contentViewSource.contains("case .documentAgentNotes, .documentNotesAgent
     && contentViewSource.contains("let fallbackFrames = estimatedDocumentPaneFrames(order: order, size: geometry.size)")
     && contentViewSource.contains("store.threePaneReorderFrameList(order: order, fallback: fallbackFrames)")
     && contentViewSource.contains("onFramesChange: { reportedOrder, frames in")
-    && stableDocumentSource.contains("EmptyWorkspaceView().environmentObject(store)")
+    && stableDocumentSource.contains("EmptyWorkspaceLauncherView().environmentObject(store)")
     && stableDocumentSource.contains("addSubview(emptyHost)")
     && stableDocumentSource.contains("for role in WorkspacePaneRole.defaultThreePaneOrder")
     && stableDocumentSource.contains("addSubview(host)")
@@ -2773,9 +2970,15 @@ expect(!notebookMarkdown.canBecomeNotebookNote, "notebook markdown does not offe
 expect(!sampleMarkdown.isImportedMarkdownFile, "sample markdown stays app-owned")
 expect(!sampleMarkdown.canBecomeNotebookNote, "sample markdown cannot become a backing-file note")
 
-let persisted = PersistedWorkspace(threePaneOrder: [.agent, .reader, .notes], noteRenderMode: .preview, showLibrary: false, showReader: false, showAgent: true, showNotes: false, showRightPane: true, adaptImportedDocumentColors: false)
+let persisted = PersistedWorkspace(threePaneOrder: [.agent, .reader, .notes], noteRenderMode: .preview, showLibrary: false, showReader: false, showAgent: true, showNotes: false, showRightPane: true, showDailyInspiration: false, adaptImportedDocumentColors: false)
 let restored = try JSONDecoder().decode(PersistedWorkspace.self, from: try JSONEncoder().encode(persisted))
 expect(restored.showLibrary == false && restored.showReader == false && restored.showAgent == true && restored.showNotes == false && restored.showRightPane == true, "pane visibility state persists")
+expect(restored.showDailyInspiration == false, "daily inspiration can be disabled and restored from workspace persistence")
+let reenabledInspiration = try JSONDecoder().decode(PersistedWorkspace.self, from: try JSONEncoder().encode(PersistedWorkspace(showDailyInspiration: true)))
+expect(reenabledInspiration.showDailyInspiration == true, "daily inspiration can be re-enabled and restored from workspace persistence")
+let legacyWorkspace = try JSONDecoder().decode(PersistedWorkspace.self, from: Data(#"{"importedItems":[],"notesByItemID":{}}"#.utf8))
+expect(legacyWorkspace.showDailyInspiration == nil
+    && workspaceStoreSource.contains("showDailyInspiration = snapshot.showDailyInspiration ?? true"), "workspace snapshots created before daily inspiration remain decodable and default to enabled")
 expect(restored.adaptImportedDocumentColors == false
     && workspaceStoreSource.contains("adaptImportedDocumentColors = snapshot.adaptImportedDocumentColors ?? true")
     && workspaceStoreSource.contains("adaptImportedDocumentColors: adaptImportedDocumentColors"), "imported-document color adaptation persists while old workspaces default to adapted reading")

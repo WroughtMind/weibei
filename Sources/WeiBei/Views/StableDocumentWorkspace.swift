@@ -34,7 +34,7 @@ struct StableDocumentWorkspace: NSViewRepresentable {
             ))
         })
         let emptyHost = nativeHost(
-            EmptyWorkspaceView().environmentObject(store),
+            EmptyWorkspaceLauncherView().environmentObject(store),
             identifier: "stable-document-empty-workspace"
         )
         splitView.install(roleHosts: roleHosts, emptyHost: emptyHost)

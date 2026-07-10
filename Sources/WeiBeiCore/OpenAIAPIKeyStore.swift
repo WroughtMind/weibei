@@ -4,10 +4,12 @@ import Security
 public struct KeychainPasswordStore {
     public let service: String
     public let account: String
+    private let keychain: SecKeychain?
 
-    public init(service: String, account: String) {
+    public init(service: String, account: String, keychain: SecKeychain? = nil) {
         self.service = service
         self.account = account
+        self.keychain = keychain
     }
 
     public static func cleaned(_ value: String) -> String {
@@ -29,11 +31,11 @@ public struct KeychainPasswordStore {
         }
 
         let data = Data(key.utf8)
-        let status = SecItemUpdate(baseQuery as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        let status = SecItemUpdate(matchQuery as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if status == errSecSuccess { return }
 
         if status == errSecItemNotFound {
-            var attributes = baseQuery
+            var attributes = addAttributes
             attributes[kSecValueData as String] = data
             attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             let addStatus = SecItemAdd(attributes as CFDictionary, nil)
@@ -45,7 +47,7 @@ public struct KeychainPasswordStore {
     }
 
     public func delete() throws {
-        let status = SecItemDelete(baseQuery as CFDictionary)
+        let status = SecItemDelete(matchQuery as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
             throw Self.keychainError(status)
         }
@@ -60,10 +62,26 @@ public struct KeychainPasswordStore {
     }
 
     private var readQuery: [String: Any] {
-        var query = baseQuery
+        var query = matchQuery
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
         return query
+    }
+
+    private var matchQuery: [String: Any] {
+        var query = baseQuery
+        if let keychain {
+            query[kSecMatchSearchList as String] = [keychain]
+        }
+        return query
+    }
+
+    private var addAttributes: [String: Any] {
+        var attributes = baseQuery
+        if let keychain {
+            attributes[kSecUseKeychain as String] = keychain
+        }
+        return attributes
     }
 
     private static func keychainError(_ status: OSStatus) -> NSError {
