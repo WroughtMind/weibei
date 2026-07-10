@@ -11,6 +11,65 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     }
 }
 
+let paneTransitionSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Views/ContentView.swift")
+let paneTransitionSource = (try? String(contentsOf: paneTransitionSourceURL, encoding: .utf8)) ?? ""
+let stableDocumentSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Views/StableDocumentWorkspace.swift")
+let stableDocumentSource = (try? String(contentsOf: stableDocumentSourceURL, encoding: .utf8)) ?? ""
+let paneContinuityRecorderSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Support/PaneContinuityRecorder.swift")
+let paneContinuityRecorderSource = (try? String(contentsOf: paneContinuityRecorderSourceURL, encoding: .utf8)) ?? ""
+let documentPaneTransitionSource: String = {
+    guard let start = paneTransitionSource.range(of: "private func documentPaneLayoutView() -> some View")?.lowerBound,
+          let end = paneTransitionSource[start...].range(of: "private func threePaneReorderOverlay")?.lowerBound else {
+        return ""
+    }
+    return String(paneTransitionSource[start..<end])
+}()
+expect(!documentPaneTransitionSource.isEmpty
+    && documentPaneTransitionSource.contains("StableDocumentWorkspace(")
+    && !documentPaneTransitionSource.contains("switch order.count")
+    && !documentPaneTransitionSource.contains("ResizableTwoPane(")
+    && !documentPaneTransitionSource.contains("ResizableThreePane(")
+    && !documentPaneTransitionSource.contains(".transition(WeiBeiTransition.layout)")
+    && !documentPaneTransitionSource.contains(".transition(WeiBeiTransition.rightPanel)"), "ordinary pane-count changes avoid whole-surface transitions that expose a blank frame")
+expect(stableDocumentSource.contains("WorkspacePaneRole.allCases.map")
+    && stableDocumentSource.contains("splitView.install(roleHosts: roleHosts, emptyHost: emptyHost)")
+    && stableDocumentSource.contains("animator().frame = frame")
+    && stableDocumentSource.contains("private let layoutAnimationDuration = 0.24")
+    && stableDocumentSource.contains("private let snapAnimationDuration = 0.18")
+    && stableDocumentSource.contains("private let animationFallbackGrace: TimeInterval = 0.25")
+    && stableDocumentSource.contains("guard activeAnimationToken == token else { return }")
+    && stableDocumentSource.contains("host.frame = CGRect(x: target.minX, y: 0, width: 0")
+    && stableDocumentSource.contains("func assertStableOwnership()")
+    && stableDocumentSource.contains("roleHosts.values.allSatisfy { $0.superview === self }")
+    && stableDocumentSource.contains("host?.isHidden = !visible.contains(role)")
+    && stableDocumentSource.contains("applyVisibleWidthsImmediately(widths, in: splitView)")
+    && !stableDocumentSource.contains("removeFromSuperview()")
+    && !stableDocumentSource.contains("rootView ="), "document pane hosts stay in one AppKit container while slot frames animate and hidden panes pause drawing")
+expect(stableDocumentSource.contains("recordContinuityTransition(duration: layoutAnimationDuration)")
+    && stableDocumentSource.contains("host.layer?.presentation()?.frame ?? host.frame")
+    && paneContinuityRecorderSource.contains("WEIBEI_VERIFY_PANE_TRACE_DIR")
+    && paneContinuityRecorderSource.contains("let recorderID = UUID().uuidString")
+    && paneContinuityRecorderSource.contains("1.0 / 60.0"), "debug verification records pane presentation frames and host ownership throughout each pane-count animation")
+expect(!paneTransitionSource.contains(".animation(WeiBeiMotion.panel, value: store.showReader)")
+    && !paneTransitionSource.contains(".animation(WeiBeiMotion.panel, value: store.showAgent)")
+    && !paneTransitionSource.contains(".animation(WeiBeiMotion.panel, value: store.showNotes)")
+    && !paneTransitionSource.contains(".animation(WeiBeiMotion.panel, value: store.showRightPane)"), "ordinary pane toggles do not animate the entire layout tree")
+let paneToggleClusterSource: String = {
+    guard let start = paneTransitionSource.range(of: "private var paneToggleCluster: some View")?.lowerBound,
+          let end = paneTransitionSource[start...].range(of: "private var agentPaneToggleHelp: String")?.lowerBound else {
+        return ""
+    }
+    return String(paneTransitionSource[start..<end])
+}()
+expect(!paneToggleClusterSource.isEmpty
+    && !paneToggleClusterSource.contains("withAnimation")
+    && paneToggleClusterSource.contains("store.toggleReader()")
+    && paneToggleClusterSource.contains("store.toggleAgent()")
+    && paneToggleClusterSource.contains("store.toggleNotes()"), "top-bar pane switches update visibility without wrapping the container replacement in an animation transaction")
+
 let offlineChinesePreview = AgentOfflinePreview.render(
     AgentOfflinePreviewInput(
         language: .chinese,
@@ -766,8 +825,6 @@ expect(contentViewSource.contains("private let railWidth = ContentRailMetrics.ra
 expect(!contentViewSource.contains("DragGesture()"), "content panes avoid SwiftUI drag resizing")
 expect(!contentViewSource.contains(".id(store.layout)"), "layout changes avoid whole-screen identity resets")
 expect(!contentViewSource.contains("PaneSeparator"), "content panes avoid hand-drawn split separators")
-expect(contentViewSource.components(separatedBy: ".transition(WeiBeiTransition.rightPanel)").count >= 5
-    && contentViewSource.components(separatedBy: ".transition(WeiBeiTransition.layout)").count >= 3, "right-pane visibility changes use shared transitions instead of naked tree swaps")
 expect(!contentViewSource.contains("topBarContentFade"), "top bar avoids a duplicate content fade wash")
 expect(contentViewSource.contains("store.toggleLibrary()")
     && contentViewSource.contains("sidebar.left")
@@ -1614,6 +1671,13 @@ expect(workspaceStoreSource.contains("let sampleItems: [StudyItem] = WorkspaceSt
     && workspaceStoreSource.contains("scenario == \"offline-learning-flow\"")
     && workspaceStoreSource.contains("scenario == \"immersive-conversation-flow\"")
     && workspaceStoreSource.contains("scenario == \"notebook-creation-flow\"")
+    && workspaceStoreSource.contains("scenario == \"pane-layout-stability-flow\"")
+    && workspaceStoreSource.contains("pane-layout-stability.complete")
+    && workspaceStoreSource.contains("WEIBEI_VERIFY_PANE_ORDER")
+    && workspaceStoreSource.contains("\"agentDraft\": agentDraft")
+    && workspaceStoreSource.contains("\"noteText\": noteText")
+    && workspaceStoreSource.contains("showAgent = true\n            save()")
+    && workspaceStoreSource.contains("showNotes = false\n            save()")
     && workspaceStoreSource.contains("layout = scenario == \"immersive-conversation-flow\" ? .immersiveConversation : .documentAgentNotes")
     && workspaceStoreSource.contains("if scenario == \"notebook-creation-flow\" {\n            layout = .immersiveWriting")
     && workspaceStoreSource.contains("showLibrary = scenario != \"immersive-conversation-flow\"")
@@ -2163,9 +2227,9 @@ expect(contentViewSource.contains("edge: .leading") && contentViewSource.contain
 expect(contentViewSource.contains("conversationSourceRailItems") && contentViewSource.contains("conversationTargetRailItems") && contentViewSource.contains("writingAssistRailItems"), "immersive rails wire role-specific actions")
 expect(contentViewSource.contains("systemImage: \"square.and.pencil\"") && contentViewSource.contains("systemImage: \"quote.opening\""), "immersive rail actions use stable semantic icons")
 expect(contentViewSource.contains("@StateObject private var paneHostRegistry = PersistentPaneHostRegistry()")
-    && contentViewSource.contains("private final class PersistentPaneHostRegistry: ObservableObject")
-    && contentViewSource.contains("private struct PersistentPaneHost: NSViewRepresentable")
-    && contentViewSource.contains("private final class PersistentPaneContainerView: NSView")
+    && contentViewSource.contains("final class PersistentPaneHostRegistry: ObservableObject")
+    && contentViewSource.contains("struct PersistentPaneHost: NSViewRepresentable")
+    && contentViewSource.contains("final class PersistentPaneContainerView: NSView")
     && contentViewSource.contains("override func viewDidMoveToWindow()")
     && contentViewSource.contains("guard container.window != nil else")
     && contentViewSource.contains("PersistentPaneHost(role: .reader, registry: paneHostRegistry)")
@@ -2173,18 +2237,18 @@ expect(contentViewSource.contains("@StateObject private var paneHostRegistry = P
     && contentViewSource.contains("PersistentPaneHost(role: .notes, registry: paneHostRegistry)")
     && contentViewSource.contains("host.removeFromSuperview()")
     && contentViewSource.contains("host.autoresizingMask = [.width, .height]")
-    && contentViewSource.contains("private struct OwnerToken: Equatable")
+    && contentViewSource.contains("struct OwnerToken: Equatable")
     && contentViewSource.contains("func registerOwner(for role: WorkspacePaneRole) -> OwnerToken")
     && contentViewSource.contains("guard latestOwnerGeneration[role] == owner.generation else { return }")
     && contentViewSource.contains("guard activeOwners[role] == owner, host.superview === container else { return }")
-    && !contentViewSource.contains("paneView(for: drag.role, reorderable: false)"), "core pane hosts survive immersive, single-pane, and split-layout changes instead of recreating their reader or editor state")
-expect(contentViewSource.contains("case .documentAgentNotes, .documentNotesAgent:")
+    && !stableDocumentSource.contains("removeFromSuperview()")
+    && !stableDocumentSource.contains("rootView ="), "core pane hosts survive immersive changes while ordinary pane-count changes keep one stable parent container")
+expect(contentViewSource.contains("case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:")
     && contentViewSource.contains("documentPaneLayoutView()")
-    && contentViewSource.contains("reorderablePaneView(for: order[0])")
     && contentViewSource.contains("PaneReorderPreviewView(role: drag.role)")
-    && contentViewSource.contains(".opacity(drag?.role == role ? 0.08 : 1)")
+    && stableDocumentSource.contains("host.alphaValue = role == draggedRole ? 0.08 : 1")
     && contentViewSource.contains(".opacity(0.11)")
-    && contentViewSource.contains("PersistentPaneHost(role: role, registry: paneHostRegistry)")
+    && stableDocumentSource.contains("PersistentPaneHost(role: role, registry: registry)")
     && contentViewSource.contains("private struct PersistentPaneRoot: View")
     && contentViewSource.contains("AgentPaneView(showsPaneHeader: false, reorderRole: reorderRole)")
     && contentViewSource.contains("NotePaneView(showsPaneHeader: false, reorderRole: reorderRole)")
@@ -2193,13 +2257,14 @@ expect(contentViewSource.contains("case .documentAgentNotes, .documentNotesAgent
     && contentViewSource.contains("threePaneReorderOverlay(order: order")
     && contentViewSource.contains("private func documentPaneLayoutView() -> some View")
     && contentViewSource.contains("let order = store.visibleDocumentPaneOrder")
-    && contentViewSource.contains("EmptyWorkspaceView()")
-    && contentViewSource.contains("documentTwoPaneView(order: order)")
-    && contentViewSource.contains("documentThreePaneView(order: Array(order.prefix(3)))")
-    && contentViewSource.contains("let estimatedFrames = threePaneFrames(order: order, size: geometry.size)")
-    && contentViewSource.contains("store.threePaneReorderFrameList(order: order, fallback: estimatedFrames)")
-    && contentViewSource.contains("onFramesChange: { frames in")
-    && contentViewSource.contains("ThreePaneReorderFrameReporter(order: order, frames: estimatedFrames)")
+    && contentViewSource.contains("StableDocumentWorkspace(")
+    && contentViewSource.contains("let fallbackFrames = estimatedDocumentPaneFrames(order: order, size: geometry.size)")
+    && contentViewSource.contains("store.threePaneReorderFrameList(order: order, fallback: fallbackFrames)")
+    && contentViewSource.contains("onFramesChange: { reportedOrder, frames in")
+    && stableDocumentSource.contains("EmptyWorkspaceView().environmentObject(store)")
+    && stableDocumentSource.contains("addSubview(emptyHost)")
+    && stableDocumentSource.contains("for role in WorkspacePaneRole.defaultThreePaneOrder")
+    && stableDocumentSource.contains("addSubview(host)")
     && !contentViewSource.contains("case .documentAgentNotes:\n                if store.showRightPane"), "document pane layouts render from the visible pane set and one draggable pane role order")
 expect(paneHeaderReorderSource.contains("struct PaneHeaderReorderModifier")
     && paneHeaderReorderSource.contains(".textSelection(.disabled)")

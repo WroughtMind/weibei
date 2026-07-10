@@ -2074,8 +2074,61 @@ final class WorkspaceStore: ObservableObject {
         let scenario = Self.environmentValue("WEIBEI_VERIFY_SCENARIO")
         guard scenario == "offline-learning-flow"
             || scenario == "immersive-conversation-flow"
-            || scenario == "notebook-creation-flow" else { return }
+            || scenario == "notebook-creation-flow"
+            || scenario == "pane-layout-stability-flow" else { return }
         didRunVerificationScenario = true
+        if scenario == "pane-layout-stability-flow" {
+            if Self.environmentValue("WEIBEI_VERIFY_APPEARANCE") == WeiBeiAppearanceMode.inkstone.rawValue {
+                appearanceMode = .inkstone
+            }
+            let rawOrder = Self.environmentValue("WEIBEI_VERIFY_PANE_ORDER")
+            if !rawOrder.isEmpty {
+                let requestedOrder = rawOrder
+                    .split(separator: ",")
+                    .compactMap { WorkspacePaneRole(rawValue: String($0)) }
+                if requestedOrder.count == WorkspacePaneRole.allCases.count,
+                   Set(requestedOrder).count == WorkspacePaneRole.allCases.count {
+                    threePaneOrder = requestedOrder
+                }
+            }
+            layout = layoutMatchingThreePaneOrder(threePaneOrder)
+            showLibrary = false
+            showReader = true
+            showAgent = false
+            showNotes = false
+            agentSurface = .hidden
+            select(itemID: "sample-html")
+            agentDraft = ui("保留这段尚未发送的提问", "Keep this unsent question")
+            updateNote(ui("# 分栏连续性验收\n\n笔记内容必须保留。\n", "# Pane continuity check\n\nThe note must survive pane changes.\n"))
+            save()
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            showAgent = true
+            save()
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            showNotes = true
+            save()
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            showNotes = false
+            save()
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            showAgent = false
+            save()
+            let completionURL = storageURL.deletingLastPathComponent().appendingPathComponent("pane-layout-stability.complete")
+            let receipt: [String: Any] = [
+                "agentDraft": agentDraft,
+                "appearance": appearanceMode.rawValue,
+                "noteText": noteText,
+                "order": normalizedThreePaneOrder.map(\.rawValue),
+                "selectedItemID": selectedItemID ?? "",
+                "showAgent": showAgent,
+                "showNotes": showNotes,
+                "showReader": showReader
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: receipt, options: [.prettyPrinted, .sortedKeys]) {
+                try? data.write(to: completionURL, options: .atomic)
+            }
+            return
+        }
         layout = scenario == "immersive-conversation-flow" ? .immersiveConversation : .documentAgentNotes
         if scenario == "notebook-creation-flow" {
             layout = .immersiveWriting
