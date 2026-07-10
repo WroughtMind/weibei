@@ -14,6 +14,7 @@ struct EmptyWorkspaceLauncherView: View {
                 let compact = geometry.size.width < 760 || geometry.size.height < 620
                 let horizontalPadding: CGFloat = compact ? 24 : 52
                 let entryWidth = min(116, max(76, (geometry.size.width - (horizontalPadding * 2) - 2) / 3))
+                let inspirationSlotHeight: CGFloat = compact ? 176 : 210
                 let currentInspiration = inspiration(at: timeline.date)
 
                 ZStack {
@@ -28,16 +29,20 @@ struct EmptyWorkspaceLauncherView: View {
                             EmptyWorkspaceEntryRow(entryWidth: entryWidth)
                         }
 
-                        if store.showDailyInspiration {
-                            Spacer(minLength: compact ? 18 : 34)
+                        Spacer(minLength: compact ? 18 : 34)
 
-                            EmptyWorkspaceInspirationView(
-                                inspiration: currentInspiration,
-                                compact: compact,
-                                onAdvance: { advanceInspiration(from: currentInspiration.id) }
-                            )
-                            .transition(.opacity)
+                        ZStack {
+                            if store.showDailyInspiration {
+                                EmptyWorkspaceInspirationView(
+                                    inspiration: currentInspiration,
+                                    compact: compact,
+                                    onAdvance: { advanceInspiration(from: currentInspiration.id) }
+                                )
+                                .id(currentInspiration.id)
+                                .transition(.opacity)
+                            }
                         }
+                        .frame(height: inspirationSlotHeight)
 
                         Spacer(minLength: compact ? 20 : 42)
                     }
@@ -281,8 +286,6 @@ private struct EmptyWorkspaceInspirationView: View {
                 }
                 .frame(maxWidth: .infinity)
                 .contentShape(Rectangle())
-                .id(inspiration.id)
-                .transition(.opacity)
             }
             .buttonStyle(.plain)
             .focused($focused)

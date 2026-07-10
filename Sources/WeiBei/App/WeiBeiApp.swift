@@ -638,6 +638,25 @@ struct SettingsView: View {
                 }
             }
 
+            settingsGroup(store.ui("空白页", "Empty Workspace")) {
+                settingsRow(
+                    title: store.ui("每日灵感", "Daily Inspiration"),
+                    detail: store.ui("关闭后只隐藏语录；文稿、对话和笔记入口始终保留。", "Hides sourced quotations only; document, chat, and notes entries always remain.")
+                ) {
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { store.showDailyInspiration },
+                            set: { store.setDailyInspirationEnabled($0) }
+                        )
+                    )
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .tint(WeiBeiTheme.cinnabar)
+                    .accessibilityLabel(Text(store.ui("显示每日灵感", "Show Daily Inspiration")))
+                }
+            }
+
             settingsGroup(store.ui("快速进入", "Jump To")) {
                 settingsRouteRow(
                     title: store.ui("外观与语言", "Appearance & Language"),
@@ -721,22 +740,6 @@ struct SettingsView: View {
                     }
                 }
 
-                settingsRow(
-                    title: store.ui("每日灵感", "Daily Inspiration"),
-                    detail: store.ui("只控制空工作区里的出处内容；文稿、对话和笔记入口始终保留。", "Controls sourced material on the empty workspace only; document, chat, and notes entries always remain.")
-                ) {
-                    Toggle(
-                        "",
-                        isOn: Binding(
-                            get: { store.showDailyInspiration },
-                            set: { store.setDailyInspirationEnabled($0) }
-                        )
-                    )
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .tint(WeiBeiTheme.cinnabar)
-                    .accessibilityLabel(Text(store.ui("显示每日灵感", "Show Daily Inspiration")))
-                }
             }
         }
     }
