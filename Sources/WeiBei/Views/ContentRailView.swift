@@ -131,6 +131,10 @@ struct ContentRailView: View {
         isRailOnly ? 42 : 40
     }
 
+    private var tickLeadingInset: CGFloat {
+        isRailOnly ? 4 : 3
+    }
+
     private var resolvedActiveID: String? {
         activeID ?? items.first?.id
     }
@@ -145,16 +149,17 @@ struct ContentRailView: View {
                 emptyOriginMark
             } else {
                 let hitHeight = railHitHeight(for: height)
-                ForEach(items) { item in
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                     railButton(
                         for: item,
+                        index: index,
                         railHeight: height,
                         hitHeight: hitHeight,
                         acceptsPointer: hitHeight >= 4
                     )
                     .position(
                         x: compactWidth / 2,
-                        y: railY(position: item.position, height: height)
+                        y: railY(index: index, count: items.count, height: height)
                     )
                 }
 
@@ -190,25 +195,24 @@ struct ContentRailView: View {
         Rectangle()
             .fill(WeiBeiTheme.hairline.opacity(0.64))
             .frame(width: 8, height: 1.5)
-            .frame(width: compactWidth, height: 34)
+            .frame(width: compactWidth - tickLeadingInset, height: 20, alignment: .leading)
+            .padding(.leading, tickLeadingInset)
             .accessibilityLabel(Text(label))
     }
 
     private func compactHeight(in totalHeight: CGFloat) -> CGFloat {
         let top = max(topInset, 0) + 10
         let bottom = max(bottomInset, 0) + 10
-        let available = max(totalHeight - top - bottom, 34)
-        guard items.count > 1 else { return min(items.isEmpty ? 34 : 50, available) }
-
-        let countDrivenHeight = 72 + CGFloat(min(max(items.count - 2, 0), 14)) * 6.3
-        return min(max(72, countDrivenHeight), min(160, available))
+        let available = max(totalHeight - top - bottom, 1)
+        let desiredHeight = max(20, 14 + CGFloat(max(items.count - 1, 0)) * 8)
+        return min(desiredHeight, min(160, available))
     }
 
     private func compactCenterY(in totalHeight: CGFloat) -> CGFloat {
         let top = max(topInset, 0) + 10
         let bottom = max(bottomInset, 0) + 10
         let available = max(totalHeight - top - bottom, 0)
-        return min(max(top + available / 2, 17), max(totalHeight - 17, 17))
+        return min(max(top + available / 2, 0), max(totalHeight, 0))
     }
 
     private func updatePointerY(_ y: CGFloat, height: CGFloat) {
@@ -220,16 +224,17 @@ struct ContentRailView: View {
     }
 
     private func restoreFocusedPointer(height: CGFloat) {
-        let focusedItem = focusedItemID.flatMap { id in
-            items.first(where: { $0.id == id })
+        let focusedIndex = focusedItemID.flatMap { id in
+            items.firstIndex(where: { $0.id == id })
         }
         withAnimation(waveMotion) {
-            pointerY = focusedItem.map { railY(position: $0.position, height: height) }
+            pointerY = focusedIndex.map { railY(index: $0, count: items.count, height: height) }
         }
     }
 
     private func railButton(
         for item: ContentRailItem,
+        index: Int,
         railHeight: CGFloat,
         hitHeight: CGFloat,
         acceptsPointer: Bool
@@ -240,13 +245,14 @@ struct ContentRailView: View {
             activate(item)
         } label: {
             Rectangle()
-                .fill(tickColor(itemID: item.id, active: active))
+                .fill(tickColor(active: active))
                 .frame(
-                    width: tickLength(for: item, active: active, railHeight: railHeight),
+                    width: tickLength(for: item, index: index, active: active, railHeight: railHeight),
                     height: active ? 2 : 1.5
                 )
-                .opacity(tickOpacity(for: item, active: active, railHeight: railHeight))
-                .frame(width: compactWidth, height: hitHeight)
+                .opacity(tickOpacity(active: active))
+                .frame(width: compactWidth - tickLeadingInset, height: hitHeight, alignment: .leading)
+                .padding(.leading, tickLeadingInset)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -273,7 +279,6 @@ struct ContentRailView: View {
             }
         }
         .animation(WeiBeiMotion.micro, value: activeID)
-        .animation(WeiBeiMotion.hover, value: hoveredID)
         .animation(waveMotion, value: pointerY)
     }
 
@@ -311,11 +316,11 @@ struct ContentRailView: View {
             .accessibilityHidden(true)
     }
 
-    private func tickLength(for item: ContentRailItem, active: Bool, railHeight: CGFloat) -> CGFloat {
+    private func tickLength(for item: ContentRailItem, index: Int, active: Bool, railHeight: CGFloat) -> CGFloat {
         let normal: CGFloat = active ? 8 : (item.level == 0 ? 7 : 6)
         guard let pointerY else { return normal }
 
-        let distance = abs(railY(position: item.position, height: railHeight) - pointerY)
+        let distance = abs(railY(index: index, count: items.count, height: railHeight) - pointerY)
         let influenceRadius: CGFloat = 48
         guard distance < influenceRadius else { return normal }
         let linear = 1 - distance / influenceRadius
@@ -323,44 +328,47 @@ struct ContentRailView: View {
         return normal + (34 - normal) * influence
     }
 
-    private func tickOpacity(for item: ContentRailItem, active: Bool, railHeight: CGFloat) -> Double {
-        let normal: Double = active ? 1 : 0.64
-        guard let pointerY else { return normal }
-
-        let distance = abs(railY(position: item.position, height: railHeight) - pointerY)
-        let influenceRadius: CGFloat = 48
-        guard distance < influenceRadius else { return normal }
-        let linear = 1 - distance / influenceRadius
-        let influence = Double(linear * linear * (3 - 2 * linear))
-        return normal + (1 - normal) * influence
+    private func tickOpacity(active: Bool) -> Double {
+        active ? 1 : 0.64
     }
 
-    private func tickColor(itemID: String, active: Bool) -> Color {
+    private func tickColor(active: Bool) -> Color {
         if active {
             return appearanceMode == .inkstone ? WeiBeiTheme.onCinnabar : WeiBeiTheme.cinnabar
-        }
-        if hoveredID == itemID {
-            return WeiBeiTheme.ink.opacity(0.92)
         }
         return WeiBeiTheme.hairline.opacity(0.92)
     }
 
-    private func railY(position: CGFloat, height: CGFloat) -> CGFloat {
-        let available = max(height - 14, 0)
-        return min(max(7 + min(max(position, 0), 1) * available, 7), max(height - 7, 7))
+    private func railSpacing(count: Int, height: CGFloat) -> CGFloat {
+        guard count > 1 else { return 0 }
+        let verticalInset = min(7, height / 2)
+        let available = max(height - verticalInset * 2, 0)
+        return min(8, available / CGFloat(count - 1))
+    }
+
+    private func railY(index: Int, count: Int, height: CGFloat) -> CGFloat {
+        guard count > 1 else { return height / 2 }
+        let spacing = railSpacing(count: count, height: height)
+        let span = spacing * CGFloat(count - 1)
+        let firstY = (height - span) / 2
+        return firstY + CGFloat(min(max(index, 0), count - 1)) * spacing
     }
 
     private func railHitHeight(for height: CGFloat) -> CGFloat {
         guard !items.isEmpty else { return 20 }
-        let available = max(height - 14, 1)
-        return min(20, available / CGFloat(items.count))
+        guard items.count > 1 else { return min(20, height) }
+        return min(20, max(railSpacing(count: items.count, height: height), 1))
     }
 
     private func nearestItem(to y: CGFloat, height: CGFloat) -> ContentRailItem? {
         guard !items.isEmpty else { return nil }
-        let available = max(height - 14, 1)
-        let position = min(max((y - 7) / available, 0), 1)
-        return items.min { abs($0.position - position) < abs($1.position - position) }
+        guard items.count > 1 else { return items[0] }
+        let spacing = railSpacing(count: items.count, height: height)
+        guard spacing > 0 else { return items[0] }
+        let firstY = railY(index: 0, count: items.count, height: height)
+        let rawIndex = ((y - firstY) / spacing).rounded()
+        let index = min(max(Int(rawIndex), 0), items.count - 1)
+        return items[index]
     }
 
     private func previewCard(for item: ContentRailItem) -> some View {
