@@ -744,7 +744,7 @@ private struct LayoutContentView: View {
                             minSecond: 540,
                             minThird: 104
                         ) {
-                            ContextRailView(title: store.ui("文档", "Documents"), items: writingDocumentRailItems, edge: .trailing)
+                            ContextRailView(title: linkedSourcesRailTitle, items: writingDocumentRailItems, edge: .trailing)
                                 .transition(WeiBeiTransition.rail)
                         } second: {
                             PersistentPaneHost(role: .notes, registry: paneHostRegistry)
@@ -755,7 +755,7 @@ private struct LayoutContentView: View {
                         .transition(WeiBeiTransition.rightPanel)
                     } else {
                         ResizableTwoPane(split: writingLeftSplit, minFirst: 96, minSecond: 540) {
-                            ContextRailView(title: store.ui("文档", "Documents"), items: writingDocumentRailItems, edge: .trailing)
+                            ContextRailView(title: linkedSourcesRailTitle, items: writingDocumentRailItems, edge: .trailing)
                                 .transition(WeiBeiTransition.rail)
                         } second: {
                             PersistentPaneHost(role: .notes, registry: paneHostRegistry)
@@ -1052,16 +1052,37 @@ private struct LayoutContentView: View {
     }
 
     private var writingDocumentRailItems: [ContextRailItem] {
-        var items: [ContextRailItem] = []
-        if let item = store.selectedMaterialItem {
+        let materials = store.allItems.filter { !$0.isNotebookNote }
+        let entries = LinkedSourceRailModel.entries(
+            materials: materials,
+            linkedSourceIDs: store.linkedSourceIDsForActiveNote,
+            currentMaterialID: store.selectedMaterialItem?.id
+        )
+        var items = entries.map { entry in
+            ContextRailItem(
+                stableID: entry.sourceID,
+                title: entry.title,
+                help: entry.state == .currentUnlinked
+                    ? store.ui("当前打开，尚未关联到笔记", "Open now, not linked to this note")
+                    : store.ui("打开这份关联资料", "Open this linked source"),
+                systemImage: entry.state == .currentUnlinked ? "link.badge.plus" : entry.kind.systemImage,
+                emphasized: entry.state == .currentLinked
+            ) {
+                store.select(itemID: entry.sourceID)
+                openReader()
+            }
+        }
+        if let currentID = store.selectedMaterialItem?.id, !store.isSourceLinkedToActiveNote(currentID), store.activeNotebookItemID != nil {
             items.append(
-                ContextRailItem(
-                    title: store.displayTitle(for: item),
-                    help: store.ui("切回沉浸阅读", "Return to immersive reading"),
-                    systemImage: item.kind.systemImage,
-                    emphasized: true
-                ) {
-                    openReader()
+                ContextRailItem(title: store.ui("关联当前资料", "Link Current Source"), help: store.ui("把当前打开资料长期关联到笔记", "Durably link the open source to this note"), systemImage: "link.badge.plus", emphasized: true) {
+                    store.toggleSourceLinkToActiveNote(currentID)
+                }
+            )
+        }
+        if store.activeNotebookItemID != nil {
+            items.append(
+                ContextRailItem(stableID: "manage-linked-sources", title: store.ui("管理关联", "Manage Links"), help: store.ui("选择这份笔记长期关联的资料", "Choose durable sources for this note"), systemImage: "slider.horizontal.3") {
+                    store.linkedSourcesPresented = true
                 }
             )
         }
@@ -1073,6 +1094,10 @@ private struct LayoutContentView: View {
             )
         }
         return items
+    }
+
+    private var linkedSourcesRailTitle: String {
+        store.ui("关联资料 \(store.linkedSourceCount)", "Linked Sources \(store.linkedSourceCount)")
     }
 
     private var writingAssistRailItems: [ContextRailItem] {

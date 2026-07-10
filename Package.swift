@@ -9,6 +9,7 @@ let package = Package(
     products: [
         .executable(name: "WeiBei", targets: ["WeiBei"]),
         .executable(name: "WeiBeiSelfCheck", targets: ["WeiBeiSelfCheck"]),
+        .executable(name: "WeiBeiRelationCheck", targets: ["WeiBeiRelationCheck"]),
         .executable(name: "WeiBeiWebEditorCheck", targets: ["WeiBeiWebEditorCheck"])
     ],
     targets: [
@@ -49,6 +50,10 @@ let package = Package(
                 .linkedFramework("AppKit"),
                 .linkedFramework("WebKit")
             ]
+        ),
+        .executableTarget(
+            name: "WeiBeiRelationCheck",
+            dependencies: ["WeiBeiCore"]
         )
     ]
 )

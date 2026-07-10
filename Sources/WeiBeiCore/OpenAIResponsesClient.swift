@@ -27,6 +27,7 @@ public struct OpenAIResponsesClient {
         noteText: String,
         selectionTitle: String? = nil,
         selectionText: String?,
+        linkedSources: [StudyAgentSource] = [],
         recentMessages: [AgentMessage],
         language: WeiBeiInterfaceLanguage = .chinese
     ) async throws -> String {
@@ -43,6 +44,7 @@ public struct OpenAIResponsesClient {
             noteText: noteText,
             selectionTitle: selectionTitle,
             selectionText: selectionText,
+            linkedSources: linkedSources,
             recentMessages: recentMessages,
             language: language
         )
@@ -70,6 +72,7 @@ public struct OpenAIResponsesClient {
         noteText: String,
         selectionTitle: String? = nil,
         selectionText: String?,
+        linkedSources: [StudyAgentSource] = [],
         recentMessages: [AgentMessage],
         language: WeiBeiInterfaceLanguage = .chinese
     ) -> AgentPromptPayload {
@@ -80,7 +83,14 @@ public struct OpenAIResponsesClient {
 
         let materialLabel = label(materialTitle, fallback: language.text("当前材料", "Current material"))
         let noteLabel = label(noteTitle, fallback: language.text("当前笔记", "Current note"))
-        let trimmedMaterial = focusedMaterialText(materialText, title: materialLabel, limit: 18_000)
+        let totalSourceCharacterLimit = 18_000
+        let trimmedMaterial = focusedMaterialText(materialText, title: materialLabel, limit: linkedSources.isEmpty ? totalSourceCharacterLimit : 10_000)
+        let budgetedLinkedSources = StudyAgentSourceContextBuilder.scopedSources(
+            linkedSources,
+            selectedIDs: linkedSources.map(\.id),
+            totalCharacterLimit: max(0, totalSourceCharacterLimit - trimmedMaterial.count),
+            perSourceLimit: 6_000
+        )
         let trimmedNote = String(noteText.prefix(6_000))
         let trimmedSelection = selectionText.map { String($0.prefix(2_000)) } ?? ""
         let hasMaterial = !trimmedMaterial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -106,6 +116,19 @@ public struct OpenAIResponsesClient {
         \(language.text("笔记内容", "Note content"))\(headingColon)
         \(trimmedNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? language.text("无", "none") : trimmedNote)
         """
+        let linkedSourceBlock: String = {
+            guard !budgetedLinkedSources.isEmpty else {
+                return language.text("本次关联资料：无", "Linked sources for this question: none")
+            }
+            return budgetedLinkedSources.enumerated().map { index, source in
+                """
+                \(language.text("关联资料 \(index + 1)", "Linked source \(index + 1)"))\(colon)\(source.title)
+                ID\(colon)\(source.id)
+                \(language.text("类型", "Type"))\(colon)\(source.kind.rawValue)
+                \(source.text)
+                """
+            }.joined(separator: "\n\n")
+        }()
         let dialogue = recentMessages.suffix(8).map { message in
             let role = message.role == .user ? language.text("用户", "User") : language.text("助手", "Assistant")
             let source = message.source?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -116,10 +139,11 @@ public struct OpenAIResponsesClient {
             "回答末尾用“来源依据”列出真正用到的材料标题、选区来源或笔记标题；没有用到的来源不要列。",
             "At the end, add a 'Sources used' section listing only the material titles, selection sources, or note titles you actually used. Do not list unused sources."
         )
-        let instructions = hasMaterial
+        let hasLinkedSources = !budgetedLinkedSources.isEmpty
+        let instructions = hasMaterial || hasLinkedSources
             ? language.text(
-                "你是魏碑里的学习助手。只根据当前材料、当前笔记和当前选区回答；没有证据就说未在材料或笔记中确认。回答用中文，先给结论。\(sourceRule)",
-                "You are the study assistant inside WeiBei. Answer only from the current material, current note, and current selection. If evidence is missing, say it is not confirmed in the material or note. Answer in English and lead with the conclusion. \(sourceRule)"
+                "你是魏碑里的学习助手。只根据当前材料、当前笔记、当前选区和本次明确勾选的关联资料回答；没有证据就说未在这些资料或笔记中确认。未勾选的关联资料不在本次上下文中。回答用中文，先给结论。\(sourceRule)",
+                "You are the study assistant inside WeiBei. Answer only from the current material, current note, current selection, and explicitly selected linked sources. If evidence is missing, say it is not confirmed there. Unselected linked sources are outside this question's context. Answer in English and lead with the conclusion. \(sourceRule)"
             )
             : language.text(
                 "你是魏碑里的学习助手。只根据当前笔记和当前选区回答；没有证据就说未在笔记或选区中确认。回答用中文，先给结论。\(sourceRule)",
@@ -131,6 +155,8 @@ public struct OpenAIResponsesClient {
         \(selectionBlock)
 
         \(noteBlock)
+
+        \(linkedSourceBlock)
 
         \(language.text("最近对话", "Recent conversation"))\(headingColon)
         \(dialogue.isEmpty ? language.text("无", "none") : dialogue)

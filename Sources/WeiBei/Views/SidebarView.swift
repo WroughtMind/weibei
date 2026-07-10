@@ -105,13 +105,17 @@ struct SidebarView: View {
                                 store.select(itemID: item.id)
                             }
                         } label: {
-                            LibraryRow(item: item, selected: item.isNotebookNote ? store.activeNotebookItemID == item.id : store.selectedItemID == item.id)
+                            LibraryRow(item: item, selected: item.isNotebookNote ? store.activeNotebookItemID == item.id : store.selectedItemID == item.id, linked: store.isSourceLinkedToActiveNote(item.id))
                         }
                         .buttonStyle(.plain)
                         .contextMenu {
                             if item.isNotebookNote {
                                 Button(store.ui("重命名笔记", "Rename Note")) {
                                     store.promptRenameNotebookNote(itemID: item.id)
+                                }
+                            } else if store.activeNotebookItemID != nil {
+                                Button(store.isSourceLinkedToActiveNote(item.id) ? store.ui("取消关联当前笔记", "Unlink from current note") : store.ui("关联到当前笔记", "Link to current note")) {
+                                    store.toggleSourceLinkToActiveNote(item.id)
                                 }
                             }
                         }
@@ -192,6 +196,7 @@ private struct LibraryRow: View {
     @EnvironmentObject private var store: WorkspaceStore
     var item: StudyItem
     var selected: Bool
+    var linked = false
     @State private var hovering = false
 
     private var tags: [String] {
@@ -220,6 +225,13 @@ private struct LibraryRow: View {
                         .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.72))
                         .lineLimit(1)
                 }
+            }
+            Spacer(minLength: 2)
+            if linked && !item.isNotebookNote {
+                Image(systemName: "link")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.76))
+                    .accessibilityLabel(Text(store.ui("已关联当前笔记", "Linked to current note")))
             }
         }
         .padding(.horizontal, 9)

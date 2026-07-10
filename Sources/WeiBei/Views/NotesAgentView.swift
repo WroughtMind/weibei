@@ -375,6 +375,7 @@ struct NotePaneView: View {
                 appearanceMode: store.appearanceMode,
                 reorderRole: reorderRole
             ) {
+                LinkedSourcesControl()
                 noteModeControl
                 newNoteControl
             }
@@ -395,6 +396,7 @@ struct NotePaneView: View {
                 actionsAlignedTrailing: true,
                 reorderRole: reorderRole
             ) {
+                LinkedSourcesControl()
                 noteModeControl
                 newNoteControl
             }
@@ -1576,6 +1578,7 @@ struct AgentPaneView: View {
             .allowsHitTesting(false)
 
             VStack(alignment: .leading, spacing: 8) {
+                AgentLinkedSourcesScopeControl()
                 if store.hasSelectionAttachments {
                     AgentSelectionAttachmentPill()
                         .transition(WeiBeiTransition.floating)
@@ -2027,6 +2030,8 @@ struct AgentDrawerView: View {
 
             CompactAgentMessagePreviewList(maxMessages: 2, maxHeight: 168)
 
+            AgentLinkedSourcesScopeControl()
+
             AgentComposerField(
                 prompt: drawerPrompt,
                 focused: $draftFocused,
@@ -2098,6 +2103,8 @@ struct CornerAgentView: View {
             }
 
             CompactAgentMessagePreviewList(maxMessages: 2, maxHeight: 138)
+
+            AgentLinkedSourcesScopeControl()
 
             AgentComposerField(
                 prompt: agentPrompt,
@@ -2621,6 +2628,7 @@ struct QuietInsightView: View {
 }
 
 struct ContextRailItem: Identifiable {
+    var stableID: String? = nil
     var title: String
     var help: String?
     var systemImage: String?
@@ -2628,7 +2636,7 @@ struct ContextRailItem: Identifiable {
     var action: (() -> Void)?
 
     var id: String {
-        title
+        stableID ?? title
     }
 }
 

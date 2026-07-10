@@ -259,15 +259,39 @@ verify_empty_workspace_state() {
   return 1
 }
 
+verify_linked_sources_flow() {
+  if [[ "$VERIFY_SCENARIO" != "linked-sources-flow" ]]; then
+    return 0
+  fi
+
+  local workspace_file="$VERIFY_DATA_DIR/workspace.json"
+  for _ in {1..30}; do
+    if [[ -f "$workspace_file" ]] \
+      && /usr/bin/grep -q '"noteSourceLinks"' "$workspace_file" \
+      && /usr/bin/grep -q '"sourceID":"sample-html"' "$workspace_file" \
+      && /usr/bin/grep -q '"sourceID":"sample-pdf"' "$workspace_file" \
+      && /usr/bin/grep -q '"selectedItemID":"sample-pdf"' "$workspace_file" \
+      && /usr/bin/grep -q '"activeNotebookItemID":"item:' "$workspace_file"; then
+      return 0
+    fi
+    sleep 0.2
+  done
+
+  echo "verify failed: linked-sources-flow did not persist both source relations." >&2
+  return 1
+}
+
 finish_verify_window() {
   if [[ "$RUN_VISUAL_VERIFY" == true ]]; then
     visual_verify_window
   fi
   verify_learning_flow_persistence
   verify_empty_workspace_state
+  verify_linked_sources_flow
 }
 
 run_verifiers() {
+  swift run -c "$BUILD_CONFIGURATION" WeiBeiRelationCheck
   swift run -c "$BUILD_CONFIGURATION" WeiBeiSelfCheck
   swift run -c "$BUILD_CONFIGURATION" WeiBeiWebEditorCheck
 }

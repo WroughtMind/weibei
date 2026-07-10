@@ -10,6 +10,7 @@ public struct AgentOfflinePreviewInput: Equatable {
     public var noteText: String
     public var selectionTitle: String?
     public var selectionText: String?
+    public var linkedSources: [StudyAgentSource]
 
     public init(
         language: WeiBeiInterfaceLanguage,
@@ -20,7 +21,8 @@ public struct AgentOfflinePreviewInput: Equatable {
         noteTitle: String,
         noteText: String,
         selectionTitle: String?,
-        selectionText: String?
+        selectionText: String?,
+        linkedSources: [StudyAgentSource] = []
     ) {
         self.language = language
         self.question = question
@@ -31,6 +33,7 @@ public struct AgentOfflinePreviewInput: Equatable {
         self.noteText = noteText
         self.selectionTitle = selectionTitle
         self.selectionText = selectionText
+        self.linkedSources = linkedSources
     }
 }
 
@@ -68,6 +71,9 @@ public enum AgentOfflinePreview {
 
         let materialPreview = preview(input.materialText, limit: 180)
         let notePreview = preview(input.noteText, limit: 90)
+        let linkedSourceValue = input.linkedSources.isEmpty
+            ? input.language.text("无", "None")
+            : input.linkedSources.map(\.title).joined(separator: "、")
         let evidence = evidenceLines(
             input: input,
             materialPreview: materialPreview,
@@ -84,7 +90,7 @@ public enum AgentOfflinePreview {
 
             **问题**：\(input.question)
 
-            **上下文**：资料：\(inline(materialValue)) · 笔记：\(inline(noteValue)) · 选区：\(inline(selectionValue))
+            **上下文**：当前资料：\(inline(materialValue)) · 关联资料：\(inline(linkedSourceValue)) · 笔记：\(inline(noteValue)) · 选区：\(inline(selectionValue))
 
             ## 可确认
             \(evidence)
@@ -100,7 +106,7 @@ public enum AgentOfflinePreview {
 
             **Question**: \(input.question)
 
-            **Context**: Material: \(inline(materialValue)) · Note: \(inline(noteValue)) · Selection: \(inline(selectionValue))
+            **Context**: Current material: \(inline(materialValue)) · Linked sources: \(inline(linkedSourceValue)) · Note: \(inline(noteValue)) · Selection: \(inline(selectionValue))
 
             ## Confirmed
             \(evidence)
@@ -136,6 +142,14 @@ public enum AgentOfflinePreview {
             lines.append(input.language.text("- 资料依据：\(materialPreview)", "- Material evidence: \(materialPreview)"))
         } else if input.hasMaterial {
             lines.append(input.language.text("- 资料依据：\(materialValue) 暂无可读文本。", "- Material evidence: \(materialValue) has no readable text yet."))
+        }
+        for source in input.linkedSources {
+            let sourcePreview = preview(source.text, limit: 140)
+            guard !sourcePreview.isEmpty else { continue }
+            lines.append(input.language.text(
+                "- 关联资料依据（\(source.title)）：\(sourcePreview)",
+                "- Linked source evidence (\(source.title)): \(sourcePreview)"
+            ))
         }
         if notePreview.isEmpty {
             lines.append(input.language.text("- 笔记状态：当前笔记为空。", "- Note state: the current note is empty."))

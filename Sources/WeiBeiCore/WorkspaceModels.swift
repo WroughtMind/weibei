@@ -35,7 +35,7 @@ public enum WeiBeiInterfaceLanguage: String, CaseIterable, Identifiable, Codable
     }
 }
 
-public enum StudyItemKind: String, Codable, CaseIterable, Identifiable {
+public enum StudyItemKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case html
     case pdf
     case markdown
@@ -620,21 +620,23 @@ public enum SelectionFloatingAgentPlacement {
     }
 }
 
-public struct StudyItem: Identifiable, Codable, Hashable {
+public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
     public var id: String
     public var title: String
     public var subtitle: String
     public var kind: StudyItemKind
     public var urlPath: String?
+    public var fileIdentity: String?
     public var isSample: Bool
     public var isNotebookNote: Bool
 
-    public init(id: String, title: String, subtitle: String, kind: StudyItemKind, urlPath: String?, isSample: Bool, isNotebookNote: Bool = false) {
+    public init(id: String, title: String, subtitle: String, kind: StudyItemKind, urlPath: String?, fileIdentity: String? = nil, isSample: Bool, isNotebookNote: Bool = false) {
         self.id = id
         self.title = title
         self.subtitle = subtitle
         self.kind = kind
         self.urlPath = urlPath
+        self.fileIdentity = fileIdentity
         self.isSample = isSample
         self.isNotebookNote = isNotebookNote
     }
@@ -645,6 +647,7 @@ public struct StudyItem: Identifiable, Codable, Hashable {
         case subtitle
         case kind
         case urlPath
+        case fileIdentity
         case isSample
         case isNotebookNote
     }
@@ -656,6 +659,7 @@ public struct StudyItem: Identifiable, Codable, Hashable {
         subtitle = try container.decode(String.self, forKey: .subtitle)
         kind = try container.decode(StudyItemKind.self, forKey: .kind)
         urlPath = try container.decodeIfPresent(String.self, forKey: .urlPath)
+        fileIdentity = try container.decodeIfPresent(String.self, forKey: .fileIdentity)
         isSample = try container.decode(Bool.self, forKey: .isSample)
         isNotebookNote = try container.decodeIfPresent(Bool.self, forKey: .isNotebookNote) ?? false
     }
@@ -709,8 +713,10 @@ public struct AgentMessage: Identifiable, Codable, Hashable {
 }
 
 public struct PersistedWorkspace: Codable {
+    public var schemaVersion: Int
     public var importedItems: [StudyItem]
     public var notesByItemID: [String: String]
+    public var noteSourceLinks: [NoteSourceLink]
     public var selectedItemID: String?
     public var activeNotebookItemID: String?
     public var modelName: String?
@@ -728,9 +734,11 @@ public struct PersistedWorkspace: Codable {
     public var adaptImportedDocumentColors: Bool?
     public var interfaceLanguageRaw: String?
 
-    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], selectedItemID: String? = nil, activeNotebookItemID: String? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, threePaneOrder: [WorkspacePaneRole]? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showReader: Bool? = nil, showAgent: Bool? = nil, showNotes: Bool? = nil, showRightPane: Bool? = nil, showDailyInspiration: Bool? = nil, appearanceModeRaw: String? = nil, adaptImportedDocumentColors: Bool? = nil, interfaceLanguageRaw: String? = nil) {
+    public init(schemaVersion: Int = 2, importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], noteSourceLinks: [NoteSourceLink] = [], selectedItemID: String? = nil, activeNotebookItemID: String? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, threePaneOrder: [WorkspacePaneRole]? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showReader: Bool? = nil, showAgent: Bool? = nil, showNotes: Bool? = nil, showRightPane: Bool? = nil, showDailyInspiration: Bool? = nil, appearanceModeRaw: String? = nil, adaptImportedDocumentColors: Bool? = nil, interfaceLanguageRaw: String? = nil) {
+        self.schemaVersion = schemaVersion
         self.importedItems = importedItems
         self.notesByItemID = notesByItemID
+        self.noteSourceLinks = NoteSourceRelations(links: noteSourceLinks).links
         self.selectedItemID = selectedItemID
         self.activeNotebookItemID = activeNotebookItemID
         self.modelName = modelName
@@ -747,6 +755,34 @@ public struct PersistedWorkspace: Codable {
         self.appearanceModeRaw = appearanceModeRaw
         self.adaptImportedDocumentColors = adaptImportedDocumentColors
         self.interfaceLanguageRaw = interfaceLanguageRaw
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion, importedItems, notesByItemID, noteSourceLinks, selectedItemID, activeNotebookItemID, modelName, workspaceLayout, threePaneOrder, agentSurface, noteRenderMode, showLibrary, showReader, showAgent, showNotes, showRightPane, showDailyInspiration, appearanceModeRaw, adaptImportedDocumentColors, interfaceLanguageRaw
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        importedItems = try container.decodeIfPresent([StudyItem].self, forKey: .importedItems) ?? []
+        notesByItemID = try container.decodeIfPresent([String: String].self, forKey: .notesByItemID) ?? [:]
+        noteSourceLinks = NoteSourceRelations(links: try container.decodeIfPresent([NoteSourceLink].self, forKey: .noteSourceLinks) ?? []).links
+        selectedItemID = try container.decodeIfPresent(String.self, forKey: .selectedItemID)
+        activeNotebookItemID = try container.decodeIfPresent(String.self, forKey: .activeNotebookItemID)
+        modelName = try container.decodeIfPresent(String.self, forKey: .modelName)
+        workspaceLayout = try container.decodeIfPresent(WorkspaceLayout.self, forKey: .workspaceLayout)
+        threePaneOrder = try container.decodeIfPresent([WorkspacePaneRole].self, forKey: .threePaneOrder)
+        agentSurface = try container.decodeIfPresent(AgentSurface.self, forKey: .agentSurface)
+        noteRenderMode = try container.decodeIfPresent(NoteRenderMode.self, forKey: .noteRenderMode)
+        showLibrary = try container.decodeIfPresent(Bool.self, forKey: .showLibrary)
+        showReader = try container.decodeIfPresent(Bool.self, forKey: .showReader)
+        showAgent = try container.decodeIfPresent(Bool.self, forKey: .showAgent)
+        showNotes = try container.decodeIfPresent(Bool.self, forKey: .showNotes)
+        showRightPane = try container.decodeIfPresent(Bool.self, forKey: .showRightPane)
+        showDailyInspiration = try container.decodeIfPresent(Bool.self, forKey: .showDailyInspiration)
+        appearanceModeRaw = try container.decodeIfPresent(String.self, forKey: .appearanceModeRaw)
+        adaptImportedDocumentColors = try container.decodeIfPresent(Bool.self, forKey: .adaptImportedDocumentColors)
+        interfaceLanguageRaw = try container.decodeIfPresent(String.self, forKey: .interfaceLanguageRaw)
     }
 }
 

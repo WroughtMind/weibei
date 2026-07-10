@@ -39,6 +39,10 @@ final class WorkspaceStore: ObservableObject {
     @Published var importedItems: [StudyItem] = []
     @Published var selectedItemID: String?
     @Published var activeNotebookItemID: String?
+    @Published private(set) var noteSourceLinks: [NoteSourceLink] = []
+    @Published var selectedAgentSourceIDs: Set<String> = []
+    @Published var includeCurrentMaterialInAgentScope = true
+    @Published var linkedSourcesPresented = false
     @Published var noteText = ""
     @Published var agentDraft = ""
     @Published var messages: [AgentMessage] = []
@@ -99,6 +103,7 @@ final class WorkspaceStore: ObservableObject {
     private var pendingNotePersistenceByItemID: [String: PendingNotePersistence] = [:]
     private var pendingNotePersistenceTasks: [String: Task<Void, Never>] = [:]
     private let notePersistenceDebounceDelay: UInt64 = 420_000_000
+    private var activeAgentRequestID: UUID?
 
     var showRightPane: Bool {
         get { showNotes || showAgent }
@@ -190,6 +195,43 @@ final class WorkspaceStore: ObservableObject {
 
     var activeNoteItemID: String? {
         activeNoteItem?.id
+    }
+
+    var linkedSourceIDsForActiveNote: [String] {
+        guard let noteID = activeNoteItemID else { return [] }
+        return NoteSourceRelations(links: noteSourceLinks).sourceIDs(for: noteID)
+    }
+
+    var linkedSourcesForActiveNote: [StudyItem] {
+        let linkedIDs = Set(linkedSourceIDsForActiveNote)
+        return allItems.filter { linkedIDs.contains($0.id) && !$0.isNotebookNote }
+    }
+
+    var linkedSourceCount: Int { linkedSourcesForActiveNote.count }
+
+    var agentSelectableLinkedSources: [StudyItem] {
+        linkedSourcesForActiveNote.filter { $0.id != selectedMaterialItem?.id }
+    }
+
+    var selectedAgentLinkedSourceCount: Int {
+        selectedAgentSourceIDs.intersection(Set(agentSelectableLinkedSources.map(\.id))).count
+    }
+
+    var agentSelectableLinkedSourceCount: Int { agentSelectableLinkedSources.count }
+
+    private func loadSelectedLinkedAgentSources() async -> [StudyAgentSource] {
+        let requests = agentSelectableLinkedSources.filter { selectedAgentSourceIDs.contains($0.id) }.map { item in
+            AgentSourceLoadRequest(
+                item: item,
+                title: displayTitle(for: item),
+                fallbackText: item.isSample ? sampleText(for: item) : ""
+            )
+        }
+        let loadedSources = await AgentSourceTextLoader.shared.sources(for: requests)
+        return StudyAgentSourceContextBuilder.scopedSources(
+            loadedSources,
+            selectedIDs: selectedAgentSourceIDs
+        )
     }
 
     var hasSelectedMaterial: Bool {
@@ -337,21 +379,27 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var agentConversationSubtitle: String {
-        if let item = selectedMaterialItem {
+        if includeCurrentMaterialInAgentScope, let item = selectedMaterialItem {
             return displayTitle(for: item)
         }
         return activeNoteItem.map(displayTitle) ?? ui("无上下文", "No context")
     }
 
     var agentPromptScope: String {
-        hasSelectedMaterial ? ui("当前材料和当前笔记", "the current material and current note") : ui("当前笔记", "the current note")
+        if !selectedAgentSourceIDs.isEmpty {
+            return includeCurrentMaterialInAgentScope && hasSelectedMaterial
+                ? ui("当前材料、当前笔记和本次勾选的关联资料", "the current material, current note, and selected linked sources")
+                : ui("当前笔记和本次勾选的关联资料", "the current note and selected linked sources")
+        }
+        return includeCurrentMaterialInAgentScope && hasSelectedMaterial ? ui("当前材料和当前笔记", "the current material and current note") : ui("当前笔记", "the current note")
     }
 
     var agentInputPrompt: String {
         if hasSelectionAttachments {
             return ui("输入问题", "Ask a question")
         }
-        return hasSelectedMaterial ? ui("问当前材料", "Ask current material") : ui("问当前笔记", "Ask current note")
+        if !selectedAgentSourceIDs.isEmpty { return ui("问本次资料", "Ask selected sources") }
+        return includeCurrentMaterialInAgentScope && hasSelectedMaterial ? ui("问当前材料", "Ask current material") : ui("问当前笔记", "Ask current note")
     }
 
     var selectionPromptScope: String {
@@ -490,8 +538,7 @@ final class WorkspaceStore: ObservableObject {
         notebookRenameDraft = nil
         if let itemID,
            let item = allItems.first(where: { $0.id == itemID && $0.isNotebookNote }) {
-            activeNotebookItemID = item.id
-            noteText = noteText(for: item)
+            activateNotebookItem(item)
             revealRichWritingSurface()
             focus(.notes)
             save()
@@ -503,7 +550,7 @@ final class WorkspaceStore: ObservableObject {
         }
         selectedItemID = itemID
         if itemChanged {
-            activeNotebookItemID = nil
+            invalidateAgentRequest()
             clearUnpinnedFloatingSelection(keepContext: false)
             selectionAttachments = []
             lastSelectionAttachmentDate = nil
@@ -512,10 +559,65 @@ final class WorkspaceStore: ObservableObject {
         readerLocationTitle = selectedMaterialItem.map(displayTitle)
         clearReaderSearchIfNeeded()
         noteText = noteText(for: activeNoteItem)
-        messages = []
         clearGeneratedQuietInsight()
         refreshQuietInsightIfNeeded()
         save()
+    }
+
+    func isSourceLinkedToActiveNote(_ sourceID: String) -> Bool {
+        guard let noteID = activeNotebookItemID else { return false }
+        return NoteSourceRelations(links: noteSourceLinks).isLinked(noteID: noteID, sourceID: sourceID)
+    }
+
+    func setLinkedSourceIDsForActiveNote(_ sourceIDs: Set<String>) {
+        guard let noteID = activeNotebookItemID else { return }
+        let validIDs = Set(allItems.filter { !$0.isNotebookNote }.map(\.id))
+        var relations = NoteSourceRelations(links: noteSourceLinks)
+        relations.replaceSources(for: noteID, sourceIDs: sourceIDs.intersection(validIDs))
+        noteSourceLinks = relations.links
+        selectedAgentSourceIDs.formIntersection(sourceIDs)
+        save()
+    }
+
+    func toggleSourceLinkToActiveNote(_ sourceID: String) {
+        guard let noteID = activeNotebookItemID,
+              allItems.contains(where: { $0.id == sourceID && !$0.isNotebookNote }) else { return }
+        var relations = NoteSourceRelations(links: noteSourceLinks)
+        if relations.isLinked(noteID: noteID, sourceID: sourceID) {
+            relations.unlink(noteID: noteID, sourceID: sourceID)
+            selectedAgentSourceIDs.remove(sourceID)
+        } else {
+            relations.link(noteID: noteID, sourceID: sourceID)
+        }
+        noteSourceLinks = relations.links
+        save()
+    }
+
+    func setAgentSourceSelected(_ sourceID: String, selected: Bool) {
+        guard isSourceLinkedToActiveNote(sourceID) else { return }
+        if selected { selectedAgentSourceIDs.insert(sourceID) }
+        else { selectedAgentSourceIDs.remove(sourceID) }
+    }
+
+    func selectAllLinkedAgentSources() {
+        selectedAgentSourceIDs = Set(agentSelectableLinkedSources.map(\.id))
+    }
+
+    private func activateNotebookItem(_ item: StudyItem) {
+        let changed = activeNotebookItemID != item.id
+        activeNotebookItemID = item.id
+        selectedAgentSourceIDs = []
+        includeCurrentMaterialInAgentScope = true
+        noteText = noteText(for: item)
+        if changed {
+            invalidateAgentRequest()
+            messages = []
+        }
+    }
+
+    private func invalidateAgentRequest() {
+        activeAgentRequestID = nil
+        isAskingAgent = false
     }
 
     func selectAdjacentItem(step: Int) {
@@ -1139,8 +1241,12 @@ final class WorkspaceStore: ObservableObject {
     private func applyNavigationSnapshot(_ snapshot: NavigationSnapshot) {
         isRestoringNavigation = true
         defer { isRestoringNavigation = false }
+        let noteChanged = activeNotebookItemID != snapshot.activeNotebookItemID
         selectedItemID = snapshot.selectedItemID
         activeNotebookItemID = snapshot.activeNotebookItemID
+        selectedAgentSourceIDs = []
+        includeCurrentMaterialInAgentScope = true
+        if noteChanged { invalidateAgentRequest() }
         layout = snapshot.layout
         showLibrary = snapshot.showLibrary
         showReader = snapshot.showReader
@@ -1156,7 +1262,7 @@ final class WorkspaceStore: ObservableObject {
         noteText = noteText(for: activeNoteItem)
         readerLocationTitle = selectedMaterialItem.map(displayTitle)
         readerTargetPageIndex = selectedMaterialItem?.kind == .pdf ? snapshot.readerPageIndex : nil
-        messages = []
+        if noteChanged { messages = [] }
         showQuietInsight = agentSurface == .quietInsight
         clearUnpinnedFloatingSelection(keepContext: false)
         clearReaderSearchIfNeeded()
@@ -1423,10 +1529,19 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func importFilesFromPanel() {
+        presentImportPanel(linkToActiveNote: false)
+    }
+
+    func importAndLinkSourcesFromPanel() {
+        presentImportPanel(linkToActiveNote: true)
+    }
+
+    private func presentImportPanel(linkToActiveNote: Bool) {
         let panel = NSOpenPanel()
         panel.title = ui("选择学习资料", "Choose study materials")
         panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
         panel.allowedContentTypes = [
             .pdf,
             .html,
@@ -1436,30 +1551,78 @@ final class WorkspaceStore: ObservableObject {
         ]
 
         guard panel.runModal() == .OK else { return }
-        importFiles(panel.urls)
+        let selections = panel.urls
+        let targetNoteID = linkToActiveNote ? activeNotebookItemID : nil
+        Task {
+            let discoveredURLs = await Task.detached(priority: .userInitiated) {
+                StudyMaterialDiscovery.urls(from: selections)
+            }.value
+            let importedIDs = importDiscoveredFiles(discoveredURLs, selectFirst: !linkToActiveNote)
+            guard linkToActiveNote, let noteID = targetNoteID, activeNotebookItemID == noteID else { return }
+            let validSourceIDs = Set(allItems.filter { !$0.isNotebookNote }.map(\.id))
+            var relations = NoteSourceRelations(links: noteSourceLinks)
+            for sourceID in importedIDs where validSourceIDs.contains(sourceID) {
+                relations.link(noteID: noteID, sourceID: sourceID, origin: selections.contains(where: { $0.hasDirectoryPath }) ? .folderBatch : .manual)
+            }
+            noteSourceLinks = relations.links
+            save()
+        }
     }
 
-    func importFiles(_ urls: [URL]) {
-        let existing = Set(importedItems.compactMap(\.urlPath))
-        let newItems = urls
-            .filter { !existing.contains($0.path) }
-            .map { url in
-                StudyItem(
-                    id: "file:\(url.path)",
-                    title: url.deletingPathExtension().lastPathComponent,
-                    subtitle: url.lastPathComponent,
-                    kind: StudyItemKind.detect(from: url),
-                    urlPath: url.path,
-                    isSample: false
-                )
-            }
+    @discardableResult
+    func importFiles(_ urls: [URL], selectFirst: Bool = true) -> [String] {
+        importDiscoveredFiles(StudyMaterialDiscovery.urls(from: urls), selectFirst: selectFirst)
+    }
 
-        importedItems.append(contentsOf: newItems)
-        if let first = newItems.first {
-            select(itemID: first.id)
+    @discardableResult
+    private func importDiscoveredFiles(_ discoveredURLs: [URL], selectFirst: Bool) -> [String] {
+        for index in importedItems.indices where importedItems[index].fileIdentity == nil {
+            if let url = importedItems[index].url {
+                importedItems[index].fileIdentity = StudyMaterialDiscovery.fileIdentity(for: url)
+            }
+        }
+        var indexByPath: [String: Int] = [:]
+        var indexByIdentity: [String: Int] = [:]
+        for index in importedItems.indices {
+            if let path = importedItems[index].urlPath, indexByPath[path] == nil { indexByPath[path] = index }
+            if let identity = importedItems[index].fileIdentity, indexByIdentity[identity] == nil { indexByIdentity[identity] = index }
+        }
+        var itemIDs: [String] = []
+
+        for url in discoveredURLs {
+            let identity = StudyMaterialDiscovery.fileIdentity(for: url)
+            if let index = indexByPath[url.path] ?? identity.flatMap({ indexByIdentity[$0] }) {
+                importedItems[index].title = url.deletingPathExtension().lastPathComponent
+                importedItems[index].subtitle = url.lastPathComponent
+                importedItems[index].kind = StudyItemKind.detect(from: url)
+                importedItems[index].urlPath = url.path
+                importedItems[index].fileIdentity = identity
+                indexByPath[url.path] = index
+                if let identity { indexByIdentity[identity] = index }
+                itemIDs.append(importedItems[index].id)
+                continue
+            }
+            let item = StudyItem(
+                id: "item:\(UUID().uuidString)",
+                title: url.deletingPathExtension().lastPathComponent,
+                subtitle: url.lastPathComponent,
+                kind: StudyItemKind.detect(from: url),
+                urlPath: url.path,
+                fileIdentity: identity,
+                isSample: false
+            )
+            importedItems.append(item)
+            let index = importedItems.index(before: importedItems.endIndex)
+            indexByPath[url.path] = index
+            if let identity { indexByIdentity[identity] = index }
+            itemIDs.append(item.id)
+        }
+        if selectFirst, let first = itemIDs.first {
+            select(itemID: first)
         } else {
             save()
         }
+        return itemIDs
     }
 
     func promptRenameNotebookNote(itemID: String) {
@@ -1498,13 +1661,11 @@ final class WorkspaceStore: ObservableObject {
             if oldURL.path != newURL.path {
                 try FileManager.default.moveItem(at: oldURL, to: newURL)
             }
-            let newID = "file:\(newURL.path)"
-            importedItems[index].id = newID
             importedItems[index].title = newURL.deletingPathExtension().lastPathComponent
             importedItems[index].subtitle = newURL.lastPathComponent
             importedItems[index].urlPath = newURL.path
+            importedItems[index].fileIdentity = StudyMaterialDiscovery.fileIdentity(for: newURL)
             if activeNotebookItemID == oldID {
-                activeNotebookItemID = newID
                 noteText = retitledMarkdown(noteText, from: oldTitle, to: importedItems[index].title)
                 persistCurrentNote()
             } else if let markdown = try? String(contentsOf: newURL, encoding: .utf8) {
@@ -1513,13 +1674,9 @@ final class WorkspaceStore: ObservableObject {
                     try updated.write(to: newURL, atomically: true, encoding: .utf8)
                 }
             }
-            if let cached = notesByItemID.removeValue(forKey: oldID) {
-                notesByItemID[newID] = retitledMarkdown(cached, from: oldTitle, to: importedItems[index].title)
+            if let cached = notesByItemID[oldID] {
+                notesByItemID[oldID] = retitledMarkdown(cached, from: oldTitle, to: importedItems[index].title)
             }
-            if selectedItemID == oldID {
-                selectedItemID = newID
-            }
-            replaceNavigationItemID(oldID, with: newID)
             save()
             notebookRenameDraft = nil
             showTransientNoteStatus(ui("已重命名为：\(newURL.lastPathComponent)", "Renamed to: \(newURL.lastPathComponent)"))
@@ -1551,7 +1708,7 @@ final class WorkspaceStore: ObservableObject {
             }
 
             let item = StudyItem(
-                id: "file:\(url.path)",
+                id: "item:\(UUID().uuidString)",
                 title: title,
                 subtitle: url.lastPathComponent,
                 kind: .markdown,
@@ -1591,7 +1748,7 @@ final class WorkspaceStore: ObservableObject {
             try FileManager.default.createDirectory(at: notesDirectory, withIntermediateDirectories: true)
             let url = nextNotebookNoteURL(in: notesDirectory, title: title)
             let item = StudyItem(
-                id: "file:\(url.path)",
+                id: "item:\(UUID().uuidString)",
                 title: url.deletingPathExtension().lastPathComponent,
                 subtitle: url.lastPathComponent,
                 kind: .markdown,
@@ -1602,7 +1759,12 @@ final class WorkspaceStore: ObservableObject {
             let markdown = defaultNotebookNote(title: item.title, sourceItem: sourceItem)
             try markdown.write(to: url, atomically: true, encoding: .utf8)
             importedItems.append(item)
-            activeNotebookItemID = item.id
+            activateNotebookItem(item)
+            if let sourceItem {
+                var relations = NoteSourceRelations(links: noteSourceLinks)
+                relations.link(noteID: item.id, sourceID: sourceItem.id, origin: .noteCreation)
+                noteSourceLinks = relations.links
+            }
             noteText = markdown
             revealRichWritingSurface()
             focus(.notes)
@@ -1619,8 +1781,7 @@ final class WorkspaceStore: ObservableObject {
     @discardableResult
     private func openExistingNotebookNote(for material: StudyItem) -> Bool {
         guard let item = existingNotebookNote(for: material) else { return false }
-        activeNotebookItemID = item.id
-        noteText = noteText(for: item)
+        activateNotebookItem(item)
         revealRichWritingSurface()
         focus(.notes)
         save()
@@ -1654,7 +1815,12 @@ final class WorkspaceStore: ObservableObject {
               let index = importedItems.firstIndex(where: { $0.id == selectedItemID && $0.canBecomeNotebookNote }) else { return }
         persistCurrentNote()
         importedItems[index].isNotebookNote = true
-        activeNotebookItemID = importedItems[index].id
+        activateNotebookItem(importedItems[index])
+        var relations = NoteSourceRelations(links: noteSourceLinks)
+        relations.links.filter { $0.sourceID == importedItems[index].id }.forEach { link in
+            relations.unlink(noteID: link.noteID, sourceID: link.sourceID)
+        }
+        noteSourceLinks = relations.links
         if selectedItemID == importedItems[index].id {
             self.selectedItemID = sampleItems.first?.id
             readerLocationTitle = selectedMaterialItem.map(displayTitle)
@@ -1978,6 +2144,13 @@ final class WorkspaceStore: ObservableObject {
         \(quotedReferenceBlock(text: selectionContext.text, sourceTitle: selectionContext.ownerTitle))
         """
         updateNote(noteText + block)
+        if selectionContext.source == .document, let sourceID = selectedMaterialItem?.id, let noteID = activeNotebookItemID {
+            var relations = NoteSourceRelations(links: noteSourceLinks)
+            if relations.link(noteID: noteID, sourceID: sourceID, origin: .excerpt) {
+                noteSourceLinks = relations.links
+                save()
+            }
+        }
         focus(.notes)
     }
 
@@ -2095,6 +2268,7 @@ final class WorkspaceStore: ObservableObject {
         guard scenario == "offline-learning-flow"
             || scenario == "immersive-conversation-flow"
             || scenario == "notebook-creation-flow"
+            || scenario == "linked-sources-flow"
             || emptyWorkspaceScenarios.contains(scenario) else { return }
         didRunVerificationScenario = true
         if emptyWorkspaceScenarios.contains(scenario) {
@@ -2105,12 +2279,23 @@ final class WorkspaceStore: ObservableObject {
         if scenario == "notebook-creation-flow" {
             layout = .immersiveWriting
         }
+        if scenario == "linked-sources-flow" {
+            layout = .immersiveWriting
+        }
         showLibrary = scenario != "immersive-conversation-flow"
         showReader = true
         showAgent = true
         showNotes = true
         agentSurface = .hidden
         select(itemID: "sample-html")
+        if scenario == "linked-sources-flow" {
+            createNotebookNote(seed: .currentMaterial(sampleItems[0]), title: ui("多资料研究笔记", "Multi-source research note"))
+            toggleSourceLinkToActiveNote("sample-pdf")
+            select(itemID: "sample-pdf")
+            showRightPane = true
+            save()
+            return
+        }
         if scenario == "notebook-creation-flow" {
             promptCreateBlankNotebookNote()
             return
@@ -2185,7 +2370,14 @@ final class WorkspaceStore: ObservableObject {
         let sentSelectionText = agentSelectionText
         let shouldClearSentDocumentSelection = sentSelectionText != nil && selectionContext?.source == .document
         let recentMessages = Array(messages.suffix(8))
-        let sourceTitle = agentMessageSourceTitle
+        let sourceTitle = includeCurrentMaterialInAgentScope ? agentMessageSourceTitle : activeNoteItem.map(displayTitle)
+        let requestMaterialTitle = includeCurrentMaterialInAgentScope ? currentReferenceTitle : ""
+        let requestMaterialText = includeCurrentMaterialInAgentScope ? selectedContextText : ""
+        let requestID = UUID()
+        activeAgentRequestID = requestID
+        isAskingAgent = true
+        let requestLinkedSources = await loadSelectedLinkedAgentSources()
+        guard activeAgentRequestID == requestID else { return }
         agentDraft = ""
         if !selectionAttachments.isEmpty {
             withAnimation(WeiBeiMotion.panel) {
@@ -2210,47 +2402,64 @@ final class WorkspaceStore: ObservableObject {
                 input: offlineAgentInput(
                     question: question,
                     selectionTitle: sentSelectionTitle,
-                    selectionText: sentSelectionText
+                    selectionText: sentSelectionText,
+                    materialTitle: requestMaterialTitle,
+                    materialText: requestMaterialText,
+                    linkedSources: requestLinkedSources
                 )
             ))
+            activeAgentRequestID = nil
+            isAskingAgent = false
             return
         }
 
         messages.append(AgentMessage(role: .user, text: question, source: sourceTitle))
-        isAskingAgent = true
-
         do {
             let client = OpenAIResponsesClient(apiKey: credential.key, model: resolvedModelName)
             let answer = try await client.ask(
                 question: question,
-                materialTitle: currentReferenceTitle,
-                materialText: selectedContextText,
+                materialTitle: requestMaterialTitle,
+                materialText: requestMaterialText,
                 noteTitle: agentNoteTitle,
                 noteText: noteText,
                 selectionTitle: sentSelectionTitle,
                 selectionText: sentSelectionText,
+                linkedSources: requestLinkedSources,
                 recentMessages: recentMessages,
                 language: interfaceLanguage
             )
+            guard activeAgentRequestID == requestID else { return }
             messages.append(AgentMessage(role: .assistant, text: answer, source: sourceTitle))
         } catch {
+            guard activeAgentRequestID == requestID else { return }
             messages.append(AgentMessage(role: .assistant, text: ui("请求失败：\(error.localizedDescription)", "Request failed: \(error.localizedDescription)"), source: sourceTitle))
         }
 
-        isAskingAgent = false
+        if activeAgentRequestID == requestID {
+            activeAgentRequestID = nil
+            isAskingAgent = false
+        }
     }
 
-    private func offlineAgentInput(question: String, selectionTitle: String?, selectionText: String?) -> AgentOfflinePreviewInput {
+    private func offlineAgentInput(
+        question: String,
+        selectionTitle: String?,
+        selectionText: String?,
+        materialTitle: String,
+        materialText: String,
+        linkedSources: [StudyAgentSource]
+    ) -> AgentOfflinePreviewInput {
         AgentOfflinePreviewInput(
             language: interfaceLanguage,
             question: question,
-            hasMaterial: hasSelectedMaterial,
-            materialTitle: currentReferenceTitle,
-            materialText: selectedContextText,
+            hasMaterial: !materialText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            materialTitle: materialTitle,
+            materialText: materialText,
             noteTitle: agentNoteTitle,
             noteText: noteText,
             selectionTitle: selectionTitle,
-            selectionText: selectionText
+            selectionText: selectionText,
+            linkedSources: linkedSources
         )
     }
 
@@ -2411,21 +2620,6 @@ final class WorkspaceStore: ObservableObject {
         let prefix = "# \(oldTitle)\n"
         guard markdown.hasPrefix(prefix) else { return markdown }
         return "# \(newTitle)\n" + String(markdown.dropFirst(prefix.count))
-    }
-
-    private func replaceNavigationItemID(_ oldID: String, with newID: String) {
-        backNavigationStack = backNavigationStack.map { snapshot in
-            var copy = snapshot
-            if copy.selectedItemID == oldID { copy.selectedItemID = newID }
-            if copy.activeNotebookItemID == oldID { copy.activeNotebookItemID = newID }
-            return copy
-        }
-        forwardNavigationStack = forwardNavigationStack.map { snapshot in
-            var copy = snapshot
-            if copy.selectedItemID == oldID { copy.selectedItemID = newID }
-            if copy.activeNotebookItemID == oldID { copy.activeNotebookItemID = newID }
-            return copy
-        }
     }
 
     private func showTransientNoteStatus(_ message: String) {
@@ -2600,7 +2794,15 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         importedItems = snapshot.importedItems
+        var didHydrateFileIdentity = false
+        for index in importedItems.indices where importedItems[index].fileIdentity == nil {
+            guard let url = importedItems[index].url,
+                  let identity = StudyMaterialDiscovery.fileIdentity(for: url) else { continue }
+            importedItems[index].fileIdentity = identity
+            didHydrateFileIdentity = true
+        }
         notesByItemID = snapshot.notesByItemID.mapValues(cleanLegacyPlaceholder)
+        noteSourceLinks = NoteSourceRelations(links: snapshot.noteSourceLinks).links
         selectedItemID = snapshot.selectedItemID
         activeNotebookItemID = snapshot.activeNotebookItemID
         if selectedItem?.isNotebookNote == true {
@@ -2647,6 +2849,9 @@ final class WorkspaceStore: ObservableObject {
             self.interfaceLanguage = interfaceLanguage
         }
         noteText = noteText(for: activeNoteItem)
+        selectedAgentSourceIDs = []
+        includeCurrentMaterialInAgentScope = true
+        if didHydrateFileIdentity { save() }
     }
 
     private func cleanLegacyPlaceholder(_ text: String) -> String {
@@ -2678,6 +2883,7 @@ final class WorkspaceStore: ObservableObject {
         let snapshot = PersistedWorkspace(
             importedItems: importedItems,
             notesByItemID: notesByItemID,
+            noteSourceLinks: noteSourceLinks,
             selectedItemID: selectedItemID,
             activeNotebookItemID: activeNotebookItemID,
             modelName: modelName,

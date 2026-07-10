@@ -6,6 +6,7 @@ import WeiBeiCore
 enum DocumentTextExtractor {
     private static var pdfTextCache: [String: String] = [:]
     private static var fileTextCache: [String: String] = [:]
+    private static let cacheLock = NSLock()
 
     static func text(for item: StudyItem) -> String? {
         guard let url = item.url else { return nil }
@@ -24,7 +25,7 @@ enum DocumentTextExtractor {
 
     private static func pdfText(url: URL) -> String? {
         let cacheKey = fileCacheKey(for: url)
-        if let cached = pdfTextCache[cacheKey] {
+        if let cached = locked({ pdfTextCache[cacheKey] }) {
             return cached
         }
 
@@ -32,7 +33,7 @@ enum DocumentTextExtractor {
         let textLayerText = pagedText(from: document)
         let text = textLayerText.isEmpty ? PDFOCRTextExtractor.text(from: document) : textLayerText
         if let text, !text.isEmpty {
-            pdfTextCache[cacheKey] = text
+            locked { pdfTextCache[cacheKey] = text }
             return text
         }
         return nil
@@ -56,12 +57,12 @@ enum DocumentTextExtractor {
 
     private static func cachedFileText(url: URL, load: (URL) -> String?) -> String? {
         let cacheKey = fileCacheKey(for: url)
-        if let cached = fileTextCache[cacheKey] {
+        if let cached = locked({ fileTextCache[cacheKey] }) {
             return cached
         }
         guard let text = load(url) else { return nil }
         if !text.isEmpty {
-            fileTextCache[cacheKey] = text
+            locked { fileTextCache[cacheKey] = text }
         }
         return text
     }
@@ -79,5 +80,29 @@ enum DocumentTextExtractor {
             return attributed.string
         }
         return String(data: data, encoding: .utf8)
+    }
+
+    private static func locked<T>(_ operation: () -> T) -> T {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
+        return operation()
+    }
+}
+
+struct AgentSourceLoadRequest: Sendable {
+    var item: StudyItem
+    var title: String
+    var fallbackText: String
+}
+
+actor AgentSourceTextLoader {
+    static let shared = AgentSourceTextLoader()
+
+    func sources(for requests: [AgentSourceLoadRequest]) -> [StudyAgentSource] {
+        requests.compactMap { request in
+            let text = DocumentTextExtractor.text(for: request.item) ?? request.fallbackText
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return StudyAgentSource(id: request.item.id, title: request.title, kind: request.item.kind, text: text)
+        }
     }
 }
