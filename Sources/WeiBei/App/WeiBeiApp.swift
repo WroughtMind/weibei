@@ -370,7 +370,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
               !capturePath.isEmpty,
               Self.scheduledVerificationCaptures.insert(capturePath).inserted else { return }
 
-        if environment["WEIBEI_VERIFY_SCENARIO"] == "pi-learning-flow",
+        if ["pi-learning-flow", "pi-course-memory-flow"].contains(environment["WEIBEI_VERIFY_SCENARIO"]),
            let workspaceDirectory = environment["WEIBEI_WORKSPACE_DIR"] {
             let stateURL = URL(fileURLWithPath: workspaceDirectory)
                 .appendingPathComponent("verification-state.txt")

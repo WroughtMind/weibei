@@ -89,6 +89,53 @@ private func checkRPCDecoding() throws {
         "PI note proposals preserve Markdown, evidence, and revision"
     )
 
+    let learningData = try JSONSerialization.data(withJSONObject: [
+        "type": "tool_execution_end",
+        "toolCallId": "tool-memory",
+        "toolName": "weibei_learning_update",
+        "isError": false,
+        "result": [
+            "details": [
+                "kind": "learning_update",
+                "contextRevision": "revision-7",
+                "memoryRevision": 4,
+                "sessionSummary": "学到实际利率。",
+                "suggestedPhase": "recall",
+                "suggestedNext": ["用一道题区分名义利率与实际利率"],
+                "entries": [
+                    [
+                        "kind": "confusion",
+                        "text": "还不熟悉费雪方程",
+                        "evidence": "[用户：本轮] 用户明确说不熟悉",
+                        "origin": "userStatement",
+                    ],
+                ],
+            ],
+        ],
+    ])
+    let learningUpdate = try PiRPCMessageDecoder.decode(learningData)
+    try piRequire(
+        learningUpdate == .learningUpdate(
+            id: "tool-memory",
+            StudyAgentLearningUpdate(
+                contextRevision: "revision-7",
+                memoryRevision: 4,
+                sessionSummary: "学到实际利率。",
+                suggestedPhase: .recall,
+                suggestedNext: ["用一道题区分名义利率与实际利率"],
+                entries: [
+                    StudyAgentMemoryUpdateEntry(
+                        kind: .confusion,
+                        text: "还不熟悉费雪方程",
+                        evidence: "[用户：本轮] 用户明确说不熟悉",
+                        origin: .userStatement
+                    ),
+                ]
+            )
+        ),
+        "PI learning updates preserve context, memory revision, evidence, and flow"
+    )
+
     let ended = try PiRPCMessageDecoder.decode(Data(#"{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"第一轮"}],"stopReason":"toolUse"},{"role":"assistant","content":[{"type":"text","text":"最终回答"}],"stopReason":"stop"}]}"#.utf8))
     try piRequire(ended == .agentEnded(text: "最终回答", stopReason: "stop"), "PI agent_end selects the final assistant answer")
     try piRequire(try PiRPCMessageDecoder.decode(Data(#"{"type":"future_event"}"#.utf8)) == .event("future_event"), "PI decoder tolerates unknown future events")
@@ -105,6 +152,28 @@ private func checkStudyAgentContext() throws {
     let recentMessages = (0..<10).map { index in
         AgentMessage(role: index.isMultiple(of: 2) ? .user : .assistant, text: "message-\(index)" + String(repeating: "字", count: 1_300), source: "source-\(index)")
     }
+    let courseItems = (0..<90).map { index in
+        StudyAgentCourseItem(
+            id: "item-\(index)",
+            title: "课程条目 \(index)",
+            subtitle: "subtitle-\(index)",
+            kind: index.isMultiple(of: 2) ? "pdf" : "markdown",
+            role: index.isMultiple(of: 2) ? "material" : "note",
+            linkedItemIDs: (0..<30).map { "linked-\($0)" },
+            headings: (0..<18).map { "heading-\($0)" },
+            tags: (0..<20).map { "#tag-\($0)" },
+            searchText: String(repeating: "课", count: 2_500)
+        )
+    }
+    let learningMemories = (0..<60).map { index in
+        LearningMemoryEntry(
+            kind: index.isMultiple(of: 2) ? .confusion : .nextStep,
+            text: "memory-\(index)" + String(repeating: "学", count: 520),
+            evidence: "[用户：本轮] evidence-\(index)" + String(repeating: "据", count: 420),
+            origin: .userStatement,
+            updatedAt: Date(timeIntervalSinceReferenceDate: TimeInterval(index))
+        )
+    }
     let request = StudyAgentRequest(
         purpose: .conversation,
         question: "请根据当前材料出题",
@@ -115,6 +184,31 @@ private func checkStudyAgentContext() throws {
         selectionTitle: String(repeating: "选", count: 320),
         selectionText: String(repeating: "选", count: 2_100),
         recentMessages: recentMessages,
+        courseContext: StudyAgentCourseContext(
+            title: "测试课程",
+            items: courseItems,
+            relations: (0..<210).map {
+                StudyAgentCourseRelation(noteItemID: "item-\($0 % 80)", sourceItemID: "item-\(($0 + 1) % 80)")
+            }
+        ),
+        learningContext: StudyAgentLearningContext(
+            memoryRevision: 7,
+            lastLocation: StudyLocation(
+                itemID: "item-0",
+                itemTitle: String(repeating: "位", count: 320),
+                locationTitle: String(repeating: "章", count: 320),
+                pageIndex: 12
+            ),
+            memories: learningMemories,
+            session: StudyAgentSessionSnapshot(
+                id: "session-1",
+                title: String(repeating: "会", count: 320),
+                summary: String(repeating: "摘", count: 2_100),
+                phase: StudyPhase.recall.rawValue,
+                focusItemIDs: (0..<30).map { "item-\($0)" },
+                turnCount: 20
+            )
+        ),
         language: .chinese,
         contextRevision: "revision-9"
     )
@@ -129,6 +223,26 @@ private func checkStudyAgentContext() throws {
         contextRevision: "revision-10"
     )
     try piRequire(noteRequest.resolvedWorkflow == .noteMaking, "study-agent automatic routing selects note making")
+    let wayfindingRequest = StudyAgentRequest(
+        purpose: .conversation,
+        question: "这个概念和课程里哪本书相关？",
+        materialTitle: "材料",
+        materialText: "正文",
+        noteTitle: "笔记",
+        noteText: "",
+        contextRevision: "revision-wayfinding"
+    )
+    try piRequire(wayfindingRequest.resolvedWorkflow == .courseWayfinding, "study-agent automatic routing selects course wayfinding")
+    let companionRequest = StudyAgentRequest(
+        purpose: .conversation,
+        question: "我上次学到哪了？",
+        materialTitle: "材料",
+        materialText: "正文",
+        noteTitle: "笔记",
+        noteText: "",
+        contextRevision: "revision-companion"
+    )
+    try piRequire(companionRequest.resolvedWorkflow == .studyCompanion, "study-agent automatic routing selects the study companion")
     let quietRequest = StudyAgentRequest(
         purpose: .quietInsight,
         question: "出题",
@@ -141,13 +255,111 @@ private func checkStudyAgentContext() throws {
     try piRequire(quietRequest.resolvedWorkflow == .closeReading, "quiet insight stays on close reading")
 
     let envelope = StudyAgentContextEnvelope(request: request)
-    try piRequire(envelope.schemaVersion == 1 && envelope.contextRevision == "revision-9", "study-agent context carries schema and revision")
+    try piRequire(envelope.schemaVersion == 2 && envelope.contextRevision == "revision-9", "study-agent context carries schema and revision")
     try piRequire(envelope.workflow == StudyAgentWorkflow.recallPractice.rawValue, "study-agent context carries resolved workflow")
     try piRequire(envelope.material?.text.count == 18_000 && envelope.note.text.count == 6_000 && envelope.selection?.text.count == 2_000, "study-agent context applies source limits")
     try piRequire(envelope.material?.title.count == 300 && envelope.note.title.count == 300 && envelope.selection?.title.count == 300, "study-agent context bounds source labels consistently")
     try piRequire(envelope.material?.isTruncated == true && envelope.note.isTruncated && envelope.selection?.isTruncated == true, "study-agent context marks every truncated source")
     try piRequire(envelope.recentMessages.count == 8 && envelope.recentMessages.first?.text.hasPrefix("message-2") == true, "study-agent context keeps the latest eight messages")
     try piRequire(envelope.recentMessages.allSatisfy { $0.text.count <= 1_200 }, "study-agent context bounds recent messages")
+    try piRequire(envelope.course.catalog.count == 90 && envelope.course.items.count == 80 && envelope.course.relations.count == 210 && envelope.course.isTruncated, "study-agent context keeps the full catalog while bounding query candidates")
+    try piRequire(
+        envelope.course.catalog.allSatisfy { $0.id.hasPrefix("course-item-") }
+            && envelope.course.items.allSatisfy { $0.id.hasPrefix("course-item-") }
+            && envelope.course.relations.allSatisfy {
+                $0.noteItemID.hasPrefix("course-item-") && $0.sourceItemID.hasPrefix("course-item-")
+            },
+        "study-agent context replaces workspace item ids with request-local opaque ids"
+    )
+    try piRequire(envelope.course.items.allSatisfy { $0.searchText.count <= 2_400 && $0.headings.count <= 12 && $0.tags.count <= 16 && $0.linkedItemIDs.count <= 24 }, "study-agent context bounds course search metadata")
+    try piRequire(envelope.learning.memoryRevision == 7 && envelope.learning.memories.count == 48, "study-agent context carries a bounded learning-memory revision")
+    try piRequire(envelope.learning.memories.allSatisfy { $0.text.count <= 500 && $0.evidence.count <= 400 }, "study-agent context bounds durable learning memory")
+    try piRequire(envelope.learning.lastLocation?.itemTitle.count == 300 && envelope.learning.lastLocation?.itemID == "course-item-1" && envelope.learning.session?.summary.count == 2_000 && envelope.learning.session?.focusItemIDs.count == 24, "study-agent context bounds location and session state with opaque course ids")
+
+    let privatePath = "/Users/student/Private Course/secret.pdf"
+    let privateItem = StudyAgentCourseItem(
+        id: "file:\(privatePath)",
+        title: "课程资料",
+        subtitle: "secret.pdf",
+        kind: "pdf",
+        role: "material",
+        searchText: "测试内容"
+    )
+    let privateEnvelope = StudyAgentContextEnvelope(
+        request: StudyAgentRequest(
+            purpose: .conversation,
+            question: "解释",
+            materialTitle: "课程资料",
+            materialText: "测试内容",
+            noteTitle: "笔记",
+            noteText: "",
+            courseContext: StudyAgentCourseContext(title: "课程", items: [privateItem]),
+            learningContext: StudyAgentLearningContext(
+                lastLocation: StudyLocation(itemID: "file:\(privatePath)", itemTitle: "课程资料")
+            ),
+            contextRevision: "private-path-test"
+        )
+    )
+    let privateEnvelopeJSON = String(decoding: try JSONEncoder().encode(privateEnvelope), as: UTF8.self)
+    try piRequire(
+        !privateEnvelopeJSON.contains(privatePath)
+            && privateEnvelope.course.catalog.first?.id == "course-item-1"
+            && privateEnvelope.learning.lastLocation?.itemID == "course-item-1",
+        "study-agent context never exposes imported absolute paths to PI"
+    )
+
+    let courseIndex = CourseKnowledgeIndex.build(
+        title: "货币金融学",
+        sources: [
+            CourseKnowledgeSource(
+                id: "rates",
+                title: "利率",
+                subtitle: "HTML",
+                kind: "html",
+                role: "material",
+                text: "## 名义利率\n\n名义利率以货币单位表示。\n\n## 实际利率\n\n实际利率扣除通货膨胀影响。"
+            ),
+            CourseKnowledgeSource(
+                id: "inflation-note",
+                title: "通货膨胀笔记",
+                subtitle: "Markdown",
+                kind: "markdown",
+                role: "note",
+                text: "# 通货膨胀\n\n#购买力\n\n通货膨胀会影响实际利率和购买力。"
+            ),
+        ],
+        links: [NoteSourceLink(noteItemID: "inflation-note", sourceItemID: "rates")],
+        query: "通货膨胀和实际利率的关联",
+        currentMaterialID: "rates",
+        currentNoteID: "inflation-note"
+    )
+    try piRequire(courseIndex.catalog.count == 2 && courseIndex.items.count == 2 && courseIndex.relations.count == 1, "course index preserves materials, notes, and durable links")
+    try piRequire(courseIndex.items.first(where: { $0.id == "inflation-note" })?.searchText.contains("实际利率") == true, "course index selects query-relevant knowledge excerpts")
+    try piRequire(courseIndex.items.first(where: { $0.id == "inflation-note" })?.tags.contains("#购买力") == true, "course index exposes notebook tags")
+
+    let largeCourseIndex = CourseKnowledgeIndex.build(
+        title: "微观经济学",
+        sources: (0..<100).map { index in
+            CourseKnowledgeSource(
+                id: "chapter-\(index)",
+                title: "课程文件 \(index)",
+                subtitle: "chapter-\(index).md",
+                kind: "markdown",
+                role: "material",
+                text: index == 99 ? "边际替代率描述消费者愿意交换两种商品的比例。" : "一般课程内容 \(index)"
+            )
+        },
+        links: [],
+        query: "边际替代率在哪个文件？",
+        currentMaterialID: nil,
+        currentNoteID: nil
+    )
+    try piRequire(
+        largeCourseIndex.catalog.count == 100
+            && largeCourseIndex.items.count == 80
+            && largeCourseIndex.items.contains(where: { $0.id == "chapter-99" }),
+        "course index keeps every file name and ranks a relevant file beyond the first eighty into the search window"
+    )
 
     let message = AgentMessage(role: .assistant, text: "PI answer", source: "材料", backend: .pi)
     let encoded = try JSONEncoder().encode(message)
@@ -156,6 +368,55 @@ private func checkStudyAgentContext() throws {
     legacyObject.removeValue(forKey: "backend")
     let legacyData = try JSONSerialization.data(withJSONObject: legacyObject)
     try piRequire(try JSONDecoder().decode(AgentMessage.self, from: legacyData).backend == nil, "legacy agent messages remain decodable")
+
+    let sessionID = UUID()
+    let persisted = PersistedWorkspace(
+        noteSourceLinks: [NoteSourceLink(noteItemID: "inflation-note", sourceItemID: "rates")],
+        studyLocationsByItemID: [
+            "rates": StudyLocation(itemID: "rates", itemTitle: "利率", locationTitle: "实际利率", pageIndex: 3),
+        ],
+        learningMemoryEntries: [
+            LearningMemoryEntry(
+                kind: .confusion,
+                text: "还不熟悉费雪方程",
+                evidence: "[用户：本轮] 用户明确说不熟悉",
+                origin: .userStatement,
+                sessionID: sessionID
+            ),
+        ],
+        learningMemoryRevision: 4,
+        studySessions: [
+            StudySession(
+                id: sessionID,
+                title: "实际利率",
+                messages: [message],
+                summary: "学到实际利率。",
+                focusItemIDs: ["rates"],
+                flow: StudyFlowState(phase: .recall, suggestedNext: ["练习费雪方程"])
+            ),
+        ],
+        activeStudySessionID: sessionID
+    )
+    let persistedData = try JSONEncoder().encode(persisted)
+    let decodedPersisted = try JSONDecoder().decode(PersistedWorkspace.self, from: persistedData)
+    try piRequire(
+        decodedPersisted.noteSourceLinks?.count == 1
+            && decodedPersisted.studyLocationsByItemID?["rates"]?.pageIndex == 3
+            && decodedPersisted.learningMemoryEntries?.first?.sessionID == sessionID
+            && decodedPersisted.learningMemoryRevision == 4
+            && decodedPersisted.studySessions?.first?.flow.phase == .recall
+            && decodedPersisted.activeStudySessionID == sessionID,
+        "course links, progress, learning memory, and sessions round-trip through workspace persistence"
+    )
+    let legacyWorkspaceData = Data(#"{"importedItems":[],"notesByItemID":{}}"#.utf8)
+    let legacyWorkspace = try JSONDecoder().decode(PersistedWorkspace.self, from: legacyWorkspaceData)
+    try piRequire(
+        legacyWorkspace.noteSourceLinks == nil
+            && legacyWorkspace.studyLocationsByItemID == nil
+            && legacyWorkspace.learningMemoryEntries == nil
+            && legacyWorkspace.studySessions == nil,
+        "legacy workspaces remain decodable without course-learning state"
+    )
 
     try piRequire(PiAgentRuntimeError.unavailable.permitsAutomaticFallback, "PI startup failures may use the existing fallback")
     try piRequire(!PiAgentRuntimeError.agentFailed("model error").permitsAutomaticFallback, "accepted PI runs are never replayed automatically")
@@ -176,9 +437,33 @@ private func checkStudyAgentContext() throws {
 private func checkBundledAgentResources() throws {
     let resources = try PiAgentResources.bundled()
     try piRequire(resources.systemPrompt.contains("魏碑拥有材料、选区、笔记"), "PI system contract is bundled")
+    try piRequire(resources.systemPrompt.contains("课程地图") && resources.systemPrompt.contains("学习记忆与会话"), "PI system contract separates course evidence from learning memory")
     let extensionSource = try String(contentsOf: resources.extensionURL, encoding: .utf8)
     try piRequire(extensionSource.contains("before_agent_start") && extensionSource.contains("tool_call") && extensionSource.contains("pi.on(\"context\""), "PI extension bundles source, permission, and stale-context hooks")
-    try piRequire(extensionSource.contains("weibei_context") && extensionSource.contains("weibei_note_proposal"), "PI extension bundles only WeiBei-owned tools")
+    try piRequire(
+        [
+            "weibei_context",
+            "weibei_course_map",
+            "weibei_course_search",
+            "weibei_learning_memory",
+            "weibei_learning_update",
+            "weibei_note_proposal",
+        ].allSatisfy(extensionSource.contains),
+        "PI extension bundles the WeiBei-owned course, memory, and note tools"
+    )
+    try piRequire(
+        extensionSource.contains("contextFileBytes: 2 * 1024 * 1024")
+            && extensionSource.contains("courseCatalogItems: 500")
+            && extensionSource.contains("courseMapPageItems: 60")
+            && extensionSource.contains("catalogCount: snapshot.course.catalog.length")
+            && extensionSource.contains("const offset = params.offset ?? 0")
+            && extensionSource.contains("const limit = params.limit ?? 40")
+            && extensionSource.contains("与已有 catalog ID 重复")
+            && extensionSource.contains("noteTitle: catalogByID.get(relation.noteItemID)!.title")
+            && extensionSource.contains("...current.course.catalog.map((item) =>")
+            && extensionSource.contains("用户陈述型记忆必须直接依据本轮用户原话"),
+        "PI extension keeps a paged full catalog, compact context output, strict ids, and catalog-backed memory evidence"
+    )
 
     for skillName in PiAgentResources.requiredSkillNames {
         let skillURL = resources.skillsURL.appendingPathComponent(skillName).appendingPathComponent("SKILL.md")
@@ -192,6 +477,9 @@ private func checkBundledAgentResources() throws {
     try piRequire(
         runtimeSource.contains("answeredBeforeContext")
             && runtimeSource.contains("allowedSourceLabels")
+            && runtimeSource.contains("allowedNoteSourceLabels")
+            && runtimeSource.contains("memoryRevision")
+            && runtimeSource.contains("context.course.catalog.map")
             && runtimeSource.contains("PI returned an answer without a current-source label")
             && runtimeSource.contains("binary.sha256")
             && runtimeSource.contains("SecStaticCodeCheckValidity"),

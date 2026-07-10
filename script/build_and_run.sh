@@ -47,6 +47,8 @@ APP_BINARY="$APP_MACOS/$PRODUCT_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 VERIFY_PID=""
 VERIFY_DATA_DIR="$DIST_DIR/Data"
+VERIFY_STDOUT="$VERIFY_DATA_DIR/app-stdout.log"
+VERIFY_STDERR="$VERIFY_DATA_DIR/app-stderr.log"
 VERIFY_SCENARIO="${WEIBEI_VERIFY_SCENARIO:-offline-learning-flow}"
 VERIFY_WINDOW_SIZE="${WEIBEI_VERIFY_WINDOW_SIZE:-}"
 VERIFY_INSPIRATION_ID="${WEIBEI_VERIFY_INSPIRATION_ID:-}"
@@ -94,6 +96,10 @@ if [[ "$CHECK_ONLY" != true ]]; then
   rm -rf "$APP_BUNDLE"
   mkdir -p "$APP_MACOS" "$APP_RESOURCES"
   cp "$BUILD_BINARY" "$APP_BINARY"
+  if ! /usr/bin/cmp -s "$BUILD_BINARY" "$APP_BINARY"; then
+    echo "package failed: copied app binary does not match the current Swift build" >&2
+    exit 10
+  fi
   chmod +x "$APP_BINARY"
   for resource_bundle in "${RESOURCE_BUNDLES[@]}"; do
     if [[ ! -d "$resource_bundle" ]]; then
@@ -141,6 +147,12 @@ if [[ "$CHECK_ONLY" != true ]]; then
 PLIST
   /usr/bin/codesign --force --sign - --timestamp=none "$APP_BUNDLE" >/dev/null
   /usr/bin/codesign --verify --deep --strict "$APP_BUNDLE"
+  BUILD_UUID="$(/usr/bin/dwarfdump --uuid "$BUILD_BINARY" | /usr/bin/awk 'NR == 1 {print $2}')"
+  PACKAGED_UUID="$(/usr/bin/dwarfdump --uuid "$APP_BINARY" | /usr/bin/awk 'NR == 1 {print $2}')"
+  if [[ -z "$BUILD_UUID" || "$PACKAGED_UUID" != "$BUILD_UUID" ]]; then
+    echo "package failed: signed app binary UUID does not match the current Swift build" >&2
+    exit 11
+  fi
   WEIBEI_PI_EXECUTABLE="$PACKAGED_PI" WEIBEI_PI_APP_BUNDLE="$APP_BUNDLE" WEIBEI_PI_LIVE_CHECK=0 \
     "$BUILD_DIR/WeiBeiPiCheck"
 fi
@@ -156,31 +168,36 @@ cleanup_verify_app() {
 }
 
 open_app_for_verify() {
-  local before_pids
-  local agent_environment=(--env WEIBEI_FORCE_OFFLINE_AGENT=1)
-  if [[ "$VERIFY_SCENARIO" == "pi-learning-flow" ]]; then
+  local agent_environment=(WEIBEI_FORCE_OFFLINE_AGENT=1)
+  if [[ "$VERIFY_SCENARIO" == "pi-learning-flow" || "$VERIFY_SCENARIO" == "pi-course-memory-flow" ]]; then
     agent_environment=(
-      --env WEIBEI_FORCE_OFFLINE_AGENT=0
-      --env WEIBEI_PI_PROVIDER=openai-codex
-      --env WEIBEI_PI_MODEL=gpt-5.5
+      WEIBEI_FORCE_OFFLINE_AGENT=0
+      WEIBEI_PI_PROVIDER=openai-codex
+      WEIBEI_PI_MODEL=gpt-5.5
     )
   fi
-  before_pids="$(pgrep -x "$PRODUCT_NAME" || true)"
   rm -rf "$VERIFY_DATA_DIR"
   mkdir -p "$VERIFY_DATA_DIR"
   rm -f "$VERIFY_CAPTURE_PATH"
-  /usr/bin/open -n -g --env WEIBEI_SUPPRESS_ACTIVATION=1 "${agent_environment[@]}" --env "WEIBEI_WORKSPACE_DIR=$VERIFY_DATA_DIR" --env "WEIBEI_VERIFY_SCENARIO=$VERIFY_SCENARIO" --env "WEIBEI_VERIFY_WINDOW_SIZE=$VERIFY_WINDOW_SIZE" --env "WEIBEI_VERIFY_INSPIRATION_ID=$VERIFY_INSPIRATION_ID" --env "WEIBEI_VERIFY_CAPTURE_PATH=$VERIFY_CAPTURE_PATH" "$APP_BUNDLE"
+  /usr/bin/env \
+    WEIBEI_SUPPRESS_ACTIVATION=1 \
+    "${agent_environment[@]}" \
+    "WEIBEI_WORKSPACE_DIR=$VERIFY_DATA_DIR" \
+    "WEIBEI_VERIFY_SCENARIO=$VERIFY_SCENARIO" \
+    "WEIBEI_VERIFY_WINDOW_SIZE=$VERIFY_WINDOW_SIZE" \
+    "WEIBEI_VERIFY_INSPIRATION_ID=$VERIFY_INSPIRATION_ID" \
+    "WEIBEI_VERIFY_CAPTURE_PATH=$VERIFY_CAPTURE_PATH" \
+    "$APP_BINARY" >"$VERIFY_STDOUT" 2>"$VERIFY_STDERR" &
+  VERIFY_PID="$!"
+  trap cleanup_verify_app EXIT
   for _ in {1..50}; do
-    local newest_pid
-    newest_pid="$(pgrep -nx "$PRODUCT_NAME" || true)"
-    if [[ -n "$newest_pid" ]] && [[ $'\n'"$before_pids"$'\n' != *$'\n'"$newest_pid"$'\n'* ]]; then
-      VERIFY_PID="$newest_pid"
-      trap cleanup_verify_app EXIT
+    if kill -0 "$VERIFY_PID" >/dev/null 2>&1; then
       return 0
     fi
     sleep 0.1
   done
-  echo "verify launch failed: could not isolate a background $APP_DISPLAY_NAME process." >&2
+  echo "verify launch failed: signed $APP_DISPLAY_NAME process exited before opening a window." >&2
+  [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
   return 1
 }
 
@@ -216,6 +233,30 @@ visual_verify_window() {
 }
 
 verify_learning_flow_persistence() {
+  if [[ "$VERIFY_SCENARIO" == "pi-course-memory-flow" ]]; then
+    local workspace_file="$VERIFY_DATA_DIR/workspace.json"
+    local marker_file="$VERIFY_DATA_DIR/pi-course-memory-verified.txt"
+    for _ in {1..600}; do
+      if [[ -s "$marker_file" ]] \
+        && [[ -f "$workspace_file" ]] \
+        && /usr/bin/grep -q '"learningMemoryEntries"' "$workspace_file" \
+        && /usr/bin/grep -q '"studyLocationsByItemID"' "$workspace_file" \
+        && /usr/bin/grep -q '"studySessions"' "$workspace_file" \
+        && /usr/bin/grep -q '"confusion"' "$workspace_file" \
+        && /usr/bin/grep -q '"userStatement"' "$workspace_file" \
+        && /usr/bin/grep -q '"pi"' "$workspace_file"; then
+        return 0
+      fi
+      sleep 0.2
+    done
+    echo "verify failed: packaged PI did not persist the course-memory learning flow." >&2
+    if [[ -f "$VERIFY_DATA_DIR/verification-state.txt" ]]; then
+      cat "$VERIFY_DATA_DIR/verification-state.txt" >&2
+    fi
+    [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
+    return 1
+  fi
+
   if [[ "$VERIFY_SCENARIO" == "pi-learning-flow" ]]; then
     local workspace_file="$VERIFY_DATA_DIR/workspace.json"
     local marker_file="$VERIFY_DATA_DIR/pi-agent-verified.txt"

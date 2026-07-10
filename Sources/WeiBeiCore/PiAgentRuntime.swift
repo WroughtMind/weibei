@@ -21,6 +21,8 @@ public struct PiAgentProviderConfiguration: Equatable, Sendable {
 
 public struct PiAgentResources: Sendable {
     public static let requiredSkillNames = [
+        "weibei-study-companion",
+        "weibei-course-wayfinding",
         "weibei-close-reading",
         "weibei-note-making",
         "weibei-recall-practice",
@@ -268,12 +270,15 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     private struct ActiveRun {
         var id: UUID
         var contextRevision: String
+        var memoryRevision: UInt64
         var workflow: StudyAgentWorkflow
         var allowedSourceLabels: Set<String>
+        var allowedNoteSourceLabels: Set<String>
         var didReadContext = false
         var answeredBeforeContext = false
         var streamedText = ""
         var proposal: StudyAgentNoteProposal?
+        var learningUpdate: StudyAgentLearningUpdate?
         var lastError: String?
         var progress: StudyAgentProgressHandler?
         var continuation: CheckedContinuation<StudyAgentReply, Error>?
@@ -328,8 +333,10 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         activeRun = ActiveRun(
             id: request.id,
             contextRevision: request.contextRevision,
+            memoryRevision: request.learningContext.memoryRevision,
             workflow: request.resolvedWorkflow,
-            allowedSourceLabels: sourceLabels(in: context),
+            allowedSourceLabels: sourceLabels(in: context, includeCourse: true),
+            allowedNoteSourceLabels: sourceLabels(in: context, includeCourse: false),
             progress: progress
         )
         refreshRunWatchdog()
@@ -456,7 +463,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             "--offline",
             "--no-session",
             "--no-builtin-tools",
-            "--tools", "weibei_context,weibei_note_proposal",
+            "--tools", "weibei_context,weibei_course_map,weibei_course_search,weibei_learning_memory,weibei_learning_update,weibei_note_proposal",
             "--no-extensions",
             "--extension", resources.extensionURL.path,
             "--no-skills",
@@ -481,7 +488,11 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     private func piPrompt(for request: StudyAgentRequest) -> String {
         let skillName: String
         switch request.resolvedWorkflow {
-        case .automatic, .closeReading:
+        case .automatic, .studyCompanion:
+            skillName = "weibei-study-companion"
+        case .courseWayfinding:
+            skillName = "weibei-course-wayfinding"
+        case .closeReading:
             skillName = "weibei-close-reading"
         case .noteMaking:
             skillName = "weibei-note-making"
@@ -491,13 +502,21 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         return "/skill:\(skillName) \(request.question)"
     }
 
-    private func sourceLabels(in context: StudyAgentContextEnvelope) -> Set<String> {
+    private func sourceLabels(in context: StudyAgentContextEnvelope, includeCourse: Bool) -> Set<String> {
         var labels = ["[笔记：\(context.note.title)]"]
         if let material = context.material {
             labels.append("[材料：\(material.title)]")
         }
         if let selection = context.selection {
             labels.append("[选区：\(selection.title)]")
+        }
+        if includeCourse {
+            labels.append(contentsOf: context.course.catalog.map { item in
+                item.role == "note" ? "[笔记：\(item.title)]" : "[材料：\(item.title)]"
+            })
+            labels.append("[学习记录：上次位置]")
+            labels.append("[学习记忆：用户状态]")
+            labels.append("[会话：当前]")
         }
         return Set(labels)
     }
@@ -768,7 +787,15 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
         case let .toolStarted(_, name):
             guard let run = activeRun else { return }
-            guard name == "weibei_context" || name == "weibei_note_proposal" else {
+            let allowedTools = Set([
+                "weibei_context",
+                "weibei_course_map",
+                "weibei_course_search",
+                "weibei_learning_memory",
+                "weibei_learning_update",
+                "weibei_note_proposal",
+            ])
+            guard allowedTools.contains(name) else {
                 finishRun(
                     id: run.id,
                     with: .failure(PiAgentRuntimeError.agentFailed("PI attempted an unavailable tool: \(name)"))
@@ -809,7 +836,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
             guard !proposal.evidence.isEmpty,
                   proposal.evidence.allSatisfy({ evidence in
-                      run.allowedSourceLabels.contains(where: { evidence.hasPrefix($0) })
+                      run.allowedNoteSourceLabels.contains(where: { evidence.hasPrefix($0) })
                   }) else {
                 finishRun(
                     id: run.id,
@@ -818,6 +845,20 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 return
             }
             run.proposal = proposal
+            activeRun = run
+            refreshRunWatchdog()
+
+        case let .learningUpdate(_, update):
+            guard var run = activeRun else { return }
+            guard update.contextRevision == run.contextRevision,
+                  update.memoryRevision == run.memoryRevision else {
+                finishRun(
+                    id: run.id,
+                    with: .failure(PiAgentRuntimeError.agentFailed("PI proposed a stale learning-memory update"))
+                )
+                return
+            }
+            run.learningUpdate = update
             activeRun = run
             refreshRunWatchdog()
 
@@ -844,11 +885,31 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                       !run.allowedSourceLabels.contains(where: { cleanText.contains($0) }) {
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed("PI returned an answer without a current-source label")))
             } else if cleanText.isEmpty, let proposal = run.proposal {
-                finishRun(id: run.id, with: .success(StudyAgentReply(text: proposal.markdown, backend: .pi, noteProposal: proposal)))
+                finishRun(
+                    id: run.id,
+                    with: .success(
+                        StudyAgentReply(
+                            text: proposal.markdown,
+                            backend: .pi,
+                            noteProposal: proposal,
+                            learningUpdate: run.learningUpdate
+                        )
+                    )
+                )
             } else if cleanText.isEmpty {
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed(run.lastError ?? "PI returned no readable text")))
             } else {
-                finishRun(id: run.id, with: .success(StudyAgentReply(text: cleanText, backend: .pi, noteProposal: run.proposal)))
+                finishRun(
+                    id: run.id,
+                    with: .success(
+                        StudyAgentReply(
+                            text: cleanText,
+                            backend: .pi,
+                            noteProposal: run.proposal,
+                            learningUpdate: run.learningUpdate
+                        )
+                    )
+                )
             }
 
         case let .extensionError(message):

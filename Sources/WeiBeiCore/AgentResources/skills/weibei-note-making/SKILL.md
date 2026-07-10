@@ -17,7 +17,7 @@ allowed-tools: weibei_context weibei_note_proposal
 ## 工作流
 
 1. 第一项动作必须调用 `weibei_context`，读取当前快照和 `contextRevision`。
-2. 根据用户要求确定建议范围；能沿用当前笔记标题、层级和结构时优先沿用。
+2. 根据用户要求确定建议范围；能沿用当前笔记标题、层级和结构时优先沿用。跨文件内容先让用户跳转并确认目标资料，本技能不把未打开的课程材料混入写回建议。
 3. 只依据当前材料、当前笔记和当前选区起草 Markdown。保留重要原意，不把推断写成原文事实。
 4. 为建议整理 `evidence`：每条写明来源标签和它支持的笔记内容。
 5. 必须调用 `weibei_note_proposal`，传入完整 `markdown`、非空 `evidence` 和刚读取的 `contextRevision`。

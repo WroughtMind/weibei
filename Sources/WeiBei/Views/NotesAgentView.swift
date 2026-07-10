@@ -1378,7 +1378,7 @@ struct AgentPaneView: View {
                                 appearanceMode: store.appearanceMode,
                                 reorderRole: reorderRole
                             ) {
-                                EmptyView()
+                                sessionMenu
                             }
                         }
 
@@ -1648,6 +1648,17 @@ struct AgentPaneView: View {
     private var emptyAgentState: some View {
         VStack(alignment: .leading, spacing: 8) {
             LazyVGrid(columns: starterChipColumns, alignment: .leading, spacing: 6) {
+                if store.canResumePreviousStudy {
+                    starterChip(store.ui("继续上次", "Resume"), systemImage: "arrow.uturn.forward", help: store.ui("回顾上次学习位置并继续", "Review the last study location and continue")) {
+                        store.resumePreviousStudy()
+                        askWith(store.ui("上次学到哪了？请结合学习记忆告诉我当时的位置、还没解决的问题和现在最适合的下一步。", "Where did I stop last time? Use my learning memory to give the location, unresolved questions, and the best next step."))
+                    }
+                }
+                if store.allItems.count > 1 {
+                    starterChip(store.ui("关联", "Connections"), systemImage: "point.3.connected.trianglepath.dotted", help: store.ui("查找当前概念在课程里的关联", "Find related course materials and notes")) {
+                        askWith(store.ui("请查找当前材料、选区或笔记在整个课程里的知识关联，说清为什么相关，并给出可跳转的来源。", "Find connections between the current material, selection, or note and the rest of the course. Explain each connection and provide jumpable sources."))
+                    }
+                }
                 if store.hasSelectedMaterial {
                     starterChip(store.ui("梳理", "Outline"), systemImage: "text.alignleft", help: store.ui("梳理当前材料", "Outline current material")) {
                         askWith(store.ui("请基于当前材料提炼核心概念、关键公式和需要回看出处的位置。", "Extract the core concepts, key formulas, and places that need source review from the current material."))
@@ -1679,6 +1690,52 @@ struct AgentPaneView: View {
             store.agentDraft = prompt
         }
         store.askAgent()
+    }
+
+    private var sessionMenu: some View {
+        Menu {
+            Button {
+                store.createStudySession()
+            } label: {
+                Label(store.ui("新学习会话", "New Study Session"), systemImage: "plus")
+            }
+
+            Divider()
+
+            ForEach(store.orderedStudySessions) { session in
+                Button {
+                    store.activateStudySession(session.id)
+                } label: {
+                    if session.id == store.activeStudySessionID {
+                        Label(session.title, systemImage: "checkmark")
+                    } else {
+                        Text(session.title)
+                    }
+                }
+            }
+
+            if store.hasCurrentSessionInferredMemory {
+                Divider()
+                Button(role: .destructive) {
+                    store.clearCurrentSessionInferredMemory()
+                } label: {
+                    Label(store.ui("清除本会话推断记忆", "Clear Inferred Memory"), systemImage: "brain.head.profile")
+                }
+            }
+
+            if let activeID = store.activeStudySessionID, store.studySessions.count > 1 {
+                Button(role: .destructive) {
+                    store.deleteStudySession(activeID)
+                } label: {
+                    Label(store.ui("删除当前会话", "Delete Current Session"), systemImage: "trash")
+                }
+            }
+        } label: {
+            Image(systemName: "bubble.left.and.bubble.right")
+        }
+        .buttonStyle(WeiBeiIconButtonStyle(size: 24))
+        .accessibilityLabel(Text(store.ui("学习会话", "Study Sessions")))
+        .help(store.ui("新建或切换学习会话", "Create or switch study sessions"))
     }
 
     private func scrollAgentToBottom(_ proxy: ScrollViewProxy) {
@@ -2930,6 +2987,10 @@ private struct AgentBubble: View {
             )
 
             if message.id == store.lastUsableAgentAnswerID {
+                if let update = store.latestAgentLearningUpdate,
+                   !update.entries.isEmpty || !update.suggestedNext.isEmpty {
+                    learningUpdateContent(update)
+                }
                 if let proposal = store.latestAgentNoteProposal, !proposal.evidence.isEmpty {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(store.ui("依据", "Evidence"))
@@ -2964,6 +3025,50 @@ private struct AgentBubble: View {
                 }
                 .padding(.top, 2)
             }
+        }
+    }
+
+    private func learningUpdateContent(_ update: StudyAgentLearningUpdate) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label(store.ui("本轮记住", "Remembered This Turn"), systemImage: "brain.head.profile")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+
+            ForEach(Array(update.entries.prefix(4).enumerated()), id: \.offset) { _, entry in
+                Text("\(memoryKindLabel(entry.kind))：\(entry.text)")
+                    .font(.caption)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            ForEach(Array(update.suggestedNext.prefix(3).enumerated()), id: \.offset) { _, next in
+                Text("→ \(next)")
+                    .font(.caption)
+                    .foregroundStyle(WeiBeiTheme.link)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.leading, 9)
+        .padding(.vertical, 5)
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(WeiBeiTheme.cinnabar.opacity(0.34))
+                .frame(width: 1)
+        }
+    }
+
+    private func memoryKindLabel(_ kind: LearningMemoryKind) -> String {
+        switch kind {
+        case .goal:
+            return store.ui("目标", "Goal")
+        case .understood:
+            return store.ui("已理解", "Understood")
+        case .confusion:
+            return store.ui("困惑", "Confusion")
+        case .nextStep:
+            return store.ui("下一步", "Next Step")
+        case .preference:
+            return store.ui("偏好", "Preference")
         }
     }
 

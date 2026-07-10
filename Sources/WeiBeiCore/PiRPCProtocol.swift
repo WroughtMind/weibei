@@ -80,6 +80,7 @@ public enum PiRPCIncomingMessage: Equatable, Sendable {
     case toolStarted(id: String, name: String)
     case contextRead(id: String, contextRevision: String)
     case noteProposal(id: String, StudyAgentNoteProposal)
+    case learningUpdate(id: String, StudyAgentLearningUpdate)
     case toolFailed(id: String, name: String, message: String)
     case agentEnded(text: String, stopReason: String?)
     case extensionError(String)
@@ -167,6 +168,37 @@ public enum PiRPCMessageDecoder {
                         markdown: markdown,
                         evidence: details["evidence"] as? [String] ?? [],
                         contextRevision: revision
+                    )
+                )
+            }
+            if name == "weibei_learning_update",
+               let details = result?["details"] as? [String: Any],
+               details["kind"] as? String == "learning_update",
+               let revision = details["contextRevision"] as? String,
+               let memoryRevision = details["memoryRevision"] as? NSNumber {
+                let entries = (details["entries"] as? [[String: Any]] ?? []).compactMap { entry -> StudyAgentMemoryUpdateEntry? in
+                    guard let kindRaw = entry["kind"] as? String,
+                          let kind = LearningMemoryKind(rawValue: kindRaw),
+                          let text = entry["text"] as? String,
+                          let evidence = entry["evidence"] as? String,
+                          let originRaw = entry["origin"] as? String,
+                          let origin = LearningMemoryOrigin(rawValue: originRaw) else { return nil }
+                    return StudyAgentMemoryUpdateEntry(
+                        kind: kind,
+                        text: text,
+                        evidence: evidence,
+                        origin: origin
+                    )
+                }
+                return .learningUpdate(
+                    id: object["toolCallId"] as? String ?? "",
+                    StudyAgentLearningUpdate(
+                        contextRevision: revision,
+                        memoryRevision: memoryRevision.uint64Value,
+                        sessionSummary: details["sessionSummary"] as? String,
+                        suggestedPhase: (details["suggestedPhase"] as? String).flatMap(StudyPhase.init(rawValue:)),
+                        suggestedNext: details["suggestedNext"] as? [String] ?? [],
+                        entries: entries
                     )
                 )
             }

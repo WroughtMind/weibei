@@ -47,9 +47,11 @@ struct WeiBeiPiCheck {
                 try await checkNoteMaking(runtime)
             }
             if runsEvaluation {
+                try await checkStudyCompanion(runtime)
+                try await checkCourseWayfinding(runtime)
                 try await checkCloseReading(runtime)
                 try await checkRecallPractice(runtime)
-                print("pi-eval passed: close-reading, note-making, recall-practice")
+                print("pi-eval passed: study-companion, course-wayfinding, close-reading, note-making, recall-practice")
             }
             try verifyNoPersistedTurnState(runtimeRoot)
 
@@ -98,6 +100,37 @@ struct WeiBeiPiCheck {
         }
     }
 
+    private static func checkStudyCompanion(_ runtime: PiAgentRuntime) async throws {
+        let reply = try await runtime.respond(
+            to: request(
+                workflow: .studyCompanion,
+                question: "我上次学到哪了？请告诉我位置和下一步。",
+                revision: "pi-check-companion"
+            )
+        )
+        guard reply.backend == .pi,
+              reply.text.contains("期限结构") || reply.text.contains("第 12 页") || reply.text.contains("第12页"),
+              reply.text.contains("[学习记录：上次位置]") else {
+            throw PiCheckError.invalidEvaluation("study-companion")
+        }
+    }
+
+    private static func checkCourseWayfinding(_ runtime: PiAgentRuntime) async throws {
+        let reply = try await runtime.respond(
+            to: request(
+                workflow: .courseWayfinding,
+                question: "利率和通货膨胀在课程里有哪份相关材料？说明关联并给出跳转来源。",
+                revision: "pi-check-wayfinding"
+            )
+        )
+        guard reply.backend == .pi,
+              reply.text.contains("通货膨胀补充材料"),
+              reply.text.contains("来源：通货膨胀补充材料"),
+              containsSourceLabel(reply.text) else {
+            throw PiCheckError.invalidEvaluation("course-wayfinding")
+        }
+    }
+
     private static func checkRecallPractice(_ runtime: PiAgentRuntime) async throws {
         let reply = try await runtime.respond(
             to: request(
@@ -129,13 +162,81 @@ struct WeiBeiPiCheck {
             noteText: "# 利率\n\n## 待整理",
             selectionTitle: "利率定义",
             selectionText: "利率是资金使用价格的表达。",
+            courseContext: StudyAgentCourseContext(
+                title: "货币金融学",
+                items: [
+                    StudyAgentCourseItem(
+                        id: "material-rates",
+                        title: "利率课程",
+                        subtitle: "利率讲义",
+                        kind: "html",
+                        role: "material",
+                        isCurrentMaterial: true,
+                        linkedItemIDs: ["note-rates"],
+                        headings: ["利率的含义", "名义利率与实际利率"],
+                        searchText: "利率是资金使用价格的表达。实际利率会扣除通货膨胀对购买力的影响。"
+                    ),
+                    StudyAgentCourseItem(
+                        id: "material-inflation",
+                        title: "通货膨胀补充材料",
+                        subtitle: "PDF 第 4 章",
+                        kind: "pdf",
+                        role: "material",
+                        headings: ["购买力与实际利率"],
+                        searchText: "通货膨胀会改变货币购买力，区分名义利率与实际利率时需要考虑通货膨胀。"
+                    ),
+                    StudyAgentCourseItem(
+                        id: "note-rates",
+                        title: "利率笔记",
+                        subtitle: "Markdown",
+                        kind: "markdown",
+                        role: "note",
+                        isCurrentNote: true,
+                        linkedItemIDs: ["material-rates"],
+                        headings: ["核心要点"],
+                        searchText: "名义利率与实际利率的区别还需要复习。"
+                    ),
+                ],
+                relations: [
+                    StudyAgentCourseRelation(noteItemID: "note-rates", sourceItemID: "material-rates"),
+                ]
+            ),
+            learningContext: StudyAgentLearningContext(
+                memoryRevision: 3,
+                lastLocation: StudyLocation(
+                    itemID: "material-rates",
+                    itemTitle: "利率课程",
+                    locationTitle: "期限结构",
+                    pageIndex: 11
+                ),
+                memories: [
+                    LearningMemoryEntry(
+                        kind: .confusion,
+                        text: "还不能稳定区分名义利率与实际利率",
+                        evidence: "[用户：本轮] 用户上次明确说这个区别还没掌握",
+                        origin: .userStatement
+                    ),
+                ],
+                session: StudyAgentSessionSnapshot(
+                    id: "pi-check-session",
+                    title: "利率复习",
+                    summary: "上次学到期限结构，实际利率与通货膨胀的关系还需要复习。",
+                    phase: StudyPhase.recall.rawValue,
+                    focusItemIDs: ["material-rates", "note-rates"],
+                    turnCount: 6
+                )
+            ),
             language: .chinese,
             contextRevision: revision
         )
     }
 
     private static func containsSourceLabel(_ text: String) -> Bool {
-        text.contains("[选区：") || text.contains("[材料：") || text.contains("[笔记：")
+        text.contains("[选区：")
+            || text.contains("[材料：")
+            || text.contains("[笔记：")
+            || text.contains("[学习记录：")
+            || text.contains("[学习记忆：")
     }
 
     private static func verifyNoPersistedTurnState(_ runtimeRoot: URL) throws {

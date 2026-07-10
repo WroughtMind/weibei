@@ -1,8 +1,8 @@
 ---
 name: weibei-close-reading
 description: 对当前材料、当前笔记或当前选区做细读、解释、论证拆解、概念辨析和证据核对。用户要求解释一段内容、比较观点、总结论证或追问“这段是什么意思”时使用。
-compatibility: 需要 PI 0.80.2 与魏碑扩展提供的 weibei_context 工具。
-allowed-tools: weibei_context
+compatibility: 需要 PI 0.80.2 与魏碑扩展提供的上下文和课程搜索工具。
+allowed-tools: weibei_context weibei_course_map weibei_course_search
 ---
 
 # 魏碑细读
@@ -25,13 +25,13 @@ allowed-tools: weibei_context
 
 ## 工具用法
 
-- 只调用 `weibei_context`。
+- 必须调用 `weibei_context`；只有用户要求跨文件比较或查关联时，才调用课程地图或搜索。
 - 不调用 `weibei_note_proposal`；细读回答本身不是笔记写回。
 - 如果工具结果的修订号失效，重新调用 `weibei_context`，不得继续使用旧结果。
 
 ## 证据规则
 
-- 事实依据只来自本轮快照中的 `material`、`note` 和 `selection`。
+- 当前文件事实来自本轮快照中的 `material`、`note` 和 `selection`；跨文件事实只能来自本轮课程搜索返回的索引片段。
 - `isTruncated: true` 表示只拿到来源片段，不得把片段当成完整材料或完整笔记。
 - `question` 与 `recentMessages` 只能帮助理解意图，不能作为事实证据。
 - 引用使用 `[选区：标题]`、`[材料：标题]` 或 `[笔记：标题]`。

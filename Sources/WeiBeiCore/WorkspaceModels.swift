@@ -35,7 +35,7 @@ public enum WeiBeiInterfaceLanguage: String, CaseIterable, Identifiable, Codable
     }
 }
 
-public enum StudyItemKind: String, Codable, CaseIterable, Identifiable {
+public enum StudyItemKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case html
     case pdf
     case markdown
@@ -620,7 +620,7 @@ public enum SelectionFloatingAgentPlacement {
     }
 }
 
-public struct StudyItem: Identifiable, Codable, Hashable {
+public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
     public var id: String
     public var title: String
     public var subtitle: String
@@ -728,6 +728,12 @@ public struct PersistedWorkspace: Codable {
     public var notesByItemID: [String: String]
     public var selectedItemID: String?
     public var activeNotebookItemID: String?
+    public var noteSourceLinks: [NoteSourceLink]?
+    public var studyLocationsByItemID: [String: StudyLocation]?
+    public var learningMemoryEntries: [LearningMemoryEntry]?
+    public var learningMemoryRevision: UInt64?
+    public var studySessions: [StudySession]?
+    public var activeStudySessionID: UUID?
     public var modelName: String?
     public var workspaceLayout: WorkspaceLayout?
     public var threePaneOrder: [WorkspacePaneRole]?
@@ -743,11 +749,17 @@ public struct PersistedWorkspace: Codable {
     public var adaptImportedDocumentColors: Bool?
     public var interfaceLanguageRaw: String?
 
-    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], selectedItemID: String? = nil, activeNotebookItemID: String? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, threePaneOrder: [WorkspacePaneRole]? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showReader: Bool? = nil, showAgent: Bool? = nil, showNotes: Bool? = nil, showRightPane: Bool? = nil, showDailyInspiration: Bool? = nil, appearanceModeRaw: String? = nil, adaptImportedDocumentColors: Bool? = nil, interfaceLanguageRaw: String? = nil) {
+    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], selectedItemID: String? = nil, activeNotebookItemID: String? = nil, noteSourceLinks: [NoteSourceLink]? = nil, studyLocationsByItemID: [String: StudyLocation]? = nil, learningMemoryEntries: [LearningMemoryEntry]? = nil, learningMemoryRevision: UInt64? = nil, studySessions: [StudySession]? = nil, activeStudySessionID: UUID? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, threePaneOrder: [WorkspacePaneRole]? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showReader: Bool? = nil, showAgent: Bool? = nil, showNotes: Bool? = nil, showRightPane: Bool? = nil, showDailyInspiration: Bool? = nil, appearanceModeRaw: String? = nil, adaptImportedDocumentColors: Bool? = nil, interfaceLanguageRaw: String? = nil) {
         self.importedItems = importedItems
         self.notesByItemID = notesByItemID
         self.selectedItemID = selectedItemID
         self.activeNotebookItemID = activeNotebookItemID
+        self.noteSourceLinks = noteSourceLinks
+        self.studyLocationsByItemID = studyLocationsByItemID
+        self.learningMemoryEntries = learningMemoryEntries
+        self.learningMemoryRevision = learningMemoryRevision
+        self.studySessions = studySessions
+        self.activeStudySessionID = activeStudySessionID
         self.modelName = modelName
         self.workspaceLayout = workspaceLayout
         self.threePaneOrder = threePaneOrder
