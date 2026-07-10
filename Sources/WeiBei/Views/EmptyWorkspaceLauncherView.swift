@@ -20,40 +20,80 @@ struct EmptyWorkspaceLauncherView: View {
                 ZStack {
                     EmptyWorkspacePaperField(compact: compact)
 
-                    VStack(spacing: 0) {
-                        Spacer(minLength: compact ? 18 : 38)
-
-                        VStack(spacing: compact ? 14 : 19) {
-                            greeting(at: timeline.date)
-
-                            EmptyWorkspaceEntryRow(entryWidth: entryWidth)
-                        }
-
-                        Spacer(minLength: compact ? 18 : 34)
-
-                        ZStack {
-                            if store.showDailyInspiration {
-                                EmptyWorkspaceInspirationView(
-                                    inspiration: currentInspiration,
-                                    compact: compact,
-                                    onAdvance: { advanceInspiration(from: currentInspiration.id) }
-                                )
-                                .id(currentInspiration.id)
-                                .transition(.opacity)
-                            }
-                        }
-                        .frame(height: inspirationSlotHeight)
-
-                        Spacer(minLength: compact ? 20 : 42)
-                    }
-                    .frame(maxWidth: 760)
-                    .padding(.horizontal, horizontalPadding)
-                    .padding(.vertical, compact ? 4 : 10)
+                    workspaceContent(
+                        at: timeline.date,
+                        inspiration: currentInspiration,
+                        compact: compact,
+                        horizontalPadding: horizontalPadding,
+                        entryWidth: entryWidth,
+                        inspirationSlotHeight: inspirationSlotHeight
+                    )
                 }
             }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("empty-workspace-launcher")
+    }
+
+    @ViewBuilder
+    private func workspaceContent(
+        at date: Date,
+        inspiration: EmptyWorkspaceInspiration,
+        compact: Bool,
+        horizontalPadding: CGFloat,
+        entryWidth: CGFloat,
+        inspirationSlotHeight: CGFloat
+    ) -> some View {
+        if store.showDailyInspiration {
+            VStack(spacing: 0) {
+                Spacer(minLength: compact ? 18 : 38)
+
+                entryCluster(
+                    at: date,
+                    spacing: compact ? 14 : 19,
+                    entryWidth: entryWidth
+                )
+
+                Spacer(minLength: compact ? 18 : 34)
+
+                ZStack {
+                    EmptyWorkspaceInspirationView(
+                        inspiration: inspiration,
+                        compact: compact,
+                        onAdvance: { advanceInspiration(from: inspiration.id) }
+                    )
+                    .id(inspiration.id)
+                    .transition(.opacity)
+                }
+                .frame(height: inspirationSlotHeight)
+
+                Spacer(minLength: compact ? 20 : 42)
+            }
+            .frame(maxWidth: 760)
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, compact ? 4 : 10)
+        } else {
+            VStack(spacing: 0) {
+                Spacer(minLength: compact ? 20 : 40)
+                entryCluster(
+                    at: date,
+                    spacing: compact ? 16 : 29,
+                    entryWidth: entryWidth
+                )
+                .offset(y: compact ? 0 : 5)
+                Spacer(minLength: compact ? 20 : 40)
+            }
+            .frame(maxWidth: 760, maxHeight: .infinity)
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, compact ? 4 : 10)
+        }
+    }
+
+    private func entryCluster(at date: Date, spacing: CGFloat, entryWidth: CGFloat) -> some View {
+        VStack(spacing: spacing) {
+            greeting(at: date)
+            EmptyWorkspaceEntryRow(entryWidth: entryWidth)
+        }
     }
 
     private func greeting(at date: Date) -> some View {

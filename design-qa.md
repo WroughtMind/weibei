@@ -40,3 +40,30 @@ No actionable P0, P1, or P2 differences remain. The preview-to-peak gap is six p
 - Package and open a non-activating isolated preview.
 
 final result: passed
+
+---
+
+# Empty Workspace Design QA: Inspiration Disabled
+
+- Reference: `/var/folders/yp/wx87z0l97wj89_yj8nw7_ptm0000gn/T/codex-clipboard-a2fc8532-c763-4611-aeef-eb42bcab300d.png`
+- Implementation capture: `/var/folders/yp/wx87z0l97wj89_yj8nw7_ptm0000gn/T/weibei-visual-verify-empty-workspace-inspiration-off.png`
+- Side-by-side comparison: `/private/tmp/weibei-empty-off-reference-comparison.png`
+- Comparison viewport: 1180 x 760 points, 2360 x 1520 pixels
+- State: light appearance, all work panes closed, daily inspiration disabled
+
+## Comparison
+
+- The greeting and `DOC | CHAT | NOTES` form one centered cluster.
+- The cluster's horizontal center, greeting baseline, entry baseline, and vertical gap match the reference at the same viewport.
+- Disabling inspiration removes the entire lower inspiration surface instead of reserving an invisible slot.
+- Existing WeiBei hairlines and hover affordances remain; no new visual language or asset was introduced.
+- The three work entries remain interactive and continue to use the existing pane toggles.
+
+## Findings
+
+- P0: none
+- P1: none
+- P2: none
+- P3: the runtime greeting differs from the reference because it follows the actual time of day; this is expected behavior.
+
+final result: passed
