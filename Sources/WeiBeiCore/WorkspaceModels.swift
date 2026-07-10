@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 
-public enum WeiBeiInterfaceLanguage: String, CaseIterable, Identifiable, Codable {
+public enum WeiBeiInterfaceLanguage: String, CaseIterable, Identifiable, Codable, Sendable {
     case chinese = "zh-Hans"
     case english = "en"
 
@@ -677,23 +677,38 @@ public struct StudyItem: Identifiable, Codable, Hashable {
     }
 }
 
-public enum AgentRole: String, Codable {
+public enum AgentRole: String, Codable, Sendable {
     case user
     case assistant
 }
 
-public struct AgentMessage: Identifiable, Codable, Hashable {
+public enum StudyAgentBackend: String, Codable, Hashable, Sendable {
+    case pi
+    case openAI
+    case offline
+}
+
+public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var role: AgentRole
     public var text: String
     public var source: String?
+    public var backend: StudyAgentBackend?
     public var createdAt: Date
 
-    public init(id: UUID = UUID(), role: AgentRole, text: String, source: String?, createdAt: Date = Date()) {
+    public init(
+        id: UUID = UUID(),
+        role: AgentRole,
+        text: String,
+        source: String?,
+        backend: StudyAgentBackend? = nil,
+        createdAt: Date = Date()
+    ) {
         self.id = id
         self.role = role
         self.text = text
         self.source = source
+        self.backend = backend
         self.createdAt = createdAt
     }
 

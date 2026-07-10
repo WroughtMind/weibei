@@ -42,6 +42,7 @@ fi
 APP_BUNDLE="$DIST_DIR/$APP_DISPLAY_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
+APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$PRODUCT_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 VERIFY_PID=""
@@ -72,21 +73,48 @@ if [[ -d "$ROOT_DIR/node_modules" ]]; then
   npm run build:editor >/dev/null
 fi
 
+PI_RUNTIME_DIR="$("$ROOT_DIR/script/prepare_pi_runtime.sh")"
+PI_RUNTIME_BINARY="$PI_RUNTIME_DIR/bin/pi"
+PI_RUNTIME_VERSION="$(/usr/bin/plutil -extract piVersion raw -o - "$PI_RUNTIME_DIR/manifest.json")"
+if [[ ! -x "$PI_RUNTIME_BINARY" ]]; then
+  echo "build failed: embedded PI runtime was not prepared" >&2
+  exit 8
+fi
+
 swift build -c "$BUILD_CONFIGURATION"
 
 if [[ "$CHECK_ONLY" != true ]]; then
   BUILD_DIR="$(swift build -c "$BUILD_CONFIGURATION" --show-bin-path)"
   BUILD_BINARY="$BUILD_DIR/$PRODUCT_NAME"
-  RESOURCE_BUNDLE="$BUILD_DIR/${PRODUCT_NAME}_${PRODUCT_NAME}.bundle"
+  RESOURCE_BUNDLES=(
+    "$BUILD_DIR/${PRODUCT_NAME}_${PRODUCT_NAME}.bundle"
+    "$BUILD_DIR/${PRODUCT_NAME}_WeiBeiCore.bundle"
+  )
 
   rm -rf "$APP_BUNDLE"
-  mkdir -p "$APP_MACOS"
+  mkdir -p "$APP_MACOS" "$APP_RESOURCES"
   cp "$BUILD_BINARY" "$APP_BINARY"
   chmod +x "$APP_BINARY"
-  if [[ -d "$RESOURCE_BUNDLE" ]]; then
-    cp -R "$RESOURCE_BUNDLE" "$APP_BUNDLE/"
-    mkdir -p "$APP_CONTENTS/Resources"
-    cp -R "$RESOURCE_BUNDLE" "$APP_CONTENTS/Resources/"
+  for resource_bundle in "${RESOURCE_BUNDLES[@]}"; do
+    if [[ ! -d "$resource_bundle" ]]; then
+      echo "package failed: missing resource bundle $resource_bundle" >&2
+      exit 7
+    fi
+    cp -R "$resource_bundle" "$APP_RESOURCES/"
+  done
+  cp -R "$PI_RUNTIME_DIR" "$APP_RESOURCES/PiRuntime"
+
+  PACKAGED_PI="$APP_RESOURCES/PiRuntime/bin/pi"
+  if [[ ! -x "$PACKAGED_PI" ]] \
+    || [[ ! -f "$APP_RESOURCES/PiRuntime/manifest.json" ]] \
+    || [[ ! -f "$APP_RESOURCES/PiRuntime/LICENSE" ]] \
+    || [[ ! -f "$APP_RESOURCES/PiRuntime/THIRD_PARTY_NOTICES.md" ]] \
+    || [[ ! -f "$APP_RESOURCES/PiRuntime/binary.sha256" ]] \
+    || ! /usr/bin/codesign --verify --strict "$PACKAGED_PI" >/dev/null 2>&1 \
+    || [[ "$(/usr/bin/shasum -a 256 "$PACKAGED_PI" | /usr/bin/awk '{print $1}')" != "$(<"$APP_RESOURCES/PiRuntime/binary.sha256")" ]] \
+    || [[ "$("$PACKAGED_PI" --version 2>/dev/null)" != "$PI_RUNTIME_VERSION" ]]; then
+    echo "package failed: embedded PI runtime is incomplete" >&2
+    exit 9
   fi
 
   cat >"$INFO_PLIST" <<PLIST
@@ -111,6 +139,10 @@ if [[ "$CHECK_ONLY" != true ]]; then
 </dict>
 </plist>
 PLIST
+  /usr/bin/codesign --force --sign - --timestamp=none "$APP_BUNDLE" >/dev/null
+  /usr/bin/codesign --verify --deep --strict "$APP_BUNDLE"
+  WEIBEI_PI_EXECUTABLE="$PACKAGED_PI" WEIBEI_PI_APP_BUNDLE="$APP_BUNDLE" WEIBEI_PI_LIVE_CHECK=0 \
+    "$BUILD_DIR/WeiBeiPiCheck"
 fi
 
 open_app() {
@@ -125,11 +157,19 @@ cleanup_verify_app() {
 
 open_app_for_verify() {
   local before_pids
+  local agent_environment=(--env WEIBEI_FORCE_OFFLINE_AGENT=1)
+  if [[ "$VERIFY_SCENARIO" == "pi-learning-flow" ]]; then
+    agent_environment=(
+      --env WEIBEI_FORCE_OFFLINE_AGENT=0
+      --env WEIBEI_PI_PROVIDER=openai-codex
+      --env WEIBEI_PI_MODEL=gpt-5.5
+    )
+  fi
   before_pids="$(pgrep -x "$PRODUCT_NAME" || true)"
   rm -rf "$VERIFY_DATA_DIR"
   mkdir -p "$VERIFY_DATA_DIR"
   rm -f "$VERIFY_CAPTURE_PATH"
-  /usr/bin/open -n -g --env WEIBEI_SUPPRESS_ACTIVATION=1 --env WEIBEI_FORCE_OFFLINE_AGENT=1 --env "WEIBEI_WORKSPACE_DIR=$VERIFY_DATA_DIR" --env "WEIBEI_VERIFY_SCENARIO=$VERIFY_SCENARIO" --env "WEIBEI_VERIFY_WINDOW_SIZE=$VERIFY_WINDOW_SIZE" --env "WEIBEI_VERIFY_INSPIRATION_ID=$VERIFY_INSPIRATION_ID" --env "WEIBEI_VERIFY_CAPTURE_PATH=$VERIFY_CAPTURE_PATH" "$APP_BUNDLE"
+  /usr/bin/open -n -g --env WEIBEI_SUPPRESS_ACTIVATION=1 "${agent_environment[@]}" --env "WEIBEI_WORKSPACE_DIR=$VERIFY_DATA_DIR" --env "WEIBEI_VERIFY_SCENARIO=$VERIFY_SCENARIO" --env "WEIBEI_VERIFY_WINDOW_SIZE=$VERIFY_WINDOW_SIZE" --env "WEIBEI_VERIFY_INSPIRATION_ID=$VERIFY_INSPIRATION_ID" --env "WEIBEI_VERIFY_CAPTURE_PATH=$VERIFY_CAPTURE_PATH" "$APP_BUNDLE"
   for _ in {1..50}; do
     local newest_pid
     newest_pid="$(pgrep -nx "$PRODUCT_NAME" || true)"
@@ -166,7 +206,7 @@ visual_verify_window() {
     fi
     rm -f "$capture_error"
   fi
-  swift -target arm64-apple-macosx14.0 -e 'import AppKit; import Foundation; let path = CommandLine.arguments[1]; guard let image = NSImage(contentsOf: URL(fileURLWithPath: path)), let data = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: data) else { exit(2) }; let xStep = max(1, bitmap.pixelsWide / 80); let yStep = max(1, bitmap.pixelsHigh / 60); var sampled = 0; var visible = 0; for y in stride(from: 0, to: bitmap.pixelsHigh, by: yStep) { for x in stride(from: 0, to: bitmap.pixelsWide, by: xStep) { guard let color = bitmap.colorAt(x: x, y: y) else { continue }; if color.redComponent > 0.08 || color.greenComponent > 0.08 || color.blueComponent > 0.08 { visible += 1 }; sampled += 1 } }; guard sampled > 0 else { exit(3) }; let nonBlackRatio = Double(visible) / Double(sampled); print("visual_non_black_ratio=\(nonBlackRatio)"); if nonBlackRatio < 0.02 { fputs("visual verify failed: captured window is black or empty\n", stderr); exit(4) }' "$capture_path"
+  swift -target arm64-apple-macosx14.0 -e 'import AppKit; import Foundation; let path = CommandLine.arguments[1]; guard let image = NSImage(contentsOf: URL(fileURLWithPath: path)), let data = image.tiffRepresentation, let bitmap = NSBitmapImageRep(data: data) else { exit(2) }; let xStep = max(1, bitmap.pixelsWide / 80); let yStep = max(1, bitmap.pixelsHigh / 60); var sampled = 0; var visible = 0; var black = 0; for y in stride(from: 0, to: bitmap.pixelsHigh, by: yStep) { for x in stride(from: 0, to: bitmap.pixelsWide, by: xStep) { guard let color = bitmap.colorAt(x: x, y: y) else { continue }; if color.redComponent > 0.08 || color.greenComponent > 0.08 || color.blueComponent > 0.08 { visible += 1 }; if color.redComponent < 0.035 && color.greenComponent < 0.035 && color.blueComponent < 0.035 { black += 1 }; sampled += 1 } }; guard sampled > 0 else { exit(3) }; let nonBlackRatio = Double(visible) / Double(sampled); let blackRatio = Double(black) / Double(sampled); print("visual_non_black_ratio=\(nonBlackRatio)"); print("visual_black_ratio=\(blackRatio)"); if nonBlackRatio < 0.02 || blackRatio > 0.12 { fputs("visual verify failed: captured window is empty or contains black rendering blocks\n", stderr); exit(4) }' "$capture_path"
   local latest_capture_path="${TMPDIR:-/tmp}/weibei-visual-verify-latest.png"
   local scenario_capture_path="${TMPDIR:-/tmp}/weibei-visual-verify-$VERIFY_SCENARIO.png"
   cp "$capture_path" "$latest_capture_path"
@@ -176,6 +216,26 @@ visual_verify_window() {
 }
 
 verify_learning_flow_persistence() {
+  if [[ "$VERIFY_SCENARIO" == "pi-learning-flow" ]]; then
+    local workspace_file="$VERIFY_DATA_DIR/workspace.json"
+    local marker_file="$VERIFY_DATA_DIR/pi-agent-verified.txt"
+    for _ in {1..600}; do
+      if [[ -s "$marker_file" ]] \
+        && [[ -f "$workspace_file" ]] \
+        && /usr/bin/grep -q "视觉验收笔记" "$workspace_file" \
+        && /usr/bin/grep -q "利率" "$workspace_file" \
+        && ! /usr/bin/grep -q "## 离线草稿" "$workspace_file"; then
+        return 0
+      fi
+      sleep 0.2
+    done
+    echo "verify failed: packaged PI did not complete the in-app learning flow." >&2
+    if [[ -f "$VERIFY_DATA_DIR/verification-state.txt" ]]; then
+      cat "$VERIFY_DATA_DIR/verification-state.txt" >&2
+    fi
+    return 1
+  fi
+
   case "$VERIFY_SCENARIO" in
     offline-learning-flow|immersive-conversation-flow)
       ;;
@@ -260,16 +320,19 @@ verify_empty_workspace_state() {
 }
 
 finish_verify_window() {
+  verify_learning_flow_persistence
+  verify_empty_workspace_state
   if [[ "$RUN_VISUAL_VERIFY" == true ]]; then
     visual_verify_window
   fi
-  verify_learning_flow_persistence
-  verify_empty_workspace_state
 }
 
 run_verifiers() {
-  swift run -c "$BUILD_CONFIGURATION" WeiBeiSelfCheck
+  WEIBEI_PI_EXECUTABLE="$PI_RUNTIME_BINARY" \
+    swift run -c "$BUILD_CONFIGURATION" WeiBeiSelfCheck
   swift run -c "$BUILD_CONFIGURATION" WeiBeiWebEditorCheck
+  WEIBEI_PI_EXECUTABLE="$PI_RUNTIME_BINARY" \
+    swift run -c "$BUILD_CONFIGURATION" WeiBeiPiCheck
 }
 
 case "$MODE" in

@@ -37,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         sharedWorkspaceStore.flushPendingNotePersistence()
+        sharedWorkspaceStore.shutdownAgentRuntime()
         if let shortcutMonitor {
             NSEvent.removeMonitor(shortcutMonitor)
         }
@@ -214,8 +215,10 @@ struct WeiBeiApp: App {
                     }
                     .keyboardShortcut("f")
                 }
-                if !store.isAskingAgent && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Button(store.sendAgentActionTitle) { Task { await store.askAgent() } }
+                if store.isAskingAgent || !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button(store.sendAgentActionTitle) {
+                        store.isAskingAgent ? store.cancelAgentRequest() : store.askAgent()
+                    }
                         .keyboardShortcut(.return, modifiers: [.command])
                 }
             }
@@ -308,7 +311,10 @@ private struct WeiBeiAppearanceTransition: ViewModifier {
     }
 }
 
+@MainActor
 private struct WindowChromeConfigurator: NSViewRepresentable {
+    private static var scheduledVerificationCaptures: Set<String> = []
+
     var appearanceMode: WeiBeiAppearanceMode
 
     func makeNSView(context: Context) -> NSView {
@@ -361,19 +367,63 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         let environment = ProcessInfo.processInfo.environment
         guard environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1",
               let capturePath = environment["WEIBEI_VERIFY_CAPTURE_PATH"],
-              !capturePath.isEmpty else { return }
+              !capturePath.isEmpty,
+              Self.scheduledVerificationCaptures.insert(capturePath).inserted else { return }
+
+        if environment["WEIBEI_VERIFY_SCENARIO"] == "pi-learning-flow",
+           let workspaceDirectory = environment["WEIBEI_WORKSPACE_DIR"] {
+            let stateURL = URL(fileURLWithPath: workspaceDirectory)
+                .appendingPathComponent("verification-state.txt")
+            Self.waitForVerificationCompletion(
+                in: window,
+                capturePath: capturePath,
+                stateURL: stateURL,
+                remainingAttempts: 600
+            )
+            return
+        }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            guard !FileManager.default.fileExists(atPath: capturePath),
-                  let contentView = window.contentView else { return }
-            let bounds = contentView.bounds
-            guard bounds.width >= 600,
-                  bounds.height >= 400,
-                  let bitmap = contentView.bitmapImageRepForCachingDisplay(in: bounds) else { return }
-            contentView.cacheDisplay(in: bounds, to: bitmap)
-            guard let png = bitmap.representation(using: .png, properties: [:]) else { return }
-            try? png.write(to: URL(fileURLWithPath: capturePath), options: .atomic)
+            Self.capture(window, to: capturePath)
         }
+    }
+
+    private static func waitForVerificationCompletion(
+        in window: NSWindow,
+        capturePath: String,
+        stateURL: URL,
+        remainingAttempts: Int
+    ) {
+        let stages = (try? String(contentsOf: stateURL, encoding: .utf8)) ?? ""
+        if stages.split(separator: "\n").contains("completed") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                capture(window, to: capturePath)
+            }
+            return
+        }
+        guard remainingAttempts > 0 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            waitForVerificationCompletion(
+                in: window,
+                capturePath: capturePath,
+                stateURL: stateURL,
+                remainingAttempts: remainingAttempts - 1
+            )
+        }
+    }
+
+    private static func capture(_ window: NSWindow, to capturePath: String) {
+        guard !FileManager.default.fileExists(atPath: capturePath),
+              let contentView = window.contentView else { return }
+        contentView.layoutSubtreeIfNeeded()
+        window.displayIfNeeded()
+        let bounds = contentView.bounds
+        guard bounds.width >= 600,
+              bounds.height >= 400,
+              let bitmap = contentView.bitmapImageRepForCachingDisplay(in: bounds) else { return }
+        contentView.cacheDisplay(in: bounds, to: bitmap)
+        guard let png = bitmap.representation(using: .png, properties: [:]) else { return }
+        try? png.write(to: URL(fileURLWithPath: capturePath), options: .atomic)
     }
 }
 

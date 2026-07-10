@@ -9,11 +9,15 @@ let package = Package(
     products: [
         .executable(name: "WeiBei", targets: ["WeiBei"]),
         .executable(name: "WeiBeiSelfCheck", targets: ["WeiBeiSelfCheck"]),
-        .executable(name: "WeiBeiWebEditorCheck", targets: ["WeiBeiWebEditorCheck"])
+        .executable(name: "WeiBeiWebEditorCheck", targets: ["WeiBeiWebEditorCheck"]),
+        .executable(name: "WeiBeiPiCheck", targets: ["WeiBeiPiCheck"])
     ],
     targets: [
         .target(
             name: "WeiBeiCore",
+            resources: [
+                .copy("AgentResources")
+            ],
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("PDFKit"),
@@ -49,6 +53,10 @@ let package = Package(
                 .linkedFramework("AppKit"),
                 .linkedFramework("WebKit")
             ]
+        ),
+        .executableTarget(
+            name: "WeiBeiPiCheck",
+            dependencies: ["WeiBeiCore"]
         )
     ]
 )

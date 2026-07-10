@@ -43,6 +43,9 @@ final class WorkspaceStore: ObservableObject {
     @Published var agentDraft = ""
     @Published var messages: [AgentMessage] = []
     @Published var isAskingAgent = false
+    @Published var agentStreamingText = ""
+    @Published var agentActivityText: String?
+    @Published private(set) var latestAgentNoteProposal: StudyAgentNoteProposal?
     @Published var showLibrary = true
     @Published var showReader = true
     @Published var showAgent = true
@@ -87,6 +90,14 @@ final class WorkspaceStore: ObservableObject {
 
     private var notesByItemID: [String: String] = [:]
     private let storageURL: URL
+    private let piRuntime: PiAgentRuntime
+    private var activeAgentRequestID: UUID?
+    private var agentRequestTask: Task<Void, Never>?
+    private var quietInsightTask: Task<Void, Never>?
+    private var quietInsightTaskID: UUID?
+    private var agentContextRevision: UInt64 = 0
+    private var lastAgentReplyContextRevision: UInt64?
+    private var stagedNoteDraft: (itemID: String, value: String)?
     private var quietInsightSignature = ""
     private var isRestoringNavigation = false
     private var didRunVerificationScenario = false
@@ -136,7 +147,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private var lastUsableAgentAnswer: AgentMessage? {
-        messages.last { $0.isUsableAgentAnswer }
+        guard lastAgentReplyContextRevision == agentContextRevision else { return nil }
+        return messages.last { $0.isUsableAgentAnswer }
     }
 
     private static let shortcutModifierMask: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
@@ -146,6 +158,7 @@ final class WorkspaceStore: ObservableObject {
     init() {
         let folder = Self.workspaceRootDirectory() ?? FileManager.default.temporaryDirectory.appendingPathComponent("WeiBei", isDirectory: true)
         storageURL = folder.appendingPathComponent("workspace.json")
+        piRuntime = PiAgentRuntime(runtimeDirectory: folder.appendingPathComponent("AgentRuntime", isDirectory: true))
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         load()
         floatingSelectionPrompt = ui("当前选区", "Current selection")
@@ -323,7 +336,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var sendAgentActionTitle: String {
-        ui("发送问题", "Send question")
+        isAskingAgent ? ui("停止回答", "Stop response") : ui("发送问题", "Send question")
     }
 
     var agentNoteTitle: String {
@@ -360,6 +373,12 @@ final class WorkspaceStore: ObservableObject {
 
     var canApplyAgentAnswer: Bool {
         lastUsableAgentAnswer != nil
+    }
+
+    var agentWriteActionTitle: String {
+        latestAgentNoteProposal == nil
+            ? ui("写入回答", "Write Answer")
+            : ui("写入建议", "Write Proposal")
     }
 
     var lastUsableAgentAnswerID: UUID? {
@@ -485,6 +504,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func select(itemID: String?) {
+        invalidateAgentContext()
         persistCurrentNote()
         notebookCreationDraft = nil
         notebookRenameDraft = nil
@@ -513,6 +533,7 @@ final class WorkspaceStore: ObservableObject {
         clearReaderSearchIfNeeded()
         noteText = noteText(for: activeNoteItem)
         messages = []
+        latestAgentNoteProposal = nil
         clearGeneratedQuietInsight()
         refreshQuietInsightIfNeeded()
         save()
@@ -527,6 +548,7 @@ final class WorkspaceStore: ObservableObject {
 
     func updateNote(_ value: String) {
         guard noteText != value else { return }
+        invalidateAgentContext()
         noteText = value
         clearGeneratedQuietInsight()
         guard let item = activeNoteItem else { return }
@@ -534,6 +556,26 @@ final class WorkspaceStore: ObservableObject {
             notesByItemID[item.id] = value
         }
         scheduleNotePersistence(value, for: item)
+    }
+
+    func stageNoteDraft(_ value: String, for itemID: String?) {
+        guard let itemID else { return }
+        if stagedNoteDraft?.itemID != itemID || stagedNoteDraft?.value != value {
+            invalidateAgentContext()
+        }
+        stagedNoteDraft = (itemID, value)
+    }
+
+    func clearStagedNoteDraft(for itemID: String?, matching value: String? = nil) {
+        guard let itemID, let stagedNoteDraft, stagedNoteDraft.itemID == itemID else { return }
+        if let value, stagedNoteDraft.value != value { return }
+        self.stagedNoteDraft = nil
+    }
+
+    private func flushStagedNoteDraftForAgentContext() {
+        guard let stagedNoteDraft, stagedNoteDraft.itemID == activeNoteItemID else { return }
+        self.stagedNoteDraft = nil
+        updateNote(stagedNoteDraft.value, for: stagedNoteDraft.itemID)
     }
 
     func updateNote(_ value: String, for itemID: String?) {
@@ -830,11 +872,17 @@ final class WorkspaceStore: ObservableObject {
 
     func updateReaderLocationTitle(_ title: String?) {
         let cleaned = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        readerLocationTitle = cleaned.isEmpty ? selectedMaterialItem.map(displayTitle) : cleaned
+        let nextTitle = cleaned.isEmpty ? selectedMaterialItem.map(displayTitle) : cleaned
+        guard readerLocationTitle != nextTitle else { return }
+        invalidateAgentContext()
+        readerLocationTitle = nextTitle
     }
 
     func updateReaderPageIndex(_ index: Int) {
-        readerPageIndex = max(index, 0)
+        let nextIndex = max(index, 0)
+        guard readerPageIndex != nextIndex else { return }
+        invalidateAgentContext()
+        readerPageIndex = nextIndex
     }
 
     func recordReaderPageNavigationPoint() {
@@ -1137,6 +1185,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func applyNavigationSnapshot(_ snapshot: NavigationSnapshot) {
+        invalidateAgentContext()
         isRestoringNavigation = true
         defer { isRestoringNavigation = false }
         selectedItemID = snapshot.selectedItemID
@@ -1157,6 +1206,7 @@ final class WorkspaceStore: ObservableObject {
         readerLocationTitle = selectedMaterialItem.map(displayTitle)
         readerTargetPageIndex = selectedMaterialItem?.kind == .pdf ? snapshot.readerPageIndex : nil
         messages = []
+        latestAgentNoteProposal = nil
         showQuietInsight = agentSurface == .quietInsight
         clearUnpinnedFloatingSelection(keepContext: false)
         clearReaderSearchIfNeeded()
@@ -1284,8 +1334,12 @@ final class WorkspaceStore: ObservableObject {
                 guard hasSelectedMaterial else { return false }
                 animatePanelChange { revealReaderSearch() }
             case "return":
-                guard !isAskingAgent && !agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-                Task { await askAgent() }
+                if isAskingAgent {
+                    cancelAgentRequest()
+                } else {
+                    guard !agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+                    askAgent()
+                }
             default:
                 return false
             }
@@ -1652,6 +1706,7 @@ final class WorkspaceStore: ObservableObject {
     func useSelectedMarkdownAsNotebookNote() {
         guard let selectedItemID,
               let index = importedItems.firstIndex(where: { $0.id == selectedItemID && $0.canBecomeNotebookNote }) else { return }
+        invalidateAgentContext()
         persistCurrentNote()
         importedItems[index].isNotebookNote = true
         activeNotebookItemID = importedItems[index].id
@@ -1735,6 +1790,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
+        invalidateAgentContext()
         clearGeneratedQuietInsight()
         let nextSelection = SelectionContext(
             text: boundedText,
@@ -1780,6 +1836,7 @@ final class WorkspaceStore: ObservableObject {
         // Instant remove — animation here made the chip absorb the first click while hover/popover settled.
         cancelPendingSelectionAttachment()
         let removed = selectionAttachments.first(where: { $0.id == id })
+        if removed != nil { invalidateAgentContext() }
         selectionAttachments.removeAll { $0.id == id }
         if selectionContext?.id == id {
                 clearUnpinnedFloatingSelection(keepContext: false)
@@ -1791,6 +1848,7 @@ final class WorkspaceStore: ObservableObject {
     func clearSelectionAttachments() {
         // Instant clear so one click always wins over hover-popover dismissal races.
         cancelPendingSelectionAttachment()
+        if !selectionAttachments.isEmpty { invalidateAgentContext() }
         selectionAttachments = []
         lastSelectionAttachmentDate = nil
         lastSelectionUpdateDate = nil
@@ -1836,6 +1894,7 @@ final class WorkspaceStore: ObservableObject {
         }) {
             return
         }
+        invalidateAgentContext()
         selectionAttachments.removeAll {
             sameSelectionSource($0)
                 && SelectionAttachmentMerge.containsSelection(cleanedText, fragment: $0.text)
@@ -1921,7 +1980,7 @@ final class WorkspaceStore: ObservableObject {
             "请根据\(agentPromptScope)，把笔记整理成更清晰的大纲，保留来源信息，并标出缺少证据的位置。",
             "Use \(agentPromptScope) to organize the note into a clearer outline, keep source references, and mark places where evidence is missing."
         )
-        Task { await askAgent() }
+        askAgent()
     }
 
     func askSelection() {
@@ -2032,33 +2091,43 @@ final class WorkspaceStore: ObservableObject {
         let contextScope = hasSelectedMaterial ? ui("当前材料、当前选区和当前笔记", "the current material, current selection, and current note") : ui("当前选区和当前笔记", "the current selection and current note")
         let evidenceText = hasSelectedMaterial ? ui("如果材料没有证据，就直接说未在材料中确认。", "If the material has no evidence, say it is not confirmed in the material.") : ui("如果笔记和选区没有证据，就直接说未在笔记或选区中确认。", "If the note and selection have no evidence, say it is not confirmed in the note or selection.")
         let signature = makeQuietInsightSignature(materialText: materialText, noteText: currentNoteText, selectionText: selectionText)
-        guard signature != quietInsightSignature else { return }
-        guard let credential = resolvedOpenAIAPIKey() else {
-            generatedQuietInsight = nil
-            return
-        }
+        guard signature != quietInsightSignature,
+              !isAskingAgent,
+              !isGeneratingQuietInsight else { return }
+
+        let requestID = UUID()
+        let requestWorkspaceRevision = agentContextRevision
+        let request = StudyAgentRequest(
+            id: requestID,
+            purpose: .quietInsight,
+            workflow: .closeReading,
+            question: ui(
+                "请静默阅读\(contextScope)，只输出一条最值得提示给用户的洞察。要温和、短、可执行；\(evidenceText)",
+                "Read \(contextScope) quietly and output only the single most useful insight for the user. Keep it gentle, short, and actionable. \(evidenceText)"
+            ),
+            materialTitle: materialTitle,
+            materialText: materialText,
+            noteTitle: agentNoteTitle,
+            noteText: currentNoteText,
+            selectionTitle: selectionContext?.ownerTitle,
+            selectionText: selectionText,
+            recentMessages: [],
+            language: interfaceLanguage,
+            contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())"
+        )
 
         isGeneratingQuietInsight = true
         defer { isGeneratingQuietInsight = false }
 
         do {
-            let client = OpenAIResponsesClient(apiKey: credential.key, model: resolvedModelName)
-            let answer = try await client.ask(
-                question: ui(
-                    "请静默阅读\(contextScope)，只输出一条最值得提示给用户的洞察。要温和、短、可执行；\(evidenceText)",
-                    "Read \(contextScope) quietly and output only the single most useful insight for the user. Keep it gentle, short, and actionable. \(evidenceText)"
-                ),
-                materialTitle: materialTitle,
-                materialText: materialText,
-                noteTitle: agentNoteTitle,
-                noteText: currentNoteText,
-                selectionTitle: selectionContext?.ownerTitle,
-                selectionText: selectionText,
-                recentMessages: [],
-                language: interfaceLanguage
-            )
-            guard signature == makeQuietInsightSignature(materialText: selectedContextText, noteText: noteText, selectionText: selectionContext?.text) else { return }
-            generatedQuietInsight = QuietInsight.agent(materialTitle: materialTitle, answer: answer, language: interfaceLanguage)
+            let reply = try await executeStudyAgentRequest(request)
+            guard requestWorkspaceRevision == agentContextRevision,
+                  signature == makeQuietInsightSignature(materialText: selectedContextText, noteText: noteText, selectionText: selectionContext?.text) else { return }
+            guard reply.backend != .offline else {
+                generatedQuietInsight = nil
+                return
+            }
+            generatedQuietInsight = QuietInsight.agent(materialTitle: materialTitle, answer: reply.text, language: interfaceLanguage)
             quietInsightSignature = signature
         } catch {
             generatedQuietInsight = nil
@@ -2071,7 +2140,8 @@ final class WorkspaceStore: ObservableObject {
 
     func applyLastAgentAnswerToNote() {
         guard let answer = lastUsableAgentAnswer else { return }
-        let block = "\n\n\(noteBlockForAgentAnswer(answer.text))"
+        let content = latestAgentNoteProposal?.markdown ?? answer.text
+        let block = "\n\n\(noteBlockForAgentAnswer(content))"
         updateNote(noteText + block)
         focus(.notes)
     }
@@ -2093,10 +2163,12 @@ final class WorkspaceStore: ObservableObject {
             "empty-workspace-open-notes",
         ]
         guard scenario == "offline-learning-flow"
+            || scenario == "pi-learning-flow"
             || scenario == "immersive-conversation-flow"
             || scenario == "notebook-creation-flow"
             || emptyWorkspaceScenarios.contains(scenario) else { return }
         didRunVerificationScenario = true
+        recordVerificationStage("recognized:\(scenario)")
         if emptyWorkspaceScenarios.contains(scenario) {
             configureEmptyWorkspaceVerificationScenario(scenario)
             return
@@ -2111,6 +2183,9 @@ final class WorkspaceStore: ObservableObject {
         showNotes = true
         agentSurface = .hidden
         select(itemID: "sample-html")
+        if scenario == "pi-learning-flow" {
+            await waitForReaderContextToSettle()
+        }
         if scenario == "notebook-creation-flow" {
             promptCreateBlankNotebookNote()
             return
@@ -2121,9 +2196,43 @@ final class WorkspaceStore: ObservableObject {
             source: .document,
             ownerTitle: currentReferenceTitle
         )
+        recordVerificationStage("context-prepared")
         agentDraft = ui("解释选区，并整理成可以写入笔记的要点。", "Explain the selection and turn it into note-ready points.")
-        await askAgent()
+        await askAgentAndWait()
+        recordVerificationStage("reply:\(messages.last?.backend?.rawValue ?? "none")")
+        if messages.last?.backend == nil, let message = messages.last?.text {
+            recordVerificationStage("failure:\(String(message.prefix(500)))")
+        }
+        if scenario == "pi-learning-flow", messages.last?.backend == .pi {
+            let markerURL = storageURL.deletingLastPathComponent().appendingPathComponent("pi-agent-verified.txt")
+            try? "PI backend completed the packaged learning flow\n".write(to: markerURL, atomically: true, encoding: .utf8)
+        }
         applyLastAgentAnswerToNote()
+        recordVerificationStage("completed")
+    }
+
+    private func waitForReaderContextToSettle() async {
+        var previousTitle = readerLocationTitle
+        var previousPage = readerPageIndex
+        var stableChecks = 0
+        for _ in 0..<20 {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            if readerLocationTitle == previousTitle, readerPageIndex == previousPage {
+                stableChecks += 1
+                if stableChecks >= 3 { return }
+            } else {
+                previousTitle = readerLocationTitle
+                previousPage = readerPageIndex
+                stableChecks = 0
+            }
+        }
+    }
+
+    private func recordVerificationStage(_ stage: String) {
+        guard Self.environmentValue("WEIBEI_SUPPRESS_ACTIVATION") == "1" else { return }
+        let url = storageURL.deletingLastPathComponent().appendingPathComponent("verification-state.txt")
+        let previous = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        try? "\(previous)\(stage)\n".write(to: url, atomically: true, encoding: .utf8)
     }
 
     private func configureEmptyWorkspaceVerificationScenario(_ scenario: String) {
@@ -2157,13 +2266,17 @@ final class WorkspaceStore: ObservableObject {
     func replaceSelectionWithLastAgentAnswer() {
         guard selectionContext?.isReplaceableNoteSelection == true,
               let answer = lastUsableAgentAnswer else { return }
-        noteEditorCommand = NoteEditorCommand(kind: .replaceSelection, markdown: answer.text)
+        noteEditorCommand = NoteEditorCommand(
+            kind: .replaceSelection,
+            markdown: latestAgentNoteProposal?.markdown ?? answer.text
+        )
         focus(.notes)
     }
 
     func applyAgentPatchToEditor() {
         guard let answer = lastUsableAgentAnswer else { return }
-        noteEditorCommand = NoteEditorCommand(kind: .applyAgentPatch, markdown: "\n\(noteBlockForAgentAnswer(answer.text))")
+        let content = latestAgentNoteProposal?.markdown ?? answer.text
+        noteEditorCommand = NoteEditorCommand(kind: .applyAgentPatch, markdown: "\n\(noteBlockForAgentAnswer(content))")
         focus(.notes)
     }
 
@@ -2176,9 +2289,28 @@ final class WorkspaceStore: ObservableObject {
         return "## \(ui("整理建议", "Organization suggestion"))\n\(text)"
     }
 
-    func askAgent() async {
+    func askAgent() {
+        flushStagedNoteDraftForAgentContext()
+        guard agentRequestTask == nil,
+              !isAskingAgent,
+              !agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        agentRequestTask = Task { @MainActor [weak self] in
+            await self?.performAgentRequest()
+        }
+    }
+
+    private func askAgentAndWait() async {
+        askAgent()
+        await agentRequestTask?.value
+    }
+
+    private func performAgentRequest() async {
+        flushStagedNoteDraftForAgentContext()
         let question = agentDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !question.isEmpty, !isAskingAgent else { return }
+        guard !question.isEmpty, !isAskingAgent else {
+            agentRequestTask = nil
+            return
+        }
 
         persistCurrentNote()
         let sentSelectionTitle = agentSelectionTitle
@@ -2186,7 +2318,24 @@ final class WorkspaceStore: ObservableObject {
         let shouldClearSentDocumentSelection = sentSelectionText != nil && selectionContext?.source == .document
         let recentMessages = Array(messages.suffix(8))
         let sourceTitle = agentMessageSourceTitle
+        let requestID = UUID()
+        let requestWorkspaceRevision = agentContextRevision
+        let request = StudyAgentRequest(
+            id: requestID,
+            purpose: .conversation,
+            question: question,
+            materialTitle: currentReferenceTitle,
+            materialText: selectedContextText,
+            noteTitle: agentNoteTitle,
+            noteText: noteText,
+            selectionTitle: sentSelectionTitle,
+            selectionText: sentSelectionText,
+            recentMessages: recentMessages,
+            language: interfaceLanguage,
+            contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())"
+        )
         agentDraft = ""
+        latestAgentNoteProposal = nil
         if !selectionAttachments.isEmpty {
             withAnimation(WeiBeiMotion.panel) {
                 cancelPendingSelectionAttachment()
@@ -2196,62 +2345,170 @@ final class WorkspaceStore: ObservableObject {
             }
         }
         if shouldClearSentDocumentSelection {
-            clearUnpinnedFloatingSelection(keepContext: false)
+            clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)
         }
-        guard let credential = resolvedOpenAIAPIKey() else {
-            let notice = ui(
-                "未配置密钥。当前用离线模式生成草稿；设置密钥后会结合\(agentPromptScope)，并在有已选文本片段时一并作答。",
-                "No key is configured. WeiBei is generating an offline draft. After setup, answers will use \(agentPromptScope) and any selected text fragments."
-            )
-            openAIKeyStatus = notice
-            messages.append(contentsOf: AgentOfflineTurn.messages(
-                question: question,
-                sourceTitle: sourceTitle,
-                input: offlineAgentInput(
-                    question: question,
-                    selectionTitle: sentSelectionTitle,
-                    selectionText: sentSelectionText
-                )
-            ))
-            return
-        }
-
         messages.append(AgentMessage(role: .user, text: question, source: sourceTitle))
         isAskingAgent = true
-
-        do {
-            let client = OpenAIResponsesClient(apiKey: credential.key, model: resolvedModelName)
-            let answer = try await client.ask(
-                question: question,
-                materialTitle: currentReferenceTitle,
-                materialText: selectedContextText,
-                noteTitle: agentNoteTitle,
-                noteText: noteText,
-                selectionTitle: sentSelectionTitle,
-                selectionText: sentSelectionText,
-                recentMessages: recentMessages,
-                language: interfaceLanguage
-            )
-            messages.append(AgentMessage(role: .assistant, text: answer, source: sourceTitle))
-        } catch {
-            messages.append(AgentMessage(role: .assistant, text: ui("请求失败：\(error.localizedDescription)", "Request failed: \(error.localizedDescription)"), source: sourceTitle))
+        activeAgentRequestID = request.id
+        agentStreamingText = ""
+        agentActivityText = ui("正在读取上下文", "Reading context")
+        defer {
+            if activeAgentRequestID == request.id {
+                activeAgentRequestID = nil
+                isAskingAgent = false
+                agentStreamingText = ""
+                agentActivityText = nil
+                agentRequestTask = nil
+            }
         }
 
-        isAskingAgent = false
+        if isGeneratingQuietInsight {
+            await piRuntime.cancel()
+        }
+
+        do {
+            let reply = try await executeStudyAgentRequest(request)
+            guard activeAgentRequestID == request.id,
+                  requestWorkspaceRevision == agentContextRevision else { return }
+            latestAgentNoteProposal = reply.noteProposal
+            lastAgentReplyContextRevision = requestWorkspaceRevision
+            messages.append(
+                AgentMessage(
+                    role: .assistant,
+                    text: reply.noteProposal?.markdown ?? reply.text,
+                    source: sourceTitle,
+                    backend: reply.backend
+                )
+            )
+        } catch PiAgentRuntimeError.cancelled, is CancellationError {
+            return
+        } catch {
+            guard activeAgentRequestID == request.id else { return }
+            if agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                agentDraft = question
+            }
+            messages.append(
+                AgentMessage(
+                    role: .assistant,
+                    text: ui(
+                        "请求失败：\(error.localizedDescription) 问题已保留在输入框。",
+                        "Request failed: \(error.localizedDescription) The question remains in the composer."
+                    ),
+                    source: sourceTitle
+                )
+            )
+        }
+
     }
 
-    private func offlineAgentInput(question: String, selectionTitle: String?, selectionText: String?) -> AgentOfflinePreviewInput {
-        AgentOfflinePreviewInput(
-            language: interfaceLanguage,
-            question: question,
-            hasMaterial: hasSelectedMaterial,
-            materialTitle: currentReferenceTitle,
-            materialText: selectedContextText,
-            noteTitle: agentNoteTitle,
-            noteText: noteText,
-            selectionTitle: selectionTitle,
-            selectionText: selectionText
-        )
+    func cancelAgentRequest() {
+        guard isAskingAgent || activeAgentRequestID != nil else { return }
+        agentRequestTask?.cancel()
+        agentRequestTask = nil
+        activeAgentRequestID = nil
+        isAskingAgent = false
+        agentStreamingText = ""
+        agentActivityText = nil
+    }
+
+    private func executeStudyAgentRequest(_ request: StudyAgentRequest) async throws -> StudyAgentReply {
+        if Self.environmentValue("WEIBEI_FORCE_OFFLINE_AGENT") == "1" {
+            return try await OfflineStudyAgentRuntime().respond(to: request)
+        }
+
+        let credential = resolvedOpenAIAPIKey()
+        if Self.environmentValue("WEIBEI_PI_DISABLED") != "1" {
+            let explicitProvider = Self.environmentValue("WEIBEI_PI_PROVIDER")
+            let explicitModel = Self.environmentValue("WEIBEI_PI_MODEL")
+            let thinking = Self.environmentValue("WEIBEI_PI_THINKING")
+            let usesOpenAIKey = explicitProvider == "openai" || (explicitProvider.isEmpty && credential != nil)
+            let configuration = PiAgentProviderConfiguration(
+                provider: explicitProvider.isEmpty ? (credential == nil ? nil : "openai") : explicitProvider,
+                model: explicitModel.isEmpty ? (usesOpenAIKey ? resolvedModelName : nil) : explicitModel,
+                apiKey: usesOpenAIKey ? credential?.key : nil,
+                thinkingLevel: thinking.isEmpty ? "medium" : thinking
+            )
+            await piRuntime.configure(configuration)
+
+            do {
+                return try await piRuntime.respond(to: request) { [weak self] progress in
+                    await self?.applyAgentProgress(progress, requestID: request.id)
+                }
+            } catch let error as PiAgentRuntimeError {
+                if error == .cancelled || Task.isCancelled {
+                    throw PiAgentRuntimeError.cancelled
+                }
+                guard error.permitsAutomaticFallback else { throw error }
+                openAIKeyStatus = ui(
+                    "PI 暂不可用：\(error.localizedDescription)",
+                    "PI is unavailable: \(error.localizedDescription)"
+                )
+            } catch {
+                if Task.isCancelled { throw PiAgentRuntimeError.cancelled }
+                openAIKeyStatus = ui(
+                    "PI 暂不可用：\(error.localizedDescription)",
+                    "PI is unavailable: \(error.localizedDescription)"
+                )
+            }
+        }
+
+        if let credential {
+            do {
+                let client = OpenAIResponsesClient(apiKey: credential.key, model: resolvedModelName)
+                return try await client.respond(to: request) { [weak self] progress in
+                    await self?.applyAgentProgress(progress, requestID: request.id)
+                }
+            } catch is CancellationError {
+                throw PiAgentRuntimeError.cancelled
+            } catch {
+                if Task.isCancelled { throw PiAgentRuntimeError.cancelled }
+                openAIKeyStatus = ui(
+                    "在线请求失败，已改用离线草稿：\(error.localizedDescription)",
+                    "Online request failed; using an offline draft: \(error.localizedDescription)"
+                )
+            }
+        } else {
+            openAIKeyStatus = ui(
+                "PI 与在线密钥均不可用，当前使用离线草稿。",
+                "PI and an online key are unavailable; using an offline draft."
+            )
+        }
+
+        return try await OfflineStudyAgentRuntime().respond(to: request) { [weak self] progress in
+            await self?.applyAgentProgress(progress, requestID: request.id)
+        }
+    }
+
+    func shutdownAgentRuntime() {
+        agentRequestTask?.cancel()
+        quietInsightTask?.cancel()
+        let runtime = piRuntime
+        let completion = DispatchSemaphore(value: 0)
+        Task.detached {
+            await runtime.shutdown()
+            completion.signal()
+        }
+        _ = completion.wait(timeout: .now() + 1)
+    }
+
+    private func applyAgentProgress(_ progress: StudyAgentProgress, requestID: UUID) {
+        guard activeAgentRequestID == requestID else { return }
+        switch progress {
+        case .readingContext:
+            agentActivityText = ui("正在读取上下文", "Reading context")
+        case let .usingTool(name):
+            switch name {
+            case "weibei_context":
+                agentActivityText = ui("正在核对材料与笔记", "Checking material and notes")
+            case "weibei_note_proposal":
+                agentActivityText = ui("正在整理写入建议", "Preparing a note proposal")
+            default:
+                agentActivityText = ui("正在处理", "Working")
+            }
+        case let .text(text):
+            agentStreamingText = text
+            agentActivityText = ui("正在组织回答", "Composing answer")
+        }
     }
 
     func sampleHTML(for item: StudyItem?) -> String {
@@ -2465,8 +2722,21 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func clearUnpinnedFloatingSelection(keepContext: Bool = true) {
+    private func invalidateAgentContext() {
+        agentContextRevision &+= 1
+        latestAgentNoteProposal = nil
+        lastAgentReplyContextRevision = nil
+        quietInsightTask?.cancel()
+        if isAskingAgent || activeAgentRequestID != nil {
+            cancelAgentRequest()
+        }
+    }
+
+    private func clearUnpinnedFloatingSelection(keepContext: Bool = true, invalidatesAgentContext: Bool = true) {
         if !keepContext {
+            if invalidatesAgentContext, selectionContext != nil {
+                invalidateAgentContext()
+            }
             cancelPendingSelectionAttachment()
             selectionContext = nil
             selectionAnchor = nil
@@ -2493,7 +2763,25 @@ final class WorkspaceStore: ObservableObject {
 
     private func refreshQuietInsightIfNeeded() {
         guard agentSurface == .quietInsight, showQuietInsight else { return }
-        Task { await refreshQuietInsight() }
+        let previousTask = quietInsightTask
+        previousTask?.cancel()
+        let taskID = UUID()
+        quietInsightTaskID = taskID
+        quietInsightTask = Task { @MainActor [weak self] in
+            await previousTask?.value
+            guard !Task.isCancelled else {
+                self?.finishQuietInsightTask(id: taskID)
+                return
+            }
+            await self?.refreshQuietInsight()
+            self?.finishQuietInsightTask(id: taskID)
+        }
+    }
+
+    private func finishQuietInsightTask(id: UUID) {
+        guard quietInsightTaskID == id else { return }
+        quietInsightTask = nil
+        quietInsightTaskID = nil
     }
 
     private func makeQuietInsightSignature(materialText: String, noteText: String, selectionText: String?) -> String {

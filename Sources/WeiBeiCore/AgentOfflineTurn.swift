@@ -11,7 +11,8 @@ public enum AgentOfflineTurn {
             AgentMessage(
                 role: .assistant,
                 text: AgentOfflinePreview.render(input),
-                source: sourceTitle ?? input.language.text("离线模式", "Offline mode")
+                source: sourceTitle ?? input.language.text("离线模式", "Offline mode"),
+                backend: .offline
             )
         ]
     }

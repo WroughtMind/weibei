@@ -85,14 +85,16 @@ struct CommandPaletteView: View {
         if store.canReplaceNoteSelection {
             items.append(PaletteCommand(title: store.ui("替换笔记选区", "Replace Note Selection"), shortcut: "⌘⇧R") { store.replaceSelectionWithLastAgentAnswer() })
         }
-        if canSendAgentDraft {
-            items.append(PaletteCommand(title: store.sendAgentActionTitle, shortcut: "⌘↩") { Task { await store.askAgent() } })
+        if canControlAgent {
+            items.append(PaletteCommand(title: store.sendAgentActionTitle, shortcut: "⌘↩") {
+                store.isAskingAgent ? store.cancelAgentRequest() : store.askAgent()
+            })
         }
         return items
     }
 
-    private var canSendAgentDraft: Bool {
-        !store.isAskingAgent && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    private var canControlAgent: Bool {
+        store.isAskingAgent || !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func markdownInsertCommand(title: String, markdown: String) -> PaletteCommand {

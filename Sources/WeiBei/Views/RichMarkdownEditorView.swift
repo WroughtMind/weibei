@@ -370,7 +370,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             coordinator?.handleAppShortcut(key: key, modifiers: modifiers) ?? false
         }
         context.coordinator.webView = view
-        if let url = Bundle.module.url(forResource: "index", withExtension: "html") {
+        if let url = WeiBeiResources.bundle.url(forResource: "index", withExtension: "html") {
             let editorDirectory = url.deletingLastPathComponent()
             view.loadFileURL(url, allowingReadAccessTo: editorDirectory.deletingLastPathComponent())
         } else {

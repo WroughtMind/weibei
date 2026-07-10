@@ -285,9 +285,9 @@ private struct EmptyWorkspaceInspirationView: View {
 
 private enum EmptyWorkspaceCalligraphyResource {
     static func image(named name: String) -> NSImage? {
-        let url = Bundle.module.url(forResource: name, withExtension: "png", subdirectory: "Inspiration/Calligraphy")
-            ?? Bundle.module.url(forResource: name, withExtension: "png", subdirectory: "Calligraphy")
-            ?? Bundle.module.url(forResource: name, withExtension: "png")
+        let url = WeiBeiResources.bundle.url(forResource: name, withExtension: "png", subdirectory: "Inspiration/Calligraphy")
+            ?? WeiBeiResources.bundle.url(forResource: name, withExtension: "png", subdirectory: "Calligraphy")
+            ?? WeiBeiResources.bundle.url(forResource: name, withExtension: "png")
         guard let url else { return nil }
         return NSImage(contentsOf: url)
     }

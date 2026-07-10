@@ -225,6 +225,10 @@ private struct AgentComposerField: View {
         !store.isAskingAgent && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var showsControl: Bool {
+        store.isAskingAgent || canSend
+    }
+
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             TextField(
@@ -243,29 +247,31 @@ private struct AgentComposerField: View {
             .focused(focused)
             .onSubmit(submit)
             .padding(.vertical, verticalPadding)
-            .padding(.trailing, canSend ? trailingPadding : 0)
+            .padding(.trailing, showsControl ? trailingPadding : 0)
             .frame(maxWidth: .infinity, alignment: .bottomLeading)
             .weibeiInputSurface(active: focused.wrappedValue, height: height, horizontalPadding: horizontalPadding)
 
-            if canSend {
-                Button(action: submit) {
-                    Image(systemName: "paperplane.fill")
+            if showsControl {
+                Button {
+                    store.isAskingAgent ? store.cancelAgentRequest() : submit()
+                } label: {
+                    Image(systemName: store.isAskingAgent ? "stop.fill" : "paperplane.fill")
                 }
-                .buttonStyle(WeiBeiIconButtonStyle(size: sendButtonSize, prominence: .primary))
-                .accessibilityLabel(Text(store.ui("发送", "Send")))
-                .help(store.ui("发送", "Send"))
+                .buttonStyle(WeiBeiIconButtonStyle(size: sendButtonSize, prominence: store.isAskingAgent ? .neutral : .primary))
+                .accessibilityLabel(Text(store.isAskingAgent ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send")))
+                .help(store.isAskingAgent ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send"))
                 .keyboardShortcut(.return, modifiers: [.command])
                 .padding(.trailing, sendTrailing)
                 .padding(.bottom, sendBottom)
                 .transition(WeiBeiTransition.floating)
-                .animation(WeiBeiMotion.micro, value: canSend)
+                .animation(WeiBeiMotion.micro, value: showsControl)
             }
         }
         .contentShape(Rectangle())
         .onTapGesture {
             focused.wrappedValue = true
         }
-        .animation(WeiBeiMotion.micro, value: canSend)
+        .animation(WeiBeiMotion.micro, value: showsControl)
     }
 }
 
@@ -348,6 +354,7 @@ struct NotePaneView: View {
                 noteDraftFlushTask = nil
                 draftNoteText = newValue
                 draftNoteItemID = store.activeNoteItemID
+                store.clearStagedNoteDraft(for: draftNoteItemID)
             }
         }
         .onChange(of: store.focusedPane) { _, pane in
@@ -604,6 +611,7 @@ struct NotePaneView: View {
                 guard value != draftNoteText else { return }
                 draftNoteText = value
                 draftNoteItemID = store.activeNoteItemID
+                store.stageNoteDraft(value, for: draftNoteItemID)
                 scheduleNoteDraftFlush()
             }
         )
@@ -724,6 +732,7 @@ struct NotePaneView: View {
         isApplyingExternalNote = true
         draftNoteItemID = store.activeNoteItemID
         draftNoteText = store.noteText
+        store.clearStagedNoteDraft(for: draftNoteItemID)
         isApplyingExternalNote = false
     }
 
@@ -748,6 +757,7 @@ struct NotePaneView: View {
         noteDraftFlushTask = nil
         guard let itemID else { return }
         let value = (itemID == draftNoteItemID) ? draftNoteText : draftNoteText
+        defer { store.clearStagedNoteDraft(for: itemID, matching: value) }
         if itemID == store.activeNoteItemID {
             if store.noteText == value { return }
             isApplyingExternalNote = true
@@ -1380,6 +1390,11 @@ struct AgentPaneView: View {
                                     ForEach(store.messages) { message in
                                         agentMessageRow(message: message, geometryWidth: geometry.size.width, contentWidth: contentWidth, proxy: proxy)
                                     }
+                                    if store.isAskingAgent && !store.agentStreamingText.isEmpty {
+                                        AgentStreamingResponse(text: store.agentStreamingText)
+                                            .id("agent-streaming-response")
+                                            .transition(WeiBeiTransition.message)
+                                    }
                                     if store.isAskingAgent {
                                         AgentThinkingIndicator()
                                             .id("agent-thinking")
@@ -1595,7 +1610,7 @@ struct AgentPaneView: View {
                     horizontalPadding: 14,
                     verticalPadding: 10
                 ) {
-                    Task { await store.askAgent() }
+                    store.askAgent()
                 }
             }
             .font(.system(size: 15))
@@ -1663,7 +1678,7 @@ struct AgentPaneView: View {
         withAnimation(WeiBeiMotion.panel) {
             store.agentDraft = prompt
         }
-        Task { await store.askAgent() }
+        store.askAgent()
     }
 
     private func scrollAgentToBottom(_ proxy: ScrollViewProxy) {
@@ -2039,7 +2054,7 @@ struct AgentDrawerView: View {
                 sendTrailing: 6,
                 sendBottom: 6
             ) {
-                Task { await store.askAgent() }
+                store.askAgent()
             }
 
             HStack(spacing: 8) {
@@ -2111,7 +2126,7 @@ struct CornerAgentView: View {
                 sendTrailing: 5,
                 sendBottom: 5
             ) {
-                Task { await store.askAgent() }
+                store.askAgent()
             }
 
         }
@@ -2453,7 +2468,7 @@ struct FloatingSelectionAgentView: View {
             expanded = true
             store.agentDraft = store.ui("请整理和润色当前笔记，保留原意，并标出缺少来源的位置。", "Organize and polish the current note, preserve the meaning, and mark where sources are missing.")
         }
-        Task { await store.askAgent() }
+        store.askAgent()
     }
 
     private func sendDraft() {
@@ -2462,7 +2477,7 @@ struct FloatingSelectionAgentView: View {
         withAnimation(WeiBeiMotion.panel) {
             expanded = true
         }
-        Task { await store.askAgent() }
+        store.askAgent()
     }
 
     private func closeFloatingAgent() {
@@ -2915,6 +2930,20 @@ private struct AgentBubble: View {
             )
 
             if message.id == store.lastUsableAgentAnswerID {
+                if let proposal = store.latestAgentNoteProposal, !proposal.evidence.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(store.ui("依据", "Evidence"))
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        ForEach(Array(proposal.evidence.enumerated()), id: \.offset) { _, evidence in
+                            Text("• \(evidence)")
+                                .font(.caption)
+                                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
                 HStack(spacing: 6) {
                     if store.selectionContext != nil {
                         Button(store.ui("摘录", "Excerpt")) {
@@ -2922,7 +2951,7 @@ private struct AgentBubble: View {
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
-                    Button(store.ui("写入回答", "Write Answer")) {
+                    Button(store.agentWriteActionTitle) {
                         store.applyLastAgentAnswerToNote()
                     }
                     .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
@@ -2943,6 +2972,11 @@ private struct AgentBubble: View {
             Text("WeiBei")
                 .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
                 .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.76))
+            if let backend = message.backend {
+                Text(backendLabel(backend))
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+            }
             if let source = message.source {
                 Text(source)
                     .font(.caption2)
@@ -2995,6 +3029,14 @@ private struct AgentBubble: View {
 
     private var assistantMarkColor: Color {
         (isCredentialNotice || isOfflineContextPreview) ? WeiBeiTheme.link.opacity(0.42) : WeiBeiTheme.cinnabar.opacity(0.50)
+    }
+
+    private func backendLabel(_ backend: StudyAgentBackend) -> String {
+        switch backend {
+        case .pi: return "PI"
+        case .openAI: return "API"
+        case .offline: return store.ui("离线", "Offline")
+        }
     }
 }
 
@@ -3053,7 +3095,7 @@ private struct AgentThinkingIndicator: View {
                         )
                 }
             }
-            Text(store.ui("正在读取上下文", "Reading context"))
+            Text(store.agentActivityText ?? store.ui("正在读取上下文", "Reading context"))
                 .font(.caption)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
         }
@@ -3068,5 +3110,35 @@ private struct AgentThinkingIndicator: View {
         .onAppear {
             pulse = true
         }
+    }
+}
+
+private struct AgentStreamingResponse: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    var text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
+                Text("WeiBei")
+                    .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.76))
+                Text("PI")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+            }
+            AgentMessageMarkdownText(text: text, rendersRichMarkdown: false)
+        }
+        .padding(.vertical, 10)
+        .padding(.leading, 20)
+        .padding(.trailing, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .leading) {
+            Capsule()
+                .fill(WeiBeiTheme.cinnabar.opacity(0.42))
+                .frame(width: 2, height: 24)
+                .padding(.leading, 4)
+        }
+        .accessibilityLabel(Text(store.ui("PI 正在回答", "PI is responding")))
     }
 }
