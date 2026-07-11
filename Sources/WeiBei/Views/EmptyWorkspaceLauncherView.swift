@@ -4,36 +4,30 @@ import WeiBeiCore
 
 struct EmptyWorkspaceLauncherView: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    @State private var selectedInspirationID: String?
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { timeline in
             GeometryReader { geometry in
                 let compact = geometry.size.width < 760 || geometry.size.height < 620
-                let horizontalPadding: CGFloat = compact ? 28 : 52
+                let horizontalPadding: CGFloat = compact ? 24 : 52
                 let entryWidth = min(116, max(76, (geometry.size.width - (horizontalPadding * 2) - 2) / 3))
+                let inspirationSlotHeight: CGFloat = compact ? 176 : 210
+                let currentInspiration = inspiration(at: timeline.date)
 
                 ZStack {
-                    WeiBeiTheme.paper
+                    EmptyWorkspacePaperField(compact: compact)
 
-                    VStack(spacing: compact ? 20 : 28) {
-                        Spacer(minLength: compact ? 24 : 44)
-
-                        greeting(at: timeline.date)
-
-                        EmptyWorkspaceEntryRow(entryWidth: entryWidth)
-
-                        if store.showDailyInspiration {
-                            EmptyWorkspaceInspirationView(
-                                inspiration: inspiration(at: timeline.date),
-                                compact: compact
-                            )
-                            .transition(.opacity)
-                        }
-
-                        Spacer(minLength: compact ? 24 : 44)
-                    }
-                    .frame(maxWidth: 760)
-                    .padding(.horizontal, horizontalPadding)
+                    workspaceContent(
+                        at: timeline.date,
+                        inspiration: currentInspiration,
+                        compact: compact,
+                        horizontalPadding: horizontalPadding,
+                        entryWidth: entryWidth,
+                        inspirationSlotHeight: inspirationSlotHeight
+                    )
                 }
             }
         }
@@ -41,15 +35,97 @@ struct EmptyWorkspaceLauncherView: View {
         .accessibilityIdentifier("empty-workspace-launcher")
     }
 
+    @ViewBuilder
+    private func workspaceContent(
+        at date: Date,
+        inspiration: EmptyWorkspaceInspiration,
+        compact: Bool,
+        horizontalPadding: CGFloat,
+        entryWidth: CGFloat,
+        inspirationSlotHeight: CGFloat
+    ) -> some View {
+        if store.showDailyInspiration {
+            VStack(spacing: 0) {
+                Spacer(minLength: compact ? 18 : 38)
+
+                entryCluster(
+                    at: date,
+                    spacing: compact ? 14 : 19,
+                    entryWidth: entryWidth
+                )
+
+                Spacer(minLength: compact ? 18 : 34)
+
+                ZStack {
+                    EmptyWorkspaceInspirationView(
+                        inspiration: inspiration,
+                        compact: compact,
+                        onAdvance: { advanceInspiration(from: inspiration.id) }
+                    )
+                    .id(inspiration.id)
+                    .transition(.opacity)
+                }
+                .frame(height: inspirationSlotHeight)
+
+                Spacer(minLength: compact ? 20 : 42)
+            }
+            .frame(maxWidth: 760)
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, compact ? 4 : 10)
+        } else {
+            VStack(spacing: 0) {
+                Spacer(minLength: compact ? 20 : 40)
+                entryCluster(
+                    at: date,
+                    spacing: compact ? 16 : 29,
+                    entryWidth: entryWidth
+                )
+                .offset(y: compact ? 0 : 5)
+                Spacer(minLength: compact ? 20 : 40)
+            }
+            .frame(maxWidth: 760, maxHeight: .infinity)
+            .padding(.horizontal, horizontalPadding)
+            .padding(.vertical, compact ? 4 : 10)
+        }
+    }
+
+    private func entryCluster(at date: Date, spacing: CGFloat, entryWidth: CGFloat) -> some View {
+        VStack(spacing: spacing) {
+            greeting(at: date)
+            EmptyWorkspaceEntryRow(entryWidth: entryWidth)
+        }
+    }
+
     private func greeting(at date: Date) -> some View {
-        Text(EmptyWorkspaceDayPeriod.current(at: date).greeting(language: store.interfaceLanguage))
-            .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 15, weight: .regular))
-            .foregroundStyle(WeiBeiTheme.secondaryInk)
-            .multilineTextAlignment(.center)
-            .accessibilityIdentifier("empty-workspace-greeting")
+        HStack(spacing: 12) {
+            greetingRule
+
+            Text(EmptyWorkspaceDayPeriod.current(at: date).greeting(language: store.interfaceLanguage))
+                .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 14.5, weight: .regular))
+                .tracking(store.interfaceLanguage == .chinese ? 0.8 : 0.35)
+                .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.92))
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("empty-workspace-greeting")
+
+            greetingRule
+        }
+    }
+
+    private var greetingRule: some View {
+        Rectangle()
+            .fill(WeiBeiTheme.hairline.opacity(0.76))
+            .frame(width: 18, height: 1)
+            .accessibilityHidden(true)
     }
 
     private func inspiration(at date: Date) -> EmptyWorkspaceInspiration {
+        let baseInspiration = dailyInspiration(at: date)
+        guard let selectedInspirationID else { return baseInspiration }
+        return EmptyWorkspaceInspirationCatalog.rotationItems.first(where: { $0.id == selectedInspirationID }) ?? baseInspiration
+    }
+
+    private func dailyInspiration(at date: Date) -> EmptyWorkspaceInspiration {
         let environment = ProcessInfo.processInfo.environment
         if environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1" {
             let forcedID: String?
@@ -62,11 +138,69 @@ struct EmptyWorkspaceLauncherView: View {
                 forcedID = environment["WEIBEI_VERIFY_INSPIRATION_ID"]
             }
             if let forcedID,
-               let requested = EmptyWorkspaceInspirationCatalog.items.first(where: { $0.id == forcedID }) {
+               let requested = EmptyWorkspaceInspirationCatalog.rotationItems.first(where: { $0.id == forcedID }) {
                 return requested
             }
         }
         return EmptyWorkspaceInspirationCatalog.item(for: date)
+    }
+
+    private func advanceInspiration(from currentID: String) {
+        guard !EmptyWorkspaceInspirationCatalog.rotationItems.isEmpty else { return }
+        var generator = SystemRandomNumberGenerator()
+        let nextID = EmptyWorkspaceInspirationCatalog.randomItem(excludingID: currentID, using: &generator).id
+        if reduceMotion {
+            selectedInspirationID = nextID
+        } else {
+            withAnimation(.easeInOut(duration: 0.24)) {
+                selectedInspirationID = nextID
+            }
+        }
+    }
+}
+
+private struct EmptyWorkspacePaperField: View {
+    let compact: Bool
+
+    var body: some View {
+        ZStack {
+            WeiBeiTheme.paper
+
+            RadialGradient(
+                colors: [
+                    WeiBeiTheme.paperRaised.opacity(0.72),
+                    WeiBeiTheme.paper.opacity(0),
+                ],
+                center: UnitPoint(x: 0.5, y: 0.42),
+                startRadius: 8,
+                endRadius: compact ? 330 : 520
+            )
+
+            LinearGradient(
+                colors: [
+                    WeiBeiTheme.ink.opacity(0.025),
+                    Color.clear,
+                    WeiBeiTheme.ink.opacity(0.018),
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+
+            VStack(spacing: 0) {
+                Rectangle()
+                    .fill(WeiBeiTheme.hairline.opacity(0.30))
+                    .frame(width: 1, height: compact ? 24 : 48)
+
+                Spacer()
+
+                Rectangle()
+                    .fill(WeiBeiTheme.hairline.opacity(0.22))
+                    .frame(width: 1, height: compact ? 28 : 58)
+            }
+            .padding(.vertical, compact ? 14 : 24)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 
@@ -117,6 +251,8 @@ private struct EmptyWorkspaceEntryRow: View {
 }
 
 private struct EmptyWorkspaceEntryButton: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     let title: String
     let accessibilityLabel: String
     let identifier: String
@@ -127,55 +263,152 @@ private struct EmptyWorkspaceEntryButton: View {
     @FocusState private var focused: Bool
 
     var body: some View {
+        let active = focused || hovering
+
         Button(action: action) {
-            Text(title)
-                .font(WeiBeiTypography.englishBrandFont(size: 20, weight: .semibold))
-                .tracking(2.2)
-                .foregroundStyle(focused || hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
-                .frame(width: width, height: 48)
-                .contentShape(Rectangle())
-                .overlay(alignment: .bottom) {
+            VStack(spacing: 2) {
+                Text(title)
+                    .font(WeiBeiTypography.englishBrandFont(size: 20, weight: .semibold))
+                    .tracking(active ? 3.5 : 2.2)
+                    .foregroundStyle(active ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk.opacity(0.88))
+                    .offset(y: active && !reduceMotion ? -2.5 : 0)
+
+                ZStack {
                     Rectangle()
-                        .fill(WeiBeiTheme.ink.opacity(focused ? 0.62 : hovering ? 0.34 : 0))
-                        .frame(width: 26, height: 1)
-                        .padding(.bottom, 4)
+                        .fill(WeiBeiTheme.hairline.opacity(0.52))
+                        .frame(width: active ? 42 : 14, height: 1)
+
+                    Rectangle()
+                        .fill(WeiBeiTheme.ink.opacity(focused ? 0.64 : hovering ? 0.42 : 0))
+                        .frame(width: active ? 32 : 0, height: 1)
                 }
+                .frame(height: 4)
+                .opacity(active ? 1 : 0.72)
+            }
+            .frame(width: width, height: 52)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .focused($focused)
-        .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.12), value: hovering)
-        .animation(.easeOut(duration: 0.12), value: focused)
+        .background {
+            EmptyWorkspaceAlwaysActiveHoverRegion { isHovering in
+                hovering = isHovering
+            }
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: hovering)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: focused)
         .accessibilityLabel(Text(accessibilityLabel))
         .accessibilityIdentifier(identifier)
         .help(accessibilityLabel)
     }
 }
 
+private struct EmptyWorkspaceAlwaysActiveHoverRegion: NSViewRepresentable {
+    let onHoverChange: (Bool) -> Void
+
+    func makeNSView(context: Context) -> HoverTrackingView {
+        HoverTrackingView(onHoverChange: onHoverChange)
+    }
+
+    func updateNSView(_ view: HoverTrackingView, context: Context) {
+        view.onHoverChange = onHoverChange
+    }
+
+    final class HoverTrackingView: NSView {
+        var onHoverChange: (Bool) -> Void
+        private var activeTrackingArea: NSTrackingArea?
+
+        init(onHoverChange: @escaping (Bool) -> Void) {
+            self.onHoverChange = onHoverChange
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) {
+            fatalError("init(coder:) has not been implemented")
+        }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            if let activeTrackingArea {
+                removeTrackingArea(activeTrackingArea)
+            }
+            let options: NSTrackingArea.Options = [.mouseEnteredAndExited, .activeAlways, .inVisibleRect]
+            let trackingArea = NSTrackingArea(rect: .zero, options: options, owner: self)
+            addTrackingArea(trackingArea)
+            activeTrackingArea = trackingArea
+        }
+
+        override func mouseEntered(with event: NSEvent) {
+            onHoverChange(true)
+        }
+
+        override func mouseExited(with event: NSEvent) {
+            onHoverChange(false)
+        }
+
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            nil
+        }
+    }
+}
+
 private struct EmptyWorkspaceInspirationView: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     let inspiration: EmptyWorkspaceInspiration
     let compact: Bool
+    let onAdvance: () -> Void
+
+    @State private var hovering = false
+    @FocusState private var focused: Bool
 
     var body: some View {
-        VStack(spacing: compact ? 8 : 10) {
-            Rectangle()
-                .fill(WeiBeiTheme.hairline.opacity(0.72))
-                .frame(width: 34, height: 1)
-                .padding(.bottom, compact ? 2 : 5)
+        VStack(spacing: compact ? 7 : 9) {
+            Button(action: onAdvance) {
+                VStack(spacing: compact ? 8 : 11) {
+                    inspirationContent
 
-            inspirationContent
+                    Text(inspiration.credit)
+                        .font(.system(size: compact ? 10.5 : 11.5, weight: .medium, design: .serif))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
 
-            Text(inspiration.credit)
-                .font(.system(size: compact ? 10.5 : 11.5, weight: .medium, design: .serif))
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
+                    advanceLabel
+                }
+                .frame(maxWidth: .infinity)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .focused($focused)
+            .onHover { hovering = $0 }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.20), value: hovering)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: focused)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(Text("\(inspiration.text)，\(inspiration.credit)"))
+            .accessibilityHint(Text(store.ui("随机换一则灵感", "Show a random inspiration")))
+            .accessibilityIdentifier("empty-workspace-inspiration-next")
 
             sourceAndRights
         }
         .frame(maxWidth: compact ? 560 : 660)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("empty-workspace-inspiration-\(inspiration.id)")
+    }
+
+    private var advanceLabel: some View {
+        HStack(spacing: 6) {
+            Text(store.ui("随机换一则", "RANDOM"))
+            Text("→")
+                .offset(x: hovering && !reduceMotion ? 2 : 0)
+        }
+        .font(.system(size: compact ? 8.5 : 9, weight: .medium, design: .serif))
+        .tracking(store.interfaceLanguage == .chinese ? 0.7 : 1.2)
+        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+        .opacity(hovering || focused ? 0.94 : 0.56)
+        .accessibilityHidden(true)
     }
 
     @ViewBuilder
@@ -189,6 +422,7 @@ private struct EmptyWorkspaceInspirationView: View {
                     .scaledToFit()
                     .foregroundStyle(WeiBeiTheme.ink.opacity(0.88))
                     .frame(maxWidth: compact ? 390 : 500, maxHeight: compact ? 54 : 72)
+                    .padding(.vertical, compact ? 1 : 2)
                     .accessibilityLabel(Text(inspiration.text))
             } else {
                 inspirationText(size: compact ? 24 : 30)
@@ -239,8 +473,8 @@ private struct EmptyWorkspaceInspirationView: View {
             .font(.system(size: size, weight: .regular, design: .serif))
             .foregroundStyle(WeiBeiTheme.ink.opacity(0.90))
             .multilineTextAlignment(.center)
-            .lineLimit(2)
-            .minimumScaleFactor(0.78)
+            .lineLimit(compact ? 3 : 2)
+            .minimumScaleFactor(compact ? 0.72 : 0.78)
             .accessibilityLabel(Text(inspiration.text))
     }
 
@@ -285,9 +519,9 @@ private struct EmptyWorkspaceInspirationView: View {
 
 private enum EmptyWorkspaceCalligraphyResource {
     static func image(named name: String) -> NSImage? {
-        let url = WeiBeiResources.bundle.url(forResource: name, withExtension: "png", subdirectory: "Inspiration/Calligraphy")
-            ?? WeiBeiResources.bundle.url(forResource: name, withExtension: "png", subdirectory: "Calligraphy")
-            ?? WeiBeiResources.bundle.url(forResource: name, withExtension: "png")
+        let url = Bundle.module.url(forResource: name, withExtension: "png", subdirectory: "Inspiration/Calligraphy")
+            ?? Bundle.module.url(forResource: name, withExtension: "png", subdirectory: "Calligraphy")
+            ?? Bundle.module.url(forResource: name, withExtension: "png")
         guard let url else { return nil }
         return NSImage(contentsOf: url)
     }

@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import SwiftUI
+import WeiBeiCore
 
 struct ContentRailItem: Identifiable {
     let id: String
@@ -31,12 +32,30 @@ struct ContentRailItem: Identifiable {
 }
 
 enum ContentRailMetrics {
-    static let normalWidth: CGFloat = 16
-    static let railOnlyWidth: CGFloat = 88
-    static let railOnlyThreshold: CGFloat = 150
-    static let snapThreshold: CGFloat = 160
-    static let readableWidth: CGFloat = 240
-    static let defaultReadableWidth: CGFloat = 420
+    /// Overlay hit area. Readable panes must not reserve this width in their layout.
+    static let normalWidth: CGFloat = ContentRailPolicy.dormantWidth
+    static let railOnlyWidth: CGFloat = normalWidth
+    static let railOnlyThreshold = ContentRailPolicy.railOnlyThreshold
+    static let snapThreshold = ContentRailPolicy.snapThreshold
+    static let readableWidth = ContentRailPolicy.readableWidth
+    static let defaultReadableWidth = ContentRailPolicy.defaultReadableWidth
+
+    static func isRailOnly(availableWidth: CGFloat, allowed: Bool) -> Bool {
+        ContentRailPolicy.presentation(
+            availableWidth: availableWidth,
+            allowsRailOnly: allowed
+        ) == .railOnly
+    }
+}
+
+enum ContentRailWaveMetrics {
+    static let peakLength: CGFloat = 28
+    static let influences: [CGFloat] = [1, 0.70, 0.41, 0.20]
+
+    static func length(normal: CGFloat, stepDistance: Int) -> CGFloat {
+        guard influences.indices.contains(stepDistance) else { return normal }
+        return normal + (peakLength - normal) * influences[stepDistance]
+    }
 }
 
 struct ContentRailView: View {
@@ -45,6 +64,7 @@ struct ContentRailView: View {
     let activeID: String?
     let appearanceMode: WeiBeiAppearanceMode
     let isRailOnly: Bool
+    let availableWidth: CGFloat?
     let topInset: CGFloat
     let bottomInset: CGFloat
     let onActivate: (ContentRailItem) -> Void
@@ -52,8 +72,10 @@ struct ContentRailView: View {
 
     @State private var hoveredID: String?
     @State private var previewID: String?
-    @State private var previewOpenWork: DispatchWorkItem?
     @State private var previewCloseWork: DispatchWorkItem?
+    @FocusState private var focusedItemID: String?
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(
         label: String,
@@ -61,6 +83,7 @@ struct ContentRailView: View {
         activeID: String? = nil,
         appearanceMode: WeiBeiAppearanceMode,
         isRailOnly: Bool = false,
+        availableWidth: CGFloat? = nil,
         topInset: CGFloat = 0,
         bottomInset: CGFloat = 0,
         onActivate: @escaping (ContentRailItem) -> Void,
@@ -71,6 +94,7 @@ struct ContentRailView: View {
         self.activeID = activeID
         self.appearanceMode = appearanceMode
         self.isRailOnly = isRailOnly
+        self.availableWidth = availableWidth
         self.topInset = topInset
         self.bottomInset = bottomInset
         self.onActivate = onActivate
@@ -79,134 +103,230 @@ struct ContentRailView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            railColumn(height: geometry.size.height)
+            let height = compactHeight(in: geometry.size.height)
+            let previewIndex = previewID.flatMap { id in items.firstIndex(where: { $0.id == id }) }
+            let previewItem = previewIndex.map { items[$0] }
+            let previewAnchorY = previewIndex.map {
+                previewY(index: $0, railHeight: height, totalHeight: geometry.size.height)
+            } ?? compactCenterY(in: geometry.size.height)
+            ZStack(alignment: .topLeading) {
+                compactRail(height: height)
+                    .position(
+                        x: compactWidth / 2,
+                        y: compactCenterY(in: geometry.size.height)
+                    )
+
+                ContentRailFloatingPreviewBridge(
+                    label: label,
+                    item: isRailOnly ? previewItem : nil,
+                    appearanceMode: appearanceMode,
+                    width: ContentRailPolicy.dormantPreviewWidth
+                )
+                .frame(width: 1, height: 1)
+                .position(x: floatingPreviewAnchorX, y: previewAnchorY)
+                .allowsHitTesting(false)
+
+                if !isRailOnly, let item = previewItem {
+                    if let width = previewWidth(in: availableWidth ?? geometry.size.width) {
+                        previewCard(for: item, width: width)
+                            .position(x: previewLeadingX + width / 2, y: previewAnchorY)
+                            .allowsHitTesting(false)
+                            .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .leading)))
+                            .zIndex(20)
+                    }
+                }
+            }
         }
         .frame(width: railWidth)
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(label))
         .animation(WeiBeiMotion.panel, value: isRailOnly)
         .animation(WeiBeiMotion.hover, value: previewID)
-        .onChange(of: items.map(\.id)) { _, ids in
-            guard let previewID, !ids.contains(previewID) else { return }
-            closePreview(immediately: true)
+        .onChange(of: items.map { $0.id }) { _, ids in
+            let staleHover = hoveredID.map { !ids.contains($0) } ?? false
+            let stalePreview = previewID.map { !ids.contains($0) } ?? false
+            if staleHover || stalePreview {
+                closePreview(immediately: true)
+            }
+            if let focusedItemID, !ids.contains(focusedItemID) {
+                self.focusedItemID = nil
+            }
         }
         .onDisappear {
-            previewOpenWork?.cancel()
             previewCloseWork?.cancel()
             if previewID != nil {
                 onHover(nil)
             }
         }
+        .task(id: "\(isRailOnly)-\(items.first?.id ?? "empty")") {
+            let verificationScenario = ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"]
+            guard isRailOnly,
+                  verificationScenario == "content-rail-dormant-preview" || verificationScenario == "content-rail-activation-preview",
+                  let first = items.first else { return }
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            guard !Task.isCancelled else { return }
+            if verificationScenario == "content-rail-activation-preview" {
+                activate(first)
+            } else {
+                beginHover(first)
+            }
+        }
+    }
+
+    private var compactWidth: CGFloat {
+        ContentRailMetrics.normalWidth
     }
 
     private var railWidth: CGFloat {
         isRailOnly ? ContentRailMetrics.railOnlyWidth : ContentRailMetrics.normalWidth
     }
 
-    private var previewWidth: CGFloat {
-        336
+    private var tickLeadingInset: CGFloat {
+        3
     }
 
-    private func railColumn(height: CGFloat) -> some View {
-        ZStack(alignment: .topLeading) {
-            railBackground
+    private var previewLeadingX: CGFloat {
+        tickLeadingInset + ContentRailWaveMetrics.peakLength + 8
+    }
 
+    private var floatingPreviewAnchorX: CGFloat {
+        max(1, compactWidth - 1)
+    }
+
+    private var resolvedActiveID: String? {
+        activeID ?? items.first?.id
+    }
+
+    private var emphasizedID: String? {
+        hoveredID ?? focusedItemID
+    }
+
+    private var highlightedID: String? {
+        emphasizedID ?? resolvedActiveID
+    }
+
+    private var waveMotion: Animation? {
+        reduceMotion ? nil : .easeOut(duration: 0.10)
+    }
+
+    private func compactRail(height: CGFloat) -> some View {
+        ZStack {
             if items.isEmpty {
                 emptyOriginMark
-                    .position(
-                        x: railWidth / 2,
-                        y: railY(position: 0, height: height)
-                    )
             } else {
                 let hitHeight = railHitHeight(for: height)
-                ForEach(items) { item in
-                    railButton(for: item, hitHeight: hitHeight, acceptsPointer: hitHeight >= 4)
-                        .position(
-                            x: railWidth / 2,
-                            y: railY(position: item.position, height: height)
-                        )
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                    railButton(
+                        for: item,
+                        index: index,
+                        hitHeight: hitHeight
+                    )
+                    .position(
+                        x: compactWidth / 2,
+                        y: railY(index: index, count: items.count, height: height)
+                    )
                 }
 
-                if hitHeight < 4 {
-                    denseRailPointerSurface(height: height)
-                }
+                railPointerSurface(height: height)
+                    .zIndex(10)
+
             }
         }
-        .frame(width: railWidth, height: height)
+        .frame(width: compactWidth, height: height)
         .contentShape(Rectangle())
-        .onContinuousHover { phase in
-            switch phase {
-            case .active(let location):
-                guard let item = nearestItem(to: location.y, height: height) else { return }
-                beginHover(item)
-            case .ended:
-                hoveredID = nil
-                schedulePreviewClose()
-            }
+        .onExitCommand {
+            focusedItemID = nil
         }
-    }
-
-    private var railBackground: some View {
-        Rectangle()
-            .fill(
-                isRailOnly
-                    ? WeiBeiTheme.paperRaised.opacity(appearanceMode == .inkstone ? 0.18 : 0.24)
-                    : Color.clear
-            )
     }
 
     private var emptyOriginMark: some View {
-        HStack(spacing: 0) {
-            Rectangle()
-                .fill(WeiBeiTheme.hairline.opacity(0.44))
-                .frame(width: isRailOnly ? 18 : 8, height: 1.5)
-            Spacer(minLength: 0)
-        }
-            .padding(.horizontal, tickHorizontalInset)
-            .frame(width: railWidth, height: 24)
-            .accessibilityLabel(Text("\(label)：暂无可导航内容"))
+        Rectangle()
+            .fill(WeiBeiTheme.hairline.opacity(0.64))
+            .frame(width: 8, height: 1.5)
+            .frame(width: compactWidth - tickLeadingInset, height: 20, alignment: .leading)
+            .padding(.leading, tickLeadingInset)
+            .accessibilityLabel(Text(label))
     }
 
-    private func railButton(for item: ContentRailItem, hitHeight: CGFloat, acceptsPointer: Bool) -> some View {
-        let active = item.id == activeID
+    private func compactHeight(in totalHeight: CGFloat) -> CGFloat {
+        let top = max(topInset, 0) + 10
+        let bottom = max(bottomInset, 0) + 10
+        let available = max(totalHeight - top - bottom, 1)
+        let desiredHeight = max(20, 14 + CGFloat(max(items.count - 1, 0)) * 8)
+        return min(desiredHeight, min(160, available))
+    }
+
+    private func compactCenterY(in totalHeight: CGFloat) -> CGFloat {
+        let top = max(topInset, 0) + 10
+        let bottom = max(bottomInset, 0) + 10
+        let available = max(totalHeight - top - bottom, 0)
+        return min(max(top + available / 2, 0), max(totalHeight, 0))
+    }
+
+    private func previewWidth(in totalWidth: CGFloat) -> CGFloat? {
+        ContentRailPolicy.previewWidth(
+            totalWidth: totalWidth,
+            previewLeadingX: previewLeadingX,
+            isRailOnly: false
+        )
+    }
+
+    private func previewY(index: Int, railHeight: CGFloat, totalHeight: CGFloat) -> CGFloat {
+        let localY = railY(index: index, count: items.count, height: railHeight)
+        let proposedY = compactCenterY(in: totalHeight) - railHeight / 2 + localY
+        let halfPreviewHeight: CGFloat = 74
+        guard totalHeight > halfPreviewHeight * 2 else { return totalHeight / 2 }
+        return min(max(proposedY, halfPreviewHeight), totalHeight - halfPreviewHeight)
+    }
+
+    private func railButton(
+        for item: ContentRailItem,
+        index: Int,
+        hitHeight: CGFloat
+    ) -> some View {
+        let active = item.id == resolvedActiveID
 
         return Button {
             activate(item)
         } label: {
-            HStack(spacing: 0) {
-                Rectangle()
-                    .fill(tickColor(itemID: item.id, active: active))
-                    .frame(
-                        width: tickLength(for: item, active: active),
-                        height: tickThickness(for: item, active: active)
-                    )
-                Spacer(minLength: 0)
-            }
-                .padding(.horizontal, tickHorizontalInset)
-                .frame(width: railWidth, height: hitHeight)
+            Rectangle()
+                .fill(tickColor(for: item, active: active))
+                .frame(
+                    width: tickLength(for: item, index: index, active: active),
+                    height: active ? 2 : 1.5
+                )
+                .frame(width: compactWidth - tickLeadingInset, height: hitHeight, alignment: .leading)
+                .padding(.leading, tickLeadingInset)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .focused($focusedItemID, equals: item.id)
         .accessibilityLabel(Text("\(label)：\(item.title)"))
         .accessibilityValue(Text(active ? "当前位置" : item.metadata))
         .help(item.title)
-        .allowsHitTesting(acceptsPointer)
-        .popover(
-            isPresented: previewBinding(for: item),
-            attachmentAnchor: .rect(.bounds),
-            arrowEdge: .leading
-        ) {
-            previewCard(for: item)
-                .frame(width: previewWidth)
-                .padding(4)
-        }
         .animation(WeiBeiMotion.micro, value: activeID)
-        .animation(WeiBeiMotion.hover, value: hoveredID)
+        .animation(waveMotion, value: emphasizedID)
     }
 
-    private func denseRailPointerSurface(height: CGFloat) -> some View {
+    private func railPointerSurface(height: CGFloat) -> some View {
         Color.clear
             .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let location):
+                    if let item = nearestItem(to: location.y, height: height),
+                       hoveredID != item.id {
+                        beginHover(item)
+                    }
+                case .ended:
+                    if let hoveredID,
+                       let item = items.first(where: { $0.id == hoveredID }) {
+                        endHover(item)
+                    } else {
+                        schedulePreviewClose()
+                    }
+                }
+            }
             .gesture(
                 SpatialTapGesture()
                     .onEnded { value in
@@ -214,161 +334,72 @@ struct ContentRailView: View {
                         activate(item)
                     }
             )
-            .frame(width: railWidth, height: height)
+            .frame(width: compactWidth, height: height)
             .accessibilityHidden(true)
     }
 
-    private var tickHorizontalInset: CGFloat {
-        isRailOnly ? 16 : 2
-    }
-
-    private func tickLength(for item: ContentRailItem, active: Bool) -> CGFloat {
-        let base: CGFloat = isRailOnly ? 34 : 8
-        let minimum: CGFloat = isRailOnly ? 10 : 4
-        let resting = active
-            ? (isRailOnly ? 48 : 10)
-            : max(minimum, base - CGFloat(min(item.level, 4)) * (isRailOnly ? 6 : 1))
-        let influence = hoverInfluence(for: item.id)
-        let hoveredLength: CGFloat = isRailOnly ? 56 : 12
-        return resting + (hoveredLength - resting) * influence
-    }
-
-    private func tickThickness(for item: ContentRailItem, active: Bool) -> CGFloat {
-        let resting: CGFloat = active ? 2.5 : 1.5
-        return resting + (2.8 - resting) * hoverInfluence(for: item.id)
-    }
-
-    private func hoverInfluence(for itemID: String) -> CGFloat {
-        guard let hoveredID,
-              let hoveredIndex = items.firstIndex(where: { $0.id == hoveredID }),
-              let itemIndex = items.firstIndex(where: { $0.id == itemID }) else { return 0 }
-        switch abs(hoveredIndex - itemIndex) {
-        case 0:
-            return 1
-        case 1:
-            return 0.52
-        case 2:
-            return 0.22
-        default:
-            return 0
+    private func tickLength(for item: ContentRailItem, index: Int, active: Bool) -> CGFloat {
+        let normal: CGFloat = active ? 8 : (item.level == 0 ? 7 : 6)
+        guard let emphasizedID,
+              let emphasizedIndex = items.firstIndex(where: { $0.id == emphasizedID }) else {
+            return normal
         }
+        return ContentRailWaveMetrics.length(
+            normal: normal,
+            stepDistance: abs(index - emphasizedIndex)
+        )
     }
 
-    private func tickColor(itemID: String, active: Bool) -> Color {
-        if active {
-            return appearanceMode == .inkstone ? WeiBeiTheme.onCinnabar : WeiBeiTheme.cinnabar
+    private func tickColor(for item: ContentRailItem, active: Bool) -> Color {
+        if item.id == highlightedID {
+            return WeiBeiTheme.cinnabar
         }
-        if hoveredID == itemID {
-            return WeiBeiTheme.secondaryInk.opacity(0.72)
-        }
-        if hoverInfluence(for: itemID) > 0 {
-            return WeiBeiTheme.hairline.opacity(0.98)
-        }
-        return WeiBeiTheme.hairline.opacity(0.86)
+        return WeiBeiTheme.secondaryInk.opacity(appearanceMode == .inkstone ? 0.78 : 0.58)
     }
 
-    private func railY(position: CGFloat, height: CGFloat) -> CGFloat {
-        let top = max(topInset, 0) + 12
-        let bottom = max(bottomInset, 0) + 12
-        let available = max(height - top - bottom, 0)
-        return min(max(top + min(max(position, 0), 1) * available, 12), max(height - 12, 12))
+    private func railSpacing(count: Int, height: CGFloat) -> CGFloat {
+        guard count > 1 else { return 0 }
+        let verticalInset = min(7, height / 2)
+        let available = max(height - verticalInset * 2, 0)
+        return min(8, available / CGFloat(count - 1))
+    }
+
+    private func railY(index: Int, count: Int, height: CGFloat) -> CGFloat {
+        guard count > 1 else { return height / 2 }
+        let spacing = railSpacing(count: count, height: height)
+        let span = spacing * CGFloat(count - 1)
+        let firstY = (height - span) / 2
+        return firstY + CGFloat(min(max(index, 0), count - 1)) * spacing
     }
 
     private func railHitHeight(for height: CGFloat) -> CGFloat {
-        guard !items.isEmpty else { return 24 }
-        let available = max(height - max(topInset, 0) - max(bottomInset, 0) - 24, 1)
-        return min(24, available / CGFloat(items.count))
+        guard !items.isEmpty else { return 20 }
+        guard items.count > 1 else { return min(20, height) }
+        return min(20, max(railSpacing(count: items.count, height: height), 1))
     }
 
     private func nearestItem(to y: CGFloat, height: CGFloat) -> ContentRailItem? {
         guard !items.isEmpty else { return nil }
-        let top = max(topInset, 0) + 12
-        let bottom = max(bottomInset, 0) + 12
-        let available = max(height - top - bottom, 1)
-        let position = min(max((y - top) / available, 0), 1)
-        return items.min { abs($0.position - position) < abs($1.position - position) }
+        guard items.count > 1 else { return items[0] }
+        let spacing = railSpacing(count: items.count, height: height)
+        guard spacing > 0 else { return items[0] }
+        let firstY = railY(index: 0, count: items.count, height: height)
+        let rawIndex = ((y - firstY) / spacing).rounded()
+        let index = min(max(Int(rawIndex), 0), items.count - 1)
+        return items[index]
     }
 
-    private func previewCard(for item: ContentRailItem) -> some View {
-        Button {
-            activate(item)
-        } label: {
-            HStack(alignment: .top, spacing: item.previewImage == nil ? 0 : 12) {
-                if let image = item.previewImage {
-                    Image(nsImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .frame(width: 88, height: 112)
-                        .clipped()
-                        .accessibilityHidden(true)
-                }
-
-                VStack(alignment: .leading, spacing: 7) {
-                    Text(label)
-                        .font(.system(size: 9.5, weight: .semibold, design: .serif))
-                        .tracking(0.7)
-                        .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.78))
-                        .lineLimit(1)
-
-                    Text(item.title)
-                        .font(.system(size: 13.5, weight: .semibold))
-                        .foregroundStyle(WeiBeiTheme.ink)
-                        .lineLimit(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-
-                    if !item.excerpt.isEmpty {
-                        Text(item.excerpt)
-                            .font(.system(size: 12.5))
-                            .lineSpacing(3)
-                            .foregroundStyle(WeiBeiTheme.secondaryInk)
-                            .lineLimit(item.previewImage == nil ? 4 : 3)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-
-                    if !item.metadata.isEmpty {
-                        Text(item.metadata)
-                            .font(.system(size: 10.5, weight: .medium, design: .monospaced))
-                            .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                            .lineLimit(1)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(12)
-            .frame(width: previewWidth, alignment: .leading)
-            .background(WeiBeiTheme.paperRaised)
-            .overlay {
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .stroke(WeiBeiTheme.hairline.opacity(0.82), lineWidth: 1)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-            .shadow(color: WeiBeiTheme.ink.opacity(appearanceMode == .inkstone ? 0.22 : 0.08), radius: 8, y: 4)
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(Text("\(item.title)，点击打开"))
-        .onHover { hovering in
-            if hovering {
-                holdPreview(item)
-            } else {
-                endHover(item)
-            }
-        }
-    }
-
-    private func previewBinding(for item: ContentRailItem) -> Binding<Bool> {
-        Binding(
-            get: { previewID == item.id },
-            set: { presented in
-                guard !presented, previewID == item.id else { return }
-                closePreview(immediately: true)
-            }
+    private func previewCard(for item: ContentRailItem, width: CGFloat) -> some View {
+        ContentRailPreviewCard(
+            label: label,
+            item: item,
+            appearanceMode: appearanceMode,
+            width: width
         )
     }
 
     private func beginHover(_ item: ContentRailItem) {
         previewCloseWork?.cancel()
-        previewOpenWork?.cancel()
         hoveredID = item.id
 
         guard previewID != item.id else {
@@ -376,24 +407,8 @@ struct ContentRailView: View {
             return
         }
 
-        let work = DispatchWorkItem {
-            guard hoveredID == item.id else { return }
-            withAnimation(WeiBeiMotion.hover) {
-                previewID = item.id
-            }
-            onHover(item)
-        }
-        previewOpenWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.10, execute: work)
-    }
-
-    private func holdPreview(_ item: ContentRailItem) {
-        previewCloseWork?.cancel()
-        hoveredID = item.id
-        if previewID != item.id {
-            withAnimation(WeiBeiMotion.hover) {
-                previewID = item.id
-            }
+        withAnimation(WeiBeiMotion.hover) {
+            previewID = item.id
         }
         onHover(item)
     }
@@ -406,6 +421,9 @@ struct ContentRailView: View {
     }
 
     private func schedulePreviewClose() {
+        if ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"] == "content-rail-dormant-preview" {
+            return
+        }
         previewCloseWork?.cancel()
         let work = DispatchWorkItem {
             guard hoveredID == nil else { return }
@@ -416,7 +434,6 @@ struct ContentRailView: View {
     }
 
     private func closePreview(immediately: Bool) {
-        previewOpenWork?.cancel()
         previewCloseWork?.cancel()
         hoveredID = nil
         if immediately {
@@ -432,5 +449,184 @@ struct ContentRailView: View {
     private func activate(_ item: ContentRailItem) {
         closePreview(immediately: true)
         onActivate(item)
+    }
+}
+
+private struct ContentRailPreviewCard: View {
+    let label: String
+    let item: ContentRailItem
+    let appearanceMode: WeiBeiAppearanceMode
+    let width: CGFloat
+
+    var body: some View {
+        let showsPreviewImage = item.previewImage != nil && width >= ContentRailPolicy.previewImageMinimumWidth
+
+        HStack(alignment: .top, spacing: showsPreviewImage ? 12 : 0) {
+            if showsPreviewImage, let image = item.previewImage {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: 88, height: 112)
+                    .clipped()
+                    .accessibilityHidden(true)
+            }
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text(label)
+                    .font(.system(size: 9.5, weight: .semibold, design: .serif))
+                    .tracking(0.7)
+                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.78))
+                    .lineLimit(1)
+
+                Text(item.title)
+                    .font(.system(size: 13.5, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.ink)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                if !item.excerpt.isEmpty {
+                    Text(item.excerpt)
+                        .font(.system(size: 12.5))
+                        .lineSpacing(3)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .lineLimit(showsPreviewImage ? 3 : 4)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                if !item.metadata.isEmpty {
+                    Text(item.metadata)
+                        .font(.system(size: 10.5, weight: .medium, design: .monospaced))
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        .lineLimit(1)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(width: width, alignment: .leading)
+        .background(WeiBeiTheme.paperRaised)
+        .overlay {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .stroke(WeiBeiTheme.hairline.opacity(0.82), lineWidth: 1)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .shadow(color: WeiBeiTheme.ink.opacity(appearanceMode == .inkstone ? 0.22 : 0.08), radius: 8, y: 4)
+        .accessibilityHidden(true)
+    }
+}
+
+/// The dormant pane is only 40pt wide, so its preview cannot live inside that pane's
+/// clipped host. This bridge places the same SwiftUI card in the existing window root.
+private struct ContentRailFloatingPreviewBridge: NSViewRepresentable {
+    let label: String
+    let item: ContentRailItem?
+    let appearanceMode: WeiBeiAppearanceMode
+    let width: CGFloat
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        NSView(frame: .zero)
+    }
+
+    func updateNSView(_ anchorView: NSView, context: Context) {
+        guard let item else {
+            context.coordinator.dismiss()
+            return
+        }
+        context.coordinator.update(
+            anchorView: anchorView,
+            label: label,
+            item: item,
+            appearanceMode: appearanceMode,
+            width: width
+        )
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.dismiss()
+    }
+
+    final class Coordinator {
+        private var hostingView: ContentRailPassthroughHostingView?
+        private weak var containerView: NSView?
+        private var updateGeneration = 0
+
+        func update(
+            anchorView: NSView,
+            label: String,
+            item: ContentRailItem,
+            appearanceMode: WeiBeiAppearanceMode,
+            width: CGFloat
+        ) {
+            updateGeneration += 1
+            let generation = updateGeneration
+            DispatchQueue.main.async { [weak self, weak anchorView] in
+                guard let self, let anchorView, generation == self.updateGeneration,
+                      let contentView = anchorView.window?.contentView,
+                      let container = contentView.superview else { return }
+
+                let card = AnyView(
+                    ContentRailPreviewCard(
+                        label: label,
+                        item: item,
+                        appearanceMode: appearanceMode,
+                        width: width
+                    )
+                    .preferredColorScheme(appearanceMode.colorScheme)
+                )
+                let hosting: ContentRailPassthroughHostingView
+                if let existing = self.hostingView {
+                    existing.rootView = card
+                    hosting = existing
+                } else {
+                    hosting = ContentRailPassthroughHostingView(rootView: card)
+                    hosting.wantsLayer = true
+                    hosting.layer?.backgroundColor = NSColor.clear.cgColor
+                    hosting.layer?.zPosition = 1_000
+                    self.hostingView = hosting
+                }
+
+                if hosting.superview !== container {
+                    hosting.removeFromSuperview()
+                    container.addSubview(hosting, positioned: .above, relativeTo: contentView)
+                    self.containerView = container
+                }
+
+                hosting.frame.size = NSSize(width: width, height: max(132, hosting.fittingSize.height))
+                let anchorCenter = anchorView.convert(
+                    NSPoint(x: anchorView.bounds.midX, y: anchorView.bounds.midY),
+                    to: container
+                )
+                let inset: CGFloat = 8
+                let proposedX = anchorCenter.x + 4
+                let maximumX = max(inset, container.bounds.maxX - hosting.frame.width - inset)
+                let x = min(max(proposedX, inset), maximumX)
+                let proposedY = anchorCenter.y - hosting.frame.height / 2
+                let maximumY = max(inset, container.bounds.maxY - hosting.frame.height - inset)
+                let y = min(max(proposedY, inset), maximumY)
+                hosting.frame.origin = NSPoint(x: x, y: y)
+            }
+        }
+
+        func dismiss() {
+            updateGeneration += 1
+            hostingView?.removeFromSuperview()
+            hostingView = nil
+            containerView = nil
+        }
+    }
+}
+
+private final class ContentRailPassthroughHostingView: NSHostingView<AnyView> {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    override var mouseDownCanMoveWindow: Bool {
+        false
     }
 }

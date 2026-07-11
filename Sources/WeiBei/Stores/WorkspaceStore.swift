@@ -2928,11 +2928,78 @@ final class WorkspaceStore: ObservableObject {
             || scenario == "pi-course-memory-flow"
             || scenario == "immersive-conversation-flow"
             || scenario == "notebook-creation-flow"
+            || scenario == "pane-layout-stability-flow"
+            || scenario == "content-rail-dormant-preview"
+            || scenario == "content-rail-activation-preview"
             || emptyWorkspaceScenarios.contains(scenario) else { return }
         didRunVerificationScenario = true
         recordVerificationStage("recognized:\(scenario)")
+        if scenario == "pane-layout-stability-flow" {
+            if Self.environmentValue("WEIBEI_VERIFY_APPEARANCE") == WeiBeiAppearanceMode.inkstone.rawValue {
+                appearanceMode = .inkstone
+            }
+            let rawOrder = Self.environmentValue("WEIBEI_VERIFY_PANE_ORDER")
+            if !rawOrder.isEmpty {
+                let requestedOrder = rawOrder
+                    .split(separator: ",")
+                    .compactMap { WorkspacePaneRole(rawValue: String($0)) }
+                if requestedOrder.count == WorkspacePaneRole.allCases.count,
+                   Set(requestedOrder).count == WorkspacePaneRole.allCases.count {
+                    threePaneOrder = requestedOrder
+                }
+            }
+            layout = layoutMatchingThreePaneOrder(threePaneOrder)
+            showLibrary = false
+            showReader = true
+            showAgent = false
+            showNotes = false
+            agentSurface = .hidden
+            select(itemID: "sample-html")
+            agentDraft = ui("保留这段尚未发送的提问", "Keep this unsent question")
+            updateNote(ui("# 分栏连续性验收\n\n笔记内容必须保留。\n", "# Pane continuity check\n\nThe note must survive pane changes.\n"))
+            save()
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            showAgent = true
+            save()
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            showNotes = true
+            save()
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            showNotes = false
+            save()
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            showAgent = false
+            save()
+            let completionURL = storageURL.deletingLastPathComponent().appendingPathComponent("pane-layout-stability.complete")
+            let receipt: [String: Any] = [
+                "agentDraft": agentDraft,
+                "appearance": appearanceMode.rawValue,
+                "noteText": noteText,
+                "order": normalizedThreePaneOrder.map(\.rawValue),
+                "selectedItemID": selectedItemID ?? "",
+                "showAgent": showAgent,
+                "showNotes": showNotes,
+                "showReader": showReader
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: receipt, options: [.prettyPrinted, .sortedKeys]) {
+                try? data.write(to: completionURL, options: .atomic)
+            }
+            return
+        }
         if emptyWorkspaceScenarios.contains(scenario) {
             configureEmptyWorkspaceVerificationScenario(scenario)
+            return
+        }
+        if scenario == "content-rail-dormant-preview" || scenario == "content-rail-activation-preview" {
+            layout = .documentAgentNotes
+            showLibrary = false
+            showReader = true
+            showAgent = true
+            showNotes = true
+            agentSurface = .hidden
+            select(itemID: "sample-html")
+            updateNote(ui("# 收起轨道验收\n\n悬浮简介必须越过收起边界显示。\n", "# Dormant rail check\n\nThe hover preview must cross the dormant pane boundary.\n"))
+            save()
             return
         }
         layout = scenario == "immersive-conversation-flow" ? .immersiveConversation : .documentAgentNotes

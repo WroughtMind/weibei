@@ -150,7 +150,10 @@ struct ReaderView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let railOnly = supportsContentRail && !isImmersive && geometry.size.width < ContentRailMetrics.railOnlyThreshold
+            let railOnly = ContentRailMetrics.isRailOnly(
+                availableWidth: geometry.size.width,
+                allowed: supportsContentRail && !isImmersive
+            )
             ZStack(alignment: .bottomTrailing) {
                 VStack(spacing: 0) {
                     readerBody
@@ -175,7 +178,7 @@ struct ReaderView: View {
             }
             .overlay(alignment: .leading) {
                 if supportsContentRail {
-                    contentRail(isRailOnly: railOnly)
+                    contentRail(isRailOnly: railOnly, availableWidth: geometry.size.width)
                         .frame(
                             width: railOnly ? min(ContentRailMetrics.railOnlyWidth, geometry.size.width) : geometry.size.width,
                             height: geometry.size.height,
@@ -296,13 +299,14 @@ struct ReaderView: View {
         }
     }
 
-    private func contentRail(isRailOnly: Bool) -> some View {
+    private func contentRail(isRailOnly: Bool, availableWidth: CGFloat) -> some View {
         ContentRailView(
             label: store.ui("文稿导航", "Document Navigation"),
             items: contentRailItems,
             activeID: contentRailActiveID,
             appearanceMode: store.appearanceMode,
             isRailOnly: isRailOnly,
+            availableWidth: availableWidth,
             topInset: showsFloatingTitle && !isRailOnly ? 46 : 14,
             bottomInset: store.selectedMaterialItem?.kind == .pdf ? 52 : 18,
             onActivate: { activateContentRailItem($0, railOnly: isRailOnly) },

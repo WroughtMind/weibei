@@ -291,7 +291,10 @@ struct NotePaneView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let railOnly = store.layout.allowsRailOnlyPanes && geometry.size.width < ContentRailMetrics.railOnlyThreshold
+            let railOnly = ContentRailMetrics.isRailOnly(
+                availableWidth: geometry.size.width,
+                allowed: store.layout.allowsRailOnlyPanes
+            )
             let railItems = noteRailItems
             ZStack(alignment: .topLeading) {
                 VStack(spacing: 0) {
@@ -319,6 +322,7 @@ struct NotePaneView: View {
                     activeID: activeNoteRailID ?? railItems.first?.id,
                     appearanceMode: store.appearanceMode,
                     isRailOnly: railOnly,
+                    availableWidth: geometry.size.width,
                     topInset: railOnly ? 0 : (showsPaneHeader ? 44 : 34),
                     onActivate: { activateNoteRailItem($0, railOnly: railOnly) }
                 )
@@ -1365,7 +1369,10 @@ struct AgentPaneView: View {
 
     var body: some View {
         GeometryReader { paneGeometry in
-            let railOnly = store.layout.allowsRailOnlyPanes && paneGeometry.size.width < ContentRailMetrics.railOnlyThreshold
+            let railOnly = ContentRailMetrics.isRailOnly(
+                availableWidth: paneGeometry.size.width,
+                allowed: store.layout.allowsRailOnlyPanes
+            )
             let railItems = agentRailItems
             ScrollViewReader { proxy in
                 ZStack(alignment: .topLeading) {
@@ -1383,7 +1390,8 @@ struct AgentPaneView: View {
                         }
 
                         GeometryReader { geometry in
-                            let contentWidth = min(max(geometry.size.width - 36, 320), agentContentMaxWidth ?? 760)
+                            let availableWidth = max(geometry.size.width, 1)
+                            let contentWidth = min(max(availableWidth - 36, 320), agentContentMaxWidth ?? 760)
 
                             ScrollView(showsIndicators: true) {
                                 LazyVStack(alignment: .leading, spacing: 12) {
@@ -1430,6 +1438,7 @@ struct AgentPaneView: View {
                         activeID: activeAgentRailID ?? railItems.first?.id,
                         appearanceMode: store.appearanceMode,
                         isRailOnly: railOnly,
+                        availableWidth: paneGeometry.size.width,
                         topInset: railOnly ? 0 : (showsPaneHeader ? 44 : 34),
                         bottomInset: railOnly ? 0 : 108,
                         onActivate: { activateAgentRailItem($0, railOnly: railOnly, proxy: proxy) }
