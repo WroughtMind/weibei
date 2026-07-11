@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import SwiftUI
+import WeiBeiCore
 
 struct ContentRailItem: Identifiable {
     let id: String
@@ -32,12 +33,19 @@ struct ContentRailItem: Identifiable {
 
 enum ContentRailMetrics {
     /// Overlay hit area. Readable panes must not reserve this width in their layout.
-    static let normalWidth: CGFloat = 40
-    static let railOnlyWidth: CGFloat = 88
-    static let railOnlyThreshold: CGFloat = 150
-    static let snapThreshold: CGFloat = 160
-    static let readableWidth: CGFloat = 240
-    static let defaultReadableWidth: CGFloat = 420
+    static let normalWidth: CGFloat = ContentRailPolicy.dormantWidth
+    static let railOnlyWidth: CGFloat = normalWidth
+    static let railOnlyThreshold = ContentRailPolicy.railOnlyThreshold
+    static let snapThreshold = ContentRailPolicy.snapThreshold
+    static let readableWidth = ContentRailPolicy.readableWidth
+    static let defaultReadableWidth = ContentRailPolicy.defaultReadableWidth
+
+    static func isRailOnly(availableWidth: CGFloat, allowed: Bool) -> Bool {
+        ContentRailPolicy.presentation(
+            availableWidth: availableWidth,
+            allowsRailOnly: allowed
+        ) == .railOnly
+    }
 }
 
 enum ContentRailWaveMetrics {
@@ -64,7 +72,6 @@ struct ContentRailView: View {
 
     @State private var hoveredID: String?
     @State private var previewID: String?
-    @State private var previewOpenWork: DispatchWorkItem?
     @State private var previewCloseWork: DispatchWorkItem?
     @FocusState private var focusedItemID: String?
 
@@ -138,7 +145,6 @@ struct ContentRailView: View {
             }
         }
         .onDisappear {
-            previewOpenWork?.cancel()
             previewCloseWork?.cancel()
             if previewID != nil {
                 onHover(nil)
@@ -147,7 +153,7 @@ struct ContentRailView: View {
     }
 
     private var compactWidth: CGFloat {
-        isRailOnly ? 42 : 40
+        ContentRailMetrics.normalWidth
     }
 
     private var railWidth: CGFloat {
@@ -155,7 +161,7 @@ struct ContentRailView: View {
     }
 
     private var tickLeadingInset: CGFloat {
-        isRailOnly ? 4 : 3
+        3
     }
 
     private var previewLeadingX: CGFloat {
@@ -233,10 +239,10 @@ struct ContentRailView: View {
     }
 
     private func previewWidth(in totalWidth: CGFloat) -> CGFloat? {
-        guard !isRailOnly else { return nil }
-        let available = totalWidth - previewLeadingX - 8
-        guard available >= 220 else { return nil }
-        return min(360, available)
+        ContentRailPolicy.previewWidth(
+            totalWidth: totalWidth,
+            previewLeadingX: previewLeadingX
+        )
     }
 
     private func previewY(index: Int, railHeight: CGFloat, totalHeight: CGFloat) -> CGFloat {
@@ -358,8 +364,10 @@ struct ContentRailView: View {
     }
 
     private func previewCard(for item: ContentRailItem, width: CGFloat) -> some View {
-        HStack(alignment: .top, spacing: item.previewImage == nil ? 0 : 12) {
-            if let image = item.previewImage {
+        let showsPreviewImage = item.previewImage != nil && width >= ContentRailPolicy.previewImageMinimumWidth
+
+        return HStack(alignment: .top, spacing: showsPreviewImage ? 12 : 0) {
+            if showsPreviewImage, let image = item.previewImage {
                 Image(nsImage: image)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
@@ -386,7 +394,7 @@ struct ContentRailView: View {
                         .font(.system(size: 12.5))
                         .lineSpacing(3)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .lineLimit(item.previewImage == nil ? 4 : 3)
+                        .lineLimit(showsPreviewImage ? 3 : 4)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
@@ -414,7 +422,6 @@ struct ContentRailView: View {
 
     private func beginHover(_ item: ContentRailItem) {
         previewCloseWork?.cancel()
-        previewOpenWork?.cancel()
         hoveredID = item.id
 
         guard previewID != item.id else {
@@ -422,15 +429,10 @@ struct ContentRailView: View {
             return
         }
 
-        let work = DispatchWorkItem {
-            guard hoveredID == item.id else { return }
-            withAnimation(WeiBeiMotion.hover) {
-                previewID = item.id
-            }
-            onHover(item)
+        withAnimation(WeiBeiMotion.hover) {
+            previewID = item.id
         }
-        previewOpenWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.10, execute: work)
+        onHover(item)
     }
 
     private func endHover(_ item: ContentRailItem) {
@@ -451,7 +453,6 @@ struct ContentRailView: View {
     }
 
     private func closePreview(immediately: Bool) {
-        previewOpenWork?.cancel()
         previewCloseWork?.cancel()
         hoveredID = nil
         if immediately {

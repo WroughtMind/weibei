@@ -929,9 +929,22 @@ let contentRailGeometrySource: String = {
     }
     return String(contentRailSource[start..<end])
 }()
+expect(ContentRailPolicy.dormantWidth == 40
+    && ContentRailPolicy.snapThreshold == ContentRailPolicy.railOnlyThreshold
+    && ContentRailPolicy.presentation(availableWidth: 40, allowsRailOnly: true) == .railOnly
+    && ContentRailPolicy.presentation(availableWidth: 189, allowsRailOnly: true) == .railOnly
+    && ContentRailPolicy.presentation(availableWidth: 190, allowsRailOnly: true) == .content
+    && ContentRailPolicy.presentation(availableWidth: 40, allowsRailOnly: false) == .content,
+    "content rail policy exposes only a 40pt dormant state and a readable content state")
+expect(ContentRailPolicy.previewWidth(totalWidth: 178, previewLeadingX: 39) == nil
+    && ContentRailPolicy.previewWidth(totalWidth: 190, previewLeadingX: 39) == 143
+    && ContentRailPolicy.previewWidth(totalWidth: 520, previewLeadingX: 39) == 360,
+    "content rail preview policy removes the no-preview intermediate range and caps wide previews")
 expect(contentRailSource.contains("struct ContentRailView: View")
-    && contentRailSource.contains("static let railOnlyWidth: CGFloat = 88")
-    && contentRailSource.contains("static let normalWidth: CGFloat = 40")
+    && contentRailSource.contains("static let normalWidth: CGFloat = ContentRailPolicy.dormantWidth")
+    && contentRailSource.contains("static let railOnlyWidth: CGFloat = normalWidth")
+    && contentRailSource.contains("static let railOnlyThreshold = ContentRailPolicy.railOnlyThreshold")
+    && contentRailSource.contains("static func isRailOnly(availableWidth: CGFloat, allowed: Bool)")
     && contentRailSource.contains("let availableWidth: CGFloat?")
     && contentRailSource.contains("availableWidth: CGFloat? = nil")
     && contentRailSource.contains("previewWidth(in: availableWidth ?? geometry.size.width)")
@@ -962,14 +975,15 @@ expect(contentRailSource.contains("struct ContentRailView: View")
     && !contentRailSource.contains("LinearGradient(")
     && !contentRailSource.contains("private var railBackground")
     && !contentRailSource.contains("private var railAtmosphere")
-    && contentRailSource.contains("DispatchQueue.main.asyncAfter(deadline: .now() + 0.10")
+    && !contentRailSource.contains("previewOpenWork")
+    && !contentRailSource.contains("DispatchQueue.main.asyncAfter(deadline: .now() + 0.10")
+    && contentRailSource.contains("previewID = item.id")
     && contentRailSource.contains("previewImage: NSImage?")
     && contentRailSource.contains("x: previewLeadingX + width / 2")
     && contentRailSource.contains("tickLeadingInset + ContentRailWaveMetrics.peakLength + 8")
-    && contentRailSource.contains("let available = totalWidth - previewLeadingX - 8")
-    && contentRailSource.contains("return min(360, available)")
-    && contentRailSource.contains("guard available >= 220 else { return nil }")
-    && contentRailSource.contains("guard !isRailOnly else { return nil }")
+    && contentRailSource.contains("ContentRailPolicy.previewWidth(")
+    && !contentRailSource.contains("guard !isRailOnly else { return nil }")
+    && contentRailSource.contains("width >= ContentRailPolicy.previewImageMinimumWidth")
     && contentRailSource.contains(".allowsHitTesting(false)")
     && !contentRailSource.contains(".popover(")
     && !contentRailSource.contains("influenceRadius")
@@ -1104,9 +1118,9 @@ expect(contentViewSource.contains("override func layout()"), "native split appli
 expect(contentViewSource.contains("libraryResizeHandle"), "library pane keeps SwiftUI resize handle")
 expect(contentViewSource.contains("minimumContentWidthWithLibrary"), "library leaves readable width for the workspace")
 expect(contentViewSource.contains("private let railWidth = ContentRailMetrics.railOnlyWidth")
-    && contentRailSource.contains("static let snapThreshold: CGFloat = 160")
-    && contentRailSource.contains("static let readableWidth: CGFloat = 240")
-    && contentViewSource.contains("handleExpansionRequest(store.paneExpansionRequest"), "normal multi-pane layouts snap to a restorable 88pt content rail state")
+    && contentRailSource.contains("static let snapThreshold = ContentRailPolicy.snapThreshold")
+    && contentRailSource.contains("static let readableWidth = ContentRailPolicy.readableWidth")
+    && contentViewSource.contains("handleExpansionRequest(store.paneExpansionRequest"), "normal multi-pane layouts snap to a restorable 40pt content rail state")
 expect(!contentViewSource.contains("DragGesture()"), "content panes avoid SwiftUI drag resizing")
 expect(!contentViewSource.contains(".id(store.layout)"), "layout changes avoid whole-screen identity resets")
 expect(!contentViewSource.contains("PaneSeparator"), "content panes avoid hand-drawn split separators")
@@ -1240,7 +1254,8 @@ expect(notesAgentSource.contains("private var noteRailItems: [ContentRailItem]")
     && notesAgentSource.contains("NoteEditorCommand(kind: .scrollToHeading")
     && notesAgentSource.contains("private var agentRailItems: [ContentRailItem]")
     && notesAgentSource.contains("store.requestPaneExpansion(.agent)")
-    && notesAgentSource.components(separatedBy: "let railOnly = store.layout.allowsRailOnlyPanes").count >= 3, "notes and conversation share the content rail and navigate after restoring a narrow pane")
+    && notesAgentSource.components(separatedBy: "ContentRailMetrics.isRailOnly").count >= 2
+    && contentRailReaderSource.contains("ContentRailMetrics.isRailOnly"), "reader, notes, and conversation share one rail-only policy and navigate after restoring a narrow pane")
 let agentRailSource: String = {
     guard let start = notesAgentSource.range(of: "private var agentRailTurns: [AgentRailTurn]")?.lowerBound,
           let end = notesAgentSource.range(of: "private var agentPrompt", range: start..<notesAgentSource.endIndex)?.lowerBound else {

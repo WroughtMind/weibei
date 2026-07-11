@@ -150,7 +150,10 @@ struct ReaderView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            let railOnly = supportsContentRail && !isImmersive && geometry.size.width < ContentRailMetrics.railOnlyThreshold
+            let railOnly = ContentRailMetrics.isRailOnly(
+                availableWidth: geometry.size.width,
+                allowed: supportsContentRail && !isImmersive
+            )
             ZStack(alignment: .bottomTrailing) {
                 VStack(spacing: 0) {
                     readerBody

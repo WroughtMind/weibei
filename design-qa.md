@@ -28,6 +28,7 @@ The reference rail measures 13, 22, 31, 44, 57, 44, 31, 22, 13 pixels around its
 1. P1: the previous peak measured 69 pixels and every neighbor stayed at 15 pixels. Fixed by reducing the peak and adding four-step distance weights.
 2. P1: the first dark capture used the pale on-cinnabar foreground for the hovered tick. Fixed by using cinnabar itself in both appearances. The final dark capture shows the selected rail in red.
 3. P1: the full-width transparent rail overlay exposed background window dragging at pane borders in non-fullscreen windows. Fixed by restoring the rail's 40-point hit surface while passing pane width as layout data only. `/private/tmp/weibei-divider-qa-401.png` confirms the overflow preview still renders with the narrow hit surface.
+4. P1: the pane previously snapped to an 88-point rail-only shell even though the dormant rail itself is 40 points, and widths between the rail threshold and the old 220-point preview minimum could suppress the preview entirely. The rail-only state now equals the 40-point dormant surface, widths below 190 points resolve to that state, compact text previews fit from 190 points, and hover opens immediately instead of racing a delayed work item.
 
 ## Findings
 
