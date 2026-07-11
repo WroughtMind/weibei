@@ -68,3 +68,9 @@ final result: passed
 - P3: the runtime greeting differs from the reference because it follows the actual time of day; this is expected behavior.
 
 final result: passed
+### 2026-07-11：收起轨道改为末端吸附并保留简介
+
+- 分栏不再在 190pt 自动收起；用户拖到 53pt 以上时保留其实际宽度。
+- 仅最后 12pt（40–52pt）作为可感知的磁吸区，松手后收成 40pt 轨道。
+- 40pt 收起态悬浮仍显示 280pt 简介浮层；浮层越过分栏边界但不改宽、不抢焦点，点击沿用原有“恢复并跳转”行为。
+- 新增 `content-rail-dormant-preview` 隔离验收场景，真实截图确认轨道、简介与相邻分栏无裁切或挤压。

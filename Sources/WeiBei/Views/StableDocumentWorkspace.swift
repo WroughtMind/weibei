@@ -748,7 +748,7 @@ final class StableDocumentSplitCoordinator {
 
     private func snappedWidths(_ widths: [CGFloat]) -> [CGFloat] {
         guard widths.count >= 2 else { return widths }
-        let snapIndices = widths.indices.filter { widths[$0] < railSnapThreshold }
+        let snapIndices = widths.indices.filter { widths[$0] <= railSnapThreshold }
         guard !snapIndices.isEmpty else { return widths }
         var target = widths
         for index in snapIndices {

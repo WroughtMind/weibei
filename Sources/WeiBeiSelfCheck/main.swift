@@ -930,16 +930,19 @@ let contentRailGeometrySource: String = {
     return String(contentRailSource[start..<end])
 }()
 expect(ContentRailPolicy.dormantWidth == 40
-    && ContentRailPolicy.snapThreshold == ContentRailPolicy.railOnlyThreshold
+    && ContentRailPolicy.magneticSnapDistance == 12
+    && ContentRailPolicy.snapThreshold == ContentRailPolicy.dormantWidth + ContentRailPolicy.magneticSnapDistance
     && ContentRailPolicy.presentation(availableWidth: 40, allowsRailOnly: true) == .railOnly
-    && ContentRailPolicy.presentation(availableWidth: 189, allowsRailOnly: true) == .railOnly
-    && ContentRailPolicy.presentation(availableWidth: 190, allowsRailOnly: true) == .content
+    && ContentRailPolicy.presentation(availableWidth: 52, allowsRailOnly: true) == .railOnly
+    && ContentRailPolicy.presentation(availableWidth: 53, allowsRailOnly: true) == .content
+    && ContentRailPolicy.presentation(availableWidth: 189, allowsRailOnly: true) == .content
     && ContentRailPolicy.presentation(availableWidth: 40, allowsRailOnly: false) == .content,
-    "content rail policy exposes only a 40pt dormant state and a readable content state")
-expect(ContentRailPolicy.previewWidth(totalWidth: 178, previewLeadingX: 39) == nil
-    && ContentRailPolicy.previewWidth(totalWidth: 190, previewLeadingX: 39) == 143
+    "content rail policy preserves user-chosen narrow widths and reserves snapping for the final 12pt magnetic zone")
+expect(ContentRailPolicy.previewWidth(totalWidth: 40, previewLeadingX: 39, isRailOnly: true) == 280
+    && ContentRailPolicy.previewWidth(totalWidth: 178, previewLeadingX: 39, isRailOnly: false) == nil
+    && ContentRailPolicy.previewWidth(totalWidth: 190, previewLeadingX: 39, isRailOnly: false) == 143
     && ContentRailPolicy.previewWidth(totalWidth: 520, previewLeadingX: 39) == 360,
-    "content rail preview policy removes the no-preview intermediate range and caps wide previews")
+    "collapsed rails always provide a compact floating preview while readable panes keep previews inside available space")
 expect(contentRailSource.contains("struct ContentRailView: View")
     && contentRailSource.contains("static let normalWidth: CGFloat = ContentRailPolicy.dormantWidth")
     && contentRailSource.contains("static let railOnlyWidth: CGFloat = normalWidth")
@@ -979,9 +982,14 @@ expect(contentRailSource.contains("struct ContentRailView: View")
     && !contentRailSource.contains("DispatchQueue.main.asyncAfter(deadline: .now() + 0.10")
     && contentRailSource.contains("previewID = item.id")
     && contentRailSource.contains("previewImage: NSImage?")
-    && contentRailSource.contains("x: previewLeadingX + width / 2")
+    && contentRailSource.contains(".position(x: previewLeadingX + width / 2")
     && contentRailSource.contains("tickLeadingInset + ContentRailWaveMetrics.peakLength + 8")
     && contentRailSource.contains("ContentRailPolicy.previewWidth(")
+    && contentRailSource.contains("ContentRailFloatingPreviewBridge(")
+    && contentRailSource.contains("anchorView.window?.contentView")
+    && contentRailSource.contains("container.addSubview(hosting, positioned: .above")
+    && contentRailSource.contains("ContentRailPassthroughHostingView")
+    && contentRailSource.contains("override func hitTest(_ point: NSPoint) -> NSView?")
     && !contentRailSource.contains("guard !isRailOnly else { return nil }")
     && contentRailSource.contains("width >= ContentRailPolicy.previewImageMinimumWidth")
     && contentRailSource.contains(".allowsHitTesting(false)")

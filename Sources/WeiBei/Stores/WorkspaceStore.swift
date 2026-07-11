@@ -2096,6 +2096,7 @@ final class WorkspaceStore: ObservableObject {
             || scenario == "immersive-conversation-flow"
             || scenario == "notebook-creation-flow"
             || scenario == "pane-layout-stability-flow"
+            || scenario == "content-rail-dormant-preview"
             || emptyWorkspaceScenarios.contains(scenario) else { return }
         didRunVerificationScenario = true
         if scenario == "pane-layout-stability-flow" {
@@ -2152,6 +2153,18 @@ final class WorkspaceStore: ObservableObject {
         }
         if emptyWorkspaceScenarios.contains(scenario) {
             configureEmptyWorkspaceVerificationScenario(scenario)
+            return
+        }
+        if scenario == "content-rail-dormant-preview" {
+            layout = .documentAgentNotes
+            showLibrary = false
+            showReader = true
+            showAgent = true
+            showNotes = true
+            agentSurface = .hidden
+            select(itemID: "sample-html")
+            updateNote(ui("# 收起轨道验收\n\n悬浮简介必须越过收起边界显示。\n", "# Dormant rail check\n\nThe hover preview must cross the dormant pane boundary.\n"))
+            save()
             return
         }
         layout = scenario == "immersive-conversation-flow" ? .immersiveConversation : .documentAgentNotes

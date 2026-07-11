@@ -104,6 +104,11 @@ struct ContentRailView: View {
     var body: some View {
         GeometryReader { geometry in
             let height = compactHeight(in: geometry.size.height)
+            let previewIndex = previewID.flatMap { id in items.firstIndex(where: { $0.id == id }) }
+            let previewItem = previewIndex.map { items[$0] }
+            let previewAnchorY = previewIndex.map {
+                previewY(index: $0, railHeight: height, totalHeight: geometry.size.height)
+            } ?? compactCenterY(in: geometry.size.height)
             ZStack(alignment: .topLeading) {
                 compactRail(height: height)
                     .position(
@@ -111,21 +116,24 @@ struct ContentRailView: View {
                         y: compactCenterY(in: geometry.size.height)
                     )
 
-                if let previewID,
-                   let previewIndex = items.firstIndex(where: { $0.id == previewID }),
-                   let width = previewWidth(in: availableWidth ?? geometry.size.width) {
-                    previewCard(for: items[previewIndex], width: width)
-                        .position(
-                            x: previewLeadingX + width / 2,
-                            y: previewY(
-                                index: previewIndex,
-                                railHeight: height,
-                                totalHeight: geometry.size.height
-                            )
-                        )
-                        .allowsHitTesting(false)
-                        .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .leading)))
-                        .zIndex(20)
+                ContentRailFloatingPreviewBridge(
+                    label: label,
+                    item: isRailOnly ? previewItem : nil,
+                    appearanceMode: appearanceMode,
+                    width: ContentRailPolicy.dormantPreviewWidth
+                )
+                .frame(width: 1, height: 1)
+                .position(x: previewLeadingX, y: previewAnchorY)
+                .allowsHitTesting(false)
+
+                if !isRailOnly, let item = previewItem {
+                    if let width = previewWidth(in: availableWidth ?? geometry.size.width) {
+                        previewCard(for: item, width: width)
+                            .position(x: previewLeadingX + width / 2, y: previewAnchorY)
+                            .allowsHitTesting(false)
+                            .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .leading)))
+                            .zIndex(20)
+                    }
                 }
             }
         }
@@ -149,6 +157,14 @@ struct ContentRailView: View {
             if previewID != nil {
                 onHover(nil)
             }
+        }
+        .task(id: "\(isRailOnly)-\(items.first?.id ?? "empty")") {
+            guard isRailOnly,
+                  ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"] == "content-rail-dormant-preview",
+                  let first = items.first else { return }
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled else { return }
+            beginHover(first)
         }
     }
 
@@ -241,7 +257,8 @@ struct ContentRailView: View {
     private func previewWidth(in totalWidth: CGFloat) -> CGFloat? {
         ContentRailPolicy.previewWidth(
             totalWidth: totalWidth,
-            previewLeadingX: previewLeadingX
+            previewLeadingX: previewLeadingX,
+            isRailOnly: false
         )
     }
 
@@ -364,9 +381,75 @@ struct ContentRailView: View {
     }
 
     private func previewCard(for item: ContentRailItem, width: CGFloat) -> some View {
+        ContentRailPreviewCard(
+            label: label,
+            item: item,
+            appearanceMode: appearanceMode,
+            width: width
+        )
+    }
+
+    private func beginHover(_ item: ContentRailItem) {
+        previewCloseWork?.cancel()
+        hoveredID = item.id
+
+        guard previewID != item.id else {
+            onHover(item)
+            return
+        }
+
+        withAnimation(WeiBeiMotion.hover) {
+            previewID = item.id
+        }
+        onHover(item)
+    }
+
+    private func endHover(_ item: ContentRailItem) {
+        if hoveredID == item.id {
+            hoveredID = nil
+        }
+        schedulePreviewClose()
+    }
+
+    private func schedulePreviewClose() {
+        previewCloseWork?.cancel()
+        let work = DispatchWorkItem {
+            guard hoveredID == nil else { return }
+            closePreview(immediately: false)
+        }
+        previewCloseWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+    }
+
+    private func closePreview(immediately: Bool) {
+        previewCloseWork?.cancel()
+        hoveredID = nil
+        if immediately {
+            previewID = nil
+        } else {
+            withAnimation(WeiBeiMotion.hover) {
+                previewID = nil
+            }
+        }
+        onHover(nil)
+    }
+
+    private func activate(_ item: ContentRailItem) {
+        closePreview(immediately: true)
+        onActivate(item)
+    }
+}
+
+private struct ContentRailPreviewCard: View {
+    let label: String
+    let item: ContentRailItem
+    let appearanceMode: WeiBeiAppearanceMode
+    let width: CGFloat
+
+    var body: some View {
         let showsPreviewImage = item.previewImage != nil && width >= ContentRailPolicy.previewImageMinimumWidth
 
-        return HStack(alignment: .top, spacing: showsPreviewImage ? 12 : 0) {
+        HStack(alignment: .top, spacing: showsPreviewImage ? 12 : 0) {
             if showsPreviewImage, let image = item.previewImage {
                 Image(nsImage: image)
                     .resizable()
@@ -419,54 +502,119 @@ struct ContentRailView: View {
         .shadow(color: WeiBeiTheme.ink.opacity(appearanceMode == .inkstone ? 0.22 : 0.08), radius: 8, y: 4)
         .accessibilityHidden(true)
     }
+}
 
-    private func beginHover(_ item: ContentRailItem) {
-        previewCloseWork?.cancel()
-        hoveredID = item.id
+/// The dormant pane is only 40pt wide, so its preview cannot live inside that pane's
+/// clipped host. This bridge places the same SwiftUI card in the existing window root.
+private struct ContentRailFloatingPreviewBridge: NSViewRepresentable {
+    let label: String
+    let item: ContentRailItem?
+    let appearanceMode: WeiBeiAppearanceMode
+    let width: CGFloat
 
-        guard previewID != item.id else {
-            onHover(item)
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        NSView(frame: .zero)
+    }
+
+    func updateNSView(_ anchorView: NSView, context: Context) {
+        guard let item else {
+            context.coordinator.dismiss()
             return
         }
-
-        withAnimation(WeiBeiMotion.hover) {
-            previewID = item.id
-        }
-        onHover(item)
+        context.coordinator.update(
+            anchorView: anchorView,
+            label: label,
+            item: item,
+            appearanceMode: appearanceMode,
+            width: width
+        )
     }
 
-    private func endHover(_ item: ContentRailItem) {
-        if hoveredID == item.id {
-            hoveredID = nil
-        }
-        schedulePreviewClose()
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.dismiss()
     }
 
-    private func schedulePreviewClose() {
-        previewCloseWork?.cancel()
-        let work = DispatchWorkItem {
-            guard hoveredID == nil else { return }
-            closePreview(immediately: false)
-        }
-        previewCloseWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
-    }
+    final class Coordinator {
+        private var hostingView: ContentRailPassthroughHostingView?
+        private weak var containerView: NSView?
+        private var updateGeneration = 0
 
-    private func closePreview(immediately: Bool) {
-        previewCloseWork?.cancel()
-        hoveredID = nil
-        if immediately {
-            previewID = nil
-        } else {
-            withAnimation(WeiBeiMotion.hover) {
-                previewID = nil
+        func update(
+            anchorView: NSView,
+            label: String,
+            item: ContentRailItem,
+            appearanceMode: WeiBeiAppearanceMode,
+            width: CGFloat
+        ) {
+            updateGeneration += 1
+            let generation = updateGeneration
+            DispatchQueue.main.async { [weak self, weak anchorView] in
+                guard let self, let anchorView, generation == self.updateGeneration,
+                      let contentView = anchorView.window?.contentView,
+                      let container = contentView.superview else { return }
+
+                let card = AnyView(
+                    ContentRailPreviewCard(
+                        label: label,
+                        item: item,
+                        appearanceMode: appearanceMode,
+                        width: width
+                    )
+                    .preferredColorScheme(appearanceMode.colorScheme)
+                )
+                let hosting: ContentRailPassthroughHostingView
+                if let existing = self.hostingView {
+                    existing.rootView = card
+                    hosting = existing
+                } else {
+                    hosting = ContentRailPassthroughHostingView(rootView: card)
+                    hosting.wantsLayer = true
+                    hosting.layer?.backgroundColor = NSColor.clear.cgColor
+                    hosting.layer?.zPosition = 1_000
+                    self.hostingView = hosting
+                }
+
+                if hosting.superview !== container {
+                    hosting.removeFromSuperview()
+                    container.addSubview(hosting, positioned: .above, relativeTo: contentView)
+                    self.containerView = container
+                }
+
+                hosting.frame.size = NSSize(width: width, height: max(132, hosting.fittingSize.height))
+                let anchorCenter = anchorView.convert(
+                    NSPoint(x: anchorView.bounds.midX, y: anchorView.bounds.midY),
+                    to: container
+                )
+                let inset: CGFloat = 8
+                let proposedX = anchorCenter.x + 4
+                let maximumX = max(inset, container.bounds.maxX - hosting.frame.width - inset)
+                let x = min(max(proposedX, inset), maximumX)
+                let proposedY = anchorCenter.y - hosting.frame.height / 2
+                let maximumY = max(inset, container.bounds.maxY - hosting.frame.height - inset)
+                let y = min(max(proposedY, inset), maximumY)
+                hosting.frame.origin = NSPoint(x: x, y: y)
             }
         }
-        onHover(nil)
+
+        func dismiss() {
+            updateGeneration += 1
+            hostingView?.removeFromSuperview()
+            hostingView = nil
+            containerView = nil
+        }
+    }
+}
+
+private final class ContentRailPassthroughHostingView: NSHostingView<AnyView> {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
     }
 
-    private func activate(_ item: ContentRailItem) {
-        closePreview(immediately: true)
-        onActivate(item)
+    override var mouseDownCanMoveWindow: Bool {
+        false
     }
 }

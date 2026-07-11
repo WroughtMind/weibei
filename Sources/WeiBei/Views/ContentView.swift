@@ -768,11 +768,21 @@ private struct LayoutContentView: View {
     }
 
     private var firstSplit: Binding<CGFloat> {
-        numericBinding($firstSplitStorage)
+        if Self.isDormantRailPreviewVerification {
+            return .constant(0.035)
+        }
+        return numericBinding($firstSplitStorage)
     }
 
     private var secondSplit: Binding<CGFloat> {
-        numericBinding($secondSplitStorage)
+        if Self.isDormantRailPreviewVerification {
+            return .constant(0.55)
+        }
+        return numericBinding($secondSplitStorage)
+    }
+
+    private static var isDormantRailPreviewVerification: Bool {
+        ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"] == "content-rail-dormant-preview"
     }
 
     private var halfSplit: Binding<CGFloat> {
@@ -1721,7 +1731,7 @@ private final class NativeSplitCoordinator: NSObject, NSSplitViewDelegate {
         let widths = splitView.arrangedSubviews.map(\.frame.width)
         guard widths.count >= 2 else { return }
 
-        let snapIndices = widths.indices.filter { widths[$0] < railSnapThreshold }
+        let snapIndices = widths.indices.filter { widths[$0] <= railSnapThreshold }
         guard snapIndices.contains(where: { abs(widths[$0] - railWidth) > 0.5 }) else { return }
 
         var targetWidths = widths
