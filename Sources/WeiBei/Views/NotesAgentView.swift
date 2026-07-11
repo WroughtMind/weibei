@@ -289,6 +289,11 @@ struct NotePaneView: View {
 
     private let noteDraftFlushDelayNanoseconds: UInt64 = 220_000_000
 
+    private static var showsLinkedSourcesVerificationOverlay: Bool {
+        ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"] == "linked-sources-flow"
+            && ProcessInfo.processInfo.environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1"
+    }
+
     var body: some View {
         GeometryReader { geometry in
             let railOnly = ContentRailMetrics.isRailOnly(
@@ -316,17 +321,19 @@ struct NotePaneView: View {
                 .opacity(railOnly ? 0 : 1)
                 .allowsHitTesting(!railOnly)
 
-                ContentRailView(
-                    label: store.ui("文稿目录", "Draft outline"),
-                    items: railItems,
-                    activeID: activeNoteRailID ?? railItems.first?.id,
-                    appearanceMode: store.appearanceMode,
-                    isRailOnly: railOnly,
-                    availableWidth: geometry.size.width,
-                    topInset: railOnly ? 0 : (showsPaneHeader ? 44 : 34),
-                    onActivate: { activateNoteRailItem($0, railOnly: railOnly) }
-                )
-                .zIndex(4)
+                if store.layout != .immersiveWriting {
+                    ContentRailView(
+                        label: store.ui("文稿目录", "Draft outline"),
+                        items: railItems,
+                        activeID: activeNoteRailID ?? railItems.first?.id,
+                        appearanceMode: store.appearanceMode,
+                        isRailOnly: railOnly,
+                        availableWidth: geometry.size.width,
+                        topInset: railOnly ? 0 : (showsPaneHeader ? 44 : 34),
+                        onActivate: { activateNoteRailItem($0, railOnly: railOnly) }
+                    )
+                    .zIndex(4)
+                }
             }
         }
         .frame(minHeight: 280)
@@ -335,6 +342,17 @@ struct NotePaneView: View {
         .overlay(alignment: .top) {
             if !showsPaneHeader {
                 immersiveNoteHeader
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if Self.showsLinkedSourcesVerificationOverlay {
+                LinkedSourcesPopover(dismiss: {})
+                    .environmentObject(store)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .shadow(color: WeiBeiTheme.ink.opacity(0.16), radius: 22, y: 10)
+                    .padding(.top, 48)
+                    .padding(.trailing, 24)
+                    .allowsHitTesting(false)
             }
         }
         .animation(WeiBeiMotion.panel, value: store.notebookCreationDraft?.id)
@@ -386,6 +404,8 @@ struct NotePaneView: View {
                 appearanceMode: store.appearanceMode,
                 reorderRole: reorderRole
             ) {
+                LinkedSourcesControl()
+                writingAssistControl
                 noteModeControl
                 newNoteControl
             }
@@ -402,10 +422,12 @@ struct NotePaneView: View {
                 mark: "NOTES",
                 title: noteHeaderSubtitle,
                 appearanceMode: store.appearanceMode,
-                isPinned: store.notebookCreationDraft != nil,
+                isPinned: store.notebookCreationDraft != nil || store.linkedSourcesPresented,
                 actionsAlignedTrailing: true,
                 reorderRole: reorderRole
             ) {
+                LinkedSourcesControl()
+                writingAssistControl
                 noteModeControl
                 newNoteControl
             }
@@ -438,6 +460,57 @@ struct NotePaneView: View {
                 }
             }
         )
+    }
+
+    private var writingAssistControl: some View {
+        Menu {
+            Button {
+                prepareWritingAssist(store.ui(
+                    "请根据\(store.agentPromptScope)，给出一版更清晰的笔记大纲。",
+                    "Use \(store.agentPromptScope) to produce a clearer note outline."
+                ))
+            } label: {
+                Label(store.ui("大纲建议", "Outline"), systemImage: "list.bullet.rectangle")
+            }
+            Button {
+                prepareWritingAssist(store.hasSelectedMaterial
+                    ? store.ui(
+                        "请检查当前笔记缺少来源的位置，并建议应该引用当前资料的哪些部分。",
+                        "Find where the current note needs sources and suggest which parts of the current material to cite."
+                    )
+                    : store.ui(
+                        "请检查当前笔记缺少来源的位置，并标出需要补证据的段落。",
+                        "Find where the current note needs sources and mark the paragraphs that need evidence."
+                    ))
+            } label: {
+                Label(store.ui("补来源", "Add Sources"), systemImage: "link")
+            }
+            Button {
+                prepareWritingAssist(store.ui(
+                    "请整理和润色当前笔记，保留原意，并标出缺少来源的位置。",
+                    "Organize and polish the current note, preserve the meaning, and mark where sources are missing."
+                ))
+            } label: {
+                Label(store.ui("润色表达", "Polish"), systemImage: "text.quote")
+            }
+        } label: {
+            Label(store.ui("整理", "Refine"), systemImage: "text.badge.checkmark")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(WeiBeiTheme.secondaryInk)
+        .accessibilityLabel(Text(store.ui("整理当前笔记", "Refine current note")))
+        .help(store.ui("按需生成大纲、补来源或润色表达", "Create an outline, add sources, or polish on demand"))
+    }
+
+    private func prepareWritingAssist(_ prompt: String) {
+        flushNoteDraft(immediate: true)
+        withAnimation(WeiBeiMotion.layout) {
+            store.agentDraft = prompt
+            store.setLayout(.immersiveConversation)
+            store.revealRightPane(focusing: .agent)
+        }
     }
 
     @ViewBuilder
@@ -2732,188 +2805,6 @@ struct QuietInsightView: View {
         .buttonStyle(WeiBeiIconButtonStyle(size: 22))
         .accessibilityLabel(Text(help))
         .help(help)
-    }
-}
-
-struct ContextRailItem: Identifiable {
-    var title: String
-    var help: String?
-    var systemImage: String?
-    var emphasized = false
-    var action: (() -> Void)?
-
-    var id: String {
-        title
-    }
-}
-
-struct ContextRailView: View {
-    var title: String
-    var items: [ContextRailItem]
-    var edge: HorizontalEdge = .trailing
-    @State private var appeared = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            HStack(spacing: 6) {
-                Rectangle()
-                    .fill(WeiBeiTheme.hairline.opacity(0.80))
-                    .frame(width: 12, height: 1)
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold, design: .serif))
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-            }
-            .padding(.horizontal, 4)
-
-            ForEach(items) { item in
-                ContextRailLine(item: item, inwardOffset: inwardOffset)
-                    .transition(WeiBeiTransition.message)
-            }
-
-            Spacer()
-        }
-        .padding(.top, 17)
-        .padding(.horizontal, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .foregroundStyle(WeiBeiTheme.ink)
-        .background(railBackground)
-        .overlay(alignment: separatorAlignment) {
-            LinearGradient(
-                colors: [
-                    .clear,
-                    WeiBeiTheme.hairline.opacity(0.34),
-                    .clear
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(width: 1)
-        }
-        .overlay(alignment: highlightAlignment) {
-            LinearGradient(
-                colors: [
-                    WeiBeiTheme.glassHighlight.opacity(0.22),
-                    .clear
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(width: 1)
-        }
-        .opacity(appeared ? 1 : 0)
-        .offset(y: appeared ? 0 : 8)
-        .onAppear {
-            withAnimation(WeiBeiMotion.reveal) {
-                appeared = true
-            }
-        }
-    }
-
-    private var inwardOffset: CGFloat {
-        edge == .leading ? -3 : 3
-    }
-
-    private var railBackground: some View {
-        ZStack(alignment: highlightAlignment) {
-            WeiBeiTheme.paperRaised.opacity(0.10)
-            LinearGradient(
-                colors: [
-                    WeiBeiTheme.paperRaised.opacity(0.26),
-                    WeiBeiTheme.paper.opacity(0.08),
-                    .clear
-                ],
-                startPoint: edge == .leading ? .leading : .trailing,
-                endPoint: edge == .leading ? .trailing : .leading
-            )
-            .frame(width: 22)
-            LinearGradient(
-                colors: [
-                    WeiBeiTheme.glassHighlight.opacity(0.12),
-                    .clear
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(width: 1)
-        }
-    }
-
-    private var separatorAlignment: Alignment {
-        edge == .leading ? .leading : .trailing
-    }
-
-    private var highlightAlignment: Alignment {
-        edge == .leading ? .trailing : .leading
-    }
-}
-
-private struct ContextRailLine: View {
-    var item: ContextRailItem
-    var inwardOffset: CGFloat
-    @State private var hovering = false
-
-    var body: some View {
-        if let action = item.action {
-            Button(action: action) {
-                lineContent
-            }
-            .buttonStyle(.plain)
-            .contentShape(Rectangle())
-            .help(item.help ?? item.title)
-            .accessibilityLabel(Text(item.help ?? item.title))
-            .onHover { hovering in
-                setHovering(hovering)
-            }
-            .animation(WeiBeiMotion.micro, value: item.emphasized)
-        } else {
-            lineContent
-                .onHover { hovering in
-                    setHovering(hovering)
-                }
-                .animation(WeiBeiMotion.micro, value: item.emphasized)
-        }
-    }
-
-    private var lineContent: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Capsule()
-                .fill(railMarkColor)
-                .frame(width: 2, height: hovering || item.emphasized ? 15 : 10)
-            if let systemImage = item.systemImage {
-                Image(systemName: systemImage)
-                    .font(.system(size: 11, weight: .semibold))
-                    .frame(width: 14)
-                    .foregroundStyle(iconColor)
-            }
-            Text(item.title)
-                .lineLimit(2)
-        }
-        .font(.system(size: 12, weight: item.emphasized ? .semibold : .medium))
-        .foregroundStyle(item.emphasized || hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
-        .padding(.horizontal, 5)
-        .padding(.vertical, 4)
-        .frame(minHeight: 24, alignment: .leading)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(WeiBeiTheme.paperInset.opacity(hovering ? 0.16 : item.emphasized ? 0.06 : 0))
-        .clipShape(RoundedRectangle(cornerRadius: 5))
-        .offset(x: hovering ? inwardOffset : 0)
-    }
-
-    private var railMarkColor: Color {
-        if item.emphasized { return WeiBeiTheme.cinnabar.opacity(hovering ? 0.54 : 0.38) }
-        if hovering { return WeiBeiTheme.cinnabar.opacity(0.28) }
-        return WeiBeiTheme.hairline.opacity(0.90)
-    }
-
-    private var iconColor: Color {
-        if item.emphasized || hovering { return WeiBeiTheme.cinnabar.opacity(0.74) }
-        return WeiBeiTheme.tertiaryInk
-    }
-
-    private func setHovering(_ hovering: Bool) {
-        withAnimation(WeiBeiMotion.hover) {
-            self.hovering = hovering
-        }
     }
 }
 

@@ -34,6 +34,120 @@ struct PaneExpansionRequest: Equatable {
     let role: WorkspacePaneRole
 }
 
+enum PaneToggleContinuityVerifier {
+    private(set) static var isMeasuring = false
+    private(set) static var htmlEventSequence = 0
+    private(set) static var htmlSectionEventCount = 0
+    private(set) static var htmlActiveEventCount = 0
+    private(set) static var htmlLocationCallCount = 0
+    private(set) static var htmlLocationCommitCount = 0
+    private(set) static var htmlLocationReasons: [String: Int] = [:]
+    private(set) static var webReaderMakeCount = 0
+    private(set) static var webReaderDismantleCount = 0
+    private(set) static var pdfReaderMakeCount = 0
+    private(set) static var pdfReaderDismantleCount = 0
+    private(set) static var noteEditorMakeCount = 0
+    private(set) static var noteEditorDismantleCount = 0
+    private(set) static var verificationScrollScheduleCount = 0
+    private(set) static var verificationScrollResult = ""
+
+    static var isEnabled: Bool {
+        let scenario = ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"]
+        return scenario == "pane-toggle-continuity-flow"
+            || scenario == "pane-layout-stability-flow"
+            || scenario == "pane-reorder-width-flow"
+            || scenario == "reader-scroll-persistence-flow"
+    }
+
+    static func beginMeasurement() {
+        guard isEnabled else { return }
+        isMeasuring = true
+        htmlSectionEventCount = 0
+        htmlActiveEventCount = 0
+        htmlLocationCallCount = 0
+        htmlLocationCommitCount = 0
+        htmlLocationReasons = [:]
+        webReaderMakeCount = 0
+        webReaderDismantleCount = 0
+        pdfReaderMakeCount = 0
+        pdfReaderDismantleCount = 0
+        noteEditorMakeCount = 0
+        noteEditorDismantleCount = 0
+        verificationScrollScheduleCount = 0
+        verificationScrollResult = ""
+    }
+
+    static func endMeasurement() {
+        guard isEnabled else { return }
+        isMeasuring = false
+    }
+
+    static func recordHTMLActiveEvent(reason: String) {
+        guard isEnabled else { return }
+        htmlEventSequence += 1
+        if isMeasuring {
+            htmlActiveEventCount += 1
+        }
+    }
+
+    static func recordHTMLSectionEvent(count: Int) {
+        guard isEnabled else { return }
+        htmlEventSequence += 1
+        if isMeasuring { htmlSectionEventCount += 1 }
+    }
+
+    static func recordHTMLLocationCall(reason: String) {
+        guard isMeasuring else { return }
+        htmlLocationCallCount += 1
+        htmlLocationReasons[reason, default: 0] += 1
+    }
+
+    static func recordHTMLLocationCommit(reason: String) {
+        guard isMeasuring else { return }
+        htmlLocationCommitCount += 1
+    }
+
+    static func recordWebReaderMake() {
+        guard isEnabled else { return }
+        if isMeasuring { webReaderMakeCount += 1 }
+    }
+
+    static func recordWebReaderDismantle() {
+        guard isEnabled else { return }
+        if isMeasuring { webReaderDismantleCount += 1 }
+    }
+
+    static func recordNoteEditorMake() {
+        guard isEnabled else { return }
+        if isMeasuring { noteEditorMakeCount += 1 }
+    }
+
+    static func recordPDFReaderMake() {
+        guard isEnabled else { return }
+        if isMeasuring { pdfReaderMakeCount += 1 }
+    }
+
+    static func recordPDFReaderDismantle() {
+        guard isEnabled else { return }
+        if isMeasuring { pdfReaderDismantleCount += 1 }
+    }
+
+    static func recordNoteEditorDismantle() {
+        guard isEnabled else { return }
+        if isMeasuring { noteEditorDismantleCount += 1 }
+    }
+
+    static func recordVerificationScrollScheduled() {
+        guard isEnabled else { return }
+        verificationScrollScheduleCount += 1
+    }
+
+    static func recordVerificationScrollResult(_ result: String) {
+        guard isEnabled else { return }
+        verificationScrollResult = result
+    }
+}
+
 @MainActor
 final class WorkspaceStore: ObservableObject {
     @Published var importedItems: [StudyItem] = []
@@ -48,7 +162,8 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var latestAgentNoteProposal: StudyAgentNoteProposal?
     @Published private(set) var latestAgentLearningUpdate: StudyAgentLearningUpdate?
     @Published private(set) var noteSourceLinks: [NoteSourceLink] = []
-    @Published private(set) var studyLocationsByItemID: [String: StudyLocation] = [:]
+    @Published var linkedSourcesPresented = false
+    private(set) var studyLocationsByItemID: [String: StudyLocation] = [:]
     @Published private(set) var learningMemoryEntries: [LearningMemoryEntry] = []
     @Published private(set) var learningMemoryRevision: UInt64 = 0
     @Published private(set) var studySessions: [StudySession] = []
@@ -66,8 +181,11 @@ final class WorkspaceStore: ObservableObject {
     @Published var readerLocationTitle: String?
     @Published var readerPageIndex = 0
     @Published var readerTargetPageIndex: Int?
+    @Published private(set) var readerTargetPageRequestID = UUID()
+    @Published private(set) var readerTargetPageRecordsLocation = false
     @Published var readerTargetLocationID: String?
     @Published var readerTargetLocationTitle: String?
+    @Published private(set) var readerTargetLocationRequestID = UUID()
     @Published var focusedPane: PaneFocus = .reader
     @Published var focusRequest = 0
     @Published var layout: WorkspaceLayout = .documentAgentNotes
@@ -124,6 +242,7 @@ final class WorkspaceStore: ObservableObject {
     private let notePersistenceDebounceDelay: UInt64 = 420_000_000
     private var studyProgressSaveTask: Task<Void, Never>?
     private let studyProgressSaveDelay: UInt64 = 900_000_000
+    private var noteSourceLinksMigrationVersion = 0
 
     var showRightPane: Bool {
         get { showNotes || showAgent }
@@ -197,10 +316,16 @@ final class WorkspaceStore: ObservableObject {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         load()
         let migratedStudyLocationTitles = refreshStudyLocationReferenceTitles()
+        let sanitizedNoteSourceLinks = sanitizeNoteSourceLinks()
         courseDocumentSearchIndex.synchronize(allItems)
         ensureActiveStudySession()
-        migrateNoteSourceLinksFromMarkdown()
-        if migratedStudyLocationTitles { save() }
+        if noteSourceLinksMigrationVersion < 1 {
+            migrateNoteSourceLinksFromMarkdown()
+            noteSourceLinksMigrationVersion = 1
+            save()
+        } else if migratedStudyLocationTitles || sanitizedNoteSourceLinks {
+            save()
+        }
         floatingSelectionPrompt = ui("当前选区", "Current selection")
         if selectedItemID == nil {
             select(itemID: sampleItems[0].id)
@@ -212,6 +337,24 @@ final class WorkspaceStore: ObservableObject {
 
     var allItems: [StudyItem] {
         sampleItems + importedItems
+    }
+
+    var linkedSourceIDsForActiveNote: [String] {
+        guard let noteItemID = activeNotebookItemID else { return [] }
+        return linkedSourceIDs(for: noteItemID)
+    }
+
+    func linkedSourceIDs(for noteItemID: String) -> [String] {
+        NoteSourceRelations(links: noteSourceLinks).sourceIDs(for: noteItemID)
+    }
+
+    var linkedSourcesForActiveNote: [StudyItem] {
+        let linkedIDs = Set(linkedSourceIDsForActiveNote)
+        return allItems.filter { linkedIDs.contains($0.id) && !$0.isNotebookNote }
+    }
+
+    var linkedSourceCount: Int {
+        linkedSourcesForActiveNote.count
     }
 
     var filteredItems: [StudyItem] {
@@ -326,9 +469,8 @@ final class WorkspaceStore: ObservableObject {
         guard let location = lastStudyLocation,
               allItems.contains(where: { $0.id == location.itemID }) else { return }
         select(itemID: location.itemID)
-        readerTargetPageIndex = location.pageIndex
-        readerTargetLocationID = location.locationID
-        readerTargetLocationTitle = location.locationTitle
+        requestReaderPDFPage(location.pageIndex, recordsLocation: false)
+        requestReaderHTMLLocation(id: location.locationID, title: location.locationTitle)
         showReader = true
         focus(.reader)
     }
@@ -778,13 +920,12 @@ final class WorkspaceStore: ObservableObject {
         }
         selectedItemID = itemID
         if itemChanged {
-            activeNotebookItemID = nil
             clearUnpinnedFloatingSelection(keepContext: false)
             selectionAttachments = []
             lastSelectionAttachmentDate = nil
             readerPageIndex = 0
             readerLocationID = nil
-            readerTargetPageIndex = nil
+            requestReaderPDFPage(nil, recordsLocation: false)
             readerTargetLocationID = nil
             readerTargetLocationTitle = nil
         }
@@ -802,6 +943,25 @@ final class WorkspaceStore: ObservableObject {
         recordCurrentStudyLocation(incrementVisit: itemChanged)
         clearGeneratedQuietInsight()
         refreshQuietInsightIfNeeded()
+        save()
+    }
+
+    func setLinkedSourceIDsForActiveNote(_ sourceItemIDs: Set<String>) {
+        guard let noteItemID = activeNotebookItemID else { return }
+        setLinkedSourceIDs(sourceItemIDs, for: noteItemID)
+    }
+
+    func setLinkedSourceIDs(_ sourceItemIDs: Set<String>, for noteItemID: String) {
+        guard allItems.contains(where: { $0.id == noteItemID && $0.isNotebookNote }) else { return }
+        let validSourceIDs = Set(allItems.lazy.filter { !$0.isNotebookNote }.map(\.id))
+        var relations = NoteSourceRelations(links: noteSourceLinks)
+        relations.replaceSources(
+            for: noteItemID,
+            sourceItemIDs: sourceItemIDs.intersection(validSourceIDs)
+        )
+        guard relations.links != noteSourceLinks else { return }
+        invalidateAgentContext()
+        noteSourceLinks = relations.links
         save()
     }
 
@@ -1140,34 +1300,53 @@ final class WorkspaceStore: ObservableObject {
         let cleaned = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let nextTitle = cleaned.isEmpty ? selectedMaterialItem.map(displayTitle) : cleaned
         guard readerLocationTitle != nextTitle else { return }
-        invalidateAgentContext()
         readerLocationTitle = nextTitle
-        recordCurrentStudyLocation(incrementVisit: false)
     }
 
-    func updateReaderHTMLLocation(id: String?, title: String?) {
+    func updateReaderHTMLLocation(id: String?, title: String?, reason: String) {
         guard selectedMaterialItem?.kind == .html else { return }
+        PaneToggleContinuityVerifier.recordHTMLLocationCall(reason: reason)
         let cleanedID = id?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let cleanedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let nextID = cleanedID.isEmpty ? nil : String(cleanedID.prefix(500))
         let nextTitle = cleanedTitle.isEmpty ? selectedMaterialItem.map(displayTitle) : String(cleanedTitle.prefix(300))
+        if reason == "jump" {
+            clearReaderHTMLLocationTarget()
+        }
         guard readerLocationID != nextID || readerLocationTitle != nextTitle else { return }
-        invalidateAgentContext()
+        PaneToggleContinuityVerifier.recordHTMLLocationCommit(reason: reason)
         readerLocationID = nextID
         readerLocationTitle = nextTitle
-        if readerTargetLocationID == nextID {
-            readerTargetLocationID = nil
-        }
-        if readerTargetLocationTitle == nextTitle {
-            readerTargetLocationTitle = nil
-        }
         recordCurrentStudyLocation(incrementVisit: false)
+    }
+
+    private func requestReaderHTMLLocation(id: String?, title: String?) {
+        readerTargetLocationID = id
+        readerTargetLocationTitle = title
+        readerTargetLocationRequestID = UUID()
+    }
+
+    private func clearReaderHTMLLocationTarget() {
+        guard readerTargetLocationID != nil || readerTargetLocationTitle != nil else { return }
+        readerTargetLocationID = nil
+        readerTargetLocationTitle = nil
+    }
+
+    private func requestReaderPDFPage(_ pageIndex: Int?, recordsLocation: Bool) {
+        readerTargetPageRecordsLocation = recordsLocation && pageIndex != nil
+        readerTargetPageIndex = pageIndex.map { max($0, 0) }
+        readerTargetPageRequestID = UUID()
+    }
+
+    func consumeReaderPDFPageRequest(_ requestID: UUID) {
+        guard readerTargetPageRequestID == requestID else { return }
+        readerTargetPageIndex = nil
+        readerTargetPageRecordsLocation = false
     }
 
     func updateReaderPageIndex(_ index: Int) {
         let nextIndex = max(index, 0)
         guard readerPageIndex != nextIndex else { return }
-        invalidateAgentContext()
         readerPageIndex = nextIndex
         recordCurrentStudyLocation(incrementVisit: false)
     }
@@ -1175,12 +1354,22 @@ final class WorkspaceStore: ObservableObject {
     private func recordCurrentStudyLocation(incrementVisit: Bool) {
         guard let item = selectedMaterialItem else { return }
         let previous = studyLocationsByItemID[item.id]
+        let itemTitle = sourceReferenceBaseTitle(for: item)
+        let locationID = item.kind == .html ? readerLocationID : nil
+        let pageIndex = item.kind == .pdf ? readerPageIndex : nil
+        if !incrementVisit,
+           previous?.itemTitle == itemTitle,
+           previous?.locationID == locationID,
+           previous?.locationTitle == readerLocationTitle,
+           previous?.pageIndex == pageIndex {
+            return
+        }
         studyLocationsByItemID[item.id] = StudyLocation(
             itemID: item.id,
-            itemTitle: sourceReferenceBaseTitle(for: item),
-            locationID: item.kind == .html ? readerLocationID : nil,
+            itemTitle: itemTitle,
+            locationID: locationID,
             locationTitle: readerLocationTitle,
-            pageIndex: item.kind == .pdf ? readerPageIndex : nil,
+            pageIndex: pageIndex,
             lastStudiedAt: Date(),
             visitCount: max((previous?.visitCount ?? 0) + (incrementVisit ? 1 : 0), 1)
         )
@@ -1205,10 +1394,9 @@ final class WorkspaceStore: ObservableObject {
         readerLocationTitle = location.locationTitle ?? displayTitle(for: item)
         if item.kind == .pdf {
             readerPageIndex = max(location.pageIndex ?? 0, 0)
-            readerTargetPageIndex = location.pageIndex.map { max($0, 0) }
+            requestReaderPDFPage(location.pageIndex, recordsLocation: false)
         } else if item.kind == .html {
-            readerTargetLocationID = location.locationID
-            readerTargetLocationTitle = location.locationTitle
+            requestReaderHTMLLocation(id: location.locationID, title: location.locationTitle)
         }
     }
 
@@ -1236,12 +1424,18 @@ final class WorkspaceStore: ObservableObject {
             focus(.notes)
             return true
         }
-        readerTargetPageIndex = item.kind == .pdf ? reference.pageIndex : nil
-        readerTargetLocationID = item.kind == .html
+        requestReaderPDFPage(
+            item.kind == .pdf ? reference.pageIndex : nil,
+            recordsLocation: item.kind == .pdf && reference.pageIndex != nil
+        )
+        let htmlTargetID = item.kind == .html
             ? reference.sectionLocationID
                 ?? reference.sectionOrdinal.map { "html-heading-\(max($0 - 1, 0))" }
             : nil
-        readerTargetLocationTitle = item.kind == .html ? reference.sectionTitle : nil
+        requestReaderHTMLLocation(
+            id: htmlTargetID,
+            title: item.kind == .html ? reference.sectionTitle : nil
+        )
         focus(.reader)
         return true
     }
@@ -1543,9 +1737,14 @@ final class WorkspaceStore: ObservableObject {
         focusedPane = snapshot.focusedPane
         threePaneOrder = WorkspacePaneRole.normalized(snapshot.threePaneOrder)
         noteText = noteText(for: activeNoteItem)
-        readerTargetPageIndex = selectedMaterialItem?.kind == .pdf ? snapshot.readerPageIndex : nil
-        readerTargetLocationID = selectedMaterialItem?.kind == .html ? snapshot.readerLocationID : nil
-        readerTargetLocationTitle = selectedMaterialItem?.kind == .html ? snapshot.readerLocationTitle : nil
+        requestReaderPDFPage(
+            selectedMaterialItem?.kind == .pdf ? snapshot.readerPageIndex : nil,
+            recordsLocation: false
+        )
+        requestReaderHTMLLocation(
+            id: selectedMaterialItem?.kind == .html ? snapshot.readerLocationID : nil,
+            title: selectedMaterialItem?.kind == .html ? snapshot.readerLocationTitle : nil
+        )
         latestAgentNoteProposal = nil
         latestAgentLearningUpdate = nil
         syncActiveStudySession()
@@ -1821,6 +2020,14 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func importFilesFromPanel() {
+        presentImportPanel(linkToActiveNote: false)
+    }
+
+    func importAndLinkSourcesFromPanel() {
+        presentImportPanel(linkToActiveNote: true)
+    }
+
+    private func presentImportPanel(linkToActiveNote: Bool) {
         let panel = NSOpenPanel()
         panel.title = ui("选择学习资料或课程文件夹", "Choose study materials or a course folder")
         panel.allowsMultipleSelection = true
@@ -1835,10 +2042,17 @@ final class WorkspaceStore: ObservableObject {
         ]
 
         guard panel.runModal() == .OK else { return }
-        importFiles(panel.urls)
+        let targetNoteID = linkToActiveNote ? activeNotebookItemID : nil
+        let selectedItems = importFiles(panel.urls)
+        if let targetNoteID, targetNoteID == activeNotebookItemID {
+            setLinkedSourceIDsForActiveNote(
+                Set(linkedSourceIDsForActiveNote).union(selectedItems.map(\.id))
+            )
+        }
     }
 
-    func importFiles(_ urls: [URL]) {
+    @discardableResult
+    func importFiles(_ urls: [URL]) -> [StudyItem] {
         let existing = Set(importedItems.compactMap(\.urlPath))
         let expandedURLs = urls
             .flatMap(Self.supportedCourseFiles(at:))
@@ -1867,6 +2081,8 @@ final class WorkspaceStore: ObservableObject {
         } else {
             save()
         }
+        let selectedIDs = Set(expandedURLs.map { "file:\($0.path)" })
+        return allItems.filter { selectedIDs.contains($0.id) && !$0.isNotebookNote }
     }
 
     private static func supportedCourseFiles(at url: URL) -> [URL] {
@@ -1981,6 +2197,7 @@ final class WorkspaceStore: ObservableObject {
 
         if let index = importedItems.firstIndex(where: { $0.urlPath == url.path }) {
             importedItems[index].isNotebookNote = true
+            removeLinksWhereSourceItemID(importedItems[index].id)
             select(itemID: importedItems[index].id)
             showTransientNoteStatus(ui("已打开双链笔记：\(importedItems[index].subtitle)", "Opened wiki note: \(importedItems[index].subtitle)"))
             save()
@@ -2050,6 +2267,7 @@ final class WorkspaceStore: ObservableObject {
             if let sourceItem {
                 addNoteSourceLink(noteItemID: item.id, sourceItemID: sourceItem.id)
             }
+            invalidateAgentContext()
             activeNotebookItemID = item.id
             noteText = markdown
             revealRichWritingSurface()
@@ -2067,6 +2285,7 @@ final class WorkspaceStore: ObservableObject {
     @discardableResult
     private func openExistingNotebookNote(for material: StudyItem) -> Bool {
         guard let item = existingNotebookNote(for: material) else { return false }
+        invalidateAgentContext()
         activeNotebookItemID = item.id
         noteText = noteText(for: item)
         revealRichWritingSurface()
@@ -2103,6 +2322,7 @@ final class WorkspaceStore: ObservableObject {
         invalidateAgentContext()
         persistCurrentNote()
         importedItems[index].isNotebookNote = true
+        removeLinksWhereSourceItemID(importedItems[index].id)
         activeNotebookItemID = importedItems[index].id
         if selectedItemID == importedItems[index].id {
             self.selectedItemID = sampleItems.first?.id
@@ -2386,6 +2606,14 @@ final class WorkspaceStore: ObservableObject {
         noteSourceLinks.append(NoteSourceLink(noteItemID: noteItemID, sourceItemID: sourceItemID))
     }
 
+    private func removeLinksWhereSourceItemID(_ sourceItemID: String) {
+        let previousCount = noteSourceLinks.count
+        noteSourceLinks.removeAll { $0.sourceItemID == sourceItemID }
+        if noteSourceLinks.count != previousCount {
+            invalidateAgentContext()
+        }
+    }
+
     private func migrateNoteSourceLinksFromMarkdown() {
         let previousCount = noteSourceLinks.count
         for note in allItems where note.isNotebookNote {
@@ -2398,6 +2626,20 @@ final class WorkspaceStore: ObservableObject {
             }
         }
         if noteSourceLinks.count != previousCount { save() }
+    }
+
+    @discardableResult
+    private func sanitizeNoteSourceLinks() -> Bool {
+        let previous = noteSourceLinks
+        let validNoteItemIDs = Set(allItems.lazy.filter(\.isNotebookNote).map(\.id))
+        let validSourceItemIDs = Set(allItems.lazy.filter { !$0.isNotebookNote }.map(\.id))
+        var relations = NoteSourceRelations(links: noteSourceLinks)
+        relations.sanitize(
+            validNoteItemIDs: validNoteItemIDs,
+            validSourceItemIDs: validSourceItemIDs
+        )
+        noteSourceLinks = relations.links
+        return noteSourceLinks != previous
     }
 
     @discardableResult
@@ -2928,64 +3170,17 @@ final class WorkspaceStore: ObservableObject {
             || scenario == "pi-course-memory-flow"
             || scenario == "immersive-conversation-flow"
             || scenario == "notebook-creation-flow"
+            || scenario == "pure-writing-flow"
+            || scenario == "linked-sources-flow"
             || scenario == "pane-layout-stability-flow"
             || scenario == "content-rail-dormant-preview"
             || scenario == "content-rail-activation-preview"
+            || scenario == "pane-toggle-continuity-flow"
+            || scenario == "pane-reorder-width-flow"
+            || scenario == "reader-scroll-persistence-flow"
             || emptyWorkspaceScenarios.contains(scenario) else { return }
         didRunVerificationScenario = true
         recordVerificationStage("recognized:\(scenario)")
-        if scenario == "pane-layout-stability-flow" {
-            if Self.environmentValue("WEIBEI_VERIFY_APPEARANCE") == WeiBeiAppearanceMode.inkstone.rawValue {
-                appearanceMode = .inkstone
-            }
-            let rawOrder = Self.environmentValue("WEIBEI_VERIFY_PANE_ORDER")
-            if !rawOrder.isEmpty {
-                let requestedOrder = rawOrder
-                    .split(separator: ",")
-                    .compactMap { WorkspacePaneRole(rawValue: String($0)) }
-                if requestedOrder.count == WorkspacePaneRole.allCases.count,
-                   Set(requestedOrder).count == WorkspacePaneRole.allCases.count {
-                    threePaneOrder = requestedOrder
-                }
-            }
-            layout = layoutMatchingThreePaneOrder(threePaneOrder)
-            showLibrary = false
-            showReader = true
-            showAgent = false
-            showNotes = false
-            agentSurface = .hidden
-            select(itemID: "sample-html")
-            agentDraft = ui("保留这段尚未发送的提问", "Keep this unsent question")
-            updateNote(ui("# 分栏连续性验收\n\n笔记内容必须保留。\n", "# Pane continuity check\n\nThe note must survive pane changes.\n"))
-            save()
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            showAgent = true
-            save()
-            try? await Task.sleep(nanoseconds: 900_000_000)
-            showNotes = true
-            save()
-            try? await Task.sleep(nanoseconds: 900_000_000)
-            showNotes = false
-            save()
-            try? await Task.sleep(nanoseconds: 900_000_000)
-            showAgent = false
-            save()
-            let completionURL = storageURL.deletingLastPathComponent().appendingPathComponent("pane-layout-stability.complete")
-            let receipt: [String: Any] = [
-                "agentDraft": agentDraft,
-                "appearance": appearanceMode.rawValue,
-                "noteText": noteText,
-                "order": normalizedThreePaneOrder.map(\.rawValue),
-                "selectedItemID": selectedItemID ?? "",
-                "showAgent": showAgent,
-                "showNotes": showNotes,
-                "showReader": showReader
-            ]
-            if let data = try? JSONSerialization.data(withJSONObject: receipt, options: [.prettyPrinted, .sortedKeys]) {
-                try? data.write(to: completionURL, options: .atomic)
-            }
-            return
-        }
         if emptyWorkspaceScenarios.contains(scenario) {
             configureEmptyWorkspaceVerificationScenario(scenario)
             return
@@ -3002,8 +3197,27 @@ final class WorkspaceStore: ObservableObject {
             save()
             return
         }
+        if scenario == "pane-toggle-continuity-flow" {
+            await runPaneToggleContinuityVerification()
+            return
+        }
+        if scenario == "pane-layout-stability-flow" {
+            await runPaneLayoutStabilityVerification()
+            return
+        }
+        if scenario == "pane-reorder-width-flow" {
+            await runPaneReorderWidthVerification()
+            return
+        }
+        if scenario == "reader-scroll-persistence-flow" {
+            await runReaderScrollPersistenceVerification()
+            return
+        }
         layout = scenario == "immersive-conversation-flow" ? .immersiveConversation : .documentAgentNotes
         if scenario == "notebook-creation-flow" {
+            layout = .immersiveWriting
+        }
+        if scenario == "pure-writing-flow" || scenario == "linked-sources-flow" {
             layout = .immersiveWriting
         }
         showLibrary = scenario != "immersive-conversation-flow"
@@ -3012,6 +3226,21 @@ final class WorkspaceStore: ObservableObject {
         showNotes = true
         agentSurface = .hidden
         select(itemID: "sample-html")
+        if scenario == "pure-writing-flow" || scenario == "linked-sources-flow" {
+            createNotebookNote(
+                seed: .currentMaterial(sampleItems[0]),
+                title: ui("多资料研究笔记", "Multi-source research note")
+            )
+            setLinkedSourceIDsForActiveNote(["sample-html", "sample-pdf"])
+            select(itemID: "sample-pdf")
+            showLibrary = false
+            linkedSourcesPresented = scenario == "linked-sources-flow"
+            if scenario == "linked-sources-flow" {
+                noteRenderMode = .source
+            }
+            save()
+            return
+        }
         if scenario == "pi-learning-flow" || scenario == "pi-course-memory-flow" {
             await waitForReaderContextToSettle()
         }
@@ -3052,7 +3281,8 @@ final class WorkspaceStore: ObservableObject {
             recordVerificationStage("completed")
             return
         }
-        updateNote(ui("# 视觉验收笔记\n\n", "# Visual verification note\n\n"))
+        let verificationNoteSeed = ui("# 视觉验收笔记\n\n", "# Visual verification note\n\n")
+        updateNote(verificationNoteSeed)
         updateSelection(
             ui("利率是资金使用价格的表达。", "An interest rate is the price paid for using funds."),
             source: .document,
@@ -3065,11 +3295,15 @@ final class WorkspaceStore: ObservableObject {
         if messages.last?.backend == nil, let message = messages.last?.text {
             recordVerificationStage("failure:\(String(message.prefix(500)))")
         }
-        if scenario == "pi-learning-flow", messages.last?.backend == .pi {
-            let markerURL = storageURL.deletingLastPathComponent().appendingPathComponent("pi-agent-verified.txt")
-            try? "PI backend completed the packaged learning flow\n".write(to: markerURL, atomically: true, encoding: .utf8)
-        }
         applyLastAgentAnswerToNote()
+        if scenario == "pi-learning-flow" {
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            if messages.last?.backend == .pi, noteText.count > verificationNoteSeed.count {
+                let markerURL = storageURL.deletingLastPathComponent().appendingPathComponent("pi-agent-verified.txt")
+                try? "PI backend completed the packaged learning flow and persisted its note proposal\n"
+                    .write(to: markerURL, atomically: true, encoding: .utf8)
+            }
+        }
         recordVerificationStage("completed")
     }
 
@@ -3085,6 +3319,424 @@ final class WorkspaceStore: ObservableObject {
             } else {
                 previousTitle = readerLocationTitle
                 previousPage = readerPageIndex
+                stableChecks = 0
+            }
+        }
+    }
+
+    private func runPaneToggleContinuityVerification() async {
+        layout = .documentAgentNotes
+        showLibrary = true
+        showReader = true
+        showAgent = false
+        showNotes = true
+        agentSurface = .hidden
+        recordVerificationStage("pane-toggle-context-prepared")
+        let agentMarker = AgentMessage(
+            role: .assistant,
+            text: "Pane continuity conversation marker",
+            source: "verification",
+            backend: .offline
+        )
+        messages = [agentMarker]
+        let baselineOrder = normalizedThreePaneOrder
+        let cases: [(itemID: String, agentVisible: Bool)] = [
+            ("sample-html", false),
+            ("sample-html", true),
+            ("sample-pdf", false),
+            ("sample-pdf", true),
+            ("sample-md", false),
+            ("sample-md", true),
+        ]
+        var caseReports: [String] = []
+        var allPassed = true
+
+        for verificationCase in cases {
+            showReader = true
+            showAgent = verificationCase.agentVisible
+            showNotes = true
+            select(itemID: verificationCase.itemID)
+            if verificationCase.itemID == "sample-html" {
+                await waitForHTMLContentRailToSettle()
+                requestReaderHTMLLocation(
+                    id: nil,
+                    title: ui("名义利率与实际利率", "Nominal and Real Interest Rates")
+                )
+                await waitForHTMLContentRailToSettle()
+            } else {
+                try? await Task.sleep(nanoseconds: 900_000_000)
+            }
+            try? await Task.sleep(nanoseconds: 700_000_000)
+
+            let noteMarker = "# Pane continuity \(verificationCase.itemID) \(verificationCase.agentVisible ? "agent-on" : "agent-off")\n\nUncommitted note state must survive pane toggles.\n"
+            updateNote(noteMarker)
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            let itemID = selectedMaterialItem?.id
+            let baselineRevision = agentContextRevision
+            let baselineLocation = itemID.flatMap { studyLocationsByItemID[$0] }
+            let baselineMessages = messages
+            PaneToggleContinuityVerifier.beginMeasurement()
+
+            for _ in 1...20 {
+                toggleNotes()
+                try? await Task.sleep(nanoseconds: 520_000_000)
+                toggleNotes()
+                try? await Task.sleep(nanoseconds: 520_000_000)
+            }
+            for _ in 1...20 {
+                toggleReader()
+                try? await Task.sleep(nanoseconds: 520_000_000)
+                toggleReader()
+                try? await Task.sleep(nanoseconds: 520_000_000)
+            }
+            if verificationCase.itemID == "sample-html" {
+                await waitForHTMLContentRailToSettle()
+            } else {
+                try? await Task.sleep(nanoseconds: 700_000_000)
+            }
+
+            let finalLocation = itemID.flatMap { studyLocationsByItemID[$0] }
+            let revisionDelta = agentContextRevision &- baselineRevision
+            let studyLocationChanged = baselineLocation != finalLocation
+            let lifecycleStable = PaneToggleContinuityVerifier.webReaderMakeCount == 0
+                && PaneToggleContinuityVerifier.webReaderDismantleCount == 0
+                && PaneToggleContinuityVerifier.pdfReaderMakeCount == 0
+                && PaneToggleContinuityVerifier.pdfReaderDismantleCount == 0
+                && PaneToggleContinuityVerifier.noteEditorMakeCount == 0
+                && PaneToggleContinuityVerifier.noteEditorDismantleCount == 0
+            let exercisedResizeChain = verificationCase.itemID != "sample-html"
+                || PaneToggleContinuityVerifier.htmlSectionEventCount > 0
+            let casePassed = exercisedResizeChain
+                && PaneToggleContinuityVerifier.htmlLocationCallCount == 0
+                && PaneToggleContinuityVerifier.htmlLocationCommitCount == 0
+                && revisionDelta == 0
+                && !studyLocationChanged
+                && lifecycleStable
+                && noteText == noteMarker
+                && messages == baselineMessages
+                && normalizedThreePaneOrder == baselineOrder
+                && showReader
+                && showAgent == verificationCase.agentVisible
+                && showNotes
+            allPassed = allPassed && casePassed
+            let caseName = "\(verificationCase.itemID)-agent-\(verificationCase.agentVisible ? "on" : "off")"
+            let locationReasons = PaneToggleContinuityVerifier.htmlLocationReasons
+                .sorted { $0.key < $1.key }
+                .map { "\($0.key):\($0.value)" }
+                .joined(separator: ",")
+            caseReports.append([
+                "case=\(caseName)",
+                "case_result=\(casePassed ? "pass" : "fail")",
+                "agent_revision_delta=\(revisionDelta)",
+                "study_location_changed=\(studyLocationChanged)",
+                "html_location_calls=\(PaneToggleContinuityVerifier.htmlLocationCallCount)",
+                "html_location_commits=\(PaneToggleContinuityVerifier.htmlLocationCommitCount)",
+                "html_location_reasons=\(locationReasons)",
+                "web_reader_make=\(PaneToggleContinuityVerifier.webReaderMakeCount)",
+                "web_reader_dismantle=\(PaneToggleContinuityVerifier.webReaderDismantleCount)",
+                "pdf_reader_make=\(PaneToggleContinuityVerifier.pdfReaderMakeCount)",
+                "pdf_reader_dismantle=\(PaneToggleContinuityVerifier.pdfReaderDismantleCount)",
+                "markdown_editor_make=\(PaneToggleContinuityVerifier.noteEditorMakeCount)",
+                "markdown_editor_dismantle=\(PaneToggleContinuityVerifier.noteEditorDismantleCount)",
+                "note_preserved=\(noteText == noteMarker)",
+                "conversation_preserved=\(messages == baselineMessages)",
+                "pane_order_preserved=\(normalizedThreePaneOrder == baselineOrder)",
+            ].joined(separator: " "))
+            PaneToggleContinuityVerifier.endMeasurement()
+        }
+
+        let report = ([
+            "result=\(allPassed ? "pass" : "fail")",
+            "cases=\(cases.count)",
+            "notes_cycles_per_case=20",
+            "reader_cycles_per_case=20",
+        ] + caseReports).joined(separator: "\n") + "\n"
+        let reportURL = storageURL.deletingLastPathComponent()
+            .appendingPathComponent("pane-toggle-continuity-report.txt")
+        try? report.write(to: reportURL, atomically: true, encoding: .utf8)
+        recordVerificationStage("pane-toggle-result:\(allPassed ? "pass" : "fail")")
+        recordVerificationStage("completed")
+    }
+
+    private func runPaneLayoutStabilityVerification() async {
+        layout = .documentAgentNotes
+        showLibrary = false
+        showReader = true
+        showAgent = false
+        showNotes = true
+        agentSurface = .hidden
+        select(itemID: "sample-html")
+        await waitForHTMLContentRailToSettle()
+
+        let noteMarker = "# Pane ownership marker\n\nUnsaved note input must survive stable slot animations.\n"
+        let draftMarker = "Unsent agent draft must survive stable slot animations."
+        let messageMarker = AgentMessage(
+            role: .assistant,
+            text: "Stable parent conversation marker",
+            source: "verification",
+            backend: .offline
+        )
+        updateNote(noteMarker)
+        agentDraft = draftMarker
+        messages = [messageMarker]
+        try? await Task.sleep(nanoseconds: 700_000_000)
+
+        let itemID = selectedMaterialItem?.id
+        let baselineLocation = itemID.flatMap { studyLocationsByItemID[$0] }
+        let baselineRevision = agentContextRevision
+        let baselineOrder = normalizedThreePaneOrder
+        PaneToggleContinuityVerifier.beginMeasurement()
+        recordVerificationStage("pane-layout-context-prepared")
+
+        toggleNotes()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleNotes()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleAgent()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleReader()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleReader()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleAgent()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleNotes()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleNotes()
+        try? await Task.sleep(nanoseconds: 700_000_000)
+
+        let finalLocation = itemID.flatMap { studyLocationsByItemID[$0] }
+        let revisionDelta = agentContextRevision &- baselineRevision
+        let passed = showReader
+            && !showAgent
+            && showNotes
+            && noteText == noteMarker
+            && agentDraft == draftMarker
+            && messages == [messageMarker]
+            && normalizedThreePaneOrder == baselineOrder
+            && finalLocation == baselineLocation
+            && revisionDelta == 0
+            && PaneToggleContinuityVerifier.htmlLocationCallCount == 0
+            && PaneToggleContinuityVerifier.webReaderMakeCount == 0
+            && PaneToggleContinuityVerifier.webReaderDismantleCount == 0
+            && PaneToggleContinuityVerifier.noteEditorMakeCount == 0
+            && PaneToggleContinuityVerifier.noteEditorDismantleCount == 0
+        let report = [
+            "result=\(passed ? "pass" : "fail")",
+            "transitions=8",
+            "reader_visible=\(showReader)",
+            "agent_visible=\(showAgent)",
+            "notes_visible=\(showNotes)",
+            "agent_revision_delta=\(revisionDelta)",
+            "study_location_changed=\(finalLocation != baselineLocation)",
+            "html_location_calls=\(PaneToggleContinuityVerifier.htmlLocationCallCount)",
+            "web_reader_make=\(PaneToggleContinuityVerifier.webReaderMakeCount)",
+            "web_reader_dismantle=\(PaneToggleContinuityVerifier.webReaderDismantleCount)",
+            "note_editor_make=\(PaneToggleContinuityVerifier.noteEditorMakeCount)",
+            "note_editor_dismantle=\(PaneToggleContinuityVerifier.noteEditorDismantleCount)",
+            "note_preserved=\(noteText == noteMarker)",
+            "agent_draft_preserved=\(agentDraft == draftMarker)",
+            "conversation_preserved=\(messages == [messageMarker])",
+            "pane_order_preserved=\(normalizedThreePaneOrder == baselineOrder)",
+        ].joined(separator: "\n") + "\n"
+        PaneToggleContinuityVerifier.endMeasurement()
+        let reportURL = storageURL.deletingLastPathComponent()
+            .appendingPathComponent("pane-layout-stability-report.txt")
+        try? report.write(to: reportURL, atomically: true, encoding: .utf8)
+        recordVerificationStage("pane-layout-result:\(passed ? "pass" : "fail")")
+        recordVerificationStage("completed")
+    }
+
+    private func runPaneReorderWidthVerification() async {
+        layout = .documentAgentNotes
+        showLibrary = false
+        showReader = true
+        showAgent = true
+        showNotes = true
+        agentSurface = .hidden
+        select(itemID: "sample-html")
+        await waitForHTMLContentRailToSettle()
+
+        let noteMarker = "# Reorder and width marker\n\nUnsaved text must survive pane movement.\n"
+        let draftMarker = "Unsent draft must survive pane movement."
+        let messageMarker = AgentMessage(
+            role: .assistant,
+            text: "Reorder conversation marker",
+            source: "verification",
+            backend: .offline
+        )
+        updateNote(noteMarker)
+        agentDraft = draftMarker
+        messages = [messageMarker]
+
+        for _ in 0..<30 {
+            let order = visibleDocumentPaneOrder
+            if order.count == 3, order.allSatisfy({ threePaneReorderFrames[$0] != nil }) {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+
+        let baselineOrder = normalizedThreePaneOrder
+        let baselineRevision = agentContextRevision
+        let itemID = selectedMaterialItem?.id
+        let baselineLocation = itemID.flatMap { studyLocationsByItemID[$0] }
+        let baselineAgentWidth = threePaneReorderFrames[.agent]?.width ?? 0
+        PaneToggleContinuityVerifier.beginMeasurement()
+        recordVerificationStage("pane-reorder-width-context-prepared")
+
+        requestPaneExpansion(.agent)
+        for _ in 0..<20 {
+            guard paneExpansionRequest != nil else { break }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        try? await Task.sleep(nanoseconds: 350_000_000)
+        let expandedAgentWidth = threePaneReorderFrames[.agent]?.width ?? 0
+
+        beginThreePaneReorder(.reader)
+        let dragDistance = max(
+            (threePaneReorderFrames[.notes]?.midX ?? 1_000)
+                - (threePaneReorderFrames[.reader]?.midX ?? 0),
+            1_000
+        )
+        updateThreePaneReorder(.reader, horizontalDelta: dragDistance)
+        finishThreePaneReorder(.reader, horizontalDelta: dragDistance)
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        let reorderedOrder = normalizedThreePaneOrder
+        let reorderedAgentWidth = threePaneReorderFrames[.agent]?.width ?? 0
+
+        toggleAgent()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleAgent()
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        let restoredAgentWidth = threePaneReorderFrames[.agent]?.width ?? 0
+        let restoredStore = WorkspaceStore()
+        let persistedOrder = restoredStore.normalizedThreePaneOrder
+        let widthTolerance = max(12, reorderedAgentWidth * 0.12)
+        let finalLocation = itemID.flatMap { studyLocationsByItemID[$0] }
+        let lifecycleStable = PaneToggleContinuityVerifier.webReaderMakeCount == 0
+            && PaneToggleContinuityVerifier.webReaderDismantleCount == 0
+            && PaneToggleContinuityVerifier.noteEditorMakeCount == 0
+            && PaneToggleContinuityVerifier.noteEditorDismantleCount == 0
+        let passed = baselineOrder != reorderedOrder
+            && reorderedOrder.last == .reader
+            && persistedOrder == reorderedOrder
+            && paneExpansionRequest == nil
+            && expandedAgentWidth >= ContentRailMetrics.readableWidth
+            && reorderedAgentWidth >= ContentRailMetrics.readableWidth
+            && abs(restoredAgentWidth - reorderedAgentWidth) <= widthTolerance
+            && noteText == noteMarker
+            && agentDraft == draftMarker
+            && messages == [messageMarker]
+            && finalLocation == baselineLocation
+            && agentContextRevision == baselineRevision
+            && lifecycleStable
+
+        let report = [
+            "result=\(passed ? "pass" : "fail")",
+            "baseline_order=\(baselineOrder.map(\.rawValue).joined(separator: ","))",
+            "reordered_order=\(reorderedOrder.map(\.rawValue).joined(separator: ","))",
+            "persisted_order=\(persistedOrder.map(\.rawValue).joined(separator: ","))",
+            "baseline_agent_width=\(baselineAgentWidth)",
+            "expanded_agent_width=\(expandedAgentWidth)",
+            "reordered_agent_width=\(reorderedAgentWidth)",
+            "restored_agent_width=\(restoredAgentWidth)",
+            "width_tolerance=\(widthTolerance)",
+            "expansion_consumed=\(paneExpansionRequest == nil)",
+            "note_preserved=\(noteText == noteMarker)",
+            "agent_draft_preserved=\(agentDraft == draftMarker)",
+            "conversation_preserved=\(messages == [messageMarker])",
+            "study_location_changed=\(finalLocation != baselineLocation)",
+            "agent_revision_delta=\(agentContextRevision &- baselineRevision)",
+            "native_lifecycle_stable=\(lifecycleStable)",
+        ].joined(separator: "\n") + "\n"
+        PaneToggleContinuityVerifier.endMeasurement()
+        let reportURL = storageURL.deletingLastPathComponent()
+            .appendingPathComponent("pane-reorder-width-report.txt")
+        try? report.write(to: reportURL, atomically: true, encoding: .utf8)
+        recordVerificationStage("pane-reorder-width-result:\(passed ? "pass" : "fail")")
+        recordVerificationStage("completed")
+    }
+
+    private func runReaderScrollPersistenceVerification() async {
+        PaneToggleContinuityVerifier.beginMeasurement()
+        layout = .documentAgentNotes
+        showLibrary = true
+        showReader = true
+        showAgent = true
+        showNotes = true
+        agentSurface = .hidden
+        select(itemID: "sample-html")
+        await waitForHTMLContentRailToSettle()
+        let baseline = studyLocationsByItemID["sample-html"]
+        let previousScrollSchedules = PaneToggleContinuityVerifier.verificationScrollScheduleCount
+        NotificationCenter.default.post(name: .weiBeiVerificationUserScroll, object: nil)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        let didTriggerScroll = PaneToggleContinuityVerifier.verificationScrollScheduleCount > previousScrollSchedules
+        recordVerificationStage("reader-scroll-context-prepared")
+
+        var finalLocation = studyLocationsByItemID["sample-html"]
+        for _ in 0..<60 {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            finalLocation = studyLocationsByItemID["sample-html"]
+            if finalLocation?.locationID != nil,
+               finalLocation?.locationID != baseline?.locationID {
+                break
+            }
+        }
+        save()
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        let restoredStore = WorkspaceStore()
+        let persisted = restoredStore.studyLocationsByItemID["sample-html"]
+        let scrolled = finalLocation?.locationID != nil
+            && finalLocation?.locationID != baseline?.locationID
+            && finalLocation?.lastStudiedAt != baseline?.lastStudiedAt
+        let restored = restoredStore.selectedItemID == "sample-html"
+            && restoredStore.readerLocationID == finalLocation?.locationID
+            && restoredStore.readerTargetLocationID == finalLocation?.locationID
+            && persisted?.locationID == finalLocation?.locationID
+            && persisted?.locationTitle == finalLocation?.locationTitle
+        let passed = didTriggerScroll && scrolled && restored
+        let locationReasons = PaneToggleContinuityVerifier.htmlLocationReasons
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key):\($0.value)" }
+            .joined(separator: ",")
+        let report = [
+            "result=\(passed ? "pass" : "fail")",
+            "input_path=dom-wheel-event",
+            "verification_scroll_triggered=\(didTriggerScroll)",
+            "baseline_location_id=\(baseline?.locationID ?? "")",
+            "final_location_id=\(finalLocation?.locationID ?? "")",
+            "final_location_title=\(finalLocation?.locationTitle ?? "")",
+            "timestamp_changed=\(finalLocation?.lastStudiedAt != baseline?.lastStudiedAt)",
+            "restored_location_id=\(restoredStore.readerLocationID ?? "")",
+            "restored_target_id=\(restoredStore.readerTargetLocationID ?? "")",
+            "html_section_events=\(PaneToggleContinuityVerifier.htmlSectionEventCount)",
+            "html_active_events=\(PaneToggleContinuityVerifier.htmlActiveEventCount)",
+            "html_location_calls=\(PaneToggleContinuityVerifier.htmlLocationCallCount)",
+            "html_location_reasons=\(locationReasons)",
+            "verification_scroll_schedules=\(PaneToggleContinuityVerifier.verificationScrollScheduleCount)",
+            "verification_scroll_result=\(PaneToggleContinuityVerifier.verificationScrollResult)",
+        ].joined(separator: "\n") + "\n"
+        PaneToggleContinuityVerifier.endMeasurement()
+        let reportURL = storageURL.deletingLastPathComponent()
+            .appendingPathComponent("reader-scroll-persistence-report.txt")
+        try? report.write(to: reportURL, atomically: true, encoding: .utf8)
+        recordVerificationStage("reader-scroll-result:\(passed ? "pass" : "fail")")
+        recordVerificationStage("completed")
+    }
+
+    private func waitForHTMLContentRailToSettle() async {
+        var previousEventCount = PaneToggleContinuityVerifier.htmlEventSequence
+        var stableChecks = 0
+        for _ in 0..<40 {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            let currentEventCount = PaneToggleContinuityVerifier.htmlEventSequence
+            if currentEventCount == previousEventCount {
+                stableChecks += 1
+                if stableChecks >= 4 { return }
+            } else {
+                previousEventCount = currentEventCount
                 stableChecks = 0
             }
         }
@@ -3813,6 +4465,7 @@ final class WorkspaceStore: ObservableObject {
         selectedItemID = snapshot.selectedItemID
         activeNotebookItemID = snapshot.activeNotebookItemID
         noteSourceLinks = snapshot.noteSourceLinks ?? []
+        noteSourceLinksMigrationVersion = snapshot.noteSourceLinksMigrationVersion ?? 0
         studyLocationsByItemID = snapshot.studyLocationsByItemID ?? [:]
         learningMemoryEntries = snapshot.learningMemoryEntries ?? []
         learningMemoryRevision = snapshot.learningMemoryRevision ?? 0
@@ -3902,6 +4555,7 @@ final class WorkspaceStore: ObservableObject {
             selectedItemID: selectedItemID,
             activeNotebookItemID: activeNotebookItemID,
             noteSourceLinks: noteSourceLinks,
+            noteSourceLinksMigrationVersion: noteSourceLinksMigrationVersion,
             studyLocationsByItemID: studyLocationsByItemID,
             learningMemoryEntries: learningMemoryEntries,
             learningMemoryRevision: learningMemoryRevision,

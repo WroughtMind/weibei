@@ -105,9 +105,7 @@ final class StableDocumentSplitView: NSView {
     fileprivate var emptyHost: NSHostingView<AnyView>?
     fileprivate let dividerViews = [StableDocumentDividerView(), StableDocumentDividerView()]
     fileprivate weak var coordinator: StableDocumentSplitCoordinator?
-#if DEBUG
     private let continuityRecorder = PaneContinuityRecorder.configuredFromEnvironment()
-#endif
 
     override var isFlipped: Bool { true }
 
@@ -140,7 +138,6 @@ final class StableDocumentSplitView: NSView {
         assert(dividerViews.allSatisfy { $0.superview === self })
     }
 
-#if DEBUG
     func recordContinuityTransition(duration: TimeInterval) {
         continuityRecorder?.recordTransition(view: self, duration: duration)
     }
@@ -150,10 +147,24 @@ final class StableDocumentSplitView: NSView {
         let roles = WorkspacePaneRole.allCases.compactMap { role -> PaneContinuityRoleSample? in
             guard let host = roleHosts[role] else { return nil }
             let presentationFrame = host.layer?.presentation()?.frame ?? host.frame
+            let contentHost = descendant(
+                identifiedBy: "persistent-pane-\(role.rawValue)",
+                in: host
+            )
+            let contentAttached = contentHost?.superview != nil && contentHost?.window != nil
+            let slotHasVisibleArea = !host.isHidden
+                && host.alphaValue > 0.01
+                && presentationFrame.width > 0.5
+                && presentationFrame.height > 0.5
             return PaneContinuityRoleSample(
                 role: role.rawValue,
                 hostID: String(describing: ObjectIdentifier(host)),
                 parentID: host.superview.map { String(describing: ObjectIdentifier($0)) } ?? "none",
+                contentHostID: contentHost.map { String(describing: ObjectIdentifier($0)) },
+                contentParentID: contentHost?.superview.map { String(describing: ObjectIdentifier($0)) },
+                contentAttached: contentAttached,
+                slotHasVisibleArea: slotHasVisibleArea,
+                visibleContentReady: !slotHasVisibleArea || (contentAttached && contentHost?.isHidden == false),
                 hidden: host.isHidden,
                 modelFrame: host.frame,
                 presentationFrame: presentationFrame
@@ -165,12 +176,24 @@ final class StableDocumentSplitView: NSView {
             frame: frame,
             timestamp: ProcessInfo.processInfo.systemUptime,
             stableOwnership: roles.count == WorkspacePaneRole.allCases.count
-                && roles.allSatisfy { $0.parentID == parentID },
+                && roles.allSatisfy { $0.parentID == parentID && $0.contentAttached },
+            noBlankVisibleSlots: roles.allSatisfy(\.visibleContentReady),
             containerBounds: bounds,
             roles: roles
         )
     }
-#endif
+
+    private func descendant(identifiedBy identifier: String, in root: NSView) -> NSView? {
+        if root.identifier?.rawValue == identifier {
+            return root
+        }
+        for subview in root.subviews {
+            if let match = descendant(identifiedBy: identifier, in: subview) {
+                return match
+            }
+        }
+        return nil
+    }
 
     override func layout() {
         super.layout()
@@ -448,9 +471,7 @@ final class StableDocumentSplitCoordinator {
             deadline: .now() + layoutAnimationDuration + animationFallbackGrace,
             execute: finishAnimation
         )
-#if DEBUG
         splitView.recordContinuityTransition(duration: layoutAnimationDuration)
-#endif
     }
 
     private func paneWidths(
@@ -467,6 +488,34 @@ final class StableDocumentSplitCoordinator {
         }
 
         if preserveCurrentWidths, appliedState != nil {
+            let minimum = minimumPaneWidth(total: usable, count: count)
+            let enteringRoles = visibleOrder.filter { !displayedVisibleOrder.contains($0) }
+            let retainedRoles = visibleOrder.filter { displayedVisibleOrder.contains($0) }
+            if !enteringRoles.isEmpty {
+                let enteringDesired = enteringRoles.map { role in
+                    max(minimum, recentReadableWidths[role] ?? defaultReadableWidth)
+                }
+                let maximumEnteringTotal = max(
+                    minimum * CGFloat(enteringRoles.count),
+                    usable - minimum * CGFloat(retainedRoles.count)
+                )
+                let enteringTotal = retainedRoles.isEmpty
+                    ? usable
+                    : min(maximumEnteringTotal, enteringDesired.reduce(0, +))
+                let enteringWidths = normalizedWidths(enteringDesired, total: enteringTotal)
+                let retainedDesired = retainedRoles.map { role in
+                    splitView.roleHosts[role]?.frame.width ?? defaultReadableWidth
+                }
+                let retainedWidths = normalizedWidths(
+                    retainedDesired,
+                    total: max(0, usable - enteringWidths.reduce(0, +))
+                )
+                let widthsByRole = Dictionary(
+                    uniqueKeysWithValues: Array(zip(enteringRoles, enteringWidths))
+                        + Array(zip(retainedRoles, retainedWidths))
+                )
+                return visibleOrder.map { widthsByRole[$0] ?? minimum }
+            }
             let desired = visibleOrder.map { role -> CGFloat in
                 if displayedVisibleOrder.contains(role), let width = splitView.roleHosts[role]?.frame.width, width > 0.5 {
                     return width
@@ -800,6 +849,7 @@ final class StableDocumentSplitCoordinator {
             }
             updateDividerFrames(dividers, animated: true, in: splitView)
         }, completionHandler: finishAnimation)
+        splitView.recordContinuityTransition(duration: duration)
         DispatchQueue.main.asyncAfter(
             deadline: .now() + duration + animationFallbackGrace,
             execute: finishAnimation

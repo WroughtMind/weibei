@@ -166,7 +166,7 @@ struct ContentView: View {
                         libraryDragStartWidth = nil
                     }
             )
-            .help(store.ui("拖动调整课程目录宽度", "Drag to resize the course index"))
+            .help(store.ui("拖动调整资料库宽度", "Drag to resize the library"))
     }
 
 }
@@ -572,7 +572,7 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var libraryButton: some View {
-        topIconButton("sidebar.left", help: store.showLibrary ? store.ui("收起课程目录", "Hide course index") : store.ui("打开课程目录", "Show course index"), active: store.showLibrary) {
+        topIconButton("sidebar.left", help: store.showLibrary ? store.ui("收起资料库", "Hide library") : store.ui("打开资料库", "Show library"), active: store.showLibrary) {
             withAnimation(WeiBeiMotion.layout) {
                 store.toggleLibrary()
             }
@@ -695,12 +695,6 @@ private struct LayoutContentView: View {
     @SceneStorage("documentThreePaneFirstSplit") private var firstSplitStorage: Double = 0.34
     @SceneStorage("documentThreePaneSecondSplit") private var secondSplitStorage: Double = 0.67
     @SceneStorage("documentNotesHalfSplit") private var halfSplitStorage: Double = 0.50
-    @SceneStorage("conversationFirstSplit") private var conversationFirstSplitStorage: Double = 0.12
-    @SceneStorage("conversationSecondSplit") private var conversationSecondSplitStorage: Double = 0.90
-    @SceneStorage("conversationLeftSplit") private var conversationLeftSplitStorage: Double = 0.13
-    @SceneStorage("writingFirstSplit") private var writingFirstSplitStorage: Double = 0.13
-    @SceneStorage("writingSecondSplit") private var writingSecondSplitStorage: Double = 0.90
-    @SceneStorage("writingLeftSplit") private var writingLeftSplitStorage: Double = 0.13
     
     var body: some View {
         Group {
@@ -728,32 +722,8 @@ private struct LayoutContentView: View {
                     .transition(WeiBeiTransition.layout)
             case .immersiveWriting:
                 ZStack(alignment: agentAlignment) {
-                    if store.showRightPane {
-                        ResizableThreePane(
-                            firstSplit: writingFirstSplit,
-                            secondSplit: writingSecondSplit,
-                            minFirst: 96,
-                            minSecond: 540,
-                            minThird: 104
-                        ) {
-                            ContextRailView(title: store.ui("文档", "Documents"), items: writingDocumentRailItems, edge: .trailing)
-                                .transition(WeiBeiTransition.rail)
-                        } second: {
-                            PersistentPaneHost(role: .notes, registry: paneHostRegistry)
-                        } third: {
-                            ContextRailView(title: store.ui("写作辅助", "Writing Aids"), items: writingAssistRailItems, edge: .leading)
-                                .transition(WeiBeiTransition.rail)
-                        }
-                        .transition(WeiBeiTransition.rightPanel)
-                    } else {
-                        ResizableTwoPane(split: writingLeftSplit, minFirst: 96, minSecond: 540) {
-                            ContextRailView(title: store.ui("文档", "Documents"), items: writingDocumentRailItems, edge: .trailing)
-                                .transition(WeiBeiTransition.rail)
-                        } second: {
-                            PersistentPaneHost(role: .notes, registry: paneHostRegistry)
-                        }
-                        .transition(WeiBeiTransition.layout)
-                    }
+                    PersistentPaneHost(role: .notes, registry: paneHostRegistry)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                     if store.agentSurface != .quietInsight {
                         agentOverlay
@@ -788,30 +758,6 @@ private struct LayoutContentView: View {
 
     private var halfSplit: Binding<CGFloat> {
         numericBinding($halfSplitStorage)
-    }
-
-    private var conversationFirstSplit: Binding<CGFloat> {
-        numericBinding($conversationFirstSplitStorage)
-    }
-
-    private var conversationSecondSplit: Binding<CGFloat> {
-        numericBinding($conversationSecondSplitStorage)
-    }
-
-    private var conversationLeftSplit: Binding<CGFloat> {
-        numericBinding($conversationLeftSplitStorage)
-    }
-
-    private var writingFirstSplit: Binding<CGFloat> {
-        numericBinding($writingFirstSplitStorage)
-    }
-
-    private var writingSecondSplit: Binding<CGFloat> {
-        numericBinding($writingSecondSplitStorage)
-    }
-
-    private var writingLeftSplit: Binding<CGFloat> {
-        numericBinding($writingLeftSplitStorage)
     }
 
     @ViewBuilder
@@ -928,133 +874,11 @@ private struct LayoutContentView: View {
         Swift.min(Swift.max(value, min), Swift.max(min, max))
     }
 
-    private var conversationSourceRailItems: [ContextRailItem] {
-        var items: [ContextRailItem] = []
-        if let item = store.selectedMaterialItem {
-            items.append(
-                ContextRailItem(
-                    title: store.displayTitle(for: item),
-                    help: store.ui("切回沉浸阅读", "Return to immersive reading"),
-                    systemImage: item.kind.systemImage,
-                    emphasized: true
-                ) {
-                    openReader()
-                }
-            )
-        }
-        items.append(
-            ContextRailItem(title: store.ui("当前笔记", "Current Note"), help: store.ui("切回沉浸写作", "Return to immersive writing"), systemImage: "square.and.pencil") {
-                openWriting()
-            }
-        )
-        if store.selectionContext != nil {
-            items.append(
-                ContextRailItem(title: store.ui("选区", "Selection"), help: store.ui("追问当前选区", "Ask about current selection"), systemImage: "text.cursor") {
-                    askCurrentSelection()
-                }
-            )
-        }
-        return items
-    }
-
-    private var conversationTargetRailItems: [ContextRailItem] {
-        var items = [
-            ContextRailItem(title: store.ui("当前笔记", "Current Note"), help: store.ui("打开写作区", "Open writing area"), systemImage: "square.and.pencil", emphasized: true) {
-                openWriting()
-            }
-        ]
-        if store.selectionContext != nil {
-            items.append(
-                ContextRailItem(title: store.ui("摘录区", "Excerpt Area"), help: store.ui("把当前选区收进笔记", "Save the current selection to notes"), systemImage: "quote.opening") {
-                    appendSelectionAndOpenWriting()
-                }
-            )
-        }
-        items.append(
-            ContextRailItem(title: store.ui("问题与结论", "Questions & Conclusions"), help: store.ui("整理问题、结论和缺少证据", "Organize questions, conclusions, and missing evidence"), systemImage: "checkmark.circle") {
-                prepareAgentDraft(store.ui("请根据\(store.agentPromptScope)，整理出问题、结论和还缺少的证据。", "Use \(store.agentPromptScope) to organize questions, conclusions, and missing evidence."))
-            }
-        )
-        return items
-    }
-
-    private var writingDocumentRailItems: [ContextRailItem] {
-        var items: [ContextRailItem] = []
-        if let item = store.selectedMaterialItem {
-            items.append(
-                ContextRailItem(
-                    title: store.displayTitle(for: item),
-                    help: store.ui("切回沉浸阅读", "Return to immersive reading"),
-                    systemImage: item.kind.systemImage,
-                    emphasized: true
-                ) {
-                    openReader()
-                }
-            )
-        }
-        if store.hasSelectedMaterial || store.selectionContext != nil {
-            items.append(
-                ContextRailItem(title: store.ui("引用", "Reference"), help: store.ui("复制当前材料或选区引用", "Copy current material or selection reference"), systemImage: "quote.opening") {
-                    store.copyCurrentReference()
-                }
-            )
-        }
-        return items
-    }
-
-    private var writingAssistRailItems: [ContextRailItem] {
-        [
-            ContextRailItem(title: store.ui("大纲建议", "Outline"), help: store.ui("生成笔记大纲", "Generate a note outline"), systemImage: "list.bullet.rectangle", emphasized: true) {
-                prepareAgentDraft(store.ui("请根据\(store.agentPromptScope)，给出一版更清晰的笔记大纲。", "Use \(store.agentPromptScope) to produce a clearer note outline."))
-            },
-            ContextRailItem(title: store.ui("补来源", "Add Sources"), help: store.ui("检查笔记缺少来源的位置", "Find places where notes need sources"), systemImage: "link") {
-                prepareAgentDraft(store.hasSelectedMaterial ? store.ui("请检查当前笔记缺少来源的位置，并建议应该引用当前材料的哪些部分。", "Find where the current note needs sources and suggest which parts of the current material to cite.") : store.ui("请检查当前笔记缺少来源的位置，并标出需要补证据的段落。", "Find where the current note needs sources and mark the paragraphs that need evidence."))
-            },
-            ContextRailItem(title: store.ui("润色表达", "Polish"), help: store.ui("润色当前笔记", "Polish current note"), systemImage: "text.quote") {
-                prepareAgentDraft(store.ui("请整理和润色当前笔记，保留原意，并标出缺少来源的位置。", "Organize and polish the current note, preserve the meaning, and mark where sources are missing."))
-            }
-        ]
-    }
-
     private func numericBinding(_ storage: Binding<Double>) -> Binding<CGFloat> {
         Binding(
             get: { CGFloat(storage.wrappedValue) },
             set: { storage.wrappedValue = Double($0) }
         )
-    }
-
-    private func openReader() {
-        withAnimation(WeiBeiMotion.layout) {
-            store.setLayout(.immersiveReading)
-        }
-    }
-
-    private func openWriting() {
-        withAnimation(WeiBeiMotion.layout) {
-            store.setLayout(.immersiveWriting)
-            store.revealRightPane(focusing: .notes)
-        }
-    }
-
-    private func askCurrentSelection() {
-        store.askSelection()
-        withAnimation(WeiBeiMotion.layout) {
-            store.setLayout(.immersiveConversation)
-            store.revealRightPane(focusing: .agent)
-        }
-    }
-
-    private func appendSelectionAndOpenWriting() {
-        store.appendSelectionToNote()
-        openWriting()
-    }
-
-    private func prepareAgentDraft(_ prompt: String) {
-        withAnimation(WeiBeiMotion.layout) {
-            store.agentDraft = prompt
-            store.setLayout(.immersiveConversation)
-            store.revealRightPane(focusing: .agent)
-        }
     }
 
     private var agentAlignment: Alignment {

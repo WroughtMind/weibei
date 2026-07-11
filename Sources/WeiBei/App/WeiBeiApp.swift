@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import WebKit
 import WeiBeiCore
 
 @MainActor private let sharedWorkspaceStore = WorkspaceStore()
@@ -92,7 +93,7 @@ struct WeiBeiApp: App {
 
                 Divider()
 
-                Button(store.ui("聚焦课程目录", "Focus Course Index")) { animateLayout { store.focus(.library) } }
+                Button(store.ui("聚焦资料库", "Focus Library")) { animateLayout { store.focus(.library) } }
                     .keyboardShortcut("1")
                 Button(store.ui("聚焦阅读", "Focus Reader")) { animateLayout { store.focus(.reader) } }
                     .keyboardShortcut("2")
@@ -110,7 +111,7 @@ struct WeiBeiApp: App {
 
                 Divider()
 
-                Button(store.showLibrary ? store.ui("收起课程目录", "Hide Course Index") : store.ui("打开课程目录", "Show Course Index")) {
+                Button(store.showLibrary ? store.ui("收起资料库", "Hide Library") : store.ui("打开资料库", "Show Library")) {
                     animateLayout {
                         store.toggleLibrary()
                     }
@@ -370,7 +371,8 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
               !capturePath.isEmpty,
               Self.scheduledVerificationCaptures.insert(capturePath).inserted else { return }
 
-        if ["pi-learning-flow", "pi-course-memory-flow"].contains(environment["WEIBEI_VERIFY_SCENARIO"]),
+        let scenario = environment["WEIBEI_VERIFY_SCENARIO"] ?? ""
+        if ["pi-learning-flow", "pi-course-memory-flow", "pane-toggle-continuity-flow", "reader-scroll-persistence-flow"].contains(scenario),
            let workspaceDirectory = environment["WEIBEI_WORKSPACE_DIR"] {
             let stateURL = URL(fileURLWithPath: workspaceDirectory)
                 .appendingPathComponent("verification-state.txt")
@@ -378,7 +380,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
                 in: window,
                 capturePath: capturePath,
                 stateURL: stateURL,
-                remainingAttempts: 600
+                remainingAttempts: scenario == "pane-toggle-continuity-flow" ? 1_800 : 600
             )
             return
         }
@@ -422,8 +424,70 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
               bounds.height >= 400,
               let bitmap = contentView.bitmapImageRepForCachingDisplay(in: bounds) else { return }
         contentView.cacheDisplay(in: bounds, to: bitmap)
-        guard let png = bitmap.representation(using: .png, properties: [:]) else { return }
-        try? png.write(to: URL(fileURLWithPath: capturePath), options: .atomic)
+        let baseImage = NSImage(size: bounds.size)
+        baseImage.addRepresentation(bitmap)
+        let webViews = visibleWebViews(in: contentView)
+        captureWebViews(webViews, at: 0, relativeTo: contentView, overlays: []) { overlays in
+            let composite = NSImage(size: bounds.size)
+            composite.lockFocus()
+            baseImage.draw(in: bounds)
+            for overlay in overlays {
+                overlay.image.draw(in: overlay.rect, from: .zero, operation: .copy, fraction: 1)
+            }
+            composite.unlockFocus()
+            guard let tiff = composite.tiffRepresentation,
+                  let representation = NSBitmapImageRep(data: tiff),
+                  let png = representation.representation(using: .png, properties: [:]) else { return }
+            try? png.write(to: URL(fileURLWithPath: capturePath), options: .atomic)
+        }
+    }
+
+    private struct WebViewSnapshot {
+        var rect: NSRect
+        var image: NSImage
+    }
+
+    private static func visibleWebViews(in view: NSView) -> [WKWebView] {
+        view.subviews.flatMap { child -> [WKWebView] in
+            var matches = child.isHidden ? [] : visibleWebViews(in: child)
+            if let webView = child as? WKWebView, !webView.isHidden, webView.window != nil {
+                matches.insert(webView, at: 0)
+            }
+            return matches
+        }
+    }
+
+    private static func captureWebViews(
+        _ webViews: [WKWebView],
+        at index: Int,
+        relativeTo contentView: NSView,
+        overlays: [WebViewSnapshot],
+        completion: @escaping ([WebViewSnapshot]) -> Void
+    ) {
+        guard webViews.indices.contains(index) else {
+            completion(overlays)
+            return
+        }
+        let webView = webViews[index]
+        let converted = webView.convert(webView.bounds, to: contentView)
+        let rect = contentView.isFlipped
+            ? NSRect(x: converted.minX, y: contentView.bounds.height - converted.maxY, width: converted.width, height: converted.height)
+            : converted
+        webView.takeSnapshot(with: nil) { image, _ in
+            DispatchQueue.main.async {
+                var nextOverlays = overlays
+                if let image, rect.width > 1, rect.height > 1 {
+                    nextOverlays.append(WebViewSnapshot(rect: rect, image: image))
+                }
+                captureWebViews(
+                    webViews,
+                    at: index + 1,
+                    relativeTo: contentView,
+                    overlays: nextOverlays,
+                    completion: completion
+                )
+            }
+        }
     }
 }
 
@@ -1033,7 +1097,7 @@ struct SettingsView: View {
     private var shortcutRows: [(String, String, String)] {
         [
             (store.ui("命令面板", "Command Palette"), "⌘K", store.ui("搜索并执行魏碑动作。", "Search and run WeiBei actions.")),
-            (store.ui("课程目录", "Course Index"), "⌘B", store.ui("打开或收起课程目录。", "Show or hide the course index.")),
+            (store.ui("资料库", "Library"), "⌘B", store.ui("打开或收起资料库。", "Show or hide the library.")),
             (store.ui("资料内搜索", "Search in Material"), "⌘F", store.ui("搜索当前打开的资料。", "Search the current material.")),
             (store.ui("聚焦阅读", "Focus Reader"), "⌘2", store.ui("把键盘焦点交给阅读区。", "Move keyboard focus to the reader.")),
             (store.ui("聚焦笔记", "Focus Notes"), "⌘3", store.ui("把键盘焦点交给笔记区。", "Move keyboard focus to notes.")),
@@ -1044,7 +1108,7 @@ struct SettingsView: View {
 
     private var dataSettings: some View {
         VStack(alignment: .leading, spacing: 16) {
-            settingsGroup(store.ui("课程目录", "Course Index")) {
+            settingsGroup(store.ui("资料库", "Library")) {
                 settingsRow(
                     title: store.ui("导入资料", "Import Material"),
                     detail: store.ui("导入 HTML、PDF、Markdown 或文本文件。", "Import HTML, PDF, Markdown, or text files.")

@@ -34,10 +34,15 @@ if [[ "$MODE" == "check" || "$MODE" == "--debug" || "$MODE" == "debug" ]]; then
 fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+FINAL_DIST_DIR="$ROOT_DIR/dist"
+FINAL_APP_BUNDLE="$FINAL_DIST_DIR/$APP_DISPLAY_NAME.app"
+FINAL_APP_BINARY="$FINAL_APP_BUNDLE/Contents/MacOS/$PRODUCT_NAME"
 if [[ "$VERIFY_MODE" == true ]]; then
-  DIST_DIR="${TMPDIR:-/tmp}/weibei-verify-$UID"
+  DIST_DIR="${TMPDIR:-/tmp}/weibei-verify-$UID-$$"
+elif [[ "$PACKAGE_ONLY" == true ]]; then
+  DIST_DIR="${TMPDIR:-/tmp}/weibei-package-$UID"
 else
-  DIST_DIR="$ROOT_DIR/dist"
+  DIST_DIR="$FINAL_DIST_DIR"
 fi
 APP_BUNDLE="$DIST_DIR/$APP_DISPLAY_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
@@ -45,6 +50,9 @@ APP_MACOS="$APP_CONTENTS/MacOS"
 APP_HELPERS="$APP_CONTENTS/Helpers"
 APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$PRODUCT_NAME"
+FINAL_AUDIT_DIR="$DIST_DIR/final-audit"
+FINAL_AUDIT_APP_BUNDLE="$FINAL_AUDIT_DIR/$APP_DISPLAY_NAME.app"
+FINAL_AUDIT_APP_BINARY="$FINAL_AUDIT_APP_BUNDLE/Contents/MacOS/$PRODUCT_NAME"
 PDF_TEXT_WORKER_NAME="WeiBeiPDFTextWorker"
 PDF_TEXT_WORKER="$APP_HELPERS/$PDF_TEXT_WORKER_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
@@ -55,14 +63,29 @@ VERIFY_STDERR="$VERIFY_DATA_DIR/app-stderr.log"
 VERIFY_SCENARIO="${WEIBEI_VERIFY_SCENARIO:-offline-learning-flow}"
 VERIFY_WINDOW_SIZE="${WEIBEI_VERIFY_WINDOW_SIZE:-}"
 VERIFY_INSPIRATION_ID="${WEIBEI_VERIFY_INSPIRATION_ID:-}"
-VERIFY_CAPTURE_PATH="${TMPDIR:-/tmp}/weibei-self-capture-$UID-$VERIFY_SCENARIO.png"
+VERIFY_CAPTURE_PATH="${TMPDIR:-/tmp}/weibei-self-capture-$UID-$$-$VERIFY_SCENARIO.png"
+
+target_app_is_running() {
+  local pid command target_binary="$APP_BINARY"
+  if [[ "$PACKAGE_ONLY" == true ]]; then
+    target_binary="$FINAL_APP_BINARY"
+  fi
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+    if [[ "$command" == "$target_binary" || "$command" == "$target_binary "* ]]; then
+      return 0
+    fi
+  done < <(pgrep -x "$PRODUCT_NAME" 2>/dev/null || true)
+  return 1
+}
 
 if [[ "$CHECK_ONLY" == true ]]; then
   :
 elif [[ "$VERIFY_MODE" == true ]]; then
   :
 elif [[ "$PACKAGE_ONLY" == true ]]; then
-  if pgrep -x "$PRODUCT_NAME" >/dev/null; then
+  if target_app_is_running; then
     echo "package blocked: $APP_DISPLAY_NAME is running; quit it first so dist can be replaced without touching the active window." >&2
     exit 6
   fi
@@ -159,6 +182,7 @@ if [[ "$CHECK_ONLY" != true ]]; then
 </dict>
 </plist>
 PLIST
+  /usr/bin/xattr -cr "$APP_BUNDLE"
   /usr/bin/codesign --force --sign - --timestamp=none "$PDF_TEXT_WORKER" >/dev/null
   /usr/bin/codesign --force --sign - --timestamp=none "$APP_BUNDLE" >/dev/null
   /usr/bin/codesign --verify --deep --strict "$APP_BUNDLE"
@@ -174,6 +198,36 @@ PLIST
   fi
   WEIBEI_PI_EXECUTABLE="$PACKAGED_PI" WEIBEI_PI_APP_BUNDLE="$APP_BUNDLE" WEIBEI_PI_LIVE_CHECK=0 \
     "$BUILD_DIR/WeiBeiPiCheck"
+  if [[ "$PACKAGE_ONLY" == true ]]; then
+    rm -rf "$FINAL_APP_BUNDLE"
+    mkdir -p "$FINAL_DIST_DIR"
+    /usr/bin/ditto --norsrc --noextattr "$APP_BUNDLE" "$FINAL_APP_BUNDLE"
+    /usr/bin/xattr -cr "$FINAL_APP_BUNDLE"
+    if ! /usr/bin/cmp -s "$APP_BINARY" "$FINAL_APP_BINARY"; then
+      echo "package failed: final app binary changed while copying from signed staging" >&2
+      exit 15
+    fi
+    /usr/bin/codesign --verify --deep "$FINAL_APP_BUNDLE"
+    FINAL_UUID="$(/usr/bin/dwarfdump --uuid "$FINAL_APP_BINARY" | /usr/bin/awk 'NR == 1 {print $2}')"
+    if [[ -z "$FINAL_UUID" || "$FINAL_UUID" != "$PACKAGED_UUID" ]]; then
+      echo "package failed: final app binary UUID changed while copying from signed staging" >&2
+      exit 16
+    fi
+    rm -rf "$FINAL_AUDIT_DIR"
+    mkdir -p "$FINAL_AUDIT_DIR"
+    /usr/bin/ditto --norsrc --noextattr "$FINAL_APP_BUNDLE" "$FINAL_AUDIT_APP_BUNDLE"
+    /usr/bin/xattr -cr "$FINAL_AUDIT_APP_BUNDLE"
+    /usr/bin/codesign --verify --deep --strict "$FINAL_AUDIT_APP_BUNDLE"
+    if ! /usr/bin/cmp -s "$FINAL_APP_BINARY" "$FINAL_AUDIT_APP_BINARY"; then
+      echo "package failed: strict-audit copy changed the final app binary" >&2
+      exit 17
+    fi
+    AUDITED_UUID="$(/usr/bin/dwarfdump --uuid "$FINAL_AUDIT_APP_BINARY" | /usr/bin/awk 'NR == 1 {print $2}')"
+    if [[ -z "$AUDITED_UUID" || "$AUDITED_UUID" != "$FINAL_UUID" ]]; then
+      echo "package failed: strict-audit copy changed the final app binary UUID" >&2
+      exit 18
+    fi
+  fi
 fi
 
 open_app() {
@@ -188,12 +242,20 @@ cleanup_verify_app() {
 
 open_app_for_verify() {
   local agent_environment=(WEIBEI_FORCE_OFFLINE_AGENT=1)
+  local pane_trace_dir=""
+  local pane_trace_samples=0
   if [[ "$VERIFY_SCENARIO" == "pi-learning-flow" || "$VERIFY_SCENARIO" == "pi-course-memory-flow" ]]; then
     agent_environment=(
       WEIBEI_FORCE_OFFLINE_AGENT=0
       WEIBEI_PI_PROVIDER=openai-codex
       WEIBEI_PI_MODEL=gpt-5.5
     )
+  fi
+  if [[ "$VERIFY_SCENARIO" == "pane-layout-stability-flow" || "$VERIFY_SCENARIO" == "pane-toggle-continuity-flow" || "$VERIFY_SCENARIO" == "pane-reorder-width-flow" ]]; then
+    pane_trace_dir="$VERIFY_DATA_DIR/pane-trace"
+  fi
+  if [[ "$VERIFY_SCENARIO" == "pane-layout-stability-flow" ]]; then
+    pane_trace_samples=1
   fi
   rm -rf "$VERIFY_DATA_DIR"
   mkdir -p "$VERIFY_DATA_DIR"
@@ -206,6 +268,8 @@ open_app_for_verify() {
     "WEIBEI_VERIFY_WINDOW_SIZE=$VERIFY_WINDOW_SIZE" \
     "WEIBEI_VERIFY_INSPIRATION_ID=$VERIFY_INSPIRATION_ID" \
     "WEIBEI_VERIFY_CAPTURE_PATH=$VERIFY_CAPTURE_PATH" \
+    "WEIBEI_VERIFY_PANE_TRACE_DIR=$pane_trace_dir" \
+    "WEIBEI_VERIFY_PANE_TRACE_SAMPLES=$pane_trace_samples" \
     "$APP_BINARY" >"$VERIFY_STDOUT" 2>"$VERIFY_STDERR" &
   VERIFY_PID="$!"
   trap cleanup_verify_app EXIT
@@ -382,9 +446,203 @@ verify_empty_workspace_state() {
   return 1
 }
 
+verify_linked_sources_flow() {
+  if [[ "$VERIFY_SCENARIO" != "linked-sources-flow" ]]; then
+    return 0
+  fi
+
+  local workspace_file="$VERIFY_DATA_DIR/workspace.json"
+  for _ in {1..30}; do
+    if [[ -f "$workspace_file" ]] \
+      && /usr/bin/grep -q '"noteSourceLinks"' "$workspace_file" \
+      && /usr/bin/grep -q '"sourceItemID":"sample-html"' "$workspace_file" \
+      && /usr/bin/grep -q '"sourceItemID":"sample-pdf"' "$workspace_file" \
+      && /usr/bin/grep -q '"selectedItemID":"sample-pdf"' "$workspace_file" \
+      && /usr/bin/grep -q '"showLibrary":false' "$workspace_file" \
+      && /usr/bin/grep -q '"activeNotebookItemID":"file:' "$workspace_file"; then
+      return 0
+    fi
+    sleep 0.2
+  done
+
+  echo "verify failed: linked-sources-flow did not persist two sources while keeping the active note independent." >&2
+  return 1
+}
+
+verify_pane_toggle_continuity() {
+  if [[ "$VERIFY_SCENARIO" != "pane-toggle-continuity-flow" ]]; then
+    return 0
+  fi
+
+  local report_file="$VERIFY_DATA_DIR/pane-toggle-continuity-report.txt"
+  for _ in {1..1800}; do
+    if [[ -f "$report_file" ]]; then
+      if /usr/bin/grep -q '^result=pass$' "$report_file"; then
+        verify_pane_trace_summary 480
+        return $?
+      fi
+      echo "verify failed: pane toggles changed passive reading state or recreated a persistent pane." >&2
+      cat "$report_file" >&2
+      [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
+      return 1
+    fi
+    sleep 0.2
+  done
+
+  echo "verify failed: pane-toggle continuity report was not produced." >&2
+  [[ -f "$VERIFY_DATA_DIR/verification-state.txt" ]] && cat "$VERIFY_DATA_DIR/verification-state.txt" >&2
+  [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
+  return 1
+}
+
+verify_pane_trace_summary() {
+  local minimum_transitions="$1"
+  local summary_file="$VERIFY_DATA_DIR/pane-trace/summary.json"
+  for _ in {1..100}; do
+    if [[ -s "$summary_file" ]] \
+      && /usr/bin/jq -e ".transitions >= $minimum_transitions" "$summary_file" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+  if [[ ! -s "$summary_file" ]]; then
+    echo "verify failed: pane frame summary was not produced." >&2
+    return 1
+  fi
+  if ! /usr/bin/jq -e ".transitions >= $minimum_transitions and .ownershipFailures == 0 and .blankVisibleFailures == 0 and .identityFailures == 0 and (.roleIdentities | length) == 3" "$summary_file" >/dev/null; then
+    echo "verify failed: pane frame summary recorded unstable ownership or an empty visible slot." >&2
+    /usr/bin/jq . "$summary_file" >&2
+    return 1
+  fi
+  /usr/bin/jq -r '"pane_summary_samples=\(.samples)\npane_summary_transitions=\(.transitions)\npane_summary_failures=\(.ownershipFailures + .blankVisibleFailures + .identityFailures)"' "$summary_file"
+}
+
+verify_pane_layout_stability() {
+  if [[ "$VERIFY_SCENARIO" != "pane-layout-stability-flow" ]]; then
+    return 0
+  fi
+
+  local report_file="$VERIFY_DATA_DIR/pane-layout-stability-report.txt"
+  local trace_dir="$VERIFY_DATA_DIR/pane-trace"
+  for _ in {1..180}; do
+    if [[ -f "$report_file" ]]; then
+      if ! /usr/bin/grep -q '^result=pass$' "$report_file"; then
+        echo "verify failed: pane state changed while exercising the stable workspace." >&2
+        cat "$report_file" >&2
+        [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
+        return 1
+      fi
+      break
+    fi
+    sleep 0.2
+  done
+
+  if [[ ! -f "$report_file" ]]; then
+    echo "verify failed: pane-layout stability report was not produced." >&2
+    [[ -f "$VERIFY_DATA_DIR/verification-state.txt" ]] && cat "$VERIFY_DATA_DIR/verification-state.txt" >&2
+    [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
+    return 1
+  fi
+
+  local trace_files=()
+  for _ in {1..50}; do
+    shopt -s nullglob
+    trace_files=("$trace_dir"/container-*.json)
+    shopt -u nullglob
+    (( ${#trace_files[@]} >= 120 )) && break
+    sleep 0.1
+  done
+  if (( ${#trace_files[@]} < 120 )); then
+    echo "verify failed: expected frame-level pane traces, found ${#trace_files[@]}." >&2
+    return 1
+  fi
+
+  if ! /usr/bin/jq -s -e '
+    def role_is_stable($role):
+      ([.[] | .roles[] | select(.role == $role) | .hostID] | unique | length) == 1
+      and ([.[] | .roles[] | select(.role == $role) | .parentID] | unique | length) == 1
+      and ([.[] | .roles[] | select(.role == $role) | .contentHostID] | unique | length) == 1
+      and ([.[] | .roles[] | select(.role == $role) | .contentParentID] | unique | length) == 1;
+    ([.[].recorderID] | unique | length) == 1
+    and ([.[].transition] | unique | length) >= 8
+    and all(.[]; .stableOwnership == true and .noBlankVisibleSlots == true)
+    and all((sort_by(.transition) | group_by(.transition))[]; length >= 15)
+    and role_is_stable("reader")
+    and role_is_stable("agent")
+    and role_is_stable("notes")
+  ' "${trace_files[@]}" >/dev/null; then
+    echo "verify failed: a pane host changed identity/parent or exposed an empty visible slot during animation." >&2
+    /usr/bin/jq -s '{samples:length, transitions:([.[].transition] | unique | length), ownership_failures:[.[] | select(.stableOwnership != true)] | length, blank_visible_failures:[.[] | select(.noBlankVisibleSlots != true)] | length}' "${trace_files[@]}" >&2
+    return 1
+  fi
+
+  local transition_count
+  transition_count="$(/usr/bin/jq -s '[.[].transition] | unique | length' "${trace_files[@]}")"
+  echo "pane_trace_samples=${#trace_files[@]}"
+  echo "pane_trace_transitions=$transition_count"
+  echo "pane_host_and_parent_identity=stable"
+  echo "pane_visible_slots=nonblank"
+}
+
+verify_pane_reorder_width() {
+  if [[ "$VERIFY_SCENARIO" != "pane-reorder-width-flow" ]]; then
+    return 0
+  fi
+
+  local report_file="$VERIFY_DATA_DIR/pane-reorder-width-report.txt"
+  for _ in {1..180}; do
+    if [[ -f "$report_file" ]]; then
+      if ! /usr/bin/grep -q '^result=pass$' "$report_file"; then
+        echo "verify failed: pane reorder, width restoration, or persistent state changed unexpectedly." >&2
+        cat "$report_file" >&2
+        [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
+        return 1
+      fi
+      verify_pane_trace_summary 4
+      return $?
+    fi
+    sleep 0.2
+  done
+
+  echo "verify failed: pane reorder and width report was not produced." >&2
+  [[ -f "$VERIFY_DATA_DIR/verification-state.txt" ]] && cat "$VERIFY_DATA_DIR/verification-state.txt" >&2
+  [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
+  return 1
+}
+
+verify_reader_scroll_persistence() {
+  if [[ "$VERIFY_SCENARIO" != "reader-scroll-persistence-flow" ]]; then
+    return 0
+  fi
+
+  local report_file="$VERIFY_DATA_DIR/reader-scroll-persistence-report.txt"
+  for _ in {1..120}; do
+    if [[ -f "$report_file" ]]; then
+      if /usr/bin/grep -q '^result=pass$' "$report_file"; then
+        return 0
+      fi
+      echo "verify failed: user scroll did not persist and restore the HTML section." >&2
+      cat "$report_file" >&2
+      [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
+      return 1
+    fi
+    sleep 0.2
+  done
+
+  echo "verify failed: reader scroll persistence report was not produced." >&2
+  [[ -f "$VERIFY_DATA_DIR/verification-state.txt" ]] && cat "$VERIFY_DATA_DIR/verification-state.txt" >&2
+  [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
+  return 1
+}
+
 finish_verify_window() {
   verify_learning_flow_persistence
   verify_empty_workspace_state
+  verify_linked_sources_flow
+  verify_pane_toggle_continuity
+  verify_pane_layout_stability
+  verify_pane_reorder_width
+  verify_reader_scroll_persistence
   if [[ "$RUN_VISUAL_VERIFY" == true ]]; then
     visual_verify_window
   fi
