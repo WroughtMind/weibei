@@ -20,14 +20,14 @@ const ALLOWED_TOOLS = new Set([
 ]);
 
 const LIMITS = {
-  contextFileBytes: 2 * 1024 * 1024,
+  contextFileBytes: 4 * 1024 * 1024,
   identifier: 256,
   title: 300,
   question: 4_000,
   materialText: 18_000,
   noteText: 6_000,
   selectionText: 2_000,
-  recentMessages: 8,
+  recentMessages: 20,
   recentMessageText: 1_200,
   messageSource: 300,
   courseCatalogItems: 500,
@@ -113,6 +113,7 @@ interface LearningMemoryEntrySnapshot {
 interface StudyLocationSnapshot {
   itemID: string;
   itemTitle: string;
+  locationID?: string;
   locationTitle?: string;
   pageIndex?: number;
   lastStudiedAt: number;
@@ -176,6 +177,9 @@ interface CourseSearchToolDetails {
   contextRevision: string;
   query: string;
   results: CourseItemSnapshot[];
+  evidenceLabels: string[];
+  jumpReferences: string[];
+  jumpEvidence: Record<string, string>;
 }
 
 interface LearningMemoryToolDetails {
@@ -183,6 +187,8 @@ interface LearningMemoryToolDetails {
   contextRevision: string;
   memoryRevision: number;
   learning: LearningSnapshot;
+  jumpReferences: string[];
+  jumpEvidence: Record<string, string>;
 }
 
 interface LearningUpdateDetails {
@@ -197,6 +203,11 @@ interface LearningUpdateDetails {
     text: string;
     evidence: string;
     origin: "userStatement" | "agentInference";
+  }>;
+  resolutions: Array<{
+    memoryID: string;
+    text: string;
+    evidence: string;
   }>;
 }
 
@@ -469,6 +480,10 @@ function readLearning(value: unknown): LearningSnapshot {
     lastLocation = {
       itemID: requireIdentifier(location.itemID, "learning.lastLocation.itemID"),
       itemTitle: truncate(requireString(location.itemTitle, "learning.lastLocation.itemTitle"), LIMITS.title),
+      locationID:
+        location.locationID === undefined || location.locationID === null
+          ? undefined
+          : requireIdentifier(location.locationID, "learning.lastLocation.locationID"),
       locationTitle:
         location.locationTitle === undefined || location.locationTitle === null
           ? undefined
@@ -563,10 +578,90 @@ function contextRevisionFromDetails(details: unknown): string | undefined {
 }
 
 function evidenceLabels(snapshot: ContextSnapshotV2): string[] {
-  const labels = [`[笔记：${snapshot.note.title}]`];
-  if (snapshot.material) labels.push(`[材料：${snapshot.material.title}]`);
-  if (snapshot.selection) labels.push(`[选区：${snapshot.selection.title}]`);
+  const labels: string[] = [];
+  if (snapshot.note.text.trim()) labels.push(`[笔记：${snapshot.note.title}]`);
+  if (snapshot.material?.text.trim()) labels.push(`[材料：${snapshot.material.title}]`);
+  if (snapshot.selection?.text.trim()) labels.push(`[选区：${snapshot.selection.title}]`);
   return labels;
+}
+
+function currentTurnEvidenceMatches(snapshot: ContextSnapshotV2, evidence: string): boolean {
+  const statement = currentTurnEvidenceStatement(evidence);
+  if (!statement || statement.length < 2) return false;
+  const normalize = (value: string) => value.replace(/[\p{P}\p{Z}\s]/gu, "");
+  if (statement.length < 4) return normalize(statement) === normalize(snapshot.question);
+  let searchStart = 0;
+  while (searchStart < snapshot.question.length) {
+    const index = snapshot.question.indexOf(statement, searchStart);
+    if (index < 0) return false;
+    const end = index + statement.length;
+    const before = index === 0 ? "" : snapshot.question[index - 1];
+    const after = end >= snapshot.question.length ? "" : snapshot.question[end];
+    const isBoundary = (value: string) => !value || /[\p{P}\p{Z}\s]/u.test(value);
+    const prefix = snapshot.question.slice(0, index).toLowerCase();
+    const immediate = prefix.trimEnd();
+    const immediateNegation = ["不", "没", "未", "无", "别", "勿"]
+      .some((term) => immediate.endsWith(term));
+    const clause = prefix.split(/[，,。！？；;:：.!?]/u).at(-1) ?? prefix;
+    const paddedClause = ` ${clause} `;
+    const negativePhrases = [
+      "不想", "不喜欢", "不太", "不能", "不会", "不要", "不愿", "没有", "没法", "尚未", "还没", "并不", "并非",
+      " not ", " never ", " no ", " without ", "cannot", "can't", "don't", "doesn't", "didn't",
+    ];
+    if (
+      isBoundary(before) &&
+      isBoundary(after) &&
+      !immediateNegation &&
+      !negativePhrases.some((term) => paddedClause.includes(term))
+    ) {
+      return true;
+    }
+    searchStart = end;
+  }
+  return false;
+}
+
+function resolutionEvidenceMatches(snapshot: ContextSnapshotV2, evidence: string): boolean {
+  if (!currentTurnEvidenceMatches(snapshot, evidence)) return false;
+  const statement = currentTurnEvidenceStatement(evidence);
+  if (!statement) return false;
+  const value = statement.toLowerCase();
+  const unresolvedTerms = [
+    "不懂", "不理解", "不会", "没懂", "仍然困惑", "还是困惑", "不知道", "不能区分", "不能够",
+    "还不能", "尚不能", "无法", "没法", "尚未", "还没", "并不", "不太", "不确定",
+    "不正确", "并非正确", "答错", "错误", "不对",
+    "don't understand", "do not understand", "can't", "cannot", "still confused", "not sure",
+    "not able", "unable", "not yet", "have not", "haven't", "incorrect", "not correct", "wrong answer", "is wrong",
+  ];
+  if (unresolvedTerms.some((term) => value.includes(term))) return false;
+  const questionTerms = ["什么", "为什么", "怎么", "为何", "吗", "？", "?", "what", "why", "how"];
+  if (questionTerms.some((term) => value.includes(term))) return false;
+  const masteryTerms = [
+    "懂了", "明白了", "会了", "掌握了", "可以区分", "能够区分", "能解释", "答对", "正确",
+    "解决了", "不再困惑", "understand now", "got it", "can distinguish", "can explain", "correct",
+  ];
+  if (masteryTerms.some((term) => value.includes(term))) return true;
+  const answerMarkers = [
+    "是", "指", "因为", "所以", "而", "但是", "扣除", "等于", "相比", "表示", "反映", "意味着", "即", "=",
+    " is ", " means", "because", "therefore", "while", "equals", "represents", "reflects", "differs",
+  ];
+  if (!answerMarkers.some((term) => value.includes(term))) return false;
+  return (statement.match(/[\p{L}\p{N}]/gu) ?? []).length >= 12;
+}
+
+function currentTurnEvidenceStatement(evidence: string): string | undefined {
+  const prefix = evidence.startsWith("[用户：本轮]")
+    ? "[用户：本轮]"
+    : evidence.startsWith("[会话：当前]")
+      ? "[会话：当前]"
+      : undefined;
+  if (!prefix) return undefined;
+  const statement = evidence
+    .slice(prefix.length)
+    .trim()
+    .replace(/^["'“”‘’]+|["'“”‘’]+$/g, "")
+    .trim();
+  return statement || undefined;
 }
 
 function courseSearchTerms(query: string): string[] {
@@ -601,10 +696,85 @@ function searchCourse(course: CourseSnapshot, query: string, limit: number): Cou
     .map((entry) => entry.item);
 }
 
+function courseJumpReference(
+  course: CourseSnapshot,
+  item: CourseCatalogItemSnapshot,
+  rawHeading?: string,
+): string {
+  const duplicateTitle = course.catalog.filter((candidate) => candidate.title === item.title).length > 1;
+  const ordinal = course.catalog.findIndex((candidate) => candidate.id === item.id) + 1;
+  const ordinalSuffix = duplicateTitle && ordinal > 0 ? `，条目：${ordinal}` : "";
+  const page = rawHeading ? coursePage(rawHeading) : undefined;
+  const heading = rawHeading && !page ? courseHeading(rawHeading) : undefined;
+  const pageSuffix = page ? `，第 ${page} 页` : "";
+  const sectionLocationSuffix = heading?.locationID ? `，章节标识：${heading.locationID}` : "";
+  const sectionOrdinalSuffix = heading?.ordinal ? `，章节序号：${heading.ordinal}` : "";
+  const sectionSuffix = heading?.title ? `，章节：${heading.title}` : "";
+  return `来源：${item.title}${ordinalSuffix}${pageSuffix}${sectionLocationSuffix}${sectionOrdinalSuffix}${sectionSuffix}`;
+}
+
+function courseEvidenceLabel(
+  course: CourseSnapshot,
+  item: CourseCatalogItemSnapshot,
+): string {
+  const duplicateTitle = course.catalog.filter((candidate) => candidate.title === item.title).length > 1;
+  const ordinal = course.catalog.findIndex((candidate) => candidate.id === item.id) + 1;
+  const ordinalSuffix = duplicateTitle && ordinal > 0 ? `，条目：${ordinal}` : "";
+  return item.role === "note"
+    ? `[笔记：${item.title}${ordinalSuffix}]`
+    : `[材料：${item.title}${ordinalSuffix}]`;
+}
+
+function courseHeading(rawHeading: string): { title: string; ordinal?: number; locationID?: string } {
+  const stableMatch = rawHeading.match(/^\[(html-section-[A-Za-z0-9-]+)\]\[html-heading-(\d+)\]\s+(.+)$/);
+  if (stableMatch) {
+    return {
+      title: stableMatch[3],
+      ordinal: Number(stableMatch[2]) + 1,
+      locationID: stableMatch[1],
+    };
+  }
+  const stableOnlyMatch = rawHeading.match(/^\[(html-section-[A-Za-z0-9-]+)\]\s+(.+)$/);
+  if (stableOnlyMatch) return { title: stableOnlyMatch[2], locationID: stableOnlyMatch[1] };
+  const legacyMatch = rawHeading.match(/^\[html-heading-(\d+)\]\s+(.+)$/);
+  if (!legacyMatch) return { title: rawHeading };
+  return { title: legacyMatch[2], ordinal: Number(legacyMatch[1]) + 1 };
+}
+
+function coursePage(rawHeading: string): number | undefined {
+  const match = rawHeading.match(/^第\s*(\d+)\s*页(?:（OCR）)?$/);
+  if (!match) return undefined;
+  const page = Number(match[1]);
+  return Number.isInteger(page) && page > 0 ? page : undefined;
+}
+
+function learningLocationJumpReference(snapshot: ContextSnapshotV2): string | undefined {
+  const location = snapshot.learning.lastLocation;
+  if (!location) return undefined;
+  const item = snapshot.course.catalog.find((candidate) => candidate.id === location.itemID);
+  if (!item) return undefined;
+  if (location.pageIndex && location.pageIndex > 0) {
+    return courseJumpReference(snapshot.course, item, `第 ${location.pageIndex} 页`);
+  }
+  if (
+    (location.locationID?.startsWith("html-section-") ||
+      location.locationID?.startsWith("html-heading-")) &&
+    location.locationTitle
+  ) {
+    return courseJumpReference(
+      snapshot.course,
+      item,
+      `[${location.locationID}] ${location.locationTitle}`,
+    );
+  }
+  return courseJumpReference(snapshot.course, item);
+}
+
 export default function weibeiExtension(pi: ExtensionAPI) {
   let requiredContextRevision: string | undefined;
   let lastReadContextRevision: string | undefined;
   let lastReadMemoryRevision: number | undefined;
+  const searchedCourseItemIDs = new Set<string>();
 
   pi.registerTool({
     name: CONTEXT_TOOL,
@@ -686,7 +856,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       const limit = params.limit ?? 40;
       const catalog = snapshot.course.catalog.slice(offset, offset + limit).map((item) => ({
         ...item,
-        jumpReference: `来源：${item.title}`,
+        jumpReference: courseJumpReference(snapshot.course, item),
       }));
       const pageCatalogIDs = new Set(catalog.map((item) => item.id));
       const catalogByID = new Map(
@@ -747,21 +917,59 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       }
       const query = params.query.trim();
       const results = searchCourse(snapshot.course, query, params.limit ?? 5);
+      results
+        .filter((item) => item.searchText.trim().length > 0)
+        .forEach((item) => searchedCourseItemIDs.add(item.id));
+      const presentedResults = results.map((item) => {
+        const hasEvidence = item.searchText.trim().length > 0;
+        const sectionJumpReferences =
+          hasEvidence && item.kind === "html"
+            ? item.headings
+                .slice(0, 5)
+                .map((heading) => courseJumpReference(snapshot.course, item, heading))
+            : [];
+        const pageJumpReferences =
+          hasEvidence && item.kind === "pdf"
+            ? item.headings
+                .filter((heading) => coursePage(heading) !== undefined)
+                .slice(0, 5)
+                .map((heading) => courseJumpReference(snapshot.course, item, heading))
+            : [];
+        return {
+          ...item,
+          headings: item.headings.map((heading) => courseHeading(heading).title),
+          evidenceLabel: hasEvidence ? courseEvidenceLabel(snapshot.course, item) : undefined,
+          jumpReference: hasEvidence ? courseJumpReference(snapshot.course, item) : undefined,
+          sectionJumpReferences,
+          pageJumpReferences,
+        };
+      });
+      const evidenceLabels = presentedResults.flatMap((item) =>
+        item.evidenceLabel ? [item.evidenceLabel] : [],
+      );
+      const jumpEvidence = Object.fromEntries(
+        presentedResults.flatMap((item) => {
+          if (!item.evidenceLabel || !item.jumpReference) return [];
+          return [item.jumpReference, ...item.sectionJumpReferences, ...item.pageJumpReferences]
+            .map((jumpReference) => [jumpReference, item.evidenceLabel] as const);
+        }),
+      );
+      const jumpReferences = Object.keys(jumpEvidence);
       const details: CourseSearchToolDetails = {
         kind: "course_search",
         contextRevision: snapshot.contextRevision,
         query,
         results,
+        evidenceLabels,
+        jumpReferences,
+        jumpEvidence,
       };
       return {
         content: [
           {
             type: "text",
             text: JSON.stringify(
-              results.map((item) => ({
-                ...item,
-                jumpReference: `来源：${item.title}`,
-              })),
+              presentedResults,
               null,
               2,
             ),
@@ -786,14 +994,30 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         throw new Error(`必须先调用 ${CONTEXT_TOOL} 读取本轮当前上下文`);
       }
       lastReadMemoryRevision = snapshot.learning.memoryRevision;
+      const locationJumpReference = learningLocationJumpReference(snapshot);
+      const jumpReferences = locationJumpReference ? [locationJumpReference] : [];
+      const jumpEvidence = locationJumpReference
+        ? { [locationJumpReference]: "[学习记录：上次位置]" }
+        : {};
       const details: LearningMemoryToolDetails = {
         kind: "learning_memory",
         contextRevision: snapshot.contextRevision,
         memoryRevision: snapshot.learning.memoryRevision,
         learning: snapshot.learning,
+        jumpReferences,
+        jumpEvidence,
       };
+      const learningForTool = locationJumpReference && snapshot.learning.lastLocation
+        ? {
+            ...snapshot.learning,
+            lastLocation: {
+              ...snapshot.learning.lastLocation,
+              jumpReference: locationJumpReference,
+            },
+          }
+        : snapshot.learning;
       return {
-        content: [{ type: "text", text: JSON.stringify(snapshot.learning, null, 2) }],
+        content: [{ type: "text", text: JSON.stringify(learningForTool, null, 2) }],
         details,
       };
     },
@@ -838,6 +1062,18 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           ),
           { maxItems: 12 },
         ),
+        resolutions: Type.Optional(
+          Type.Array(
+            Type.Object(
+              {
+                memoryID: Type.String({ minLength: 1, maxLength: LIMITS.identifier }),
+                evidence: Type.String({ minLength: 1, maxLength: LIMITS.learningEvidence }),
+              },
+              { additionalProperties: false },
+            ),
+            { maxItems: 12 },
+          ),
+        ),
       },
       { additionalProperties: false },
     ),
@@ -868,9 +1104,9 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         "[用户：本轮]",
         "[会话：当前]",
         ...evidenceLabels(current),
-        ...current.course.catalog.map((item) =>
-          item.role === "note" ? `[笔记：${item.title}]` : `[材料：${item.title}]`,
-        ),
+        ...current.course.catalog
+          .filter((item) => searchedCourseItemIDs.has(item.id))
+          .map((item) => courseEvidenceLabel(current.course, item)),
       ];
       if (
         entries.some(
@@ -885,6 +1121,16 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       if (
         entries.some(
           (entry) =>
+            (entry.evidence.startsWith("[用户：本轮]") ||
+              entry.evidence.startsWith("[会话：当前]")) &&
+            !currentTurnEvidenceMatches(current, entry.evidence),
+        )
+      ) {
+        throw new Error("本轮用户或会话依据必须在标签后逐字引用用户本轮真实原话");
+      }
+      if (
+        entries.some(
+          (entry) =>
             entry.origin === "userStatement" && !entry.evidence.startsWith("[用户：本轮]"),
         )
       ) {
@@ -894,7 +1140,37 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         .map((item) => item.trim())
         .filter((item) => item.length > 0);
       const sessionSummary = params.sessionSummary?.trim();
-      if (!sessionSummary && !params.suggestedPhase && suggestedNext.length === 0 && entries.length === 0) {
+      const activeMemoryByID = new Map(
+        current.learning.memories
+          .filter(
+            (memory) =>
+              memory.status === "active" &&
+              ["goal", "confusion", "nextStep"].includes(memory.kind),
+          )
+          .map((memory) => [memory.id, memory] as const),
+      );
+      const resolutions = (params.resolutions ?? []).map((resolution) => {
+        const memory = activeMemoryByID.get(resolution.memoryID);
+        const evidence = resolution.evidence.trim();
+        if (!memory) {
+          throw new Error("只能结案当前学习记忆中仍处于活跃状态的项目");
+        }
+        if (!resolutionEvidenceMatches(current, evidence)) {
+          throw new Error("学习记忆结案必须逐字引用用户本轮的确认或回忆表现");
+        }
+        return {
+          memoryID: memory.id,
+          text: memory.text,
+          evidence,
+        };
+      });
+      if (
+        !sessionSummary &&
+        !params.suggestedPhase &&
+        suggestedNext.length === 0 &&
+        entries.length === 0 &&
+        resolutions.length === 0
+      ) {
         throw new Error("学习状态建议不能为空");
       }
       const details: LearningUpdateDetails = {
@@ -905,6 +1181,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         suggestedPhase: params.suggestedPhase,
         suggestedNext,
         entries,
+        resolutions,
       };
       return {
         content: [
@@ -992,6 +1269,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event) => {
     lastReadContextRevision = undefined;
     lastReadMemoryRevision = undefined;
+    searchedCourseItemIDs.clear();
 
     let purpose = "unavailable";
     let revision = "unavailable";

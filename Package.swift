@@ -10,7 +10,8 @@ let package = Package(
         .executable(name: "WeiBei", targets: ["WeiBei"]),
         .executable(name: "WeiBeiSelfCheck", targets: ["WeiBeiSelfCheck"]),
         .executable(name: "WeiBeiWebEditorCheck", targets: ["WeiBeiWebEditorCheck"]),
-        .executable(name: "WeiBeiPiCheck", targets: ["WeiBeiPiCheck"])
+        .executable(name: "WeiBeiPiCheck", targets: ["WeiBeiPiCheck"]),
+        .executable(name: "WeiBeiPDFTextWorker", targets: ["WeiBeiPDFTextWorker"])
     ],
     targets: [
         .target(
@@ -22,7 +23,8 @@ let package = Package(
                 .linkedFramework("AppKit"),
                 .linkedFramework("PDFKit"),
                 .linkedFramework("Security"),
-                .linkedFramework("Vision")
+                .linkedFramework("Vision"),
+                .linkedLibrary("sqlite3")
             ]
         ),
         .executableTarget(
@@ -57,6 +59,12 @@ let package = Package(
         .executableTarget(
             name: "WeiBeiPiCheck",
             dependencies: ["WeiBeiCore"]
+        ),
+        .executableTarget(
+            name: "WeiBeiPDFTextWorker",
+            linkerSettings: [
+                .linkedFramework("PDFKit")
+            ]
         )
     ]
 )

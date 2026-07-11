@@ -61,6 +61,34 @@ private func checkRPCDecoding() throws {
     let contextRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-context","toolName":"weibei_context","isError":false,"result":{"details":{"kind":"weibei_context","contextRevision":"revision-7"}}}"#.utf8))
     try piRequire(contextRead == .contextRead(id: "tool-context", contextRevision: "revision-7"), "PI context reads preserve the validated revision")
 
+    let courseRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-course","toolName":"weibei_course_search","isError":false,"result":{"details":{"kind":"course_search","contextRevision":"revision-7","results":[{"title":"利率","role":"material","searchText":"利率正文"},{"title":"课堂笔记","role":"note","searchText":"笔记正文"},{"title":"只有标题","role":"material","searchText":""}],"evidenceLabels":["[材料：利率，条目：2]","[笔记：课堂笔记]"],"jumpEvidence":{"来源：利率，条目：2，第 3 页":"[材料：利率，条目：2]"}}}}"#.utf8))
+    try piRequire(
+        courseRead == .courseSourcesRead(
+            id: "tool-course",
+            contextRevision: "revision-7",
+            labels: ["[材料：利率，条目：2]", "[笔记：课堂笔记]"],
+            jumpEvidence: ["来源：利率，条目：2，第 3 页": "[材料：利率，条目：2]"]
+        ),
+        "PI course tools expose only labels backed by non-empty source excerpts read this turn"
+    )
+    let mapRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-map","toolName":"weibei_course_map","isError":false,"result":{"details":{"kind":"course_map","catalog":[{"title":"只有目录标题","role":"material"}]}}}"#.utf8))
+    try piRequire(
+        mapRead == .event("tool_execution_end"),
+        "PI course-map metadata does not unlock a material as content evidence"
+    )
+
+    let memoryRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-learning","toolName":"weibei_learning_memory","isError":false,"result":{"details":{"kind":"learning_memory","contextRevision":"revision-7","memoryRevision":4,"learning":{"memories":[]},"jumpEvidence":{}}}}"#.utf8))
+    try piRequire(
+        memoryRead == .learningMemoryRead(
+            id: "tool-learning",
+            contextRevision: "revision-7",
+            memoryRevision: 4,
+            labels: ["[学习记忆：无记录]"],
+            jumpEvidence: [:]
+        ),
+        "PI learning-memory reads preserve the validated revision and expose only the memory evidence that actually exists"
+    )
+
     let proposalData = try JSONSerialization.data(withJSONObject: [
         "type": "tool_execution_end",
         "toolCallId": "tool-3",
@@ -110,6 +138,13 @@ private func checkRPCDecoding() throws {
                         "origin": "userStatement",
                     ],
                 ],
+                "resolutions": [
+                    [
+                        "memoryID": "00000000-0000-0000-0000-000000000004",
+                        "text": "曾经不熟悉费雪方程",
+                        "evidence": "[会话：当前] 用户在回忆题中正确解释",
+                    ],
+                ],
             ],
         ],
     ])
@@ -130,6 +165,13 @@ private func checkRPCDecoding() throws {
                         evidence: "[用户：本轮] 用户明确说不熟悉",
                         origin: .userStatement
                     ),
+                ],
+                resolutions: [
+                    StudyAgentMemoryResolution(
+                        memoryID: "00000000-0000-0000-0000-000000000004",
+                        text: "曾经不熟悉费雪方程",
+                        evidence: "[会话：当前] 用户在回忆题中正确解释"
+                    ),
                 ]
             )
         ),
@@ -149,7 +191,7 @@ private func checkRPCDecoding() throws {
 }
 
 private func checkStudyAgentContext() throws {
-    let recentMessages = (0..<10).map { index in
+    let recentMessages = (0..<24).map { index in
         AgentMessage(role: index.isMultiple(of: 2) ? .user : .assistant, text: "message-\(index)" + String(repeating: "字", count: 1_300), source: "source-\(index)")
     }
     let courseItems = (0..<90).map { index in
@@ -196,6 +238,7 @@ private func checkStudyAgentContext() throws {
             lastLocation: StudyLocation(
                 itemID: "item-0",
                 itemTitle: String(repeating: "位", count: 320),
+                locationID: "html-section-a1b2c3d4",
                 locationTitle: String(repeating: "章", count: 320),
                 pageIndex: 12
             ),
@@ -243,6 +286,61 @@ private func checkStudyAgentContext() throws {
         contextRevision: "revision-companion"
     )
     try piRequire(companionRequest.resolvedWorkflow == .studyCompanion, "study-agent automatic routing selects the study companion")
+    try piRequire(
+        StudyAgentQuestionScope.allowsLearningOnlyAnswer("我上次学到哪了？请告诉我位置和下一步。")
+            && StudyAgentQuestionScope.allowsLearningOnlyAnswer("我的学习目标是什么？")
+            && !StudyAgentQuestionScope.allowsLearningOnlyAnswer("继续学习")
+            && !StudyAgentQuestionScope.allowsLearningOnlyAnswer("continue learning")
+            && !StudyAgentQuestionScope.allowsLearningOnlyAnswer("我上次学到的费雪方程怎么算？")
+            && !StudyAgentQuestionScope.allowsLearningOnlyAnswer("我的困惑是名义利率；请解释它和实际利率的区别。"),
+        "learning-only answers are limited to structured progress and memory questions, not course-content questions that mention prior study"
+    )
+    try piRequire(
+        StudyAgentCurrentTurnEvidence.matches(
+            "[用户：本轮]我还不懂名义利率和实际利率的区别",
+            question: "上次学到哪？我还不懂名义利率和实际利率的区别，请记住。"
+        )
+            && StudyAgentCurrentTurnEvidence.matches(
+                "[用户：本轮]I like reasoning from first principles",
+                question: "I do not like rote memorization, I like reasoning from first principles."
+            )
+            && !StudyAgentCurrentTurnEvidence.matches(
+                "[用户：本轮]喜欢死记硬背",
+                question: "我不喜欢死记硬背"
+            )
+            && !StudyAgentCurrentTurnEvidence.matches(
+                "[用户：本轮]喜欢死记硬背",
+                question: "我不太喜欢死记硬背"
+            )
+            && !StudyAgentCurrentTurnEvidence.matches(
+                "[用户：本轮]like rote memorization",
+                question: "I do not like rote memorization"
+            ),
+        "current-turn memory evidence requires a bounded verbatim clause and cannot omit leading negation"
+    )
+    try piRequire(
+        !StudyAgentResolutionEvidence.matches(
+            "[用户：本轮]我还不能够区分名义利率和实际利率",
+            question: "我还不能够区分名义利率和实际利率"
+        )
+            && !StudyAgentResolutionEvidence.matches(
+                "[用户：本轮]I am not yet able to distinguish nominal and real rates",
+                question: "I am not yet able to distinguish nominal and real rates"
+            )
+            && !StudyAgentResolutionEvidence.matches(
+                "[用户：本轮]这个答案不正确",
+                question: "这个答案不正确"
+            )
+            && !StudyAgentResolutionEvidence.matches(
+                "[用户：本轮]This answer is not correct",
+                question: "This answer is not correct"
+            )
+            && StudyAgentResolutionEvidence.matches(
+                "[用户：本轮]我已经能够区分名义利率和实际利率了",
+                question: "我已经能够区分名义利率和实际利率了"
+            ),
+        "learning-memory resolution rejects negated mastery phrases before accepting explicit mastery"
+    )
     let quietRequest = StudyAgentRequest(
         purpose: .quietInsight,
         question: "出题",
@@ -260,7 +358,7 @@ private func checkStudyAgentContext() throws {
     try piRequire(envelope.material?.text.count == 18_000 && envelope.note.text.count == 6_000 && envelope.selection?.text.count == 2_000, "study-agent context applies source limits")
     try piRequire(envelope.material?.title.count == 300 && envelope.note.title.count == 300 && envelope.selection?.title.count == 300, "study-agent context bounds source labels consistently")
     try piRequire(envelope.material?.isTruncated == true && envelope.note.isTruncated && envelope.selection?.isTruncated == true, "study-agent context marks every truncated source")
-    try piRequire(envelope.recentMessages.count == 8 && envelope.recentMessages.first?.text.hasPrefix("message-2") == true, "study-agent context keeps the latest eight messages")
+    try piRequire(envelope.recentMessages.count == 20 && envelope.recentMessages.first?.text.hasPrefix("message-4") == true, "study-agent context keeps the latest twenty messages")
     try piRequire(envelope.recentMessages.allSatisfy { $0.text.count <= 1_200 }, "study-agent context bounds recent messages")
     try piRequire(envelope.course.catalog.count == 90 && envelope.course.items.count == 80 && envelope.course.relations.count == 210 && envelope.course.isTruncated, "study-agent context keeps the full catalog while bounding query candidates")
     try piRequire(
@@ -274,7 +372,15 @@ private func checkStudyAgentContext() throws {
     try piRequire(envelope.course.items.allSatisfy { $0.searchText.count <= 2_400 && $0.headings.count <= 12 && $0.tags.count <= 16 && $0.linkedItemIDs.count <= 24 }, "study-agent context bounds course search metadata")
     try piRequire(envelope.learning.memoryRevision == 7 && envelope.learning.memories.count == 48, "study-agent context carries a bounded learning-memory revision")
     try piRequire(envelope.learning.memories.allSatisfy { $0.text.count <= 500 && $0.evidence.count <= 400 }, "study-agent context bounds durable learning memory")
-    try piRequire(envelope.learning.lastLocation?.itemTitle.count == 300 && envelope.learning.lastLocation?.itemID == "course-item-1" && envelope.learning.session?.summary.count == 2_000 && envelope.learning.session?.focusItemIDs.count == 24, "study-agent context bounds location and session state with opaque course ids")
+    try piRequire(
+        envelope.learning.lastLocation?.itemTitle.count == 300
+            && envelope.learning.lastLocation?.itemID == "course-item-1"
+            && envelope.learning.lastLocation?.locationID == "html-section-a1b2c3d4"
+            && envelope.learning.lastLocation?.pageIndex == 13
+            && envelope.learning.session?.summary.count == 2_000
+            && envelope.learning.session?.focusItemIDs.count == 24,
+        "study-agent context bounds location and session state, uses opaque ids, and exposes one-based page numbers"
+    )
 
     let privatePath = "/Users/student/Private Course/secret.pdf"
     let privateItem = StudyAgentCourseItem(
@@ -373,7 +479,13 @@ private func checkStudyAgentContext() throws {
     let persisted = PersistedWorkspace(
         noteSourceLinks: [NoteSourceLink(noteItemID: "inflation-note", sourceItemID: "rates")],
         studyLocationsByItemID: [
-            "rates": StudyLocation(itemID: "rates", itemTitle: "利率", locationTitle: "实际利率", pageIndex: 3),
+            "rates": StudyLocation(
+                itemID: "rates",
+                itemTitle: "利率",
+                locationID: "section-real-rate",
+                locationTitle: "实际利率",
+                pageIndex: 3
+            ),
         ],
         learningMemoryEntries: [
             LearningMemoryEntry(
@@ -381,7 +493,10 @@ private func checkStudyAgentContext() throws {
                 text: "还不熟悉费雪方程",
                 evidence: "[用户：本轮] 用户明确说不熟悉",
                 origin: .userStatement,
-                sessionID: sessionID
+                status: .resolved,
+                sessionID: sessionID,
+                resolvedAt: Date(timeIntervalSinceReferenceDate: 200),
+                resolutionEvidence: "[会话：当前] 用户已正确解释"
             ),
         ],
         learningMemoryRevision: 4,
@@ -402,7 +517,10 @@ private func checkStudyAgentContext() throws {
     try piRequire(
         decodedPersisted.noteSourceLinks?.count == 1
             && decodedPersisted.studyLocationsByItemID?["rates"]?.pageIndex == 3
+            && decodedPersisted.studyLocationsByItemID?["rates"]?.locationID == "section-real-rate"
             && decodedPersisted.learningMemoryEntries?.first?.sessionID == sessionID
+            && decodedPersisted.learningMemoryEntries?.first?.status == .resolved
+            && decodedPersisted.learningMemoryEntries?.first?.resolutionEvidence?.hasPrefix("[会话：当前]") == true
             && decodedPersisted.learningMemoryRevision == 4
             && decodedPersisted.studySessions?.first?.flow.phase == .recall
             && decodedPersisted.activeStudySessionID == sessionID,
@@ -452,7 +570,7 @@ private func checkBundledAgentResources() throws {
         "PI extension bundles the WeiBei-owned course, memory, and note tools"
     )
     try piRequire(
-        extensionSource.contains("contextFileBytes: 2 * 1024 * 1024")
+        extensionSource.contains("contextFileBytes: 4 * 1024 * 1024")
             && extensionSource.contains("courseCatalogItems: 500")
             && extensionSource.contains("courseMapPageItems: 60")
             && extensionSource.contains("catalogCount: snapshot.course.catalog.length")
@@ -460,9 +578,26 @@ private func checkBundledAgentResources() throws {
             && extensionSource.contains("const limit = params.limit ?? 40")
             && extensionSource.contains("与已有 catalog ID 重复")
             && extensionSource.contains("noteTitle: catalogByID.get(relation.noteItemID)!.title")
-            && extensionSource.contains("...current.course.catalog.map((item) =>")
+            && extensionSource.contains("searchedCourseItemIDs.has(item.id)")
+            && extensionSource.contains("courseJumpReference")
+            && extensionSource.contains("courseEvidenceLabel")
+            && extensionSource.contains("jumpEvidence")
+            && extensionSource.contains("courseHeading")
+            && extensionSource.contains("coursePage")
+            && extensionSource.contains("pageJumpReferences")
+            && extensionSource.contains("learningLocationJumpReference")
+            && extensionSource.contains("duplicateTitle")
+            && extensionSource.contains("章节标识")
+            && extensionSource.contains("章节序号")
+            && extensionSource.contains("resolutionEvidenceMatches")
+            && extensionSource.contains("unresolvedTerms")
+            && extensionSource.contains("不能够")
+            && extensionSource.contains("not yet")
+            && extensionSource.contains("不正确")
+            && extensionSource.contains("immediateNegation")
+            && extensionSource.contains("html-section-")
             && extensionSource.contains("用户陈述型记忆必须直接依据本轮用户原话"),
-        "PI extension keeps a paged full catalog, compact context output, strict ids, and catalog-backed memory evidence"
+        "PI extension keeps a paged full catalog, stable file and section jumps, compact context output, strict ids, and read-backed memory evidence"
     )
 
     for skillName in PiAgentResources.requiredSkillNames {
@@ -479,8 +614,20 @@ private func checkBundledAgentResources() throws {
             && runtimeSource.contains("allowedSourceLabels")
             && runtimeSource.contains("allowedNoteSourceLabels")
             && runtimeSource.contains("memoryRevision")
-            && runtimeSource.contains("context.course.catalog.map")
-            && runtimeSource.contains("PI returned an answer without a current-source label")
+            && runtimeSource.contains("courseSourcesRead")
+            && runtimeSource.contains("allowedJumpReferences")
+            && runtimeSource.contains("jumpEvidenceLabels")
+            && runtimeSource.contains("registerJumpEvidence")
+            && runtimeSource.contains("canonicalJumpReference")
+            && runtimeSource.contains("isDedicatedJumpLine")
+            && runtimeSource.contains("contextRevision == run.contextRevision")
+            && runtimeSource.contains("citedJumpReferences")
+            && runtimeSource.contains("learningUpdateValidationError")
+            && runtimeSource.contains("resolutionEvidenceMatches")
+            && runtimeSource.contains("StudyAgentResolutionEvidence.matches")
+            && runtimeSource.contains("StudyAgentCurrentTurnEvidence.matches")
+            && runtimeSource.contains("allowsLearningOnlyAnswer")
+            && runtimeSource.contains("PI returned a content answer without a source read in the current turn")
             && runtimeSource.contains("binary.sha256")
             && runtimeSource.contains("SecStaticCodeCheckValidity"),
         "PI host enforces context-first answers, source labels, binary integrity, and code signatures"

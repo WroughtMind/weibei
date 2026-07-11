@@ -7,6 +7,7 @@ public struct CourseKnowledgeSource: Sendable {
     public var kind: String
     public var role: String
     public var text: String
+    public var isTruncated: Bool
 
     public init(
         id: String,
@@ -14,7 +15,8 @@ public struct CourseKnowledgeSource: Sendable {
         subtitle: String,
         kind: String,
         role: String,
-        text: String
+        text: String,
+        isTruncated: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -22,6 +24,7 @@ public struct CourseKnowledgeSource: Sendable {
         self.kind = kind
         self.role = role
         self.text = text
+        self.isTruncated = isTruncated
     }
 }
 
@@ -100,7 +103,7 @@ public enum CourseKnowledgeIndex {
                 headings: headings(in: source.text),
                 tags: source.role == "note" ? MarkdownTagSearch.tags(in: source.text) : [],
                 searchText: excerpt.text,
-                isTruncated: excerpt.isTruncated
+                isTruncated: source.isTruncated || excerpt.isTruncated
             )
         }
         let relations = validLinks.prefix(maximumRelations).map {
@@ -111,7 +114,9 @@ public enum CourseKnowledgeIndex {
             catalog: catalog,
             items: items,
             relations: relations,
-            isTruncated: sources.count > includedSources.count || validLinks.count > relations.count
+            isTruncated: sources.count > includedSources.count
+                || validLinks.count > relations.count
+                || includedSources.contains { $0.isTruncated }
         )
     }
 
@@ -174,7 +179,7 @@ public enum CourseKnowledgeIndex {
             let heading: String?
             if line.hasPrefix("#") {
                 heading = line.trimmingCharacters(in: CharacterSet(charactersIn: "# "))
-            } else if line.range(of: #"^第\s*\d+\s*页$"#, options: .regularExpression) != nil {
+            } else if line.range(of: #"^第\s*\d+\s*页(?:（OCR）)?$"#, options: .regularExpression) != nil {
                 heading = line
             } else if line.count <= 80,
                       line.range(of: #"^(?:第.+[章节讲部分]|Chapter\s+\d+|Section\s+\d+)"#, options: [.regularExpression, .caseInsensitive]) != nil {
@@ -216,7 +221,10 @@ public enum CourseKnowledgeIndex {
                 }
             }
         }
-        return Array(Set(terms)).sorted { $0.count > $1.count }
+        var seen: Set<String> = []
+        return terms.filter { term in
+            seen.insert(term).inserted
+        }
     }
 }
 

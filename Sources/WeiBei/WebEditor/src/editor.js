@@ -751,7 +751,7 @@ const decorateWikiLinks = (decorations, text, pos) => {
 };
 
 const decorateSourceReferences = (decorations, text, pos) => {
-  for (const match of text.matchAll(/(?:^|\s)((?:来源：|Source:)[^\n]+)/g)) {
+  for (const match of text.matchAll(/(?:^|[\s`])((?:来源：|Source:)[^`\n]+)/g)) {
     const prefixLength = match[0].startsWith(match[1]) ? 0 : 1;
     const sourcePrefix = match[1].startsWith('来源：') ? '来源：' : 'Source:';
     const from = pos + (match.index || 0) + prefixLength;

@@ -219,6 +219,11 @@ expect(runScript.contains("prepare_pi_runtime.sh")
     && runScript.contains("PACKAGED_UUID=")
     && runScript.contains("signed app binary UUID does not match the current Swift build")
     && runScript.contains("codesign --verify --deep --strict \"$APP_BUNDLE\""), "packaging embeds and integrity-checks the signed PI runtime inside the app")
+expect(runScript.contains("PDF_TEXT_WORKER_NAME=\"WeiBeiPDFTextWorker\"")
+    && runScript.contains("cp \"$BUILD_PDF_TEXT_WORKER\" \"$PDF_TEXT_WORKER\"")
+    && runScript.contains("cmp -s \"$BUILD_PDF_TEXT_WORKER\" \"$PDF_TEXT_WORKER\"")
+    && runScript.contains("codesign --force --sign - --timestamp=none \"$PDF_TEXT_WORKER\"")
+    && runScript.contains("WEIBEI_PDF_WORKER_VERIFY=1 \"$PDF_TEXT_WORKER\" --verification-probe normal"), "packaging embeds, signs, and executes the bounded PDF text worker")
 expect(runScript.contains("kCGWindowOwnerName") && runScript.contains("\"$APP_DISPLAY_NAME\""), "run script verifies the visible app window by owner name")
 expect(runScript.contains("let isOnscreen = window[kCGWindowIsOnscreen as String] as? NSNumber") && runScript.contains("let visibleEnough = isOnscreen == nil || isOnscreen?.intValue != 0"), "run script tolerates missing onscreen metadata when the window is otherwise capturable")
 expect(!runScript.contains("pid=\"$(pgrep -x \"$PRODUCT_NAME\""), "run script window verification does not depend on pgrep")
@@ -227,6 +232,7 @@ expect(runScript.contains("weibei-visual-verify-latest.png") && runScript.contai
 expect(runScript.contains("weibei-visual-verify-$VERIFY_SCENARIO.png")
     && runScript.contains("visual_capture_path=$scenario_capture_path"), "visual verification preserves a separate screenshot for every empty-workspace theme and width scenario")
 expect(runScript.contains("WEIBEI_VERIFY_CAPTURE_PATH")
+    && runScript.contains("[[ -s \"$VERIFY_CAPTURE_PATH\" ]] && break")
     && runScript.contains("app-owned capture and macOS window capture failed")
     && runScript.contains("Grant Screen Recording permission"), "visual verification prefers an app-owned capture and reports when both capture paths fail")
 expect(runScript.contains("open_app() {\n  /usr/bin/open \"$APP_BUNDLE\"\n}")
@@ -252,7 +258,7 @@ expect(runScript.contains("open_app_for_verify()")
     && runScript.contains("\"WEIBEI_VERIFY_WINDOW_SIZE=$VERIFY_WINDOW_SIZE\"")
     && runScript.contains("\"$APP_BINARY\" >\"$VERIFY_STDOUT\" 2>\"$VERIFY_STDERR\" &")
     && runScript.contains("VERIFY_PID=\"$!\"")
-    && runScript.contains("if [[ -n \"$VERIFY_SCENARIO\" ]]; then\n    sleep 2.6\n  fi")
+    && runScript.contains("if [[ -n \"$VERIFY_SCENARIO\" ]]; then\n    for _ in {1..50}; do")
     && runScript.contains("--verify|verify)\n    run_verifiers\n    open_app_for_verify")
     && runScript.contains("--visual-verify|visual-verify)\n    run_verifiers\n    open_app_for_verify"), "verify modes launch the app in the background with an isolated offline or PI-backed learning-flow workspace")
 expect(runScript.contains("verify_learning_flow_persistence()")
@@ -413,15 +419,96 @@ let documentTextExtractorURL = URL(fileURLWithPath: FileManager.default.currentD
     .appendingPathComponent("Sources/WeiBei/Services/DocumentTextExtractor.swift")
 let documentTextExtractorSource = (try? String(contentsOf: documentTextExtractorURL, encoding: .utf8)) ?? ""
 expect(documentTextExtractorSource.contains("private static var pdfTextCache")
-    && documentTextExtractorSource.contains("private static var pdfIndexTextCache")
+    && documentTextExtractorSource.contains("private static var fileTextCache")
     && documentTextExtractorSource.contains("private static let cacheLock = NSLock()")
     && documentTextExtractorSource.contains("return pdfText(url: url)")
-    && documentTextExtractorSource.contains("private static func pagedText(from document: PDFDocument) -> String")
-    && documentTextExtractorSource.contains("return \"第 \\(index + 1) 页\\n\\(text)\"")
-    && !documentTextExtractorSource.contains("let textLayerText = document.string?.trimmingCharacters")
-    && documentTextExtractorSource.contains("let text = textLayerText.isEmpty ? PDFOCRTextExtractor.text(from: document) : textLayerText")
+    && documentTextExtractorSource.contains("PDFOCRTextExtractor.text(from: document, maxPages: 12)")
     && documentTextExtractorSource.contains("store(text, for: cacheKey, cache: .pdf)")
-    && documentTextExtractorSource.contains("store(indexed, for: indexCacheKey, cache: .pdfIndex)"), "PDF material extraction and background course indexing use thread-safe caches with OCR limited to the active material")
+    && documentTextExtractorSource.contains("maximumPDFCacheBytes")
+    && documentTextExtractorSource.contains("maximumFileCacheBytes")
+    && documentTextExtractorSource.contains("maximumActiveFileBytes = 4 * 1_024 * 1_024")
+    && documentTextExtractorSource.contains("maximumActivePDFPages = 12")
+    && documentTextExtractorSource.contains("maximumActivePDFCharacters = 64_000")
+    && documentTextExtractorSource.contains("maximumActivePDFTextSeconds: TimeInterval = 2")
+    && documentTextExtractorSource.contains("BoundedPDFTextExtractor.pages")
+    && documentTextExtractorSource.contains("static func cachedText(for item: StudyItem)")
+    && !documentTextExtractorSource.contains("page.string")
+    && documentTextExtractorSource.contains("handle.read(upToCount: maximumActiveFileBytes)")
+    && documentTextExtractorSource.contains("totalBytes > byteLimit"), "active-material extraction uses byte-bounded thread-safe caches while the persistent course index owns full-library search")
+let courseDocumentIndexURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBeiCore/CourseDocumentSearchIndex.swift")
+let courseDocumentIndexSource = (try? String(contentsOf: courseDocumentIndexURL, encoding: .utf8)) ?? ""
+let pdfTextWorkerURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBeiPDFTextWorker/main.swift")
+let pdfTextWorkerSource = (try? String(contentsOf: pdfTextWorkerURL, encoding: .utf8)) ?? ""
+let boundedPDFTextExtractorURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBeiCore/BoundedPDFTextExtractor.swift")
+let boundedPDFTextExtractorSource = (try? String(contentsOf: boundedPDFTextExtractorURL, encoding: .utf8)) ?? ""
+expect(courseDocumentIndexSource.contains("CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5")
+    && courseDocumentIndexSource.contains("private let indexingQueue")
+    && courseDocumentIndexSource.contains("private let ocrQueue")
+    && courseDocumentIndexSource.contains("indexPDFTextLayer")
+    && courseDocumentIndexSource.contains("finishPDFOCR")
+    && courseDocumentIndexSource.contains("PDFOCRTextExtractor.pageOutcome")
+    && courseDocumentIndexSource.contains("withWriteTransaction")
+    && courseDocumentIndexSource.contains("ROLLBACK")
+    && courseDocumentIndexSource.contains("storageID(for: item.id)")
+    && courseDocumentIndexSource.contains("ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY rank)")
+    && courseDocumentIndexSource.contains("state?.chunkCount")
+    && courseDocumentIndexSource.contains("refreshChangedItemsForLookup")
+    && courseDocumentIndexSource.contains("let persistedStates: [String: FileState]")
+    && courseDocumentIndexSource.contains("shouldIndexImmediately = state.signature != scheduled.signature")
+    && courseDocumentIndexSource.contains("shouldIndexImmediately = true")
+    && courseDocumentIndexSource.contains("maximumImmediateRefreshItems = 24")
+    && courseDocumentIndexSource.contains("maximumImmediateRefreshSeconds: TimeInterval = 4")
+    && courseDocumentIndexSource.contains("maximumTextSourceBytes: UInt64 = 32 * 1_024 * 1_024")
+    && courseDocumentIndexSource.contains("maximumForegroundPDFPages = 32")
+    && courseDocumentIndexSource.contains("maximumPDFPageCharacters = 128_000")
+    && courseDocumentIndexSource.contains("maximumNativePDFPages: Self.maximumForegroundPDFPages")
+    && courseDocumentIndexSource.contains("maximumNativePDFSeconds: min(")
+    && courseDocumentIndexSource.contains("guard !Task.isCancelled else { return false }")
+    && courseDocumentIndexSource.contains("CourseIndexCancellationProbe")
+    && courseDocumentIndexSource.contains("sqlite3_progress_handler")
+    && courseDocumentIndexSource.contains("Unmanaged.passRetained(cancellationProbe)")
+    && courseDocumentIndexSource.contains("fromOpaque(cancellationContext).release()")
+    && courseDocumentIndexSource.contains("acquireItemIndexLock")
+    && courseDocumentIndexSource.contains("BoundedPDFTextExtractor.pages")
+    && courseDocumentIndexSource.contains("foregroundPDFTextBudget: TimeInterval = 2")
+    && courseDocumentIndexSource.contains("backgroundPDFTextBudget: TimeInterval = 20")
+    && courseDocumentIndexSource.contains("CREATE TABLE IF NOT EXISTS native_attempted_pages")
+    && courseDocumentIndexSource.contains("let pagesToOCR = nativeAttemptedPages.subtracting(processedPages).sorted()")
+    && courseDocumentIndexSource.contains("hasPendingNativePDFPages")
+    && courseDocumentIndexSource.contains("extraction_kind = 'failed'")
+    && !courseDocumentIndexSource.contains("page.string")
+    && courseDocumentIndexSource.contains("text-partial")
+    && courseDocumentIndexSource.contains("htmlSectionLocationID")
+    && courseDocumentIndexSource.contains("html-section-%08x")
+    && courseDocumentIndexSource.contains("[\\(locationID)][html-heading-\\(index)]")
+    && courseDocumentIndexSource.contains("guard isExpected(signature: signature, for: storageID) else { return false }")
+    && courseDocumentIndexSource.contains("BEGIN DEFERRED")
+    && courseDocumentIndexSource.contains("CREATE INDEX IF NOT EXISTS chunk_index_item_sort")
+    && courseDocumentIndexSource.contains("SELECT COUNT(*) FROM chunk_index WHERE item_id = ?")
+    && courseDocumentIndexSource.contains("WHERE item_id = ? AND signature = ?")
+    && courseDocumentIndexSource.contains("PRAGMA max_page_count")
+    && courseDocumentIndexSource.contains("integerValue(\"PRAGMA max_page_count\"")
+    && courseDocumentIndexSource.contains("PRAGMA journal_size_limit=67108864")
+    && courseDocumentIndexSource.contains("INSERT INTO chunks(chunks, rank) VALUES('merge', 64)")
+    && !courseDocumentIndexSource.contains("VALUES('optimize')")
+    && courseDocumentIndexSource.contains("PRAGMA incremental_vacuum")
+    && !courseDocumentIndexSource.contains("public func lookup(\n        items: [StudyItem],\n        query: String,\n        maximumCharactersPerItem: Int = 24_000\n    ) -> [String: CourseDocumentIndexResult] {\n        schedule(items)"), "course search persists private FTS chunks, uses rollback-safe writes, OCRs every missing PDF page, and reports incomplete excerpts without rescanning files per question")
+expect(pdfTextWorkerSource.contains("setrlimit(RLIMIT_CPU")
+    && pdfTextWorkerSource.contains("maximumUTF8Bytes")
+    && pdfTextWorkerSource.contains("rawText.prefix(maximumCharacters)")
+    && pdfTextWorkerSource.contains("runVerificationProbe"), "native PDF text extraction runs in a resource-limited helper with bounded output")
+expect(boundedPDFTextExtractorSource.contains("maximumWorkerTimeout: TimeInterval = 3.5")
+    && boundedPDFTextExtractorSource.contains("maximumWorkerResidentBytes: UInt64 = 384 * 1_024 * 1_024")
+    && boundedPDFTextExtractorSource.contains("process.environment = environment")
+    && boundedPDFTextExtractorSource.contains("proc_pidinfo(processID, PROC_PIDTASKINFO")
+    && boundedPDFTextExtractorSource.contains("$0 > maximumResidentBytes")
+    && boundedPDFTextExtractorSource.contains("process.terminate()")
+    && boundedPDFTextExtractorSource.contains("Darwin.kill(process.processIdentifier, SIGKILL)")
+    && boundedPDFTextExtractorSource.contains("outputBox.append(chunk, limit: maximumOutputBytes)")
+    && boundedPDFTextExtractorSource.contains("runSafetySelfCheck"), "PDF text worker calls are cancellable, time-limited, memory-monitored, output-bounded, and expose a real safety self-check")
 let quietScrollersSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Support/QuietScrollers.swift")
 let quietScrollersSource = (try? String(contentsOf: quietScrollersSourceURL, encoding: .utf8)) ?? ""
@@ -494,6 +581,21 @@ func makeImageOnlyPDF(at url: URL) {
     expect(document.write(to: url), "write image-only pdf")
 }
 
+func makeBlankImageOnlyPDF(at url: URL) {
+    let image = NSImage(size: NSSize(width: 600, height: 300))
+    image.lockFocus()
+    NSColor.white.setFill()
+    NSRect(origin: .zero, size: image.size).fill()
+    image.unlockFocus()
+    let document = PDFDocument()
+    guard let page = PDFPage(image: image) else {
+        expect(false, "create blank image-only pdf page")
+        return
+    }
+    document.insert(page, at: 0)
+    expect(document.write(to: url), "write blank image-only pdf")
+}
+
 let selectablePDFURL = FileManager.default.temporaryDirectory
     .appendingPathComponent("weibei-selectable-pdf-check-\(UUID().uuidString).pdf")
 makeSelectablePDF(at: selectablePDFURL)
@@ -530,6 +632,272 @@ let targetedOCRPages = imageOnlyPDF.map { PDFOCRTextExtractor.pages(from: $0, pa
 expect(targetedOCRPages.count == 1 && targetedOCRPages[0].pageIndex == 0, "Vision OCR can target a specific PDF page for mixed text and scanned documents")
 let outOfRangeOCRPages = imageOnlyPDF.map { PDFOCRTextExtractor.pages(from: $0, pageIndexes: [1]) } ?? []
 expect(outOfRangeOCRPages.isEmpty, "targeted OCR ignores pages outside the PDF")
+let blankImagePDFURL = FileManager.default.temporaryDirectory
+    .appendingPathComponent("weibei-blank-image-pdf-check-\(UUID().uuidString).pdf")
+makeBlankImageOnlyPDF(at: blankImagePDFURL)
+defer { try? FileManager.default.removeItem(at: blankImagePDFURL) }
+if let blankImagePDF = PDFDocument(url: blankImagePDFURL) {
+    expect(
+        PDFOCRTextExtractor.pageOutcome(from: blankImagePDF, pageIndex: 0) == .empty(pageIndex: 0),
+        "Vision OCR distinguishes a successfully scanned blank page from an extraction failure"
+    )
+} else {
+    expect(false, "open blank image-only pdf")
+}
+
+func makeMixedLateOCRPDF(at url: URL) {
+    let data = NSMutableData()
+    var mediaBox = CGRect(x: 0, y: 0, width: 720, height: 420)
+    guard let consumer = CGDataConsumer(data: data as CFMutableData),
+          let context = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else {
+        expect(false, "create mixed PDF context")
+        return
+    }
+
+    for pageIndex in 0..<13 {
+        context.beginPDFPage(nil)
+        context.setFillColor(NSColor.white.cgColor)
+        context.fill(mediaBox)
+        if pageIndex < 12 {
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+            NSString(string: "Native text layer content for page \(pageIndex + 1) with enough characters").draw(
+                at: CGPoint(x: 48, y: 210),
+                withAttributes: [
+                    .font: NSFont.systemFont(ofSize: 24),
+                    .foregroundColor: NSColor.black,
+                ]
+            )
+            NSGraphicsContext.restoreGraphicsState()
+        } else {
+            let image = NSImage(size: NSSize(width: 1_200, height: 500))
+            image.lockFocus()
+            NSColor.white.setFill()
+            NSRect(origin: .zero, size: image.size).fill()
+            NSString(string: "LATEPAGE OCR TARGET").draw(
+                at: CGPoint(x: 70, y: 190),
+                withAttributes: [
+                    .font: NSFont.boldSystemFont(ofSize: 82),
+                    .foregroundColor: NSColor.black,
+                ]
+            )
+            image.unlockFocus()
+            var imageRect = CGRect(origin: .zero, size: image.size)
+            if let cgImage = image.cgImage(forProposedRect: &imageRect, context: nil, hints: nil) {
+                context.draw(cgImage, in: CGRect(x: 35, y: 70, width: 650, height: 270))
+            }
+        }
+        context.endPDFPage()
+    }
+    context.closePDF()
+    expect(data.write(to: url, atomically: true), "write mixed late-OCR PDF")
+}
+
+let courseIndexRoot = FileManager.default.temporaryDirectory
+    .appendingPathComponent("weibei-course-index-check-\(UUID().uuidString)", isDirectory: true)
+try? FileManager.default.createDirectory(at: courseIndexRoot, withIntermediateDirectories: true)
+defer { try? FileManager.default.removeItem(at: courseIndexRoot) }
+let mixedPDFURL = courseIndexRoot.appendingPathComponent("mixed-late-ocr.pdf")
+makeMixedLateOCRPDF(at: mixedPDFURL)
+let mixedPDFItem = StudyItem(
+    id: "file:\(mixedPDFURL.path)",
+    title: "Mixed late OCR",
+    subtitle: mixedPDFURL.lastPathComponent,
+    kind: .pdf,
+    urlPath: mixedPDFURL.path,
+    isSample: false
+)
+let markdownIndexURL = courseIndexRoot.appendingPathComponent("late-section.md")
+let lateMarkdownToken = "PERSISTENT_LATE_INDEX_TOKEN"
+try? (String(repeating: "ordinary material\n\n", count: 1_500) + lateMarkdownToken)
+    .write(to: markdownIndexURL, atomically: true, encoding: .utf8)
+let markdownIndexItem = StudyItem(
+    id: "file:\(markdownIndexURL.path)",
+    title: "Late markdown section",
+    subtitle: markdownIndexURL.lastPathComponent,
+    kind: .markdown,
+    urlPath: markdownIndexURL.path,
+    isSample: false
+)
+let stableHTMLURL = courseIndexRoot.appendingPathComponent("stable-sections.html")
+let stableHTMLOriginal = """
+<html><body>
+<h1>利率</h1><p>ORIGINAL_ALPHA_SECTION 资金价格。</p>
+<h2>利率</h2><p>ORIGINAL_BETA_SECTION 购买力变化。</p>
+</body></html>
+"""
+try? stableHTMLOriginal.write(to: stableHTMLURL, atomically: true, encoding: .utf8)
+let stableHTMLItem = StudyItem(
+    id: "file:\(stableHTMLURL.path)",
+    title: "Stable duplicate sections",
+    subtitle: stableHTMLURL.lastPathComponent,
+    kind: .html,
+    urlPath: stableHTMLURL.path,
+    isSample: false
+)
+let blankPDFIndexItem = StudyItem(
+    id: "file:\(blankImagePDFURL.path)",
+    title: "Blank scanned page",
+    subtitle: blankImagePDFURL.lastPathComponent,
+    kind: .pdf,
+    urlPath: blankImagePDFURL.path,
+    isSample: false
+)
+let courseIndexDatabaseURL = courseIndexRoot.appendingPathComponent("course-search.sqlite3")
+let courseIndex = CourseDocumentSearchIndex(databaseURL: courseIndexDatabaseURL)
+expect(
+    BoundedPDFTextExtractor.runSafetySelfCheck(),
+    "bounded PDF worker passes normal execution, timeout, cancellation, memory, and output-overflow probes"
+)
+let boundedNativeProbe = BoundedPDFTextExtractor.pages(
+    from: mixedPDFURL,
+    pageIndexes: Array(0..<8),
+    maximumCharactersPerPage: 128_000,
+    timeout: 3.5
+)
+if boundedNativeProbe?[0]?.text.contains("Native text layer content for page 1") != true {
+    fputs("bounded native PDF diagnostic: \(String(describing: boundedNativeProbe))\n", stderr)
+}
+expect(
+    boundedNativeProbe?[0]?.text.contains("Native text layer content for page 1") == true,
+    "bounded PDF worker returns native text for a generated multi-page PDF"
+)
+courseIndex.schedule([mixedPDFItem, markdownIndexItem, stableHTMLItem, blankPDFIndexItem])
+var mixedIndexResult: CourseDocumentIndexResult?
+var markdownIndexResult: CourseDocumentIndexResult?
+var blankPDFIndexResult: CourseDocumentIndexResult?
+var stableHTMLIndexResult: CourseDocumentIndexResult?
+for _ in 0..<200 {
+    mixedIndexResult = courseIndex.lookup(items: [mixedPDFItem], query: "LATEPAGE OCR TARGET")[mixedPDFItem.id]
+    markdownIndexResult = courseIndex.lookup(items: [markdownIndexItem], query: lateMarkdownToken)[markdownIndexItem.id]
+    blankPDFIndexResult = courseIndex.lookup(items: [blankPDFIndexItem], query: "blank page")[blankPDFIndexItem.id]
+    stableHTMLIndexResult = courseIndex.lookup(items: [stableHTMLItem], query: "ORIGINAL_ALPHA_SECTION ORIGINAL_BETA_SECTION")[stableHTMLItem.id]
+    if mixedIndexResult?.text?.uppercased().contains("LATEPAGE") == true,
+       markdownIndexResult?.text?.contains(lateMarkdownToken) == true,
+       stableHTMLIndexResult?.text?.contains("ORIGINAL_ALPHA_SECTION") == true,
+       blankPDFIndexResult?.isTruncated == false {
+        break
+    }
+    Thread.sleep(forTimeInterval: 0.05)
+}
+expect(
+    mixedIndexResult?.isTruncated == true
+        && mixedIndexResult?.text?.uppercased().contains("LATEPAGE") == true
+        && mixedIndexResult?.text?.contains("第 13 页（OCR）") == true,
+    "persistent course index OCRs a scanned page beyond page twelve, keeps its page location, and marks the returned excerpt partial"
+)
+let nativePDFIndexResult = courseIndex.lookup(
+    items: [mixedPDFItem],
+    query: "Native text layer content for page 1"
+)[mixedPDFItem.id]
+if nativePDFIndexResult?.text?.contains("Native text layer content for page 1") != true
+    || nativePDFIndexResult?.text?.contains("第 1 页（OCR）") == true {
+    fputs("native PDF index diagnostic: \(nativePDFIndexResult?.text ?? "<nil>")\n", stderr)
+}
+expect(
+    nativePDFIndexResult?.text?.contains("Native text layer content for page 1") == true
+        && nativePDFIndexResult?.text?.contains("第 1 页（OCR）") != true,
+    "persistent course index executes the bounded worker and preserves a real native PDF text-layer result"
+)
+let indexedPDFCourseContext = CourseKnowledgeIndex.build(
+    title: "Indexed PDF",
+    sources: [
+        CourseKnowledgeSource(
+            id: mixedPDFItem.id,
+            title: mixedPDFItem.title,
+            subtitle: mixedPDFItem.subtitle,
+            kind: mixedPDFItem.kind.rawValue,
+            role: "material",
+            text: mixedIndexResult?.text ?? "",
+            isTruncated: mixedIndexResult?.isTruncated ?? true
+        ),
+    ],
+    links: [],
+    query: "LATEPAGE OCR TARGET",
+    currentMaterialID: nil,
+    currentNoteID: nil
+)
+expect(
+    indexedPDFCourseContext.items.first?.headings.contains("第 13 页（OCR）") == true,
+    "course search preserves confirmed OCR page locations for exact PDF jumps"
+)
+expect(
+    blankPDFIndexResult?.isTruncated == false && blankPDFIndexResult?.text == nil,
+    "persistent course index records a successfully scanned blank PDF page without retrying it forever"
+)
+expect(
+    markdownIndexResult?.isTruncated == true
+        && markdownIndexResult?.text?.contains(lateMarkdownToken) == true,
+    "persistent course index finds a late text-file section without per-question rescanning and marks the excerpt partial"
+)
+func stableHTMLSectionIDs(in text: String) -> Set<String> {
+    guard let regex = try? NSRegularExpression(pattern: #"\[(html-section-[A-Za-z0-9-]+)\]"#) else {
+        return []
+    }
+    let range = NSRange(text.startIndex..<text.endIndex, in: text)
+    return Set(regex.matches(in: text, range: range).compactMap { match in
+        guard match.numberOfRanges > 1,
+              let range = Range(match.range(at: 1), in: text) else { return nil }
+        return String(text[range])
+    })
+}
+let originalStableSectionIDs = stableHTMLSectionIDs(in: stableHTMLIndexResult?.text ?? "")
+let stableHTMLWithInsertedDuplicate = """
+<html><body>
+<h1>利率</h1><p>NEW_INSERTED_SECTION 新增解释。</p>
+<h1>利率</h1><p>ORIGINAL_ALPHA_SECTION 资金价格。</p>
+<h2>利率</h2><p>ORIGINAL_BETA_SECTION 购买力变化。</p>
+</body></html>
+"""
+try? stableHTMLWithInsertedDuplicate.write(to: stableHTMLURL, atomically: true, encoding: .utf8)
+let refreshedStableHTML = courseIndex.lookup(
+    items: [stableHTMLItem],
+    query: "ORIGINAL_ALPHA_SECTION ORIGINAL_BETA_SECTION"
+)[stableHTMLItem.id]
+let refreshedStableSectionIDs = stableHTMLSectionIDs(in: refreshedStableHTML?.text ?? "")
+expect(
+    originalStableSectionIDs.count == 2
+        && originalStableSectionIDs.isSubset(of: refreshedStableSectionIDs)
+        && refreshedStableSectionIDs.count == 3,
+    "HTML section content fingerprints survive insertion of a new same-title section before existing sections"
+)
+let reopenedCourseIndex = CourseDocumentSearchIndex(databaseURL: courseIndexDatabaseURL)
+reopenedCourseIndex.schedule([mixedPDFItem])
+let reopenedResult = reopenedCourseIndex.lookup(
+    items: [mixedPDFItem],
+    query: "LATEPAGE OCR TARGET"
+)[mixedPDFItem.id]
+expect(
+    reopenedResult?.isTruncated == true
+        && reopenedResult?.text?.uppercased().contains("LATEPAGE") == true,
+    "course full-text index survives reopening without rebuilding the PDF"
+)
+
+let splitFailureIndex = CourseDocumentSearchIndex(
+    databaseURL: courseIndexRoot.appendingPathComponent("course-search-split-failure.sqlite3"),
+    nativePDFTextLoader: { _, pageIndexes, _, _ in
+        guard pageIndexes.count == 1, let pageIndex = pageIndexes.first else { return nil }
+        let text = pageIndex < 12
+            ? "SPLIT_NATIVE_LAYER_PAGE_\(pageIndex + 1) remains native after a failed batch extraction"
+            : ""
+        return [pageIndex: BoundedPDFTextPage(text: text, isPartial: false)]
+    }
+)
+splitFailureIndex.schedule([mixedPDFItem])
+var splitFailureResult: CourseDocumentIndexResult?
+for _ in 0..<200 {
+    splitFailureResult = splitFailureIndex.lookup(
+        items: [mixedPDFItem],
+        query: "SPLIT_NATIVE_LAYER_PAGE_1"
+    )[mixedPDFItem.id]
+    if splitFailureResult?.text?.contains("SPLIT_NATIVE_LAYER_PAGE_1") == true { break }
+    Thread.sleep(forTimeInterval: 0.05)
+}
+expect(
+    splitFailureResult?.text?.contains("SPLIT_NATIVE_LAYER_PAGE_1") == true
+        && splitFailureResult?.text?.contains("第 1 页（OCR）") != true,
+    "a failed native PDF batch is bisected to single pages instead of sending unattempted text pages to OCR"
+)
 
 let data = Data("""
 {"output":[{"content":[{"type":"output_text","text":"只根据当前材料回答。"}]}]}
@@ -794,6 +1162,37 @@ expect(ReaderSearch.firstMatch(in: "Money and Banking", query: "money")?.locatio
 expect(ReaderSearch.firstMatch(in: "Money and Banking", query: " ") == nil, "reader search ignores empty query")
 let pdfSourceReference = SourceReferenceTitle.parse("> 来源：Mishkin 教材样例，第 3 页")
 expect(pdfSourceReference.title == "Mishkin 教材样例" && pdfSourceReference.pageIndex == 2, "source reference parses pdf page")
+let htmlSourceReference = SourceReferenceTitle.parse("来源：货币金融学课程 HTML，章节：实际利率")
+expect(
+    htmlSourceReference.title == "货币金融学课程 HTML"
+        && htmlSourceReference.pageIndex == nil
+        && htmlSourceReference.sectionTitle == "实际利率"
+        && htmlSourceReference.sectionLocationID == nil
+        && htmlSourceReference.sectionOrdinal == nil,
+    "source reference parses an exact HTML section"
+)
+let disambiguatedSourceReference = SourceReferenceTitle.parse("来源：重复教材，条目：7，章节标识：html-section-a1b2c3d4，章节序号：4，章节：利率")
+expect(
+    disambiguatedSourceReference.title == "重复教材"
+        && disambiguatedSourceReference.courseItemOrdinal == 7
+        && disambiguatedSourceReference.sectionLocationID == "html-section-a1b2c3d4"
+        && disambiguatedSourceReference.sectionOrdinal == 4
+        && disambiguatedSourceReference.sectionTitle == "利率",
+    "source reference preserves the file and section ordinals needed to disambiguate duplicate titles"
+)
+let englishSectionReference = SourceReferenceTitle.parse("Source: Repeated Course, item: 2, section id: html-section-d4c3b2a1, section number: 5, section: Interest")
+expect(
+    englishSectionReference.title == "Repeated Course"
+        && englishSectionReference.courseItemOrdinal == 2
+        && englishSectionReference.sectionLocationID == "html-section-d4c3b2a1"
+        && englishSectionReference.sectionOrdinal == 5
+        && englishSectionReference.sectionTitle == "Interest",
+    "source reference preserves stable HTML section ordinals in English"
+)
+let emphasizedSourceReference = SourceReferenceTitle.parse("来源：**Mishkin 教材样例**")
+expect(emphasizedSourceReference.title == "Mishkin 教材样例", "source reference ignores whole-title Markdown emphasis")
+let inlineCodeSourceReference = SourceReferenceTitle.parse("- 相关资料：`来源：Mishkin 教材样例`")
+expect(inlineCodeSourceReference.title == "Mishkin 教材样例", "source reference remains actionable when PI wraps the jump in inline code")
 let calloutSourceReference = SourceReferenceTitle.parse("""
 > [!quote] 选区摘录
 > 实际利率
@@ -1483,6 +1882,19 @@ expect(readerViewSource.contains("static func readerStyleScript(for mode: WeiBei
     && readerViewSource.contains("element.removeAttribute(\"data-weibei-paper-surface\")")
     && !readerStyleScriptSource.contains("MutationObserver"), "HTML adaptation is reversible and bounds its one-time near-white surface pass without a persistent DOM observer")
 expect(readerViewSource.contains("pendingPDFPageIndex") && readerViewSource.contains("applyPendingPDFPageIfReady") && readerViewSource.contains("store.readerTargetPageIndex = nil"), "pdf reader consumes source-jump target pages")
+expect(readerViewSource.contains("applyPendingHTMLLocationIfReady")
+    && readerViewSource.contains("store.readerTargetLocationID")
+    && readerViewSource.contains("store.readerTargetLocationTitle")
+    && readerViewSource.contains("targetID = matches.count == 1 ? matches[0].id : nil")
+    && readerViewSource.contains("Self.normalizedHTMLSectionTitle(savedSection.title)")
+    && readerViewSource.contains("document.querySelectorAll(\"h1, h2, h3, h4\")")
+    && !readerViewSource.contains("h1, h2, h3, h4, [role='heading']")
+    && readerViewSource.contains("const headings = Array.from(document.querySelectorAll")
+    && readerViewSource.contains("sectionFingerprintBody")
+    && readerViewSource.contains("sectionLocationID")
+    && readerViewSource.contains("new TextEncoder().encode(normalized)")
+    && readerViewSource.contains("`html-section-${hash.toString(16).padStart(8, \"0\")}`")
+    && readerViewSource.contains("store.updateReaderHTMLLocation(id: id, title: title)"), "HTML reader persists the active section and consumes exact section jumps")
 expect(readerViewSource.contains("onSourceReference: { reference in store.openSourceReference(reference) }"), "markdown reader source references can jump back to material")
 expect(readerViewSource.contains("private struct SamplePDFView")
     && readerViewSource.contains("ScrollView {")
@@ -1736,6 +2148,9 @@ expect(appSource.contains("init() {\n        WeiBeiTypography.registerBundledFon
 let workspaceStoreSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Stores/WorkspaceStore.swift")
 let workspaceStoreSource = (try? String(contentsOf: workspaceStoreSourceURL, encoding: .utf8)) ?? ""
+expect(workspaceStoreSource.contains("DocumentTextExtractor.cachedText(for: item)")
+    && workspaceStoreSource.contains("loadedMaterialText = await Task.detached(priority: .utility)")
+    && !workspaceStoreSource.contains("if let text = DocumentTextExtractor.text(for: item)"), "main-actor workspace reads only cached document text while bounded extraction runs off the UI thread")
 expect(workspaceStoreSource.contains("@Published var showDailyInspiration = true")
     && workspaceStoreSource.contains("func setDailyInspirationEnabled(_ enabled: Bool)")
     && workspaceStoreSource.contains("showDailyInspiration = snapshot.showDailyInspiration ?? true")
@@ -1836,8 +2251,29 @@ expect(workspaceStoreSource.contains("let item = allItems.first(where: { $0.id =
     && workspaceStoreSource.contains("activeNotebookItemID = item.id")
     && workspaceStoreSource.contains("noteText = noteText(for: item)")
     && !workspaceStoreSource.contains("select(itemID: item.id)\n            noteFileError = ui(\"已创建笔记"), "selecting or creating a notebook note does not replace the current reader material")
-expect(workspaceStoreSource.contains("@Published var readerLocationTitle") && workspaceStoreSource.contains("var currentReferenceTitle"), "store tracks the current reader reference title")
-expect(workspaceStoreSource.contains("@Published var readerTargetPageIndex") && workspaceStoreSource.contains("func openSourceReference") && workspaceStoreSource.contains("SourceReferenceTitle.parse"), "store can jump from source reference text to the referenced material")
+expect(workspaceStoreSource.contains("@Published var readerLocationID")
+    && workspaceStoreSource.contains("@Published var readerLocationTitle")
+    && workspaceStoreSource.contains("func updateReaderHTMLLocation")
+    && workspaceStoreSource.contains("var currentReferenceTitle"), "store tracks durable PDF and HTML reader locations")
+expect(workspaceStoreSource.contains("private func sessionContinuitySummary(for session: StudySession)")
+    && workspaceStoreSource.contains("messages.suffix(20)")
+    && workspaceStoreSource.contains("olderMessages.prefix(4)")
+    && workspaceStoreSource.contains("olderMessages.suffix(8)"), "durable study sessions inject recent turns plus bounded earlier conversation excerpts into each clean PI run")
+expect(workspaceStoreSource.contains("itemTitle: sourceReferenceBaseTitle(for: item)")
+    && workspaceStoreSource.contains("private func refreshStudyLocationReferenceTitles() -> Bool")
+    && workspaceStoreSource.contains("learningMemoryEntries[index].origin = .userStatement\n                    learningMemoryEntries[index].sessionID = activeStudySessionID")
+    && workspaceStoreSource.contains("$0.sessionID == activeStudySessionID")
+    && workspaceStoreSource.contains("learningMemoryEntries[index].origin == .userStatement")
+    && workspaceStoreSource.contains("proposed.origin != .userStatement")
+    && !workspaceStoreSource.contains("learningMemoryEntries[index].sessionID = activeStudySessionID\n                learningMemoryEntries[index].updatedAt"), "learning locations preserve duplicate-file identity and inferred memories keep their original session provenance")
+expect(workspaceStoreSource.contains("@Published var readerTargetPageIndex")
+    && workspaceStoreSource.contains("@Published var readerTargetLocationTitle")
+    && workspaceStoreSource.contains("func openSourceReference")
+    && workspaceStoreSource.contains("reference.sectionTitle")
+    && workspaceStoreSource.contains("reference.sectionLocationID")
+    && workspaceStoreSource.contains("reference.sectionOrdinal.map { \"html-heading-\\(max($0 - 1, 0))\" }")
+    && workspaceStoreSource.contains("private func sourceReferenceBaseTitle")
+    && workspaceStoreSource.contains("return matches.count == 1 ? matches[0] : nil"), "store can jump from source references to PDF pages and HTML sections without guessing between duplicate file titles")
 expect(workspaceStoreSource.contains("let sampleItems: [StudyItem] = WorkspaceStore.makeSampleItems()")
     && workspaceStoreSource.contains("StudyItem(id: \"sample-pdf\", title: \"Mishkin 教材样例\", subtitle: \"PDF 阅读\", kind: .pdf, urlPath: samplePDFURL()?.path, isSample: true)")
     && workspaceStoreSource.contains("private var didRunVerificationScenario = false")
@@ -1960,7 +2396,9 @@ if let askSelectionStart = workspaceStoreSource.range(of: "func askSelection()")
 }
 expect(workspaceStoreSource.contains("selectionAttachments\n                .map { quotedReferenceBlock(text: $0.text, sourceTitle: $0.ownerTitle) }")
     && workspaceStoreSource.contains("sourceTitle: selectionContext.ownerTitle")
-    && workspaceStoreSource.contains("来源：\\(currentReferenceTitle)"), "copy reference uses attached selections, the live selection, or the current reader source")
+    && workspaceStoreSource.contains("来源：\\(currentSourceReferenceTitle)")
+    && workspaceStoreSource.contains("\\(itemTitle)，章节标识：\\(locationID)，章节：\\(locationTitle)")
+    && workspaceStoreSource.contains("\\(itemTitle)，章节序号：\\(sectionOrdinal)，章节：\\(locationTitle)"), "copy reference uses attached selections or a canonical file-plus-location source")
 expect(workspaceStoreSource.contains("private func quotedReferenceBlock")
     && workspaceStoreSource.contains("let quoted = MarkdownSelectionSanitizer.clean(text)")
     && workspaceStoreSource.contains("> [!quote] 选区摘录")
@@ -1994,11 +2432,11 @@ if let hideReaderSearchStart = workspaceStoreSource.range(of: "func hideReaderSe
     expect(false, "reader search dismissal source is readable")
 }
 expect(workspaceStoreSource.contains("var selectedMaterialTitle") && workspaceStoreSource.contains("selectedMaterialItem.map(displayTitle) ?? ui(\"未选择材料\""), "agent material title does not invent a current material")
-expect(workspaceStoreSource.contains("var agentMessageSourceTitle: String?") && workspaceStoreSource.contains("hasSelectedMaterial ? currentReferenceTitle : activeNoteItem.map(displayTitle)") && !workspaceStoreSource.contains("source: selectedMaterialItem?.title"), "agent message source uses the current reader location and falls back to the localized active note title")
-expect(workspaceStoreSource.contains("let sentMaterialTitle = currentReferenceTitle")
-    && workspaceStoreSource.contains("materialTitle: sentMaterialTitle"), "agent prompt snapshots the current reader location title so PDF page context reaches the model after background indexing")
+expect(workspaceStoreSource.contains("var agentMessageSourceTitle: String?") && workspaceStoreSource.contains("hasSelectedMaterial ? currentSourceReferenceTitle : activeNoteItem.map(displayTitle)") && !workspaceStoreSource.contains("source: selectedMaterialItem?.title"), "agent message source uses the canonical file location and falls back to the localized active note title")
+expect(workspaceStoreSource.contains("let sentMaterialTitle = currentSourceReferenceTitle")
+    && workspaceStoreSource.contains("materialTitle: sentMaterialTitle"), "agent prompt snapshots the canonical file location so PDF pages and HTML sections reach the model")
 expect(workspaceStoreSource.contains("private var quietInsightReferenceTitle: String")
-    && workspaceStoreSource.contains("selectionContext?.ownerTitle ?? (hasSelectedMaterial ? currentReferenceTitle : activeNoteItem.map(displayTitle)) ?? ui(\"当前笔记\"")
+    && workspaceStoreSource.contains("selectionContext?.ownerTitle ?? (hasSelectedMaterial ? currentSourceReferenceTitle : activeNoteItem.map(displayTitle)) ?? ui(\"当前笔记\"")
     && workspaceStoreSource.contains("没有证据就说\\(evidenceText)"), "quiet insight uses real selection, current reader location, or note source wording")
 expect(workspaceStoreSource.contains("private func clearUnpinnedFloatingSelection(keepContext: Bool = true, invalidatesAgentContext: Bool = true)")
     && workspaceStoreSource.contains("if invalidatesAgentContext, selectionContext != nil")
@@ -2126,11 +2564,13 @@ if let requestStart = workspaceStoreSource.range(of: "private func performAgentR
         && requestSource.contains("clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)")
         && requestSource.contains("appendAgentMessage(AgentMessage(role: .user, text: question, source: sourceTitle))")
         && requestSource.contains("let sentLearningContext = makeLearningContext()")
-        && requestSource.contains("let courseContext = try await makeCourseContext(query: courseQuery)")
-        && requestSource.contains("courseContext: courseContext")
+        && requestSource.contains("let courseBuild = try await makeCourseContext(query: courseQuery)")
+        && requestSource.contains("materialIsTruncated: courseBuild.selectedMaterialIsTruncated")
+        && requestSource.contains("courseContext: courseBuild.context")
         && requestSource.contains("learningContext: sentLearningContext")
         && requestSource.contains("let reply = try await executeStudyAgentRequest(request)")
         && requestSource.contains("applyLearningUpdate(")
+        && requestSource.contains("expectedUserQuestion: request.question")
         && requestSource.contains("requestWorkspaceRevision == agentContextRevision")
         && requestSource.contains("requestMemoryRevision == learningMemoryRevision")
         && requestSource.contains("lastAgentReplyContextRevision = requestWorkspaceRevision")
@@ -2150,16 +2590,29 @@ expect(workspaceStoreSource.contains("noteSourceLinks: noteSourceLinks")
     && workspaceStoreSource.contains("learningMemoryRevision: learningMemoryRevision")
     && workspaceStoreSource.contains("studySessions: studySessions")
     && workspaceStoreSource.contains("activeStudySessionID: activeStudySessionID"), "course links, progress, memory, and sessions are saved with the workspace")
+expect(workspaceStoreSource.contains("acceptedUpdate.resolutions = update.resolutions.prefix(12).filter")
+    && workspaceStoreSource.contains("func confirmLearningMemoryResolution")
+    && workspaceStoreSource.contains("private static func resolutionEvidenceMatches")
+    && workspaceStoreSource.contains("StudyAgentResolutionEvidence.matches")
+    && workspaceStoreSource.contains("func restoreLearningMemory(")
+    && workspaceStoreSource.contains("resolutionEvidence = \"[用户：界面确认]\"")
+    && notesAgentSource.contains("建议结案：")
+    && notesAgentSource.contains("store.confirmLearningMemoryResolution(resolution)")
+    && notesAgentSource.contains("store.restoreLearningMemoryResolution(resolution)"), "PI can only propose memory resolution; user confirmation persists it and the UI can undo it")
 expect(workspaceStoreSource.contains("} else {\n            restoreCurrentStudyLocation()\n            recordCurrentStudyLocation(incrementVisit: false)\n        }")
     && workspaceStoreSource.contains("private func restoreCurrentStudyLocation()")
     && workspaceStoreSource.contains("readerPageIndex = max(location.pageIndex ?? 0, 0)")
     && workspaceStoreSource.contains("readerTargetPageIndex = location.pageIndex.map { max($0, 0) }"), "saved heading and PDF page are restored before startup records the current study location")
 expect(workspaceStoreSource.contains("private func makeCourseContext(query: String) async throws")
     && workspaceStoreSource.contains("CourseKnowledgeIndex.build(")
-    && workspaceStoreSource.contains("DocumentTextExtractor.indexText(for:")
+    && workspaceStoreSource.contains("courseDocumentSearchIndex: CourseDocumentSearchIndex")
+    && workspaceStoreSource.contains("course-search-v3.sqlite3")
+    && workspaceStoreSource.contains("removeLegacyCourseIndex")
+    && workspaceStoreSource.contains("let indexedByItemID = searchIndex.lookup(")
+    && workspaceStoreSource.contains("candidate.item.isSample")
     && workspaceStoreSource.contains("Task.detached(priority: .userInitiated)")
     && workspaceStoreSource.contains("withTaskCancellationHandler")
-    && workspaceStoreSource.contains("migrateNoteSourceLinksFromMarkdown()"), "agent requests index every course item and migrate durable note-source links")
+    && workspaceStoreSource.contains("migrateNoteSourceLinksFromMarkdown()"), "agent queries the persistent course index in the background and migrates durable note-source links")
 if let selectStart = workspaceStoreSource.range(of: "func select(itemID: String?)")?.lowerBound,
    let selectEnd = workspaceStoreSource[selectStart...].range(of: "\n    func ", options: [], range: workspaceStoreSource.index(after: selectStart)..<workspaceStoreSource.endIndex)?.lowerBound {
     let selectSource = String(workspaceStoreSource[selectStart..<selectEnd])
@@ -2175,6 +2628,7 @@ expect(workspaceStoreSource.contains("func stageNoteDraft(_ value: String, for i
     && notesAgentSource.contains("store.stageNoteDraft(value, for: draftNoteItemID)"), "agent requests flush the current local note-editor draft before snapshotting context")
 expect(workspaceStoreSource.contains("func updateReaderLocationTitle(_ title: String?)")
     && workspaceStoreSource.contains("guard readerLocationTitle != nextTitle else { return }\n        invalidateAgentContext()")
+    && workspaceStoreSource.contains("func updateReaderHTMLLocation(id: String?, title: String?)")
     && workspaceStoreSource.contains("guard readerPageIndex != nextIndex else { return }\n        invalidateAgentContext()"), "reader heading and page changes invalidate stale agent answers")
 expect(workspaceStoreSource.contains("var agentPromptScope") && workspaceStoreSource.contains("var selectionPromptScope") && !workspaceStoreSource.contains("var libraryOrganizationScope"), "agent prompt builders avoid half-built library organization context")
 expect(!workspaceStoreSource.contains("请根据当前文档和当前笔记") && !workspaceStoreSource.contains("请根据当前材料和当前笔记") && !workspaceStoreSource.contains("结合当前文档和笔记"), "agent draft presets do not hardcode fake material context")
@@ -2215,7 +2669,10 @@ expect(workspaceStoreSource.contains("func cancelNotebookNoteCreation()")
     && workspaceStoreSource.contains("func select(itemID: String?) {\n        invalidateAgentContext()\n        persistCurrentNote()\n        notebookCreationDraft = nil")
     && !workspaceStoreSource.contains("private func promptCreateNotebookNote(seed: NotebookNoteSeed)")
     && !workspaceStoreSource.contains("alert.messageText = seed.isBlank"), "new-note creation opens the inline naming strip and confirms through the shared local markdown creator")
-expect(workspaceStoreSource.contains("importedItems.append(item)\n            if let sourceItem {\n                addNoteSourceLink(noteItemID: item.id, sourceItemID: sourceItem.id)\n            }\n            activeNotebookItemID = item.id\n            noteText = markdown\n            revealRichWritingSurface()\n            focus(.notes)\n            save()"), "new notebook notes persist their material link and open in the note pane without replacing the reader material")
+expect(workspaceStoreSource.contains("importedItems.append(item)")
+    && workspaceStoreSource.contains("courseDocumentSearchIndex.synchronize(allItems)")
+    && workspaceStoreSource.contains("addNoteSourceLink(noteItemID: item.id, sourceItemID: sourceItem.id)")
+    && workspaceStoreSource.contains("activeNotebookItemID = item.id\n            noteText = markdown\n            revealRichWritingSurface()\n            focus(.notes)\n            save()"), "new notebook notes persist their material link, join the course index, and open in the note pane without replacing the reader material")
 expect(workspaceStoreSource.contains("private func showTransientNoteStatus(_ message: String)")
     && workspaceStoreSource.contains("Task { @MainActor [weak self] in")
     && workspaceStoreSource.contains("if self?.noteFileError == message")

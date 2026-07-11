@@ -79,6 +79,8 @@ public enum PiRPCIncomingMessage: Equatable, Sendable {
     case assistantError(String)
     case toolStarted(id: String, name: String)
     case contextRead(id: String, contextRevision: String)
+    case courseSourcesRead(id: String, contextRevision: String, labels: [String], jumpEvidence: [String: String])
+    case learningMemoryRead(id: String, contextRevision: String, memoryRevision: UInt64, labels: [String], jumpEvidence: [String: String])
     case noteProposal(id: String, StudyAgentNoteProposal)
     case learningUpdate(id: String, StudyAgentLearningUpdate)
     case toolFailed(id: String, name: String, message: String)
@@ -157,6 +159,56 @@ public enum PiRPCMessageDecoder {
                     contextRevision: revision
                 )
             }
+            if name == "weibei_course_search",
+               let details = result?["details"] as? [String: Any],
+               let contextRevision = details["contextRevision"] as? String {
+                let entries = (details["catalog"] as? [[String: Any]])
+                    ?? (details["results"] as? [[String: Any]])
+                    ?? []
+                let legacyLabels = entries.compactMap { entry -> String? in
+                    guard let title = entry["title"] as? String,
+                          let role = entry["role"] as? String,
+                          role == "material" || role == "note",
+                          let searchText = entry["searchText"] as? String,
+                          !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                        return nil
+                    }
+                    return role == "note" ? "[笔记：\(title)]" : "[材料：\(title)]"
+                }
+                return .courseSourcesRead(
+                    id: object["toolCallId"] as? String ?? "",
+                    contextRevision: contextRevision,
+                    labels: details["evidenceLabels"] as? [String] ?? legacyLabels,
+                    jumpEvidence: details["jumpEvidence"] as? [String: String] ?? [:]
+                )
+            }
+            if name == "weibei_learning_memory",
+               let details = result?["details"] as? [String: Any],
+               details["kind"] as? String == "learning_memory",
+               let contextRevision = details["contextRevision"] as? String,
+               let memoryRevision = details["memoryRevision"] as? NSNumber {
+                let learning = details["learning"] as? [String: Any] ?? [:]
+                var labels: [String] = []
+                if learning["lastLocation"] is [String: Any] {
+                    labels.append("[学习记录：上次位置]")
+                }
+                if let memories = learning["memories"] as? [[String: Any]], !memories.isEmpty {
+                    labels.append("[学习记忆：用户状态]")
+                }
+                if learning["session"] is [String: Any] {
+                    labels.append("[会话：当前]")
+                }
+                if labels.isEmpty {
+                    labels.append("[学习记忆：无记录]")
+                }
+                return .learningMemoryRead(
+                    id: object["toolCallId"] as? String ?? "",
+                    contextRevision: contextRevision,
+                    memoryRevision: memoryRevision.uint64Value,
+                    labels: labels,
+                    jumpEvidence: details["jumpEvidence"] as? [String: String] ?? [:]
+                )
+            }
             if name == "weibei_note_proposal",
                let details = result?["details"] as? [String: Any],
                details["kind"] as? String == "note_proposal",
@@ -190,6 +242,16 @@ public enum PiRPCMessageDecoder {
                         origin: origin
                     )
                 }
+                let resolutions = (details["resolutions"] as? [[String: Any]] ?? []).compactMap { resolution -> StudyAgentMemoryResolution? in
+                    guard let memoryID = resolution["memoryID"] as? String,
+                          let text = resolution["text"] as? String,
+                          let evidence = resolution["evidence"] as? String else { return nil }
+                    return StudyAgentMemoryResolution(
+                        memoryID: memoryID,
+                        text: text,
+                        evidence: evidence
+                    )
+                }
                 return .learningUpdate(
                     id: object["toolCallId"] as? String ?? "",
                     StudyAgentLearningUpdate(
@@ -198,7 +260,8 @@ public enum PiRPCMessageDecoder {
                         sessionSummary: details["sessionSummary"] as? String,
                         suggestedPhase: (details["suggestedPhase"] as? String).flatMap(StudyPhase.init(rawValue:)),
                         suggestedNext: details["suggestedNext"] as? [String] ?? [],
-                        entries: entries
+                        entries: entries,
+                        resolutions: resolutions
                     )
                 )
             }

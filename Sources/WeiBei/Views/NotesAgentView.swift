@@ -1714,6 +1714,40 @@ struct AgentPaneView: View {
                 }
             }
 
+            if !store.orderedLearningMemoryEntries.isEmpty {
+                Divider()
+                Menu {
+                    ForEach(Array(store.orderedLearningMemoryEntries.prefix(20))) { memory in
+                        if memory.status == .resolved {
+                            Button {
+                                store.restoreLearningMemory(memory.id)
+                            } label: {
+                                Label(
+                                    "\(store.learningMemoryKindLabel(memory.kind))：\(String(memory.text.prefix(64)))",
+                                    systemImage: "arrow.uturn.backward"
+                                )
+                            }
+                        } else if memory.kind == .goal || memory.kind == .confusion || memory.kind == .nextStep {
+                            Button {
+                                store.resolveLearningMemory(memory.id)
+                            } label: {
+                                Label(
+                                    "\(store.learningMemoryKindLabel(memory.kind))：\(String(memory.text.prefix(64)))",
+                                    systemImage: "checkmark.circle"
+                                )
+                            }
+                        } else {
+                            Label(
+                                "\(store.learningMemoryKindLabel(memory.kind))：\(String(memory.text.prefix(64)))",
+                                systemImage: "brain.head.profile"
+                            )
+                        }
+                    }
+                } label: {
+                    Label(store.ui("学习记忆", "Learning Memory"), systemImage: "brain.head.profile")
+                }
+            }
+
             if store.hasCurrentSessionInferredMemory {
                 Divider()
                 Button(role: .destructive) {
@@ -2988,7 +3022,7 @@ private struct AgentBubble: View {
 
             if message.id == store.lastUsableAgentAnswerID {
                 if let update = store.latestAgentLearningUpdate,
-                   !update.entries.isEmpty || !update.suggestedNext.isEmpty {
+                   !update.entries.isEmpty || !update.resolutions.isEmpty || !update.suggestedNext.isEmpty {
                     learningUpdateContent(update)
                 }
                 if let proposal = store.latestAgentNoteProposal, !proposal.evidence.isEmpty {
@@ -3039,6 +3073,28 @@ private struct AgentBubble: View {
                     .font(.caption)
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+
+            ForEach(Array(update.resolutions.prefix(4).enumerated()), id: \.offset) { _, resolution in
+                let isResolved = store.isLearningMemoryResolved(resolution.memoryID)
+                HStack(alignment: .top, spacing: 6) {
+                    Text(store.ui("建议结案：\(resolution.text)", "Suggested resolution: \(resolution.text)"))
+                        .font(.caption)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    Button {
+                        if isResolved {
+                            store.restoreLearningMemoryResolution(resolution)
+                        } else {
+                            store.confirmLearningMemoryResolution(resolution)
+                        }
+                    } label: {
+                        Image(systemName: isResolved ? "arrow.uturn.backward" : "checkmark.circle")
+                    }
+                    .buttonStyle(WeiBeiIconButtonStyle(active: isResolved, size: 22))
+                    .help(store.ui(isResolved ? "撤销结案" : "确认结案", isResolved ? "Undo resolution" : "Confirm resolution"))
+                }
             }
 
             ForEach(Array(update.suggestedNext.prefix(3).enumerated()), id: \.offset) { _, next in

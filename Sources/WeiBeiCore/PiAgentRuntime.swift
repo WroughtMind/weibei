@@ -271,8 +271,15 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var id: UUID
         var contextRevision: String
         var memoryRevision: UInt64
+        var userQuestion: String
         var workflow: StudyAgentWorkflow
+        var allowsLearningOnlyAnswer: Bool
+        var resolvableMemoryIDs: Set<String>
         var allowedSourceLabels: Set<String>
+        var allowedJumpReferences: Set<String>
+        var jumpEvidenceLabels: [String: Set<String>]
+        var allowedLearningLabels: Set<String> = []
+        var lastLocationSourceLabel: String?
         var allowedNoteSourceLabels: Set<String>
         var didReadContext = false
         var answeredBeforeContext = false
@@ -330,13 +337,26 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         try writeContext(context)
         await progress?(.readingContext)
 
+        let currentJumpEvidence = currentJumpEvidence(in: context)
         activeRun = ActiveRun(
             id: request.id,
             contextRevision: request.contextRevision,
             memoryRevision: request.learningContext.memoryRevision,
+            userQuestion: request.question,
             workflow: request.resolvedWorkflow,
-            allowedSourceLabels: sourceLabels(in: context, includeCourse: true),
-            allowedNoteSourceLabels: sourceLabels(in: context, includeCourse: false),
+            allowsLearningOnlyAnswer: StudyAgentQuestionScope.allowsLearningOnlyAnswer(request.question),
+            resolvableMemoryIDs: Set(request.learningContext.memories.compactMap { memory in
+                guard memory.status == .active,
+                      memory.kind == .goal || memory.kind == .confusion || memory.kind == .nextStep else {
+                    return nil
+                }
+                return memory.id.uuidString.lowercased()
+            }),
+            allowedSourceLabels: currentSourceLabels(in: context),
+            allowedJumpReferences: Set(currentJumpEvidence.keys),
+            jumpEvidenceLabels: currentJumpEvidence,
+            lastLocationSourceLabel: context.learning.lastLocation.map { "[材料：\($0.itemTitle)]" },
+            allowedNoteSourceLabels: currentSourceLabels(in: context),
             progress: progress
         )
         refreshRunWatchdog()
@@ -502,23 +522,188 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         return "/skill:\(skillName) \(request.question)"
     }
 
-    private func sourceLabels(in context: StudyAgentContextEnvelope, includeCourse: Bool) -> Set<String> {
-        var labels = ["[笔记：\(context.note.title)]"]
-        if let material = context.material {
+    private func currentSourceLabels(in context: StudyAgentContextEnvelope) -> Set<String> {
+        var labels: [String] = []
+        if !context.note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            labels.append("[笔记：\(context.note.title)]")
+        }
+        if let material = context.material,
+           !material.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             labels.append("[材料：\(material.title)]")
         }
-        if let selection = context.selection {
+        if let selection = context.selection,
+           !selection.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             labels.append("[选区：\(selection.title)]")
         }
-        if includeCourse {
-            labels.append(contentsOf: context.course.catalog.map { item in
-                item.role == "note" ? "[笔记：\(item.title)]" : "[材料：\(item.title)]"
-            })
-            labels.append("[学习记录：上次位置]")
-            labels.append("[学习记忆：用户状态]")
-            labels.append("[会话：当前]")
-        }
         return Set(labels)
+    }
+
+    private func currentJumpEvidence(in context: StudyAgentContextEnvelope) -> [String: Set<String>] {
+        var evidence: [String: Set<String>] = [:]
+        func add(_ rawReference: String, label: String) {
+            guard let reference = canonicalJumpReference(rawReference) else { return }
+            evidence[reference, default: []].insert(label)
+        }
+        if !context.note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            add("来源：\(context.note.title)", label: "[笔记：\(context.note.title)]")
+        }
+        if let material = context.material,
+           !material.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            add("来源：\(material.title)", label: "[材料：\(material.title)]")
+        }
+        if let selection = context.selection,
+           !selection.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            add("来源：\(selection.title)", label: "[选区：\(selection.title)]")
+        }
+        return evidence
+    }
+
+    private func registerJumpEvidence(
+        _ jumpEvidence: [String: String],
+        in run: inout ActiveRun
+    ) {
+        for (rawReference, label) in jumpEvidence {
+            guard let reference = canonicalJumpReference(rawReference) else { continue }
+            run.allowedJumpReferences.insert(reference)
+            run.jumpEvidenceLabels[reference, default: []].insert(label)
+        }
+    }
+
+    private func citedContentLabels(in text: String) -> Set<String> {
+        labels(in: text, pattern: #"\[(?:材料|笔记|选区)：[^\]\n]{1,300}\]"#)
+    }
+
+    private func citedLearningLabels(in text: String) -> Set<String> {
+        Set(["[学习记录：上次位置]", "[学习记忆：用户状态]", "[学习记忆：无记录]", "[会话：当前]"])
+            .filter { text.contains($0) }
+    }
+
+    private func citedJumpReferences(in text: String) -> Set<String> {
+        Set(text.components(separatedBy: .newlines).compactMap { rawLine in
+            var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.hasPrefix(">") {
+                line = String(line.dropFirst()).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            guard line.contains("来源：") || line.localizedCaseInsensitiveContains("source:") else {
+                return nil
+            }
+            guard isDedicatedJumpLine(line) else { return nil }
+            return canonicalJumpReference(line)
+        })
+    }
+
+    private func isDedicatedJumpLine(_ line: String) -> Bool {
+        line.range(
+            of: #"^\s*(?:[-*+>→]\s*)?(?:(?:(?:可点击)?(?:来源|跳转)\s*[:：]?|(?:clickable\s+)?(?:source|jump)\s*:?)\s*)?[`*_]*(?:来源：|source:)"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+    }
+
+    private func canonicalJumpReference(_ raw: String) -> String? {
+        let reference = SourceReferenceTitle.parse(raw)
+        let title = reference.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty,
+              !title.hasPrefix("["),
+              !title.contains("来源："),
+              !title.localizedCaseInsensitiveContains("source:") else { return nil }
+        var result = "来源：\(title)"
+        if let ordinal = reference.courseItemOrdinal {
+            result += "，条目：\(ordinal)"
+        }
+        if let pageIndex = reference.pageIndex {
+            result += "，第 \(pageIndex + 1) 页"
+        }
+        if let sectionLocationID = reference.sectionLocationID {
+            result += "，章节标识：\(sectionLocationID)"
+        }
+        if let sectionOrdinal = reference.sectionOrdinal {
+            result += "，章节序号：\(sectionOrdinal)"
+        }
+        if let sectionTitle = reference.sectionTitle {
+            result += "，章节：\(sectionTitle)"
+        }
+        return result
+    }
+
+    private func labels(in text: String, pattern: String) -> Set<String> {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return Set(regex.matches(in: text, range: range).compactMap { match in
+            Range(match.range, in: text).map { String(text[$0]) }
+        })
+    }
+
+    private func answerValidationError(text: String, run: ActiveRun) -> String? {
+        let contentLabels = citedContentLabels(in: text)
+        let learningLabels = citedLearningLabels(in: text)
+        guard !contentLabels.isEmpty
+                || (run.allowsLearningOnlyAnswer && !learningLabels.isEmpty) else {
+            return "PI returned a content answer without a source read in the current turn"
+        }
+        guard contentLabels.isSubset(of: run.allowedSourceLabels) else {
+            return "PI cited a source that was not read in the current turn"
+        }
+        let jumpReferences = citedJumpReferences(in: text)
+        let unverifiedJumpReferences = jumpReferences.subtracting(run.allowedJumpReferences)
+        guard unverifiedJumpReferences.isEmpty else {
+            return "PI suggested a jump location that was not returned by a current-turn tool: \(unverifiedJumpReferences.sorted().joined(separator: ", "))"
+        }
+        let citedEvidenceLabels = contentLabels.union(learningLabels)
+        let mismatchedJumpReferences = jumpReferences.filter { reference in
+            guard let requiredLabels = run.jumpEvidenceLabels[reference], !requiredLabels.isEmpty else {
+                return true
+            }
+            return requiredLabels.isDisjoint(with: citedEvidenceLabels)
+        }
+        guard mismatchedJumpReferences.isEmpty else {
+            return "PI suggested a jump that does not match its cited evidence: \(mismatchedJumpReferences.sorted().joined(separator: ", "))"
+        }
+        guard learningLabels.isSubset(of: run.allowedLearningLabels) else {
+            return "PI cited learning memory before reading it"
+        }
+        return nil
+    }
+
+    private func learningUpdateValidationError(
+        _ update: StudyAgentLearningUpdate,
+        run: ActiveRun
+    ) -> String? {
+        guard !run.allowedLearningLabels.isEmpty else {
+            return "PI proposed a learning-memory update before reading learning memory"
+        }
+        for entry in update.entries {
+            let evidenceIsCurrentTurn = entry.evidence.hasPrefix("[用户：本轮]")
+                || entry.evidence.hasPrefix("[会话：当前]")
+            if evidenceIsCurrentTurn,
+               !currentTurnEvidenceMatches(entry.evidence, question: run.userQuestion) {
+                return "PI proposed learning memory without quoting the current user turn"
+            }
+            let evidenceIsReadSource = run.allowedSourceLabels.contains {
+                entry.evidence.hasPrefix($0)
+            }
+            guard evidenceIsCurrentTurn || evidenceIsReadSource else {
+                return "PI proposed learning memory with evidence that was not read"
+            }
+            if entry.origin == .userStatement,
+               !entry.evidence.hasPrefix("[用户：本轮]") {
+                return "PI marked a memory as a user statement without direct user evidence"
+            }
+        }
+        guard update.resolutions.allSatisfy({ resolution in
+            run.resolvableMemoryIDs.contains(resolution.memoryID.lowercased())
+                && resolutionEvidenceMatches(resolution.evidence, question: run.userQuestion)
+        }) else {
+            return "PI resolved learning memory without current-turn evidence"
+        }
+        return nil
+    }
+
+    private func currentTurnEvidenceMatches(_ evidence: String, question: String) -> Bool {
+        StudyAgentCurrentTurnEvidence.matches(evidence, question: question)
+    }
+
+    private func resolutionEvidenceMatches(_ evidence: String, question: String) -> Bool {
+        StudyAgentResolutionEvidence.matches(evidence, question: question)
     }
 
     private func launchEnvironment(
@@ -818,6 +1003,27 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             activeRun = run
             refreshRunWatchdog()
 
+        case let .courseSourcesRead(_, contextRevision, labels, jumpEvidence):
+            guard var run = activeRun, contextRevision == run.contextRevision else { return }
+            run.allowedSourceLabels.formUnion(labels)
+            run.allowedNoteSourceLabels.formUnion(labels)
+            registerJumpEvidence(jumpEvidence, in: &run)
+            activeRun = run
+            refreshRunWatchdog()
+
+        case let .learningMemoryRead(_, contextRevision, memoryRevision, labels, jumpEvidence):
+            guard var run = activeRun,
+                  contextRevision == run.contextRevision,
+                  memoryRevision == run.memoryRevision else { return }
+            run.allowedLearningLabels = Set(labels)
+            registerJumpEvidence(jumpEvidence, in: &run)
+            if labels.contains("[学习记录：上次位置]"),
+               let lastLocationSourceLabel = run.lastLocationSourceLabel {
+                run.allowedSourceLabels.insert(lastLocationSourceLabel)
+            }
+            activeRun = run
+            refreshRunWatchdog()
+
         case let .noteProposal(_, proposal):
             guard var run = activeRun else { return }
             guard run.workflow == .noteMaking else {
@@ -858,6 +1064,13 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 )
                 return
             }
+            if let validationError = learningUpdateValidationError(update, run: run) {
+                finishRun(
+                    id: run.id,
+                    with: .failure(PiAgentRuntimeError.agentFailed(validationError))
+                )
+                return
+            }
             run.learningUpdate = update
             activeRun = run
             refreshRunWatchdog()
@@ -882,8 +1095,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             } else if run.workflow == .noteMaking, run.proposal == nil {
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed("PI returned no revision-matched note proposal")))
             } else if run.workflow != .noteMaking,
-                      !run.allowedSourceLabels.contains(where: { cleanText.contains($0) }) {
-                finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed("PI returned an answer without a current-source label")))
+                      let validationError = answerValidationError(text: cleanText, run: run) {
+                finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed(validationError)))
             } else if cleanText.isEmpty, let proposal = run.proposal {
                 finishRun(
                     id: run.id,

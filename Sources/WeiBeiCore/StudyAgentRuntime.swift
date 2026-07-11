@@ -14,6 +14,153 @@ public enum StudyAgentWorkflow: String, Codable, Sendable {
     case recallPractice
 }
 
+public enum StudyAgentQuestionScope {
+    public static func allowsLearningOnlyAnswer(_ question: String) -> Bool {
+        var remainder = question.lowercased().unicodeScalars.filter {
+            CharacterSet.alphanumerics.contains($0)
+                || (0x4E00...0x9FFF).contains(Int($0.value))
+        }.map(String.init).joined()
+        let statePhrases = [
+            "你记得我的学习情况吗", "你记得我学到哪吗", "我上次学习到哪了", "我上次学习到哪",
+            "我上次学到哪了", "我上次学到哪", "上次学习到哪了", "上次学习到哪",
+            "上次学到哪了", "上次学到哪", "我的学习进度", "学习进度", "我的学习目标", "学习目标",
+            "我的目标", "我的学习困惑", "学习困惑", "我的困惑", "接下来学什么",
+            "接下来做什么", "下一步学什么", "下一步做什么", "下一步", "你记得我吗",
+            "wheredidistoplasttime", "whereididstoplasttime", "learningprogress", "mygoal", "mylearninggoal",
+            "myconfusion", "whatnext", "doyourememberme",
+        ]
+        var matchedStatePhrase = false
+        for phrase in statePhrases where remainder.contains(phrase) {
+            remainder = remainder.replacingOccurrences(of: phrase, with: "")
+            matchedStatePhrase = true
+        }
+        guard matchedStatePhrase else { return false }
+        let benignWords = [
+            "请告诉我一下", "请告诉我", "告诉我一下", "告诉我", "我", "的", "是", "什么",
+            "有哪些", "请", "一下", "了", "吗", "呢", "和", "以及", "位置", "在哪", "哪里",
+            "当前", "现在", "想", "要", "please", "tellme", "the", "and", "location",
+            "current", "now", "what", "is", "are", "my", "i", "did", "lasttime",
+        ]
+        for word in benignWords {
+            remainder = remainder.replacingOccurrences(of: word, with: "")
+        }
+        return remainder.isEmpty
+    }
+}
+
+public enum StudyAgentResolutionEvidence {
+    public static func matches(_ evidence: String, question: String) -> Bool {
+        guard StudyAgentCurrentTurnEvidence.matches(evidence, question: question),
+              let statement = statement(in: evidence) else { return false }
+        let value = statement.lowercased()
+        let unresolvedTerms = [
+            "不懂", "不理解", "不会", "没懂", "仍然困惑", "还是困惑", "不知道", "不能区分", "不能够",
+            "还不能", "尚不能", "无法", "没法", "尚未", "还没", "并不", "不太", "不确定",
+            "不正确", "并非正确", "答错", "错误", "不对",
+            "don't understand", "do not understand", "can't", "cannot", "still confused", "not sure",
+            "not able", "unable", "not yet", "have not", "haven't", "incorrect", "not correct", "wrong answer", "is wrong",
+        ]
+        guard !unresolvedTerms.contains(where: value.contains) else { return false }
+        let questionTerms = ["什么", "为什么", "怎么", "为何", "吗", "？", "?", "what", "why", "how"]
+        guard !questionTerms.contains(where: value.contains) else { return false }
+        let masteryTerms = [
+            "懂了", "明白了", "会了", "掌握了", "可以区分", "能够区分", "能解释", "答对", "正确",
+            "解决了", "不再困惑", "understand now", "got it", "can distinguish", "can explain", "correct",
+        ]
+        if masteryTerms.contains(where: value.contains) { return true }
+        let answerMarkers = [
+            "是", "指", "因为", "所以", "而", "但是", "扣除", "等于", "相比", "表示", "反映", "意味着", "即", "=",
+            " is ", " means", "because", "therefore", "while", "equals", "represents", "reflects", "differs",
+        ]
+        guard answerMarkers.contains(where: value.contains) else { return false }
+        let meaningfulCount = statement.unicodeScalars.filter {
+            CharacterSet.alphanumerics.contains($0)
+                || (0x4E00...0x9FFF).contains(Int($0.value))
+        }.count
+        return meaningfulCount >= 12
+    }
+
+    private static func statement(in evidence: String) -> String? {
+        let prefixes = ["[用户：本轮]", "[会话：当前]"]
+        guard let prefix = prefixes.first(where: { evidence.hasPrefix($0) }) else { return nil }
+        let quoteCharacters = CharacterSet(charactersIn: "\"'“”‘’")
+        let value = String(evidence.dropFirst(prefix.count))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: quoteCharacters)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+}
+
+public enum StudyAgentCurrentTurnEvidence {
+    public static func matches(_ evidence: String, question: String) -> Bool {
+        guard let statement = statement(in: evidence), statement.count >= 2 else { return false }
+        if statement.count < 4 {
+            return normalized(statement) == normalized(question)
+        }
+        var searchStart = question.startIndex
+        while searchStart < question.endIndex,
+              let range = question.range(of: statement, range: searchStart..<question.endIndex) {
+            if hasClauseBoundaries(range, in: question),
+               !omitsLeadingNegation(range, in: question) {
+                return true
+            }
+            searchStart = range.upperBound
+        }
+        return false
+    }
+
+    private static func hasClauseBoundaries(_ range: Range<String.Index>, in question: String) -> Bool {
+        let startsAtBoundary = range.lowerBound == question.startIndex
+            || question[question.index(before: range.lowerBound)].isWhitespace
+            || question[question.index(before: range.lowerBound)].isPunctuation
+        let endsAtBoundary = range.upperBound == question.endIndex
+            || question[range.upperBound].isWhitespace
+            || question[range.upperBound].isPunctuation
+        return startsAtBoundary && endsAtBoundary
+    }
+
+    private static func omitsLeadingNegation(
+        _ range: Range<String.Index>,
+        in question: String
+    ) -> Bool {
+        guard range.lowerBound > question.startIndex else { return false }
+        let prefix = String(question[..<range.lowerBound]).lowercased()
+        let immediate = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        if ["不", "没", "未", "无", "别", "勿"].contains(where: immediate.hasSuffix) {
+            return true
+        }
+        let clause = prefix
+            .components(separatedBy: CharacterSet(charactersIn: "，,。！？；;:：.!?"))
+            .last ?? prefix
+        let negativePhrases = [
+            "不想", "不喜欢", "不太", "不能", "不会", "不要", "不愿", "没有", "没法", "尚未", "还没", "并不", "并非",
+            " not ", " never ", " no ", " without ", "cannot", "can't", "don't", "doesn't", "didn't",
+        ]
+        let paddedClause = " \(clause) "
+        return negativePhrases.contains(where: paddedClause.contains)
+    }
+
+    private static func statement(in evidence: String) -> String? {
+        let prefixes = ["[用户：本轮]", "[会话：当前]"]
+        guard let prefix = prefixes.first(where: { evidence.hasPrefix($0) }) else { return nil }
+        let quoteCharacters = CharacterSet(charactersIn: "\"'“”‘’")
+        let value = String(evidence.dropFirst(prefix.count))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: quoteCharacters)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+    private static func normalized(_ text: String) -> String {
+        text.unicodeScalars.filter {
+            !CharacterSet.whitespacesAndNewlines.contains($0)
+                && !CharacterSet.punctuationCharacters.contains($0)
+        }.map(String.init).joined()
+    }
+}
+
 public struct StudyAgentCourseCatalogItem: Codable, Equatable, Sendable {
     public var id: String
     public var title: String
@@ -192,6 +339,7 @@ public struct StudyAgentRequest: Sendable {
     public var question: String
     public var materialTitle: String
     public var materialText: String
+    public var materialIsTruncated: Bool
     public var noteTitle: String
     public var noteText: String
     public var selectionTitle: String?
@@ -209,6 +357,7 @@ public struct StudyAgentRequest: Sendable {
         question: String,
         materialTitle: String,
         materialText: String,
+        materialIsTruncated: Bool = false,
         noteTitle: String,
         noteText: String,
         selectionTitle: String? = nil,
@@ -225,6 +374,7 @@ public struct StudyAgentRequest: Sendable {
         self.question = question
         self.materialTitle = materialTitle
         self.materialText = materialText
+        self.materialIsTruncated = materialIsTruncated
         self.noteTitle = noteTitle
         self.noteText = noteText
         self.selectionTitle = selectionTitle
@@ -289,6 +439,18 @@ public struct StudyAgentMemoryUpdateEntry: Codable, Equatable, Sendable {
     }
 }
 
+public struct StudyAgentMemoryResolution: Codable, Equatable, Sendable {
+    public var memoryID: String
+    public var text: String
+    public var evidence: String
+
+    public init(memoryID: String, text: String, evidence: String) {
+        self.memoryID = memoryID
+        self.text = text
+        self.evidence = evidence
+    }
+}
+
 public struct StudyAgentLearningUpdate: Codable, Equatable, Sendable {
     public var contextRevision: String
     public var memoryRevision: UInt64
@@ -296,6 +458,7 @@ public struct StudyAgentLearningUpdate: Codable, Equatable, Sendable {
     public var suggestedPhase: StudyPhase?
     public var suggestedNext: [String]
     public var entries: [StudyAgentMemoryUpdateEntry]
+    public var resolutions: [StudyAgentMemoryResolution]
 
     public init(
         contextRevision: String,
@@ -303,7 +466,8 @@ public struct StudyAgentLearningUpdate: Codable, Equatable, Sendable {
         sessionSummary: String? = nil,
         suggestedPhase: StudyPhase? = nil,
         suggestedNext: [String] = [],
-        entries: [StudyAgentMemoryUpdateEntry] = []
+        entries: [StudyAgentMemoryUpdateEntry] = [],
+        resolutions: [StudyAgentMemoryResolution] = []
     ) {
         self.contextRevision = contextRevision
         self.memoryRevision = memoryRevision
@@ -311,6 +475,7 @@ public struct StudyAgentLearningUpdate: Codable, Equatable, Sendable {
         self.suggestedPhase = suggestedPhase
         self.suggestedNext = suggestedNext
         self.entries = entries
+        self.resolutions = resolutions
     }
 }
 
@@ -432,7 +597,7 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
             : Source(
                 title: String(request.materialTitle.prefix(300)),
                 text: materialText,
-                isTruncated: request.materialText.count > materialText.count
+                isTruncated: request.materialIsTruncated || request.materialText.count > materialText.count
             )
 
         let noteText = String(request.noteText.prefix(6_000))
@@ -451,7 +616,7 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
                 isTruncated: (request.selectionText ?? "").count > selectedText.count
             )
 
-        recentMessages = request.recentMessages.suffix(8).map { message in
+        recentMessages = request.recentMessages.suffix(20).map { message in
             Message(
                 role: message.role.rawValue,
                 text: String(message.text.prefix(1_200)),
@@ -544,6 +709,8 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
                     origin: memory.origin,
                     status: memory.status,
                     sessionID: memory.sessionID,
+                    resolvedAt: memory.resolvedAt,
+                    resolutionEvidence: memory.resolutionEvidence.map { String($0.prefix(400)) },
                     createdAt: memory.createdAt,
                     updatedAt: memory.updatedAt
                 )
@@ -553,8 +720,9 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
             return StudyLocation(
                 itemID: itemID,
                 itemTitle: String(location.itemTitle.prefix(300)),
+                locationID: location.locationID.map { String($0.prefix(500)) },
                 locationTitle: location.locationTitle.map { String($0.prefix(300)) },
-                pageIndex: location.pageIndex,
+                pageIndex: location.pageIndex.map { max($0, 0) + 1 },
                 lastStudiedAt: location.lastStudiedAt,
                 visitCount: location.visitCount
             )

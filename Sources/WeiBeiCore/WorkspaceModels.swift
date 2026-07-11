@@ -251,12 +251,22 @@ public enum WikiLink {
 }
 
 public enum SourceReferenceTitle {
-    public static func parse(_ raw: String) -> (title: String, pageIndex: Int?) {
+    public static func parse(
+        _ raw: String
+    ) -> (
+        title: String,
+        pageIndex: Int?,
+        sectionTitle: String?,
+        sectionLocationID: String?,
+        sectionOrdinal: Int?,
+        courseItemOrdinal: Int?
+    ) {
         var text = raw
             .components(separatedBy: .newlines)
             .reversed()
-            .map(cleanedLine)
-            .first(where: { $0.hasPrefix("来源：") || $0.localizedCaseInsensitiveContains("source:") })
+            .compactMap(sourceFragment)
+            .first
+            ?? sourceFragment(in: raw)
             ?? cleanedLine(raw)
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.hasPrefix(">") {
@@ -267,14 +277,104 @@ public enum SourceReferenceTitle {
         } else if text.lowercased().hasPrefix("source:") {
             text = String(text.dropFirst("source:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
         }
+        text = text.trimmingCharacters(in: CharacterSet(charactersIn: "`"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard let range = text.range(of: #"(?:，第\s*\d+\s*页|,\s*page\s*\d+)$"#, options: [.regularExpression, .caseInsensitive]) else {
-            return (text, nil)
+        var sectionTitle: String?
+        if let markerRange = text.range(of: "，章节：", options: .backwards) {
+            let section = text[markerRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+            sectionTitle = section.isEmpty ? nil : unwrappedInlineMarkup(String(section))
+            text = text[..<markerRange.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if let markerRange = text.range(of: #",\s*section:\s*"#, options: [.regularExpression, .caseInsensitive]) {
+            let section = text[markerRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+            sectionTitle = section.isEmpty ? nil : unwrappedInlineMarkup(String(section))
+            text = text[..<markerRange.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        let suffix = text[range]
-        let pageNumber = Int(suffix.filter(\.isNumber))
-        let title = text[..<range.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
-        return (title, pageNumber.map { max($0 - 1, 0) })
+
+        var sectionOrdinal: Int?
+        if let range = text.range(
+            of: #"(?:，章节序号：\s*\d+|,\s*section\s*(?:ordinal|number):?\s*\d+)$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) {
+            sectionOrdinal = Int(text[range].filter(\.isNumber))
+            text = text[..<range.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        var sectionLocationID: String?
+        if let range = text.range(
+            of: #"(?:，章节标识：\s*[A-Za-z0-9-]+|,\s*section\s*(?:id|identifier):?\s*[A-Za-z0-9-]+)$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) {
+            let suffix = String(text[range])
+            let separator = suffix.lastIndex(where: { $0 == "：" || $0 == ":" })
+            let identifier = (separator.map { String(suffix[suffix.index(after: $0)...]) } ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            sectionLocationID = identifier.isEmpty ? nil : identifier
+            text = text[..<range.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        var pageIndex: Int?
+        if let range = text.range(
+            of: #"(?:，第\s*\d+\s*页|,\s*page\s*\d+)$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) {
+            let suffix = text[range]
+            pageIndex = Int(suffix.filter(\.isNumber)).map { max($0 - 1, 0) }
+            text = text[..<range.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        var courseItemOrdinal: Int?
+        if let range = text.range(
+            of: #"(?:，条目：\s*\d+|,\s*(?:item|entry):?\s*\d+)$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) {
+            courseItemOrdinal = Int(text[range].filter(\.isNumber))
+            text = text[..<range.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return (
+            unwrappedInlineMarkup(text),
+            pageIndex,
+            sectionTitle,
+            sectionLocationID,
+            sectionOrdinal,
+            courseItemOrdinal
+        )
+    }
+
+    private static func unwrappedInlineMarkup(_ raw: String) -> String {
+        var text = raw
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "`"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        for marker in ["**", "__", "`", "*"] {
+            if text.hasPrefix(marker), text.hasSuffix(marker), text.count > marker.count * 2 {
+                text = String(text.dropFirst(marker.count).dropLast(marker.count))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return text
+    }
+
+    private static func sourceFragment(in raw: String) -> String? {
+        let line = cleanedLine(raw)
+        let chinese = line.range(of: "来源：", options: .backwards)
+        let english = line.range(of: "source:", options: [.backwards, .caseInsensitive])
+        let markerRange: Range<String.Index>?
+        switch (chinese, english) {
+        case let (left?, right?): markerRange = left.lowerBound > right.lowerBound ? left : right
+        case let (left?, nil): markerRange = left
+        case let (nil, right?): markerRange = right
+        case (nil, nil): markerRange = nil
+        }
+        guard let markerRange else { return nil }
+        let fragment = String(line[markerRange.lowerBound...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let markerLength = fragment.hasPrefix("来源：") ? "来源：".count : "source:".count
+        let suffix = String(fragment.dropFirst(markerLength))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "`"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return suffix.isEmpty ? nil : fragment
     }
 
     private static func cleanedLine(_ raw: String) -> String {

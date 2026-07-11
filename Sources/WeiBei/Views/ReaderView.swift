@@ -205,7 +205,9 @@ struct ReaderView: View {
         .onAppear {
             syncReaderLocationTitle()
             pendingPDFPageIndex = store.readerTargetPageIndex
+            htmlContentRailActiveID = store.readerLocationID
             applyPendingPDFPageIfReady()
+            applyPendingHTMLLocationIfReady()
             rebuildPDFContentRail()
         }
         .onChange(of: store.selectedItemID) { _, _ in
@@ -216,11 +218,12 @@ struct ReaderView: View {
             pdfRailTargetPageIndex = nil
             pendingPDFRailPreviewPages = []
             htmlContentRailItems = []
-            htmlContentRailActiveID = nil
+            htmlContentRailActiveID = store.readerLocationID
             htmlContentRailTarget = nil
             syncReaderLocationTitle()
             pendingPDFPageIndex = store.readerTargetPageIndex
             applyPendingPDFPageIfReady()
+            applyPendingHTMLLocationIfReady()
             rebuildPDFContentRail()
         }
         .onChange(of: pdfPageIndex) { _, _ in
@@ -236,6 +239,12 @@ struct ReaderView: View {
             pendingPDFPageIndex = target
             applyPendingPDFPageIfReady()
         }
+        .onChange(of: store.readerTargetLocationID) { _, _ in
+            applyPendingHTMLLocationIfReady()
+        }
+        .onChange(of: store.readerTargetLocationTitle) { _, _ in
+            applyPendingHTMLLocationIfReady()
+        }
     }
 
     private func syncReaderLocationTitle() {
@@ -244,6 +253,12 @@ struct ReaderView: View {
             return
         }
         let displayTitle = store.displayTitle(for: item)
+        if item.kind == .html {
+            if store.readerLocationTitle == nil {
+                store.updateReaderLocationTitle(displayTitle)
+            }
+            return
+        }
         let title = item.kind == .pdf
             ? store.ui("\(displayTitle)，第 \(pdfPageIndex + 1) 页", "\(displayTitle), page \(pdfPageIndex + 1)")
             : displayTitle
@@ -371,8 +386,49 @@ struct ReaderView: View {
         }
         if let activeID = htmlContentRailActiveID,
            !htmlContentRailItems.contains(where: { $0.id == activeID }) {
-            htmlContentRailActiveID = htmlContentRailItems.first?.id
+            applyHTMLContentRailActiveID(htmlContentRailItems.first?.id)
+        } else if let activeID = htmlContentRailActiveID {
+            applyHTMLContentRailActiveID(activeID)
         }
+        applyPendingHTMLLocationIfReady()
+    }
+
+    private func applyHTMLContentRailActiveID(_ id: String?) {
+        htmlContentRailActiveID = id
+        let title = id.flatMap { activeID in
+            htmlContentRailItems.first(where: { $0.id == activeID })?.title
+        }
+        store.updateReaderHTMLLocation(id: id, title: title)
+    }
+
+    private func applyPendingHTMLLocationIfReady() {
+        guard store.selectedMaterialItem?.kind == .html,
+              !htmlContentRailItems.isEmpty else { return }
+        let targetID: String?
+        if let savedID = store.readerTargetLocationID,
+           let savedSection = htmlContentRailItems.first(where: { $0.id == savedID }),
+           store.readerTargetLocationTitle.map({
+               Self.normalizedHTMLSectionTitle($0) == Self.normalizedHTMLSectionTitle(savedSection.title)
+           }) ?? true {
+            targetID = savedSection.id
+        } else if let targetTitle = store.readerTargetLocationTitle {
+            let normalizedTarget = Self.normalizedHTMLSectionTitle(targetTitle)
+            let matches = htmlContentRailItems.filter {
+                Self.normalizedHTMLSectionTitle($0.title) == normalizedTarget
+            }
+            targetID = matches.count == 1 ? matches[0].id : nil
+        } else {
+            targetID = nil
+        }
+        guard let targetID else { return }
+        htmlContentRailTarget = WebReaderContentRailTarget(id: targetID)
+    }
+
+    private static func normalizedHTMLSectionTitle(_ title: String) -> String {
+        title
+            .lowercased()
+            .split(whereSeparator: { $0.isWhitespace || $0.isPunctuation })
+            .joined()
     }
 
     private static func pdfContentRailID(pageIndex: Int) -> String {
@@ -643,7 +699,7 @@ struct ReaderView: View {
                         adaptsDocumentColors: store.adaptImportedDocumentColors,
                         contentRailTarget: htmlContentRailTarget,
                         onContentRailChange: applyHTMLContentRailSections,
-                        onContentRailActiveChange: { htmlContentRailActiveID = $0 },
+                        onContentRailActiveChange: applyHTMLContentRailActiveID,
                         onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
                     ) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
@@ -656,7 +712,7 @@ struct ReaderView: View {
                         adaptsDocumentColors: true,
                         contentRailTarget: htmlContentRailTarget,
                         onContentRailChange: applyHTMLContentRailSections,
-                        onContentRailActiveChange: { htmlContentRailActiveID = $0 },
+                        onContentRailActiveChange: applyHTMLContentRailActiveID,
                         onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
                     ) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
@@ -1733,14 +1789,56 @@ struct WebReaderRepresentable: NSViewRepresentable {
         return "";
       };
 
-      const headingSections = () => Array.from(document.querySelectorAll("h1, h2, h3, h4, [role='heading']"))
-        .filter((element) => visible(element) && clean(element.textContent))
+      const sectionFingerprintBody = (heading, nextHeading) => {
+        try {
+          const range = document.createRange();
+          range.setStartAfter(heading);
+          if (nextHeading) {
+            range.setEndBefore(nextHeading);
+          } else if (document.body?.lastChild) {
+            range.setEndAfter(document.body.lastChild);
+          } else {
+            return "";
+          }
+          const fragment = range.cloneContents();
+          fragment.querySelectorAll?.("script, style, noscript, template").forEach((element) => element.remove());
+          return clean(fragment.textContent);
+        } catch (_) {
+          return excerptAfterHeading(heading);
+        }
+      };
+
+      const sectionLocationID = (title, body) => {
+        const normalized = `${title}|${body}`
+          .toLocaleLowerCase()
+          .match(/[\\p{L}\\p{N}]/gu)?.join("").slice(0, 500) || "";
+        const bytes = new TextEncoder().encode(normalized);
+        let hash = 0x811c9dc5;
+        bytes.forEach((byte) => {
+          hash ^= byte;
+          hash = Math.imul(hash, 0x01000193) >>> 0;
+        });
+        return `html-section-${hash.toString(16).padStart(8, "0")}`;
+      };
+
+      const headingSections = () => {
+        const headings = Array.from(document.querySelectorAll("h1, h2, h3, h4"));
+        const locationIDCounts = new Map();
+        return headings
         .map((element, index) => {
+          const title = clean(element.textContent);
+          const baseID = sectionLocationID(title, sectionFingerprintBody(element, headings[index + 1]));
+          const count = (locationIDCounts.get(baseID) || 0) + 1;
+          locationIDCounts.set(baseID, count);
+          const id = count === 1 ? baseID : `${baseID}-dup-${count}`;
+          element.dataset.weibeiContentRailID = id;
+          return { element, index, id };
+        })
+        .filter(({ element }) => visible(element) && clean(element.textContent))
+        .map(({ element, index, id }) => {
           const explicitLevel = Number(element.getAttribute("aria-level"));
           const tagLevel = /^H[1-4]$/.test(element.tagName) ? Number(element.tagName.slice(1)) : 2;
           const level = Math.max(1, Math.min(4, Number.isFinite(explicitLevel) && explicitLevel > 0 ? explicitLevel : tagLevel));
-          const id = element.dataset.weibeiContentRailID || `html-heading-${index}`;
-          element.dataset.weibeiContentRailID = id;
           return {
             id,
             element,
@@ -1752,6 +1850,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
             fallback: false
           };
         });
+      };
 
       const fallbackSections = () => {
         const root = document.querySelector("main, article") || document.body;

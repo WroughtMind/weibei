@@ -119,13 +119,13 @@ struct WeiBeiPiCheck {
         let reply = try await runtime.respond(
             to: request(
                 workflow: .courseWayfinding,
-                question: "利率和通货膨胀在课程里有哪份相关材料？说明关联并给出跳转来源。",
+                question: "利率和通货膨胀在课程里有哪份相关材料？说明关联，并原样给出工具返回的最精确 PDF 页码跳转。",
                 revision: "pi-check-wayfinding"
             )
         )
         guard reply.backend == .pi,
               reply.text.contains("通货膨胀补充材料"),
-              reply.text.contains("来源：通货膨胀补充材料"),
+              reply.text.contains("来源：通货膨胀补充材料，第 4 页"),
               containsSourceLabel(reply.text) else {
             throw PiCheckError.invalidEvaluation("course-wayfinding")
         }
@@ -182,7 +182,7 @@ struct WeiBeiPiCheck {
                         subtitle: "PDF 第 4 章",
                         kind: "pdf",
                         role: "material",
-                        headings: ["购买力与实际利率"],
+                        headings: ["第 4 页", "购买力与实际利率"],
                         searchText: "通货膨胀会改变货币购买力，区分名义利率与实际利率时需要考虑通货膨胀。"
                     ),
                     StudyAgentCourseItem(

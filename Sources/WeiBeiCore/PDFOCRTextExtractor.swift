@@ -27,6 +27,12 @@ public struct PDFOCRPage: Equatable {
     }
 }
 
+public enum PDFOCRPageOutcome: Equatable {
+    case text(PDFOCRPage)
+    case empty(pageIndex: Int)
+    case failed(pageIndex: Int)
+}
+
 public enum PDFOCRTextExtractor {
     public static func text(from document: PDFDocument, maxPages: Int = 12) -> String? {
         let text = pages(from: document, maxPages: maxPages)
@@ -48,12 +54,24 @@ public enum PDFOCRTextExtractor {
             .filter { $0 >= 0 && $0 < pageCount }
             .sorted()
 
-        return indexes.compactMap { index -> PDFOCRPage? in
-            guard let page = document.page(at: index),
-                  let image = cgImage(for: page) else { return nil }
-            let lines = recognizeLines(in: image)
-            return lines.isEmpty ? nil : PDFOCRPage(pageIndex: index, lines: lines)
+        return indexes.compactMap { index in
+            guard case let .text(page) = pageOutcome(from: document, pageIndex: index) else {
+                return nil
+            }
+            return page
         }
+    }
+
+    public static func pageOutcome(from document: PDFDocument, pageIndex: Int) -> PDFOCRPageOutcome {
+        guard pageIndex >= 0,
+              pageIndex < document.pageCount,
+              let page = document.page(at: pageIndex),
+              let image = cgImage(for: page),
+              let lines = recognizeLines(in: image) else {
+            return .failed(pageIndex: pageIndex)
+        }
+        guard !lines.isEmpty else { return .empty(pageIndex: pageIndex) }
+        return .text(PDFOCRPage(pageIndex: pageIndex, lines: lines))
     }
 
     private static func cgImage(for page: PDFPage) -> CGImage? {
@@ -65,7 +83,7 @@ public enum PDFOCRTextExtractor {
         return page.thumbnail(of: size, for: .mediaBox).cgImage(forProposedRect: &rect, context: nil, hints: nil)
     }
 
-    private static func recognizeLines(in image: CGImage) -> [PDFOCRLine] {
+    private static func recognizeLines(in image: CGImage) -> [PDFOCRLine]? {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = true
@@ -79,7 +97,7 @@ public enum PDFOCRTextExtractor {
         do {
             try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
         } catch {
-            return []
+            return nil
         }
 
         return (request.results ?? [])

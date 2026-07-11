@@ -120,7 +120,7 @@ public struct OpenAIResponsesClient: Sendable {
         \(language.text("笔记内容", "Note content"))\(headingColon)
         \(trimmedNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? language.text("无", "none") : trimmedNote)
         """
-        let dialogue = recentMessages.suffix(8).map { message in
+        let dialogue = recentMessages.suffix(20).map { message in
             let role = message.role == .user ? language.text("用户", "User") : language.text("助手", "Assistant")
             let source = message.source?.trimmingCharacters(in: .whitespacesAndNewlines)
             let sourceText = source?.isEmpty == false ? language.text("（来源：\(source!)）", " (source: \(source!))") : ""

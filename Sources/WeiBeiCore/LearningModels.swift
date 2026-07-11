@@ -22,6 +22,7 @@ public struct NoteSourceLink: Identifiable, Codable, Hashable, Sendable {
 public struct StudyLocation: Codable, Hashable, Sendable {
     public var itemID: String
     public var itemTitle: String
+    public var locationID: String?
     public var locationTitle: String?
     public var pageIndex: Int?
     public var lastStudiedAt: Date
@@ -30,6 +31,7 @@ public struct StudyLocation: Codable, Hashable, Sendable {
     public init(
         itemID: String,
         itemTitle: String,
+        locationID: String? = nil,
         locationTitle: String? = nil,
         pageIndex: Int? = nil,
         lastStudiedAt: Date = Date(),
@@ -37,6 +39,7 @@ public struct StudyLocation: Codable, Hashable, Sendable {
     ) {
         self.itemID = itemID
         self.itemTitle = itemTitle
+        self.locationID = locationID
         self.locationTitle = locationTitle
         self.pageIndex = pageIndex
         self.lastStudiedAt = lastStudiedAt
@@ -71,6 +74,8 @@ public struct LearningMemoryEntry: Identifiable, Codable, Hashable, Sendable {
     public var origin: LearningMemoryOrigin
     public var status: LearningMemoryStatus
     public var sessionID: UUID?
+    public var resolvedAt: Date?
+    public var resolutionEvidence: String?
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -82,6 +87,8 @@ public struct LearningMemoryEntry: Identifiable, Codable, Hashable, Sendable {
         origin: LearningMemoryOrigin,
         status: LearningMemoryStatus = .active,
         sessionID: UUID? = nil,
+        resolvedAt: Date? = nil,
+        resolutionEvidence: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -92,6 +99,8 @@ public struct LearningMemoryEntry: Identifiable, Codable, Hashable, Sendable {
         self.origin = origin
         self.status = status
         self.sessionID = sessionID
+        self.resolvedAt = resolvedAt
+        self.resolutionEvidence = resolutionEvidence
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }

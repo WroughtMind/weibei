@@ -25,4 +25,5 @@ allowed-tools: weibei_context weibei_course_map weibei_course_search weibei_lear
   来源：精确标题
 ```
 
-`\[材料：标题\]` 或 `\[笔记：标题\]` 用于证据；单独的 `来源：标题` 用于魏碑点击跳转。
+工具返回的 `evidenceLabel` 用于证据；单独的来源行用于魏碑点击跳转。必须原样复制 `evidenceLabel` 以及工具返回的 `jumpReference`、`sectionJumpReferences` 或 `pageJumpReferences`，不得删掉重复文件所需的 `条目`、HTML 定位所需的 `章节标识` / `章节序号` 或 PDF 页码，也不得自行改写章节名。
+工具返回页或章节级跳转时，优先给最精确的位置，不退回只打开整份文件。

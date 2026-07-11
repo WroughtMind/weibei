@@ -42,8 +42,11 @@ fi
 APP_BUNDLE="$DIST_DIR/$APP_DISPLAY_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
+APP_HELPERS="$APP_CONTENTS/Helpers"
 APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$PRODUCT_NAME"
+PDF_TEXT_WORKER_NAME="WeiBeiPDFTextWorker"
+PDF_TEXT_WORKER="$APP_HELPERS/$PDF_TEXT_WORKER_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 VERIFY_PID=""
 VERIFY_DATA_DIR="$DIST_DIR/Data"
@@ -94,13 +97,24 @@ if [[ "$CHECK_ONLY" != true ]]; then
   )
 
   rm -rf "$APP_BUNDLE"
-  mkdir -p "$APP_MACOS" "$APP_RESOURCES"
+  mkdir -p "$APP_MACOS" "$APP_HELPERS" "$APP_RESOURCES"
   cp "$BUILD_BINARY" "$APP_BINARY"
   if ! /usr/bin/cmp -s "$BUILD_BINARY" "$APP_BINARY"; then
     echo "package failed: copied app binary does not match the current Swift build" >&2
     exit 10
   fi
   chmod +x "$APP_BINARY"
+  BUILD_PDF_TEXT_WORKER="$BUILD_DIR/$PDF_TEXT_WORKER_NAME"
+  if [[ ! -x "$BUILD_PDF_TEXT_WORKER" ]]; then
+    echo "package failed: missing bounded PDF text worker" >&2
+    exit 12
+  fi
+  cp "$BUILD_PDF_TEXT_WORKER" "$PDF_TEXT_WORKER"
+  if ! /usr/bin/cmp -s "$BUILD_PDF_TEXT_WORKER" "$PDF_TEXT_WORKER"; then
+    echo "package failed: copied PDF text worker does not match the current Swift build" >&2
+    exit 13
+  fi
+  chmod +x "$PDF_TEXT_WORKER"
   for resource_bundle in "${RESOURCE_BUNDLES[@]}"; do
     if [[ ! -d "$resource_bundle" ]]; then
       echo "package failed: missing resource bundle $resource_bundle" >&2
@@ -145,8 +159,13 @@ if [[ "$CHECK_ONLY" != true ]]; then
 </dict>
 </plist>
 PLIST
+  /usr/bin/codesign --force --sign - --timestamp=none "$PDF_TEXT_WORKER" >/dev/null
   /usr/bin/codesign --force --sign - --timestamp=none "$APP_BUNDLE" >/dev/null
   /usr/bin/codesign --verify --deep --strict "$APP_BUNDLE"
+  if [[ "$(/usr/bin/env WEIBEI_PDF_WORKER_VERIFY=1 "$PDF_TEXT_WORKER" --verification-probe normal)" != "verification-ok" ]]; then
+    echo "package failed: signed PDF text worker did not complete its runtime probe" >&2
+    exit 14
+  fi
   BUILD_UUID="$(/usr/bin/dwarfdump --uuid "$BUILD_BINARY" | /usr/bin/awk 'NR == 1 {print $2}')"
   PACKAGED_UUID="$(/usr/bin/dwarfdump --uuid "$APP_BINARY" | /usr/bin/awk 'NR == 1 {print $2}')"
   if [[ -z "$BUILD_UUID" || "$PACKAGED_UUID" != "$BUILD_UUID" ]]; then
@@ -207,7 +226,10 @@ verify_window() {
 
 visual_verify_window() {
   if [[ -n "$VERIFY_SCENARIO" ]]; then
-    sleep 2.6
+    for _ in {1..50}; do
+      [[ -s "$VERIFY_CAPTURE_PATH" ]] && break
+      sleep 0.2
+    done
   fi
   local capture_path="$VERIFY_CAPTURE_PATH"
   if [[ ! -s "$capture_path" ]]; then
