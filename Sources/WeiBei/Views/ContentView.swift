@@ -769,7 +769,7 @@ private struct LayoutContentView: View {
 
     private var firstSplit: Binding<CGFloat> {
         if Self.isDormantRailPreviewVerification {
-            return .constant(0.035)
+            return .constant(0.02)
         }
         return numericBinding($firstSplitStorage)
     }
@@ -782,7 +782,8 @@ private struct LayoutContentView: View {
     }
 
     private static var isDormantRailPreviewVerification: Bool {
-        ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"] == "content-rail-dormant-preview"
+        let scenario = ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"]
+        return scenario == "content-rail-dormant-preview" || scenario == "content-rail-activation-preview"
     }
 
     private var halfSplit: Binding<CGFloat> {
@@ -1772,7 +1773,7 @@ private final class NativeSplitCoordinator: NSObject, NSSplitViewDelegate {
             partial + (minimums[safe: index] ?? railWidth)
         }
         let requestedMinimum = minimums[safe: requestedIndex] ?? railWidth
-        let desiredWidth = max(recentReadableWidths[role] ?? defaultReadableWidth, readableWidthThreshold)
+        let desiredWidth = ContentRailPolicy.expansionWidth(recentWidth: recentReadableWidths[role])
         let requestedWidth = clamped(
             desiredWidth,
             min: requestedMinimum,

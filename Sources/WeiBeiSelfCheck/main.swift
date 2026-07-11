@@ -929,16 +929,21 @@ let contentRailGeometrySource: String = {
     }
     return String(contentRailSource[start..<end])
 }()
-expect(ContentRailPolicy.dormantWidth == 40
-    && ContentRailPolicy.magneticSnapDistance == 12
+expect(ContentRailPolicy.dormantWidth == 28
+    && ContentRailPolicy.magneticSnapDistance == 10
     && ContentRailPolicy.snapThreshold == ContentRailPolicy.dormantWidth + ContentRailPolicy.magneticSnapDistance
-    && ContentRailPolicy.presentation(availableWidth: 40, allowsRailOnly: true) == .railOnly
-    && ContentRailPolicy.presentation(availableWidth: 52, allowsRailOnly: true) == .railOnly
-    && ContentRailPolicy.presentation(availableWidth: 53, allowsRailOnly: true) == .content
+    && ContentRailPolicy.presentation(availableWidth: 28, allowsRailOnly: true) == .railOnly
+    && ContentRailPolicy.presentation(availableWidth: 38, allowsRailOnly: true) == .railOnly
+    && ContentRailPolicy.presentation(availableWidth: 39, allowsRailOnly: true) == .content
     && ContentRailPolicy.presentation(availableWidth: 189, allowsRailOnly: true) == .content
-    && ContentRailPolicy.presentation(availableWidth: 40, allowsRailOnly: false) == .content,
-    "content rail policy preserves user-chosen narrow widths and reserves snapping for the final 12pt magnetic zone")
-expect(ContentRailPolicy.previewWidth(totalWidth: 40, previewLeadingX: 39, isRailOnly: true) == 280
+    && ContentRailPolicy.presentation(availableWidth: 28, allowsRailOnly: false) == .content,
+    "content rail policy preserves user-chosen narrow widths and reserves snapping for a compact 28pt rail")
+expect(ContentRailPolicy.expansionWidth(recentWidth: nil) == 340
+    && ContentRailPolicy.expansionWidth(recentWidth: 250) == 300
+    && ContentRailPolicy.expansionWidth(recentWidth: 350) == 350
+    && ContentRailPolicy.expansionWidth(recentWidth: 720) == 380,
+    "activating a dormant rail restores a comfortable bounded pane width")
+expect(ContentRailPolicy.previewWidth(totalWidth: 28, previewLeadingX: 39, isRailOnly: true) == 280
     && ContentRailPolicy.previewWidth(totalWidth: 178, previewLeadingX: 39, isRailOnly: false) == nil
     && ContentRailPolicy.previewWidth(totalWidth: 190, previewLeadingX: 39, isRailOnly: false) == 143
     && ContentRailPolicy.previewWidth(totalWidth: 520, previewLeadingX: 39) == 360,
@@ -984,6 +989,8 @@ expect(contentRailSource.contains("struct ContentRailView: View")
     && contentRailSource.contains("previewImage: NSImage?")
     && contentRailSource.contains(".position(x: previewLeadingX + width / 2")
     && contentRailSource.contains("tickLeadingInset + ContentRailWaveMetrics.peakLength + 8")
+    && contentRailSource.contains("max(1, compactWidth - 1)")
+    && contentRailSource.contains(".position(x: floatingPreviewAnchorX")
     && contentRailSource.contains("ContentRailPolicy.previewWidth(")
     && contentRailSource.contains("ContentRailFloatingPreviewBridge(")
     && contentRailSource.contains("anchorView.window?.contentView")
@@ -1128,7 +1135,9 @@ expect(contentViewSource.contains("minimumContentWidthWithLibrary"), "library le
 expect(contentViewSource.contains("private let railWidth = ContentRailMetrics.railOnlyWidth")
     && contentRailSource.contains("static let snapThreshold = ContentRailPolicy.snapThreshold")
     && contentRailSource.contains("static let readableWidth = ContentRailPolicy.readableWidth")
-    && contentViewSource.contains("handleExpansionRequest(store.paneExpansionRequest"), "normal multi-pane layouts snap to a restorable 40pt content rail state")
+    && contentViewSource.contains("ContentRailPolicy.expansionWidth(recentWidth:")
+    && stableDocumentSource.contains("ContentRailPolicy.expansionWidth(recentWidth:")
+    && contentViewSource.contains("handleExpansionRequest(store.paneExpansionRequest"), "normal multi-pane layouts snap to a compact 28pt rail and restore to a bounded reading width")
 expect(!contentViewSource.contains("DragGesture()"), "content panes avoid SwiftUI drag resizing")
 expect(!contentViewSource.contains(".id(store.layout)"), "layout changes avoid whole-screen identity resets")
 expect(!contentViewSource.contains("PaneSeparator"), "content panes avoid hand-drawn split separators")

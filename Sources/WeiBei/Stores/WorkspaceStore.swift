@@ -2097,6 +2097,7 @@ final class WorkspaceStore: ObservableObject {
             || scenario == "notebook-creation-flow"
             || scenario == "pane-layout-stability-flow"
             || scenario == "content-rail-dormant-preview"
+            || scenario == "content-rail-activation-preview"
             || emptyWorkspaceScenarios.contains(scenario) else { return }
         didRunVerificationScenario = true
         if scenario == "pane-layout-stability-flow" {
@@ -2155,7 +2156,7 @@ final class WorkspaceStore: ObservableObject {
             configureEmptyWorkspaceVerificationScenario(scenario)
             return
         }
-        if scenario == "content-rail-dormant-preview" {
+        if scenario == "content-rail-dormant-preview" || scenario == "content-rail-activation-preview" {
             layout = .documentAgentNotes
             showLibrary = false
             showReader = true

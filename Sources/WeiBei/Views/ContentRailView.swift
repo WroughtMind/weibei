@@ -123,7 +123,7 @@ struct ContentRailView: View {
                     width: ContentRailPolicy.dormantPreviewWidth
                 )
                 .frame(width: 1, height: 1)
-                .position(x: previewLeadingX, y: previewAnchorY)
+                .position(x: floatingPreviewAnchorX, y: previewAnchorY)
                 .allowsHitTesting(false)
 
                 if !isRailOnly, let item = previewItem {
@@ -159,12 +159,17 @@ struct ContentRailView: View {
             }
         }
         .task(id: "\(isRailOnly)-\(items.first?.id ?? "empty")") {
+            let verificationScenario = ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"]
             guard isRailOnly,
-                  ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"] == "content-rail-dormant-preview",
+                  verificationScenario == "content-rail-dormant-preview" || verificationScenario == "content-rail-activation-preview",
                   let first = items.first else { return }
-            try? await Task.sleep(nanoseconds: 500_000_000)
+            try? await Task.sleep(nanoseconds: 50_000_000)
             guard !Task.isCancelled else { return }
-            beginHover(first)
+            if verificationScenario == "content-rail-activation-preview" {
+                activate(first)
+            } else {
+                beginHover(first)
+            }
         }
     }
 
@@ -182,6 +187,10 @@ struct ContentRailView: View {
 
     private var previewLeadingX: CGFloat {
         tickLeadingInset + ContentRailWaveMetrics.peakLength + 8
+    }
+
+    private var floatingPreviewAnchorX: CGFloat {
+        max(1, compactWidth - 1)
     }
 
     private var resolvedActiveID: String? {
@@ -412,6 +421,9 @@ struct ContentRailView: View {
     }
 
     private func schedulePreviewClose() {
+        if ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"] == "content-rail-dormant-preview" {
+            return
+        }
         previewCloseWork?.cancel()
         let work = DispatchWorkItem {
             guard hoveredID == nil else { return }

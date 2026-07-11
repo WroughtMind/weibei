@@ -7,13 +7,16 @@ public enum ContentRailPresentation: Equatable, Sendable {
 
 public enum ContentRailPolicy {
     /// The rail is the pane's entire dormant surface, not an additional sidebar.
-    public static let dormantWidth: CGFloat = 40
+    public static let dormantWidth: CGFloat = 28
     /// A short end-stop makes the dormant state discoverable without hijacking useful narrow widths.
-    public static let magneticSnapDistance: CGFloat = 12
+    public static let magneticSnapDistance: CGFloat = 10
     public static let railOnlyThreshold: CGFloat = dormantWidth + magneticSnapDistance
     public static let snapThreshold: CGFloat = railOnlyThreshold
     public static let readableWidth: CGFloat = 240
     public static let defaultReadableWidth: CGFloat = 420
+    public static let expansionMinimumWidth: CGFloat = 300
+    public static let expansionPreferredWidth: CGFloat = 340
+    public static let expansionMaximumWidth: CGFloat = 380
     public static let previewMinimumWidth: CGFloat = 140
     public static let previewMaximumWidth: CGFloat = 360
     public static let dormantPreviewWidth: CGFloat = 280
@@ -24,6 +27,13 @@ public enum ContentRailPolicy {
         allowsRailOnly: Bool
     ) -> ContentRailPresentation {
         allowsRailOnly && availableWidth <= railOnlyThreshold ? .railOnly : .content
+    }
+
+    public static func expansionWidth(recentWidth: CGFloat?) -> CGFloat {
+        min(
+            expansionMaximumWidth,
+            max(expansionMinimumWidth, recentWidth ?? expansionPreferredWidth)
+        )
     }
 
     public static func previewWidth(

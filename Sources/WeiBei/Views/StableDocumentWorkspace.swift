@@ -852,7 +852,7 @@ final class StableDocumentSplitCoordinator {
         let minimum = minimumPaneWidth(total: total, count: widths.count)
         let maxRequested = max(minimum, total - minimum * CGFloat(widths.count - 1))
         let requested = clamped(
-            max(recentReadableWidths[role] ?? defaultReadableWidth, readableWidthThreshold),
+            ContentRailPolicy.expansionWidth(recentWidth: recentReadableWidths[role]),
             min: minimum,
             max: maxRequested
         )

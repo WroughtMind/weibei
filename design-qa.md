@@ -68,6 +68,12 @@ final result: passed
 - P3: the runtime greeting differs from the reference because it follows the actual time of day; this is expected behavior.
 
 final result: passed
+### 2026-07-11：收起轨道缩至真实休眠尺寸
+
+- 休眠轨道从 40pt 缩至 28pt，磁吸区同步收窄为最后 10pt，减少对阅读面积的占用。
+- 点击轨道节点时，恢复宽度限制在 300–380pt；没有可用历史宽度时使用 340pt，避免恢复成过宽或过窄面板。
+- 历史宽度只在舒适区内原样恢复，超出区间时取最近边界；内容、选区与滚动位置仍沿用原有状态。
+
 ### 2026-07-11：收起轨道改为末端吸附并保留简介
 
 - 分栏不再在 190pt 自动收起；用户拖到 53pt 以上时保留其实际宽度。
