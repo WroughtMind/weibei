@@ -23,6 +23,18 @@ public struct NoteSourceRelations: Sendable {
             .map(\.sourceItemID)
     }
 
+    public func noteIDs(for sourceItemID: String) -> [String] {
+        links
+            .filter { $0.sourceItemID == sourceItemID }
+            .sorted { lhs, rhs in
+                if lhs.createdAt == rhs.createdAt {
+                    return lhs.noteItemID < rhs.noteItemID
+                }
+                return lhs.createdAt < rhs.createdAt
+            }
+            .map(\.noteItemID)
+    }
+
     public func isLinked(noteItemID: String, sourceItemID: String) -> Bool {
         links.contains {
             $0.noteItemID == noteItemID && $0.sourceItemID == sourceItemID
@@ -38,6 +50,18 @@ public struct NoteSourceRelations: Sendable {
             .subtracting(existingIDs)
             .sorted()
             .map { NoteSourceLink(noteItemID: noteItemID, sourceItemID: $0) }
+        links = Self.deduplicated(retained + additions)
+    }
+
+    public mutating func replaceNotes(for sourceItemID: String, noteItemIDs: Set<String>) {
+        let retained = links.filter {
+            $0.sourceItemID != sourceItemID || noteItemIDs.contains($0.noteItemID)
+        }
+        let existingIDs = Set(retained.lazy.filter { $0.sourceItemID == sourceItemID }.map(\.noteItemID))
+        let additions = noteItemIDs
+            .subtracting(existingIDs)
+            .sorted()
+            .map { NoteSourceLink(noteItemID: $0, sourceItemID: sourceItemID) }
         links = Self.deduplicated(retained + additions)
     }
 
@@ -67,5 +91,40 @@ public struct NoteSourceRelations: Sendable {
             .filter { link in
                 seen.insert("\(link.noteItemID)\u{1F}\(link.sourceItemID)").inserted
             }
+    }
+}
+
+/// Read-optimized snapshot for rendering the many-to-many relationship graph.
+/// Build it when the durable links change, then reuse its constant-time lookups.
+public struct NoteSourceRelationIndex: Sendable {
+    private let sourceIDsByNoteID: [String: [String]]
+    private let noteIDsBySourceID: [String: [String]]
+
+    public init(links: [NoteSourceLink]) {
+        let normalizedLinks = NoteSourceRelations(links: links).links
+        var sources: [String: [String]] = [:]
+        var notes: [String: [String]] = [:]
+        for link in normalizedLinks {
+            sources[link.noteItemID, default: []].append(link.sourceItemID)
+            notes[link.sourceItemID, default: []].append(link.noteItemID)
+        }
+        sourceIDsByNoteID = sources
+        noteIDsBySourceID = notes
+    }
+
+    public func sourceIDs(for noteItemID: String) -> [String] {
+        sourceIDsByNoteID[noteItemID] ?? []
+    }
+
+    public func noteIDs(for sourceItemID: String) -> [String] {
+        noteIDsBySourceID[sourceItemID] ?? []
+    }
+
+    public func sourceCount(for noteItemID: String) -> Int {
+        sourceIDsByNoteID[noteItemID]?.count ?? 0
+    }
+
+    public func noteCount(for sourceItemID: String) -> Int {
+        noteIDsBySourceID[sourceItemID]?.count ?? 0
     }
 }

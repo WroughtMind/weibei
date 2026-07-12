@@ -469,6 +469,77 @@ verify_linked_sources_flow() {
   return 1
 }
 
+verify_course_workspace_flow() {
+  local report_file=""
+  case "$VERIFY_SCENARIO" in
+    course-workspace-overview-flow)
+      report_file="$VERIFY_DATA_DIR/course-workspace-overview-report.json"
+      ;;
+    course-workspace-workflow-flow)
+      report_file="$VERIFY_DATA_DIR/course-workspace-workflow-report.json"
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+
+  for _ in {1..150}; do
+    if [[ -s "$report_file" ]]; then
+      break
+    fi
+    sleep 0.2
+  done
+  if [[ ! -s "$report_file" ]]; then
+    echo "verify failed: course workspace report was not produced for $VERIFY_SCENARIO." >&2
+    [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
+    return 1
+  fi
+
+  if [[ "$VERIFY_SCENARIO" == "course-workspace-overview-flow" ]]; then
+    if ! /usr/bin/jq -e '
+      .result == "pass"
+      and .materialCount == 3
+      and .noteCount == 3
+      and .explicitLinkCount == 3
+      and .readingPositionCount == 1
+      and .studySessionCount == 1
+      and .unresolvedConfusionCount == 1
+      and .importClassificationPassed == true
+      and .invalidNoteCreationPassed == true
+      and .folderCountSummaryPassed == true
+      and .unlinkedMaterialIDs == ["course-material-c"]
+      and .unlinkedNoteIDs == ["course-note-c"]
+      and .courseWorkspacePresented == true
+    ' "$report_file" >/dev/null; then
+      echo "verify failed: course workspace overview exposed inaccurate facts." >&2
+      /usr/bin/jq . "$report_file" >&2
+      return 1
+    fi
+  elif ! /usr/bin/jq -e '
+    .result == "pass"
+    and .continuityPassed == true
+    and .importClassificationPassed == true
+    and .invalidNoteCreationPassed == true
+    and .folderCountSummaryPassed == true
+    and .materialNavigationPassed == true
+    and .noteNavigationPassed == true
+    and .persistencePassed == true
+    and .finalMaterialID == "course-material-c"
+    and .finalNoteID == "course-note-c"
+    and .noteA_sources == ["course-material-a"]
+    and (.noteC_sources | sort) == ["course-material-b", "course-material-c"]
+    and (.materialB_notes | sort) == ["course-note-b", "course-note-c"]
+    and .paneMakeCount == 0
+    and .paneDismantleCount == 0
+  ' "$report_file" >/dev/null; then
+    echo "verify failed: course workspace relationship workflow or pane continuity regressed." >&2
+    /usr/bin/jq . "$report_file" >&2
+    return 1
+  fi
+
+  /usr/bin/jq -r '"course_workspace_result=\(.result)"' "$report_file"
+}
+
 verify_pane_toggle_continuity() {
   if [[ "$VERIFY_SCENARIO" != "pane-toggle-continuity-flow" ]]; then
     return 0
@@ -639,6 +710,7 @@ finish_verify_window() {
   verify_learning_flow_persistence
   verify_empty_workspace_state
   verify_linked_sources_flow
+  verify_course_workspace_flow
   verify_pane_toggle_continuity
   verify_pane_layout_stability
   verify_pane_reorder_width

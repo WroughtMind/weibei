@@ -1901,7 +1901,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
         activeFrame: 0,
         scanTimer: 0,
         pendingScanReason: "initial",
-        jumpUntil: 0,
         userScrollUntil: 0
       };
       const clean = (value) => String(value || "").replace(/\\s+/g, " ").trim();
@@ -2047,7 +2046,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
       const applyActive = (requestedReason = "unknown") => {
         const now = Date.now();
         const reason = requestedReason === "scroll"
-          ? (now <= state.jumpUntil ? "jump" : now <= state.userScrollUntil ? "scroll" : "programmatic")
+          ? (now <= state.userScrollUntil ? "scroll" : "programmatic")
           : requestedReason;
         if (state.items.length === 0) {
           if (state.activeID) {
@@ -2089,7 +2088,6 @@ struct WebReaderRepresentable: NSViewRepresentable {
       const scrollTo = (id) => {
         const item = state.items.find((candidate) => candidate.id === id);
         if (!item?.element) return false;
-        state.jumpUntil = Date.now() + 1600;
         item.element.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
         window.setTimeout(() => window.scrollBy({ top: -44, behavior: "auto" }), 180);
         window.setTimeout(() => {
@@ -2791,10 +2789,11 @@ private class ReaderSelectableTextView: NSTextView {
 }
 
 struct EscapeKeyBridge: NSViewRepresentable {
+    var isEnabled = true
     var onEscape: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onEscape: onEscape)
+        Coordinator(isEnabled: isEnabled, onEscape: onEscape)
     }
 
     func makeNSView(context: Context) -> NSView {
@@ -2804,6 +2803,7 @@ struct EscapeKeyBridge: NSViewRepresentable {
     }
 
     func updateNSView(_ view: NSView, context: Context) {
+        context.coordinator.isEnabled = isEnabled
         context.coordinator.onEscape = onEscape
     }
 
@@ -2812,17 +2812,22 @@ struct EscapeKeyBridge: NSViewRepresentable {
     }
 
     final class Coordinator {
+        var isEnabled: Bool
         var onEscape: () -> Void
         private var monitor: Any?
 
-        init(onEscape: @escaping () -> Void) {
+        init(isEnabled: Bool, onEscape: @escaping () -> Void) {
+            self.isEnabled = isEnabled
             self.onEscape = onEscape
         }
 
         func installMonitor() {
             guard monitor == nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                guard event.keyCode == 53 else { return event }
+                guard event.keyCode == 53,
+                      self?.isEnabled == true,
+                      NSApp.modalWindow == nil,
+                      event.window?.attachedSheet == nil else { return event }
                 self?.onEscape()
                 return nil
             }

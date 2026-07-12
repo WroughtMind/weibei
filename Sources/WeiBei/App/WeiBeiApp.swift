@@ -80,6 +80,11 @@ struct WeiBeiApp: App {
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandMenu(store.appDisplayName) {
+                Button(store.ui("打开课程台", "Open Course Workspace")) { store.presentCourseWorkspace() }
+                    .keyboardShortcut("0")
+
+                Divider()
+
                 Button(store.ui("打开资料", "Open Material")) { store.importFilesFromPanel() }
                     .keyboardShortcut("o")
 

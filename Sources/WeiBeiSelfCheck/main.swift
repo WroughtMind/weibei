@@ -1700,6 +1700,9 @@ expect(readerViewSource.contains("private final class PDFContentRailPreviewLoade
     && readerViewSource.contains("static let contentRailScript")
     && readerViewSource.contains("window.WeiBeiContentRail")
     && readerViewSource.contains("if railOnly {\n            store.requestPaneExpansion(.reader)"), "PDF and HTML rails use real page or document content and restore narrow reader panes")
+expect(readerViewSource.contains("now <= state.userScrollUntil ? \"scroll\"")
+    && !readerViewSource.contains("jumpUntil")
+    && readerViewSource.contains("postMessage({ id, reason: \"jump\" })"), "html reader treats only the explicit target acknowledgement as a jump and lets real user scrolling take priority")
 let selectionAnchorContentPointSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Support/SelectionAnchorContentPoint.swift")
 let selectionAnchorContentPointSource = (try? String(contentsOf: selectionAnchorContentPointSourceURL, encoding: .utf8)) ?? ""
@@ -2216,6 +2219,19 @@ let workspaceStoreSource = (try? String(contentsOf: workspaceStoreSourceURL, enc
 let linkedSourcesSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/LinkedSourcesView.swift")
 let linkedSourcesSource = (try? String(contentsOf: linkedSourcesSourceURL, encoding: .utf8)) ?? ""
+let courseWorkspaceSourceNames = [
+    "CourseWorkspaceView.swift",
+    "CourseOverviewView.swift",
+    "CourseRelationsView.swift",
+    "CourseRecordsView.swift",
+    "CourseWorkspaceComponents.swift",
+]
+let courseWorkspaceSource = courseWorkspaceSourceNames.map { name in
+    let url = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        .appendingPathComponent("Sources/WeiBei/Views")
+        .appendingPathComponent(name)
+    return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+}.joined(separator: "\n")
 let selectItemSource: String = {
     guard let start = workspaceStoreSource.range(of: "func select(itemID: String?)")?.lowerBound,
           let end = workspaceStoreSource[start...].range(of: "func selectAdjacentItem")?.lowerBound else {
@@ -2233,6 +2249,55 @@ expect(workspaceStoreSource.contains("invalidateAgentContext()\n            acti
 expect(linkedSourcesSource.contains("@State private var noteItemID: String?")
     && linkedSourcesSource.contains("noteItemID = store.activeNotebookItemID")
     && linkedSourcesSource.contains("store.setLinkedSourceIDs(draftIDs, for: noteItemID)"), "relationship editing remains bound to the note that opened the popover")
+expect(contentViewSource.contains("if store.courseWorkspacePresented")
+    && contentViewSource.contains("CourseWorkspaceView()")
+    && contentViewSource.contains("LayoutContentView()")
+    && contentViewSource.contains("container.isHidden = store.courseWorkspacePresented")
+    && !contentViewSource.contains("if store.courseWorkspacePresented {\n                            CourseWorkspaceView()\n                        } else"), "course workspace covers and hides native pane hosts without replacing the persistent pane tree")
+expect(courseWorkspaceSource.contains("case overview")
+    && courseWorkspaceSource.contains("case relations")
+    && courseWorkspaceSource.contains("case records")
+    && courseWorkspaceSource.contains("打开只是当前动作，关联才是长期关系。")
+    && courseWorkspaceSource.contains("尚未建立资料关联")
+    && courseWorkspaceSource.contains("尚无阅读位置")
+    && !courseWorkspaceSource.contains("已消化")
+    && !courseWorkspaceSource.contains("消化率"), "course workspace exposes overview, relationships, and learning records using only evidence-backed status language")
+expect(courseWorkspaceSource.contains("更改自动保存")
+    && courseWorkspaceSource.contains("showRecords(session.id)")
+    && courseWorkspaceSource.contains("courseMaterialsWithoutReadingPosition.first?.id")
+    && !courseWorkspaceSource.contains("store.courseMaterials + store.sampleItems"), "course relationship edits save immediately, route to the selected fact, and keep built-in samples outside course counts")
+expect(workspaceStoreSource.contains("@Published private(set) var workspaceSaveError")
+    && workspaceStoreSource.contains("func retryWorkspaceSave()")
+    && workspaceStoreSource.contains("Course changes were not saved to disk")
+    && courseWorkspaceSource.contains("保存失败，点此重试")
+    && courseWorkspaceSource.contains("draft.automaticMaterialCount + draft.markdownFiles.count - notePaths.count")
+    && courseWorkspaceSource.contains("url.deletingLastPathComponent().path"), "course autosave failures stay visible and mixed-folder classification reports complete counts with unambiguous paths")
+expect(workspaceStoreSource.contains("func presentCourseWorkspace(")
+    && workspaceStoreSource.contains("func dismissCourseWorkspace()")
+    && workspaceStoreSource.contains("func openCourseMaterial(")
+    && workspaceStoreSource.contains("func openCourseNote(")
+    && workspaceStoreSource.contains("func continueCourseSession(")
+    && workspaceStoreSource.contains("func prepareCourseFolderImportFromPanel()")
+    && workspaceStoreSource.contains("func importCourseMaterialsFromPanel()")
+    && workspaceStoreSource.contains("func importCourseNotesFromPanel()")
+    && workspaceStoreSource.contains("markdownNotePaths: Set<String>? = nil")
+    && workspaceStoreSource.contains("reclassifiesExistingMarkdown: true")
+    && workspaceStoreSource.contains("defaultMarkdownIsNotebookNote")
+    && workspaceStoreSource.contains("func createCourseNotebookNote(title: String) -> String?")
+    && courseWorkspaceSource.contains("确认 Markdown 的角色")
+    && courseWorkspaceSource.contains("guard let noteID = store.createCourseNotebookNote")
+    && courseWorkspaceSource.contains("newNoteError = store.noteFileError")
+    && appSource.contains("打开课程台")
+    && commandPaletteSource.contains("打开课程台")
+    && linkedSourcesSource.contains("store.presentCourseWorkspace(.notes"), "course workspace is reachable from top-level commands and note relationships, while explicit open actions own navigation")
+expect(workspaceStoreSource.contains("noteSourceRelationIndex = NoteSourceRelationIndex(links: noteSourceLinks)")
+    && workspaceStoreSource.contains("func linkedNoteCount(for sourceItemID: String)")
+    && workspaceStoreSource.contains("verifyCourseOverlayContinuity(itemID:")
+    && workspaceStoreSource.contains("verifyCourseOverlayContinuity(itemID: \"sample-pdf\")")
+    && workspaceStoreSource.contains("PaneToggleContinuityVerifier.endMeasurement()"), "course relationships use a reusable index and overlay continuity measures live HTML and PDF panes")
+expect(readerViewSource.contains("var isEnabled = true")
+    && readerViewSource.contains("NSApp.modalWindow == nil")
+    && courseWorkspaceSource.contains("isEnabled: !showsNewNotePrompt && store.courseFolderImportDraft == nil"), "escape dismisses only the active course surface and leaves sheets or file panels in control")
 expect(workspaceStoreSource.contains("DocumentTextExtractor.cachedText(for: item)")
     && workspaceStoreSource.contains("loadedMaterialText = await Task.detached(priority: .utility)")
     && !workspaceStoreSource.contains("if let text = DocumentTextExtractor.text(for: item)"), "main-actor workspace reads only cached document text while bounded extraction runs off the UI thread")
@@ -3543,6 +3608,8 @@ expect(!sampleMarkdown.isImportedMarkdownFile, "sample markdown stays app-owned"
 expect(!sampleMarkdown.canBecomeNotebookNote, "sample markdown cannot become a backing-file note")
 
 let relationNoteID = "note:research"
+let relationNoteB = "note:shared"
+let relationNoteC = "note:replacement"
 let relationSourceA = "file:/tmp/a.pdf"
 let relationSourceB = "file:/tmp/b.html"
 let oldestLink = NoteSourceLink(
@@ -3557,6 +3624,24 @@ let duplicateLink = NoteSourceLink(
     sourceItemID: relationSourceA,
     createdAt: Date(timeIntervalSince1970: 2)
 )
+let sharedSourceLink = NoteSourceLink(
+    id: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!,
+    noteItemID: relationNoteB,
+    sourceItemID: relationSourceA,
+    createdAt: Date(timeIntervalSince1970: 3)
+)
+let sharedSourceDuplicate = NoteSourceLink(
+    id: UUID(uuidString: "00000000-0000-0000-0000-000000000004")!,
+    noteItemID: relationNoteB,
+    sourceItemID: relationSourceA,
+    createdAt: Date(timeIntervalSince1970: 4)
+)
+let unrelatedSourceLink = NoteSourceLink(
+    id: UUID(uuidString: "00000000-0000-0000-0000-000000000005")!,
+    noteItemID: relationNoteID,
+    sourceItemID: relationSourceB,
+    createdAt: Date(timeIntervalSince1970: 5)
+)
 var noteSourceRelations = NoteSourceRelations(links: [duplicateLink, oldestLink])
 expect(noteSourceRelations.links == [oldestLink]
     && noteSourceRelations.sourceIDs(for: relationNoteID) == [relationSourceA], "note-source relations keep one durable pair and preserve the oldest identity")
@@ -3565,6 +3650,78 @@ expect(noteSourceRelations.sourceIDs(for: relationNoteID) == [relationSourceB]
     && !noteSourceRelations.isLinked(noteItemID: relationNoteID, sourceItemID: relationSourceA), "explicitly replacing a note's sources removes unlinked material")
 noteSourceRelations.sanitize(validNoteItemIDs: [relationNoteID], validSourceItemIDs: [relationSourceA])
 expect(noteSourceRelations.links.isEmpty, "note-source sanitation removes relationships whose source no longer exists")
+
+var sharedSourceRelations = NoteSourceRelations(
+    links: [unrelatedSourceLink, sharedSourceDuplicate, sharedSourceLink, duplicateLink, oldestLink]
+)
+expect(sharedSourceRelations.links == [oldestLink, sharedSourceLink, unrelatedSourceLink]
+    && sharedSourceRelations.noteIDs(for: relationSourceA) == [relationNoteID, relationNoteB], "one source can be shared by multiple notes while duplicate pairs keep their oldest identity")
+sharedSourceRelations.replaceNotes(
+    for: relationSourceA,
+    noteItemIDs: [relationNoteB, relationNoteC]
+)
+expect(sharedSourceRelations.noteIDs(for: relationSourceA) == [relationNoteB, relationNoteC]
+    && sharedSourceRelations.links.contains(sharedSourceLink)
+    && sharedSourceRelations.links.contains(unrelatedSourceLink)
+    && !sharedSourceRelations.isLinked(noteItemID: relationNoteID, sourceItemID: relationSourceA), "replacing a source's notes preserves retained links and removes only deselected notes")
+let relationIndex = NoteSourceRelationIndex(links: sharedSourceRelations.links)
+expect(relationIndex.sourceIDs(for: relationNoteB) == [relationSourceA]
+    && relationIndex.noteIDs(for: relationSourceA) == [relationNoteB, relationNoteC]
+    && relationIndex.sourceCount(for: relationNoteID) == 1
+    && relationIndex.noteCount(for: relationSourceB) == 1, "relationship index reuses normalized note-to-source and source-to-note lookups")
+
+let courseMaterials = [
+    StudyItem(id: "material:a", title: "第一讲", subtitle: "第一讲.pdf", kind: .pdf, urlPath: "/tmp/course/a.pdf", isSample: false),
+    StudyItem(id: "material:b", title: "第二讲", subtitle: "第二讲.html", kind: .html, urlPath: "/tmp/course/b.html", isSample: false),
+    StudyItem(id: "material:c", title: "补充材料", subtitle: "补充材料.txt", kind: .text, urlPath: "/tmp/course/c.txt", isSample: false)
+]
+let courseNotes = [
+    StudyItem(id: "note:a", title: "第一讲笔记", subtitle: "第一讲笔记.md", kind: .markdown, urlPath: "/tmp/course/note-a.md", isSample: false, isNotebookNote: true),
+    StudyItem(id: "note:b", title: "共同主题", subtitle: "共同主题.md", kind: .markdown, urlPath: "/tmp/course/note-b.md", isSample: false, isNotebookNote: true),
+    StudyItem(id: "note:c", title: "待整理", subtitle: "待整理.md", kind: .markdown, urlPath: "/tmp/course/note-c.md", isSample: false, isNotebookNote: true)
+]
+let builtInSample = StudyItem(id: "sample:ignored", title: "内置样例", subtitle: "样例", kind: .html, urlPath: nil, isSample: true)
+let courseLinks = [
+    NoteSourceLink(noteItemID: "note:a", sourceItemID: "material:a", createdAt: Date(timeIntervalSince1970: 10)),
+    NoteSourceLink(noteItemID: "note:b", sourceItemID: "material:a", createdAt: Date(timeIntervalSince1970: 11)),
+    NoteSourceLink(noteItemID: "note:b", sourceItemID: "material:b", createdAt: Date(timeIntervalSince1970: 12)),
+    NoteSourceLink(noteItemID: "note:b", sourceItemID: "material:b", createdAt: Date(timeIntervalSince1970: 13)),
+    NoteSourceLink(noteItemID: "note:missing", sourceItemID: "material:c", createdAt: Date(timeIntervalSince1970: 14)),
+    NoteSourceLink(noteItemID: "note:a", sourceItemID: "sample:ignored", createdAt: Date(timeIntervalSince1970: 15))
+]
+let firstCourseSessionID = UUID(uuidString: "10000000-0000-0000-0000-000000000001")!
+let secondCourseSessionID = UUID(uuidString: "10000000-0000-0000-0000-000000000002")!
+let courseSummary = CourseWorkspaceSummary(
+    importedItems: courseMaterials + courseNotes + [builtInSample],
+    noteSourceLinks: courseLinks,
+    studyLocationsByItemID: [
+        "material:a": StudyLocation(itemID: "material:a", itemTitle: "第一讲"),
+        "material:c": StudyLocation(itemID: "material:c", itemTitle: "补充材料"),
+        "material:missing": StudyLocation(itemID: "material:missing", itemTitle: "已移除资料")
+    ],
+    studySessions: [
+        StudySession(
+            id: firstCourseSessionID,
+            title: "第一次学习",
+            messages: [AgentMessage(role: .user, text: "解释第一讲", source: "第一讲")]
+        ),
+        StudySession(id: secondCourseSessionID, title: "第二次学习")
+    ],
+    learningMemoryEntries: [
+        LearningMemoryEntry(kind: .confusion, text: "困惑一", evidence: "用户提出", origin: .userStatement),
+        LearningMemoryEntry(kind: .confusion, text: "困惑二", evidence: "用户提出", origin: .userStatement),
+        LearningMemoryEntry(kind: .confusion, text: "已解决困惑", evidence: "用户提出", origin: .userStatement, status: .resolved),
+        LearningMemoryEntry(kind: .goal, text: "课程目标", evidence: "用户提出", origin: .userStatement)
+    ]
+)
+expect(courseSummary.materialCount == 3
+    && courseSummary.noteCount == 3
+    && courseSummary.explicitLinkCount == 3
+    && courseSummary.readingPositionCount == 2
+    && courseSummary.unlinkedMaterialCount == 1
+    && courseSummary.unlinkedNoteCount == 1
+    && courseSummary.studySessionCount == 1
+    && courseSummary.unresolvedConfusionCount == 2, "course workspace summary reports only durable facts from the imported course")
 
 let persisted = PersistedWorkspace(noteSourceLinks: [oldestLink], noteSourceLinksMigrationVersion: 1, threePaneOrder: [.agent, .reader, .notes], noteRenderMode: .preview, showLibrary: false, showReader: false, showAgent: true, showNotes: false, showRightPane: true, showDailyInspiration: false, adaptImportedDocumentColors: false)
 let restored = try JSONDecoder().decode(PersistedWorkspace.self, from: try JSONEncoder().encode(persisted))

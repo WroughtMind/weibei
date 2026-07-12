@@ -23,6 +23,14 @@ struct NotebookRenameDraft: Identifiable, Equatable {
     var title: String
 }
 
+struct CourseFolderImportDraft: Identifiable {
+    let id = UUID()
+    var rootURLs: [URL]
+    var markdownFiles: [URL]
+    var notePaths: Set<String>
+    var automaticMaterialCount: Int
+}
+
 struct ThreePaneReorderDrag: Equatable {
     var role: WorkspacePaneRole
     var translation: CGFloat
@@ -57,6 +65,7 @@ enum PaneToggleContinuityVerifier {
             || scenario == "pane-layout-stability-flow"
             || scenario == "pane-reorder-width-flow"
             || scenario == "reader-scroll-persistence-flow"
+            || scenario == "course-workspace-workflow-flow"
     }
 
     static func beginMeasurement() {
@@ -148,6 +157,13 @@ enum PaneToggleContinuityVerifier {
     }
 }
 
+enum CourseWorkspaceDestination: String, CaseIterable, Sendable {
+    case overview
+    case materials
+    case notes
+    case sessions
+}
+
 @MainActor
 final class WorkspaceStore: ObservableObject {
     @Published var importedItems: [StudyItem] = []
@@ -161,7 +177,11 @@ final class WorkspaceStore: ObservableObject {
     @Published var agentActivityText: String?
     @Published private(set) var latestAgentNoteProposal: StudyAgentNoteProposal?
     @Published private(set) var latestAgentLearningUpdate: StudyAgentLearningUpdate?
-    @Published private(set) var noteSourceLinks: [NoteSourceLink] = []
+    @Published private(set) var noteSourceLinks: [NoteSourceLink] = [] {
+        didSet {
+            noteSourceRelationIndex = NoteSourceRelationIndex(links: noteSourceLinks)
+        }
+    }
     @Published var linkedSourcesPresented = false
     private(set) var studyLocationsByItemID: [String: StudyLocation] = [:]
     @Published private(set) var learningMemoryEntries: [LearningMemoryEntry] = []
@@ -204,6 +224,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var selectionAnchor: CGPoint?
     @Published var noteEditorCommand: NoteEditorCommand?
     @Published var noteFileError: String?
+    @Published private(set) var workspaceSaveError: String?
     @Published var notebookCreationDraft: NotebookCreationDraft?
     @Published var notebookRenameDraft: NotebookRenameDraft?
     @Published var modelName: String = ProcessInfo.processInfo.environment["WEIBEI_OPENAI_MODEL"] ?? "gpt-5.1"
@@ -213,6 +234,10 @@ final class WorkspaceStore: ObservableObject {
     @Published var adaptImportedDocumentColors = true
     @Published var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     @Published var topBarVariant: TopBarVariant = TopBarVariant(rawValue: UserDefaults.standard.string(forKey: "topBarVariant") ?? "") ?? .balanced
+    @Published var courseWorkspacePresented = false
+    @Published private(set) var courseWorkspaceDestination: CourseWorkspaceDestination = .overview
+    @Published private(set) var courseWorkspaceTargetItemID: String?
+    @Published var courseFolderImportDraft: CourseFolderImportDraft?
     @Published private var backNavigationStack: [NavigationSnapshot] = []
     @Published private var forwardNavigationStack: [NavigationSnapshot] = []
 
@@ -243,6 +268,8 @@ final class WorkspaceStore: ObservableObject {
     private var studyProgressSaveTask: Task<Void, Never>?
     private let studyProgressSaveDelay: UInt64 = 900_000_000
     private var noteSourceLinksMigrationVersion = 0
+    private var noteSourceRelationIndex = NoteSourceRelationIndex(links: [])
+    private var courseWorkspaceReturnFocus: PaneFocus?
 
     var showRightPane: Bool {
         get { showNotes || showAgent }
@@ -339,13 +366,91 @@ final class WorkspaceStore: ObservableObject {
         sampleItems + importedItems
     }
 
+    var courseMaterials: [StudyItem] {
+        importedItems.filter { !$0.isNotebookNote }
+    }
+
+    var courseNotebookItems: [StudyItem] {
+        importedItems.filter(\.isNotebookNote)
+    }
+
+    var recentCourseSessions: [StudySession] {
+        orderedStudySessions.filter { !$0.messages.isEmpty }
+    }
+
+    var activeCourseMemories: [LearningMemoryEntry] {
+        orderedLearningMemoryEntries.filter { $0.status == .active }
+    }
+
+    var recentCourseMessages: [AgentMessage] {
+        studySessions
+            .flatMap(\.messages)
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    var courseWorkspaceSummary: CourseWorkspaceSummary {
+        CourseWorkspaceSummary(
+            importedItems: importedItems,
+            noteSourceLinks: noteSourceLinks,
+            studyLocationsByItemID: studyLocationsByItemID,
+            studySessions: studySessions,
+            learningMemoryEntries: learningMemoryEntries
+        )
+    }
+
+    var courseMaterialsWithoutReadingPosition: [StudyItem] {
+        courseMaterials.filter { studyLocationsByItemID[$0.id] == nil }
+    }
+
+    var courseMaterialsWithoutNoteLinks: [StudyItem] {
+        let validNoteIDs = Set(courseNotebookItems.map(\.id))
+        let linkedIDs = Set(noteSourceLinks.lazy.filter { validNoteIDs.contains($0.noteItemID) }.map(\.sourceItemID))
+        return courseMaterials.filter { !linkedIDs.contains($0.id) }
+    }
+
+    var courseNotesWithoutSourceLinks: [StudyItem] {
+        let validSourceIDs = Set(courseMaterials.map(\.id))
+        let linkedIDs = Set(noteSourceLinks.lazy.filter { validSourceIDs.contains($0.sourceItemID) }.map(\.noteItemID))
+        return courseNotebookItems.filter { !linkedIDs.contains($0.id) }
+    }
+
+    func studyLocation(for itemID: String) -> StudyLocation? {
+        studyLocationsByItemID[itemID]
+    }
+
+    func linkedNotes(for sourceItemID: String) -> [StudyItem] {
+        let noteIDs = Set(linkedNoteIDs(for: sourceItemID))
+        return courseNotebookItems.filter { noteIDs.contains($0.id) }
+    }
+
+    func linkedNoteIDs(for sourceItemID: String) -> [String] {
+        noteSourceRelationIndex.noteIDs(for: sourceItemID)
+    }
+
+    func linkedNoteCount(for sourceItemID: String) -> Int {
+        noteSourceRelationIndex.noteCount(for: sourceItemID)
+    }
+
+    func item(withID itemID: String) -> StudyItem? {
+        allItems.first { $0.id == itemID }
+    }
+
     var linkedSourceIDsForActiveNote: [String] {
         guard let noteItemID = activeNotebookItemID else { return [] }
         return linkedSourceIDs(for: noteItemID)
     }
 
     func linkedSourceIDs(for noteItemID: String) -> [String] {
-        NoteSourceRelations(links: noteSourceLinks).sourceIDs(for: noteItemID)
+        noteSourceRelationIndex.sourceIDs(for: noteItemID)
+    }
+
+    func linkedSourceCount(for noteItemID: String) -> Int {
+        noteSourceRelationIndex.sourceCount(for: noteItemID)
+    }
+
+    func linkedCourseSourceIDs(for noteItemID: String) -> [String] {
+        let validCourseIDs = Set(courseMaterials.map(\.id))
+        return noteSourceRelationIndex.sourceIDs(for: noteItemID).filter(validCourseIDs.contains)
     }
 
     var linkedSourcesForActiveNote: [StudyItem] {
@@ -965,6 +1070,84 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
+    func setLinkedCourseSourceIDs(_ sourceItemIDs: Set<String>, for noteItemID: String) {
+        let courseSourceIDs = Set(courseMaterials.map(\.id))
+        let retainedNonCourseIDs = Set(linkedSourceIDs(for: noteItemID)).subtracting(courseSourceIDs)
+        setLinkedSourceIDs(
+            retainedNonCourseIDs.union(sourceItemIDs.intersection(courseSourceIDs)),
+            for: noteItemID
+        )
+    }
+
+    func setLinkedNoteIDs(_ noteItemIDs: Set<String>, for sourceItemID: String) {
+        guard allItems.contains(where: { $0.id == sourceItemID && !$0.isNotebookNote }) else { return }
+        let validNoteIDs = Set(courseNotebookItems.map(\.id))
+        var relations = NoteSourceRelations(links: noteSourceLinks)
+        relations.replaceNotes(
+            for: sourceItemID,
+            noteItemIDs: noteItemIDs.intersection(validNoteIDs)
+        )
+        guard relations.links != noteSourceLinks else { return }
+        invalidateAgentContext()
+        noteSourceLinks = relations.links
+        save()
+    }
+
+    func presentCourseWorkspace(
+        _ destination: CourseWorkspaceDestination = .overview,
+        selecting itemID: String? = nil
+    ) {
+        persistCurrentNote()
+        courseWorkspaceReturnFocus = focusedPane
+        courseWorkspaceDestination = destination
+        courseWorkspaceTargetItemID = itemID
+        courseWorkspacePresented = true
+    }
+
+    func dismissCourseWorkspace() {
+        dismissCourseWorkspace(restoringFocus: true)
+    }
+
+    func openCourseMaterial(_ itemID: String) {
+        guard courseMaterials.contains(where: { $0.id == itemID }) else { return }
+        dismissCourseWorkspace(restoringFocus: false)
+        select(itemID: itemID)
+        if layout == .immersiveWriting || layout == .immersiveConversation {
+            setLayout(.immersiveReading)
+        } else {
+            showReader = true
+            focus(.reader)
+            save()
+        }
+    }
+
+    func openCourseNote(_ itemID: String) {
+        guard courseNotebookItems.contains(where: { $0.id == itemID }) else { return }
+        dismissCourseWorkspace(restoringFocus: false)
+        select(itemID: itemID)
+    }
+
+    func continueCourseSession(_ sessionID: UUID) {
+        guard studySessions.contains(where: { $0.id == sessionID && !$0.messages.isEmpty }) else { return }
+        activateStudySession(sessionID)
+        dismissCourseWorkspace(restoringFocus: false)
+        setLayout(.immersiveConversation)
+    }
+
+    private func dismissCourseWorkspace(restoringFocus: Bool) {
+        guard courseWorkspacePresented else { return }
+        courseWorkspacePresented = false
+        courseWorkspaceTargetItemID = nil
+        courseFolderImportDraft = nil
+        guard restoringFocus, let courseWorkspaceReturnFocus else {
+            self.courseWorkspaceReturnFocus = nil
+            return
+        }
+        focusedPane = courseWorkspaceReturnFocus
+        focusRequest += 1
+        self.courseWorkspaceReturnFocus = nil
+    }
+
     func selectAdjacentItem(step: Int) {
         let ids = navigableItems.map(\.id)
         guard let nextID = LibraryNavigator.adjacentID(in: ids, selectedID: selectedItemID, step: step) else { return }
@@ -1029,6 +1212,11 @@ final class WorkspaceStore: ObservableObject {
 
     func createBlankNotebookNote() {
         createNotebookNote(seed: .blank)
+    }
+
+    @discardableResult
+    func createCourseNotebookNote(title: String) -> String? {
+        createNotebookNote(seed: .blank, title: title)?.id
     }
 
     func createNotebookNoteFromCurrentMaterial() {
@@ -2023,27 +2211,90 @@ final class WorkspaceStore: ObservableObject {
         presentImportPanel(linkToActiveNote: false)
     }
 
+    func prepareCourseFolderImportFromPanel() {
+        let panel = NSOpenPanel()
+        panel.title = ui("选择课程文件夹", "Choose a course folder")
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        guard panel.runModal() == .OK else {
+            courseFolderImportDraft = nil
+            return
+        }
+
+        let draft = makeCourseFolderImportDraft(rootURLs: panel.urls)
+        guard !draft.markdownFiles.isEmpty else {
+            _ = importFiles(panel.urls, selectsFirstImportedItem: false)
+            courseFolderImportDraft = nil
+            return
+        }
+        courseFolderImportDraft = draft
+    }
+
+    func importCourseFolder(_ draft: CourseFolderImportDraft, notePaths: Set<String>) {
+        _ = importFiles(
+            draft.rootURLs,
+            selectsFirstImportedItem: false,
+            markdownNotePaths: notePaths,
+            reclassifiesExistingMarkdown: true
+        )
+    }
+
+    @discardableResult
+    func retryWorkspaceSave() -> Bool {
+        save()
+    }
+
+    func importCourseMaterialsFromPanel() {
+        presentImportPanel(
+            linkToActiveNote: false,
+            selectsFirstImportedItem: false,
+            reclassifiesExistingMarkdown: true,
+            panelTitle: ui("选择课程资料或文件夹", "Choose course materials or a folder")
+        )
+    }
+
+    func importCourseNotesFromPanel() {
+        presentImportPanel(
+            linkToActiveNote: false,
+            selectsFirstImportedItem: false,
+            markdownAsNotes: true,
+            markdownOnly: true,
+            reclassifiesExistingMarkdown: true,
+            panelTitle: ui("选择 Markdown 笔记或文件夹", "Choose Markdown notes or a folder")
+        )
+    }
+
     func importAndLinkSourcesFromPanel() {
         presentImportPanel(linkToActiveNote: true)
     }
 
-    private func presentImportPanel(linkToActiveNote: Bool) {
+    private func presentImportPanel(
+        linkToActiveNote: Bool,
+        selectsFirstImportedItem: Bool = true,
+        markdownAsNotes: Bool = false,
+        markdownOnly: Bool = false,
+        reclassifiesExistingMarkdown: Bool = false,
+        panelTitle: String? = nil
+    ) {
         let panel = NSOpenPanel()
-        panel.title = ui("选择学习资料或课程文件夹", "Choose study materials or a course folder")
+        panel.title = panelTitle ?? ui("选择学习资料或课程文件夹", "Choose study materials or a course folder")
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = true
         panel.canChooseFiles = true
-        panel.allowedContentTypes = [
-            .pdf,
-            .html,
-            .plainText,
-            UTType(filenameExtension: "md") ?? .plainText,
-            UTType(filenameExtension: "markdown") ?? .plainText
-        ]
+        panel.allowedContentTypes = markdownOnly
+            ? [UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText]
+            : [.pdf, .html, .plainText, UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText]
 
         guard panel.runModal() == .OK else { return }
         let targetNoteID = linkToActiveNote ? activeNotebookItemID : nil
-        let selectedItems = importFiles(panel.urls)
+        let selectedItems = importFiles(
+            panel.urls,
+            selectsFirstImportedItem: selectsFirstImportedItem,
+            markdownAsNotes: markdownAsNotes,
+            markdownOnly: markdownOnly,
+            reclassifiesExistingMarkdown: reclassifiesExistingMarkdown
+        )
         if let targetNoteID, targetNoteID == activeNotebookItemID {
             setLinkedSourceIDsForActiveNote(
                 Set(linkedSourceIDsForActiveNote).union(selectedItems.map(\.id))
@@ -2052,15 +2303,56 @@ final class WorkspaceStore: ObservableObject {
     }
 
     @discardableResult
-    func importFiles(_ urls: [URL]) -> [StudyItem] {
+    func importFiles(
+        _ urls: [URL],
+        selectsFirstImportedItem: Bool = true,
+        markdownAsNotes: Bool = false,
+        markdownOnly: Bool = false,
+        markdownNotePaths: Set<String>? = nil,
+        reclassifiesExistingMarkdown: Bool = false
+    ) -> [StudyItem] {
         let existing = Set(importedItems.compactMap(\.urlPath))
-        let expandedURLs = urls
+        let supportedURLs = urls
             .flatMap(Self.supportedCourseFiles(at:))
             .reduce(into: [URL]()) { result, url in
                 if !result.contains(where: { $0.standardizedFileURL == url.standardizedFileURL }) {
                     result.append(url)
                 }
             }
+        let expandedURLs = markdownOnly
+            ? supportedURLs.filter(Self.isMarkdownFile)
+            : supportedURLs
+        let isNotebookNote: (URL) -> Bool = { url in
+            guard Self.isMarkdownFile(url) else { return false }
+            return markdownNotePaths?.contains(url.path) ?? markdownAsNotes
+        }
+
+        var roleChanged = false
+        if reclassifiesExistingMarkdown || markdownNotePaths != nil {
+            persistCurrentNote()
+            for url in expandedURLs where Self.isMarkdownFile(url) {
+                guard let index = importedItems.firstIndex(where: { $0.urlPath == url.path }) else { continue }
+                let nextRole = isNotebookNote(url)
+                guard importedItems[index].isNotebookNote != nextRole else { continue }
+                importedItems[index].isNotebookNote = nextRole
+                roleChanged = true
+            }
+            if roleChanged {
+                if let selectedItemID,
+                   importedItems.first(where: { $0.id == selectedItemID })?.isNotebookNote == true {
+                    self.selectedItemID = courseMaterials.first?.id ?? sampleItems.first?.id
+                    readerLocationTitle = selectedMaterialItem.map(displayTitle)
+                    restoreCurrentStudyLocation()
+                }
+                if let activeNotebookItemID,
+                   importedItems.first(where: { $0.id == activeNotebookItemID })?.isNotebookNote == false {
+                    self.activeNotebookItemID = courseNotebookItems.first?.id
+                    noteText = noteText(for: activeNoteItem)
+                }
+                _ = sanitizeNoteSourceLinks()
+                invalidateAgentContext()
+            }
+        }
         let newItems = expandedURLs
             .filter { !existing.contains($0.path) }
             .map { url in
@@ -2070,19 +2362,37 @@ final class WorkspaceStore: ObservableObject {
                     subtitle: url.lastPathComponent,
                     kind: StudyItemKind.detect(from: url),
                     urlPath: url.path,
-                    isSample: false
+                    isSample: false,
+                    isNotebookNote: isNotebookNote(url)
                 )
             }
 
         importedItems.append(contentsOf: newItems)
         courseDocumentSearchIndex.synchronize(allItems)
-        if let first = newItems.first {
+        if selectsFirstImportedItem, let first = newItems.first {
             select(itemID: first.id)
         } else {
             save()
         }
         let selectedIDs = Set(expandedURLs.map { "file:\($0.path)" })
         return allItems.filter { selectedIDs.contains($0.id) && !$0.isNotebookNote }
+    }
+
+    private func makeCourseFolderImportDraft(rootURLs: [URL]) -> CourseFolderImportDraft {
+        let supportedFiles = rootURLs
+            .flatMap(Self.supportedCourseFiles(at:))
+            .reduce(into: [URL]()) { result, url in
+                if !result.contains(where: { $0.standardizedFileURL == url.standardizedFileURL }) {
+                    result.append(url)
+                }
+            }
+        let markdownFiles = supportedFiles.filter(Self.isMarkdownFile)
+        return CourseFolderImportDraft(
+            rootURLs: rootURLs,
+            markdownFiles: markdownFiles,
+            notePaths: Set(markdownFiles.filter(Self.defaultMarkdownIsNotebookNote).map(\.path)),
+            automaticMaterialCount: supportedFiles.count - markdownFiles.count
+        )
     }
 
     private static func supportedCourseFiles(at url: URL) -> [URL] {
@@ -2110,6 +2420,16 @@ final class WorkspaceStore: ObservableObject {
     private static func isSupportedCourseFile(_ url: URL) -> Bool {
         ["pdf", "html", "htm", "md", "markdown", "txt", "text"]
             .contains(url.pathExtension.lowercased())
+    }
+
+    private static func isMarkdownFile(_ url: URL) -> Bool {
+        ["md", "markdown"].contains(url.pathExtension.lowercased())
+    }
+
+    private static func defaultMarkdownIsNotebookNote(_ url: URL) -> Bool {
+        let description = (url.deletingPathExtension().lastPathComponent + " "
+            + url.deletingLastPathComponent().pathComponents.suffix(3).joined(separator: " ")).lowercased()
+        return ["笔记", "note", "notes", "notebook"].contains { description.contains($0) }
     }
 
     func promptRenameNotebookNote(itemID: String) {
@@ -2230,7 +2550,8 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func createNotebookNote(seed: NotebookNoteSeed, title rawTitle: String? = nil) {
+    @discardableResult
+    private func createNotebookNote(seed: NotebookNoteSeed, title rawTitle: String? = nil) -> StudyItem? {
         let sourceItem: StudyItem?
         let defaultTitle = suggestedNotebookTitle(for: seed)
         switch seed {
@@ -2242,7 +2563,7 @@ final class WorkspaceStore: ObservableObject {
         let title = (rawTitle ?? defaultTitle).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else {
             noteFileError = ui("笔记名不能为空。", "Note name cannot be empty.")
-            return
+            return nil
         }
 
         persistCurrentNote()
@@ -2277,8 +2598,10 @@ final class WorkspaceStore: ObservableObject {
                 ? ui("已新建空白笔记：\(url.lastPathComponent)", "Created blank note: \(url.lastPathComponent)")
                 : ui("已为当前资料新建笔记：\(url.lastPathComponent)", "Created note from current material: \(url.lastPathComponent)")
             showTransientNoteStatus(status)
+            return item
         } catch {
             noteFileError = ui("无法创建笔记：\(error.localizedDescription)", "Could not create note: \(error.localizedDescription)")
+            return nil
         }
     }
 
@@ -3178,6 +3501,8 @@ final class WorkspaceStore: ObservableObject {
             || scenario == "pane-toggle-continuity-flow"
             || scenario == "pane-reorder-width-flow"
             || scenario == "reader-scroll-persistence-flow"
+            || scenario == "course-workspace-overview-flow"
+            || scenario == "course-workspace-workflow-flow"
             || emptyWorkspaceScenarios.contains(scenario) else { return }
         didRunVerificationScenario = true
         recordVerificationStage("recognized:\(scenario)")
@@ -3195,6 +3520,10 @@ final class WorkspaceStore: ObservableObject {
             select(itemID: "sample-html")
             updateNote(ui("# 收起轨道验收\n\n悬浮简介必须越过收起边界显示。\n", "# Dormant rail check\n\nThe hover preview must cross the dormant pane boundary.\n"))
             save()
+            return
+        }
+        if scenario == "course-workspace-overview-flow" || scenario == "course-workspace-workflow-flow" {
+            await runCourseWorkspaceVerification(scenario)
             return
         }
         if scenario == "pane-toggle-continuity-flow" {
@@ -3305,6 +3634,320 @@ final class WorkspaceStore: ObservableObject {
             }
         }
         recordVerificationStage("completed")
+    }
+
+    private func runCourseWorkspaceVerification(_ scenario: String) async {
+        let fixtureDirectory = storageURL.deletingLastPathComponent()
+            .appendingPathComponent("CourseWorkspaceFixtures", isDirectory: true)
+        try? FileManager.default.createDirectory(at: fixtureDirectory, withIntermediateDirectories: true)
+
+        func fixtureURL(_ name: String, extension fileExtension: String) -> URL {
+            fixtureDirectory.appendingPathComponent(name).appendingPathExtension(fileExtension)
+        }
+
+        let materialAURL = fixtureURL("利率基础", extension: "html")
+        let materialBURL = fixtureURL("货币政策", extension: "md")
+        let materialCURL = fixtureURL("复习问题", extension: "txt")
+        let noteAURL = fixtureURL("利率研究笔记", extension: "md")
+        let noteBURL = fixtureURL("政策工具笔记", extension: "md")
+        let noteCURL = fixtureURL("期末复习笔记", extension: "md")
+        try? "<h1>利率基础</h1><p>名义利率与实际利率。</p>".write(to: materialAURL, atomically: true, encoding: .utf8)
+        try? "# 货币政策\n\n公开市场操作与政策利率。\n".write(to: materialBURL, atomically: true, encoding: .utf8)
+        try? "复习：比较名义利率与实际利率。\n".write(to: materialCURL, atomically: true, encoding: .utf8)
+        try? "# 利率研究笔记\n\n## 核心要点\n".write(to: noteAURL, atomically: true, encoding: .utf8)
+        try? "# 政策工具笔记\n\n## 摘录\n".write(to: noteBURL, atomically: true, encoding: .utf8)
+        try? "# 期末复习笔记\n\n## 待追问\n".write(to: noteCURL, atomically: true, encoding: .utf8)
+
+        let selectionBeforeFolderImport = selectedItemID
+        let folderImportDraft = makeCourseFolderImportDraft(rootURLs: [fixtureDirectory])
+        importCourseFolder(folderImportDraft, notePaths: folderImportDraft.notePaths)
+        let importedFolderItems = importedItems.filter {
+            $0.url?.deletingLastPathComponent().standardizedFileURL.path == fixtureDirectory.standardizedFileURL.path
+        }
+        let importedFolderRoles = Dictionary(uniqueKeysWithValues: importedFolderItems.map {
+            ($0.subtitle, $0.isNotebookNote)
+        })
+        let folderItemCountPassed = importedFolderItems.count == 6
+        let folderMaterialDefaultPassed = (importedFolderRoles[materialBURL.lastPathComponent] ?? true) == false
+        let folderNoteDefaultsPassed = [noteAURL, noteBURL, noteCURL].allSatisfy { url in
+            (importedFolderRoles[url.lastPathComponent] ?? false) == true
+        }
+        let folderCountSummaryPassed = folderImportDraft.automaticMaterialCount
+            + folderImportDraft.markdownFiles.count
+            - folderImportDraft.notePaths.count == 3
+        let initialFolderClassificationPassed = folderItemCountPassed
+            && folderMaterialDefaultPassed
+            && folderNoteDefaultsPassed
+            && folderCountSummaryPassed
+        _ = importFiles(
+            [materialBURL],
+            selectsFirstImportedItem: false,
+            markdownAsNotes: true,
+            markdownOnly: true,
+            reclassifiesExistingMarkdown: true
+        )
+        let correctedExistingFileToNote = importedItems.first(where: { $0.urlPath == materialBURL.path })?.isNotebookNote == true
+        _ = importFiles(
+            [materialBURL],
+            selectsFirstImportedItem: false,
+            reclassifiesExistingMarkdown: true
+        )
+        let correctedExistingFileBackToMaterial = importedItems.first(where: { $0.urlPath == materialBURL.path })?.isNotebookNote == false
+        let importClassificationPassed = initialFolderClassificationPassed
+            && correctedExistingFileToNote
+            && correctedExistingFileBackToMaterial
+            && selectedItemID == selectionBeforeFolderImport
+        let importSelectionPreserved = selectedItemID == selectionBeforeFolderImport
+
+        let materialA = StudyItem(id: "course-material-a", title: "利率基础", subtitle: materialAURL.lastPathComponent, kind: .html, urlPath: materialAURL.path, isSample: false)
+        let materialB = StudyItem(id: "course-material-b", title: "货币政策", subtitle: materialBURL.lastPathComponent, kind: .markdown, urlPath: materialBURL.path, isSample: false)
+        let materialC = StudyItem(id: "course-material-c", title: "复习问题", subtitle: materialCURL.lastPathComponent, kind: .text, urlPath: materialCURL.path, isSample: false)
+        let noteA = StudyItem(id: "course-note-a", title: "利率研究笔记", subtitle: noteAURL.lastPathComponent, kind: .markdown, urlPath: noteAURL.path, isSample: false, isNotebookNote: true)
+        let noteB = StudyItem(id: "course-note-b", title: "政策工具笔记", subtitle: noteBURL.lastPathComponent, kind: .markdown, urlPath: noteBURL.path, isSample: false, isNotebookNote: true)
+        let noteC = StudyItem(id: "course-note-c", title: "期末复习笔记", subtitle: noteCURL.lastPathComponent, kind: .markdown, urlPath: noteCURL.path, isSample: false, isNotebookNote: true)
+
+        importedItems = [materialA, materialB, materialC, noteA, noteB, noteC]
+        notesByItemID = [
+            noteA.id: "# 利率研究笔记\n\n## 核心要点\n",
+            noteB.id: "# 政策工具笔记\n\n## 摘录\n",
+            noteC.id: "# 期末复习笔记\n\n## 待追问\n",
+        ]
+        selectedItemID = materialA.id
+        activeNotebookItemID = noteA.id
+        noteText = notesByItemID[noteA.id] ?? ""
+        noteSourceLinks = [
+            NoteSourceLink(noteItemID: noteA.id, sourceItemID: materialA.id),
+            NoteSourceLink(noteItemID: noteA.id, sourceItemID: materialB.id),
+            NoteSourceLink(noteItemID: noteB.id, sourceItemID: materialB.id),
+        ]
+        studyLocationsByItemID = [
+            materialA.id: StudyLocation(
+                itemID: materialA.id,
+                itemTitle: materialA.title,
+                locationID: "html-heading-1",
+                locationTitle: "名义利率与实际利率",
+                lastStudiedAt: Date().addingTimeInterval(-1_800),
+                visitCount: 3
+            )
+        ]
+        let activeSession = StudySession(
+            title: "利率为什么会变化",
+            messages: [
+                AgentMessage(role: .user, text: "名义利率和实际利率有什么区别？", source: materialA.title, backend: .pi),
+                AgentMessage(role: .assistant, text: "实际利率会扣除通货膨胀的影响。", source: materialA.title, backend: .pi),
+            ],
+            summary: "比较名义利率与实际利率，并联系货币政策工具。",
+            focusItemIDs: [materialA.id, materialB.id, noteA.id],
+            flow: StudyFlowState(phase: .note, suggestedNext: ["把利率公式整理到复习笔记", "用一道例题检验区别"]),
+            updatedAt: Date().addingTimeInterval(-900)
+        )
+        let emptySession = StudySession(title: "新学习会话")
+        studySessions = [activeSession, emptySession]
+        activeStudySessionID = activeSession.id
+        messages = activeSession.messages
+        learningMemoryEntries = [
+            LearningMemoryEntry(
+                kind: .confusion,
+                text: "仍不确定通货膨胀预期如何传导到名义利率。",
+                evidence: "用户在当前会话中明确提出",
+                origin: .userStatement,
+                sessionID: activeSession.id
+            ),
+            LearningMemoryEntry(
+                kind: .nextStep,
+                text: "完成名义利率与实际利率的对照例题。",
+                evidence: "当前会话建议",
+                origin: .agentInference,
+                sessionID: activeSession.id
+            ),
+        ]
+        layout = .documentAgentNotes
+        showLibrary = false
+        showReader = true
+        showAgent = true
+        showNotes = true
+        agentSurface = .hidden
+        courseDocumentSearchIndex.synchronize(allItems)
+        save()
+
+        let noteCountBeforeInvalidCreation = courseNotebookItems.count
+        let invalidNoteID = createCourseNotebookNote(title: "   ")
+        let invalidNoteCreationPassed = invalidNoteID == nil
+            && courseNotebookItems.count == noteCountBeforeInvalidCreation
+            && noteFileError?.isEmpty == false
+        noteFileError = nil
+
+        let initialSummary = courseWorkspaceSummary
+        let initialRelations = NoteSourceRelations(links: noteSourceLinks)
+        if scenario == "course-workspace-overview-flow" {
+            let requestedPage = Self.environmentValue("WEIBEI_VERIFY_COURSE_PAGE")
+            if requestedPage == "notes" {
+                presentCourseWorkspace(.notes, selecting: noteA.id)
+            } else if requestedPage == "materials" {
+                presentCourseWorkspace(.materials, selecting: materialB.id)
+            } else if requestedPage == "sessions" {
+                presentCourseWorkspace(.sessions, selecting: activeSession.id.uuidString)
+            } else {
+                presentCourseWorkspace(.overview)
+            }
+            writeCourseWorkspaceVerificationReport(
+                name: "course-workspace-overview-report.json",
+                payload: [
+                    "result": initialSummary.materialCount == 3
+                        && initialSummary.noteCount == 3
+                        && initialSummary.explicitLinkCount == 3
+                        && initialSummary.readingPositionCount == 1
+                        && initialSummary.unlinkedMaterialCount == 1
+                        && initialSummary.unlinkedNoteCount == 1
+                        && initialSummary.studySessionCount == 1
+                        && initialSummary.unresolvedConfusionCount == 1
+                        && importClassificationPassed ? "pass" : "fail",
+                    "importClassificationPassed": importClassificationPassed,
+                    "invalidNoteCreationPassed": invalidNoteCreationPassed,
+                    "initialFolderClassificationPassed": initialFolderClassificationPassed,
+                    "correctedExistingFileToNote": correctedExistingFileToNote,
+                    "correctedExistingFileBackToMaterial": correctedExistingFileBackToMaterial,
+                    "importSelectionPreserved": importSelectionPreserved,
+                    "importedFolderItemCount": importedFolderItems.count,
+                    "importedFolderRoles": importedFolderRoles,
+                    "folderMaterialDefaultPassed": folderMaterialDefaultPassed,
+                    "folderNoteDefaultsPassed": folderNoteDefaultsPassed,
+                    "folderCountSummaryPassed": folderCountSummaryPassed,
+                    "materialCount": initialSummary.materialCount,
+                    "noteCount": initialSummary.noteCount,
+                    "explicitLinkCount": initialSummary.explicitLinkCount,
+                    "readingPositionCount": initialSummary.readingPositionCount,
+                    "unlinkedMaterialIDs": courseMaterialsWithoutNoteLinks.map(\.id).sorted(),
+                    "unlinkedNoteIDs": courseNotesWithoutSourceLinks.map(\.id).sorted(),
+                    "studySessionCount": initialSummary.studySessionCount,
+                    "unresolvedConfusionCount": initialSummary.unresolvedConfusionCount,
+                    "currentMaterialID": selectedItemID ?? "",
+                    "currentNoteID": activeNotebookItemID ?? "",
+                    "courseWorkspacePresented": courseWorkspacePresented,
+                ]
+            )
+            return
+        }
+
+        func verifyCourseOverlayContinuity(itemID: String) async -> (passed: Bool, makeCount: Int, dismantleCount: Int) {
+            select(itemID: itemID)
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            let baselineLayout = layout
+            let baselineMaterialID = selectedItemID
+            let baselineNoteID = activeNotebookItemID
+            let baselineNoteText = noteText
+            let baselineMessages = messages
+            let baselineOrder = threePaneOrder
+            let baselineLocation = selectedItemID.flatMap { studyLocationsByItemID[$0] }
+            PaneToggleContinuityVerifier.beginMeasurement()
+            presentCourseWorkspace(.overview)
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            dismissCourseWorkspace()
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            let makeCount = PaneToggleContinuityVerifier.webReaderMakeCount
+                + PaneToggleContinuityVerifier.pdfReaderMakeCount
+                + PaneToggleContinuityVerifier.noteEditorMakeCount
+            let dismantleCount = PaneToggleContinuityVerifier.webReaderDismantleCount
+                + PaneToggleContinuityVerifier.pdfReaderDismantleCount
+                + PaneToggleContinuityVerifier.noteEditorDismantleCount
+            let passed = layout == baselineLayout
+                && selectedItemID == baselineMaterialID
+                && activeNotebookItemID == baselineNoteID
+                && noteText == baselineNoteText
+                && messages == baselineMessages
+                && threePaneOrder == baselineOrder
+                && selectedItemID.flatMap { studyLocationsByItemID[$0] } == baselineLocation
+                && makeCount == 0
+                && dismantleCount == 0
+            PaneToggleContinuityVerifier.endMeasurement()
+            return (passed, makeCount, dismantleCount)
+        }
+
+        let htmlContinuity = await verifyCourseOverlayContinuity(itemID: materialA.id)
+        let pdfContinuity = await verifyCourseOverlayContinuity(itemID: "sample-pdf")
+        let continuityPassed = htmlContinuity.passed && pdfContinuity.passed
+        let paneMakeCount = htmlContinuity.makeCount + pdfContinuity.makeCount
+        let paneDismantleCount = htmlContinuity.dismantleCount + pdfContinuity.dismantleCount
+        select(itemID: materialA.id)
+
+        setLinkedSourceIDs([materialA.id], for: noteA.id)
+        setLinkedSourceIDs([materialB.id, materialC.id], for: noteC.id)
+        let editedRelations = NoteSourceRelations(links: noteSourceLinks)
+
+        presentCourseWorkspace(.materials, selecting: materialC.id)
+        openCourseMaterial(materialC.id)
+        let materialNavigationPassed = selectedItemID == materialC.id
+            && activeNotebookItemID == noteA.id
+            && !editedRelations.isLinked(noteItemID: noteA.id, sourceItemID: materialC.id)
+
+        presentCourseWorkspace(.notes, selecting: noteC.id)
+        openCourseNote(noteC.id)
+        let noteNavigationPassed = selectedItemID == materialC.id
+            && activeNotebookItemID == noteC.id
+
+        flushPendingNotePersistence()
+        save()
+        let diskData = try? Data(contentsOf: storageURL)
+        let diskSnapshot = diskData.flatMap { try? JSONDecoder().decode(PersistedWorkspace.self, from: $0) }
+        let diskRelations = NoteSourceRelations(links: diskSnapshot?.noteSourceLinks ?? [])
+        let diskSummary = diskSnapshot.map {
+            CourseWorkspaceSummary(
+                importedItems: $0.importedItems,
+                noteSourceLinks: $0.noteSourceLinks ?? [],
+                studyLocationsByItemID: $0.studyLocationsByItemID ?? [:],
+                studySessions: $0.studySessions ?? [],
+                learningMemoryEntries: $0.learningMemoryEntries ?? []
+            )
+        }
+        let persistencePassed = diskRelations.sourceIDs(for: noteA.id) == [materialA.id]
+            && Set(diskRelations.sourceIDs(for: noteC.id)) == Set([materialB.id, materialC.id])
+            && Set(diskRelations.noteIDs(for: materialB.id)) == Set([noteB.id, noteC.id])
+            && diskSummary?.explicitLinkCount == 4
+            && diskSummary?.unlinkedMaterialCount == 0
+            && diskSummary?.unlinkedNoteCount == 0
+
+        let resultPassed = initialRelations.links.count == 3
+            && importClassificationPassed
+            && invalidNoteCreationPassed
+            && continuityPassed
+            && materialNavigationPassed
+            && noteNavigationPassed
+            && persistencePassed
+        writeCourseWorkspaceVerificationReport(
+            name: "course-workspace-workflow-report.json",
+            payload: [
+                "result": resultPassed ? "pass" : "fail",
+                "continuityPassed": continuityPassed,
+                "importClassificationPassed": importClassificationPassed,
+                "invalidNoteCreationPassed": invalidNoteCreationPassed,
+                "initialFolderClassificationPassed": initialFolderClassificationPassed,
+                "correctedExistingFileToNote": correctedExistingFileToNote,
+                "correctedExistingFileBackToMaterial": correctedExistingFileBackToMaterial,
+                "importSelectionPreserved": importSelectionPreserved,
+                "importedFolderItemCount": importedFolderItems.count,
+                "importedFolderRoles": importedFolderRoles,
+                "folderMaterialDefaultPassed": folderMaterialDefaultPassed,
+                "folderNoteDefaultsPassed": folderNoteDefaultsPassed,
+                "folderCountSummaryPassed": folderCountSummaryPassed,
+                "materialNavigationPassed": materialNavigationPassed,
+                "noteNavigationPassed": noteNavigationPassed,
+                "persistencePassed": persistencePassed,
+                "finalMaterialID": selectedItemID ?? "",
+                "finalNoteID": activeNotebookItemID ?? "",
+                "noteA_sources": diskRelations.sourceIDs(for: noteA.id),
+                "noteC_sources": diskRelations.sourceIDs(for: noteC.id),
+                "materialB_notes": diskRelations.noteIDs(for: materialB.id),
+                "paneMakeCount": paneMakeCount,
+                "paneDismantleCount": paneDismantleCount,
+            ]
+        )
+    }
+
+    private func writeCourseWorkspaceVerificationReport(name: String, payload: [String: Any]) {
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) else { return }
+        let url = storageURL.deletingLastPathComponent().appendingPathComponent(name)
+        try? data.write(to: url, options: .atomic)
     }
 
     private func waitForReaderContextToSettle() async {
@@ -4548,7 +5191,8 @@ final class WorkspaceStore: ObservableObject {
             .replacingOccurrences(of: "\n- <br />", with: "")
     }
 
-    private func save() {
+    @discardableResult
+    private func save() -> Bool {
         let snapshot = PersistedWorkspace(
             importedItems: importedItems,
             notesByItemID: notesByItemID,
@@ -4576,8 +5220,18 @@ final class WorkspaceStore: ObservableObject {
             adaptImportedDocumentColors: adaptImportedDocumentColors,
             interfaceLanguageRaw: interfaceLanguage.rawValue
         )
-        guard let data = try? JSONEncoder().encode(snapshot) else { return }
-        try? data.write(to: storageURL, options: [.atomic])
+        do {
+            let data = try JSONEncoder().encode(snapshot)
+            try data.write(to: storageURL, options: [.atomic])
+            workspaceSaveError = nil
+            return true
+        } catch {
+            workspaceSaveError = ui(
+                "课程更改尚未写入磁盘：\(error.localizedDescription)",
+                "Course changes were not saved to disk: \(error.localizedDescription)"
+            )
+            return false
+        }
     }
 
     private func resolvedOpenAIAPIKey() -> (key: String, source: String)? {

@@ -13,60 +13,74 @@ struct ContentView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            VStack(spacing: 0) {
-                UnifiedTopBarView(
-                    isImmersiveLayout: isImmersiveLayout,
-                    isFullScreen: windowIsFullScreen,
-                    searchFocused: $topSearchFocused
-                )
+            ZStack {
+                VStack(spacing: 0) {
+                    UnifiedTopBarView(
+                        isImmersiveLayout: isImmersiveLayout,
+                        isFullScreen: windowIsFullScreen,
+                        searchFocused: $topSearchFocused
+                    )
 
-                ZStack(alignment: .top) {
-                    HStack(spacing: 0) {
-                        if store.showLibrary {
-                            SidebarView()
-                                .frame(width: libraryWidth(in: geometry.size.width))
-                                .focused($focusedPane, equals: .library)
-                                .transition(WeiBeiTransition.sidePanel)
-                                .zIndex(2)
+                    ZStack(alignment: .top) {
+                        HStack(spacing: 0) {
+                            if store.showLibrary {
+                                SidebarView()
+                                    .frame(width: libraryWidth(in: geometry.size.width))
+                                    .focused($focusedPane, equals: .library)
+                                    .transition(WeiBeiTransition.sidePanel)
+                                    .zIndex(2)
 
-                            libraryResizeHandle(totalWidth: geometry.size.width)
-                                .transition(.opacity)
+                                libraryResizeHandle(totalWidth: geometry.size.width)
+                                    .transition(.opacity)
+                            }
+
+                            LayoutContentView()
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(WeiBeiTheme.paper)
+                        .animation(WeiBeiMotion.layout, value: store.showLibrary)
+                        .animation(WeiBeiMotion.layout, value: store.layout)
+
+                        if store.commandPalettePresented {
+                            CommandPaletteView()
+                                .transition(WeiBeiTransition.commandPalette)
+                                .zIndex(40)
                         }
 
-                        LayoutContentView()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(WeiBeiTheme.paper)
-                    .animation(WeiBeiMotion.layout, value: store.showLibrary)
-                    .animation(WeiBeiMotion.layout, value: store.layout)
+                        if showsGlobalFloatingAgent {
+                            FloatingSelectionAgentView(
+                                expanded: $floatingAgentExpanded,
+                                routesToConversation: store.isConversationSurfaceVisible
+                            )
+                                .position(floatingAgentPosition(in: geometry.size))
+                                .transition(WeiBeiTransition.floating)
+                                .zIndex(30)
+                        }
 
-                    if store.commandPalettePresented {
-                        CommandPaletteView()
-                            .transition(WeiBeiTransition.commandPalette)
-                            .zIndex(40)
                     }
+                }
+                .allowsHitTesting(!store.courseWorkspacePresented)
+                .accessibilityHidden(store.courseWorkspacePresented)
 
-                    if showsGlobalFloatingAgent {
-                        FloatingSelectionAgentView(
-                            expanded: $floatingAgentExpanded,
-                            routesToConversation: store.isConversationSurfaceVisible
-                        )
-                            .position(floatingAgentPosition(in: geometry.size))
-                            .transition(WeiBeiTransition.floating)
-                            .zIndex(30)
+                if store.courseWorkspacePresented {
+                    ZStack {
+                        WeiBeiTheme.paper
+                        CourseWorkspaceView()
                     }
-
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .transition(.opacity.combined(with: .scale(scale: 0.995, anchor: .top)))
+                    .zIndex(100)
                 }
             }
             .background {
-                if showsGlobalFloatingAgent {
+                if !store.courseWorkspacePresented && showsGlobalFloatingAgent {
                     EscapeKeyBridge {
                         store.dismissFloatingSelectionAgent()
                     }
                 }
 
-                if store.showReaderSearch {
+                if !store.courseWorkspacePresented && store.showReaderSearch {
                     EscapeKeyBridge {
                         store.hideReaderSearch()
                         topSearchFocused = false
@@ -85,10 +99,12 @@ struct ContentView: View {
             focusedPane = store.focusedPane
         }
         .animation(WeiBeiMotion.appearance, value: store.appearanceMode)
+        .animation(WeiBeiMotion.panel, value: store.courseWorkspacePresented)
     }
 
     private var showsGlobalFloatingAgent: Bool {
-        return store.canShowSelectionPromptSurface && SelectionFloatingAgentPlacement.isVisible(
+        return !store.courseWorkspacePresented
+            && store.canShowSelectionPromptSurface && SelectionFloatingAgentPlacement.isVisible(
             surface: store.agentSurface,
             hasSelection: store.selectionContext != nil,
             hasAnchor: store.selectionAnchor != nil,
@@ -449,6 +465,10 @@ private struct UnifiedTopBarView: View {
     @ViewBuilder
     private var leftPrimaryControls: some View {
         HStack(spacing: 5) {
+            topIconButton("books.vertical", help: store.ui("打开课程台", "Open course workspace")) {
+                store.presentCourseWorkspace()
+            }
+
             libraryButton
 
             navigationButtons
@@ -998,6 +1018,7 @@ struct PersistentPaneHost: NSViewRepresentable {
 
     func makeNSView(context: Context) -> PersistentPaneContainerView {
         let container = PersistentPaneContainerView()
+        container.isHidden = store.courseWorkspacePresented
         container.onWindowChange = { [weak coordinator = context.coordinator] container in
             coordinator?.windowChanged(container)
         }
@@ -1006,6 +1027,7 @@ struct PersistentPaneHost: NSViewRepresentable {
     }
 
     func updateNSView(_ container: PersistentPaneContainerView, context: Context) {
+        container.isHidden = store.courseWorkspacePresented
         context.coordinator.update(role: role, registry: registry, store: store, container: container)
     }
 
