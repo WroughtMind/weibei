@@ -262,6 +262,8 @@ public enum PiAgentDiagnosticSanitizer {
 }
 
 public actor PiAgentRuntime: StudyAgentRuntime {
+    private static let processReadinessTimeoutSeconds: UInt64 = 12
+
     private struct PendingCommand {
         var continuation: CheckedContinuation<PiRPCResponse, Error>
         var timeoutTask: Task<Void, Never>
@@ -302,6 +304,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     private var stderrTask: Task<Void, Never>?
     private var pendingCommands: [String: PendingCommand] = [:]
     private var activeRun: ActiveRun?
+    private var startingRunID: UUID?
+    private var cancelledStartingRunIDs: Set<UUID> = []
     private var stderrBuffer = ""
     private var startupFailure: PiAgentRuntimeError?
     private var idleShutdownTask: Task<Void, Never>?
@@ -327,12 +331,21 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     }
 
     public func respond(to request: StudyAgentRequest, progress: StudyAgentProgressHandler?) async throws -> StudyAgentReply {
-        guard activeRun == nil else { throw PiAgentRuntimeError.busy }
+        guard activeRun == nil, startingRunID == nil else { throw PiAgentRuntimeError.busy }
+        startingRunID = request.id
+        defer {
+            if startingRunID == request.id {
+                startingRunID = nil
+            }
+            cancelledStartingRunIDs.remove(request.id)
+        }
         idleShutdownTask?.cancel()
         idleShutdownTask = nil
         try await ensureProcess()
+        try requireStartingRun(request.id)
 
         _ = try await sendCommand(type: "new_session", timeoutSeconds: 3)
+        try requireStartingRun(request.id)
         let context = StudyAgentContextEnvelope(request: request)
         try writeContext(context)
         await progress?(.readingContext)
@@ -359,8 +372,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             allowedNoteSourceLabels: currentSourceLabels(in: context),
             progress: progress
         )
+        startingRunID = nil
         refreshRunWatchdog()
-
         do {
             _ = try await sendCommand(
                 type: "prompt",
@@ -378,8 +391,20 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     }
 
     public func cancel() async {
-        guard let runID = activeRun?.id else { return }
-        await cancelRun(id: runID)
+        if let runID = activeRun?.id {
+            await cancelRun(id: runID)
+            return
+        }
+        guard let runID = startingRunID else { return }
+        cancelledStartingRunIDs.insert(runID)
+        startingRunID = nil
+        shutdownProcess(reason: PiAgentRuntimeError.cancelled)
+    }
+
+    private func requireStartingRun(_ runID: UUID) throws {
+        guard startingRunID == runID, !cancelledStartingRunIDs.contains(runID) else {
+            throw PiAgentRuntimeError.cancelled
+        }
     }
 
     private func cancelRun(id runID: UUID) async {
@@ -464,11 +489,17 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         stderrTask = readStderr(errorPipe.fileHandleForReading)
 
         do {
-            let state = try await sendCommand(type: "get_state", timeoutSeconds: 3)
+            let state = try await sendCommand(
+                type: "get_state",
+                timeoutSeconds: Self.processReadinessTimeoutSeconds
+            )
             guard state.dataJSON != nil else {
                 throw PiAgentRuntimeError.protocolFailure("get_state returned no data")
             }
-            let commands = try await sendCommand(type: "get_commands", timeoutSeconds: 3)
+            let commands = try await sendCommand(
+                type: "get_commands",
+                timeoutSeconds: Self.processReadinessTimeoutSeconds
+            )
             try verifyRequiredSkills(in: commands)
             if let startupFailure { throw startupFailure }
         } catch {
