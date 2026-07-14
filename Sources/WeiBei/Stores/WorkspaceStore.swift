@@ -3503,6 +3503,7 @@ final class WorkspaceStore: ObservableObject {
             || scenario == "reader-scroll-persistence-flow"
             || scenario == "course-workspace-overview-flow"
             || scenario == "course-workspace-workflow-flow"
+            || scenario == "course-index-navigation-flow"
             || emptyWorkspaceScenarios.contains(scenario) else { return }
         didRunVerificationScenario = true
         recordVerificationStage("recognized:\(scenario)")
@@ -3524,6 +3525,17 @@ final class WorkspaceStore: ObservableObject {
         }
         if scenario == "course-workspace-overview-flow" || scenario == "course-workspace-workflow-flow" {
             await runCourseWorkspaceVerification(scenario)
+            return
+        }
+        if scenario == "course-index-navigation-flow" {
+            layout = .documentAgentNotes
+            showLibrary = true
+            showReader = false
+            showAgent = false
+            showNotes = false
+            agentSurface = .hidden
+            showDailyInspiration = true
+            save()
             return
         }
         if scenario == "pane-toggle-continuity-flow" {

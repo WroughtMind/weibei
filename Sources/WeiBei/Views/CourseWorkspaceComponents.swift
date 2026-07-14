@@ -7,8 +7,28 @@ struct CourseRelationDetailHeader: View {
     let mark: String
     let title: String
     let detail: String
+    let manageTitle: String?
+    let manage: (() -> Void)?
     let openTitle: String
     let open: () -> Void
+
+    init(
+        mark: String,
+        title: String,
+        detail: String,
+        manageTitle: String? = nil,
+        manage: (() -> Void)? = nil,
+        openTitle: String,
+        open: @escaping () -> Void
+    ) {
+        self.mark = mark
+        self.title = title
+        self.detail = detail
+        self.manageTitle = manageTitle
+        self.manage = manage
+        self.openTitle = openTitle
+        self.open = open
+    }
 
     var body: some View {
         HStack(alignment: .center, spacing: 18) {
@@ -27,12 +47,50 @@ struct CourseRelationDetailHeader: View {
 
             Spacer()
 
-            Button(openTitle, action: open)
-                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+            HStack(spacing: 8) {
+                if let manageTitle, let manage {
+                    Button(manageTitle, action: manage)
+                        .buttonStyle(WeiBeiTextActionButtonStyle())
+                }
+                Button(openTitle, action: open)
+                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+            }
         }
         .padding(.horizontal, 24)
         .frame(minHeight: 88)
         .background(WeiBeiTheme.paperRaised.opacity(0.28))
+    }
+}
+
+struct CourseLinkedItemRow: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let item: StudyItem
+    let detail: String
+
+    var body: some View {
+        HStack(spacing: 11) {
+            Image(systemName: item.kind.systemImage)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(store.displayTitle(for: item))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(WeiBeiTheme.ink)
+                    .lineLimit(1)
+                Text(detail)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Text(store.ui("已关联", "Linked"))
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(WeiBeiTheme.cinnabar)
+        }
+        .padding(.horizontal, 10)
+        .frame(minHeight: 48)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -60,7 +118,7 @@ struct CourseWorkspaceRow: View {
                         .lineLimit(1)
                     Text(detail)
                         .font(.system(size: 10.5))
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .lineLimit(1)
                 }
 
@@ -88,6 +146,7 @@ struct CourseWorkspaceRow: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .animation(WeiBeiMotion.hover, value: hovering)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
@@ -116,7 +175,7 @@ struct RelationSelectionRow: View {
                         .lineLimit(1)
                     Text(detail)
                         .font(.system(size: 10.5))
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .lineLimit(1)
                 }
                 Spacer()
@@ -150,7 +209,7 @@ struct CourseDetailSection<Content: View>: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title)
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
             content
         }
     }
@@ -168,7 +227,7 @@ struct CourseContextLine: View {
                 .frame(width: 18)
             Text(label)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
                 .frame(width: 76, alignment: .leading)
             Text(value)
                 .font(.system(size: 13, weight: .medium))
@@ -201,7 +260,7 @@ struct CourseActionRow: View {
                     .lineLimit(1)
                 Text(detail)
                     .font(.system(size: 10.5))
-                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .lineLimit(2)
             }
             Spacer()
@@ -234,7 +293,7 @@ struct CourseAttentionRow: View {
                         .foregroundStyle(WeiBeiTheme.ink)
                     Text(detail)
                         .font(.system(size: 10.5))
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .lineLimit(2)
                 }
                 Spacer()
@@ -305,7 +364,7 @@ func relationFooter(
         } else {
             Text(statusTitle)
                 .font(.system(size: 10.5))
-                .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
         }
     }
     .padding(.horizontal, 18)

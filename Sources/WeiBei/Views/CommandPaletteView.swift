@@ -10,16 +10,16 @@ struct CommandPaletteView: View {
 
     private var commands: [PaletteCommand] {
         var items = [
-            PaletteCommand(title: store.ui("打开课程台", "Open Course Workspace"), shortcut: "⌘0", animation: WeiBeiMotion.panel) { store.presentCourseWorkspace() },
+            PaletteCommand(title: store.ui("打开课程首页", "Open Course Home"), shortcut: "⌘0", animation: WeiBeiMotion.panel) { store.presentCourseWorkspace() },
             PaletteCommand(title: store.ui("打开资料", "Open Material"), shortcut: "⌘O") { store.importFilesFromPanel() },
             PaletteCommand(title: store.ui("新建空白笔记", "New Blank Note"), shortcut: "⌘N") { store.promptCreateBlankNotebookNote() },
-            PaletteCommand(title: store.ui("聚焦资料库", "Focus Library"), shortcut: "⌘1", animation: WeiBeiMotion.layout) { store.focus(.library) },
+            PaletteCommand(title: store.ui("聚焦课程目录", "Focus Course Index"), shortcut: "⌘1", animation: WeiBeiMotion.layout) { store.focus(.library) },
             PaletteCommand(title: store.ui("聚焦阅读", "Focus Reader"), shortcut: "⌘2", animation: WeiBeiMotion.layout) { store.focus(.reader) },
             PaletteCommand(title: store.ui("聚焦笔记", "Focus Notes"), shortcut: "⌘3", animation: WeiBeiMotion.layout) { store.focus(.notes) },
             PaletteCommand(title: store.ui("聚焦对话", "Focus Chat"), shortcut: "⌘4", animation: WeiBeiMotion.layout) { store.focus(.agent) },
             PaletteCommand(title: store.ui("上一份资料", "Previous Material"), shortcut: "⌥⌘↑", animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: -1) },
             PaletteCommand(title: store.ui("下一份资料", "Next Material"), shortcut: "⌥⌘↓", animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: 1) },
-            PaletteCommand(title: store.showLibrary ? store.ui("收起资料库", "Hide Library") : store.ui("打开资料库", "Show Library"), shortcut: "⌘B", animation: WeiBeiMotion.layout) { store.toggleLibrary() },
+            PaletteCommand(title: store.showLibrary ? store.ui("收起课程目录", "Hide Course Index") : store.ui("打开课程目录", "Show Course Index"), shortcut: "⌘B", animation: WeiBeiMotion.layout) { store.toggleLibrary() },
             PaletteCommand(title: store.ui("三栏工作台", "Three-Pane Workspace"), shortcut: "⌥⌘1", animation: WeiBeiMotion.layout) { store.setLayout(.documentAgentNotes) },
             PaletteCommand(title: WorkspaceLayout.documentNotesSplit.label(language: store.interfaceLanguage), shortcut: "⌥⌘2", animation: WeiBeiMotion.layout) { store.setLayout(.documentNotesSplit) },
             PaletteCommand(title: WorkspaceLayout.immersiveReading.label(language: store.interfaceLanguage), shortcut: "⌥⌘R", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveReading) },

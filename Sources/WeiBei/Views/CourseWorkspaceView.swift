@@ -12,9 +12,9 @@ enum CourseWorkspacePage: String, CaseIterable, Identifiable {
     func label(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
         case .overview:
-            language.text("总览", "Overview")
+            language.text("概览", "Overview")
         case .relations:
-            language.text("资料与笔记", "Materials & Notes")
+            language.text("课程内容", "Course Content")
         case .records:
             language.text("学习记录", "Learning Records")
         }
@@ -30,9 +30,9 @@ enum CourseRelationLens: String, CaseIterable, Identifiable {
     func label(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
         case .notes:
-            language.text("按笔记", "By Note")
+            language.text("笔记", "Notes")
         case .materials:
-            language.text("按资料", "By Material")
+            language.text("资料", "Materials")
         }
     }
 }
@@ -210,7 +210,7 @@ private struct CourseNewNoteSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(store.ui("新建课程笔记", "New course note"))
                     .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 20, weight: .semibold))
-                Text(store.ui("新笔记会进入课程台，并保存到本地笔记目录。", "The note will appear in the course workspace and save locally."))
+                Text(store.ui("新笔记会进入课程首页，并保存到本地笔记目录。", "The note will appear in the course home and save locally."))
                     .font(.system(size: 12))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
@@ -264,8 +264,8 @@ private struct CourseFolderImportSheet: View {
                     Text(store.ui("确认 Markdown 的角色", "Classify Markdown files"))
                         .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 20, weight: .semibold))
                     Text(store.ui(
-                        "PDF、HTML 和文本会作为资料加入。请确认每个 Markdown 是课程资料还是笔记。",
-                        "PDF, HTML, and text files are materials. Choose whether each Markdown file is material or a note."
+                        "其他文件已经按资料处理。这里只需确认 Markdown 是课程资料还是笔记。",
+                        "Other files are already materials. Only classify each Markdown file as material or note."
                     ))
                         .font(.system(size: 12))
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
@@ -295,9 +295,9 @@ private struct CourseFolderImportSheet: View {
                                 Text(url.deletingPathExtension().lastPathComponent)
                                     .font(.system(size: 13, weight: .medium))
                                     .lineLimit(1)
-                                Text(url.deletingLastPathComponent().path)
+                                Text(relativeFolderLabel(for: url))
                                     .font(.system(size: 10.5))
-                                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                                    .foregroundStyle(WeiBeiTheme.secondaryInk)
                                     .lineLimit(1)
                                     .truncationMode(.middle)
                             }
@@ -309,7 +309,12 @@ private struct CourseFolderImportSheet: View {
                             }
                             .labelsHidden()
                             .pickerStyle(.segmented)
+                            .tint(WeiBeiTheme.cinnabar)
                             .frame(width: 150)
+                            .accessibilityLabel(Text(store.ui(
+                                "\(url.deletingPathExtension().lastPathComponent) 的角色",
+                                "Role for \(url.deletingPathExtension().lastPathComponent)"
+                            )))
                         }
                         .padding(.horizontal, 22)
                         .frame(minHeight: 58)
@@ -342,14 +347,34 @@ private struct CourseFolderImportSheet: View {
                 Spacer()
                 Button(store.ui("取消", "Cancel"), action: cancel)
                     .keyboardShortcut(.cancelAction)
-                Button(store.ui("加入课程台", "Add to course")) { confirm(notePaths) }
+                Button(store.ui("添加到课程", "Add to course")) { confirm(notePaths) }
+                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                     .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, 22)
             .frame(height: 54)
         }
-        .frame(width: 680, height: 560)
+        .frame(width: 680, height: sheetHeight)
         .background(WeiBeiTheme.paper)
+    }
+
+    private var sheetHeight: CGFloat {
+        min(560, max(360, CGFloat(220 + draft.markdownFiles.count * 58)))
+    }
+
+    private func relativeFolderLabel(for url: URL) -> String {
+        let folder = url.deletingLastPathComponent().standardizedFileURL
+        guard let root = draft.rootURLs.first?.standardizedFileURL else {
+            return folder.lastPathComponent
+        }
+        if folder == root {
+            return store.ui("课程根目录", "Course root")
+        }
+        let rootPrefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
+        if folder.path.hasPrefix(rootPrefix) {
+            return String(folder.path.dropFirst(rootPrefix.count))
+        }
+        return folder.lastPathComponent
     }
 
     private func roleBinding(for url: URL) -> Binding<Bool> {
@@ -391,12 +416,12 @@ struct CourseWorkspaceHeader: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(Text(store.ui("关闭课程台并返回工作台", "Close course workspace")))
+            .accessibilityLabel(Text(store.ui("关闭课程首页并返回工作台", "Close course home")))
 
             VStack(alignment: .leading, spacing: 0) {
-                Text(store.ui("课程台", "Course Workspace"))
+                Text(store.ui("课程首页", "Course Home"))
                     .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 20, weight: .semibold))
-                Text(store.interfaceLanguage == .chinese ? "COURSE DESK" : "WEIBEI")
+                Text(store.interfaceLanguage == .chinese ? "COURSE HOME" : "WEIBEI")
                     .font(WeiBeiTypography.englishBrandFont(size: 8.5, weight: .semibold))
                     .tracking(0.9)
                     .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.74))
@@ -471,24 +496,17 @@ struct CourseWorkspaceHeader: View {
                     Label(store.ui("新建笔记", "New note"), systemImage: "square.and.pencil")
                 }
             } label: {
-                Label(store.ui("加入", "Add"), systemImage: "plus")
+                Label(store.ui("添加", "Add"), systemImage: "plus")
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    .padding(.horizontal, 8)
-                    .frame(height: 24)
+                    .padding(.horizontal, 9)
+                    .frame(height: 28)
                     .background(WeiBeiTheme.paperInset.opacity(0.20))
                     .clipShape(RoundedRectangle(cornerRadius: 6))
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
-            .help(store.ui("加入课程文件夹、资料或笔记", "Add course folders, materials, or notes"))
-
-            Button(action: dismiss) {
-                Image(systemName: "xmark")
-            }
-            .buttonStyle(WeiBeiIconButtonStyle(size: 28))
-            .accessibilityLabel(Text(store.ui("关闭课程台", "Close course workspace")))
-            .keyboardShortcut(.cancelAction)
+            .help(store.ui("添加课程文件夹、资料或笔记", "Add course folders, materials, or notes"))
         }
         .padding(.horizontal, 16)
         .frame(height: 52)
@@ -500,7 +518,7 @@ struct CourseWorkspaceHeader: View {
         case .overview:
             store.ui("搜索课程", "Search course")
         case .relations:
-            store.ui("搜索资料与笔记", "Search materials and notes")
+            store.ui("搜索课程内容", "Search course content")
         case .records:
             store.ui("搜索学习记录", "Search learning records")
         }
@@ -517,8 +535,8 @@ struct CourseWorkspaceTab: View {
             Text(title)
                 .font(.system(size: 12.5, weight: active ? .semibold : .medium))
                 .foregroundStyle(active ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
-                .padding(.horizontal, 2)
-                .frame(height: 34)
+                .padding(.horizontal, 8)
+                .frame(height: 40)
                 .overlay(alignment: .bottom) {
                     Rectangle()
                         .fill(active ? WeiBeiTheme.cinnabar : Color.clear)
@@ -527,5 +545,6 @@ struct CourseWorkspaceTab: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(active ? .isSelected : [])
     }
 }

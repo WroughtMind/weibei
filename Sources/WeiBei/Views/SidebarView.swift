@@ -10,12 +10,22 @@ struct SidebarView: View {
             VStack(spacing: 0) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(store.ui("资料库", "Library"))
+                        Text(store.ui("课程目录", "Course Index"))
                             .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 22, weight: .semibold))
-                        Text(store.interfaceLanguage == .chinese ? "WEIBEI STUDY" : "WEIBEI")
-                            .font(WeiBeiTypography.englishBrandFont(size: 8.5, weight: .semibold))
-                            .tracking(0.9)
-                            .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.74))
+                        Button {
+                            store.presentCourseWorkspace()
+                        } label: {
+                            HStack(spacing: 3) {
+                                Text(store.ui("课程首页", "Course Home"))
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 8, weight: .bold))
+                            }
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.78))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(Text(store.ui("打开课程首页", "Open course home")))
+                        .help(store.ui("打开课程首页", "Open course home"))
                     }
                     Spacer()
                     Button { store.importFilesFromPanel() } label: {
@@ -32,7 +42,7 @@ struct SidebarView: View {
                 TextField(
                     "",
                     text: $store.librarySearch,
-                    prompt: Text(store.ui("搜索资料与笔记", "Search materials and notes"))
+                    prompt: Text(store.ui("搜索课程资料与笔记", "Search course materials and notes"))
                         .font(.system(size: 13))
                         .foregroundStyle(WeiBeiTheme.placeholderInk)
                 )
@@ -53,9 +63,9 @@ struct SidebarView: View {
 
             ScrollView(showsIndicators: false) {
                 LazyVStack(alignment: .leading, spacing: 14) {
-                    sidebarSection(title: store.ui("课程资料", "Course Materials"), items: store.sampleItems)
-                    sidebarSection(title: store.ui("导入资料", "Imported Materials"), items: importedMaterialItems)
-                    sidebarSection(title: store.ui("我的笔记", "My Notes"), items: notebookItems)
+                    sidebarSection(title: store.ui("内置示例", "Built-in Examples"), items: store.sampleItems)
+                    sidebarSection(title: store.ui("课程资料", "Course Materials"), items: importedMaterialItems)
+                    sidebarSection(title: store.ui("课程笔记", "Course Notes"), items: notebookItems)
                 }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 10)

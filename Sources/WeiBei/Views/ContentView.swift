@@ -182,7 +182,7 @@ struct ContentView: View {
                         libraryDragStartWidth = nil
                     }
             )
-            .help(store.ui("拖动调整资料库宽度", "Drag to resize the library"))
+            .help(store.ui("拖动调整课程目录宽度", "Drag to resize the course index"))
     }
 
 }
@@ -465,10 +465,6 @@ private struct UnifiedTopBarView: View {
     @ViewBuilder
     private var leftPrimaryControls: some View {
         HStack(spacing: 5) {
-            topIconButton("books.vertical", help: store.ui("打开课程台", "Open course workspace")) {
-                store.presentCourseWorkspace()
-            }
-
             libraryButton
 
             navigationButtons
@@ -592,7 +588,7 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var libraryButton: some View {
-        topIconButton("sidebar.left", help: store.showLibrary ? store.ui("收起资料库", "Hide library") : store.ui("打开资料库", "Show library"), active: store.showLibrary) {
+        topIconButton("sidebar.left", help: store.showLibrary ? store.ui("收起课程目录", "Hide course index") : store.ui("打开课程目录", "Show course index"), active: store.showLibrary) {
             withAnimation(WeiBeiMotion.layout) {
                 store.toggleLibrary()
             }

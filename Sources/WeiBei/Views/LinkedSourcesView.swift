@@ -126,7 +126,7 @@ struct LinkedSourcesPopover: View {
                     store.presentCourseWorkspace(.notes, selecting: noteItemID)
                     dismiss()
                 } label: {
-                    Label(store.ui("课程台", "Course"), systemImage: "books.vertical")
+                    Label(store.ui("课程首页", "Course Home"), systemImage: "books.vertical")
                 }
                 .buttonStyle(WeiBeiTextActionButtonStyle())
 

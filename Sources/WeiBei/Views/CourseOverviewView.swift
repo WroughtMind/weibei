@@ -8,6 +8,7 @@ struct CourseOverviewView: View {
     let showUnlinkedMaterials: () -> Void
     let showMaterialsWithoutReadingPosition: () -> Void
     let showRecords: (UUID?) -> Void
+    @State private var showsAttention = false
 
     private var summary: CourseWorkspaceSummary {
         store.courseWorkspaceSummary
@@ -25,11 +26,18 @@ struct CourseOverviewView: View {
             .map(\.text)
         let flowSteps = store.activeStudySession?.flow.suggestedNext ?? []
         var seen = Set<String>()
-        return (memorySteps + flowSteps).filter { seen.insert($0).inserted }.prefix(6).map { $0 }
+        return (memorySteps + flowSteps).filter { seen.insert($0).inserted }.prefix(3).map { $0 }
     }
 
     private var unresolvedConfusions: [LearningMemoryEntry] {
         store.activeCourseMemories.filter { $0.kind == .confusion }
+    }
+
+    private var attentionCount: Int {
+        summary.unlinkedNoteCount
+            + summary.unlinkedMaterialCount
+            + store.courseMaterialsWithoutReadingPosition.count
+            + summary.unresolvedConfusionCount
     }
 
     var body: some View {
@@ -45,8 +53,8 @@ struct CourseOverviewView: View {
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .top, spacing: 0) {
                         VStack(alignment: .leading, spacing: 26) {
-                            currentContextSection
                             continueSection
+                            currentContextSection
                             attentionSection
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -60,20 +68,20 @@ struct CourseOverviewView: View {
                             nextStepSection
                             recentDiscussionSection
                         }
-                        .frame(width: 390, alignment: .leading)
+                        .frame(width: 340, alignment: .leading)
                         .padding(.leading, 34)
                     }
 
                     VStack(alignment: .leading, spacing: 28) {
-                        currentContextSection
                         continueSection
+                        currentContextSection
                         attentionSection
                         nextStepSection
                         recentDiscussionSection
                     }
                 }
             }
-            .frame(maxWidth: 1260, alignment: .leading)
+            .frame(maxWidth: 1120, alignment: .leading)
             .padding(.horizontal, 42)
             .padding(.top, 34)
             .padding(.bottom, 54)
@@ -140,37 +148,75 @@ struct CourseOverviewView: View {
         }
     }
 
+    @ViewBuilder
     private var attentionSection: some View {
-        CourseDetailSection(title: store.ui("待整理", "Needs attention")) {
-            VStack(spacing: 0) {
-                CourseAttentionRow(
-                    title: store.ui("尚未建立资料关联的笔记", "Notes without material links"),
-                    count: summary.unlinkedNoteCount,
-                    detail: store.ui("明确哪些资料长期支撑这些笔记", "Choose which materials support these notes"),
-                    action: showUnlinkedNotes
-                )
-                CourseHairline()
-                CourseAttentionRow(
-                    title: store.ui("还没有进入任何笔记的资料", "Materials not linked to any note"),
-                    count: summary.unlinkedMaterialCount,
-                    detail: store.ui("这不代表没有阅读，只代表尚未建立关系", "This means no relationship has been recorded"),
-                    action: showUnlinkedMaterials
-                )
-                CourseHairline()
-                CourseAttentionRow(
-                    title: store.ui("尚无阅读位置的资料", "Materials without a reading position"),
-                    count: store.courseMaterialsWithoutReadingPosition.count,
-                    detail: store.ui("应用还没有记录到页码或章节", "No page or section has been recorded"),
-                    action: showMaterialsWithoutReadingPosition
-                )
-                if summary.unresolvedConfusionCount > 0 {
-                    CourseHairline()
-                    CourseAttentionRow(
-                        title: store.ui("还没有解决的困惑", "Unresolved questions"),
-                        count: summary.unresolvedConfusionCount,
-                        detail: unresolvedConfusions.first?.text ?? "",
-                        action: { showRecords(unresolvedConfusions.first?.sessionID) }
-                    )
+        if attentionCount > 0 {
+            CourseDetailSection(title: store.ui("待整理", "Needs attention")) {
+                VStack(spacing: 0) {
+                    Button {
+                        withAnimation(WeiBeiMotion.reveal) {
+                            showsAttention.toggle()
+                        }
+                    } label: {
+                        HStack(spacing: 12) {
+                            Text(store.ui("\(attentionCount) 项需要整理", "\(attentionCount) items to review"))
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(WeiBeiTheme.ink)
+                            Spacer()
+                            Text(showsAttention ? store.ui("收起", "Collapse") : store.ui("展开", "Expand"))
+                                .font(.system(size: 10.5, weight: .medium))
+                                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                                .rotationEffect(.degrees(showsAttention ? 180 : 0))
+                        }
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 46)
+                        .contentShape(Rectangle())
+                        .background(WeiBeiTheme.paperRaised.opacity(0.28))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityValue(Text(showsAttention ? store.ui("已展开", "Expanded") : store.ui("已收起", "Collapsed")))
+
+                    if showsAttention {
+                        if summary.unlinkedNoteCount > 0 {
+                            CourseHairline()
+                            CourseAttentionRow(
+                                title: store.ui("尚未建立资料关联的笔记", "Notes without material links"),
+                                count: summary.unlinkedNoteCount,
+                                detail: store.ui("明确哪些资料长期支撑这些笔记", "Choose which materials support these notes"),
+                                action: showUnlinkedNotes
+                            )
+                        }
+                        if summary.unlinkedMaterialCount > 0 {
+                            CourseHairline()
+                            CourseAttentionRow(
+                                title: store.ui("还没有进入任何笔记的资料", "Materials not linked to any note"),
+                                count: summary.unlinkedMaterialCount,
+                                detail: store.ui("只代表尚未建立长期关系", "No durable relationship has been recorded"),
+                                action: showUnlinkedMaterials
+                            )
+                        }
+                        if !store.courseMaterialsWithoutReadingPosition.isEmpty {
+                            CourseHairline()
+                            CourseAttentionRow(
+                                title: store.ui("尚无阅读位置的资料", "Materials without a reading position"),
+                                count: store.courseMaterialsWithoutReadingPosition.count,
+                                detail: store.ui("应用还没有记录到页码或章节", "No page or section has been recorded"),
+                                action: showMaterialsWithoutReadingPosition
+                            )
+                        }
+                        if summary.unresolvedConfusionCount > 0 {
+                            CourseHairline()
+                            CourseAttentionRow(
+                                title: store.ui("还没有解决的困惑", "Unresolved questions"),
+                                count: summary.unresolvedConfusionCount,
+                                detail: unresolvedConfusions.first?.text ?? "",
+                                action: { showRecords(unresolvedConfusions.first?.sessionID) }
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -181,7 +227,7 @@ struct CourseOverviewView: View {
             if nextSteps.isEmpty {
                 CourseEmptyState(
                     title: store.ui("还没有明确的下一步", "No next step yet"),
-                    detail: store.ui("继续阅读或对话后，课程台会把真实建议放在这里。", "Continue reading or chatting to build the next step."),
+                    detail: store.ui("继续阅读或对话后，课程首页会把真实建议放在这里。", "Continue reading or chatting to build the next step."),
                     systemImage: "arrow.forward"
                 )
             } else {
