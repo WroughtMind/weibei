@@ -709,8 +709,10 @@ public struct AgentMessage: Identifiable, Codable, Hashable {
 }
 
 public struct PersistedWorkspace: Codable {
+    public var schemaVersion: Int
     public var importedItems: [StudyItem]
     public var notesByItemID: [String: String]
+    public var noteSourceLinks: [NoteSourceLink]
     public var selectedItemID: String?
     public var activeNotebookItemID: String?
     public var modelName: String?
@@ -728,9 +730,11 @@ public struct PersistedWorkspace: Codable {
     public var adaptImportedDocumentColors: Bool?
     public var interfaceLanguageRaw: String?
 
-    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], selectedItemID: String? = nil, activeNotebookItemID: String? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, threePaneOrder: [WorkspacePaneRole]? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showReader: Bool? = nil, showAgent: Bool? = nil, showNotes: Bool? = nil, showRightPane: Bool? = nil, showDailyInspiration: Bool? = nil, appearanceModeRaw: String? = nil, adaptImportedDocumentColors: Bool? = nil, interfaceLanguageRaw: String? = nil) {
+    public init(schemaVersion: Int = 2, importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], noteSourceLinks: [NoteSourceLink] = [], selectedItemID: String? = nil, activeNotebookItemID: String? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, threePaneOrder: [WorkspacePaneRole]? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showReader: Bool? = nil, showAgent: Bool? = nil, showNotes: Bool? = nil, showRightPane: Bool? = nil, showDailyInspiration: Bool? = nil, appearanceModeRaw: String? = nil, adaptImportedDocumentColors: Bool? = nil, interfaceLanguageRaw: String? = nil) {
+        self.schemaVersion = schemaVersion
         self.importedItems = importedItems
         self.notesByItemID = notesByItemID
+        self.noteSourceLinks = NoteSourceRelations(links: noteSourceLinks).links
         self.selectedItemID = selectedItemID
         self.activeNotebookItemID = activeNotebookItemID
         self.modelName = modelName
@@ -747,6 +751,55 @@ public struct PersistedWorkspace: Codable {
         self.appearanceModeRaw = appearanceModeRaw
         self.adaptImportedDocumentColors = adaptImportedDocumentColors
         self.interfaceLanguageRaw = interfaceLanguageRaw
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion
+        case importedItems
+        case notesByItemID
+        case noteSourceLinks
+        case selectedItemID
+        case activeNotebookItemID
+        case modelName
+        case workspaceLayout
+        case threePaneOrder
+        case agentSurface
+        case noteRenderMode
+        case showLibrary
+        case showReader
+        case showAgent
+        case showNotes
+        case showRightPane
+        case showDailyInspiration
+        case appearanceModeRaw
+        case adaptImportedDocumentColors
+        case interfaceLanguageRaw
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+        importedItems = try container.decodeIfPresent([StudyItem].self, forKey: .importedItems) ?? []
+        notesByItemID = try container.decodeIfPresent([String: String].self, forKey: .notesByItemID) ?? [:]
+        noteSourceLinks = NoteSourceRelations(
+            links: try container.decodeIfPresent([NoteSourceLink].self, forKey: .noteSourceLinks) ?? []
+        ).links
+        selectedItemID = try container.decodeIfPresent(String.self, forKey: .selectedItemID)
+        activeNotebookItemID = try container.decodeIfPresent(String.self, forKey: .activeNotebookItemID)
+        modelName = try container.decodeIfPresent(String.self, forKey: .modelName)
+        workspaceLayout = try container.decodeIfPresent(WorkspaceLayout.self, forKey: .workspaceLayout)
+        threePaneOrder = try container.decodeIfPresent([WorkspacePaneRole].self, forKey: .threePaneOrder)
+        agentSurface = try container.decodeIfPresent(AgentSurface.self, forKey: .agentSurface)
+        noteRenderMode = try container.decodeIfPresent(NoteRenderMode.self, forKey: .noteRenderMode)
+        showLibrary = try container.decodeIfPresent(Bool.self, forKey: .showLibrary)
+        showReader = try container.decodeIfPresent(Bool.self, forKey: .showReader)
+        showAgent = try container.decodeIfPresent(Bool.self, forKey: .showAgent)
+        showNotes = try container.decodeIfPresent(Bool.self, forKey: .showNotes)
+        showRightPane = try container.decodeIfPresent(Bool.self, forKey: .showRightPane)
+        showDailyInspiration = try container.decodeIfPresent(Bool.self, forKey: .showDailyInspiration)
+        appearanceModeRaw = try container.decodeIfPresent(String.self, forKey: .appearanceModeRaw)
+        adaptImportedDocumentColors = try container.decodeIfPresent(Bool.self, forKey: .adaptImportedDocumentColors)
+        interfaceLanguageRaw = try container.decodeIfPresent(String.self, forKey: .interfaceLanguageRaw)
     }
 }
 
