@@ -2,6 +2,17 @@ import AppKit
 import SwiftUI
 import WeiBeiCore
 
+private enum EmptyWorkspaceLayoutMetrics {
+    static let compactWidthThreshold: CGFloat = 1140
+    static let compactHeightThreshold: CGFloat = 680
+    static let entryCenterRatio: CGFloat = 0.402
+    static let inspirationCenterRatio: CGFloat = 0.66
+    static let contentMaxWidth: CGFloat = 760
+    static let inspirationMaxWidth: CGFloat = 660
+    static let inspirationSlotHeight: CGFloat = 210
+    static let compactInspirationSlotHeight: CGFloat = 176
+}
+
 struct EmptyWorkspaceLauncherView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -11,10 +22,13 @@ struct EmptyWorkspaceLauncherView: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { timeline in
             GeometryReader { geometry in
-                let compact = geometry.size.width < 760 || geometry.size.height < 620
+                let compact = geometry.size.width < EmptyWorkspaceLayoutMetrics.compactWidthThreshold
+                    || geometry.size.height < EmptyWorkspaceLayoutMetrics.compactHeightThreshold
                 let horizontalPadding: CGFloat = compact ? 24 : 52
                 let entryWidth = min(116, max(76, (geometry.size.width - (horizontalPadding * 2) - 2) / 3))
-                let inspirationSlotHeight: CGFloat = compact ? 176 : 210
+                let inspirationSlotHeight = compact
+                    ? EmptyWorkspaceLayoutMetrics.compactInspirationSlotHeight
+                    : EmptyWorkspaceLayoutMetrics.inspirationSlotHeight
                 let currentInspiration = inspiration(at: timeline.date)
 
                 ZStack {
@@ -23,6 +37,7 @@ struct EmptyWorkspaceLauncherView: View {
                     workspaceContent(
                         at: timeline.date,
                         inspiration: currentInspiration,
+                        availableSize: geometry.size,
                         compact: compact,
                         horizontalPadding: horizontalPadding,
                         entryWidth: entryWidth,
@@ -39,23 +54,49 @@ struct EmptyWorkspaceLauncherView: View {
     private func workspaceContent(
         at date: Date,
         inspiration: EmptyWorkspaceInspiration,
+        availableSize: CGSize,
         compact: Bool,
         horizontalPadding: CGFloat,
         entryWidth: CGFloat,
         inspirationSlotHeight: CGFloat
     ) -> some View {
-        if store.showDailyInspiration {
-            VStack(spacing: 0) {
-                Spacer(minLength: compact ? 18 : 38)
+        let contentWidth = max(
+            1,
+            min(EmptyWorkspaceLayoutMetrics.contentMaxWidth, availableSize.width - horizontalPadding * 2)
+        )
+        let entryHeight: CGFloat = compact ? 84 : 98
+        let entryCenterRatio: CGFloat = store.showDailyInspiration ? EmptyWorkspaceLayoutMetrics.entryCenterRatio : 0.5
+        let entryCenterY = clampedCenterY(
+            ratio: entryCenterRatio,
+            elementHeight: entryHeight,
+            availableHeight: availableSize.height,
+            edgeInset: compact ? 14 : 20
+        )
+        let minimumInspirationCenterY = max(
+            clampedCenterY(
+                ratio: EmptyWorkspaceLayoutMetrics.inspirationCenterRatio,
+                elementHeight: inspirationSlotHeight,
+                availableHeight: availableSize.height,
+                edgeInset: compact ? 12 : 18
+            ),
+            entryCenterY + entryHeight / 2 + (compact ? 12 : 20) + inspirationSlotHeight / 2
+        )
+        let inspirationCenterY = min(
+            minimumInspirationCenterY,
+            availableSize.height - (compact ? 12 : 18) - inspirationSlotHeight / 2
+        )
 
-                entryCluster(
-                    at: date,
-                    spacing: compact ? 14 : 19,
-                    entryWidth: entryWidth
-                )
+        ZStack {
+            entryCluster(
+                at: date,
+                compact: compact,
+                spacing: store.showDailyInspiration ? (compact ? 18 : 26) : (compact ? 16 : 29),
+                entryWidth: entryWidth
+            )
+            .frame(width: contentWidth)
+            .position(x: availableSize.width / 2, y: entryCenterY)
 
-                Spacer(minLength: compact ? 18 : 34)
-
+            if store.showDailyInspiration {
                 ZStack {
                     EmptyWorkspaceInspirationView(
                         inspiration: inspiration,
@@ -65,58 +106,44 @@ struct EmptyWorkspaceLauncherView: View {
                     .id(inspiration.id)
                     .transition(.opacity)
                 }
-                .frame(height: inspirationSlotHeight)
-
-                Spacer(minLength: compact ? 20 : 42)
-            }
-            .frame(maxWidth: 760)
-            .padding(.horizontal, horizontalPadding)
-            .padding(.vertical, compact ? 4 : 10)
-        } else {
-            VStack(spacing: 0) {
-                Spacer(minLength: compact ? 20 : 40)
-                entryCluster(
-                    at: date,
-                    spacing: compact ? 16 : 29,
-                    entryWidth: entryWidth
+                .frame(
+                    width: min(EmptyWorkspaceLayoutMetrics.inspirationMaxWidth, contentWidth),
+                    height: inspirationSlotHeight
                 )
-                .offset(y: compact ? 0 : 5)
-                Spacer(minLength: compact ? 20 : 40)
+                .position(x: availableSize.width / 2, y: inspirationCenterY)
             }
-            .frame(maxWidth: 760, maxHeight: .infinity)
-            .padding(.horizontal, horizontalPadding)
-            .padding(.vertical, compact ? 4 : 10)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func entryCluster(at date: Date, spacing: CGFloat, entryWidth: CGFloat) -> some View {
+    private func clampedCenterY(
+        ratio: CGFloat,
+        elementHeight: CGFloat,
+        availableHeight: CGFloat,
+        edgeInset: CGFloat
+    ) -> CGFloat {
+        let halfHeight = elementHeight / 2
+        return min(
+            max(availableHeight * ratio, edgeInset + halfHeight),
+            availableHeight - edgeInset - halfHeight
+        )
+    }
+
+    private func entryCluster(at date: Date, compact: Bool, spacing: CGFloat, entryWidth: CGFloat) -> some View {
         VStack(spacing: spacing) {
-            greeting(at: date)
+            greeting(at: date, compact: compact)
             EmptyWorkspaceEntryRow(entryWidth: entryWidth)
         }
     }
 
-    private func greeting(at date: Date) -> some View {
-        HStack(spacing: 12) {
-            greetingRule
-
-            Text(EmptyWorkspaceDayPeriod.current(at: date).greeting(language: store.interfaceLanguage))
-                .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 14.5, weight: .regular))
-                .tracking(store.interfaceLanguage == .chinese ? 0.8 : 0.35)
-                .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.92))
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("empty-workspace-greeting")
-
-            greetingRule
-        }
-    }
-
-    private var greetingRule: some View {
-        Rectangle()
-            .fill(WeiBeiTheme.hairline.opacity(0.76))
-            .frame(width: 18, height: 1)
-            .accessibilityHidden(true)
+    private func greeting(at date: Date, compact: Bool) -> some View {
+        Text(EmptyWorkspaceDayPeriod.current(at: date).greeting(language: store.interfaceLanguage))
+            .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: compact ? 14.5 : 16, weight: .regular))
+            .tracking(store.interfaceLanguage == .chinese ? 0.8 : 0.35)
+            .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.92))
+            .multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
+            .accessibilityIdentifier("empty-workspace-greeting")
     }
 
     private func inspiration(at date: Date) -> EmptyWorkspaceInspiration {
@@ -186,18 +213,11 @@ private struct EmptyWorkspacePaperField: View {
                 endPoint: .bottomTrailing
             )
 
-            VStack(spacing: 0) {
-                Rectangle()
-                    .fill(WeiBeiTheme.hairline.opacity(0.30))
-                    .frame(width: 1, height: compact ? 24 : 48)
-
-                Spacer()
-
-                Rectangle()
-                    .fill(WeiBeiTheme.hairline.opacity(0.22))
-                    .frame(width: 1, height: compact ? 28 : 58)
-            }
-            .padding(.vertical, compact ? 14 : 24)
+            Rectangle()
+                .fill(WeiBeiTheme.hairline.opacity(0.30))
+                .frame(width: 1, height: compact ? 24 : 48)
+                .frame(maxHeight: .infinity, alignment: .top)
+                .padding(.top, compact ? 14 : 24)
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
@@ -268,7 +288,7 @@ private struct EmptyWorkspaceEntryButton: View {
         Button(action: action) {
             VStack(spacing: 2) {
                 Text(title)
-                    .font(WeiBeiTypography.englishBrandFont(size: 20, weight: .semibold))
+                    .font(WeiBeiTypography.englishBrandFont(size: 22, weight: .semibold))
                     .tracking(active ? 3.5 : 2.2)
                     .foregroundStyle(active ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk.opacity(0.88))
                     .offset(y: active && !reduceMotion ? -2.5 : 0)
@@ -365,14 +385,14 @@ private struct EmptyWorkspaceInspirationView: View {
     @FocusState private var focused: Bool
 
     var body: some View {
-        VStack(spacing: compact ? 7 : 9) {
+        VStack(spacing: compact ? 7 : 8) {
             Button(action: onAdvance) {
-                VStack(spacing: compact ? 8 : 11) {
+                VStack(spacing: compact ? 8 : 9) {
                     inspirationContent
 
                     Text(inspiration.credit)
-                        .font(.system(size: compact ? 10.5 : 11.5, weight: .medium, design: .serif))
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .font(.system(size: compact ? 11 : 12, weight: .medium, design: .serif))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.86))
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
 
@@ -404,10 +424,10 @@ private struct EmptyWorkspaceInspirationView: View {
             Text("→")
                 .offset(x: hovering && !reduceMotion ? 2 : 0)
         }
-        .font(.system(size: compact ? 8.5 : 9, weight: .medium, design: .serif))
+        .font(.system(size: compact ? 9.5 : 10.5, weight: .medium, design: .serif))
         .tracking(store.interfaceLanguage == .chinese ? 0.7 : 1.2)
-        .foregroundStyle(WeiBeiTheme.tertiaryInk)
-        .opacity(hovering || focused ? 0.94 : 0.56)
+        .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.82))
+        .opacity(hovering || focused ? 1 : 0.78)
         .accessibilityHidden(true)
     }
 
@@ -421,22 +441,22 @@ private struct EmptyWorkspaceInspirationView: View {
                     .resizable()
                     .scaledToFit()
                     .foregroundStyle(WeiBeiTheme.ink.opacity(0.88))
-                    .frame(maxWidth: compact ? 390 : 500, maxHeight: compact ? 54 : 72)
+                    .frame(maxWidth: compact ? 390 : 470, maxHeight: compact ? 54 : 64)
                     .padding(.vertical, compact ? 1 : 2)
                     .accessibilityLabel(Text(inspiration.text))
             } else {
-                inspirationText(size: compact ? 24 : 30)
+                inspirationText(size: compact ? 21 : 24)
             }
         case .quotation:
-            inspirationText(size: compact ? 21 : 26)
+            inspirationText(size: compact ? 20 : 23.5)
         case .formula:
-            formulaContent(size: compact ? 24 : 30)
+            formulaContent(size: compact ? 21 : 24)
         }
     }
 
     private func formulaContent(size: CGFloat) -> some View {
         formulaText(size: size)
-            .foregroundStyle(WeiBeiTheme.ink.opacity(0.90))
+            .foregroundStyle(WeiBeiTheme.ink.opacity(0.78))
             .multilineTextAlignment(.center)
             .lineLimit(1)
             .minimumScaleFactor(0.78)
@@ -471,7 +491,7 @@ private struct EmptyWorkspaceInspirationView: View {
     private func inspirationText(size: CGFloat) -> some View {
         Text(inspiration.text)
             .font(.system(size: size, weight: .regular, design: .serif))
-            .foregroundStyle(WeiBeiTheme.ink.opacity(0.90))
+            .foregroundStyle(WeiBeiTheme.ink.opacity(0.78))
             .multilineTextAlignment(.center)
             .lineLimit(compact ? 3 : 2)
             .minimumScaleFactor(compact ? 0.72 : 0.78)
@@ -492,8 +512,8 @@ private struct EmptyWorkspaceInspirationView: View {
                 rightsLink
             }
         }
-        .font(.system(size: compact ? 9 : 9.5, weight: .regular))
-        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+        .font(.system(size: compact ? 9.5 : 10.5, weight: .regular))
+        .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.78))
         .multilineTextAlignment(.center)
         .lineLimit(2)
     }
