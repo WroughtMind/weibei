@@ -2292,6 +2292,7 @@ final class WorkspaceStore: ObservableObject {
             createNotebookNote(seed: .currentMaterial(sampleItems[0]), title: ui("多资料研究笔记", "Multi-source research note"))
             toggleSourceLinkToActiveNote("sample-pdf")
             select(itemID: "sample-pdf")
+            showLibrary = false
             showRightPane = true
             save()
             return

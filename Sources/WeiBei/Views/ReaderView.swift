@@ -2157,7 +2157,7 @@ private struct EmptyReaderView: View {
     var body: some View {
         ReaderStateMessage(
             title: store.ui("选择资料", "Choose Material"),
-            detail: store.ui("从课程目录打开 HTML、PDF 或 Markdown。", "Open HTML, PDF, or Markdown from the course index."),
+            detail: store.ui("从资料库打开 HTML、PDF 或 Markdown。", "Open HTML, PDF, or Markdown from the library."),
             systemImage: "doc.text.magnifyingglass"
         )
     }

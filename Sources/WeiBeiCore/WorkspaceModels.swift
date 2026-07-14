@@ -315,9 +315,9 @@ public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable {
 
     public var hasCollapsibleRightPane: Bool {
         switch self {
-        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit, .immersiveConversation, .immersiveWriting:
+        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit, .immersiveConversation:
             return true
-        case .immersiveReading:
+        case .immersiveReading, .immersiveWriting:
             return false
         }
     }

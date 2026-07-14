@@ -41,7 +41,7 @@ private struct LinkedSourcesPopover: View {
     }
 
     private var groupedMaterials: [(String, [StudyItem])] {
-        let groups = Dictionary(grouping: materials) { item in
+        let groups = Dictionary(grouping: materials.filter { $0.id != store.selectedMaterialItem?.id }) { item in
             item.url?.deletingLastPathComponent().path.replacingOccurrences(of: NSHomeDirectory(), with: "~")
                 ?? store.ui("内置资料", "Built-in")
         }
@@ -53,9 +53,9 @@ private struct LinkedSourcesPopover: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 3) {
-                        Text(store.ui("关联资料", "Linked Sources"))
+                        Text(store.ui("这份笔记的资料", "Sources for this note"))
                             .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 16, weight: .semibold))
-                        Text(store.ui("一份笔记可以连接多种、多个资料", "One note can connect to many source types"))
+                        Text(store.ui("选中的资料会一直跟随这份笔记", "Selected sources stay with this note"))
                             .font(.caption)
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
                     }
@@ -81,17 +81,18 @@ private struct LinkedSourcesPopover: View {
                         HStack(spacing: 8) {
                             Image(systemName: draftIDs.contains(current.id) ? "checkmark.square.fill" : "square")
                                 .foregroundStyle(draftIDs.contains(current.id) ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk)
-                            Text(store.ui("当前打开：\(store.displayTitle(for: current))", "Open now: \(store.displayTitle(for: current))"))
+                            Text(store.displayTitle(for: current))
                                 .lineLimit(1)
                             Spacer()
+                            Text(store.ui("当前", "Open"))
+                                .font(.caption2)
+                                .foregroundStyle(WeiBeiTheme.tertiaryInk)
                         }
                     }
                     .buttonStyle(.plain)
                     .font(.system(size: 12, weight: .medium))
                     .padding(.horizontal, 8)
-                    .frame(height: 32)
-                    .background(WeiBeiTheme.cinnabarSoft.opacity(0.45))
-                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                    .frame(height: 36)
                     .accessibilityValue(Text(draftIDs.contains(current.id) ? store.ui("已关联", "Linked") : store.ui("未关联", "Not linked")))
                 }
             }
@@ -131,7 +132,7 @@ private struct LinkedSourcesPopover: View {
                     store.importAndLinkSourcesFromPanel()
                     dismiss()
                 } label: {
-                    Label(store.ui("导入并关联", "Import and link"), systemImage: "plus")
+                    Label(store.ui("导入资料", "Import sources"), systemImage: "plus")
                 }
                 .buttonStyle(WeiBeiTextActionButtonStyle())
 
@@ -139,7 +140,7 @@ private struct LinkedSourcesPopover: View {
 
                 Button(store.ui("取消", "Cancel"), action: dismiss)
                     .buttonStyle(WeiBeiTextActionButtonStyle())
-                Button(store.ui("应用", "Apply")) {
+                Button(store.ui("保存关联", "Save links")) {
                     store.setLinkedSourceIDsForActiveNote(draftIDs)
                     dismiss()
                 }
@@ -147,7 +148,7 @@ private struct LinkedSourcesPopover: View {
             }
             .padding(12)
         }
-        .frame(width: 470)
+        .frame(width: 440)
         .background(WeiBeiTheme.paperRaised)
         .onAppear { draftIDs = Set(store.linkedSourceIDsForActiveNote) }
     }

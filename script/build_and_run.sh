@@ -271,6 +271,7 @@ verify_linked_sources_flow() {
       && /usr/bin/grep -q '"sourceID":"sample-html"' "$workspace_file" \
       && /usr/bin/grep -q '"sourceID":"sample-pdf"' "$workspace_file" \
       && /usr/bin/grep -q '"selectedItemID":"sample-pdf"' "$workspace_file" \
+      && /usr/bin/grep -q '"showLibrary":false' "$workspace_file" \
       && /usr/bin/grep -q '"activeNotebookItemID":"item:' "$workspace_file"; then
       return 0
     fi

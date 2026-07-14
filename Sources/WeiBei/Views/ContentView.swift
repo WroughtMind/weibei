@@ -166,7 +166,7 @@ struct ContentView: View {
                         libraryDragStartWidth = nil
                     }
             )
-            .help(store.ui("拖动调整课程目录宽度", "Drag to resize the course index"))
+            .help(store.ui("拖动调整资料库宽度", "Drag to resize the library"))
     }
 
 }
@@ -578,7 +578,7 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var libraryButton: some View {
-        topIconButton("sidebar.left", help: store.showLibrary ? store.ui("收起课程目录", "Hide course index") : store.ui("打开课程目录", "Show course index"), active: store.showLibrary) {
+        topIconButton("sidebar.left", help: store.showLibrary ? store.ui("收起资料库", "Hide library") : store.ui("打开资料库", "Show library"), active: store.showLibrary) {
             withAnimation(WeiBeiMotion.layout) {
                 store.toggleLibrary()
             }
@@ -704,9 +704,6 @@ private struct LayoutContentView: View {
     @SceneStorage("conversationFirstSplit") private var conversationFirstSplitStorage: Double = 0.12
     @SceneStorage("conversationSecondSplit") private var conversationSecondSplitStorage: Double = 0.90
     @SceneStorage("conversationLeftSplit") private var conversationLeftSplitStorage: Double = 0.13
-    @SceneStorage("writingFirstSplit") private var writingFirstSplitStorage: Double = 0.13
-    @SceneStorage("writingSecondSplit") private var writingSecondSplitStorage: Double = 0.90
-    @SceneStorage("writingLeftSplit") private var writingLeftSplitStorage: Double = 0.13
     
     var body: some View {
         Group {
@@ -736,32 +733,8 @@ private struct LayoutContentView: View {
                     .transition(WeiBeiTransition.layout)
             case .immersiveWriting:
                 ZStack(alignment: agentAlignment) {
-                    if store.showRightPane {
-                        ResizableThreePane(
-                            firstSplit: writingFirstSplit,
-                            secondSplit: writingSecondSplit,
-                            minFirst: 96,
-                            minSecond: 540,
-                            minThird: 104
-                        ) {
-                            ContextRailView(title: linkedSourcesRailTitle, items: writingDocumentRailItems, edge: .trailing)
-                                .transition(WeiBeiTransition.rail)
-                        } second: {
-                            PersistentPaneHost(role: .notes, registry: paneHostRegistry)
-                        } third: {
-                            ContextRailView(title: store.ui("写作辅助", "Writing Aids"), items: writingAssistRailItems, edge: .leading)
-                                .transition(WeiBeiTransition.rail)
-                        }
-                        .transition(WeiBeiTransition.rightPanel)
-                    } else {
-                        ResizableTwoPane(split: writingLeftSplit, minFirst: 96, minSecond: 540) {
-                            ContextRailView(title: linkedSourcesRailTitle, items: writingDocumentRailItems, edge: .trailing)
-                                .transition(WeiBeiTransition.rail)
-                        } second: {
-                            PersistentPaneHost(role: .notes, registry: paneHostRegistry)
-                        }
-                        .transition(WeiBeiTransition.layout)
-                    }
+                    PersistentPaneHost(role: .notes, registry: paneHostRegistry)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                     if store.agentSurface != .quietInsight {
                         agentOverlay
@@ -801,18 +774,6 @@ private struct LayoutContentView: View {
 
     private var conversationLeftSplit: Binding<CGFloat> {
         numericBinding($conversationLeftSplitStorage)
-    }
-
-    private var writingFirstSplit: Binding<CGFloat> {
-        numericBinding($writingFirstSplitStorage)
-    }
-
-    private var writingSecondSplit: Binding<CGFloat> {
-        numericBinding($writingSecondSplitStorage)
-    }
-
-    private var writingLeftSplit: Binding<CGFloat> {
-        numericBinding($writingLeftSplitStorage)
     }
 
     @ViewBuilder
@@ -1049,69 +1010,6 @@ private struct LayoutContentView: View {
             }
         )
         return items
-    }
-
-    private var writingDocumentRailItems: [ContextRailItem] {
-        let materials = store.allItems.filter { !$0.isNotebookNote }
-        let entries = LinkedSourceRailModel.entries(
-            materials: materials,
-            linkedSourceIDs: store.linkedSourceIDsForActiveNote,
-            currentMaterialID: store.selectedMaterialItem?.id
-        )
-        var items = entries.map { entry in
-            ContextRailItem(
-                stableID: entry.sourceID,
-                title: entry.title,
-                help: entry.state == .currentUnlinked
-                    ? store.ui("当前打开，尚未关联到笔记", "Open now, not linked to this note")
-                    : store.ui("打开这份关联资料", "Open this linked source"),
-                systemImage: entry.state == .currentUnlinked ? "link.badge.plus" : entry.kind.systemImage,
-                emphasized: entry.state == .currentLinked
-            ) {
-                store.select(itemID: entry.sourceID)
-                openReader()
-            }
-        }
-        if let currentID = store.selectedMaterialItem?.id, !store.isSourceLinkedToActiveNote(currentID), store.activeNotebookItemID != nil {
-            items.append(
-                ContextRailItem(title: store.ui("关联当前资料", "Link Current Source"), help: store.ui("把当前打开资料长期关联到笔记", "Durably link the open source to this note"), systemImage: "link.badge.plus", emphasized: true) {
-                    store.toggleSourceLinkToActiveNote(currentID)
-                }
-            )
-        }
-        if store.activeNotebookItemID != nil {
-            items.append(
-                ContextRailItem(stableID: "manage-linked-sources", title: store.ui("管理关联", "Manage Links"), help: store.ui("选择这份笔记长期关联的资料", "Choose durable sources for this note"), systemImage: "slider.horizontal.3") {
-                    store.linkedSourcesPresented = true
-                }
-            )
-        }
-        if store.hasSelectedMaterial || store.selectionContext != nil {
-            items.append(
-                ContextRailItem(title: store.ui("引用", "Reference"), help: store.ui("复制当前材料或选区引用", "Copy current material or selection reference"), systemImage: "quote.opening") {
-                    store.copyCurrentReference()
-                }
-            )
-        }
-        return items
-    }
-
-    private var linkedSourcesRailTitle: String {
-        store.ui("关联资料 \(store.linkedSourceCount)", "Linked Sources \(store.linkedSourceCount)")
-    }
-
-    private var writingAssistRailItems: [ContextRailItem] {
-        [
-            ContextRailItem(title: store.ui("大纲建议", "Outline"), help: store.ui("生成笔记大纲", "Generate a note outline"), systemImage: "list.bullet.rectangle", emphasized: true) {
-                prepareAgentDraft(store.ui("请根据\(store.agentPromptScope)，给出一版更清晰的笔记大纲。", "Use \(store.agentPromptScope) to produce a clearer note outline."))
-            },
-            ContextRailItem(title: store.ui("补来源", "Add Sources"), help: store.ui("检查笔记缺少来源的位置", "Find places where notes need sources"), systemImage: "link") {
-                prepareAgentDraft(store.hasSelectedMaterial ? store.ui("请检查当前笔记缺少来源的位置，并建议应该引用当前材料的哪些部分。", "Find where the current note needs sources and suggest which parts of the current material to cite.") : store.ui("请检查当前笔记缺少来源的位置，并标出需要补证据的段落。", "Find where the current note needs sources and mark the paragraphs that need evidence."))
-            },
-            ContextRailItem(title: store.ui("润色表达", "Polish"), help: store.ui("润色当前笔记", "Polish current note"), systemImage: "text.quote") {
-                prepareAgentDraft(store.ui("请整理和润色当前笔记，保留原意，并标出缺少来源的位置。", "Organize and polish the current note, preserve the meaning, and mark where sources are missing."))
-            }
-        ]
     }
 
     private func numericBinding(_ storage: Binding<Double>) -> Binding<CGFloat> {

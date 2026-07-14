@@ -10,7 +10,7 @@ struct SidebarView: View {
             VStack(spacing: 0) {
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(store.ui("课程目录", "Course Index"))
+                        Text(store.ui("资料库", "Library"))
                             .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 22, weight: .semibold))
                         Text(store.interfaceLanguage == .chinese ? "WEIBEI STUDY" : "WEIBEI")
                             .font(WeiBeiTypography.englishBrandFont(size: 8.5, weight: .semibold))
@@ -32,7 +32,7 @@ struct SidebarView: View {
                 TextField(
                     "",
                     text: $store.librarySearch,
-                    prompt: Text(store.ui("搜索当前课程", "Search current course"))
+                    prompt: Text(store.ui("搜索资料与笔记", "Search materials and notes"))
                         .font(.system(size: 13))
                         .foregroundStyle(WeiBeiTheme.placeholderInk)
                 )
@@ -53,8 +53,8 @@ struct SidebarView: View {
 
             ScrollView(showsIndicators: false) {
                 LazyVStack(alignment: .leading, spacing: 14) {
-                    sidebarSection(title: store.ui("课程样例", "Course Samples"), items: store.sampleItems)
-                    sidebarSection(title: store.ui("我的资料", "My Materials"), items: importedMaterialItems)
+                    sidebarSection(title: store.ui("课程资料", "Course Materials"), items: store.sampleItems)
+                    sidebarSection(title: store.ui("导入资料", "Imported Materials"), items: importedMaterialItems)
                     sidebarSection(title: store.ui("我的笔记", "My Notes"), items: notebookItems)
                 }
                 .padding(.horizontal, 10)
