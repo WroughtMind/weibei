@@ -357,6 +357,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     private var stderrTask: Task<Void, Never>?
     private var pendingCommands: [String: PendingCommand] = [:]
     private var activeRun: ActiveRun?
+    private var startingRunID: UUID?
+    private var cancelledStartingRunIDs: Set<UUID> = []
     private var stderrBuffer = ""
     private var startupFailure: PiAgentRuntimeError?
     private var idleShutdownTask: Task<Void, Never>?
@@ -382,12 +384,21 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     }
 
     public func respond(to request: StudyAgentRequest, progress: StudyAgentProgressHandler?) async throws -> StudyAgentReply {
-        guard activeRun == nil else { throw PiAgentRuntimeError.busy }
+        guard activeRun == nil, startingRunID == nil else { throw PiAgentRuntimeError.busy }
+        startingRunID = request.id
+        defer {
+            if startingRunID == request.id {
+                startingRunID = nil
+            }
+            cancelledStartingRunIDs.remove(request.id)
+        }
         idleShutdownTask?.cancel()
         idleShutdownTask = nil
         try await ensureProcess()
+        try requireStartingRun(request.id)
 
         _ = try await sendCommand(type: "new_session", timeoutSeconds: 3)
+        try requireStartingRun(request.id)
         let context = StudyAgentContextEnvelope(request: request)
         try writeContext(context)
         await progress?(.readingContext)
@@ -415,6 +426,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             allowedNoteSourceLabels: currentSourceLabels(in: context),
             progress: progress
         )
+        startingRunID = nil
         do {
             _ = try await sendCommand(
                 type: "prompt",
@@ -432,8 +444,20 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     }
 
     public func cancel() async {
-        guard let runID = activeRun?.id else { return }
-        await cancelRun(id: runID)
+        if let runID = activeRun?.id {
+            await cancelRun(id: runID)
+            return
+        }
+        guard let runID = startingRunID else { return }
+        cancelledStartingRunIDs.insert(runID)
+        startingRunID = nil
+        shutdownProcess(reason: PiAgentRuntimeError.cancelled)
+    }
+
+    private func requireStartingRun(_ runID: UUID) throws {
+        guard startingRunID == runID, !cancelledStartingRunIDs.contains(runID) else {
+            throw PiAgentRuntimeError.cancelled
+        }
     }
 
     private func cancelRun(id runID: UUID) async {
