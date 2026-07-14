@@ -375,37 +375,27 @@ private struct EmptyWorkspaceAlwaysActiveHoverRegion: NSViewRepresentable {
 
 private struct EmptyWorkspaceInspirationView: View {
     @EnvironmentObject private var store: WorkspaceStore
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let inspiration: EmptyWorkspaceInspiration
     let compact: Bool
     let onAdvance: () -> Void
 
-    @State private var hovering = false
-    @FocusState private var focused: Bool
-
     var body: some View {
-        VStack(spacing: compact ? 7 : 8) {
+        VStack(spacing: compact ? 7 : 9) {
             Button(action: onAdvance) {
-                VStack(spacing: compact ? 8 : 9) {
+                VStack(spacing: compact ? 8 : 11) {
                     inspirationContent
 
                     Text(inspiration.credit)
-                        .font(.system(size: compact ? 11 : 12, weight: .medium, design: .serif))
-                        .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.86))
+                        .font(.system(size: compact ? 10.5 : 11.5, weight: .medium, design: .serif))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
-
-                    advanceLabel
                 }
                 .frame(maxWidth: .infinity)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .focused($focused)
-            .onHover { hovering = $0 }
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.20), value: hovering)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: focused)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(Text("\(inspiration.text)，\(inspiration.credit)"))
             .accessibilityHint(Text(store.ui("随机换一则灵感", "Show a random inspiration")))
@@ -418,19 +408,6 @@ private struct EmptyWorkspaceInspirationView: View {
         .accessibilityIdentifier("empty-workspace-inspiration-\(inspiration.id)")
     }
 
-    private var advanceLabel: some View {
-        HStack(spacing: 6) {
-            Text(store.ui("随机换一则", "RANDOM"))
-            Text("→")
-                .offset(x: hovering && !reduceMotion ? 2 : 0)
-        }
-        .font(.system(size: compact ? 9.5 : 10.5, weight: .medium, design: .serif))
-        .tracking(store.interfaceLanguage == .chinese ? 0.7 : 1.2)
-        .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.82))
-        .opacity(hovering || focused ? 1 : 0.78)
-        .accessibilityHidden(true)
-    }
-
     @ViewBuilder
     private var inspirationContent: some View {
         switch inspiration.presentation {
@@ -441,22 +418,22 @@ private struct EmptyWorkspaceInspirationView: View {
                     .resizable()
                     .scaledToFit()
                     .foregroundStyle(WeiBeiTheme.ink.opacity(0.88))
-                    .frame(maxWidth: compact ? 390 : 470, maxHeight: compact ? 54 : 64)
+                    .frame(maxWidth: compact ? 390 : 500, maxHeight: compact ? 54 : 72)
                     .padding(.vertical, compact ? 1 : 2)
                     .accessibilityLabel(Text(inspiration.text))
             } else {
-                inspirationText(size: compact ? 21 : 24)
+                inspirationText(size: compact ? 24 : 30)
             }
         case .quotation:
-            inspirationText(size: compact ? 20 : 23.5)
+            inspirationText(size: compact ? 21 : 26)
         case .formula:
-            formulaContent(size: compact ? 21 : 24)
+            formulaContent(size: compact ? 24 : 30)
         }
     }
 
     private func formulaContent(size: CGFloat) -> some View {
         formulaText(size: size)
-            .foregroundStyle(WeiBeiTheme.ink.opacity(0.78))
+            .foregroundStyle(WeiBeiTheme.ink.opacity(0.90))
             .multilineTextAlignment(.center)
             .lineLimit(1)
             .minimumScaleFactor(0.78)
@@ -491,7 +468,7 @@ private struct EmptyWorkspaceInspirationView: View {
     private func inspirationText(size: CGFloat) -> some View {
         Text(inspiration.text)
             .font(.system(size: size, weight: .regular, design: .serif))
-            .foregroundStyle(WeiBeiTheme.ink.opacity(0.78))
+            .foregroundStyle(WeiBeiTheme.ink.opacity(0.90))
             .multilineTextAlignment(.center)
             .lineLimit(compact ? 3 : 2)
             .minimumScaleFactor(compact ? 0.72 : 0.78)
@@ -512,8 +489,8 @@ private struct EmptyWorkspaceInspirationView: View {
                 rightsLink
             }
         }
-        .font(.system(size: compact ? 9.5 : 10.5, weight: .regular))
-        .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.78))
+        .font(.system(size: compact ? 9 : 9.5, weight: .regular))
+        .foregroundStyle(WeiBeiTheme.tertiaryInk)
         .multilineTextAlignment(.center)
         .lineLimit(2)
     }
