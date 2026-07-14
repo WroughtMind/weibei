@@ -532,9 +532,7 @@ private struct UnifiedTopBarView: View {
                 help: store.isPaneToggleActive(.reader) ? store.ui("隐藏文稿", "Hide document") : store.ui("显示文稿", "Show document"),
                 active: store.isPaneToggleActive(.reader)
             ) {
-                withAnimation(WeiBeiMotion.layout) {
-                    store.toggleReader()
-                }
+                store.toggleReader()
             }
 
             topIconButton(
@@ -542,9 +540,7 @@ private struct UnifiedTopBarView: View {
                 help: agentPaneToggleHelp,
                 active: store.isPaneToggleActive(.agent)
             ) {
-                withAnimation(WeiBeiMotion.layout) {
-                    store.toggleAgent()
-                }
+                store.toggleAgent()
             }
 
             topIconButton(
@@ -552,9 +548,7 @@ private struct UnifiedTopBarView: View {
                 help: store.isPaneToggleActive(.notes) ? store.ui("隐藏笔记", "Hide notes") : store.ui("显示笔记", "Show notes"),
                 active: store.isPaneToggleActive(.notes)
             ) {
-                withAnimation(WeiBeiMotion.layout) {
-                    store.toggleNotes()
-                }
+                store.toggleNotes()
             }
         }
         .padding(.horizontal, 4)
@@ -711,9 +705,7 @@ private struct LayoutContentView: View {
     var body: some View {
         Group {
             switch store.layout {
-            case .documentAgentNotes, .documentNotesAgent:
-                documentPaneLayoutView()
-            case .documentNotesSplit:
+            case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
                 documentPaneLayoutView()
             case .immersiveReading:
                 ZStack(alignment: .topTrailing) {
@@ -771,10 +763,6 @@ private struct LayoutContentView: View {
         }
         .transition(WeiBeiTransition.layout)
         .animation(WeiBeiMotion.layout, value: store.layout)
-        .animation(WeiBeiMotion.panel, value: store.showRightPane)
-        .animation(WeiBeiMotion.panel, value: store.showReader)
-        .animation(WeiBeiMotion.panel, value: store.showAgent)
-        .animation(WeiBeiMotion.panel, value: store.showNotes)
         .animation(WeiBeiMotion.panel, value: store.agentSurface)
         .animation(WeiBeiMotion.panel, value: store.showQuietInsight)
     }
@@ -818,102 +806,47 @@ private struct LayoutContentView: View {
     @ViewBuilder
     private func documentPaneLayoutView() -> some View {
         let order = store.visibleDocumentPaneOrder
+        GeometryReader { geometry in
+            let fallbackFrames = estimatedDocumentPaneFrames(order: order, size: geometry.size)
+            let frames = store.threePaneReorderFrameList(order: order, fallback: fallbackFrames)
+            ZStack {
+                StableDocumentWorkspace(
+                    firstSplit: firstSplit,
+                    secondSplit: secondSplit,
+                    halfSplit: halfSplit,
+                    registry: paneHostRegistry,
+                    normalizedOrder: store.normalizedThreePaneOrder,
+                    visibleOrder: order,
+                    draggedRole: store.threePaneReorderDrag?.role,
+                    expansionRequest: store.paneExpansionRequest,
+                    onFramesChange: { reportedOrder, frames in
+                        store.updateThreePaneReorderFrames(order: reportedOrder, frames: frames)
+                    },
+                    onExpansionRequestHandled: { requestID in
+                        store.completePaneExpansionRequest(requestID)
+                    }
+                )
+
+                threePaneReorderOverlay(order: order, size: geometry.size, frames: frames)
+            }
+        }
+    }
+
+    private func estimatedDocumentPaneFrames(order: [WorkspacePaneRole], size: CGSize) -> [CGRect] {
         switch order.count {
         case 0:
-            EmptyWorkspaceLauncherView()
-                .transition(WeiBeiTransition.layout)
+            return []
         case 1:
-            paneView(for: order[0])
-                .transition(WeiBeiTransition.layout)
+            return [CGRect(origin: .zero, size: size)]
         case 2:
-            documentTwoPaneView(order: order)
+            return twoPaneFrames(order: order, size: size)
         default:
-            documentThreePaneView(order: Array(order.prefix(3)))
+            return threePaneFrames(order: Array(order.prefix(3)), size: size)
         }
     }
 
     private func minimumWidth(for _: WorkspacePaneRole) -> CGFloat {
         ContentRailMetrics.railOnlyWidth
-    }
-
-    @ViewBuilder
-    private func documentTwoPaneView(order: [WorkspacePaneRole]) -> some View {
-        GeometryReader { geometry in
-            let frames = twoPaneFrames(order: order, size: geometry.size)
-            ZStack {
-                ResizableTwoPane(
-                    split: halfSplit,
-                    minFirst: minimumWidth(for: order[0]),
-                    minSecond: minimumWidth(for: order[1]),
-                    roles: order,
-                    allowRailSnapping: true
-                ) {
-                    reorderablePaneView(for: order[0])
-                } second: {
-                    reorderablePaneView(for: order[1])
-                }
-
-                threePaneReorderOverlay(order: order, size: geometry.size, frames: frames)
-            }
-            .background(ThreePaneReorderFrameReporter(order: order, frames: frames))
-        }
-        .transition(WeiBeiTransition.rightPanel)
-    }
-
-    @ViewBuilder
-    private func documentThreePaneView(order: [WorkspacePaneRole]) -> some View {
-        GeometryReader { geometry in
-            let estimatedFrames = threePaneFrames(order: order, size: geometry.size)
-            let frames = store.threePaneReorderFrameList(order: order, fallback: estimatedFrames)
-            ZStack {
-                ResizableThreePane(
-                    firstSplit: firstSplit,
-                    secondSplit: secondSplit,
-                    minFirst: minimumWidth(for: order[0]),
-                    minSecond: minimumWidth(for: order[1]),
-                    minThird: minimumWidth(for: order[2]),
-                    roles: order,
-                    allowRailSnapping: true
-                ) {
-                    reorderablePaneView(for: order[0])
-                } second: {
-                    reorderablePaneView(for: order[1])
-                } third: {
-                    reorderablePaneView(for: order[2])
-                } onFramesChange: { frames in
-                    store.updateThreePaneReorderFrames(order: order, frames: frames)
-                }
-
-                threePaneReorderOverlay(order: order, size: geometry.size, frames: frames)
-            }
-            .background(ThreePaneReorderFrameReporter(order: order, frames: estimatedFrames))
-        }
-        .transition(WeiBeiTransition.rightPanel)
-    }
-
-    @ViewBuilder
-    private func reorderablePaneView(for role: WorkspacePaneRole) -> some View {
-        let drag = store.threePaneReorderDrag
-        paneView(for: role)
-            .opacity(drag?.role == role ? 0.08 : 1)
-            .overlay {
-                if drag?.targetIndex == store.normalizedThreePaneOrder.firstIndex(of: role), drag?.role != role {
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(WeiBeiTheme.cinnabar.opacity(0.22), lineWidth: 1)
-                        .background {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(WeiBeiTheme.cinnabarSoft.opacity(0.10))
-                        }
-                        .padding(8)
-                        .transition(WeiBeiTransition.floating)
-                }
-            }
-            .animation(WeiBeiMotion.micro, value: drag)
-    }
-
-    @ViewBuilder
-    private func paneView(for role: WorkspacePaneRole) -> some View {
-        PersistentPaneHost(role: role, registry: paneHostRegistry)
     }
 
     @ViewBuilder
@@ -1171,12 +1104,12 @@ private struct LayoutContentView: View {
     }
 }
 
-private struct OwnerToken: Equatable {
+struct OwnerToken: Equatable {
     let role: WorkspacePaneRole
     let generation: Int
 }
 
-private final class PersistentPaneHostRegistry: ObservableObject {
+final class PersistentPaneHostRegistry: ObservableObject {
     private var hosts: [WorkspacePaneRole: NSHostingView<AnyView>] = [:]
     private var latestOwnerGeneration: [WorkspacePaneRole: Int] = [:]
     private var activeOwners: [WorkspacePaneRole: OwnerToken] = [:]
@@ -1227,7 +1160,7 @@ private final class PersistentPaneHostRegistry: ObservableObject {
     }
 }
 
-private final class PersistentPaneContainerView: NSView {
+final class PersistentPaneContainerView: NSView {
     var onWindowChange: ((PersistentPaneContainerView) -> Void)?
 
     override func viewDidMoveToWindow() {
@@ -1236,7 +1169,7 @@ private final class PersistentPaneContainerView: NSView {
     }
 }
 
-private struct PersistentPaneHost: NSViewRepresentable {
+struct PersistentPaneHost: NSViewRepresentable {
     @EnvironmentObject private var store: WorkspaceStore
     let role: WorkspacePaneRole
     let registry: PersistentPaneHostRegistry

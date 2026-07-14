@@ -1,12 +1,14 @@
 import Foundation
 import WeiBeiCore
 
-func runPiAgentSelfChecks() throws {
+func runPiAgentSelfChecks() async throws {
     try checkJSONLFraming()
     try checkRPCDecoding()
     try checkStudyAgentContext()
+    try checkAnswerGrounding()
     try checkBundledAgentResources()
     try checkPiExecutableLocation()
+    try await checkPiRunCancellationControl()
 }
 
 private func piRequire(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
@@ -43,6 +45,57 @@ private func checkJSONLFraming() throws {
     } catch let error as PiRPCProtocolError {
         try piRequire(error == .lineTooLarge(4), "PI JSONL enforces its byte limit")
     }
+}
+
+private func checkAnswerGrounding() throws {
+    for question in ["给我讲一个笑话", "你叫什么"] {
+        try piRequire(
+            StudyAgentQuestionScope.allowsSourceFreeAnswer(question),
+            "source-free PI answer scope accepts \(question)"
+        )
+        try piRequire(
+            PiAnswerEvidenceRequirement.validationError(
+                contentLabels: [],
+                learningLabels: [],
+                allowsLearningOnlyAnswer: false,
+                allowsSourceFreeAnswer: true
+            ) == nil,
+            "source-free PI answers are not rejected as missing course evidence"
+        )
+    }
+
+    try piRequire(
+        !StudyAgentQuestionScope.allowsSourceFreeAnswer("费雪方程是什么意思？"),
+        "course-content questions do not bypass current-turn evidence"
+    )
+    for question in [
+        "你叫什么，顺便解释费雪方程",
+        "讲一个关于费雪方程的笑话",
+        "你是谁写的这本教材？",
+    ] {
+        try piRequire(
+            !StudyAgentQuestionScope.allowsSourceFreeAnswer(question),
+            "mixed or course-dependent questions do not bypass evidence: \(question)"
+        )
+    }
+    try piRequire(
+        PiAnswerEvidenceRequirement.validationError(
+            contentLabels: [],
+            learningLabels: [],
+            allowsLearningOnlyAnswer: false,
+            allowsSourceFreeAnswer: false
+        ) == "PI 返回了课程内容，但没有标注本轮读取的来源",
+        "course-content answers still require current-turn evidence"
+    )
+    try piRequire(
+        PiAnswerEvidenceRequirement.validationError(
+            contentLabels: [],
+            learningLabels: ["[学习记录：上次位置]"],
+            allowsLearningOnlyAnswer: true,
+            allowsSourceFreeAnswer: false
+        ) == nil,
+        "learning-only answers continue to accept current-turn learning evidence"
+    )
 }
 
 private func checkRPCDecoding() throws {
@@ -179,7 +232,29 @@ private func checkRPCDecoding() throws {
     )
 
     let ended = try PiRPCMessageDecoder.decode(Data(#"{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"第一轮"}],"stopReason":"toolUse"},{"role":"assistant","content":[{"type":"text","text":"最终回答"}],"stopReason":"stop"}]}"#.utf8))
-    try piRequire(ended == .agentEnded(text: "最终回答", stopReason: "stop"), "PI agent_end selects the final assistant answer")
+    try piRequire(ended == .agentEnded(text: "最终回答", stopReason: "stop", error: nil), "PI agent_end selects the final assistant answer")
+
+    let providerFailure = try PiRPCMessageDecoder.decode(Data(#"{"type":"agent_end","messages":[{"role":"assistant","content":[],"provider":"openai-codex","model":"gpt-5.5","stopReason":"error","diagnostics":[{"type":"provider_transport_failure","error":{"message":"WebSocket failed to connect"}}],"errorMessage":"Was there a typo in the url or port?"}],"willRetry":false}"#.utf8))
+    try piRequire(
+        providerFailure == .agentEnded(
+            text: "",
+            stopReason: "error",
+            error: "Was there a typo in the url or port?"
+        ),
+        "PI agent_end preserves the provider error instead of reporting an unknown model"
+    )
+    try piRequire(
+        PiAgentRetryPolicy.shouldRetry(.agentFailed("Codex SSE response headers timed out after 20000ms")),
+        "PI retries one bounded transient provider timeout"
+    )
+    try piRequire(
+        PiAgentRetryPolicy.shouldRetry(.agentFailed("unknown certificate verification error")),
+        "PI retries one bounded certificate-handshake failure without bypassing verification"
+    )
+    try piRequire(
+        !PiAgentRetryPolicy.shouldRetry(.agentFailed("Unknown model gpt-missing")),
+        "PI does not retry permanent model configuration errors"
+    )
     try piRequire(try PiRPCMessageDecoder.decode(Data(#"{"type":"future_event"}"#.utf8)) == .event("future_event"), "PI decoder tolerates unknown future events")
 
     do {
@@ -193,6 +268,14 @@ private func checkRPCDecoding() throws {
 private func checkStudyAgentContext() throws {
     let recentMessages = (0..<24).map { index in
         AgentMessage(role: index.isMultiple(of: 2) ? .user : .assistant, text: "message-\(index)" + String(repeating: "字", count: 1_300), source: "source-\(index)")
+    }
+    let interactions = (0..<16).map { index in
+        StudyAgentInteractionEvent(
+            blockID: "block-\(index)" + String(repeating: "b", count: 140),
+            kind: "kind-\(index)" + String(repeating: "k", count: 90),
+            action: "action-\(index)" + String(repeating: "a", count: 90),
+            detail: "detail-\(index)" + String(repeating: "互", count: 1_300)
+        )
     }
     let courseItems = (0..<90).map { index in
         StudyAgentCourseItem(
@@ -226,6 +309,7 @@ private func checkStudyAgentContext() throws {
         selectionTitle: String(repeating: "选", count: 320),
         selectionText: String(repeating: "选", count: 2_100),
         recentMessages: recentMessages,
+        interactions: interactions,
         courseContext: StudyAgentCourseContext(
             title: "测试课程",
             items: courseItems,
@@ -256,6 +340,425 @@ private func checkStudyAgentContext() throws {
         contextRevision: "revision-9"
     )
     try piRequire(request.resolvedWorkflow == .recallPractice, "study-agent automatic routing selects recall practice")
+    let interactiveRequest = StudyAgentRequest(
+        purpose: .conversation,
+        question: "把这个概念做成可互动学习卡，先让我想再揭晓",
+        materialTitle: "材料",
+        materialText: "正文",
+        noteTitle: "笔记",
+        noteText: "",
+        contextRevision: "revision-interactive"
+    )
+    try piRequire(interactiveRequest.resolvedWorkflow == .interactiveStudy, "study-agent automatic routing selects interactive study")
+    let visualInteractiveRequest = StudyAgentRequest(
+        purpose: .conversation,
+        question: "用函数曲线和滑块调参展示这个关系，再补一个配色对照",
+        materialTitle: "材料",
+        materialText: "正文",
+        noteTitle: "笔记",
+        noteText: "",
+        contextRevision: "revision-visual-interactive"
+    )
+    try piRequire(visualInteractiveRequest.resolvedWorkflow == .interactiveStudy, "study-agent routes charts, function plots, controls, comparisons, and palettes to interactive study")
+    let proactiveChartRequest = StudyAgentRequest(
+        purpose: .conversation,
+        question: "这组数据的变化说明了什么？",
+        materialTitle: "利率数据",
+        materialText: "2022 年为 2.1%，2023 年为 3.4%，2024 年为 4.8%，呈连续上升。",
+        noteTitle: "笔记",
+        noteText: "",
+        contextRevision: "revision-proactive-chart"
+    )
+    try piRequire(
+        proactiveChartRequest.resolvedWorkflow == .interactiveStudy
+            && proactiveChartRequest.richPresentationDecision.shape == .chart,
+        "study-agent proactively selects a chart when the question and evidence are quantitative"
+    )
+    let proactiveRelationshipRequest = StudyAgentRequest(
+        purpose: .conversation,
+        question: "这个机制为什么会影响市场利率？",
+        materialTitle: "利率传导",
+        materialText: "准备金减少会导致银行可贷资金收缩，因此信贷供给下降，进而推动市场利率上升。",
+        noteTitle: "笔记",
+        noteText: "",
+        contextRevision: "revision-proactive-relationship"
+    )
+    try piRequire(
+        proactiveRelationshipRequest.resolvedWorkflow == .interactiveStudy
+            && proactiveRelationshipRequest.richPresentationDecision.shape == .relationshipMap,
+        "study-agent proactively selects a relationship map for evidence-backed causal explanations"
+    )
+    let proactiveTimelineRequest = StudyAgentRequest(
+        purpose: .conversation,
+        question: "这个过程先后经历了哪些阶段？",
+        materialTitle: "政策过程",
+        materialText: "第一步确认目标。第二步调整工具。随后观察市场反应。最后复盘结果。",
+        noteTitle: "笔记",
+        noteText: "",
+        contextRevision: "revision-proactive-timeline"
+    )
+    try piRequire(
+        proactiveTimelineRequest.resolvedWorkflow == .interactiveStudy
+            && proactiveTimelineRequest.richPresentationDecision.shape == .timeline,
+        "study-agent proactively selects a timeline for ordered evidence"
+    )
+    let proactiveComparisonRequest = StudyAgentRequest(
+        purpose: .conversation,
+        question: "名义利率和实际利率到底有什么区别？",
+        materialTitle: "利率",
+        materialText: "名义利率包含预期通胀，实际利率扣除预期通胀，二者用途不同。",
+        noteTitle: "笔记",
+        noteText: "",
+        contextRevision: "revision-proactive-comparison"
+    )
+    try piRequire(
+        proactiveComparisonRequest.resolvedWorkflow == .interactiveStudy
+            && proactiveComparisonRequest.richPresentationDecision.shape == .comparisonMatrix,
+        "study-agent proactively selects a comparison matrix for concept differences"
+    )
+    let proactiveAnnotationRequest = StudyAgentRequest(
+        purpose: .conversation,
+        question: "这段怎么理解？帮我抓住原文里的关键词。",
+        materialTitle: "利率",
+        materialText: "材料正文",
+        noteTitle: "笔记",
+        noteText: "",
+        selectionTitle: "当前选区",
+        selectionText: "名义利率包含预期通胀，而实际利率反映扣除预期通胀后的真实资金成本。这两个概念服务于不同的观察目标。",
+        contextRevision: "revision-proactive-annotation"
+    )
+    try piRequire(
+        proactiveAnnotationRequest.richPresentationDecision.shape == .annotatedPassage,
+        "study-agent proactively selects inline annotations for a bounded close-reading selection"
+    )
+    let proactiveDerivationRequest = StudyAgentRequest(
+        purpose: .conversation,
+        question: "这个关系是怎么推导出来的？",
+        materialTitle: "费雪关系",
+        materialText: "名义利率约等于实际利率加预期通胀，因此移项后，实际利率约等于名义利率减去预期通胀。",
+        noteTitle: "笔记",
+        noteText: "",
+        contextRevision: "revision-proactive-derivation"
+    )
+    try piRequire(
+        proactiveDerivationRequest.richPresentationDecision.shape == .derivationSteps,
+        "study-agent proactively selects progressive derivation for evidence-backed reasoning"
+    )
+    let proactiveEvidenceRequest = StudyAgentRequest(
+        purpose: .conversation,
+        question: "这个结论是否成立，证据够吗？",
+        materialTitle: "论证",
+        materialText: "材料表明实际利率扣除了预期通胀，因此更接近真实资金成本；但是当前片段缺少适用市场条件。",
+        noteTitle: "笔记",
+        noteText: "",
+        contextRevision: "revision-proactive-evidence"
+    )
+    try piRequire(
+        proactiveEvidenceRequest.richPresentationDecision.shape == .evidenceBoard,
+        "study-agent proactively selects an evidence board when a claim has support and a gap"
+    )
+    let proactiveDecisionRequest = StudyAgentRequest(
+        purpose: .conversation,
+        question: "我应该选哪个指标，怎么判断？",
+        materialTitle: "指标选择",
+        materialText: "如果观察合约报价，那么看名义利率；如果观察真实资金成本，那么看实际利率，否则需要先确认观察目标。",
+        noteTitle: "笔记",
+        noteText: "",
+        contextRevision: "revision-proactive-decision"
+    )
+    try piRequire(
+        proactiveDecisionRequest.richPresentationDecision.shape == .decisionPath,
+        "study-agent proactively selects a decision path for evidence-backed conditional choices"
+    )
+    let plainDefinitionRequest = StudyAgentRequest(
+        purpose: .conversation,
+        question: "这里的定义是什么意思？",
+        materialTitle: "定义",
+        materialText: "利率是资金跨期配置的价格。",
+        noteTitle: "笔记",
+        noteText: "",
+        contextRevision: "revision-plain-definition"
+    )
+    try piRequire(
+        plainDefinitionRequest.resolvedWorkflow == .studyCompanion
+            && plainDefinitionRequest.richPresentationDecision.shape == nil,
+        "study-agent keeps plain prose when no visual structure would improve the answer"
+    )
+    let noteMakingWithNumbersRequest = StudyAgentRequest(
+        purpose: .conversation,
+        question: "把这些数据整理成笔记",
+        materialTitle: "利率数据",
+        materialText: "2022 年 2.1%，2023 年 3.4%，2024 年 4.8%。",
+        noteTitle: "笔记",
+        noteText: "",
+        contextRevision: "revision-note-over-visual"
+    )
+    try piRequire(
+        noteMakingWithNumbersRequest.resolvedWorkflow == .noteMaking,
+        "explicit note-making stays ahead of proactive rich presentation"
+    )
+    let mixedWayfindingRequest = StudyAgentRequest(
+        purpose: .conversation,
+        question: "这些文件怎么关联？给我看清知识关系",
+        materialTitle: "当前材料",
+        materialText: "当前材料解释名义利率。",
+        noteTitle: "课堂笔记",
+        noteText: "笔记记录实际利率。",
+        courseContext: StudyAgentCourseContext(
+            title: "利率课程",
+            relations: [StudyAgentCourseRelation(noteItemID: "note-1", sourceItemID: "source-1")]
+        ),
+        contextRevision: "revision-wayfinding-rich"
+    )
+    try piRequire(
+        mixedWayfindingRequest.resolvedWorkflow == .courseWayfinding
+            && mixedWayfindingRequest.richPresentationDecision.shape == .relationshipMap,
+        "course wayfinding keeps its evidence workflow while independently planning a relationship map"
+    )
+    let expandedInteractiveShapes: [(String, StudyAgentRichPresentationShape)] = [
+        ("把这段原文做成可以逐条点开的夹批", .annotatedPassage),
+        ("把这段论证做成一步一步揭晓的推导", .derivationSteps),
+        ("把这些概念做成一组可以翻面的记忆卡", .flashcards),
+        ("让我自己给这些步骤排序，然后检查", .sequenceBuilder),
+        ("做一个情境实验，让我切换条件观察结果", .scenarioLab),
+        ("把这个结论的支持证据、反例和缺口分开核验", .evidenceBoard),
+        ("把这些观点放到一条连续光谱上让我点选", .spectrum),
+        ("把这个选择做成可以逐步分支的决策路径", .decisionPath),
+    ]
+    for (question, expectedShape) in expandedInteractiveShapes {
+        let request = StudyAgentRequest(
+            purpose: .conversation,
+            question: question,
+            materialTitle: "材料",
+            materialText: "材料包含足够的结构化证据。",
+            noteTitle: "笔记",
+            noteText: "",
+            contextRevision: "revision-expanded-\(expectedShape.rawValue)"
+        )
+        try piRequire(
+            request.resolvedWorkflow == .interactiveStudy
+                && request.richPresentationDecision.shape == expectedShape,
+            "study-agent routes \(expectedShape.rawValue) to the expanded interactive vocabulary"
+        )
+    }
+    let allRichShapeRawValues = [
+        StudyAgentRichPresentationShape.quiz,
+        .reveal,
+        .chart,
+        .functionPlot,
+        .parameterLab,
+        .textStudy,
+        .designCompare,
+        .palette,
+        .studyBoard,
+        .relationshipMap,
+        .timeline,
+        .comparisonMatrix,
+        .annotatedPassage,
+        .derivationSteps,
+        .flashcards,
+        .sequenceBuilder,
+        .scenarioLab,
+        .evidenceBoard,
+        .spectrum,
+        .decisionPath,
+        .unitWorkbench,
+        .reactionBalance,
+        .algorithmTrace,
+        .languageAligner,
+        .argumentMap,
+        .visualAnalysis,
+        .spatialLayers,
+        .pathwayLab,
+    ].map(\.rawValue)
+    try piRequire(
+        allRichShapeRawValues.count == 28 && Set(allRichShapeRawValues).count == 28,
+        "study-agent rich answer vocabulary expands from twenty to twenty-eight unique kinds"
+    )
+    let crossDisciplinaryProtocolStrings: [(StudyAgentRichPresentationShape, String)] = [
+        (
+            .unitWorkbench,
+            "unit-workbench: title, optional question, variables[{id,label,value(字符串),unit,optional role,source}], checks[{id,label,left,right,result,source}], sources"
+        ),
+        (
+            .reactionBalance,
+            "reaction-balance: title, species[{id,label,side reactant/product,coefficient 1...9,atoms 元素->单个分子原子数,source}], sources"
+        ),
+        (
+            .algorithmTrace,
+            "algorithm-trace: title, codeLines[string], steps[{lineIndex,summary,optional note,source}], sources"
+        ),
+        (
+            .languageAligner,
+            "language-aligner: title, pairs[{label,sourceText,targetText,note,source}], sources"
+        ),
+        (
+            .argumentMap,
+            "argument-map: title, optional question, nodes[{id,type premise/claim/objection/reply,label,optional detail,source}], edges[{from,to,optional label}], sources"
+        ),
+        (
+            .visualAnalysis,
+            "visual-analysis: title, zones[{id,label,x,y,width,height,note,tone,source}], optional palette[{label,role,tone}], optional lenses[{id,label,note,zoneIds}], sources"
+        ),
+        (
+            .spatialLayers,
+            "spatial-layers: title, layers[{id,label,visible}], features[{id,type point/route/region,layerId,label,note,points:[[x,y]...],source}], sources"
+        ),
+        (
+            .pathwayLab,
+            "pathway-lab: title, nodes[{id,label,detail,source}], states[{id,label,note,activeNodeIds,source}], edges[{from,to,label}], sources"
+        ),
+    ]
+    for (shape, protocolString) in crossDisciplinaryProtocolStrings {
+        try piRequire(
+            StudyAgentRichPresentationDecision(shape: shape).promptHint?.contains(protocolString) == true,
+            "study-agent runtime prompt hint exposes the editor-compatible \(shape.rawValue) protocol"
+        )
+    }
+    let crossDisciplinaryShapes: [(String, StudyAgentRichPresentationShape)] = [
+        ("把这些数值做成单位工作台，检查量纲", .unitWorkbench),
+        ("把这个反应做成反应配平，检查原子守恒", .reactionBalance),
+        ("把这个过程做成算法跟踪，手动跑一遍", .algorithmTrace),
+        ("把这段做成语言对齐，中英对照术语", .languageAligner),
+        ("把这段论证做成论证图，看前提和结论", .argumentMap),
+        ("把这张图做成视觉分析", .visualAnalysis),
+        ("把这个结构做成空间层次示意", .spatialLayers),
+        ("做一个通路实验，让我切换状态", .pathwayLab),
+    ]
+    for (question, expectedShape) in crossDisciplinaryShapes {
+        let request = StudyAgentRequest(
+            purpose: .conversation,
+            question: question,
+            materialTitle: "材料",
+            materialText: "材料包含足够的结构化证据。",
+            noteTitle: "笔记",
+            noteText: "",
+            contextRevision: "revision-cross-\(expectedShape.rawValue)"
+        )
+        try piRequire(
+            request.resolvedWorkflow == .interactiveStudy
+                && request.richPresentationDecision.shape == expectedShape,
+            "study-agent routes explicit \(expectedShape.rawValue) requests to the cross-disciplinary vocabulary"
+        )
+    }
+    let proactiveCrossDisciplinaryRoutes: [(StudyAgentRequest, StudyAgentRichPresentationShape)] = [
+        (
+            StudyAgentRequest(
+                purpose: .conversation,
+                question: "这两个速度怎么换算并统一单位？",
+                materialTitle: "物理量",
+                materialText: "实验速度为 36 km/h，目标单位对应 10 m/s，需要做单位换算并检查单位。",
+                noteTitle: "笔记",
+                noteText: "",
+                contextRevision: "revision-proactive-unit"
+            ),
+            .unitWorkbench
+        ),
+        (
+            StudyAgentRequest(
+                purpose: .conversation,
+                question: "这个反应式怎么配平？",
+                materialTitle: "化学反应",
+                materialText: "H2 + O2 -> H2O。反应物和生成物需要按元素 H、O 做原子守恒检查，并确定系数。",
+                noteTitle: "笔记",
+                noteText: "",
+                contextRevision: "revision-proactive-reaction"
+            ),
+            .reactionBalance
+        ),
+        (
+            StudyAgentRequest(
+                purpose: .conversation,
+                question: "这个算法的状态变化怎么逐步运行？",
+                materialTitle: "算法",
+                materialText: "输入数组后，初始状态设置 low 和 high。步骤一比较 mid，循环迭代更新边界，最后输出索引。",
+                noteTitle: "笔记",
+                noteText: "",
+                contextRevision: "revision-proactive-algorithm"
+            ),
+            .algorithmTrace
+        ),
+        (
+            StudyAgentRequest(
+                purpose: .conversation,
+                question: "这段原文和译文的术语怎么对应？",
+                materialTitle: "双语材料",
+                materialText: "原文 real interest rate；译文 实际利率。术语 expected inflation 对应 预期通胀，语气保持教材表达。",
+                noteTitle: "笔记",
+                noteText: "",
+                contextRevision: "revision-proactive-language"
+            ),
+            .languageAligner
+        ),
+        (
+            StudyAgentRequest(
+                purpose: .conversation,
+                question: "这段论证的前提和结论是什么？",
+                materialTitle: "论证",
+                materialText: "结论是实际利率更适合衡量真实资金成本。前提是它扣除预期通胀，因为通胀会改变购买力；但是材料留下适用条件缺口。",
+                noteTitle: "笔记",
+                noteText: "",
+                contextRevision: "revision-proactive-argument"
+            ),
+            .argumentMap
+        ),
+        (
+            StudyAgentRequest(
+                purpose: .conversation,
+                question: "这张图做视觉分析，关键区域是什么？",
+                materialTitle: "图像说明",
+                materialText: "图像左侧区域标注输入端，右侧区域标注输出端，上方箭头表示流程方向，颜色用于区分两类模块。",
+                noteTitle: "笔记",
+                noteText: "",
+                contextRevision: "revision-proactive-visual"
+            ),
+            .visualAnalysis
+        ),
+        (
+            StudyAgentRequest(
+                purpose: .conversation,
+                question: "这个结构的空间层次怎么理解？",
+                materialTitle: "结构说明",
+                materialText: "外层包围内层，上方是入口，下方是出口，左侧和右侧分别是两个区域，中心层承载核心部件。",
+                noteTitle: "笔记",
+                noteText: "",
+                contextRevision: "revision-proactive-spatial"
+            ),
+            .spatialLayers
+        ),
+        (
+            StudyAgentRequest(
+                purpose: .conversation,
+                question: "这条信号通路激活或抑制后会怎样？",
+                materialTitle: "通路",
+                materialText: "通路有基准状态。上游激活会导致下游增强；上游抑制会导致下游减弱。状态转换只在这些已列状态之间发生。",
+                noteTitle: "笔记",
+                noteText: "",
+                contextRevision: "revision-proactive-pathway"
+            ),
+            .pathwayLab
+        ),
+    ]
+    for (request, expectedShape) in proactiveCrossDisciplinaryRoutes {
+        try piRequire(
+            request.resolvedWorkflow == .interactiveStudy
+                && request.richPresentationDecision.shape == expectedShape,
+            "study-agent proactively selects \(expectedShape.rawValue) when course evidence is sufficient"
+        )
+    }
+    let visualURLRequest = StudyAgentRequest(
+        purpose: .conversation,
+        question: "对 https://example.com/image.png 做视觉分析",
+        materialTitle: "图像说明",
+        materialText: "图像左侧区域标注输入端，右侧区域标注输出端。",
+        noteTitle: "笔记",
+        noteText: "",
+        contextRevision: "revision-visual-url-reject"
+    )
+    try piRequire(
+        visualURLRequest.richPresentationDecision.shape != .visualAnalysis,
+        "study-agent refuses visual-analysis routing for URL or HTML inputs"
+    )
     let noteRequest = StudyAgentRequest(
         purpose: .conversation,
         question: "整理成笔记",
@@ -360,6 +863,14 @@ private func checkStudyAgentContext() throws {
     try piRequire(envelope.material?.isTruncated == true && envelope.note.isTruncated && envelope.selection?.isTruncated == true, "study-agent context marks every truncated source")
     try piRequire(envelope.recentMessages.count == 20 && envelope.recentMessages.first?.text.hasPrefix("message-4") == true, "study-agent context keeps the latest twenty messages")
     try piRequire(envelope.recentMessages.allSatisfy { $0.text.count <= 1_200 }, "study-agent context bounds recent messages")
+    try piRequire(
+        envelope.interactions.count == 12
+            && envelope.interactions.first?.blockID.hasPrefix("block-4") == true
+            && envelope.interactions.allSatisfy {
+                $0.blockID.count <= 120 && $0.kind.count <= 80 && $0.action.count <= 80 && $0.detail.count <= 1_200
+            },
+        "study-agent context keeps only the latest bounded interactive actions"
+    )
     try piRequire(envelope.course.catalog.count == 90 && envelope.course.items.count == 80 && envelope.course.relations.count == 210 && envelope.course.isTruncated, "study-agent context keeps the full catalog while bounding query candidates")
     try piRequire(
         envelope.course.catalog.allSatisfy { $0.id.hasPrefix("course-item-") }
@@ -556,6 +1067,34 @@ private func checkBundledAgentResources() throws {
     let resources = try PiAgentResources.bundled()
     try piRequire(resources.systemPrompt.contains("魏碑拥有材料、选区、笔记"), "PI system contract is bundled")
     try piRequire(resources.systemPrompt.contains("课程地图") && resources.systemPrompt.contains("学习记忆与会话"), "PI system contract separates course evidence from learning memory")
+    try piRequire(resources.systemPrompt.contains("weibei-interactive"), "PI system contract exposes the safe interactive answer protocol")
+    let crossDisciplinaryProtocolStrings = [
+        "unit-workbench: title, optional question, variables[{id,label,value(字符串),unit,optional role,source}], checks[{id,label,left,right,result,source}], sources",
+        "reaction-balance: title, species[{id,label,side reactant/product,coefficient 1...9,atoms 元素->单个分子原子数,source}], sources",
+        "algorithm-trace: title, codeLines[string], steps[{lineIndex,summary,optional note,source}], sources",
+        "language-aligner: title, pairs[{label,sourceText,targetText,note,source}], sources",
+        "argument-map: title, optional question, nodes[{id,type premise/claim/objection/reply,label,optional detail,source}], edges[{from,to,optional label}], sources",
+        "visual-analysis: title, zones[{id,label,x,y,width,height,note,tone,source}], optional palette[{label,role,tone}], optional lenses[{id,label,note,zoneIds}], sources",
+        "spatial-layers: title, layers[{id,label,visible}], features[{id,type point/route/region,layerId,label,note,points:[[x,y]...],source}], sources",
+        "pathway-lab: title, nodes[{id,label,detail,source}], states[{id,label,note,activeNodeIds,source}], edges[{from,to,label}], sources",
+    ]
+    try piRequire(
+        crossDisciplinaryProtocolStrings.allSatisfy(resources.systemPrompt.contains),
+        "PI system contract pins the editor-compatible cross-disciplinary interactive schemas"
+    )
+    try piRequire(
+        [
+            "quiz", "reveal", "chart", "function-plot", "parameter-lab", "text-study",
+            "design-compare", "palette", "study-board", "relationship-map", "timeline", "comparison-matrix",
+            "annotated-passage", "derivation-steps", "flashcards", "sequence-builder",
+            "scenario-lab", "evidence-board", "spectrum", "decision-path",
+            "unit-workbench", "reaction-balance", "algorithm-trace", "language-aligner",
+            "argument-map", "visual-analysis", "spatial-layers", "pathway-lab",
+        ].allSatisfy(resources.systemPrompt.contains),
+        "PI system contract exposes the complete twenty-eight-kind interactive vocabulary"
+    )
+    try piRequire(resources.systemPrompt.contains("不得输出任意 HTML")
+        && resources.systemPrompt.contains("不得输出任意 JavaScript"), "PI system contract keeps model-authored HTML and scripts outside the runtime")
     let extensionSource = try String(contentsOf: resources.extensionURL, encoding: .utf8)
     try piRequire(extensionSource.contains("before_agent_start") && extensionSource.contains("tool_call") && extensionSource.contains("pi.on(\"context\""), "PI extension bundles source, permission, and stale-context hooks")
     try piRequire(
@@ -605,6 +1144,67 @@ private func checkBundledAgentResources() throws {
         let source = try String(contentsOf: skillURL, encoding: .utf8)
         try piRequire(source.contains("name: \(skillName)") && source.contains("description:"), "PI skill \(skillName) has valid frontmatter")
     }
+    let interactiveSkillURL = resources.skillsURL
+        .appendingPathComponent("weibei-interactive-study")
+        .appendingPathComponent("SKILL.md")
+    let interactiveSkill = try String(contentsOf: interactiveSkillURL, encoding: .utf8)
+    try piRequire(
+        [
+            "chart", "function-plot", "parameter-lab", "text-study", "design-compare", "palette",
+            "study-board", "relationship-map", "timeline", "comparison-matrix",
+            "annotated-passage", "derivation-steps", "flashcards", "sequence-builder",
+            "scenario-lab", "evidence-board", "spectrum", "decision-path",
+            "unit-workbench", "reaction-balance", "algorithm-trace", "language-aligner",
+            "argument-map", "visual-analysis", "spatial-layers", "pathway-lab",
+        ].allSatisfy(interactiveSkill.contains),
+        "interactive study skill bundles the twenty-eight-kind rich component selection templates"
+    )
+    try piRequire(
+        crossDisciplinaryProtocolStrings.allSatisfy(interactiveSkill.contains),
+        "interactive study skill pins the editor-compatible cross-disciplinary JSON schemas"
+    )
+    try piRequire(
+        [
+            "\"variables\"",
+            "\"checks\"",
+            "\"species\"",
+            "\"codeLines\"",
+            "\"pairs\"",
+            "\"zones\"",
+            "\"features\"",
+            "\"activeNodeIds\"",
+        ].allSatisfy(interactiveSkill.contains)
+            && [
+                "\"quantities\"",
+                "\"conversions\"",
+                "\"segments\"",
+                "\"observations\"",
+                "\"regions\"",
+                "\"diagramLabel\"",
+                "\"initialStateID\"",
+                "\"transitions\"",
+            ].allSatisfy { !interactiveSkill.contains($0) },
+        "interactive study skill examples use only the current editor.js parser field names"
+    )
+    try piRequire(interactiveSkill.contains("预采样")
+        && interactiveSkill.contains("白名单")
+        && interactiveSkill.contains("不得输出原始 HTML"), "interactive study skill documents safe curve, controller, and HTML boundaries")
+    try piRequire(
+        interactiveSkill.contains("不要等待用户说出")
+            && interactiveSkill.contains("主动选择纯文字")
+            && interactiveSkill.contains("相邻回答不要机械复用同一构图"),
+        "interactive study skill includes proactive selection, negative examples, and anti-template variation rules"
+    )
+    try piRequire(
+        interactiveSkill.contains("一条回答最多一个主互动块")
+            && interactiveSkill.contains("主动生成必须有课程证据支撑")
+            && interactiveSkill.contains("前端只按给定 `atoms` 乘系数")
+            && interactiveSkill.contains("只是展示预枚举步骤")
+            && interactiveSkill.contains("禁止 URL、HTML")
+            && interactiveSkill.contains("文案必须称“示意图”")
+            && interactiveSkill.contains("切换预先枚举的 `states`"),
+        "interactive study skill documents the new cross-disciplinary safety boundaries"
+    )
 
     let runtimeSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         .appendingPathComponent("Sources/WeiBeiCore/PiAgentRuntime.swift")
@@ -627,7 +1227,7 @@ private func checkBundledAgentResources() throws {
             && runtimeSource.contains("StudyAgentResolutionEvidence.matches")
             && runtimeSource.contains("StudyAgentCurrentTurnEvidence.matches")
             && runtimeSource.contains("allowsLearningOnlyAnswer")
-            && runtimeSource.contains("PI returned a content answer without a source read in the current turn")
+            && runtimeSource.contains("PI 返回了课程内容，但没有标注本轮读取的来源")
             && runtimeSource.contains("binary.sha256")
             && runtimeSource.contains("SecStaticCodeCheckValidity"),
         "PI host enforces context-first answers, source labels, binary integrity, and code signatures"

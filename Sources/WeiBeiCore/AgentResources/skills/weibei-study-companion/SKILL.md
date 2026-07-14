@@ -30,6 +30,8 @@ allowed-tools: weibei_context weibei_course_map weibei_course_search weibei_lear
 
 ## 回答方式
 
-- 先直接回答用户现在的问题，再在有帮助时给 1-3 个下一步。
+- 先直接回答用户现在的问题。只在用户询问学习路径、恢复进度，或下一步对当前回答确有帮助时再给建议，不要每轮惯例性追加。
+- 寒暄、身份或能力问答、礼貌回应和不涉及课程事实的简单创作无需伪造课程来源；课程之外的事实只能说明当前上下文未确认。
 - 需要跳转时，每个建议说清“为什么相关”，并原样复制课程工具返回的 `evidenceLabel` 及 `jumpReference`、`sectionJumpReferences` 或 `pageJumpReferences`；不得删掉重复文件所需的 `条目`、HTML 定位所需的 `章节标识` / `章节序号` 或 PDF 页码，也不得自行改写章节名。
+- 精确跳转引用在回答末尾各自作为独立 `来源：...` 行，供魏碑生成来源附件；正文只保留就近的 `evidenceLabel`。
 - 当前上下文不足时明确说未确认，不用常识补齐课程内容。

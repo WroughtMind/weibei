@@ -1,6 +1,11 @@
 import AppKit
 import SwiftUI
+import WebKit
 import WeiBeiCore
+
+private enum WeiBeiBuildIdentity {
+    static let richAnswerRevision = "2026-07-14-cross-discipline-v2"
+}
 
 @MainActor private let sharedWorkspaceStore = WorkspaceStore()
 
@@ -11,6 +16,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         WeiBeiTypography.registerBundledFonts()
+        UserDefaults.standard.register(defaults: [
+            "WeiBeiRichAnswerRevision": WeiBeiBuildIdentity.richAnswerRevision,
+        ])
         NSApp.setActivationPolicy(.regular)
         if shouldActivateOnLaunch {
             NSApp.activate(ignoringOtherApps: true)
@@ -370,7 +378,8 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
               !capturePath.isEmpty,
               Self.scheduledVerificationCaptures.insert(capturePath).inserted else { return }
 
-        if ["pi-learning-flow", "pi-course-memory-flow"].contains(environment["WEIBEI_VERIFY_SCENARIO"]),
+        let scenario = environment["WEIBEI_VERIFY_SCENARIO"] ?? ""
+        if ["pi-learning-flow", "pi-course-memory-flow", "pane-toggle-continuity-flow", "reader-scroll-persistence-flow"].contains(scenario),
            let workspaceDirectory = environment["WEIBEI_WORKSPACE_DIR"] {
             let stateURL = URL(fileURLWithPath: workspaceDirectory)
                 .appendingPathComponent("verification-state.txt")
@@ -378,12 +387,14 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
                 in: window,
                 capturePath: capturePath,
                 stateURL: stateURL,
-                remainingAttempts: 600
+                remainingAttempts: scenario == "pane-toggle-continuity-flow" ? 1_800 : 600
             )
             return
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+        let captureDelay: TimeInterval = scenario.hasPrefix("agent-answer-showcase-")
+            || scenario.hasPrefix("agent-interactive-gallery-") ? 4 : 2
+        DispatchQueue.main.asyncAfter(deadline: .now() + captureDelay) {
             Self.capture(window, to: capturePath)
         }
     }
@@ -422,8 +433,76 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
               bounds.height >= 400,
               let bitmap = contentView.bitmapImageRepForCachingDisplay(in: bounds) else { return }
         contentView.cacheDisplay(in: bounds, to: bitmap)
-        guard let png = bitmap.representation(using: .png, properties: [:]) else { return }
-        try? png.write(to: URL(fileURLWithPath: capturePath), options: .atomic)
+        let baseImage = NSImage(size: bounds.size)
+        baseImage.addRepresentation(bitmap)
+        let webViews = visibleWebViews(in: contentView)
+        captureWebViews(webViews, at: 0, relativeTo: contentView, overlays: []) { overlays in
+            let composite = NSImage(size: bounds.size)
+            composite.lockFocus()
+            (window.backgroundColor).setFill()
+            bounds.fill()
+            baseImage.draw(in: bounds)
+            for overlay in overlays {
+                overlay.image.draw(in: overlay.rect, from: .zero, operation: .copy, fraction: 1)
+            }
+            composite.unlockFocus()
+            guard let tiff = composite.tiffRepresentation,
+                  let representation = NSBitmapImageRep(data: tiff),
+                  let png = representation.representation(using: .png, properties: [:]) else { return }
+            try? png.write(to: URL(fileURLWithPath: capturePath), options: .atomic)
+        }
+    }
+
+    private struct WebViewSnapshot {
+        var rect: NSRect
+        var image: NSImage
+    }
+
+    private static func visibleWebViews(in view: NSView) -> [WKWebView] {
+        view.subviews.flatMap { child -> [WKWebView] in
+            var matches = child.isHidden ? [] : visibleWebViews(in: child)
+            if let webView = child as? WKWebView, !webView.isHidden, webView.window != nil {
+                matches.insert(webView, at: 0)
+            }
+            return matches
+        }
+    }
+
+    private static func captureWebViews(
+        _ webViews: [WKWebView],
+        at index: Int,
+        relativeTo contentView: NSView,
+        overlays: [WebViewSnapshot],
+        completion: @escaping ([WebViewSnapshot]) -> Void
+    ) {
+        guard webViews.indices.contains(index) else {
+            completion(overlays)
+            return
+        }
+        let webView = webViews[index]
+        let converted = webView.convert(webView.bounds, to: contentView)
+        let rect = contentView.isFlipped
+            ? NSRect(x: converted.minX, y: contentView.bounds.height - converted.maxY, width: converted.width, height: converted.height)
+            : converted
+        let drewBackground = (webView.value(forKey: "drawsBackground") as? Bool) ?? true
+        webView.setValue(true, forKey: "drawsBackground")
+        webView.displayIfNeeded()
+        webView.takeSnapshot(with: nil) { image, _ in
+            DispatchQueue.main.async {
+                webView.setValue(drewBackground, forKey: "drawsBackground")
+                var nextOverlays = overlays
+                if let image, rect.width > 1, rect.height > 1 {
+                    nextOverlays.append(WebViewSnapshot(rect: rect, image: image))
+                }
+                captureWebViews(
+                    webViews,
+                    at: index + 1,
+                    relativeTo: contentView,
+                    overlays: nextOverlays,
+                    completion: completion
+                )
+            }
+        }
     }
 }
 

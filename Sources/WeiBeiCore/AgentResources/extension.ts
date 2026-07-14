@@ -30,6 +30,8 @@ const LIMITS = {
   recentMessages: 20,
   recentMessageText: 1_200,
   messageSource: 300,
+  interactions: 12,
+  interactionDetail: 1_200,
   courseCatalogItems: 500,
   courseItems: 80,
   courseRelations: 500,
@@ -57,6 +59,13 @@ interface RecentMessageSnapshot {
   role: string;
   text: string;
   source?: string;
+}
+
+interface InteractionSnapshot {
+  blockID: string;
+  kind: string;
+  action: string;
+  detail: string;
 }
 
 interface CourseCatalogItemSnapshot {
@@ -148,6 +157,7 @@ interface ContextSnapshotV2 {
   note: SourceSnapshot;
   selection?: SourceSnapshot;
   recentMessages: RecentMessageSnapshot[];
+  interactions: InteractionSnapshot[];
   course: CourseSnapshot;
   learning: LearningSnapshot;
 }
@@ -303,6 +313,26 @@ function readRecentMessages(value: unknown): RecentMessageSnapshot[] {
         source === undefined || source === null
           ? undefined
           : truncate(requireString(source, `recentMessages[${index}].source`), LIMITS.messageSource),
+    };
+  });
+}
+
+function readInteractions(value: unknown): InteractionSnapshot[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) {
+    throw new Error("魏碑上下文字段 interactions 必须是数组");
+  }
+
+  return value.slice(-LIMITS.interactions).map((entry, index) => {
+    const interaction = requireRecord(entry, `interactions[${index}]`);
+    return {
+      blockID: requireIdentifier(interaction.blockID, `interactions[${index}].blockID`),
+      kind: requireIdentifier(interaction.kind, `interactions[${index}].kind`),
+      action: requireIdentifier(interaction.action, `interactions[${index}].action`),
+      detail: truncate(
+        requireString(interaction.detail, `interactions[${index}].detail`),
+        LIMITS.interactionDetail,
+      ),
     };
   });
 }
@@ -567,6 +597,7 @@ async function readCurrentSnapshot(): Promise<ContextSnapshotV2> {
     note: readSource(envelope.note, "note", LIMITS.noteText),
     selection: readOptionalSource(envelope.selection, "selection", LIMITS.selectionText),
     recentMessages: readRecentMessages(envelope.recentMessages),
+    interactions: readInteractions(envelope.interactions),
     course: readCourse(envelope.course),
     learning: readLearning(envelope.learning),
   };
@@ -807,6 +838,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
                 note: snapshot.note,
                 selection: snapshot.selection,
                 recentMessages: snapshot.recentMessages,
+                interactions: snapshot.interactions,
                 course: {
                   title: snapshot.course.title,
                   catalogCount: snapshot.course.catalog.length,

@@ -26,6 +26,7 @@ public struct PiAgentResources: Sendable {
         "weibei-close-reading",
         "weibei-note-making",
         "weibei-recall-practice",
+        "weibei-interactive-study",
     ]
 
     public var rootURL: URL
@@ -236,6 +237,42 @@ public enum PiAgentRuntimeError: LocalizedError, Equatable, Sendable {
     }
 }
 
+public enum PiAgentRetryPolicy {
+    public static func shouldRetry(_ error: PiAgentRuntimeError) -> Bool {
+        let message: String
+        switch error {
+        case let .agentFailed(value), let .inFlightFailed(value), let .protocolFailure(value):
+            message = value.lowercased()
+        default:
+            return false
+        }
+
+        let transientSignals = [
+            "response headers timed out",
+            "failed to connect",
+            "connection reset",
+            "network connection was lost",
+            "temporarily unavailable",
+            "service unavailable",
+            "gateway timeout",
+            "provider_transport_failure",
+            "socket hang up",
+            "econnreset",
+            "etimedout",
+            "fetch failed",
+            "certificate verification error",
+            "certificate verify failed",
+            "unable to verify the first certificate",
+            "tls handshake",
+            "typo in the url or port",
+            "http 502",
+            "http 503",
+            "http 504",
+        ]
+        return transientSignals.contains { message.contains($0) }
+    }
+}
+
 public enum PiAgentDiagnosticSanitizer {
     public static func sanitize(_ value: String, secret: String? = nil) -> String {
         var result = value
@@ -261,6 +298,22 @@ public enum PiAgentDiagnosticSanitizer {
     }
 }
 
+public enum PiAnswerEvidenceRequirement {
+    public static func validationError(
+        contentLabels: Set<String>,
+        learningLabels: Set<String>,
+        allowsLearningOnlyAnswer: Bool,
+        allowsSourceFreeAnswer: Bool
+    ) -> String? {
+        guard allowsSourceFreeAnswer
+                || !contentLabels.isEmpty
+                || (allowsLearningOnlyAnswer && !learningLabels.isEmpty) else {
+            return "PI 返回了课程内容，但没有标注本轮读取的来源"
+        }
+        return nil
+    }
+}
+
 public actor PiAgentRuntime: StudyAgentRuntime {
     private struct PendingCommand {
         var continuation: CheckedContinuation<PiRPCResponse, Error>
@@ -274,6 +327,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var userQuestion: String
         var workflow: StudyAgentWorkflow
         var allowsLearningOnlyAnswer: Bool
+        var allowsSourceFreeAnswer: Bool
         var resolvableMemoryIDs: Set<String>
         var allowedSourceLabels: Set<String>
         var allowedJumpReferences: Set<String>
@@ -290,7 +344,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var progress: StudyAgentProgressHandler?
         var continuation: CheckedContinuation<StudyAgentReply, Error>?
         var completed: Result<StudyAgentReply, Error>?
-        var watchdogTask: Task<Void, Never>?
     }
 
     private let executableOverride: URL?
@@ -298,6 +351,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     private var providerConfiguration = PiAgentProviderConfiguration()
     private var process: Process?
     private var inputHandle: FileHandle?
+    private var outputHandle: FileHandle?
+    private var errorHandle: FileHandle?
     private var stdoutTask: Task<Void, Never>?
     private var stderrTask: Task<Void, Never>?
     private var pendingCommands: [String: PendingCommand] = [:]
@@ -345,6 +400,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             userQuestion: request.question,
             workflow: request.resolvedWorkflow,
             allowsLearningOnlyAnswer: StudyAgentQuestionScope.allowsLearningOnlyAnswer(request.question),
+            allowsSourceFreeAnswer: StudyAgentQuestionScope.allowsSourceFreeAnswer(request.question),
             resolvableMemoryIDs: Set(request.learningContext.memories.compactMap { memory in
                 guard memory.status == .active,
                       memory.kind == .goal || memory.kind == .confusion || memory.kind == .nextStep else {
@@ -359,8 +415,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             allowedNoteSourceLabels: currentSourceLabels(in: context),
             progress: progress
         )
-        refreshRunWatchdog()
-
         do {
             _ = try await sendCommand(
                 type: "prompt",
@@ -384,21 +438,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private func cancelRun(id runID: UUID) async {
         guard activeRun?.id == runID else { return }
-        guard process != nil else {
-            finishRun(id: runID, with: .failure(PiAgentRuntimeError.cancelled))
-            return
-        }
-
-        do {
-            _ = try await sendCommand(type: "abort", timeoutSeconds: 2)
-        } catch {
-            shutdownProcess(reason: PiAgentRuntimeError.cancelled)
-            return
-        }
-
-        if activeRun?.id == runID {
-            finishRun(id: runID, with: .failure(PiAgentRuntimeError.cancelled))
-        }
+        finishRun(id: runID, with: .failure(PiAgentRuntimeError.cancelled))
+        shutdownProcess(reason: PiAgentRuntimeError.cancelled)
     }
 
     public func reset() async {
@@ -450,6 +491,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         startupFailure = nil
         self.process = process
         inputHandle = inputPipe.fileHandleForWriting
+        outputHandle = outputPipe.fileHandleForReading
+        errorHandle = errorPipe.fileHandleForReading
 
         do {
             try process.run()
@@ -457,6 +500,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         } catch {
             self.process = nil
             inputHandle = nil
+            outputHandle = nil
+            errorHandle = nil
             throw PiAgentRuntimeError.launchFailed(error.localizedDescription)
         }
 
@@ -518,6 +563,11 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             skillName = "weibei-note-making"
         case .recallPractice:
             skillName = "weibei-recall-practice"
+        case .interactiveStudy:
+            skillName = "weibei-interactive-study"
+        }
+        if let presentationHint = request.richPresentationDecision.promptHint {
+            return "/skill:\(skillName) \(presentationHint)\n\n用户问题：\(request.question)"
         }
         return "/skill:\(skillName) \(request.question)"
     }
@@ -636,9 +686,13 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     private func answerValidationError(text: String, run: ActiveRun) -> String? {
         let contentLabels = citedContentLabels(in: text)
         let learningLabels = citedLearningLabels(in: text)
-        guard !contentLabels.isEmpty
-                || (run.allowsLearningOnlyAnswer && !learningLabels.isEmpty) else {
-            return "PI returned a content answer without a source read in the current turn"
+        if let validationError = PiAnswerEvidenceRequirement.validationError(
+            contentLabels: contentLabels,
+            learningLabels: learningLabels,
+            allowsLearningOnlyAnswer: run.allowsLearningOnlyAnswer,
+            allowsSourceFreeAnswer: run.allowsSourceFreeAnswer
+        ) {
+            return validationError
         }
         guard contentLabels.isSubset(of: run.allowedSourceLabels) else {
             return "PI cited a source that was not read in the current turn"
@@ -893,17 +947,21 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     }
 
     private func readStdout(_ handle: FileHandle) -> Task<Void, Never> {
-        Task.detached(priority: .userInitiated) { [weak self] in
+        let stream = readableDataStream(for: handle)
+        return Task.detached(priority: .userInitiated) { [weak self] in
             await self?.trace("stdout reader started")
             var framer = PiJSONLFramer()
             do {
-                while !Task.isCancelled {
-                    let data = handle.availableData
-                    if data.isEmpty { break }
+                for await data in stream {
                     let lines = try framer.append(data)
                     for line in lines {
+                        let message = try PiRPCMessageDecoder.decode(line)
+                        if case .event = message {
+                            continue
+                        }
                         await self?.trace("stdout line bytes=\(line.count)")
-                        await self?.receiveStdoutLine(line)
+                        await self?.receiveStdoutMessage(message)
+                        await Task.yield()
                     }
                 }
                 _ = try framer.finish()
@@ -914,24 +972,30 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     }
 
     private func readStderr(_ handle: FileHandle) -> Task<Void, Never> {
-        Task.detached(priority: .utility) { [weak self] in
-            while !Task.isCancelled {
-                let data = handle.availableData
-                if data.isEmpty { break }
+        let stream = readableDataStream(for: handle)
+        return Task.detached(priority: .utility) { [weak self] in
+            for await data in stream {
                 await self?.appendStderr(data)
+                await Task.yield()
             }
         }
     }
 
-    private func receiveStdoutLine(_ line: Data) async {
-        let message: PiRPCIncomingMessage
-        do {
-            message = try PiRPCMessageDecoder.decode(line)
-        } catch {
-            transportFailed(error)
-            return
+    private func readableDataStream(for handle: FileHandle) -> AsyncStream<Data> {
+        AsyncStream { continuation in
+            handle.readabilityHandler = { readableHandle in
+                let data = readableHandle.availableData
+                guard !data.isEmpty else {
+                    readableHandle.readabilityHandler = nil
+                    continuation.finish()
+                    return
+                }
+                continuation.yield(data)
+            }
         }
+    }
 
+    private func receiveStdoutMessage(_ message: PiRPCIncomingMessage) async {
         switch message {
         case let .response(response):
             guard let id = response.id, let pending = pendingCommands.removeValue(forKey: id) else {
@@ -961,14 +1025,12 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
             run.streamedText += delta
             activeRun = run
-            refreshRunWatchdog()
             await run.progress?(.text(run.streamedText))
 
         case let .assistantError(message):
             guard var run = activeRun else { return }
             run.lastError = sanitizedDiagnostic(message)
             activeRun = run
-            refreshRunWatchdog()
 
         case let .toolStarted(_, name):
             guard let run = activeRun else { return }
@@ -987,7 +1049,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 )
                 return
             }
-            refreshRunWatchdog()
             await run.progress?(.usingTool(name))
 
         case let .contextRead(_, contextRevision):
@@ -1001,7 +1062,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
             run.didReadContext = true
             activeRun = run
-            refreshRunWatchdog()
 
         case let .courseSourcesRead(_, contextRevision, labels, jumpEvidence):
             guard var run = activeRun, contextRevision == run.contextRevision else { return }
@@ -1009,7 +1069,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             run.allowedNoteSourceLabels.formUnion(labels)
             registerJumpEvidence(jumpEvidence, in: &run)
             activeRun = run
-            refreshRunWatchdog()
 
         case let .learningMemoryRead(_, contextRevision, memoryRevision, labels, jumpEvidence):
             guard var run = activeRun,
@@ -1022,7 +1081,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 run.allowedSourceLabels.insert(lastLocationSourceLabel)
             }
             activeRun = run
-            refreshRunWatchdog()
 
         case let .noteProposal(_, proposal):
             guard var run = activeRun else { return }
@@ -1052,7 +1110,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
             run.proposal = proposal
             activeRun = run
-            refreshRunWatchdog()
 
         case let .learningUpdate(_, update):
             guard var run = activeRun else { return }
@@ -1073,21 +1130,22 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
             run.learningUpdate = update
             activeRun = run
-            refreshRunWatchdog()
 
         case let .toolFailed(_, name, message):
             guard var run = activeRun else { return }
             run.lastError = "\(name): \(sanitizedDiagnostic(message))"
             activeRun = run
-            refreshRunWatchdog()
 
-        case let .agentEnded(text, stopReason):
+        case let .agentEnded(text, stopReason, modelError):
             guard let run = activeRun else { return }
             let cleanText = (text.isEmpty ? run.streamedText : text).trimmingCharacters(in: .whitespacesAndNewlines)
             if stopReason == "aborted" {
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.cancelled))
             } else if stopReason == "error" {
-                finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed(run.lastError ?? "Unknown model error")))
+                let detail = modelError.map(sanitizedDiagnostic)
+                    ?? run.lastError
+                    ?? "PI 模型请求失败，但运行时没有返回错误详情"
+                finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed(detail)))
             } else if run.answeredBeforeContext {
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed("PI answered before reading the current WeiBei context")))
             } else if !run.didReadContext {
@@ -1134,14 +1192,12 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
 
         case .event:
-            refreshRunWatchdog()
+            break
         }
     }
 
     private func finishRun(id: UUID, with result: Result<StudyAgentReply, Error>) {
         guard var run = activeRun, run.id == id, run.completed == nil else { return }
-        run.watchdogTask?.cancel()
-        run.watchdogTask = nil
         clearContextSnapshot()
         if let continuation = run.continuation {
             activeRun = nil
@@ -1155,7 +1211,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private func discardRun(id: UUID) {
         guard let run = activeRun, run.id == id else { return }
-        run.watchdogTask?.cancel()
         activeRun = nil
         clearContextSnapshot()
         scheduleIdleShutdown()
@@ -1178,31 +1233,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         }
         guard missing.isEmpty else {
             throw PiAgentRuntimeError.resourcesMissing("Missing PI skills: \(missing.joined(separator: ", "))")
-        }
-    }
-
-    private func refreshRunWatchdog() {
-        guard var run = activeRun else { return }
-        run.watchdogTask?.cancel()
-        let runID = run.id
-        run.watchdogTask = Task { [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: 300 * 1_000_000_000)
-            } catch {
-                return
-            }
-            await self?.runTimedOut(id: runID)
-        }
-        activeRun = run
-    }
-
-    private func runTimedOut(id: UUID) async {
-        guard activeRun?.id == id else { return }
-        finishRun(id: id, with: .failure(PiAgentRuntimeError.agentFailed("PI produced no events for five minutes")))
-        do {
-            _ = try await sendCommand(type: "abort", timeoutSeconds: 2)
-        } catch {
-            shutdownProcess(reason: error)
         }
     }
 
@@ -1256,11 +1286,17 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         stderrTask?.cancel()
         stdoutTask = nil
         stderrTask = nil
+        outputHandle?.readabilityHandler = nil
+        errorHandle?.readabilityHandler = nil
 
         let runningProcess = process
         process = nil
         try? inputHandle?.close()
+        try? outputHandle?.close()
+        try? errorHandle?.close()
         inputHandle = nil
+        outputHandle = nil
+        errorHandle = nil
         if let processToStop = runningProcess, processToStop.isRunning {
             processToStop.terminate()
             Task.detached(priority: .utility) {

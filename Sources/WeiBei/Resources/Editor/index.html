@@ -10,6 +10,7 @@
       color-scheme: light;
       --paper: #f1e4cf;
       --paper-raised: #f7ecd9;
+      --host-paper: #f6eedd;
       --ink: #1d1814;
       --muted: rgba(58, 46, 38, .72);
       --faint: rgba(58, 46, 38, .50);
@@ -30,6 +31,7 @@
       color-scheme: dark;
       --paper: #0f0f0f;
       --paper-raised: #151515;
+      --host-paper: #121212;
       --ink: #d7cbb0;
       --muted: rgba(155, 145, 120, .88);
       --faint: rgba(111, 102, 85, .86);
@@ -68,6 +70,11 @@
       background: transparent;
     }
 
+    :root[data-weibei-compact-preview="true"],
+    :root[data-weibei-compact-preview="true"] body {
+      background: var(--host-paper);
+    }
+
     #editor {
       box-sizing: border-box;
       height: 100vh;
@@ -83,7 +90,7 @@
       min-height: 0;
       overflow: hidden;
       padding: 0;
-      background: transparent;
+      background: var(--host-paper);
     }
 
     :root[data-weibei-theme="inkstone"] #editor {
@@ -91,7 +98,7 @@
     }
 
     :root[data-weibei-compact-preview="true"][data-weibei-theme="inkstone"] #editor {
-      background: transparent;
+      background: var(--host-paper);
     }
 
     #editor::-webkit-scrollbar {
@@ -105,7 +112,7 @@
 
     #editor::-webkit-scrollbar-thumb {
       border: 2px solid rgba(239, 225, 199, .72);
-      border-radius: 999px;
+      border-radius: 6px;
       background: transparent;
       transition: background-color .18s ease-out;
     }
@@ -163,7 +170,7 @@
     .ProseMirror div[data-type="math_block"]::-webkit-scrollbar-thumb,
     .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-thumb {
       border: 2px solid rgba(239, 225, 199, .72);
-      border-radius: 999px;
+      border-radius: 6px;
       background: transparent;
       transition: background-color .18s ease-out;
     }
@@ -202,6 +209,7 @@
       max-width: none;
       min-height: 0;
       margin: 0;
+      background: var(--host-paper);
     }
 
     #frontmatter-panel {
@@ -258,6 +266,7 @@
       min-height: 0;
       font-size: 14px;
       line-height: 1.68;
+      background: var(--host-paper);
     }
 
     .ProseMirror::selection,
@@ -687,6 +696,18 @@
       cursor: pointer;
     }
 
+    button.weibei-source-reference {
+      appearance: none;
+      border: 0;
+      border-bottom: 1px dotted rgba(49, 86, 107, .38);
+      border-radius: 0;
+      padding: 0;
+      background: transparent;
+      color: var(--blue-ink);
+      font: inherit;
+      text-align: left;
+    }
+
     :root[data-weibei-theme="inkstone"] .weibei-source-reference,
     :root[data-weibei-theme="inkstone"] .weibei-inline-footnote {
       background: rgba(200, 185, 138, .06);
@@ -986,6 +1007,2729 @@
       white-space: pre-wrap;
     }
 
+    body[data-editable="false"] .ProseMirror pre.weibei-interactive-source,
+    :root[data-weibei-compact-preview="true"] .ProseMirror pre.weibei-interactive-source {
+      display: none;
+    }
+
+    .weibei-interactive {
+      margin: .82em 0;
+      padding: 10px 11px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(247, 236, 217, .46);
+      color: var(--ink);
+      font: 13px/1.58 -apple-system, BlinkMacSystemFont, "Songti SC", serif;
+      box-sizing: border-box;
+      max-width: 100%;
+      overflow: hidden;
+    }
+
+    :root[data-weibei-theme="inkstone"] .weibei-interactive {
+      background: rgba(255, 255, 255, .035);
+      border-color: var(--line);
+      color: var(--ink);
+    }
+
+    .weibei-interactive-label {
+      display: inline-block;
+      margin-right: 7px;
+      color: var(--cinnabar);
+      font-size: 11px;
+      font-weight: 650;
+    }
+
+    .weibei-interactive-prompt,
+    .weibei-interactive-title {
+      color: var(--ink);
+      font-weight: 650;
+    }
+
+    .weibei-interactive-options {
+      display: grid;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .weibei-interactive-option,
+    .weibei-interactive-reveal-toggle {
+      appearance: none;
+      width: 100%;
+      border: 1px solid rgba(92, 70, 46, .22);
+      border-radius: 6px;
+      background: rgba(251, 245, 234, .44);
+      color: var(--ink);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .weibei-interactive-option {
+      padding: 6px 8px;
+    }
+
+    .weibei-interactive-reveal-toggle {
+      padding: 0;
+      border: 0;
+      background: transparent;
+    }
+
+    :root[data-weibei-theme="inkstone"] .weibei-interactive-option {
+      background: rgba(255, 255, 255, .035);
+      border-color: rgba(200, 185, 138, .18);
+      color: var(--ink);
+    }
+
+    .weibei-interactive-option:hover,
+    .weibei-interactive-option:focus-visible,
+    .weibei-interactive-reveal-toggle:focus-visible,
+    .weibei-interactive-tab:focus-visible,
+    .weibei-parameter-slider:focus-visible,
+    .weibei-palette-swatch:focus-visible {
+      outline: 1px solid rgba(145, 38, 28, .24);
+      outline-offset: 2px;
+    }
+
+    .weibei-interactive-option.is-correct {
+      border-color: rgba(57, 95, 72, .50);
+      background: rgba(57, 95, 72, .10);
+    }
+
+    .weibei-interactive-option.is-wrong {
+      border-color: var(--cinnabar-line);
+      background: var(--cinnabar-soft);
+    }
+
+    .weibei-interactive-explanation,
+    .weibei-interactive-reveal-content {
+      margin-top: 8px;
+      color: var(--muted);
+    }
+
+    .weibei-interactive-source-row {
+      margin-top: 8px;
+      color: var(--faint);
+      font-size: 12px;
+    }
+
+    .weibei-interactive-chart-svg {
+      display: block;
+      width: 100%;
+      height: auto;
+      max-width: 390px;
+      margin-top: 8px;
+      overflow: visible;
+    }
+
+    :root[data-weibei-compact-preview="true"] .weibei-interactive-chart-svg {
+      max-width: 390px;
+    }
+
+    .weibei-chart-grid,
+    .weibei-chart-axis {
+      vector-effect: non-scaling-stroke;
+    }
+
+    .weibei-chart-grid {
+      stroke: rgba(92, 70, 46, .16);
+      stroke-width: .7;
+    }
+
+    .weibei-chart-axis {
+      stroke: rgba(92, 70, 46, .38);
+      stroke-width: .9;
+    }
+
+    :root[data-weibei-theme="inkstone"] .weibei-chart-grid {
+      stroke: rgba(215, 203, 176, .13);
+    }
+
+    :root[data-weibei-theme="inkstone"] .weibei-chart-axis {
+      stroke: rgba(215, 203, 176, .30);
+    }
+
+    .weibei-chart-series,
+    .weibei-chart-line,
+    .weibei-function-curve,
+    .weibei-parameter-curve {
+      vector-effect: non-scaling-stroke;
+      stroke-width: 1.8;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .weibei-chart-area {
+      fill-opacity: .16;
+      stroke-opacity: .82;
+    }
+
+    .weibei-chart-bar {
+      opacity: .78;
+    }
+
+    .weibei-chart-bar,
+    .weibei-chart-point {
+      cursor: crosshair;
+      transition: opacity .14s ease-out, stroke-width .14s ease-out;
+    }
+
+    .weibei-chart-bar:focus-visible,
+    .weibei-chart-point:focus-visible {
+      outline: none;
+      opacity: 1;
+      stroke: var(--ink);
+      stroke-width: 1.5;
+    }
+
+    .weibei-chart-point {
+      stroke: rgba(247, 236, 217, .72);
+      stroke-width: .8;
+      vector-effect: non-scaling-stroke;
+    }
+
+    :root[data-weibei-theme="inkstone"] .weibei-chart-point {
+      stroke: rgba(15, 15, 15, .88);
+    }
+
+    .weibei-interactive-axis-label {
+      fill: var(--muted);
+      font: 10px/1 -apple-system, BlinkMacSystemFont, "Songti SC", serif;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .weibei-chart-tick-label {
+      fill: var(--faint);
+      font: 8.5px/1 -apple-system, BlinkMacSystemFont, "Songti SC", serif;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .weibei-chart-legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px 10px;
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .weibei-chart-legend-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    .weibei-chart-legend-swatch {
+      width: 9px;
+      height: 3px;
+      border-radius: 1px;
+      flex: 0 0 auto;
+    }
+
+    .weibei-function-formula {
+      margin-top: 5px;
+      color: var(--muted);
+      font: 12px/1.45 "SF Mono", Menlo, ui-monospace, monospace;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .weibei-parameter-controls {
+      display: grid;
+      gap: 7px;
+      margin-top: 8px;
+    }
+
+    .weibei-parameter-control {
+      display: grid;
+      grid-template-columns: minmax(58px, 1fr) minmax(108px, 2fr) minmax(32px, auto);
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .weibei-parameter-label,
+    .weibei-parameter-value {
+      min-width: 0;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .weibei-parameter-value {
+      text-align: right;
+      color: var(--ink);
+      font-family: "SF Mono", Menlo, ui-monospace, monospace;
+    }
+
+    .weibei-parameter-slider {
+      width: 100%;
+      max-width: 100%;
+      min-width: 92px;
+      margin: 0;
+      accent-color: var(--cinnabar);
+    }
+
+    .weibei-interactive-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .weibei-interactive-tab {
+      appearance: none;
+      min-height: 28px;
+      padding: 4px 8px;
+      border: 1px solid rgba(92, 70, 46, .22);
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .weibei-interactive-tab[aria-selected="true"] {
+      border-color: var(--cinnabar-line);
+      color: var(--ink);
+      background: var(--cinnabar-soft);
+    }
+
+    .weibei-text-study-copy,
+    .weibei-text-study-note,
+    .weibei-design-preview,
+    .weibei-palette-preview,
+    .weibei-palette-detail {
+      box-sizing: border-box;
+      max-width: 100%;
+      overflow-wrap: anywhere;
+    }
+
+    .weibei-text-study-copy {
+      margin-top: 8px;
+      color: var(--ink);
+    }
+
+    .weibei-text-study-note {
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .weibei-text-highlight {
+      padding: 0 2px;
+      border-radius: 3px;
+      background: rgba(145, 38, 28, .13);
+      color: inherit;
+    }
+
+    .weibei-design-preview {
+      position: relative;
+      margin-top: 8px;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: rgba(255, 251, 241, .28);
+    }
+
+    .weibei-design-preview::before {
+      content: "";
+      display: block;
+      width: 26px;
+      height: 2px;
+      margin-bottom: 7px;
+      border-radius: 2px;
+      background: var(--weibei-design-tone, var(--cinnabar));
+    }
+
+    :root[data-weibei-theme="inkstone"] .weibei-design-preview {
+      background: rgba(255, 255, 255, .025);
+    }
+
+    .weibei-design-preview[data-treatment="annotated"] {
+      background: rgba(57, 95, 72, .08);
+    }
+
+    .weibei-design-preview[data-treatment="compact"] {
+      padding: 7px 8px;
+      background: rgba(29, 24, 20, .035);
+    }
+
+    .weibei-design-preview[data-treatment="compact"]::before {
+      width: 18px;
+    }
+
+    .weibei-design-preview[data-treatment="outline"] {
+      background: transparent;
+      border-style: dashed;
+    }
+
+    .weibei-design-preview-title {
+      color: var(--ink);
+      font-weight: 650;
+    }
+
+    .weibei-design-preview-body {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .weibei-palette-swatches {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(70px, 1fr));
+      gap: 7px;
+      margin-top: 8px;
+    }
+
+    .weibei-palette-swatch {
+      appearance: none;
+      min-height: 34px;
+      padding: 5px 6px;
+      border: 1px solid rgba(92, 70, 46, .24);
+      border-radius: 6px;
+      font: 11px/1.2 -apple-system, BlinkMacSystemFont, "Songti SC", serif;
+      cursor: pointer;
+    }
+
+    .weibei-palette-swatch[aria-pressed="true"] {
+      box-shadow: inset 0 0 0 2px rgba(255, 251, 241, .52);
+    }
+
+    .weibei-palette-detail {
+      margin-top: 6px;
+      color: var(--muted);
+      font: 12px/1.45 "SF Mono", Menlo, ui-monospace, monospace;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .weibei-palette-preview {
+      margin-top: 8px;
+      padding: 8px 9px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--ink);
+      background: rgba(255, 251, 241, .25);
+    }
+
+    :root[data-weibei-theme="inkstone"] .weibei-palette-preview {
+      background: rgba(255, 255, 255, .025);
+    }
+
+    .weibei-study-board-header,
+    .weibei-study-board-metric,
+    .weibei-study-board-item,
+    .weibei-relationship-node,
+    .weibei-relationship-edge,
+    .weibei-timeline-event,
+    .weibei-comparison-table {
+      box-sizing: border-box;
+      max-width: 100%;
+      overflow-wrap: anywhere;
+    }
+
+    .weibei-interactive-study-board {
+      padding: 9px;
+    }
+
+    .weibei-interactive-study-board[data-treatment="outline"] {
+      background: transparent;
+      border-style: dashed;
+    }
+
+    .weibei-interactive-study-board[data-treatment="compact"] {
+      padding: 7px;
+      background: rgba(29, 24, 20, .035);
+    }
+
+    .weibei-interactive-study-board[data-treatment="annotated"] .weibei-study-board-item {
+      border-left: 2px solid var(--weibei-interactive-tone, var(--cinnabar));
+    }
+
+    .weibei-study-board-summary {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .weibei-study-board-metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(72px, 1fr));
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .weibei-study-board-metric {
+      padding: 6px 7px;
+      border-top: 2px solid var(--weibei-interactive-tone, var(--cinnabar));
+      background: rgba(255, 251, 241, .20);
+    }
+
+    .weibei-study-board-metric-label,
+    .weibei-study-board-metric-note,
+    .weibei-study-board-kicker,
+    .weibei-study-board-status {
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .weibei-study-board-metric-value {
+      color: var(--ink);
+      font: 650 15px/1.2 "SF Mono", Menlo, ui-monospace, monospace;
+    }
+
+    .weibei-study-board-items {
+      display: grid;
+      gap: 7px;
+      margin-top: 8px;
+    }
+
+    .weibei-interactive-study-board[data-layout="grid"] .weibei-study-board-items {
+      grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+    }
+
+    .weibei-interactive-study-board[data-layout="lanes"] .weibei-study-board-items {
+      grid-template-columns: repeat(auto-fit, minmax(154px, 1fr));
+      align-items: stretch;
+    }
+
+    .weibei-interactive-study-board[data-layout="sequence"] .weibei-study-board-items {
+      counter-reset: study-step;
+    }
+
+    .weibei-study-board-item {
+      appearance: none;
+      display: block;
+      width: 100%;
+      min-width: 0;
+      padding: 7px 8px;
+      border: 1px solid rgba(92, 70, 46, .20);
+      border-radius: 5px;
+      background: rgba(255, 251, 241, .24);
+      color: var(--ink);
+      font: inherit;
+      text-align: left;
+    }
+
+    .weibei-interactive-study-board[data-layout="sequence"] .weibei-study-board-item {
+      display: grid;
+      grid-template-columns: 24px minmax(0, 1fr);
+      column-gap: 7px;
+      align-items: start;
+      border-width: 0 0 1px;
+      border-radius: 0;
+      background: transparent;
+    }
+
+    .weibei-interactive-study-board[data-layout="sequence"] .weibei-study-board-item::before {
+      content: attr(data-index);
+      display: grid;
+      place-items: center;
+      width: 20px;
+      height: 20px;
+      border: 1px solid var(--line);
+      border-radius: 3px;
+      color: var(--weibei-interactive-tone, var(--cinnabar));
+      font: 11px/1 "SF Mono", Menlo, ui-monospace, monospace;
+    }
+
+    .weibei-study-board-item.weibei-source-reference,
+    .weibei-relationship-node.weibei-source-reference,
+    .weibei-timeline-event.weibei-source-reference {
+      border-bottom: 1px solid rgba(92, 70, 46, .20);
+      cursor: pointer;
+    }
+
+    .weibei-study-board-item-meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+      margin-bottom: 3px;
+    }
+
+    .weibei-study-board-item-title,
+    .weibei-relationship-node-label,
+    .weibei-timeline-title {
+      color: var(--ink);
+      font-weight: 650;
+    }
+
+    .weibei-study-board-item-body,
+    .weibei-relationship-node-detail,
+    .weibei-timeline-detail {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .weibei-interactive-relationship-map {
+      background: transparent;
+    }
+
+    .ProseMirror .weibei-interactive-relationship-map,
+    .ProseMirror .weibei-interactive-timeline,
+    .ProseMirror .weibei-interactive-comparison-matrix {
+      padding: 9px 0;
+      border-width: 1px 0;
+      border-radius: 0;
+      background: transparent;
+    }
+
+    .weibei-relationship-nodes {
+      display: grid;
+      gap: 7px;
+      margin-top: 8px;
+    }
+
+    .weibei-interactive-relationship-map[data-layout="radial"] .weibei-relationship-nodes {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .weibei-interactive-relationship-map[data-layout="radial"] .weibei-relationship-node[data-role="center"] {
+      grid-column: 1 / -1;
+      border-color: var(--cinnabar-line);
+      background: var(--cinnabar-soft);
+    }
+
+    .weibei-interactive-relationship-map[data-layout="flow"] .weibei-relationship-nodes {
+      position: relative;
+      grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+      gap: 20px;
+    }
+
+    .weibei-interactive-relationship-map[data-layout="flow"] .weibei-relationship-nodes::before {
+      content: "";
+      position: absolute;
+      z-index: 0;
+      top: 50%;
+      left: 8%;
+      right: 8%;
+      border-top: 1px solid var(--cinnabar-line);
+    }
+
+    .weibei-interactive-relationship-map[data-layout="flow"] .weibei-relationship-node {
+      position: relative;
+      z-index: 1;
+    }
+
+    .weibei-relationship-node {
+      appearance: none;
+      display: block;
+      width: 100%;
+      min-width: 0;
+      padding: 7px 8px;
+      border: 1px solid rgba(92, 70, 46, .20);
+      border-top: 2px solid var(--weibei-interactive-tone, var(--cinnabar));
+      border-radius: 5px;
+      background: rgba(255, 251, 241, .22);
+      color: var(--ink);
+      font: inherit;
+      text-align: left;
+    }
+
+    .weibei-relationship-edges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px 12px;
+      margin-top: 8px;
+    }
+
+    .weibei-relationship-edge {
+      display: inline-grid;
+      grid-template-columns: auto auto auto auto;
+      gap: 5px;
+      align-items: center;
+      padding: 3px 0;
+      border-bottom: 1px solid rgba(92, 70, 46, .14);
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .weibei-relationship-edge-label {
+      color: var(--faint);
+    }
+
+    .weibei-relationship-edge-label::before {
+      content: "· ";
+    }
+
+    .weibei-relationship-edge-arrow {
+      color: var(--cinnabar);
+      font-family: "SF Mono", Menlo, ui-monospace, monospace;
+    }
+
+    .weibei-timeline-events {
+      display: grid;
+      grid-auto-flow: column;
+      grid-auto-columns: minmax(132px, 1fr);
+      gap: 8px;
+      margin-top: 8px;
+      overflow-x: auto;
+      padding-bottom: 2px;
+      scrollbar-width: thin;
+    }
+
+    .weibei-timeline-event {
+      appearance: none;
+      position: relative;
+      display: block;
+      min-width: 0;
+      padding: 5px 8px 7px;
+      border-top: 2px solid var(--weibei-interactive-tone, var(--cinnabar));
+      border-right: 1px solid rgba(92, 70, 46, .18);
+      background: rgba(255, 251, 241, .18);
+      color: var(--ink);
+      font: inherit;
+      text-align: left;
+    }
+
+    .weibei-timeline-label {
+      color: var(--weibei-interactive-tone, var(--cinnabar));
+      font: 11px/1.35 "SF Mono", Menlo, ui-monospace, monospace;
+    }
+
+    .weibei-comparison-table {
+      width: 100%;
+      margin-top: 8px;
+      border-collapse: collapse;
+      table-layout: fixed;
+      font-size: 12px;
+    }
+
+    .weibei-comparison-table th,
+    .weibei-comparison-table td {
+      padding: 6px 7px;
+      border: 1px solid rgba(92, 70, 46, .18);
+      vertical-align: top;
+    }
+
+    .weibei-comparison-corner {
+      width: 24%;
+    }
+
+    .weibei-comparison-row-label {
+      color: var(--ink);
+      font-weight: 650;
+      text-align: left;
+    }
+
+    .weibei-comparison-column-button {
+      appearance: none;
+      width: 100%;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+      font-weight: 650;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .weibei-comparison-column-button[aria-pressed="true"],
+    .weibei-comparison-cell.is-focused-column {
+      color: var(--ink);
+      background: var(--cinnabar-soft);
+    }
+
+    .weibei-comparison-cell.is-emphasized {
+      box-shadow: inset 2px 0 0 var(--cinnabar);
+    }
+
+    .weibei-comparison-column-button:focus-visible,
+    .weibei-study-board-item:focus-visible,
+    .weibei-relationship-node:focus-visible,
+    .weibei-timeline-event:focus-visible {
+      outline: 1px solid rgba(145, 38, 28, .24);
+      outline-offset: 2px;
+    }
+
+    :root[data-weibei-theme="inkstone"] .weibei-study-board-metric,
+    :root[data-weibei-theme="inkstone"] .weibei-study-board-item,
+    :root[data-weibei-theme="inkstone"] .weibei-relationship-node,
+    :root[data-weibei-theme="inkstone"] .weibei-timeline-event {
+      background: rgba(255, 255, 255, .025);
+      border-color: rgba(200, 185, 138, .16);
+    }
+
+    @media (max-width: 420px) {
+      .weibei-interactive-study-board[data-layout="grid"] .weibei-study-board-items,
+      .weibei-interactive-study-board[data-layout="lanes"] .weibei-study-board-items,
+      .weibei-interactive-relationship-map[data-layout="radial"] .weibei-relationship-nodes,
+      .weibei-interactive-relationship-map[data-layout="flow"] .weibei-relationship-nodes {
+        grid-template-columns: 1fr;
+      }
+
+      .weibei-interactive-relationship-map[data-layout="flow"] .weibei-relationship-nodes::before {
+        top: 8%;
+        bottom: 8%;
+        left: 10px;
+        right: auto;
+        border-top: 0;
+        border-left: 1px solid var(--cinnabar-line);
+      }
+
+      .weibei-timeline-events {
+        grid-auto-flow: row;
+        grid-auto-columns: auto;
+        overflow-x: visible;
+      }
+
+      .weibei-comparison-table {
+        font-size: 11px;
+      }
+
+      .weibei-comparison-table th,
+      .weibei-comparison-table td {
+        padding: 5px;
+      }
+    }
+
+    .weibei-interactive {
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      overflow: visible;
+      isolation: isolate;
+    }
+
+    :root[data-weibei-theme="inkstone"] .weibei-interactive {
+      border-color: transparent;
+      background: transparent;
+    }
+
+    .weibei-interactive * {
+      box-sizing: border-box;
+      min-width: 0;
+    }
+
+    .weibei-interactive-title {
+      letter-spacing: .01em;
+    }
+
+    .weibei-interactive-label {
+      padding: 1px 4px;
+      border: 1px solid var(--cinnabar-line);
+      border-radius: 2px;
+      background: var(--cinnabar-soft);
+      line-height: 1.35;
+    }
+
+    .weibei-interactive-source-row {
+      clear: both;
+      border-top: 1px dotted rgba(92, 70, 46, .20);
+      padding-top: 5px;
+    }
+
+    .weibei-interactive-option,
+    .weibei-interactive-tab,
+    .weibei-interactive-reveal-toggle,
+    .weibei-study-board-item,
+    .weibei-relationship-node,
+    .weibei-timeline-event,
+    .weibei-comparison-column-button,
+    .weibei-palette-swatch,
+    .weibei-derivation-step,
+    .weibei-flashcard,
+    .weibei-sequence-item,
+    .weibei-scenario-option,
+    .weibei-evidence-filter,
+    .weibei-evidence-item,
+    .weibei-decision-choice {
+      transition: background-color .16s ease-out, border-color .16s ease-out, color .16s ease-out, opacity .16s ease-out, transform .16s ease-out;
+    }
+
+    .weibei-interactive-option:active,
+    .weibei-interactive-tab:active,
+    .weibei-interactive-reveal-toggle:active,
+    .weibei-study-board-item:active,
+    .weibei-relationship-node:active,
+    .weibei-timeline-event:active,
+    .weibei-comparison-column-button:active,
+    .weibei-palette-swatch:active,
+    .weibei-derivation-step:active,
+    .weibei-sequence-item:active,
+    .weibei-scenario-option:active,
+    .weibei-evidence-filter:active,
+    .weibei-evidence-item:active,
+    .weibei-decision-choice:active {
+      transform: translateY(1px);
+    }
+
+    .weibei-interactive :where(.is-active, [aria-selected="true"], [aria-pressed="true"]) {
+      border-color: var(--cinnabar-line);
+      color: var(--ink);
+      background: var(--cinnabar-soft);
+    }
+
+    .weibei-interactive .is-muted,
+    .weibei-interactive .is-hidden-series {
+      opacity: .46;
+      filter: grayscale(.35);
+    }
+
+    .weibei-interactive .is-complete {
+      border-color: rgba(57, 95, 72, .46);
+      background: rgba(57, 95, 72, .09);
+      box-shadow: inset 3px 0 0 rgba(57, 95, 72, .62);
+    }
+
+    .weibei-interactive .is-correct {
+      border-color: rgba(57, 95, 72, .58);
+      background: rgba(57, 95, 72, .12);
+      box-shadow: inset 0 -2px 0 rgba(57, 95, 72, .62);
+    }
+
+    .weibei-interactive .is-wrong {
+      border-color: var(--cinnabar-line);
+      background: var(--cinnabar-soft);
+      box-shadow: inset 0 -2px 0 var(--cinnabar);
+    }
+
+    .weibei-interactive-action {
+      appearance: none;
+      min-height: 27px;
+      padding: 4px 8px;
+      border: 1px solid rgba(92, 70, 46, .22);
+      border-radius: 3px;
+      background: transparent;
+      color: var(--muted);
+      font: 600 11px/1.3 -apple-system, BlinkMacSystemFont, "Songti SC", serif;
+      cursor: pointer;
+    }
+
+    .weibei-interactive-action:hover,
+    .weibei-interactive-action:focus-visible {
+      border-color: var(--cinnabar-line);
+      color: var(--ink);
+      background: var(--cinnabar-soft);
+      outline: none;
+    }
+
+    .weibei-interactive-focus-source {
+      min-height: 18px;
+      margin-top: 6px;
+      color: var(--faint);
+      font-size: 11px;
+    }
+
+    .weibei-interactive-inline-source {
+      max-width: 100%;
+      overflow: hidden;
+      color: var(--blue-ink);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .weibei-chart-inspector {
+      grid-column: 1;
+      min-height: 23px;
+      padding: 4px 0 3px 8px;
+      border-left: 2px solid var(--cinnabar-line);
+      color: var(--muted);
+      font: 11px/1.45 "SF Mono", Menlo, ui-monospace, monospace;
+    }
+
+    .weibei-chart-legend-item {
+      appearance: none;
+      padding: 2px 0;
+      border: 0;
+      border-bottom: 1px dotted transparent;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .weibei-chart-legend-item[aria-pressed="false"] {
+      border-bottom-color: var(--line);
+      opacity: .45;
+    }
+
+    .weibei-timeline-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .weibei-interactive-quiz,
+    .weibei-interactive-reveal {
+      padding: 9px 0 7px;
+      border-width: 1px 0;
+      border-style: solid;
+      border-color: rgba(92, 70, 46, .24);
+      background: transparent;
+    }
+
+    .weibei-interactive-quiz .weibei-interactive-prompt {
+      display: grid;
+      grid-template-columns: 20px minmax(0, 1fr);
+      gap: 7px;
+      align-items: start;
+      margin-top: 8px;
+    }
+
+    .weibei-interactive-quiz .weibei-interactive-prompt::before {
+      content: "?";
+      display: grid;
+      place-items: center;
+      height: 20px;
+      border: 1px solid var(--cinnabar-line);
+      border-radius: 3px;
+      color: var(--cinnabar);
+      font: 650 12px/1 "SF Mono", Menlo, ui-monospace, monospace;
+    }
+
+    .weibei-interactive-options {
+      gap: 0;
+      border-top: 1px solid rgba(92, 70, 46, .16);
+    }
+
+    .weibei-interactive-option {
+      min-height: 32px;
+      padding: 7px 8px;
+      border-width: 0 0 1px;
+      border-color: rgba(92, 70, 46, .16);
+      border-radius: 0;
+      background: transparent;
+    }
+
+    .weibei-interactive-option:hover,
+    .weibei-interactive-option:focus-visible {
+      background: rgba(145, 38, 28, .065);
+    }
+
+    .weibei-interactive-explanation,
+    .weibei-interactive-reveal-content {
+      padding: 7px 9px 0 28px;
+      border-top: 1px solid rgba(92, 70, 46, .16);
+      color: var(--muted);
+    }
+
+    .weibei-interactive-reveal-toggle {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 7px;
+      align-items: baseline;
+      min-height: 30px;
+      border-bottom: 1px solid rgba(92, 70, 46, .22);
+      color: var(--ink);
+    }
+
+    .weibei-interactive-reveal-toggle:hover {
+      background: rgba(145, 38, 28, .055);
+    }
+
+    .weibei-interactive-chart,
+    .weibei-interactive-function,
+    .weibei-interactive-parameter {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(118px, .42fr);
+      gap: 8px 12px;
+      align-items: start;
+      padding: 8px 0;
+      border-width: 1px 0;
+      border-style: solid;
+      border-color: rgba(92, 70, 46, .18);
+    }
+
+    .weibei-interactive-chart > .weibei-interactive-title,
+    .weibei-interactive-function > .weibei-interactive-title,
+    .weibei-interactive-parameter > .weibei-interactive-title {
+      grid-column: 1 / -1;
+    }
+
+    .weibei-interactive-chart-svg {
+      grid-column: 1;
+      max-width: none;
+      margin-top: 0;
+      padding: 3px 0 2px;
+      border-bottom: 1px solid rgba(92, 70, 46, .20);
+      border-left: 1px solid rgba(92, 70, 46, .14);
+    }
+
+    .weibei-chart-legend,
+    .weibei-function-formula,
+    .weibei-parameter-controls {
+      grid-column: 2;
+      align-self: start;
+      margin-top: 0;
+      padding-left: 8px;
+      border-left: 1px dotted rgba(92, 70, 46, .24);
+    }
+
+    .weibei-chart-legend {
+      display: grid;
+      gap: 6px;
+    }
+
+    .weibei-parameter-controls {
+      gap: 8px;
+    }
+
+    .weibei-parameter-control {
+      grid-template-columns: 1fr;
+      gap: 4px;
+      padding-bottom: 7px;
+      border-bottom: 1px solid rgba(92, 70, 46, .14);
+    }
+
+    .weibei-parameter-value {
+      text-align: left;
+    }
+
+    .weibei-parameter-slider {
+      min-width: 0;
+    }
+
+    .weibei-interactive-text-study,
+    .weibei-interactive-design,
+    .weibei-interactive-palette,
+    .weibei-interactive-annotated-passage {
+      padding: 8px 0 8px 10px;
+      border-left: 2px solid rgba(92, 70, 46, .30);
+      background: transparent;
+    }
+
+    .weibei-interactive-tabs {
+      gap: 0;
+      border-bottom: 1px solid rgba(92, 70, 46, .18);
+    }
+
+    .weibei-interactive-tab {
+      min-height: 27px;
+      padding: 4px 7px;
+      border-width: 0 0 2px;
+      border-color: transparent;
+      border-radius: 0;
+    }
+
+    .weibei-interactive-tab[aria-selected="true"] {
+      border-color: var(--cinnabar);
+      background: transparent;
+    }
+
+    .weibei-text-study-copy,
+    .weibei-annotated-copy {
+      margin-top: 9px;
+      padding-right: 8px;
+      color: var(--ink);
+      line-height: 1.72;
+    }
+
+    .weibei-text-study-note,
+    .weibei-annotation-entry {
+      margin-top: 7px;
+      padding: 6px 0 0 8px;
+      border-left: 1px solid var(--cinnabar-line);
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    button.weibei-annotation-entry {
+      appearance: none;
+      width: 100%;
+      border-width: 0 0 0 1px;
+      background: transparent;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .weibei-annotation-entry.is-active {
+      border-left-width: 2px;
+      border-left-color: var(--weibei-interactive-tone, var(--cinnabar));
+      color: var(--ink);
+    }
+
+    .weibei-text-highlight,
+    .weibei-annotated-mark {
+      border-radius: 2px;
+      background: rgba(145, 38, 28, .12);
+      box-shadow: inset 0 -1px 0 var(--cinnabar-line);
+    }
+
+    button.weibei-annotated-mark {
+      appearance: none;
+      padding: 0 2px;
+      border: 0;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .weibei-design-preview,
+    .weibei-palette-preview {
+      padding: 8px 0 8px 9px;
+      border-width: 0 0 0 2px;
+      border-radius: 0;
+      background: transparent;
+    }
+
+    .weibei-design-preview::before {
+      width: 34px;
+      height: 3px;
+      border-radius: 1px;
+    }
+
+    .weibei-palette-swatches {
+      grid-template-columns: repeat(auto-fit, minmax(58px, 1fr));
+      gap: 6px;
+    }
+
+    .weibei-palette-swatch {
+      min-height: 42px;
+      border-radius: 2px;
+      box-shadow: inset 0 0 0 1px rgba(255, 251, 241, .30);
+    }
+
+    .weibei-palette-detail {
+      padding-left: 8px;
+      border-left: 1px dotted rgba(92, 70, 46, .28);
+    }
+
+    .weibei-interactive-study-board {
+      padding: 0;
+    }
+
+    .weibei-study-board-header {
+      padding-bottom: 7px;
+      border-bottom: 1px solid rgba(92, 70, 46, .20);
+    }
+
+    .weibei-study-board-metrics {
+      grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
+      gap: 1px;
+      border: 1px solid rgba(92, 70, 46, .18);
+      border-width: 1px 0;
+    }
+
+    .weibei-study-board-metric {
+      padding: 7px 8px;
+      border: 0;
+      border-left: 2px solid var(--weibei-interactive-tone, var(--cinnabar));
+      background: transparent;
+    }
+
+    .weibei-study-board-items {
+      gap: 8px;
+    }
+
+    .weibei-interactive-study-board[data-layout="grid"] .weibei-study-board-items {
+      grid-template-columns: repeat(auto-fit, minmax(116px, 1fr));
+      padding: 8px;
+      border: 1px solid rgba(92, 70, 46, .18);
+      background: transparent;
+    }
+
+    .weibei-interactive-study-board[data-layout="grid"] .weibei-study-board-item {
+      border-style: solid;
+      box-shadow: inset 0 -1px 0 rgba(92, 70, 46, .16);
+    }
+
+    .weibei-interactive-study-board[data-layout="lanes"] .weibei-study-board-items {
+      grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+      gap: 0;
+      border-width: 1px 0;
+      border-style: solid;
+      border-color: rgba(92, 70, 46, .18);
+    }
+
+    .weibei-interactive-study-board[data-layout="lanes"] .weibei-study-board-item {
+      border-width: 0 1px 0 0;
+      border-color: rgba(92, 70, 46, .18);
+      border-radius: 0;
+    }
+
+    .weibei-interactive-study-board[data-layout="sequence"] .weibei-study-board-items {
+      position: relative;
+      gap: 0;
+      padding-left: 7px;
+      border-left: 2px solid rgba(145, 38, 28, .32);
+    }
+
+    .weibei-interactive-study-board[data-layout="sequence"] .weibei-study-board-item {
+      grid-template-columns: 26px minmax(0, 1fr);
+      padding: 8px 0 8px 8px;
+      border-width: 0 0 1px;
+    }
+
+    .weibei-interactive-study-board[data-layout="sequence"] .weibei-study-board-item::before {
+      width: 20px;
+      height: 20px;
+      border-radius: 3px;
+      background: var(--paper);
+    }
+
+    .weibei-study-board-item {
+      padding: 8px;
+      border: 1px solid rgba(92, 70, 46, .18);
+      border-radius: 2px;
+      background: rgba(255, 251, 241, .16);
+    }
+
+    .weibei-interactive-relationship-map,
+    .weibei-interactive-timeline,
+    .weibei-interactive-comparison-matrix {
+      padding: 9px 0;
+      border-width: 1px 0;
+      border-style: solid;
+      border-color: rgba(92, 70, 46, .18);
+      background: transparent;
+    }
+
+    .ProseMirror .weibei-interactive-relationship-map,
+    .ProseMirror .weibei-interactive-timeline,
+    .ProseMirror .weibei-interactive-comparison-matrix {
+      padding: 9px 0;
+      border-width: 1px 0;
+    }
+
+    .weibei-relationship-nodes {
+      position: relative;
+      gap: 10px;
+    }
+
+    .weibei-interactive-relationship-map[data-layout="radial"] .weibei-relationship-nodes {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      align-items: center;
+    }
+
+    .weibei-interactive-relationship-map[data-layout="radial"] .weibei-relationship-nodes::before {
+      content: "";
+      position: absolute;
+      z-index: -1;
+      inset: 28% 8%;
+      border-top: 1px solid rgba(29, 24, 20, .22);
+      border-bottom: 1px solid rgba(29, 24, 20, .16);
+    }
+
+    .weibei-interactive-relationship-map[data-layout="radial"] .weibei-relationship-node[data-role="center"] {
+      grid-column: 2;
+      grid-row: 1 / span 2;
+      min-height: 74px;
+      place-self: center stretch;
+      border: 2px solid var(--cinnabar);
+      background: var(--cinnabar-soft);
+      color: var(--cinnabar);
+      text-align: center;
+    }
+
+    .weibei-interactive-relationship-map[data-layout="flow"] .weibei-relationship-nodes {
+      grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+      gap: 18px;
+    }
+
+    .weibei-interactive-relationship-map[data-layout="flow"] .weibei-relationship-nodes::before {
+      left: 4%;
+      right: 4%;
+      border-top-color: rgba(29, 24, 20, .28);
+    }
+
+    .weibei-relationship-node {
+      padding: 8px;
+      border-width: 1px 0 0;
+      border-radius: 0;
+      background: rgba(255, 251, 241, .20);
+      box-shadow: inset 0 2px 0 var(--weibei-interactive-tone, var(--cinnabar));
+    }
+
+    .weibei-relationship-edges {
+      gap: 4px 10px;
+      padding-top: 7px;
+      border-top: 1px dotted rgba(92, 70, 46, .20);
+    }
+
+    .weibei-relationship-edge {
+      grid-template-columns: auto auto auto minmax(0, auto);
+      border-bottom: 1px solid rgba(92, 70, 46, .12);
+    }
+
+    .weibei-timeline-events {
+      position: relative;
+      gap: 0;
+      padding-top: 14px;
+    }
+
+    .weibei-timeline-events::before {
+      content: "";
+      position: absolute;
+      top: 7px;
+      left: 0;
+      right: 0;
+      border-top: 2px solid rgba(145, 38, 28, .32);
+    }
+
+    .weibei-timeline-event {
+      padding: 8px 9px 7px;
+      border-width: 0 1px 0 0;
+      border-color: rgba(92, 70, 46, .18);
+      background: transparent;
+    }
+
+    .weibei-timeline-event::before {
+      content: "";
+      position: absolute;
+      top: -10px;
+      left: 9px;
+      width: 7px;
+      height: 7px;
+      border: 1px solid var(--cinnabar);
+      border-radius: 2px;
+      background: var(--paper);
+    }
+
+    .weibei-comparison-table {
+      border-collapse: separate;
+      border-spacing: 0;
+      border-top: 2px solid rgba(92, 70, 46, .34);
+      border-bottom: 2px solid rgba(92, 70, 46, .28);
+      font-size: 12px;
+    }
+
+    .weibei-comparison-table th,
+    .weibei-comparison-table td {
+      border-width: 0 0 1px;
+      border-color: rgba(92, 70, 46, .20);
+      background: transparent;
+    }
+
+    .weibei-comparison-table th + th,
+    .weibei-comparison-table td + td {
+      border-left: 1px solid rgba(92, 70, 46, .14);
+    }
+
+    .weibei-comparison-row-label {
+      width: 24%;
+      color: var(--ochre);
+    }
+
+    .weibei-comparison-column-button {
+      padding-bottom: 2px;
+      border-bottom: 2px solid transparent;
+    }
+
+    .weibei-comparison-column-button[aria-pressed="true"] {
+      border-bottom-color: var(--cinnabar);
+      background: transparent;
+    }
+
+    .weibei-comparison-cell.is-focused-column {
+      background: rgba(145, 38, 28, .08);
+    }
+
+    .weibei-comparison-cell.is-emphasized {
+      box-shadow: inset 3px 0 0 var(--cinnabar);
+    }
+
+    .weibei-annotated-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(96px, .34fr);
+      gap: 10px;
+      align-items: start;
+    }
+
+    .weibei-annotation-margin {
+      display: grid;
+      gap: 8px;
+      padding-left: 8px;
+      border-left: 1px dotted rgba(92, 70, 46, .28);
+    }
+
+    .weibei-interactive-derivation {
+      padding: 8px 0;
+      border-width: 1px 0;
+      border-style: solid;
+      border-color: rgba(92, 70, 46, .18);
+    }
+
+    .weibei-derivation-progress {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(44px, 1fr));
+      gap: 4px;
+      margin-top: 8px;
+      border-bottom: 1px solid rgba(92, 70, 46, .18);
+    }
+
+    .weibei-derivation-prompt {
+      margin-top: 6px;
+      color: var(--muted);
+      line-height: 1.55;
+    }
+
+    .weibei-derivation-steps {
+      display: grid;
+      gap: 0;
+    }
+
+    .weibei-derivation-step {
+      padding: 6px 0 7px;
+      border-bottom: 1px solid transparent;
+      color: var(--muted);
+    }
+
+    .weibei-derivation-step.is-active {
+      border-bottom-color: var(--cinnabar-line);
+      background: transparent;
+    }
+
+    .weibei-derivation-label {
+      color: var(--ochre);
+      font: 600 10px/1.35 "SF Mono", Menlo, ui-monospace, monospace;
+    }
+
+    .weibei-derivation-statement {
+      margin-top: 3px;
+      color: var(--ink);
+      font-weight: 650;
+    }
+
+    .weibei-derivation-reason {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .weibei-derivation-controls,
+    .weibei-flashcard-controls,
+    .weibei-sequence-controls,
+    .weibei-scenario-controls,
+    .weibei-decision-choices {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    .weibei-interactive-flashcards {
+      padding: 8px 0;
+      border-width: 1px 0;
+      border-style: solid;
+      border-color: rgba(92, 70, 46, .18);
+    }
+
+    .weibei-flashcard-stage {
+      margin-top: 8px;
+    }
+
+    .weibei-flashcard-status {
+      margin-top: 4px;
+      color: var(--faint);
+      font: 10px/1.35 "SF Mono", Menlo, ui-monospace, monospace;
+      text-align: right;
+    }
+
+    .weibei-flashcard {
+      appearance: none;
+      width: 100%;
+      position: relative;
+      min-height: 118px;
+      border: 1px solid rgba(92, 70, 46, .24);
+      border-radius: 4px;
+      background: rgba(255, 251, 241, .22);
+      color: var(--ink);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      overflow: hidden;
+    }
+
+    .weibei-flashcard-front,
+    .weibei-flashcard-back {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 12px;
+      transition: opacity .18s ease-out, transform .18s ease-out;
+    }
+
+    .weibei-flashcard-front {
+      visibility: visible;
+      opacity: 1;
+      transform: translateX(0);
+    }
+
+    .weibei-flashcard-back {
+      visibility: hidden;
+      opacity: 0;
+      transform: translateX(10px);
+      border-left: 2px solid var(--cinnabar-line);
+    }
+
+    .weibei-flashcard.is-flipped .weibei-flashcard-front {
+      visibility: hidden;
+      opacity: 0;
+      transform: translateX(-10px);
+    }
+
+    .weibei-flashcard.is-flipped .weibei-flashcard-back {
+      visibility: visible;
+      opacity: 1;
+      transform: translateX(0);
+    }
+
+    .weibei-interactive-sequence-builder {
+      padding: 8px 0;
+      border-width: 1px 0;
+      border-style: solid;
+      border-color: rgba(92, 70, 46, .18);
+    }
+
+    .weibei-sequence-instruction {
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .weibei-sequence-pool,
+    .weibei-sequence-answer {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+      gap: 6px;
+      margin-top: 8px;
+      padding: 7px;
+      border: 1px solid rgba(92, 70, 46, .16);
+    }
+
+    .weibei-sequence-answer {
+      border-style: dashed;
+      background: rgba(145, 38, 28, .045);
+    }
+
+    .weibei-sequence-item,
+    .weibei-scenario-option,
+    .weibei-decision-choice {
+      appearance: none;
+      width: 100%;
+      padding: 7px 8px;
+      border: 1px solid rgba(92, 70, 46, .20);
+      border-radius: 3px;
+      background: transparent;
+      color: var(--ink);
+      font: inherit;
+      text-align: left;
+    }
+
+    .weibei-sequence-feedback {
+      margin-top: 7px;
+      padding-left: 8px;
+      border-left: 2px solid var(--cinnabar-line);
+      color: var(--muted);
+    }
+
+    .weibei-sequence-item-label,
+    .weibei-sequence-item-detail {
+      display: block;
+    }
+
+    .weibei-sequence-item-label {
+      color: var(--ink);
+      font-weight: 650;
+    }
+
+    .weibei-sequence-item-detail {
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .weibei-interactive-scenario-lab,
+    .weibei-interactive-evidence-board,
+    .weibei-interactive-spectrum,
+    .weibei-interactive-decision-path {
+      padding: 8px 0;
+      border-width: 1px 0;
+      border-style: solid;
+      border-color: rgba(92, 70, 46, .18);
+    }
+
+    .weibei-scenario-layout {
+      display: grid;
+      grid-template-columns: minmax(0, .42fr) minmax(0, 1fr);
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    .weibei-scenario-control {
+      padding-bottom: 8px;
+      border-bottom: 1px dotted rgba(92, 70, 46, .22);
+    }
+
+    .weibei-scenario-controls {
+      display: grid;
+      gap: 8px;
+      margin-top: 0;
+    }
+
+    .weibei-scenario-control-label {
+      margin-bottom: 5px;
+      color: var(--ochre);
+      font-size: 11px;
+      font-weight: 650;
+    }
+
+    .weibei-scenario-result {
+      padding: 9px 0 9px 10px;
+      border-left: 2px solid var(--cinnabar-line);
+      color: var(--ink);
+    }
+
+    .weibei-scenario-result-title {
+      font-weight: 650;
+    }
+
+    .weibei-scenario-result-body {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .weibei-evidence-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 8px;
+      padding-bottom: 7px;
+      border-bottom: 1px solid rgba(92, 70, 46, .18);
+    }
+
+    .weibei-evidence-claim {
+      margin-top: 5px;
+      color: var(--ink);
+      font-weight: 650;
+    }
+
+    .weibei-evidence-filter {
+      appearance: none;
+      padding: 4px 7px;
+      border: 1px solid rgba(92, 70, 46, .22);
+      border-radius: 3px;
+      background: transparent;
+      color: var(--muted);
+      font: inherit;
+    }
+
+    .weibei-evidence-list {
+      display: grid;
+      gap: 0;
+      margin-top: 8px;
+      border-top: 1px solid rgba(92, 70, 46, .18);
+    }
+
+    .weibei-evidence-item {
+      appearance: none;
+      width: 100%;
+      padding: 7px 8px;
+      border-width: 0 0 1px 2px;
+      border-bottom: 1px solid rgba(92, 70, 46, .16);
+      border-left-color: var(--weibei-interactive-tone, var(--line));
+      background: transparent;
+      color: var(--ink);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .weibei-evidence-item-title,
+    .weibei-evidence-detail-title {
+      color: var(--ink);
+      font-weight: 650;
+    }
+
+    .weibei-evidence-detail-body {
+      margin-top: 3px;
+    }
+
+    .weibei-evidence-detail {
+      margin-top: 8px;
+      padding: 8px 0 0 9px;
+      border-left: 2px solid var(--cinnabar-line);
+      color: var(--muted);
+    }
+
+    .weibei-spectrum-track {
+      position: relative;
+      min-height: 58px;
+      margin: 18px 22px 0;
+      border-top: 2px solid rgba(92, 70, 46, .30);
+    }
+
+    .weibei-spectrum-track::before,
+    .weibei-spectrum-track::after {
+      position: absolute;
+      top: -17px;
+      color: var(--faint);
+      font-size: 10px;
+      content: attr(data-start);
+    }
+
+    .weibei-spectrum-track::before {
+      left: -22px;
+    }
+
+    .weibei-spectrum-track::after {
+      right: -22px;
+      content: attr(data-end);
+    }
+
+    .weibei-spectrum-marker {
+      position: absolute;
+      top: -8px;
+      width: auto;
+      min-width: 44px;
+      height: 42px;
+      padding: 17px 3px 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: var(--muted);
+      font: 10px/1.2 -apple-system, BlinkMacSystemFont, "Songti SC", serif;
+      transform: translateX(-50%);
+      cursor: pointer;
+    }
+
+    .weibei-spectrum-marker::before {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      width: 10px;
+      height: 10px;
+      border: 1px solid var(--weibei-interactive-tone, var(--cinnabar));
+      border-radius: 2px;
+      background: var(--paper);
+      content: "";
+      transform: translateX(-50%);
+    }
+
+    .weibei-spectrum-marker.is-active {
+      color: var(--ink);
+      font-weight: 650;
+    }
+
+    .weibei-spectrum-marker.is-active::before {
+      background: var(--weibei-interactive-tone, var(--cinnabar));
+    }
+
+    .weibei-spectrum-detail {
+      margin-top: 8px;
+      padding-left: 8px;
+      border-left: 1px dotted rgba(92, 70, 46, .28);
+      color: var(--muted);
+    }
+
+    .weibei-spectrum-detail-title,
+    .weibei-decision-node-title {
+      color: var(--ink);
+      font-weight: 650;
+    }
+
+    .weibei-spectrum-detail-body,
+    .weibei-decision-node-body {
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .weibei-decision-trail {
+      display: grid;
+      gap: 0;
+      margin-top: 8px;
+      border-left: 2px solid rgba(145, 38, 28, .30);
+    }
+
+    .weibei-decision-node {
+      padding: 8px 0 8px 10px;
+      border-bottom: 1px solid rgba(92, 70, 46, .16);
+    }
+
+    .weibei-decision-reset {
+      color: var(--faint);
+    }
+
+    /* Cross-discipline study instruments share the paper, not a card shell. */
+    .weibei-interactive-unit-workbench,
+    .weibei-interactive-reaction-balance,
+    .weibei-interactive-algorithm-trace,
+    .weibei-interactive-language-aligner,
+    .weibei-interactive-argument-map,
+    .weibei-interactive-visual-analysis,
+    .weibei-interactive-spatial-layers,
+    .weibei-interactive-pathway-lab {
+      padding: 9px 0;
+      border-width: 1px 0;
+      border-style: solid;
+      border-color: rgba(92, 70, 46, .20);
+      background: transparent;
+    }
+
+    .weibei-unit-title,
+    .weibei-reaction-title,
+    .weibei-algorithm-title,
+    .weibei-language-title,
+    .weibei-argument-title,
+    .weibei-visual-analysis-title,
+    .weibei-spatial-title,
+    .weibei-pathway-title {
+      color: var(--ink);
+      font-size: 13px;
+      font-weight: 680;
+      line-height: 1.4;
+    }
+
+    .weibei-interactive-unit-workbench button,
+    .weibei-interactive-reaction-balance button,
+    .weibei-interactive-algorithm-trace button,
+    .weibei-interactive-language-aligner button,
+    .weibei-interactive-argument-map button,
+    .weibei-interactive-visual-analysis button,
+    .weibei-interactive-spatial-layers button,
+    .weibei-interactive-pathway-lab button {
+      appearance: none;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .weibei-interactive-unit-workbench button:focus-visible,
+    .weibei-interactive-reaction-balance button:focus-visible,
+    .weibei-interactive-algorithm-trace button:focus-visible,
+    .weibei-interactive-language-aligner button:focus-visible,
+    .weibei-interactive-argument-map button:focus-visible,
+    .weibei-interactive-visual-analysis button:focus-visible,
+    .weibei-interactive-spatial-layers button:focus-visible,
+    .weibei-interactive-pathway-lab button:focus-visible {
+      outline: 2px solid var(--blue-ink);
+      outline-offset: 2px;
+    }
+
+    .weibei-unit-question {
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .weibei-unit-variables {
+      display: grid;
+      margin-top: 8px;
+      border-top: 2px solid rgba(92, 70, 46, .30);
+      border-bottom: 1px solid rgba(92, 70, 46, .22);
+    }
+
+    .weibei-unit-variable {
+      display: grid;
+      grid-template-columns: minmax(72px, 1fr) minmax(86px, auto) minmax(90px, .8fr);
+      gap: 8px;
+      align-items: baseline;
+      min-width: 0;
+      padding: 6px 4px;
+      border: 0;
+      border-bottom: 1px dotted rgba(92, 70, 46, .20);
+      background: transparent;
+      text-align: left;
+    }
+
+    .weibei-unit-variable:last-child {
+      border-bottom: 0;
+    }
+
+    .weibei-unit-variable-label,
+    .weibei-unit-check-label {
+      color: var(--ochre);
+      font-size: 11px;
+      font-weight: 650;
+    }
+
+    .weibei-unit-variable-value,
+    .weibei-unit-check-chain {
+      color: var(--ink);
+      font: 600 12px/1.45 "SF Mono", Menlo, ui-monospace, monospace;
+      overflow-wrap: anywhere;
+    }
+
+    .weibei-unit-variable-role {
+      color: var(--faint);
+      font-size: 11px;
+      text-align: right;
+    }
+
+    .weibei-unit-checks {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(126px, 1fr));
+      gap: 1px;
+      margin-top: 8px;
+      border: 1px solid rgba(92, 70, 46, .18);
+      border-width: 1px 0;
+    }
+
+    .weibei-unit-check {
+      display: grid;
+      gap: 3px;
+      padding: 7px 8px;
+      border: 0;
+      border-left: 2px solid rgba(57, 95, 72, .58);
+      background: transparent;
+      text-align: left;
+    }
+
+    .weibei-unit-detail,
+    .weibei-reaction-source,
+    .weibei-language-note,
+    .weibei-argument-detail,
+    .weibei-visual-analysis-detail,
+    .weibei-spatial-detail,
+    .weibei-pathway-detail {
+      min-height: 22px;
+      margin-top: 8px;
+      padding: 6px 0 0 9px;
+      border-left: 2px solid var(--cinnabar-line);
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .weibei-unit-detail:empty,
+    .weibei-reaction-source:empty,
+    .weibei-language-note:empty,
+    .weibei-argument-detail:empty,
+    .weibei-visual-analysis-detail:empty,
+    .weibei-spatial-detail:empty,
+    .weibei-pathway-detail:empty {
+      display: none;
+    }
+
+    .weibei-unit-detail-title,
+    .weibei-argument-detail-label,
+    .weibei-visual-analysis-zone-title,
+    .weibei-spatial-detail-title,
+    .weibei-pathway-state-label,
+    .weibei-pathway-node-title {
+      color: var(--ink);
+      font-weight: 650;
+    }
+
+    .weibei-unit-detail-body,
+    .weibei-unit-detail-note,
+    .weibei-argument-detail-body,
+    .weibei-visual-analysis-zone-note,
+    .weibei-spatial-detail-note,
+    .weibei-pathway-state-note,
+    .weibei-pathway-node-note {
+      margin-top: 2px;
+    }
+
+    .weibei-reaction-equation {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 30px minmax(0, 1fr);
+      gap: 6px;
+      align-items: center;
+      margin-top: 9px;
+      padding: 10px 0;
+      border-top: 2px solid rgba(92, 70, 46, .32);
+      border-bottom: 1px solid rgba(92, 70, 46, .20);
+    }
+
+    .weibei-reaction-side {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+      align-items: center;
+    }
+
+    .weibei-reaction-products {
+      justify-content: flex-end;
+    }
+
+    .weibei-reaction-species {
+      display: grid;
+      grid-template-columns: 22px 24px 22px;
+      gap: 2px;
+      align-items: center;
+      min-width: 86px;
+      padding-bottom: 4px;
+      border-bottom: 2px solid var(--weibei-interactive-tone, var(--ochre));
+    }
+
+    .weibei-reaction-stepper {
+      width: 22px;
+      height: 22px;
+      padding: 0;
+      border: 1px solid rgba(92, 70, 46, .24);
+      border-radius: 2px;
+      background: transparent;
+      color: var(--muted);
+      font: 600 14px/1 "SF Mono", Menlo, ui-monospace, monospace;
+    }
+
+    .weibei-reaction-coefficient {
+      color: var(--cinnabar);
+      font: 700 14px/1 "SF Mono", Menlo, ui-monospace, monospace;
+      text-align: center;
+    }
+
+    .weibei-reaction-label {
+      grid-column: 1 / -1;
+      color: var(--ink);
+      font: 650 13px/1.3 "SF Mono", Menlo, ui-monospace, monospace;
+      text-align: center;
+      overflow-wrap: anywhere;
+    }
+
+    .weibei-reaction-arrow {
+      color: var(--cinnabar);
+      font: 700 18px/1 "SF Mono", Menlo, ui-monospace, monospace;
+      text-align: center;
+    }
+
+    .weibei-reaction-balance {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(86px, 1fr));
+      gap: 0;
+      margin-top: 8px;
+      border-top: 1px solid rgba(92, 70, 46, .18);
+      border-bottom: 1px solid rgba(92, 70, 46, .18);
+    }
+
+    .weibei-reaction-element {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 6px;
+      padding: 6px 8px;
+      border-left: 2px solid var(--cinnabar-line);
+    }
+
+    .weibei-reaction-element.is-balanced {
+      border-left-color: rgba(57, 95, 72, .66);
+    }
+
+    .weibei-reaction-element-name {
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    .weibei-reaction-element-count {
+      color: var(--muted);
+      font: 11px/1.45 "SF Mono", Menlo, ui-monospace, monospace;
+      text-align: right;
+    }
+
+    .weibei-interactive-algorithm-trace {
+      display: grid;
+      grid-template-columns: minmax(0, 1.12fr) minmax(132px, .88fr);
+      gap: 8px 12px;
+      align-items: start;
+    }
+
+    .weibei-algorithm-title,
+    .weibei-interactive-algorithm-trace > .weibei-interactive-source-row {
+      grid-column: 1 / -1;
+    }
+
+    .weibei-algorithm-code {
+      grid-column: 1;
+      grid-row: 2 / span 3;
+      min-width: 0;
+      margin: 0;
+      padding: 8px 8px 8px 34px;
+      border: 1px solid rgba(92, 70, 46, .22);
+      border-left: 3px solid rgba(29, 24, 20, .52);
+      border-radius: 2px;
+      background: rgba(29, 24, 20, .035);
+      color: var(--muted);
+      font: 11px/1.62 "SF Mono", Menlo, ui-monospace, monospace;
+      overflow-x: auto;
+    }
+
+    .weibei-algorithm-line {
+      min-height: 18px;
+      padding: 1px 4px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .weibei-algorithm-line.is-active {
+      background: var(--cinnabar-soft);
+      color: var(--ink);
+      box-shadow: inset 2px 0 0 var(--cinnabar);
+    }
+
+    .weibei-algorithm-step {
+      grid-column: 2;
+      min-height: 72px;
+      padding: 8px 0 8px 9px;
+      border-left: 2px solid var(--cinnabar-line);
+    }
+
+    .weibei-algorithm-step-title {
+      color: var(--ink);
+      font-weight: 650;
+      line-height: 1.48;
+    }
+
+    .weibei-algorithm-step-note {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.5;
+    }
+
+    .weibei-algorithm-progress {
+      grid-column: 2;
+      color: var(--faint);
+      font: 10px/1.3 "SF Mono", Menlo, ui-monospace, monospace;
+      text-align: right;
+    }
+
+    .weibei-algorithm-controls {
+      grid-column: 2;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+    }
+
+    .weibei-algorithm-action {
+      min-height: 27px;
+      padding: 4px 7px;
+      border: 1px solid rgba(92, 70, 46, .22);
+      border-radius: 2px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .weibei-algorithm-action:disabled {
+      cursor: default;
+      opacity: .36;
+    }
+
+    .weibei-language-pairs {
+      display: grid;
+      margin-top: 8px;
+      border-top: 2px solid rgba(92, 70, 46, .30);
+      border-bottom: 1px solid rgba(92, 70, 46, .20);
+    }
+
+    .weibei-language-pair {
+      display: grid;
+      grid-template-columns: minmax(52px, .28fr) minmax(0, 1fr) minmax(0, 1fr);
+      gap: 8px;
+      align-items: start;
+      min-width: 0;
+      padding: 8px 4px;
+      border: 0;
+      border-bottom: 1px solid rgba(92, 70, 46, .16);
+      background: transparent;
+      text-align: left;
+    }
+
+    .weibei-language-pair:last-child {
+      border-bottom: 0;
+    }
+
+    .weibei-language-pair-label {
+      color: var(--ochre);
+      font: 600 10px/1.45 "SF Mono", Menlo, ui-monospace, monospace;
+    }
+
+    .weibei-language-source-text,
+    .weibei-language-target-text {
+      min-width: 0;
+      color: var(--ink);
+      line-height: 1.58;
+      overflow-wrap: anywhere;
+    }
+
+    .weibei-language-target-text {
+      padding-left: 8px;
+      border-left: 1px dotted rgba(92, 70, 46, .28);
+    }
+
+    .weibei-language-note-source,
+    .weibei-language-note-target {
+      display: inline;
+      color: var(--ink);
+    }
+
+    .weibei-language-note-source::after {
+      margin: 0 6px;
+      color: var(--cinnabar);
+      content: "→";
+    }
+
+    .weibei-language-note-body {
+      margin-top: 4px;
+    }
+
+    .weibei-argument-question {
+      margin-top: 5px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .weibei-argument-nodes {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(112px, 1fr));
+      gap: 0;
+      margin-top: 9px;
+      border-top: 2px solid rgba(92, 70, 46, .30);
+      border-bottom: 1px solid rgba(92, 70, 46, .20);
+    }
+
+    .weibei-argument-node {
+      display: grid;
+      align-content: start;
+      gap: 4px;
+      min-height: 72px;
+      padding: 8px;
+      border: 0;
+      border-right: 1px solid rgba(92, 70, 46, .16);
+      border-top: 3px solid var(--line);
+      background: transparent;
+      text-align: left;
+    }
+
+    .weibei-argument-node[data-argument-type="claim"] {
+      border-top-color: var(--cinnabar);
+    }
+
+    .weibei-argument-node[data-argument-type="premise"] {
+      border-top-color: rgba(57, 95, 72, .72);
+    }
+
+    .weibei-argument-node[data-argument-type="objection"] {
+      border-top-color: var(--ochre);
+    }
+
+    .weibei-argument-node[data-argument-type="reply"] {
+      border-top-color: var(--blue-ink);
+    }
+
+    .weibei-argument-node-type,
+    .weibei-argument-detail-type {
+      color: var(--faint);
+      font: 600 9px/1.3 "SF Mono", Menlo, ui-monospace, monospace;
+      text-transform: uppercase;
+    }
+
+    .weibei-argument-node-label {
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 630;
+      line-height: 1.48;
+    }
+
+    .weibei-argument-edges,
+    .weibei-pathway-edges {
+      display: grid;
+      gap: 0;
+      margin-top: 7px;
+      border-top: 1px dotted rgba(92, 70, 46, .22);
+    }
+
+    .weibei-argument-edge,
+    .weibei-pathway-edge {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) minmax(0, .8fr);
+      gap: 6px;
+      align-items: baseline;
+      padding: 5px 2px;
+      border-bottom: 1px solid rgba(92, 70, 46, .12);
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .weibei-argument-edge-arrow,
+    .weibei-pathway-edge-arrow {
+      color: var(--cinnabar);
+    }
+
+    .weibei-argument-edge-label,
+    .weibei-pathway-edge-label {
+      color: var(--ochre);
+      text-align: right;
+    }
+
+    .weibei-interactive-visual-analysis,
+    .weibei-interactive-spatial-layers {
+      display: grid;
+      grid-template-columns: minmax(168px, 1.08fr) minmax(118px, .92fr);
+      gap: 8px 12px;
+      align-items: start;
+    }
+
+    .weibei-visual-analysis-title,
+    .weibei-spatial-title,
+    .weibei-interactive-visual-analysis > .weibei-interactive-source-row,
+    .weibei-interactive-spatial-layers > .weibei-interactive-source-row {
+      grid-column: 1 / -1;
+    }
+
+    .weibei-visual-analysis-surface,
+    .weibei-spatial-surface {
+      grid-column: 1;
+      grid-row: 2 / span 4;
+      display: block;
+      width: 100%;
+      min-height: 0;
+      aspect-ratio: 3 / 2;
+      border: 1px solid rgba(92, 70, 46, .22);
+      background-color: rgba(255, 251, 241, .13);
+      box-shadow: inset 0 0 0 4px rgba(92, 70, 46, .035);
+    }
+
+    .weibei-visual-analysis-zone {
+      stroke: rgba(29, 24, 20, .50);
+      stroke-width: .7;
+      fill-opacity: .22;
+      transition: fill-opacity .16s ease-out, opacity .16s ease-out, stroke-width .16s ease-out;
+    }
+
+    .weibei-visual-analysis-zone.is-active {
+      stroke: var(--cinnabar);
+      stroke-width: 1.6;
+      fill-opacity: .55;
+    }
+
+    .weibei-visual-analysis-lenses,
+    .weibei-spatial-toolbar,
+    .weibei-pathway-states {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      padding-bottom: 7px;
+      border-bottom: 1px solid rgba(92, 70, 46, .18);
+    }
+
+    .weibei-visual-analysis-lens,
+    .weibei-spatial-layer-toggle,
+    .weibei-pathway-state {
+      min-height: 25px;
+      padding: 3px 7px;
+      border: 1px solid rgba(92, 70, 46, .22);
+      border-radius: 2px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 10px;
+    }
+
+    .weibei-visual-analysis-zones,
+    .weibei-spatial-features {
+      display: grid;
+      gap: 0;
+      border-top: 1px solid rgba(92, 70, 46, .15);
+    }
+
+    .weibei-visual-analysis-zone-button,
+    .weibei-spatial-feature {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 6px;
+      align-items: baseline;
+      min-width: 0;
+      padding: 6px 3px;
+      border: 0;
+      border-bottom: 1px dotted rgba(92, 70, 46, .20);
+      background: transparent;
+      text-align: left;
+    }
+
+    .weibei-spatial-feature-type {
+      color: var(--faint);
+      font: 600 9px/1.3 "SF Mono", Menlo, ui-monospace, monospace;
+      text-transform: uppercase;
+    }
+
+    .weibei-visual-analysis-palette {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(76px, 1fr));
+      gap: 5px;
+    }
+
+    .weibei-visual-analysis-palette-item {
+      display: grid;
+      grid-template-columns: 9px minmax(0, 1fr);
+      gap: 5px;
+      align-items: center;
+      min-width: 0;
+      padding: 4px;
+      border: 1px solid rgba(92, 70, 46, .18);
+      border-radius: 2px;
+      background: transparent;
+      text-align: left;
+    }
+
+    .weibei-visual-analysis-palette-item::before {
+      grid-row: 1 / span 2;
+      width: 8px;
+      height: 28px;
+      background: var(--weibei-interactive-tone, var(--ink));
+      content: "";
+    }
+
+    .weibei-visual-analysis-palette-label {
+      color: var(--ink);
+      font-size: 10px;
+      font-weight: 650;
+    }
+
+    .weibei-visual-analysis-palette-role {
+      color: var(--faint);
+      font-size: 9px;
+    }
+
+    .weibei-spatial-layer {
+      transition: opacity .16s ease-out;
+    }
+
+    .weibei-spatial-layer.is-hidden-layer {
+      opacity: 0;
+    }
+
+    .weibei-spatial-point {
+      fill: var(--cinnabar);
+      stroke: var(--paper);
+      stroke-width: .8;
+    }
+
+    .weibei-spatial-route {
+      stroke: var(--blue-ink);
+      stroke-width: 1.6;
+      stroke-dasharray: 3 2;
+    }
+
+    .weibei-spatial-region {
+      fill: rgba(142, 102, 44, .18);
+      stroke: var(--ochre);
+      stroke-width: .8;
+    }
+
+    .weibei-interactive-pathway-lab {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(118px, .38fr);
+      gap: 8px 12px;
+      align-items: start;
+    }
+
+    .weibei-pathway-title,
+    .weibei-pathway-states,
+    .weibei-interactive-pathway-lab > .weibei-interactive-source-row {
+      grid-column: 1 / -1;
+    }
+
+    .weibei-pathway-map {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+      gap: 14px 20px;
+      padding: 12px 0;
+      border-top: 1px solid rgba(92, 70, 46, .18);
+      border-bottom: 1px solid rgba(92, 70, 46, .18);
+    }
+
+    .weibei-pathway-map::before {
+      position: absolute;
+      top: 50%;
+      left: 4%;
+      right: 4%;
+      border-top: 1px solid rgba(92, 70, 46, .30);
+      content: "";
+    }
+
+    .weibei-pathway-node {
+      position: relative;
+      z-index: 1;
+      display: grid;
+      gap: 3px;
+      min-height: 54px;
+      padding: 7px;
+      border: 1px solid rgba(92, 70, 46, .24);
+      border-radius: 2px;
+      background: var(--paper);
+      text-align: left;
+    }
+
+    .weibei-pathway-node.is-active {
+      border-color: rgba(57, 95, 72, .62);
+      background: rgba(57, 95, 72, .09);
+      box-shadow: inset 0 3px 0 rgba(57, 95, 72, .62);
+    }
+
+    .weibei-pathway-node-label {
+      color: var(--ink);
+      font-weight: 650;
+    }
+
+    .weibei-pathway-node-detail {
+      color: var(--faint);
+      font-size: 10px;
+      line-height: 1.4;
+    }
+
+    .weibei-pathway-edges,
+    .weibei-pathway-detail {
+      grid-column: 2;
+    }
+
+    :root[data-weibei-theme="inkstone"] .weibei-algorithm-code,
+    :root[data-weibei-theme="inkstone"] .weibei-visual-analysis-surface,
+    :root[data-weibei-theme="inkstone"] .weibei-spatial-surface {
+      background-color: rgba(255, 255, 255, .025);
+      border-color: rgba(200, 185, 138, .18);
+    }
+
+    :root[data-weibei-theme="inkstone"] .weibei-pathway-node {
+      background: var(--paper);
+      border-color: rgba(200, 185, 138, .20);
+    }
+
+    :root[data-weibei-theme="inkstone"] .weibei-interactive :where(.is-active, [aria-selected="true"], [aria-pressed="true"]),
+    :root[data-weibei-theme="inkstone"] .weibei-study-board-item,
+    :root[data-weibei-theme="inkstone"] .weibei-relationship-node,
+    :root[data-weibei-theme="inkstone"] .weibei-flashcard,
+    :root[data-weibei-theme="inkstone"] .weibei-sequence-pool,
+    :root[data-weibei-theme="inkstone"] .weibei-sequence-answer,
+    :root[data-weibei-theme="inkstone"] .weibei-sequence-item,
+    :root[data-weibei-theme="inkstone"] .weibei-scenario-option,
+    :root[data-weibei-theme="inkstone"] .weibei-evidence-filter,
+    :root[data-weibei-theme="inkstone"] .weibei-decision-choice {
+      background: rgba(255, 255, 255, .025);
+      border-color: rgba(200, 185, 138, .18);
+    }
+
+    :root[data-weibei-theme="inkstone"] .weibei-interactive-study-board[data-layout="grid"] .weibei-study-board-items {
+      background: transparent;
+    }
+
+    :root[data-weibei-theme="inkstone"] .weibei-timeline-event::before,
+    :root[data-weibei-theme="inkstone"] .weibei-spectrum-marker::before,
+    :root[data-weibei-theme="inkstone"] .weibei-interactive-study-board[data-layout="sequence"] .weibei-study-board-item::before {
+      background: var(--paper);
+    }
+
+    @media (max-width: 420px) {
+      .weibei-interactive {
+        margin: .74em 0;
+        max-width: 100%;
+      }
+
+      .weibei-interactive-chart,
+      .weibei-interactive-function,
+      .weibei-interactive-parameter,
+      .weibei-annotated-layout,
+      .weibei-scenario-layout,
+      .weibei-interactive-algorithm-trace,
+      .weibei-interactive-visual-analysis,
+      .weibei-interactive-spatial-layers,
+      .weibei-interactive-pathway-lab {
+        grid-template-columns: 1fr;
+      }
+
+      .weibei-algorithm-title,
+      .weibei-algorithm-code,
+      .weibei-algorithm-step,
+      .weibei-algorithm-progress,
+      .weibei-algorithm-controls,
+      .weibei-visual-analysis-title,
+      .weibei-visual-analysis-surface,
+      .weibei-spatial-title,
+      .weibei-spatial-surface,
+      .weibei-pathway-title,
+      .weibei-pathway-states,
+      .weibei-pathway-map,
+      .weibei-pathway-edges,
+      .weibei-pathway-detail {
+        grid-column: 1;
+        grid-row: auto;
+      }
+
+      .weibei-language-pair,
+      .weibei-unit-variable {
+        grid-template-columns: 1fr;
+      }
+
+      .weibei-language-target-text,
+      .weibei-unit-variable-role {
+        padding-left: 8px;
+        border-left: 1px dotted rgba(92, 70, 46, .24);
+        text-align: left;
+      }
+
+      .weibei-reaction-equation {
+        grid-template-columns: 1fr;
+      }
+
+      .weibei-reaction-products {
+        justify-content: flex-start;
+      }
+
+      .weibei-reaction-arrow {
+        transform: rotate(90deg);
+      }
+
+      .weibei-chart-legend,
+      .weibei-function-formula,
+      .weibei-parameter-controls,
+      .weibei-annotation-margin {
+        grid-column: auto;
+        padding-left: 0;
+        border-left: 0;
+        border-top: 1px dotted rgba(92, 70, 46, .24);
+        padding-top: 7px;
+      }
+
+      .weibei-interactive-relationship-map[data-layout="radial"] .weibei-relationship-nodes {
+        grid-template-columns: 1fr;
+      }
+
+      .weibei-interactive-relationship-map[data-layout="radial"] .weibei-relationship-node[data-role="center"] {
+        grid-column: auto;
+        grid-row: auto;
+      }
+
+      .weibei-interactive-study-board[data-layout="grid"] .weibei-study-board-items,
+      .weibei-sequence-pool,
+      .weibei-sequence-answer {
+        grid-template-columns: 1fr;
+      }
+
+      .weibei-timeline-events::before {
+        top: 0;
+        bottom: 0;
+        left: 5px;
+        right: auto;
+        border-top: 0;
+        border-left: 2px solid rgba(145, 38, 28, .32);
+      }
+
+      .weibei-timeline-event {
+        padding-left: 18px;
+        border-right: 0;
+        border-bottom: 1px solid rgba(92, 70, 46, .16);
+      }
+
+      .weibei-timeline-event::before {
+        top: 10px;
+        left: 1px;
+      }
+
+      .weibei-comparison-table {
+        table-layout: auto;
+      }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .weibei-interactive * {
+        transition: none;
+      }
+
+    }
+
     .weibei-image {
       border: 1px solid var(--line);
       background: rgba(255, 251, 241, .32);
@@ -1027,6 +3771,7 @@
       white-space: pre-wrap;
     }
   </style>
+  <link rel="stylesheet" href="./answer-design.css">
 </head>
 <body>
   <main id="editor">

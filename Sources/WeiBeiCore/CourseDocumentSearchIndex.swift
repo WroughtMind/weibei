@@ -1,5 +1,6 @@
 import AppKit
 import CryptoKit
+import Darwin
 import Foundation
 import PDFKit
 import SQLite3
@@ -60,6 +61,10 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
     private let nativePDFTextLoader: CourseNativePDFTextLoader
     private let indexingQueue = DispatchQueue(
         label: "com.changfenhuang.weibei.course-index",
+        qos: .utility
+    )
+    private let metadataQueue = DispatchQueue(
+        label: "com.changfenhuang.weibei.course-index.metadata",
         qos: .utility
     )
     private let ocrQueue = DispatchQueue(
@@ -176,27 +181,33 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
     }
 
     public func schedule(_ items: [StudyItem]) {
-        let scheduledItems = items.compactMap(Self.scheduledItem)
-        schedulingLock.lock()
-        for scheduled in scheduledItems {
-            expectedSignaturesByStorageID[scheduled.storageID] = scheduled.signature
+        metadataQueue.async { [weak self] in
+            guard let self else { return }
+            let scheduledItems = items.compactMap(Self.scheduledItem)
+            self.schedulingLock.lock()
+            for scheduled in scheduledItems {
+                self.expectedSignaturesByStorageID[scheduled.storageID] = scheduled.signature
+            }
+            self.schedulingLock.unlock()
+            scheduledItems.forEach(self.schedule)
         }
-        schedulingLock.unlock()
-        scheduledItems.forEach(schedule)
     }
 
     public func synchronize(_ items: [StudyItem]) {
-        let scheduledItems = items.compactMap(Self.scheduledItem)
-        let validStorageIDs = Set(scheduledItems.map(\.storageID))
-        schedulingLock.lock()
-        expectedSignaturesByStorageID = Dictionary(
-            uniqueKeysWithValues: scheduledItems.map { ($0.storageID, $0.signature) }
-        )
-        schedulingLock.unlock()
-        indexingQueue.async { [weak self] in
-            self?.pruneMissingItems(validStorageIDs: validStorageIDs)
+        metadataQueue.async { [weak self] in
+            guard let self else { return }
+            let scheduledItems = items.compactMap(Self.scheduledItem)
+            let validStorageIDs = Set(scheduledItems.map(\.storageID))
+            self.schedulingLock.lock()
+            self.expectedSignaturesByStorageID = Dictionary(
+                uniqueKeysWithValues: scheduledItems.map { ($0.storageID, $0.signature) }
+            )
+            self.schedulingLock.unlock()
+            self.indexingQueue.async { [weak self] in
+                self?.pruneMissingItems(validStorageIDs: validStorageIDs)
+            }
+            scheduledItems.forEach(self.schedule)
         }
-        scheduledItems.forEach(schedule)
     }
 
     public func lookup(
@@ -1170,26 +1181,39 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         return String(cString: value)
     }
 
-    private static func fileSignature(for item: StudyItem) -> String? {
-        guard let url = item.url,
-              let attributes = try? FileManager.default.attributesOfItem(atPath: url.path) else {
-            return nil
+    private struct FileMetadata {
+        var modified: TimeInterval
+        var size: UInt64
+    }
+
+    private static func fileMetadata(for url: URL) -> FileMetadata? {
+        var info = Darwin.stat()
+        let result = url.withUnsafeFileSystemRepresentation { path -> Int32 in
+            guard let path else { return -1 }
+            return Darwin.lstat(path, &info)
         }
-        let modified = (attributes[FileAttributeKey.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-        let size = (attributes[FileAttributeKey.size] as? NSNumber)?.uint64Value ?? 0
-        return "v4#\(item.kind.rawValue)#\(modified)#\(size)"
+        guard result == 0 else { return nil }
+        let modified = TimeInterval(info.st_mtimespec.tv_sec)
+            + TimeInterval(info.st_mtimespec.tv_nsec) / 1_000_000_000
+        return FileMetadata(
+            modified: modified,
+            size: UInt64(max(info.st_size, 0))
+        )
+    }
+
+    private static func fileSignature(for item: StudyItem) -> String? {
+        guard let url = item.url, let metadata = fileMetadata(for: url) else { return nil }
+        return "v4#\(item.kind.rawValue)#\(metadata.modified)#\(metadata.size)"
     }
 
     private static func scheduledItem(_ item: StudyItem) -> ScheduledItem? {
         guard let url = item.url,
-              let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
-              let signature = fileSignature(for: item) else { return nil }
-        let fileBytes = (attributes[.size] as? NSNumber)?.uint64Value ?? 0
-        guard item.kind == .pdf || fileBytes <= maximumTextSourceBytes else { return nil }
+              let metadata = fileMetadata(for: url) else { return nil }
+        guard item.kind == .pdf || metadata.size <= maximumTextSourceBytes else { return nil }
         return ScheduledItem(
             item: item,
             storageID: storageID(for: item.id),
-            signature: signature
+            signature: "v4#\(item.kind.rawValue)#\(metadata.modified)#\(metadata.size)"
         )
     }
 

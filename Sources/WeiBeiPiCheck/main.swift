@@ -8,6 +8,7 @@ struct WeiBeiPiCheck {
         let environment = ProcessInfo.processInfo.environment
         let liveCheckSetting = environment["WEIBEI_PI_LIVE_CHECK"] ?? "auto"
         let runsEvaluation = environment["WEIBEI_PI_EVAL"] == "1"
+        let runsSourceFreeCheck = environment["WEIBEI_PI_SOURCE_FREE_CHECK"] == "1"
         let explicitPath = environment["WEIBEI_PI_EXECUTABLE"]?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let executableURL = explicitPath.isEmpty
@@ -51,7 +52,11 @@ struct WeiBeiPiCheck {
                 try await checkCourseWayfinding(runtime)
                 try await checkCloseReading(runtime)
                 try await checkRecallPractice(runtime)
-                print("pi-eval passed: study-companion, course-wayfinding, close-reading, note-making, recall-practice")
+                try await checkInteractiveStudy(runtime)
+                print("pi-eval passed: study-companion, course-wayfinding, close-reading, note-making, recall-practice, interactive-study")
+            }
+            if runsSourceFreeCheck {
+                try await checkSourceFreeConversation(runtime)
             }
             try verifyNoPersistedTurnState(runtimeRoot)
 
@@ -82,6 +87,37 @@ struct WeiBeiPiCheck {
             throw PiCheckError.invalidLiveReply
         }
         print("pi-live-check passed: proposal=\(proposal.markdown.count) chars evidence=\(proposal.evidence.count)")
+    }
+
+    private static func checkSourceFreeConversation(_ runtime: PiAgentRuntime) async throws {
+        for (question, revision) in [
+            ("给我讲一个笑话", "pi-check-source-free-joke"),
+            ("你叫什么", "pi-check-source-free-identity"),
+        ] {
+            let reply = try await runtime.respond(
+                to: sourceFreeRequest(question: question, revision: revision)
+            )
+            guard reply.backend == .pi,
+                  !reply.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  !containsSourceLabel(reply.text) else {
+                throw PiCheckError.invalidEvaluation("source-free-conversation")
+            }
+        }
+        print("pi-source-free-check passed: joke and identity replies completed without course citations")
+    }
+
+    private static func sourceFreeRequest(question: String, revision: String) -> StudyAgentRequest {
+        StudyAgentRequest(
+            purpose: .conversation,
+            workflow: .studyCompanion,
+            question: question,
+            materialTitle: "",
+            materialText: "",
+            noteTitle: "",
+            noteText: "",
+            language: .chinese,
+            contextRevision: revision
+        )
     }
 
     private static func checkCloseReading(_ runtime: PiAgentRuntime) async throws {
@@ -145,6 +181,66 @@ struct WeiBeiPiCheck {
               containsSourceLabel(reply.text) else {
             throw PiCheckError.invalidEvaluation("recall-practice")
         }
+    }
+
+    private static func checkInteractiveStudy(_ runtime: PiAgentRuntime) async throws {
+        var interactiveRequest = request(
+            workflow: .automatic,
+            question: "这段怎么理解？帮我抓住原文里的关键词。",
+            revision: "pi-check-interactive"
+        )
+        interactiveRequest.selectionTitle = "利率定义选区"
+        interactiveRequest.selectionText = "名义利率包含预期通胀，而实际利率反映扣除预期通胀后的真实资金成本。这两个概念服务于不同的观察目标。"
+        interactiveRequest.interactions = [
+            StudyAgentInteractionEvent(
+                blockID: "block-prior-reading",
+                kind: "evidence-board",
+                action: "inspect-evidence",
+                detail: #"{"stance":"gap","title":"适用范围未说明"}"#
+            ),
+        ]
+        guard interactiveRequest.resolvedWorkflow == .interactiveStudy,
+              interactiveRequest.richPresentationDecision.shape == .annotatedPassage else {
+            throw PiCheckError.invalidEvaluation("interactive-study-routing")
+        }
+
+        let reply = try await runtime.respond(to: interactiveRequest)
+        let presentation = AgentAnswerPresentation.parse(reply.text, fallbackSource: nil)
+        guard reply.backend == .pi,
+              reply.text.contains("```weibei-interactive"),
+              interactiveKinds(in: reply.text).contains("annotated-passage"),
+              !presentation.sourceReferences.isEmpty else {
+            throw PiCheckError.invalidEvaluation("interactive-study")
+        }
+    }
+
+    private static func interactiveKinds(in markdown: String) -> [String] {
+        let lines = markdown.components(separatedBy: .newlines)
+        var kinds: [String] = []
+        var jsonLines: [String] = []
+        var insideInteractiveFence = false
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.hasPrefix("```weibei-interactive") {
+                insideInteractiveFence = true
+                jsonLines.removeAll(keepingCapacity: true)
+                continue
+            }
+            if insideInteractiveFence, trimmed.hasPrefix("```") {
+                let json = jsonLines.joined(separator: "\n")
+                if let data = json.data(using: .utf8),
+                   let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                   let kind = object["kind"] as? String {
+                    kinds.append(kind)
+                }
+                insideInteractiveFence = false
+                continue
+            }
+            if insideInteractiveFence {
+                jsonLines.append(line)
+            }
+        }
+        return kinds
     }
 
     private static func request(

@@ -1313,6 +1313,7 @@ struct MarkdownPreviewView: View {
     var fitsContentHeight = true
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
+    var onInteractiveAction: (StudyAgentInteractionEvent) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
     var onSelectionChange: (String, CGPoint?) -> Void = { _, _ in }
     var onContentHeightChange: () -> Void = {}
@@ -1337,6 +1338,7 @@ struct MarkdownPreviewView: View {
             },
             onWikiLink: onWikiLink,
             onSourceReference: onSourceReference,
+            onInteractiveAction: onInteractiveAction,
             onAppShortcut: onAppShortcut
         )
         .background(compact ? Color.clear : WeiBeiTheme.paper)
@@ -1350,6 +1352,19 @@ private struct AgentRailTurn {
     var startIndex: Int
     var question: String
     var answer: String
+}
+
+private enum AgentAnswerMetrics {
+    static let space1: CGFloat = 4
+    static let space2: CGFloat = 8
+    static let space3: CGFloat = 12
+    static let space4: CGFloat = 16
+    static let space6: CGFloat = 24
+    static let outerInset: CGFloat = 18
+    static let readingMaxWidth: CGFloat = 780
+    static let instrumentMaxWidth: CGFloat = 1040
+    static let composerMaxWidth: CGFloat = 720
+    static let bottomClearance: CGFloat = 32
 }
 
 struct AgentPaneView: View {
@@ -1383,10 +1398,13 @@ struct AgentPaneView: View {
                         }
 
                         GeometryReader { geometry in
-                            let contentWidth = min(max(geometry.size.width - 36, 320), agentContentMaxWidth ?? 760)
+                            let contentWidth = min(
+                                max(geometry.size.width - AgentAnswerMetrics.outerInset * 2, 320),
+                                agentContentMaxWidth ?? AgentAnswerMetrics.readingMaxWidth
+                            )
 
                             ScrollView(showsIndicators: true) {
-                                LazyVStack(alignment: .leading, spacing: 12) {
+                                LazyVStack(alignment: .leading, spacing: AgentAnswerMetrics.space6) {
                                     ForEach(store.messages) { message in
                                         agentMessageRow(message: message, geometryWidth: geometry.size.width, contentWidth: contentWidth, proxy: proxy)
                                     }
@@ -1395,7 +1413,7 @@ struct AgentPaneView: View {
                                             .id("agent-streaming-response")
                                             .transition(WeiBeiTransition.message)
                                     }
-                                    if store.isAskingAgent {
+                                    if store.isAskingAgent && store.agentStreamingText.isEmpty {
                                         AgentThinkingIndicator()
                                             .id("agent-thinking")
                                             .transition(WeiBeiTransition.message)
@@ -1406,12 +1424,13 @@ struct AgentPaneView: View {
                                             .transition(WeiBeiTransition.message)
                                     }
                                     Color.clear
-                                        .frame(height: 1)
+                                        .frame(height: AgentAnswerMetrics.bottomClearance)
                                         .id(agentBottomAnchorID)
                                 }
                                 .scrollTargetLayout()
-                                .padding(14)
-                                .padding(.top, store.messages.isEmpty ? 22 : 0)
+                                .padding(.horizontal, AgentAnswerMetrics.outerInset)
+                                .padding(.vertical, AgentAnswerMetrics.space4)
+                                .padding(.top, store.messages.isEmpty ? AgentAnswerMetrics.space2 : 0)
                                 .frame(width: geometry.size.width, alignment: .topLeading)
                                 .frame(minHeight: geometry.size.height, alignment: .topLeading)
                                 .animation(WeiBeiMotion.panel, value: store.messages.count)
@@ -1442,11 +1461,14 @@ struct AgentPaneView: View {
                 .onChange(of: visibleAgentMessageID) { _, messageID in
                     updateAgentRailPosition(for: messageID)
                 }
+                .onAppear {
+                    scrollAgentToBottom(proxy)
+                }
             }
         }
         .frame(minHeight: 260)
         .foregroundStyle(WeiBeiTheme.ink)
-        .background(showsPaneHeader ? WeiBeiTheme.paper : Color.clear)
+        .background(WeiBeiTheme.paper)
         .overlay(alignment: .top) {
             ZStack(alignment: .top) {
                 if showsPaneHeader {
@@ -1476,18 +1498,24 @@ struct AgentPaneView: View {
 
     private func agentMessageRow(message: AgentMessage, geometryWidth: CGFloat, contentWidth: CGFloat, proxy: ScrollViewProxy) -> some View {
         let isUser = message.role == .user
-        // Both roles share one centered reading column. User bubbles trail inside the
-        // column (Codex-style), not against the window's right edge.
-        let readingWidth = max(contentWidth - 28, 240)
-        let readingLeadingInset = max((geometryWidth - contentWidth) / 2, 0)
+        let presentation = AgentAnswerPresentation.parse(message.text, fallbackSource: nil)
+        let readingWidth = max(contentWidth, 240)
+        let answerWidth = !isUser && !presentation.interactiveKinds.isEmpty
+            ? min(
+                max(geometryWidth - AgentAnswerMetrics.outerInset * 2, readingWidth),
+                AgentAnswerMetrics.instrumentMaxWidth
+            )
+            : readingWidth
+        let readingLeadingInset = max((geometryWidth - answerWidth) / 2, 0)
 
         return AgentBubble(
             message: message,
+            presentation: presentation,
             onMarkdownHeightChange: message.id == store.messages.last?.id ? {
                 scrollAgentToBottom(proxy)
             } : {}
         )
-        .frame(maxWidth: readingWidth, alignment: isUser ? .trailing : .leading)
+        .frame(maxWidth: answerWidth, alignment: isUser ? .trailing : .leading)
         .padding(.leading, readingLeadingInset)
         .frame(maxWidth: .infinity, alignment: .leading)
         .id(message.id)
@@ -1578,18 +1606,6 @@ struct AgentPaneView: View {
 
     private var agentInputTray: some View {
         VStack(spacing: 0) {
-            LinearGradient(
-                colors: [
-                    .clear,
-                    WeiBeiTheme.paper.opacity(0.18),
-                    WeiBeiTheme.glassTint.opacity(0.34)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(height: 22)
-            .allowsHitTesting(false)
-
             VStack(alignment: .leading, spacing: 8) {
                 if store.hasSelectionAttachments {
                     AgentSelectionAttachmentPill()
@@ -1616,33 +1632,28 @@ struct AgentPaneView: View {
             .font(.system(size: 15))
             .frame(minHeight: 56, alignment: .bottom)
             .frame(maxWidth: agentInputMaxWidth)
-            .padding(.horizontal, 18)
-            .padding(.top, 4)
-            .padding(.bottom, 16)
+            .padding(.horizontal, AgentAnswerMetrics.outerInset)
+            .padding(.top, AgentAnswerMetrics.space3)
+            .padding(.bottom, AgentAnswerMetrics.space4)
             .frame(maxWidth: .infinity)
             .animation(WeiBeiMotion.reveal, value: store.agentDraft)
         }
-        .background(alignment: .bottom) {
-            WeiBeiGlassHeaderBackground(
-                paperOpacity: showsPaneHeader ? 0.34 : 0.14,
-                materialOpacity: showsPaneHeader ? 0.04 : 0.02
-            )
-            .mask(
-                LinearGradient(
-                    colors: [.clear, WeiBeiTheme.ink.opacity(0.42), WeiBeiTheme.ink.opacity(0.78)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
+        .background {
+            WeiBeiTheme.paperRaised.opacity(store.appearanceMode == .inkstone ? 0.30 : 0.52)
+        }
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(WeiBeiTheme.hairline.opacity(store.appearanceMode == .inkstone ? 0.74 : 0.52))
+                .frame(height: 1)
         }
     }
 
     private var agentInputMaxWidth: CGFloat? {
-        680
+        AgentAnswerMetrics.composerMaxWidth
     }
 
     private var agentContentMaxWidth: CGFloat? {
-        760
+        AgentAnswerMetrics.readingMaxWidth
     }
 
     private var emptyAgentState: some View {
@@ -1669,7 +1680,16 @@ struct AgentPaneView: View {
                 }
                 if store.hasSelectedMaterial {
                     starterChip(store.ui("出题", "Quiz"), systemImage: "questionmark.square", help: store.ui("生成复习题", "Generate review questions")) {
-                        askWith(store.ui("请根据当前材料和笔记生成 5 个复习问题，并标出每题依据。", "Generate 5 review questions from the current material and note, and cite the evidence for each question."))
+                        askWith(store.ui("请根据当前材料和笔记生成 3 个可交互测验，让我选择后再显示解释，每题附上可跳转依据。", "Create 3 interactive quizzes from the current material and note. Reveal each explanation after I choose, with a jumpable source for every question."))
+                    }
+                    starterChip(store.ui("揭晓", "Reveal"), systemImage: "rectangle.on.rectangle", help: store.ui("做成先想后揭晓的学习卡", "Create a think-first reveal card")) {
+                        askWith(store.ui("请把当前最难的一个概念做成互动学习卡：先给我一个思考提示，点开后再揭晓解释，并附可跳转来源。", "Turn the hardest current concept into an interactive study card: give me a prompt first, reveal the explanation on click, and attach a jumpable source."))
+                    }
+                    starterChip(store.ui("图解", "Visualize"), systemImage: "chart.xyaxis.line", help: store.ui("生成互动图解", "Create an interactive visual")) {
+                        askWith(store.ui("请把当前最适合用视觉理解的内容做成互动图解。根据内容选择图表、函数曲线或参数调节器，不要为了炫技硬加组件，并附可跳转来源。", "Turn the part best understood visually into an interactive explanation. Choose a chart, function plot, or parameter lab based on the content, avoid decorative widgets, and attach a jumpable source."))
+                    }
+                    starterChip(store.ui("对照", "Compare"), systemImage: "rectangle.split.2x1", help: store.ui("比较文本、设计或配色", "Compare text, design, or color")) {
+                        askWith(store.ui("请把当前最值得比较的内容做成互动对照。根据内容选择文本研读、设计方案比较或配色板，说清差异，不要输出任意 HTML，并附可跳转来源。", "Turn the most useful comparison into an interactive study. Choose a text study, design comparison, or palette based on the content, explain the difference, do not output arbitrary HTML, and attach a jumpable source."))
                     }
                 }
             }
@@ -1776,6 +1796,10 @@ struct AgentPaneView: View {
         guard agentFollowsLatest else { return }
         DispatchQueue.main.async {
             withAnimation(WeiBeiMotion.panel) {
+                proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                guard agentFollowsLatest else { return }
                 proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)
             }
         }
@@ -2908,9 +2932,258 @@ private struct ContextRailLine: View {
     }
 }
 
+private struct WeiBeiAgentAvatar: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    var active = false
+    var notice = false
+    var size: CGFloat = 30
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .fill(avatarFill)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .strokeBorder(WeiBeiTheme.hairline.opacity(active ? 0.78 : 0.52), lineWidth: 1)
+                }
+
+            VStack(spacing: 0) {
+                Rectangle()
+                    .fill(WeiBeiTheme.cinnabar.opacity(active ? 0.74 : 0.54))
+                    .frame(height: 2)
+                Spacer(minLength: 0)
+                Rectangle()
+                    .fill(WeiBeiTheme.hairline.opacity(0.38))
+                    .frame(height: 1)
+            }
+            .padding(3)
+
+            Text(store.interfaceLanguage == .chinese ? "魏" : "W")
+                .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: size * 0.46, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.ink.opacity(active ? 0.96 : 0.84))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            RoundedRectangle(cornerRadius: 1)
+                .fill(notice ? WeiBeiTheme.link.opacity(0.72) : WeiBeiTheme.cinnabar.opacity(0.72))
+                .frame(width: 5, height: 5)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 1).stroke(WeiBeiTheme.paper.opacity(0.72), lineWidth: 1)
+                }
+                .offset(x: 1.5, y: 1.5)
+        }
+        .frame(width: size, height: size)
+        .shadow(color: WeiBeiTheme.ink.opacity(active ? 0.08 : 0.035), radius: active ? 4 : 2, y: 1)
+        .accessibilityLabel(Text(store.ui("魏碑 Agent", "WeiBei Agent")))
+    }
+
+    private var avatarFill: Color {
+        store.appearanceMode == .inkstone
+            ? WeiBeiTheme.paperRaised.opacity(active ? 0.42 : 0.28)
+            : WeiBeiTheme.paperRaised.opacity(active ? 0.96 : 0.76)
+    }
+}
+
+private struct AgentSourceRibbon: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    var references: [AgentSourceReference]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AgentAnswerMetrics.space2) {
+            HStack(spacing: AgentAnswerMetrics.space2) {
+                Label(store.ui("依据", "Evidence"), systemImage: "books.vertical")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                Text("\(references.count)")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundStyle(sourceHintInk)
+                Spacer(minLength: 8)
+                Text(store.ui("悬停预览 · 点击跳转", "Hover to preview · click to open"))
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(sourceHintInk)
+            }
+
+            ScrollView(.horizontal) {
+                HStack(spacing: AgentAnswerMetrics.space2) {
+                    ForEach(Array(references.enumerated()), id: \.element.id) { index, reference in
+                        AgentSourceTag(
+                            ordinal: index + 1,
+                            preview: store.agentSourcePreview(for: reference)
+                        )
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .padding(.top, AgentAnswerMetrics.space3)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(WeiBeiTheme.hairline.opacity(0.64))
+                .frame(height: 1)
+        }
+        .accessibilityLabel(Text(store.ui("回答来源", "Answer sources")))
+    }
+
+    private var sourceHintInk: Color {
+        store.appearanceMode == .inkstone
+            ? WeiBeiTheme.secondaryInk.opacity(0.96)
+            : WeiBeiTheme.tertiaryInk
+    }
+}
+
+private struct AgentSourceTag: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    var ordinal: Int
+    var preview: AgentSourcePreview
+    @State private var hovering = false
+    @State private var previewPresented = false
+
+    var body: some View {
+        Button {
+            guard preview.canOpen else { return }
+            previewPresented = false
+            store.openSourceReference(preview.reference.rawValue)
+        } label: {
+            HStack(spacing: AgentAnswerMetrics.space2) {
+                Text(String(format: "%02d", ordinal))
+                    .font(.system(size: 9.5, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(sourceSecondaryInk)
+                    .frame(width: 18, alignment: .leading)
+
+                Rectangle()
+                    .fill(WeiBeiTheme.hairline.opacity(0.58))
+                    .frame(width: 1, height: 22)
+
+                Image(systemName: preview.systemImage)
+                    .font(.system(size: 11, weight: .medium))
+                    .frame(width: 14)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(preview.title)
+                        .lineLimit(1)
+                    if let locator = preview.locator {
+                        Text(locator)
+                            .font(.system(size: 9.5, weight: .medium))
+                            .foregroundStyle(sourceSecondaryInk)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: AgentAnswerMetrics.space1)
+
+                if preview.canOpen {
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(sourceSecondaryInk)
+                }
+            }
+            .font(.system(size: 10.5, weight: .medium))
+            .foregroundStyle(preview.canOpen ? sourcePrimaryInk : sourceSecondaryInk)
+            .padding(.horizontal, 9)
+            .frame(width: 248, height: 42, alignment: .leading)
+            .background(sourceFill)
+            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                    .strokeBorder(WeiBeiTheme.hairline.opacity(sourceBorderOpacity), lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering in
+            withAnimation(WeiBeiMotion.hover) {
+                hovering = isHovering
+            }
+            previewPresented = isHovering
+        }
+        .popover(isPresented: $previewPresented, arrowEdge: .bottom) {
+            AgentSourcePreviewPopover(preview: preview)
+        }
+        .help(preview.canOpen
+            ? store.ui("打开\(preview.title)", "Open \(preview.title)")
+            : store.ui("暂时无法定位\(preview.title)", "Cannot locate \(preview.title)"))
+    }
+
+    private var sourcePrimaryInk: Color {
+        store.appearanceMode == .inkstone
+            ? WeiBeiTheme.ink.opacity(0.86)
+            : WeiBeiTheme.secondaryInk
+    }
+
+    private var sourceSecondaryInk: Color {
+        store.appearanceMode == .inkstone
+            ? WeiBeiTheme.secondaryInk.opacity(0.96)
+            : WeiBeiTheme.tertiaryInk
+    }
+
+    private var sourceBorderOpacity: Double {
+        if hovering { return store.appearanceMode == .inkstone ? 0.86 : 0.72 }
+        return store.appearanceMode == .inkstone ? 0.66 : 0.42
+    }
+
+    private var sourceFill: Color {
+        if store.appearanceMode == .inkstone {
+            return WeiBeiTheme.paperRaised.opacity(hovering ? 0.58 : 0.34)
+        }
+        return WeiBeiTheme.paperRaised.opacity(hovering ? 0.92 : 0.58)
+    }
+}
+
+private struct AgentSourcePreviewPopover: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    var preview: AgentSourcePreview
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
+                Label(preview.kindLabel, systemImage: preview.systemImage)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                Spacer(minLength: 12)
+                if preview.canOpen {
+                    Image(systemName: "arrow.up.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(WeiBeiTheme.link)
+                }
+            }
+
+            Text(preview.title)
+                .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 14, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if let locator = preview.locator {
+                Label(locator, systemImage: "bookmark")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+            }
+
+            Text(preview.excerpt ?? preview.subtitle)
+                .font(.system(size: 11.5))
+                .lineSpacing(2)
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .lineLimit(4)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(12)
+        .frame(width: 270, alignment: .leading)
+        .background(WeiBeiTheme.paper)
+    }
+}
+
 private struct AgentBubble: View {
+    private enum AnswerMode {
+        case dialogue
+        case grounded
+        case closeReading
+        case reasoning
+        case practice
+        case exploration
+        case observation
+    }
+
     @EnvironmentObject private var store: WorkspaceStore
     var message: AgentMessage
+    var presentation: AgentAnswerPresentation
     var onMarkdownHeightChange: () -> Void = {}
     @State private var hovering = false
 
@@ -2932,15 +3205,17 @@ private struct AgentBubble: View {
 
     @ViewBuilder
     private var userTurn: some View {
-        // Quiet paper chip on the right edge: role is encoded by position + surface,
-        // so no "你" label, no accent rail, no messenger chrome.
-        VStack(alignment: .trailing, spacing: 5) {
-            if let source = message.source {
-                Text(source)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(WeiBeiTheme.tertiaryInk.opacity(0.86))
-                    .lineLimit(1)
-                    .padding(.trailing, 2)
+        VStack(alignment: .trailing, spacing: AgentAnswerMetrics.space2) {
+            HStack(spacing: AgentAnswerMetrics.space2) {
+                if let source = message.source {
+                    Text(source)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk.opacity(0.94))
+                        .lineLimit(1)
+                }
+                Label(store.ui("提问", "Question"), systemImage: "text.bubble")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
 
             AgentMessageMarkdownText(
@@ -2948,77 +3223,65 @@ private struct AgentBubble: View {
                 rendersRichMarkdown: false,
                 onContentHeightChange: onMarkdownHeightChange
             )
-            .padding(.horizontal, 13)
-            .padding(.vertical, 9)
-            .background {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(userBubbleFill)
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .strokeBorder(userBubbleStroke, lineWidth: 1)
-                    }
-                    .shadow(
-                        color: WeiBeiTheme.ink.opacity(store.appearanceMode == .inkstone ? 0.0 : (hovering ? 0.055 : 0.035)),
-                        radius: hovering ? 5 : 3.5,
-                        y: hovering ? 1.5 : 1
-                    )
+            .padding(.top, AgentAnswerMetrics.space2)
+            .padding(.bottom, AgentAnswerMetrics.space1)
+            .overlay(alignment: .top) {
+                Rectangle()
+                    .fill(hovering ? WeiBeiTheme.secondaryInk.opacity(0.72) : WeiBeiTheme.hairline.opacity(0.72))
+                    .frame(height: 1)
             }
-            .frame(maxWidth: 520, alignment: .trailing)
+            .frame(maxWidth: 560, alignment: .trailing)
         }
-        .weibeiHoverLift(active: hovering, amount: 0.6)
+        .padding(.vertical, AgentAnswerMetrics.space2)
         .frame(maxWidth: .infinity, alignment: .trailing)
-    }
-
-    private var userBubbleFill: Color {
-        // Same paper family as chips/panels: a slightly raised slip of paper, not a tinted chat blob.
-        store.appearanceMode == .inkstone
-            ? WeiBeiTheme.paperRaised.opacity(hovering ? 0.58 : 0.46)
-            : WeiBeiTheme.paperRaised.opacity(hovering ? 1.0 : 0.96)
-    }
-
-    private var userBubbleStroke: Color {
-        store.appearanceMode == .inkstone
-            ? WeiBeiTheme.hairline.opacity(hovering ? 0.58 : 0.42)
-            : WeiBeiTheme.hairline.opacity(hovering ? 0.52 : 0.38)
     }
 
     @ViewBuilder
     private var assistantTurn: some View {
-        if isCredentialNotice {
-            credentialNoticeContent
-                .padding(.vertical, 8)
-                .padding(.leading, 18)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .overlay(alignment: .leading) {
-                    Capsule()
-                        .fill(WeiBeiTheme.link.opacity(hovering ? 0.50 : 0.34))
-                        .frame(width: 2, height: 30)
+        VStack(alignment: .leading, spacing: AgentAnswerMetrics.space3) {
+            HStack(alignment: .center, spacing: AgentAnswerMetrics.space3) {
+                WeiBeiAgentAvatar(
+                    active: hovering,
+                    notice: isCredentialNotice || isOfflineContextPreview,
+                    size: 28
+                )
+                messageMetadata
+            }
+
+            Group {
+                if isCredentialNotice {
+                    credentialNoticeContent
+                } else {
+                    regularMessageContent
                 }
-        } else {
-            regularMessageContent
-                .padding(.vertical, 10)
-                .padding(.leading, 20)
-                .padding(.trailing, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .overlay(alignment: .leading) {
-                    Capsule()
-                        .fill(assistantMarkColor.opacity(hovering ? 1.0 : 0.72))
-                        .frame(width: 2, height: hovering ? 34 : 24)
-                        .padding(.leading, 4)
-                }
+            }
+            .padding(.leading, 40)
         }
+        .padding(.top, AgentAnswerMetrics.space4)
+        .padding(.bottom, AgentAnswerMetrics.space3)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(WeiBeiTheme.hairline.opacity(0.54))
+                .frame(height: 1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
     }
 
     private var regularMessageContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            messageMetadata
+        VStack(alignment: .leading, spacing: presentation.interactiveKinds.isEmpty ? AgentAnswerMetrics.space2 : AgentAnswerMetrics.space4) {
+            if !presentation.bodyMarkdown.isEmpty {
+                AgentMessageMarkdownText(
+                    text: presentation.bodyMarkdown,
+                    rendersRichMarkdown: true,
+                    onInteractiveAction: store.recordAgentInteractiveAction,
+                    onContentHeightChange: onMarkdownHeightChange
+                )
+            }
 
-            AgentMessageMarkdownText(
-                text: message.text,
-                rendersRichMarkdown: true,
-                onContentHeightChange: onMarkdownHeightChange
-            )
+            if !presentation.sourceReferences.isEmpty {
+                AgentSourceRibbon(references: presentation.sourceReferences)
+            }
 
             if message.id == store.lastUsableAgentAnswerID {
                 if let update = store.latestAgentLearningUpdate,
@@ -3041,23 +3304,35 @@ private struct AgentBubble: View {
                 }
                 HStack(spacing: 6) {
                     if store.selectionContext != nil {
-                        Button(store.ui("摘录", "Excerpt")) {
+                        Button {
                             store.appendSelectionToNote()
+                        } label: {
+                            Label(store.ui("摘录", "Excerpt"), systemImage: "text.quote")
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
-                    Button(store.agentWriteActionTitle) {
+                    Button {
                         store.applyLastAgentAnswerToNote()
+                    } label: {
+                        Label(store.agentWriteActionTitle, systemImage: "square.and.pencil")
                     }
                     .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                     if store.canReplaceNoteSelection {
-                        Button(store.ui("替换", "Replace")) {
+                        Button {
                             store.replaceSelectionWithLastAgentAnswer()
+                        } label: {
+                            Label(store.ui("替换", "Replace"), systemImage: "arrow.triangle.2.circlepath")
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
                 }
-                .padding(.top, 2)
+                .padding(.top, 8)
+                .padding(.bottom, AgentAnswerMetrics.space2)
+                .overlay(alignment: .top) {
+                    Rectangle()
+                        .fill(WeiBeiTheme.hairline.opacity(0.46))
+                        .frame(height: 1)
+                }
             }
         }
     }
@@ -3104,12 +3379,12 @@ private struct AgentBubble: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(.leading, 9)
-        .padding(.vertical, 5)
-        .overlay(alignment: .leading) {
+        .padding(.top, 8)
+        .padding(.bottom, 3)
+        .overlay(alignment: .top) {
             Rectangle()
-                .fill(WeiBeiTheme.cinnabar.opacity(0.34))
-                .frame(width: 1)
+                .fill(WeiBeiTheme.hairline.opacity(0.52))
+                .frame(height: 1)
         }
     }
 
@@ -3129,26 +3404,70 @@ private struct AgentBubble: View {
     }
 
     private var messageMetadata: some View {
-        HStack(spacing: 6) {
-            Text("WeiBei")
-                .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
-                .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.76))
-            if let backend = message.backend {
-                Text(backendLabel(backend))
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-            }
-            if let source = message.source {
-                Text(source)
-                    .font(.caption2)
-                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                    .lineLimit(1)
-                    .padding(.horizontal, 6)
-                    .frame(height: 18)
-                    .background(WeiBeiTheme.paperInset.opacity(0.24))
-                    .clipShape(RoundedRectangle(cornerRadius: 5))
+        HStack(spacing: AgentAnswerMetrics.space2) {
+            Label(answerModeLabel, systemImage: answerModeIcon)
+                .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 11, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .help(message.backend.map { store.ui("由 \(backendLabel($0)) 驱动", "Powered by \(backendLabel($0))") } ?? "")
+
+            if !presentation.sourceReferences.isEmpty {
+                Rectangle()
+                    .fill(WeiBeiTheme.hairline.opacity(0.76))
+                    .frame(width: 12, height: 1)
+                Label(
+                    store.ui("\(presentation.sourceReferences.count) 条依据", "\(presentation.sourceReferences.count) sources"),
+                    systemImage: "books.vertical"
+                )
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(WeiBeiTheme.tertiaryInk)
             }
             Spacer(minLength: 0)
+        }
+    }
+
+    private var answerModeLabel: String {
+        switch answerMode {
+        case .dialogue: return store.ui("对话", "Dialogue")
+        case .grounded: return store.ui("据答", "Grounded")
+        case .closeReading: return store.ui("细读", "Read")
+        case .reasoning: return store.ui("辨析", "Reason")
+        case .practice: return store.ui("研练", "Practice")
+        case .exploration: return store.ui("推演", "Explore")
+        case .observation: return store.ui("观察", "Observe")
+        }
+    }
+
+    private var answerMode: AnswerMode {
+        let kinds = Set(presentation.interactiveKinds)
+        if !kinds.isDisjoint(with: ["quiz", "flashcards", "sequence-builder", "derivation-steps"]) {
+            return .practice
+        }
+        if !kinds.isDisjoint(with: ["function-plot", "parameter-lab", "scenario-lab", "unit-workbench", "reaction-balance", "algorithm-trace", "pathway-lab"]) {
+            return .exploration
+        }
+        if !kinds.isDisjoint(with: ["evidence-board", "argument-map", "decision-path", "relationship-map", "comparison-matrix", "timeline", "spectrum"]) {
+            return .reasoning
+        }
+        if !kinds.isDisjoint(with: ["reveal", "text-study", "annotated-passage", "language-aligner"]) {
+            return .closeReading
+        }
+        if !kinds.isEmpty {
+            return .observation
+        }
+        return presentation.sourceReferences.isEmpty
+            ? .dialogue
+            : .grounded
+    }
+
+    private var answerModeIcon: String {
+        switch answerMode {
+        case .practice: return "checkmark.square"
+        case .exploration: return "slider.horizontal.3"
+        case .reasoning: return "point.3.connected.trianglepath.dotted"
+        case .closeReading: return "text.magnifyingglass"
+        case .observation: return "viewfinder"
+        case .grounded: return "books.vertical"
+        case .dialogue: return "bubble.left.and.text.bubble.right"
         }
     }
 
@@ -3188,10 +3507,6 @@ private struct AgentBubble: View {
             || message.text.contains("## Offline Draft")
     }
 
-    private var assistantMarkColor: Color {
-        (isCredentialNotice || isOfflineContextPreview) ? WeiBeiTheme.link.opacity(0.42) : WeiBeiTheme.cinnabar.opacity(0.50)
-    }
-
     private func backendLabel(_ backend: StudyAgentBackend) -> String {
         switch backend {
         case .pi: return "PI"
@@ -3205,6 +3520,7 @@ private struct AgentMessageMarkdownText: View {
     @EnvironmentObject private var store: WorkspaceStore
     var text: String
     var rendersRichMarkdown: Bool
+    var onInteractiveAction: (StudyAgentInteractionEvent) -> Void = { _ in }
     var onContentHeightChange: () -> Void = {}
 
     var body: some View {
@@ -3217,6 +3533,7 @@ private struct AgentMessageMarkdownText: View {
                 compact: true,
                 onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
                 onSourceReference: { reference in store.openSourceReference(reference) },
+                onInteractiveAction: onInteractiveAction,
                 onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) },
                 onContentHeightChange: onContentHeightChange
             )
@@ -3240,34 +3557,38 @@ private struct AgentThinkingIndicator: View {
     @State private var pulse = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 4) {
-                ForEach(0..<3, id: \.self) { index in
-                    Circle()
-                        .fill(WeiBeiTheme.cinnabar.opacity(0.46))
-                        .frame(width: 5, height: 5)
-                        .scaleEffect(pulse ? 1.0 : 0.72)
-                        .opacity(pulse ? 0.84 : 0.34)
-                        .animation(
-                            .easeInOut(duration: 0.72)
-                                .repeatForever(autoreverses: true)
-                                .delay(Double(index) * 0.12),
-                            value: pulse
-                        )
+        HStack(spacing: AgentAnswerMetrics.space3) {
+            WeiBeiAgentAvatar(active: pulse, size: 26)
+
+            HStack(spacing: 7) {
+                HStack(spacing: 4) {
+                    ForEach(0..<3, id: \.self) { index in
+                        Circle()
+                            .fill(WeiBeiTheme.secondaryInk.opacity(0.54))
+                            .frame(width: 4.5, height: 4.5)
+                            .scaleEffect(pulse ? 1.0 : 0.72)
+                            .opacity(pulse ? 0.82 : 0.32)
+                            .animation(
+                                .easeInOut(duration: 0.72)
+                                    .repeatForever(autoreverses: true)
+                                    .delay(Double(index) * 0.12),
+                                value: pulse
+                            )
+                    }
                 }
+                Text(store.agentActivityText ?? store.ui("正在读取上下文", "Reading context"))
+                    .font(.caption)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
-            Text(store.agentActivityText ?? store.ui("正在读取上下文", "Reading context"))
-                .font(.caption)
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
         }
-        .padding(.horizontal, 12)
-        .frame(height: 30)
-        .background(WeiBeiTheme.paperRaised.opacity(0.34))
-        .clipShape(RoundedRectangle(cornerRadius: 7))
-        .overlay {
-            RoundedRectangle(cornerRadius: 7)
-                .stroke(WeiBeiTheme.hairline, lineWidth: 1)
+        .padding(.top, AgentAnswerMetrics.space4)
+        .padding(.bottom, AgentAnswerMetrics.space3)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(WeiBeiTheme.hairline.opacity(0.54))
+                .frame(height: 1)
         }
+        .frame(minHeight: 48)
         .onAppear {
             pulse = true
         }
@@ -3279,27 +3600,28 @@ private struct AgentStreamingResponse: View {
     var text: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 6) {
-                Text("WeiBei")
-                    .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
-                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.76))
-                Text("PI")
-                    .font(.system(size: 9.5, weight: .semibold))
+        VStack(alignment: .leading, spacing: AgentAnswerMetrics.space3) {
+            HStack(spacing: AgentAnswerMetrics.space3) {
+                WeiBeiAgentAvatar(active: true, size: 28)
+                Label(store.ui("正在研读", "Reading"), systemImage: "text.magnifyingglass")
+                    .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 11, weight: .semibold))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
+                Spacer(minLength: 0)
             }
-            AgentMessageMarkdownText(text: text, rendersRichMarkdown: false)
+
+            Group {
+                AgentMessageMarkdownText(text: text, rendersRichMarkdown: false)
+            }
+            .padding(.leading, 40)
         }
-        .padding(.vertical, 10)
-        .padding(.leading, 20)
-        .padding(.trailing, 8)
+        .padding(.top, AgentAnswerMetrics.space4)
+        .padding(.bottom, AgentAnswerMetrics.space3)
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(WeiBeiTheme.hairline.opacity(0.54))
+                .frame(height: 1)
+        }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(alignment: .leading) {
-            Capsule()
-                .fill(WeiBeiTheme.cinnabar.opacity(0.42))
-                .frame(width: 2, height: 24)
-                .padding(.leading, 4)
-        }
         .accessibilityLabel(Text(store.ui("PI 正在回答", "PI is responding")))
     }
 }

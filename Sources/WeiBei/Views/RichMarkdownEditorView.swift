@@ -249,6 +249,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     var onActiveHeadingChange: (Int?) -> Void = { _ in }
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
+    var onInteractiveAction: (StudyAgentInteractionEvent) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
     private static let localImageScheme = "weibeiimage"
 
@@ -271,6 +272,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onAskAgentWithSelection: onAskAgentWithSelection,
             onWikiLink: onWikiLink,
             onSourceReference: onSourceReference,
+            onInteractiveAction: onInteractiveAction,
             onAppShortcut: onAppShortcut
         )
     }
@@ -362,7 +364,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         let view = MarkdownWebView(frame: .zero, configuration: configuration)
         view.setValue(false, forKey: "drawsBackground")
         view.passesVerticalScrollToSuperview = isCompactPreview
-        Self.applyWebAppearance(to: view, appearanceMode: appearanceMode)
+        Self.applyWebAppearance(
+            to: view,
+            appearanceMode: appearanceMode,
+            isCompactPreview: isCompactPreview
+        )
         view.pasteImageFromClipboard = { [weak coordinator = context.coordinator] in
             coordinator?.pasteImageFromClipboard() ?? false
         }
@@ -381,7 +387,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
     func updateNSView(_ view: WKWebView, context: Context) {
         (view as? MarkdownWebView)?.passesVerticalScrollToSuperview = isCompactPreview
-        Self.applyWebAppearance(to: view, appearanceMode: appearanceMode)
+        Self.applyWebAppearance(
+            to: view,
+            appearanceMode: appearanceMode,
+            isCompactPreview: isCompactPreview
+        )
         context.coordinator.markdown = $markdown
         context.coordinator.command = $command
         if context.coordinator.documentID != documentID {
@@ -412,6 +422,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.focusRequest = focusRequest
         context.coordinator.onWikiLink = onWikiLink
         context.coordinator.onSourceReference = onSourceReference
+        context.coordinator.onInteractiveAction = onInteractiveAction
         context.coordinator.onAppShortcut = onAppShortcut
         let nextBaseURL = markdownBaseURL?.absoluteString ?? ""
         if context.coordinator.markdownBaseURLString != nextBaseURL {
@@ -452,6 +463,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         "askAgentWithSelection",
         "wikiLinkActivated",
         "sourceReferenceActivated",
+        "interactiveAction",
         "imageAttachmentRequested",
         "contentHeightChanged",
         "activeHeadingChanged",
@@ -459,8 +471,15 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         "appShortcut"
     ]
 
-    private static func applyWebAppearance(to view: WKWebView, appearanceMode: WeiBeiAppearanceMode) {
-        view.underPageBackgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
+    private static func applyWebAppearance(
+        to view: WKWebView,
+        appearanceMode: WeiBeiAppearanceMode,
+        isCompactPreview: Bool
+    ) {
+        let backgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
+        view.underPageBackgroundColor = backgroundColor
+        view.wantsLayer = true
+        view.layer?.backgroundColor = backgroundColor.cgColor
         view.appearance = NSAppearance(named: appearanceMode == .inkstone ? .darkAqua : .aqua)
     }
 
@@ -479,6 +498,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var onActiveHeadingChange: (Int?) -> Void
         var onWikiLink: (String) -> Void
         var onSourceReference: (String) -> Void
+        var onInteractiveAction: (StudyAgentInteractionEvent) -> Void
         var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool
         weak var webView: WKWebView?
         var isReady = false
@@ -515,6 +535,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onAskAgentWithSelection: @escaping (String, CGPoint?) -> Void,
             onWikiLink: @escaping (String) -> Void,
             onSourceReference: @escaping (String) -> Void,
+            onInteractiveAction: @escaping (StudyAgentInteractionEvent) -> Void,
             onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool
         ) {
             self.documentID = documentID
@@ -534,6 +555,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.onAskAgentWithSelection = onAskAgentWithSelection
             self.onWikiLink = onWikiLink
             self.onSourceReference = onSourceReference
+            self.onInteractiveAction = onInteractiveAction
             self.onAppShortcut = onAppShortcut
         }
 
@@ -588,6 +610,21 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 guard let body = message.body as? [String: Any],
                       let reference = body["reference"] as? String else { return }
                 onSourceReference(reference)
+            case "interactiveAction":
+                guard let body = message.body as? [String: Any],
+                      let blockID = body["blockId"] as? String,
+                      let kind = body["kind"] as? String,
+                      let action = body["action"] as? String,
+                      let detail = body["detail"] as? String,
+                      !blockID.isEmpty,
+                      !kind.isEmpty,
+                      !action.isEmpty else { return }
+                onInteractiveAction(StudyAgentInteractionEvent(
+                    blockID: String(blockID.prefix(120)),
+                    kind: String(kind.prefix(80)),
+                    action: String(action.prefix(80)),
+                    detail: String(detail.prefix(1_200))
+                ))
             case "imageAttachmentRequested":
                 guard isEditable,
                       let body = message.body as? [String: Any],

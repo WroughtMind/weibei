@@ -34,6 +34,133 @@ struct PaneExpansionRequest: Equatable {
     let role: WorkspacePaneRole
 }
 
+struct AgentSourcePreview: Identifiable, Equatable {
+    var reference: AgentSourceReference
+    var title: String
+    var subtitle: String
+    var kindLabel: String
+    var systemImage: String
+    var locator: String?
+    var excerpt: String?
+    var canOpen: Bool
+
+    var id: String { reference.id }
+}
+
+enum PaneToggleContinuityVerifier {
+    private(set) static var isMeasuring = false
+    private(set) static var htmlEventSequence = 0
+    private(set) static var htmlSectionEventCount = 0
+    private(set) static var htmlActiveEventCount = 0
+    private(set) static var htmlLocationCallCount = 0
+    private(set) static var htmlLocationCommitCount = 0
+    private(set) static var htmlLocationReasons: [String: Int] = [:]
+    private(set) static var webReaderMakeCount = 0
+    private(set) static var webReaderDismantleCount = 0
+    private(set) static var pdfReaderMakeCount = 0
+    private(set) static var pdfReaderDismantleCount = 0
+    private(set) static var noteEditorMakeCount = 0
+    private(set) static var noteEditorDismantleCount = 0
+    private(set) static var verificationScrollScheduleCount = 0
+    private(set) static var verificationScrollResult = ""
+
+    static var isEnabled: Bool {
+        let scenario = ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"]
+        return scenario == "pane-toggle-continuity-flow"
+            || scenario == "pane-layout-stability-flow"
+            || scenario == "pane-reorder-width-flow"
+            || scenario == "reader-scroll-persistence-flow"
+    }
+
+    static func beginMeasurement() {
+        guard isEnabled else { return }
+        isMeasuring = true
+        htmlSectionEventCount = 0
+        htmlActiveEventCount = 0
+        htmlLocationCallCount = 0
+        htmlLocationCommitCount = 0
+        htmlLocationReasons = [:]
+        webReaderMakeCount = 0
+        webReaderDismantleCount = 0
+        pdfReaderMakeCount = 0
+        pdfReaderDismantleCount = 0
+        noteEditorMakeCount = 0
+        noteEditorDismantleCount = 0
+        verificationScrollScheduleCount = 0
+        verificationScrollResult = ""
+    }
+
+    static func endMeasurement() {
+        guard isEnabled else { return }
+        isMeasuring = false
+    }
+
+    static func recordHTMLActiveEvent(reason: String) {
+        guard isEnabled else { return }
+        htmlEventSequence += 1
+        if isMeasuring {
+            htmlActiveEventCount += 1
+        }
+    }
+
+    static func recordHTMLSectionEvent(count: Int) {
+        guard isEnabled else { return }
+        htmlEventSequence += 1
+        if isMeasuring { htmlSectionEventCount += 1 }
+    }
+
+    static func recordHTMLLocationCall(reason: String) {
+        guard isMeasuring else { return }
+        htmlLocationCallCount += 1
+        htmlLocationReasons[reason, default: 0] += 1
+    }
+
+    static func recordHTMLLocationCommit(reason: String) {
+        guard isMeasuring else { return }
+        htmlLocationCommitCount += 1
+    }
+
+    static func recordWebReaderMake() {
+        guard isEnabled else { return }
+        if isMeasuring { webReaderMakeCount += 1 }
+    }
+
+    static func recordWebReaderDismantle() {
+        guard isEnabled else { return }
+        if isMeasuring { webReaderDismantleCount += 1 }
+    }
+
+    static func recordNoteEditorMake() {
+        guard isEnabled else { return }
+        if isMeasuring { noteEditorMakeCount += 1 }
+    }
+
+    static func recordPDFReaderMake() {
+        guard isEnabled else { return }
+        if isMeasuring { pdfReaderMakeCount += 1 }
+    }
+
+    static func recordPDFReaderDismantle() {
+        guard isEnabled else { return }
+        if isMeasuring { pdfReaderDismantleCount += 1 }
+    }
+
+    static func recordNoteEditorDismantle() {
+        guard isEnabled else { return }
+        if isMeasuring { noteEditorDismantleCount += 1 }
+    }
+
+    static func recordVerificationScrollScheduled() {
+        guard isEnabled else { return }
+        verificationScrollScheduleCount += 1
+    }
+
+    static func recordVerificationScrollResult(_ result: String) {
+        guard isEnabled else { return }
+        verificationScrollResult = result
+    }
+}
+
 @MainActor
 final class WorkspaceStore: ObservableObject {
     @Published var importedItems: [StudyItem] = []
@@ -48,7 +175,7 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var latestAgentNoteProposal: StudyAgentNoteProposal?
     @Published private(set) var latestAgentLearningUpdate: StudyAgentLearningUpdate?
     @Published private(set) var noteSourceLinks: [NoteSourceLink] = []
-    @Published private(set) var studyLocationsByItemID: [String: StudyLocation] = [:]
+    private(set) var studyLocationsByItemID: [String: StudyLocation] = [:]
     @Published private(set) var learningMemoryEntries: [LearningMemoryEntry] = []
     @Published private(set) var learningMemoryRevision: UInt64 = 0
     @Published private(set) var studySessions: [StudySession] = []
@@ -66,8 +193,11 @@ final class WorkspaceStore: ObservableObject {
     @Published var readerLocationTitle: String?
     @Published var readerPageIndex = 0
     @Published var readerTargetPageIndex: Int?
+    @Published private(set) var readerTargetPageRequestID = UUID()
+    @Published private(set) var readerTargetPageRecordsLocation = false
     @Published var readerTargetLocationID: String?
     @Published var readerTargetLocationTitle: String?
+    @Published private(set) var readerTargetLocationRequestID = UUID()
     @Published var focusedPane: PaneFocus = .reader
     @Published var focusRequest = 0
     @Published var layout: WorkspaceLayout = .documentAgentNotes
@@ -108,6 +238,7 @@ final class WorkspaceStore: ObservableObject {
     private var quietInsightTaskID: UUID?
     private var agentContextRevision: UInt64 = 0
     private var lastAgentReplyContextRevision: UInt64?
+    private var pendingAgentInteractiveActions: [StudyAgentInteractionEvent] = []
     private var latestAgentLearningUpdateQuestion: String?
     private var stagedNoteDraft: (itemID: String, value: String)?
     private var quietInsightSignature = ""
@@ -326,9 +457,8 @@ final class WorkspaceStore: ObservableObject {
         guard let location = lastStudyLocation,
               allItems.contains(where: { $0.id == location.itemID }) else { return }
         select(itemID: location.itemID)
-        readerTargetPageIndex = location.pageIndex
-        readerTargetLocationID = location.locationID
-        readerTargetLocationTitle = location.locationTitle
+        requestReaderPDFPage(location.pageIndex, recordsLocation: false)
+        requestReaderHTMLLocation(id: location.locationID, title: location.locationTitle)
         showReader = true
         focus(.reader)
     }
@@ -354,6 +484,32 @@ final class WorkspaceStore: ObservableObject {
         messages.append(message)
         syncActiveStudySession(titleSeed: message.role == .user ? message.text : nil)
         save()
+    }
+
+    func recordAgentInteractiveAction(_ event: StudyAgentInteractionEvent) {
+        let bounded = StudyAgentInteractionEvent(
+            blockID: String(event.blockID.prefix(120)),
+            kind: String(event.kind.prefix(80)),
+            action: String(event.action.prefix(80)),
+            detail: String(event.detail.prefix(1_200))
+        )
+        guard !bounded.blockID.isEmpty, !bounded.kind.isEmpty, !bounded.action.isEmpty else { return }
+        pendingAgentInteractiveActions.removeAll {
+            $0.blockID == bounded.blockID && $0.action == bounded.action
+        }
+        pendingAgentInteractiveActions.append(bounded)
+        if pendingAgentInteractiveActions.count > 12 {
+            pendingAgentInteractiveActions.removeFirst(pendingAgentInteractiveActions.count - 12)
+        }
+    }
+
+    private func restoreAgentInteractiveActions(_ events: [StudyAgentInteractionEvent]) {
+        guard !events.isEmpty else { return }
+        let currentEvents = pendingAgentInteractiveActions
+        pendingAgentInteractiveActions.removeAll(keepingCapacity: true)
+        for event in events + currentEvents {
+            recordAgentInteractiveAction(event)
+        }
     }
 
     private func syncActiveStudySession(titleSeed: String? = nil) {
@@ -784,7 +940,7 @@ final class WorkspaceStore: ObservableObject {
             lastSelectionAttachmentDate = nil
             readerPageIndex = 0
             readerLocationID = nil
-            readerTargetPageIndex = nil
+            requestReaderPDFPage(nil, recordsLocation: false)
             readerTargetLocationID = nil
             readerTargetLocationTitle = nil
         }
@@ -1140,34 +1296,53 @@ final class WorkspaceStore: ObservableObject {
         let cleaned = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let nextTitle = cleaned.isEmpty ? selectedMaterialItem.map(displayTitle) : cleaned
         guard readerLocationTitle != nextTitle else { return }
-        invalidateAgentContext()
         readerLocationTitle = nextTitle
-        recordCurrentStudyLocation(incrementVisit: false)
     }
 
-    func updateReaderHTMLLocation(id: String?, title: String?) {
+    func updateReaderHTMLLocation(id: String?, title: String?, reason: String) {
         guard selectedMaterialItem?.kind == .html else { return }
+        PaneToggleContinuityVerifier.recordHTMLLocationCall(reason: reason)
         let cleanedID = id?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let cleanedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let nextID = cleanedID.isEmpty ? nil : String(cleanedID.prefix(500))
         let nextTitle = cleanedTitle.isEmpty ? selectedMaterialItem.map(displayTitle) : String(cleanedTitle.prefix(300))
+        if reason == "jump" {
+            clearReaderHTMLLocationTarget()
+        }
         guard readerLocationID != nextID || readerLocationTitle != nextTitle else { return }
-        invalidateAgentContext()
+        PaneToggleContinuityVerifier.recordHTMLLocationCommit(reason: reason)
         readerLocationID = nextID
         readerLocationTitle = nextTitle
-        if readerTargetLocationID == nextID {
-            readerTargetLocationID = nil
-        }
-        if readerTargetLocationTitle == nextTitle {
-            readerTargetLocationTitle = nil
-        }
         recordCurrentStudyLocation(incrementVisit: false)
+    }
+
+    private func requestReaderHTMLLocation(id: String?, title: String?) {
+        readerTargetLocationID = id
+        readerTargetLocationTitle = title
+        readerTargetLocationRequestID = UUID()
+    }
+
+    private func clearReaderHTMLLocationTarget() {
+        guard readerTargetLocationID != nil || readerTargetLocationTitle != nil else { return }
+        readerTargetLocationID = nil
+        readerTargetLocationTitle = nil
+    }
+
+    private func requestReaderPDFPage(_ pageIndex: Int?, recordsLocation: Bool) {
+        readerTargetPageRecordsLocation = recordsLocation && pageIndex != nil
+        readerTargetPageIndex = pageIndex.map { max($0, 0) }
+        readerTargetPageRequestID = UUID()
+    }
+
+    func consumeReaderPDFPageRequest(_ requestID: UUID) {
+        guard readerTargetPageRequestID == requestID else { return }
+        readerTargetPageIndex = nil
+        readerTargetPageRecordsLocation = false
     }
 
     func updateReaderPageIndex(_ index: Int) {
         let nextIndex = max(index, 0)
         guard readerPageIndex != nextIndex else { return }
-        invalidateAgentContext()
         readerPageIndex = nextIndex
         recordCurrentStudyLocation(incrementVisit: false)
     }
@@ -1175,12 +1350,22 @@ final class WorkspaceStore: ObservableObject {
     private func recordCurrentStudyLocation(incrementVisit: Bool) {
         guard let item = selectedMaterialItem else { return }
         let previous = studyLocationsByItemID[item.id]
+        let itemTitle = sourceReferenceBaseTitle(for: item)
+        let locationID = item.kind == .html ? readerLocationID : nil
+        let pageIndex = item.kind == .pdf ? readerPageIndex : nil
+        if !incrementVisit,
+           previous?.itemTitle == itemTitle,
+           previous?.locationID == locationID,
+           previous?.locationTitle == readerLocationTitle,
+           previous?.pageIndex == pageIndex {
+            return
+        }
         studyLocationsByItemID[item.id] = StudyLocation(
             itemID: item.id,
-            itemTitle: sourceReferenceBaseTitle(for: item),
-            locationID: item.kind == .html ? readerLocationID : nil,
+            itemTitle: itemTitle,
+            locationID: locationID,
             locationTitle: readerLocationTitle,
-            pageIndex: item.kind == .pdf ? readerPageIndex : nil,
+            pageIndex: pageIndex,
             lastStudiedAt: Date(),
             visitCount: max((previous?.visitCount ?? 0) + (incrementVisit ? 1 : 0), 1)
         )
@@ -1205,10 +1390,9 @@ final class WorkspaceStore: ObservableObject {
         readerLocationTitle = location.locationTitle ?? displayTitle(for: item)
         if item.kind == .pdf {
             readerPageIndex = max(location.pageIndex ?? 0, 0)
-            readerTargetPageIndex = location.pageIndex.map { max($0, 0) }
+            requestReaderPDFPage(location.pageIndex, recordsLocation: false)
         } else if item.kind == .html {
-            readerTargetLocationID = location.locationID
-            readerTargetLocationTitle = location.locationTitle
+            requestReaderHTMLLocation(id: location.locationID, title: location.locationTitle)
         }
     }
 
@@ -1236,14 +1420,57 @@ final class WorkspaceStore: ObservableObject {
             focus(.notes)
             return true
         }
-        readerTargetPageIndex = item.kind == .pdf ? reference.pageIndex : nil
-        readerTargetLocationID = item.kind == .html
+        requestReaderPDFPage(
+            item.kind == .pdf ? reference.pageIndex : nil,
+            recordsLocation: item.kind == .pdf && reference.pageIndex != nil
+        )
+        let htmlTargetID = item.kind == .html
             ? reference.sectionLocationID
                 ?? reference.sectionOrdinal.map { "html-heading-\(max($0 - 1, 0))" }
             : nil
-        readerTargetLocationTitle = item.kind == .html ? reference.sectionTitle : nil
+        requestReaderHTMLLocation(
+            id: htmlTargetID,
+            title: item.kind == .html ? reference.sectionTitle : nil
+        )
         focus(.reader)
         return true
+    }
+
+    func agentSourcePreview(for reference: AgentSourceReference) -> AgentSourcePreview {
+        let item = sourceReferenceItem(from: reference.rawValue)
+        let title = item.map(displayTitle) ?? reference.title
+        let subtitle = item.map(displaySubtitle) ?? ui("尚未在课程目录中定位", "Not located in the course yet")
+        let kindLabel: String
+        let systemImage: String
+        if let item {
+            kindLabel = item.isNotebookNote ? ui("笔记", "Note") : item.kind.label(language: interfaceLanguage)
+            systemImage = item.isNotebookNote ? "note.text" : item.kind.systemImage
+        } else {
+            kindLabel = ui("来源", "Source")
+            systemImage = "link"
+        }
+
+        let locator: String?
+        if let pageIndex = reference.pageIndex {
+            locator = ui("第 \(pageIndex + 1) 页", "Page \(pageIndex + 1)")
+        } else if let sectionTitle = reference.sectionTitle, !sectionTitle.isEmpty {
+            locator = sectionTitle
+        } else if let sectionOrdinal = reference.sectionOrdinal {
+            locator = ui("第 \(sectionOrdinal) 节", "Section \(sectionOrdinal)")
+        } else {
+            locator = nil
+        }
+
+        return AgentSourcePreview(
+            reference: reference,
+            title: title,
+            subtitle: subtitle,
+            kindLabel: kindLabel,
+            systemImage: systemImage,
+            locator: locator,
+            excerpt: item.flatMap(sourcePreviewExcerpt),
+            canOpen: item != nil
+        )
     }
 
     func setLayout(_ layout: WorkspaceLayout) {
@@ -1543,9 +1770,14 @@ final class WorkspaceStore: ObservableObject {
         focusedPane = snapshot.focusedPane
         threePaneOrder = WorkspacePaneRole.normalized(snapshot.threePaneOrder)
         noteText = noteText(for: activeNoteItem)
-        readerTargetPageIndex = selectedMaterialItem?.kind == .pdf ? snapshot.readerPageIndex : nil
-        readerTargetLocationID = selectedMaterialItem?.kind == .html ? snapshot.readerLocationID : nil
-        readerTargetLocationTitle = selectedMaterialItem?.kind == .html ? snapshot.readerLocationTitle : nil
+        requestReaderPDFPage(
+            selectedMaterialItem?.kind == .pdf ? snapshot.readerPageIndex : nil,
+            recordsLocation: false
+        )
+        requestReaderHTMLLocation(
+            id: selectedMaterialItem?.kind == .html ? snapshot.readerLocationID : nil,
+            title: selectedMaterialItem?.kind == .html ? snapshot.readerLocationTitle : nil
+        )
         latestAgentNoteProposal = nil
         latestAgentLearningUpdate = nil
         syncActiveStudySession()
@@ -2378,6 +2610,18 @@ final class WorkspaceStore: ObservableObject {
         return matches.count == 1 ? matches[0] : nil
     }
 
+    private func sourcePreviewExcerpt(for item: StudyItem) -> String? {
+        guard item.isNotebookNote else { return nil }
+        let excerpt = noteMarkdownText(for: item)
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("来源：") && !$0.lowercased().hasPrefix("source:") }
+            .prefix(3)
+            .joined(separator: " ")
+        guard !excerpt.isEmpty else { return nil }
+        return String(excerpt.prefix(180))
+    }
+
     private func addNoteSourceLink(noteItemID: String, sourceItemID: String) {
         guard noteItemID != sourceItemID,
               !noteSourceLinks.contains(where: {
@@ -2923,16 +3167,76 @@ final class WorkspaceStore: ObservableObject {
             "empty-workspace-open-chat",
             "empty-workspace-open-notes",
         ]
+        let agentAnswerShowcaseScenarios: Set<String> = [
+            "agent-answer-showcase-light",
+            "agent-answer-showcase-dark",
+        ]
+        let agentInteractiveGalleryScenarios: Set<String> = [
+            "agent-interactive-gallery-data-light",
+            "agent-interactive-gallery-data-dark",
+            "agent-interactive-gallery-creative-light",
+            "agent-interactive-gallery-creative-dark",
+            "agent-interactive-gallery-structure-light",
+            "agent-interactive-gallery-structure-dark",
+            "agent-interactive-gallery-sequence-light",
+            "agent-interactive-gallery-sequence-dark",
+            "agent-interactive-gallery-reading-light",
+            "agent-interactive-gallery-reading-dark",
+            "agent-interactive-gallery-reasoning-light",
+            "agent-interactive-gallery-reasoning-dark",
+            "agent-interactive-gallery-practice-light",
+            "agent-interactive-gallery-practice-dark",
+            "agent-interactive-gallery-choice-light",
+            "agent-interactive-gallery-choice-dark",
+            "agent-interactive-gallery-science-light",
+            "agent-interactive-gallery-science-dark",
+            "agent-interactive-gallery-technology-light",
+            "agent-interactive-gallery-technology-dark",
+            "agent-interactive-gallery-humanities-light",
+            "agent-interactive-gallery-humanities-dark",
+            "agent-interactive-gallery-world-light",
+            "agent-interactive-gallery-world-dark",
+        ]
         guard scenario == "offline-learning-flow"
             || scenario == "pi-learning-flow"
             || scenario == "pi-course-memory-flow"
             || scenario == "immersive-conversation-flow"
             || scenario == "notebook-creation-flow"
-            || emptyWorkspaceScenarios.contains(scenario) else { return }
+            || scenario == "pane-layout-stability-flow"
+            || scenario == "pane-toggle-continuity-flow"
+            || scenario == "pane-reorder-width-flow"
+            || scenario == "reader-scroll-persistence-flow"
+            || emptyWorkspaceScenarios.contains(scenario)
+            || agentAnswerShowcaseScenarios.contains(scenario)
+            || agentInteractiveGalleryScenarios.contains(scenario) else { return }
         didRunVerificationScenario = true
         recordVerificationStage("recognized:\(scenario)")
         if emptyWorkspaceScenarios.contains(scenario) {
             configureEmptyWorkspaceVerificationScenario(scenario)
+            return
+        }
+        if agentAnswerShowcaseScenarios.contains(scenario) {
+            configureAgentAnswerShowcaseScenario(scenario)
+            return
+        }
+        if agentInteractiveGalleryScenarios.contains(scenario) {
+            configureAgentInteractiveGalleryScenario(scenario)
+            return
+        }
+        if scenario == "pane-toggle-continuity-flow" {
+            await runPaneToggleContinuityVerification()
+            return
+        }
+        if scenario == "pane-layout-stability-flow" {
+            await runPaneLayoutStabilityVerification()
+            return
+        }
+        if scenario == "pane-reorder-width-flow" {
+            await runPaneReorderWidthVerification()
+            return
+        }
+        if scenario == "reader-scroll-persistence-flow" {
+            await runReaderScrollPersistenceVerification()
             return
         }
         layout = scenario == "immersive-conversation-flow" ? .immersiveConversation : .documentAgentNotes
@@ -2985,7 +3289,8 @@ final class WorkspaceStore: ObservableObject {
             recordVerificationStage("completed")
             return
         }
-        updateNote(ui("# 视觉验收笔记\n\n", "# Visual verification note\n\n"))
+        let verificationNoteSeed = ui("# 视觉验收笔记\n\n", "# Visual verification note\n\n")
+        updateNote(verificationNoteSeed)
         updateSelection(
             ui("利率是资金使用价格的表达。", "An interest rate is the price paid for using funds."),
             source: .document,
@@ -2998,11 +3303,15 @@ final class WorkspaceStore: ObservableObject {
         if messages.last?.backend == nil, let message = messages.last?.text {
             recordVerificationStage("failure:\(String(message.prefix(500)))")
         }
-        if scenario == "pi-learning-flow", messages.last?.backend == .pi {
-            let markerURL = storageURL.deletingLastPathComponent().appendingPathComponent("pi-agent-verified.txt")
-            try? "PI backend completed the packaged learning flow\n".write(to: markerURL, atomically: true, encoding: .utf8)
-        }
         applyLastAgentAnswerToNote()
+        if scenario == "pi-learning-flow" {
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            if messages.last?.backend == .pi, noteText.count > verificationNoteSeed.count {
+                let markerURL = storageURL.deletingLastPathComponent().appendingPathComponent("pi-agent-verified.txt")
+                try? "PI backend completed the packaged learning flow and persisted its note proposal\n"
+                    .write(to: markerURL, atomically: true, encoding: .utf8)
+            }
+        }
         recordVerificationStage("completed")
     }
 
@@ -3020,6 +3329,432 @@ final class WorkspaceStore: ObservableObject {
                 previousPage = readerPageIndex
                 stableChecks = 0
             }
+        }
+    }
+
+    private func runPaneToggleContinuityVerification() async {
+        layout = .documentAgentNotes
+        showLibrary = true
+        showReader = true
+        showAgent = false
+        showNotes = true
+        agentSurface = .hidden
+        recordVerificationStage("pane-toggle-context-prepared")
+        let agentMarker = AgentMessage(
+            role: .assistant,
+            text: "Pane continuity conversation marker",
+            source: "verification",
+            backend: .offline
+        )
+        messages = [agentMarker]
+        let baselineOrder = normalizedThreePaneOrder
+        let cases: [(itemID: String, agentVisible: Bool)] = [
+            ("sample-html", false),
+            ("sample-html", true),
+            ("sample-pdf", false),
+            ("sample-pdf", true),
+            ("sample-md", false),
+            ("sample-md", true),
+        ]
+        var caseReports: [String] = []
+        var allPassed = true
+
+        for verificationCase in cases {
+            showReader = true
+            showAgent = verificationCase.agentVisible
+            showNotes = true
+            select(itemID: verificationCase.itemID)
+            if verificationCase.itemID == "sample-html" {
+                await waitForHTMLContentRailToSettle()
+                requestReaderHTMLLocation(
+                    id: nil,
+                    title: ui("名义利率与实际利率", "Nominal and Real Interest Rates")
+                )
+                await waitForReaderHTMLLocationTargetToClear()
+                await waitForHTMLContentRailToSettle()
+            } else {
+                try? await Task.sleep(nanoseconds: 900_000_000)
+            }
+            try? await Task.sleep(nanoseconds: 700_000_000)
+
+            let noteMarker = "# Pane continuity \(verificationCase.itemID) \(verificationCase.agentVisible ? "agent-on" : "agent-off")\n\nUncommitted note state must survive pane toggles.\n"
+            updateNote(noteMarker)
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            let itemID = selectedMaterialItem?.id
+            let baselineRevision = agentContextRevision
+            let baselineLocation = itemID.flatMap { studyLocationsByItemID[$0] }
+            let baselineMessages = messages
+            PaneToggleContinuityVerifier.beginMeasurement()
+
+            for _ in 1...20 {
+                toggleNotes()
+                try? await Task.sleep(nanoseconds: 520_000_000)
+                toggleNotes()
+                try? await Task.sleep(nanoseconds: 520_000_000)
+            }
+            for _ in 1...20 {
+                toggleReader()
+                try? await Task.sleep(nanoseconds: 520_000_000)
+                toggleReader()
+                try? await Task.sleep(nanoseconds: 520_000_000)
+            }
+            if verificationCase.itemID == "sample-html" {
+                await waitForHTMLContentRailToSettle()
+            } else {
+                try? await Task.sleep(nanoseconds: 700_000_000)
+            }
+
+            let finalLocation = itemID.flatMap { studyLocationsByItemID[$0] }
+            let revisionDelta = agentContextRevision &- baselineRevision
+            let studyLocationChanged = baselineLocation != finalLocation
+            let lifecycleStable = PaneToggleContinuityVerifier.webReaderMakeCount == 0
+                && PaneToggleContinuityVerifier.webReaderDismantleCount == 0
+                && PaneToggleContinuityVerifier.pdfReaderMakeCount == 0
+                && PaneToggleContinuityVerifier.pdfReaderDismantleCount == 0
+                && PaneToggleContinuityVerifier.noteEditorMakeCount == 0
+                && PaneToggleContinuityVerifier.noteEditorDismantleCount == 0
+            let exercisedResizeChain = verificationCase.itemID != "sample-html"
+                || PaneToggleContinuityVerifier.htmlSectionEventCount > 0
+            let casePassed = exercisedResizeChain
+                && PaneToggleContinuityVerifier.htmlLocationCallCount == 0
+                && PaneToggleContinuityVerifier.htmlLocationCommitCount == 0
+                && revisionDelta == 0
+                && !studyLocationChanged
+                && lifecycleStable
+                && noteText == noteMarker
+                && messages == baselineMessages
+                && normalizedThreePaneOrder == baselineOrder
+                && showReader
+                && showAgent == verificationCase.agentVisible
+                && showNotes
+            allPassed = allPassed && casePassed
+            let caseName = "\(verificationCase.itemID)-agent-\(verificationCase.agentVisible ? "on" : "off")"
+            let locationReasons = PaneToggleContinuityVerifier.htmlLocationReasons
+                .sorted { $0.key < $1.key }
+                .map { "\($0.key):\($0.value)" }
+                .joined(separator: ",")
+            caseReports.append([
+                "case=\(caseName)",
+                "case_result=\(casePassed ? "pass" : "fail")",
+                "agent_revision_delta=\(revisionDelta)",
+                "study_location_changed=\(studyLocationChanged)",
+                "html_location_calls=\(PaneToggleContinuityVerifier.htmlLocationCallCount)",
+                "html_location_commits=\(PaneToggleContinuityVerifier.htmlLocationCommitCount)",
+                "html_location_reasons=\(locationReasons)",
+                "web_reader_make=\(PaneToggleContinuityVerifier.webReaderMakeCount)",
+                "web_reader_dismantle=\(PaneToggleContinuityVerifier.webReaderDismantleCount)",
+                "pdf_reader_make=\(PaneToggleContinuityVerifier.pdfReaderMakeCount)",
+                "pdf_reader_dismantle=\(PaneToggleContinuityVerifier.pdfReaderDismantleCount)",
+                "markdown_editor_make=\(PaneToggleContinuityVerifier.noteEditorMakeCount)",
+                "markdown_editor_dismantle=\(PaneToggleContinuityVerifier.noteEditorDismantleCount)",
+                "note_preserved=\(noteText == noteMarker)",
+                "conversation_preserved=\(messages == baselineMessages)",
+                "pane_order_preserved=\(normalizedThreePaneOrder == baselineOrder)",
+            ].joined(separator: " "))
+            PaneToggleContinuityVerifier.endMeasurement()
+        }
+
+        let report = ([
+            "result=\(allPassed ? "pass" : "fail")",
+            "cases=\(cases.count)",
+            "notes_cycles_per_case=20",
+            "reader_cycles_per_case=20",
+        ] + caseReports).joined(separator: "\n") + "\n"
+        let reportURL = storageURL.deletingLastPathComponent()
+            .appendingPathComponent("pane-toggle-continuity-report.txt")
+        try? report.write(to: reportURL, atomically: true, encoding: .utf8)
+        recordVerificationStage("pane-toggle-result:\(allPassed ? "pass" : "fail")")
+        recordVerificationStage("completed")
+    }
+
+    private func runPaneLayoutStabilityVerification() async {
+        layout = .documentAgentNotes
+        showLibrary = false
+        showReader = true
+        showAgent = false
+        showNotes = true
+        agentSurface = .hidden
+        select(itemID: "sample-html")
+        await waitForHTMLContentRailToSettle()
+
+        let noteMarker = "# Pane ownership marker\n\nUnsaved note input must survive stable slot animations.\n"
+        let draftMarker = "Unsent agent draft must survive stable slot animations."
+        let messageMarker = AgentMessage(
+            role: .assistant,
+            text: "Stable parent conversation marker",
+            source: "verification",
+            backend: .offline
+        )
+        updateNote(noteMarker)
+        agentDraft = draftMarker
+        messages = [messageMarker]
+        try? await Task.sleep(nanoseconds: 700_000_000)
+
+        let itemID = selectedMaterialItem?.id
+        let baselineLocation = itemID.flatMap { studyLocationsByItemID[$0] }
+        let baselineRevision = agentContextRevision
+        let baselineOrder = normalizedThreePaneOrder
+        PaneToggleContinuityVerifier.beginMeasurement()
+        recordVerificationStage("pane-layout-context-prepared")
+
+        toggleNotes()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleNotes()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleAgent()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleReader()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleReader()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleAgent()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleNotes()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleNotes()
+        try? await Task.sleep(nanoseconds: 700_000_000)
+
+        let finalLocation = itemID.flatMap { studyLocationsByItemID[$0] }
+        let revisionDelta = agentContextRevision &- baselineRevision
+        let passed = showReader
+            && !showAgent
+            && showNotes
+            && noteText == noteMarker
+            && agentDraft == draftMarker
+            && messages == [messageMarker]
+            && normalizedThreePaneOrder == baselineOrder
+            && finalLocation == baselineLocation
+            && revisionDelta == 0
+            && PaneToggleContinuityVerifier.htmlLocationCallCount == 0
+            && PaneToggleContinuityVerifier.webReaderMakeCount == 0
+            && PaneToggleContinuityVerifier.webReaderDismantleCount == 0
+            && PaneToggleContinuityVerifier.noteEditorMakeCount == 0
+            && PaneToggleContinuityVerifier.noteEditorDismantleCount == 0
+        let report = [
+            "result=\(passed ? "pass" : "fail")",
+            "transitions=8",
+            "reader_visible=\(showReader)",
+            "agent_visible=\(showAgent)",
+            "notes_visible=\(showNotes)",
+            "agent_revision_delta=\(revisionDelta)",
+            "study_location_changed=\(finalLocation != baselineLocation)",
+            "html_location_calls=\(PaneToggleContinuityVerifier.htmlLocationCallCount)",
+            "web_reader_make=\(PaneToggleContinuityVerifier.webReaderMakeCount)",
+            "web_reader_dismantle=\(PaneToggleContinuityVerifier.webReaderDismantleCount)",
+            "note_editor_make=\(PaneToggleContinuityVerifier.noteEditorMakeCount)",
+            "note_editor_dismantle=\(PaneToggleContinuityVerifier.noteEditorDismantleCount)",
+            "note_preserved=\(noteText == noteMarker)",
+            "agent_draft_preserved=\(agentDraft == draftMarker)",
+            "conversation_preserved=\(messages == [messageMarker])",
+            "pane_order_preserved=\(normalizedThreePaneOrder == baselineOrder)",
+        ].joined(separator: "\n") + "\n"
+        PaneToggleContinuityVerifier.endMeasurement()
+        let reportURL = storageURL.deletingLastPathComponent()
+            .appendingPathComponent("pane-layout-stability-report.txt")
+        try? report.write(to: reportURL, atomically: true, encoding: .utf8)
+        recordVerificationStage("pane-layout-result:\(passed ? "pass" : "fail")")
+        recordVerificationStage("completed")
+    }
+
+    private func runPaneReorderWidthVerification() async {
+        layout = .documentAgentNotes
+        showLibrary = false
+        showReader = true
+        showAgent = true
+        showNotes = true
+        agentSurface = .hidden
+        select(itemID: "sample-html")
+        await waitForHTMLContentRailToSettle()
+
+        let noteMarker = "# Reorder and width marker\n\nUnsaved text must survive pane movement.\n"
+        let draftMarker = "Unsent draft must survive pane movement."
+        let messageMarker = AgentMessage(
+            role: .assistant,
+            text: "Reorder conversation marker",
+            source: "verification",
+            backend: .offline
+        )
+        updateNote(noteMarker)
+        agentDraft = draftMarker
+        messages = [messageMarker]
+
+        for _ in 0..<30 {
+            let order = visibleDocumentPaneOrder
+            if order.count == 3, order.allSatisfy({ threePaneReorderFrames[$0] != nil }) {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+
+        let baselineOrder = normalizedThreePaneOrder
+        let baselineRevision = agentContextRevision
+        let itemID = selectedMaterialItem?.id
+        let baselineLocation = itemID.flatMap { studyLocationsByItemID[$0] }
+        let baselineAgentWidth = threePaneReorderFrames[.agent]?.width ?? 0
+        PaneToggleContinuityVerifier.beginMeasurement()
+        recordVerificationStage("pane-reorder-width-context-prepared")
+
+        requestPaneExpansion(.agent)
+        for _ in 0..<20 {
+            guard paneExpansionRequest != nil else { break }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        try? await Task.sleep(nanoseconds: 350_000_000)
+        let expandedAgentWidth = threePaneReorderFrames[.agent]?.width ?? 0
+
+        beginThreePaneReorder(.reader)
+        let dragDistance = max(
+            (threePaneReorderFrames[.notes]?.midX ?? 1_000)
+                - (threePaneReorderFrames[.reader]?.midX ?? 0),
+            1_000
+        )
+        updateThreePaneReorder(.reader, horizontalDelta: dragDistance)
+        finishThreePaneReorder(.reader, horizontalDelta: dragDistance)
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        let reorderedOrder = normalizedThreePaneOrder
+        let reorderedAgentWidth = threePaneReorderFrames[.agent]?.width ?? 0
+
+        toggleAgent()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleAgent()
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        let restoredAgentWidth = threePaneReorderFrames[.agent]?.width ?? 0
+        let restoredStore = WorkspaceStore()
+        let persistedOrder = restoredStore.normalizedThreePaneOrder
+        let widthTolerance = max(12, reorderedAgentWidth * 0.12)
+        let finalLocation = itemID.flatMap { studyLocationsByItemID[$0] }
+        let lifecycleStable = PaneToggleContinuityVerifier.webReaderMakeCount == 0
+            && PaneToggleContinuityVerifier.webReaderDismantleCount == 0
+            && PaneToggleContinuityVerifier.noteEditorMakeCount == 0
+            && PaneToggleContinuityVerifier.noteEditorDismantleCount == 0
+        let passed = baselineOrder != reorderedOrder
+            && reorderedOrder.last == .reader
+            && persistedOrder == reorderedOrder
+            && paneExpansionRequest == nil
+            && expandedAgentWidth >= ContentRailMetrics.readableWidth
+            && reorderedAgentWidth >= ContentRailMetrics.readableWidth
+            && abs(restoredAgentWidth - reorderedAgentWidth) <= widthTolerance
+            && noteText == noteMarker
+            && agentDraft == draftMarker
+            && messages == [messageMarker]
+            && finalLocation == baselineLocation
+            && agentContextRevision == baselineRevision
+            && lifecycleStable
+
+        let report = [
+            "result=\(passed ? "pass" : "fail")",
+            "baseline_order=\(baselineOrder.map(\.rawValue).joined(separator: ","))",
+            "reordered_order=\(reorderedOrder.map(\.rawValue).joined(separator: ","))",
+            "persisted_order=\(persistedOrder.map(\.rawValue).joined(separator: ","))",
+            "baseline_agent_width=\(baselineAgentWidth)",
+            "expanded_agent_width=\(expandedAgentWidth)",
+            "reordered_agent_width=\(reorderedAgentWidth)",
+            "restored_agent_width=\(restoredAgentWidth)",
+            "width_tolerance=\(widthTolerance)",
+            "expansion_consumed=\(paneExpansionRequest == nil)",
+            "note_preserved=\(noteText == noteMarker)",
+            "agent_draft_preserved=\(agentDraft == draftMarker)",
+            "conversation_preserved=\(messages == [messageMarker])",
+            "study_location_changed=\(finalLocation != baselineLocation)",
+            "agent_revision_delta=\(agentContextRevision &- baselineRevision)",
+            "native_lifecycle_stable=\(lifecycleStable)",
+        ].joined(separator: "\n") + "\n"
+        PaneToggleContinuityVerifier.endMeasurement()
+        let reportURL = storageURL.deletingLastPathComponent()
+            .appendingPathComponent("pane-reorder-width-report.txt")
+        try? report.write(to: reportURL, atomically: true, encoding: .utf8)
+        recordVerificationStage("pane-reorder-width-result:\(passed ? "pass" : "fail")")
+        recordVerificationStage("completed")
+    }
+
+    private func runReaderScrollPersistenceVerification() async {
+        PaneToggleContinuityVerifier.beginMeasurement()
+        layout = .documentAgentNotes
+        showLibrary = true
+        showReader = true
+        showAgent = true
+        showNotes = true
+        agentSurface = .hidden
+        select(itemID: "sample-html")
+        await waitForHTMLContentRailToSettle()
+        let baseline = studyLocationsByItemID["sample-html"]
+        let previousScrollSchedules = PaneToggleContinuityVerifier.verificationScrollScheduleCount
+        NotificationCenter.default.post(name: .weiBeiVerificationUserScroll, object: nil)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        let didTriggerScroll = PaneToggleContinuityVerifier.verificationScrollScheduleCount > previousScrollSchedules
+        recordVerificationStage("reader-scroll-context-prepared")
+
+        var finalLocation = studyLocationsByItemID["sample-html"]
+        for _ in 0..<60 {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            finalLocation = studyLocationsByItemID["sample-html"]
+            if finalLocation?.locationID != nil,
+               finalLocation?.locationID != baseline?.locationID {
+                break
+            }
+        }
+        save()
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        let restoredStore = WorkspaceStore()
+        let persisted = restoredStore.studyLocationsByItemID["sample-html"]
+        let scrolled = finalLocation?.locationID != nil
+            && finalLocation?.locationID != baseline?.locationID
+            && finalLocation?.lastStudiedAt != baseline?.lastStudiedAt
+        let restored = restoredStore.selectedItemID == "sample-html"
+            && restoredStore.readerLocationID == finalLocation?.locationID
+            && restoredStore.readerTargetLocationID == finalLocation?.locationID
+            && persisted?.locationID == finalLocation?.locationID
+            && persisted?.locationTitle == finalLocation?.locationTitle
+        let passed = didTriggerScroll && scrolled && restored
+        let locationReasons = PaneToggleContinuityVerifier.htmlLocationReasons
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key):\($0.value)" }
+            .joined(separator: ",")
+        let report = [
+            "result=\(passed ? "pass" : "fail")",
+            "input_path=dom-wheel-event",
+            "verification_scroll_triggered=\(didTriggerScroll)",
+            "baseline_location_id=\(baseline?.locationID ?? "")",
+            "final_location_id=\(finalLocation?.locationID ?? "")",
+            "final_location_title=\(finalLocation?.locationTitle ?? "")",
+            "timestamp_changed=\(finalLocation?.lastStudiedAt != baseline?.lastStudiedAt)",
+            "restored_location_id=\(restoredStore.readerLocationID ?? "")",
+            "restored_target_id=\(restoredStore.readerTargetLocationID ?? "")",
+            "html_section_events=\(PaneToggleContinuityVerifier.htmlSectionEventCount)",
+            "html_active_events=\(PaneToggleContinuityVerifier.htmlActiveEventCount)",
+            "html_location_calls=\(PaneToggleContinuityVerifier.htmlLocationCallCount)",
+            "html_location_reasons=\(locationReasons)",
+            "verification_scroll_schedules=\(PaneToggleContinuityVerifier.verificationScrollScheduleCount)",
+            "verification_scroll_result=\(PaneToggleContinuityVerifier.verificationScrollResult)",
+        ].joined(separator: "\n") + "\n"
+        PaneToggleContinuityVerifier.endMeasurement()
+        let reportURL = storageURL.deletingLastPathComponent()
+            .appendingPathComponent("reader-scroll-persistence-report.txt")
+        try? report.write(to: reportURL, atomically: true, encoding: .utf8)
+        recordVerificationStage("reader-scroll-result:\(passed ? "pass" : "fail")")
+        recordVerificationStage("completed")
+    }
+
+    private func waitForHTMLContentRailToSettle() async {
+        var previousEventCount = PaneToggleContinuityVerifier.htmlEventSequence
+        var stableChecks = 0
+        for _ in 0..<40 {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            let currentEventCount = PaneToggleContinuityVerifier.htmlEventSequence
+            if currentEventCount == previousEventCount {
+                stableChecks += 1
+                if stableChecks >= 4 { return }
+            } else {
+                previousEventCount = currentEventCount
+                stableChecks = 0
+            }
+        }
+    }
+
+    private func waitForReaderHTMLLocationTargetToClear() async {
+        for _ in 0..<40 {
+            if readerTargetLocationID == nil, readerTargetLocationTitle == nil { return }
+            try? await Task.sleep(nanoseconds: 150_000_000)
         }
     }
 
@@ -3056,6 +3791,287 @@ final class WorkspaceStore: ObservableObject {
         default:
             save()
         }
+    }
+
+    private func configureAgentAnswerShowcaseScenario(_ scenario: String) {
+        interfaceLanguage = .chinese
+        appearanceMode = scenario.hasSuffix("dark") ? .inkstone : .paper
+        layout = .immersiveConversation
+        showLibrary = false
+        showReader = false
+        showAgent = true
+        showNotes = false
+        agentSurface = .hidden
+        select(itemID: "sample-html")
+        messages = [
+            AgentMessage(
+                role: .user,
+                text: "名义利率和实际利率到底有什么关系？顺便出一道题让我自测。",
+                source: currentSourceReferenceTitle
+            ),
+            AgentMessage(
+                role: .assistant,
+                text: """
+                名义利率是账面上看到的利率；实际利率则把预期通胀的影响扣除，更接近资金真实购买力的变化。[材料：Mishkin 教材样例]
+
+                | 概念 | 关心的是什么 |
+                | --- | --- |
+                | 名义利率 | 合同或报价上的数字 |
+                | 实际利率 | 扣除预期通胀后的回报 |
+
+                ```weibei-interactive
+                {"kind":"quiz","prompt":"若名义利率为 6%，预期通胀为 2%，近似的实际利率是多少？","options":["2%","4%","6%"],"correctIndex":1,"explanation":"用近似关系：实际利率 ≈ 名义利率 - 预期通胀，所以是 4%。","source":"来源：Mishkin 教材样例，第 3 页"}
+                ```
+
+                来源：Mishkin 教材样例，第 3 页
+                来源：货币金融学课程 HTML，章节：实际利率
+                """,
+                source: currentSourceReferenceTitle,
+                backend: .pi
+            ),
+        ]
+        lastAgentReplyContextRevision = agentContextRevision
+        recordVerificationStage("completed")
+    }
+
+    private func configureAgentInteractiveGalleryScenario(_ scenario: String) {
+        interfaceLanguage = .chinese
+        appearanceMode = scenario.hasSuffix("dark") ? .inkstone : .paper
+        layout = .immersiveConversation
+        showLibrary = false
+        showReader = false
+        showAgent = true
+        showNotes = false
+        agentSurface = .hidden
+        select(itemID: "sample-html")
+
+        let answer: String
+        if scenario.contains("-science-") {
+            answer = """
+            这是跨学科组件的交互演示，不冒充当前课程材料结论。先统一实验量纲，再检查化学反应两侧的原子守恒。
+
+            ```weibei-interactive
+            {"kind":"unit-workbench","title":"实验速度单位工作台","question":"36 km/h 是否等于 10 m/s？","variables":[{"id":"speed_kmh","label":"原始速度","value":"36","unit":"km/h","role":"待换算量"},{"id":"speed_ms","label":"目标速度","value":"10","unit":"m/s","role":"统一口径"}],"checks":[{"id":"dimension","label":"量纲检查","left":"36 km/h","right":"10 m/s","result":"二者都是长度除以时间；36 × 1000 ÷ 3600 = 10。"}],"sources":[]}
+            ```
+
+            ```weibei-interactive
+            {"kind":"reaction-balance","title":"氢气与氧气反应配平","species":[{"id":"h2","label":"H2","side":"reactant","coefficient":2,"atoms":{"H":2}},{"id":"o2","label":"O2","side":"reactant","coefficient":1,"atoms":{"O":2}},{"id":"h2o","label":"H2O","side":"product","coefficient":2,"atoms":{"H":2,"O":1}}],"sources":[]}
+            ```
+            """
+        } else if scenario.contains("-technology-") {
+            answer = """
+            这是跨学科组件的交互演示，不冒充当前课程材料结论。先手动跟踪算法状态，再切换一条预先枚举的处理通路。
+
+            ```weibei-interactive
+            {"kind":"algorithm-trace","title":"二分查找状态跟踪","codeLines":["low = 0, high = 3","mid = 1, value = 3","low = 2, high = 3","mid = 2, value = 7"],"steps":[{"lineIndex":1,"summary":"第一次比较 3 与目标 7，目标位于右侧。","note":"把下界更新为 2。"},{"lineIndex":3,"summary":"第二次比较命中目标 7。","note":"返回索引 2。"}],"sources":[]}
+            ```
+
+            ```weibei-interactive
+            {"kind":"pathway-lab","title":"请求处理通路实验","nodes":[{"id":"input","label":"接收请求","detail":"读取并校验输入。"},{"id":"compute","label":"执行计算","detail":"处理已通过校验的数据。"},{"id":"output","label":"返回结果","detail":"组织并输出最终响应。"}],"states":[{"id":"validated","label":"校验完成","note":"请求已进入计算前状态。","activeNodeIds":["input"]},{"id":"processing","label":"处理中","note":"校验与计算节点处于活动状态。","activeNodeIds":["input","compute"]},{"id":"completed","label":"已完成","note":"整条通路已走通。","activeNodeIds":["input","compute","output"]}],"edges":[{"from":"input","to":"compute","label":"通过校验"},{"from":"compute","to":"output","label":"生成结果"}],"sources":[]}
+            ```
+            """
+        } else if scenario.contains("-humanities-") {
+            answer = """
+            这是跨学科组件的交互演示，不冒充当前课程材料结论。这里用课程中的利率术语做语言细读，并把同一材料里的判断拆成论点与前提。
+
+            ```weibei-interactive
+            {"kind":"language-aligner","title":"利率术语语言对齐","pairs":[{"label":"术语一","sourceText":"nominal interest rate","targetText":"名义利率","note":"指合同或报价直接标示、尚未扣除预期通胀的利率。","source":"材料：Mishkin 教材样例，第 3 页"},{"label":"术语二","sourceText":"real interest rate","targetText":"实际利率","note":"在这里指扣除预期通胀后、更接近真实资金成本的利率。","source":"材料：货币金融学课程 HTML，章节：实际利率"}],"sources":["材料：Mishkin 教材样例，第 3 页","材料：货币金融学课程 HTML，章节：实际利率"]}
+            ```
+
+            ```weibei-interactive
+            {"kind":"argument-map","title":"实际利率判断的论证结构","question":"为什么实际利率更适合观察真实资金成本？","nodes":[{"id":"premise_inflation","type":"premise","label":"实际利率扣除了预期通胀","detail":"材料用这一差异区分名义利率和实际利率。","source":"材料：Mishkin 教材样例，第 3 页"},{"id":"claim_cost","type":"claim","label":"实际利率更接近真实资金成本","detail":"这是依据材料关系得到的观察口径。","source":"材料：货币金融学课程 HTML，章节：实际利率"},{"id":"objection_expectation","type":"objection","label":"预期通胀不等于实现通胀","detail":"若预期与实现值偏离，观察结果也需要重新解释。","source":"材料：货币金融学课程 HTML，章节：实际利率"}],"edges":[{"from":"premise_inflation","to":"claim_cost","label":"支持"},{"from":"objection_expectation","to":"claim_cost","label":"限制"}],"sources":["材料：Mishkin 教材样例，第 3 页","材料：货币金融学课程 HTML，章节：实际利率"]}
+            ```
+
+            来源：Mishkin 教材样例，第 3 页
+            来源：货币金融学课程 HTML，章节：实际利率
+            """
+        } else if scenario.contains("-world-") {
+            answer = """
+            这是跨学科组件的交互演示，不冒充当前课程材料结论。这里把利率材料组织成视觉观察区与空间层次示意图，所有可跳转附件仍指向原有利率内容。
+
+            ```weibei-interactive
+            {"kind":"visual-analysis","title":"利率概念图的视觉观察","zones":[{"id":"nominal_zone","label":"名义利率区","x":8,"y":24,"width":32,"height":48,"note":"呈现合同或报价直接标示的利率，并保留预期通胀这一组成。","tone":"ochre","source":"材料：Mishkin 教材样例，第 3 页"},{"id":"real_zone","label":"实际利率区","x":60,"y":24,"width":32,"height":48,"note":"呈现扣除预期通胀后的观察口径，更接近真实资金成本。","tone":"cinnabar","source":"材料：货币金融学课程 HTML，章节：实际利率"}],"palette":[{"label":"赭黄","role":"标示报价口径","tone":"ochre"},{"label":"朱砂","role":"标示真实成本口径","tone":"cinnabar"}],"lenses":[{"id":"comparison","label":"口径比较","note":"先看报价，再看扣除预期通胀后的结果。","zoneIds":["nominal_zone","real_zone"]}],"sources":["材料：Mishkin 教材样例，第 3 页","材料：货币金融学课程 HTML，章节：实际利率"]}
+            ```
+
+            ```weibei-interactive
+            {"kind":"spatial-layers","title":"利率观察口径空间示意图","layers":[{"id":"quoted","label":"报价层","visible":true},{"id":"adjustment","label":"通胀调整层","visible":true},{"id":"purchasing_power","label":"购买力层","visible":true}],"features":[{"id":"nominal_region","type":"region","layerId":"quoted","label":"名义利率区域","note":"示意合同或报价直接标示的利率口径。","points":[[8,18],[92,18],[92,38],[8,38]],"source":"材料：Mishkin 教材样例，第 3 页"},{"id":"inflation_route","type":"route","layerId":"adjustment","label":"预期通胀扣除路径","note":"示意从名义利率转向实际利率时的调整方向。","points":[[72,38],[60,52],[48,64]],"source":"材料：货币金融学课程 HTML，章节：实际利率"},{"id":"real_point","type":"point","layerId":"purchasing_power","label":"实际利率观察点","note":"示意扣除预期通胀后观察真实资金成本的位置。","points":[[48,78]],"source":"材料：货币金融学课程 HTML，章节：实际利率"}],"sources":["材料：Mishkin 教材样例，第 3 页","材料：货币金融学课程 HTML，章节：实际利率"]}
+            ```
+
+            来源：Mishkin 教材样例，第 3 页
+            来源：货币金融学课程 HTML，章节：实际利率
+            """
+        } else if scenario.contains("-reading-") {
+            answer = """
+            这段材料适合先在原文上就地夹批，再把费雪关系逐步展开；两种呈现共享同一组可跳转证据。
+
+            ```weibei-interactive
+            {"kind":"annotated-passage","title":"原文里的两个观察口径","text":"名义利率包含预期通胀，实际利率反映扣除预期通胀后的真实资金成本。","annotations":[{"term":"名义利率","note":"合同或报价直接标示的利率，尚未剔除价格预期。","tone":"ochre","source":"材料：Mishkin 教材样例，第 3 页"},{"term":"实际利率","note":"扣除预期通胀后，用于观察真实购买力与资金成本。","tone":"cinnabar","source":"材料：货币金融学课程 HTML，章节：实际利率"}],"sources":["材料：Mishkin 教材样例，第 3 页","材料：货币金融学课程 HTML，章节：实际利率"]}
+            ```
+
+            ```weibei-interactive
+            {"kind":"derivation-steps","title":"实际利率怎样从关系式里得到","prompt":"先判断预期通胀属于名义利率的哪一部分。","steps":[{"label":"组成","statement":"名义利率约等于实际利率加预期通胀。","reason":"报价同时反映真实回报与价格预期。","source":"材料：Mishkin 教材样例，第 3 页"},{"label":"移项","statement":"实际利率约等于名义利率减去预期通胀。","reason":"从报价中剔除价格水平预期。","source":"材料：货币金融学课程 HTML，章节：实际利率"},{"label":"检验","statement":"把结果代回原关系，应该还原名义利率。","reason":"用同一时期、同一口径的数据核对。","source":"材料：货币金融学课程 HTML，章节：实际利率"}],"sources":["材料：Mishkin 教材样例，第 3 页","材料：货币金融学课程 HTML，章节：实际利率"]}
+            ```
+
+            来源：Mishkin 教材样例，第 3 页
+            来源：货币金融学课程 HTML，章节：实际利率
+            """
+        } else if scenario.contains("-reasoning-") {
+            answer = """
+            先把这个判断拆成支持、反例与证据缺口，再把两个观察口径放到同一条连续轴上比较。
+
+            ```weibei-interactive
+            {"kind":"evidence-board","title":"核验“实际利率更接近真实资金成本”","claim":"实际利率比名义利率更适合观察真实购买力变化。","items":[{"stance":"support","title":"扣除预期通胀","detail":"材料明确把实际利率描述为扣除预期通胀后的利率。","tone":"moss","source":"材料：Mishkin 教材样例，第 3 页"},{"stance":"challenge","title":"预期并非实际通胀","detail":"如果预期与实现值偏离，估计出的真实回报也会变化。","tone":"cinnabar","source":"材料：货币金融学课程 HTML，章节：实际利率"},{"stance":"gap","title":"适用条件未完整列出","detail":"当前片段没有覆盖税收、期限和风险补偿等条件。","tone":"ochre","source":"材料：货币金融学课程 HTML，章节：实际利率"}],"sources":["材料：Mishkin 教材样例，第 3 页","材料：货币金融学课程 HTML，章节：实际利率"]}
+            ```
+
+            ```weibei-interactive
+            {"kind":"spectrum","title":"从报价表面到真实负担","axisStart":"报价表面","axisEnd":"真实负担","points":[{"label":"名义利率","position":18,"detail":"直接出现在合约或报价中，包含预期通胀。","tone":"ochre","source":"材料：Mishkin 教材样例，第 3 页"},{"label":"实际利率","position":82,"detail":"扣除预期通胀后，更接近真实资金成本。","tone":"cinnabar","source":"材料：货币金融学课程 HTML，章节：实际利率"}],"sources":["材料：Mishkin 教材样例，第 3 页","材料：货币金融学课程 HTML，章节：实际利率"]}
+            ```
+
+            来源：Mishkin 教材样例，第 3 页
+            来源：货币金融学课程 HTML，章节：实际利率
+            """
+        } else if scenario.contains("-practice-") {
+            answer = """
+            这轮不再重复讲定义：先翻卡回忆，再亲手排出从报价到解释真实购买力的顺序。
+
+            ```weibei-interactive
+            {"kind":"flashcards","title":"两张利率记忆卡","cards":[{"front":"名义利率包含什么？","back":"包含预期通胀，是合同或报价直接标示的数字。","hint":"想一想报价与购买力的区别。","source":"材料：Mishkin 教材样例，第 3 页"},{"front":"实际利率主要观察什么？","back":"扣除预期通胀后的真实资金成本。","source":"材料：货币金融学课程 HTML，章节：实际利率"}],"sources":["材料：Mishkin 教材样例，第 3 页","材料：货币金融学课程 HTML，章节：实际利率"]}
+            ```
+
+            ```weibei-interactive
+            {"kind":"sequence-builder","title":"排出实际利率的判断顺序","instruction":"依次点选三个步骤，再检查。","items":[{"id":"nominal","label":"读取名义利率","detail":"确认合同或报价上的数字","source":"材料：Mishkin 教材样例，第 3 页"},{"id":"inflation","label":"确认预期通胀","detail":"保持时期与口径一致","source":"材料：货币金融学课程 HTML，章节：实际利率"},{"id":"interpret","label":"解释真实购买力","detail":"完成扣除并回到资金成本","source":"材料：货币金融学课程 HTML，章节：实际利率"}],"correctOrder":["nominal","inflation","interpret"],"successText":"顺序正确，可以尝试代入一组数字。","retryText":"先确认报价，再处理预期通胀。","sources":["材料：Mishkin 教材样例，第 3 页","材料：货币金融学课程 HTML，章节：实际利率"]}
+            ```
+
+            来源：Mishkin 教材样例，第 3 页
+            来源：货币金融学课程 HTML，章节：实际利率
+            """
+        } else if scenario.contains("-choice-") {
+            answer = """
+            条件变化用有限情境实验观察；需要选指标时，再沿有依据的分支一步步判断。
+
+            ```weibei-interactive
+            {"kind":"scenario-lab","title":"预期通胀变化实验","controls":[{"id":"inflation","label":"预期通胀","options":["保持不变","上升"],"initialIndex":1}],"outcomes":[{"selections":[0],"title":"基准情境","body":"名义利率与实际利率保持材料中的基准差额。","tone":"ink","source":"材料：Mishkin 教材样例，第 3 页"},{"selections":[1],"title":"差额扩大","body":"在实际利率不变的前提下，名义利率需要反映更高的预期通胀。","tone":"cinnabar","source":"材料：货币金融学课程 HTML，章节：实际利率"}],"sources":["材料：Mishkin 教材样例，第 3 页","材料：货币金融学课程 HTML，章节：实际利率"]}
+            ```
+
+            ```weibei-interactive
+            {"kind":"decision-path","title":"这次应该看哪一种利率","startID":"goal","nodes":[{"id":"goal","title":"你要观察什么？","body":"先区分报价本身与真实资金成本。","choices":[{"label":"看合同或报价","nextID":"nominal"},{"label":"看真实购买力","nextID":"real"}],"source":"材料：Mishkin 教材样例，第 3 页"},{"id":"nominal","title":"使用名义利率","body":"直接读取合同或报价上的利率。","choices":[],"source":"材料：Mishkin 教材样例，第 3 页"},{"id":"real","title":"使用实际利率","body":"读取扣除预期通胀后的利率。","choices":[],"source":"材料：货币金融学课程 HTML，章节：实际利率"}],"sources":["材料：Mishkin 教材样例，第 3 页","材料：货币金融学课程 HTML，章节：实际利率"]}
+            ```
+
+            来源：Mishkin 教材样例，第 3 页
+            来源：货币金融学课程 HTML，章节：实际利率
+            """
+        } else if scenario.contains("-data-") {
+            answer = """
+            这组三个组件分别回答“数据怎么变”“函数长什么样”“参数改变会怎样”。
+
+            ```weibei-interactive
+            {"kind":"chart","title":"名义利率与通胀","chartType":"line","xLabel":"时期","yLabel":"百分比","series":[{"name":"名义利率","tone":"cinnabar","points":[{"x":1,"y":5.2},{"x":2,"y":4.8},{"x":3,"y":4.3}]},{"name":"通胀率","tone":"ochre","points":[{"x":1,"y":2.1},{"x":2,"y":2.7},{"x":3,"y":3.0}]}],"source":"来源：Mishkin 教材样例，第 3 页"}
+            ```
+
+            ```weibei-interactive
+            {"kind":"function-plot","title":"二次函数曲线","xLabel":"x","yLabel":"y","xDomain":[-3,3],"yDomain":[-1,10],"curves":[{"name":"平方函数","formulaLabel":"y = x^2","tone":"blue-ink","points":[[-3,9],[-2,4],[-1,1],[0,0],[1,1],[2,4],[3,9]]}],"source":"来源：货币金融学课程 HTML，章节：实际利率"}
+            ```
+
+            ```weibei-interactive
+            {"kind":"parameter-lab","title":"二次函数调参","family":"quadratic","xDomain":[-4,4],"yDomain":[-4,12],"controls":[{"key":"a","label":"开口 a","min":-2,"max":2,"step":0.5,"value":1},{"key":"h","label":"横移 h","min":-2,"max":2,"step":0.5,"value":0},{"key":"k","label":"纵移 k","min":-2,"max":4,"step":0.5,"value":0}],"source":"来源：Mishkin 教材样例，第 3 页"}
+            ```
+
+            来源：Mishkin 教材样例，第 3 页
+            来源：货币金融学课程 HTML，章节：实际利率
+            """
+        } else if scenario.contains("-structure-") {
+            answer = """
+            先把这一节压成可扫描的学习全貌，再沿着证据看清概念之间的传导关系。
+
+            ```weibei-interactive
+            {"kind":"study-board","title":"本节的三个抓手","summary":"定义、机制和检验方式放在同一张研习面上。","layout":"lanes","treatment":"annotated","metrics":[{"label":"核心概念","value":"3 个","note":"均可回到材料核对","tone":"cinnabar"},{"label":"待解决","value":"1 个","note":"名义与实际的差异","tone":"ochre"}],"items":[{"kicker":"定义","title":"资金价格","body":"利率描述资金跨期配置的价格。","status":"先理解","tone":"ink","source":"材料：Mishkin 教材样例，第 3 页"},{"kicker":"修正","title":"扣除通胀","body":"实际利率从名义利率中扣除预期通胀。","status":"再比较","tone":"moss","source":"材料：货币金融学课程 HTML，章节：实际利率"},{"kicker":"应用","title":"观察购买力","body":"用真实购买力变化判断资金成本。","status":"去检验","tone":"blue-ink","source":"材料：货币金融学课程 HTML，章节：实际利率"}],"sources":["材料：Mishkin 教材样例，第 3 页","材料：货币金融学课程 HTML，章节：实际利率"]}
+            ```
+
+            ```weibei-interactive
+            {"kind":"relationship-map","title":"从通胀预期到真实资金成本","layout":"flow","nodes":[{"id":"nominal","label":"名义利率","detail":"合同或报价上的数字","tone":"cinnabar","source":"材料：Mishkin 教材样例，第 3 页"},{"id":"inflation","label":"预期通胀","detail":"需要扣除的购买力变化","tone":"ochre","source":"材料：货币金融学课程 HTML，章节：实际利率"},{"id":"real","label":"实际利率","detail":"更接近真实资金成本","tone":"moss","source":"材料：货币金融学课程 HTML，章节：实际利率"}],"edges":[{"from":"nominal","to":"real","label":"作为起点"},{"from":"inflation","to":"real","label":"扣除后得到"}],"sources":["材料：Mishkin 教材样例，第 3 页","材料：货币金融学课程 HTML，章节：实际利率"]}
+            ```
+
+            来源：Mishkin 教材样例，第 3 页
+            来源：货币金融学课程 HTML，章节：实际利率
+            """
+        } else if scenario.contains("-sequence-") {
+            answer = """
+            过程和差异分别用时间线与比较矩阵承载；点击矩阵列标题，可以只看一列。
+
+            ```weibei-interactive
+            {"kind":"timeline","title":"从报价到真实回报","events":[{"label":"第一步","title":"读取名义利率","detail":"确认合同或报价上的利率。","tone":"ink","source":"材料：Mishkin 教材样例，第 3 页"},{"label":"第二步","title":"确认预期通胀","detail":"使用同一时期、同一口径的数据。","tone":"ochre","source":"材料：货币金融学课程 HTML，章节：实际利率"},{"label":"第三步","title":"完成扣除","detail":"近似得到实际利率。","tone":"cinnabar","source":"材料：货币金融学课程 HTML，章节：实际利率"},{"label":"最后","title":"解释购买力","detail":"把结果放回真实资金成本。","tone":"moss","source":"材料：货币金融学课程 HTML，章节：实际利率"}],"sources":["材料：Mishkin 教材样例，第 3 页","材料：货币金融学课程 HTML，章节：实际利率"]}
+            ```
+
+            ```weibei-interactive
+            {"kind":"comparison-matrix","title":"名义利率与实际利率","columns":["名义利率","实际利率"],"rows":[{"label":"是否包含预期通胀","values":["包含","扣除"],"emphasisIndex":1},{"label":"观察对象","values":["合同报价","真实购买力"]},{"label":"学习用途","values":["先确认表面数字","再判断真实资金成本"]}],"sources":["材料：Mishkin 教材样例，第 3 页","材料：货币金融学课程 HTML，章节：实际利率"]}
+            ```
+
+            来源：Mishkin 教材样例，第 3 页
+            来源：货币金融学课程 HTML，章节：实际利率
+            """
+        } else {
+            answer = """
+            这组三个组件用于比较表达、版式和颜色角色，方案本身是设计推演，不冒充材料原文。
+
+            ```weibei-interactive
+            {"kind":"text-study","title":"论证语气比较","variants":[{"label":"原句","text":"数字金融一定提高资源配置效率。","note":"结论过满，缺少条件。"},{"label":"收束后","text":"在信息披露充分时，数字金融可能提高资源配置效率。","note":"补出条件，并降低无证据的绝对断言。"}],"highlightTerms":["信息披露充分","可能"],"source":"来源：货币金融学课程 HTML，章节：实际利率"}
+            ```
+
+            ```weibei-interactive
+            {"kind":"design-compare","title":"学习摘要版式","variants":[{"label":"文稿型","headline":"名义利率与实际利率","body":"先给定义，再用通胀条件解释二者差异。","treatment":"editorial","tone":"cinnabar"},{"label":"注释型","headline":"先看购买力","body":"把实际利率写成对名义利率的条件修正。","treatment":"annotated","tone":"moss"}],"source":"来源：Mishkin 教材样例，第 3 页"}
+            ```
+
+            ```weibei-interactive
+            {"kind":"palette","title":"纸墨配色","previewText":"利率是资金跨期配置的价格。","colors":[{"name":"宣纸","value":"#F1E4CF","role":"底色"},{"name":"墨色","value":"#1D1814","role":"正文"},{"name":"朱砂","value":"#91261C","role":"强调"},{"name":"苔绿","value":"#395F48","role":"正确与确认"}],"source":"来源：Mishkin 教材样例，第 3 页"}
+            ```
+
+            来源：Mishkin 教材样例，第 3 页
+            来源：货币金融学课程 HTML，章节：实际利率
+            """
+        }
+
+        let question: String
+        if scenario.contains("-science-") {
+            question = "帮我把实验量纲和反应配平做成可操作演示。"
+        } else if scenario.contains("-technology-") {
+            question = "帮我手动跟踪算法，再切换系统通路状态。"
+        } else if scenario.contains("-humanities-") {
+            question = "帮我对齐利率术语，并拆开这段论证。"
+        } else if scenario.contains("-world-") {
+            question = "帮我从视觉区域和空间层次读懂这组利率关系。"
+        } else if scenario.contains("-reading-") {
+            question = "这段原文我读得有点混，帮我逐处解释，再一步步推导。"
+        } else if scenario.contains("-reasoning-") {
+            question = "这个判断证据够吗？也帮我看清两个概念处在什么位置。"
+        } else if scenario.contains("-practice-") {
+            question = "别再重复讲，直接让我练习并检查。"
+        } else if scenario.contains("-choice-") {
+            question = "条件变化会怎样？实际使用时我该选哪个指标？"
+        } else if scenario.contains("-data-") {
+            question = "把关系做成能操作的图解。"
+        } else if scenario.contains("-structure-") {
+            question = "帮我看清这一节的全貌和知识关系。"
+        } else if scenario.contains("-sequence-") {
+            question = "把这个过程和概念差异讲清楚。"
+        } else {
+            question = "把文本、设计和配色做成对照。"
+        }
+
+        messages = [
+            AgentMessage(
+                role: .user,
+                text: question,
+                source: currentSourceReferenceTitle
+            ),
+            AgentMessage(
+                role: .assistant,
+                text: answer,
+                source: currentSourceReferenceTitle,
+                backend: .pi
+            ),
+        ]
+        lastAgentReplyContextRevision = agentContextRevision
+        recordVerificationStage("completed")
     }
 
     func replaceSelectionWithLastAgentAnswer() {
@@ -3122,6 +4138,8 @@ final class WorkspaceStore: ObservableObject {
         let sentNoteText = noteText
         let sentLearningContext = makeLearningContext()
         let sentLanguage = interfaceLanguage
+        let sentInteractiveActions = Array(pendingAgentInteractiveActions.suffix(12))
+        pendingAgentInteractiveActions.removeAll(keepingCapacity: true)
         let courseQuery = [question, sentSelectionText ?? "", String(sentNoteText.prefix(2_000))]
             .joined(separator: "\n\n")
         agentDraft = ""
@@ -3158,6 +4176,9 @@ final class WorkspaceStore: ObservableObject {
             guard activeAgentRequestID == requestID,
                   requestWorkspaceRevision == agentContextRevision,
                   requestMemoryRevision == learningMemoryRevision else {
+                if requestWorkspaceRevision == agentContextRevision {
+                    restoreAgentInteractiveActions(sentInteractiveActions)
+                }
                 if agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     agentDraft = question
                 }
@@ -3175,6 +4196,7 @@ final class WorkspaceStore: ObservableObject {
                 selectionTitle: sentSelectionTitle,
                 selectionText: sentSelectionText,
                 recentMessages: recentMessages,
+                interactions: sentInteractiveActions,
                 courseContext: courseBuild.context,
                 learningContext: sentLearningContext,
                 language: sentLanguage,
@@ -3189,7 +4211,12 @@ final class WorkspaceStore: ObservableObject {
             let reply = try await executeStudyAgentRequest(request)
             guard activeAgentRequestID == request.id,
                   requestWorkspaceRevision == agentContextRevision,
-                  requestMemoryRevision == learningMemoryRevision else { return }
+                  requestMemoryRevision == learningMemoryRevision else {
+                if requestWorkspaceRevision == agentContextRevision {
+                    restoreAgentInteractiveActions(sentInteractiveActions)
+                }
+                return
+            }
             latestAgentNoteProposal = reply.noteProposal
             applyLearningUpdate(
                 reply.learningUpdate,
@@ -3207,6 +4234,9 @@ final class WorkspaceStore: ObservableObject {
                 )
             )
         } catch PiAgentRuntimeError.cancelled, is CancellationError {
+            if requestWorkspaceRevision == agentContextRevision {
+                restoreAgentInteractiveActions(sentInteractiveActions)
+            }
             if !didAppendUserMessage,
                agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 agentDraft = question
@@ -3214,6 +4244,9 @@ final class WorkspaceStore: ObservableObject {
             return
         } catch {
             guard activeAgentRequestID == requestID else { return }
+            if requestWorkspaceRevision == agentContextRevision {
+                restoreAgentInteractiveActions(sentInteractiveActions)
+            }
             if !didAppendUserMessage {
                 appendAgentMessage(AgentMessage(role: .user, text: question, source: sourceTitle))
             }
@@ -3268,8 +4301,25 @@ final class WorkspaceStore: ObservableObject {
             await piRuntime.configure(configuration)
 
             do {
-                return try await piRuntime.respond(to: request) { [weak self] progress in
-                    await self?.applyAgentProgress(progress, requestID: request.id)
+                var retryCount = 0
+                while true {
+                    do {
+                        return try await piRuntime.respond(to: request) { [weak self] progress in
+                            await self?.applyAgentProgress(progress, requestID: request.id)
+                        }
+                    } catch let error as PiAgentRuntimeError {
+                        guard retryCount == 0,
+                              !Task.isCancelled,
+                              PiAgentRetryPolicy.shouldRetry(error) else {
+                            throw error
+                        }
+                        retryCount += 1
+                        agentActivityText = ui(
+                            "模型连接波动，正在重试…",
+                            "The model connection was interrupted. Retrying…"
+                        )
+                        try await Task.sleep(nanoseconds: 800_000_000)
+                    }
                 }
             } catch let error as PiAgentRuntimeError {
                 if error == .cancelled || Task.isCancelled {

@@ -17,13 +17,9 @@ allowed-tools: weibei_context weibei_course_map weibei_course_search weibei_lear
 
 ## 输出
 
-不强制固定篇幅。有多个有效去处时，使用简短的“关联”段落：
+不强制固定篇幅或固定标题。先用自然语言说清“它与当前问题是什么关系、为什么现在值得跳过去”；有多个有效去处时才用简短列表便于比较。不要反复输出“关联原因”这种模板标签。
 
-```markdown
-## 关联
-- **关联原因**：这份材料如何帮助当前问题。[材料：精确标题]
-  来源：精确标题
-```
+工具返回的 `evidenceLabel` 就近放在它支持的判断后面；不在正文里反复堆文件路径。所有用到的精确 `jumpReference`、`sectionJumpReferences` 或 `pageJumpReferences` 放在回答末尾，每条单独一行；魏碑会将它们抽出为可预览、可跳转的来源附件。
 
-工具返回的 `evidenceLabel` 用于证据；单独的来源行用于魏碑点击跳转。必须原样复制 `evidenceLabel` 以及工具返回的 `jumpReference`、`sectionJumpReferences` 或 `pageJumpReferences`，不得删掉重复文件所需的 `条目`、HTML 定位所需的 `章节标识` / `章节序号` 或 PDF 页码，也不得自行改写章节名。
+必须原样复制 `evidenceLabel` 与跳转引用，不得删掉重复文件所需的 `条目`、HTML 定位所需的 `章节标识` / `章节序号` 或 PDF 页码，也不得自行改写章节名。
 工具返回页或章节级跳转时，优先给最精确的位置，不退回只打开整份文件。

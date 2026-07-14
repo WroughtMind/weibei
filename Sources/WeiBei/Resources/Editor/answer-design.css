@@ -1,0 +1,814 @@
+/* WeiBei answer language: paper, ink, annotation, evidence, and practice. */
+:root {
+  --answer-space-1: 4px;
+  --answer-space-2: 8px;
+  --answer-space-3: 12px;
+  --answer-space-4: 16px;
+  --answer-space-6: 24px;
+  --answer-space-8: 32px;
+  --answer-radius-control: 3px;
+  --answer-radius-surface: 4px;
+  --answer-reading-measure: 48em;
+  --answer-rule: rgba(92, 70, 46, .24);
+  --answer-rule-strong: rgba(92, 70, 46, .42);
+  --answer-wash: rgba(255, 251, 241, .24);
+  --answer-wash-strong: rgba(255, 251, 241, .46);
+  --answer-note: rgba(119, 88, 47, .075);
+  --answer-chart-label: rgba(58, 46, 38, .72);
+  --answer-chart-tick: rgba(58, 46, 38, .60);
+  --answer-success: #395f48;
+  --answer-focus: #31566b;
+  --answer-practice: #91261c;
+  --answer-reading: #77582f;
+  --answer-atlas: #5d4b6d;
+  --answer-planning: #51483d;
+}
+
+:root[data-weibei-theme="inkstone"] {
+  --answer-rule: rgba(184, 164, 123, .24);
+  --answer-rule-strong: rgba(200, 185, 138, .40);
+  --answer-wash: rgba(255, 255, 255, .025);
+  --answer-wash-strong: rgba(255, 255, 255, .055);
+  --answer-note: rgba(184, 138, 66, .085);
+  --answer-chart-label: rgba(223, 214, 190, .92);
+  --answer-chart-tick: rgba(193, 184, 160, .90);
+  --answer-success: #92b49b;
+  --answer-focus: #9ab7c9;
+  --answer-practice: #d26d60;
+  --answer-reading: #c09a66;
+  --answer-atlas: #b8a3c7;
+  --answer-planning: #c8b98a;
+}
+
+:root[data-weibei-theme="inkstone"][data-weibei-compact-preview="true"] {
+  --muted: rgba(214, 204, 177, .92);
+  --faint: rgba(188, 178, 152, .92);
+}
+
+:root[data-weibei-compact-preview="true"] .ProseMirror {
+  font-size: 15px;
+  line-height: 1.78;
+  letter-spacing: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+:root[data-weibei-compact-preview="true"] .ProseMirror > :where(p, h1, h2, h3, h4, ul, ol, blockquote) {
+  max-width: min(var(--answer-reading-measure), 100%);
+  text-wrap: pretty;
+}
+
+:root[data-weibei-compact-preview="true"] .ProseMirror h1,
+:root[data-weibei-compact-preview="true"] .ProseMirror h2,
+:root[data-weibei-compact-preview="true"] .ProseMirror h3 {
+  margin-top: 1.24em;
+  margin-bottom: .42em;
+  color: var(--ink);
+  font-family: "Songti SC", "STSong", ui-serif, serif;
+  letter-spacing: 0;
+}
+
+:root[data-weibei-compact-preview="true"] .ProseMirror h1 { font-size: 1.42rem; }
+:root[data-weibei-compact-preview="true"] .ProseMirror h2 { font-size: 1.24rem; }
+:root[data-weibei-compact-preview="true"] .ProseMirror h3 { font-size: 1.08rem; }
+
+:root[data-weibei-compact-preview="true"] .ProseMirror p {
+  margin: .66em 0;
+}
+
+:root[data-weibei-compact-preview="true"] .ProseMirror blockquote:not(.weibei-callout) {
+  margin: .9em 0;
+  padding: 2px 0 2px 12px;
+  border-left-color: var(--answer-reading);
+  color: var(--muted);
+}
+
+.weibei-interactive {
+  --instrument-accent: var(--answer-reading);
+  --instrument-wash: var(--answer-wash);
+  width: 100%;
+  max-width: 100%;
+  margin: var(--answer-space-6) 0 20px;
+  padding: var(--answer-space-4) 0 14px;
+  border: 0;
+  border-top: 1px solid var(--answer-rule-strong);
+  border-bottom: 1px solid var(--answer-rule);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Songti SC", serif;
+  line-height: 1.52;
+  letter-spacing: 0;
+  overflow: visible;
+}
+
+:root[data-weibei-theme="inkstone"] .weibei-interactive {
+  box-shadow: none;
+}
+
+.weibei-interactive[data-family="reading"] {
+  --instrument-accent: var(--answer-reading);
+  --instrument-wash: transparent;
+  padding-left: 0;
+  padding-right: 0;
+  border-top-width: 2px;
+  border-top-color: var(--instrument-accent);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.weibei-interactive[data-family="reasoning"] {
+  --instrument-accent: var(--answer-focus);
+  --instrument-wash: transparent;
+  border-top-width: 2px;
+  border-top-color: var(--instrument-accent);
+}
+
+.weibei-interactive[data-family="practice"] {
+  --instrument-accent: var(--answer-practice);
+  --instrument-wash: var(--answer-note);
+  padding: var(--answer-space-4) 14px 14px;
+  border: 1px solid var(--answer-rule);
+  border-top: 2px solid var(--instrument-accent);
+  border-radius: var(--answer-radius-surface);
+  background: var(--instrument-wash);
+  overflow: hidden;
+}
+
+.weibei-interactive[data-family="lab"] {
+  --instrument-accent: var(--answer-success);
+  --instrument-wash: var(--answer-wash);
+  padding: var(--answer-space-4) 14px 14px;
+  border: 1px solid var(--answer-rule-strong);
+  border-top: 2px solid var(--instrument-accent);
+  border-radius: 2px;
+  background: var(--instrument-wash);
+  overflow: hidden;
+}
+
+.weibei-interactive[data-family="atlas"] {
+  --instrument-accent: var(--answer-atlas);
+  --instrument-wash: transparent;
+  padding: var(--answer-space-4) 0 14px;
+  border: 0;
+  border-top: 2px solid var(--instrument-accent);
+  border-bottom: 1px solid var(--answer-rule);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+.weibei-interactive[data-family="planning"] {
+  --instrument-accent: var(--answer-planning);
+  --instrument-wash: transparent;
+  border-top: 2px solid var(--instrument-accent);
+  border-radius: 0;
+}
+
+.weibei-interactive :where(button, input) {
+  font-family: -apple-system, BlinkMacSystemFont, "Songti SC", serif;
+  letter-spacing: 0;
+}
+
+.weibei-interactive :where(button, [tabindex="0"]):focus-visible {
+  outline: 2px solid var(--instrument-accent);
+  outline-offset: 2px;
+}
+
+.weibei-interactive button:active {
+  transform: scale(.98);
+}
+
+.weibei-interactive-title,
+.weibei-unit-title,
+.weibei-reaction-title,
+.weibei-algorithm-title,
+.weibei-language-title,
+.weibei-argument-title,
+.weibei-visual-analysis-title,
+.weibei-spatial-title,
+.weibei-pathway-title {
+  color: var(--ink);
+  font-family: "Songti SC", "STSong", ui-serif, serif;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.42;
+  letter-spacing: 0;
+}
+
+.weibei-interactive-label {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--instrument-accent);
+  font: 650 10px/1.3 -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.weibei-interactive :where(
+  .weibei-interactive-action,
+  .weibei-interactive-tab,
+  .weibei-evidence-filter,
+  .weibei-scenario-option,
+  .weibei-decision-choice,
+  .weibei-algorithm-action
+) {
+  min-height: 32px;
+  padding-right: 10px;
+  padding-left: 10px;
+  border: 1px solid var(--answer-rule);
+  border-radius: var(--answer-radius-control);
+  background: transparent;
+  color: var(--muted);
+}
+
+.weibei-interactive :where(
+  .weibei-interactive-action,
+  .weibei-interactive-tab,
+  .weibei-evidence-filter,
+  .weibei-scenario-option,
+  .weibei-decision-choice,
+  .weibei-algorithm-action
+):hover {
+  border-color: var(--instrument-accent);
+  background: var(--answer-wash-strong);
+  color: var(--ink);
+}
+
+.weibei-interactive :where(.is-active, [aria-selected="true"], [aria-pressed="true"]) {
+  border-color: var(--instrument-accent);
+  background: var(--answer-wash-strong);
+  color: var(--ink);
+}
+
+.weibei-interactive-status {
+  grid-column: 1 / -1;
+  clear: both;
+  min-height: 24px;
+  margin-top: 10px;
+  padding: 7px 0 0 17px;
+  border-top: 1px solid var(--answer-rule);
+  color: var(--muted);
+  font: 550 11px/1.45 -apple-system, BlinkMacSystemFont, sans-serif;
+  position: relative;
+}
+
+.weibei-interactive-status::before {
+  content: "";
+  position: absolute;
+  top: 10px;
+  left: 2px;
+  width: 6px;
+  height: 6px;
+  border: 1px solid var(--instrument-accent);
+  border-radius: 1px;
+}
+
+.weibei-interactive[data-interaction-state="correct"] .weibei-interactive-status,
+.weibei-interactive[data-interaction-state="familiar"] .weibei-interactive-status {
+  color: var(--answer-success);
+}
+
+.weibei-interactive[data-interaction-state="correct"] .weibei-interactive-status::before,
+.weibei-interactive[data-interaction-state="familiar"] .weibei-interactive-status::before {
+  background: var(--answer-success);
+  border-color: var(--answer-success);
+}
+
+.weibei-interactive[data-interaction-state="retry"] .weibei-interactive-status,
+.weibei-interactive[data-interaction-state="review"] .weibei-interactive-status {
+  color: var(--answer-practice);
+}
+
+.weibei-interactive-status[hidden] {
+  display: none;
+}
+
+/* Reading instruments use marginalia and parallel text, never a generic card grid. */
+.weibei-interactive[data-family="reading"] :where(
+  .weibei-text-study-note,
+  .weibei-annotation-entry,
+  .weibei-language-note,
+  .weibei-interactive-reveal-content
+) {
+  margin-top: 8px;
+  padding: 8px 0 0;
+  border-width: 1px 0 0;
+  border-color: var(--answer-rule);
+  color: var(--muted);
+}
+
+.weibei-interactive[data-family="reading"] .weibei-interactive-tabs {
+  gap: 14px;
+  margin-top: 7px;
+  border-bottom: 1px solid var(--answer-rule);
+}
+
+.weibei-interactive[data-family="reading"] .weibei-interactive-tab {
+  min-height: 28px;
+  padding: 4px 0;
+  border-width: 0 0 2px;
+  border-radius: 0;
+}
+
+.weibei-interactive[data-family="reading"] .weibei-interactive-tab[aria-selected="true"] {
+  border-bottom-color: var(--instrument-accent);
+  background: transparent;
+}
+
+.weibei-text-study-copy,
+.weibei-annotated-copy,
+.weibei-language-source-text,
+.weibei-language-target-text {
+  font-family: "Songti SC", "STSong", ui-serif, serif;
+  font-size: 14.5px;
+  line-height: 1.78;
+}
+
+.weibei-text-highlight,
+.weibei-annotated-mark {
+  border-radius: 1px;
+  background: color-mix(in srgb, var(--answer-reading) 12%, transparent);
+  box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--answer-reading) 44%, transparent);
+}
+
+.weibei-annotation-margin {
+  border-left-color: var(--answer-rule);
+}
+
+.weibei-annotated-layout {
+  gap: var(--answer-space-6);
+}
+
+.weibei-language-pair {
+  min-height: 44px;
+  padding: var(--answer-space-2) 0;
+}
+
+/* Practice instruments look like answer sheets and keep correction visible. */
+.weibei-interactive-quiz .weibei-interactive-prompt {
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 9px;
+  margin: 9px 0 7px;
+  font-weight: 620;
+}
+
+.weibei-interactive[data-family="practice"] :where(
+  .weibei-derivation-progress,
+  .weibei-flashcard-status,
+  .weibei-sequence-instruction
+) {
+  font-variant-numeric: tabular-nums;
+}
+
+.weibei-interactive-quiz .weibei-interactive-prompt::before {
+  width: 24px;
+  height: 24px;
+  border-color: var(--instrument-accent);
+  color: var(--instrument-accent);
+}
+
+.weibei-interactive-options {
+  counter-reset: answer-choice;
+  border-top-color: var(--answer-rule);
+}
+
+.weibei-interactive-option {
+  counter-increment: answer-choice;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-height: 36px;
+  border-bottom-color: var(--answer-rule);
+  text-align: left;
+}
+
+.weibei-interactive-option::before {
+  content: counter(answer-choice, upper-alpha);
+  color: var(--faint);
+  font: 600 10px/1.2 "SF Mono", Menlo, monospace;
+}
+
+.weibei-interactive-option.is-correct::before { color: var(--answer-success); }
+.weibei-interactive-option.is-wrong::before { color: var(--answer-practice); }
+
+.weibei-interactive-explanation,
+.weibei-sequence-feedback {
+  padding: 8px 0 0;
+  border-width: 1px 0 0;
+  border-color: var(--answer-rule);
+}
+
+.weibei-flashcard {
+  min-height: 132px;
+  border-color: var(--answer-rule-strong);
+  border-radius: 4px;
+  background: var(--answer-wash-strong);
+}
+
+.weibei-flashcard-back {
+  border-left: 0;
+  border-top: 2px solid var(--answer-success);
+}
+
+/* Reasoning instruments favor connective rules, comparison, and evidence. */
+.weibei-relationship-node,
+.weibei-argument-node,
+.weibei-evidence-item {
+  background: transparent;
+  box-shadow: none;
+}
+
+.weibei-evidence-list {
+  gap: var(--answer-space-2);
+}
+
+.weibei-interactive-timeline .weibei-timeline-events {
+  gap: 0;
+  padding-top: var(--answer-space-2);
+}
+
+.weibei-interactive-timeline .weibei-timeline-event {
+  min-height: 102px;
+  padding: var(--answer-space-3) var(--answer-space-3) var(--answer-space-3) var(--answer-space-4);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: inset 1px 0 0 var(--answer-rule);
+}
+
+.weibei-interactive-comparison-matrix .weibei-comparison-table {
+  font-variant-numeric: tabular-nums;
+}
+
+.weibei-interactive-argument-map .weibei-argument-node {
+  min-height: 72px;
+  border-radius: 2px;
+}
+
+.weibei-interactive-decision-path .weibei-decision-trail {
+  font-variant-numeric: tabular-nums;
+}
+
+.weibei-relationship-node {
+  border-width: 2px 0 1px;
+  border-top-color: var(--weibei-interactive-tone, var(--instrument-accent));
+  border-bottom-color: var(--answer-rule);
+}
+
+.weibei-relationship-edges,
+.weibei-argument-edges,
+.weibei-pathway-edges {
+  border-top-color: var(--answer-rule);
+}
+
+.weibei-comparison-table {
+  border-top-color: var(--instrument-accent);
+  border-bottom-color: var(--answer-rule-strong);
+}
+
+.weibei-comparison-table :where(th, td) {
+  border-color: var(--answer-rule);
+}
+
+.weibei-evidence-detail,
+.weibei-spectrum-detail,
+.weibei-scenario-result,
+.weibei-decision-trail {
+  padding: 8px 0 0;
+  border-width: 1px 0 0;
+  border-color: var(--answer-rule);
+}
+
+.weibei-evidence-item {
+  border-left-width: 0;
+  border-bottom-color: var(--answer-rule);
+  box-shadow: inset 3px 0 0 var(--weibei-interactive-tone, var(--instrument-accent));
+}
+
+.weibei-derivation-step.is-active {
+  border-color: var(--instrument-accent);
+  box-shadow: inset 3px 0 0 var(--instrument-accent);
+  padding-left: 11px;
+}
+
+/* Labs reserve a stable readout and use tabular numerals. */
+.weibei-interactive[data-family="lab"] :where(
+  .weibei-unit-variable-value,
+  .weibei-unit-check-chain,
+  .weibei-reaction-coefficient,
+  .weibei-reaction-label,
+  .weibei-algorithm-code,
+  .weibei-parameter-value
+) {
+  font-variant-numeric: tabular-nums;
+}
+
+.weibei-chart-inspector,
+.weibei-unit-detail,
+.weibei-reaction-source,
+.weibei-argument-detail,
+.weibei-visual-analysis-detail,
+.weibei-spatial-detail,
+.weibei-pathway-detail,
+.weibei-algorithm-step {
+  min-height: 28px;
+  margin-top: 8px;
+  padding: 7px 0 0;
+  border-width: 1px 0 0;
+  border-color: var(--answer-rule);
+  color: var(--muted);
+}
+
+.weibei-chart-inspector[data-empty="true"] {
+  color: var(--faint);
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+.weibei-interactive-axis-label {
+  fill: var(--answer-chart-label);
+  font-size: 11px;
+  font-weight: 560;
+}
+
+.weibei-chart-tick-label {
+  fill: var(--answer-chart-tick);
+  font-size: 10px;
+  font-weight: 520;
+}
+
+.weibei-unit-check,
+.weibei-reaction-element {
+  border-left-color: var(--answer-success);
+}
+
+.weibei-algorithm-code {
+  border-color: var(--answer-rule);
+  border-left-color: var(--instrument-accent);
+  background: var(--code-paper);
+}
+
+.weibei-algorithm-line.is-active {
+  background: color-mix(in srgb, var(--instrument-accent) 12%, transparent);
+  box-shadow: inset 2px 0 0 var(--instrument-accent);
+}
+
+/* Charts and visual analysis behave as inspectable plates. */
+.weibei-interactive-chart,
+.weibei-interactive-function,
+.weibei-interactive-parameter {
+  grid-template-columns: minmax(0, 1fr) minmax(126px, .34fr);
+  gap: 9px 14px;
+}
+
+.weibei-interactive-chart-svg {
+  width: 100%;
+  max-width: none;
+  padding: 5px 0 2px;
+  border: 0;
+  border-bottom: 1px solid var(--answer-rule);
+}
+
+.weibei-chart-grid { stroke: color-mix(in srgb, var(--answer-rule) 88%, transparent); }
+.weibei-chart-axis { stroke: color-mix(in srgb, var(--answer-chart-label) 58%, transparent); }
+
+.weibei-chart-line,
+.weibei-chart-area,
+.weibei-chart-point,
+.weibei-chart-bar {
+  cursor: crosshair;
+  transition: opacity .14s ease-out, stroke-width .14s ease-out, filter .14s ease-out;
+}
+
+.weibei-chart-line,
+.weibei-chart-area {
+  pointer-events: visibleStroke;
+}
+
+.weibei-chart-area { pointer-events: visiblePainted; }
+
+.weibei-chart-line:hover,
+.weibei-chart-line:focus,
+.weibei-chart-line.is-inspected,
+.weibei-chart-area:hover,
+.weibei-chart-area:focus,
+.weibei-chart-area.is-inspected {
+  stroke-width: 3;
+  filter: saturate(1.2);
+}
+
+.weibei-chart-point:hover,
+.weibei-chart-point:focus,
+.weibei-chart-point.is-inspected,
+.weibei-chart-bar:hover,
+.weibei-chart-bar:focus,
+.weibei-chart-bar.is-inspected {
+  filter: brightness(.86) saturate(1.25);
+  stroke: var(--ink);
+  stroke-width: 1;
+}
+
+.weibei-chart-legend,
+.weibei-function-formula,
+.weibei-parameter-controls {
+  padding-left: var(--answer-space-3);
+  border-left-color: var(--answer-rule);
+}
+
+.weibei-chart-legend {
+  color: var(--answer-chart-label);
+}
+
+.weibei-chart-legend-item {
+  min-height: 26px;
+  border-bottom-color: transparent;
+}
+
+.weibei-chart-legend-item[aria-pressed="false"] {
+  border-bottom-color: var(--answer-rule);
+}
+
+.weibei-visual-analysis-surface,
+.weibei-spatial-surface {
+  border-color: var(--answer-rule-strong);
+  background: var(--answer-wash);
+  aspect-ratio: 16 / 9;
+  min-height: 220px;
+}
+
+.weibei-palette-swatch {
+  border-radius: 2px;
+}
+
+.weibei-interactive-design .weibei-design-preview,
+.weibei-interactive-palette .weibei-palette-preview {
+  min-height: 104px;
+  border-radius: 0;
+}
+
+.weibei-interactive-palette .weibei-palette-preview {
+  display: grid;
+  align-content: center;
+  padding: var(--answer-space-3) 0 var(--answer-space-3) var(--answer-space-3);
+  font-size: 15px;
+  line-height: 1.62;
+}
+
+/* Planning reads as a compact work ledger. */
+.weibei-study-board-header {
+  border-bottom-color: var(--answer-rule-strong);
+}
+
+.weibei-study-board-metrics {
+  border-color: var(--answer-rule);
+}
+
+.weibei-study-board-metric {
+  border-left-color: var(--weibei-interactive-tone, var(--instrument-accent));
+}
+
+.weibei-study-board-item {
+  border-color: var(--answer-rule);
+  border-radius: 2px;
+  background: transparent;
+}
+
+.weibei-interactive-study-board .weibei-study-board-items {
+  gap: var(--answer-space-3);
+}
+
+.weibei-interactive-study-board .weibei-study-board-item {
+  min-height: 94px;
+  padding: var(--answer-space-3);
+}
+
+:root[data-weibei-theme="inkstone"] .weibei-interactive[data-family="lab"],
+:root[data-weibei-theme="inkstone"] .weibei-interactive[data-family="practice"] {
+  background: rgba(255, 255, 255, .035);
+  border-color: rgba(230, 219, 192, .20);
+}
+
+:root[data-weibei-theme="inkstone"] .weibei-interactive :where(
+  .weibei-design-preview-body,
+  .weibei-palette-detail,
+  .weibei-study-board-item-body,
+  .weibei-relationship-detail,
+  .weibei-argument-detail,
+  .weibei-timeline-detail,
+  .weibei-evidence-detail,
+  .weibei-scenario-outcome-body,
+  .weibei-language-note,
+  .weibei-algorithm-note
+) {
+  color: rgba(218, 209, 185, .94);
+}
+
+:root[data-weibei-theme="inkstone"] .weibei-chart-grid {
+  stroke: rgba(226, 216, 190, .16);
+}
+
+:root[data-weibei-theme="inkstone"] .weibei-chart-axis {
+  stroke: rgba(226, 216, 190, .44);
+}
+
+:root[data-weibei-theme="inkstone"] :where(
+  .weibei-chart-legend-item,
+  .weibei-spatial-feature-type,
+  .weibei-visual-analysis-palette-role,
+  .weibei-chart-inspector,
+  .weibei-visual-analysis-zone-note,
+  .weibei-spatial-detail-note
+) {
+  color: var(--answer-chart-tick);
+}
+
+@media (max-width: 560px) {
+  .weibei-interactive {
+    margin: 15px 0 13px;
+    padding: 12px 10px 11px;
+  }
+
+  .weibei-interactive[data-family="reading"],
+  .weibei-interactive[data-family="planning"] {
+    padding-right: 0;
+    padding-left: 0;
+  }
+
+  .weibei-interactive-chart,
+  .weibei-interactive-function,
+  .weibei-interactive-parameter,
+  .weibei-interactive-algorithm-trace,
+  .weibei-interactive-visual-analysis,
+  .weibei-interactive-spatial-layers,
+  .weibei-annotated-layout,
+  .weibei-scenario-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .weibei-chart-legend,
+  .weibei-function-formula,
+  .weibei-parameter-controls,
+  .weibei-algorithm-step,
+  .weibei-algorithm-progress,
+  .weibei-algorithm-controls {
+    grid-column: 1;
+    padding-left: 0;
+    border-left: 0;
+    border-top: 1px solid var(--answer-rule);
+  }
+
+  .weibei-language-pair {
+    grid-template-columns: minmax(44px, .24fr) minmax(0, 1fr);
+  }
+
+  .weibei-language-target-text {
+    grid-column: 2;
+    padding: 6px 0 0;
+    border-width: 1px 0 0;
+    border-color: var(--answer-rule);
+  }
+
+  .weibei-visual-analysis-surface,
+  .weibei-spatial-surface {
+    min-height: 180px;
+  }
+}
+
+@media (max-width: 390px) {
+  .weibei-interactive {
+    border-right-color: transparent;
+    border-left-color: transparent;
+    border-radius: 0;
+  }
+
+  .weibei-unit-variable {
+    grid-template-columns: minmax(0, 1fr) minmax(72px, auto);
+  }
+
+  .weibei-unit-variable-role {
+    grid-column: 1 / -1;
+    text-align: left;
+  }
+
+  .weibei-reaction-equation {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .weibei-reaction-arrow {
+    transform: rotate(90deg);
+  }
+
+  .weibei-reaction-products {
+    justify-content: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .weibei-interactive *,
+  .weibei-interactive *::before,
+  .weibei-interactive *::after {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+  }
+}
