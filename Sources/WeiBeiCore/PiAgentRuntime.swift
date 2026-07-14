@@ -315,6 +315,8 @@ public enum PiAnswerEvidenceRequirement {
 }
 
 public actor PiAgentRuntime: StudyAgentRuntime {
+    private static let processReadinessTimeoutSeconds: UInt64 = 12
+
     private struct PendingCommand {
         var continuation: CheckedContinuation<PiRPCResponse, Error>
         var timeoutTask: Task<Void, Never>
@@ -533,11 +535,17 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         stderrTask = readStderr(errorPipe.fileHandleForReading)
 
         do {
-            let state = try await sendCommand(type: "get_state", timeoutSeconds: 3)
+            let state = try await sendCommand(
+                type: "get_state",
+                timeoutSeconds: Self.processReadinessTimeoutSeconds
+            )
             guard state.dataJSON != nil else {
                 throw PiAgentRuntimeError.protocolFailure("get_state returned no data")
             }
-            let commands = try await sendCommand(type: "get_commands", timeoutSeconds: 3)
+            let commands = try await sendCommand(
+                type: "get_commands",
+                timeoutSeconds: Self.processReadinessTimeoutSeconds
+            )
             try verifyRequiredSkills(in: commands)
             if let startupFailure { throw startupFailure }
         } catch {
