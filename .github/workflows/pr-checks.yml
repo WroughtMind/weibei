@@ -41,6 +41,10 @@ jobs:
       - name: 运行应用自检
         run: swift run WeiBeiSelfCheck
 
+      - name: 运行 Pi 终止语义自检
+        if: ${{ hashFiles('Sources/WeiBeiSelfCheck/PiTerminalRuntimeSelfChecks.swift') != '' }}
+        run: WEIBEI_PI_TERMINAL_SELF_CHECK_ONLY=1 swift run WeiBeiSelfCheck
+
       - name: 运行编辑器自检
         run: swift run WeiBeiWebEditorCheck
 
