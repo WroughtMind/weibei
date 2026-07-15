@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import CryptoKit
 import Darwin
 import Foundation
 import SwiftUI
@@ -243,8 +244,15 @@ final class WorkspaceStore: ObservableObject {
     @Published private var forwardNavigationStack: [NavigationSnapshot] = []
 
     private var notesByItemID: [String: String] = [:]
+    private var pendingNoteWritesByItemID: [String: PendingNoteWriteState] = [:]
+    private var noteBackingContentDigestsByItemID: [String: String] = [:]
     private let storageURL: URL
+    private let notebookRenameJournalURL: URL
     private let importedFileIdentityResolver: (URL) -> ImportedFileIdentity?
+    private let notebookMarkdownReader: (URL) throws -> String
+    private let notebookMarkdownWriter: (String, URL) throws -> Void
+    private let notebookFileMover: (URL, URL) throws -> Void
+    private let workspaceSnapshotWriter: (Data, URL) throws -> Void
     private let piRuntime: PiAgentRuntime
     private let courseDocumentSearchIndex: CourseDocumentSearchIndex
     private var activeAgentRequestID: UUID?
@@ -329,6 +337,18 @@ final class WorkspaceStore: ObservableObject {
         var isStale: Bool
     }
 
+    private struct PendingNotebookRenameJournal: Codable {
+        var oldItem: StudyItem
+        var replacementItemID: String
+        var oldPath: String
+        var newPath: String
+        var newTitle: String
+        var sourceMarkdown: String
+        var retitledMarkdown: String
+        var originalContentDigest: String
+        var retitledContentDigest: String
+    }
+
     private var lastUsableAgentAnswer: AgentMessage? {
         guard lastAgentReplyContextRevision == agentContextRevision else { return nil }
         return messages.last { $0.isUsableAgentAnswer }
@@ -346,10 +366,19 @@ final class WorkspaceStore: ObservableObject {
 
     init(
         workspaceDirectory folder: URL,
-        importedFileIdentityResolver: @escaping (URL) -> ImportedFileIdentity? = WorkspaceStore.resolveImportedFileIdentity
+        importedFileIdentityResolver: @escaping (URL) -> ImportedFileIdentity? = WorkspaceStore.resolveImportedFileIdentity,
+        notebookMarkdownReader: @escaping (URL) throws -> String = WorkspaceStore.readNotebookMarkdown,
+        notebookMarkdownWriter: @escaping (String, URL) throws -> Void = WorkspaceStore.writeNotebookMarkdown,
+        notebookFileMover: @escaping (URL, URL) throws -> Void = WorkspaceStore.moveNotebookFile,
+        workspaceSnapshotWriter: @escaping (Data, URL) throws -> Void = WorkspaceStore.writeWorkspaceSnapshot
     ) {
         storageURL = folder.appendingPathComponent("workspace.json")
+        notebookRenameJournalURL = folder.appendingPathComponent("pending-notebook-rename.json")
         self.importedFileIdentityResolver = importedFileIdentityResolver
+        self.notebookMarkdownReader = notebookMarkdownReader
+        self.notebookMarkdownWriter = notebookMarkdownWriter
+        self.notebookFileMover = notebookFileMover
+        self.workspaceSnapshotWriter = workspaceSnapshotWriter
         piRuntime = PiAgentRuntime(runtimeDirectory: folder.appendingPathComponent("AgentRuntime", isDirectory: true))
         let courseIndexDirectory = folder.appendingPathComponent("CourseIndex", isDirectory: true)
         Self.removeLegacyCourseIndex(in: courseIndexDirectory)
@@ -358,21 +387,34 @@ final class WorkspaceStore: ObservableObject {
         )
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         load()
+        let recoveredPendingNotebookRename = recoverPendingNotebookRenameIfNeeded()
         let resolvedImportedFileBookmarks = resolvePersistedImportedFileBookmarks()
         let migratedImportedItemIdentities = migrateLegacyImportedItemIdentities()
+        if recoveredPendingNotebookRename
+            || resolvedImportedFileBookmarks
+            || migratedImportedItemIdentities {
+            noteText = noteText(for: activeNoteItem)
+        }
         let migratedStudyLocationTitles = refreshStudyLocationReferenceTitles()
         let sanitizedNoteSourceLinks = sanitizeNoteSourceLinks()
         courseDocumentSearchIndex.synchronize(allItems)
         ensureActiveStudySession()
+        let savedInitializationChanges: Bool
         if noteSourceLinksMigrationVersion < 1 {
             migrateNoteSourceLinksFromMarkdown()
             noteSourceLinksMigrationVersion = 1
-            save()
+            savedInitializationChanges = save()
         } else if resolvedImportedFileBookmarks
+                    || recoveredPendingNotebookRename
                     || migratedImportedItemIdentities
                     || migratedStudyLocationTitles
                     || sanitizedNoteSourceLinks {
-            save()
+            savedInitializationChanges = save()
+        } else {
+            savedInitializationChanges = true
+        }
+        if recoveredPendingNotebookRename, savedInitializationChanges {
+            removePendingNotebookRenameJournal()
         }
         floatingSelectionPrompt = ui("当前选区", "Current selection")
         if selectedItemID == nil {
@@ -2366,12 +2408,18 @@ final class WorkspaceStore: ObservableObject {
                     didChangeItems = true
                 }
             }
-            let matchingIndex = importedItems.firstIndex { item in
+            let identityMatchingIndex = importedItems.firstIndex { item in
                 if let identity {
                     return item.importedFileIdentity == identity
                 }
                 return item.importedFileIdentity == nil && item.urlPath == url.path
             }
+            let legacyPathMatchingIndex = identity == nil ? nil : importedItems.firstIndex { item in
+                item.id.hasPrefix("file:")
+                    && item.importedFileIdentity == nil
+                    && (item.urlPath == url.path || item.importedFileLastKnownPath == url.path)
+            }
+            let matchingIndex = identityMatchingIndex ?? legacyPathMatchingIndex
 
             if let matchingIndex {
                 if identity != nil, importedItems[matchingIndex].id.hasPrefix("file:") {
@@ -2476,8 +2524,15 @@ final class WorkspaceStore: ObservableObject {
             .volumeIdentifierKey,
             .creationDateKey,
         ]
-        return try? url.bookmarkData(
+        if let scopedBookmark = try? url.bookmarkData(
             options: [.withSecurityScope],
+            includingResourceValuesForKeys: resourceKeys,
+            relativeTo: nil
+        ) {
+            return scopedBookmark
+        }
+        return try? url.bookmarkData(
+            options: [],
             includingResourceValuesForKeys: resourceKeys,
             relativeTo: nil
         )
@@ -2485,15 +2540,22 @@ final class WorkspaceStore: ObservableObject {
 
     nonisolated private static func resolveImportedFileBookmark(_ data: Data) -> ResolvedImportedFileBookmark? {
         var isStale = false
-        guard let url = try? URL(
+        if let scopedURL = try? URL(
             resolvingBookmarkData: data,
             options: [.withSecurityScope, .withoutUI],
             relativeTo: nil,
             bookmarkDataIsStale: &isStale
-        ) else {
-            return nil
+        ) {
+            return ResolvedImportedFileBookmark(url: scopedURL.standardizedFileURL, isStale: isStale)
         }
-        return ResolvedImportedFileBookmark(url: url.standardizedFileURL, isStale: isStale)
+        isStale = false
+        guard let plainURL = try? URL(
+            resolvingBookmarkData: data,
+            options: [.withoutUI],
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        ) else { return nil }
+        return ResolvedImportedFileBookmark(url: plainURL.standardizedFileURL, isStale: isStale)
     }
 
     nonisolated private static func makeImportedItemID() -> String {
@@ -2577,51 +2639,354 @@ final class WorkspaceStore: ObservableObject {
             noteFileError = ui("笔记名不能为空。", "Note name cannot be empty.")
             return
         }
-        guard let index = importedItems.firstIndex(where: { $0.id == itemID && $0.isNotebookNote }),
-              let oldURL = importedItems[index].url else { return }
+        guard let initialIndex = importedItems.firstIndex(where: { $0.id == itemID && $0.isNotebookNote }) else { return }
+        let oldTitle = displayTitle(for: importedItems[initialIndex])
 
+        if let stagedNoteDraft, stagedNoteDraft.itemID == itemID {
+            self.stagedNoteDraft = nil
+            updateNote(stagedNoteDraft.value, for: itemID)
+        }
+        flushPendingNotePersistence(for: itemID)
         persistCurrentNote()
+        if pendingNoteWritesByItemID[itemID] != nil {
+            noteFileError = ui(
+                "这份笔记还有待写草稿或外部冲突；两份内容都已保留，处理完成前不会重命名文件。",
+                "This note still has a pending draft or external conflict. Both versions were kept, and the file will not be renamed until it is resolved."
+            )
+            save()
+            return
+        }
+        guard let index = importedItems.firstIndex(where: { $0.id == itemID && $0.isNotebookNote }) else { return }
+        let resolution = resolveTrackedImportedFile(at: index)
+        guard let oldURL = resolution.url else {
+            noteFileError = ui(
+                "找不到这份笔记的当前位置，最新编辑已保留，未执行重命名。",
+                "The current note location could not be found. The latest edit was retained and the note was not renamed."
+            )
+            save()
+            return
+        }
         let oldItem = importedItems[index]
         let oldID = oldItem.id
-        let oldTitle = displayTitle(for: oldItem)
         let wasActiveNotebook = activeNotebookItemID == oldID
         let newURL = renamedNotebookURL(in: oldURL.deletingLastPathComponent(), title: title, currentURL: oldURL)
+        let newTitle = newURL.deletingPathExtension().lastPathComponent
+        let sourceMarkdown: String
+        do {
+            sourceMarkdown = wasActiveNotebook ? noteText : try notebookMarkdownReader(oldURL)
+        } catch {
+            noteFileError = ui(
+                "无法重命名笔记：无法读取原 Markdown，文件和课程关系均未改动。",
+                "Could not rename the note because the original Markdown could not be read. The file and course relationships were not changed."
+            )
+            save()
+            return
+        }
+        let retitledMarkdown = retitledMarkdown(sourceMarkdown, from: oldTitle, to: newTitle)
+        guard let originalContentDigest = noteBackingContentDigestsByItemID[oldID]
+                ?? Self.noteContentDigest(at: oldURL) else {
+            noteFileError = ui(
+                "无法重命名笔记：无法确认原 Markdown 内容，文件和课程关系均未改动。",
+                "Could not rename the note because the original Markdown contents could not be verified. The file and course relationships were not changed."
+            )
+            save()
+            return
+        }
+        let sourceMarkdownDigest = Self.noteContentDigest(Data(sourceMarkdown.utf8))
+        let willRewriteMarkdown = retitledMarkdown != sourceMarkdown
+        let expectedOutputDigest = willRewriteMarkdown
+            ? Self.noteContentDigest(Data(retitledMarkdown.utf8))
+            : originalContentDigest
+        let originalIdentity = oldItem.importedFileIdentity
+            ?? importedFileIdentityResolver(oldURL)
+        let replacementItemID = oldID.hasPrefix("file:") && originalIdentity != nil
+            ? Self.makeImportedItemID()
+            : (oldID.hasPrefix("file:") ? "file:\(newURL.path)" : oldID)
+        var journalOldItem = oldItem
+        journalOldItem.importedFileIdentity = originalIdentity
+        let renameJournal = PendingNotebookRenameJournal(
+            oldItem: journalOldItem,
+            replacementItemID: replacementItemID,
+            oldPath: oldURL.path,
+            newPath: newURL.path,
+            newTitle: newTitle,
+            sourceMarkdown: sourceMarkdown,
+            retitledMarkdown: retitledMarkdown,
+            originalContentDigest: originalContentDigest,
+            retitledContentDigest: expectedOutputDigest
+        )
+        guard save() else {
+            noteFileError = ui(
+                "无法重命名笔记：当前课程状态尚未安全保存，文件和关系均未改动。",
+                "Could not rename the note because the current course state was not safely saved. The file and relationships were not changed."
+            )
+            return
+        }
+        removePendingNotebookRenameJournal()
+        do {
+            try writePendingNotebookRenameJournal(renameJournal)
+        } catch {
+            noteFileError = ui(
+                "无法重命名笔记：无法建立崩溃恢复记录，文件和课程关系均未改动。",
+                "Could not rename the note because a crash-recovery record could not be created. The file and course relationships were not changed."
+            )
+            save()
+            return
+        }
+
+        var movedFile = false
+        var verifiedApplicationOutput = false
 
         do {
             if oldURL.path != newURL.path {
-                try FileManager.default.moveItem(at: oldURL, to: newURL)
+                try notebookFileMover(oldURL, newURL)
+                movedFile = true
             }
-            let resolvedIdentity = importedFileIdentityResolver(newURL)
-            let newID = oldID.hasPrefix("file:") && resolvedIdentity != nil
-                ? Self.makeImportedItemID()
-                : (oldID.hasPrefix("file:") ? "file:\(newURL.path)" : oldID)
-            importedItems[index].id = newID
-            importedItems[index].title = newURL.deletingPathExtension().lastPathComponent
-            importedItems[index].subtitle = newURL.lastPathComponent
-            importedItems[index].urlPath = newURL.path
-            importedItems[index].importedFileIdentity = resolvedIdentity ?? oldItem.importedFileIdentity
-            importedItems[index].importedFileBookmarkData = Self.makeImportedFileBookmark(for: newURL)
-                ?? oldItem.importedFileBookmarkData
-            importedItems[index].importedFileLastKnownPath = newURL.path
-            replaceItemIDEverywhere(oldID, with: newID)
-            if wasActiveNotebook {
-                noteText = retitledMarkdown(noteText, from: oldTitle, to: importedItems[index].title)
-                persistCurrentNote()
-            } else if let markdown = try? String(contentsOf: newURL, encoding: .utf8) {
-                let updated = retitledMarkdown(markdown, from: oldTitle, to: importedItems[index].title)
-                if updated != markdown {
-                    try updated.write(to: newURL, atomically: true, encoding: .utf8)
+            let movedIdentity = importedFileIdentityResolver(newURL)
+            let identityChanged = !oldID.hasPrefix("file:")
+                && (originalIdentity == nil || movedIdentity != originalIdentity)
+            let movedContentDigest = Self.noteContentDigest(at: newURL)
+            let contentChanged = movedContentDigest != originalContentDigest
+            if identityChanged || contentChanged {
+                throw NSError(
+                    domain: "WeiBei.ImportedFileIdentity",
+                    code: 1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: ui(
+                            "文件身份或内容在重命名期间发生变化，操作已中止。",
+                            "The file identity or content changed during rename, so the operation was stopped."
+                        ),
+                    ]
+                )
+            }
+
+            var coordinatedIdentity: ImportedFileIdentity?
+            var coordinatedDigest: String?
+            var coordinationError: NSError?
+            var operationError: Error?
+            let coordinator = NSFileCoordinator(filePresenter: nil)
+            coordinator.coordinate(
+                writingItemAt: newURL,
+                options: .forReplacing,
+                error: &coordinationError
+            ) { coordinatedURL in
+                do {
+                    guard importedFileIdentityResolver(coordinatedURL) == movedIdentity,
+                          Self.noteContentDigest(at: coordinatedURL) == originalContentDigest else {
+                        throw NSError(
+                            domain: "WeiBei.ImportedFileIdentity",
+                            code: 2,
+                            userInfo: [
+                                NSLocalizedDescriptionKey: ui(
+                                    "写入前检测到文件被外部修改，操作已中止。",
+                                    "The file changed externally before writing, so the operation was stopped."
+                                ),
+                            ]
+                        )
+                    }
+                    if willRewriteMarkdown {
+                        try notebookMarkdownWriter(retitledMarkdown, coordinatedURL)
+                    }
+                    let identityBeforeRead = importedFileIdentityResolver(coordinatedURL)
+                    let outputData = try Data(contentsOf: coordinatedURL)
+                    let identityAfterRead = importedFileIdentityResolver(coordinatedURL)
+                    let outputDigest = Self.noteContentDigest(outputData)
+                    guard identityBeforeRead == identityAfterRead,
+                          outputDigest == expectedOutputDigest else {
+                        throw NSError(
+                            domain: "WeiBei.ImportedFileIdentity",
+                            code: 3,
+                            userInfo: [
+                                NSLocalizedDescriptionKey: ui(
+                                    "写入后文件内容或身份不一致，操作已中止。",
+                                    "The file contents or identity did not match after writing, so the operation was stopped."
+                                ),
+                            ]
+                        )
+                    }
+                    if !oldID.hasPrefix("file:"), identityAfterRead == nil {
+                        throw NSError(
+                            domain: "WeiBei.ImportedFileIdentity",
+                            code: 4,
+                            userInfo: [
+                                NSLocalizedDescriptionKey: ui(
+                                    "写入标题后无法确认文件身份，操作已中止。",
+                                    "The file identity could not be confirmed after writing the title, so the operation was stopped."
+                                ),
+                            ]
+                        )
+                    }
+                    coordinatedIdentity = identityAfterRead
+                    coordinatedDigest = outputDigest
+                    verifiedApplicationOutput = true
+                } catch {
+                    operationError = error
                 }
             }
-            if let cached = notesByItemID[newID] {
-                notesByItemID[newID] = retitledMarkdown(cached, from: oldTitle, to: importedItems[index].title)
+            if let coordinationError { throw coordinationError }
+            if let operationError { throw operationError }
+            guard let finalContentDigest = coordinatedDigest,
+                  importedFileIdentityResolver(newURL) == coordinatedIdentity,
+                  Self.noteContentDigest(at: newURL) == finalContentDigest else {
+                throw NSError(
+                    domain: "WeiBei.ImportedFileIdentity",
+                    code: 5,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: ui(
+                            "提交前检测到文件再次变化，操作已中止。",
+                            "The file changed again before the rename could be committed, so the operation was stopped."
+                        ),
+                    ]
+                )
             }
+            var renamedItem = oldItem
+            renamedItem.id = replacementItemID
+            renamedItem.title = newTitle
+            renamedItem.subtitle = newURL.lastPathComponent
+            renamedItem.urlPath = newURL.path
+            renamedItem.importedFileIdentity = coordinatedIdentity ?? originalIdentity
+            renamedItem.importedFileBookmarkData = Self.makeImportedFileBookmark(for: newURL)
+                ?? oldItem.importedFileBookmarkData
+            renamedItem.importedFileLastKnownPath = newURL.path
+            importedItems[index] = renamedItem
+            replaceItemIDEverywhere(oldID, with: replacementItemID)
+            if wasActiveNotebook {
+                noteText = retitledMarkdown
+            }
+            if let cached = notesByItemID[replacementItemID] {
+                notesByItemID[replacementItemID] = self.retitledMarkdown(cached, from: oldTitle, to: newTitle)
+            }
+            noteBackingContentDigestsByItemID[replacementItemID] = finalContentDigest
             courseDocumentSearchIndex.synchronize(allItems)
-            save()
+            guard save() else {
+                notebookRenameDraft = NotebookRenameDraft(itemID: replacementItemID, title: newTitle)
+                noteFileError = ui(
+                    "文件已重命名，但课程状态尚未写入磁盘；恢复记录已保留，重启后会自动接回。",
+                    "The file was renamed, but the course state has not been saved to disk. A recovery record was retained so it can be reconnected after restart."
+                )
+                return
+            }
+            removePendingNotebookRenameJournal()
             notebookRenameDraft = nil
+            noteFileError = nil
             showTransientNoteStatus(ui("已重命名为：\(newURL.lastPathComponent)", "Renamed to: \(newURL.lastPathComponent)"))
         } catch {
-            noteFileError = ui("无法重命名笔记：\(error.localizedDescription)", "Could not rename note: \(error.localizedDescription)")
+            var restoredOldPath = oldURL.path == newURL.path
+            if movedFile {
+                do {
+                    try notebookFileMover(newURL, oldURL)
+                    restoredOldPath = true
+                } catch {
+                    restoredOldPath = false
+                }
+            } else if oldURL.path != newURL.path {
+                let currentOldIdentity = importedFileIdentityResolver(oldURL)
+                restoredOldPath = Self.noteContentDigest(at: oldURL) == originalContentDigest
+                    && (originalIdentity == nil || currentOldIdentity == originalIdentity)
+            }
+
+            if restoredOldPath {
+                var restoredIdentity = importedFileIdentityResolver(oldURL)
+                var restoredDigest = Self.noteContentDigest(at: oldURL)
+                let recoveredApplicationOutput = willRewriteMarkdown
+                    && verifiedApplicationOutput
+                    && restoredDigest == expectedOutputDigest
+                if recoveredApplicationOutput, willRewriteMarkdown {
+                    do {
+                        try notebookMarkdownWriter(sourceMarkdown, oldURL)
+                        restoredIdentity = importedFileIdentityResolver(oldURL)
+                        restoredDigest = Self.noteContentDigest(at: oldURL)
+                    } catch {
+                        restoredIdentity = importedFileIdentityResolver(oldURL)
+                        restoredDigest = Self.noteContentDigest(at: oldURL)
+                    }
+                }
+                let restoredOriginalGeneration = restoredDigest == originalContentDigest
+                    && (originalIdentity == nil || restoredIdentity == originalIdentity)
+                let restoredKnownApplicationCopy = recoveredApplicationOutput
+                    && restoredDigest == sourceMarkdownDigest
+                let restoredFileIsTrusted = restoredOriginalGeneration || restoredKnownApplicationCopy
+                if restoredFileIsTrusted {
+                    importedItems[index] = oldItem
+                    importedItems[index].urlPath = oldURL.path
+                    importedItems[index].importedFileLastKnownPath = oldURL.path
+                    importedItems[index].importedFileIdentity = restoredIdentity
+                    importedItems[index].importedFileBookmarkData = Self.makeImportedFileBookmark(for: oldURL)
+                        ?? oldItem.importedFileBookmarkData
+                    noteBackingContentDigestsByItemID[oldID] = restoredDigest
+                } else {
+                    importedItems[index] = oldItem
+                    importedItems[index].urlPath = nil
+                    importedItems[index].importedFileLastKnownPath = oldURL.path
+                    notesByItemID[oldID] = sourceMarkdown
+                    pendingNoteWritesByItemID[oldID] = PendingNoteWriteState(
+                        baselineContentDigest: originalContentDigest
+                    )
+                    if wasActiveNotebook {
+                        noteText = sourceMarkdown
+                    }
+                }
+            } else if FileManager.default.fileExists(atPath: newURL.path) {
+                let currentIdentity = importedFileIdentityResolver(newURL)
+                let currentDigest = Self.noteContentDigest(at: newURL)
+                let currentFileIsMovedOriginal = currentDigest == originalContentDigest
+                    && (originalIdentity == nil || currentIdentity == originalIdentity)
+                let currentFileIsKnownApplicationOutput = willRewriteMarkdown
+                    && verifiedApplicationOutput
+                    && currentDigest == expectedOutputDigest
+                guard currentFileIsMovedOriginal || currentFileIsKnownApplicationOutput else {
+                    importedItems[index] = oldItem
+                    importedItems[index].urlPath = nil
+                    importedItems[index].importedFileLastKnownPath = oldURL.path
+                    notesByItemID[oldID] = sourceMarkdown
+                    pendingNoteWritesByItemID[oldID] = PendingNoteWriteState(
+                        baselineContentDigest: originalContentDigest
+                    )
+                    if wasActiveNotebook {
+                        noteText = sourceMarkdown
+                    }
+                    courseDocumentSearchIndex.synchronize(allItems)
+                    let savedRecovery = save()
+                    if savedRecovery { removePendingNotebookRenameJournal() }
+                    noteFileError = ui(
+                        "无法重命名笔记：\(error.localizedDescription) 原关系和最新正文已保留，请重新定位文件。",
+                        "Could not rename the note: \(error.localizedDescription) The original relationships and latest text were retained; relocate the file to continue."
+                    )
+                    return
+                }
+                importedItems[index].title = newTitle
+                importedItems[index].subtitle = newURL.lastPathComponent
+                importedItems[index].urlPath = newURL.path
+                importedItems[index].importedFileIdentity = currentIdentity
+                importedItems[index].importedFileBookmarkData = Self.makeImportedFileBookmark(for: newURL)
+                    ?? oldItem.importedFileBookmarkData
+                importedItems[index].importedFileLastKnownPath = newURL.path
+                noteBackingContentDigestsByItemID[oldID] = currentDigest
+                if currentFileIsKnownApplicationOutput, wasActiveNotebook {
+                    noteText = retitledMarkdown
+                }
+            } else {
+                importedItems[index] = oldItem
+                importedItems[index].urlPath = nil
+                importedItems[index].importedFileLastKnownPath = oldURL.path
+                notesByItemID[oldID] = sourceMarkdown
+                pendingNoteWritesByItemID[oldID] = PendingNoteWriteState(
+                    baselineContentDigest: originalContentDigest
+                )
+                if wasActiveNotebook {
+                    noteText = sourceMarkdown
+                }
+            }
+            courseDocumentSearchIndex.synchronize(allItems)
+            let recovery = restoredOldPath
+                ? ui("文件已恢复到原路径。", "The file was restored to its original path.")
+                : ui("原关系和最新正文已保留，请重新定位文件。", "The original relationships and latest text were retained; relocate the file to continue.")
+            noteFileError = ui(
+                "无法重命名笔记：\(error.localizedDescription) \(recovery)",
+                "Could not rename the note: \(error.localizedDescription) \(recovery)"
+            )
+            let savedRecovery = save()
+            if savedRecovery { removePendingNotebookRenameJournal() }
         }
     }
 
@@ -2720,6 +3085,7 @@ final class WorkspaceStore: ObservableObject {
             )
             let markdown = defaultNotebookNote(title: item.title, sourceItem: sourceItem)
             try markdown.write(to: url, atomically: true, encoding: .utf8)
+            noteBackingContentDigestsByItemID[item.id] = Self.noteContentDigest(Data(markdown.utf8))
             item.importedFileIdentity = importedFileIdentityResolver(url)
             item.importedFileBookmarkData = item.importedFileIdentity.flatMap { _ in
                 Self.makeImportedFileBookmark(for: url)
@@ -5035,61 +5401,196 @@ final class WorkspaceStore: ObservableObject {
         return "# \(newTitle)\n" + String(markdown.dropFirst(prefix.count))
     }
 
+    private func writePendingNotebookRenameJournal(_ journal: PendingNotebookRenameJournal) throws {
+        let data = try JSONEncoder().encode(journal)
+        try data.write(to: notebookRenameJournalURL, options: [.atomic])
+    }
+
+    private func removePendingNotebookRenameJournal() {
+        try? FileManager.default.removeItem(at: notebookRenameJournalURL)
+    }
+
+    @discardableResult
+    private func recoverPendingNotebookRenameIfNeeded() -> Bool {
+        guard let data = try? Data(contentsOf: notebookRenameJournalURL),
+              let journal = try? JSONDecoder().decode(PendingNotebookRenameJournal.self, from: data) else {
+            return false
+        }
+        guard let itemIndex = importedItems.firstIndex(where: {
+            $0.id == journal.oldItem.id || $0.id == journal.replacementItemID
+        }) else {
+            removePendingNotebookRenameJournal()
+            return false
+        }
+
+        let oldURL = URL(fileURLWithPath: journal.oldPath).standardizedFileURL
+        let newURL = URL(fileURLWithPath: journal.newPath).standardizedFileURL
+        let newDigest = Self.noteContentDigest(at: newURL)
+        let newIdentity = importedFileIdentityResolver(newURL)
+        let newFileMatchesMovedOriginal = newDigest == journal.originalContentDigest
+            && (journal.oldItem.importedFileIdentity == nil
+                || newIdentity == journal.oldItem.importedFileIdentity)
+        let newFileMatchesApplicationOutput = newDigest == journal.retitledContentDigest
+            && (journal.retitledContentDigest != journal.originalContentDigest
+                || journal.oldItem.importedFileIdentity == nil
+                || newIdentity == journal.oldItem.importedFileIdentity)
+
+        if newFileMatchesMovedOriginal || newFileMatchesApplicationOutput {
+            let previousID = importedItems[itemIndex].id
+            var recoveredItem = importedItems[itemIndex]
+            recoveredItem.id = journal.replacementItemID
+            recoveredItem.title = journal.newTitle
+            recoveredItem.subtitle = newURL.lastPathComponent
+            recoveredItem.urlPath = newURL.path
+            recoveredItem.importedFileIdentity = newIdentity ?? journal.oldItem.importedFileIdentity
+            recoveredItem.importedFileBookmarkData = Self.makeImportedFileBookmark(for: newURL)
+                ?? recoveredItem.importedFileBookmarkData
+                ?? journal.oldItem.importedFileBookmarkData
+            recoveredItem.importedFileLastKnownPath = newURL.path
+            recoveredItem.kind = StudyItemKind.detect(from: newURL)
+            importedItems[itemIndex] = recoveredItem
+            replaceItemIDEverywhere(previousID, with: journal.replacementItemID)
+            noteBackingContentDigestsByItemID[journal.replacementItemID] = newDigest
+            if activeNotebookItemID == journal.replacementItemID {
+                noteText = newFileMatchesApplicationOutput
+                    ? journal.retitledMarkdown
+                    : journal.sourceMarkdown
+            }
+            noteFileError = ui(
+                "已从上次未完成的保存中恢复笔记重命名。",
+                "Recovered a notebook rename from the previous incomplete save."
+            )
+            return true
+        }
+
+        let oldDigest = Self.noteContentDigest(at: oldURL)
+        let oldIdentity = importedFileIdentityResolver(oldURL)
+        let oldFileIsTrusted = oldDigest == journal.originalContentDigest
+            && (journal.oldItem.importedFileIdentity == nil
+                || oldIdentity == journal.oldItem.importedFileIdentity)
+        let previousID = importedItems[itemIndex].id
+        if previousID != journal.oldItem.id {
+            replaceItemIDEverywhere(previousID, with: journal.oldItem.id)
+        }
+        importedItems[itemIndex] = journal.oldItem
+        if oldFileIsTrusted {
+            importedItems[itemIndex].urlPath = oldURL.path
+            importedItems[itemIndex].importedFileIdentity = oldIdentity ?? journal.oldItem.importedFileIdentity
+            importedItems[itemIndex].importedFileBookmarkData = Self.makeImportedFileBookmark(for: oldURL)
+                ?? journal.oldItem.importedFileBookmarkData
+            importedItems[itemIndex].importedFileLastKnownPath = oldURL.path
+            noteBackingContentDigestsByItemID[journal.oldItem.id] = oldDigest
+        } else {
+            importedItems[itemIndex].urlPath = nil
+            importedItems[itemIndex].importedFileLastKnownPath = journal.oldPath
+            notesByItemID[journal.oldItem.id] = journal.sourceMarkdown
+            pendingNoteWritesByItemID[journal.oldItem.id] = PendingNoteWriteState(
+                baselineContentDigest: journal.originalContentDigest
+            )
+            if activeNotebookItemID == journal.oldItem.id {
+                noteText = journal.sourceMarkdown
+            }
+        }
+        noteFileError = oldFileIsTrusted
+            ? ui(
+                "上次笔记重命名未完成，已恢复原文件。",
+                "The previous notebook rename did not finish, so the original file was restored."
+            )
+            : ui(
+                "上次笔记重命名遇到文件冲突；原关系和最新正文均已保留。",
+                "The previous notebook rename encountered a file conflict. The original relationships and latest text were retained."
+            )
+        return true
+    }
+
     @discardableResult
     private func resolvePersistedImportedFileBookmarks() -> Bool {
         var changed = false
         for index in importedItems.indices {
-            guard let storedIdentity = importedItems[index].importedFileIdentity else { continue }
-            let currentURL = importedItems[index].urlPath
-                .map { URL(fileURLWithPath: $0).standardizedFileURL }
-            let currentPathIsValid = currentURL.map {
-                importedFileIdentityResolver($0) == storedIdentity
-            } ?? false
-            let bookmarkResolution = currentPathIsValid
-                ? nil
-                : importedItems[index].importedFileBookmarkData.flatMap(Self.resolveImportedFileBookmark)
-            let fallbackPath = importedItems[index].urlPath
-                ?? importedItems[index].importedFileLastKnownPath
-            let candidateURL = (currentPathIsValid ? currentURL : nil)
-                ?? bookmarkResolution?.url
-                ?? fallbackPath.map { URL(fileURLWithPath: $0).standardizedFileURL }
-            guard let candidateURL,
-                  importedFileIdentityResolver(candidateURL) == storedIdentity else {
-                if let path = importedItems[index].urlPath {
-                    importedItems[index].importedFileLastKnownPath = path
-                    importedItems[index].urlPath = nil
-                    changed = true
-                }
-                continue
-            }
-
-            let nextPath = candidateURL.path
-            let nextTitle = candidateURL.deletingPathExtension().lastPathComponent
-            let nextSubtitle = candidateURL.lastPathComponent
-            let nextKind = StudyItemKind.detect(from: candidateURL)
-            if importedItems[index].urlPath != nextPath
-                || importedItems[index].importedFileLastKnownPath != nextPath
-                || importedItems[index].title != nextTitle
-                || importedItems[index].subtitle != nextSubtitle
-                || importedItems[index].kind != nextKind {
-                importedItems[index].urlPath = nextPath
-                importedItems[index].importedFileLastKnownPath = nextPath
-                importedItems[index].title = nextTitle
-                importedItems[index].subtitle = nextSubtitle
-                importedItems[index].kind = nextKind
-                changed = true
-            }
-            let resolvedThroughFallback = !currentPathIsValid && bookmarkResolution == nil
-            if importedItems[index].importedFileBookmarkData == nil
-                || bookmarkResolution?.isStale == true
-                || resolvedThroughFallback,
-               let refreshedBookmark = Self.makeImportedFileBookmark(for: candidateURL),
-               importedItems[index].importedFileBookmarkData != refreshedBookmark {
-                importedItems[index].importedFileBookmarkData = refreshedBookmark
-                changed = true
-            }
+            let resolution = resolveTrackedImportedFile(at: index)
+            if resolution.changed { changed = true }
         }
         return changed
+    }
+
+    private func resolveTrackedImportedFile(at index: Int) -> (url: URL?, changed: Bool) {
+        guard importedItems.indices.contains(index) else { return (nil, false) }
+        guard let storedIdentity = importedItems[index].importedFileIdentity else {
+            guard let currentURL = importedItems[index].url,
+                  importedFileIdentityResolver(currentURL) != nil else {
+                return (nil, false)
+            }
+            return (currentURL.standardizedFileURL, false)
+        }
+
+        var changed = false
+        let currentURL = importedItems[index].urlPath
+            .map { URL(fileURLWithPath: $0).standardizedFileURL }
+        let currentPathIsValid = currentURL.map {
+            importedFileIdentityResolver($0) == storedIdentity
+        } ?? false
+        let bookmarkResolution = currentPathIsValid
+            ? nil
+            : importedItems[index].importedFileBookmarkData.flatMap(Self.resolveImportedFileBookmark)
+        let fallbackPath = importedItems[index].urlPath
+            ?? importedItems[index].importedFileLastKnownPath
+        let candidateURL = (currentPathIsValid ? currentURL : nil)
+            ?? bookmarkResolution?.url
+            ?? fallbackPath.map { URL(fileURLWithPath: $0).standardizedFileURL }
+        guard let candidateURL,
+              importedFileIdentityResolver(candidateURL) == storedIdentity else {
+            if let path = importedItems[index].urlPath {
+                importedItems[index].importedFileLastKnownPath = path
+                importedItems[index].urlPath = nil
+                changed = true
+            }
+            return (nil, changed)
+        }
+
+        let nextPath = candidateURL.path
+        let nextTitle = candidateURL.deletingPathExtension().lastPathComponent
+        let nextSubtitle = candidateURL.lastPathComponent
+        let nextKind = StudyItemKind.detect(from: candidateURL)
+        if importedItems[index].urlPath != nextPath
+            || importedItems[index].importedFileLastKnownPath != nextPath
+            || importedItems[index].title != nextTitle
+            || importedItems[index].subtitle != nextSubtitle
+            || importedItems[index].kind != nextKind {
+            importedItems[index].urlPath = nextPath
+            importedItems[index].importedFileLastKnownPath = nextPath
+            importedItems[index].title = nextTitle
+            importedItems[index].subtitle = nextSubtitle
+            importedItems[index].kind = nextKind
+            changed = true
+        }
+        let resolvedThroughFallback = !currentPathIsValid && bookmarkResolution == nil
+        if importedItems[index].importedFileBookmarkData == nil
+            || bookmarkResolution?.isStale == true
+            || resolvedThroughFallback,
+           let refreshedBookmark = Self.makeImportedFileBookmark(for: candidateURL),
+           importedItems[index].importedFileBookmarkData != refreshedBookmark {
+            importedItems[index].importedFileBookmarkData = refreshedBookmark
+            changed = true
+        }
+        return (candidateURL, changed)
+    }
+
+    @discardableResult
+    private func refreshImportedFileTracking(itemID: String, url: URL) -> StudyItem? {
+        guard let index = importedItems.firstIndex(where: { $0.id == itemID }),
+              let identity = importedFileIdentityResolver(url) else {
+            return nil
+        }
+        let standardizedURL = url.standardizedFileURL
+        importedItems[index].urlPath = standardizedURL.path
+        importedItems[index].importedFileIdentity = identity
+        importedItems[index].importedFileBookmarkData = Self.makeImportedFileBookmark(for: standardizedURL)
+            ?? importedItems[index].importedFileBookmarkData
+        importedItems[index].importedFileLastKnownPath = standardizedURL.path
+        importedItems[index].title = standardizedURL.deletingPathExtension().lastPathComponent
+        importedItems[index].subtitle = standardizedURL.lastPathComponent
+        importedItems[index].kind = StudyItemKind.detect(from: standardizedURL)
+        return importedItems[index]
     }
 
     @discardableResult
@@ -5098,7 +5599,8 @@ final class WorkspaceStore: ObservableObject {
         var canonicalIDByIdentity: [ImportedFileIdentity: String] = [:]
         for item in importedItems
         where item.importedFileIdentity != nil && !item.id.hasPrefix("file:") {
-            if let identity = item.importedFileIdentity {
+            if let identity = item.importedFileIdentity,
+               canonicalIDByIdentity[identity] == nil {
                 canonicalIDByIdentity[identity] = item.id
             }
         }
@@ -5127,8 +5629,21 @@ final class WorkspaceStore: ObservableObject {
             if let resolvedIdentity,
                let canonicalID = canonicalIDByIdentity[resolvedIdentity],
                canonicalID != item.id {
-                replaceItemIDEverywhere(item.id, with: canonicalID)
-                changed = true
+                let canonicalItem = migratedItems.first(where: { $0.id == canonicalID })
+                    ?? importedItems.first(where: { $0.id == canonicalID })
+                if let canonicalItem,
+                   canCoalesceDuplicateItem(item, into: canonicalItem) {
+                    replaceItemIDEverywhere(item.id, with: canonicalID)
+                    changed = true
+                    continue
+                }
+                if item.id.hasPrefix("file:") {
+                    let oldID = item.id
+                    item.id = Self.makeImportedItemID()
+                    replaceItemIDEverywhere(oldID, with: item.id)
+                    changed = true
+                }
+                migratedItems.append(item)
                 continue
             }
 
@@ -5147,11 +5662,55 @@ final class WorkspaceStore: ObservableObject {
         return changed
     }
 
+    private func canCoalesceDuplicateItem(_ oldItem: StudyItem, into newItem: StudyItem) -> Bool {
+        let newID = newItem.id
+        guard oldItem.isNotebookNote == newItem.isNotebookNote,
+              oldItem.kind == newItem.kind,
+              oldItem.isSample == newItem.isSample,
+              valuesCanCoalesce(notesByItemID[oldItem.id], notesByItemID[newID]),
+              valuesCanCoalesce(pendingNoteWritesByItemID[oldItem.id], pendingNoteWritesByItemID[newID]),
+              valuesCanCoalesce(noteBackingContentDigestsByItemID[oldItem.id], noteBackingContentDigestsByItemID[newID]),
+              studyLocationsCanCoalesce(oldID: oldItem.id, newID: newID),
+              pendingPersistenceCanCoalesce(oldID: oldItem.id, newID: newID) else {
+            return false
+        }
+        return true
+    }
+
+    private func valuesCanCoalesce<Value: Equatable>(_ oldValue: Value?, _ newValue: Value?) -> Bool {
+        oldValue == nil || newValue == nil || oldValue == newValue
+    }
+
+    private func studyLocationsCanCoalesce(oldID: String, newID: String) -> Bool {
+        guard var oldLocation = studyLocationsByItemID[oldID],
+              let newLocation = studyLocationsByItemID[newID] else {
+            return true
+        }
+        oldLocation.itemID = newID
+        return oldLocation == newLocation
+    }
+
+    private func pendingPersistenceCanCoalesce(oldID: String, newID: String) -> Bool {
+        guard let oldPending = pendingNotePersistenceByItemID[oldID],
+              let newPending = pendingNotePersistenceByItemID[newID] else {
+            return true
+        }
+        return oldPending.markdown == newPending.markdown
+    }
+
     private func replaceItemIDEverywhere(_ oldID: String, with newID: String) {
         guard oldID != newID else { return }
 
         if let oldNote = notesByItemID.removeValue(forKey: oldID), notesByItemID[newID] == nil {
             notesByItemID[newID] = oldNote
+        }
+        if let pendingWrite = pendingNoteWritesByItemID.removeValue(forKey: oldID),
+           pendingNoteWritesByItemID[newID] == nil {
+            pendingNoteWritesByItemID[newID] = pendingWrite
+        }
+        if let backingDigest = noteBackingContentDigestsByItemID.removeValue(forKey: oldID),
+           noteBackingContentDigestsByItemID[newID] == nil {
+            noteBackingContentDigestsByItemID[newID] = backingDigest
         }
         if selectedItemID == oldID { selectedItemID = newID }
         if activeNotebookItemID == oldID { activeNotebookItemID = newID }
@@ -5341,18 +5900,70 @@ final class WorkspaceStore: ObservableObject {
         """
     }
 
+    private static func noteContentDigest(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    nonisolated private static func readNotebookMarkdown(at url: URL) throws -> String {
+        let data = try Data(contentsOf: url)
+        guard let markdown = String(data: data, encoding: .utf8) else {
+            throw CocoaError(.fileReadInapplicableStringEncoding)
+        }
+        return markdown
+    }
+
+    nonisolated private static func writeNotebookMarkdown(_ markdown: String, to url: URL) throws {
+        try markdown.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    nonisolated private static func moveNotebookFile(from sourceURL: URL, to destinationURL: URL) throws {
+        try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
+    }
+
+    nonisolated private static func writeWorkspaceSnapshot(_ data: Data, to url: URL) throws {
+        try data.write(to: url, options: [.atomic])
+    }
+
+    private static func noteContentDigest(at url: URL) -> String? {
+        (try? Data(contentsOf: url)).map(noteContentDigest)
+    }
+
     private func noteText(for item: StudyItem?) -> String {
         guard let item else {
             noteFileError = nil
             return defaultNote(for: nil)
+        }
+        if let pendingWrite = pendingNoteWritesByItemID[item.id],
+           let cached = notesByItemID[item.id] {
+            let diskDigest = item.url.flatMap(Self.noteContentDigest)
+            if let diskDigest {
+                noteBackingContentDigestsByItemID[item.id] = diskDigest
+            }
+            let hasConflict = diskDigest != nil
+                && (pendingWrite.baselineContentDigest == nil || pendingWrite.baselineContentDigest != diskDigest)
+            noteFileError = hasConflict
+                ? ui(
+                    "检测到笔记冲突：魏碑草稿和外部文件都已保留，请对照后再处理。",
+                    "A note conflict was detected. Both the WeiBei draft and external file were kept for review."
+                )
+                : ui(
+                    "正在保留尚未写回原 Markdown 的最新编辑。",
+                    "Keeping the latest edit that has not yet been written back to the original Markdown."
+                )
+            return cleanLegacyPlaceholder(cached)
         }
         guard item.editsBackingMarkdownFile, let url = item.url else {
             noteFileError = nil
             return cleanLegacyPlaceholder(notesByItemID[item.id] ?? defaultNote(for: item))
         }
         do {
+            let data = try Data(contentsOf: url)
+            guard let markdown = String(data: data, encoding: .utf8) else {
+                throw CocoaError(.fileReadInapplicableStringEncoding)
+            }
+            noteBackingContentDigestsByItemID[item.id] = Self.noteContentDigest(data)
             noteFileError = nil
-            return cleanLegacyPlaceholder(try String(contentsOf: url, encoding: .utf8))
+            return cleanLegacyPlaceholder(markdown)
         } catch {
             noteFileError = ui("无法读取原 Markdown：\(url.lastPathComponent)", "Could not read original Markdown: \(url.lastPathComponent)")
             return cleanLegacyPlaceholder(notesByItemID[item.id] ?? defaultNote(for: item))
@@ -5398,17 +6009,77 @@ final class WorkspaceStore: ObservableObject {
         pendingNotePersistenceTasks[itemID] = nil
     }
 
+    private func retainPendingNoteWrite(_ markdown: String, itemID: String, fallbackURL: URL?) {
+        let baseline: String?
+        if let existingPendingWrite = pendingNoteWritesByItemID[itemID] {
+            baseline = existingPendingWrite.baselineContentDigest
+        } else {
+            baseline = noteBackingContentDigestsByItemID[itemID]
+                ?? fallbackURL.flatMap(Self.noteContentDigest)
+        }
+        notesByItemID[itemID] = markdown
+        pendingNoteWritesByItemID[itemID] = PendingNoteWriteState(
+            baselineContentDigest: baseline
+        )
+    }
+
     private func persistNote(_ markdown: String, for item: StudyItem) {
         let noteItemID = item.id
-        if item.editsBackingMarkdownFile, let url = item.url {
+        if item.editsBackingMarkdownFile {
+            guard let index = importedItems.firstIndex(where: { $0.id == noteItemID }) else {
+                retainPendingNoteWrite(markdown, itemID: noteItemID, fallbackURL: item.url)
+                noteFileError = ui("无法确认原 Markdown 的课程身份。", "Could not resolve the original Markdown identity.")
+                save()
+                return
+            }
+            let resolution = resolveTrackedImportedFile(at: index)
+            guard let url = resolution.url else {
+                retainPendingNoteWrite(markdown, itemID: noteItemID, fallbackURL: item.url)
+                noteFileError = ui(
+                    "原 Markdown 已移动或不可用，最新编辑已安全保留在课程中。",
+                    "The original Markdown moved or is unavailable. The latest edit is safely retained in the course."
+                )
+                save()
+                return
+            }
+            let pendingWrite = pendingNoteWritesByItemID[noteItemID]
+            let expectedDigest = pendingWrite == nil
+                ? noteBackingContentDigestsByItemID[noteItemID]
+                : pendingWrite?.baselineContentDigest
+            let currentDigest = Self.noteContentDigest(at: url)
+            let hasConflict: Bool
+            if pendingWrite != nil {
+                hasConflict = expectedDigest.flatMap { expected in
+                    currentDigest.map { $0 != expected }
+                } ?? true
+            } else if let expectedDigest {
+                hasConflict = currentDigest.map { $0 != expectedDigest } ?? true
+            } else {
+                hasConflict = false
+            }
+            if hasConflict {
+                retainPendingNoteWrite(markdown, itemID: noteItemID, fallbackURL: url)
+                noteFileError = ui(
+                    "检测到笔记冲突：没有覆盖外部文件，魏碑草稿也已保留。请对照两份内容后再处理。",
+                    "A note conflict was detected. The external file was not overwritten, and the WeiBei draft was retained for review."
+                )
+                save()
+                return
+            }
             do {
                 try markdown.write(to: url, atomically: true, encoding: .utf8)
                 notesByItemID.removeValue(forKey: noteItemID)
+                pendingNoteWritesByItemID.removeValue(forKey: noteItemID)
+                noteBackingContentDigestsByItemID[noteItemID] = Self.noteContentDigest(Data(markdown.utf8))
                 noteFileError = nil
-                courseDocumentSearchIndex.schedule([item])
+                let refreshedItem = refreshImportedFileTracking(itemID: noteItemID, url: url)
+                    ?? importedItems[index]
+                courseDocumentSearchIndex.schedule([refreshedItem])
+                save()
             } catch {
-                notesByItemID[noteItemID] = markdown
+                retainPendingNoteWrite(markdown, itemID: noteItemID, fallbackURL: url)
                 noteFileError = ui("无法写回原 Markdown：\(url.lastPathComponent)", "Could not write original Markdown: \(url.lastPathComponent)")
+                save()
             }
             return
         }
@@ -5422,6 +6093,18 @@ final class WorkspaceStore: ObservableObject {
         }
         importedItems = snapshot.importedItems
         notesByItemID = snapshot.notesByItemID.mapValues(cleanLegacyPlaceholder)
+        if let persistedPendingNoteWrites = snapshot.pendingNoteWritesByItemID {
+            pendingNoteWritesByItemID = persistedPendingNoteWrites
+        } else {
+            pendingNoteWritesByItemID = [:]
+            for item in importedItems
+            where item.editsBackingMarkdownFile && notesByItemID[item.id] != nil {
+                pendingNoteWritesByItemID[item.id] = PendingNoteWriteState(
+                    baselineContentDigest: nil
+                )
+            }
+        }
+        noteBackingContentDigestsByItemID = snapshot.noteBackingContentDigestsByItemID ?? [:]
         selectedItemID = snapshot.selectedItemID
         activeNotebookItemID = snapshot.activeNotebookItemID
         noteSourceLinks = snapshot.noteSourceLinks ?? []
@@ -5513,6 +6196,8 @@ final class WorkspaceStore: ObservableObject {
         let snapshot = PersistedWorkspace(
             importedItems: importedItems,
             notesByItemID: notesByItemID,
+            pendingNoteWritesByItemID: pendingNoteWritesByItemID,
+            noteBackingContentDigestsByItemID: noteBackingContentDigestsByItemID,
             selectedItemID: selectedItemID,
             activeNotebookItemID: activeNotebookItemID,
             noteSourceLinks: noteSourceLinks,
@@ -5539,7 +6224,7 @@ final class WorkspaceStore: ObservableObject {
         )
         do {
             let data = try JSONEncoder().encode(snapshot)
-            try data.write(to: storageURL, options: [.atomic])
+            try workspaceSnapshotWriter(data, storageURL)
             workspaceSaveError = nil
             return true
         } catch {

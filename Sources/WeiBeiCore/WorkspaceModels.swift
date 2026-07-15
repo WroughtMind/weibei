@@ -811,7 +811,7 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
     }
 
     public var editsBackingMarkdownFile: Bool {
-        isImportedMarkdownFile && isNotebookNote
+        !isSample && kind == .markdown && isNotebookNote
     }
 
     public var canBecomeNotebookNote: Bool {
@@ -865,9 +865,19 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+public struct PendingNoteWriteState: Codable, Hashable, Sendable {
+    public var baselineContentDigest: String?
+
+    public init(baselineContentDigest: String?) {
+        self.baselineContentDigest = baselineContentDigest
+    }
+}
+
 public struct PersistedWorkspace: Codable {
     public var importedItems: [StudyItem]
     public var notesByItemID: [String: String]
+    public var pendingNoteWritesByItemID: [String: PendingNoteWriteState]?
+    public var noteBackingContentDigestsByItemID: [String: String]?
     public var selectedItemID: String?
     public var activeNotebookItemID: String?
     public var noteSourceLinks: [NoteSourceLink]?
@@ -892,9 +902,11 @@ public struct PersistedWorkspace: Codable {
     public var adaptImportedDocumentColors: Bool?
     public var interfaceLanguageRaw: String?
 
-    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], selectedItemID: String? = nil, activeNotebookItemID: String? = nil, noteSourceLinks: [NoteSourceLink]? = nil, noteSourceLinksMigrationVersion: Int? = nil, studyLocationsByItemID: [String: StudyLocation]? = nil, learningMemoryEntries: [LearningMemoryEntry]? = nil, learningMemoryRevision: UInt64? = nil, studySessions: [StudySession]? = nil, activeStudySessionID: UUID? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, threePaneOrder: [WorkspacePaneRole]? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showReader: Bool? = nil, showAgent: Bool? = nil, showNotes: Bool? = nil, showRightPane: Bool? = nil, showDailyInspiration: Bool? = nil, appearanceModeRaw: String? = nil, adaptImportedDocumentColors: Bool? = nil, interfaceLanguageRaw: String? = nil) {
+    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], pendingNoteWritesByItemID: [String: PendingNoteWriteState]? = nil, noteBackingContentDigestsByItemID: [String: String]? = nil, selectedItemID: String? = nil, activeNotebookItemID: String? = nil, noteSourceLinks: [NoteSourceLink]? = nil, noteSourceLinksMigrationVersion: Int? = nil, studyLocationsByItemID: [String: StudyLocation]? = nil, learningMemoryEntries: [LearningMemoryEntry]? = nil, learningMemoryRevision: UInt64? = nil, studySessions: [StudySession]? = nil, activeStudySessionID: UUID? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, threePaneOrder: [WorkspacePaneRole]? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showReader: Bool? = nil, showAgent: Bool? = nil, showNotes: Bool? = nil, showRightPane: Bool? = nil, showDailyInspiration: Bool? = nil, appearanceModeRaw: String? = nil, adaptImportedDocumentColors: Bool? = nil, interfaceLanguageRaw: String? = nil) {
         self.importedItems = importedItems
         self.notesByItemID = notesByItemID
+        self.pendingNoteWritesByItemID = pendingNoteWritesByItemID
+        self.noteBackingContentDigestsByItemID = noteBackingContentDigestsByItemID
         self.selectedItemID = selectedItemID
         self.activeNotebookItemID = activeNotebookItemID
         self.noteSourceLinks = noteSourceLinks
