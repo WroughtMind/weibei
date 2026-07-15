@@ -720,21 +720,57 @@ public enum SelectionFloatingAgentPlacement {
     }
 }
 
+public struct ImportedFileIdentity: Codable, Hashable, Sendable {
+    public var volumeID: UInt64
+    public var fileID: UInt64
+    public var birthTimeSeconds: Int64
+    public var birthTimeNanoseconds: Int64
+
+    public init(
+        volumeID: UInt64,
+        fileID: UInt64,
+        birthTimeSeconds: Int64,
+        birthTimeNanoseconds: Int64
+    ) {
+        self.volumeID = volumeID
+        self.fileID = fileID
+        self.birthTimeSeconds = birthTimeSeconds
+        self.birthTimeNanoseconds = birthTimeNanoseconds
+    }
+}
+
 public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
     public var id: String
     public var title: String
     public var subtitle: String
     public var kind: StudyItemKind
     public var urlPath: String?
+    public var importedFileIdentity: ImportedFileIdentity?
+    public var importedFileBookmarkData: Data?
+    public var importedFileLastKnownPath: String?
     public var isSample: Bool
     public var isNotebookNote: Bool
 
-    public init(id: String, title: String, subtitle: String, kind: StudyItemKind, urlPath: String?, isSample: Bool, isNotebookNote: Bool = false) {
+    public init(
+        id: String,
+        title: String,
+        subtitle: String,
+        kind: StudyItemKind,
+        urlPath: String?,
+        importedFileIdentity: ImportedFileIdentity? = nil,
+        importedFileBookmarkData: Data? = nil,
+        importedFileLastKnownPath: String? = nil,
+        isSample: Bool,
+        isNotebookNote: Bool = false
+    ) {
         self.id = id
         self.title = title
         self.subtitle = subtitle
         self.kind = kind
         self.urlPath = urlPath
+        self.importedFileIdentity = importedFileIdentity
+        self.importedFileBookmarkData = importedFileBookmarkData
+        self.importedFileLastKnownPath = importedFileLastKnownPath ?? urlPath
         self.isSample = isSample
         self.isNotebookNote = isNotebookNote
     }
@@ -745,6 +781,9 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         case subtitle
         case kind
         case urlPath
+        case importedFileIdentity
+        case importedFileBookmarkData
+        case importedFileLastKnownPath
         case isSample
         case isNotebookNote
     }
@@ -756,6 +795,9 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         subtitle = try container.decode(String.self, forKey: .subtitle)
         kind = try container.decode(StudyItemKind.self, forKey: .kind)
         urlPath = try container.decodeIfPresent(String.self, forKey: .urlPath)
+        importedFileIdentity = try container.decodeIfPresent(ImportedFileIdentity.self, forKey: .importedFileIdentity)
+        importedFileBookmarkData = try container.decodeIfPresent(Data.self, forKey: .importedFileBookmarkData)
+        importedFileLastKnownPath = try container.decodeIfPresent(String.self, forKey: .importedFileLastKnownPath) ?? urlPath
         isSample = try container.decode(Bool.self, forKey: .isSample)
         isNotebookNote = try container.decodeIfPresent(Bool.self, forKey: .isNotebookNote) ?? false
     }
@@ -769,7 +811,7 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
     }
 
     public var editsBackingMarkdownFile: Bool {
-        isImportedMarkdownFile && isNotebookNote
+        !isSample && kind == .markdown && isNotebookNote
     }
 
     public var canBecomeNotebookNote: Bool {
@@ -823,9 +865,19 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+public struct PendingNoteWriteState: Codable, Hashable, Sendable {
+    public var baselineContentDigest: String?
+
+    public init(baselineContentDigest: String?) {
+        self.baselineContentDigest = baselineContentDigest
+    }
+}
+
 public struct PersistedWorkspace: Codable {
     public var importedItems: [StudyItem]
     public var notesByItemID: [String: String]
+    public var pendingNoteWritesByItemID: [String: PendingNoteWriteState]?
+    public var noteBackingContentDigestsByItemID: [String: String]?
     public var selectedItemID: String?
     public var activeNotebookItemID: String?
     public var noteSourceLinks: [NoteSourceLink]?
@@ -850,9 +902,11 @@ public struct PersistedWorkspace: Codable {
     public var adaptImportedDocumentColors: Bool?
     public var interfaceLanguageRaw: String?
 
-    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], selectedItemID: String? = nil, activeNotebookItemID: String? = nil, noteSourceLinks: [NoteSourceLink]? = nil, noteSourceLinksMigrationVersion: Int? = nil, studyLocationsByItemID: [String: StudyLocation]? = nil, learningMemoryEntries: [LearningMemoryEntry]? = nil, learningMemoryRevision: UInt64? = nil, studySessions: [StudySession]? = nil, activeStudySessionID: UUID? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, threePaneOrder: [WorkspacePaneRole]? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showReader: Bool? = nil, showAgent: Bool? = nil, showNotes: Bool? = nil, showRightPane: Bool? = nil, showDailyInspiration: Bool? = nil, appearanceModeRaw: String? = nil, adaptImportedDocumentColors: Bool? = nil, interfaceLanguageRaw: String? = nil) {
+    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], pendingNoteWritesByItemID: [String: PendingNoteWriteState]? = nil, noteBackingContentDigestsByItemID: [String: String]? = nil, selectedItemID: String? = nil, activeNotebookItemID: String? = nil, noteSourceLinks: [NoteSourceLink]? = nil, noteSourceLinksMigrationVersion: Int? = nil, studyLocationsByItemID: [String: StudyLocation]? = nil, learningMemoryEntries: [LearningMemoryEntry]? = nil, learningMemoryRevision: UInt64? = nil, studySessions: [StudySession]? = nil, activeStudySessionID: UUID? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, threePaneOrder: [WorkspacePaneRole]? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showReader: Bool? = nil, showAgent: Bool? = nil, showNotes: Bool? = nil, showRightPane: Bool? = nil, showDailyInspiration: Bool? = nil, appearanceModeRaw: String? = nil, adaptImportedDocumentColors: Bool? = nil, interfaceLanguageRaw: String? = nil) {
         self.importedItems = importedItems
         self.notesByItemID = notesByItemID
+        self.pendingNoteWritesByItemID = pendingNoteWritesByItemID
+        self.noteBackingContentDigestsByItemID = noteBackingContentDigestsByItemID
         self.selectedItemID = selectedItemID
         self.activeNotebookItemID = activeNotebookItemID
         self.noteSourceLinks = noteSourceLinks

@@ -3,7 +3,13 @@ import SwiftUI
 import WebKit
 import WeiBeiCore
 
-@MainActor private let sharedWorkspaceStore = WorkspaceStore()
+private let runsImportedIdentitySelfCheck = ProcessInfo.processInfo.arguments.contains("--self-check-imported-identity")
+private let importedIdentitySelfCheckBootstrapDirectory = FileManager.default.temporaryDirectory
+    .appendingPathComponent("weibei-imported-identity-bootstrap-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+
+@MainActor private let sharedWorkspaceStore = runsImportedIdentitySelfCheck
+    ? WorkspaceStore(workspaceDirectory: importedIdentitySelfCheckBootstrapDirectory)
+    : WorkspaceStore()
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -55,6 +61,17 @@ struct WeiBeiApp: App {
     @StateObject private var store = sharedWorkspaceStore
 
     init() {
+        if runsImportedIdentitySelfCheck {
+            defer { try? FileManager.default.removeItem(at: importedIdentitySelfCheckBootstrapDirectory) }
+            do {
+                try ImportedIdentitySelfCheck.run()
+                print("WeiBei imported identity self-checks passed")
+                exit(EXIT_SUCCESS)
+            } catch {
+                fputs("WeiBei imported identity self-check failed: \(error.localizedDescription)\n", stderr)
+                exit(EXIT_FAILURE)
+            }
+        }
         WeiBeiTypography.registerBundledFonts()
     }
 

@@ -491,7 +491,8 @@ verify_linked_sources_flow() {
       && /usr/bin/grep -q '"sourceItemID":"sample-pdf"' "$workspace_file" \
       && /usr/bin/grep -q '"selectedItemID":"sample-pdf"' "$workspace_file" \
       && /usr/bin/grep -q '"showLibrary":false' "$workspace_file" \
-      && /usr/bin/grep -q '"activeNotebookItemID":"file:' "$workspace_file"; then
+      && /usr/bin/grep -q '"activeNotebookItemID":"imported:' "$workspace_file" \
+      && ! /usr/bin/grep -q '"activeNotebookItemID":"file:' "$workspace_file"; then
       return 0
     fi
     sleep 0.2
@@ -755,6 +756,8 @@ finish_verify_window() {
 run_verifiers() {
   WEIBEI_PI_EXECUTABLE="$PI_RUNTIME_BINARY" \
     swift run -c "$BUILD_CONFIGURATION" WeiBeiSelfCheck
+  WEIBEI_SUPPRESS_ACTIVATION=1 \
+    swift run -c "$BUILD_CONFIGURATION" WeiBei --self-check-imported-identity
   swift run -c "$BUILD_CONFIGURATION" WeiBeiWebEditorCheck
   WEIBEI_PI_EXECUTABLE="$PI_RUNTIME_BINARY" \
     swift run -c "$BUILD_CONFIGURATION" WeiBeiPiCheck
