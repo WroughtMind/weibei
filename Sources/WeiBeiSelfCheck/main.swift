@@ -12,6 +12,12 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     }
 }
 
+if ProcessInfo.processInfo.environment["WEIBEI_PI_TERMINAL_SELF_CHECK_ONLY"] == "1" {
+    try await runPiTerminalRuntimeSelfChecks()
+    print("WeiBei PI terminal runtime self-check passed")
+    exit(0)
+}
+
 try runPiAgentSelfChecks()
 
 expect(EmptyWorkspaceDayPeriod(hour: 5) == .morning
@@ -793,7 +799,7 @@ for _ in 0..<200 {
        blankPDFIndexResult?.isTruncated == false {
         break
     }
-    Thread.sleep(forTimeInterval: 0.05)
+    try? await Task.sleep(nanoseconds: 50_000_000)
 }
 expect(
     mixedIndexResult?.isTruncated == true
@@ -906,7 +912,7 @@ for _ in 0..<200 {
         query: "SPLIT_NATIVE_LAYER_PAGE_1"
     )[mixedPDFItem.id]
     if splitFailureResult?.text?.contains("SPLIT_NATIVE_LAYER_PAGE_1") == true { break }
-    Thread.sleep(forTimeInterval: 0.05)
+    try? await Task.sleep(nanoseconds: 50_000_000)
 }
 expect(
     splitFailureResult?.text?.contains("SPLIT_NATIVE_LAYER_PAGE_1") == true

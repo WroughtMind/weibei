@@ -73,9 +73,16 @@ public struct PiRPCResponse: Equatable, Sendable {
     }
 }
 
+public enum PiRPCRunActivity: Equatable, Sendable {
+    case thinking
+    case tool
+    case retrying
+}
+
 public enum PiRPCIncomingMessage: Equatable, Sendable {
     case response(PiRPCResponse)
     case textDelta(String)
+    case runActivity(PiRPCRunActivity)
     case assistantError(String)
     case toolStarted(id: String, name: String)
     case contextRead(id: String, contextRevision: String)
@@ -84,7 +91,7 @@ public enum PiRPCIncomingMessage: Equatable, Sendable {
     case noteProposal(id: String, StudyAgentNoteProposal)
     case learningUpdate(id: String, StudyAgentLearningUpdate)
     case toolFailed(id: String, name: String, message: String)
-    case agentEnded(text: String, stopReason: String?)
+    case agentEnded(text: String, stopReason: String?, error: String?)
     case extensionError(String)
     case event(String)
 }
@@ -125,6 +132,9 @@ public enum PiRPCMessageDecoder {
             if eventType == "text_delta", let delta = event["delta"] as? String {
                 return .textDelta(delta)
             }
+            if ["thinking_start", "thinking_delta", "thinking_end"].contains(eventType) {
+                return .runActivity(.thinking)
+            }
             if eventType == "error" {
                 let reason = event["error"] as? String
                     ?? event["reason"] as? String
@@ -132,6 +142,21 @@ public enum PiRPCMessageDecoder {
                 return .assistantError(reason)
             }
             return .event(eventType)
+
+        case "auto_retry_start", "auto_retry_end":
+            return .runActivity(.retrying)
+
+        case "tool_execution_update":
+            return .runActivity(.tool)
+
+        case "message_end", "turn_end":
+            guard let message = object["message"] as? [String: Any],
+                  message["role"] as? String == "assistant",
+                  message["stopReason"] as? String == "error",
+                  let error = assistantError(in: message) else {
+                return .event(type)
+            }
+            return .assistantError(error)
 
         case "tool_execution_start":
             guard let name = object["toolName"] as? String else {
@@ -271,12 +296,14 @@ public enum PiRPCMessageDecoder {
             let messages = object["messages"] as? [[String: Any]] ?? []
             var finalText = ""
             var stopReason: String?
+            var finalError: String?
             for message in messages where message["role"] as? String == "assistant" {
                 let text = assistantText(in: message)
                 if !text.isEmpty { finalText = text }
                 stopReason = message["stopReason"] as? String ?? stopReason
+                finalError = assistantError(in: message) ?? finalError
             }
-            return .agentEnded(text: finalText, stopReason: stopReason)
+            return .agentEnded(text: finalText, stopReason: stopReason, error: finalError)
 
         case "extension_error":
             let path = object["extensionPath"] as? String ?? "WeiBei extension"
@@ -295,6 +322,29 @@ public enum PiRPCMessageDecoder {
             guard item["type"] as? String == "text" else { return nil }
             return item["text"] as? String
         }.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func assistantError(in message: [String: Any]) -> String? {
+        if let errorMessage = nonEmptyString(message["errorMessage"]) {
+            return errorMessage
+        }
+        let diagnostics = message["diagnostics"] as? [[String: Any]] ?? []
+        for diagnostic in diagnostics.reversed() {
+            if let error = diagnostic["error"] as? [String: Any],
+               let message = nonEmptyString(error["message"]) {
+                return message
+            }
+            if let message = nonEmptyString(diagnostic["message"]) {
+                return message
+            }
+        }
+        return nil
+    }
+
+    private static func nonEmptyString(_ value: Any?) -> String? {
+        guard let value = value as? String else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     private static func firstText(in result: [String: Any]?) -> String? {
