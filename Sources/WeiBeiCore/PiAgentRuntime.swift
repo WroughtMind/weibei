@@ -264,6 +264,32 @@ public enum PiAgentDiagnosticSanitizer {
 public actor PiAgentRuntime: StudyAgentRuntime {
     private static let processReadinessTimeoutSeconds: UInt64 = 12
 
+    private struct ProgressDelivery: Sendable {
+        let continuation: AsyncStream<StudyAgentProgress>.Continuation
+        let task: Task<Void, Never>
+
+        init(handler: @escaping StudyAgentProgressHandler) {
+            let pair = AsyncStream<StudyAgentProgress>.makeStream(
+                bufferingPolicy: .bufferingNewest(32)
+            )
+            continuation = pair.continuation
+            task = Task.detached(priority: .userInitiated) {
+                for await event in pair.stream {
+                    await handler(event)
+                }
+            }
+        }
+
+        func yield(_ event: StudyAgentProgress) {
+            continuation.yield(event)
+        }
+
+        func finish() {
+            continuation.finish()
+            task.cancel()
+        }
+    }
+
     private struct PendingCommand {
         var continuation: CheckedContinuation<PiRPCResponse, Error>
         var timeoutTask: Task<Void, Never>
@@ -289,7 +315,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var proposal: StudyAgentNoteProposal?
         var learningUpdate: StudyAgentLearningUpdate?
         var lastError: String?
-        var progress: StudyAgentProgressHandler?
+        var progressDelivery: ProgressDelivery?
         var continuation: CheckedContinuation<StudyAgentReply, Error>?
         var completed: Result<StudyAgentReply, Error>?
         var watchdogTask: Task<Void, Never>?
@@ -297,6 +323,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private let executableOverride: URL?
     private let runtimeDirectory: URL
+    private let runInactivityTimeoutNanoseconds: UInt64
     private var providerConfiguration = PiAgentProviderConfiguration()
     private var process: Process?
     private var inputHandle: FileHandle?
@@ -311,12 +338,17 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     private var idleShutdownTask: Task<Void, Never>?
     private let traceEnabled = ProcessInfo.processInfo.environment["WEIBEI_PI_TRACE"] == "1"
 
-    public init(executableURL: URL? = nil, runtimeDirectory: URL? = nil) {
+    public init(
+        executableURL: URL? = nil,
+        runtimeDirectory: URL? = nil,
+        runInactivityTimeoutNanoseconds: UInt64 = 300_000_000_000
+    ) {
         executableOverride = executableURL
         self.runtimeDirectory = runtimeDirectory
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?
                 .appendingPathComponent("WeiBei/AgentRuntime", isDirectory: true)
             ?? FileManager.default.temporaryDirectory.appendingPathComponent("WeiBeiAgentRuntime", isDirectory: true)
+        self.runInactivityTimeoutNanoseconds = max(1, runInactivityTimeoutNanoseconds)
     }
 
     public func configure(_ configuration: PiAgentProviderConfiguration) {
@@ -348,7 +380,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         try requireStartingRun(request.id)
         let context = StudyAgentContextEnvelope(request: request)
         try writeContext(context)
-        await progress?(.readingContext)
+        let progressDelivery = progress.map(ProgressDelivery.init(handler:))
 
         let currentJumpEvidence = currentJumpEvidence(in: context)
         activeRun = ActiveRun(
@@ -370,8 +402,9 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             jumpEvidenceLabels: currentJumpEvidence,
             lastLocationSourceLabel: context.learning.lastLocation.map { "[材料：\($0.itemTitle)]" },
             allowedNoteSourceLabels: currentSourceLabels(in: context),
-            progress: progress
+            progressDelivery: progressDelivery
         )
+        progressDelivery?.yield(.readingContext)
         startingRunID = nil
         refreshRunWatchdog()
         do {
@@ -409,21 +442,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private func cancelRun(id runID: UUID) async {
         guard activeRun?.id == runID else { return }
-        guard process != nil else {
-            finishRun(id: runID, with: .failure(PiAgentRuntimeError.cancelled))
-            return
-        }
-
-        do {
-            _ = try await sendCommand(type: "abort", timeoutSeconds: 2)
-        } catch {
-            shutdownProcess(reason: PiAgentRuntimeError.cancelled)
-            return
-        }
-
-        if activeRun?.id == runID {
-            finishRun(id: runID, with: .failure(PiAgentRuntimeError.cancelled))
-        }
+        finishRun(id: runID, with: .failure(PiAgentRuntimeError.cancelled))
+        shutdownProcess(reason: PiAgentRuntimeError.cancelled)
     }
 
     public func reset() async {
@@ -993,7 +1013,10 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             run.streamedText += delta
             activeRun = run
             refreshRunWatchdog()
-            await run.progress?(.text(run.streamedText))
+            run.progressDelivery?.yield(.text(run.streamedText))
+
+        case .runActivity:
+            refreshRunWatchdog()
 
         case let .assistantError(message):
             guard var run = activeRun else { return }
@@ -1019,7 +1042,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 return
             }
             refreshRunWatchdog()
-            await run.progress?(.usingTool(name))
+            run.progressDelivery?.yield(.usingTool(name))
 
         case let .contextRead(_, contextRevision):
             guard var run = activeRun else { return }
@@ -1112,13 +1135,16 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             activeRun = run
             refreshRunWatchdog()
 
-        case let .agentEnded(text, stopReason):
+        case let .agentEnded(text, stopReason, modelError):
             guard let run = activeRun else { return }
             let cleanText = (text.isEmpty ? run.streamedText : text).trimmingCharacters(in: .whitespacesAndNewlines)
             if stopReason == "aborted" {
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.cancelled))
             } else if stopReason == "error" {
-                finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed(run.lastError ?? "Unknown model error")))
+                let detail = modelError.map(sanitizedDiagnostic)
+                    ?? run.lastError
+                    ?? "PI 模型请求失败，但运行时没有返回错误详情"
+                finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed(detail)))
             } else if run.answeredBeforeContext {
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed("PI answered before reading the current WeiBei context")))
             } else if !run.didReadContext {
@@ -1165,7 +1191,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
 
         case .event:
-            refreshRunWatchdog()
+            break
         }
     }
 
@@ -1173,6 +1199,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         guard var run = activeRun, run.id == id, run.completed == nil else { return }
         run.watchdogTask?.cancel()
         run.watchdogTask = nil
+        run.progressDelivery?.finish()
         clearContextSnapshot()
         if let continuation = run.continuation {
             activeRun = nil
@@ -1187,6 +1214,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     private func discardRun(id: UUID) {
         guard let run = activeRun, run.id == id else { return }
         run.watchdogTask?.cancel()
+        run.progressDelivery?.finish()
         activeRun = nil
         clearContextSnapshot()
         scheduleIdleShutdown()
@@ -1216,9 +1244,10 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         guard var run = activeRun else { return }
         run.watchdogTask?.cancel()
         let runID = run.id
+        let inactivityTimeoutNanoseconds = runInactivityTimeoutNanoseconds
         run.watchdogTask = Task { [weak self] in
             do {
-                try await Task.sleep(nanoseconds: 300 * 1_000_000_000)
+                try await Task.sleep(nanoseconds: inactivityTimeoutNanoseconds)
             } catch {
                 return
             }

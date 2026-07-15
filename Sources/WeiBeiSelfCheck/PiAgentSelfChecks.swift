@@ -179,7 +179,32 @@ private func checkRPCDecoding() throws {
     )
 
     let ended = try PiRPCMessageDecoder.decode(Data(#"{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"第一轮"}],"stopReason":"toolUse"},{"role":"assistant","content":[{"type":"text","text":"最终回答"}],"stopReason":"stop"}]}"#.utf8))
-    try piRequire(ended == .agentEnded(text: "最终回答", stopReason: "stop"), "PI agent_end selects the final assistant answer")
+    try piRequire(ended == .agentEnded(text: "最终回答", stopReason: "stop", error: nil), "PI agent_end selects the final assistant answer")
+
+    let messageEndError = try PiRPCMessageDecoder.decode(Data(#"{"type":"message_end","message":{"role":"assistant","stopReason":"error","errorMessage":"上游服务拒绝了这次请求"}}"#.utf8))
+    try piRequire(
+        messageEndError == .assistantError("上游服务拒绝了这次请求"),
+        "PI message_end exposes the assistant error instead of collapsing it into an unknown error"
+    )
+
+    let turnEndError = try PiRPCMessageDecoder.decode(Data(#"{"type":"turn_end","message":{"role":"assistant","stopReason":"error","diagnostics":[{"message":"旧诊断"},{"error":{"message":"证书校验失败"}}]}}"#.utf8))
+    try piRequire(
+        turnEndError == .assistantError("证书校验失败"),
+        "PI turn_end exposes the newest nested diagnostic"
+    )
+
+    let thinking = try PiRPCMessageDecoder.decode(Data(#"{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"正在核对来源"}}"#.utf8))
+    try piRequire(thinking == .runActivity(.thinking), "PI thinking deltas count as real run activity")
+    let retrying = try PiRPCMessageDecoder.decode(Data(#"{"type":"auto_retry_start","attempt":2}"#.utf8))
+    try piRequire(retrying == .runActivity(.retrying), "PI provider retries count as real run activity")
+    let toolUpdate = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_update","toolCallId":"tool-9","toolName":"weibei_course_search"}"#.utf8))
+    try piRequire(toolUpdate == .runActivity(.tool), "PI tool updates count as real run activity")
+
+    let endedWithError = try PiRPCMessageDecoder.decode(Data(#"{"type":"agent_end","messages":[{"role":"assistant","content":[],"stopReason":"error","diagnostics":[{"error":{"message":"真实模型错误"}}]}]}"#.utf8))
+    try piRequire(
+        endedWithError == .agentEnded(text: "", stopReason: "error", error: "真实模型错误"),
+        "PI agent_end preserves the terminal model error"
+    )
     try piRequire(try PiRPCMessageDecoder.decode(Data(#"{"type":"future_event"}"#.utf8)) == .event("future_event"), "PI decoder tolerates unknown future events")
 
     do {
