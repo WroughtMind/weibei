@@ -13,60 +13,74 @@ struct ContentView: View {
 
     var body: some View {
         GeometryReader { geometry in
-            VStack(spacing: 0) {
-                UnifiedTopBarView(
-                    isImmersiveLayout: isImmersiveLayout,
-                    isFullScreen: windowIsFullScreen,
-                    searchFocused: $topSearchFocused
-                )
+            ZStack {
+                VStack(spacing: 0) {
+                    UnifiedTopBarView(
+                        isImmersiveLayout: isImmersiveLayout,
+                        isFullScreen: windowIsFullScreen,
+                        searchFocused: $topSearchFocused
+                    )
 
-                ZStack(alignment: .top) {
-                    HStack(spacing: 0) {
-                        if store.showLibrary {
-                            SidebarView()
-                                .frame(width: libraryWidth(in: geometry.size.width))
-                                .focused($focusedPane, equals: .library)
-                                .transition(WeiBeiTransition.sidePanel)
-                                .zIndex(2)
+                    ZStack(alignment: .top) {
+                        HStack(spacing: 0) {
+                            if store.showLibrary {
+                                SidebarView()
+                                    .frame(width: libraryWidth(in: geometry.size.width))
+                                    .focused($focusedPane, equals: .library)
+                                    .transition(WeiBeiTransition.sidePanel)
+                                    .zIndex(2)
 
-                            libraryResizeHandle(totalWidth: geometry.size.width)
-                                .transition(.opacity)
+                                libraryResizeHandle(totalWidth: geometry.size.width)
+                                    .transition(.opacity)
+                            }
+
+                            LayoutContentView()
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(WeiBeiTheme.paper)
+                        .animation(WeiBeiMotion.layout, value: store.showLibrary)
+                        .animation(WeiBeiMotion.layout, value: store.layout)
+
+                        if store.commandPalettePresented {
+                            CommandPaletteView()
+                                .transition(WeiBeiTransition.commandPalette)
+                                .zIndex(40)
                         }
 
-                        LayoutContentView()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(WeiBeiTheme.paper)
-                    .animation(WeiBeiMotion.layout, value: store.showLibrary)
-                    .animation(WeiBeiMotion.layout, value: store.layout)
+                        if showsGlobalFloatingAgent {
+                            FloatingSelectionAgentView(
+                                expanded: $floatingAgentExpanded,
+                                routesToConversation: store.isConversationSurfaceVisible
+                            )
+                                .position(floatingAgentPosition(in: geometry.size))
+                                .transition(WeiBeiTransition.floating)
+                                .zIndex(30)
+                        }
 
-                    if store.commandPalettePresented {
-                        CommandPaletteView()
-                            .transition(WeiBeiTransition.commandPalette)
-                            .zIndex(40)
                     }
+                }
+                .allowsHitTesting(!store.courseWorkspacePresented)
+                .accessibilityHidden(store.courseWorkspacePresented)
 
-                    if showsGlobalFloatingAgent {
-                        FloatingSelectionAgentView(
-                            expanded: $floatingAgentExpanded,
-                            routesToConversation: store.isConversationSurfaceVisible
-                        )
-                            .position(floatingAgentPosition(in: geometry.size))
-                            .transition(WeiBeiTransition.floating)
-                            .zIndex(30)
+                if store.courseWorkspacePresented {
+                    ZStack {
+                        WeiBeiTheme.paper
+                        CourseWorkspaceView()
                     }
-
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .transition(.opacity.combined(with: .scale(scale: 0.995, anchor: .top)))
+                    .zIndex(100)
                 }
             }
             .background {
-                if showsGlobalFloatingAgent {
+                if !store.courseWorkspacePresented && showsGlobalFloatingAgent {
                     EscapeKeyBridge {
                         store.dismissFloatingSelectionAgent()
                     }
                 }
 
-                if store.showReaderSearch {
+                if !store.courseWorkspacePresented && store.showReaderSearch {
                     EscapeKeyBridge {
                         store.hideReaderSearch()
                         topSearchFocused = false
@@ -85,10 +99,12 @@ struct ContentView: View {
             focusedPane = store.focusedPane
         }
         .animation(WeiBeiMotion.appearance, value: store.appearanceMode)
+        .animation(WeiBeiMotion.panel, value: store.courseWorkspacePresented)
     }
 
     private var showsGlobalFloatingAgent: Bool {
-        return store.canShowSelectionPromptSurface && SelectionFloatingAgentPlacement.isVisible(
+        return !store.courseWorkspacePresented
+            && store.canShowSelectionPromptSurface && SelectionFloatingAgentPlacement.isVisible(
             surface: store.agentSurface,
             hasSelection: store.selectionContext != nil,
             hasAnchor: store.selectionAnchor != nil,
@@ -532,9 +548,7 @@ private struct UnifiedTopBarView: View {
                 help: store.isPaneToggleActive(.reader) ? store.ui("隐藏文稿", "Hide document") : store.ui("显示文稿", "Show document"),
                 active: store.isPaneToggleActive(.reader)
             ) {
-                withAnimation(WeiBeiMotion.layout) {
-                    store.toggleReader()
-                }
+                store.toggleReader()
             }
 
             topIconButton(
@@ -542,9 +556,7 @@ private struct UnifiedTopBarView: View {
                 help: agentPaneToggleHelp,
                 active: store.isPaneToggleActive(.agent)
             ) {
-                withAnimation(WeiBeiMotion.layout) {
-                    store.toggleAgent()
-                }
+                store.toggleAgent()
             }
 
             topIconButton(
@@ -552,9 +564,7 @@ private struct UnifiedTopBarView: View {
                 help: store.isPaneToggleActive(.notes) ? store.ui("隐藏笔记", "Hide notes") : store.ui("显示笔记", "Show notes"),
                 active: store.isPaneToggleActive(.notes)
             ) {
-                withAnimation(WeiBeiMotion.layout) {
-                    store.toggleNotes()
-                }
+                store.toggleNotes()
             }
         }
         .padding(.horizontal, 4)
@@ -701,19 +711,11 @@ private struct LayoutContentView: View {
     @SceneStorage("documentThreePaneFirstSplit") private var firstSplitStorage: Double = 0.34
     @SceneStorage("documentThreePaneSecondSplit") private var secondSplitStorage: Double = 0.67
     @SceneStorage("documentNotesHalfSplit") private var halfSplitStorage: Double = 0.50
-    @SceneStorage("conversationFirstSplit") private var conversationFirstSplitStorage: Double = 0.12
-    @SceneStorage("conversationSecondSplit") private var conversationSecondSplitStorage: Double = 0.90
-    @SceneStorage("conversationLeftSplit") private var conversationLeftSplitStorage: Double = 0.13
-    @SceneStorage("writingFirstSplit") private var writingFirstSplitStorage: Double = 0.13
-    @SceneStorage("writingSecondSplit") private var writingSecondSplitStorage: Double = 0.90
-    @SceneStorage("writingLeftSplit") private var writingLeftSplitStorage: Double = 0.13
     
     var body: some View {
         Group {
             switch store.layout {
-            case .documentAgentNotes, .documentNotesAgent:
-                documentPaneLayoutView()
-            case .documentNotesSplit:
+            case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
                 documentPaneLayoutView()
             case .immersiveReading:
                 ZStack(alignment: .topTrailing) {
@@ -736,32 +738,8 @@ private struct LayoutContentView: View {
                     .transition(WeiBeiTransition.layout)
             case .immersiveWriting:
                 ZStack(alignment: agentAlignment) {
-                    if store.showRightPane {
-                        ResizableThreePane(
-                            firstSplit: writingFirstSplit,
-                            secondSplit: writingSecondSplit,
-                            minFirst: 96,
-                            minSecond: 540,
-                            minThird: 104
-                        ) {
-                            ContextRailView(title: store.ui("文档", "Documents"), items: writingDocumentRailItems, edge: .trailing)
-                                .transition(WeiBeiTransition.rail)
-                        } second: {
-                            PersistentPaneHost(role: .notes, registry: paneHostRegistry)
-                        } third: {
-                            ContextRailView(title: store.ui("写作辅助", "Writing Aids"), items: writingAssistRailItems, edge: .leading)
-                                .transition(WeiBeiTransition.rail)
-                        }
-                        .transition(WeiBeiTransition.rightPanel)
-                    } else {
-                        ResizableTwoPane(split: writingLeftSplit, minFirst: 96, minSecond: 540) {
-                            ContextRailView(title: store.ui("文档", "Documents"), items: writingDocumentRailItems, edge: .trailing)
-                                .transition(WeiBeiTransition.rail)
-                        } second: {
-                            PersistentPaneHost(role: .notes, registry: paneHostRegistry)
-                        }
-                        .transition(WeiBeiTransition.layout)
-                    }
+                    PersistentPaneHost(role: .notes, registry: paneHostRegistry)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                     if store.agentSurface != .quietInsight {
                         agentOverlay
@@ -771,154 +749,60 @@ private struct LayoutContentView: View {
         }
         .transition(WeiBeiTransition.layout)
         .animation(WeiBeiMotion.layout, value: store.layout)
-        .animation(WeiBeiMotion.panel, value: store.showRightPane)
-        .animation(WeiBeiMotion.panel, value: store.showReader)
-        .animation(WeiBeiMotion.panel, value: store.showAgent)
-        .animation(WeiBeiMotion.panel, value: store.showNotes)
         .animation(WeiBeiMotion.panel, value: store.agentSurface)
         .animation(WeiBeiMotion.panel, value: store.showQuietInsight)
     }
 
     private var firstSplit: Binding<CGFloat> {
-        numericBinding($firstSplitStorage)
+        if Self.isDormantRailPreviewVerification {
+            return .constant(0.02)
+        }
+        return numericBinding($firstSplitStorage)
     }
 
     private var secondSplit: Binding<CGFloat> {
-        numericBinding($secondSplitStorage)
+        if Self.isDormantRailPreviewVerification {
+            return .constant(0.55)
+        }
+        return numericBinding($secondSplitStorage)
+    }
+
+    private static var isDormantRailPreviewVerification: Bool {
+        let scenario = ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"]
+        return scenario == "content-rail-dormant-preview" || scenario == "content-rail-activation-preview"
     }
 
     private var halfSplit: Binding<CGFloat> {
         numericBinding($halfSplitStorage)
     }
 
-    private var conversationFirstSplit: Binding<CGFloat> {
-        numericBinding($conversationFirstSplitStorage)
-    }
-
-    private var conversationSecondSplit: Binding<CGFloat> {
-        numericBinding($conversationSecondSplitStorage)
-    }
-
-    private var conversationLeftSplit: Binding<CGFloat> {
-        numericBinding($conversationLeftSplitStorage)
-    }
-
-    private var writingFirstSplit: Binding<CGFloat> {
-        numericBinding($writingFirstSplitStorage)
-    }
-
-    private var writingSecondSplit: Binding<CGFloat> {
-        numericBinding($writingSecondSplitStorage)
-    }
-
-    private var writingLeftSplit: Binding<CGFloat> {
-        numericBinding($writingLeftSplitStorage)
-    }
-
-    private var normalSidePaneMinimum: CGFloat {
-        store.showLibrary ? 220 : 260
-    }
-
     @ViewBuilder
     private func documentPaneLayoutView() -> some View {
         let order = store.visibleDocumentPaneOrder
-        switch order.count {
-        case 0:
-            EmptyWorkspaceView()
-                .transition(WeiBeiTransition.layout)
-        case 1:
-            paneView(for: order[0])
-                .transition(WeiBeiTransition.layout)
-        case 2:
-            documentTwoPaneView(order: order)
-        default:
-            documentThreePaneView(order: Array(order.prefix(3)))
-        }
-    }
-
-    private func minimumWidth(for role: WorkspacePaneRole) -> CGFloat {
-        switch role {
-        case .reader:
-            return 320
-        case .agent, .notes:
-            return normalSidePaneMinimum
-        }
-    }
-
-    @ViewBuilder
-    private func documentTwoPaneView(order: [WorkspacePaneRole]) -> some View {
         GeometryReader { geometry in
-            let frames = twoPaneFrames(order: order, size: geometry.size)
+            let fallbackFrames = estimatedDocumentPaneFrames(order: order, size: geometry.size)
+            let frames = store.threePaneReorderFrameList(order: order, fallback: fallbackFrames)
             ZStack {
-                ResizableTwoPane(
-                    split: halfSplit,
-                    minFirst: minimumWidth(for: order[0]),
-                    minSecond: minimumWidth(for: order[1])
-                ) {
-                    reorderablePaneView(for: order[0])
-                } second: {
-                    reorderablePaneView(for: order[1])
-                }
-
-                threePaneReorderOverlay(order: order, size: geometry.size, frames: frames)
-            }
-            .background(ThreePaneReorderFrameReporter(order: order, frames: frames))
-        }
-        .transition(WeiBeiTransition.rightPanel)
-    }
-
-    @ViewBuilder
-    private func documentThreePaneView(order: [WorkspacePaneRole]) -> some View {
-        GeometryReader { geometry in
-            let estimatedFrames = threePaneFrames(order: order, size: geometry.size)
-            let frames = store.threePaneReorderFrameList(order: order, fallback: estimatedFrames)
-            ZStack {
-                ResizableThreePane(
+                StableDocumentWorkspace(
                     firstSplit: firstSplit,
                     secondSplit: secondSplit,
-                    minFirst: minimumWidth(for: order[0]),
-                    minSecond: minimumWidth(for: order[1]),
-                    minThird: minimumWidth(for: order[2])
-                ) {
-                    reorderablePaneView(for: order[0])
-                } second: {
-                    reorderablePaneView(for: order[1])
-                } third: {
-                    reorderablePaneView(for: order[2])
-                } onFramesChange: { frames in
-                    store.updateThreePaneReorderFrames(order: order, frames: frames)
-                }
+                    halfSplit: halfSplit,
+                    registry: paneHostRegistry,
+                    normalizedOrder: store.normalizedThreePaneOrder,
+                    visibleOrder: order,
+                    draggedRole: store.threePaneReorderDrag?.role,
+                    expansionRequest: store.paneExpansionRequest,
+                    onFramesChange: { reportedOrder, frames in
+                        store.updateThreePaneReorderFrames(order: reportedOrder, frames: frames)
+                    },
+                    onExpansionRequestHandled: { requestID in
+                        store.completePaneExpansionRequest(requestID)
+                    }
+                )
 
                 threePaneReorderOverlay(order: order, size: geometry.size, frames: frames)
             }
-            .background(ThreePaneReorderFrameReporter(order: order, frames: estimatedFrames))
         }
-        .transition(WeiBeiTransition.rightPanel)
-    }
-
-    @ViewBuilder
-    private func reorderablePaneView(for role: WorkspacePaneRole) -> some View {
-        let drag = store.threePaneReorderDrag
-        paneView(for: role)
-            .opacity(drag?.role == role ? 0.08 : 1)
-            .overlay {
-                if drag?.targetIndex == store.normalizedThreePaneOrder.firstIndex(of: role), drag?.role != role {
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(WeiBeiTheme.cinnabar.opacity(0.22), lineWidth: 1)
-                        .background {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(WeiBeiTheme.cinnabarSoft.opacity(0.10))
-                        }
-                        .padding(8)
-                        .transition(WeiBeiTransition.floating)
-                }
-            }
-            .animation(WeiBeiMotion.micro, value: drag)
-    }
-
-    @ViewBuilder
-    private func paneView(for role: WorkspacePaneRole) -> some View {
-        PersistentPaneHost(role: role, registry: paneHostRegistry)
     }
 
     @ViewBuilder
@@ -952,6 +836,23 @@ private struct LayoutContentView: View {
                     .zIndex(8)
             }
         }
+    }
+
+    private func estimatedDocumentPaneFrames(order: [WorkspacePaneRole], size: CGSize) -> [CGRect] {
+        switch order.count {
+        case 0:
+            return []
+        case 1:
+            return [CGRect(origin: .zero, size: size)]
+        case 2:
+            return twoPaneFrames(order: order, size: size)
+        default:
+            return threePaneFrames(order: Array(order.prefix(3)), size: size)
+        }
+    }
+
+    private func minimumWidth(for _: WorkspacePaneRole) -> CGFloat {
+        ContentRailMetrics.railOnlyWidth
     }
 
     private func threePaneFrames(order: [WorkspacePaneRole], size: CGSize) -> [CGRect] {
@@ -989,150 +890,11 @@ private struct LayoutContentView: View {
         Swift.min(Swift.max(value, min), Swift.max(min, max))
     }
 
-    private struct ThreePaneReorderFrameReporter: View {
-        @EnvironmentObject private var store: WorkspaceStore
-        let order: [WorkspacePaneRole]
-        let frames: [CGRect]
-
-        var body: some View {
-            Color.clear
-                .onAppear(perform: report)
-                .onChange(of: order) { _, _ in report() }
-                .onChange(of: frames) { _, _ in report() }
-        }
-
-        private func report() {
-            store.updateThreePaneReorderFrames(order: order, frames: frames)
-        }
-    }
-
-    private var conversationSourceRailItems: [ContextRailItem] {
-        var items: [ContextRailItem] = []
-        if let item = store.selectedMaterialItem {
-            items.append(
-                ContextRailItem(
-                    title: store.displayTitle(for: item),
-                    help: store.ui("切回沉浸阅读", "Return to immersive reading"),
-                    systemImage: item.kind.systemImage,
-                    emphasized: true
-                ) {
-                    openReader()
-                }
-            )
-        }
-        items.append(
-            ContextRailItem(title: store.ui("当前笔记", "Current Note"), help: store.ui("切回沉浸写作", "Return to immersive writing"), systemImage: "square.and.pencil") {
-                openWriting()
-            }
-        )
-        if store.selectionContext != nil {
-            items.append(
-                ContextRailItem(title: store.ui("选区", "Selection"), help: store.ui("追问当前选区", "Ask about current selection"), systemImage: "text.cursor") {
-                    askCurrentSelection()
-                }
-            )
-        }
-        return items
-    }
-
-    private var conversationTargetRailItems: [ContextRailItem] {
-        var items = [
-            ContextRailItem(title: store.ui("当前笔记", "Current Note"), help: store.ui("打开写作区", "Open writing area"), systemImage: "square.and.pencil", emphasized: true) {
-                openWriting()
-            }
-        ]
-        if store.selectionContext != nil {
-            items.append(
-                ContextRailItem(title: store.ui("摘录区", "Excerpt Area"), help: store.ui("把当前选区收进笔记", "Save the current selection to notes"), systemImage: "quote.opening") {
-                    appendSelectionAndOpenWriting()
-                }
-            )
-        }
-        items.append(
-            ContextRailItem(title: store.ui("问题与结论", "Questions & Conclusions"), help: store.ui("整理问题、结论和缺少证据", "Organize questions, conclusions, and missing evidence"), systemImage: "checkmark.circle") {
-                prepareAgentDraft(store.ui("请根据\(store.agentPromptScope)，整理出问题、结论和还缺少的证据。", "Use \(store.agentPromptScope) to organize questions, conclusions, and missing evidence."))
-            }
-        )
-        return items
-    }
-
-    private var writingDocumentRailItems: [ContextRailItem] {
-        var items: [ContextRailItem] = []
-        if let item = store.selectedMaterialItem {
-            items.append(
-                ContextRailItem(
-                    title: store.displayTitle(for: item),
-                    help: store.ui("切回沉浸阅读", "Return to immersive reading"),
-                    systemImage: item.kind.systemImage,
-                    emphasized: true
-                ) {
-                    openReader()
-                }
-            )
-        }
-        if store.hasSelectedMaterial || store.selectionContext != nil {
-            items.append(
-                ContextRailItem(title: store.ui("引用", "Reference"), help: store.ui("复制当前材料或选区引用", "Copy current material or selection reference"), systemImage: "quote.opening") {
-                    store.copyCurrentReference()
-                }
-            )
-        }
-        return items
-    }
-
-    private var writingAssistRailItems: [ContextRailItem] {
-        [
-            ContextRailItem(title: store.ui("大纲建议", "Outline"), help: store.ui("生成笔记大纲", "Generate a note outline"), systemImage: "list.bullet.rectangle", emphasized: true) {
-                prepareAgentDraft(store.ui("请根据\(store.agentPromptScope)，给出一版更清晰的笔记大纲。", "Use \(store.agentPromptScope) to produce a clearer note outline."))
-            },
-            ContextRailItem(title: store.ui("补来源", "Add Sources"), help: store.ui("检查笔记缺少来源的位置", "Find places where notes need sources"), systemImage: "link") {
-                prepareAgentDraft(store.hasSelectedMaterial ? store.ui("请检查当前笔记缺少来源的位置，并建议应该引用当前材料的哪些部分。", "Find where the current note needs sources and suggest which parts of the current material to cite.") : store.ui("请检查当前笔记缺少来源的位置，并标出需要补证据的段落。", "Find where the current note needs sources and mark the paragraphs that need evidence."))
-            },
-            ContextRailItem(title: store.ui("润色表达", "Polish"), help: store.ui("润色当前笔记", "Polish current note"), systemImage: "text.quote") {
-                prepareAgentDraft(store.ui("请整理和润色当前笔记，保留原意，并标出缺少来源的位置。", "Organize and polish the current note, preserve the meaning, and mark where sources are missing."))
-            }
-        ]
-    }
-
     private func numericBinding(_ storage: Binding<Double>) -> Binding<CGFloat> {
         Binding(
             get: { CGFloat(storage.wrappedValue) },
             set: { storage.wrappedValue = Double($0) }
         )
-    }
-
-    private func openReader() {
-        withAnimation(WeiBeiMotion.layout) {
-            store.setLayout(.immersiveReading)
-        }
-    }
-
-    private func openWriting() {
-        withAnimation(WeiBeiMotion.layout) {
-            store.setLayout(.immersiveWriting)
-            store.revealRightPane(focusing: .notes)
-        }
-    }
-
-    private func askCurrentSelection() {
-        store.askSelection()
-        withAnimation(WeiBeiMotion.layout) {
-            store.setLayout(.immersiveConversation)
-            store.revealRightPane(focusing: .agent)
-        }
-    }
-
-    private func appendSelectionAndOpenWriting() {
-        store.appendSelectionToNote()
-        openWriting()
-    }
-
-    private func prepareAgentDraft(_ prompt: String) {
-        withAnimation(WeiBeiMotion.layout) {
-            store.agentDraft = prompt
-            store.setLayout(.immersiveConversation)
-            store.revealRightPane(focusing: .agent)
-        }
     }
 
     private var agentAlignment: Alignment {
@@ -1176,12 +938,12 @@ private struct LayoutContentView: View {
     }
 }
 
-private struct OwnerToken: Equatable {
+struct OwnerToken: Equatable {
     let role: WorkspacePaneRole
     let generation: Int
 }
 
-private final class PersistentPaneHostRegistry: ObservableObject {
+final class PersistentPaneHostRegistry: ObservableObject {
     private var hosts: [WorkspacePaneRole: NSHostingView<AnyView>] = [:]
     private var latestOwnerGeneration: [WorkspacePaneRole: Int] = [:]
     private var activeOwners: [WorkspacePaneRole: OwnerToken] = [:]
@@ -1232,7 +994,7 @@ private final class PersistentPaneHostRegistry: ObservableObject {
     }
 }
 
-private final class PersistentPaneContainerView: NSView {
+final class PersistentPaneContainerView: NSView {
     var onWindowChange: ((PersistentPaneContainerView) -> Void)?
 
     override func viewDidMoveToWindow() {
@@ -1241,7 +1003,7 @@ private final class PersistentPaneContainerView: NSView {
     }
 }
 
-private struct PersistentPaneHost: NSViewRepresentable {
+struct PersistentPaneHost: NSViewRepresentable {
     @EnvironmentObject private var store: WorkspaceStore
     let role: WorkspacePaneRole
     let registry: PersistentPaneHostRegistry
@@ -1252,6 +1014,7 @@ private struct PersistentPaneHost: NSViewRepresentable {
 
     func makeNSView(context: Context) -> PersistentPaneContainerView {
         let container = PersistentPaneContainerView()
+        container.isHidden = store.courseWorkspacePresented
         container.onWindowChange = { [weak coordinator = context.coordinator] container in
             coordinator?.windowChanged(container)
         }
@@ -1260,6 +1023,7 @@ private struct PersistentPaneHost: NSViewRepresentable {
     }
 
     func updateNSView(_ container: PersistentPaneContainerView, context: Context) {
+        container.isHidden = store.courseWorkspacePresented
         context.coordinator.update(role: role, registry: registry, store: store, container: container)
     }
 
@@ -1370,7 +1134,7 @@ private struct PaneReorderPreviewView: View {
     }
 }
 
-private struct EmptyWorkspaceView: View {
+struct EmptyWorkspaceView: View {
     @EnvironmentObject private var store: WorkspaceStore
 
     var body: some View {
@@ -1423,6 +1187,8 @@ private struct ResizableTwoPane<First: View, Second: View>: NSViewRepresentable 
     @Binding var split: CGFloat
     var minFirst: CGFloat = 320
     var minSecond: CGFloat = 320
+    var roles: [WorkspacePaneRole] = []
+    var allowRailSnapping = false
     private let first: First
     private let second: Second
 
@@ -1430,18 +1196,27 @@ private struct ResizableTwoPane<First: View, Second: View>: NSViewRepresentable 
         split: Binding<CGFloat>,
         minFirst: CGFloat = 320,
         minSecond: CGFloat = 320,
+        roles: [WorkspacePaneRole] = [],
+        allowRailSnapping: Bool = false,
         @ViewBuilder first: () -> First,
         @ViewBuilder second: () -> Second
     ) {
         _split = split
         self.minFirst = minFirst
         self.minSecond = minSecond
+        self.roles = roles
+        self.allowRailSnapping = allowRailSnapping
         self.first = first()
         self.second = second()
     }
 
     func makeCoordinator() -> NativeSplitCoordinator {
-        NativeSplitCoordinator(kind: .two(split: $split), minimums: [minFirst, minSecond])
+        NativeSplitCoordinator(
+            kind: .two(split: $split),
+            minimums: [minFirst, minSecond],
+            roles: roles,
+            allowRailSnapping: allowRailSnapping
+        )
     }
 
     func makeNSView(context: Context) -> WeiBeiSplitView {
@@ -1454,11 +1229,18 @@ private struct ResizableTwoPane<First: View, Second: View>: NSViewRepresentable 
     }
 
     func updateNSView(_ splitView: WeiBeiSplitView, context: Context) {
+        context.coordinator.captureReadableWidths(in: splitView)
         context.coordinator.kind = .two(split: $split)
         context.coordinator.minimums = [minFirst, minSecond]
+        context.coordinator.roles = roles
+        context.coordinator.allowRailSnapping = allowRailSnapping
+        context.coordinator.onExpansionRequestHandled = { requestID in
+            store.completePaneExpansionRequest(requestID)
+        }
         updateHost(at: 0, in: splitView, with: first)
         updateHost(at: 1, in: splitView, with: second)
         context.coordinator.applyStoredPositionsWhenNeeded(in: splitView)
+        context.coordinator.handleExpansionRequest(store.paneExpansionRequest, in: splitView)
     }
 
     private func nativeHost<V: View>(_ view: V) -> NSHostingView<AnyView> {
@@ -1483,6 +1265,8 @@ private struct ResizableThreePane<First: View, Second: View, Third: View>: NSVie
     var minFirst: CGFloat = 320
     var minSecond: CGFloat = 260
     var minThird: CGFloat = 260
+    var roles: [WorkspacePaneRole] = []
+    var allowRailSnapping = false
     var onFramesChange: (([CGRect]) -> Void)? = nil
     private let first: First
     private let second: Second
@@ -1494,6 +1278,8 @@ private struct ResizableThreePane<First: View, Second: View, Third: View>: NSVie
         minFirst: CGFloat = 320,
         minSecond: CGFloat = 260,
         minThird: CGFloat = 260,
+        roles: [WorkspacePaneRole] = [],
+        allowRailSnapping: Bool = false,
         @ViewBuilder first: () -> First,
         @ViewBuilder second: () -> Second,
         @ViewBuilder third: () -> Third,
@@ -1504,6 +1290,8 @@ private struct ResizableThreePane<First: View, Second: View, Third: View>: NSVie
         self.minFirst = minFirst
         self.minSecond = minSecond
         self.minThird = minThird
+        self.roles = roles
+        self.allowRailSnapping = allowRailSnapping
         self.onFramesChange = onFramesChange
         self.first = first()
         self.second = second()
@@ -1511,7 +1299,13 @@ private struct ResizableThreePane<First: View, Second: View, Third: View>: NSVie
     }
 
     func makeCoordinator() -> NativeSplitCoordinator {
-        NativeSplitCoordinator(kind: .three(first: $firstSplit, second: $secondSplit), minimums: [minFirst, minSecond, minThird], onFramesChange: onFramesChange)
+        NativeSplitCoordinator(
+            kind: .three(first: $firstSplit, second: $secondSplit),
+            minimums: [minFirst, minSecond, minThird],
+            roles: roles,
+            allowRailSnapping: allowRailSnapping,
+            onFramesChange: onFramesChange
+        )
     }
 
     func makeNSView(context: Context) -> WeiBeiSplitView {
@@ -1525,13 +1319,20 @@ private struct ResizableThreePane<First: View, Second: View, Third: View>: NSVie
     }
 
     func updateNSView(_ splitView: WeiBeiSplitView, context: Context) {
+        context.coordinator.captureReadableWidths(in: splitView)
         context.coordinator.kind = .three(first: $firstSplit, second: $secondSplit)
         context.coordinator.minimums = [minFirst, minSecond, minThird]
+        context.coordinator.roles = roles
+        context.coordinator.allowRailSnapping = allowRailSnapping
         context.coordinator.onFramesChange = onFramesChange
+        context.coordinator.onExpansionRequestHandled = { requestID in
+            store.completePaneExpansionRequest(requestID)
+        }
         updateHost(at: 0, in: splitView, with: first)
         updateHost(at: 1, in: splitView, with: second)
         updateHost(at: 2, in: splitView, with: third)
         context.coordinator.applyStoredPositionsWhenNeeded(in: splitView)
+        context.coordinator.handleExpansionRequest(store.paneExpansionRequest, in: splitView)
     }
 
     private func nativeHost<V: View>(_ view: V) -> NSHostingView<AnyView> {
@@ -1603,15 +1404,33 @@ private final class NativeSplitCoordinator: NSObject, NSSplitViewDelegate {
 
     var kind: Kind
     var minimums: [CGFloat]
+    var roles: [WorkspacePaneRole]
+    var allowRailSnapping: Bool
     var onFramesChange: (([CGRect]) -> Void)?
+    var onExpansionRequestHandled: ((UUID) -> Void)?
     private var isDragging = false
     private var isApplyingStoredPositions = false
     private var lastAppliedWidth: CGFloat = 0
     private var saveWork: DispatchWorkItem?
+    private var recentReadableWidths: [WorkspacePaneRole: CGFloat] = [:]
+    private var handledExpansionRequestID: UUID?
 
-    init(kind: Kind, minimums: [CGFloat], onFramesChange: (([CGRect]) -> Void)? = nil) {
+    private let railWidth = ContentRailMetrics.railOnlyWidth
+    private let railSnapThreshold = ContentRailMetrics.snapThreshold
+    private let readableWidthThreshold = ContentRailMetrics.readableWidth
+    private let defaultReadableWidth = ContentRailMetrics.defaultReadableWidth
+
+    init(
+        kind: Kind,
+        minimums: [CGFloat],
+        roles: [WorkspacePaneRole] = [],
+        allowRailSnapping: Bool = false,
+        onFramesChange: (([CGRect]) -> Void)? = nil
+    ) {
         self.kind = kind
         self.minimums = minimums
+        self.roles = roles
+        self.allowRailSnapping = allowRailSnapping
         self.onFramesChange = onFramesChange
     }
 
@@ -1619,13 +1438,20 @@ private final class NativeSplitCoordinator: NSObject, NSSplitViewDelegate {
         splitView.isVertical = true
         splitView.dividerStyle = .thin
         splitView.delegate = self
-        splitView.onDragStart = { [weak self] in
-            self?.isDragging = true
-            self?.saveWork?.cancel()
+        splitView.onDragStart = { [weak self, weak splitView] in
+            guard let self else { return }
+            if let splitView {
+                self.captureReadableWidths(in: splitView)
+            }
+            self.isDragging = true
+            self.saveWork?.cancel()
         }
         splitView.onDragEnd = { [weak self, weak splitView] in
             guard let self, let splitView else { return }
             self.isDragging = false
+            if self.allowRailSnapping {
+                self.snapRailWidthsIfNeeded(in: splitView)
+            }
             self.saveRatios(from: splitView)
             self.reportFrames(from: splitView)
         }
@@ -1669,8 +1495,37 @@ private final class NativeSplitCoordinator: NSObject, NSSplitViewDelegate {
             splitView.setPosition(actualFirstWidth + splitView.dividerThickness + secondWidth, ofDividerAt: 1)
         }
 
-        lastAppliedWidth = splitView.bounds.width
-        reportFrames(from: splitView)
+        if allowRailSnapping {
+            snapRailWidthsIfNeeded(in: splitView)
+        }
+
+        saveRatios(from: splitView)
+    }
+
+    func captureReadableWidths(in splitView: NSSplitView) {
+        guard allowRailSnapping, roles.count == splitView.arrangedSubviews.count else { return }
+        for (role, view) in zip(roles, splitView.arrangedSubviews) where view.frame.width >= readableWidthThreshold {
+            recentReadableWidths[role] = view.frame.width
+        }
+    }
+
+    func handleExpansionRequest(_ request: PaneExpansionRequest?, in splitView: NSSplitView) {
+        guard allowRailSnapping,
+              let request,
+              request.id != handledExpansionRequestID,
+              roles.count == splitView.arrangedSubviews.count,
+              let requestedIndex = roles.firstIndex(of: request.role) else { return }
+
+        handledExpansionRequestID = request.id
+        expandPane(at: requestedIndex, role: request.role, in: splitView)
+        snapRailWidthsIfNeeded(in: splitView)
+        saveRatios(from: splitView)
+        splitView.needsLayout = true
+        splitView.layoutSubtreeIfNeeded()
+
+        DispatchQueue.main.async { [weak self] in
+            self?.onExpansionRequestHandled?(request.id)
+        }
     }
 
     func splitViewDidResizeSubviews(_ notification: Notification) {
@@ -1710,8 +1565,99 @@ private final class NativeSplitCoordinator: NSObject, NSSplitViewDelegate {
             first.wrappedValue = clamped(widths[0] / usable, min: 0, max: 1)
             second.wrappedValue = clamped((widths[0] + widths[1]) / usable, min: 0, max: 1)
         }
+        captureReadableWidths(in: splitView)
         lastAppliedWidth = splitView.bounds.width
         reportFrames(from: splitView)
+    }
+
+    private func snapRailWidthsIfNeeded(in splitView: NSSplitView) {
+        let widths = splitView.arrangedSubviews.map(\.frame.width)
+        guard widths.count >= 2 else { return }
+
+        let snapIndices = widths.indices.filter { widths[$0] <= railSnapThreshold }
+        guard snapIndices.contains(where: { abs(widths[$0] - railWidth) > 0.5 }) else { return }
+
+        var targetWidths = widths
+        for index in snapIndices {
+            targetWidths[index] = railWidth
+        }
+
+        let readableIndices = widths.indices.filter { !snapIndices.contains($0) }
+        let fallbackRecipient = widths.indices.max { widths[$0] < widths[$1] }
+        for index in snapIndices {
+            let releasedWidth = widths[index] - railWidth
+            guard releasedWidth > 0.5 else { continue }
+            let recipient = readableIndices.min { lhs, rhs in
+                let lhsDistance = abs(lhs - index)
+                let rhsDistance = abs(rhs - index)
+                if lhsDistance == rhsDistance {
+                    return widths[lhs] > widths[rhs]
+                }
+                return lhsDistance < rhsDistance
+            } ?? fallbackRecipient
+            if let recipient {
+                targetWidths[recipient] += releasedWidth
+            }
+        }
+
+        applyPaneWidths(targetWidths, in: splitView)
+    }
+
+    private func expandPane(at requestedIndex: Int, role: WorkspacePaneRole, in splitView: NSSplitView) {
+        let widths = splitView.arrangedSubviews.map(\.frame.width)
+        guard widths.indices.contains(requestedIndex) else { return }
+        let usable = max(
+            splitView.bounds.width - CGFloat(widths.count - 1) * splitView.dividerThickness,
+            1
+        )
+        let otherIndices = widths.indices.filter { $0 != requestedIndex }
+        let otherMinimumTotal = otherIndices.reduce(CGFloat(0)) { partial, index in
+            partial + (minimums[safe: index] ?? railWidth)
+        }
+        let requestedMinimum = minimums[safe: requestedIndex] ?? railWidth
+        let desiredWidth = ContentRailPolicy.expansionWidth(recentWidth: recentReadableWidths[role])
+        let requestedWidth = clamped(
+            desiredWidth,
+            min: requestedMinimum,
+            max: max(requestedMinimum, usable - otherMinimumTotal)
+        )
+
+        var targetWidths = Array(repeating: CGFloat(0), count: widths.count)
+        targetWidths[requestedIndex] = requestedWidth
+        let remainingWidth = max(0, usable - requestedWidth)
+        let extraAvailable = max(0, remainingWidth - otherMinimumTotal)
+        let currentExtras = otherIndices.map { index in
+            max(0, widths[index] - (minimums[safe: index] ?? railWidth))
+        }
+        let currentExtraTotal = currentExtras.reduce(0, +)
+
+        for (offset, index) in otherIndices.enumerated() {
+            let minimum = minimums[safe: index] ?? railWidth
+            let share: CGFloat
+            if currentExtraTotal > 0.5 {
+                share = extraAvailable * currentExtras[offset] / currentExtraTotal
+            } else {
+                share = extraAvailable / CGFloat(max(otherIndices.count, 1))
+            }
+            targetWidths[index] = minimum + share
+        }
+
+        if let correctionIndex = otherIndices.last {
+            targetWidths[correctionIndex] += usable - targetWidths.reduce(0, +)
+        }
+        applyPaneWidths(targetWidths, in: splitView)
+    }
+
+    private func applyPaneWidths(_ widths: [CGFloat], in splitView: NSSplitView) {
+        guard widths.count == splitView.arrangedSubviews.count, widths.count >= 2 else { return }
+        var leadingWidth: CGFloat = 0
+        for dividerIndex in 0..<(widths.count - 1) {
+            leadingWidth += widths[dividerIndex]
+            splitView.setPosition(
+                leadingWidth + CGFloat(dividerIndex) * splitView.dividerThickness,
+                ofDividerAt: dividerIndex
+            )
+        }
     }
 
     private func reportFrames(from splitView: NSSplitView) {

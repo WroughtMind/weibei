@@ -1,5 +1,7 @@
 import AppKit
 import Combine
+import CryptoKit
+import Darwin
 import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
@@ -23,10 +25,145 @@ struct NotebookRenameDraft: Identifiable, Equatable {
     var title: String
 }
 
+struct CourseFolderImportDraft: Identifiable {
+    let id = UUID()
+    var rootURLs: [URL]
+    var markdownFiles: [URL]
+    var notePaths: Set<String>
+    var automaticMaterialCount: Int
+}
+
 struct ThreePaneReorderDrag: Equatable {
     var role: WorkspacePaneRole
     var translation: CGFloat
     var targetIndex: Int?
+}
+
+struct PaneExpansionRequest: Equatable {
+    let id = UUID()
+    let role: WorkspacePaneRole
+}
+
+enum PaneToggleContinuityVerifier {
+    private(set) static var isMeasuring = false
+    private(set) static var htmlEventSequence = 0
+    private(set) static var htmlSectionEventCount = 0
+    private(set) static var htmlActiveEventCount = 0
+    private(set) static var htmlLocationCallCount = 0
+    private(set) static var htmlLocationCommitCount = 0
+    private(set) static var htmlLocationReasons: [String: Int] = [:]
+    private(set) static var webReaderMakeCount = 0
+    private(set) static var webReaderDismantleCount = 0
+    private(set) static var pdfReaderMakeCount = 0
+    private(set) static var pdfReaderDismantleCount = 0
+    private(set) static var noteEditorMakeCount = 0
+    private(set) static var noteEditorDismantleCount = 0
+    private(set) static var verificationScrollScheduleCount = 0
+    private(set) static var verificationScrollResult = ""
+
+    static var isEnabled: Bool {
+        let scenario = ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"]
+        return scenario == "pane-toggle-continuity-flow"
+            || scenario == "pane-layout-stability-flow"
+            || scenario == "pane-reorder-width-flow"
+            || scenario == "reader-scroll-persistence-flow"
+            || scenario == "course-workspace-workflow-flow"
+    }
+
+    static func beginMeasurement() {
+        guard isEnabled else { return }
+        isMeasuring = true
+        htmlSectionEventCount = 0
+        htmlActiveEventCount = 0
+        htmlLocationCallCount = 0
+        htmlLocationCommitCount = 0
+        htmlLocationReasons = [:]
+        webReaderMakeCount = 0
+        webReaderDismantleCount = 0
+        pdfReaderMakeCount = 0
+        pdfReaderDismantleCount = 0
+        noteEditorMakeCount = 0
+        noteEditorDismantleCount = 0
+        verificationScrollScheduleCount = 0
+        verificationScrollResult = ""
+    }
+
+    static func endMeasurement() {
+        guard isEnabled else { return }
+        isMeasuring = false
+    }
+
+    static func recordHTMLActiveEvent(reason: String) {
+        guard isEnabled else { return }
+        htmlEventSequence += 1
+        if isMeasuring {
+            htmlActiveEventCount += 1
+        }
+    }
+
+    static func recordHTMLSectionEvent(count: Int) {
+        guard isEnabled else { return }
+        htmlEventSequence += 1
+        if isMeasuring { htmlSectionEventCount += 1 }
+    }
+
+    static func recordHTMLLocationCall(reason: String) {
+        guard isMeasuring else { return }
+        htmlLocationCallCount += 1
+        htmlLocationReasons[reason, default: 0] += 1
+    }
+
+    static func recordHTMLLocationCommit(reason: String) {
+        guard isMeasuring else { return }
+        htmlLocationCommitCount += 1
+    }
+
+    static func recordWebReaderMake() {
+        guard isEnabled else { return }
+        if isMeasuring { webReaderMakeCount += 1 }
+    }
+
+    static func recordWebReaderDismantle() {
+        guard isEnabled else { return }
+        if isMeasuring { webReaderDismantleCount += 1 }
+    }
+
+    static func recordNoteEditorMake() {
+        guard isEnabled else { return }
+        if isMeasuring { noteEditorMakeCount += 1 }
+    }
+
+    static func recordPDFReaderMake() {
+        guard isEnabled else { return }
+        if isMeasuring { pdfReaderMakeCount += 1 }
+    }
+
+    static func recordPDFReaderDismantle() {
+        guard isEnabled else { return }
+        if isMeasuring { pdfReaderDismantleCount += 1 }
+    }
+
+    static func recordNoteEditorDismantle() {
+        guard isEnabled else { return }
+        if isMeasuring { noteEditorDismantleCount += 1 }
+    }
+
+    static func recordVerificationScrollScheduled() {
+        guard isEnabled else { return }
+        verificationScrollScheduleCount += 1
+    }
+
+    static func recordVerificationScrollResult(_ result: String) {
+        guard isEnabled else { return }
+        verificationScrollResult = result
+    }
+}
+
+enum CourseWorkspaceDestination: String, CaseIterable, Sendable {
+    case overview
+    case materials
+    case notes
+    case sessions
 }
 
 @MainActor
@@ -38,22 +175,45 @@ final class WorkspaceStore: ObservableObject {
     @Published var agentDraft = ""
     @Published var messages: [AgentMessage] = []
     @Published var isAskingAgent = false
+    @Published var agentStreamingText = ""
+    @Published var agentActivityText: String?
+    @Published private(set) var latestAgentNoteProposal: StudyAgentNoteProposal?
+    @Published private(set) var latestAgentLearningUpdate: StudyAgentLearningUpdate?
+    @Published private(set) var noteSourceLinks: [NoteSourceLink] = [] {
+        didSet {
+            noteSourceRelationIndex = NoteSourceRelationIndex(links: noteSourceLinks)
+        }
+    }
+    @Published var linkedSourcesPresented = false
+    private(set) var studyLocationsByItemID: [String: StudyLocation] = [:]
+    @Published private(set) var learningMemoryEntries: [LearningMemoryEntry] = []
+    @Published private(set) var learningMemoryRevision: UInt64 = 0
+    @Published private(set) var studySessions: [StudySession] = []
+    @Published private(set) var activeStudySessionID: UUID?
     @Published var showLibrary = true
     @Published var showReader = true
     @Published var showAgent = true
     @Published var showNotes = true
+    @Published var showDailyInspiration = true
     @Published var commandPalettePresented = false
     @Published var librarySearch = ""
     @Published var readerSearch = ""
     @Published var showReaderSearch = false
+    @Published var readerLocationID: String?
     @Published var readerLocationTitle: String?
     @Published var readerPageIndex = 0
     @Published var readerTargetPageIndex: Int?
+    @Published private(set) var readerTargetPageRequestID = UUID()
+    @Published private(set) var readerTargetPageRecordsLocation = false
+    @Published var readerTargetLocationID: String?
+    @Published var readerTargetLocationTitle: String?
+    @Published private(set) var readerTargetLocationRequestID = UUID()
     @Published var focusedPane: PaneFocus = .reader
     @Published var focusRequest = 0
     @Published var layout: WorkspaceLayout = .documentAgentNotes
     @Published var threePaneOrder: [WorkspacePaneRole] = WorkspacePaneRole.defaultThreePaneOrder
     @Published var threePaneReorderDrag: ThreePaneReorderDrag?
+    @Published private(set) var paneExpansionRequest: PaneExpansionRequest?
     @Published var agentSurface: AgentSurface = .bottomDrawer
     @Published var noteRenderMode: NoteRenderMode = .rich
     @Published var showQuietInsight = true
@@ -66,6 +226,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var selectionAnchor: CGPoint?
     @Published var noteEditorCommand: NoteEditorCommand?
     @Published var noteFileError: String?
+    @Published private(set) var workspaceSaveError: String?
     @Published var notebookCreationDraft: NotebookCreationDraft?
     @Published var notebookRenameDraft: NotebookRenameDraft?
     @Published var modelName: String = ProcessInfo.processInfo.environment["WEIBEI_OPENAI_MODEL"] ?? "gpt-5.1"
@@ -75,11 +236,33 @@ final class WorkspaceStore: ObservableObject {
     @Published var adaptImportedDocumentColors = true
     @Published var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     @Published var topBarVariant: TopBarVariant = TopBarVariant(rawValue: UserDefaults.standard.string(forKey: "topBarVariant") ?? "") ?? .balanced
+    @Published var courseWorkspacePresented = false
+    @Published private(set) var courseWorkspaceDestination: CourseWorkspaceDestination = .overview
+    @Published private(set) var courseWorkspaceTargetItemID: String?
+    @Published var courseFolderImportDraft: CourseFolderImportDraft?
     @Published private var backNavigationStack: [NavigationSnapshot] = []
     @Published private var forwardNavigationStack: [NavigationSnapshot] = []
 
     private var notesByItemID: [String: String] = [:]
+    private var pendingNoteWritesByItemID: [String: PendingNoteWriteState] = [:]
+    private var noteBackingContentDigestsByItemID: [String: String] = [:]
     private let storageURL: URL
+    private let notebookRenameJournalURL: URL
+    private let importedFileIdentityResolver: (URL) -> ImportedFileIdentity?
+    private let notebookMarkdownReader: (URL) throws -> String
+    private let notebookMarkdownWriter: (String, URL) throws -> Void
+    private let notebookFileMover: (URL, URL) throws -> Void
+    private let workspaceSnapshotWriter: (Data, URL) throws -> Void
+    private let piRuntime: PiAgentRuntime
+    private let courseDocumentSearchIndex: CourseDocumentSearchIndex
+    private var activeAgentRequestID: UUID?
+    private var agentRequestTask: Task<Void, Never>?
+    private var quietInsightTask: Task<Void, Never>?
+    private var quietInsightTaskID: UUID?
+    private var agentContextRevision: UInt64 = 0
+    private var lastAgentReplyContextRevision: UInt64?
+    private var latestAgentLearningUpdateQuestion: String?
+    private var stagedNoteDraft: (itemID: String, value: String)?
     private var quietInsightSignature = ""
     private var isRestoringNavigation = false
     private var didRunVerificationScenario = false
@@ -92,6 +275,11 @@ final class WorkspaceStore: ObservableObject {
     private var pendingNotePersistenceByItemID: [String: PendingNotePersistence] = [:]
     private var pendingNotePersistenceTasks: [String: Task<Void, Never>] = [:]
     private let notePersistenceDebounceDelay: UInt64 = 420_000_000
+    private var studyProgressSaveTask: Task<Void, Never>?
+    private let studyProgressSaveDelay: UInt64 = 900_000_000
+    private var noteSourceLinksMigrationVersion = 0
+    private var noteSourceRelationIndex = NoteSourceRelationIndex(links: [])
+    private var courseWorkspaceReturnFocus: PaneFocus?
 
     var showRightPane: Bool {
         get { showNotes || showAgent }
@@ -113,6 +301,8 @@ final class WorkspaceStore: ObservableObject {
         var noteRenderMode: NoteRenderMode
         var showReaderSearch: Bool
         var readerSearch: String
+        var readerLocationID: String?
+        var readerLocationTitle: String?
         var readerPageIndex: Int
         var focusedPane: PaneFocus
         var threePaneOrder: [WorkspacePaneRole]
@@ -128,22 +318,110 @@ final class WorkspaceStore: ObservableObject {
         var markdown: String
     }
 
+    private struct CourseIndexCandidate: Sendable {
+        var item: StudyItem
+        var title: String
+        var subtitle: String
+        var embeddedText: String?
+        var fallbackText: String
+    }
+
+    private struct CourseContextBuildResult: Sendable {
+        var context: StudyAgentCourseContext
+        var selectedMaterialText: String?
+        var selectedMaterialIsTruncated: Bool
+    }
+
+    private struct ResolvedImportedFileBookmark {
+        var url: URL
+        var isStale: Bool
+    }
+
+    private struct PendingNotebookRenameJournal: Codable {
+        var oldItem: StudyItem
+        var replacementItemID: String
+        var oldPath: String
+        var newPath: String
+        var newTitle: String
+        var sourceMarkdown: String
+        var retitledMarkdown: String
+        var originalContentDigest: String
+        var retitledContentDigest: String
+    }
+
     private var lastUsableAgentAnswer: AgentMessage? {
-        messages.last { $0.isUsableAgentAnswer }
+        guard lastAgentReplyContextRevision == agentContextRevision else { return nil }
+        return messages.last { $0.isUsableAgentAnswer }
     }
 
     private static let shortcutModifierMask: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
 
     let sampleItems: [StudyItem] = WorkspaceStore.makeSampleItems()
 
-    init() {
-        let folder = Self.workspaceRootDirectory() ?? FileManager.default.temporaryDirectory.appendingPathComponent("WeiBei", isDirectory: true)
+    convenience init() {
+        let folder = Self.workspaceRootDirectory()
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("WeiBei", isDirectory: true)
+        self.init(workspaceDirectory: folder)
+    }
+
+    init(
+        workspaceDirectory folder: URL,
+        importedFileIdentityResolver: @escaping (URL) -> ImportedFileIdentity? = WorkspaceStore.resolveImportedFileIdentity,
+        notebookMarkdownReader: @escaping (URL) throws -> String = WorkspaceStore.readNotebookMarkdown,
+        notebookMarkdownWriter: @escaping (String, URL) throws -> Void = WorkspaceStore.writeNotebookMarkdown,
+        notebookFileMover: @escaping (URL, URL) throws -> Void = WorkspaceStore.moveNotebookFile,
+        workspaceSnapshotWriter: @escaping (Data, URL) throws -> Void = WorkspaceStore.writeWorkspaceSnapshot
+    ) {
         storageURL = folder.appendingPathComponent("workspace.json")
+        notebookRenameJournalURL = folder.appendingPathComponent("pending-notebook-rename.json")
+        self.importedFileIdentityResolver = importedFileIdentityResolver
+        self.notebookMarkdownReader = notebookMarkdownReader
+        self.notebookMarkdownWriter = notebookMarkdownWriter
+        self.notebookFileMover = notebookFileMover
+        self.workspaceSnapshotWriter = workspaceSnapshotWriter
+        piRuntime = PiAgentRuntime(runtimeDirectory: folder.appendingPathComponent("AgentRuntime", isDirectory: true))
+        let courseIndexDirectory = folder.appendingPathComponent("CourseIndex", isDirectory: true)
+        Self.removeLegacyCourseIndex(in: courseIndexDirectory)
+        courseDocumentSearchIndex = CourseDocumentSearchIndex(
+            databaseURL: courseIndexDirectory.appendingPathComponent("course-search-v3.sqlite3")
+        )
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         load()
+        let recoveredPendingNotebookRename = recoverPendingNotebookRenameIfNeeded()
+        let resolvedImportedFileBookmarks = resolvePersistedImportedFileBookmarks()
+        let migratedImportedItemIdentities = migrateLegacyImportedItemIdentities()
+        if recoveredPendingNotebookRename
+            || resolvedImportedFileBookmarks
+            || migratedImportedItemIdentities {
+            noteText = noteText(for: activeNoteItem)
+        }
+        let migratedStudyLocationTitles = refreshStudyLocationReferenceTitles()
+        let sanitizedNoteSourceLinks = sanitizeNoteSourceLinks()
+        courseDocumentSearchIndex.synchronize(allItems)
+        ensureActiveStudySession()
+        let savedInitializationChanges: Bool
+        if noteSourceLinksMigrationVersion < 1 {
+            migrateNoteSourceLinksFromMarkdown()
+            noteSourceLinksMigrationVersion = 1
+            savedInitializationChanges = save()
+        } else if resolvedImportedFileBookmarks
+                    || recoveredPendingNotebookRename
+                    || migratedImportedItemIdentities
+                    || migratedStudyLocationTitles
+                    || sanitizedNoteSourceLinks {
+            savedInitializationChanges = save()
+        } else {
+            savedInitializationChanges = true
+        }
+        if recoveredPendingNotebookRename, savedInitializationChanges {
+            removePendingNotebookRenameJournal()
+        }
         floatingSelectionPrompt = ui("当前选区", "Current selection")
         if selectedItemID == nil {
             select(itemID: sampleItems[0].id)
+        } else {
+            restoreCurrentStudyLocation()
+            recordCurrentStudyLocation(incrementVisit: false)
         }
     }
 
@@ -151,10 +429,268 @@ final class WorkspaceStore: ObservableObject {
         sampleItems + importedItems
     }
 
+    var courseMaterials: [StudyItem] {
+        importedItems.filter { !$0.isNotebookNote }
+    }
+
+    var courseNotebookItems: [StudyItem] {
+        importedItems.filter(\.isNotebookNote)
+    }
+
+    var recentCourseSessions: [StudySession] {
+        orderedStudySessions.filter { !$0.messages.isEmpty }
+    }
+
+    var activeCourseMemories: [LearningMemoryEntry] {
+        orderedLearningMemoryEntries.filter { $0.status == .active }
+    }
+
+    var recentCourseMessages: [AgentMessage] {
+        studySessions
+            .flatMap(\.messages)
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    var courseWorkspaceSummary: CourseWorkspaceSummary {
+        CourseWorkspaceSummary(
+            importedItems: importedItems,
+            noteSourceLinks: noteSourceLinks,
+            studyLocationsByItemID: studyLocationsByItemID,
+            studySessions: studySessions,
+            learningMemoryEntries: learningMemoryEntries
+        )
+    }
+
+    var courseMaterialsWithoutReadingPosition: [StudyItem] {
+        courseMaterials.filter { studyLocationsByItemID[$0.id] == nil }
+    }
+
+    var courseMaterialsWithoutNoteLinks: [StudyItem] {
+        let validNoteIDs = Set(courseNotebookItems.map(\.id))
+        let linkedIDs = Set(noteSourceLinks.lazy.filter { validNoteIDs.contains($0.noteItemID) }.map(\.sourceItemID))
+        return courseMaterials.filter { !linkedIDs.contains($0.id) }
+    }
+
+    var courseNotesWithoutSourceLinks: [StudyItem] {
+        let validSourceIDs = Set(courseMaterials.map(\.id))
+        let linkedIDs = Set(noteSourceLinks.lazy.filter { validSourceIDs.contains($0.sourceItemID) }.map(\.noteItemID))
+        return courseNotebookItems.filter { !linkedIDs.contains($0.id) }
+    }
+
+    func studyLocation(for itemID: String) -> StudyLocation? {
+        studyLocationsByItemID[itemID]
+    }
+
+    func linkedNotes(for sourceItemID: String) -> [StudyItem] {
+        let noteIDs = Set(linkedNoteIDs(for: sourceItemID))
+        return courseNotebookItems.filter { noteIDs.contains($0.id) }
+    }
+
+    func linkedNoteIDs(for sourceItemID: String) -> [String] {
+        noteSourceRelationIndex.noteIDs(for: sourceItemID)
+    }
+
+    func linkedNoteCount(for sourceItemID: String) -> Int {
+        noteSourceRelationIndex.noteCount(for: sourceItemID)
+    }
+
+    func item(withID itemID: String) -> StudyItem? {
+        allItems.first { $0.id == itemID }
+    }
+
+    var linkedSourceIDsForActiveNote: [String] {
+        guard let noteItemID = activeNotebookItemID else { return [] }
+        return linkedSourceIDs(for: noteItemID)
+    }
+
+    func linkedSourceIDs(for noteItemID: String) -> [String] {
+        noteSourceRelationIndex.sourceIDs(for: noteItemID)
+    }
+
+    func linkedSourceCount(for noteItemID: String) -> Int {
+        noteSourceRelationIndex.sourceCount(for: noteItemID)
+    }
+
+    func linkedCourseSourceIDs(for noteItemID: String) -> [String] {
+        let validCourseIDs = Set(courseMaterials.map(\.id))
+        return noteSourceRelationIndex.sourceIDs(for: noteItemID).filter(validCourseIDs.contains)
+    }
+
+    var linkedSourcesForActiveNote: [StudyItem] {
+        let linkedIDs = Set(linkedSourceIDsForActiveNote)
+        return allItems.filter { linkedIDs.contains($0.id) && !$0.isNotebookNote }
+    }
+
+    var linkedSourceCount: Int {
+        linkedSourcesForActiveNote.count
+    }
+
     var filteredItems: [StudyItem] {
         let query = librarySearch.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return allItems }
         return allItems.filter { itemMatchesLibrarySearch($0, query: query) }
+    }
+
+    var activeStudySession: StudySession? {
+        guard let activeStudySessionID else { return nil }
+        return studySessions.first { $0.id == activeStudySessionID }
+    }
+
+    var orderedStudySessions: [StudySession] {
+        studySessions.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    var orderedLearningMemoryEntries: [LearningMemoryEntry] {
+        learningMemoryEntries.sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    func learningMemoryKindLabel(_ kind: LearningMemoryKind) -> String {
+        switch kind {
+        case .goal: ui("目标", "Goal")
+        case .understood: ui("已理解", "Understood")
+        case .confusion: ui("困惑", "Confusion")
+        case .nextStep: ui("下一步", "Next Step")
+        case .preference: ui("偏好", "Preference")
+        }
+    }
+
+    var activeStudySessionTitle: String {
+        activeStudySession?.title ?? ui("新学习会话", "New Study Session")
+    }
+
+    var lastStudyLocation: StudyLocation? {
+        studyLocationsByItemID.values.max { $0.lastStudiedAt < $1.lastStudiedAt }
+    }
+
+    var canResumePreviousStudy: Bool {
+        lastStudyLocation != nil
+    }
+
+    var hasCurrentSessionInferredMemory: Bool {
+        guard let activeStudySessionID else { return false }
+        return learningMemoryEntries.contains {
+            $0.sessionID == activeStudySessionID && $0.origin == .agentInference
+        }
+    }
+
+    func createStudySession() {
+        cancelAgentRequest()
+        syncActiveStudySession()
+        let session = StudySession(title: ui("新学习会话", "New Study Session"))
+        studySessions.append(session)
+        activeStudySessionID = session.id
+        messages = []
+        latestAgentNoteProposal = nil
+        latestAgentLearningUpdate = nil
+        lastAgentReplyContextRevision = nil
+        invalidateAgentContext()
+        save()
+    }
+
+    func activateStudySession(_ id: UUID) {
+        guard id != activeStudySessionID,
+              let session = studySessions.first(where: { $0.id == id }) else { return }
+        cancelAgentRequest()
+        syncActiveStudySession()
+        activeStudySessionID = id
+        messages = session.messages
+        latestAgentNoteProposal = nil
+        latestAgentLearningUpdate = nil
+        lastAgentReplyContextRevision = nil
+        invalidateAgentContext()
+        save()
+    }
+
+    func deleteStudySession(_ id: UUID) {
+        guard studySessions.count > 1,
+              let index = studySessions.firstIndex(where: { $0.id == id }) else { return }
+        let deletingActiveSession = activeStudySessionID == id
+        if deletingActiveSession { cancelAgentRequest() }
+        studySessions.remove(at: index)
+        learningMemoryEntries.removeAll { $0.sessionID == id && $0.origin == .agentInference }
+        if deletingActiveSession, let replacement = orderedStudySessions.first {
+            activeStudySessionID = replacement.id
+            messages = replacement.messages
+            latestAgentNoteProposal = nil
+            latestAgentLearningUpdate = nil
+            lastAgentReplyContextRevision = nil
+            invalidateAgentContext()
+        }
+        learningMemoryRevision &+= 1
+        save()
+    }
+
+    func clearCurrentSessionInferredMemory() {
+        guard let activeStudySessionID else { return }
+        let previousCount = learningMemoryEntries.count
+        learningMemoryEntries.removeAll {
+            $0.sessionID == activeStudySessionID && $0.origin == .agentInference
+        }
+        guard learningMemoryEntries.count != previousCount else { return }
+        learningMemoryRevision &+= 1
+        latestAgentLearningUpdate = nil
+        invalidateAgentContext()
+        save()
+    }
+
+    func resumePreviousStudy() {
+        guard let location = lastStudyLocation,
+              allItems.contains(where: { $0.id == location.itemID }) else { return }
+        select(itemID: location.itemID)
+        requestReaderPDFPage(location.pageIndex, recordsLocation: false)
+        requestReaderHTMLLocation(id: location.locationID, title: location.locationTitle)
+        showReader = true
+        focus(.reader)
+    }
+
+    private func ensureActiveStudySession() {
+        if let activeStudySessionID,
+           let session = studySessions.first(where: { $0.id == activeStudySessionID }) {
+            messages = session.messages
+            return
+        }
+        if let session = orderedStudySessions.first {
+            activeStudySessionID = session.id
+            messages = session.messages
+            return
+        }
+        let session = StudySession(title: ui("新学习会话", "New Study Session"))
+        studySessions = [session]
+        activeStudySessionID = session.id
+        messages = []
+    }
+
+    private func appendAgentMessage(_ message: AgentMessage) {
+        messages.append(message)
+        syncActiveStudySession(titleSeed: message.role == .user ? message.text : nil)
+        save()
+    }
+
+    private func syncActiveStudySession(titleSeed: String? = nil) {
+        guard let activeStudySessionID,
+              let index = studySessions.firstIndex(where: { $0.id == activeStudySessionID }) else { return }
+        studySessions[index].messages = messages
+        studySessions[index].updatedAt = Date()
+        if let titleSeed,
+           studySessions[index].messages.filter({ $0.role == .user }).count == 1 {
+            studySessions[index].title = Self.sessionTitle(from: titleSeed)
+        }
+        for itemID in [selectedItemID, activeNoteItemID].compactMap({ $0 }) {
+            if !studySessions[index].focusItemIDs.contains(itemID) {
+                studySessions[index].focusItemIDs.append(itemID)
+            }
+        }
+        if studySessions[index].focusItemIDs.count > 24 {
+            studySessions[index].focusItemIDs.removeFirst(studySessions[index].focusItemIDs.count - 24)
+        }
+    }
+
+    private static func sessionTitle(from text: String) -> String {
+        let title = text
+            .replacingOccurrences(of: #"[`*_>#\[\]()]"#, with: "", options: .regularExpression)
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        return title.isEmpty ? "Study Session" : String(title.prefix(36))
     }
 
     var navigableItems: [StudyItem] {
@@ -259,7 +795,7 @@ final class WorkspaceStore: ObservableObject {
 
     var selectedContextText: String {
         guard let item = selectedMaterialItem else { return "" }
-        if let text = DocumentTextExtractor.text(for: item) {
+        if let text = DocumentTextExtractor.cachedText(for: item) {
             return text
         }
         return sampleText(for: item)
@@ -270,11 +806,58 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var agentMessageSourceTitle: String? {
-        hasSelectedMaterial ? currentReferenceTitle : activeNoteItem.map(displayTitle)
+        hasSelectedMaterial ? currentSourceReferenceTitle : activeNoteItem.map(displayTitle)
     }
 
     var currentReferenceTitle: String {
         readerLocationTitle ?? selectedMaterialItem.map(displayTitle) ?? activeNoteItem.map(displayTitle) ?? ui("当前笔记", "Current note")
+    }
+
+    var currentSourceReferenceTitle: String {
+        guard let item = selectedMaterialItem else {
+            return activeNoteItem.map(displayTitle) ?? ui("当前笔记", "Current note")
+        }
+        let itemTitle = sourceReferenceBaseTitle(for: item)
+        switch item.kind {
+        case .pdf:
+            return ui("\(itemTitle)，第 \(readerPageIndex + 1) 页", "\(itemTitle), page \(readerPageIndex + 1)")
+        case .html:
+            guard let locationTitle = readerLocationTitle,
+                  locationTitle != itemTitle else { return itemTitle }
+            if let locationID = readerLocationID,
+               locationID.hasPrefix("html-section-") {
+                return ui(
+                    "\(itemTitle)，章节标识：\(locationID)，章节：\(locationTitle)",
+                    "\(itemTitle), section id: \(locationID), section: \(locationTitle)"
+                )
+            }
+            let sectionOrdinal = readerLocationID.flatMap { id -> Int? in
+                guard id.hasPrefix("html-heading-") else { return nil }
+                return Int(id.dropFirst("html-heading-".count)).map { $0 + 1 }
+            }
+            if let sectionOrdinal {
+                return ui(
+                    "\(itemTitle)，章节序号：\(sectionOrdinal)，章节：\(locationTitle)",
+                    "\(itemTitle), section number: \(sectionOrdinal), section: \(locationTitle)"
+                )
+            }
+            return ui("\(itemTitle)，章节：\(locationTitle)", "\(itemTitle), section: \(locationTitle)")
+        case .markdown, .text:
+            return itemTitle
+        }
+    }
+
+    private func sourceReferenceBaseTitle(for item: StudyItem) -> String {
+        let title = displayTitle(for: item)
+        let catalog = Array(allItems.prefix(500))
+        let matchingIndexes = catalog.indices.filter {
+            displayTitle(for: catalog[$0]) == title
+        }
+        guard matchingIndexes.count > 1,
+              let index = catalog.firstIndex(where: { $0.id == item.id }) else {
+            return title
+        }
+        return ui("\(title)，条目：\(index + 1)", "\(title), item: \(index + 1)")
     }
 
     var hasSelectionAttachments: Bool {
@@ -316,7 +899,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var sendAgentActionTitle: String {
-        ui("发送问题", "Send question")
+        isAskingAgent ? ui("停止回答", "Stop response") : ui("发送问题", "Send question")
     }
 
     var agentNoteTitle: String {
@@ -330,10 +913,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var agentConversationSubtitle: String {
-        if let item = selectedMaterialItem {
-            return displayTitle(for: item)
-        }
-        return activeNoteItem.map(displayTitle) ?? ui("无上下文", "No context")
+        activeStudySessionTitle
     }
 
     var agentPromptScope: String {
@@ -344,7 +924,9 @@ final class WorkspaceStore: ObservableObject {
         if hasSelectionAttachments {
             return ui("输入问题", "Ask a question")
         }
-        return hasSelectedMaterial ? ui("问当前材料", "Ask current material") : ui("问当前笔记", "Ask current note")
+        return hasSelectedMaterial
+            ? ui("问当前课程或材料", "Ask the course or current material")
+            : ui("问当前课程或笔记", "Ask the course or current note")
     }
 
     var selectionPromptScope: String {
@@ -353,6 +935,12 @@ final class WorkspaceStore: ObservableObject {
 
     var canApplyAgentAnswer: Bool {
         lastUsableAgentAnswer != nil
+    }
+
+    var agentWriteActionTitle: String {
+        latestAgentNoteProposal == nil
+            ? ui("写入回答", "Write Answer")
+            : ui("写入建议", "Write Proposal")
     }
 
     var lastUsableAgentAnswerID: UUID? {
@@ -478,6 +1066,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func select(itemID: String?) {
+        invalidateAgentContext()
         persistCurrentNote()
         notebookCreationDraft = nil
         notebookRenameDraft = nil
@@ -485,6 +1074,9 @@ final class WorkspaceStore: ObservableObject {
            let item = allItems.first(where: { $0.id == itemID && $0.isNotebookNote }) {
             activeNotebookItemID = item.id
             noteText = noteText(for: item)
+            latestAgentNoteProposal = nil
+            latestAgentLearningUpdate = nil
+            syncActiveStudySession()
             revealRichWritingSurface()
             focus(.notes)
             save()
@@ -496,19 +1088,127 @@ final class WorkspaceStore: ObservableObject {
         }
         selectedItemID = itemID
         if itemChanged {
-            activeNotebookItemID = nil
             clearUnpinnedFloatingSelection(keepContext: false)
             selectionAttachments = []
             lastSelectionAttachmentDate = nil
             readerPageIndex = 0
+            readerLocationID = nil
+            requestReaderPDFPage(nil, recordsLocation: false)
+            readerTargetLocationID = nil
+            readerTargetLocationTitle = nil
         }
-        readerLocationTitle = selectedMaterialItem.map(displayTitle)
+        if itemChanged {
+            readerLocationTitle = selectedMaterialItem.map(displayTitle)
+            restoreCurrentStudyLocation()
+        } else if readerLocationTitle == nil {
+            readerLocationTitle = selectedMaterialItem.map(displayTitle)
+        }
         clearReaderSearchIfNeeded()
         noteText = noteText(for: activeNoteItem)
-        messages = []
+        latestAgentNoteProposal = nil
+        latestAgentLearningUpdate = nil
+        syncActiveStudySession()
+        recordCurrentStudyLocation(incrementVisit: itemChanged)
         clearGeneratedQuietInsight()
         refreshQuietInsightIfNeeded()
         save()
+    }
+
+    func setLinkedSourceIDsForActiveNote(_ sourceItemIDs: Set<String>) {
+        guard let noteItemID = activeNotebookItemID else { return }
+        setLinkedSourceIDs(sourceItemIDs, for: noteItemID)
+    }
+
+    func setLinkedSourceIDs(_ sourceItemIDs: Set<String>, for noteItemID: String) {
+        guard allItems.contains(where: { $0.id == noteItemID && $0.isNotebookNote }) else { return }
+        let validSourceIDs = Set(allItems.lazy.filter { !$0.isNotebookNote }.map(\.id))
+        var relations = NoteSourceRelations(links: noteSourceLinks)
+        relations.replaceSources(
+            for: noteItemID,
+            sourceItemIDs: sourceItemIDs.intersection(validSourceIDs)
+        )
+        guard relations.links != noteSourceLinks else { return }
+        invalidateAgentContext()
+        noteSourceLinks = relations.links
+        save()
+    }
+
+    func setLinkedCourseSourceIDs(_ sourceItemIDs: Set<String>, for noteItemID: String) {
+        let courseSourceIDs = Set(courseMaterials.map(\.id))
+        let retainedNonCourseIDs = Set(linkedSourceIDs(for: noteItemID)).subtracting(courseSourceIDs)
+        setLinkedSourceIDs(
+            retainedNonCourseIDs.union(sourceItemIDs.intersection(courseSourceIDs)),
+            for: noteItemID
+        )
+    }
+
+    func setLinkedNoteIDs(_ noteItemIDs: Set<String>, for sourceItemID: String) {
+        guard allItems.contains(where: { $0.id == sourceItemID && !$0.isNotebookNote }) else { return }
+        let validNoteIDs = Set(courseNotebookItems.map(\.id))
+        var relations = NoteSourceRelations(links: noteSourceLinks)
+        relations.replaceNotes(
+            for: sourceItemID,
+            noteItemIDs: noteItemIDs.intersection(validNoteIDs)
+        )
+        guard relations.links != noteSourceLinks else { return }
+        invalidateAgentContext()
+        noteSourceLinks = relations.links
+        save()
+    }
+
+    func presentCourseWorkspace(
+        _ destination: CourseWorkspaceDestination = .overview,
+        selecting itemID: String? = nil
+    ) {
+        persistCurrentNote()
+        courseWorkspaceReturnFocus = focusedPane
+        courseWorkspaceDestination = destination
+        courseWorkspaceTargetItemID = itemID
+        courseWorkspacePresented = true
+    }
+
+    func dismissCourseWorkspace() {
+        dismissCourseWorkspace(restoringFocus: true)
+    }
+
+    func openCourseMaterial(_ itemID: String) {
+        guard courseMaterials.contains(where: { $0.id == itemID }) else { return }
+        dismissCourseWorkspace(restoringFocus: false)
+        select(itemID: itemID)
+        if layout == .immersiveWriting || layout == .immersiveConversation {
+            setLayout(.immersiveReading)
+        } else {
+            showReader = true
+            focus(.reader)
+            save()
+        }
+    }
+
+    func openCourseNote(_ itemID: String) {
+        guard courseNotebookItems.contains(where: { $0.id == itemID }) else { return }
+        dismissCourseWorkspace(restoringFocus: false)
+        select(itemID: itemID)
+    }
+
+    func continueCourseSession(_ sessionID: UUID) {
+        guard studySessions.contains(where: { $0.id == sessionID && !$0.messages.isEmpty }) else { return }
+        activateStudySession(sessionID)
+        dismissCourseWorkspace(restoringFocus: false)
+        setLayout(.immersiveConversation)
+    }
+
+    private func dismissCourseWorkspace(restoringFocus: Bool) {
+        guard courseWorkspacePresented else { return }
+        courseWorkspacePresented = false
+        courseWorkspaceTargetItemID = nil
+        courseFolderImportDraft = nil
+        guard restoringFocus, let courseWorkspaceReturnFocus else {
+            self.courseWorkspaceReturnFocus = nil
+            return
+        }
+        focusedPane = courseWorkspaceReturnFocus
+        focusRequest += 1
+        self.courseWorkspaceReturnFocus = nil
     }
 
     func selectAdjacentItem(step: Int) {
@@ -520,6 +1220,7 @@ final class WorkspaceStore: ObservableObject {
 
     func updateNote(_ value: String) {
         guard noteText != value else { return }
+        invalidateAgentContext()
         noteText = value
         clearGeneratedQuietInsight()
         guard let item = activeNoteItem else { return }
@@ -527,6 +1228,26 @@ final class WorkspaceStore: ObservableObject {
             notesByItemID[item.id] = value
         }
         scheduleNotePersistence(value, for: item)
+    }
+
+    func stageNoteDraft(_ value: String, for itemID: String?) {
+        guard let itemID else { return }
+        if stagedNoteDraft?.itemID != itemID || stagedNoteDraft?.value != value {
+            invalidateAgentContext()
+        }
+        stagedNoteDraft = (itemID, value)
+    }
+
+    func clearStagedNoteDraft(for itemID: String?, matching value: String? = nil) {
+        guard let itemID, let stagedNoteDraft, stagedNoteDraft.itemID == itemID else { return }
+        if let value, stagedNoteDraft.value != value { return }
+        self.stagedNoteDraft = nil
+    }
+
+    private func flushStagedNoteDraftForAgentContext() {
+        guard let stagedNoteDraft, stagedNoteDraft.itemID == activeNoteItemID else { return }
+        self.stagedNoteDraft = nil
+        updateNote(stagedNoteDraft.value, for: stagedNoteDraft.itemID)
     }
 
     func updateNote(_ value: String, for itemID: String?) {
@@ -554,6 +1275,11 @@ final class WorkspaceStore: ObservableObject {
 
     func createBlankNotebookNote() {
         createNotebookNote(seed: .blank)
+    }
+
+    @discardableResult
+    func createCourseNotebookNote(title: String) -> String? {
+        createNotebookNote(seed: .blank, title: title)?.id
     }
 
     func createNotebookNoteFromCurrentMaterial() {
@@ -823,11 +1549,106 @@ final class WorkspaceStore: ObservableObject {
 
     func updateReaderLocationTitle(_ title: String?) {
         let cleaned = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        readerLocationTitle = cleaned.isEmpty ? selectedMaterialItem.map(displayTitle) : cleaned
+        let nextTitle = cleaned.isEmpty ? selectedMaterialItem.map(displayTitle) : cleaned
+        guard readerLocationTitle != nextTitle else { return }
+        readerLocationTitle = nextTitle
+    }
+
+    func updateReaderHTMLLocation(id: String?, title: String?, reason: String) {
+        guard selectedMaterialItem?.kind == .html else { return }
+        PaneToggleContinuityVerifier.recordHTMLLocationCall(reason: reason)
+        let cleanedID = id?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let cleanedTitle = title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let nextID = cleanedID.isEmpty ? nil : String(cleanedID.prefix(500))
+        let nextTitle = cleanedTitle.isEmpty ? selectedMaterialItem.map(displayTitle) : String(cleanedTitle.prefix(300))
+        if reason == "jump" {
+            clearReaderHTMLLocationTarget()
+        }
+        guard readerLocationID != nextID || readerLocationTitle != nextTitle else { return }
+        PaneToggleContinuityVerifier.recordHTMLLocationCommit(reason: reason)
+        readerLocationID = nextID
+        readerLocationTitle = nextTitle
+        recordCurrentStudyLocation(incrementVisit: false)
+    }
+
+    private func requestReaderHTMLLocation(id: String?, title: String?) {
+        readerTargetLocationID = id
+        readerTargetLocationTitle = title
+        readerTargetLocationRequestID = UUID()
+    }
+
+    private func clearReaderHTMLLocationTarget() {
+        guard readerTargetLocationID != nil || readerTargetLocationTitle != nil else { return }
+        readerTargetLocationID = nil
+        readerTargetLocationTitle = nil
+    }
+
+    private func requestReaderPDFPage(_ pageIndex: Int?, recordsLocation: Bool) {
+        readerTargetPageRecordsLocation = recordsLocation && pageIndex != nil
+        readerTargetPageIndex = pageIndex.map { max($0, 0) }
+        readerTargetPageRequestID = UUID()
+    }
+
+    func consumeReaderPDFPageRequest(_ requestID: UUID) {
+        guard readerTargetPageRequestID == requestID else { return }
+        readerTargetPageIndex = nil
+        readerTargetPageRecordsLocation = false
     }
 
     func updateReaderPageIndex(_ index: Int) {
-        readerPageIndex = max(index, 0)
+        let nextIndex = max(index, 0)
+        guard readerPageIndex != nextIndex else { return }
+        readerPageIndex = nextIndex
+        recordCurrentStudyLocation(incrementVisit: false)
+    }
+
+    private func recordCurrentStudyLocation(incrementVisit: Bool) {
+        guard let item = selectedMaterialItem else { return }
+        let previous = studyLocationsByItemID[item.id]
+        let itemTitle = sourceReferenceBaseTitle(for: item)
+        let locationID = item.kind == .html ? readerLocationID : nil
+        let pageIndex = item.kind == .pdf ? readerPageIndex : nil
+        if !incrementVisit,
+           previous?.itemTitle == itemTitle,
+           previous?.locationID == locationID,
+           previous?.locationTitle == readerLocationTitle,
+           previous?.pageIndex == pageIndex {
+            return
+        }
+        studyLocationsByItemID[item.id] = StudyLocation(
+            itemID: item.id,
+            itemTitle: itemTitle,
+            locationID: locationID,
+            locationTitle: readerLocationTitle,
+            pageIndex: pageIndex,
+            lastStudiedAt: Date(),
+            visitCount: max((previous?.visitCount ?? 0) + (incrementVisit ? 1 : 0), 1)
+        )
+        studyProgressSaveTask?.cancel()
+        let delay = studyProgressSaveDelay
+        studyProgressSaveTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: delay)
+            guard !Task.isCancelled else { return }
+            self?.studyProgressSaveTask = nil
+            self?.save()
+        }
+    }
+
+    private func restoreCurrentStudyLocation() {
+        guard let item = selectedMaterialItem else { return }
+        guard let location = studyLocationsByItemID[item.id] else {
+            readerLocationID = nil
+            readerLocationTitle = displayTitle(for: item)
+            return
+        }
+        readerLocationID = item.kind == .html ? location.locationID : nil
+        readerLocationTitle = location.locationTitle ?? displayTitle(for: item)
+        if item.kind == .pdf {
+            readerPageIndex = max(location.pageIndex ?? 0, 0)
+            requestReaderPDFPage(location.pageIndex, recordsLocation: false)
+        } else if item.kind == .html {
+            requestReaderHTMLLocation(id: location.locationID, title: location.locationTitle)
+        }
     }
 
     func recordReaderPageNavigationPoint() {
@@ -850,7 +1671,22 @@ final class WorkspaceStore: ObservableObject {
         guard let item = sourceReferenceItem(from: rawReference) else { return false }
         let reference = SourceReferenceTitle.parse(rawReference)
         select(itemID: item.id)
-        readerTargetPageIndex = item.kind == .pdf ? reference.pageIndex : nil
+        if item.isNotebookNote {
+            focus(.notes)
+            return true
+        }
+        requestReaderPDFPage(
+            item.kind == .pdf ? reference.pageIndex : nil,
+            recordsLocation: item.kind == .pdf && reference.pageIndex != nil
+        )
+        let htmlTargetID = item.kind == .html
+            ? reference.sectionLocationID
+                ?? reference.sectionOrdinal.map { "html-heading-\(max($0 - 1, 0))" }
+            : nil
+        requestReaderHTMLLocation(
+            id: htmlTargetID,
+            title: item.kind == .html ? reference.sectionTitle : nil
+        )
         focus(.reader)
         return true
     }
@@ -940,6 +1776,15 @@ final class WorkspaceStore: ObservableObject {
         let nextFrames = Dictionary(uniqueKeysWithValues: zip(order, frames))
         guard !sameReorderFrames(nextFrames, threePaneReorderFrames) else { return }
         threePaneReorderFrames = nextFrames
+    }
+
+    func requestPaneExpansion(_ role: WorkspacePaneRole) {
+        paneExpansionRequest = PaneExpansionRequest(role: role)
+    }
+
+    func completePaneExpansionRequest(_ id: UUID) {
+        guard paneExpansionRequest?.id == id else { return }
+        paneExpansionRequest = nil
     }
 
     func threePaneReorderFrameList(order: [WorkspacePaneRole], fallback: [CGRect]) -> [CGRect] {
@@ -1114,6 +1959,8 @@ final class WorkspaceStore: ObservableObject {
             noteRenderMode: noteRenderMode,
             showReaderSearch: showReaderSearch,
             readerSearch: readerSearch,
+            readerLocationID: readerLocationID,
+            readerLocationTitle: readerLocationTitle,
             readerPageIndex: readerPageIndex,
             focusedPane: focusedPane,
             threePaneOrder: normalizedThreePaneOrder
@@ -1121,6 +1968,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func applyNavigationSnapshot(_ snapshot: NavigationSnapshot) {
+        invalidateAgentContext()
         isRestoringNavigation = true
         defer { isRestoringNavigation = false }
         selectedItemID = snapshot.selectedItemID
@@ -1134,13 +1982,24 @@ final class WorkspaceStore: ObservableObject {
         noteRenderMode = snapshot.noteRenderMode.visibleMode
         showReaderSearch = snapshot.showReaderSearch
         readerSearch = snapshot.readerSearch
+        readerLocationID = snapshot.readerLocationID
+        readerLocationTitle = snapshot.readerLocationTitle
         readerPageIndex = snapshot.readerPageIndex
         focusedPane = snapshot.focusedPane
         threePaneOrder = WorkspacePaneRole.normalized(snapshot.threePaneOrder)
         noteText = noteText(for: activeNoteItem)
-        readerLocationTitle = selectedMaterialItem.map(displayTitle)
-        readerTargetPageIndex = selectedMaterialItem?.kind == .pdf ? snapshot.readerPageIndex : nil
-        messages = []
+        requestReaderPDFPage(
+            selectedMaterialItem?.kind == .pdf ? snapshot.readerPageIndex : nil,
+            recordsLocation: false
+        )
+        requestReaderHTMLLocation(
+            id: selectedMaterialItem?.kind == .html ? snapshot.readerLocationID : nil,
+            title: selectedMaterialItem?.kind == .html ? snapshot.readerLocationTitle : nil
+        )
+        latestAgentNoteProposal = nil
+        latestAgentLearningUpdate = nil
+        syncActiveStudySession()
+        recordCurrentStudyLocation(incrementVisit: false)
         showQuietInsight = agentSurface == .quietInsight
         clearUnpinnedFloatingSelection(keepContext: false)
         clearReaderSearchIfNeeded()
@@ -1268,8 +2127,12 @@ final class WorkspaceStore: ObservableObject {
                 guard hasSelectedMaterial else { return false }
                 animatePanelChange { revealReaderSearch() }
             case "return":
-                guard !isAskingAgent && !agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-                Task { await askAgent() }
+                if isAskingAgent {
+                    cancelAgentRequest()
+                } else {
+                    guard !agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+                    askAgent()
+                }
             default:
                 return false
             }
@@ -1361,6 +2224,12 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
+    func setDailyInspirationEnabled(_ enabled: Bool) {
+        guard showDailyInspiration != enabled else { return }
+        showDailyInspiration = enabled
+        save()
+    }
+
     func toggleImportedDocumentColorAdaptation() {
         setImportedDocumentColorAdaptation(!adaptImportedDocumentColors)
     }
@@ -1381,6 +2250,7 @@ final class WorkspaceStore: ObservableObject {
         guard interfaceLanguage != language else { return }
         interfaceLanguage = language
         floatingSelectionPrompt = ui("当前选区", "Current selection")
+        _ = refreshStudyLocationReferenceTitles()
         save()
     }
 
@@ -1401,43 +2271,349 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func importFilesFromPanel() {
-        let panel = NSOpenPanel()
-        panel.title = ui("选择学习资料", "Choose study materials")
-        panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
-        panel.allowedContentTypes = [
-            .pdf,
-            .html,
-            .plainText,
-            UTType(filenameExtension: "md") ?? .plainText,
-            UTType(filenameExtension: "markdown") ?? .plainText
-        ]
-
-        guard panel.runModal() == .OK else { return }
-        importFiles(panel.urls)
+        presentImportPanel(linkToActiveNote: false)
     }
 
-    func importFiles(_ urls: [URL]) {
-        let existing = Set(importedItems.compactMap(\.urlPath))
-        let newItems = urls
-            .filter { !existing.contains($0.path) }
-            .map { url in
-                StudyItem(
-                    id: "file:\(url.path)",
-                    title: url.deletingPathExtension().lastPathComponent,
-                    subtitle: url.lastPathComponent,
-                    kind: StudyItemKind.detect(from: url),
-                    urlPath: url.path,
-                    isSample: false
-                )
+    func prepareCourseFolderImportFromPanel() {
+        let panel = NSOpenPanel()
+        panel.title = ui("选择课程文件夹", "Choose a course folder")
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        guard panel.runModal() == .OK else {
+            courseFolderImportDraft = nil
+            return
+        }
+
+        let draft = makeCourseFolderImportDraft(rootURLs: panel.urls)
+        guard !draft.markdownFiles.isEmpty else {
+            _ = importFiles(panel.urls, selectsFirstImportedItem: false)
+            courseFolderImportDraft = nil
+            return
+        }
+        courseFolderImportDraft = draft
+    }
+
+    func importCourseFolder(_ draft: CourseFolderImportDraft, notePaths: Set<String>) {
+        _ = importFiles(
+            draft.rootURLs,
+            selectsFirstImportedItem: false,
+            markdownNotePaths: notePaths,
+            reclassifiesExistingMarkdown: true
+        )
+    }
+
+    @discardableResult
+    func retryWorkspaceSave() -> Bool {
+        save()
+    }
+
+    func importCourseMaterialsFromPanel() {
+        presentImportPanel(
+            linkToActiveNote: false,
+            selectsFirstImportedItem: false,
+            reclassifiesExistingMarkdown: true,
+            panelTitle: ui("选择课程资料或文件夹", "Choose course materials or a folder")
+        )
+    }
+
+    func importCourseNotesFromPanel() {
+        presentImportPanel(
+            linkToActiveNote: false,
+            selectsFirstImportedItem: false,
+            markdownAsNotes: true,
+            markdownOnly: true,
+            reclassifiesExistingMarkdown: true,
+            panelTitle: ui("选择 Markdown 笔记或文件夹", "Choose Markdown notes or a folder")
+        )
+    }
+
+    func importAndLinkSourcesFromPanel() {
+        presentImportPanel(linkToActiveNote: true)
+    }
+
+    private func presentImportPanel(
+        linkToActiveNote: Bool,
+        selectsFirstImportedItem: Bool = true,
+        markdownAsNotes: Bool = false,
+        markdownOnly: Bool = false,
+        reclassifiesExistingMarkdown: Bool = false,
+        panelTitle: String? = nil
+    ) {
+        let panel = NSOpenPanel()
+        panel.title = panelTitle ?? ui("选择学习资料或课程文件夹", "Choose study materials or a course folder")
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = markdownOnly
+            ? [UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText]
+            : [.pdf, .html, .plainText, UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText]
+
+        guard panel.runModal() == .OK else { return }
+        let targetNoteID = linkToActiveNote ? activeNotebookItemID : nil
+        let selectedItems = importFiles(
+            panel.urls,
+            selectsFirstImportedItem: selectsFirstImportedItem,
+            markdownAsNotes: markdownAsNotes,
+            markdownOnly: markdownOnly,
+            reclassifiesExistingMarkdown: reclassifiesExistingMarkdown
+        )
+        if let targetNoteID, targetNoteID == activeNotebookItemID {
+            setLinkedSourceIDsForActiveNote(
+                Set(linkedSourceIDsForActiveNote).union(selectedItems.map(\.id))
+            )
+        }
+    }
+
+    @discardableResult
+    func importFiles(
+        _ urls: [URL],
+        selectsFirstImportedItem: Bool = true,
+        markdownAsNotes: Bool = false,
+        markdownOnly: Bool = false,
+        markdownNotePaths: Set<String>? = nil,
+        reclassifiesExistingMarkdown: Bool = false
+    ) -> [StudyItem] {
+        let supportedURLs = urls
+            .flatMap(Self.supportedCourseFiles(at:))
+            .reduce(into: [URL]()) { result, url in
+                if !result.contains(where: { $0.standardizedFileURL == url.standardizedFileURL }) {
+                    result.append(url)
+                }
+            }
+        let expandedURLs = markdownOnly
+            ? supportedURLs.filter(Self.isMarkdownFile)
+            : supportedURLs
+        let isNotebookNote: (URL) -> Bool = { url in
+            guard Self.isMarkdownFile(url) else { return false }
+            return markdownNotePaths?.contains(url.path) ?? markdownAsNotes
+        }
+
+        if reclassifiesExistingMarkdown || markdownNotePaths != nil {
+            persistCurrentNote()
+        }
+        var roleChanged = false
+        var importedIDs: [String] = []
+        var didChangeItems = false
+        for url in expandedURLs {
+            let identity = importedFileIdentityResolver(url)
+            let bookmarkData = identity.flatMap { _ in Self.makeImportedFileBookmark(for: url) }
+            if let identity {
+                for index in importedItems.indices
+                where importedItems[index].urlPath == url.path
+                    && importedItems[index].importedFileIdentity != nil
+                    && importedItems[index].importedFileIdentity != identity {
+                    importedItems[index].importedFileLastKnownPath = url.path
+                    importedItems[index].urlPath = nil
+                    didChangeItems = true
+                }
+            }
+            let identityMatchingIndex = importedItems.firstIndex { item in
+                if let identity {
+                    return item.importedFileIdentity == identity
+                }
+                return item.importedFileIdentity == nil && item.urlPath == url.path
+            }
+            let legacyPathMatchingIndex = identity == nil ? nil : importedItems.firstIndex { item in
+                item.id.hasPrefix("file:")
+                    && item.importedFileIdentity == nil
+                    && (item.urlPath == url.path || item.importedFileLastKnownPath == url.path)
+            }
+            let matchingIndex = identityMatchingIndex ?? legacyPathMatchingIndex
+
+            if let matchingIndex {
+                if identity != nil, importedItems[matchingIndex].id.hasPrefix("file:") {
+                    let oldID = importedItems[matchingIndex].id
+                    let newID = Self.makeImportedItemID()
+                    importedItems[matchingIndex].id = newID
+                    replaceItemIDEverywhere(oldID, with: newID)
+                    didChangeItems = true
+                }
+                importedIDs.append(importedItems[matchingIndex].id)
+                let nextTitle = url.deletingPathExtension().lastPathComponent
+                let nextSubtitle = url.lastPathComponent
+                let nextKind = StudyItemKind.detect(from: url)
+                let nextRole = isNotebookNote(url)
+                if importedItems[matchingIndex].isNotebookNote != nextRole {
+                    roleChanged = true
+                }
+                if importedItems[matchingIndex].urlPath != url.path
+                    || importedItems[matchingIndex].title != nextTitle
+                    || importedItems[matchingIndex].subtitle != nextSubtitle
+                    || importedItems[matchingIndex].kind != nextKind
+                    || importedItems[matchingIndex].isNotebookNote != nextRole
+                    || importedItems[matchingIndex].importedFileIdentity != identity
+                    || importedItems[matchingIndex].importedFileBookmarkData != bookmarkData
+                    || importedItems[matchingIndex].importedFileLastKnownPath != url.path {
+                    importedItems[matchingIndex].urlPath = url.path
+                    importedItems[matchingIndex].title = nextTitle
+                    importedItems[matchingIndex].subtitle = nextSubtitle
+                    importedItems[matchingIndex].kind = nextKind
+                    importedItems[matchingIndex].isNotebookNote = nextRole
+                    importedItems[matchingIndex].importedFileIdentity = identity
+                    importedItems[matchingIndex].importedFileBookmarkData = bookmarkData
+                        ?? importedItems[matchingIndex].importedFileBookmarkData
+                    importedItems[matchingIndex].importedFileLastKnownPath = url.path
+                    didChangeItems = true
+                }
+                continue
             }
 
-        importedItems.append(contentsOf: newItems)
-        if let first = newItems.first {
+            let item = StudyItem(
+                id: Self.makeImportedItemID(),
+                title: url.deletingPathExtension().lastPathComponent,
+                subtitle: url.lastPathComponent,
+                kind: StudyItemKind.detect(from: url),
+                urlPath: url.path,
+                importedFileIdentity: identity,
+                importedFileBookmarkData: bookmarkData,
+                importedFileLastKnownPath: url.path,
+                isSample: false,
+                isNotebookNote: isNotebookNote(url)
+            )
+            importedItems.append(item)
+            importedIDs.append(item.id)
+            didChangeItems = true
+        }
+
+        if roleChanged {
+            if let selectedItemID,
+               importedItems.first(where: { $0.id == selectedItemID })?.isNotebookNote == true {
+                self.selectedItemID = courseMaterials.first?.id ?? sampleItems.first?.id
+                readerLocationTitle = selectedMaterialItem.map(displayTitle)
+                restoreCurrentStudyLocation()
+            }
+            if let activeNotebookItemID,
+               importedItems.first(where: { $0.id == activeNotebookItemID })?.isNotebookNote == false {
+                self.activeNotebookItemID = courseNotebookItems.first?.id
+                noteText = noteText(for: activeNoteItem)
+            }
+            _ = sanitizeNoteSourceLinks()
+            invalidateAgentContext()
+        }
+        courseDocumentSearchIndex.synchronize(allItems)
+        let importedIDSet = Set(importedIDs)
+        let selectedItems = importedItems.filter { importedIDSet.contains($0.id) && !$0.isNotebookNote }
+        if selectsFirstImportedItem, let first = selectedItems.first {
             select(itemID: first.id)
-        } else {
+        } else if didChangeItems {
             save()
         }
+        return selectedItems
+    }
+
+    nonisolated private static func resolveImportedFileIdentity(at url: URL) -> ImportedFileIdentity? {
+        var fileStat = Darwin.stat()
+        guard url.withUnsafeFileSystemRepresentation({ path in
+            guard let path else { return false }
+            return Darwin.lstat(path, &fileStat) == 0
+        }) else {
+            return nil
+        }
+        return ImportedFileIdentity(
+            volumeID: UInt64(fileStat.st_dev),
+            fileID: UInt64(fileStat.st_ino),
+            birthTimeSeconds: Int64(fileStat.st_birthtimespec.tv_sec),
+            birthTimeNanoseconds: Int64(fileStat.st_birthtimespec.tv_nsec)
+        )
+    }
+
+    nonisolated private static func makeImportedFileBookmark(for url: URL) -> Data? {
+        let resourceKeys: Set<URLResourceKey> = [
+            .fileResourceIdentifierKey,
+            .volumeIdentifierKey,
+            .creationDateKey,
+        ]
+        if let scopedBookmark = try? url.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: resourceKeys,
+            relativeTo: nil
+        ) {
+            return scopedBookmark
+        }
+        return try? url.bookmarkData(
+            options: [],
+            includingResourceValuesForKeys: resourceKeys,
+            relativeTo: nil
+        )
+    }
+
+    nonisolated private static func resolveImportedFileBookmark(_ data: Data) -> ResolvedImportedFileBookmark? {
+        var isStale = false
+        if let scopedURL = try? URL(
+            resolvingBookmarkData: data,
+            options: [.withSecurityScope, .withoutUI],
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        ) {
+            return ResolvedImportedFileBookmark(url: scopedURL.standardizedFileURL, isStale: isStale)
+        }
+        isStale = false
+        guard let plainURL = try? URL(
+            resolvingBookmarkData: data,
+            options: [.withoutUI],
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        ) else { return nil }
+        return ResolvedImportedFileBookmark(url: plainURL.standardizedFileURL, isStale: isStale)
+    }
+
+    nonisolated private static func makeImportedItemID() -> String {
+        "imported:\(UUID().uuidString.lowercased())"
+    }
+
+    private func makeCourseFolderImportDraft(rootURLs: [URL]) -> CourseFolderImportDraft {
+        let supportedFiles = rootURLs
+            .flatMap(Self.supportedCourseFiles(at:))
+            .reduce(into: [URL]()) { result, url in
+                if !result.contains(where: { $0.standardizedFileURL == url.standardizedFileURL }) {
+                    result.append(url)
+                }
+            }
+        let markdownFiles = supportedFiles.filter(Self.isMarkdownFile)
+        return CourseFolderImportDraft(
+            rootURLs: rootURLs,
+            markdownFiles: markdownFiles,
+            notePaths: Set(markdownFiles.filter(Self.defaultMarkdownIsNotebookNote).map(\.path)),
+            automaticMaterialCount: supportedFiles.count - markdownFiles.count
+        )
+    }
+
+    private static func supportedCourseFiles(at url: URL) -> [URL] {
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return [] }
+        if !isDirectory.boolValue {
+            return isSupportedCourseFile(url) ? [url] : []
+        }
+
+        guard let enumerator = FileManager.default.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.isRegularFileKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else { return [] }
+        var files: [URL] = []
+        for case let fileURL as URL in enumerator {
+            guard isSupportedCourseFile(fileURL),
+                  (try? fileURL.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
+            files.append(fileURL)
+            if files.count == 500 { break }
+        }
+        return files.sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
+    }
+
+    private static func isSupportedCourseFile(_ url: URL) -> Bool {
+        ["pdf", "html", "htm", "md", "markdown", "txt", "text"]
+            .contains(url.pathExtension.lowercased())
+    }
+
+    private static func isMarkdownFile(_ url: URL) -> Bool {
+        ["md", "markdown"].contains(url.pathExtension.lowercased())
+    }
+
+    private static func defaultMarkdownIsNotebookNote(_ url: URL) -> Bool {
+        let description = (url.deletingPathExtension().lastPathComponent + " "
+            + url.deletingLastPathComponent().pathComponents.suffix(3).joined(separator: " ")).lowercased()
+        return ["笔记", "note", "notes", "notebook"].contains { description.contains($0) }
     }
 
     func promptRenameNotebookNote(itemID: String) {
@@ -1463,46 +2639,354 @@ final class WorkspaceStore: ObservableObject {
             noteFileError = ui("笔记名不能为空。", "Note name cannot be empty.")
             return
         }
-        guard let index = importedItems.firstIndex(where: { $0.id == itemID && $0.isNotebookNote }),
-              let oldURL = importedItems[index].url else { return }
+        guard let initialIndex = importedItems.firstIndex(where: { $0.id == itemID && $0.isNotebookNote }) else { return }
+        let oldTitle = displayTitle(for: importedItems[initialIndex])
 
+        if let stagedNoteDraft, stagedNoteDraft.itemID == itemID {
+            self.stagedNoteDraft = nil
+            updateNote(stagedNoteDraft.value, for: itemID)
+        }
+        flushPendingNotePersistence(for: itemID)
         persistCurrentNote()
+        if pendingNoteWritesByItemID[itemID] != nil {
+            noteFileError = ui(
+                "这份笔记还有待写草稿或外部冲突；两份内容都已保留，处理完成前不会重命名文件。",
+                "This note still has a pending draft or external conflict. Both versions were kept, and the file will not be renamed until it is resolved."
+            )
+            save()
+            return
+        }
+        guard let index = importedItems.firstIndex(where: { $0.id == itemID && $0.isNotebookNote }) else { return }
+        let resolution = resolveTrackedImportedFile(at: index)
+        guard let oldURL = resolution.url else {
+            noteFileError = ui(
+                "找不到这份笔记的当前位置，最新编辑已保留，未执行重命名。",
+                "The current note location could not be found. The latest edit was retained and the note was not renamed."
+            )
+            save()
+            return
+        }
         let oldItem = importedItems[index]
         let oldID = oldItem.id
-        let oldTitle = displayTitle(for: oldItem)
+        let wasActiveNotebook = activeNotebookItemID == oldID
         let newURL = renamedNotebookURL(in: oldURL.deletingLastPathComponent(), title: title, currentURL: oldURL)
+        let newTitle = newURL.deletingPathExtension().lastPathComponent
+        let sourceMarkdown: String
+        do {
+            sourceMarkdown = wasActiveNotebook ? noteText : try notebookMarkdownReader(oldURL)
+        } catch {
+            noteFileError = ui(
+                "无法重命名笔记：无法读取原 Markdown，文件和课程关系均未改动。",
+                "Could not rename the note because the original Markdown could not be read. The file and course relationships were not changed."
+            )
+            save()
+            return
+        }
+        let retitledMarkdown = retitledMarkdown(sourceMarkdown, from: oldTitle, to: newTitle)
+        guard let originalContentDigest = noteBackingContentDigestsByItemID[oldID]
+                ?? Self.noteContentDigest(at: oldURL) else {
+            noteFileError = ui(
+                "无法重命名笔记：无法确认原 Markdown 内容，文件和课程关系均未改动。",
+                "Could not rename the note because the original Markdown contents could not be verified. The file and course relationships were not changed."
+            )
+            save()
+            return
+        }
+        let sourceMarkdownDigest = Self.noteContentDigest(Data(sourceMarkdown.utf8))
+        let willRewriteMarkdown = retitledMarkdown != sourceMarkdown
+        let expectedOutputDigest = willRewriteMarkdown
+            ? Self.noteContentDigest(Data(retitledMarkdown.utf8))
+            : originalContentDigest
+        let originalIdentity = oldItem.importedFileIdentity
+            ?? importedFileIdentityResolver(oldURL)
+        let replacementItemID = oldID.hasPrefix("file:") && originalIdentity != nil
+            ? Self.makeImportedItemID()
+            : (oldID.hasPrefix("file:") ? "file:\(newURL.path)" : oldID)
+        var journalOldItem = oldItem
+        journalOldItem.importedFileIdentity = originalIdentity
+        let renameJournal = PendingNotebookRenameJournal(
+            oldItem: journalOldItem,
+            replacementItemID: replacementItemID,
+            oldPath: oldURL.path,
+            newPath: newURL.path,
+            newTitle: newTitle,
+            sourceMarkdown: sourceMarkdown,
+            retitledMarkdown: retitledMarkdown,
+            originalContentDigest: originalContentDigest,
+            retitledContentDigest: expectedOutputDigest
+        )
+        guard save() else {
+            noteFileError = ui(
+                "无法重命名笔记：当前课程状态尚未安全保存，文件和关系均未改动。",
+                "Could not rename the note because the current course state was not safely saved. The file and relationships were not changed."
+            )
+            return
+        }
+        removePendingNotebookRenameJournal()
+        do {
+            try writePendingNotebookRenameJournal(renameJournal)
+        } catch {
+            noteFileError = ui(
+                "无法重命名笔记：无法建立崩溃恢复记录，文件和课程关系均未改动。",
+                "Could not rename the note because a crash-recovery record could not be created. The file and course relationships were not changed."
+            )
+            save()
+            return
+        }
+
+        var movedFile = false
+        var verifiedApplicationOutput = false
 
         do {
             if oldURL.path != newURL.path {
-                try FileManager.default.moveItem(at: oldURL, to: newURL)
+                try notebookFileMover(oldURL, newURL)
+                movedFile = true
             }
-            let newID = "file:\(newURL.path)"
-            importedItems[index].id = newID
-            importedItems[index].title = newURL.deletingPathExtension().lastPathComponent
-            importedItems[index].subtitle = newURL.lastPathComponent
-            importedItems[index].urlPath = newURL.path
-            if activeNotebookItemID == oldID {
-                activeNotebookItemID = newID
-                noteText = retitledMarkdown(noteText, from: oldTitle, to: importedItems[index].title)
-                persistCurrentNote()
-            } else if let markdown = try? String(contentsOf: newURL, encoding: .utf8) {
-                let updated = retitledMarkdown(markdown, from: oldTitle, to: importedItems[index].title)
-                if updated != markdown {
-                    try updated.write(to: newURL, atomically: true, encoding: .utf8)
+            let movedIdentity = importedFileIdentityResolver(newURL)
+            let identityChanged = !oldID.hasPrefix("file:")
+                && (originalIdentity == nil || movedIdentity != originalIdentity)
+            let movedContentDigest = Self.noteContentDigest(at: newURL)
+            let contentChanged = movedContentDigest != originalContentDigest
+            if identityChanged || contentChanged {
+                throw NSError(
+                    domain: "WeiBei.ImportedFileIdentity",
+                    code: 1,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: ui(
+                            "文件身份或内容在重命名期间发生变化，操作已中止。",
+                            "The file identity or content changed during rename, so the operation was stopped."
+                        ),
+                    ]
+                )
+            }
+
+            var coordinatedIdentity: ImportedFileIdentity?
+            var coordinatedDigest: String?
+            var coordinationError: NSError?
+            var operationError: Error?
+            let coordinator = NSFileCoordinator(filePresenter: nil)
+            coordinator.coordinate(
+                writingItemAt: newURL,
+                options: .forReplacing,
+                error: &coordinationError
+            ) { coordinatedURL in
+                do {
+                    guard importedFileIdentityResolver(coordinatedURL) == movedIdentity,
+                          Self.noteContentDigest(at: coordinatedURL) == originalContentDigest else {
+                        throw NSError(
+                            domain: "WeiBei.ImportedFileIdentity",
+                            code: 2,
+                            userInfo: [
+                                NSLocalizedDescriptionKey: ui(
+                                    "写入前检测到文件被外部修改，操作已中止。",
+                                    "The file changed externally before writing, so the operation was stopped."
+                                ),
+                            ]
+                        )
+                    }
+                    if willRewriteMarkdown {
+                        try notebookMarkdownWriter(retitledMarkdown, coordinatedURL)
+                    }
+                    let identityBeforeRead = importedFileIdentityResolver(coordinatedURL)
+                    let outputData = try Data(contentsOf: coordinatedURL)
+                    let identityAfterRead = importedFileIdentityResolver(coordinatedURL)
+                    let outputDigest = Self.noteContentDigest(outputData)
+                    guard identityBeforeRead == identityAfterRead,
+                          outputDigest == expectedOutputDigest else {
+                        throw NSError(
+                            domain: "WeiBei.ImportedFileIdentity",
+                            code: 3,
+                            userInfo: [
+                                NSLocalizedDescriptionKey: ui(
+                                    "写入后文件内容或身份不一致，操作已中止。",
+                                    "The file contents or identity did not match after writing, so the operation was stopped."
+                                ),
+                            ]
+                        )
+                    }
+                    if !oldID.hasPrefix("file:"), identityAfterRead == nil {
+                        throw NSError(
+                            domain: "WeiBei.ImportedFileIdentity",
+                            code: 4,
+                            userInfo: [
+                                NSLocalizedDescriptionKey: ui(
+                                    "写入标题后无法确认文件身份，操作已中止。",
+                                    "The file identity could not be confirmed after writing the title, so the operation was stopped."
+                                ),
+                            ]
+                        )
+                    }
+                    coordinatedIdentity = identityAfterRead
+                    coordinatedDigest = outputDigest
+                    verifiedApplicationOutput = true
+                } catch {
+                    operationError = error
                 }
             }
-            if let cached = notesByItemID.removeValue(forKey: oldID) {
-                notesByItemID[newID] = retitledMarkdown(cached, from: oldTitle, to: importedItems[index].title)
+            if let coordinationError { throw coordinationError }
+            if let operationError { throw operationError }
+            guard let finalContentDigest = coordinatedDigest,
+                  importedFileIdentityResolver(newURL) == coordinatedIdentity,
+                  Self.noteContentDigest(at: newURL) == finalContentDigest else {
+                throw NSError(
+                    domain: "WeiBei.ImportedFileIdentity",
+                    code: 5,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: ui(
+                            "提交前检测到文件再次变化，操作已中止。",
+                            "The file changed again before the rename could be committed, so the operation was stopped."
+                        ),
+                    ]
+                )
             }
-            if selectedItemID == oldID {
-                selectedItemID = newID
+            var renamedItem = oldItem
+            renamedItem.id = replacementItemID
+            renamedItem.title = newTitle
+            renamedItem.subtitle = newURL.lastPathComponent
+            renamedItem.urlPath = newURL.path
+            renamedItem.importedFileIdentity = coordinatedIdentity ?? originalIdentity
+            renamedItem.importedFileBookmarkData = Self.makeImportedFileBookmark(for: newURL)
+                ?? oldItem.importedFileBookmarkData
+            renamedItem.importedFileLastKnownPath = newURL.path
+            importedItems[index] = renamedItem
+            replaceItemIDEverywhere(oldID, with: replacementItemID)
+            if wasActiveNotebook {
+                noteText = retitledMarkdown
             }
-            replaceNavigationItemID(oldID, with: newID)
-            save()
+            if let cached = notesByItemID[replacementItemID] {
+                notesByItemID[replacementItemID] = self.retitledMarkdown(cached, from: oldTitle, to: newTitle)
+            }
+            noteBackingContentDigestsByItemID[replacementItemID] = finalContentDigest
+            courseDocumentSearchIndex.synchronize(allItems)
+            guard save() else {
+                notebookRenameDraft = NotebookRenameDraft(itemID: replacementItemID, title: newTitle)
+                noteFileError = ui(
+                    "文件已重命名，但课程状态尚未写入磁盘；恢复记录已保留，重启后会自动接回。",
+                    "The file was renamed, but the course state has not been saved to disk. A recovery record was retained so it can be reconnected after restart."
+                )
+                return
+            }
+            removePendingNotebookRenameJournal()
             notebookRenameDraft = nil
+            noteFileError = nil
             showTransientNoteStatus(ui("已重命名为：\(newURL.lastPathComponent)", "Renamed to: \(newURL.lastPathComponent)"))
         } catch {
-            noteFileError = ui("无法重命名笔记：\(error.localizedDescription)", "Could not rename note: \(error.localizedDescription)")
+            var restoredOldPath = oldURL.path == newURL.path
+            if movedFile {
+                do {
+                    try notebookFileMover(newURL, oldURL)
+                    restoredOldPath = true
+                } catch {
+                    restoredOldPath = false
+                }
+            } else if oldURL.path != newURL.path {
+                let currentOldIdentity = importedFileIdentityResolver(oldURL)
+                restoredOldPath = Self.noteContentDigest(at: oldURL) == originalContentDigest
+                    && (originalIdentity == nil || currentOldIdentity == originalIdentity)
+            }
+
+            if restoredOldPath {
+                var restoredIdentity = importedFileIdentityResolver(oldURL)
+                var restoredDigest = Self.noteContentDigest(at: oldURL)
+                let recoveredApplicationOutput = willRewriteMarkdown
+                    && verifiedApplicationOutput
+                    && restoredDigest == expectedOutputDigest
+                if recoveredApplicationOutput, willRewriteMarkdown {
+                    do {
+                        try notebookMarkdownWriter(sourceMarkdown, oldURL)
+                        restoredIdentity = importedFileIdentityResolver(oldURL)
+                        restoredDigest = Self.noteContentDigest(at: oldURL)
+                    } catch {
+                        restoredIdentity = importedFileIdentityResolver(oldURL)
+                        restoredDigest = Self.noteContentDigest(at: oldURL)
+                    }
+                }
+                let restoredOriginalGeneration = restoredDigest == originalContentDigest
+                    && (originalIdentity == nil || restoredIdentity == originalIdentity)
+                let restoredKnownApplicationCopy = recoveredApplicationOutput
+                    && restoredDigest == sourceMarkdownDigest
+                let restoredFileIsTrusted = restoredOriginalGeneration || restoredKnownApplicationCopy
+                if restoredFileIsTrusted {
+                    importedItems[index] = oldItem
+                    importedItems[index].urlPath = oldURL.path
+                    importedItems[index].importedFileLastKnownPath = oldURL.path
+                    importedItems[index].importedFileIdentity = restoredIdentity
+                    importedItems[index].importedFileBookmarkData = Self.makeImportedFileBookmark(for: oldURL)
+                        ?? oldItem.importedFileBookmarkData
+                    noteBackingContentDigestsByItemID[oldID] = restoredDigest
+                } else {
+                    importedItems[index] = oldItem
+                    importedItems[index].urlPath = nil
+                    importedItems[index].importedFileLastKnownPath = oldURL.path
+                    notesByItemID[oldID] = sourceMarkdown
+                    pendingNoteWritesByItemID[oldID] = PendingNoteWriteState(
+                        baselineContentDigest: originalContentDigest
+                    )
+                    if wasActiveNotebook {
+                        noteText = sourceMarkdown
+                    }
+                }
+            } else if FileManager.default.fileExists(atPath: newURL.path) {
+                let currentIdentity = importedFileIdentityResolver(newURL)
+                let currentDigest = Self.noteContentDigest(at: newURL)
+                let currentFileIsMovedOriginal = currentDigest == originalContentDigest
+                    && (originalIdentity == nil || currentIdentity == originalIdentity)
+                let currentFileIsKnownApplicationOutput = willRewriteMarkdown
+                    && verifiedApplicationOutput
+                    && currentDigest == expectedOutputDigest
+                guard currentFileIsMovedOriginal || currentFileIsKnownApplicationOutput else {
+                    importedItems[index] = oldItem
+                    importedItems[index].urlPath = nil
+                    importedItems[index].importedFileLastKnownPath = oldURL.path
+                    notesByItemID[oldID] = sourceMarkdown
+                    pendingNoteWritesByItemID[oldID] = PendingNoteWriteState(
+                        baselineContentDigest: originalContentDigest
+                    )
+                    if wasActiveNotebook {
+                        noteText = sourceMarkdown
+                    }
+                    courseDocumentSearchIndex.synchronize(allItems)
+                    let savedRecovery = save()
+                    if savedRecovery { removePendingNotebookRenameJournal() }
+                    noteFileError = ui(
+                        "无法重命名笔记：\(error.localizedDescription) 原关系和最新正文已保留，请重新定位文件。",
+                        "Could not rename the note: \(error.localizedDescription) The original relationships and latest text were retained; relocate the file to continue."
+                    )
+                    return
+                }
+                importedItems[index].title = newTitle
+                importedItems[index].subtitle = newURL.lastPathComponent
+                importedItems[index].urlPath = newURL.path
+                importedItems[index].importedFileIdentity = currentIdentity
+                importedItems[index].importedFileBookmarkData = Self.makeImportedFileBookmark(for: newURL)
+                    ?? oldItem.importedFileBookmarkData
+                importedItems[index].importedFileLastKnownPath = newURL.path
+                noteBackingContentDigestsByItemID[oldID] = currentDigest
+                if currentFileIsKnownApplicationOutput, wasActiveNotebook {
+                    noteText = retitledMarkdown
+                }
+            } else {
+                importedItems[index] = oldItem
+                importedItems[index].urlPath = nil
+                importedItems[index].importedFileLastKnownPath = oldURL.path
+                notesByItemID[oldID] = sourceMarkdown
+                pendingNoteWritesByItemID[oldID] = PendingNoteWriteState(
+                    baselineContentDigest: originalContentDigest
+                )
+                if wasActiveNotebook {
+                    noteText = sourceMarkdown
+                }
+            }
+            courseDocumentSearchIndex.synchronize(allItems)
+            let recovery = restoredOldPath
+                ? ui("文件已恢复到原路径。", "The file was restored to its original path.")
+                : ui("原关系和最新正文已保留，请重新定位文件。", "The original relationships and latest text were retained; relocate the file to continue.")
+            noteFileError = ui(
+                "无法重命名笔记：\(error.localizedDescription) \(recovery)",
+                "Could not rename the note: \(error.localizedDescription) \(recovery)"
+            )
+            let savedRecovery = save()
+            if savedRecovery { removePendingNotebookRenameJournal() }
         }
     }
 
@@ -1513,9 +2997,16 @@ final class WorkspaceStore: ObservableObject {
         let notesDirectory = appOwnedFilesDirectory().appendingPathComponent("Notes", isDirectory: true)
         let fileName = "\(safeFileStem(title)).md"
         let url = notesDirectory.appendingPathComponent(fileName)
+        let existingIdentity = importedFileIdentityResolver(url)
 
-        if let index = importedItems.firstIndex(where: { $0.urlPath == url.path }) {
+        if let index = importedItems.firstIndex(where: { item in
+            if let existingIdentity {
+                return item.importedFileIdentity == existingIdentity
+            }
+            return item.importedFileIdentity == nil && item.urlPath == url.path
+        }) {
             importedItems[index].isNotebookNote = true
+            removeLinksWhereSourceItemID(importedItems[index].id)
             select(itemID: importedItems[index].id)
             showTransientNoteStatus(ui("已打开双链笔记：\(importedItems[index].subtitle)", "Opened wiki note: \(importedItems[index].subtitle)"))
             save()
@@ -1527,19 +3018,33 @@ final class WorkspaceStore: ObservableObject {
             if !FileManager.default.fileExists(atPath: url.path) {
                 try "# \(title)\n\n".write(to: url, atomically: true, encoding: .utf8)
             }
+            let identity = importedFileIdentityResolver(url)
+            if let identity {
+                for index in importedItems.indices
+                where importedItems[index].urlPath == url.path
+                    && importedItems[index].importedFileIdentity != nil
+                    && importedItems[index].importedFileIdentity != identity {
+                    importedItems[index].importedFileLastKnownPath = url.path
+                    importedItems[index].urlPath = nil
+                }
+            }
 
             let item = StudyItem(
-                id: "file:\(url.path)",
+                id: Self.makeImportedItemID(),
                 title: title,
                 subtitle: url.lastPathComponent,
                 kind: .markdown,
                 urlPath: url.path,
+                importedFileIdentity: identity,
+                importedFileBookmarkData: identity.flatMap { _ in Self.makeImportedFileBookmark(for: url) },
+                importedFileLastKnownPath: url.path,
                 isSample: false,
                 isNotebookNote: true
             )
             if !importedItems.contains(where: { $0.urlPath == url.path }) {
                 importedItems.append(item)
             }
+            courseDocumentSearchIndex.synchronize(allItems)
             select(itemID: item.id)
             showTransientNoteStatus(ui("已创建双链笔记：\(url.lastPathComponent)", "Created wiki note: \(url.lastPathComponent)"))
         } catch {
@@ -1547,7 +3052,8 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func createNotebookNote(seed: NotebookNoteSeed, title rawTitle: String? = nil) {
+    @discardableResult
+    private func createNotebookNote(seed: NotebookNoteSeed, title rawTitle: String? = nil) -> StudyItem? {
         let sourceItem: StudyItem?
         let defaultTitle = suggestedNotebookTitle(for: seed)
         switch seed {
@@ -1559,7 +3065,7 @@ final class WorkspaceStore: ObservableObject {
         let title = (rawTitle ?? defaultTitle).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else {
             noteFileError = ui("笔记名不能为空。", "Note name cannot be empty.")
-            return
+            return nil
         }
 
         persistCurrentNote()
@@ -1568,8 +3074,8 @@ final class WorkspaceStore: ObservableObject {
         do {
             try FileManager.default.createDirectory(at: notesDirectory, withIntermediateDirectories: true)
             let url = nextNotebookNoteURL(in: notesDirectory, title: title)
-            let item = StudyItem(
-                id: "file:\(url.path)",
+            var item = StudyItem(
+                id: Self.makeImportedItemID(),
                 title: url.deletingPathExtension().lastPathComponent,
                 subtitle: url.lastPathComponent,
                 kind: .markdown,
@@ -1579,7 +3085,18 @@ final class WorkspaceStore: ObservableObject {
             )
             let markdown = defaultNotebookNote(title: item.title, sourceItem: sourceItem)
             try markdown.write(to: url, atomically: true, encoding: .utf8)
+            noteBackingContentDigestsByItemID[item.id] = Self.noteContentDigest(Data(markdown.utf8))
+            item.importedFileIdentity = importedFileIdentityResolver(url)
+            item.importedFileBookmarkData = item.importedFileIdentity.flatMap { _ in
+                Self.makeImportedFileBookmark(for: url)
+            }
+            item.importedFileLastKnownPath = url.path
             importedItems.append(item)
+            courseDocumentSearchIndex.synchronize(allItems)
+            if let sourceItem {
+                addNoteSourceLink(noteItemID: item.id, sourceItemID: sourceItem.id)
+            }
+            invalidateAgentContext()
             activeNotebookItemID = item.id
             noteText = markdown
             revealRichWritingSurface()
@@ -1589,14 +3106,17 @@ final class WorkspaceStore: ObservableObject {
                 ? ui("已新建空白笔记：\(url.lastPathComponent)", "Created blank note: \(url.lastPathComponent)")
                 : ui("已为当前资料新建笔记：\(url.lastPathComponent)", "Created note from current material: \(url.lastPathComponent)")
             showTransientNoteStatus(status)
+            return item
         } catch {
             noteFileError = ui("无法创建笔记：\(error.localizedDescription)", "Could not create note: \(error.localizedDescription)")
+            return nil
         }
     }
 
     @discardableResult
     private func openExistingNotebookNote(for material: StudyItem) -> Bool {
         guard let item = existingNotebookNote(for: material) else { return false }
+        invalidateAgentContext()
         activeNotebookItemID = item.id
         noteText = noteText(for: item)
         revealRichWritingSurface()
@@ -1630,8 +3150,10 @@ final class WorkspaceStore: ObservableObject {
     func useSelectedMarkdownAsNotebookNote() {
         guard let selectedItemID,
               let index = importedItems.firstIndex(where: { $0.id == selectedItemID && $0.canBecomeNotebookNote }) else { return }
+        invalidateAgentContext()
         persistCurrentNote()
         importedItems[index].isNotebookNote = true
+        removeLinksWhereSourceItemID(importedItems[index].id)
         activeNotebookItemID = importedItems[index].id
         if selectedItemID == importedItems[index].id {
             self.selectedItemID = sampleItems.first?.id
@@ -1654,7 +3176,7 @@ final class WorkspaceStore: ObservableObject {
             reference = quotedReferenceBlock(text: selection, sourceTitle: selectionContext.ownerTitle)
         } else {
             guard selectedMaterialItem != nil || activeNoteItem?.isNotebookNote == true else { return }
-            reference = ui("来源：\(currentReferenceTitle)", "Source: \(currentReferenceTitle)")
+            reference = ui("来源：\(currentSourceReferenceTitle)", "Source: \(currentSourceReferenceTitle)")
         }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(reference, forType: .string)
@@ -1713,6 +3235,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
 
+        invalidateAgentContext()
         clearGeneratedQuietInsight()
         let nextSelection = SelectionContext(
             text: boundedText,
@@ -1758,6 +3281,7 @@ final class WorkspaceStore: ObservableObject {
         // Instant remove — animation here made the chip absorb the first click while hover/popover settled.
         cancelPendingSelectionAttachment()
         let removed = selectionAttachments.first(where: { $0.id == id })
+        if removed != nil { invalidateAgentContext() }
         selectionAttachments.removeAll { $0.id == id }
         if selectionContext?.id == id {
                 clearUnpinnedFloatingSelection(keepContext: false)
@@ -1769,6 +3293,7 @@ final class WorkspaceStore: ObservableObject {
     func clearSelectionAttachments() {
         // Instant clear so one click always wins over hover-popover dismissal races.
         cancelPendingSelectionAttachment()
+        if !selectionAttachments.isEmpty { invalidateAgentContext() }
         selectionAttachments = []
         lastSelectionAttachmentDate = nil
         lastSelectionUpdateDate = nil
@@ -1814,6 +3339,7 @@ final class WorkspaceStore: ObservableObject {
         }) {
             return
         }
+        invalidateAgentContext()
         selectionAttachments.removeAll {
             sameSelectionSource($0)
                 && SelectionAttachmentMerge.containsSelection(cleanedText, fragment: $0.text)
@@ -1871,7 +3397,7 @@ final class WorkspaceStore: ObservableObject {
         if source == .note || activeNoteItem?.isNotebookNote == true {
             return activeNoteItem.map(displayTitle) ?? ui("当前笔记", "Current note")
         }
-        return currentReferenceTitle
+        return currentSourceReferenceTitle
     }
 
     private static func boundedSelectionText(_ text: String) -> String {
@@ -1888,10 +3414,388 @@ final class WorkspaceStore: ObservableObject {
     private func sourceReferenceItem(from rawReference: String?) -> StudyItem? {
         let reference = SourceReferenceTitle.parse(rawReference ?? "")
         guard !reference.title.isEmpty else { return nil }
-        return allItems.first {
-            !$0.isNotebookNote
-                && ($0.title == reference.title || $0.subtitle == reference.title)
+        if let ordinal = reference.courseItemOrdinal {
+            let catalog = Array(allItems.prefix(500))
+            let index = ordinal - 1
+            guard catalog.indices.contains(index) else { return nil }
+            let item = catalog[index]
+            guard displayTitle(for: item) == reference.title
+                    || displaySubtitle(for: item) == reference.title else { return nil }
+            return item
         }
+        let matches = allItems.filter {
+            displayTitle(for: $0) == reference.title || displaySubtitle(for: $0) == reference.title
+        }
+        return matches.count == 1 ? matches[0] : nil
+    }
+
+    private func addNoteSourceLink(noteItemID: String, sourceItemID: String) {
+        guard noteItemID != sourceItemID,
+              !noteSourceLinks.contains(where: {
+                  $0.noteItemID == noteItemID && $0.sourceItemID == sourceItemID
+              }) else { return }
+        noteSourceLinks.append(NoteSourceLink(noteItemID: noteItemID, sourceItemID: sourceItemID))
+    }
+
+    private func removeLinksWhereSourceItemID(_ sourceItemID: String) {
+        let previousCount = noteSourceLinks.count
+        noteSourceLinks.removeAll { $0.sourceItemID == sourceItemID }
+        if noteSourceLinks.count != previousCount {
+            invalidateAgentContext()
+        }
+    }
+
+    private func migrateNoteSourceLinksFromMarkdown() {
+        let previousCount = noteSourceLinks.count
+        for note in allItems where note.isNotebookNote {
+            let markdown = noteMarkdownText(for: note)
+            for rawLine in markdown.components(separatedBy: .newlines) {
+                let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard line.contains("来源：") || line.localizedCaseInsensitiveContains("source:") else { continue }
+                guard let source = sourceReferenceItem(from: line), !source.isNotebookNote else { continue }
+                addNoteSourceLink(noteItemID: note.id, sourceItemID: source.id)
+            }
+        }
+        if noteSourceLinks.count != previousCount { save() }
+    }
+
+    @discardableResult
+    private func sanitizeNoteSourceLinks() -> Bool {
+        let previous = noteSourceLinks
+        let validNoteItemIDs = Set(allItems.lazy.filter(\.isNotebookNote).map(\.id))
+        let validSourceItemIDs = Set(allItems.lazy.filter { !$0.isNotebookNote }.map(\.id))
+        var relations = NoteSourceRelations(links: noteSourceLinks)
+        relations.sanitize(
+            validNoteItemIDs: validNoteItemIDs,
+            validSourceItemIDs: validSourceItemIDs
+        )
+        noteSourceLinks = relations.links
+        return noteSourceLinks != previous
+    }
+
+    @discardableResult
+    private func refreshStudyLocationReferenceTitles() -> Bool {
+        var changed = false
+        for itemID in Array(studyLocationsByItemID.keys) {
+            guard let item = allItems.first(where: { $0.id == itemID }),
+                  var location = studyLocationsByItemID[itemID] else { continue }
+            let title = sourceReferenceBaseTitle(for: item)
+            guard location.itemTitle != title else { continue }
+            location.itemTitle = title
+            studyLocationsByItemID[itemID] = location
+            changed = true
+        }
+        return changed
+    }
+
+    private func makeCourseContext(query: String) async throws -> CourseContextBuildResult {
+        let candidates = allItems.map { item in
+            let embeddedText: String?
+            if item.isNotebookNote {
+                embeddedText = noteMarkdownText(for: item)
+            } else if item.id == selectedItemID {
+                embeddedText = selectedContextText
+            } else {
+                embeddedText = nil
+            }
+            let fallbackText = item.id == "sample-md"
+                ? notesByItemID[item.id] ?? defaultNote(for: item)
+                : sampleText(for: item)
+            return CourseIndexCandidate(
+                item: item,
+                title: displayTitle(for: item),
+                subtitle: displaySubtitle(for: item),
+                embeddedText: embeddedText,
+                fallbackText: fallbackText
+            )
+        }
+        let title = ui("当前课程", "Current Course")
+        let links = noteSourceLinks
+        let currentMaterialID = selectedMaterialItem?.id
+        let currentNoteID = activeNoteItem?.isNotebookNote == true ? activeNoteItem?.id : nil
+        let searchIndex = courseDocumentSearchIndex
+        let indexingTask = Task.detached(priority: .userInitiated) {
+            let indexedByItemID = searchIndex.lookup(
+                items: candidates.map(\.item),
+                query: query
+            )
+            var sources: [CourseKnowledgeSource] = []
+            sources.reserveCapacity(candidates.count)
+            for candidate in candidates {
+                try Task.checkCancellation()
+                let indexed = indexedByItemID[candidate.item.id]
+                let sampleIndexedText = candidate.item.isSample
+                    ? DocumentTextExtractor.indexText(for: candidate.item, query: query)
+                    : nil
+                let selectedIndexedText = candidate.item.id == currentMaterialID ? indexed?.text : nil
+                let text = selectedIndexedText
+                    ?? candidate.embeddedText
+                    ?? indexed?.text
+                    ?? sampleIndexedText
+                    ?? candidate.fallbackText
+                let isTruncated = indexed?.isTruncated
+                    ?? (candidate.item.url != nil && !candidate.item.isSample)
+                sources.append(
+                    CourseKnowledgeSource(
+                        id: candidate.item.id,
+                        title: candidate.title,
+                        subtitle: candidate.subtitle,
+                        kind: candidate.item.kind.rawValue,
+                        role: candidate.item.isNotebookNote ? "note" : "material",
+                        text: text,
+                        isTruncated: isTruncated
+                    )
+                )
+            }
+            let selectedIndex = currentMaterialID.flatMap { indexedByItemID[$0] }
+            return CourseContextBuildResult(
+                context: CourseKnowledgeIndex.build(
+                    title: title,
+                    sources: sources,
+                    links: links,
+                    query: query,
+                    currentMaterialID: currentMaterialID,
+                    currentNoteID: currentNoteID
+                ),
+                selectedMaterialText: selectedIndex?.text,
+                selectedMaterialIsTruncated: selectedIndex?.isTruncated ?? false
+            )
+        }
+        return try await withTaskCancellationHandler {
+            try await indexingTask.value
+        } onCancel: {
+            indexingTask.cancel()
+        }
+    }
+
+    private func makeLearningContext() -> StudyAgentLearningContext {
+        let session = activeStudySession.map { session in
+            StudyAgentSessionSnapshot(
+                id: session.id.uuidString.lowercased(),
+                title: session.title,
+                summary: sessionContinuitySummary(for: session),
+                phase: session.flow.phase.rawValue,
+                focusItemIDs: session.focusItemIDs,
+                turnCount: session.messages.count
+            )
+        }
+        return StudyAgentLearningContext(
+            memoryRevision: learningMemoryRevision,
+            lastLocation: lastStudyLocation,
+            memories: learningMemoryEntries,
+            session: session
+        )
+    }
+
+    private func sessionContinuitySummary(for session: StudySession) -> String {
+        let recentMessageLimit = 20
+        let olderMessages = Array(session.messages.dropLast(min(session.messages.count, recentMessageLimit)))
+        let selectedOlderMessages: [AgentMessage]
+        if olderMessages.count <= 12 {
+            selectedOlderMessages = olderMessages
+        } else {
+            selectedOlderMessages = Array(olderMessages.prefix(4)) + Array(olderMessages.suffix(8))
+        }
+        let earlierTranscript = selectedOlderMessages.map { message in
+            let role = message.role == .user ? ui("用户", "User") : ui("助手", "Assistant")
+            let text = message.text
+                .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return "\(role)：\(String(text.prefix(220)))"
+        }.joined(separator: "\n")
+        let persistedSummary = session.summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parts = [
+            persistedSummary,
+            earlierTranscript.isEmpty ? "" : "\(ui("更早对话摘录", "Earlier conversation excerpts"))：\n\(earlierTranscript)",
+        ].filter { !$0.isEmpty }
+        return String(parts.joined(separator: "\n\n").prefix(2_000))
+    }
+
+    private func applyLearningUpdate(
+        _ update: StudyAgentLearningUpdate?,
+        expectedContextRevision: String,
+        expectedMemoryRevision: UInt64,
+        expectedUserQuestion: String
+    ) {
+        latestAgentLearningUpdate = nil
+        guard let update,
+              update.contextRevision == expectedContextRevision,
+              update.memoryRevision == expectedMemoryRevision,
+              learningMemoryRevision == expectedMemoryRevision else { return }
+
+        var changed = false
+        let now = Date()
+        for proposed in update.entries.prefix(12) {
+            let text = proposed.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let evidence = proposed.evidence.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty, !evidence.isEmpty else { continue }
+            if (evidence.hasPrefix("[用户：本轮]") || evidence.hasPrefix("[会话：当前]")),
+               !Self.currentTurnEvidenceMatches(evidence, question: expectedUserQuestion) {
+                continue
+            }
+            if proposed.origin == .userStatement,
+               !evidence.hasPrefix("[用户：本轮]") {
+                continue
+            }
+            let normalized = Self.normalizedMemoryText(text)
+            if let index = learningMemoryEntries.firstIndex(where: {
+                $0.kind == proposed.kind
+                    && $0.status == .active
+                    && Self.normalizedMemoryText($0.text) == normalized
+                    && (
+                        $0.origin == .userStatement
+                            || proposed.origin == .userStatement
+                            || $0.sessionID == activeStudySessionID
+                    )
+            }) {
+                if learningMemoryEntries[index].origin == .userStatement,
+                   proposed.origin != .userStatement {
+                    continue
+                }
+                learningMemoryEntries[index].text = String(text.prefix(500))
+                learningMemoryEntries[index].evidence = String(evidence.prefix(400))
+                if proposed.origin == .userStatement {
+                    learningMemoryEntries[index].origin = .userStatement
+                    learningMemoryEntries[index].sessionID = activeStudySessionID
+                }
+                learningMemoryEntries[index].updatedAt = now
+                changed = true
+            } else {
+                learningMemoryEntries.append(
+                    LearningMemoryEntry(
+                        kind: proposed.kind,
+                        text: String(text.prefix(500)),
+                        evidence: String(evidence.prefix(400)),
+                        origin: proposed.origin == .observed ? .agentInference : proposed.origin,
+                        sessionID: activeStudySessionID,
+                        createdAt: now,
+                        updatedAt: now
+                    )
+                )
+                changed = true
+            }
+        }
+
+        if let activeStudySessionID,
+           let index = studySessions.firstIndex(where: { $0.id == activeStudySessionID }) {
+            if let summary = update.sessionSummary?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !summary.isEmpty {
+                studySessions[index].summary = String(summary.prefix(2_000))
+                changed = true
+            }
+            if !studySessions[index].flow.pinnedByUser,
+               let phase = update.suggestedPhase {
+                studySessions[index].flow.phase = phase
+                changed = true
+            }
+            let next = update.suggestedNext
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .prefix(3)
+                .map { String($0.prefix(300)) }
+            if !next.isEmpty {
+                studySessions[index].flow.suggestedNext = next
+                changed = true
+            }
+            studySessions[index].updatedAt = now
+        }
+
+        if learningMemoryEntries.count > 200 {
+            learningMemoryEntries = Array(
+                learningMemoryEntries
+                    .sorted { $0.updatedAt > $1.updatedAt }
+                    .prefix(200)
+            )
+        }
+        if changed { learningMemoryRevision &+= 1 }
+        var acceptedUpdate = update
+        acceptedUpdate.resolutions = update.resolutions.prefix(12).filter { resolution in
+            guard Self.resolutionEvidenceMatches(
+                resolution.evidence.trimmingCharacters(in: .whitespacesAndNewlines),
+                question: expectedUserQuestion
+            ),
+            let memoryID = UUID(uuidString: resolution.memoryID),
+            let memory = learningMemoryEntries.first(where: { $0.id == memoryID }) else {
+                return false
+            }
+            return memory.status == .active
+                && (memory.kind == .goal || memory.kind == .confusion || memory.kind == .nextStep)
+        }
+        latestAgentLearningUpdate = acceptedUpdate
+        latestAgentLearningUpdateQuestion = expectedUserQuestion
+    }
+
+    func isLearningMemoryResolved(_ memoryID: String) -> Bool {
+        guard let id = UUID(uuidString: memoryID) else { return false }
+        return learningMemoryEntries.first(where: { $0.id == id })?.status == .resolved
+    }
+
+    func confirmLearningMemoryResolution(_ resolution: StudyAgentMemoryResolution) {
+        guard latestAgentLearningUpdate?.resolutions.contains(resolution) == true,
+              let question = latestAgentLearningUpdateQuestion,
+              Self.resolutionEvidenceMatches(resolution.evidence, question: question),
+              let memoryID = UUID(uuidString: resolution.memoryID),
+              let index = learningMemoryEntries.firstIndex(where: {
+                  $0.id == memoryID
+                      && $0.status == .active
+                      && ($0.kind == .goal || $0.kind == .confusion || $0.kind == .nextStep)
+              }) else { return }
+        let now = Date()
+        learningMemoryEntries[index].status = .resolved
+        learningMemoryEntries[index].resolvedAt = now
+        learningMemoryEntries[index].resolutionEvidence = String(resolution.evidence.prefix(400))
+        learningMemoryEntries[index].updatedAt = now
+        learningMemoryRevision &+= 1
+        save()
+    }
+
+    func resolveLearningMemory(_ memoryID: UUID) {
+        guard let index = learningMemoryEntries.firstIndex(where: {
+            $0.id == memoryID
+                && $0.status == .active
+                && ($0.kind == .goal || $0.kind == .confusion || $0.kind == .nextStep)
+        }) else { return }
+        let now = Date()
+        learningMemoryEntries[index].status = .resolved
+        learningMemoryEntries[index].resolvedAt = now
+        learningMemoryEntries[index].resolutionEvidence = "[用户：界面确认]"
+        learningMemoryEntries[index].updatedAt = now
+        learningMemoryRevision &+= 1
+        save()
+    }
+
+    func restoreLearningMemory(_ memoryID: UUID) {
+        guard let index = learningMemoryEntries.firstIndex(where: {
+            $0.id == memoryID && $0.status == .resolved
+        }) else { return }
+        let now = Date()
+        learningMemoryEntries[index].status = .active
+        learningMemoryEntries[index].resolvedAt = nil
+        learningMemoryEntries[index].resolutionEvidence = nil
+        learningMemoryEntries[index].updatedAt = now
+        learningMemoryRevision &+= 1
+        save()
+    }
+
+    func restoreLearningMemoryResolution(_ resolution: StudyAgentMemoryResolution) {
+        guard latestAgentLearningUpdate?.resolutions.contains(resolution) == true,
+              let memoryID = UUID(uuidString: resolution.memoryID) else { return }
+        restoreLearningMemory(memoryID)
+    }
+
+    private static func normalizedMemoryText(_ text: String) -> String {
+        text
+            .lowercased()
+            .split(whereSeparator: { $0.isWhitespace || $0.isPunctuation })
+            .joined()
+    }
+
+    private static func currentTurnEvidenceMatches(_ evidence: String, question: String) -> Bool {
+        StudyAgentCurrentTurnEvidence.matches(evidence, question: question)
+    }
+
+    private static func resolutionEvidenceMatches(_ evidence: String, question: String) -> Bool {
+        StudyAgentResolutionEvidence.matches(evidence, question: question)
     }
 
     func askToOrganizeNote() {
@@ -1899,7 +3803,7 @@ final class WorkspaceStore: ObservableObject {
             "请根据\(agentPromptScope)，把笔记整理成更清晰的大纲，保留来源信息，并标出缺少证据的位置。",
             "Use \(agentPromptScope) to organize the note into a clearer outline, keep source references, and mark places where evidence is missing."
         )
-        Task { await askAgent() }
+        askAgent()
     }
 
     func askSelection() {
@@ -2003,40 +3907,61 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func refreshQuietInsight() async {
+        guard !isAskingAgent, !isGeneratingQuietInsight else { return }
+        isGeneratingQuietInsight = true
+        defer { isGeneratingQuietInsight = false }
+
         let materialTitle = quietInsightReferenceTitle
-        let materialText = selectedContextText
+        let materialItem = selectedMaterialItem
+        let cachedMaterialText = selectedContextText
+        let loadedMaterialText: String?
+        if cachedMaterialText.isEmpty, let materialItem {
+            loadedMaterialText = await Task.detached(priority: .utility) {
+                DocumentTextExtractor.text(for: materialItem)
+            }.value
+        } else {
+            loadedMaterialText = nil
+        }
+        guard !Task.isCancelled,
+              materialItem?.id == selectedMaterialItem?.id else { return }
+        let materialText = loadedMaterialText ?? cachedMaterialText
         let currentNoteText = noteText
         let selectionText = selectionContext?.text
         let contextScope = hasSelectedMaterial ? ui("当前材料、当前选区和当前笔记", "the current material, current selection, and current note") : ui("当前选区和当前笔记", "the current selection and current note")
         let evidenceText = hasSelectedMaterial ? ui("如果材料没有证据，就直接说未在材料中确认。", "If the material has no evidence, say it is not confirmed in the material.") : ui("如果笔记和选区没有证据，就直接说未在笔记或选区中确认。", "If the note and selection have no evidence, say it is not confirmed in the note or selection.")
         let signature = makeQuietInsightSignature(materialText: materialText, noteText: currentNoteText, selectionText: selectionText)
         guard signature != quietInsightSignature else { return }
-        guard let credential = resolvedOpenAIAPIKey() else {
-            generatedQuietInsight = nil
-            return
-        }
 
-        isGeneratingQuietInsight = true
-        defer { isGeneratingQuietInsight = false }
+        let requestID = UUID()
+        let requestWorkspaceRevision = agentContextRevision
+        let request = StudyAgentRequest(
+            id: requestID,
+            purpose: .quietInsight,
+            workflow: .closeReading,
+            question: ui(
+                "请静默阅读\(contextScope)，只输出一条最值得提示给用户的洞察。要温和、短、可执行；\(evidenceText)",
+                "Read \(contextScope) quietly and output only the single most useful insight for the user. Keep it gentle, short, and actionable. \(evidenceText)"
+            ),
+            materialTitle: materialTitle,
+            materialText: materialText,
+            noteTitle: agentNoteTitle,
+            noteText: currentNoteText,
+            selectionTitle: selectionContext?.ownerTitle,
+            selectionText: selectionText,
+            recentMessages: [],
+            language: interfaceLanguage,
+            contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())"
+        )
 
         do {
-            let client = OpenAIResponsesClient(apiKey: credential.key, model: resolvedModelName)
-            let answer = try await client.ask(
-                question: ui(
-                    "请静默阅读\(contextScope)，只输出一条最值得提示给用户的洞察。要温和、短、可执行；\(evidenceText)",
-                    "Read \(contextScope) quietly and output only the single most useful insight for the user. Keep it gentle, short, and actionable. \(evidenceText)"
-                ),
-                materialTitle: materialTitle,
-                materialText: materialText,
-                noteTitle: agentNoteTitle,
-                noteText: currentNoteText,
-                selectionTitle: selectionContext?.ownerTitle,
-                selectionText: selectionText,
-                recentMessages: [],
-                language: interfaceLanguage
-            )
-            guard signature == makeQuietInsightSignature(materialText: selectedContextText, noteText: noteText, selectionText: selectionContext?.text) else { return }
-            generatedQuietInsight = QuietInsight.agent(materialTitle: materialTitle, answer: answer, language: interfaceLanguage)
+            let reply = try await executeStudyAgentRequest(request)
+            guard requestWorkspaceRevision == agentContextRevision,
+                  materialItem?.id == selectedMaterialItem?.id else { return }
+            guard reply.backend != .offline else {
+                generatedQuietInsight = nil
+                return
+            }
+            generatedQuietInsight = QuietInsight.agent(materialTitle: materialTitle, answer: reply.text, language: interfaceLanguage)
             quietInsightSignature = signature
         } catch {
             generatedQuietInsight = nil
@@ -2044,25 +3969,104 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private var quietInsightReferenceTitle: String {
-        selectionContext?.ownerTitle ?? (hasSelectedMaterial ? currentReferenceTitle : activeNoteItem.map(displayTitle)) ?? ui("当前笔记", "Current note")
+        selectionContext?.ownerTitle ?? (hasSelectedMaterial ? currentSourceReferenceTitle : activeNoteItem.map(displayTitle)) ?? ui("当前笔记", "Current note")
     }
 
     func applyLastAgentAnswerToNote() {
         guard let answer = lastUsableAgentAnswer else { return }
-        let block = "\n\n\(noteBlockForAgentAnswer(answer.text))"
+        let content = latestAgentNoteProposal?.markdown ?? answer.text
+        let block = "\n\n\(noteBlockForAgentAnswer(content))"
         updateNote(noteText + block)
         focus(.notes)
     }
 
     func runVerificationScenarioIfNeeded() async {
         guard !didRunVerificationScenario else { return }
+        guard Self.environmentValue("WEIBEI_SUPPRESS_ACTIVATION") == "1" else { return }
         let scenario = Self.environmentValue("WEIBEI_VERIFY_SCENARIO")
+        let emptyWorkspaceScenarios: Set<String> = [
+            "empty-workspace-light-wide",
+            "empty-workspace-light-narrow",
+            "empty-workspace-dark-wide",
+            "empty-workspace-dark-narrow",
+            "empty-workspace-calligraphy-light",
+            "empty-workspace-calligraphy-dark",
+            "empty-workspace-inspiration-off",
+            "empty-workspace-open-doc",
+            "empty-workspace-open-chat",
+            "empty-workspace-open-notes",
+        ]
         guard scenario == "offline-learning-flow"
+            || scenario == "pi-learning-flow"
+            || scenario == "pi-course-memory-flow"
             || scenario == "immersive-conversation-flow"
-            || scenario == "notebook-creation-flow" else { return }
+            || scenario == "notebook-creation-flow"
+            || scenario == "pure-writing-flow"
+            || scenario == "linked-sources-flow"
+            || scenario == "pane-layout-stability-flow"
+            || scenario == "content-rail-dormant-preview"
+            || scenario == "content-rail-activation-preview"
+            || scenario == "pane-toggle-continuity-flow"
+            || scenario == "pane-reorder-width-flow"
+            || scenario == "reader-scroll-persistence-flow"
+            || scenario == "course-workspace-overview-flow"
+            || scenario == "course-workspace-workflow-flow"
+            || scenario == "course-index-navigation-flow"
+            || emptyWorkspaceScenarios.contains(scenario) else { return }
         didRunVerificationScenario = true
+        recordVerificationStage("recognized:\(scenario)")
+        if emptyWorkspaceScenarios.contains(scenario) {
+            configureEmptyWorkspaceVerificationScenario(scenario)
+            return
+        }
+        if scenario == "content-rail-dormant-preview" || scenario == "content-rail-activation-preview" {
+            layout = .documentAgentNotes
+            showLibrary = false
+            showReader = true
+            showAgent = true
+            showNotes = true
+            agentSurface = .hidden
+            select(itemID: "sample-html")
+            updateNote(ui("# 收起轨道验收\n\n悬浮简介必须越过收起边界显示。\n", "# Dormant rail check\n\nThe hover preview must cross the dormant pane boundary.\n"))
+            save()
+            return
+        }
+        if scenario == "course-workspace-overview-flow" || scenario == "course-workspace-workflow-flow" {
+            await runCourseWorkspaceVerification(scenario)
+            return
+        }
+        if scenario == "course-index-navigation-flow" {
+            layout = .documentAgentNotes
+            showLibrary = true
+            showReader = false
+            showAgent = false
+            showNotes = false
+            agentSurface = .hidden
+            showDailyInspiration = true
+            save()
+            return
+        }
+        if scenario == "pane-toggle-continuity-flow" {
+            await runPaneToggleContinuityVerification()
+            return
+        }
+        if scenario == "pane-layout-stability-flow" {
+            await runPaneLayoutStabilityVerification()
+            return
+        }
+        if scenario == "pane-reorder-width-flow" {
+            await runPaneReorderWidthVerification()
+            return
+        }
+        if scenario == "reader-scroll-persistence-flow" {
+            await runReaderScrollPersistenceVerification()
+            return
+        }
         layout = scenario == "immersive-conversation-flow" ? .immersiveConversation : .documentAgentNotes
         if scenario == "notebook-creation-flow" {
+            layout = .immersiveWriting
+        }
+        if scenario == "pure-writing-flow" || scenario == "linked-sources-flow" {
             layout = .immersiveWriting
         }
         showLibrary = scenario != "immersive-conversation-flow"
@@ -2071,31 +4075,887 @@ final class WorkspaceStore: ObservableObject {
         showNotes = true
         agentSurface = .hidden
         select(itemID: "sample-html")
+        if scenario == "pure-writing-flow" || scenario == "linked-sources-flow" {
+            createNotebookNote(
+                seed: .currentMaterial(sampleItems[0]),
+                title: ui("多资料研究笔记", "Multi-source research note")
+            )
+            setLinkedSourceIDsForActiveNote(["sample-html", "sample-pdf"])
+            select(itemID: "sample-pdf")
+            showLibrary = false
+            linkedSourcesPresented = scenario == "linked-sources-flow"
+            if scenario == "linked-sources-flow" {
+                noteRenderMode = .source
+            }
+            save()
+            return
+        }
+        if scenario == "pi-learning-flow" || scenario == "pi-course-memory-flow" {
+            await waitForReaderContextToSettle()
+        }
         if scenario == "notebook-creation-flow" {
             promptCreateBlankNotebookNote()
             return
         }
-        updateNote(ui("# 视觉验收笔记\n\n", "# Visual verification note\n\n"))
+        if scenario == "pi-course-memory-flow" {
+            updateReaderLocationTitle(ui("实际利率", "Real interest rates"))
+            updateNote(ui("# 课程学习记录\n\n", "# Course study record\n\n"))
+            recordVerificationStage("course-memory-context-prepared")
+            agentDraft = ui(
+                "我上次学到哪？课程里哪份其他资料也提到利率，为什么相关？我还不懂名义利率和实际利率的区别，请记住这个困惑，并给出可点击来源。",
+                "Where did I stop last time? Which other course material discusses interest rates, and why is it related? I still do not understand nominal versus real rates. Remember that confusion and give me a clickable source."
+            )
+            await askAgentAndWait()
+            let answer = messages.last?.text ?? ""
+            let recordedConfusion = latestAgentLearningUpdate?.entries.contains { $0.kind == .confusion } == true
+            let hasJumpReference = answer.contains(ui("来源：", "Source:"))
+            let previousItemID = selectedItemID
+            let previousLearningUpdate = latestAgentLearningUpdate
+            let openedJumpReference = openSourceReference(answer)
+            if openedJumpReference, let previousItemID {
+                select(itemID: previousItemID)
+                latestAgentLearningUpdate = previousLearningUpdate
+                lastAgentReplyContextRevision = agentContextRevision
+            }
+            recordVerificationStage("course-memory-reply:\(messages.last?.backend?.rawValue ?? "none")")
+            recordVerificationStage("course-memory-update:\(recordedConfusion)")
+            recordVerificationStage("course-memory-jump:\(hasJumpReference && openedJumpReference)")
+            if messages.last?.backend == .pi,
+               recordedConfusion,
+               hasJumpReference,
+               openedJumpReference {
+                let markerURL = storageURL.deletingLastPathComponent().appendingPathComponent("pi-course-memory-verified.txt")
+                try? "PI backend completed course memory and wayfinding\n".write(to: markerURL, atomically: true, encoding: .utf8)
+            }
+            recordVerificationStage("completed")
+            return
+        }
+        let verificationNoteSeed = ui("# 视觉验收笔记\n\n", "# Visual verification note\n\n")
+        updateNote(verificationNoteSeed)
         updateSelection(
             ui("利率是资金使用价格的表达。", "An interest rate is the price paid for using funds."),
             source: .document,
-            ownerTitle: currentReferenceTitle
+            ownerTitle: currentSourceReferenceTitle
         )
+        recordVerificationStage("context-prepared")
         agentDraft = ui("解释选区，并整理成可以写入笔记的要点。", "Explain the selection and turn it into note-ready points.")
-        await askAgent()
+        await askAgentAndWait()
+        recordVerificationStage("reply:\(messages.last?.backend?.rawValue ?? "none")")
+        if messages.last?.backend == nil, let message = messages.last?.text {
+            recordVerificationStage("failure:\(String(message.prefix(500)))")
+        }
         applyLastAgentAnswerToNote()
+        if scenario == "pi-learning-flow" {
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            if messages.last?.backend == .pi, noteText.count > verificationNoteSeed.count {
+                let markerURL = storageURL.deletingLastPathComponent().appendingPathComponent("pi-agent-verified.txt")
+                try? "PI backend completed the packaged learning flow and persisted its note proposal\n"
+                    .write(to: markerURL, atomically: true, encoding: .utf8)
+            }
+        }
+        recordVerificationStage("completed")
+    }
+
+    private func runCourseWorkspaceVerification(_ scenario: String) async {
+        let fixtureDirectory = storageURL.deletingLastPathComponent()
+            .appendingPathComponent("CourseWorkspaceFixtures", isDirectory: true)
+        try? FileManager.default.createDirectory(at: fixtureDirectory, withIntermediateDirectories: true)
+
+        func fixtureURL(_ name: String, extension fileExtension: String) -> URL {
+            fixtureDirectory.appendingPathComponent(name).appendingPathExtension(fileExtension)
+        }
+
+        let materialAURL = fixtureURL("利率基础", extension: "html")
+        let materialBURL = fixtureURL("货币政策", extension: "md")
+        let materialCURL = fixtureURL("复习问题", extension: "txt")
+        let noteAURL = fixtureURL("利率研究笔记", extension: "md")
+        let noteBURL = fixtureURL("政策工具笔记", extension: "md")
+        let noteCURL = fixtureURL("期末复习笔记", extension: "md")
+        try? "<h1>利率基础</h1><p>名义利率与实际利率。</p>".write(to: materialAURL, atomically: true, encoding: .utf8)
+        try? "# 货币政策\n\n公开市场操作与政策利率。\n".write(to: materialBURL, atomically: true, encoding: .utf8)
+        try? "复习：比较名义利率与实际利率。\n".write(to: materialCURL, atomically: true, encoding: .utf8)
+        try? "# 利率研究笔记\n\n## 核心要点\n".write(to: noteAURL, atomically: true, encoding: .utf8)
+        try? "# 政策工具笔记\n\n## 摘录\n".write(to: noteBURL, atomically: true, encoding: .utf8)
+        try? "# 期末复习笔记\n\n## 待追问\n".write(to: noteCURL, atomically: true, encoding: .utf8)
+
+        let selectionBeforeFolderImport = selectedItemID
+        let folderImportDraft = makeCourseFolderImportDraft(rootURLs: [fixtureDirectory])
+        importCourseFolder(folderImportDraft, notePaths: folderImportDraft.notePaths)
+        let importedFolderItems = importedItems.filter {
+            $0.url?.deletingLastPathComponent().standardizedFileURL.path == fixtureDirectory.standardizedFileURL.path
+        }
+        let importedFolderRoles = Dictionary(uniqueKeysWithValues: importedFolderItems.map {
+            ($0.subtitle, $0.isNotebookNote)
+        })
+        let folderItemCountPassed = importedFolderItems.count == 6
+        let folderMaterialDefaultPassed = (importedFolderRoles[materialBURL.lastPathComponent] ?? true) == false
+        let folderNoteDefaultsPassed = [noteAURL, noteBURL, noteCURL].allSatisfy { url in
+            (importedFolderRoles[url.lastPathComponent] ?? false) == true
+        }
+        let folderCountSummaryPassed = folderImportDraft.automaticMaterialCount
+            + folderImportDraft.markdownFiles.count
+            - folderImportDraft.notePaths.count == 3
+        let initialFolderClassificationPassed = folderItemCountPassed
+            && folderMaterialDefaultPassed
+            && folderNoteDefaultsPassed
+            && folderCountSummaryPassed
+        _ = importFiles(
+            [materialBURL],
+            selectsFirstImportedItem: false,
+            markdownAsNotes: true,
+            markdownOnly: true,
+            reclassifiesExistingMarkdown: true
+        )
+        let correctedExistingFileToNote = importedItems.first(where: { $0.urlPath == materialBURL.path })?.isNotebookNote == true
+        _ = importFiles(
+            [materialBURL],
+            selectsFirstImportedItem: false,
+            reclassifiesExistingMarkdown: true
+        )
+        let correctedExistingFileBackToMaterial = importedItems.first(where: { $0.urlPath == materialBURL.path })?.isNotebookNote == false
+        let importClassificationPassed = initialFolderClassificationPassed
+            && correctedExistingFileToNote
+            && correctedExistingFileBackToMaterial
+            && selectedItemID == selectionBeforeFolderImport
+        let importSelectionPreserved = selectedItemID == selectionBeforeFolderImport
+
+        let materialA = StudyItem(id: "course-material-a", title: "利率基础", subtitle: materialAURL.lastPathComponent, kind: .html, urlPath: materialAURL.path, isSample: false)
+        let materialB = StudyItem(id: "course-material-b", title: "货币政策", subtitle: materialBURL.lastPathComponent, kind: .markdown, urlPath: materialBURL.path, isSample: false)
+        let materialC = StudyItem(id: "course-material-c", title: "复习问题", subtitle: materialCURL.lastPathComponent, kind: .text, urlPath: materialCURL.path, isSample: false)
+        let noteA = StudyItem(id: "course-note-a", title: "利率研究笔记", subtitle: noteAURL.lastPathComponent, kind: .markdown, urlPath: noteAURL.path, isSample: false, isNotebookNote: true)
+        let noteB = StudyItem(id: "course-note-b", title: "政策工具笔记", subtitle: noteBURL.lastPathComponent, kind: .markdown, urlPath: noteBURL.path, isSample: false, isNotebookNote: true)
+        let noteC = StudyItem(id: "course-note-c", title: "期末复习笔记", subtitle: noteCURL.lastPathComponent, kind: .markdown, urlPath: noteCURL.path, isSample: false, isNotebookNote: true)
+
+        importedItems = [materialA, materialB, materialC, noteA, noteB, noteC]
+        notesByItemID = [
+            noteA.id: "# 利率研究笔记\n\n## 核心要点\n",
+            noteB.id: "# 政策工具笔记\n\n## 摘录\n",
+            noteC.id: "# 期末复习笔记\n\n## 待追问\n",
+        ]
+        selectedItemID = materialA.id
+        activeNotebookItemID = noteA.id
+        noteText = notesByItemID[noteA.id] ?? ""
+        noteSourceLinks = [
+            NoteSourceLink(noteItemID: noteA.id, sourceItemID: materialA.id),
+            NoteSourceLink(noteItemID: noteA.id, sourceItemID: materialB.id),
+            NoteSourceLink(noteItemID: noteB.id, sourceItemID: materialB.id),
+        ]
+        studyLocationsByItemID = [
+            materialA.id: StudyLocation(
+                itemID: materialA.id,
+                itemTitle: materialA.title,
+                locationID: "html-heading-1",
+                locationTitle: "名义利率与实际利率",
+                lastStudiedAt: Date().addingTimeInterval(-1_800),
+                visitCount: 3
+            )
+        ]
+        let activeSession = StudySession(
+            title: "利率为什么会变化",
+            messages: [
+                AgentMessage(role: .user, text: "名义利率和实际利率有什么区别？", source: materialA.title, backend: .pi),
+                AgentMessage(role: .assistant, text: "实际利率会扣除通货膨胀的影响。", source: materialA.title, backend: .pi),
+            ],
+            summary: "比较名义利率与实际利率，并联系货币政策工具。",
+            focusItemIDs: [materialA.id, materialB.id, noteA.id],
+            flow: StudyFlowState(phase: .note, suggestedNext: ["把利率公式整理到复习笔记", "用一道例题检验区别"]),
+            updatedAt: Date().addingTimeInterval(-900)
+        )
+        let emptySession = StudySession(title: "新学习会话")
+        studySessions = [activeSession, emptySession]
+        activeStudySessionID = activeSession.id
+        messages = activeSession.messages
+        learningMemoryEntries = [
+            LearningMemoryEntry(
+                kind: .confusion,
+                text: "仍不确定通货膨胀预期如何传导到名义利率。",
+                evidence: "用户在当前会话中明确提出",
+                origin: .userStatement,
+                sessionID: activeSession.id
+            ),
+            LearningMemoryEntry(
+                kind: .nextStep,
+                text: "完成名义利率与实际利率的对照例题。",
+                evidence: "当前会话建议",
+                origin: .agentInference,
+                sessionID: activeSession.id
+            ),
+        ]
+        layout = .documentAgentNotes
+        showLibrary = false
+        showReader = true
+        showAgent = true
+        showNotes = true
+        agentSurface = .hidden
+        courseDocumentSearchIndex.synchronize(allItems)
+        save()
+
+        let noteCountBeforeInvalidCreation = courseNotebookItems.count
+        let invalidNoteID = createCourseNotebookNote(title: "   ")
+        let invalidNoteCreationPassed = invalidNoteID == nil
+            && courseNotebookItems.count == noteCountBeforeInvalidCreation
+            && noteFileError?.isEmpty == false
+        noteFileError = nil
+
+        let initialSummary = courseWorkspaceSummary
+        let initialRelations = NoteSourceRelations(links: noteSourceLinks)
+        if scenario == "course-workspace-overview-flow" {
+            let requestedPage = Self.environmentValue("WEIBEI_VERIFY_COURSE_PAGE")
+            if requestedPage == "notes" {
+                presentCourseWorkspace(.notes, selecting: noteA.id)
+            } else if requestedPage == "materials" {
+                presentCourseWorkspace(.materials, selecting: materialB.id)
+            } else if requestedPage == "sessions" {
+                presentCourseWorkspace(.sessions, selecting: activeSession.id.uuidString)
+            } else {
+                presentCourseWorkspace(.overview)
+            }
+            writeCourseWorkspaceVerificationReport(
+                name: "course-workspace-overview-report.json",
+                payload: [
+                    "result": initialSummary.materialCount == 3
+                        && initialSummary.noteCount == 3
+                        && initialSummary.explicitLinkCount == 3
+                        && initialSummary.readingPositionCount == 1
+                        && initialSummary.unlinkedMaterialCount == 1
+                        && initialSummary.unlinkedNoteCount == 1
+                        && initialSummary.studySessionCount == 1
+                        && initialSummary.unresolvedConfusionCount == 1
+                        && importClassificationPassed ? "pass" : "fail",
+                    "importClassificationPassed": importClassificationPassed,
+                    "invalidNoteCreationPassed": invalidNoteCreationPassed,
+                    "initialFolderClassificationPassed": initialFolderClassificationPassed,
+                    "correctedExistingFileToNote": correctedExistingFileToNote,
+                    "correctedExistingFileBackToMaterial": correctedExistingFileBackToMaterial,
+                    "importSelectionPreserved": importSelectionPreserved,
+                    "importedFolderItemCount": importedFolderItems.count,
+                    "importedFolderRoles": importedFolderRoles,
+                    "folderMaterialDefaultPassed": folderMaterialDefaultPassed,
+                    "folderNoteDefaultsPassed": folderNoteDefaultsPassed,
+                    "folderCountSummaryPassed": folderCountSummaryPassed,
+                    "materialCount": initialSummary.materialCount,
+                    "noteCount": initialSummary.noteCount,
+                    "explicitLinkCount": initialSummary.explicitLinkCount,
+                    "readingPositionCount": initialSummary.readingPositionCount,
+                    "unlinkedMaterialIDs": courseMaterialsWithoutNoteLinks.map(\.id).sorted(),
+                    "unlinkedNoteIDs": courseNotesWithoutSourceLinks.map(\.id).sorted(),
+                    "studySessionCount": initialSummary.studySessionCount,
+                    "unresolvedConfusionCount": initialSummary.unresolvedConfusionCount,
+                    "currentMaterialID": selectedItemID ?? "",
+                    "currentNoteID": activeNotebookItemID ?? "",
+                    "courseWorkspacePresented": courseWorkspacePresented,
+                ]
+            )
+            recordVerificationStage("completed")
+            return
+        }
+
+        func verifyCourseOverlayContinuity(itemID: String) async -> (passed: Bool, makeCount: Int, dismantleCount: Int) {
+            select(itemID: itemID)
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            let baselineLayout = layout
+            let baselineMaterialID = selectedItemID
+            let baselineNoteID = activeNotebookItemID
+            let baselineNoteText = noteText
+            let baselineMessages = messages
+            let baselineOrder = threePaneOrder
+            let baselineLocation = selectedItemID.flatMap { studyLocationsByItemID[$0] }
+            PaneToggleContinuityVerifier.beginMeasurement()
+            presentCourseWorkspace(.overview)
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            dismissCourseWorkspace()
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            let makeCount = PaneToggleContinuityVerifier.webReaderMakeCount
+                + PaneToggleContinuityVerifier.pdfReaderMakeCount
+                + PaneToggleContinuityVerifier.noteEditorMakeCount
+            let dismantleCount = PaneToggleContinuityVerifier.webReaderDismantleCount
+                + PaneToggleContinuityVerifier.pdfReaderDismantleCount
+                + PaneToggleContinuityVerifier.noteEditorDismantleCount
+            let passed = layout == baselineLayout
+                && selectedItemID == baselineMaterialID
+                && activeNotebookItemID == baselineNoteID
+                && noteText == baselineNoteText
+                && messages == baselineMessages
+                && threePaneOrder == baselineOrder
+                && selectedItemID.flatMap { studyLocationsByItemID[$0] } == baselineLocation
+                && makeCount == 0
+                && dismantleCount == 0
+            PaneToggleContinuityVerifier.endMeasurement()
+            return (passed, makeCount, dismantleCount)
+        }
+
+        let htmlContinuity = await verifyCourseOverlayContinuity(itemID: materialA.id)
+        let pdfContinuity = await verifyCourseOverlayContinuity(itemID: "sample-pdf")
+        let continuityPassed = htmlContinuity.passed && pdfContinuity.passed
+        let paneMakeCount = htmlContinuity.makeCount + pdfContinuity.makeCount
+        let paneDismantleCount = htmlContinuity.dismantleCount + pdfContinuity.dismantleCount
+        select(itemID: materialA.id)
+
+        setLinkedSourceIDs([materialA.id], for: noteA.id)
+        setLinkedSourceIDs([materialB.id, materialC.id], for: noteC.id)
+        let editedRelations = NoteSourceRelations(links: noteSourceLinks)
+
+        presentCourseWorkspace(.materials, selecting: materialC.id)
+        openCourseMaterial(materialC.id)
+        let materialNavigationPassed = selectedItemID == materialC.id
+            && activeNotebookItemID == noteA.id
+            && !editedRelations.isLinked(noteItemID: noteA.id, sourceItemID: materialC.id)
+
+        presentCourseWorkspace(.notes, selecting: noteC.id)
+        openCourseNote(noteC.id)
+        let noteNavigationPassed = selectedItemID == materialC.id
+            && activeNotebookItemID == noteC.id
+
+        flushPendingNotePersistence()
+        save()
+        let diskData = try? Data(contentsOf: storageURL)
+        let diskSnapshot = diskData.flatMap { try? JSONDecoder().decode(PersistedWorkspace.self, from: $0) }
+        let diskRelations = NoteSourceRelations(links: diskSnapshot?.noteSourceLinks ?? [])
+        let diskSummary = diskSnapshot.map {
+            CourseWorkspaceSummary(
+                importedItems: $0.importedItems,
+                noteSourceLinks: $0.noteSourceLinks ?? [],
+                studyLocationsByItemID: $0.studyLocationsByItemID ?? [:],
+                studySessions: $0.studySessions ?? [],
+                learningMemoryEntries: $0.learningMemoryEntries ?? []
+            )
+        }
+        let persistencePassed = diskRelations.sourceIDs(for: noteA.id) == [materialA.id]
+            && Set(diskRelations.sourceIDs(for: noteC.id)) == Set([materialB.id, materialC.id])
+            && Set(diskRelations.noteIDs(for: materialB.id)) == Set([noteB.id, noteC.id])
+            && diskSummary?.explicitLinkCount == 4
+            && diskSummary?.unlinkedMaterialCount == 0
+            && diskSummary?.unlinkedNoteCount == 0
+
+        let resultPassed = initialRelations.links.count == 3
+            && importClassificationPassed
+            && invalidNoteCreationPassed
+            && continuityPassed
+            && materialNavigationPassed
+            && noteNavigationPassed
+            && persistencePassed
+        writeCourseWorkspaceVerificationReport(
+            name: "course-workspace-workflow-report.json",
+            payload: [
+                "result": resultPassed ? "pass" : "fail",
+                "continuityPassed": continuityPassed,
+                "importClassificationPassed": importClassificationPassed,
+                "invalidNoteCreationPassed": invalidNoteCreationPassed,
+                "initialFolderClassificationPassed": initialFolderClassificationPassed,
+                "correctedExistingFileToNote": correctedExistingFileToNote,
+                "correctedExistingFileBackToMaterial": correctedExistingFileBackToMaterial,
+                "importSelectionPreserved": importSelectionPreserved,
+                "importedFolderItemCount": importedFolderItems.count,
+                "importedFolderRoles": importedFolderRoles,
+                "folderMaterialDefaultPassed": folderMaterialDefaultPassed,
+                "folderNoteDefaultsPassed": folderNoteDefaultsPassed,
+                "folderCountSummaryPassed": folderCountSummaryPassed,
+                "materialNavigationPassed": materialNavigationPassed,
+                "noteNavigationPassed": noteNavigationPassed,
+                "persistencePassed": persistencePassed,
+                "finalMaterialID": selectedItemID ?? "",
+                "finalNoteID": activeNotebookItemID ?? "",
+                "noteA_sources": diskRelations.sourceIDs(for: noteA.id),
+                "noteC_sources": diskRelations.sourceIDs(for: noteC.id),
+                "materialB_notes": diskRelations.noteIDs(for: materialB.id),
+                "paneMakeCount": paneMakeCount,
+                "paneDismantleCount": paneDismantleCount,
+            ]
+        )
+        recordVerificationStage("completed")
+    }
+
+    private func writeCourseWorkspaceVerificationReport(name: String, payload: [String: Any]) {
+        guard JSONSerialization.isValidJSONObject(payload),
+              let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) else { return }
+        let url = storageURL.deletingLastPathComponent().appendingPathComponent(name)
+        try? data.write(to: url, options: .atomic)
+    }
+
+    private func waitForReaderContextToSettle() async {
+        var previousTitle = readerLocationTitle
+        var previousPage = readerPageIndex
+        var stableChecks = 0
+        for _ in 0..<20 {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            if readerLocationTitle == previousTitle, readerPageIndex == previousPage {
+                stableChecks += 1
+                if stableChecks >= 3 { return }
+            } else {
+                previousTitle = readerLocationTitle
+                previousPage = readerPageIndex
+                stableChecks = 0
+            }
+        }
+    }
+
+    private func runPaneToggleContinuityVerification() async {
+        layout = .documentAgentNotes
+        showLibrary = true
+        showReader = true
+        showAgent = false
+        showNotes = true
+        agentSurface = .hidden
+        recordVerificationStage("pane-toggle-context-prepared")
+        let agentMarker = AgentMessage(
+            role: .assistant,
+            text: "Pane continuity conversation marker",
+            source: "verification",
+            backend: .offline
+        )
+        messages = [agentMarker]
+        let baselineOrder = normalizedThreePaneOrder
+        let cases: [(itemID: String, agentVisible: Bool)] = [
+            ("sample-html", false),
+            ("sample-html", true),
+            ("sample-pdf", false),
+            ("sample-pdf", true),
+            ("sample-md", false),
+            ("sample-md", true),
+        ]
+        var caseReports: [String] = []
+        var allPassed = true
+
+        for verificationCase in cases {
+            showReader = true
+            showAgent = verificationCase.agentVisible
+            showNotes = true
+            select(itemID: verificationCase.itemID)
+            if verificationCase.itemID == "sample-html" {
+                await waitForHTMLContentRailToSettle()
+                requestReaderHTMLLocation(
+                    id: nil,
+                    title: ui("名义利率与实际利率", "Nominal and Real Interest Rates")
+                )
+                await waitForHTMLContentRailToSettle()
+            } else {
+                try? await Task.sleep(nanoseconds: 900_000_000)
+            }
+            try? await Task.sleep(nanoseconds: 700_000_000)
+
+            let noteMarker = "# Pane continuity \(verificationCase.itemID) \(verificationCase.agentVisible ? "agent-on" : "agent-off")\n\nUncommitted note state must survive pane toggles.\n"
+            updateNote(noteMarker)
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            let itemID = selectedMaterialItem?.id
+            let baselineRevision = agentContextRevision
+            let baselineLocation = itemID.flatMap { studyLocationsByItemID[$0] }
+            let baselineMessages = messages
+            PaneToggleContinuityVerifier.beginMeasurement()
+
+            for _ in 1...20 {
+                toggleNotes()
+                try? await Task.sleep(nanoseconds: 520_000_000)
+                toggleNotes()
+                try? await Task.sleep(nanoseconds: 520_000_000)
+            }
+            for _ in 1...20 {
+                toggleReader()
+                try? await Task.sleep(nanoseconds: 520_000_000)
+                toggleReader()
+                try? await Task.sleep(nanoseconds: 520_000_000)
+            }
+            if verificationCase.itemID == "sample-html" {
+                await waitForHTMLContentRailToSettle()
+            } else {
+                try? await Task.sleep(nanoseconds: 700_000_000)
+            }
+
+            let finalLocation = itemID.flatMap { studyLocationsByItemID[$0] }
+            let revisionDelta = agentContextRevision &- baselineRevision
+            let studyLocationChanged = baselineLocation != finalLocation
+            let lifecycleStable = PaneToggleContinuityVerifier.webReaderMakeCount == 0
+                && PaneToggleContinuityVerifier.webReaderDismantleCount == 0
+                && PaneToggleContinuityVerifier.pdfReaderMakeCount == 0
+                && PaneToggleContinuityVerifier.pdfReaderDismantleCount == 0
+                && PaneToggleContinuityVerifier.noteEditorMakeCount == 0
+                && PaneToggleContinuityVerifier.noteEditorDismantleCount == 0
+            let exercisedResizeChain = verificationCase.itemID != "sample-html"
+                || PaneToggleContinuityVerifier.htmlSectionEventCount > 0
+            let casePassed = exercisedResizeChain
+                && PaneToggleContinuityVerifier.htmlLocationCallCount == 0
+                && PaneToggleContinuityVerifier.htmlLocationCommitCount == 0
+                && revisionDelta == 0
+                && !studyLocationChanged
+                && lifecycleStable
+                && noteText == noteMarker
+                && messages == baselineMessages
+                && normalizedThreePaneOrder == baselineOrder
+                && showReader
+                && showAgent == verificationCase.agentVisible
+                && showNotes
+            allPassed = allPassed && casePassed
+            let caseName = "\(verificationCase.itemID)-agent-\(verificationCase.agentVisible ? "on" : "off")"
+            let locationReasons = PaneToggleContinuityVerifier.htmlLocationReasons
+                .sorted { $0.key < $1.key }
+                .map { "\($0.key):\($0.value)" }
+                .joined(separator: ",")
+            caseReports.append([
+                "case=\(caseName)",
+                "case_result=\(casePassed ? "pass" : "fail")",
+                "agent_revision_delta=\(revisionDelta)",
+                "study_location_changed=\(studyLocationChanged)",
+                "html_location_calls=\(PaneToggleContinuityVerifier.htmlLocationCallCount)",
+                "html_location_commits=\(PaneToggleContinuityVerifier.htmlLocationCommitCount)",
+                "html_location_reasons=\(locationReasons)",
+                "web_reader_make=\(PaneToggleContinuityVerifier.webReaderMakeCount)",
+                "web_reader_dismantle=\(PaneToggleContinuityVerifier.webReaderDismantleCount)",
+                "pdf_reader_make=\(PaneToggleContinuityVerifier.pdfReaderMakeCount)",
+                "pdf_reader_dismantle=\(PaneToggleContinuityVerifier.pdfReaderDismantleCount)",
+                "markdown_editor_make=\(PaneToggleContinuityVerifier.noteEditorMakeCount)",
+                "markdown_editor_dismantle=\(PaneToggleContinuityVerifier.noteEditorDismantleCount)",
+                "note_preserved=\(noteText == noteMarker)",
+                "conversation_preserved=\(messages == baselineMessages)",
+                "pane_order_preserved=\(normalizedThreePaneOrder == baselineOrder)",
+            ].joined(separator: " "))
+            PaneToggleContinuityVerifier.endMeasurement()
+        }
+
+        let report = ([
+            "result=\(allPassed ? "pass" : "fail")",
+            "cases=\(cases.count)",
+            "notes_cycles_per_case=20",
+            "reader_cycles_per_case=20",
+        ] + caseReports).joined(separator: "\n") + "\n"
+        let reportURL = storageURL.deletingLastPathComponent()
+            .appendingPathComponent("pane-toggle-continuity-report.txt")
+        try? report.write(to: reportURL, atomically: true, encoding: .utf8)
+        recordVerificationStage("pane-toggle-result:\(allPassed ? "pass" : "fail")")
+        recordVerificationStage("completed")
+    }
+
+    private func runPaneLayoutStabilityVerification() async {
+        layout = .documentAgentNotes
+        showLibrary = false
+        showReader = true
+        showAgent = false
+        showNotes = true
+        agentSurface = .hidden
+        select(itemID: "sample-html")
+        await waitForHTMLContentRailToSettle()
+
+        let noteMarker = "# Pane ownership marker\n\nUnsaved note input must survive stable slot animations.\n"
+        let draftMarker = "Unsent agent draft must survive stable slot animations."
+        let messageMarker = AgentMessage(
+            role: .assistant,
+            text: "Stable parent conversation marker",
+            source: "verification",
+            backend: .offline
+        )
+        updateNote(noteMarker)
+        agentDraft = draftMarker
+        messages = [messageMarker]
+        try? await Task.sleep(nanoseconds: 700_000_000)
+
+        let itemID = selectedMaterialItem?.id
+        let baselineLocation = itemID.flatMap { studyLocationsByItemID[$0] }
+        let baselineRevision = agentContextRevision
+        let baselineOrder = normalizedThreePaneOrder
+        PaneToggleContinuityVerifier.beginMeasurement()
+        recordVerificationStage("pane-layout-context-prepared")
+
+        toggleNotes()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleNotes()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleAgent()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleReader()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleReader()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleAgent()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleNotes()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleNotes()
+        try? await Task.sleep(nanoseconds: 700_000_000)
+
+        let finalLocation = itemID.flatMap { studyLocationsByItemID[$0] }
+        let revisionDelta = agentContextRevision &- baselineRevision
+        let passed = showReader
+            && !showAgent
+            && showNotes
+            && noteText == noteMarker
+            && agentDraft == draftMarker
+            && messages == [messageMarker]
+            && normalizedThreePaneOrder == baselineOrder
+            && finalLocation == baselineLocation
+            && revisionDelta == 0
+            && PaneToggleContinuityVerifier.htmlLocationCallCount == 0
+            && PaneToggleContinuityVerifier.webReaderMakeCount == 0
+            && PaneToggleContinuityVerifier.webReaderDismantleCount == 0
+            && PaneToggleContinuityVerifier.noteEditorMakeCount == 0
+            && PaneToggleContinuityVerifier.noteEditorDismantleCount == 0
+        let report = [
+            "result=\(passed ? "pass" : "fail")",
+            "transitions=8",
+            "reader_visible=\(showReader)",
+            "agent_visible=\(showAgent)",
+            "notes_visible=\(showNotes)",
+            "agent_revision_delta=\(revisionDelta)",
+            "study_location_changed=\(finalLocation != baselineLocation)",
+            "html_location_calls=\(PaneToggleContinuityVerifier.htmlLocationCallCount)",
+            "web_reader_make=\(PaneToggleContinuityVerifier.webReaderMakeCount)",
+            "web_reader_dismantle=\(PaneToggleContinuityVerifier.webReaderDismantleCount)",
+            "note_editor_make=\(PaneToggleContinuityVerifier.noteEditorMakeCount)",
+            "note_editor_dismantle=\(PaneToggleContinuityVerifier.noteEditorDismantleCount)",
+            "note_preserved=\(noteText == noteMarker)",
+            "agent_draft_preserved=\(agentDraft == draftMarker)",
+            "conversation_preserved=\(messages == [messageMarker])",
+            "pane_order_preserved=\(normalizedThreePaneOrder == baselineOrder)",
+        ].joined(separator: "\n") + "\n"
+        PaneToggleContinuityVerifier.endMeasurement()
+        let reportURL = storageURL.deletingLastPathComponent()
+            .appendingPathComponent("pane-layout-stability-report.txt")
+        try? report.write(to: reportURL, atomically: true, encoding: .utf8)
+        recordVerificationStage("pane-layout-result:\(passed ? "pass" : "fail")")
+        recordVerificationStage("completed")
+    }
+
+    private func runPaneReorderWidthVerification() async {
+        layout = .documentAgentNotes
+        showLibrary = false
+        showReader = true
+        showAgent = true
+        showNotes = true
+        agentSurface = .hidden
+        select(itemID: "sample-html")
+        await waitForHTMLContentRailToSettle()
+
+        let noteMarker = "# Reorder and width marker\n\nUnsaved text must survive pane movement.\n"
+        let draftMarker = "Unsent draft must survive pane movement."
+        let messageMarker = AgentMessage(
+            role: .assistant,
+            text: "Reorder conversation marker",
+            source: "verification",
+            backend: .offline
+        )
+        updateNote(noteMarker)
+        agentDraft = draftMarker
+        messages = [messageMarker]
+
+        for _ in 0..<30 {
+            let order = visibleDocumentPaneOrder
+            if order.count == 3, order.allSatisfy({ threePaneReorderFrames[$0] != nil }) {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+
+        let baselineOrder = normalizedThreePaneOrder
+        let baselineRevision = agentContextRevision
+        let itemID = selectedMaterialItem?.id
+        let baselineLocation = itemID.flatMap { studyLocationsByItemID[$0] }
+        let baselineAgentWidth = threePaneReorderFrames[.agent]?.width ?? 0
+        PaneToggleContinuityVerifier.beginMeasurement()
+        recordVerificationStage("pane-reorder-width-context-prepared")
+
+        requestPaneExpansion(.agent)
+        for _ in 0..<20 {
+            guard paneExpansionRequest != nil else { break }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        try? await Task.sleep(nanoseconds: 350_000_000)
+        let expandedAgentWidth = threePaneReorderFrames[.agent]?.width ?? 0
+
+        beginThreePaneReorder(.reader)
+        let dragDistance = max(
+            (threePaneReorderFrames[.notes]?.midX ?? 1_000)
+                - (threePaneReorderFrames[.reader]?.midX ?? 0),
+            1_000
+        )
+        updateThreePaneReorder(.reader, horizontalDelta: dragDistance)
+        finishThreePaneReorder(.reader, horizontalDelta: dragDistance)
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        let reorderedOrder = normalizedThreePaneOrder
+        let reorderedAgentWidth = threePaneReorderFrames[.agent]?.width ?? 0
+
+        toggleAgent()
+        try? await Task.sleep(nanoseconds: 520_000_000)
+        toggleAgent()
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        let restoredAgentWidth = threePaneReorderFrames[.agent]?.width ?? 0
+        let restoredStore = WorkspaceStore()
+        let persistedOrder = restoredStore.normalizedThreePaneOrder
+        let widthTolerance = max(12, reorderedAgentWidth * 0.12)
+        let finalLocation = itemID.flatMap { studyLocationsByItemID[$0] }
+        let lifecycleStable = PaneToggleContinuityVerifier.webReaderMakeCount == 0
+            && PaneToggleContinuityVerifier.webReaderDismantleCount == 0
+            && PaneToggleContinuityVerifier.noteEditorMakeCount == 0
+            && PaneToggleContinuityVerifier.noteEditorDismantleCount == 0
+        let passed = baselineOrder != reorderedOrder
+            && reorderedOrder.last == .reader
+            && persistedOrder == reorderedOrder
+            && paneExpansionRequest == nil
+            && expandedAgentWidth >= ContentRailMetrics.readableWidth
+            && reorderedAgentWidth >= ContentRailMetrics.readableWidth
+            && abs(restoredAgentWidth - reorderedAgentWidth) <= widthTolerance
+            && noteText == noteMarker
+            && agentDraft == draftMarker
+            && messages == [messageMarker]
+            && finalLocation == baselineLocation
+            && agentContextRevision == baselineRevision
+            && lifecycleStable
+
+        let report = [
+            "result=\(passed ? "pass" : "fail")",
+            "baseline_order=\(baselineOrder.map(\.rawValue).joined(separator: ","))",
+            "reordered_order=\(reorderedOrder.map(\.rawValue).joined(separator: ","))",
+            "persisted_order=\(persistedOrder.map(\.rawValue).joined(separator: ","))",
+            "baseline_agent_width=\(baselineAgentWidth)",
+            "expanded_agent_width=\(expandedAgentWidth)",
+            "reordered_agent_width=\(reorderedAgentWidth)",
+            "restored_agent_width=\(restoredAgentWidth)",
+            "width_tolerance=\(widthTolerance)",
+            "expansion_consumed=\(paneExpansionRequest == nil)",
+            "note_preserved=\(noteText == noteMarker)",
+            "agent_draft_preserved=\(agentDraft == draftMarker)",
+            "conversation_preserved=\(messages == [messageMarker])",
+            "study_location_changed=\(finalLocation != baselineLocation)",
+            "agent_revision_delta=\(agentContextRevision &- baselineRevision)",
+            "native_lifecycle_stable=\(lifecycleStable)",
+        ].joined(separator: "\n") + "\n"
+        PaneToggleContinuityVerifier.endMeasurement()
+        let reportURL = storageURL.deletingLastPathComponent()
+            .appendingPathComponent("pane-reorder-width-report.txt")
+        try? report.write(to: reportURL, atomically: true, encoding: .utf8)
+        recordVerificationStage("pane-reorder-width-result:\(passed ? "pass" : "fail")")
+        recordVerificationStage("completed")
+    }
+
+    private func runReaderScrollPersistenceVerification() async {
+        PaneToggleContinuityVerifier.beginMeasurement()
+        layout = .documentAgentNotes
+        showLibrary = true
+        showReader = true
+        showAgent = true
+        showNotes = true
+        agentSurface = .hidden
+        select(itemID: "sample-html")
+        await waitForHTMLContentRailToSettle()
+        let baseline = studyLocationsByItemID["sample-html"]
+        let previousScrollSchedules = PaneToggleContinuityVerifier.verificationScrollScheduleCount
+        NotificationCenter.default.post(name: .weiBeiVerificationUserScroll, object: nil)
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        let didTriggerScroll = PaneToggleContinuityVerifier.verificationScrollScheduleCount > previousScrollSchedules
+        recordVerificationStage("reader-scroll-context-prepared")
+
+        var finalLocation = studyLocationsByItemID["sample-html"]
+        for _ in 0..<60 {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            finalLocation = studyLocationsByItemID["sample-html"]
+            if finalLocation?.locationID != nil,
+               finalLocation?.locationID != baseline?.locationID {
+                break
+            }
+        }
+        save()
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        let restoredStore = WorkspaceStore()
+        let persisted = restoredStore.studyLocationsByItemID["sample-html"]
+        let scrolled = finalLocation?.locationID != nil
+            && finalLocation?.locationID != baseline?.locationID
+            && finalLocation?.lastStudiedAt != baseline?.lastStudiedAt
+        let restored = restoredStore.selectedItemID == "sample-html"
+            && restoredStore.readerLocationID == finalLocation?.locationID
+            && restoredStore.readerTargetLocationID == finalLocation?.locationID
+            && persisted?.locationID == finalLocation?.locationID
+            && persisted?.locationTitle == finalLocation?.locationTitle
+        let passed = didTriggerScroll && scrolled && restored
+        let locationReasons = PaneToggleContinuityVerifier.htmlLocationReasons
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key):\($0.value)" }
+            .joined(separator: ",")
+        let report = [
+            "result=\(passed ? "pass" : "fail")",
+            "input_path=dom-wheel-event",
+            "verification_scroll_triggered=\(didTriggerScroll)",
+            "baseline_location_id=\(baseline?.locationID ?? "")",
+            "final_location_id=\(finalLocation?.locationID ?? "")",
+            "final_location_title=\(finalLocation?.locationTitle ?? "")",
+            "timestamp_changed=\(finalLocation?.lastStudiedAt != baseline?.lastStudiedAt)",
+            "restored_location_id=\(restoredStore.readerLocationID ?? "")",
+            "restored_target_id=\(restoredStore.readerTargetLocationID ?? "")",
+            "html_section_events=\(PaneToggleContinuityVerifier.htmlSectionEventCount)",
+            "html_active_events=\(PaneToggleContinuityVerifier.htmlActiveEventCount)",
+            "html_location_calls=\(PaneToggleContinuityVerifier.htmlLocationCallCount)",
+            "html_location_reasons=\(locationReasons)",
+            "verification_scroll_schedules=\(PaneToggleContinuityVerifier.verificationScrollScheduleCount)",
+            "verification_scroll_result=\(PaneToggleContinuityVerifier.verificationScrollResult)",
+        ].joined(separator: "\n") + "\n"
+        PaneToggleContinuityVerifier.endMeasurement()
+        let reportURL = storageURL.deletingLastPathComponent()
+            .appendingPathComponent("reader-scroll-persistence-report.txt")
+        try? report.write(to: reportURL, atomically: true, encoding: .utf8)
+        recordVerificationStage("reader-scroll-result:\(passed ? "pass" : "fail")")
+        recordVerificationStage("completed")
+    }
+
+    private func waitForHTMLContentRailToSettle() async {
+        var previousEventCount = PaneToggleContinuityVerifier.htmlEventSequence
+        var stableChecks = 0
+        for _ in 0..<40 {
+            try? await Task.sleep(nanoseconds: 150_000_000)
+            let currentEventCount = PaneToggleContinuityVerifier.htmlEventSequence
+            if currentEventCount == previousEventCount {
+                stableChecks += 1
+                if stableChecks >= 4 { return }
+            } else {
+                previousEventCount = currentEventCount
+                stableChecks = 0
+            }
+        }
+    }
+
+    private func recordVerificationStage(_ stage: String) {
+        guard Self.environmentValue("WEIBEI_SUPPRESS_ACTIVATION") == "1" else { return }
+        let url = storageURL.deletingLastPathComponent().appendingPathComponent("verification-state.txt")
+        let previous = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+        try? "\(previous)\(stage)\n".write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private func configureEmptyWorkspaceVerificationScenario(_ scenario: String) {
+        layout = .documentAgentNotes
+        showLibrary = false
+        agentSurface = .hidden
+        appearanceMode = scenario.contains("dark") ? .inkstone : .paper
+        showDailyInspiration = scenario != "empty-workspace-inspiration-off"
+
+        if scenario.hasPrefix("empty-workspace-open-") {
+            select(itemID: "sample-html")
+            updateNote("# Empty workspace entry state marker\n\nPane toggles must preserve this note.\n")
+        }
+
+        showReader = false
+        showAgent = false
+        showNotes = false
+
+        switch scenario {
+        case "empty-workspace-open-doc":
+            toggleReader()
+        case "empty-workspace-open-chat":
+            toggleAgent()
+        case "empty-workspace-open-notes":
+            toggleNotes()
+        default:
+            save()
+        }
     }
 
     func replaceSelectionWithLastAgentAnswer() {
         guard selectionContext?.isReplaceableNoteSelection == true,
               let answer = lastUsableAgentAnswer else { return }
-        noteEditorCommand = NoteEditorCommand(kind: .replaceSelection, markdown: answer.text)
+        noteEditorCommand = NoteEditorCommand(
+            kind: .replaceSelection,
+            markdown: latestAgentNoteProposal?.markdown ?? answer.text
+        )
         focus(.notes)
     }
 
     func applyAgentPatchToEditor() {
         guard let answer = lastUsableAgentAnswer else { return }
-        noteEditorCommand = NoteEditorCommand(kind: .applyAgentPatch, markdown: "\n\(noteBlockForAgentAnswer(answer.text))")
+        let content = latestAgentNoteProposal?.markdown ?? answer.text
+        noteEditorCommand = NoteEditorCommand(kind: .applyAgentPatch, markdown: "\n\(noteBlockForAgentAnswer(content))")
         focus(.notes)
     }
 
@@ -2108,17 +4968,49 @@ final class WorkspaceStore: ObservableObject {
         return "## \(ui("整理建议", "Organization suggestion"))\n\(text)"
     }
 
-    func askAgent() async {
+    func askAgent() {
+        flushStagedNoteDraftForAgentContext()
+        guard agentRequestTask == nil,
+              !isAskingAgent,
+              !agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        agentRequestTask = Task { @MainActor [weak self] in
+            await self?.performAgentRequest()
+        }
+    }
+
+    private func askAgentAndWait() async {
+        askAgent()
+        await agentRequestTask?.value
+    }
+
+    private func performAgentRequest() async {
+        flushStagedNoteDraftForAgentContext()
         let question = agentDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !question.isEmpty, !isAskingAgent else { return }
+        guard !question.isEmpty, !isAskingAgent else {
+            agentRequestTask = nil
+            return
+        }
 
         persistCurrentNote()
         let sentSelectionTitle = agentSelectionTitle
         let sentSelectionText = agentSelectionText
         let shouldClearSentDocumentSelection = sentSelectionText != nil && selectionContext?.source == .document
-        let recentMessages = Array(messages.suffix(8))
+        let recentMessages = Array(messages.suffix(20))
         let sourceTitle = agentMessageSourceTitle
+        let requestID = UUID()
+        let requestWorkspaceRevision = agentContextRevision
+        let requestMemoryRevision = learningMemoryRevision
+        let sentMaterialTitle = currentSourceReferenceTitle
+        let sentMaterialText = selectedContextText
+        let sentNoteTitle = agentNoteTitle
+        let sentNoteText = noteText
+        let sentLearningContext = makeLearningContext()
+        let sentLanguage = interfaceLanguage
+        let courseQuery = [question, sentSelectionText ?? "", String(sentNoteText.prefix(2_000))]
+            .joined(separator: "\n\n")
         agentDraft = ""
+        latestAgentNoteProposal = nil
+        latestAgentLearningUpdate = nil
         if !selectionAttachments.isEmpty {
             withAnimation(WeiBeiMotion.panel) {
                 cancelPendingSelectionAttachment()
@@ -2128,62 +5020,228 @@ final class WorkspaceStore: ObservableObject {
             }
         }
         if shouldClearSentDocumentSelection {
-            clearUnpinnedFloatingSelection(keepContext: false)
+            clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)
         }
-        guard let credential = resolvedOpenAIAPIKey() else {
-            let notice = ui(
-                "未配置密钥。当前用离线模式生成草稿；设置密钥后会结合\(agentPromptScope)，并在有已选文本片段时一并作答。",
-                "No key is configured. WeiBei is generating an offline draft. After setup, answers will use \(agentPromptScope) and any selected text fragments."
-            )
-            openAIKeyStatus = notice
-            messages.append(contentsOf: AgentOfflineTurn.messages(
-                question: question,
-                sourceTitle: sourceTitle,
-                input: offlineAgentInput(
-                    question: question,
-                    selectionTitle: sentSelectionTitle,
-                    selectionText: sentSelectionText
-                )
-            ))
-            return
-        }
-
-        messages.append(AgentMessage(role: .user, text: question, source: sourceTitle))
         isAskingAgent = true
+        activeAgentRequestID = requestID
+        agentStreamingText = ""
+        agentActivityText = ui("正在整理课程目录", "Indexing course")
+        defer {
+            if activeAgentRequestID == requestID {
+                activeAgentRequestID = nil
+                isAskingAgent = false
+                agentStreamingText = ""
+                agentActivityText = nil
+                agentRequestTask = nil
+            }
+        }
 
+        var didAppendUserMessage = false
         do {
-            let client = OpenAIResponsesClient(apiKey: credential.key, model: resolvedModelName)
-            let answer = try await client.ask(
+            let courseBuild = try await makeCourseContext(query: courseQuery)
+            guard activeAgentRequestID == requestID,
+                  requestWorkspaceRevision == agentContextRevision,
+                  requestMemoryRevision == learningMemoryRevision else {
+                if agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    agentDraft = question
+                }
+                return
+            }
+            let request = StudyAgentRequest(
+                id: requestID,
+                purpose: .conversation,
                 question: question,
-                materialTitle: currentReferenceTitle,
-                materialText: selectedContextText,
-                noteTitle: agentNoteTitle,
-                noteText: noteText,
+                materialTitle: sentMaterialTitle,
+                materialText: courseBuild.selectedMaterialText ?? sentMaterialText,
+                materialIsTruncated: courseBuild.selectedMaterialIsTruncated,
+                noteTitle: sentNoteTitle,
+                noteText: sentNoteText,
                 selectionTitle: sentSelectionTitle,
                 selectionText: sentSelectionText,
                 recentMessages: recentMessages,
-                language: interfaceLanguage
+                courseContext: courseBuild.context,
+                learningContext: sentLearningContext,
+                language: sentLanguage,
+                contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())"
             )
-            messages.append(AgentMessage(role: .assistant, text: answer, source: sourceTitle))
+            appendAgentMessage(AgentMessage(role: .user, text: question, source: sourceTitle))
+            didAppendUserMessage = true
+            agentActivityText = ui("正在读取上下文", "Reading context")
+            if isGeneratingQuietInsight {
+                await piRuntime.cancel()
+            }
+            let reply = try await executeStudyAgentRequest(request)
+            guard activeAgentRequestID == request.id,
+                  requestWorkspaceRevision == agentContextRevision,
+                  requestMemoryRevision == learningMemoryRevision else { return }
+            latestAgentNoteProposal = reply.noteProposal
+            applyLearningUpdate(
+                reply.learningUpdate,
+                expectedContextRevision: request.contextRevision,
+                expectedMemoryRevision: requestMemoryRevision,
+                expectedUserQuestion: request.question
+            )
+            lastAgentReplyContextRevision = requestWorkspaceRevision
+            appendAgentMessage(
+                AgentMessage(
+                    role: .assistant,
+                    text: reply.noteProposal?.markdown ?? reply.text,
+                    source: sourceTitle,
+                    backend: reply.backend
+                )
+            )
+        } catch PiAgentRuntimeError.cancelled, is CancellationError {
+            if !didAppendUserMessage,
+               agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                agentDraft = question
+            }
+            return
         } catch {
-            messages.append(AgentMessage(role: .assistant, text: ui("请求失败：\(error.localizedDescription)", "Request failed: \(error.localizedDescription)"), source: sourceTitle))
+            guard activeAgentRequestID == requestID else { return }
+            if !didAppendUserMessage {
+                appendAgentMessage(AgentMessage(role: .user, text: question, source: sourceTitle))
+            }
+            if agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                agentDraft = question
+            }
+            appendAgentMessage(
+                AgentMessage(
+                    role: .assistant,
+                    text: ui(
+                        "请求失败：\(error.localizedDescription) 问题已保留在输入框。",
+                        "Request failed: \(error.localizedDescription) The question remains in the composer."
+                    ),
+                    source: sourceTitle
+                )
+            )
         }
 
-        isAskingAgent = false
     }
 
-    private func offlineAgentInput(question: String, selectionTitle: String?, selectionText: String?) -> AgentOfflinePreviewInput {
-        AgentOfflinePreviewInput(
-            language: interfaceLanguage,
-            question: question,
-            hasMaterial: hasSelectedMaterial,
-            materialTitle: currentReferenceTitle,
-            materialText: selectedContextText,
-            noteTitle: agentNoteTitle,
-            noteText: noteText,
-            selectionTitle: selectionTitle,
-            selectionText: selectionText
-        )
+    func cancelAgentRequest() {
+        guard isAskingAgent || activeAgentRequestID != nil else { return }
+        agentRequestTask?.cancel()
+        agentRequestTask = nil
+        activeAgentRequestID = nil
+        isAskingAgent = false
+        agentStreamingText = ""
+        agentActivityText = nil
+    }
+
+    private func executeStudyAgentRequest(_ request: StudyAgentRequest) async throws -> StudyAgentReply {
+        let isExplicitOfflineVerification = Self.environmentValue("WEIBEI_FORCE_OFFLINE_AGENT") == "1"
+            && Self.environmentValue("WEIBEI_SUPPRESS_ACTIVATION") == "1"
+            && Self.environmentValue("WEIBEI_VERIFY_SCENARIO") == "offline-learning-flow"
+        if isExplicitOfflineVerification {
+            return try await OfflineStudyAgentRuntime().respond(to: request)
+        }
+
+        let credential = resolvedOpenAIAPIKey()
+        var piFailure: Error?
+        if Self.environmentValue("WEIBEI_PI_DISABLED") != "1" {
+            let explicitProvider = Self.environmentValue("WEIBEI_PI_PROVIDER")
+            let explicitModel = Self.environmentValue("WEIBEI_PI_MODEL")
+            let thinking = Self.environmentValue("WEIBEI_PI_THINKING")
+            let usesOpenAIKey = explicitProvider == "openai" || (explicitProvider.isEmpty && credential != nil)
+            let configuration = PiAgentProviderConfiguration(
+                provider: explicitProvider.isEmpty ? (credential == nil ? nil : "openai") : explicitProvider,
+                model: explicitModel.isEmpty ? (usesOpenAIKey ? resolvedModelName : nil) : explicitModel,
+                apiKey: usesOpenAIKey ? credential?.key : nil,
+                thinkingLevel: thinking.isEmpty ? "medium" : thinking
+            )
+            await piRuntime.configure(configuration)
+
+            do {
+                return try await piRuntime.respond(to: request) { [weak self] progress in
+                    await self?.applyAgentProgress(progress, requestID: request.id)
+                }
+            } catch let error as PiAgentRuntimeError {
+                if error == .cancelled || Task.isCancelled {
+                    throw PiAgentRuntimeError.cancelled
+                }
+                guard error.permitsAutomaticFallback else { throw error }
+                piFailure = error
+                openAIKeyStatus = ui(
+                    "PI 暂不可用：\(error.localizedDescription)",
+                    "PI is unavailable: \(error.localizedDescription)"
+                )
+            } catch {
+                if Task.isCancelled { throw PiAgentRuntimeError.cancelled }
+                piFailure = error
+                openAIKeyStatus = ui(
+                    "PI 暂不可用：\(error.localizedDescription)",
+                    "PI is unavailable: \(error.localizedDescription)"
+                )
+            }
+        }
+
+        if request.purpose == .conversation {
+            throw piFailure ?? PiAgentRuntimeError.unavailable
+        }
+
+        if let credential {
+            do {
+                let client = OpenAIResponsesClient(apiKey: credential.key, model: resolvedModelName)
+                return try await client.respond(to: request) { [weak self] progress in
+                    await self?.applyAgentProgress(progress, requestID: request.id)
+                }
+            } catch is CancellationError {
+                throw PiAgentRuntimeError.cancelled
+            } catch {
+                if Task.isCancelled { throw PiAgentRuntimeError.cancelled }
+                openAIKeyStatus = ui(
+                    "在线请求失败，已改用离线草稿：\(error.localizedDescription)",
+                    "Online request failed; using an offline draft: \(error.localizedDescription)"
+                )
+            }
+        } else {
+            openAIKeyStatus = ui(
+                "PI 与在线密钥均不可用，当前使用离线草稿。",
+                "PI and an online key are unavailable; using an offline draft."
+            )
+        }
+
+        return try await OfflineStudyAgentRuntime().respond(to: request) { [weak self] progress in
+            await self?.applyAgentProgress(progress, requestID: request.id)
+        }
+    }
+
+    func shutdownAgentRuntime() {
+        agentRequestTask?.cancel()
+        quietInsightTask?.cancel()
+        let runtime = piRuntime
+        let completion = DispatchSemaphore(value: 0)
+        Task.detached {
+            await runtime.shutdown()
+            completion.signal()
+        }
+        _ = completion.wait(timeout: .now() + 1)
+    }
+
+    private func applyAgentProgress(_ progress: StudyAgentProgress, requestID: UUID) {
+        guard activeAgentRequestID == requestID else { return }
+        switch progress {
+        case .readingContext:
+            agentActivityText = ui("正在读取上下文", "Reading context")
+        case let .usingTool(name):
+            switch name {
+            case "weibei_context":
+                agentActivityText = ui("正在核对材料与笔记", "Checking material and notes")
+            case "weibei_course_map", "weibei_course_search":
+                agentActivityText = ui("正在查找课程关联", "Finding course connections")
+            case "weibei_learning_memory":
+                agentActivityText = ui("正在回顾学习记忆", "Reviewing learning memory")
+            case "weibei_learning_update":
+                agentActivityText = ui("正在整理学习进展", "Updating study progress")
+            case "weibei_note_proposal":
+                agentActivityText = ui("正在整理写入建议", "Preparing a note proposal")
+            default:
+                agentActivityText = ui("正在处理", "Working")
+            }
+        case let .text(text):
+            agentStreamingText = text
+            agentActivityText = ui("正在组织回答", "Composing answer")
+        }
     }
 
     func sampleHTML(for item: StudyItem?) -> String {
@@ -2345,6 +5403,362 @@ final class WorkspaceStore: ObservableObject {
         return "# \(newTitle)\n" + String(markdown.dropFirst(prefix.count))
     }
 
+    private func writePendingNotebookRenameJournal(_ journal: PendingNotebookRenameJournal) throws {
+        let data = try JSONEncoder().encode(journal)
+        try data.write(to: notebookRenameJournalURL, options: [.atomic])
+    }
+
+    private func removePendingNotebookRenameJournal() {
+        try? FileManager.default.removeItem(at: notebookRenameJournalURL)
+    }
+
+    @discardableResult
+    private func recoverPendingNotebookRenameIfNeeded() -> Bool {
+        guard let data = try? Data(contentsOf: notebookRenameJournalURL),
+              let journal = try? JSONDecoder().decode(PendingNotebookRenameJournal.self, from: data) else {
+            return false
+        }
+        guard let itemIndex = importedItems.firstIndex(where: {
+            $0.id == journal.oldItem.id || $0.id == journal.replacementItemID
+        }) else {
+            removePendingNotebookRenameJournal()
+            return false
+        }
+
+        let oldURL = URL(fileURLWithPath: journal.oldPath).standardizedFileURL
+        let newURL = URL(fileURLWithPath: journal.newPath).standardizedFileURL
+        let newDigest = Self.noteContentDigest(at: newURL)
+        let newIdentity = importedFileIdentityResolver(newURL)
+        let newFileMatchesMovedOriginal = newDigest == journal.originalContentDigest
+            && (journal.oldItem.importedFileIdentity == nil
+                || newIdentity == journal.oldItem.importedFileIdentity)
+        let newFileMatchesApplicationOutput = newDigest == journal.retitledContentDigest
+            && (journal.retitledContentDigest != journal.originalContentDigest
+                || journal.oldItem.importedFileIdentity == nil
+                || newIdentity == journal.oldItem.importedFileIdentity)
+
+        if newFileMatchesMovedOriginal || newFileMatchesApplicationOutput {
+            let previousID = importedItems[itemIndex].id
+            var recoveredItem = importedItems[itemIndex]
+            recoveredItem.id = journal.replacementItemID
+            recoveredItem.title = journal.newTitle
+            recoveredItem.subtitle = newURL.lastPathComponent
+            recoveredItem.urlPath = newURL.path
+            recoveredItem.importedFileIdentity = newIdentity ?? journal.oldItem.importedFileIdentity
+            recoveredItem.importedFileBookmarkData = Self.makeImportedFileBookmark(for: newURL)
+                ?? recoveredItem.importedFileBookmarkData
+                ?? journal.oldItem.importedFileBookmarkData
+            recoveredItem.importedFileLastKnownPath = newURL.path
+            recoveredItem.kind = StudyItemKind.detect(from: newURL)
+            importedItems[itemIndex] = recoveredItem
+            replaceItemIDEverywhere(previousID, with: journal.replacementItemID)
+            noteBackingContentDigestsByItemID[journal.replacementItemID] = newDigest
+            if activeNotebookItemID == journal.replacementItemID {
+                noteText = newFileMatchesApplicationOutput
+                    ? journal.retitledMarkdown
+                    : journal.sourceMarkdown
+            }
+            noteFileError = ui(
+                "已从上次未完成的保存中恢复笔记重命名。",
+                "Recovered a notebook rename from the previous incomplete save."
+            )
+            return true
+        }
+
+        let oldDigest = Self.noteContentDigest(at: oldURL)
+        let oldIdentity = importedFileIdentityResolver(oldURL)
+        let oldFileIsTrusted = oldDigest == journal.originalContentDigest
+            && (journal.oldItem.importedFileIdentity == nil
+                || oldIdentity == journal.oldItem.importedFileIdentity)
+        let previousID = importedItems[itemIndex].id
+        if previousID != journal.oldItem.id {
+            replaceItemIDEverywhere(previousID, with: journal.oldItem.id)
+        }
+        importedItems[itemIndex] = journal.oldItem
+        if oldFileIsTrusted {
+            importedItems[itemIndex].urlPath = oldURL.path
+            importedItems[itemIndex].importedFileIdentity = oldIdentity ?? journal.oldItem.importedFileIdentity
+            importedItems[itemIndex].importedFileBookmarkData = Self.makeImportedFileBookmark(for: oldURL)
+                ?? journal.oldItem.importedFileBookmarkData
+            importedItems[itemIndex].importedFileLastKnownPath = oldURL.path
+            noteBackingContentDigestsByItemID[journal.oldItem.id] = oldDigest
+        } else {
+            importedItems[itemIndex].urlPath = nil
+            importedItems[itemIndex].importedFileLastKnownPath = journal.oldPath
+            notesByItemID[journal.oldItem.id] = journal.sourceMarkdown
+            pendingNoteWritesByItemID[journal.oldItem.id] = PendingNoteWriteState(
+                baselineContentDigest: journal.originalContentDigest
+            )
+            if activeNotebookItemID == journal.oldItem.id {
+                noteText = journal.sourceMarkdown
+            }
+        }
+        noteFileError = oldFileIsTrusted
+            ? ui(
+                "上次笔记重命名未完成，已恢复原文件。",
+                "The previous notebook rename did not finish, so the original file was restored."
+            )
+            : ui(
+                "上次笔记重命名遇到文件冲突；原关系和最新正文均已保留。",
+                "The previous notebook rename encountered a file conflict. The original relationships and latest text were retained."
+            )
+        return true
+    }
+
+    @discardableResult
+    private func resolvePersistedImportedFileBookmarks() -> Bool {
+        var changed = false
+        for index in importedItems.indices {
+            let resolution = resolveTrackedImportedFile(at: index)
+            if resolution.changed { changed = true }
+        }
+        return changed
+    }
+
+    private func resolveTrackedImportedFile(at index: Int) -> (url: URL?, changed: Bool) {
+        guard importedItems.indices.contains(index) else { return (nil, false) }
+        guard let storedIdentity = importedItems[index].importedFileIdentity else {
+            guard let currentURL = importedItems[index].url,
+                  importedFileIdentityResolver(currentURL) != nil else {
+                return (nil, false)
+            }
+            return (currentURL.standardizedFileURL, false)
+        }
+
+        var changed = false
+        let currentURL = importedItems[index].urlPath
+            .map { URL(fileURLWithPath: $0).standardizedFileURL }
+        let currentPathIsValid = currentURL.map {
+            importedFileIdentityResolver($0) == storedIdentity
+        } ?? false
+        let bookmarkResolution = currentPathIsValid
+            ? nil
+            : importedItems[index].importedFileBookmarkData.flatMap(Self.resolveImportedFileBookmark)
+        let fallbackPath = importedItems[index].urlPath
+            ?? importedItems[index].importedFileLastKnownPath
+        let candidateURL = (currentPathIsValid ? currentURL : nil)
+            ?? bookmarkResolution?.url
+            ?? fallbackPath.map { URL(fileURLWithPath: $0).standardizedFileURL }
+        guard let candidateURL,
+              importedFileIdentityResolver(candidateURL) == storedIdentity else {
+            if let path = importedItems[index].urlPath {
+                importedItems[index].importedFileLastKnownPath = path
+                importedItems[index].urlPath = nil
+                changed = true
+            }
+            return (nil, changed)
+        }
+
+        let nextPath = candidateURL.path
+        let nextTitle = candidateURL.deletingPathExtension().lastPathComponent
+        let nextSubtitle = candidateURL.lastPathComponent
+        let nextKind = StudyItemKind.detect(from: candidateURL)
+        if importedItems[index].urlPath != nextPath
+            || importedItems[index].importedFileLastKnownPath != nextPath
+            || importedItems[index].title != nextTitle
+            || importedItems[index].subtitle != nextSubtitle
+            || importedItems[index].kind != nextKind {
+            importedItems[index].urlPath = nextPath
+            importedItems[index].importedFileLastKnownPath = nextPath
+            importedItems[index].title = nextTitle
+            importedItems[index].subtitle = nextSubtitle
+            importedItems[index].kind = nextKind
+            changed = true
+        }
+        let resolvedThroughFallback = !currentPathIsValid && bookmarkResolution == nil
+        if importedItems[index].importedFileBookmarkData == nil
+            || bookmarkResolution?.isStale == true
+            || resolvedThroughFallback,
+           let refreshedBookmark = Self.makeImportedFileBookmark(for: candidateURL),
+           importedItems[index].importedFileBookmarkData != refreshedBookmark {
+            importedItems[index].importedFileBookmarkData = refreshedBookmark
+            changed = true
+        }
+        return (candidateURL, changed)
+    }
+
+    @discardableResult
+    private func refreshImportedFileTracking(itemID: String, url: URL) -> StudyItem? {
+        guard let index = importedItems.firstIndex(where: { $0.id == itemID }),
+              let identity = importedFileIdentityResolver(url) else {
+            return nil
+        }
+        let standardizedURL = url.standardizedFileURL
+        importedItems[index].urlPath = standardizedURL.path
+        importedItems[index].importedFileIdentity = identity
+        importedItems[index].importedFileBookmarkData = Self.makeImportedFileBookmark(for: standardizedURL)
+            ?? importedItems[index].importedFileBookmarkData
+        importedItems[index].importedFileLastKnownPath = standardizedURL.path
+        importedItems[index].title = standardizedURL.deletingPathExtension().lastPathComponent
+        importedItems[index].subtitle = standardizedURL.lastPathComponent
+        importedItems[index].kind = StudyItemKind.detect(from: standardizedURL)
+        return importedItems[index]
+    }
+
+    @discardableResult
+    private func migrateLegacyImportedItemIdentities() -> Bool {
+        var changed = false
+        var canonicalIDByIdentity: [ImportedFileIdentity: String] = [:]
+        for item in importedItems
+        where item.importedFileIdentity != nil && !item.id.hasPrefix("file:") {
+            if let identity = item.importedFileIdentity,
+               canonicalIDByIdentity[identity] == nil {
+                canonicalIDByIdentity[identity] = item.id
+            }
+        }
+
+        var migratedItems: [StudyItem] = []
+        migratedItems.reserveCapacity(importedItems.count)
+        for var item in importedItems {
+            let resolvedIdentity = item.importedFileIdentity
+                ?? item.url.flatMap(importedFileIdentityResolver)
+            if item.importedFileIdentity != resolvedIdentity {
+                item.importedFileIdentity = resolvedIdentity
+                changed = true
+            }
+            if item.importedFileLastKnownPath == nil, let path = item.urlPath {
+                item.importedFileLastKnownPath = path
+                changed = true
+            }
+            if resolvedIdentity != nil,
+               item.importedFileBookmarkData == nil,
+               let url = item.url,
+               let bookmark = Self.makeImportedFileBookmark(for: url) {
+                item.importedFileBookmarkData = bookmark
+                changed = true
+            }
+
+            if let resolvedIdentity,
+               let canonicalID = canonicalIDByIdentity[resolvedIdentity],
+               canonicalID != item.id {
+                let canonicalItem = migratedItems.first(where: { $0.id == canonicalID })
+                    ?? importedItems.first(where: { $0.id == canonicalID })
+                if let canonicalItem,
+                   canCoalesceDuplicateItem(item, into: canonicalItem) {
+                    replaceItemIDEverywhere(item.id, with: canonicalID)
+                    changed = true
+                    continue
+                }
+                if item.id.hasPrefix("file:") {
+                    let oldID = item.id
+                    item.id = Self.makeImportedItemID()
+                    replaceItemIDEverywhere(oldID, with: item.id)
+                    changed = true
+                }
+                migratedItems.append(item)
+                continue
+            }
+
+            if resolvedIdentity != nil, item.id.hasPrefix("file:") {
+                let oldID = item.id
+                item.id = Self.makeImportedItemID()
+                replaceItemIDEverywhere(oldID, with: item.id)
+                changed = true
+            }
+            if let resolvedIdentity {
+                canonicalIDByIdentity[resolvedIdentity] = item.id
+            }
+            migratedItems.append(item)
+        }
+        importedItems = migratedItems
+        return changed
+    }
+
+    private func canCoalesceDuplicateItem(_ oldItem: StudyItem, into newItem: StudyItem) -> Bool {
+        let newID = newItem.id
+        guard oldItem.isNotebookNote == newItem.isNotebookNote,
+              oldItem.kind == newItem.kind,
+              oldItem.isSample == newItem.isSample,
+              valuesCanCoalesce(notesByItemID[oldItem.id], notesByItemID[newID]),
+              valuesCanCoalesce(pendingNoteWritesByItemID[oldItem.id], pendingNoteWritesByItemID[newID]),
+              valuesCanCoalesce(noteBackingContentDigestsByItemID[oldItem.id], noteBackingContentDigestsByItemID[newID]),
+              studyLocationsCanCoalesce(oldID: oldItem.id, newID: newID),
+              pendingPersistenceCanCoalesce(oldID: oldItem.id, newID: newID) else {
+            return false
+        }
+        return true
+    }
+
+    private func valuesCanCoalesce<Value: Equatable>(_ oldValue: Value?, _ newValue: Value?) -> Bool {
+        oldValue == nil || newValue == nil || oldValue == newValue
+    }
+
+    private func studyLocationsCanCoalesce(oldID: String, newID: String) -> Bool {
+        guard var oldLocation = studyLocationsByItemID[oldID],
+              let newLocation = studyLocationsByItemID[newID] else {
+            return true
+        }
+        oldLocation.itemID = newID
+        return oldLocation == newLocation
+    }
+
+    private func pendingPersistenceCanCoalesce(oldID: String, newID: String) -> Bool {
+        guard let oldPending = pendingNotePersistenceByItemID[oldID],
+              let newPending = pendingNotePersistenceByItemID[newID] else {
+            return true
+        }
+        return oldPending.markdown == newPending.markdown
+    }
+
+    private func replaceItemIDEverywhere(_ oldID: String, with newID: String) {
+        guard oldID != newID else { return }
+
+        if let oldNote = notesByItemID.removeValue(forKey: oldID), notesByItemID[newID] == nil {
+            notesByItemID[newID] = oldNote
+        }
+        if let pendingWrite = pendingNoteWritesByItemID.removeValue(forKey: oldID),
+           pendingNoteWritesByItemID[newID] == nil {
+            pendingNoteWritesByItemID[newID] = pendingWrite
+        }
+        if let backingDigest = noteBackingContentDigestsByItemID.removeValue(forKey: oldID),
+           noteBackingContentDigestsByItemID[newID] == nil {
+            noteBackingContentDigestsByItemID[newID] = backingDigest
+        }
+        if selectedItemID == oldID { selectedItemID = newID }
+        if activeNotebookItemID == oldID { activeNotebookItemID = newID }
+        if courseWorkspaceTargetItemID == oldID { courseWorkspaceTargetItemID = newID }
+
+        noteSourceLinks = NoteSourceRelations(
+            links: noteSourceLinks.map { link in
+                var copy = link
+                if copy.noteItemID == oldID { copy.noteItemID = newID }
+                if copy.sourceItemID == oldID { copy.sourceItemID = newID }
+                return copy
+            }
+        ).links
+
+        if var location = studyLocationsByItemID.removeValue(forKey: oldID) {
+            location.itemID = newID
+            if studyLocationsByItemID[newID] == nil {
+                studyLocationsByItemID[newID] = location
+            }
+        }
+        for index in studySessions.indices {
+            var seen = Set<String>()
+            studySessions[index].focusItemIDs = studySessions[index].focusItemIDs.compactMap { itemID in
+                let migratedID = itemID == oldID ? newID : itemID
+                return seen.insert(migratedID).inserted ? migratedID : nil
+            }
+        }
+
+        if stagedNoteDraft?.itemID == oldID, let value = stagedNoteDraft?.value {
+            stagedNoteDraft = (newID, value)
+        }
+        if notebookCreationDraft?.sourceItemID == oldID {
+            notebookCreationDraft?.sourceItemID = newID
+        }
+        if notebookRenameDraft?.itemID == oldID {
+            notebookRenameDraft?.itemID = newID
+        }
+
+        pendingNotePersistenceTasks.removeValue(forKey: oldID)?.cancel()
+        if var pending = pendingNotePersistenceByItemID.removeValue(forKey: oldID) {
+            pending.item.id = newID
+            scheduleNotePersistence(pending.markdown, for: pending.item)
+        }
+        replaceNavigationItemID(oldID, with: newID)
+    }
+
     private func replaceNavigationItemID(_ oldID: String, with newID: String) {
         backNavigationStack = backNavigationStack.map { snapshot in
             var copy = snapshot
@@ -2397,8 +5811,21 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func clearUnpinnedFloatingSelection(keepContext: Bool = true) {
+    private func invalidateAgentContext() {
+        agentContextRevision &+= 1
+        latestAgentNoteProposal = nil
+        lastAgentReplyContextRevision = nil
+        quietInsightTask?.cancel()
+        if isAskingAgent || activeAgentRequestID != nil {
+            cancelAgentRequest()
+        }
+    }
+
+    private func clearUnpinnedFloatingSelection(keepContext: Bool = true, invalidatesAgentContext: Bool = true) {
         if !keepContext {
+            if invalidatesAgentContext, selectionContext != nil {
+                invalidateAgentContext()
+            }
             cancelPendingSelectionAttachment()
             selectionContext = nil
             selectionAnchor = nil
@@ -2425,7 +5852,25 @@ final class WorkspaceStore: ObservableObject {
 
     private func refreshQuietInsightIfNeeded() {
         guard agentSurface == .quietInsight, showQuietInsight else { return }
-        Task { await refreshQuietInsight() }
+        let previousTask = quietInsightTask
+        previousTask?.cancel()
+        let taskID = UUID()
+        quietInsightTaskID = taskID
+        quietInsightTask = Task { @MainActor [weak self] in
+            await previousTask?.value
+            guard !Task.isCancelled else {
+                self?.finishQuietInsightTask(id: taskID)
+                return
+            }
+            await self?.refreshQuietInsight()
+            self?.finishQuietInsightTask(id: taskID)
+        }
+    }
+
+    private func finishQuietInsightTask(id: UUID) {
+        guard quietInsightTaskID == id else { return }
+        quietInsightTask = nil
+        quietInsightTaskID = nil
     }
 
     private func makeQuietInsightSignature(materialText: String, noteText: String, selectionText: String?) -> String {
@@ -2457,18 +5902,70 @@ final class WorkspaceStore: ObservableObject {
         """
     }
 
+    private static func noteContentDigest(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
+    nonisolated private static func readNotebookMarkdown(at url: URL) throws -> String {
+        let data = try Data(contentsOf: url)
+        guard let markdown = String(data: data, encoding: .utf8) else {
+            throw CocoaError(.fileReadInapplicableStringEncoding)
+        }
+        return markdown
+    }
+
+    nonisolated private static func writeNotebookMarkdown(_ markdown: String, to url: URL) throws {
+        try markdown.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    nonisolated private static func moveNotebookFile(from sourceURL: URL, to destinationURL: URL) throws {
+        try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
+    }
+
+    nonisolated private static func writeWorkspaceSnapshot(_ data: Data, to url: URL) throws {
+        try data.write(to: url, options: [.atomic])
+    }
+
+    private static func noteContentDigest(at url: URL) -> String? {
+        (try? Data(contentsOf: url)).map(noteContentDigest)
+    }
+
     private func noteText(for item: StudyItem?) -> String {
         guard let item else {
             noteFileError = nil
             return defaultNote(for: nil)
+        }
+        if let pendingWrite = pendingNoteWritesByItemID[item.id],
+           let cached = notesByItemID[item.id] {
+            let diskDigest = item.url.flatMap(Self.noteContentDigest)
+            if let diskDigest {
+                noteBackingContentDigestsByItemID[item.id] = diskDigest
+            }
+            let hasConflict = diskDigest != nil
+                && (pendingWrite.baselineContentDigest == nil || pendingWrite.baselineContentDigest != diskDigest)
+            noteFileError = hasConflict
+                ? ui(
+                    "检测到笔记冲突：魏碑草稿和外部文件都已保留，请对照后再处理。",
+                    "A note conflict was detected. Both the WeiBei draft and external file were kept for review."
+                )
+                : ui(
+                    "正在保留尚未写回原 Markdown 的最新编辑。",
+                    "Keeping the latest edit that has not yet been written back to the original Markdown."
+                )
+            return cleanLegacyPlaceholder(cached)
         }
         guard item.editsBackingMarkdownFile, let url = item.url else {
             noteFileError = nil
             return cleanLegacyPlaceholder(notesByItemID[item.id] ?? defaultNote(for: item))
         }
         do {
+            let data = try Data(contentsOf: url)
+            guard let markdown = String(data: data, encoding: .utf8) else {
+                throw CocoaError(.fileReadInapplicableStringEncoding)
+            }
+            noteBackingContentDigestsByItemID[item.id] = Self.noteContentDigest(data)
             noteFileError = nil
-            return cleanLegacyPlaceholder(try String(contentsOf: url, encoding: .utf8))
+            return cleanLegacyPlaceholder(markdown)
         } catch {
             noteFileError = ui("无法读取原 Markdown：\(url.lastPathComponent)", "Could not read original Markdown: \(url.lastPathComponent)")
             return cleanLegacyPlaceholder(notesByItemID[item.id] ?? defaultNote(for: item))
@@ -2484,6 +5981,10 @@ final class WorkspaceStore: ObservableObject {
     func flushPendingNotePersistence() {
         let itemIDs = Array(pendingNotePersistenceByItemID.keys)
         itemIDs.forEach { flushPendingNotePersistence(for: $0) }
+        studyProgressSaveTask?.cancel()
+        studyProgressSaveTask = nil
+        syncActiveStudySession()
+        save()
     }
 
     private func scheduleNotePersistence(_ markdown: String, for item: StudyItem) {
@@ -2510,16 +6011,77 @@ final class WorkspaceStore: ObservableObject {
         pendingNotePersistenceTasks[itemID] = nil
     }
 
+    private func retainPendingNoteWrite(_ markdown: String, itemID: String, fallbackURL: URL?) {
+        let baseline: String?
+        if let existingPendingWrite = pendingNoteWritesByItemID[itemID] {
+            baseline = existingPendingWrite.baselineContentDigest
+        } else {
+            baseline = noteBackingContentDigestsByItemID[itemID]
+                ?? fallbackURL.flatMap(Self.noteContentDigest)
+        }
+        notesByItemID[itemID] = markdown
+        pendingNoteWritesByItemID[itemID] = PendingNoteWriteState(
+            baselineContentDigest: baseline
+        )
+    }
+
     private func persistNote(_ markdown: String, for item: StudyItem) {
         let noteItemID = item.id
-        if item.editsBackingMarkdownFile, let url = item.url {
+        if item.editsBackingMarkdownFile {
+            guard let index = importedItems.firstIndex(where: { $0.id == noteItemID }) else {
+                retainPendingNoteWrite(markdown, itemID: noteItemID, fallbackURL: item.url)
+                noteFileError = ui("无法确认原 Markdown 的课程身份。", "Could not resolve the original Markdown identity.")
+                save()
+                return
+            }
+            let resolution = resolveTrackedImportedFile(at: index)
+            guard let url = resolution.url else {
+                retainPendingNoteWrite(markdown, itemID: noteItemID, fallbackURL: item.url)
+                noteFileError = ui(
+                    "原 Markdown 已移动或不可用，最新编辑已安全保留在课程中。",
+                    "The original Markdown moved or is unavailable. The latest edit is safely retained in the course."
+                )
+                save()
+                return
+            }
+            let pendingWrite = pendingNoteWritesByItemID[noteItemID]
+            let expectedDigest = pendingWrite == nil
+                ? noteBackingContentDigestsByItemID[noteItemID]
+                : pendingWrite?.baselineContentDigest
+            let currentDigest = Self.noteContentDigest(at: url)
+            let hasConflict: Bool
+            if pendingWrite != nil {
+                hasConflict = expectedDigest.flatMap { expected in
+                    currentDigest.map { $0 != expected }
+                } ?? true
+            } else if let expectedDigest {
+                hasConflict = currentDigest.map { $0 != expectedDigest } ?? true
+            } else {
+                hasConflict = false
+            }
+            if hasConflict {
+                retainPendingNoteWrite(markdown, itemID: noteItemID, fallbackURL: url)
+                noteFileError = ui(
+                    "检测到笔记冲突：没有覆盖外部文件，魏碑草稿也已保留。请对照两份内容后再处理。",
+                    "A note conflict was detected. The external file was not overwritten, and the WeiBei draft was retained for review."
+                )
+                save()
+                return
+            }
             do {
                 try markdown.write(to: url, atomically: true, encoding: .utf8)
                 notesByItemID.removeValue(forKey: noteItemID)
+                pendingNoteWritesByItemID.removeValue(forKey: noteItemID)
+                noteBackingContentDigestsByItemID[noteItemID] = Self.noteContentDigest(Data(markdown.utf8))
                 noteFileError = nil
+                let refreshedItem = refreshImportedFileTracking(itemID: noteItemID, url: url)
+                    ?? importedItems[index]
+                courseDocumentSearchIndex.schedule([refreshedItem])
+                save()
             } catch {
-                notesByItemID[noteItemID] = markdown
+                retainPendingNoteWrite(markdown, itemID: noteItemID, fallbackURL: url)
                 noteFileError = ui("无法写回原 Markdown：\(url.lastPathComponent)", "Could not write original Markdown: \(url.lastPathComponent)")
+                save()
             }
             return
         }
@@ -2533,8 +6095,33 @@ final class WorkspaceStore: ObservableObject {
         }
         importedItems = snapshot.importedItems
         notesByItemID = snapshot.notesByItemID.mapValues(cleanLegacyPlaceholder)
+        if let persistedPendingNoteWrites = snapshot.pendingNoteWritesByItemID {
+            pendingNoteWritesByItemID = persistedPendingNoteWrites
+        } else {
+            pendingNoteWritesByItemID = [:]
+            for item in importedItems
+            where item.editsBackingMarkdownFile && notesByItemID[item.id] != nil {
+                pendingNoteWritesByItemID[item.id] = PendingNoteWriteState(
+                    baselineContentDigest: nil
+                )
+            }
+        }
+        noteBackingContentDigestsByItemID = snapshot.noteBackingContentDigestsByItemID ?? [:]
         selectedItemID = snapshot.selectedItemID
         activeNotebookItemID = snapshot.activeNotebookItemID
+        noteSourceLinks = snapshot.noteSourceLinks ?? []
+        noteSourceLinksMigrationVersion = snapshot.noteSourceLinksMigrationVersion ?? 0
+        studyLocationsByItemID = snapshot.studyLocationsByItemID ?? [:]
+        learningMemoryEntries = snapshot.learningMemoryEntries ?? []
+        learningMemoryRevision = snapshot.learningMemoryRevision ?? 0
+        studySessions = (snapshot.studySessions ?? []).map { session in
+            var bounded = session
+            if bounded.messages.count > 500 {
+                bounded.messages = Array(bounded.messages.suffix(500))
+            }
+            return bounded
+        }
+        activeStudySessionID = snapshot.activeStudySessionID
         if selectedItem?.isNotebookNote == true {
             activeNotebookItemID = selectedItemID
             selectedItemID = sampleItems.first?.id
@@ -2568,6 +6155,7 @@ final class WorkspaceStore: ObservableObject {
         showReader = snapshot.showReader ?? true
         showAgent = snapshot.showAgent ?? legacyRightPane ?? true
         showNotes = snapshot.showNotes ?? legacyRightPane ?? true
+        showDailyInspiration = snapshot.showDailyInspiration ?? true
         if let appearanceModeRaw = snapshot.appearanceModeRaw,
            let appearanceMode = WeiBeiAppearanceMode(rawValue: appearanceModeRaw) {
             self.appearanceMode = appearanceMode
@@ -2605,12 +6193,22 @@ final class WorkspaceStore: ObservableObject {
             .replacingOccurrences(of: "\n- <br />", with: "")
     }
 
-    private func save() {
+    @discardableResult
+    private func save() -> Bool {
         let snapshot = PersistedWorkspace(
             importedItems: importedItems,
             notesByItemID: notesByItemID,
+            pendingNoteWritesByItemID: pendingNoteWritesByItemID,
+            noteBackingContentDigestsByItemID: noteBackingContentDigestsByItemID,
             selectedItemID: selectedItemID,
             activeNotebookItemID: activeNotebookItemID,
+            noteSourceLinks: noteSourceLinks,
+            noteSourceLinksMigrationVersion: noteSourceLinksMigrationVersion,
+            studyLocationsByItemID: studyLocationsByItemID,
+            learningMemoryEntries: learningMemoryEntries,
+            learningMemoryRevision: learningMemoryRevision,
+            studySessions: studySessions,
+            activeStudySessionID: activeStudySessionID,
             modelName: modelName,
             workspaceLayout: layout,
             threePaneOrder: normalizedThreePaneOrder,
@@ -2621,12 +6219,23 @@ final class WorkspaceStore: ObservableObject {
             showAgent: showAgent,
             showNotes: showNotes,
             showRightPane: showRightPane,
+            showDailyInspiration: showDailyInspiration,
             appearanceModeRaw: appearanceMode.rawValue,
             adaptImportedDocumentColors: adaptImportedDocumentColors,
             interfaceLanguageRaw: interfaceLanguage.rawValue
         )
-        guard let data = try? JSONEncoder().encode(snapshot) else { return }
-        try? data.write(to: storageURL, options: [.atomic])
+        do {
+            let data = try JSONEncoder().encode(snapshot)
+            try workspaceSnapshotWriter(data, storageURL)
+            workspaceSaveError = nil
+            return true
+        } catch {
+            workspaceSaveError = ui(
+                "课程更改尚未写入磁盘：\(error.localizedDescription)",
+                "Course changes were not saved to disk: \(error.localizedDescription)"
+            )
+            return false
+        }
     }
 
     private func resolvedOpenAIAPIKey() -> (key: String, source: String)? {
@@ -2654,6 +6263,19 @@ final class WorkspaceStore: ObservableObject {
 
     private static func environmentValue(_ name: String) -> String {
         OpenAIAPIKeyStore.cleaned(ProcessInfo.processInfo.environment[name] ?? "")
+    }
+
+    private static func removeLegacyCourseIndex(in directory: URL) {
+        for version in ["v1", "v2"] {
+            let legacy = directory.appendingPathComponent("course-search-\(version).sqlite3")
+            for url in [
+                legacy,
+                URL(fileURLWithPath: legacy.path + "-wal"),
+                URL(fileURLWithPath: legacy.path + "-shm"),
+            ] where FileManager.default.fileExists(atPath: url.path) {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
     }
 
     private static func workspaceRootDirectory() -> URL? {

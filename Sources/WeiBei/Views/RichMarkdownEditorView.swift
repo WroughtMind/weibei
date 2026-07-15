@@ -246,6 +246,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     var onSelectionChange: (String, CGPoint?) -> Void
     var onAskAgentWithSelection: (String, CGPoint?) -> Void
     var onContentHeightChange: (CGFloat) -> Void = { _ in }
+    var onActiveHeadingChange: (Int?) -> Void = { _ in }
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
@@ -265,6 +266,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             appearanceMode: appearanceMode,
             interfaceLanguage: interfaceLanguage,
             onContentHeightChange: onContentHeightChange,
+            onActiveHeadingChange: onActiveHeadingChange,
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onAskAgentWithSelection,
             onWikiLink: onWikiLink,
@@ -368,7 +370,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             coordinator?.handleAppShortcut(key: key, modifiers: modifiers) ?? false
         }
         context.coordinator.webView = view
-        if let url = Bundle.module.url(forResource: "index", withExtension: "html") {
+        if let url = WeiBeiResources.bundle.url(forResource: "index", withExtension: "html") {
             let editorDirectory = url.deletingLastPathComponent()
             view.loadFileURL(url, allowingReadAccessTo: editorDirectory.deletingLastPathComponent())
         } else {
@@ -423,6 +425,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.onSelectionChange = onSelectionChange
         context.coordinator.onAskAgentWithSelection = onAskAgentWithSelection
         context.coordinator.onContentHeightChange = onContentHeightChange
+        context.coordinator.onActiveHeadingChange = onActiveHeadingChange
 
         if context.coordinator.isReady, context.coordinator.webMarkdown != markdown {
             context.coordinator.setMarkdown(markdown)
@@ -451,6 +454,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         "sourceReferenceActivated",
         "imageAttachmentRequested",
         "contentHeightChanged",
+        "activeHeadingChanged",
         "compactPreviewWheel",
         "appShortcut"
     ]
@@ -472,6 +476,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var onSelectionChange: (String, CGPoint?) -> Void
         var onAskAgentWithSelection: (String, CGPoint?) -> Void
         var onContentHeightChange: (CGFloat) -> Void
+        var onActiveHeadingChange: (Int?) -> Void
         var onWikiLink: (String) -> Void
         var onSourceReference: (String) -> Void
         var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool
@@ -505,6 +510,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             appearanceMode: WeiBeiAppearanceMode,
             interfaceLanguage: WeiBeiInterfaceLanguage,
             onContentHeightChange: @escaping (CGFloat) -> Void,
+            onActiveHeadingChange: @escaping (Int?) -> Void,
             onSelectionChange: @escaping (String, CGPoint?) -> Void,
             onAskAgentWithSelection: @escaping (String, CGPoint?) -> Void,
             onWikiLink: @escaping (String) -> Void,
@@ -523,6 +529,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.appearanceMode = appearanceMode
             self.interfaceLanguage = interfaceLanguage
             self.onContentHeightChange = onContentHeightChange
+            self.onActiveHeadingChange = onActiveHeadingChange
             self.onSelectionChange = onSelectionChange
             self.onAskAgentWithSelection = onAskAgentWithSelection
             self.onWikiLink = onWikiLink
@@ -535,10 +542,20 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard messageMatchesDocument(message.body) else { return }
+            // The SwiftUI document can change while the WebView is still booting.
+            // Its one ready callback still belongs to this WebView and must be
+            // accepted so we can push the latest document into it. Every later
+            // callback remains scoped to the current document identity.
+            if message.name != "editorReady" {
+                guard messageMatchesDocument(message.body) else { return }
+            }
             switch message.name {
             case "editorReady":
                 isReady = true
+                setDocumentID(documentID)
+                setMarkdownBaseURL(markdownBaseURLString)
+                setEditable(isEditable)
+                setInterfaceLanguage(interfaceLanguage)
                 if let text = (message.body as? [String: Any])?["markdown"] as? String {
                     webMarkdown = text
                     if markdown.wrappedValue == text {
@@ -604,6 +621,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 guard let body = message.body as? [String: Any],
                       let height = body["height"] as? Double else { return }
                 onContentHeightChange(CGFloat(height))
+            case "activeHeadingChanged":
+                guard let body = message.body as? [String: Any] else { return }
+                onActiveHeadingChange((body["index"] as? NSNumber)?.intValue)
             case "compactPreviewWheel":
                 guard let body = message.body as? [String: Any],
                       let deltaY = body["deltaY"] as? Double else { return }
@@ -672,6 +692,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 evaluate("window.WeiBeiEditor?.applyAgentPatch(\(Self.json(command.markdown)))")
             case .insertMarkdown:
                 evaluate("window.WeiBeiEditor?.insertMarkdown(\(Self.json(command.markdown)))")
+            case .scrollToHeading:
+                evaluate("window.WeiBeiEditor?.scrollToHeading(\(Self.json(command.markdown)))")
             }
         }
 

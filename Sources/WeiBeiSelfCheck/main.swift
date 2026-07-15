@@ -2,6 +2,7 @@ import AppKit
 import CoreText
 import Foundation
 import PDFKit
+import Security
 import WeiBeiCore
 
 func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
@@ -10,6 +11,48 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
         exit(1)
     }
 }
+
+if ProcessInfo.processInfo.environment["WEIBEI_PI_TERMINAL_SELF_CHECK_ONLY"] == "1" {
+    try await runPiTerminalRuntimeSelfChecks()
+    print("WeiBei PI terminal runtime self-check passed")
+    exit(0)
+}
+
+try runPiAgentSelfChecks()
+
+expect(EmptyWorkspaceDayPeriod(hour: 5) == .morning
+    && EmptyWorkspaceDayPeriod(hour: 10) == .morning
+    && EmptyWorkspaceDayPeriod(hour: 11) == .midday
+    && EmptyWorkspaceDayPeriod(hour: 16) == .midday
+    && EmptyWorkspaceDayPeriod(hour: 17) == .evening
+    && EmptyWorkspaceDayPeriod(hour: 22) == .evening
+    && EmptyWorkspaceDayPeriod(hour: 23) == .lateNight
+    && EmptyWorkspaceDayPeriod(hour: 4) == .lateNight, "empty workspace greeting follows morning, midday, evening, and late-night boundaries")
+expect(EmptyWorkspaceDayPeriod.morning.greeting(language: .chinese).contains("早安")
+    && EmptyWorkspaceDayPeriod.midday.greeting(language: .chinese).contains("午安")
+    && EmptyWorkspaceDayPeriod.evening.greeting(language: .chinese).contains("晚安")
+    && EmptyWorkspaceDayPeriod.lateNight.greeting(language: .chinese).contains("夜深")
+    && !EmptyWorkspaceDayPeriod.morning.greeting(language: .english).isEmpty, "empty workspace greetings stay localized and non-empty")
+
+let inspirationItems = EmptyWorkspaceInspirationCatalog.items
+expect(inspirationItems.count >= 6
+    && EmptyWorkspaceInspirationCatalog.validationErrors.isEmpty
+    && inspirationItems.contains(where: { if case .calligraphy = $0.presentation { return true }; return false })
+    && inspirationItems.contains(where: { $0.presentation == .quotation })
+    && inspirationItems.contains(where: { $0.presentation == .formula }), "daily inspiration catalog contains validated calligraphy, original-language quotation, and formulas")
+expect(inspirationItems.allSatisfy { item in
+    !item.text.isEmpty
+        && !item.credit.isEmpty
+        && item.sourceURL?.scheme == "https"
+        && !item.rightsLabel.isEmpty
+        && item.rightsURL?.scheme == "https"
+}, "every daily inspiration keeps text, author/work credit, a reliable source, and rights metadata")
+var inspirationCalendar = Calendar(identifier: .gregorian)
+inspirationCalendar.timeZone = TimeZone(secondsFromGMT: 0)!
+let inspirationDayOne = inspirationCalendar.date(from: DateComponents(year: 2026, month: 7, day: 10, hour: 12))!
+let inspirationDayTwo = inspirationCalendar.date(byAdding: .day, value: 1, to: inspirationDayOne)!
+expect(EmptyWorkspaceInspirationCatalog.item(for: inspirationDayOne, calendar: inspirationCalendar).id
+    != EmptyWorkspaceInspirationCatalog.item(for: inspirationDayTwo, calendar: inspirationCalendar).id, "daily inspiration rotates deterministically from one local day to the next")
 
 let offlineChinesePreview = AgentOfflinePreview.render(
     AgentOfflinePreviewInput(
@@ -105,6 +148,70 @@ CTFontManagerRegisterFontsForURL(displayFontURL as CFURL, .process, nil)
 CTFontManagerRegisterFontsForURL(monoFontURL as CFURL, .process, nil)
 expect(NSFont(name: "WeiBeiStele-Regular", size: 18) != nil
     && NSFont(name: "WeiBeiSteleMono-Regular", size: 13) != nil, "bundled WeiBei English fonts register under their PostScript names")
+let emptyWorkspaceEntryFont = CTFontCreateWithName("WeiBeiStele-Regular" as CFString, 22, nil)
+let emptyWorkspaceEntryCharacters = Array("DOCCHATNOTES".utf16)
+var emptyWorkspaceEntryGlyphs = Array(repeating: CGGlyph(), count: emptyWorkspaceEntryCharacters.count)
+expect(emptyWorkspaceEntryCharacters.withUnsafeBufferPointer { characters in
+    emptyWorkspaceEntryGlyphs.withUnsafeMutableBufferPointer { glyphs in
+        CTFontGetGlyphsForCharacters(emptyWorkspaceEntryFont, characters.baseAddress!, glyphs.baseAddress!, characters.count)
+    }
+} && emptyWorkspaceEntryGlyphs.allSatisfy { $0 != 0 }, "WeiBeiStele keeps every glyph required by the DOC, CHAT, and NOTES work entries")
+
+func inspectCalligraphyAsset(_ url: URL) throws -> (width: Int, height: Int, visible: Int, transparent: Int, opaqueWhite: Int, outerInk: Int) {
+    let data = try Data(contentsOf: url)
+    guard let bitmap = NSBitmapImageRep(data: data) else {
+        throw NSError(domain: "WeiBeiSelfCheck", code: 1, userInfo: [NSLocalizedDescriptionKey: "Unreadable calligraphy PNG: \(url.path)"])
+    }
+    var visible = 0
+    var transparent = 0
+    var opaqueWhite = 0
+    var outerInk = 0
+    for y in 0..<bitmap.pixelsHigh {
+        for x in 0..<bitmap.pixelsWide {
+            guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+            if color.alphaComponent > 0.05 {
+                visible += 1
+                if x < 2 || y < 2 || x >= bitmap.pixelsWide - 2 || y >= bitmap.pixelsHigh - 2 {
+                    outerInk += 1
+                }
+            } else {
+                transparent += 1
+            }
+            if color.alphaComponent > 0.95
+                && color.redComponent > 0.95
+                && color.greenComponent > 0.95
+                && color.blueComponent > 0.95 {
+                opaqueWhite += 1
+            }
+        }
+    }
+    return (bitmap.pixelsWide, bitmap.pixelsHigh, visible, transparent, opaqueWhite, outerInk)
+}
+
+let calligraphyDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Resources/Inspiration/Calligraphy", isDirectory: true)
+let clearBreezeStats = try inspectCalligraphyAsset(calligraphyDirectoryURL.appendingPathComponent("lanting-clear-breeze.png"))
+let universeStats = try inspectCalligraphyAsset(calligraphyDirectoryURL.appendingPathComponent("lanting-universe.png"))
+expect(clearBreezeStats.width == 856 && clearBreezeStats.height == 132
+    && universeStats.width == 624 && universeStats.height == 132
+    && clearBreezeStats.visible > 1_000 && universeStats.visible > 1_000
+    && clearBreezeStats.transparent > clearBreezeStats.visible
+    && universeStats.transparent > universeStats.visible
+    && clearBreezeStats.opaqueWhite == 0 && universeStats.opaqueWhite == 0
+    && clearBreezeStats.outerInk == 0 && universeStats.outerInk == 0, "bundled Lanting calligraphy masks are transparent, uncropped, and free of hard white backgrounds")
+
+let inspirationSourcesURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Resources/Inspiration/SOURCES.md")
+let inspirationSources = (try? String(contentsOf: inspirationSourcesURL, encoding: .utf8)) ?? ""
+expect(inspirationSources.contains("a133647a8695cd06d0f5c6215d66e0b8b8d93d56")
+    && inspirationSources.contains("b30c54279d2e0b5c7b8221369962ba3a3c0e16b264808332da38cb1b8e63d936")
+    && inspirationSources.contains("a915d1e460c68a0634c2cfaad90f802fda04ea8c25227632cd4812c51647df22")
+    && inspirationSources.contains("1c7965b6447392a874ed75adb1ce5703f26b562b8fc5fd6f380d1fdde0621379")
+    && inspirationSources.contains("Public Domain Mark 1.0")
+    && inspirationSources.contains("故00002597")
+    && inspirationSources.contains("were rejected")
+    && inspirationSources.contains("No NC, ND")
+    && inspirationSources.contains("No generative fill, vector tracing, or font substitution"), "inspiration resource documentation preserves source hashes, public-domain status, provenance, exclusions, and transformation limits")
 
 let runScriptURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("script/build_and_run.sh")
@@ -114,39 +221,97 @@ expect(runScript.contains("BUILD_CONFIGURATION=\"release\"")
     && runScript.contains("swift build -c \"$BUILD_CONFIGURATION\"")
     && runScript.contains("swift build -c \"$BUILD_CONFIGURATION\" --show-bin-path")
     && runScript.contains("swift run -c \"$BUILD_CONFIGURATION\" WeiBeiSelfCheck")
-    && runScript.contains("swift run -c \"$BUILD_CONFIGURATION\" WeiBeiWebEditorCheck"), "user-facing app builds are optimized while check and debugger modes remain debuggable")
+    && runScript.contains("swift run -c \"$BUILD_CONFIGURATION\" WeiBei --self-check-imported-identity")
+    && runScript.contains("swift run -c \"$BUILD_CONFIGURATION\" WeiBeiWebEditorCheck")
+    && runScript.contains("swift run -c \"$BUILD_CONFIGURATION\" WeiBeiPiCheck"), "user-facing app builds are optimized while check and debugger modes remain debuggable")
+expect(runScript.contains("'\"activeNotebookItemID\":\"imported:'")
+    && runScript.contains("&& ! /usr/bin/grep -q '\"activeNotebookItemID\":\"file:'"), "linked-source verification requires stable notebook identity and rejects a legacy path identity")
+expect(runScript.contains("${PRODUCT_NAME}_WeiBeiCore.bundle")
+    && runScript.contains("for resource_bundle in \"${RESOURCE_BUNDLES[@]}\"")
+    && runScript.contains("cp -R \"$resource_bundle\" \"$APP_RESOURCES/\"")
+    && !runScript.contains("cp -R \"$resource_bundle\" \"$APP_BUNDLE/\""), "packaging places both Swift resource bundles once in the signed app Resources directory")
+expect(runScript.contains("prepare_pi_runtime.sh")
+    && runScript.contains("PiRuntime/bin/pi")
+    && runScript.contains("binary.sha256")
+    && runScript.contains("cmp -s \"$BUILD_BINARY\" \"$APP_BINARY\"")
+    && runScript.contains("PACKAGED_UUID=")
+    && runScript.contains("signed app binary UUID does not match the current Swift build")
+    && runScript.contains("codesign --verify --deep --strict \"$APP_BUNDLE\""), "packaging embeds and integrity-checks the signed PI runtime inside the app")
+expect(runScript.contains("PDF_TEXT_WORKER_NAME=\"WeiBeiPDFTextWorker\"")
+    && runScript.contains("cp \"$BUILD_PDF_TEXT_WORKER\" \"$PDF_TEXT_WORKER\"")
+    && runScript.contains("cmp -s \"$BUILD_PDF_TEXT_WORKER\" \"$PDF_TEXT_WORKER\"")
+    && runScript.contains("codesign --force --sign - --timestamp=none \"$PDF_TEXT_WORKER\"")
+    && runScript.contains("WEIBEI_PDF_WORKER_VERIFY=1 \"$PDF_TEXT_WORKER\" --verification-probe normal"), "packaging embeds, signs, and executes the bounded PDF text worker")
 expect(runScript.contains("kCGWindowOwnerName") && runScript.contains("\"$APP_DISPLAY_NAME\""), "run script verifies the visible app window by owner name")
 expect(runScript.contains("let isOnscreen = window[kCGWindowIsOnscreen as String] as? NSNumber") && runScript.contains("let visibleEnough = isOnscreen == nil || isOnscreen?.intValue != 0"), "run script tolerates missing onscreen metadata when the window is otherwise capturable")
 expect(!runScript.contains("pid=\"$(pgrep -x \"$PRODUCT_NAME\""), "run script window verification does not depend on pgrep")
-expect(runScript.contains("visual_verify_window") && runScript.contains("--visual-verify") && runScript.contains("visual_non_black_ratio") && runScript.contains("visual verify failed: captured window is black or empty") && runScript.contains("nonBlackRatio < 0.02"), "run script exposes an explicit visual non-black window check")
-expect(runScript.contains("weibei-visual-verify-latest.png") && runScript.contains("visual_capture_path=$latest_capture_path"), "visual verification leaves one latest screenshot path for review")
-expect(runScript.contains("visual verify blocked: macOS refused window capture") && runScript.contains("Grant Screen Recording permission"), "visual verification reports capture-permission failures instead of looking like an app rendering failure")
+expect(runScript.contains("visual_verify_window") && runScript.contains("--visual-verify") && runScript.contains("visual_non_black_ratio") && runScript.contains("visual_black_ratio") && runScript.contains("visual_transparent_ratio") && runScript.contains("color.alphaComponent < 0.05") && runScript.contains("blackRatio > 0.12") && runScript.contains("transparentRatio > 0.005") && runScript.contains("nonBlackRatio < 0.02"), "run script rejects empty, fully transparent, and black rendering blocks without rejecting translucent titlebar material")
+expect(runScript.contains("weibei-visual-verify-latest.png") && runScript.contains("cp \"$capture_path\" \"$latest_capture_path\""), "visual verification leaves one latest screenshot path for review")
+expect(runScript.contains("weibei-visual-verify-$VERIFY_SCENARIO.png")
+    && runScript.contains("visual_capture_path=$scenario_capture_path"), "visual verification preserves a separate screenshot for every empty-workspace theme and width scenario")
+expect(runScript.contains("WEIBEI_VERIFY_CAPTURE_PATH")
+    && runScript.contains("[[ -s \"$VERIFY_CAPTURE_PATH\" ]] && break")
+    && runScript.contains("app-owned capture and macOS window capture failed")
+    && runScript.contains("Grant Screen Recording permission"), "visual verification prefers an app-owned capture and reports when both capture paths fail")
 expect(runScript.contains("open_app() {\n  /usr/bin/open \"$APP_BUNDLE\"\n}")
     && !runScript.contains("open_app() {\n  /usr/bin/open -n \"$APP_BUNDLE\"\n}"), "regular run opens WeiBei without forcing a second app instance")
 expect(runScript.contains("RUN_VISUAL_VERIFY=false")
     && runScript.contains("if [[ \"${2:-}\" == \"--visual-verify\"")
     && runScript.contains("finish_verify_window()")
     && runScript.contains("if [[ \"$RUN_VISUAL_VERIFY\" == true ]]; then\n    visual_verify_window")
-    && runScript.contains("swift run -c \"$BUILD_CONFIGURATION\" WeiBeiWebEditorCheck"), "run script verify mode includes Web editor checks and honors --verify --visual-verify")
+    && runScript.contains("swift run -c \"$BUILD_CONFIGURATION\" WeiBeiWebEditorCheck")
+    && runScript.contains("swift run -c \"$BUILD_CONFIGURATION\" WeiBeiPiCheck"), "run script verify mode includes Web editor and PI checks and honors --verify --visual-verify")
 expect(runScript.contains("open_app_for_verify()")
     && runScript.contains("VERIFY_DATA_DIR=\"$DIST_DIR/Data\"")
     && runScript.contains("VERIFY_SCENARIO=\"${WEIBEI_VERIFY_SCENARIO:-offline-learning-flow}\"")
+    && runScript.contains("VERIFY_WINDOW_SIZE=\"${WEIBEI_VERIFY_WINDOW_SIZE:-}\"")
+    && runScript.contains("VERIFY_INSPIRATION_ID=\"${WEIBEI_VERIFY_INSPIRATION_ID:-}\"")
     && runScript.contains("rm -rf \"$VERIFY_DATA_DIR\"")
-    && runScript.contains("--env WEIBEI_SUPPRESS_ACTIVATION=1 --env WEIBEI_FORCE_OFFLINE_AGENT=1 --env \"WEIBEI_WORKSPACE_DIR=$VERIFY_DATA_DIR\" --env \"WEIBEI_VERIFY_SCENARIO=$VERIFY_SCENARIO\"")
-    && runScript.contains("if [[ -n \"$VERIFY_SCENARIO\" ]]; then\n    sleep 2.6\n  fi")
+    && runScript.contains("local agent_environment=(WEIBEI_FORCE_OFFLINE_AGENT=1)")
+    && runScript.contains("if [[ \"$VERIFY_SCENARIO\" == \"pi-learning-flow\" || \"$VERIFY_SCENARIO\" == \"pi-course-memory-flow\" ]]")
+    && runScript.contains("/usr/bin/env \\")
+    && runScript.contains("WEIBEI_SUPPRESS_ACTIVATION=1 \\")
+    && runScript.contains("\"WEIBEI_WORKSPACE_DIR=$VERIFY_DATA_DIR\"")
+    && runScript.contains("\"WEIBEI_VERIFY_SCENARIO=$VERIFY_SCENARIO\"")
+    && runScript.contains("\"WEIBEI_VERIFY_WINDOW_SIZE=$VERIFY_WINDOW_SIZE\"")
+    && runScript.contains("\"$APP_BINARY\" >\"$VERIFY_STDOUT\" 2>\"$VERIFY_STDERR\" &")
+    && runScript.contains("VERIFY_PID=\"$!\"")
+    && runScript.contains("if [[ -n \"$VERIFY_SCENARIO\" ]]; then\n    for _ in {1..50}; do")
     && runScript.contains("--verify|verify)\n    run_verifiers\n    open_app_for_verify")
-    && runScript.contains("--visual-verify|visual-verify)\n    run_verifiers\n    open_app_for_verify"), "verify modes launch the app in the background with an isolated offline learning-flow workspace")
+    && runScript.contains("--visual-verify|visual-verify)\n    run_verifiers\n    open_app_for_verify"), "verify modes launch the app in the background with an isolated offline or PI-backed learning-flow workspace")
 expect(runScript.contains("verify_learning_flow_persistence()")
     && runScript.contains("workspace.json")
     && runScript.contains("## 整理建议")
     && runScript.contains("把可确认依据写入笔记")
     && runScript.contains("! /usr/bin/grep -q \"## 离线草稿\"")
     && runScript.contains("! /usr/bin/grep -q \"## 可确认\""), "verify mode checks that the offline learning flow persists only the note-ready agent suggestion into the note workspace")
+expect(runScript.contains("pi-agent-verified.txt")
+    && runScript.contains("packaged PI did not complete the in-app learning flow")
+    && workspaceStoreSource.contains("scenario == \"pi-learning-flow\", messages.last?.backend == .pi"), "verify mode can prove the packaged app itself completed a real PI-backed learning flow")
+expect(runScript.contains("pi-course-memory-verified.txt")
+    && runScript.contains("packaged PI did not persist the course-memory learning flow")
+    && runScript.contains("'\"learningMemoryEntries\"'")
+    && runScript.contains("'\"studyLocationsByItemID\"'")
+    && runScript.contains("'\"studySessions\"'")
+    && workspaceStoreSource.contains("scenario == \"pi-course-memory-flow\"")
+    && workspaceStoreSource.contains("latestAgentLearningUpdate?.entries.contains { $0.kind == .confusion }")
+    && workspaceStoreSource.contains("pi-course-memory-verified.txt"), "verify mode proves the packaged PI can resume, navigate across course files, and persist a user-stated confusion")
+expect(runScript.contains("verify_empty_workspace_state()")
+    && runScript.contains("empty-workspace-open-doc")
+    && runScript.contains("empty-workspace-open-chat")
+    && runScript.contains("empty-workspace-open-notes")
+    && runScript.contains("\\\"showReader\\\":$expected_reader")
+    && runScript.contains("\\\"showAgent\\\":$expected_agent")
+    && runScript.contains("\\\"showNotes\\\":$expected_notes")
+    && runScript.contains("\\\"showDailyInspiration\\\":$expected_inspiration")
+    && runScript.contains("Empty workspace entry state marker"), "verify mode proves each empty-workspace entry opens the requested pane while preserving existing note state")
 expect(runScript.contains("VERIFY_MODE=true")
-    && runScript.contains("DIST_DIR=\"${TMPDIR:-/tmp}/weibei-verify-$UID\"")
+    && runScript.contains("DIST_DIR=\"${TMPDIR:-/tmp}/weibei-verify-$UID-$$\"")
     && runScript.contains("elif [[ \"$VERIFY_MODE\" == true ]]; then\n  :")
     && runScript.contains("VERIFY_PID")
-    && runScript.contains("pgrep -nx \"$PRODUCT_NAME\"")
+    && !runScript.contains("pgrep -nx \"$PRODUCT_NAME\"")
+    && runScript.contains("kill -0 \"$VERIFY_PID\"")
+    && runScript.contains("\"$APP_BINARY\" >\"$VERIFY_STDOUT\" 2>\"$VERIFY_STDERR\" &")
     && runScript.contains("trap cleanup_verify_app EXIT")
     && runScript.contains("kCGWindowOwnerPID"), "verify modes use an isolated temporary app and PID-scoped window checks instead of killing the user's active WeiBei window")
 expect(runScript.contains("PACKAGE_ONLY=false")
@@ -272,12 +437,102 @@ let documentTextExtractorURL = URL(fileURLWithPath: FileManager.default.currentD
     .appendingPathComponent("Sources/WeiBei/Services/DocumentTextExtractor.swift")
 let documentTextExtractorSource = (try? String(contentsOf: documentTextExtractorURL, encoding: .utf8)) ?? ""
 expect(documentTextExtractorSource.contains("private static var pdfTextCache")
+    && documentTextExtractorSource.contains("private static var fileTextCache")
+    && documentTextExtractorSource.contains("private static let cacheLock = NSLock()")
     && documentTextExtractorSource.contains("return pdfText(url: url)")
-    && documentTextExtractorSource.contains("private static func pagedText(from document: PDFDocument) -> String")
-    && documentTextExtractorSource.contains("return \"第 \\(index + 1) 页\\n\\(text)\"")
-    && !documentTextExtractorSource.contains("let textLayerText = document.string?.trimmingCharacters")
-    && documentTextExtractorSource.contains("let text = textLayerText.isEmpty ? PDFOCRTextExtractor.text(from: document) : textLayerText")
-    && documentTextExtractorSource.contains("pdfTextCache[cacheKey] = text"), "PDF material extraction uses cached OCR fallback when the native text layer is empty")
+    && documentTextExtractorSource.contains("PDFOCRTextExtractor.text(from: document, maxPages: 12)")
+    && documentTextExtractorSource.contains("store(text, for: cacheKey, cache: .pdf)")
+    && documentTextExtractorSource.contains("maximumPDFCacheBytes")
+    && documentTextExtractorSource.contains("maximumFileCacheBytes")
+    && documentTextExtractorSource.contains("maximumActiveFileBytes = 4 * 1_024 * 1_024")
+    && documentTextExtractorSource.contains("maximumActivePDFPages = 12")
+    && documentTextExtractorSource.contains("maximumActivePDFCharacters = 64_000")
+    && documentTextExtractorSource.contains("maximumActivePDFTextSeconds: TimeInterval = 2")
+    && documentTextExtractorSource.contains("BoundedPDFTextExtractor.pages")
+    && documentTextExtractorSource.contains("static func cachedText(for item: StudyItem)")
+    && !documentTextExtractorSource.contains("page.string")
+    && documentTextExtractorSource.contains("handle.read(upToCount: maximumActiveFileBytes)")
+    && documentTextExtractorSource.contains("totalBytes > byteLimit"), "active-material extraction uses byte-bounded thread-safe caches while the persistent course index owns full-library search")
+let courseDocumentIndexURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBeiCore/CourseDocumentSearchIndex.swift")
+let courseDocumentIndexSource = (try? String(contentsOf: courseDocumentIndexURL, encoding: .utf8)) ?? ""
+let pdfTextWorkerURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBeiPDFTextWorker/main.swift")
+let pdfTextWorkerSource = (try? String(contentsOf: pdfTextWorkerURL, encoding: .utf8)) ?? ""
+let boundedPDFTextExtractorURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBeiCore/BoundedPDFTextExtractor.swift")
+let boundedPDFTextExtractorSource = (try? String(contentsOf: boundedPDFTextExtractorURL, encoding: .utf8)) ?? ""
+expect(courseDocumentIndexSource.contains("CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5")
+    && courseDocumentIndexSource.contains("private let indexingQueue")
+    && courseDocumentIndexSource.contains("private let metadataQueue")
+    && courseDocumentIndexSource.contains("metadataQueue.async { [weak self] in")
+    && courseDocumentIndexSource.contains("let resolvedURL = url.resolvingSymlinksInPath()")
+    && courseDocumentIndexSource.contains("resolvedURL.resourceValues")
+    && courseDocumentIndexSource.contains("return \"v5#\\(item.kind.rawValue)#\\(metadata.modified)#\\(metadata.size)\"")
+    && courseDocumentIndexSource.contains("let metadata = fileMetadata(for: url)")
+    && courseDocumentIndexSource.contains("private let ocrQueue")
+    && courseDocumentIndexSource.contains("indexPDFTextLayer")
+    && courseDocumentIndexSource.contains("finishPDFOCR")
+    && courseDocumentIndexSource.contains("PDFOCRTextExtractor.pageOutcome")
+    && courseDocumentIndexSource.contains("withWriteTransaction")
+    && courseDocumentIndexSource.contains("ROLLBACK")
+    && courseDocumentIndexSource.contains("storageID(for: item.id)")
+    && courseDocumentIndexSource.contains("ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY rank)")
+    && courseDocumentIndexSource.contains("state?.chunkCount")
+    && courseDocumentIndexSource.contains("refreshChangedItemsForLookup")
+    && courseDocumentIndexSource.contains("let persistedStates: [String: FileState]")
+    && courseDocumentIndexSource.contains("shouldIndexImmediately = state.signature != scheduled.signature")
+    && courseDocumentIndexSource.contains("shouldIndexImmediately = true")
+    && courseDocumentIndexSource.contains("maximumImmediateRefreshItems = 24")
+    && courseDocumentIndexSource.contains("maximumImmediateRefreshSeconds: TimeInterval = 4")
+    && courseDocumentIndexSource.contains("maximumTextSourceBytes: UInt64 = 32 * 1_024 * 1_024")
+    && courseDocumentIndexSource.contains("maximumForegroundPDFPages = 32")
+    && courseDocumentIndexSource.contains("maximumPDFPageCharacters = 128_000")
+    && courseDocumentIndexSource.contains("maximumNativePDFPages: Self.maximumForegroundPDFPages")
+    && courseDocumentIndexSource.contains("maximumNativePDFSeconds: min(")
+    && courseDocumentIndexSource.contains("guard !Task.isCancelled else { return false }")
+    && courseDocumentIndexSource.contains("CourseIndexCancellationProbe")
+    && courseDocumentIndexSource.contains("sqlite3_progress_handler")
+    && courseDocumentIndexSource.contains("Unmanaged.passRetained(cancellationProbe)")
+    && courseDocumentIndexSource.contains("fromOpaque(cancellationContext).release()")
+    && courseDocumentIndexSource.contains("acquireItemIndexLock")
+    && courseDocumentIndexSource.contains("BoundedPDFTextExtractor.pages")
+    && courseDocumentIndexSource.contains("foregroundPDFTextBudget: TimeInterval = 2")
+    && courseDocumentIndexSource.contains("backgroundPDFTextBudget: TimeInterval = 20")
+    && courseDocumentIndexSource.contains("CREATE TABLE IF NOT EXISTS native_attempted_pages")
+    && courseDocumentIndexSource.contains("let pagesToOCR = nativeAttemptedPages.subtracting(processedPages).sorted()")
+    && courseDocumentIndexSource.contains("hasPendingNativePDFPages")
+    && courseDocumentIndexSource.contains("extraction_kind = 'failed'")
+    && !courseDocumentIndexSource.contains("page.string")
+    && courseDocumentIndexSource.contains("text-partial")
+    && courseDocumentIndexSource.contains("htmlSectionLocationID")
+    && courseDocumentIndexSource.contains("html-section-%08x")
+    && courseDocumentIndexSource.contains("[\\(locationID)][html-heading-\\(index)]")
+    && courseDocumentIndexSource.contains("guard isExpected(signature: signature, for: storageID) else { return false }")
+    && courseDocumentIndexSource.contains("BEGIN DEFERRED")
+    && courseDocumentIndexSource.contains("CREATE INDEX IF NOT EXISTS chunk_index_item_sort")
+    && courseDocumentIndexSource.contains("SELECT COUNT(*) FROM chunk_index WHERE item_id = ?")
+    && courseDocumentIndexSource.contains("WHERE item_id = ? AND signature = ?")
+    && courseDocumentIndexSource.contains("PRAGMA max_page_count")
+    && courseDocumentIndexSource.contains("integerValue(\"PRAGMA max_page_count\"")
+    && courseDocumentIndexSource.contains("PRAGMA journal_size_limit=67108864")
+    && courseDocumentIndexSource.contains("INSERT INTO chunks(chunks, rank) VALUES('merge', 64)")
+    && !courseDocumentIndexSource.contains("VALUES('optimize')")
+    && courseDocumentIndexSource.contains("PRAGMA incremental_vacuum")
+    && !courseDocumentIndexSource.contains("public func lookup(\n        items: [StudyItem],\n        query: String,\n        maximumCharactersPerItem: Int = 24_000\n    ) -> [String: CourseDocumentIndexResult] {\n        schedule(items)"), "course search persists private FTS chunks, uses rollback-safe writes, OCRs every missing PDF page, and reports incomplete excerpts without rescanning files per question")
+expect(pdfTextWorkerSource.contains("setrlimit(RLIMIT_CPU")
+    && pdfTextWorkerSource.contains("maximumUTF8Bytes")
+    && pdfTextWorkerSource.contains("rawText.prefix(maximumCharacters)")
+    && pdfTextWorkerSource.contains("runVerificationProbe"), "native PDF text extraction runs in a resource-limited helper with bounded output")
+expect(boundedPDFTextExtractorSource.contains("maximumWorkerTimeout: TimeInterval = 3.5")
+    && boundedPDFTextExtractorSource.contains("maximumWorkerResidentBytes: UInt64 = 384 * 1_024 * 1_024")
+    && boundedPDFTextExtractorSource.contains("process.environment = environment")
+    && boundedPDFTextExtractorSource.contains("proc_pidinfo(processID, PROC_PIDTASKINFO")
+    && boundedPDFTextExtractorSource.contains("$0 > maximumResidentBytes")
+    && boundedPDFTextExtractorSource.contains("process.terminate()")
+    && boundedPDFTextExtractorSource.contains("Darwin.kill(process.processIdentifier, SIGKILL)")
+    && boundedPDFTextExtractorSource.contains("outputBox.append(chunk, limit: maximumOutputBytes)")
+    && boundedPDFTextExtractorSource.contains("runSafetySelfCheck"), "PDF text worker calls are cancellable, time-limited, memory-monitored, output-bounded, and expose a real safety self-check")
 let quietScrollersSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Support/QuietScrollers.swift")
 let quietScrollersSource = (try? String(contentsOf: quietScrollersSourceURL, encoding: .utf8)) ?? ""
@@ -350,6 +605,21 @@ func makeImageOnlyPDF(at url: URL) {
     expect(document.write(to: url), "write image-only pdf")
 }
 
+func makeBlankImageOnlyPDF(at url: URL) {
+    let image = NSImage(size: NSSize(width: 600, height: 300))
+    image.lockFocus()
+    NSColor.white.setFill()
+    NSRect(origin: .zero, size: image.size).fill()
+    image.unlockFocus()
+    let document = PDFDocument()
+    guard let page = PDFPage(image: image) else {
+        expect(false, "create blank image-only pdf page")
+        return
+    }
+    document.insert(page, at: 0)
+    expect(document.write(to: url), "write blank image-only pdf")
+}
+
 let selectablePDFURL = FileManager.default.temporaryDirectory
     .appendingPathComponent("weibei-selectable-pdf-check-\(UUID().uuidString).pdf")
 makeSelectablePDF(at: selectablePDFURL)
@@ -386,6 +656,272 @@ let targetedOCRPages = imageOnlyPDF.map { PDFOCRTextExtractor.pages(from: $0, pa
 expect(targetedOCRPages.count == 1 && targetedOCRPages[0].pageIndex == 0, "Vision OCR can target a specific PDF page for mixed text and scanned documents")
 let outOfRangeOCRPages = imageOnlyPDF.map { PDFOCRTextExtractor.pages(from: $0, pageIndexes: [1]) } ?? []
 expect(outOfRangeOCRPages.isEmpty, "targeted OCR ignores pages outside the PDF")
+let blankImagePDFURL = FileManager.default.temporaryDirectory
+    .appendingPathComponent("weibei-blank-image-pdf-check-\(UUID().uuidString).pdf")
+makeBlankImageOnlyPDF(at: blankImagePDFURL)
+defer { try? FileManager.default.removeItem(at: blankImagePDFURL) }
+if let blankImagePDF = PDFDocument(url: blankImagePDFURL) {
+    expect(
+        PDFOCRTextExtractor.pageOutcome(from: blankImagePDF, pageIndex: 0) == .empty(pageIndex: 0),
+        "Vision OCR distinguishes a successfully scanned blank page from an extraction failure"
+    )
+} else {
+    expect(false, "open blank image-only pdf")
+}
+
+func makeMixedLateOCRPDF(at url: URL) {
+    let data = NSMutableData()
+    var mediaBox = CGRect(x: 0, y: 0, width: 720, height: 420)
+    guard let consumer = CGDataConsumer(data: data as CFMutableData),
+          let context = CGContext(consumer: consumer, mediaBox: &mediaBox, nil) else {
+        expect(false, "create mixed PDF context")
+        return
+    }
+
+    for pageIndex in 0..<13 {
+        context.beginPDFPage(nil)
+        context.setFillColor(NSColor.white.cgColor)
+        context.fill(mediaBox)
+        if pageIndex < 12 {
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: false)
+            NSString(string: "Native text layer content for page \(pageIndex + 1) with enough characters").draw(
+                at: CGPoint(x: 48, y: 210),
+                withAttributes: [
+                    .font: NSFont.systemFont(ofSize: 24),
+                    .foregroundColor: NSColor.black,
+                ]
+            )
+            NSGraphicsContext.restoreGraphicsState()
+        } else {
+            let image = NSImage(size: NSSize(width: 1_200, height: 500))
+            image.lockFocus()
+            NSColor.white.setFill()
+            NSRect(origin: .zero, size: image.size).fill()
+            NSString(string: "LATEPAGE OCR TARGET").draw(
+                at: CGPoint(x: 70, y: 190),
+                withAttributes: [
+                    .font: NSFont.boldSystemFont(ofSize: 82),
+                    .foregroundColor: NSColor.black,
+                ]
+            )
+            image.unlockFocus()
+            var imageRect = CGRect(origin: .zero, size: image.size)
+            if let cgImage = image.cgImage(forProposedRect: &imageRect, context: nil, hints: nil) {
+                context.draw(cgImage, in: CGRect(x: 35, y: 70, width: 650, height: 270))
+            }
+        }
+        context.endPDFPage()
+    }
+    context.closePDF()
+    expect(data.write(to: url, atomically: true), "write mixed late-OCR PDF")
+}
+
+let courseIndexRoot = FileManager.default.temporaryDirectory
+    .appendingPathComponent("weibei-course-index-check-\(UUID().uuidString)", isDirectory: true)
+try? FileManager.default.createDirectory(at: courseIndexRoot, withIntermediateDirectories: true)
+defer { try? FileManager.default.removeItem(at: courseIndexRoot) }
+let mixedPDFURL = courseIndexRoot.appendingPathComponent("mixed-late-ocr.pdf")
+makeMixedLateOCRPDF(at: mixedPDFURL)
+let mixedPDFItem = StudyItem(
+    id: "file:\(mixedPDFURL.path)",
+    title: "Mixed late OCR",
+    subtitle: mixedPDFURL.lastPathComponent,
+    kind: .pdf,
+    urlPath: mixedPDFURL.path,
+    isSample: false
+)
+let markdownIndexURL = courseIndexRoot.appendingPathComponent("late-section.md")
+let lateMarkdownToken = "PERSISTENT_LATE_INDEX_TOKEN"
+try? (String(repeating: "ordinary material\n\n", count: 1_500) + lateMarkdownToken)
+    .write(to: markdownIndexURL, atomically: true, encoding: .utf8)
+let markdownIndexItem = StudyItem(
+    id: "file:\(markdownIndexURL.path)",
+    title: "Late markdown section",
+    subtitle: markdownIndexURL.lastPathComponent,
+    kind: .markdown,
+    urlPath: markdownIndexURL.path,
+    isSample: false
+)
+let stableHTMLURL = courseIndexRoot.appendingPathComponent("stable-sections.html")
+let stableHTMLOriginal = """
+<html><body>
+<h1>利率</h1><p>ORIGINAL_ALPHA_SECTION 资金价格。</p>
+<h2>利率</h2><p>ORIGINAL_BETA_SECTION 购买力变化。</p>
+</body></html>
+"""
+try? stableHTMLOriginal.write(to: stableHTMLURL, atomically: true, encoding: .utf8)
+let stableHTMLItem = StudyItem(
+    id: "file:\(stableHTMLURL.path)",
+    title: "Stable duplicate sections",
+    subtitle: stableHTMLURL.lastPathComponent,
+    kind: .html,
+    urlPath: stableHTMLURL.path,
+    isSample: false
+)
+let blankPDFIndexItem = StudyItem(
+    id: "file:\(blankImagePDFURL.path)",
+    title: "Blank scanned page",
+    subtitle: blankImagePDFURL.lastPathComponent,
+    kind: .pdf,
+    urlPath: blankImagePDFURL.path,
+    isSample: false
+)
+let courseIndexDatabaseURL = courseIndexRoot.appendingPathComponent("course-search.sqlite3")
+let courseIndex = CourseDocumentSearchIndex(databaseURL: courseIndexDatabaseURL)
+expect(
+    BoundedPDFTextExtractor.runSafetySelfCheck(),
+    "bounded PDF worker passes normal execution, timeout, cancellation, memory, and output-overflow probes"
+)
+let boundedNativeProbe = BoundedPDFTextExtractor.pages(
+    from: mixedPDFURL,
+    pageIndexes: Array(0..<8),
+    maximumCharactersPerPage: 128_000,
+    timeout: 3.5
+)
+if boundedNativeProbe?[0]?.text.contains("Native text layer content for page 1") != true {
+    fputs("bounded native PDF diagnostic: \(String(describing: boundedNativeProbe))\n", stderr)
+}
+expect(
+    boundedNativeProbe?[0]?.text.contains("Native text layer content for page 1") == true,
+    "bounded PDF worker returns native text for a generated multi-page PDF"
+)
+courseIndex.schedule([mixedPDFItem, markdownIndexItem, stableHTMLItem, blankPDFIndexItem])
+var mixedIndexResult: CourseDocumentIndexResult?
+var markdownIndexResult: CourseDocumentIndexResult?
+var blankPDFIndexResult: CourseDocumentIndexResult?
+var stableHTMLIndexResult: CourseDocumentIndexResult?
+for _ in 0..<200 {
+    mixedIndexResult = courseIndex.lookup(items: [mixedPDFItem], query: "LATEPAGE OCR TARGET")[mixedPDFItem.id]
+    markdownIndexResult = courseIndex.lookup(items: [markdownIndexItem], query: lateMarkdownToken)[markdownIndexItem.id]
+    blankPDFIndexResult = courseIndex.lookup(items: [blankPDFIndexItem], query: "blank page")[blankPDFIndexItem.id]
+    stableHTMLIndexResult = courseIndex.lookup(items: [stableHTMLItem], query: "ORIGINAL_ALPHA_SECTION ORIGINAL_BETA_SECTION")[stableHTMLItem.id]
+    if mixedIndexResult?.text?.uppercased().contains("LATEPAGE") == true,
+       markdownIndexResult?.text?.contains(lateMarkdownToken) == true,
+       stableHTMLIndexResult?.text?.contains("ORIGINAL_ALPHA_SECTION") == true,
+       blankPDFIndexResult?.isTruncated == false {
+        break
+    }
+    try? await Task.sleep(nanoseconds: 50_000_000)
+}
+expect(
+    mixedIndexResult?.isTruncated == true
+        && mixedIndexResult?.text?.uppercased().contains("LATEPAGE") == true
+        && mixedIndexResult?.text?.contains("第 13 页（OCR）") == true,
+    "persistent course index OCRs a scanned page beyond page twelve, keeps its page location, and marks the returned excerpt partial"
+)
+let nativePDFIndexResult = courseIndex.lookup(
+    items: [mixedPDFItem],
+    query: "Native text layer content for page 1"
+)[mixedPDFItem.id]
+if nativePDFIndexResult?.text?.contains("Native text layer content for page 1") != true
+    || nativePDFIndexResult?.text?.contains("第 1 页（OCR）") == true {
+    fputs("native PDF index diagnostic: \(nativePDFIndexResult?.text ?? "<nil>")\n", stderr)
+}
+expect(
+    nativePDFIndexResult?.text?.contains("Native text layer content for page 1") == true
+        && nativePDFIndexResult?.text?.contains("第 1 页（OCR）") != true,
+    "persistent course index executes the bounded worker and preserves a real native PDF text-layer result"
+)
+let indexedPDFCourseContext = CourseKnowledgeIndex.build(
+    title: "Indexed PDF",
+    sources: [
+        CourseKnowledgeSource(
+            id: mixedPDFItem.id,
+            title: mixedPDFItem.title,
+            subtitle: mixedPDFItem.subtitle,
+            kind: mixedPDFItem.kind.rawValue,
+            role: "material",
+            text: mixedIndexResult?.text ?? "",
+            isTruncated: mixedIndexResult?.isTruncated ?? true
+        ),
+    ],
+    links: [],
+    query: "LATEPAGE OCR TARGET",
+    currentMaterialID: nil,
+    currentNoteID: nil
+)
+expect(
+    indexedPDFCourseContext.items.first?.headings.contains("第 13 页（OCR）") == true,
+    "course search preserves confirmed OCR page locations for exact PDF jumps"
+)
+expect(
+    blankPDFIndexResult?.isTruncated == false && blankPDFIndexResult?.text == nil,
+    "persistent course index records a successfully scanned blank PDF page without retrying it forever"
+)
+expect(
+    markdownIndexResult?.isTruncated == true
+        && markdownIndexResult?.text?.contains(lateMarkdownToken) == true,
+    "persistent course index finds a late text-file section without per-question rescanning and marks the excerpt partial"
+)
+func stableHTMLSectionIDs(in text: String) -> Set<String> {
+    guard let regex = try? NSRegularExpression(pattern: #"\[(html-section-[A-Za-z0-9-]+)\]"#) else {
+        return []
+    }
+    let range = NSRange(text.startIndex..<text.endIndex, in: text)
+    return Set(regex.matches(in: text, range: range).compactMap { match in
+        guard match.numberOfRanges > 1,
+              let range = Range(match.range(at: 1), in: text) else { return nil }
+        return String(text[range])
+    })
+}
+let originalStableSectionIDs = stableHTMLSectionIDs(in: stableHTMLIndexResult?.text ?? "")
+let stableHTMLWithInsertedDuplicate = """
+<html><body>
+<h1>利率</h1><p>NEW_INSERTED_SECTION 新增解释。</p>
+<h1>利率</h1><p>ORIGINAL_ALPHA_SECTION 资金价格。</p>
+<h2>利率</h2><p>ORIGINAL_BETA_SECTION 购买力变化。</p>
+</body></html>
+"""
+try? stableHTMLWithInsertedDuplicate.write(to: stableHTMLURL, atomically: true, encoding: .utf8)
+let refreshedStableHTML = courseIndex.lookup(
+    items: [stableHTMLItem],
+    query: "ORIGINAL_ALPHA_SECTION ORIGINAL_BETA_SECTION"
+)[stableHTMLItem.id]
+let refreshedStableSectionIDs = stableHTMLSectionIDs(in: refreshedStableHTML?.text ?? "")
+expect(
+    originalStableSectionIDs.count == 2
+        && originalStableSectionIDs.isSubset(of: refreshedStableSectionIDs)
+        && refreshedStableSectionIDs.count == 3,
+    "HTML section content fingerprints survive insertion of a new same-title section before existing sections"
+)
+let reopenedCourseIndex = CourseDocumentSearchIndex(databaseURL: courseIndexDatabaseURL)
+reopenedCourseIndex.schedule([mixedPDFItem])
+let reopenedResult = reopenedCourseIndex.lookup(
+    items: [mixedPDFItem],
+    query: "LATEPAGE OCR TARGET"
+)[mixedPDFItem.id]
+expect(
+    reopenedResult?.isTruncated == true
+        && reopenedResult?.text?.uppercased().contains("LATEPAGE") == true,
+    "course full-text index survives reopening without rebuilding the PDF"
+)
+
+let splitFailureIndex = CourseDocumentSearchIndex(
+    databaseURL: courseIndexRoot.appendingPathComponent("course-search-split-failure.sqlite3"),
+    nativePDFTextLoader: { _, pageIndexes, _, _ in
+        guard pageIndexes.count == 1, let pageIndex = pageIndexes.first else { return nil }
+        let text = pageIndex < 12
+            ? "SPLIT_NATIVE_LAYER_PAGE_\(pageIndex + 1) remains native after a failed batch extraction"
+            : ""
+        return [pageIndex: BoundedPDFTextPage(text: text, isPartial: false)]
+    }
+)
+splitFailureIndex.schedule([mixedPDFItem])
+var splitFailureResult: CourseDocumentIndexResult?
+for _ in 0..<200 {
+    splitFailureResult = splitFailureIndex.lookup(
+        items: [mixedPDFItem],
+        query: "SPLIT_NATIVE_LAYER_PAGE_1"
+    )[mixedPDFItem.id]
+    if splitFailureResult?.text?.contains("SPLIT_NATIVE_LAYER_PAGE_1") == true { break }
+    try? await Task.sleep(nanoseconds: 50_000_000)
+}
+expect(
+    splitFailureResult?.text?.contains("SPLIT_NATIVE_LAYER_PAGE_1") == true
+        && splitFailureResult?.text?.contains("第 1 页（OCR）") != true,
+    "a failed native PDF batch is bisected to single pages instead of sending unattempted text pages to OCR"
+)
 
 let data = Data("""
 {"output":[{"content":[{"type":"output_text","text":"只根据当前材料回答。"}]}]}
@@ -490,15 +1026,33 @@ expect(
 )
 expect(OpenAIAPIKeyStore.cleaned("  sk-test\n") == "sk-test", "api key cleaning")
 
-let temporaryKeychainStore = KeychainPasswordStore(
-    service: "com.changfenhuang.weibei.selfcheck.\(UUID().uuidString)",
-    account: "OPENAI_API_KEY"
-)
-try? temporaryKeychainStore.delete()
-try temporaryKeychainStore.save("  sk-selfcheck\n")
-expect(temporaryKeychainStore.load() == "sk-selfcheck", "keychain save and load")
-try temporaryKeychainStore.delete()
-expect(temporaryKeychainStore.load().isEmpty, "keychain delete")
+do {
+    let temporaryKeychainURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("weibei-selfcheck-\(UUID().uuidString).keychain-db")
+    let temporaryKeychainPassword = Data("weibei-selfcheck-only".utf8)
+    var temporaryKeychain: SecKeychain?
+    let createStatus = temporaryKeychainURL.path.withCString { path in
+        temporaryKeychainPassword.withUnsafeBytes { password in
+            SecKeychainCreate(path, UInt32(password.count), password.baseAddress, false, nil, &temporaryKeychain)
+        }
+    }
+    expect(createStatus == errSecSuccess && temporaryKeychain != nil, "isolated self-check keychain is created without changing the user's default keychain")
+    guard let temporaryKeychain else { exit(1) }
+    defer {
+        SecKeychainDelete(temporaryKeychain)
+    }
+
+    let temporaryKeychainStore = KeychainPasswordStore(
+        service: "com.changfenhuang.weibei.selfcheck.\(UUID().uuidString)",
+        account: "OPENAI_API_KEY",
+        keychain: temporaryKeychain
+    )
+    try? temporaryKeychainStore.delete()
+    try temporaryKeychainStore.save("  sk-selfcheck\n")
+    expect(temporaryKeychainStore.load() == "sk-selfcheck", "keychain save and load")
+    try temporaryKeychainStore.delete()
+    expect(temporaryKeychainStore.load().isEmpty, "keychain delete")
+}
 
 let missingSelectionInsight = QuietInsight.make(
     materialTitle: "利率资料",
@@ -632,6 +1186,37 @@ expect(ReaderSearch.firstMatch(in: "Money and Banking", query: "money")?.locatio
 expect(ReaderSearch.firstMatch(in: "Money and Banking", query: " ") == nil, "reader search ignores empty query")
 let pdfSourceReference = SourceReferenceTitle.parse("> 来源：Mishkin 教材样例，第 3 页")
 expect(pdfSourceReference.title == "Mishkin 教材样例" && pdfSourceReference.pageIndex == 2, "source reference parses pdf page")
+let htmlSourceReference = SourceReferenceTitle.parse("来源：货币金融学课程 HTML，章节：实际利率")
+expect(
+    htmlSourceReference.title == "货币金融学课程 HTML"
+        && htmlSourceReference.pageIndex == nil
+        && htmlSourceReference.sectionTitle == "实际利率"
+        && htmlSourceReference.sectionLocationID == nil
+        && htmlSourceReference.sectionOrdinal == nil,
+    "source reference parses an exact HTML section"
+)
+let disambiguatedSourceReference = SourceReferenceTitle.parse("来源：重复教材，条目：7，章节标识：html-section-a1b2c3d4，章节序号：4，章节：利率")
+expect(
+    disambiguatedSourceReference.title == "重复教材"
+        && disambiguatedSourceReference.courseItemOrdinal == 7
+        && disambiguatedSourceReference.sectionLocationID == "html-section-a1b2c3d4"
+        && disambiguatedSourceReference.sectionOrdinal == 4
+        && disambiguatedSourceReference.sectionTitle == "利率",
+    "source reference preserves the file and section ordinals needed to disambiguate duplicate titles"
+)
+let englishSectionReference = SourceReferenceTitle.parse("Source: Repeated Course, item: 2, section id: html-section-d4c3b2a1, section number: 5, section: Interest")
+expect(
+    englishSectionReference.title == "Repeated Course"
+        && englishSectionReference.courseItemOrdinal == 2
+        && englishSectionReference.sectionLocationID == "html-section-d4c3b2a1"
+        && englishSectionReference.sectionOrdinal == 5
+        && englishSectionReference.sectionTitle == "Interest",
+    "source reference preserves stable HTML section ordinals in English"
+)
+let emphasizedSourceReference = SourceReferenceTitle.parse("来源：**Mishkin 教材样例**")
+expect(emphasizedSourceReference.title == "Mishkin 教材样例", "source reference ignores whole-title Markdown emphasis")
+let inlineCodeSourceReference = SourceReferenceTitle.parse("- 相关资料：`来源：Mishkin 教材样例`")
+expect(inlineCodeSourceReference.title == "Mishkin 教材样例", "source reference remains actionable when PI wraps the jump in inline code")
 let calloutSourceReference = SourceReferenceTitle.parse("""
 > [!quote] 选区摘录
 > 实际利率
@@ -649,9 +1234,14 @@ expect(WikiLink.enclosingTitle(in: "没有双链", cursor: 2) == nil, "wikilink 
 expect(WorkspaceLayout.documentAgentNotes.hasCollapsibleRightPane, "three-pane layout can collapse right pane")
 expect(WorkspaceLayout.documentNotesSplit.hasCollapsibleRightPane, "split layout can collapse right pane")
 expect(!WorkspaceLayout.immersiveReading.hasCollapsibleRightPane, "immersive reading has no right pane to collapse")
+expect(!WorkspaceLayout.immersiveWriting.hasCollapsibleRightPane, "immersive writing keeps one uninterrupted note canvas")
 expect(WorkspaceLayout.documentAgentNotes.isDocumentThreePane
     && WorkspaceLayout.documentNotesAgent.isDocumentThreePane
     && !WorkspaceLayout.documentNotesSplit.isDocumentThreePane, "only full document layouts participate in three-pane reordering")
+expect(WorkspaceLayout.documentAgentNotes.allowsRailOnlyPanes
+    && WorkspaceLayout.documentNotesSplit.allowsRailOnlyPanes
+    && !WorkspaceLayout.immersiveConversation.allowsRailOnlyPanes
+    && !WorkspaceLayout.immersiveWriting.allowsRailOnlyPanes, "only normal multi-pane layouts can collapse content panes into rail-only mode")
 expect(WorkspaceLayout.documentAgentNotes.defaultThreePaneOrder == [.reader, .agent, .notes]
     && WorkspaceLayout.documentNotesAgent.defaultThreePaneOrder == [.reader, .notes, .agent], "legacy three-pane layout presets map to pane role order")
 expect(WorkspacePaneRole.normalized([.notes, .reader, .notes]) == [.notes, .reader, .agent], "pane role order normalization preserves user pane order and restores missing panes")
@@ -678,6 +1268,138 @@ let contentViewSourceURL = URL(fileURLWithPath: FileManager.default.currentDirec
     .appendingPathComponent("Sources/WeiBei/Views/ContentView.swift")
 let contentViewSource = (try? String(contentsOf: contentViewSourceURL, encoding: .utf8)) ?? ""
 expect(!contentViewSource.isEmpty, "content view source is readable")
+let stableDocumentSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Views/StableDocumentWorkspace.swift")
+let stableDocumentSource = (try? String(contentsOf: stableDocumentSourceURL, encoding: .utf8)) ?? ""
+let paneContinuityRecorderSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Support/PaneContinuityRecorder.swift")
+let paneContinuityRecorderSource = (try? String(contentsOf: paneContinuityRecorderSourceURL, encoding: .utf8)) ?? ""
+let documentPaneTransitionSource: String = {
+    guard let start = contentViewSource.range(of: "private func documentPaneLayoutView() -> some View")?.lowerBound,
+          let end = contentViewSource[start...].range(of: "private func threePaneReorderOverlay")?.lowerBound else {
+        return ""
+    }
+    return String(contentViewSource[start..<end])
+}()
+expect(!documentPaneTransitionSource.isEmpty
+    && documentPaneTransitionSource.contains("StableDocumentWorkspace(")
+    && !documentPaneTransitionSource.contains("switch order.count")
+    && !documentPaneTransitionSource.contains("ResizableTwoPane(")
+    && !documentPaneTransitionSource.contains("ResizableThreePane(")
+    && !documentPaneTransitionSource.contains(".transition(WeiBeiTransition.layout)")
+    && !documentPaneTransitionSource.contains(".transition(WeiBeiTransition.rightPanel)"), "ordinary pane-count changes keep one stable container instead of replacing the layout tree")
+expect(stableDocumentSource.contains("WorkspacePaneRole.allCases.map")
+    && stableDocumentSource.contains("splitView.install(roleHosts: roleHosts, emptyHost: emptyHost)")
+    && stableDocumentSource.contains("animator().frame = frame")
+    && stableDocumentSource.contains("private let layoutAnimationDuration = 0.24")
+    && stableDocumentSource.contains("func assertStableOwnership()")
+    && stableDocumentSource.contains("roleHosts.values.allSatisfy { $0.superview === self }")
+    && stableDocumentSource.contains("EmptyWorkspaceLauncherView().environmentObject(store)")
+    && !stableDocumentSource.contains("removeFromSuperview()")
+    && !stableDocumentSource.contains("rootView ="), "document pane hosts remain under one AppKit parent while frames animate")
+expect(stableDocumentSource.contains("recordContinuityTransition(duration: layoutAnimationDuration)")
+    && stableDocumentSource.contains("host.layer?.presentation()?.frame ?? host.frame")
+    && paneContinuityRecorderSource.contains("WEIBEI_VERIFY_PANE_TRACE_DIR")
+    && paneContinuityRecorderSource.contains("1.0 / 60.0"), "pane verification records ownership and presentation frames throughout each animation")
+expect(!contentViewSource.contains(".animation(WeiBeiMotion.panel, value: store.showReader)")
+    && !contentViewSource.contains(".animation(WeiBeiMotion.panel, value: store.showAgent)")
+    && !contentViewSource.contains(".animation(WeiBeiMotion.panel, value: store.showNotes)")
+    && !contentViewSource.contains(".animation(WeiBeiMotion.panel, value: store.showRightPane)"), "pane toggles do not animate the entire layout tree")
+let paneToggleClusterSource: String = {
+    guard let start = contentViewSource.range(of: "private var paneToggleCluster: some View")?.lowerBound,
+          let end = contentViewSource[start...].range(of: "private var agentPaneToggleHelp: String")?.lowerBound else {
+        return ""
+    }
+    return String(contentViewSource[start..<end])
+}()
+expect(!paneToggleClusterSource.isEmpty
+    && !paneToggleClusterSource.contains("withAnimation")
+    && paneToggleClusterSource.contains("store.toggleReader()")
+    && paneToggleClusterSource.contains("store.toggleAgent()")
+    && paneToggleClusterSource.contains("store.toggleNotes()"), "top-bar pane toggles hand animation ownership to the stable AppKit container")
+let emptyWorkspaceSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Views/EmptyWorkspaceLauncherView.swift")
+let emptyWorkspaceSource = (try? String(contentsOf: emptyWorkspaceSourceURL, encoding: .utf8)) ?? ""
+let inspirationCatalogSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBeiCore/EmptyWorkspaceInspiration.swift")
+let inspirationCatalogSource = (try? String(contentsOf: inspirationCatalogSourceURL, encoding: .utf8)) ?? ""
+let contentRailSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Views/ContentRailView.swift")
+let contentRailSource = (try? String(contentsOf: contentRailSourceURL, encoding: .utf8)) ?? ""
+expect(contentRailSource.contains("struct ContentRailView: View")
+    && contentRailSource.contains("static let normalWidth: CGFloat = ContentRailPolicy.dormantWidth")
+    && contentRailSource.contains("static let railOnlyThreshold = ContentRailPolicy.railOnlyThreshold")
+    && contentRailSource.contains("ContentRailPolicy.previewWidth(")
+    && contentRailSource.contains("ContentRailFloatingPreviewBridge(")
+    && contentRailSource.contains("SpatialTapGesture()")
+    && contentRailSource.contains("private func nearestItem")
+    && !contentRailSource.contains(".popover("), "shared content rail uses the latest compact policy and floats previews beyond the existing pane edge")
+expect(stableDocumentSource.contains("EmptyWorkspaceLauncherView().environmentObject(store)")
+    && emptyWorkspaceSource.contains("Text(title)")
+    && emptyWorkspaceSource.contains("title: \"DOC\"")
+    && emptyWorkspaceSource.contains("title: \"CHAT\"")
+    && emptyWorkspaceSource.contains("title: \"NOTES\"")
+    && emptyWorkspaceSource.contains("action: store.toggleReader")
+    && emptyWorkspaceSource.contains("action: store.toggleAgent")
+    && emptyWorkspaceSource.contains("action: store.toggleNotes"), "empty workspace exposes direct document, chat, and notes entries through the existing pane toggles")
+expect(emptyWorkspaceSource.contains("WeiBeiTypography.englishBrandFont")
+    && emptyWorkspaceSource.contains("entryDivider")
+    && emptyWorkspaceSource.contains("Rectangle()")
+    && !emptyWorkspaceSource.contains("RoundedRectangle")
+    && !emptyWorkspaceSource.contains("Capsule()")
+    && !emptyWorkspaceSource.contains("stroke(WeiBeiTheme.cinnabar"), "empty workspace entry uses WeiBei English lettering, hairlines, and whitespace without cards, pills, or red outlines")
+expect(emptyWorkspaceSource.contains("TimelineView(.periodic(from: .now, by: 60))")
+    && emptyWorkspaceSource.contains("EmptyWorkspaceDayPeriod.current(at:")
+    && emptyWorkspaceSource.contains("static let compactWidthThreshold: CGFloat = 1140")
+    && emptyWorkspaceSource.contains("static let compactHeightThreshold: CGFloat = 680")
+    && emptyWorkspaceSource.contains("geometry.size.width < EmptyWorkspaceLayoutMetrics.compactWidthThreshold")
+    && emptyWorkspaceSource.contains("min(116, max(76")
+    && emptyWorkspaceSource.contains("minimumScaleFactor(0.78)"), "empty workspace greeting updates with time and its entry and inspiration typography adapt to compact windows")
+expect(emptyWorkspaceSource.contains("selectedInspirationID")
+    && emptyWorkspaceSource.contains("randomItem(excludingID: currentID")
+    && emptyWorkspaceSource.contains("static let entryCenterRatio: CGFloat = 0.402")
+    && emptyWorkspaceSource.contains("static let inspirationCenterRatio: CGFloat = 0.66")
+    && emptyWorkspaceSource.contains("let entryCenterY = clampedCenterY(")
+    && emptyWorkspaceSource.contains("let minimumInspirationCenterY = max(")
+    && emptyWorkspaceSource.contains("let inspirationCenterY = min(")
+    && emptyWorkspaceSource.contains(".position(x: availableSize.width / 2, y: entryCenterY)")
+    && emptyWorkspaceSource.contains(".position(x: availableSize.width / 2, y: inspirationCenterY)")
+    && emptyWorkspaceSource.contains("let inspirationSlotHeight = compact")
+    && emptyWorkspaceSource.contains("height: inspirationSlotHeight")
+    && emptyWorkspaceSource.contains("private func workspaceContent(")
+    && emptyWorkspaceSource.contains("if store.showDailyInspiration")
+    && emptyWorkspaceSource.contains(".frame(maxWidth: .infinity, maxHeight: .infinity)")
+    && emptyWorkspaceSource.contains("private func entryCluster(")
+    && emptyWorkspaceSource.contains("let entryCenterRatio: CGFloat = store.showDailyInspiration ? EmptyWorkspaceLayoutMetrics.entryCenterRatio : 0.5")
+    && emptyWorkspaceSource.contains(".id(inspiration.id)")
+    && emptyWorkspaceSource.contains(".transition(.opacity)")
+    && emptyWorkspaceSource.contains("随机换一则")
+    && emptyWorkspaceSource.contains("WeiBeiTypography.englishBrandFont(size: 22, weight: .semibold)")
+    && emptyWorkspaceSource.contains("formulaContent(size: compact ? 24 : 30)")
+    && emptyWorkspaceSource.contains("inspirationText(size: compact ? 21 : 26)")
+    && emptyWorkspaceSource.contains("foregroundStyle(WeiBeiTheme.ink.opacity(0.90))")
+    && emptyWorkspaceSource.contains("foregroundStyle(WeiBeiTheme.tertiaryInk)")
+    && !emptyWorkspaceSource.contains("Text(store.ui(\"随机换一则\", \"RANDOM\"))")
+    && emptyWorkspaceSource.contains("accessibilityHint(Text(store.ui(\"随机换一则灵感\", \"Show a random inspiration\")))")
+    && !emptyWorkspaceSource.contains("greetingRule")
+    && !emptyWorkspaceSource.contains("inspirationCounter")
+    && !emptyWorkspaceSource.contains("%02d / %02d")
+    && !emptyWorkspaceSource.contains("inspirationOffset"), "empty workspace inspiration switches randomly without repeating the current item or showing catalog counters")
+expect(emptyWorkspaceSource.contains("if store.showDailyInspiration")
+    && emptyWorkspaceSource.contains("EmptyWorkspaceInspirationCatalog.item")
+    && emptyWorkspaceSource.contains("case \"empty-workspace-calligraphy-light\":")
+    && emptyWorkspaceSource.contains("forcedID = \"lanting-clear-breeze\"")
+    && emptyWorkspaceSource.contains("case \"empty-workspace-calligraphy-dark\":")
+    && emptyWorkspaceSource.contains("forcedID = \"lanting-universe\"")
+    && emptyWorkspaceSource.contains("Link(inspiration.sourceLabel")
+    && emptyWorkspaceSource.contains("Link(inspiration.rightsLabel")
+    && emptyWorkspaceSource.contains("Bundle.module.url(forResource:")
+    && !emptyWorkspaceSource.contains("URLSession")
+    && !inspirationCatalogSource.contains("URLSession"), "daily inspiration is bundled for offline use while retaining visible source and rights links")
+expect(emptyWorkspaceSource.contains("empty-workspace-entry-doc")
+    && emptyWorkspaceSource.contains("empty-workspace-entry-chat")
+    && emptyWorkspaceSource.contains("empty-workspace-entry-notes")
+    && emptyWorkspaceSource.contains("accessibilityLabel"), "empty workspace entries remain individually named and reachable to accessibility automation")
 expect(contentViewSource.contains("case .immersiveReading:\n                ZStack(alignment: .topTrailing)")
     && contentViewSource.contains("QuietInsightView(compact: true)")
     && contentViewSource.contains(".padding(.top, 24)")
@@ -725,7 +1447,7 @@ expect(themeSource.contains("static let appearance = Animation.easeInOut(duratio
 expect(themeSource.contains("tertiaryInk.opacity(0.58)") && themeSource.contains("tertiaryInk.opacity(0.60)"), "disabled button text remains legible on light paper surfaces")
 expect(themeSource.contains("englishDisplayFontName = \"WeiBeiStele-Regular\"")
     && themeSource.contains("englishMonoFontName = \"WeiBeiSteleMono-Regular\"")
-    && themeSource.contains("Bundle.module.url(forResource: name, withExtension: \"ttf\")\n                ?? Bundle.module.url(forResource: name, withExtension: \"ttf\", subdirectory: \"Fonts\")")
+    && themeSource.contains("WeiBeiResources.bundle.url(forResource: name, withExtension: \"ttf\")\n                ?? WeiBeiResources.bundle.url(forResource: name, withExtension: \"ttf\", subdirectory: \"Fonts\")")
     && themeSource.contains("case .english:\n            registerBundledFonts()\n            return .custom(englishDisplayFontName, size: size).weight(weight)")
     && themeSource.contains("static func englishBrandFont(size: CGFloat, weight: Font.Weight = .semibold) -> Font {\n        registerBundledFonts()")
     && themeSource.contains("case .english:\n            registerBundledFonts()\n            return .custom(englishMonoFontName, size: size)")
@@ -744,19 +1466,28 @@ expect(contentViewSource.contains("dividerFill.setFill()")
 expect(contentViewSource.contains("override func layout()"), "native split applies saved positions after first real layout")
 expect(contentViewSource.contains("libraryResizeHandle"), "library pane keeps SwiftUI resize handle")
 expect(contentViewSource.contains("minimumContentWidthWithLibrary"), "library leaves readable width for the workspace")
-expect(contentViewSource.contains("normalSidePaneMinimum"), "normal three-pane layout relaxes side panes when library is open")
+expect(contentViewSource.contains("private let railWidth = ContentRailMetrics.railOnlyWidth")
+    && contentRailSource.contains("static let snapThreshold = ContentRailPolicy.snapThreshold")
+    && contentRailSource.contains("static let readableWidth = ContentRailPolicy.readableWidth")
+    && contentViewSource.contains("handleExpansionRequest(store.paneExpansionRequest")
+    && stableDocumentSource.contains("ContentRailPolicy.expansionWidth(recentWidth:"), "normal multi-pane layouts snap to the latest compact rail and restore a bounded readable width")
 expect(!contentViewSource.contains("DragGesture()"), "content panes avoid SwiftUI drag resizing")
 expect(!contentViewSource.contains(".id(store.layout)"), "layout changes avoid whole-screen identity resets")
+expect(contentViewSource.contains("case .immersiveWriting:\n                ZStack(alignment: agentAlignment) {\n                    PersistentPaneHost(role: .notes")
+    && !contentViewSource.contains("writingDocumentRailItems")
+    && !contentViewSource.contains("writingAssistRailItems")
+    && !contentViewSource.contains("writingFirstSplitStorage"), "immersive writing reuses the persistent note host without permanent document or writing-aid rails")
 expect(!contentViewSource.contains("PaneSeparator"), "content panes avoid hand-drawn split separators")
-expect(contentViewSource.components(separatedBy: ".transition(WeiBeiTransition.rightPanel)").count >= 5
-    && contentViewSource.components(separatedBy: ".transition(WeiBeiTransition.layout)").count >= 3, "right-pane visibility changes use shared transitions instead of naked tree swaps")
+expect(contentViewSource.components(separatedBy: ".transition(WeiBeiTransition.rightPanel)").count >= 2
+    && contentViewSource.components(separatedBy: ".transition(WeiBeiTransition.layout)").count >= 2
+    && !documentPaneTransitionSource.contains(".transition(WeiBeiTransition"), "immersive layouts keep shared transitions while ordinary pane visibility is animated inside the stable container")
 expect(!contentViewSource.contains("topBarContentFade"), "top bar avoids a duplicate content fade wash")
 expect(contentViewSource.contains("store.toggleLibrary()")
     && contentViewSource.contains("sidebar.left")
     && contentViewSource.contains("private var libraryButton: some View")
     && contentViewSource.contains("active: store.showLibrary")
     && contentViewSource.contains("store.showLibrary ? store.ui(\"收起课程目录\"")
-    && !contentViewSource.contains("恢复资料库")
+    && !contentViewSource.contains("恢复课程目录")
     && !contentViewSource.contains(".opacity(isImmersiveLayout ? 0.45 : 1)"), "immersive top bar keeps a clear stateful library chooser instead of dimming a live control")
 if let leftControlsStart = contentViewSource.range(of: "private var leftPrimaryControls: some View")?.lowerBound,
    let leftControlsEnd = contentViewSource[leftControlsStart...].range(of: "\n    }\n\n    @ViewBuilder\n    private var brandBlock")?.lowerBound {
@@ -765,7 +1496,9 @@ if let leftControlsStart = contentViewSource.range(of: "private var leftPrimaryC
        let navigationRange = leftControlsSource.range(of: "navigationButtons"),
        let settingsRange = leftControlsSource.range(of: "settingsMenu") {
         expect(libraryRange.lowerBound < navigationRange.lowerBound
-            && navigationRange.lowerBound < settingsRange.lowerBound, "top-left controls keep library first, then back/forward, then settings")
+            && navigationRange.lowerBound < settingsRange.lowerBound
+            && !leftControlsSource.contains("books.vertical")
+            && !leftControlsSource.contains("presentCourseWorkspace"), "top-left controls keep one course-index entry before navigation and settings")
     } else {
         expect(false, "top-left controls expose library, navigation, and settings controls")
     }
@@ -791,16 +1524,9 @@ expect(!contentViewSource.contains("文代笔")
     && !contentViewSource.contains("对话中栏")
     && !contentViewSource.contains("对话右栏")
     && contentViewSource.contains("store.threePaneOrderLabel(compact: true)"), "top bar short layout label reflects the real draggable pane order without legacy fixed-position labels")
-for helperName in ["openReader", "openWriting", "askCurrentSelection", "prepareAgentDraft"] {
-    if let helperStart = contentViewSource.range(of: "private func \(helperName)")?.lowerBound,
-       let helperEnd = contentViewSource[helperStart...].range(of: "\n    }\n")?.upperBound {
-        let helperSource = String(contentViewSource[helperStart..<helperEnd])
-        expect(!helperSource.contains("showLibrary = false"), "\(helperName) keeps a user-opened immersive library visible")
-        expect(!helperSource.contains("store.layout =") && !helperSource.contains("store.showRightPane = true") && !helperSource.contains("store.showLibrary = true"), "\(helperName) routes durable layout changes through WorkspaceStore helpers")
-    } else {
-        expect(false, "\(helperName) source is readable")
-    }
-}
+expect(!contentViewSource.contains("showLibrary = false")
+    && !contentViewSource.contains("store.layout = ")
+    && !contentViewSource.contains("store.showRightPane = true"), "content view routes durable layout changes through WorkspaceStore without closing a user-opened library")
 expect(contentViewSource.contains(".weibeiInputSurface(active: searchFocused.wrappedValue, height: controlHeight)")
     && contentViewSource.contains("prompt: Text(store.ui(\"资料内搜索\"")
     && contentViewSource.contains(".foregroundStyle(WeiBeiTheme.placeholderInk)")
@@ -870,12 +1596,19 @@ let sidebarSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectory
     .appendingPathComponent("Sources/WeiBei/Views/SidebarView.swift")
 let sidebarSource = (try? String(contentsOf: sidebarSourceURL, encoding: .utf8)) ?? ""
 expect(sidebarSource.contains("Text(store.ui(\"课程目录\", \"Course Index\")")
-    && sidebarSource.contains("prompt: Text(store.ui(\"搜索当前课程\"")
+    && sidebarSource.contains("Text(store.ui(\"课程首页\", \"Course Home\")")
+    && sidebarSource.contains("store.presentCourseWorkspace()")
+    && sidebarSource.contains("prompt: Text(store.ui(\"搜索课程资料与笔记\"")
     && sidebarSource.contains(".foregroundStyle(WeiBeiTheme.placeholderInk)")
-    && sidebarSource.contains(".foregroundColor(WeiBeiTheme.ink)"), "course index search uses current-course language with readable ink")
+    && sidebarSource.contains(".foregroundColor(WeiBeiTheme.ink)"), "course index exposes a textual course-home path and searches materials and notes with readable ink")
 let notesAgentSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/NotesAgentView.swift")
 let notesAgentSource = (try? String(contentsOf: notesAgentSourceURL, encoding: .utf8)) ?? ""
+expect(notesAgentSource.contains("private var noteRailItems: [ContentRailItem]")
+    && notesAgentSource.contains("NoteEditorCommand(kind: .scrollToHeading")
+    && notesAgentSource.contains("private var agentRailItems: [ContentRailItem]")
+    && notesAgentSource.contains("store.requestPaneExpansion(.agent)")
+    && notesAgentSource.components(separatedBy: "let railOnly = ContentRailMetrics.isRailOnly(").count >= 3, "notes and conversation share the content rail and navigate after restoring a narrow pane")
 let notePaneHeaderSource: String = {
     guard let start = notesAgentSource.range(of: "struct NotePaneView: View")?.lowerBound,
           let end = notesAgentSource.range(of: "private func noteFileStatusColor", range: start..<notesAgentSource.endIndex)?.lowerBound else {
@@ -911,13 +1644,6 @@ let emptyAgentStateSource: String = {
     }
     return String(notesAgentSource[start..<end])
 }()
-let railBackgroundSource: String = {
-    guard let start = notesAgentSource.range(of: "private var railBackground: some View")?.lowerBound,
-          let end = notesAgentSource.range(of: "private var separatorAlignment", range: start..<notesAgentSource.endIndex)?.lowerBound else {
-        return ""
-    }
-    return String(notesAgentSource[start..<end])
-}()
 let notebookCreationPanelSource: String = {
     guard let start = notesAgentSource.range(of: "private struct NotebookCreationPanel")?.lowerBound,
           let end = notesAgentSource.range(of: "final class MarkdownSourceTextView", range: start..<notesAgentSource.endIndex)?.lowerBound else {
@@ -948,7 +1674,9 @@ expect(notesAgentSource.contains("private func refreshSourcePresentation(in text
     && notesAgentSource.contains("case .insertMarkdown"), "source editor refreshes callout presentation after agent, command, or attachment insertions")
 expect(!sidebarSource.contains("commandPalettePresented.toggle()") && !sidebarSource.contains("Label(\"命令\", systemImage: \"command\")"), "sidebar does not duplicate the command palette entry")
 expect(sidebarSource.contains("ScrollView(showsIndicators: false)"), "sidebar hides the heavy system scroll indicator that reads as a divider")
-expect(sidebarSource.contains("sidebarSection(title: store.ui(\"我的资料\"") && sidebarSource.contains("sidebarSection(title: store.ui(\"我的笔记\""), "sidebar separates user materials from notebook notes")
+expect(sidebarSource.contains("sidebarSection(title: store.ui(\"内置示例\"")
+    && sidebarSource.contains("sidebarSection(title: store.ui(\"课程资料\"")
+    && sidebarSource.contains("sidebarSection(title: store.ui(\"课程笔记\""), "course index separates built-in examples, course materials, and course notes")
 expect(sidebarSource.contains("!$0.isSample && !$0.isNotebookNote") && sidebarSource.contains("store.filteredItems.filter(\\.isNotebookNote)"), "sidebar material list excludes notebook notes without hiding notes")
 expect(sidebarSource.contains("item.isNotebookNote ? store.activeNotebookItemID == item.id : store.selectedItemID == item.id"), "sidebar highlights the active notebook note separately from the selected reader material")
 expect(sidebarSource.contains(".contextMenu")
@@ -984,7 +1712,7 @@ expect(!commandPaletteSource.contains("收起右栏"), "command palette avoids f
 expect(!commandPaletteSource.contains("Agent 整理资料与笔记") && !commandPaletteSource.contains("本地排序资料库"), "command palette avoids half-built library organization shortcuts")
 expect(commandPaletteSource.contains("store.showLibrary ? store.ui(\"收起课程目录\"")
     && commandPaletteSource.contains("PaletteCommand(title: store.ui(\"聚焦课程目录\"")
-    && !commandPaletteSource.contains("恢复资料"), "command palette names the course index toggle as an explicit course action")
+    && !commandPaletteSource.contains("恢复资料"), "command palette names the unified library action explicitly")
 expect(!commandPaletteSource.contains("PaletteCommand(title: \"顶栏") && contentViewSource.contains("Section(store.ui(\"顶部栏\""), "top bar variants live in the settings menu instead of the command palette")
 expect(commandPaletteSource.contains("private var rightPaneCommand: PaletteCommand?") && commandPaletteSource.contains("store.layout.hasCollapsibleRightPane"), "command palette hides right pane command when the layout has no auxiliary pane")
 expect(commandPaletteSource.contains("收起辅助栏") && commandPaletteSource.contains("展开辅助栏"), "command palette names auxiliary pane action by current state")
@@ -997,7 +1725,9 @@ expect(commandPaletteSource.contains("if store.canCopyReference")
     && commandPaletteSource.contains("PaletteCommand(title: store.ui(\"打开资料内搜索\""), "command palette names copy-reference by the actual current target")
 expect(appSource.contains("Button(store.copyReferenceActionTitle) { store.copyCurrentReference() }")
     && contentViewSource.contains("topIconButton(\"quote.opening\", help: store.copyReferenceActionTitle)"), "top bar and app menu share the same copy-reference wording")
-expect(commandPaletteSource.contains("private var canSendAgentDraft: Bool") && commandPaletteSource.contains("PaletteCommand(title: store.sendAgentActionTitle"), "command palette hides the agent send command until a draft exists")
+expect(commandPaletteSource.contains("private var canControlAgent: Bool")
+    && commandPaletteSource.contains("store.isAskingAgent || !store.agentDraft.trimmingCharacters")
+    && commandPaletteSource.contains("store.isAskingAgent ? store.cancelAgentRequest() : store.askAgent()"), "command palette switches the send command to stop while the agent is running")
 expect(commandPaletteSource.contains("if store.canApplyAgentAnswer") && commandPaletteSource.contains("if store.canReplaceNoteSelection") && commandPaletteSource.contains("PaletteCommand(title: store.ui(\"替换笔记选区\""), "command palette hides agent answer actions until they can work")
 if let selectionCommandStart = commandPaletteSource.range(of: "PaletteCommand(title: store.ui(\"问当前选区\"")?.lowerBound,
    let selectionCommandEnd = commandPaletteSource[selectionCommandStart...].range(of: "\n            })")?.upperBound {
@@ -1020,6 +1750,14 @@ expect(commandPaletteSource.contains("if store.agentSurface != .hidden") && comm
 let readerViewSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/ReaderView.swift")
 let readerViewSource = (try? String(contentsOf: readerViewSourceURL, encoding: .utf8)) ?? ""
+expect(readerViewSource.contains("private final class PDFContentRailPreviewLoader")
+    && readerViewSource.contains("page.thumbnail(of:")
+    && readerViewSource.contains("static let contentRailScript")
+    && readerViewSource.contains("window.WeiBeiContentRail")
+    && readerViewSource.contains("if railOnly {\n            store.requestPaneExpansion(.reader)"), "PDF and HTML rails use real page or document content and restore narrow reader panes")
+expect(readerViewSource.contains("now <= state.userScrollUntil ? \"scroll\"")
+    && !readerViewSource.contains("jumpUntil")
+    && readerViewSource.contains("postMessage({ id, reason: \"jump\" })"), "html reader treats only the explicit target acknowledgement as a jump and lets real user scrolling take priority")
 let selectionAnchorContentPointSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Support/SelectionAnchorContentPoint.swift")
 let selectionAnchorContentPointSource = (try? String(contentsOf: selectionAnchorContentPointSourceURL, encoding: .utf8)) ?? ""
@@ -1051,15 +1789,18 @@ expect(readerViewSource.contains("document.addEventListener(\"selectionchange\",
     && readerViewSource.contains("window.weiBeiSuppressSelectionReport = true;")
     && readerViewSource.contains("x: null,")
     && readerViewSource.contains("y: null"), "html reader reports selection changes live and also clears the floating agent when selection is empty")
-expect(readerViewSource.contains("controller.add(context.coordinator, name: \"appShortcut\")")
+expect(readerViewSource.contains("private static let scriptMessageNames = [")
+    && readerViewSource.contains("\"appShortcut\"")
+    && readerViewSource.contains("private static let scriptMessageNames")
+    && readerViewSource.contains("controller.add(context.coordinator, name: name)")
     && readerViewSource.contains("static let appShortcutScript")
     && readerViewSource.contains("[\"1\", \"2\", \"3\", \"a\", \"n\", \"r\", \"t\"].includes(key)")
     && readerViewSource.contains("[\"1\", \"2\", \"3\", \"4\", \"[\", \"]\", \"b\", \"j\", \"k\", \"f\"].includes(key)")
     && readerViewSource.contains("store.handleAppShortcut(key: key, modifiers: modifiers)")
-    && readerViewSource.contains("removeScriptMessageHandler(forName: \"appShortcut\")"), "html reader forwards app keyboard shortcuts while the web document has focus")
+    && readerViewSource.contains("controller.removeScriptMessageHandler(forName: name)"), "html reader forwards app keyboard shortcuts while the web document has focus")
 expect(!readerViewSource.contains("readerHeader") && !readerViewSource.contains("statusBar"), "reader avoids duplicate internal chrome under unified top bar")
 expect(readerViewSource.contains("ReaderStateMessage") && !readerViewSource.contains("ContentUnavailableView("), "reader empty states use WeiBei paper styling")
-expect(readerViewSource.contains("if store.selectedMaterialItem?.kind == .pdf") && readerViewSource.contains("if let item = store.selectedMaterialItem"), "reader renders materials, not notebook notes")
+expect(readerViewSource.contains("store.selectedMaterialItem?.kind == .pdf") && readerViewSource.contains("if let item = store.selectedMaterialItem"), "reader renders materials, not notebook notes")
 expect(readerViewSource.contains("NotebookSelectedReaderView") && readerViewSource.contains("阅读区只显示资料"), "reader explains notebook selection instead of rendering it as material")
 expect(readerViewSource.contains("ZStack(alignment: .bottomTrailing)")
     && readerViewSource.contains(".padding(.trailing, isImmersive ? 18 : 10)")
@@ -1117,7 +1858,12 @@ expect(readerViewSource.contains(".keyboardShortcut(\"[\", modifiers: [.command,
     && readerViewSource.contains(".keyboardShortcut(\"]\", modifiers: [.command, .option])"), "pdf page shortcuts yield command-brackets to workspace history")
 expect(!readerViewSource.contains(".disabled(pdfPageIndex"), "pdf pager keeps arrows visible instead of showing grey dead buttons")
 expect(readerViewSource.contains("syncReaderLocationTitle")
-    && readerViewSource.contains("store.updateReaderPageIndex(pdfPageIndex)")
+    && readerViewSource.contains("onUserPageChange: schedulePDFLocationCommit")
+    && readerViewSource.contains("if pendingPDFPageRecordsLocation")
+    && readerViewSource.contains("Date() <= self.userNavigationDeadline")
+    && readerViewSource.contains("[.leftMouseDown, .leftMouseDragged, .leftMouseUp, .scrollWheel, .keyDown]")
+    && readerViewSource.components(separatedBy: "schedulePDFLocationCommit(next)").count >= 3
+    && readerViewSource.contains("store.updateReaderPageIndex(pageIndex)")
     && readerViewSource.components(separatedBy: "store.recordReaderPageNavigationPoint()").count >= 3
     && readerViewSource.contains("let next = PageNavigator.previous(pdfPageIndex)")
     && readerViewSource.contains("let next = PageNavigator.next(pdfPageIndex, pageCount: pdfPageCount)")
@@ -1151,7 +1897,7 @@ if let pdfViewStart = readerViewSource.range(of: "private final class ReaderPDFV
 expect(readerViewSource.contains("func reportCurrentSelection(in view: PDFView)")
     && readerViewSource.contains("view.reportCurrentSelection = { [weak coordinator = context.coordinator, weak view] in")
     && readerViewSource.contains("coordinator?.reportCurrentSelection(in: view)")
-    && readerViewSource.contains("NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp])")
+    && readerViewSource.contains("NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .scrollWheel, .keyDown])")
     && readerViewSource.contains("if event.type == .leftMouseDown")
     && readerViewSource.contains("view.bounds.contains(location)")
     && readerViewSource.contains("NSEvent.removeMonitor(eventMonitor)"), "PDF selection reporting polls currentSelection after PDFKit internal drag gestures instead of relying only on outer PDFView mouse events")
@@ -1233,13 +1979,36 @@ expect(readerViewSource.contains("private var importedDocumentAdaptationControl:
     && readerViewSource.contains("Image(systemName: \"eyeglasses\")")
     && readerViewSource.contains("WeiBeiIconButtonStyle(active: store.adaptImportedDocumentColors, size: 22)")
     && readerViewSource.contains("store.toggleImportedDocumentColorAdaptation()"), "DOC hover title offers a quiet stateful adaptation control only for imported PDF and HTML materials")
+let readerStyleScriptSource: String = {
+    guard let start = readerViewSource.range(of: "static func readerStyleScript")?.lowerBound,
+          let end = readerViewSource.range(of: "final class Coordinator", range: start..<readerViewSource.endIndex)?.lowerBound else {
+        return ""
+    }
+    return String(readerViewSource[start..<end])
+}()
 expect(readerViewSource.contains("static func readerStyleScript(for mode: WeiBeiAppearanceMode, adaptsDocumentColors: Bool = true)")
     && readerViewSource.contains("document.documentElement.dataset.weibeiTheme = adaptsDocumentColors ? appearance : \"original\"")
     && readerViewSource.contains("[data-weibei-paper-surface] { background-color: transparent !important; }")
     && readerViewSource.contains(".slice(0, 2500)")
     && readerViewSource.contains("element.removeAttribute(\"data-weibei-paper-surface\")")
-    && !readerViewSource.contains("MutationObserver"), "HTML adaptation is reversible and bounds its one-time near-white surface pass without a persistent DOM observer")
-expect(readerViewSource.contains("pendingPDFPageIndex") && readerViewSource.contains("applyPendingPDFPageIfReady") && readerViewSource.contains("store.readerTargetPageIndex = nil"), "pdf reader consumes source-jump target pages")
+    && !readerStyleScriptSource.contains("MutationObserver"), "HTML adaptation is reversible and bounds its one-time near-white surface pass without a persistent DOM observer")
+expect(readerViewSource.contains("pendingPDFPageIndex")
+    && readerViewSource.contains("pendingPDFPageRecordsLocation")
+    && readerViewSource.contains("applyPendingPDFPageIfReady")
+    && readerViewSource.contains("store.consumeReaderPDFPageRequest(requestID)"), "pdf reader consumes source-jump target pages and only persists requests marked as user navigation")
+expect(readerViewSource.contains("applyPendingHTMLLocationIfReady")
+    && readerViewSource.contains("store.readerTargetLocationID")
+    && readerViewSource.contains("store.readerTargetLocationTitle")
+    && readerViewSource.contains("targetID = matches.count == 1 ? matches[0].id : nil")
+    && readerViewSource.contains("Self.normalizedHTMLSectionTitle(savedSection.title)")
+    && readerViewSource.contains("document.querySelectorAll(\"h1, h2, h3, h4\")")
+    && !readerViewSource.contains("h1, h2, h3, h4, [role='heading']")
+    && readerViewSource.contains("const headings = Array.from(document.querySelectorAll")
+    && readerViewSource.contains("sectionFingerprintBody")
+    && readerViewSource.contains("sectionLocationID")
+    && readerViewSource.contains("new TextEncoder().encode(normalized)")
+    && readerViewSource.contains("`html-section-${hash.toString(16).padStart(8, \"0\")}`")
+    && readerViewSource.contains("store.updateReaderHTMLLocation(id: id, title: title, reason: reason.rawValue)"), "HTML reader persists the active section and consumes exact section jumps")
 expect(readerViewSource.contains("onSourceReference: { reference in store.openSourceReference(reference) }"), "markdown reader source references can jump back to material")
 expect(readerViewSource.contains("private struct SamplePDFView")
     && readerViewSource.contains("ScrollView {")
@@ -1271,11 +2040,19 @@ expect(richEditorSource.contains("var passesVerticalScrollToSuperview = false")
     && richEditorSource.contains("bounds.contains(localPoint)")
     && richEditorSource.contains("return nil"), "compact markdown previews pass vertical wheel events to the outer conversation scroll instead of trapping the pointer over message text")
 expect(richEditorSource.contains("var documentID = \"\"") && richEditorSource.contains("var pendingExternalMarkdown: String?"), "rich editor tracks document identity and pending external sync")
+expect(!richEditorSource.contains("nativeViewCache")
+    && !richEditorSource.contains("cached.view.removeFromSuperview()")
+    && !readerViewSource.contains("nativeViewCache")
+    && !readerViewSource.contains("cached.view.removeFromSuperview()"), "native readers and editors rely on stable pane ownership instead of detach-and-reattach caches")
 expect(
     richEditorSource.contains("window.weiBeiDocumentID")
         && richEditorSource.contains("func setDocumentID(_ id: String)")
-        && richEditorSource.contains("guard messageMatchesDocument(message.body) else { return }"),
-    "rich editor rejects stale web callbacks from a previous document"
+        && richEditorSource.contains("if message.name != \"editorReady\" {")
+        && richEditorSource.contains("guard messageMatchesDocument(message.body) else { return }")
+        && richEditorSource.contains("case \"editorReady\":\n                isReady = true\n                setDocumentID(documentID)")
+        && richEditorSource.contains("setMarkdownBaseURL(markdownBaseURLString)")
+        && richEditorSource.contains("setEditable(isEditable)"),
+    "rich editor accepts a late ready callback, reapplies the current document, and rejects every other stale callback"
 )
 expect(richEditorSource.contains("guard text == pendingExternalMarkdown else { return }"), "rich editor ignores stale markdown callbacks during document sync")
 expect(richEditorSource.contains("command && shift && !option && !control") && richEditorSource.contains("[\"a\", \"r\", \"e\", \"c\"].includes(key)"), "rich editor forwards command-shift agent shortcuts to Swift")
@@ -1382,7 +2159,26 @@ expect(appSource.contains("private var shouldActivateOnLaunch: Bool")
     && appSource.contains("WEIBEI_SUPPRESS_ACTIVATION")
     && appSource.contains("Task { await store.runVerificationScenarioIfNeeded() }")
     && appSource.contains("if shouldActivateOnLaunch {\n            NSApp.activate(ignoringOtherApps: true)\n        }"), "app activation is skipped during non-invasive verification launches")
+expect(appSource.contains("applyVerificationWindowSize(to: window)")
+    && appSource.contains("environment[\"WEIBEI_SUPPRESS_ACTIVATION\"] == \"1\"")
+    && appSource.contains("environment[\"WEIBEI_VERIFY_WINDOW_SIZE\"]")
+    && appSource.contains("window.setContentSize(target)")
+    && appSource.contains("window.center()"), "verification-only window sizing supports real wide and narrow screenshots without changing normal launch behavior")
 expect(appSource.contains("window.isOpaque = true"), "main window declares opaque paper backing for stable capture")
+expect(appSource.contains("environment[\"WEIBEI_VERIFY_CAPTURE_PATH\"]")
+    && appSource.contains("bitmapImageRepForCachingDisplay")
+    && appSource.contains("cacheDisplay(in: bounds, to: bitmap)")
+    && appSource.contains("visibleWebViews(in: contentView)")
+    && appSource.contains("webView.takeSnapshot(with: nil)")
+    && appSource.contains("overlay.image.draw(in: overlay.rect, from: .zero, operation: .sourceOver, fraction: 1)")
+    && !appSource.contains("operation: .copy"), "isolated verification capture preserves the opaque window underneath transparent WebView snapshots")
+expect(appSource.contains("let scenario = environment[\"WEIBEI_VERIFY_SCENARIO\"] ?? \"\"")
+    && appSource.contains("\"course-workspace-overview-flow\"")
+    && appSource.contains("\"course-workspace-workflow-flow\""), "course workspace verification scenarios opt into completion-aware capture")
+expect(appSource.contains("remainingAttempts: scenario == \"pane-toggle-continuity-flow\" ? 1_800 : 600")
+    && appSource.contains("waitForVerificationCompletion")
+    && appSource.contains("stages.split(separator: \"\\n\").contains(\"completed\")")
+    && appSource.contains("DispatchQueue.main.asyncAfter(deadline: .now() + 1.5)"), "isolated verification capture waits for an explicit completion marker and settled rendering")
 expect(appSource.contains("sharedWorkspaceStore"), "main window and settings share one workspace store")
 expect(!appSource.contains("launchProbe"), "app launch path has no temporary probe logging")
 expect(appSource.contains("WeiBeiAppearanceTransition")
@@ -1463,6 +2259,11 @@ expect(!appSource.contains("Form {")
     && appSource.contains("store.setTopBarVariant(variant)"), "settings center uses categorized WeiBei chrome and real bound controls instead of the default form field")
 expect(appSource.contains("settingsPill(\n                    title: store.interfaceLanguage.settingsLabel,\n                    icon: \"character.book.closed\",\n                    active: false")
     && appSource.contains("settingsPill(\n                    title: store.appearanceMode.label(language: store.interfaceLanguage),\n                    icon: store.appearanceMode.systemImage,\n                    active: false"), "settings sidebar summary pills stay neutral instead of looking permanently selected")
+expect(appSource.contains("title: store.ui(\"每日灵感\", \"Daily Inspiration\")")
+    && appSource.contains("get: { store.showDailyInspiration }")
+    && appSource.contains("set: { store.setDailyInspirationEnabled($0) }")
+    && appSource.contains("文稿、对话和笔记入口始终保留")
+    && appSource.contains(".accessibilityLabel(Text(store.ui(\"显示每日灵感\""), "settings explicitly toggles daily inspiration without implying that the three work entries disappear")
 expect(appSource.contains("segmented(NoteRenderMode.visibleCases, active: store.noteRenderMode.visibleMode)")
     && !appSource.contains("笔记预览")
     && !appSource.contains("Note Preview")
@@ -1473,10 +2274,107 @@ expect(appSource.contains("segmented(NoteRenderMode.visibleCases, active: store.
 let interactiveInputSources = [contentViewSource, sidebarSource, commandPaletteSource, notesAgentSource, appSource].joined(separator: "\n")
 expect(!interactiveInputSources.contains(".weibeiInputPrompt("), "interactive input placeholders stay on native prompts instead of overlay text")
 expect(appSource.contains("WeiBeiTextActionButtonStyle(active: true)") && appSource.contains(".background(WeiBeiTheme.paper)") && appSource.contains("WeiBeiGlassHeaderBackground(paperOpacity: 0.66"), "settings view uses WeiBei paper, glass header, and button styles")
-expect(appSource.contains("init() {\n        WeiBeiTypography.registerBundledFonts()\n    }"), "app registers bundled WeiBei fonts before the SwiftUI window tree is built")
+expect(appSource.contains("init() {")
+    && appSource.contains("WeiBeiTypography.registerBundledFonts()"), "app registers bundled WeiBei fonts before the SwiftUI window tree is built")
 let workspaceStoreSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Stores/WorkspaceStore.swift")
 let workspaceStoreSource = (try? String(contentsOf: workspaceStoreSourceURL, encoding: .utf8)) ?? ""
+expect(workspaceStoreSource.components(separatedBy: "recordVerificationStage(\"completed\")").count >= 4, "verification scenarios record completion before capture")
+let linkedSourcesSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Views/LinkedSourcesView.swift")
+let linkedSourcesSource = (try? String(contentsOf: linkedSourcesSourceURL, encoding: .utf8)) ?? ""
+let courseWorkspaceSourceNames = [
+    "CourseWorkspaceView.swift",
+    "CourseOverviewView.swift",
+    "CourseRelationsView.swift",
+    "CourseRecordsView.swift",
+    "CourseWorkspaceComponents.swift",
+]
+let courseWorkspaceSource = courseWorkspaceSourceNames.map { name in
+    let url = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        .appendingPathComponent("Sources/WeiBei/Views")
+        .appendingPathComponent(name)
+    return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
+}.joined(separator: "\n")
+let selectItemSource: String = {
+    guard let start = workspaceStoreSource.range(of: "func select(itemID: String?)")?.lowerBound,
+          let end = workspaceStoreSource[start...].range(of: "func selectAdjacentItem")?.lowerBound else {
+        return ""
+    }
+    return String(workspaceStoreSource[start..<end])
+}()
+expect(!selectItemSource.contains("activeNotebookItemID = nil")
+    && selectItemSource.contains("selectedItemID = itemID"), "opening another material does not detach the note the user is writing")
+expect(workspaceStoreSource.contains("noteSourceLinksMigrationVersion < 1")
+    && workspaceStoreSource.contains("noteSourceLinksMigrationVersion = 1")
+    && workspaceStoreSource.contains("setLinkedSourceIDsForActiveNote"), "note-source migration runs once and explicit relationship management remains available")
+expect(workspaceStoreSource.contains("invalidateAgentContext()\n            activeNotebookItemID = item.id")
+    && workspaceStoreSource.components(separatedBy: "removeLinksWhereSourceItemID").count >= 3, "switching notes invalidates in-flight agent work and source-to-note conversion removes invalid relationships")
+expect(linkedSourcesSource.contains("@State private var noteItemID: String?")
+    && linkedSourcesSource.contains("noteItemID = store.activeNotebookItemID")
+    && linkedSourcesSource.contains("store.setLinkedSourceIDs(draftIDs, for: noteItemID)"), "relationship editing remains bound to the note that opened the popover")
+expect(contentViewSource.contains("if store.courseWorkspacePresented")
+    && contentViewSource.contains("CourseWorkspaceView()")
+    && contentViewSource.contains("LayoutContentView()")
+    && contentViewSource.contains("container.isHidden = store.courseWorkspacePresented")
+    && !contentViewSource.contains("if store.courseWorkspacePresented {\n                            CourseWorkspaceView()\n                        } else"), "course workspace covers and hides native pane hosts without replacing the persistent pane tree")
+expect(courseWorkspaceSource.contains("case overview")
+    && courseWorkspaceSource.contains("case relations")
+    && courseWorkspaceSource.contains("case records")
+    && courseWorkspaceSource.contains("打开只是当前动作，关联才是长期关系。")
+    && courseWorkspaceSource.contains("尚未建立资料关联")
+    && courseWorkspaceSource.contains("尚无阅读位置")
+    && !courseWorkspaceSource.contains("已消化")
+    && !courseWorkspaceSource.contains("消化率"), "course workspace exposes overview, relationships, and learning records using only evidence-backed status language")
+expect(courseWorkspaceSource.contains("更改自动保存")
+    && courseWorkspaceSource.contains("showRecords(session.id)")
+    && courseWorkspaceSource.contains("courseMaterialsWithoutReadingPosition.first?.id")
+    && !courseWorkspaceSource.contains("store.courseMaterials + store.sampleItems"), "course relationship edits save immediately, route to the selected fact, and keep built-in samples outside course counts")
+expect(workspaceStoreSource.contains("@Published private(set) var workspaceSaveError")
+    && workspaceStoreSource.contains("func retryWorkspaceSave()")
+    && workspaceStoreSource.contains("Course changes were not saved to disk")
+    && courseWorkspaceSource.contains("保存失败，点此重试")
+    && courseWorkspaceSource.contains("draft.automaticMaterialCount + draft.markdownFiles.count - notePaths.count")
+    && courseWorkspaceSource.contains("url.deletingLastPathComponent().path"), "course autosave failures stay visible and mixed-folder classification reports complete counts with unambiguous paths")
+expect(workspaceStoreSource.contains("func presentCourseWorkspace(")
+    && workspaceStoreSource.contains("func dismissCourseWorkspace()")
+    && workspaceStoreSource.contains("func openCourseMaterial(")
+    && workspaceStoreSource.contains("func openCourseNote(")
+    && workspaceStoreSource.contains("func continueCourseSession(")
+    && workspaceStoreSource.contains("func prepareCourseFolderImportFromPanel()")
+    && workspaceStoreSource.contains("func importCourseMaterialsFromPanel()")
+    && workspaceStoreSource.contains("func importCourseNotesFromPanel()")
+    && workspaceStoreSource.contains("markdownNotePaths: Set<String>? = nil")
+    && workspaceStoreSource.contains("reclassifiesExistingMarkdown: true")
+    && workspaceStoreSource.contains("defaultMarkdownIsNotebookNote")
+    && workspaceStoreSource.contains("func createCourseNotebookNote(title: String) -> String?")
+    && courseWorkspaceSource.contains("确认 Markdown 的角色")
+    && courseWorkspaceSource.contains("guard let noteID = store.createCourseNotebookNote")
+    && courseWorkspaceSource.contains("newNoteError = store.noteFileError")
+    && appSource.contains("打开课程首页")
+    && commandPaletteSource.contains("打开课程首页")
+    && sidebarSource.contains("store.presentCourseWorkspace()")
+    && linkedSourcesSource.contains("store.presentCourseWorkspace(.notes"), "course workspace is reachable from top-level commands and note relationships, while explicit open actions own navigation")
+expect(workspaceStoreSource.contains("scenario == \"course-index-navigation-flow\"")
+    && workspaceStoreSource.contains("showLibrary = true")
+    && workspaceStoreSource.contains("showReader = false")
+    && workspaceStoreSource.contains("showAgent = false")
+    && workspaceStoreSource.contains("showNotes = false"), "course-index verification owns a quiet real-window state for the unified navigation path")
+expect(workspaceStoreSource.contains("noteSourceRelationIndex = NoteSourceRelationIndex(links: noteSourceLinks)")
+    && workspaceStoreSource.contains("func linkedNoteCount(for sourceItemID: String)")
+    && workspaceStoreSource.contains("verifyCourseOverlayContinuity(itemID:")
+    && workspaceStoreSource.contains("verifyCourseOverlayContinuity(itemID: \"sample-pdf\")")
+    && workspaceStoreSource.contains("PaneToggleContinuityVerifier.endMeasurement()"), "course relationships use a reusable index and overlay continuity measures live HTML and PDF panes")
+expect(readerViewSource.contains("var isEnabled = true")
+    && readerViewSource.contains("NSApp.modalWindow == nil")
+    && courseWorkspaceSource.contains("isEnabled: !showsNewNotePrompt && store.courseFolderImportDraft == nil"), "escape dismisses only the active course surface and leaves sheets or file panels in control")
+expect(workspaceStoreSource.contains("DocumentTextExtractor.cachedText(for: item)")
+    && workspaceStoreSource.contains("loadedMaterialText = await Task.detached(priority: .utility)")
+    && !workspaceStoreSource.contains("if let text = DocumentTextExtractor.text(for: item)"), "main-actor workspace reads only cached document text while bounded extraction runs off the UI thread")
+expect(workspaceStoreSource.contains("@Published var showDailyInspiration = true")
+    && workspaceStoreSource.contains("func setDailyInspirationEnabled(_ enabled: Bool)")
+    && workspaceStoreSource.contains("showDailyInspiration = snapshot.showDailyInspiration ?? true")
+    && workspaceStoreSource.contains("showDailyInspiration: showDailyInspiration"), "daily inspiration preference persists in the isolated workspace file and older workspaces default to enabled")
 expect(workspaceStoreSource.contains("var brandLatinName: String")
     && workspaceStoreSource.contains("\"WeiBei\"")
     && contentViewSource.contains("Text(store.brandLatinName)")
@@ -1485,9 +2383,8 @@ expect(workspaceStoreSource.contains("var brandLatinName: String")
     && contentViewSource.contains("WeiBeiTypography.englishBrandFont(size: variant == .wide ? 17 : 16")
     && appSource.contains("Text(store.brandLatinName)")
     && appSource.contains("WeiBeiTypography.englishBrandFont(size: 18")
-    && sidebarSource.contains("WEIBEI STUDY")
     && notesAgentSource.contains("latinMark: store.interfaceLanguage == .chinese ? \"NOTES\" : nil")
-    && notesAgentSource.contains("latinMark: store.interfaceLanguage == .chinese ? \"CHAT\" : nil"), "custom English font has visible Latin brand marks in the top bar, settings, library, and pane headers")
+    && notesAgentSource.contains("latinMark: store.interfaceLanguage == .chinese ? \"CHAT\" : nil"), "custom English font has visible Latin brand marks in the top bar, settings, and pane headers")
 expect(notesAgentSource.contains("ForEach(NoteRenderMode.visibleCases)")
     && notesAgentSource.contains("switch store.noteRenderMode.visibleMode")
     && !notesAgentSource.contains("ForEach(NoteRenderMode.allCases)")
@@ -1528,7 +2425,10 @@ expect(workspaceStoreSource.contains("var canCopyReference: Bool")
     && workspaceStoreSource.contains("if hasSelectedMaterial { return ui(\"复制资料引用\"")
     && workspaceStoreSource.contains("guard canCopyReference else { return false }")
     && workspaceStoreSource.contains("guard hasSelectedMaterial else { return false }"), "app shortcuts and menus name copy-reference by the actual current target")
-expect(workspaceStoreSource.contains("selectAdjacentItem(step: -1)") && workspaceStoreSource.contains("Task { await askAgent() }"), "app shortcut handler covers navigation and agent send")
+expect(workspaceStoreSource.contains("selectAdjacentItem(step: -1)")
+    && workspaceStoreSource.contains("if isAskingAgent {\n                    cancelAgentRequest()")
+    && workspaceStoreSource.contains("guard !agentDraft.trimmingCharacters")
+    && workspaceStoreSource.contains("askAgent()"), "app shortcut handler covers navigation plus agent send and stop")
 expect(workspaceStoreSource.contains("return allItems.filter { itemMatchesLibrarySearch($0, query: query) }")
     && workspaceStoreSource.contains("return materialItems.filter { itemMatchesLibrarySearch($0, query: query) }")
     && workspaceStoreSource.contains("func displayTags(for item: StudyItem, limit: Int = 3) -> [String]")
@@ -1551,8 +2451,10 @@ expect(workspaceStoreSource.contains("@Published var readerPageIndex = 0")
     && workspaceStoreSource.contains("func updateReaderPageIndex(_ index: Int)")
     && workspaceStoreSource.contains("func recordReaderPageNavigationPoint()")
     && workspaceStoreSource.contains("readerPageIndex: readerPageIndex")
-    && workspaceStoreSource.contains("readerTargetPageIndex = selectedMaterialItem?.kind == .pdf ? snapshot.readerPageIndex : nil"), "workspace navigation snapshots restore PDF page position instead of only restoring the selected document")
-expect(workspaceStoreSource.contains("case \"return\":\n                guard !isAskingAgent && !agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }\n                Task { await askAgent() }"), "app shortcut does not swallow command-return when there is no sendable agent draft")
+    && workspaceStoreSource.contains("selectedMaterialItem?.kind == .pdf ? snapshot.readerPageIndex : nil")
+    && workspaceStoreSource.contains("recordsLocation: false"), "workspace navigation snapshots restore PDF page position without treating restoration as new study activity")
+expect(workspaceStoreSource.contains("case \"return\":\n                if isAskingAgent")
+    && workspaceStoreSource.contains("guard !agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }"), "app shortcut stops a running answer but does not swallow command-return when idle with no draft")
 expect(workspaceStoreSource.contains("showQuietInsight = agentSurface == .quietInsight") && !workspaceStoreSource.contains("agentSurface = .quietInsight\n            showQuietInsight = true"), "immersive reading preserves the chosen agent surface")
 expect(workspaceStoreSource.contains("@Published var activeNotebookItemID")
     && workspaceStoreSource.contains("var activeNoteItem: StudyItem?")
@@ -1569,8 +2471,30 @@ expect(workspaceStoreSource.contains("let item = allItems.first(where: { $0.id =
     && workspaceStoreSource.contains("activeNotebookItemID = item.id")
     && workspaceStoreSource.contains("noteText = noteText(for: item)")
     && !workspaceStoreSource.contains("select(itemID: item.id)\n            noteFileError = ui(\"已创建笔记"), "selecting or creating a notebook note does not replace the current reader material")
-expect(workspaceStoreSource.contains("@Published var readerLocationTitle") && workspaceStoreSource.contains("var currentReferenceTitle"), "store tracks the current reader reference title")
-expect(workspaceStoreSource.contains("@Published var readerTargetPageIndex") && workspaceStoreSource.contains("func openSourceReference") && workspaceStoreSource.contains("SourceReferenceTitle.parse"), "store can jump from source reference text to the referenced material")
+expect(workspaceStoreSource.contains("@Published var readerLocationID")
+    && workspaceStoreSource.contains("@Published var readerLocationTitle")
+    && workspaceStoreSource.contains("func updateReaderHTMLLocation")
+    && workspaceStoreSource.contains("var currentReferenceTitle"), "store tracks durable PDF and HTML reader locations")
+expect(workspaceStoreSource.contains("private func sessionContinuitySummary(for session: StudySession)")
+    && workspaceStoreSource.contains("messages.suffix(20)")
+    && workspaceStoreSource.contains("olderMessages.prefix(4)")
+    && workspaceStoreSource.contains("olderMessages.suffix(8)"), "durable study sessions inject recent turns plus bounded earlier conversation excerpts into each clean PI run")
+expect(workspaceStoreSource.contains("let itemTitle = sourceReferenceBaseTitle(for: item)")
+    && workspaceStoreSource.contains("itemTitle: itemTitle")
+    && workspaceStoreSource.contains("private func refreshStudyLocationReferenceTitles() -> Bool")
+    && workspaceStoreSource.contains("learningMemoryEntries[index].origin = .userStatement\n                    learningMemoryEntries[index].sessionID = activeStudySessionID")
+    && workspaceStoreSource.contains("$0.sessionID == activeStudySessionID")
+    && workspaceStoreSource.contains("learningMemoryEntries[index].origin == .userStatement")
+    && workspaceStoreSource.contains("proposed.origin != .userStatement")
+    && !workspaceStoreSource.contains("learningMemoryEntries[index].sessionID = activeStudySessionID\n                learningMemoryEntries[index].updatedAt"), "learning locations preserve duplicate-file identity and inferred memories keep their original session provenance")
+expect(workspaceStoreSource.contains("@Published var readerTargetPageIndex")
+    && workspaceStoreSource.contains("@Published var readerTargetLocationTitle")
+    && workspaceStoreSource.contains("func openSourceReference")
+    && workspaceStoreSource.contains("reference.sectionTitle")
+    && workspaceStoreSource.contains("reference.sectionLocationID")
+    && workspaceStoreSource.contains("reference.sectionOrdinal.map { \"html-heading-\\(max($0 - 1, 0))\" }")
+    && workspaceStoreSource.contains("private func sourceReferenceBaseTitle")
+    && workspaceStoreSource.contains("return matches.count == 1 ? matches[0] : nil"), "store can jump from source references to PDF pages and HTML sections without guessing between duplicate file titles")
 expect(workspaceStoreSource.contains("let sampleItems: [StudyItem] = WorkspaceStore.makeSampleItems()")
     && workspaceStoreSource.contains("StudyItem(id: \"sample-pdf\", title: \"Mishkin 教材样例\", subtitle: \"PDF 阅读\", kind: .pdf, urlPath: samplePDFURL()?.path, isSample: true)")
     && workspaceStoreSource.contains("private var didRunVerificationScenario = false")
@@ -1583,7 +2507,7 @@ expect(workspaceStoreSource.contains("let sampleItems: [StudyItem] = WorkspaceSt
     && workspaceStoreSource.contains("if scenario == \"notebook-creation-flow\" {\n            layout = .immersiveWriting")
     && workspaceStoreSource.contains("showLibrary = scenario != \"immersive-conversation-flow\"")
     && workspaceStoreSource.contains("updateSelection(\n            ui(\"利率是资金使用价格的表达。\"")
-    && workspaceStoreSource.contains("await askAgent()")
+    && workspaceStoreSource.contains("await askAgentAndWait()")
     && workspaceStoreSource.contains("applyLastAgentAnswerToNote()")
     && workspaceStoreSource.contains("WEIBEI_FORCE_OFFLINE_AGENT")
     && workspaceStoreSource.contains("private static func workspaceRootDirectory() -> URL?")
@@ -1594,6 +2518,22 @@ expect(workspaceStoreSource.contains("let sampleItems: [StudyItem] = WorkspaceSt
     && workspaceStoreSource.contains("CGDataConsumer(data: data as CFMutableData)")
     && workspaceStoreSource.contains("利率是资金使用价格的表达。")
     && !workspaceStoreSource.contains("StudyItem(id: \"sample-pdf\", title: \"Mishkin 教材样例\", subtitle: \"PDF 阅读\", kind: .pdf, urlPath: nil, isSample: true)"), "sample PDF item points at a generated selectable PDF file instead of the fake PDF fallback")
+expect(workspaceStoreSource.contains("empty-workspace-light-wide")
+    && workspaceStoreSource.contains("empty-workspace-light-narrow")
+    && workspaceStoreSource.contains("empty-workspace-calligraphy-light")
+    && workspaceStoreSource.contains("empty-workspace-calligraphy-dark")
+    && workspaceStoreSource.contains("empty-workspace-dark-wide")
+    && workspaceStoreSource.contains("empty-workspace-dark-narrow")
+    && workspaceStoreSource.contains("empty-workspace-inspiration-off")
+    && workspaceStoreSource.contains("configureEmptyWorkspaceVerificationScenario")
+    && workspaceStoreSource.contains("guard Self.environmentValue(\"WEIBEI_SUPPRESS_ACTIVATION\") == \"1\" else { return }")
+    && workspaceStoreSource.contains("showReader = false")
+    && workspaceStoreSource.contains("showAgent = false")
+    && workspaceStoreSource.contains("showNotes = false")
+    && workspaceStoreSource.contains("case \"empty-workspace-open-doc\":\n            toggleReader()")
+    && workspaceStoreSource.contains("case \"empty-workspace-open-chat\":\n            toggleAgent()")
+    && workspaceStoreSource.contains("case \"empty-workspace-open-notes\":\n            toggleNotes()")
+    && workspaceStoreSource.contains("Empty workspace entry state marker"), "verification scenarios cover empty light and dark wide and narrow windows plus all three preserved-state entry paths")
 expect(workspaceStoreSource.contains("ownerTitle: String? = nil") && workspaceStoreSource.contains("let resolvedOwnerTitle"), "selection updates can carry a precise reader source title")
 expect(workspaceStoreSource.contains("@Published var selectionAttachments: [SelectionContext] = []")
     && workspaceStoreSource.contains("@Published var floatingSelectionPrompt = \"\"")
@@ -1677,7 +2617,9 @@ if let askSelectionStart = workspaceStoreSource.range(of: "func askSelection()")
 }
 expect(workspaceStoreSource.contains("selectionAttachments\n                .map { quotedReferenceBlock(text: $0.text, sourceTitle: $0.ownerTitle) }")
     && workspaceStoreSource.contains("sourceTitle: selectionContext.ownerTitle")
-    && workspaceStoreSource.contains("来源：\\(currentReferenceTitle)"), "copy reference uses attached selections, the live selection, or the current reader source")
+    && workspaceStoreSource.contains("来源：\\(currentSourceReferenceTitle)")
+    && workspaceStoreSource.contains("\\(itemTitle)，章节标识：\\(locationID)，章节：\\(locationTitle)")
+    && workspaceStoreSource.contains("\\(itemTitle)，章节序号：\\(sectionOrdinal)，章节：\\(locationTitle)"), "copy reference uses attached selections or a canonical file-plus-location source")
 expect(workspaceStoreSource.contains("private func quotedReferenceBlock")
     && workspaceStoreSource.contains("let quoted = MarkdownSelectionSanitizer.clean(text)")
     && workspaceStoreSource.contains("> [!quote] 选区摘录")
@@ -1711,12 +2653,14 @@ if let hideReaderSearchStart = workspaceStoreSource.range(of: "func hideReaderSe
     expect(false, "reader search dismissal source is readable")
 }
 expect(workspaceStoreSource.contains("var selectedMaterialTitle") && workspaceStoreSource.contains("selectedMaterialItem.map(displayTitle) ?? ui(\"未选择材料\""), "agent material title does not invent a current material")
-expect(workspaceStoreSource.contains("var agentMessageSourceTitle: String?") && workspaceStoreSource.contains("hasSelectedMaterial ? currentReferenceTitle : activeNoteItem.map(displayTitle)") && !workspaceStoreSource.contains("source: selectedMaterialItem?.title"), "agent message source uses the current reader location and falls back to the localized active note title")
-expect(workspaceStoreSource.contains("materialTitle: currentReferenceTitle"), "agent prompt uses the current reader location title so PDF page context reaches the model")
+expect(workspaceStoreSource.contains("var agentMessageSourceTitle: String?") && workspaceStoreSource.contains("hasSelectedMaterial ? currentSourceReferenceTitle : activeNoteItem.map(displayTitle)") && !workspaceStoreSource.contains("source: selectedMaterialItem?.title"), "agent message source uses the canonical file location and falls back to the localized active note title")
+expect(workspaceStoreSource.contains("let sentMaterialTitle = currentSourceReferenceTitle")
+    && workspaceStoreSource.contains("materialTitle: sentMaterialTitle"), "agent prompt snapshots the canonical file location so PDF pages and HTML sections reach the model")
 expect(workspaceStoreSource.contains("private var quietInsightReferenceTitle: String")
-    && workspaceStoreSource.contains("selectionContext?.ownerTitle ?? (hasSelectedMaterial ? currentReferenceTitle : activeNoteItem.map(displayTitle)) ?? ui(\"当前笔记\"")
+    && workspaceStoreSource.contains("selectionContext?.ownerTitle ?? (hasSelectedMaterial ? currentSourceReferenceTitle : activeNoteItem.map(displayTitle)) ?? ui(\"当前笔记\"")
     && workspaceStoreSource.contains("没有证据就说\\(evidenceText)"), "quiet insight uses real selection, current reader location, or note source wording")
-expect(workspaceStoreSource.contains("private func clearUnpinnedFloatingSelection(keepContext: Bool = true)")
+expect(workspaceStoreSource.contains("private func clearUnpinnedFloatingSelection(keepContext: Bool = true, invalidatesAgentContext: Bool = true)")
+    && workspaceStoreSource.contains("if invalidatesAgentContext, selectionContext != nil")
     && workspaceStoreSource.contains("selectionContext = nil")
     && workspaceStoreSource.contains("selectionAnchor = nil")
     && workspaceStoreSource.contains("floatingSelectionPrompt = ui(\"当前选区\"")
@@ -1817,11 +2761,10 @@ expect(!workspaceStoreSource.contains("selectedItem?.title ?? \"当前材料\"")
     && !workspaceStoreSource.contains("Agent 请求失败：")
     && workspaceStoreSource.contains("请求失败：\\(error.localizedDescription)")
     && !workspaceStoreSource.contains("Agent 设置")
-    && workspaceStoreSource.contains("未配置密钥。当前用离线模式生成草稿")
-    && workspaceStoreSource.contains("AgentOfflineTurn.messages(")
-    && workspaceStoreSource.contains("offlineAgentInput(")
-    && workspaceStoreSource.contains("AgentOfflinePreviewInput(")
-    && workspaceStoreSource.contains("messages.append(AgentMessage(role: .user, text: question, source: sourceTitle))")
+    && workspaceStoreSource.contains("PI 与在线密钥均不可用，当前使用离线草稿。")
+    && workspaceStoreSource.contains("OfflineStudyAgentRuntime().respond")
+    && workspaceStoreSource.contains("PiAgentRuntime")
+    && workspaceStoreSource.contains("appendAgentMessage(AgentMessage(role: .user, text: question, source: sourceTitle))")
     && !workspaceStoreSource.contains("未配置 OPENAI_API_KEY 或钥匙串密钥")
     && workspaceStoreSource.contains("正在使用本机环境密钥。")
     && workspaceStoreSource.contains("密钥已保存，可直接用于对话。")
@@ -1832,26 +2775,87 @@ expect(!workspaceStoreSource.contains("selectedItem?.title ?? \"当前材料\"")
     && !workspaceStoreSource.contains("已清除钥匙串密钥。")
     && !workspaceStoreSource.contains("已保存到 macOS 钥匙串。")
     && !workspaceStoreSource.contains("已选择材料、当前选区和右侧笔记"), "agent context and setup notices avoid fake material fallback copy and visible internal agent labels")
-if let askAgentStart = workspaceStoreSource.range(of: "func askAgent() async")?.lowerBound,
-   let offlineInputStart = workspaceStoreSource.range(of: "private func offlineAgentInput")?.lowerBound {
-    let askAgentSource = String(workspaceStoreSource[askAgentStart..<offlineInputStart])
-    let credentialRange = askAgentSource.range(of: "guard let credential = resolvedOpenAIAPIKey()")!
-    expect(askAgentSource.range(of: "agentDraft = \"\"") != nil
-        && askAgentSource.range(of: "selectionAttachments = []") != nil
-        && askAgentSource.range(of: "let shouldClearSentDocumentSelection = sentSelectionText != nil && selectionContext?.source == .document") != nil
-        && askAgentSource.range(of: "clearUnpinnedFloatingSelection(keepContext: false)") != nil
-        && askAgentSource.range(of: "messages.append(contentsOf: AgentOfflineTurn.messages(") != nil
-        && askAgentSource.range(of: "messages.append(AgentMessage(role: .user, text: question, source: sourceTitle))") != nil
-        && askAgentSource.range(of: "let shouldClearSentDocumentSelection")!.lowerBound > askAgentSource.range(of: "let sentSelectionText = agentSelectionText")!.lowerBound
-        && askAgentSource.range(of: "agentDraft = \"\"")!.lowerBound < credentialRange.lowerBound
-        && askAgentSource.range(of: "selectionAttachments = []")!.lowerBound < credentialRange.lowerBound
-        && askAgentSource.range(of: "clearUnpinnedFloatingSelection(keepContext: false)")!.lowerBound < credentialRange.lowerBound
-        && askAgentSource.range(of: "messages.append(contentsOf: AgentOfflineTurn.messages(")!.lowerBound > credentialRange.lowerBound
-        && askAgentSource.range(of: "messages.append(AgentMessage(role: .user, text: question, source: sourceTitle))")!.lowerBound > credentialRange.lowerBound,
-        "agent send clears the composer before key validation and uses the offline turn helper when no API key exists")
+if let requestStart = workspaceStoreSource.range(of: "private func performAgentRequest() async")?.lowerBound,
+   let executionStart = workspaceStoreSource.range(of: "private func executeStudyAgentRequest")?.lowerBound {
+    let requestSource = String(workspaceStoreSource[requestStart..<executionStart])
+    expect(requestSource.contains("agentDraft = \"\"")
+        && requestSource.contains("flushStagedNoteDraftForAgentContext()")
+        && requestSource.contains("selectionAttachments = []")
+        && requestSource.contains("let shouldClearSentDocumentSelection = sentSelectionText != nil && selectionContext?.source == .document")
+        && requestSource.contains("clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)")
+        && requestSource.contains("appendAgentMessage(AgentMessage(role: .user, text: question, source: sourceTitle))")
+        && requestSource.contains("let sentLearningContext = makeLearningContext()")
+        && requestSource.contains("let courseBuild = try await makeCourseContext(query: courseQuery)")
+        && requestSource.contains("materialIsTruncated: courseBuild.selectedMaterialIsTruncated")
+        && requestSource.contains("courseContext: courseBuild.context")
+        && requestSource.contains("learningContext: sentLearningContext")
+        && requestSource.contains("let reply = try await executeStudyAgentRequest(request)")
+        && requestSource.contains("applyLearningUpdate(")
+        && requestSource.contains("expectedUserQuestion: request.question")
+        && requestSource.contains("requestWorkspaceRevision == agentContextRevision")
+        && requestSource.contains("requestMemoryRevision == learningMemoryRevision")
+        && requestSource.contains("lastAgentReplyContextRevision = requestWorkspaceRevision")
+        && requestSource.contains("contextRevision: \"\\(requestWorkspaceRevision):\\(requestID.uuidString.lowercased())\""),
+        "agent send clears the composer, executes the unified runtime, and accepts only the current context revision")
 } else {
-    expect(false, "askAgent source is readable")
+    expect(false, "unified agent request source is readable")
 }
+expect(workspaceStoreSource.contains("@Published private(set) var studySessions")
+    && workspaceStoreSource.contains("func createStudySession()")
+    && workspaceStoreSource.contains("func activateStudySession(_ id: UUID)")
+    && workspaceStoreSource.contains("private func syncActiveStudySession(titleSeed: String? = nil)")
+    && workspaceStoreSource.contains("private func appendAgentMessage(_ message: AgentMessage)"), "agent conversations are durable course study sessions")
+expect(workspaceStoreSource.contains("noteSourceLinks: noteSourceLinks")
+    && workspaceStoreSource.contains("studyLocationsByItemID: studyLocationsByItemID")
+    && workspaceStoreSource.contains("learningMemoryEntries: learningMemoryEntries")
+    && workspaceStoreSource.contains("learningMemoryRevision: learningMemoryRevision")
+    && workspaceStoreSource.contains("studySessions: studySessions")
+    && workspaceStoreSource.contains("activeStudySessionID: activeStudySessionID"), "course links, progress, memory, and sessions are saved with the workspace")
+expect(workspaceStoreSource.contains("acceptedUpdate.resolutions = update.resolutions.prefix(12).filter")
+    && workspaceStoreSource.contains("func confirmLearningMemoryResolution")
+    && workspaceStoreSource.contains("private static func resolutionEvidenceMatches")
+    && workspaceStoreSource.contains("StudyAgentResolutionEvidence.matches")
+    && workspaceStoreSource.contains("func restoreLearningMemory(")
+    && workspaceStoreSource.contains("resolutionEvidence = \"[用户：界面确认]\"")
+    && notesAgentSource.contains("建议结案：")
+    && notesAgentSource.contains("store.confirmLearningMemoryResolution(resolution)")
+    && notesAgentSource.contains("store.restoreLearningMemoryResolution(resolution)"), "PI can only propose memory resolution; user confirmation persists it and the UI can undo it")
+expect(workspaceStoreSource.contains("} else {\n            restoreCurrentStudyLocation()\n            recordCurrentStudyLocation(incrementVisit: false)\n        }")
+    && workspaceStoreSource.contains("private func restoreCurrentStudyLocation()")
+    && workspaceStoreSource.contains("readerPageIndex = max(location.pageIndex ?? 0, 0)")
+    && workspaceStoreSource.contains("requestReaderPDFPage(location.pageIndex, recordsLocation: false)"), "saved heading and PDF page are restored before startup records the current study location")
+expect(workspaceStoreSource.contains("private func makeCourseContext(query: String) async throws")
+    && workspaceStoreSource.contains("CourseKnowledgeIndex.build(")
+    && workspaceStoreSource.contains("courseDocumentSearchIndex: CourseDocumentSearchIndex")
+    && workspaceStoreSource.contains("course-search-v3.sqlite3")
+    && workspaceStoreSource.contains("removeLegacyCourseIndex")
+    && workspaceStoreSource.contains("let indexedByItemID = searchIndex.lookup(")
+    && workspaceStoreSource.contains("candidate.item.isSample")
+    && workspaceStoreSource.contains("Task.detached(priority: .userInitiated)")
+    && workspaceStoreSource.contains("withTaskCancellationHandler")
+    && workspaceStoreSource.contains("migrateNoteSourceLinksFromMarkdown()"), "agent queries the persistent course index in the background and migrates durable note-source links")
+if let selectStart = workspaceStoreSource.range(of: "func select(itemID: String?)")?.lowerBound,
+   let selectEnd = workspaceStoreSource[selectStart...].range(of: "\n    func ", options: [], range: workspaceStoreSource.index(after: selectStart)..<workspaceStoreSource.endIndex)?.lowerBound {
+    let selectSource = String(workspaceStoreSource[selectStart..<selectEnd])
+    expect(!selectSource.contains("messages = []")
+        && selectSource.contains("syncActiveStudySession()")
+        && selectSource.contains("recordCurrentStudyLocation("), "changing course material preserves the active conversation and records progress")
+} else {
+    expect(false, "course material selection source is readable")
+}
+expect(workspaceStoreSource.contains("func stageNoteDraft(_ value: String, for itemID: String?)")
+    && workspaceStoreSource.contains("if stagedNoteDraft?.itemID != itemID || stagedNoteDraft?.value != value {\n            invalidateAgentContext()")
+    && workspaceStoreSource.contains("private func flushStagedNoteDraftForAgentContext()")
+    && notesAgentSource.contains("store.stageNoteDraft(value, for: draftNoteItemID)"), "agent requests flush the current local note-editor draft before snapshotting context")
+expect(workspaceStoreSource.contains("func updateReaderLocationTitle(_ title: String?)")
+    && workspaceStoreSource.contains("func updateReaderHTMLLocation(id: String?, title: String?, reason: String)")
+    && workspaceStoreSource.contains("PaneToggleContinuityVerifier.recordHTMLLocationCall(reason: reason)")
+    && workspaceStoreSource.contains("if !incrementVisit,")
+    && workspaceStoreSource.contains("previous?.locationID == locationID")
+    && workspaceStoreSource.contains("private(set) var studyLocationsByItemID")
+    && !workspaceStoreSource.contains("@Published private(set) var studyLocationsByItemID")
+    && readerViewSource.contains("guard change.reason == .scroll || change.reason == .jump else { return }")
+    && readerViewSource.contains("Task.sleep(nanoseconds: 350_000_000)"), "passive reader layout stays local while settled user navigation persists without publishing duplicate study locations")
 expect(workspaceStoreSource.contains("var agentPromptScope") && workspaceStoreSource.contains("var selectionPromptScope") && !workspaceStoreSource.contains("var libraryOrganizationScope"), "agent prompt builders avoid half-built library organization context")
 expect(!workspaceStoreSource.contains("请根据当前文档和当前笔记") && !workspaceStoreSource.contains("请根据当前材料和当前笔记") && !workspaceStoreSource.contains("结合当前文档和笔记"), "agent draft presets do not hardcode fake material context")
 expect(workspaceStoreSource.contains("正在静默阅读当前材料和笔记。")
@@ -1863,8 +2867,9 @@ expect(workspaceStoreSource.contains("private func noteBlockForAgentAnswer")
     && workspaceStoreSource.contains("AgentOfflinePreview.suggestedNoteBlock(from: text, language: interfaceLanguage)")
     && workspaceStoreSource.contains("guard !text.hasPrefix(\"#\") else { return text }")
     && workspaceStoreSource.contains("return \"## \\(ui(\"整理建议\", \"Organization suggestion\"))\\n\\(text)\"")
-    && workspaceStoreSource.contains("markdown: \"\\n\\(noteBlockForAgentAnswer(answer.text))\"")
-    && !workspaceStoreSource.contains("## Agent 整理建议"), "agent note writeback uses a note-ready offline section before falling back to a plain reader-facing suggestion heading")
+    && workspaceStoreSource.contains("let content = latestAgentNoteProposal?.markdown ?? answer.text")
+    && workspaceStoreSource.contains("markdown: \"\\n\\(noteBlockForAgentAnswer(content))\"")
+    && !workspaceStoreSource.contains("## Agent 整理建议"), "agent note writeback prefers a revision-matched PI proposal before falling back to a reader-facing answer section")
 expect(workspaceStoreSource.contains("func createBlankNotebookNote()")
     && workspaceStoreSource.contains("func createNotebookNoteFromCurrentMaterial()")
     && workspaceStoreSource.contains("func promptCreateBlankNotebookNote()")
@@ -1887,10 +2892,13 @@ expect(workspaceStoreSource.contains("func cancelNotebookNoteCreation()")
     && workspaceStoreSource.contains("func confirmNotebookNoteCreation()")
     && workspaceStoreSource.contains("notebookCreationDraft = NotebookCreationDraft(")
     && workspaceStoreSource.contains("let title = draft.title.trimmingCharacters")
-    && workspaceStoreSource.contains("func select(itemID: String?) {\n        persistCurrentNote()\n        notebookCreationDraft = nil")
+    && workspaceStoreSource.contains("func select(itemID: String?) {\n        invalidateAgentContext()\n        persistCurrentNote()\n        notebookCreationDraft = nil")
     && !workspaceStoreSource.contains("private func promptCreateNotebookNote(seed: NotebookNoteSeed)")
     && !workspaceStoreSource.contains("alert.messageText = seed.isBlank"), "new-note creation opens the inline naming strip and confirms through the shared local markdown creator")
-expect(workspaceStoreSource.contains("importedItems.append(item)\n            activeNotebookItemID = item.id\n            noteText = markdown\n            revealRichWritingSurface()\n            focus(.notes)\n            save()"), "new notebook notes open in the note pane without replacing the reader material")
+expect(workspaceStoreSource.contains("importedItems.append(item)")
+    && workspaceStoreSource.contains("courseDocumentSearchIndex.synchronize(allItems)")
+    && workspaceStoreSource.contains("addNoteSourceLink(noteItemID: item.id, sourceItemID: sourceItem.id)")
+    && workspaceStoreSource.contains("activeNotebookItemID = item.id\n            noteText = markdown\n            revealRichWritingSurface()\n            focus(.notes)\n            save()"), "new notebook notes persist their material link, join the course index, and open in the note pane without replacing the reader material")
 expect(workspaceStoreSource.contains("private func showTransientNoteStatus(_ message: String)")
     && workspaceStoreSource.contains("Task { @MainActor [weak self] in")
     && workspaceStoreSource.contains("if self?.noteFileError == message")
@@ -1902,10 +2910,17 @@ expect(workspaceStoreSource.contains("func promptRenameNotebookNote(itemID: Stri
     && workspaceStoreSource.contains("func cancelRenameNotebookNote()")
     && workspaceStoreSource.contains("func confirmRenameNotebookNote()")
     && workspaceStoreSource.contains("func renameNotebookNote(itemID: String, to rawTitle: String)")
-    && workspaceStoreSource.contains("try FileManager.default.moveItem(at: oldURL, to: newURL)")
+    && workspaceStoreSource.contains("sourceMarkdown = wasActiveNotebook ? noteText : try notebookMarkdownReader(oldURL)")
+    && workspaceStoreSource.contains("try writePendingNotebookRenameJournal(renameJournal)")
+    && workspaceStoreSource.contains("try notebookFileMover(oldURL, newURL)")
+    && workspaceStoreSource.contains("let coordinator = NSFileCoordinator(filePresenter: nil)")
+    && workspaceStoreSource.contains("try notebookMarkdownWriter(retitledMarkdown, coordinatedURL)")
+    && workspaceStoreSource.contains("outputDigest == expectedOutputDigest")
     && workspaceStoreSource.contains("activeNotebookItemID = newID")
-    && workspaceStoreSource.contains("retitledMarkdown(noteText, from: oldTitle")
+    && workspaceStoreSource.contains("noteText = retitledMarkdown")
     && workspaceStoreSource.contains("replaceNavigationItemID(oldID, with: newID)")
+    && workspaceStoreSource.contains("guard save() else")
+    && workspaceStoreSource.contains("文件已重命名，但课程状态尚未写入磁盘")
     && workspaceStoreSource.contains("notebookRenameDraft = nil")
     && !workspaceStoreSource.contains("alert.messageText = ui(\"重命名笔记\""), "renaming a notebook note updates the local markdown file, active note identity, heading, and navigation snapshots without a system alert")
 expect(workspaceStoreSource.contains("let title = item.map(displayTitle) ?? ui(\"新笔记\"")
@@ -1918,7 +2933,9 @@ expect(workspaceStoreSource.contains("let title = item.map(displayTitle) ?? ui(\
     && !workspaceStoreSource.contains("## 待追问\n        - ")
     && !workspaceStoreSource.contains("未命名材料"), "new note templates avoid fake source copy and empty bullets")
 expect(workspaceStoreSource.contains("return cleanLegacyPlaceholder(notesByItemID[item.id] ?? defaultNote(for: item))")
-    && workspaceStoreSource.contains("cleanLegacyPlaceholder(try String(contentsOf: url, encoding: .utf8))")
+    && workspaceStoreSource.contains("guard let markdown = String(data: data, encoding: .utf8)")
+    && workspaceStoreSource.contains("noteBackingContentDigestsByItemID[item.id] = Self.noteContentDigest(data)")
+    && workspaceStoreSource.contains("return cleanLegacyPlaceholder(markdown)")
     && workspaceStoreSource.contains("静默洞察|Agent 洞察")
     && workspaceStoreSource.contains("with: \"> [!note] 阅读线索\\n>\\n> $1\\n>\\n> 来源：$2\"")
     && workspaceStoreSource.contains(#"(?m)^> \[!note\] 阅读线索\n> ([^\n])"#)
@@ -1940,7 +2957,8 @@ expect(appSource.contains("Button(store.ui(\"新建空白笔记\"") && appSource
     && appSource.contains("Button(store.ui(\"从当前资料开笔记\"")
     && appSource.contains("animateLayout { store.promptCreateNotebookNoteFromCurrentMaterial() }"), "new-note menu commands use layout motion and expose blank/material paths separately")
 expect(appSource.contains("Button(store.sendAgentActionTitle)") && workspaceStoreSource.contains("var sendAgentActionTitle: String"), "app send command uses one stable action label")
-expect(appSource.contains("if !store.isAskingAgent && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty")
+expect(appSource.contains("if store.isAskingAgent || !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty")
+    && appSource.contains("store.isAskingAgent ? store.cancelAgentRequest() : store.askAgent()")
     && appSource.contains(".keyboardShortcut(.return, modifiers: [.command])"), "app menu hides the agent send action until a draft can really send")
 expect(appSource.contains("Button(store.showLibrary ? store.ui(\"收起课程目录\"")
     && !appSource.contains("恢复资料")
@@ -2080,10 +3098,14 @@ expect(notesAgentSource.contains("func weibeiPaneHeaderChrome(appearanceMode: We
     && !notesAgentSource.contains("NSAlert()")
     && !notePaneHeaderSource.contains("NoteCreateMenuLabel")
     && !notePaneHeaderSource.contains("Button(\"作为笔记编辑\")")
-    && agentPaneHeaderSource.contains("EmptyView()")
+    && agentPaneHeaderSource.contains("sessionMenu")
+    && notesAgentSource.contains("private var sessionMenu: some View")
+    && notesAgentSource.contains("store.createStudySession()")
+    && notesAgentSource.contains("store.activateStudySession(session.id)")
+    && notesAgentSource.contains("store.clearCurrentSessionInferredMemory()")
     && !agentPaneHeaderSource.contains("agentToolButton(")
     && !notesAgentSource.contains("private func agentToolButton")
-    && notesAgentSource.contains("Button(store.ui(\"写入回答\", \"Write Answer\"")
+    && notesAgentSource.contains("Button(store.agentWriteActionTitle)")
     && notesAgentSource.contains("Button(store.ui(\"替换\", \"Replace\"")
     && !notesAgentSource.contains(".labelStyle(.titleAndIcon)\n        }\n        .buttonStyle(WeiBeiTextActionButtonStyle())")
     && notePaneHeaderSource.contains(".background(WeiBeiTheme.paper)")
@@ -2111,26 +3133,18 @@ expect(noteModeControlSource.contains("NoteRenderMode.visibleCases")
     && noteModeControlSource.contains(".weibeiHeaderAccessoryGroup()")
     && noteModeControlSource.contains(".scaleEffect(hovering && !selected ? 1.012 : 1)")
     && !noteModeControlSource.contains(".stroke(WeiBeiTheme.hairline.opacity(0.14), lineWidth: 1)"), "note mode control is icon-only so narrow panes never collapse labels into ellipses")
-expect(notesAgentSource.contains("ContextRailLine") && notesAgentSource.contains(".onHover"), "context rails keep hover motion")
 expect(!notesAgentSource.contains(".id(store.noteRenderMode)"), "note mode changes avoid forced hard view identity resets")
-expect(notesAgentSource.contains("struct ContextRailItem: Identifiable") && notesAgentSource.contains("Button(action: action)"), "context rails expose actionable rows")
-expect(notesAgentSource.contains("var systemImage: String?") && notesAgentSource.contains("Image(systemName: systemImage)"), "context rail rows support semantic icons")
-expect(notesAgentSource.contains(".accessibilityLabel(Text(item.help ?? item.title))") && notesAgentSource.contains(".help(item.help ?? item.title)"), "context rail actions explain their intent")
-expect(notesAgentSource.contains("var edge: HorizontalEdge = .trailing") && notesAgentSource.contains("edge == .leading ? -3 : 3"), "context rails move inward from either side")
-expect(!railBackgroundSource.isEmpty
-    && railBackgroundSource.contains("WeiBeiTheme.paperRaised.opacity(0.10)")
-    && railBackgroundSource.contains("WeiBeiTheme.paperRaised.opacity(0.26)")
-    && railBackgroundSource.contains(".frame(width: 22)")
-    && !railBackgroundSource.contains("WeiBeiTheme.paper.opacity(0.18)")
-    && !railBackgroundSource.contains("WeiBeiTheme.paperRaised.opacity(0.40),\n                    WeiBeiTheme.paper.opacity(0.42),\n                    WeiBeiTheme.paper.opacity(0.28)"), "immersive context rails avoid full-height heavy background bands")
 expect(!notesAgentSource.contains(".id(expanded)"), "selection agent expands without forcing a hard view identity reset")
-expect(contentViewSource.contains("edge: .leading") && contentViewSource.contains("edge: .trailing"), "immersive rails declare their content-facing edge")
-expect(contentViewSource.contains("conversationSourceRailItems") && contentViewSource.contains("conversationTargetRailItems") && contentViewSource.contains("writingAssistRailItems"), "immersive rails wire role-specific actions")
-expect(contentViewSource.contains("systemImage: \"square.and.pencil\"") && contentViewSource.contains("systemImage: \"quote.opening\""), "immersive rail actions use stable semantic icons")
+expect(!contentViewSource.contains("ContextRailView(title: store.ui(\"文档\"")
+    && !contentViewSource.contains("ContextRailView(title: store.ui(\"写作辅助\""), "immersive writing has no permanent side rails")
+expect(notesAgentSource.contains("LinkedSourcesControl()")
+    && notesAgentSource.contains("private var writingAssistControl: some View")
+    && notesAgentSource.contains("if store.layout != .immersiveWriting")
+    && notesAgentSource.contains(".accessibilityLabel(Text(store.ui(\"整理当前笔记\""), "note relationships and writing aids live in accessible, on-demand header actions")
 expect(contentViewSource.contains("@StateObject private var paneHostRegistry = PersistentPaneHostRegistry()")
-    && contentViewSource.contains("private final class PersistentPaneHostRegistry: ObservableObject")
-    && contentViewSource.contains("private struct PersistentPaneHost: NSViewRepresentable")
-    && contentViewSource.contains("private final class PersistentPaneContainerView: NSView")
+    && contentViewSource.contains("final class PersistentPaneHostRegistry: ObservableObject")
+    && contentViewSource.contains("struct PersistentPaneHost: NSViewRepresentable")
+    && contentViewSource.contains("final class PersistentPaneContainerView: NSView")
     && contentViewSource.contains("override func viewDidMoveToWindow()")
     && contentViewSource.contains("guard container.window != nil else")
     && contentViewSource.contains("PersistentPaneHost(role: .reader, registry: paneHostRegistry)")
@@ -2138,18 +3152,18 @@ expect(contentViewSource.contains("@StateObject private var paneHostRegistry = P
     && contentViewSource.contains("PersistentPaneHost(role: .notes, registry: paneHostRegistry)")
     && contentViewSource.contains("host.removeFromSuperview()")
     && contentViewSource.contains("host.autoresizingMask = [.width, .height]")
-    && contentViewSource.contains("private struct OwnerToken: Equatable")
+    && contentViewSource.contains("struct OwnerToken: Equatable")
     && contentViewSource.contains("func registerOwner(for role: WorkspacePaneRole) -> OwnerToken")
     && contentViewSource.contains("guard latestOwnerGeneration[role] == owner.generation else { return }")
     && contentViewSource.contains("guard activeOwners[role] == owner, host.superview === container else { return }")
     && !contentViewSource.contains("paneView(for: drag.role, reorderable: false)"), "core pane hosts survive immersive, single-pane, and split-layout changes instead of recreating their reader or editor state")
 expect(contentViewSource.contains("case .documentAgentNotes, .documentNotesAgent:")
-    && contentViewSource.contains("documentPaneLayoutView()")
-    && contentViewSource.contains("reorderablePaneView(for: order[0])")
+    || contentViewSource.contains("case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:"), "ordinary document layouts share one routing branch")
+expect(contentViewSource.contains("documentPaneLayoutView()")
+    && contentViewSource.contains("StableDocumentWorkspace(")
     && contentViewSource.contains("PaneReorderPreviewView(role: drag.role)")
-    && contentViewSource.contains(".opacity(drag?.role == role ? 0.08 : 1)")
     && contentViewSource.contains(".opacity(0.11)")
-    && contentViewSource.contains("PersistentPaneHost(role: role, registry: paneHostRegistry)")
+    && stableDocumentSource.contains("PersistentPaneHost(role: role, registry: registry)")
     && contentViewSource.contains("private struct PersistentPaneRoot: View")
     && contentViewSource.contains("AgentPaneView(showsPaneHeader: false, reorderRole: reorderRole)")
     && contentViewSource.contains("NotePaneView(showsPaneHeader: false, reorderRole: reorderRole)")
@@ -2158,13 +3172,13 @@ expect(contentViewSource.contains("case .documentAgentNotes, .documentNotesAgent
     && contentViewSource.contains("threePaneReorderOverlay(order: order")
     && contentViewSource.contains("private func documentPaneLayoutView() -> some View")
     && contentViewSource.contains("let order = store.visibleDocumentPaneOrder")
-    && contentViewSource.contains("EmptyWorkspaceView()")
-    && contentViewSource.contains("documentTwoPaneView(order: order)")
-    && contentViewSource.contains("documentThreePaneView(order: Array(order.prefix(3)))")
-    && contentViewSource.contains("let estimatedFrames = threePaneFrames(order: order, size: geometry.size)")
-    && contentViewSource.contains("store.threePaneReorderFrameList(order: order, fallback: estimatedFrames)")
-    && contentViewSource.contains("onFramesChange: { frames in")
-    && contentViewSource.contains("ThreePaneReorderFrameReporter(order: order, frames: estimatedFrames)")
+    && stableDocumentSource.contains("EmptyWorkspaceLauncherView()")
+    && !contentViewSource.contains("documentTwoPaneView(order: order)")
+    && !contentViewSource.contains("documentThreePaneView(order: Array(order.prefix(3)))")
+    && contentViewSource.contains("let fallbackFrames = estimatedDocumentPaneFrames(order: order, size: geometry.size)")
+    && contentViewSource.contains("store.threePaneReorderFrameList(order: order, fallback: fallbackFrames)")
+    && contentViewSource.contains("onFramesChange: { reportedOrder, frames in")
+    && stableDocumentSource.contains("self?.onFramesChange?(order, frames)")
     && !contentViewSource.contains("case .documentAgentNotes:\n                if store.showRightPane"), "document pane layouts render from the visible pane set and one draggable pane role order")
 expect(paneHeaderReorderSource.contains("struct PaneHeaderReorderModifier")
     && paneHeaderReorderSource.contains(".textSelection(.disabled)")
@@ -2195,7 +3209,8 @@ expect(!readerViewSource.contains("struct ReaderPaneView")
     && readerViewSource.contains(".frame(maxWidth: .infinity)")
     && readerViewSource.contains(".frame(maxWidth: actionsAlignedTrailing ? .infinity : nil, alignment: .leading)")
     && readerViewSource.contains(".padding(.horizontal, actionsAlignedTrailing ? 14 : 0)")
-    && readerViewSource.contains("mark: \"DOC\",\n                    title: floatingTitle")
+    && readerViewSource.contains("mark: \"DOC\"")
+    && readerViewSource.contains("title: floatingTitle")
     && readerViewSource.contains("reorderRole: floatingTitleReorderRole")
     && readerViewSource.contains("DispatchQueue.main.asyncAfter(deadline: .now() + 0.8, execute: task)")
     && contentViewSource.contains("isImmersive: store.layout == .immersiveReading")
@@ -2233,27 +3248,24 @@ expect(workspaceStoreSource.contains("@Published var threePaneOrder")
     && !workspaceStoreSource.contains("guard role != .reader else { return }")
     && workspaceStoreSource.contains("layoutMatchingThreePaneOrder")
     && workspaceStoreSource.contains("threePaneOrder: normalizedThreePaneOrder"), "workspace store owns, drags, swaps, and persists custom three-pane order")
-expect(!contentViewSource.contains("ContextRailItem(title: store.ui(\"课程目录\"")
+expect(!contentViewSource.contains("ContextRailItem")
     && contentViewSource.contains("topIconButton(\"sidebar.left\"")
     && contentViewSource.contains("store.toggleLibrary()")
-    && workspaceStoreSource.contains("func revealLibrary()"), "immersive rails do not duplicate the course index because the top bar owns the library entry")
+    && workspaceStoreSource.contains("func revealLibrary()"), "immersive surfaces do not duplicate the library because the top bar owns its entry")
 expect(!appSource.contains("沉浸模式也保留课程目录入口")
     && !appSource.contains("Immersive modes keep the course index entry")
     && !appSource.contains("Button(store.showLibrary ? store.ui(\"收起\", \"Hide\") : store.ui(\"打开\", \"Show\"))"), "settings does not duplicate the top bar course index toggle")
-expect(contentViewSource.contains("help: store.ui(\"追问当前选区\"")
-    && contentViewSource.contains("help: store.ui(\"整理问题、结论和缺少证据\"")
-    && contentViewSource.contains("help: store.ui(\"生成笔记大纲\"")
-    && contentViewSource.contains("help: store.ui(\"检查笔记缺少来源的位置\"")
-    && contentViewSource.contains("help: store.ui(\"润色当前笔记\"")
-    && !contentViewSource.contains("help: \"用 Agent")
-    && !contentViewSource.contains("help: \"让 Agent"), "immersive rail help text uses direct task language instead of internal agent wording")
-expect(contentViewSource.contains("store.agentPromptScope")
-    && contentViewSource.contains("store.hasSelectedMaterial ? store.ui(\"请检查当前笔记缺少来源的位置")
-    && contentViewSource.contains("store.ui(\"请检查当前笔记缺少来源的位置，并标出需要补证据的段落。\""), "immersive agent rails reuse real context wording")
+expect(notesAgentSource.contains("store.ui(\"大纲建议\"")
+    && notesAgentSource.contains("store.ui(\"补来源\"")
+    && notesAgentSource.contains("store.ui(\"润色表达\"")
+    && !notesAgentSource.contains("help: \"用 Agent")
+    && !notesAgentSource.contains("help: \"让 Agent"), "on-demand writing tools use direct task language instead of internal agent wording")
+expect(notesAgentSource.contains("store.agentPromptScope")
+    && notesAgentSource.contains("store.hasSelectedMaterial")
+    && notesAgentSource.contains("请检查当前笔记缺少来源的位置，并标出需要补证据的段落。"), "on-demand writing tools reuse real context wording")
 expect(contentViewSource.contains(".overlay(alignment: agentAlignment)") && contentViewSource.contains("if store.agentSurface != .quietInsight {\n                        agentOverlay"), "immersive layouts can show the lightweight agent overlay")
-expect(!contentViewSource.contains("来源预览"), "immersive writing document rail avoids duplicate reader entries")
-expect(!contentViewSource.contains("title: store.selectedItem?.title ?? \"当前材料\"") && contentViewSource.contains("if let item = store.selectedMaterialItem"), "immersive rails avoid fake current material entries")
-expect(contentViewSource.contains("store.appendSelectionToNote()") && contentViewSource.contains("store.copyCurrentReference()") && contentViewSource.contains("prepareAgentDraft"), "immersive rails connect to existing note, reference, and agent actions")
+expect(!contentViewSource.contains("来源预览"), "immersive writing avoids duplicate reader entries")
+expect(!contentViewSource.contains("title: store.selectedItem?.title ?? \"当前材料\""), "immersive writing avoids fake current material entries")
 expect(!notesAgentSource.contains("Agent 抽屉"), "agent drawer avoids engineering labels")
 expect(!notesAgentSource.contains("Agent 只在右下角待命"), "corner agent avoids explanatory placeholder copy")
 expect(!notesAgentSource.contains("魏碑会优先读取材料"), "agent empty state avoids product-explainer copy")
@@ -2305,7 +3317,8 @@ expect(notesAgentSource.contains("if store.hasSelectedMaterial")
     && !notesAgentSource.contains("starterChip(\"梳理材料\"")
     && !notesAgentSource.contains("starterChip(\"出复习题\""), "agent starter chips hide material actions without a selected material and avoid clipped long labels")
 expect(notesAgentSource.contains("GeometryReader { geometry in")
-    && notesAgentSource.contains("let contentWidth = min(max(geometry.size.width - 36, 320), agentContentMaxWidth ?? 760)")
+    && notesAgentSource.contains("let availableWidth = max(geometry.size.width, 1)")
+    && notesAgentSource.contains("let contentWidth = min(max(availableWidth - 36, 320), agentContentMaxWidth ?? 760)")
     && notesAgentSource.contains("agentMessageRow(message: message, geometryWidth: geometry.size.width, contentWidth: contentWidth, proxy: proxy)")
     && notesAgentSource.contains("private func agentMessageRow(message: AgentMessage, geometryWidth: CGFloat, contentWidth: CGFloat, proxy: ScrollViewProxy) -> some View")
     && notesAgentSource.contains(".padding(.top, store.messages.isEmpty ? 22 : 0)")
@@ -2408,8 +3421,8 @@ expect(!notesAgentSource.contains("Label(store.ui(\"把当前 Markdown 作为笔
     && !commandPaletteSource.contains("写回当前 Markdown 文件"), "imported markdown conversion is named as editing, not an immediate overwrite")
 expect(workspaceStoreSource.contains("var agentInputPrompt: String")
     && workspaceStoreSource.contains("if hasSelectionAttachments {\n            return ui(\"输入问题\"")
-    && workspaceStoreSource.contains("return hasSelectedMaterial ? ui(\"问当前材料\"")
-    && workspaceStoreSource.contains(": ui(\"问当前笔记\"")
+    && workspaceStoreSource.contains("? ui(\"问当前课程或材料\"")
+    && workspaceStoreSource.contains(": ui(\"问当前课程或笔记\"")
     && !notesAgentSource.contains("问当前选区或当前材料")
     && !workspaceStoreSource.contains("追问已选文本片段"), "agent placeholders stay clean once selected fragments are represented by the attachment pill")
 expect(notesAgentSource.contains("func weibeiFloatingHeaderChrome(appearanceMode: WeiBeiAppearanceMode) -> some View")
@@ -2481,8 +3494,8 @@ expect(notesAgentSource.contains("private struct CompactAgentMessagePreviewList"
     && notesAgentSource.contains("## Offline Draft")
     && !notesAgentSource.contains("question was still sent into the chat"), "drawer and corner chat surfaces show recent local/offline replies with the current offline-preview detection")
 if let selectionStart = notesAgentSource.range(of: "struct FloatingSelectionAgentView")?.lowerBound,
-   let contextRailStart = notesAgentSource.range(of: "struct ContextRailItem")?.lowerBound {
-    let floatingSelectionSource = String(notesAgentSource[selectionStart..<contextRailStart])
+   let agentBubbleStart = notesAgentSource.range(of: "private struct AgentBubble")?.lowerBound {
+    let floatingSelectionSource = String(notesAgentSource[selectionStart..<agentBubbleStart])
     expect(floatingSelectionSource.contains("private var promptSeparator: some View")
         && floatingSelectionSource.contains("WeiBeiTheme.hairline.opacity(0.78)")
         && !floatingSelectionSource.contains("Divider()"), "selection floating agent uses WeiBei hairline separators instead of system dividers")
@@ -2553,19 +3566,20 @@ expect(notesAgentSource.contains("WeiBeiTheme.ink.opacity(0.42), WeiBeiTheme.ink
     && !notesAgentSource.contains(".black.opacity(0.72), .black"), "agent input tray fade mask uses semantic ink instead of a fixed black ramp")
 expect(notesAgentSource.contains("lineLimit: 1...6")
     && notesAgentSource.contains(".fixedSize(horizontal: false, vertical: true)")
-    && notesAgentSource.contains(".padding(.trailing, canSend ? trailingPadding : 0)")
+    && notesAgentSource.contains(".padding(.trailing, showsControl ? trailingPadding : 0)")
     && notesAgentSource.contains(".frame(minHeight: 56, alignment: .bottom)")
     && notesAgentSource.contains(".weibeiInputSurface(active: focused.wrappedValue, height: height, horizontalPadding: horizontalPadding)")
     && notesAgentSource.contains("height: 56")
     && notesAgentSource.contains("horizontalPadding: 14")
     && notesAgentSource.contains("prompt: agentPrompt")
-    && notesAgentSource.contains("WeiBeiIconButtonStyle(size: sendButtonSize, prominence: .primary)")
+    && notesAgentSource.contains("WeiBeiIconButtonStyle(size: sendButtonSize, prominence: store.isAskingAgent ? .neutral : .primary)")
     && notesAgentSource.contains("sendButtonSize: 30")
     && notesAgentSource.contains("sendTrailing: 10")
     && notesAgentSource.contains("sendBottom: 10"), "main agent input grows upward like a real chat composer and keeps send visually inside the field edge")
-expect(notesAgentSource.contains("Image(systemName: \"paperplane.fill\")")
+expect(notesAgentSource.contains("Image(systemName: store.isAskingAgent ? \"stop.fill\" : \"paperplane.fill\")")
+    && notesAgentSource.contains("store.isAskingAgent ? store.cancelAgentRequest() : submit()")
     && !notesAgentSource.contains("Image(systemName: \"arrow.up\")")
-    && !notesAgentSource.contains("AgentComposerSendButtonStyle"), "main agent send affordance stays the cinnabar paper-plane control while sitting inside the composer edge")
+    && !notesAgentSource.contains("AgentComposerSendButtonStyle"), "main agent composer switches between the paper-plane send control and a stop control")
 expect(!notesAgentSource.contains("RoundedRectangle(cornerRadius: 9)")
     && !notesAgentSource.contains(".stroke(draftFocused ? WeiBeiTheme.link.opacity(0.16) : WeiBeiTheme.hairline.opacity(0.34), lineWidth: 1)")
     && !notesAgentSource.contains("WeiBeiTheme.paperRaised.opacity(0.46)"), "agent input tray avoids a heavy nested form border")
@@ -2671,14 +3685,137 @@ expect(!notebookMarkdown.canBecomeNotebookNote, "notebook markdown does not offe
 expect(!sampleMarkdown.isImportedMarkdownFile, "sample markdown stays app-owned")
 expect(!sampleMarkdown.canBecomeNotebookNote, "sample markdown cannot become a backing-file note")
 
-let persisted = PersistedWorkspace(threePaneOrder: [.agent, .reader, .notes], noteRenderMode: .preview, showLibrary: false, showReader: false, showAgent: true, showNotes: false, showRightPane: true, adaptImportedDocumentColors: false)
+let relationNoteID = "note:research"
+let relationNoteB = "note:shared"
+let relationNoteC = "note:replacement"
+let relationSourceA = "file:/tmp/a.pdf"
+let relationSourceB = "file:/tmp/b.html"
+let oldestLink = NoteSourceLink(
+    id: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!,
+    noteItemID: relationNoteID,
+    sourceItemID: relationSourceA,
+    createdAt: Date(timeIntervalSince1970: 1)
+)
+let duplicateLink = NoteSourceLink(
+    id: UUID(uuidString: "00000000-0000-0000-0000-000000000002")!,
+    noteItemID: relationNoteID,
+    sourceItemID: relationSourceA,
+    createdAt: Date(timeIntervalSince1970: 2)
+)
+let sharedSourceLink = NoteSourceLink(
+    id: UUID(uuidString: "00000000-0000-0000-0000-000000000003")!,
+    noteItemID: relationNoteB,
+    sourceItemID: relationSourceA,
+    createdAt: Date(timeIntervalSince1970: 3)
+)
+let sharedSourceDuplicate = NoteSourceLink(
+    id: UUID(uuidString: "00000000-0000-0000-0000-000000000004")!,
+    noteItemID: relationNoteB,
+    sourceItemID: relationSourceA,
+    createdAt: Date(timeIntervalSince1970: 4)
+)
+let unrelatedSourceLink = NoteSourceLink(
+    id: UUID(uuidString: "00000000-0000-0000-0000-000000000005")!,
+    noteItemID: relationNoteID,
+    sourceItemID: relationSourceB,
+    createdAt: Date(timeIntervalSince1970: 5)
+)
+var noteSourceRelations = NoteSourceRelations(links: [duplicateLink, oldestLink])
+expect(noteSourceRelations.links == [oldestLink]
+    && noteSourceRelations.sourceIDs(for: relationNoteID) == [relationSourceA], "note-source relations keep one durable pair and preserve the oldest identity")
+noteSourceRelations.replaceSources(for: relationNoteID, sourceItemIDs: [relationSourceB])
+expect(noteSourceRelations.sourceIDs(for: relationNoteID) == [relationSourceB]
+    && !noteSourceRelations.isLinked(noteItemID: relationNoteID, sourceItemID: relationSourceA), "explicitly replacing a note's sources removes unlinked material")
+noteSourceRelations.sanitize(validNoteItemIDs: [relationNoteID], validSourceItemIDs: [relationSourceA])
+expect(noteSourceRelations.links.isEmpty, "note-source sanitation removes relationships whose source no longer exists")
+
+var sharedSourceRelations = NoteSourceRelations(
+    links: [unrelatedSourceLink, sharedSourceDuplicate, sharedSourceLink, duplicateLink, oldestLink]
+)
+expect(sharedSourceRelations.links == [oldestLink, sharedSourceLink, unrelatedSourceLink]
+    && sharedSourceRelations.noteIDs(for: relationSourceA) == [relationNoteID, relationNoteB], "one source can be shared by multiple notes while duplicate pairs keep their oldest identity")
+sharedSourceRelations.replaceNotes(
+    for: relationSourceA,
+    noteItemIDs: [relationNoteB, relationNoteC]
+)
+expect(sharedSourceRelations.noteIDs(for: relationSourceA) == [relationNoteB, relationNoteC]
+    && sharedSourceRelations.links.contains(sharedSourceLink)
+    && sharedSourceRelations.links.contains(unrelatedSourceLink)
+    && !sharedSourceRelations.isLinked(noteItemID: relationNoteID, sourceItemID: relationSourceA), "replacing a source's notes preserves retained links and removes only deselected notes")
+let relationIndex = NoteSourceRelationIndex(links: sharedSourceRelations.links)
+expect(relationIndex.sourceIDs(for: relationNoteB) == [relationSourceA]
+    && relationIndex.noteIDs(for: relationSourceA) == [relationNoteB, relationNoteC]
+    && relationIndex.sourceCount(for: relationNoteID) == 1
+    && relationIndex.noteCount(for: relationSourceB) == 1, "relationship index reuses normalized note-to-source and source-to-note lookups")
+
+let courseMaterials = [
+    StudyItem(id: "material:a", title: "第一讲", subtitle: "第一讲.pdf", kind: .pdf, urlPath: "/tmp/course/a.pdf", isSample: false),
+    StudyItem(id: "material:b", title: "第二讲", subtitle: "第二讲.html", kind: .html, urlPath: "/tmp/course/b.html", isSample: false),
+    StudyItem(id: "material:c", title: "补充材料", subtitle: "补充材料.txt", kind: .text, urlPath: "/tmp/course/c.txt", isSample: false)
+]
+let courseNotes = [
+    StudyItem(id: "note:a", title: "第一讲笔记", subtitle: "第一讲笔记.md", kind: .markdown, urlPath: "/tmp/course/note-a.md", isSample: false, isNotebookNote: true),
+    StudyItem(id: "note:b", title: "共同主题", subtitle: "共同主题.md", kind: .markdown, urlPath: "/tmp/course/note-b.md", isSample: false, isNotebookNote: true),
+    StudyItem(id: "note:c", title: "待整理", subtitle: "待整理.md", kind: .markdown, urlPath: "/tmp/course/note-c.md", isSample: false, isNotebookNote: true)
+]
+let builtInSample = StudyItem(id: "sample:ignored", title: "内置样例", subtitle: "样例", kind: .html, urlPath: nil, isSample: true)
+let courseLinks = [
+    NoteSourceLink(noteItemID: "note:a", sourceItemID: "material:a", createdAt: Date(timeIntervalSince1970: 10)),
+    NoteSourceLink(noteItemID: "note:b", sourceItemID: "material:a", createdAt: Date(timeIntervalSince1970: 11)),
+    NoteSourceLink(noteItemID: "note:b", sourceItemID: "material:b", createdAt: Date(timeIntervalSince1970: 12)),
+    NoteSourceLink(noteItemID: "note:b", sourceItemID: "material:b", createdAt: Date(timeIntervalSince1970: 13)),
+    NoteSourceLink(noteItemID: "note:missing", sourceItemID: "material:c", createdAt: Date(timeIntervalSince1970: 14)),
+    NoteSourceLink(noteItemID: "note:a", sourceItemID: "sample:ignored", createdAt: Date(timeIntervalSince1970: 15))
+]
+let firstCourseSessionID = UUID(uuidString: "10000000-0000-0000-0000-000000000001")!
+let secondCourseSessionID = UUID(uuidString: "10000000-0000-0000-0000-000000000002")!
+let courseSummary = CourseWorkspaceSummary(
+    importedItems: courseMaterials + courseNotes + [builtInSample],
+    noteSourceLinks: courseLinks,
+    studyLocationsByItemID: [
+        "material:a": StudyLocation(itemID: "material:a", itemTitle: "第一讲"),
+        "material:c": StudyLocation(itemID: "material:c", itemTitle: "补充材料"),
+        "material:missing": StudyLocation(itemID: "material:missing", itemTitle: "已移除资料")
+    ],
+    studySessions: [
+        StudySession(
+            id: firstCourseSessionID,
+            title: "第一次学习",
+            messages: [AgentMessage(role: .user, text: "解释第一讲", source: "第一讲")]
+        ),
+        StudySession(id: secondCourseSessionID, title: "第二次学习")
+    ],
+    learningMemoryEntries: [
+        LearningMemoryEntry(kind: .confusion, text: "困惑一", evidence: "用户提出", origin: .userStatement),
+        LearningMemoryEntry(kind: .confusion, text: "困惑二", evidence: "用户提出", origin: .userStatement),
+        LearningMemoryEntry(kind: .confusion, text: "已解决困惑", evidence: "用户提出", origin: .userStatement, status: .resolved),
+        LearningMemoryEntry(kind: .goal, text: "课程目标", evidence: "用户提出", origin: .userStatement)
+    ]
+)
+expect(courseSummary.materialCount == 3
+    && courseSummary.noteCount == 3
+    && courseSummary.explicitLinkCount == 3
+    && courseSummary.readingPositionCount == 2
+    && courseSummary.unlinkedMaterialCount == 1
+    && courseSummary.unlinkedNoteCount == 1
+    && courseSummary.studySessionCount == 1
+    && courseSummary.unresolvedConfusionCount == 2, "course workspace summary reports only durable facts from the imported course")
+
+let persisted = PersistedWorkspace(noteSourceLinks: [oldestLink], noteSourceLinksMigrationVersion: 1, threePaneOrder: [.agent, .reader, .notes], noteRenderMode: .preview, showLibrary: false, showReader: false, showAgent: true, showNotes: false, showRightPane: true, showDailyInspiration: false, adaptImportedDocumentColors: false)
 let restored = try JSONDecoder().decode(PersistedWorkspace.self, from: try JSONEncoder().encode(persisted))
 expect(restored.showLibrary == false && restored.showReader == false && restored.showAgent == true && restored.showNotes == false && restored.showRightPane == true, "pane visibility state persists")
+expect(restored.showDailyInspiration == false, "daily inspiration can be disabled and restored from workspace persistence")
+let reenabledInspiration = try JSONDecoder().decode(PersistedWorkspace.self, from: try JSONEncoder().encode(PersistedWorkspace(showDailyInspiration: true)))
+expect(reenabledInspiration.showDailyInspiration == true, "daily inspiration can be re-enabled and restored from workspace persistence")
+let legacyWorkspace = try JSONDecoder().decode(PersistedWorkspace.self, from: Data(#"{"importedItems":[],"notesByItemID":{}}"#.utf8))
+expect(legacyWorkspace.showDailyInspiration == nil
+    && workspaceStoreSource.contains("showDailyInspiration = snapshot.showDailyInspiration ?? true"), "workspace snapshots created before daily inspiration remain decodable and default to enabled")
 expect(restored.adaptImportedDocumentColors == false
     && workspaceStoreSource.contains("adaptImportedDocumentColors = snapshot.adaptImportedDocumentColors ?? true")
     && workspaceStoreSource.contains("adaptImportedDocumentColors: adaptImportedDocumentColors"), "imported-document color adaptation persists while old workspaces default to adapted reading")
 expect(restored.noteRenderMode == .preview, "legacy preview note mode remains decodable for old workspace snapshots")
 expect(restored.threePaneOrder == [.agent, .reader, .notes], "custom three-pane order persists")
+expect(restored.noteSourceLinks == [oldestLink] && restored.noteSourceLinksMigrationVersion == 1, "note-source relations and one-time migration state persist together")
 expect(workspaceStoreSource.contains("if let noteRenderMode = snapshot.noteRenderMode {\n            self.noteRenderMode = noteRenderMode.visibleMode\n        }")
     && workspaceStoreSource.contains("noteRenderMode = snapshot.noteRenderMode.visibleMode")
     && workspaceStoreSource.contains("let nextMode = mode.visibleMode")

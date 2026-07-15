@@ -1,8 +1,15 @@
 import AppKit
 import SwiftUI
+import WebKit
 import WeiBeiCore
 
-@MainActor private let sharedWorkspaceStore = WorkspaceStore()
+private let runsImportedIdentitySelfCheck = ProcessInfo.processInfo.arguments.contains("--self-check-imported-identity")
+private let importedIdentitySelfCheckBootstrapDirectory = FileManager.default.temporaryDirectory
+    .appendingPathComponent("weibei-imported-identity-bootstrap-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
+
+@MainActor private let sharedWorkspaceStore = runsImportedIdentitySelfCheck
+    ? WorkspaceStore(workspaceDirectory: importedIdentitySelfCheckBootstrapDirectory)
+    : WorkspaceStore()
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -37,6 +44,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         sharedWorkspaceStore.flushPendingNotePersistence()
+        sharedWorkspaceStore.shutdownAgentRuntime()
         if let shortcutMonitor {
             NSEvent.removeMonitor(shortcutMonitor)
         }
@@ -53,6 +61,17 @@ struct WeiBeiApp: App {
     @StateObject private var store = sharedWorkspaceStore
 
     init() {
+        if runsImportedIdentitySelfCheck {
+            defer { try? FileManager.default.removeItem(at: importedIdentitySelfCheckBootstrapDirectory) }
+            do {
+                try ImportedIdentitySelfCheck.run()
+                print("WeiBei imported identity self-checks passed")
+                exit(EXIT_SUCCESS)
+            } catch {
+                fputs("WeiBei imported identity self-check failed: \(error.localizedDescription)\n", stderr)
+                exit(EXIT_FAILURE)
+            }
+        }
         WeiBeiTypography.registerBundledFonts()
     }
 
@@ -78,6 +97,11 @@ struct WeiBeiApp: App {
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandMenu(store.appDisplayName) {
+                Button(store.ui("打开课程首页", "Open Course Home")) { store.presentCourseWorkspace() }
+                    .keyboardShortcut("0")
+
+                Divider()
+
                 Button(store.ui("打开资料", "Open Material")) { store.importFilesFromPanel() }
                     .keyboardShortcut("o")
 
@@ -214,8 +238,10 @@ struct WeiBeiApp: App {
                     }
                     .keyboardShortcut("f")
                 }
-                if !store.isAskingAgent && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Button(store.sendAgentActionTitle) { Task { await store.askAgent() } }
+                if store.isAskingAgent || !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Button(store.sendAgentActionTitle) {
+                        store.isAskingAgent ? store.cancelAgentRequest() : store.askAgent()
+                    }
                         .keyboardShortcut(.return, modifiers: [.command])
                 }
             }
@@ -308,7 +334,10 @@ private struct WeiBeiAppearanceTransition: ViewModifier {
     }
 }
 
+@MainActor
 private struct WindowChromeConfigurator: NSViewRepresentable {
+    private static var scheduledVerificationCaptures: Set<String> = []
+
     var appearanceMode: WeiBeiAppearanceMode
 
     func makeNSView(context: Context) -> NSView {
@@ -335,6 +364,159 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         window.isOpaque = true
         window.backgroundColor = appearanceMode.windowBackground
         window.isMovableByWindowBackground = true
+        applyVerificationWindowSize(to: window)
+        captureVerificationWindowIfRequested(window)
+    }
+
+    private func applyVerificationWindowSize(to window: NSWindow) {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1",
+              let rawSize = environment["WEIBEI_VERIFY_WINDOW_SIZE"] else { return }
+        let parts = rawSize.lowercased().split(separator: "x", maxSplits: 1)
+        guard parts.count == 2,
+              let width = Double(parts[0]),
+              let height = Double(parts[1]),
+              width >= 600,
+              height >= 400 else { return }
+
+        let target = NSSize(width: width, height: height)
+        let current = window.contentLayoutRect.size
+        guard abs(current.width - target.width) > 1 || abs(current.height - target.height) > 1 else { return }
+        window.setContentSize(target)
+        window.center()
+    }
+
+    private func captureVerificationWindowIfRequested(_ window: NSWindow) {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1",
+              let capturePath = environment["WEIBEI_VERIFY_CAPTURE_PATH"],
+              !capturePath.isEmpty,
+              Self.scheduledVerificationCaptures.insert(capturePath).inserted else { return }
+
+        let scenario = environment["WEIBEI_VERIFY_SCENARIO"] ?? ""
+        if [
+            "pi-learning-flow",
+            "pi-course-memory-flow",
+            "pane-toggle-continuity-flow",
+            "reader-scroll-persistence-flow",
+            "course-workspace-overview-flow",
+            "course-workspace-workflow-flow",
+        ].contains(scenario),
+           let workspaceDirectory = environment["WEIBEI_WORKSPACE_DIR"] {
+            let stateURL = URL(fileURLWithPath: workspaceDirectory)
+                .appendingPathComponent("verification-state.txt")
+            Self.waitForVerificationCompletion(
+                in: window,
+                capturePath: capturePath,
+                stateURL: stateURL,
+                remainingAttempts: scenario == "pane-toggle-continuity-flow" ? 1_800 : 600
+            )
+            return
+        }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            Self.capture(window, to: capturePath)
+        }
+    }
+
+    private static func waitForVerificationCompletion(
+        in window: NSWindow,
+        capturePath: String,
+        stateURL: URL,
+        remainingAttempts: Int
+    ) {
+        let stages = (try? String(contentsOf: stateURL, encoding: .utf8)) ?? ""
+        if stages.split(separator: "\n").contains("completed") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                capture(window, to: capturePath)
+            }
+            return
+        }
+        guard remainingAttempts > 0 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            waitForVerificationCompletion(
+                in: window,
+                capturePath: capturePath,
+                stateURL: stateURL,
+                remainingAttempts: remainingAttempts - 1
+            )
+        }
+    }
+
+    private static func capture(_ window: NSWindow, to capturePath: String) {
+        guard !FileManager.default.fileExists(atPath: capturePath),
+              let contentView = window.contentView else { return }
+        contentView.layoutSubtreeIfNeeded()
+        window.displayIfNeeded()
+        let bounds = contentView.bounds
+        guard bounds.width >= 600,
+              bounds.height >= 400,
+              let bitmap = contentView.bitmapImageRepForCachingDisplay(in: bounds) else { return }
+        contentView.cacheDisplay(in: bounds, to: bitmap)
+        let baseImage = NSImage(size: bounds.size)
+        baseImage.addRepresentation(bitmap)
+        let webViews = visibleWebViews(in: contentView)
+        captureWebViews(webViews, at: 0, relativeTo: contentView, overlays: []) { overlays in
+            let composite = NSImage(size: bounds.size)
+            composite.lockFocus()
+            baseImage.draw(in: bounds)
+            for overlay in overlays {
+                overlay.image.draw(in: overlay.rect, from: .zero, operation: .sourceOver, fraction: 1)
+            }
+            composite.unlockFocus()
+            guard let tiff = composite.tiffRepresentation,
+                  let representation = NSBitmapImageRep(data: tiff),
+                  let png = representation.representation(using: .png, properties: [:]) else { return }
+            try? png.write(to: URL(fileURLWithPath: capturePath), options: .atomic)
+        }
+    }
+
+    private struct WebViewSnapshot {
+        var rect: NSRect
+        var image: NSImage
+    }
+
+    private static func visibleWebViews(in view: NSView) -> [WKWebView] {
+        view.subviews.flatMap { child -> [WKWebView] in
+            var matches = child.isHidden ? [] : visibleWebViews(in: child)
+            if let webView = child as? WKWebView, !webView.isHidden, webView.window != nil {
+                matches.insert(webView, at: 0)
+            }
+            return matches
+        }
+    }
+
+    private static func captureWebViews(
+        _ webViews: [WKWebView],
+        at index: Int,
+        relativeTo contentView: NSView,
+        overlays: [WebViewSnapshot],
+        completion: @escaping ([WebViewSnapshot]) -> Void
+    ) {
+        guard webViews.indices.contains(index) else {
+            completion(overlays)
+            return
+        }
+        let webView = webViews[index]
+        let converted = webView.convert(webView.bounds, to: contentView)
+        let rect = contentView.isFlipped
+            ? NSRect(x: converted.minX, y: contentView.bounds.height - converted.maxY, width: converted.width, height: converted.height)
+            : converted
+        webView.takeSnapshot(with: nil) { image, _ in
+            DispatchQueue.main.async {
+                var nextOverlays = overlays
+                if let image, rect.width > 1, rect.height > 1 {
+                    nextOverlays.append(WebViewSnapshot(rect: rect, image: image))
+                }
+                captureWebViews(
+                    webViews,
+                    at: index + 1,
+                    relativeTo: contentView,
+                    overlays: nextOverlays,
+                    completion: completion
+                )
+            }
+        }
     }
 }
 
@@ -599,6 +781,25 @@ struct SettingsView: View {
                 }
             }
 
+            settingsGroup(store.ui("空白页", "Empty Workspace")) {
+                settingsRow(
+                    title: store.ui("每日灵感", "Daily Inspiration"),
+                    detail: store.ui("关闭后只隐藏语录；文稿、对话和笔记入口始终保留。", "Hides sourced quotations only; document, chat, and notes entries always remain.")
+                ) {
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { store.showDailyInspiration },
+                            set: { store.setDailyInspirationEnabled($0) }
+                        )
+                    )
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .tint(WeiBeiTheme.cinnabar)
+                    .accessibilityLabel(Text(store.ui("显示每日灵感", "Show Daily Inspiration")))
+                }
+            }
+
             settingsGroup(store.ui("快速进入", "Jump To")) {
                 settingsRouteRow(
                     title: store.ui("外观与语言", "Appearance & Language"),
@@ -682,6 +883,22 @@ struct SettingsView: View {
                     }
                 }
 
+                settingsRow(
+                    title: store.ui("每日灵感", "Daily Inspiration"),
+                    detail: store.ui("只控制空工作区里的出处内容；文稿、对话和笔记入口始终保留。", "Controls sourced material on the empty workspace only; document, chat, and notes entries always remain.")
+                ) {
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { store.showDailyInspiration },
+                            set: { store.setDailyInspirationEnabled($0) }
+                        )
+                    )
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .tint(WeiBeiTheme.cinnabar)
+                    .accessibilityLabel(Text(store.ui("显示每日灵感", "Show Daily Inspiration")))
+                }
             }
         }
     }
@@ -920,7 +1137,7 @@ struct SettingsView: View {
 
     private var dataSettings: some View {
         VStack(alignment: .leading, spacing: 16) {
-            settingsGroup(store.ui("课程目录", "Course Index")) {
+            settingsGroup(store.ui("课程资料", "Course Materials")) {
                 settingsRow(
                     title: store.ui("导入资料", "Import Material"),
                     detail: store.ui("导入 HTML、PDF、Markdown 或文本文件。", "Import HTML, PDF, Markdown, or text files.")

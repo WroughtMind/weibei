@@ -4,6 +4,10 @@ import SwiftUI
 import WeiBeiCore
 import WebKit
 
+extension Notification.Name {
+    static let weiBeiVerificationUserScroll = Notification.Name("WeiBeiVerificationUserScroll")
+}
+
 struct ImmersiveHoverTitleView<Actions: View>: View {
     let mark: String
     let title: String
@@ -140,38 +144,67 @@ struct ReaderView: View {
     @State private var pdfControlsExpanded = false
     @State private var pdfControlsCollapseToken = UUID()
     @State private var pendingPDFPageIndex: Int?
+    @State private var pendingPDFPageRequestID: UUID?
+    @State private var pendingPDFPageRecordsLocation = false
     @State private var pdfHasSelectableText: Bool?
+    @State private var pdfContentRailItems: [ContentRailItem] = []
+    @State private var pdfRailTargetPageIndex: Int?
+    @State private var pendingPDFRailPreviewPages: Set<Int> = []
+    @State private var htmlContentRailItems: [ContentRailItem] = []
+    @State private var htmlContentRailActiveID: String?
+    @State private var htmlContentRailTarget: WebReaderContentRailTarget?
+    @State private var pendingHTMLLocationCommit: Task<Void, Never>?
+    @State private var pendingPDFLocationCommit: Task<Void, Never>?
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            VStack(spacing: 0) {
-                readerBody
-            }
-
-            if store.selectedMaterialItem?.kind == .pdf {
-                pdfFloatingControls
-                    .padding(.trailing, isImmersive ? 18 : 10)
-                    .padding(.bottom, isImmersive ? 18 : 12)
-                    .transition(WeiBeiTransition.floating)
-            }
-
-            if pdfHasSelectableText == false {
-                pdfTextLayerNotice
-                    .padding(.leading, isImmersive ? 18 : 14)
-                    .padding(.bottom, isImmersive ? 18 : 14)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-                    .transition(WeiBeiTransition.floating)
+        GeometryReader { geometry in
+            let railOnly = ContentRailMetrics.isRailOnly(
+                availableWidth: geometry.size.width,
+                allowed: supportsContentRail && !isImmersive
+            )
+            ZStack(alignment: .bottomTrailing) {
+                VStack(spacing: 0) {
+                    readerBody
                 }
-        }
-        .overlay(alignment: .top) {
-            if showsFloatingTitle {
-                ImmersiveHoverTitleView(
-                    mark: "DOC",
-                    title: floatingTitle,
-                    appearanceMode: store.appearanceMode,
-                    reorderRole: floatingTitleReorderRole
-                ) {
-                    importedDocumentAdaptationControl
+                .opacity(railOnly ? 0 : 1)
+                .allowsHitTesting(!railOnly)
+
+                if !railOnly, store.selectedMaterialItem?.kind == .pdf {
+                    pdfFloatingControls
+                        .padding(.trailing, isImmersive ? 18 : 10)
+                        .padding(.bottom, isImmersive ? 18 : 12)
+                        .transition(WeiBeiTransition.floating)
+                }
+
+                if !railOnly, pdfHasSelectableText == false {
+                    pdfTextLayerNotice
+                        .padding(.leading, isImmersive ? 18 : 14)
+                        .padding(.bottom, isImmersive ? 18 : 14)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                        .transition(WeiBeiTransition.floating)
+                }
+            }
+            .overlay(alignment: .leading) {
+                if supportsContentRail {
+                    contentRail(isRailOnly: railOnly, availableWidth: geometry.size.width)
+                        .frame(
+                            width: railOnly ? min(ContentRailMetrics.railOnlyWidth, geometry.size.width) : geometry.size.width,
+                            height: geometry.size.height,
+                            alignment: .leading
+                        )
+                        .zIndex(6)
+                }
+            }
+            .overlay(alignment: .top) {
+                if !railOnly, showsFloatingTitle {
+                    ImmersiveHoverTitleView(
+                        mark: "DOC",
+                        title: floatingTitle,
+                        appearanceMode: store.appearanceMode,
+                        reorderRole: floatingTitleReorderRole
+                    ) {
+                        importedDocumentAdaptationControl
+                    }
                 }
             }
         }
@@ -182,28 +215,56 @@ struct ReaderView: View {
         .animation(WeiBeiMotion.panel, value: pdfHasSelectableText)
         .onAppear {
             syncReaderLocationTitle()
-            pendingPDFPageIndex = store.readerTargetPageIndex
+            capturePendingPDFPageRequest()
+            htmlContentRailActiveID = store.readerLocationID
             applyPendingPDFPageIfReady()
+            applyPendingHTMLLocationIfReady()
+            rebuildPDFContentRail()
         }
         .onChange(of: store.selectedItemID) { _, _ in
+            pendingHTMLLocationCommit?.cancel()
+            pendingHTMLLocationCommit = nil
+            pendingPDFLocationCommit?.cancel()
+            pendingPDFLocationCommit = nil
             pdfPageIndex = 0
             pdfPageCount = store.selectedMaterialItem?.kind == .pdf && store.selectedMaterialItem?.url == nil ? 1 : 0
             pdfHasSelectableText = store.selectedMaterialItem?.kind == .pdf && store.selectedMaterialItem?.url == nil ? true : nil
+            pdfContentRailItems = []
+            pdfRailTargetPageIndex = nil
+            pendingPDFRailPreviewPages = []
+            htmlContentRailItems = []
+            htmlContentRailActiveID = store.readerLocationID
+            htmlContentRailTarget = nil
             syncReaderLocationTitle()
-            pendingPDFPageIndex = store.readerTargetPageIndex
+            capturePendingPDFPageRequest()
             applyPendingPDFPageIfReady()
+            applyPendingHTMLLocationIfReady()
+            rebuildPDFContentRail()
         }
         .onChange(of: pdfPageIndex) { _, _ in
-            store.updateReaderPageIndex(pdfPageIndex)
             syncReaderLocationTitle()
         }
         .onChange(of: pdfPageCount) { _, _ in
             syncReaderLocationTitle()
             applyPendingPDFPageIfReady()
+            rebuildPDFContentRail()
         }
         .onChange(of: store.readerTargetPageIndex) { _, target in
-            pendingPDFPageIndex = target
+            capturePendingPDFPageRequest()
             applyPendingPDFPageIfReady()
+        }
+        .onChange(of: store.readerTargetPageRequestID) { _, _ in
+            capturePendingPDFPageRequest()
+            applyPendingPDFPageIfReady()
+        }
+        .onChange(of: store.readerTargetLocationID) { _, _ in
+            applyPendingHTMLLocationIfReady()
+        }
+        .onChange(of: store.readerTargetLocationTitle) { _, _ in
+            applyPendingHTMLLocationIfReady()
+        }
+        .onChange(of: store.readerTargetLocationRequestID) { _, _ in
+            applyPendingHTMLLocationIfReady()
         }
     }
 
@@ -213,6 +274,12 @@ struct ReaderView: View {
             return
         }
         let displayTitle = store.displayTitle(for: item)
+        if item.kind == .html {
+            if store.readerLocationTitle == nil {
+                store.updateReaderLocationTitle(displayTitle)
+            }
+            return
+        }
         let title = item.kind == .pdf
             ? store.ui("\(displayTitle)，第 \(pdfPageIndex + 1) 页", "\(displayTitle), page \(pdfPageIndex + 1)")
             : displayTitle
@@ -221,6 +288,222 @@ struct ReaderView: View {
 
     private var floatingTitle: String {
         store.currentReferenceTitle
+    }
+
+    private var supportsContentRail: Bool {
+        guard let kind = store.selectedMaterialItem?.kind else { return false }
+        return kind == .pdf || kind == .html
+    }
+
+    private var contentRailItems: [ContentRailItem] {
+        switch store.selectedMaterialItem?.kind {
+        case .pdf:
+            return pdfContentRailItems
+        case .html:
+            return htmlContentRailItems
+        default:
+            return []
+        }
+    }
+
+    private var contentRailActiveID: String? {
+        switch store.selectedMaterialItem?.kind {
+        case .pdf:
+            return Self.pdfContentRailID(pageIndex: pdfPageIndex)
+        case .html:
+            return htmlContentRailActiveID
+        default:
+            return nil
+        }
+    }
+
+    private func contentRail(isRailOnly: Bool, availableWidth: CGFloat) -> some View {
+        ContentRailView(
+            label: store.ui("文稿导航", "Document Navigation"),
+            items: contentRailItems,
+            activeID: contentRailActiveID,
+            appearanceMode: store.appearanceMode,
+            isRailOnly: isRailOnly,
+            availableWidth: availableWidth,
+            topInset: showsFloatingTitle && !isRailOnly ? 46 : 14,
+            bottomInset: store.selectedMaterialItem?.kind == .pdf ? 52 : 18,
+            onActivate: { activateContentRailItem($0, railOnly: isRailOnly) },
+            onHover: hoverContentRailItem
+        )
+    }
+
+    private func activateContentRailItem(_ item: ContentRailItem, railOnly: Bool) {
+        if railOnly {
+            store.requestPaneExpansion(.reader)
+        }
+        switch store.selectedMaterialItem?.kind {
+        case .pdf:
+            if let pageIndex = Self.pdfPageIndex(fromContentRailID: item.id) {
+                pdfRailTargetPageIndex = pageIndex
+                schedulePDFLocationCommit(pageIndex)
+            }
+        case .html:
+            htmlContentRailTarget = WebReaderContentRailTarget(id: item.id)
+        default:
+            break
+        }
+    }
+
+    private func hoverContentRailItem(_ item: ContentRailItem?) {
+        guard store.selectedMaterialItem?.kind == .pdf,
+              let item,
+              let pageIndex = Self.pdfPageIndex(fromContentRailID: item.id),
+              let url = store.selectedMaterialItem?.url,
+              item.previewImage == nil,
+              !pendingPDFRailPreviewPages.contains(pageIndex) else { return }
+        pendingPDFRailPreviewPages.insert(pageIndex)
+        let selectedPath = url.standardizedFileURL.path
+        PDFContentRailPreviewLoader.shared.load(url: url, pageIndex: pageIndex) { preview in
+            guard store.selectedMaterialItem?.url?.standardizedFileURL.path == selectedPath else { return }
+            pendingPDFRailPreviewPages.remove(pageIndex)
+            guard let preview,
+                  let itemIndex = pdfContentRailItems.firstIndex(where: { $0.id == item.id }) else { return }
+            let fallbackTitle = store.ui("第 \(pageIndex + 1) 页", "Page \(pageIndex + 1)")
+            let excerpt = preview.excerpt.isEmpty
+                ? store.ui("扫描页；预览来自真实 PDF 页面。", "Scanned page; previewed from the real PDF page.")
+                : preview.excerpt
+            pdfContentRailItems[itemIndex] = ContentRailItem(
+                id: item.id,
+                position: item.position,
+                level: item.level,
+                title: preview.title.isEmpty ? fallbackTitle : preview.title,
+                excerpt: excerpt,
+                metadata: "\(pageIndex + 1) / \(max(pdfPageCount, 1)) · PDF",
+                previewImage: preview.image
+            )
+        }
+    }
+
+    private func rebuildPDFContentRail() {
+        guard store.selectedMaterialItem?.kind == .pdf, pdfPageCount > 0 else {
+            pdfContentRailItems = []
+            return
+        }
+        let denominator = max(pdfPageCount - 1, 1)
+        pdfContentRailItems = (0..<pdfPageCount).map { pageIndex in
+            let pageNumber = pageIndex + 1
+            return ContentRailItem(
+                id: Self.pdfContentRailID(pageIndex: pageIndex),
+                position: CGFloat(pageIndex) / CGFloat(denominator),
+                level: Self.pdfContentRailLevel(pageIndex: pageIndex, pageCount: pdfPageCount),
+                title: store.ui("第 \(pageNumber) 页", "Page \(pageNumber)"),
+                excerpt: store.ui("悬停以预览真实页面内容。", "Hover to preview the real page content."),
+                metadata: "\(pageNumber) / \(pdfPageCount) · PDF"
+            )
+        }
+    }
+
+    private func applyHTMLContentRailSections(_ sections: [WebReaderContentRailSection]) {
+        let items = sections.map { section in
+            ContentRailItem(
+                id: section.id,
+                position: section.position,
+                level: section.level,
+                title: section.title,
+                excerpt: section.excerpt,
+                metadata: section.metadata
+            )
+        }
+        htmlContentRailItems = items
+        if let activeID = htmlContentRailActiveID,
+           !htmlContentRailItems.contains(where: { $0.id == activeID }) {
+            htmlContentRailActiveID = htmlContentRailItems.first?.id
+        }
+        applyPendingHTMLLocationIfReady()
+    }
+
+    private func applyHTMLContentRailActiveID(_ change: WebReaderContentRailActiveChange) {
+        let id = change.id
+        if htmlContentRailActiveID != id {
+            htmlContentRailActiveID = id
+        }
+        guard change.reason == .scroll || change.reason == .jump else { return }
+        let title = id.flatMap { activeID in
+            htmlContentRailItems.first(where: { $0.id == activeID })?.title
+        }
+        scheduleHTMLLocationCommit(id: id, title: title, reason: change.reason)
+    }
+
+    private func scheduleHTMLLocationCommit(
+        id: String?,
+        title: String?,
+        reason: WebReaderContentRailEventReason
+    ) {
+        pendingHTMLLocationCommit?.cancel()
+        let itemID = store.selectedMaterialItem?.id
+        pendingHTMLLocationCommit = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled,
+                  store.selectedMaterialItem?.id == itemID,
+                  htmlContentRailActiveID == id else { return }
+            pendingHTMLLocationCommit = nil
+            store.updateReaderHTMLLocation(id: id, title: title, reason: reason.rawValue)
+        }
+    }
+
+    private func schedulePDFLocationCommit(_ pageIndex: Int) {
+        pendingPDFLocationCommit?.cancel()
+        let itemID = store.selectedMaterialItem?.id
+        pendingPDFLocationCommit = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled,
+                  store.selectedMaterialItem?.id == itemID,
+                  pdfPageIndex == pageIndex else { return }
+            pendingPDFLocationCommit = nil
+            store.updateReaderPageIndex(pageIndex)
+        }
+    }
+
+    private func applyPendingHTMLLocationIfReady() {
+        guard store.selectedMaterialItem?.kind == .html,
+              !htmlContentRailItems.isEmpty else { return }
+        let targetID: String?
+        if let savedID = store.readerTargetLocationID,
+           let savedSection = htmlContentRailItems.first(where: { $0.id == savedID }),
+           store.readerTargetLocationTitle.map({
+               Self.normalizedHTMLSectionTitle($0) == Self.normalizedHTMLSectionTitle(savedSection.title)
+           }) ?? true {
+            targetID = savedSection.id
+        } else if let targetTitle = store.readerTargetLocationTitle {
+            let normalizedTarget = Self.normalizedHTMLSectionTitle(targetTitle)
+            let matches = htmlContentRailItems.filter {
+                Self.normalizedHTMLSectionTitle($0.title) == normalizedTarget
+            }
+            targetID = matches.count == 1 ? matches[0].id : nil
+        } else {
+            targetID = nil
+        }
+        guard let targetID else { return }
+        let requestID = store.readerTargetLocationRequestID
+        guard htmlContentRailTarget?.requestID != requestID else { return }
+        htmlContentRailTarget = WebReaderContentRailTarget(id: targetID, requestID: requestID)
+    }
+
+    private static func normalizedHTMLSectionTitle(_ title: String) -> String {
+        title
+            .lowercased()
+            .split(whereSeparator: { $0.isWhitespace || $0.isPunctuation })
+            .joined()
+    }
+
+    private static func pdfContentRailID(pageIndex: Int) -> String {
+        "pdf-page-\(max(pageIndex, 0))"
+    }
+
+    private static func pdfPageIndex(fromContentRailID id: String) -> Int? {
+        guard id.hasPrefix("pdf-page-") else { return nil }
+        return Int(id.dropFirst("pdf-page-".count))
+    }
+
+    private static func pdfContentRailLevel(pageIndex: Int, pageCount: Int) -> Int {
+        if pageIndex == 0 || pageIndex == pageCount - 1 { return 1 }
+        if (pageIndex + 1).isMultiple(of: 10) { return 2 }
+        return 4
     }
 
     @ViewBuilder
@@ -253,13 +536,26 @@ struct ReaderView: View {
 
     private func applyPendingPDFPageIfReady() {
         guard let target = pendingPDFPageIndex,
+              let requestID = pendingPDFPageRequestID,
               store.selectedMaterialItem?.kind == .pdf,
               pdfPageCount > 0 else { return }
         pdfBrowseMode = .page
-        pdfPageIndex = min(max(target, 0), max(pdfPageCount - 1, 0))
+        let resolvedPageIndex = min(max(target, 0), max(pdfPageCount - 1, 0))
+        pdfPageIndex = resolvedPageIndex
+        if pendingPDFPageRecordsLocation {
+            schedulePDFLocationCommit(resolvedPageIndex)
+        }
         pendingPDFPageIndex = nil
-        store.readerTargetPageIndex = nil
+        pendingPDFPageRequestID = nil
+        pendingPDFPageRecordsLocation = false
+        store.consumeReaderPDFPageRequest(requestID)
         syncReaderLocationTitle()
+    }
+
+    private func capturePendingPDFPageRequest() {
+        pendingPDFPageIndex = store.readerTargetPageIndex
+        pendingPDFPageRequestID = store.readerTargetPageRequestID
+        pendingPDFPageRecordsLocation = store.readerTargetPageRecordsLocation
     }
 
     private var pdfFloatingControls: some View {
@@ -337,6 +633,7 @@ struct ReaderView: View {
                     guard next != pdfPageIndex else { return }
                     store.recordReaderPageNavigationPoint()
                     pdfPageIndex = next
+                    schedulePDFLocationCommit(next)
                 } label: {
                     Image(systemName: "chevron.left")
                 }
@@ -356,6 +653,7 @@ struct ReaderView: View {
                     guard next != pdfPageIndex else { return }
                     store.recordReaderPageNavigationPoint()
                     pdfPageIndex = next
+                    schedulePDFLocationCommit(next)
                 } label: {
                     Image(systemName: "chevron.right")
                 }
@@ -451,6 +749,8 @@ struct ReaderView: View {
                         adaptsDocumentColors: store.adaptImportedDocumentColors,
                         pageIndex: $pdfPageIndex,
                         pageCount: $pdfPageCount,
+                        railTargetPageIndex: $pdfRailTargetPageIndex,
+                        onUserPageChange: schedulePDFLocationCommit,
                         onSelectableTextChange: { available in pdfHasSelectableText = available }
                     ) { text, anchor, selectionPageIndex in
                         let title = store.displayTitle(for: item)
@@ -473,6 +773,9 @@ struct ReaderView: View {
                         searchQuery: store.readerSearch,
                         appearanceMode: store.appearanceMode,
                         adaptsDocumentColors: store.adaptImportedDocumentColors,
+                        contentRailTarget: htmlContentRailTarget,
+                        onContentRailChange: applyHTMLContentRailSections,
+                        onContentRailActiveChange: applyHTMLContentRailActiveID,
                         onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
                     ) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
@@ -483,6 +786,9 @@ struct ReaderView: View {
                         searchQuery: store.readerSearch,
                         appearanceMode: store.appearanceMode,
                         adaptsDocumentColors: true,
+                        contentRailTarget: htmlContentRailTarget,
+                        onContentRailChange: applyHTMLContentRailSections,
+                        onContentRailActiveChange: applyHTMLContentRailActiveID,
                         onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
                     ) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
@@ -533,6 +839,115 @@ struct ReaderView: View {
 
 }
 
+struct WebReaderContentRailSection: Hashable {
+    var id: String
+    var position: CGFloat
+    var level: Int
+    var title: String
+    var excerpt: String
+    var metadata: String
+}
+
+struct WebReaderContentRailTarget: Equatable {
+    var id: String
+    var requestID = UUID()
+}
+
+enum WebReaderContentRailEventReason: String {
+    case initial
+    case resize
+    case mutation
+    case scroll
+    case jump
+    case programmatic
+    case unknown
+}
+
+struct WebReaderContentRailActiveChange {
+    var id: String?
+    var reason: WebReaderContentRailEventReason
+}
+
+private struct PDFContentRailPreview {
+    var image: NSImage
+    var title: String
+    var excerpt: String
+}
+
+private final class PDFContentRailPreviewBox: NSObject {
+    let preview: PDFContentRailPreview
+
+    init(_ preview: PDFContentRailPreview) {
+        self.preview = preview
+    }
+}
+
+private final class PDFContentRailPreviewLoader {
+    static let shared = PDFContentRailPreviewLoader()
+
+    private let queue = DispatchQueue(label: "WeiBei.PDFContentRailPreview", qos: .userInitiated)
+    private let documentCache = NSCache<NSString, PDFDocument>()
+    private let previewCache = NSCache<NSString, PDFContentRailPreviewBox>()
+
+    private init() {
+        documentCache.countLimit = 3
+        previewCache.countLimit = 80
+    }
+
+    func load(url: URL, pageIndex: Int, completion: @escaping (PDFContentRailPreview?) -> Void) {
+        let documentKey = cacheKey(for: url)
+        let previewKey = "\(documentKey)#page=\(pageIndex)" as NSString
+        if let cached = previewCache.object(forKey: previewKey) {
+            DispatchQueue.main.async {
+                completion(cached.preview)
+            }
+            return
+        }
+
+        queue.async { [documentCache, previewCache] in
+            let key = documentKey as NSString
+            let document: PDFDocument
+            if let cached = documentCache.object(forKey: key) {
+                document = cached
+            } else if let loaded = PDFDocument(url: url) {
+                document = loaded
+                documentCache.setObject(loaded, forKey: key)
+            } else {
+                DispatchQueue.main.async {
+                    completion(nil)
+                }
+                return
+            }
+            guard let page = document.page(at: pageIndex) else {
+                DispatchQueue.main.async {
+                    completion(nil)
+                }
+                return
+            }
+
+            let image = page.thumbnail(of: NSSize(width: 180, height: 240), for: .mediaBox)
+            let lines = (page.string ?? "")
+                .split(whereSeparator: { $0.isNewline })
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            let title = lines.first.map { String($0.prefix(52)) } ?? ""
+            let bodyLines = lines.count > 1 ? lines.dropFirst() : lines[...]
+            let excerpt = String(bodyLines.joined(separator: " ").prefix(180))
+            let preview = PDFContentRailPreview(image: image, title: title, excerpt: excerpt)
+            previewCache.setObject(PDFContentRailPreviewBox(preview), forKey: previewKey)
+            DispatchQueue.main.async {
+                completion(preview)
+            }
+        }
+    }
+
+    private func cacheKey(for url: URL) -> String {
+        let modificationDate = (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date)?
+            .timeIntervalSince1970 ?? 0
+        return "\(url.standardizedFileURL.path)#\(modificationDate)"
+    }
+}
+
 private enum PDFBrowseMode: String, CaseIterable, Identifiable {
     case scroll
     case page
@@ -580,6 +995,8 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
     var adaptsDocumentColors: Bool
     @Binding var pageIndex: Int
     @Binding var pageCount: Int
+    @Binding var railTargetPageIndex: Int?
+    var onUserPageChange: (Int) -> Void
     var onSelectableTextChange: (Bool?) -> Void = { _ in }
     var onSelectionChange: (String, CGPoint?, Int) -> Void
 
@@ -587,12 +1004,14 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         Coordinator(
             pageIndex: $pageIndex,
             pageCount: $pageCount,
+            onUserPageChange: onUserPageChange,
             onSelectableTextChange: onSelectableTextChange,
             onSelectionChange: onSelectionChange
         )
     }
 
     func makeNSView(context: Context) -> ReaderPDFView {
+        PaneToggleContinuityVerifier.recordPDFReaderMake()
         let view = ReaderPDFView()
         view.autoScales = true
         view.displayDirection = .vertical
@@ -618,6 +1037,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         context.coordinator.pageIndex = $pageIndex
         context.coordinator.pageCount = $pageCount
         context.coordinator.appearanceMode = appearanceMode
+        context.coordinator.onUserPageChange = onUserPageChange
         context.coordinator.onSelectableTextChange = onSelectableTextChange
         view.backgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
         view.configureDocumentColorAdaptation(enabled: adaptsDocumentColors, appearanceMode: appearanceMode)
@@ -641,6 +1061,16 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             view.go(to: page)
         }
 
+        if let targetPageIndex = railTargetPageIndex,
+           let page = view.document?.page(at: min(max(targetPageIndex, 0), max(pageCount - 1, 0))) {
+            view.go(to: page)
+            DispatchQueue.main.async {
+                if railTargetPageIndex == targetPageIndex {
+                    railTargetPageIndex = nil
+                }
+            }
+        }
+
         context.coordinator.applySearch(searchQuery, in: view)
         DispatchQueue.main.async {
             WeiBeiQuietScrollers.configureRecursively(
@@ -654,9 +1084,16 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         }
     }
 
+    static func dismantleNSView(_ view: ReaderPDFView, coordinator: Coordinator) {
+        PaneToggleContinuityVerifier.recordPDFReaderDismantle()
+        coordinator.suspend()
+        view.reportCurrentSelection = nil
+    }
+
     final class Coordinator: NSObject {
         var pageIndex: Binding<Int>
         var pageCount: Binding<Int>
+        var onUserPageChange: (Int) -> Void
         var onSelectableTextChange: (Bool?) -> Void
         var onSelectionChange: (String, CGPoint?, Int) -> Void
         var appearanceMode: WeiBeiAppearanceMode = .paper
@@ -671,13 +1108,20 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         private var ocrHighlightedLinesByPageIndex: [Int: Set<Int>] = [:]
         private var lastSearchQuery = ""
         private var loadGeneration = 0
+        private var userNavigationDeadline = Date.distantPast
         private(set) var loadedURL: URL?
 
-        init(pageIndex: Binding<Int>, pageCount: Binding<Int>, onSelectableTextChange: @escaping (Bool?) -> Void, onSelectionChange: @escaping (String, CGPoint?, Int) -> Void) {
+        init(pageIndex: Binding<Int>, pageCount: Binding<Int>, onUserPageChange: @escaping (Int) -> Void, onSelectableTextChange: @escaping (Bool?) -> Void, onSelectionChange: @escaping (String, CGPoint?, Int) -> Void) {
             self.pageIndex = pageIndex
             self.pageCount = pageCount
+            self.onUserPageChange = onUserPageChange
             self.onSelectableTextChange = onSelectableTextChange
             self.onSelectionChange = onSelectionChange
+        }
+
+        func suspend() {
+            selectionWork?.cancel()
+            removeObservers()
         }
 
         func load(_ url: URL, in view: PDFView) {
@@ -845,14 +1289,28 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             ) { [weak self] _ in
                 guard let self, let view = self.observedView, let document = view.document, let page = view.currentPage else { return }
                 self.pageCount.wrappedValue = document.pageCount
-                self.pageIndex.wrappedValue = document.index(for: page)
+                let index = document.index(for: page)
+                self.pageIndex.wrappedValue = index
+                if Date() <= self.userNavigationDeadline {
+                    self.onUserPageChange(index)
+                }
                 self.updateSelectableTextState(in: view)
                 self.ensureOCRForCurrentPage(in: view)
             }
-            eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]) { [weak self, weak view] event in
+            eventMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .scrollWheel, .keyDown]) { [weak self, weak view] event in
                 guard let self, let view, event.window === view.window else { return event }
+                if event.type == .keyDown {
+                    if self.isFirstResponderInside(view) {
+                        self.markUserNavigationIntent()
+                    }
+                    return event
+                }
                 let location = view.convert(event.locationInWindow, from: nil)
                 guard view.bounds.contains(location) else { return event }
+                if event.type == .scrollWheel {
+                    self.markUserNavigationIntent()
+                    return event
+                }
                 if event.type == .leftMouseDown {
                     view.window?.makeFirstResponder(view)
                     return event
@@ -863,6 +1321,15 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                 }
                 return event
             }
+        }
+
+        private func markUserNavigationIntent() {
+            userNavigationDeadline = Date().addingTimeInterval(0.9)
+        }
+
+        private func isFirstResponderInside(_ view: NSView) -> Bool {
+            guard let responder = view.window?.firstResponder as? NSView else { return false }
+            return responder === view || responder.isDescendant(of: view)
         }
 
         private func removeObservers() {
@@ -975,8 +1442,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         }
 
         deinit {
-            selectionWork?.cancel()
-            removeObservers()
+            suspend()
         }
     }
 }
@@ -1191,14 +1657,27 @@ struct WebReaderRepresentable: NSViewRepresentable {
     var searchQuery: String
     var appearanceMode: WeiBeiAppearanceMode
     var adaptsDocumentColors: Bool
+    var contentRailTarget: WebReaderContentRailTarget?
+    var onContentRailChange: ([WebReaderContentRailSection]) -> Void
+    var onContentRailActiveChange: (WebReaderContentRailActiveChange) -> Void
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool
     var onSelectionChange: (String, CGPoint?) -> Void
+
+    private static let scriptMessageNames = [
+        "selection",
+        "appShortcut",
+        "contentRailSections",
+        "contentRailActive"
+    ]
 
     init(
         html: String,
         searchQuery: String = "",
         appearanceMode: WeiBeiAppearanceMode = .paper,
         adaptsDocumentColors: Bool = true,
+        contentRailTarget: WebReaderContentRailTarget? = nil,
+        onContentRailChange: @escaping ([WebReaderContentRailSection]) -> Void = { _ in },
+        onContentRailActiveChange: @escaping (WebReaderContentRailActiveChange) -> Void = { _ in },
         onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false },
         onSelectionChange: @escaping (String, CGPoint?) -> Void
     ) {
@@ -1207,6 +1686,9 @@ struct WebReaderRepresentable: NSViewRepresentable {
         self.searchQuery = searchQuery
         self.appearanceMode = appearanceMode
         self.adaptsDocumentColors = adaptsDocumentColors
+        self.contentRailTarget = contentRailTarget
+        self.onContentRailChange = onContentRailChange
+        self.onContentRailActiveChange = onContentRailActiveChange
         self.onAppShortcut = onAppShortcut
         self.onSelectionChange = onSelectionChange
     }
@@ -1216,6 +1698,9 @@ struct WebReaderRepresentable: NSViewRepresentable {
         searchQuery: String = "",
         appearanceMode: WeiBeiAppearanceMode = .paper,
         adaptsDocumentColors: Bool = true,
+        contentRailTarget: WebReaderContentRailTarget? = nil,
+        onContentRailChange: @escaping ([WebReaderContentRailSection]) -> Void = { _ in },
+        onContentRailActiveChange: @escaping (WebReaderContentRailActiveChange) -> Void = { _ in },
         onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false },
         onSelectionChange: @escaping (String, CGPoint?) -> Void
     ) {
@@ -1224,6 +1709,9 @@ struct WebReaderRepresentable: NSViewRepresentable {
         self.searchQuery = searchQuery
         self.appearanceMode = appearanceMode
         self.adaptsDocumentColors = adaptsDocumentColors
+        self.contentRailTarget = contentRailTarget
+        self.onContentRailChange = onContentRailChange
+        self.onContentRailActiveChange = onContentRailActiveChange
         self.onAppShortcut = onAppShortcut
         self.onSelectionChange = onSelectionChange
     }
@@ -1232,16 +1720,21 @@ struct WebReaderRepresentable: NSViewRepresentable {
         Coordinator(
             appearanceMode: appearanceMode,
             adaptsDocumentColors: adaptsDocumentColors,
+            contentRailTarget: contentRailTarget,
+            onContentRailChange: onContentRailChange,
+            onContentRailActiveChange: onContentRailActiveChange,
             onAppShortcut: onAppShortcut,
             onSelectionChange: onSelectionChange
         )
     }
 
     func makeNSView(context: Context) -> WKWebView {
+        PaneToggleContinuityVerifier.recordWebReaderMake()
         let configuration = WKWebViewConfiguration()
         let controller = WKUserContentController()
-        controller.add(context.coordinator, name: "selection")
-        controller.add(context.coordinator, name: "appShortcut")
+        for name in Self.scriptMessageNames {
+            controller.add(context.coordinator, name: name)
+        }
         controller.addUserScript(WKUserScript(
             source: Self.appShortcutScript,
             injectionTime: .atDocumentStart,
@@ -1257,18 +1750,27 @@ struct WebReaderRepresentable: NSViewRepresentable {
             injectionTime: .atDocumentEnd,
             forMainFrameOnly: true
         ))
+        controller.addUserScript(WKUserScript(
+            source: Self.contentRailScript,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: true
+        ))
         configuration.userContentController = controller
 
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.setValue(false, forKey: "drawsBackground")
         context.coordinator.webView = view
         view.navigationDelegate = context.coordinator
+        context.coordinator.installVerificationScrollObserverIfNeeded()
         return view
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
         context.coordinator.searchQuery = searchQuery
         context.coordinator.onAppShortcut = onAppShortcut
+        context.coordinator.onContentRailChange = onContentRailChange
+        context.coordinator.onContentRailActiveChange = onContentRailActiveChange
+        context.coordinator.contentRailTarget = contentRailTarget
         if context.coordinator.appearanceMode != appearanceMode
             || context.coordinator.adaptsDocumentColors != adaptsDocumentColors {
             context.coordinator.appearanceMode = appearanceMode
@@ -1292,11 +1794,21 @@ struct WebReaderRepresentable: NSViewRepresentable {
                 context.coordinator.applySearch(in: view)
             }
         }
+        context.coordinator.applyContentRailTarget(in: view)
     }
 
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
-        view.configuration.userContentController.removeScriptMessageHandler(forName: "selection")
-        view.configuration.userContentController.removeScriptMessageHandler(forName: "appShortcut")
+        PaneToggleContinuityVerifier.recordWebReaderDismantle()
+        coordinator.removeVerificationScrollObserver()
+        unbindScriptMessages(in: view)
+        view.navigationDelegate = nil
+    }
+
+    private static func unbindScriptMessages(in view: WKWebView) {
+        let controller = view.configuration.userContentController
+        for name in scriptMessageNames {
+            controller.removeScriptMessageHandler(forName: name)
+        }
     }
 
     static let appShortcutScript = """
@@ -1373,6 +1885,257 @@ struct WebReaderRepresentable: NSViewRepresentable {
       document.addEventListener("mouseup", reportSelection);
       document.addEventListener("keyup", reportSelection);
       document.addEventListener("touchend", reportSelection);
+    })();
+    """
+
+    static let contentRailScript = """
+    (() => {
+      if (window.WeiBeiContentRail?.installed) {
+        window.WeiBeiContentRail.scan();
+        return;
+      }
+
+      const state = {
+        items: [],
+        activeID: "",
+        activeFrame: 0,
+        scanTimer: 0,
+        pendingScanReason: "initial",
+        userScrollUntil: 0
+      };
+      const clean = (value) => String(value || "").replace(/\\s+/g, " ").trim();
+      const clipped = (value, limit) => clean(value).slice(0, limit);
+      const visible = (element) => {
+        if (!(element instanceof Element)) return false;
+        if (element.closest("nav, footer, [aria-hidden='true']")) return false;
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== "none" && style.visibility !== "hidden" && rect.width > 1 && rect.height > 1;
+      };
+      const absoluteTop = (element) => window.scrollY + element.getBoundingClientRect().top;
+      const maximumScroll = () => Math.max(
+        1,
+        (document.scrollingElement?.scrollHeight || document.documentElement.scrollHeight || document.body.scrollHeight || 1)
+          - window.innerHeight
+      );
+      const normalizedPosition = (element) => Math.max(0, Math.min(1, absoluteTop(element) / maximumScroll()));
+      const metadata = (index, count, fallback) => fallback
+        ? `HTML · 内容段 ${index + 1} / ${count}`
+        : `HTML · ${index + 1} / ${count}`;
+
+      const excerptAfterHeading = (heading) => {
+        let cursor = heading.nextElementSibling;
+        while (cursor) {
+          if (/^H[1-4]$/.test(cursor.tagName) || cursor.getAttribute("role") === "heading") break;
+          const candidate = cursor.matches("p, li, blockquote, figcaption, pre")
+            ? cursor
+            : cursor.querySelector("p, li, blockquote, figcaption, pre");
+          const text = clipped(candidate?.textContent, 180);
+          if (text) return text;
+          cursor = cursor.nextElementSibling;
+        }
+        return "";
+      };
+
+      const sectionFingerprintBody = (heading, nextHeading) => {
+        try {
+          const range = document.createRange();
+          range.setStartAfter(heading);
+          if (nextHeading) {
+            range.setEndBefore(nextHeading);
+          } else if (document.body?.lastChild) {
+            range.setEndAfter(document.body.lastChild);
+          } else {
+            return "";
+          }
+          const fragment = range.cloneContents();
+          fragment.querySelectorAll?.("script, style, noscript, template").forEach((element) => element.remove());
+          return clean(fragment.textContent);
+        } catch (_) {
+          return excerptAfterHeading(heading);
+        }
+      };
+
+      const sectionLocationID = (title, body) => {
+        const normalized = `${title}|${body}`
+          .toLocaleLowerCase()
+          .match(/[\\p{L}\\p{N}]/gu)?.join("").slice(0, 500) || "";
+        const bytes = new TextEncoder().encode(normalized);
+        let hash = 0x811c9dc5;
+        bytes.forEach((byte) => {
+          hash ^= byte;
+          hash = Math.imul(hash, 0x01000193) >>> 0;
+        });
+        return `html-section-${hash.toString(16).padStart(8, "0")}`;
+      };
+
+      const headingSections = () => {
+        const headings = Array.from(document.querySelectorAll("h1, h2, h3, h4"));
+        const locationIDCounts = new Map();
+        return headings
+        .map((element, index) => {
+          const title = clean(element.textContent);
+          const baseID = sectionLocationID(title, sectionFingerprintBody(element, headings[index + 1]));
+          const count = (locationIDCounts.get(baseID) || 0) + 1;
+          locationIDCounts.set(baseID, count);
+          const id = count === 1 ? baseID : `${baseID}-dup-${count}`;
+          element.dataset.weibeiContentRailID = id;
+          return { element, index, id };
+        })
+        .filter(({ element }) => visible(element) && clean(element.textContent))
+        .map(({ element, index, id }) => {
+          const explicitLevel = Number(element.getAttribute("aria-level"));
+          const tagLevel = /^H[1-4]$/.test(element.tagName) ? Number(element.tagName.slice(1)) : 2;
+          const level = Math.max(1, Math.min(4, Number.isFinite(explicitLevel) && explicitLevel > 0 ? explicitLevel : tagLevel));
+          return {
+            id,
+            element,
+            level,
+            title: clipped(element.textContent, 72),
+            excerpt: excerptAfterHeading(element),
+            top: absoluteTop(element),
+            position: normalizedPosition(element),
+            fallback: false
+          };
+        });
+      };
+
+      const fallbackSections = () => {
+        const root = document.querySelector("main, article") || document.body;
+        const blocks = Array.from(root?.querySelectorAll("p, li, blockquote, figcaption, pre") || [])
+          .filter((element) => visible(element) && clean(element.textContent).length >= 24)
+          .sort((left, right) => absoluteTop(left) - absoluteTop(right));
+        if (blocks.length === 0) return [];
+        const desiredCount = Math.max(1, Math.min(24, Math.ceil(maximumScroll() / Math.max(window.innerHeight * 1.35, 640)) + 1));
+        const selected = [];
+        for (let index = 0; index < desiredCount; index += 1) {
+          const blockIndex = desiredCount === 1
+            ? 0
+            : Math.round((index / (desiredCount - 1)) * (blocks.length - 1));
+          const element = blocks[blockIndex];
+          if (!element || selected.some((entry) => entry.element === element)) continue;
+          const text = clean(element.textContent);
+          const id = element.dataset.weibeiContentRailID || `html-block-${blockIndex}`;
+          element.dataset.weibeiContentRailID = id;
+          selected.push({
+            id,
+            element,
+            level: 4,
+            title: clipped(text, 48),
+            excerpt: clipped(text, 180),
+            top: absoluteTop(element),
+            position: normalizedPosition(element),
+            fallback: true
+          });
+        }
+        return selected;
+      };
+
+      const postSections = () => {
+        const count = state.items.length;
+        window.webkit?.messageHandlers?.contentRailSections?.postMessage(state.items.map((item, index) => ({
+          id: item.id,
+          position: item.position,
+          level: item.level,
+          title: item.title,
+          excerpt: item.excerpt,
+          metadata: metadata(index, count, item.fallback)
+        })));
+      };
+
+      const applyActive = (requestedReason = "unknown") => {
+        const now = Date.now();
+        const reason = requestedReason === "scroll"
+          ? (now <= state.userScrollUntil ? "scroll" : "programmatic")
+          : requestedReason;
+        if (state.items.length === 0) {
+          if (state.activeID) {
+            state.activeID = "";
+            window.webkit?.messageHandlers?.contentRailActive?.postMessage({ id: "", reason });
+          }
+          return;
+        }
+        const readingLine = window.scrollY + window.innerHeight * 0.32;
+        let active = state.items[0];
+        for (const item of state.items) {
+          if (item.top <= readingLine) active = item;
+          else break;
+        }
+        if (active.id === state.activeID) return;
+        state.activeID = active.id;
+        window.webkit?.messageHandlers?.contentRailActive?.postMessage({ id: active.id, reason });
+      };
+
+      const updateActive = (requestedReason = "unknown") => {
+        window.cancelAnimationFrame(state.activeFrame);
+        state.activeFrame = window.requestAnimationFrame(() => applyActive(requestedReason));
+      };
+
+      const scan = (reason = "unknown") => {
+        const headings = headingSections();
+        state.items = (headings.length > 0 ? headings : fallbackSections())
+          .sort((left, right) => left.top - right.top);
+        postSections();
+        updateActive(reason);
+      };
+
+      const scheduleScan = (reason) => {
+        state.pendingScanReason = reason;
+        window.clearTimeout(state.scanTimer);
+        state.scanTimer = window.setTimeout(() => scan(state.pendingScanReason), 160);
+      };
+
+      const scrollTo = (id) => {
+        const item = state.items.find((candidate) => candidate.id === id);
+        if (!item?.element) return false;
+        item.element.scrollIntoView({ behavior: "smooth", block: "start", inline: "nearest" });
+        window.setTimeout(() => window.scrollBy({ top: -44, behavior: "auto" }), 180);
+        window.setTimeout(() => {
+          state.activeID = id;
+          window.webkit?.messageHandlers?.contentRailActive?.postMessage({ id, reason: "jump" });
+        }, 240);
+        return true;
+      };
+
+      const markUserScrollIntent = () => {
+        state.userScrollUntil = Date.now() + 900;
+      };
+
+      const markKeyboardScrollIntent = (event) => {
+        const keys = ["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "];
+        if (keys.includes(event.key)) markUserScrollIntent();
+      };
+
+      const simulateUserScrollForVerification = () => {
+        const before = window.scrollY;
+        const maximum = maximumScroll();
+        state.activeID = "";
+        window.dispatchEvent(new WheelEvent("wheel", { deltaY: window.innerHeight * 2.4 }));
+        window.scrollTo({ top: maximum, behavior: "auto" });
+        applyActive("scroll");
+        return `before:${before},after:${window.scrollY},max:${maximum},intent:${state.userScrollUntil > Date.now()}`;
+      };
+
+      window.WeiBeiContentRail = {
+        installed: true,
+        scan: () => scan("initial"),
+        scrollTo,
+        simulateUserScrollForVerification
+      };
+      window.addEventListener("wheel", markUserScrollIntent, { passive: true });
+      window.addEventListener("touchmove", markUserScrollIntent, { passive: true });
+      window.addEventListener("keydown", markKeyboardScrollIntent, { passive: true });
+      window.addEventListener("scroll", () => updateActive("scroll"), { passive: true });
+      window.addEventListener("resize", () => scheduleScan("resize"), { passive: true });
+      new MutationObserver(() => scheduleScan("mutation")).observe(document.body || document.documentElement, {
+        childList: true,
+        characterData: true,
+        subtree: true
+      });
+      if (window.ResizeObserver) {
+        new ResizeObserver(() => scheduleScan("resize")).observe(document.body || document.documentElement);
+      }
+      window.requestAnimationFrame(() => scan("initial"));
     })();
     """
 
@@ -1472,23 +2235,65 @@ struct WebReaderRepresentable: NSViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var onSelectionChange: (String, CGPoint?) -> Void
         var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool
+        var onContentRailChange: ([WebReaderContentRailSection]) -> Void
+        var onContentRailActiveChange: (WebReaderContentRailActiveChange) -> Void
+        var contentRailTarget: WebReaderContentRailTarget?
         var loadedSignature: String?
         var searchQuery = ""
         var appearanceMode: WeiBeiAppearanceMode = .paper
         var adaptsDocumentColors = true
         private var lastAppliedSearchQuery = ""
+        private var lastAppliedContentRailTargetRequestID: UUID?
+        private var observesVerificationScroll = false
         weak var webView: WKWebView?
 
         init(
             appearanceMode: WeiBeiAppearanceMode,
             adaptsDocumentColors: Bool,
+            contentRailTarget: WebReaderContentRailTarget?,
+            onContentRailChange: @escaping ([WebReaderContentRailSection]) -> Void,
+            onContentRailActiveChange: @escaping (WebReaderContentRailActiveChange) -> Void,
             onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool,
             onSelectionChange: @escaping (String, CGPoint?) -> Void
         ) {
             self.appearanceMode = appearanceMode
             self.adaptsDocumentColors = adaptsDocumentColors
+            self.contentRailTarget = contentRailTarget
+            self.onContentRailChange = onContentRailChange
+            self.onContentRailActiveChange = onContentRailActiveChange
             self.onAppShortcut = onAppShortcut
             self.onSelectionChange = onSelectionChange
+        }
+
+        func installVerificationScrollObserverIfNeeded() {
+            guard !observesVerificationScroll,
+                  ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"] == "reader-scroll-persistence-flow" else { return }
+            observesVerificationScroll = true
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(performVerificationUserScroll),
+                name: .weiBeiVerificationUserScroll,
+                object: nil
+            )
+        }
+
+        func removeVerificationScrollObserver() {
+            guard observesVerificationScroll else { return }
+            NotificationCenter.default.removeObserver(self, name: .weiBeiVerificationUserScroll, object: nil)
+            observesVerificationScroll = false
+        }
+
+        @objc private func performVerificationUserScroll() {
+            guard let webView else { return }
+            PaneToggleContinuityVerifier.recordVerificationScrollScheduled()
+            webView.evaluateJavaScript(
+                "window.WeiBeiContentRail?.simulateUserScrollForVerification()"
+            ) { result, error in
+                let value = result as? String
+                    ?? error.map { "error:\($0.localizedDescription)" }
+                    ?? "missing-result"
+                PaneToggleContinuityVerifier.recordVerificationScrollResult(value)
+            }
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -1496,6 +2301,33 @@ struct WebReaderRepresentable: NSViewRepresentable {
                 guard let body = message.body as? [String: Any],
                       let key = body["key"] as? String else { return }
                 _ = onAppShortcut(key, Self.modifiers(from: body))
+                return
+            }
+
+            if message.name == "contentRailSections" {
+                guard let rows = message.body as? [[String: Any]] else { return }
+                let sections = rows.compactMap(Self.contentRailSection(from:))
+                PaneToggleContinuityVerifier.recordHTMLSectionEvent(count: sections.count)
+                Task { @MainActor in
+                    self.onContentRailChange(sections)
+                }
+                return
+            }
+
+            if message.name == "contentRailActive" {
+                let body = message.body as? [String: Any]
+                let id = body?["id"] as? String
+                let reason = (body?["reason"] as? String)
+                    .flatMap(WebReaderContentRailEventReason.init(rawValue:)) ?? .unknown
+                PaneToggleContinuityVerifier.recordHTMLActiveEvent(reason: reason.rawValue)
+                Task { @MainActor in
+                    self.onContentRailActiveChange(
+                        WebReaderContentRailActiveChange(
+                            id: id?.isEmpty == false ? id : nil,
+                            reason: reason
+                        )
+                    )
+                }
                 return
             }
 
@@ -1533,6 +2365,21 @@ struct WebReaderRepresentable: NSViewRepresentable {
             return modifiers
         }
 
+        private static func contentRailSection(from body: [String: Any]) -> WebReaderContentRailSection? {
+            guard let id = body["id"] as? String,
+                  let title = body["title"] as? String,
+                  let position = (body["position"] as? NSNumber)?.doubleValue,
+                  let level = (body["level"] as? NSNumber)?.intValue else { return nil }
+            return WebReaderContentRailSection(
+                id: id,
+                position: CGFloat(position),
+                level: level,
+                title: title,
+                excerpt: body["excerpt"] as? String ?? "",
+                metadata: body["metadata"] as? String ?? "HTML"
+            )
+        }
+
         private static func anchor(from body: [String: Any], in view: WKWebView?) -> CGPoint? {
             guard let view,
                   let x = body["x"] as? Double,
@@ -1544,8 +2391,10 @@ struct WebReaderRepresentable: NSViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             lastAppliedSearchQuery = ""
+            lastAppliedContentRailTargetRequestID = nil
             webView.evaluateJavaScript(WebReaderRepresentable.readerStyleScript(for: appearanceMode, adaptsDocumentColors: adaptsDocumentColors))
             applySearch(in: webView)
+            applyContentRailTarget(in: webView)
         }
 
         func applySearch(in view: WKWebView) {
@@ -1570,6 +2419,13 @@ struct WebReaderRepresentable: NSViewRepresentable {
             })();
             """
             view.evaluateJavaScript(script)
+        }
+
+        func applyContentRailTarget(in view: WKWebView) {
+            guard let contentRailTarget,
+                  contentRailTarget.requestID != lastAppliedContentRailTargetRequestID else { return }
+            lastAppliedContentRailTargetRequestID = contentRailTarget.requestID
+            view.evaluateJavaScript("window.WeiBeiContentRail?.scrollTo(\(Self.json(contentRailTarget.id)))")
         }
 
         private static func json(_ value: String) -> String {
@@ -1933,10 +2789,11 @@ private class ReaderSelectableTextView: NSTextView {
 }
 
 struct EscapeKeyBridge: NSViewRepresentable {
+    var isEnabled = true
     var onEscape: () -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(onEscape: onEscape)
+        Coordinator(isEnabled: isEnabled, onEscape: onEscape)
     }
 
     func makeNSView(context: Context) -> NSView {
@@ -1946,6 +2803,7 @@ struct EscapeKeyBridge: NSViewRepresentable {
     }
 
     func updateNSView(_ view: NSView, context: Context) {
+        context.coordinator.isEnabled = isEnabled
         context.coordinator.onEscape = onEscape
     }
 
@@ -1954,17 +2812,22 @@ struct EscapeKeyBridge: NSViewRepresentable {
     }
 
     final class Coordinator {
+        var isEnabled: Bool
         var onEscape: () -> Void
         private var monitor: Any?
 
-        init(onEscape: @escaping () -> Void) {
+        init(isEnabled: Bool, onEscape: @escaping () -> Void) {
+            self.isEnabled = isEnabled
             self.onEscape = onEscape
         }
 
         func installMonitor() {
             guard monitor == nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                guard event.keyCode == 53 else { return event }
+                guard event.keyCode == 53,
+                      self?.isEnabled == true,
+                      NSApp.modalWindow == nil,
+                      event.window?.attachedSheet == nil else { return event }
                 self?.onEscape()
                 return nil
             }

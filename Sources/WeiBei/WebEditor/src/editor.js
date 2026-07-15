@@ -751,7 +751,7 @@ const decorateWikiLinks = (decorations, text, pos) => {
 };
 
 const decorateSourceReferences = (decorations, text, pos) => {
-  for (const match of text.matchAll(/(?:^|\s)((?:来源：|Source:)[^\n]+)/g)) {
+  for (const match of text.matchAll(/(?:^|[\s`])((?:来源：|Source:)[^`\n]+)/g)) {
     const prefixLength = match[0].startsWith(match[1]) ? 0 : 1;
     const sourcePrefix = match[1].startsWith('来源：') ? '来源：' : 'Source:';
     const from = pos + (match.index || 0) + prefixLength;
@@ -1468,6 +1468,42 @@ const pressKeyForCheck = (key, options = {}) => {
   });
 };
 
+const headingElements = () => Array.from(document.querySelectorAll('.ProseMirror h1, .ProseMirror h2, .ProseMirror h3, .ProseMirror h4'));
+let activeHeadingFrame = 0;
+let lastActiveHeadingIndex = -2;
+
+const reportActiveHeading = () => {
+  window.cancelAnimationFrame(activeHeadingFrame);
+  activeHeadingFrame = window.requestAnimationFrame(() => {
+    const headings = headingElements();
+    if (headings.length === 0) {
+      if (lastActiveHeadingIndex !== -1) {
+        lastActiveHeadingIndex = -1;
+        post('activeHeadingChanged', { index: null });
+      }
+      return;
+    }
+    const readingLine = Math.max(0, window.innerHeight * 0.32);
+    let activeIndex = 0;
+    headings.forEach((heading, index) => {
+      if (heading.getBoundingClientRect().top <= readingLine) activeIndex = index;
+    });
+    if (activeIndex === lastActiveHeadingIndex) return;
+    lastActiveHeadingIndex = activeIndex;
+    post('activeHeadingChanged', { index: activeIndex });
+  });
+};
+
+const scrollToHeadingInternal = (rawIndex) => {
+  const index = Number(rawIndex);
+  const headings = headingElements();
+  const heading = Number.isFinite(index) ? headings[Math.max(0, Math.floor(index))] : null;
+  if (!heading) return false;
+  heading.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  window.setTimeout(reportActiveHeading, 180);
+  return true;
+};
+
 window.WeiBeiEditor = {
   getMarkdown: getMarkdownInternal,
   setMarkdown: setMarkdownInternal,
@@ -1552,6 +1588,7 @@ window.WeiBeiEditor = {
       view.dispatch(view.state.tr.setMeta('weibeiLanguageChanged', currentLanguage));
     });
   },
+  scrollToHeading: scrollToHeadingInternal,
 };
 
 if (window.weiBeiEditorCheckMode) {
@@ -1602,6 +1639,7 @@ Editor
       if (normalizedMarkdown === lastMarkdown) return;
       lastMarkdown = normalizedMarkdown;
       post('markdownChanged', { markdown: normalizedMarkdown });
+      reportActiveHeading();
     });
     ctx.get(listenerCtx).selectionUpdated(() => {
       requestAnimationFrame(reportSelection);
@@ -1639,7 +1677,9 @@ Editor
       reportSelection();
     });
     installContentHeightObserver();
+    document.addEventListener('scroll', reportActiveHeading, true);
     post('editorReady', { markdown: lastMarkdown });
     reportContentHeight();
+    reportActiveHeading();
   })
   .catch(showFailure);

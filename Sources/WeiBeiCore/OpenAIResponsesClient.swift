@@ -10,7 +10,7 @@ public struct AgentPromptPayload: Equatable {
     }
 }
 
-public struct OpenAIResponsesClient {
+public struct OpenAIResponsesClient: Sendable {
     let apiKey: String
     let model: String
 
@@ -62,6 +62,20 @@ public struct OpenAIResponsesClient {
         return try Self.extractText(from: data)
     }
 
+    public func ask(request: StudyAgentRequest) async throws -> String {
+        try await ask(
+            question: request.question,
+            materialTitle: request.materialTitle,
+            materialText: request.materialText,
+            noteTitle: request.noteTitle,
+            noteText: request.noteText,
+            selectionTitle: request.selectionTitle,
+            selectionText: request.selectionText,
+            recentMessages: request.recentMessages,
+            language: request.language
+        )
+    }
+
     public static func composePrompt(
         question: String,
         materialTitle: String,
@@ -106,7 +120,7 @@ public struct OpenAIResponsesClient {
         \(language.text("笔记内容", "Note content"))\(headingColon)
         \(trimmedNote.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? language.text("无", "none") : trimmedNote)
         """
-        let dialogue = recentMessages.suffix(8).map { message in
+        let dialogue = recentMessages.suffix(20).map { message in
             let role = message.role == .user ? language.text("用户", "User") : language.text("助手", "Assistant")
             let source = message.source?.trimmingCharacters(in: .whitespacesAndNewlines)
             let sourceText = source?.isEmpty == false ? language.text("（来源：\(source!)）", " (source: \(source!))") : ""
@@ -180,4 +194,15 @@ public struct OpenAIResponsesClient {
         }
         return text
     }
+}
+
+extension OpenAIResponsesClient: StudyAgentRuntime {
+    public func respond(to request: StudyAgentRequest, progress: StudyAgentProgressHandler?) async throws -> StudyAgentReply {
+        await progress?(.readingContext)
+        let text = try await ask(request: request)
+        return StudyAgentReply(text: text, backend: .openAI)
+    }
+
+    public func cancel() async {}
+    public func reset() async {}
 }

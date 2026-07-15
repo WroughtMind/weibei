@@ -1,7 +1,7 @@
 import CoreGraphics
 import Foundation
 
-public enum WeiBeiInterfaceLanguage: String, CaseIterable, Identifiable, Codable {
+public enum WeiBeiInterfaceLanguage: String, CaseIterable, Identifiable, Codable, Sendable {
     case chinese = "zh-Hans"
     case english = "en"
 
@@ -35,7 +35,7 @@ public enum WeiBeiInterfaceLanguage: String, CaseIterable, Identifiable, Codable
     }
 }
 
-public enum StudyItemKind: String, Codable, CaseIterable, Identifiable {
+public enum StudyItemKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case html
     case pdf
     case markdown
@@ -251,12 +251,22 @@ public enum WikiLink {
 }
 
 public enum SourceReferenceTitle {
-    public static func parse(_ raw: String) -> (title: String, pageIndex: Int?) {
+    public static func parse(
+        _ raw: String
+    ) -> (
+        title: String,
+        pageIndex: Int?,
+        sectionTitle: String?,
+        sectionLocationID: String?,
+        sectionOrdinal: Int?,
+        courseItemOrdinal: Int?
+    ) {
         var text = raw
             .components(separatedBy: .newlines)
             .reversed()
-            .map(cleanedLine)
-            .first(where: { $0.hasPrefix("来源：") || $0.localizedCaseInsensitiveContains("source:") })
+            .compactMap(sourceFragment)
+            .first
+            ?? sourceFragment(in: raw)
             ?? cleanedLine(raw)
         text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.hasPrefix(">") {
@@ -267,14 +277,104 @@ public enum SourceReferenceTitle {
         } else if text.lowercased().hasPrefix("source:") {
             text = String(text.dropFirst("source:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
         }
+        text = text.trimmingCharacters(in: CharacterSet(charactersIn: "`"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard let range = text.range(of: #"(?:，第\s*\d+\s*页|,\s*page\s*\d+)$"#, options: [.regularExpression, .caseInsensitive]) else {
-            return (text, nil)
+        var sectionTitle: String?
+        if let markerRange = text.range(of: "，章节：", options: .backwards) {
+            let section = text[markerRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+            sectionTitle = section.isEmpty ? nil : unwrappedInlineMarkup(String(section))
+            text = text[..<markerRange.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        } else if let markerRange = text.range(of: #",\s*section:\s*"#, options: [.regularExpression, .caseInsensitive]) {
+            let section = text[markerRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+            sectionTitle = section.isEmpty ? nil : unwrappedInlineMarkup(String(section))
+            text = text[..<markerRange.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        let suffix = text[range]
-        let pageNumber = Int(suffix.filter(\.isNumber))
-        let title = text[..<range.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
-        return (title, pageNumber.map { max($0 - 1, 0) })
+
+        var sectionOrdinal: Int?
+        if let range = text.range(
+            of: #"(?:，章节序号：\s*\d+|,\s*section\s*(?:ordinal|number):?\s*\d+)$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) {
+            sectionOrdinal = Int(text[range].filter(\.isNumber))
+            text = text[..<range.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        var sectionLocationID: String?
+        if let range = text.range(
+            of: #"(?:，章节标识：\s*[A-Za-z0-9-]+|,\s*section\s*(?:id|identifier):?\s*[A-Za-z0-9-]+)$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) {
+            let suffix = String(text[range])
+            let separator = suffix.lastIndex(where: { $0 == "：" || $0 == ":" })
+            let identifier = (separator.map { String(suffix[suffix.index(after: $0)...]) } ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            sectionLocationID = identifier.isEmpty ? nil : identifier
+            text = text[..<range.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        var pageIndex: Int?
+        if let range = text.range(
+            of: #"(?:，第\s*\d+\s*页|,\s*page\s*\d+)$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) {
+            let suffix = text[range]
+            pageIndex = Int(suffix.filter(\.isNumber)).map { max($0 - 1, 0) }
+            text = text[..<range.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        var courseItemOrdinal: Int?
+        if let range = text.range(
+            of: #"(?:，条目：\s*\d+|,\s*(?:item|entry):?\s*\d+)$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) {
+            courseItemOrdinal = Int(text[range].filter(\.isNumber))
+            text = text[..<range.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return (
+            unwrappedInlineMarkup(text),
+            pageIndex,
+            sectionTitle,
+            sectionLocationID,
+            sectionOrdinal,
+            courseItemOrdinal
+        )
+    }
+
+    private static func unwrappedInlineMarkup(_ raw: String) -> String {
+        var text = raw
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "`"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        for marker in ["**", "__", "`", "*"] {
+            if text.hasPrefix(marker), text.hasSuffix(marker), text.count > marker.count * 2 {
+                text = String(text.dropFirst(marker.count).dropLast(marker.count))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return text
+    }
+
+    private static func sourceFragment(in raw: String) -> String? {
+        let line = cleanedLine(raw)
+        let chinese = line.range(of: "来源：", options: .backwards)
+        let english = line.range(of: "source:", options: [.backwards, .caseInsensitive])
+        let markerRange: Range<String.Index>?
+        switch (chinese, english) {
+        case let (left?, right?): markerRange = left.lowerBound > right.lowerBound ? left : right
+        case let (left?, nil): markerRange = left
+        case let (nil, right?): markerRange = right
+        case (nil, nil): markerRange = nil
+        }
+        guard let markerRange else { return nil }
+        let fragment = String(line[markerRange.lowerBound...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let markerLength = fragment.hasPrefix("来源：") ? "来源：".count : "source:".count
+        let suffix = String(fragment.dropFirst(markerLength))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "`"))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return suffix.isEmpty ? nil : fragment
     }
 
     private static func cleanedLine(_ raw: String) -> String {
@@ -315,9 +415,9 @@ public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable {
 
     public var hasCollapsibleRightPane: Bool {
         switch self {
-        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit, .immersiveConversation, .immersiveWriting:
+        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit, .immersiveConversation:
             return true
-        case .immersiveReading:
+        case .immersiveReading, .immersiveWriting:
             return false
         }
     }
@@ -327,6 +427,15 @@ public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable {
         case .documentAgentNotes, .documentNotesAgent:
             return true
         case .documentNotesSplit, .immersiveReading, .immersiveConversation, .immersiveWriting:
+            return false
+        }
+    }
+
+    public var allowsRailOnlyPanes: Bool {
+        switch self {
+        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+            return true
+        case .immersiveReading, .immersiveConversation, .immersiveWriting:
             return false
         }
     }
@@ -435,6 +544,7 @@ public struct NoteEditorCommand: Identifiable, Hashable {
         case replaceSelection
         case applyAgentPatch
         case insertMarkdown
+        case scrollToHeading
     }
 
     public var id: UUID
@@ -610,21 +720,57 @@ public enum SelectionFloatingAgentPlacement {
     }
 }
 
-public struct StudyItem: Identifiable, Codable, Hashable {
+public struct ImportedFileIdentity: Codable, Hashable, Sendable {
+    public var volumeID: UInt64
+    public var fileID: UInt64
+    public var birthTimeSeconds: Int64
+    public var birthTimeNanoseconds: Int64
+
+    public init(
+        volumeID: UInt64,
+        fileID: UInt64,
+        birthTimeSeconds: Int64,
+        birthTimeNanoseconds: Int64
+    ) {
+        self.volumeID = volumeID
+        self.fileID = fileID
+        self.birthTimeSeconds = birthTimeSeconds
+        self.birthTimeNanoseconds = birthTimeNanoseconds
+    }
+}
+
+public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
     public var id: String
     public var title: String
     public var subtitle: String
     public var kind: StudyItemKind
     public var urlPath: String?
+    public var importedFileIdentity: ImportedFileIdentity?
+    public var importedFileBookmarkData: Data?
+    public var importedFileLastKnownPath: String?
     public var isSample: Bool
     public var isNotebookNote: Bool
 
-    public init(id: String, title: String, subtitle: String, kind: StudyItemKind, urlPath: String?, isSample: Bool, isNotebookNote: Bool = false) {
+    public init(
+        id: String,
+        title: String,
+        subtitle: String,
+        kind: StudyItemKind,
+        urlPath: String?,
+        importedFileIdentity: ImportedFileIdentity? = nil,
+        importedFileBookmarkData: Data? = nil,
+        importedFileLastKnownPath: String? = nil,
+        isSample: Bool,
+        isNotebookNote: Bool = false
+    ) {
         self.id = id
         self.title = title
         self.subtitle = subtitle
         self.kind = kind
         self.urlPath = urlPath
+        self.importedFileIdentity = importedFileIdentity
+        self.importedFileBookmarkData = importedFileBookmarkData
+        self.importedFileLastKnownPath = importedFileLastKnownPath ?? urlPath
         self.isSample = isSample
         self.isNotebookNote = isNotebookNote
     }
@@ -635,6 +781,9 @@ public struct StudyItem: Identifiable, Codable, Hashable {
         case subtitle
         case kind
         case urlPath
+        case importedFileIdentity
+        case importedFileBookmarkData
+        case importedFileLastKnownPath
         case isSample
         case isNotebookNote
     }
@@ -646,6 +795,9 @@ public struct StudyItem: Identifiable, Codable, Hashable {
         subtitle = try container.decode(String.self, forKey: .subtitle)
         kind = try container.decode(StudyItemKind.self, forKey: .kind)
         urlPath = try container.decodeIfPresent(String.self, forKey: .urlPath)
+        importedFileIdentity = try container.decodeIfPresent(ImportedFileIdentity.self, forKey: .importedFileIdentity)
+        importedFileBookmarkData = try container.decodeIfPresent(Data.self, forKey: .importedFileBookmarkData)
+        importedFileLastKnownPath = try container.decodeIfPresent(String.self, forKey: .importedFileLastKnownPath) ?? urlPath
         isSample = try container.decode(Bool.self, forKey: .isSample)
         isNotebookNote = try container.decodeIfPresent(Bool.self, forKey: .isNotebookNote) ?? false
     }
@@ -659,7 +811,7 @@ public struct StudyItem: Identifiable, Codable, Hashable {
     }
 
     public var editsBackingMarkdownFile: Bool {
-        isImportedMarkdownFile && isNotebookNote
+        !isSample && kind == .markdown && isNotebookNote
     }
 
     public var canBecomeNotebookNote: Bool {
@@ -667,23 +819,38 @@ public struct StudyItem: Identifiable, Codable, Hashable {
     }
 }
 
-public enum AgentRole: String, Codable {
+public enum AgentRole: String, Codable, Sendable {
     case user
     case assistant
 }
 
-public struct AgentMessage: Identifiable, Codable, Hashable {
+public enum StudyAgentBackend: String, Codable, Hashable, Sendable {
+    case pi
+    case openAI
+    case offline
+}
+
+public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var role: AgentRole
     public var text: String
     public var source: String?
+    public var backend: StudyAgentBackend?
     public var createdAt: Date
 
-    public init(id: UUID = UUID(), role: AgentRole, text: String, source: String?, createdAt: Date = Date()) {
+    public init(
+        id: UUID = UUID(),
+        role: AgentRole,
+        text: String,
+        source: String?,
+        backend: StudyAgentBackend? = nil,
+        createdAt: Date = Date()
+    ) {
         self.id = id
         self.role = role
         self.text = text
         self.source = source
+        self.backend = backend
         self.createdAt = createdAt
     }
 
@@ -698,11 +865,28 @@ public struct AgentMessage: Identifiable, Codable, Hashable {
     }
 }
 
+public struct PendingNoteWriteState: Codable, Hashable, Sendable {
+    public var baselineContentDigest: String?
+
+    public init(baselineContentDigest: String?) {
+        self.baselineContentDigest = baselineContentDigest
+    }
+}
+
 public struct PersistedWorkspace: Codable {
     public var importedItems: [StudyItem]
     public var notesByItemID: [String: String]
+    public var pendingNoteWritesByItemID: [String: PendingNoteWriteState]?
+    public var noteBackingContentDigestsByItemID: [String: String]?
     public var selectedItemID: String?
     public var activeNotebookItemID: String?
+    public var noteSourceLinks: [NoteSourceLink]?
+    public var noteSourceLinksMigrationVersion: Int?
+    public var studyLocationsByItemID: [String: StudyLocation]?
+    public var learningMemoryEntries: [LearningMemoryEntry]?
+    public var learningMemoryRevision: UInt64?
+    public var studySessions: [StudySession]?
+    public var activeStudySessionID: UUID?
     public var modelName: String?
     public var workspaceLayout: WorkspaceLayout?
     public var threePaneOrder: [WorkspacePaneRole]?
@@ -713,15 +897,25 @@ public struct PersistedWorkspace: Codable {
     public var showAgent: Bool?
     public var showNotes: Bool?
     public var showRightPane: Bool?
+    public var showDailyInspiration: Bool?
     public var appearanceModeRaw: String?
     public var adaptImportedDocumentColors: Bool?
     public var interfaceLanguageRaw: String?
 
-    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], selectedItemID: String? = nil, activeNotebookItemID: String? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, threePaneOrder: [WorkspacePaneRole]? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showReader: Bool? = nil, showAgent: Bool? = nil, showNotes: Bool? = nil, showRightPane: Bool? = nil, appearanceModeRaw: String? = nil, adaptImportedDocumentColors: Bool? = nil, interfaceLanguageRaw: String? = nil) {
+    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], pendingNoteWritesByItemID: [String: PendingNoteWriteState]? = nil, noteBackingContentDigestsByItemID: [String: String]? = nil, selectedItemID: String? = nil, activeNotebookItemID: String? = nil, noteSourceLinks: [NoteSourceLink]? = nil, noteSourceLinksMigrationVersion: Int? = nil, studyLocationsByItemID: [String: StudyLocation]? = nil, learningMemoryEntries: [LearningMemoryEntry]? = nil, learningMemoryRevision: UInt64? = nil, studySessions: [StudySession]? = nil, activeStudySessionID: UUID? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, threePaneOrder: [WorkspacePaneRole]? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showReader: Bool? = nil, showAgent: Bool? = nil, showNotes: Bool? = nil, showRightPane: Bool? = nil, showDailyInspiration: Bool? = nil, appearanceModeRaw: String? = nil, adaptImportedDocumentColors: Bool? = nil, interfaceLanguageRaw: String? = nil) {
         self.importedItems = importedItems
         self.notesByItemID = notesByItemID
+        self.pendingNoteWritesByItemID = pendingNoteWritesByItemID
+        self.noteBackingContentDigestsByItemID = noteBackingContentDigestsByItemID
         self.selectedItemID = selectedItemID
         self.activeNotebookItemID = activeNotebookItemID
+        self.noteSourceLinks = noteSourceLinks
+        self.noteSourceLinksMigrationVersion = noteSourceLinksMigrationVersion
+        self.studyLocationsByItemID = studyLocationsByItemID
+        self.learningMemoryEntries = learningMemoryEntries
+        self.learningMemoryRevision = learningMemoryRevision
+        self.studySessions = studySessions
+        self.activeStudySessionID = activeStudySessionID
         self.modelName = modelName
         self.workspaceLayout = workspaceLayout
         self.threePaneOrder = threePaneOrder
@@ -732,6 +926,7 @@ public struct PersistedWorkspace: Codable {
         self.showAgent = showAgent
         self.showNotes = showNotes
         self.showRightPane = showRightPane
+        self.showDailyInspiration = showDailyInspiration
         self.appearanceModeRaw = appearanceModeRaw
         self.adaptImportedDocumentColors = adaptImportedDocumentColors
         self.interfaceLanguageRaw = interfaceLanguageRaw

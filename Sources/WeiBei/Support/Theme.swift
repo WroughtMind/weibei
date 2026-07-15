@@ -83,8 +83,8 @@ enum WeiBeiTypography {
         guard !didRegisterBundledFonts else { return }
         didRegisterBundledFonts = true
         ["WeiBeiStele", "WeiBeiSteleMono"].forEach { name in
-            guard let url = Bundle.module.url(forResource: name, withExtension: "ttf")
-                ?? Bundle.module.url(forResource: name, withExtension: "ttf", subdirectory: "Fonts")
+            guard let url = WeiBeiResources.bundle.url(forResource: name, withExtension: "ttf")
+                ?? WeiBeiResources.bundle.url(forResource: name, withExtension: "ttf", subdirectory: "Fonts")
             else { return }
             CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
         }

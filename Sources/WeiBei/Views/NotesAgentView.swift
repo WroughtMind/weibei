@@ -225,6 +225,10 @@ private struct AgentComposerField: View {
         !store.isAskingAgent && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    private var showsControl: Bool {
+        store.isAskingAgent || canSend
+    }
+
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             TextField(
@@ -243,29 +247,31 @@ private struct AgentComposerField: View {
             .focused(focused)
             .onSubmit(submit)
             .padding(.vertical, verticalPadding)
-            .padding(.trailing, canSend ? trailingPadding : 0)
+            .padding(.trailing, showsControl ? trailingPadding : 0)
             .frame(maxWidth: .infinity, alignment: .bottomLeading)
             .weibeiInputSurface(active: focused.wrappedValue, height: height, horizontalPadding: horizontalPadding)
 
-            if canSend {
-                Button(action: submit) {
-                    Image(systemName: "paperplane.fill")
+            if showsControl {
+                Button {
+                    store.isAskingAgent ? store.cancelAgentRequest() : submit()
+                } label: {
+                    Image(systemName: store.isAskingAgent ? "stop.fill" : "paperplane.fill")
                 }
-                .buttonStyle(WeiBeiIconButtonStyle(size: sendButtonSize, prominence: .primary))
-                .accessibilityLabel(Text(store.ui("发送", "Send")))
-                .help(store.ui("发送", "Send"))
+                .buttonStyle(WeiBeiIconButtonStyle(size: sendButtonSize, prominence: store.isAskingAgent ? .neutral : .primary))
+                .accessibilityLabel(Text(store.isAskingAgent ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send")))
+                .help(store.isAskingAgent ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send"))
                 .keyboardShortcut(.return, modifiers: [.command])
                 .padding(.trailing, sendTrailing)
                 .padding(.bottom, sendBottom)
                 .transition(WeiBeiTransition.floating)
-                .animation(WeiBeiMotion.micro, value: canSend)
+                .animation(WeiBeiMotion.micro, value: showsControl)
             }
         }
         .contentShape(Rectangle())
         .onTapGesture {
             focused.wrappedValue = true
         }
-        .animation(WeiBeiMotion.micro, value: canSend)
+        .animation(WeiBeiMotion.micro, value: showsControl)
     }
 }
 
@@ -277,27 +283,58 @@ struct NotePaneView: View {
     @State private var draftNoteItemID: String?
     @State private var isApplyingExternalNote = false
     @State private var noteDraftFlushTask: Task<Void, Never>?
+    @State private var activeNoteRailID: String?
     var showsPaneHeader = true
     var reorderRole: WorkspacePaneRole? = nil
 
     private let noteDraftFlushDelayNanoseconds: UInt64 = 220_000_000
 
+    private static var showsLinkedSourcesVerificationOverlay: Bool {
+        ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"] == "linked-sources-flow"
+            && ProcessInfo.processInfo.environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1"
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            if showsPaneHeader {
-                noteHeader
-            }
+        GeometryReader { geometry in
+            let railOnly = ContentRailMetrics.isRailOnly(
+                availableWidth: geometry.size.width,
+                allowed: store.layout.allowsRailOnlyPanes
+            )
+            let railItems = noteRailItems
+            ZStack(alignment: .topLeading) {
+                VStack(spacing: 0) {
+                    if showsPaneHeader {
+                        noteHeader
+                    }
 
-            if let noteFileError = store.noteFileError {
-                Text(noteFileError)
-                    .font(.caption)
-                    .foregroundStyle(noteFileStatusColor(for: noteFileError))
-                    .lineLimit(1)
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 8)
-            }
+                    if let noteFileError = store.noteFileError {
+                        Text(noteFileError)
+                            .font(.caption)
+                            .foregroundStyle(noteFileStatusColor(for: noteFileError))
+                            .lineLimit(1)
+                            .padding(.horizontal, 14)
+                            .padding(.bottom, 8)
+                    }
 
-            noteBody
+                    noteBody
+                }
+                .opacity(railOnly ? 0 : 1)
+                .allowsHitTesting(!railOnly)
+
+                if store.layout != .immersiveWriting {
+                    ContentRailView(
+                        label: store.ui("文稿目录", "Draft outline"),
+                        items: railItems,
+                        activeID: activeNoteRailID ?? railItems.first?.id,
+                        appearanceMode: store.appearanceMode,
+                        isRailOnly: railOnly,
+                        availableWidth: geometry.size.width,
+                        topInset: railOnly ? 0 : (showsPaneHeader ? 44 : 34),
+                        onActivate: { activateNoteRailItem($0, railOnly: railOnly) }
+                    )
+                    .zIndex(4)
+                }
+            }
         }
         .frame(minHeight: 280)
         .foregroundStyle(WeiBeiTheme.ink)
@@ -305,6 +342,17 @@ struct NotePaneView: View {
         .overlay(alignment: .top) {
             if !showsPaneHeader {
                 immersiveNoteHeader
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if Self.showsLinkedSourcesVerificationOverlay {
+                LinkedSourcesPopover(dismiss: {})
+                    .environmentObject(store)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .shadow(color: WeiBeiTheme.ink.opacity(0.16), radius: 22, y: 10)
+                    .padding(.top, 48)
+                    .padding(.trailing, 24)
+                    .allowsHitTesting(false)
             }
         }
         .animation(WeiBeiMotion.panel, value: store.notebookCreationDraft?.id)
@@ -328,6 +376,7 @@ struct NotePaneView: View {
                 noteDraftFlushTask = nil
                 draftNoteText = newValue
                 draftNoteItemID = store.activeNoteItemID
+                store.clearStagedNoteDraft(for: draftNoteItemID)
             }
         }
         .onChange(of: store.focusedPane) { _, pane in
@@ -355,6 +404,8 @@ struct NotePaneView: View {
                 appearanceMode: store.appearanceMode,
                 reorderRole: reorderRole
             ) {
+                LinkedSourcesControl()
+                writingAssistControl
                 noteModeControl
                 newNoteControl
             }
@@ -371,10 +422,12 @@ struct NotePaneView: View {
                 mark: "NOTES",
                 title: noteHeaderSubtitle,
                 appearanceMode: store.appearanceMode,
-                isPinned: store.notebookCreationDraft != nil,
+                isPinned: store.notebookCreationDraft != nil || store.linkedSourcesPresented,
                 actionsAlignedTrailing: true,
                 reorderRole: reorderRole
             ) {
+                LinkedSourcesControl()
+                writingAssistControl
                 noteModeControl
                 newNoteControl
             }
@@ -407,6 +460,57 @@ struct NotePaneView: View {
                 }
             }
         )
+    }
+
+    private var writingAssistControl: some View {
+        Menu {
+            Button {
+                prepareWritingAssist(store.ui(
+                    "请根据\(store.agentPromptScope)，给出一版更清晰的笔记大纲。",
+                    "Use \(store.agentPromptScope) to produce a clearer note outline."
+                ))
+            } label: {
+                Label(store.ui("大纲建议", "Outline"), systemImage: "list.bullet.rectangle")
+            }
+            Button {
+                prepareWritingAssist(store.hasSelectedMaterial
+                    ? store.ui(
+                        "请检查当前笔记缺少来源的位置，并建议应该引用当前资料的哪些部分。",
+                        "Find where the current note needs sources and suggest which parts of the current material to cite."
+                    )
+                    : store.ui(
+                        "请检查当前笔记缺少来源的位置，并标出需要补证据的段落。",
+                        "Find where the current note needs sources and mark the paragraphs that need evidence."
+                    ))
+            } label: {
+                Label(store.ui("补来源", "Add Sources"), systemImage: "link")
+            }
+            Button {
+                prepareWritingAssist(store.ui(
+                    "请整理和润色当前笔记，保留原意，并标出缺少来源的位置。",
+                    "Organize and polish the current note, preserve the meaning, and mark where sources are missing."
+                ))
+            } label: {
+                Label(store.ui("润色表达", "Polish"), systemImage: "text.quote")
+            }
+        } label: {
+            Label(store.ui("整理", "Refine"), systemImage: "text.badge.checkmark")
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .font(.system(size: 11, weight: .medium))
+        .foregroundStyle(WeiBeiTheme.secondaryInk)
+        .accessibilityLabel(Text(store.ui("整理当前笔记", "Refine current note")))
+        .help(store.ui("按需生成大纲、补来源或润色表达", "Create an outline, add sources, or polish on demand"))
+    }
+
+    private func prepareWritingAssist(_ prompt: String) {
+        flushNoteDraft(immediate: true)
+        withAnimation(WeiBeiMotion.layout) {
+            store.agentDraft = prompt
+            store.setLayout(.immersiveConversation)
+            store.revealRightPane(focusing: .agent)
+        }
     }
 
     @ViewBuilder
@@ -584,9 +688,60 @@ struct NotePaneView: View {
                 guard value != draftNoteText else { return }
                 draftNoteText = value
                 draftNoteItemID = store.activeNoteItemID
+                store.stageNoteDraft(value, for: draftNoteItemID)
                 scheduleNoteDraftFlush()
             }
         )
+    }
+
+    private var noteRailItems: [ContentRailItem] {
+        let lines = draftNoteText.components(separatedBy: .newlines)
+        let headings = lines.enumerated().compactMap { offset, line -> (line: Int, level: Int, title: String)? in
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let level = trimmed.prefix { $0 == "#" }.count
+            guard (1...4).contains(level) else { return nil }
+            let markerEnd = trimmed.index(trimmed.startIndex, offsetBy: level)
+            guard markerEnd < trimmed.endIndex, trimmed[markerEnd].isWhitespace else { return nil }
+            let title = trimmed[markerEnd...].trimmingCharacters(in: .whitespaces)
+            guard !title.isEmpty else { return nil }
+            return (offset, level, title)
+        }
+
+        return headings.enumerated().map { index, heading in
+            let nextLine = index + 1 < headings.count ? headings[index + 1].line : lines.count
+            let excerpt = lines[(heading.line + 1)..<max(heading.line + 1, nextLine)]
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+            let position = lines.count > 1 ? CGFloat(heading.line) / CGFloat(lines.count - 1) : 0
+            return ContentRailItem(
+                id: "note-heading-\(index)",
+                position: position,
+                level: heading.level - 1,
+                title: heading.title,
+                excerpt: railPreviewText(excerpt),
+                metadata: store.ui("第 \(index + 1) / \(headings.count) 节 · H\(heading.level)", "Section \(index + 1) / \(headings.count) · H\(heading.level)")
+            )
+        }
+    }
+
+    private func activateNoteRailItem(_ item: ContentRailItem, railOnly: Bool) {
+        guard let index = Int(item.id.replacingOccurrences(of: "note-heading-", with: "")) else { return }
+        activeNoteRailID = item.id
+        let navigate = {
+            store.noteEditorCommand = NoteEditorCommand(kind: .scrollToHeading, markdown: String(index))
+        }
+        if railOnly {
+            store.requestPaneExpansion(.notes)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.24, execute: navigate)
+        } else {
+            navigate()
+        }
+    }
+
+    private func railPreviewText(_ value: String) -> String {
+        let collapsed = value.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        return String(collapsed.prefix(180))
     }
 
     private var richEditor: some View {
@@ -609,6 +764,8 @@ struct NotePaneView: View {
             flushNoteDraft(immediate: true)
             store.updateSelection(text, source: .note, anchor: anchor)
             store.askSelection()
+        }, onActiveHeadingChange: { index in
+            activeNoteRailID = index.map { "note-heading-\($0)" }
         }, onWikiLink: { title in
             flushNoteDraft(immediate: true)
             store.openOrCreateWikiNote(title: title)
@@ -652,6 +809,7 @@ struct NotePaneView: View {
         isApplyingExternalNote = true
         draftNoteItemID = store.activeNoteItemID
         draftNoteText = store.noteText
+        store.clearStagedNoteDraft(for: draftNoteItemID)
         isApplyingExternalNote = false
     }
 
@@ -676,6 +834,7 @@ struct NotePaneView: View {
         noteDraftFlushTask = nil
         guard let itemID else { return }
         let value = (itemID == draftNoteItemID) ? draftNoteText : draftNoteText
+        defer { store.clearStagedNoteDraft(for: itemID, matching: value) }
         if itemID == store.activeNoteItemID {
             if store.noteText == value { return }
             isApplyingExternalNote = true
@@ -1079,7 +1238,19 @@ struct MarkdownSourceEditor: NSViewRepresentable {
                 applyPatch(command.markdown, in: textView)
             case .insertMarkdown:
                 insertMarkdown(command.markdown, in: textView)
+            case .scrollToHeading:
+                scrollToHeading(command.markdown, in: textView)
             }
+        }
+
+        private func scrollToHeading(_ rawIndex: String, in textView: NSTextView) {
+            guard let targetIndex = Int(rawIndex), targetIndex >= 0 else { return }
+            let pattern = #"(?m)^#{1,4}[\t ]+.+$"#
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { return }
+            let fullRange = NSRange(location: 0, length: (textView.string as NSString).length)
+            let matches = regex.matches(in: textView.string, range: fullRange)
+            guard matches.indices.contains(targetIndex) else { return }
+            textView.scrollRangeToVisible(matches[targetIndex].range)
         }
 
         private func replaceSelection(with markdown: String, in textView: NSTextView) {
@@ -1250,64 +1421,110 @@ struct MarkdownPreviewView: View {
     }
 }
 
+private struct AgentRailTurn {
+    var id: UUID
+    var startMessageID: UUID
+    var startIndex: Int
+    var question: String
+    var answer: String
+}
+
 struct AgentPaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
     var showsPaneHeader = true
     var reorderRole: WorkspacePaneRole? = nil
     @FocusState private var draftFocused: Bool
+    @State private var visibleAgentMessageID: UUID?
+    @State private var activeAgentRailID: String?
+    @State private var agentFollowsLatest = true
 
     private let agentBottomAnchorID = "agentConversationBottom"
 
     var body: some View {
-        VStack(spacing: 0) {
-            if showsPaneHeader {
-                WeiBeiPaneHeader(
-                    title: store.ui("对话", "Chat"),
-                    latinMark: store.interfaceLanguage == .chinese ? "CHAT" : nil,
-                    subtitle: store.agentConversationSubtitle,
-                    appearanceMode: store.appearanceMode,
-                    reorderRole: reorderRole
-                ) {
-                    EmptyView()
-                }
-            }
-
+        GeometryReader { paneGeometry in
+            let railOnly = ContentRailMetrics.isRailOnly(
+                availableWidth: paneGeometry.size.width,
+                allowed: store.layout.allowsRailOnlyPanes
+            )
+            let railItems = agentRailItems
             ScrollViewReader { proxy in
-                GeometryReader { geometry in
-                    let contentWidth = min(max(geometry.size.width - 36, 320), agentContentMaxWidth ?? 760)
-
-                    ScrollView(showsIndicators: true) {
-                        LazyVStack(alignment: .leading, spacing: 12) {
-                            ForEach(store.messages) { message in
-                                agentMessageRow(message: message, geometryWidth: geometry.size.width, contentWidth: contentWidth, proxy: proxy)
+                ZStack(alignment: .topLeading) {
+                    VStack(spacing: 0) {
+                        if showsPaneHeader {
+                            WeiBeiPaneHeader(
+                                title: store.ui("对话", "Chat"),
+                                latinMark: store.interfaceLanguage == .chinese ? "CHAT" : nil,
+                                subtitle: store.agentConversationSubtitle,
+                                appearanceMode: store.appearanceMode,
+                                reorderRole: reorderRole
+                            ) {
+                                sessionMenu
                             }
-                            if store.isAskingAgent {
-                                AgentThinkingIndicator()
-                                    .id("agent-thinking")
-                                    .transition(WeiBeiTransition.message)
-                            }
-                            if store.messages.isEmpty {
-                                emptyAgentState
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .transition(WeiBeiTransition.message)
-                            }
-                            Color.clear
-                                .frame(height: 1)
-                                .id(agentBottomAnchorID)
                         }
-                        .padding(14)
-                        .padding(.top, store.messages.isEmpty ? 22 : 0)
-                        .frame(width: geometry.size.width, alignment: .topLeading)
-                        .frame(minHeight: geometry.size.height, alignment: .topLeading)
-                        .animation(WeiBeiMotion.panel, value: store.messages.count)
+
+                        GeometryReader { geometry in
+                            let availableWidth = max(geometry.size.width, 1)
+                            let contentWidth = min(max(availableWidth - 36, 320), agentContentMaxWidth ?? 760)
+
+                            ScrollView(showsIndicators: true) {
+                                LazyVStack(alignment: .leading, spacing: 12) {
+                                    ForEach(store.messages) { message in
+                                        agentMessageRow(message: message, geometryWidth: geometry.size.width, contentWidth: contentWidth, proxy: proxy)
+                                    }
+                                    if store.isAskingAgent && !store.agentStreamingText.isEmpty {
+                                        AgentStreamingResponse(text: store.agentStreamingText)
+                                            .id("agent-streaming-response")
+                                            .transition(WeiBeiTransition.message)
+                                    }
+                                    if store.isAskingAgent {
+                                        AgentThinkingIndicator()
+                                            .id("agent-thinking")
+                                            .transition(WeiBeiTransition.message)
+                                    }
+                                    if store.messages.isEmpty {
+                                        emptyAgentState
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .transition(WeiBeiTransition.message)
+                                    }
+                                    Color.clear
+                                        .frame(height: 1)
+                                        .id(agentBottomAnchorID)
+                                }
+                                .scrollTargetLayout()
+                                .padding(14)
+                                .padding(.top, store.messages.isEmpty ? 22 : 0)
+                                .frame(width: geometry.size.width, alignment: .topLeading)
+                                .frame(minHeight: geometry.size.height, alignment: .topLeading)
+                                .animation(WeiBeiMotion.panel, value: store.messages.count)
+                            }
+                            .scrollPosition(id: $visibleAgentMessageID, anchor: .center)
+                        }
+
+                        agentInputTray
                     }
+                    .opacity(railOnly ? 0 : 1)
+                    .allowsHitTesting(!railOnly)
+
+                    ContentRailView(
+                        label: store.ui("对话轨道", "Conversation rail"),
+                        items: railItems,
+                        activeID: activeAgentRailID ?? railItems.first?.id,
+                        appearanceMode: store.appearanceMode,
+                        isRailOnly: railOnly,
+                        availableWidth: paneGeometry.size.width,
+                        topInset: railOnly ? 0 : (showsPaneHeader ? 44 : 34),
+                        bottomInset: railOnly ? 0 : 108,
+                        onActivate: { activateAgentRailItem($0, railOnly: railOnly, proxy: proxy) }
+                    )
+                    .zIndex(4)
                 }
                 .onChange(of: store.messages.count) { _, _ in
                     scrollAgentToBottom(proxy)
                 }
+                .onChange(of: visibleAgentMessageID) { _, messageID in
+                    updateAgentRailPosition(for: messageID)
+                }
             }
-
-            agentInputTray
         }
         .frame(minHeight: 260)
         .foregroundStyle(WeiBeiTheme.ink)
@@ -1359,6 +1576,84 @@ struct AgentPaneView: View {
         .transition(WeiBeiTransition.message)
     }
 
+    private var agentRailTurns: [AgentRailTurn] {
+        var turns: [AgentRailTurn] = []
+        for (index, message) in store.messages.enumerated() {
+            switch message.role {
+            case .user:
+                turns.append(AgentRailTurn(
+                    id: message.id,
+                    startMessageID: message.id,
+                    startIndex: index,
+                    question: message.text,
+                    answer: ""
+                ))
+            case .assistant:
+                if turns.isEmpty {
+                    turns.append(AgentRailTurn(
+                        id: message.id,
+                        startMessageID: message.id,
+                        startIndex: index,
+                        question: store.ui("对话回复", "Response"),
+                        answer: message.text
+                    ))
+                } else if turns[turns.count - 1].answer.isEmpty {
+                    turns[turns.count - 1].answer = message.text
+                } else {
+                    turns[turns.count - 1].answer += "\n\n" + message.text
+                }
+            }
+        }
+        return turns
+    }
+
+    private var agentRailItems: [ContentRailItem] {
+        let turns = agentRailTurns
+        return turns.enumerated().map { index, turn in
+            ContentRailItem(
+                id: "chat-turn-\(turn.id.uuidString)",
+                position: turns.count > 1 ? CGFloat(index) / CGFloat(turns.count - 1) : 0,
+                title: railText(turn.question, fallback: store.ui("第 \(index + 1) 轮对话", "Conversation \(index + 1)")),
+                excerpt: railText(turn.answer, fallback: store.ui("等待回复", "Waiting for response")),
+                metadata: store.ui("第 \(index + 1) / \(turns.count) 轮", "Turn \(index + 1) / \(turns.count)")
+            )
+        }
+    }
+
+    private func activateAgentRailItem(_ item: ContentRailItem, railOnly: Bool, proxy: ScrollViewProxy) {
+        guard let turn = agentRailTurns.first(where: { "chat-turn-\($0.id.uuidString)" == item.id }) else { return }
+        activeAgentRailID = item.id
+        agentFollowsLatest = false
+        let navigate = {
+            withAnimation(WeiBeiMotion.panel) {
+                proxy.scrollTo(turn.startMessageID, anchor: .center)
+            }
+        }
+        if railOnly {
+            store.requestPaneExpansion(.agent)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.24, execute: navigate)
+        } else {
+            navigate()
+        }
+    }
+
+    private func updateAgentRailPosition(for messageID: UUID?) {
+        guard let messageID,
+              let visibleIndex = store.messages.firstIndex(where: { $0.id == messageID }) else { return }
+        agentFollowsLatest = messageID == store.messages.last?.id
+        if let turn = agentRailTurns.last(where: { $0.startIndex <= visibleIndex }) {
+            activeAgentRailID = "chat-turn-\(turn.id.uuidString)"
+        }
+    }
+
+    private func railText(_ value: String, fallback: String) -> String {
+        let collapsed = value
+            .replacingOccurrences(of: #"[`*_>#\[\]()]"#, with: "", options: .regularExpression)
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        return collapsed.isEmpty ? fallback : String(collapsed.prefix(180))
+    }
+
     private var agentPrompt: String {
         store.agentInputPrompt
     }
@@ -1397,7 +1692,7 @@ struct AgentPaneView: View {
                     horizontalPadding: 14,
                     verticalPadding: 10
                 ) {
-                    Task { await store.askAgent() }
+                    store.askAgent()
                 }
             }
             .font(.system(size: 15))
@@ -1435,6 +1730,17 @@ struct AgentPaneView: View {
     private var emptyAgentState: some View {
         VStack(alignment: .leading, spacing: 8) {
             LazyVGrid(columns: starterChipColumns, alignment: .leading, spacing: 6) {
+                if store.canResumePreviousStudy {
+                    starterChip(store.ui("继续上次", "Resume"), systemImage: "arrow.uturn.forward", help: store.ui("回顾上次学习位置并继续", "Review the last study location and continue")) {
+                        store.resumePreviousStudy()
+                        askWith(store.ui("上次学到哪了？请结合学习记忆告诉我当时的位置、还没解决的问题和现在最适合的下一步。", "Where did I stop last time? Use my learning memory to give the location, unresolved questions, and the best next step."))
+                    }
+                }
+                if store.allItems.count > 1 {
+                    starterChip(store.ui("关联", "Connections"), systemImage: "point.3.connected.trianglepath.dotted", help: store.ui("查找当前概念在课程里的关联", "Find related course materials and notes")) {
+                        askWith(store.ui("请查找当前材料、选区或笔记在整个课程里的知识关联，说清为什么相关，并给出可跳转的来源。", "Find connections between the current material, selection, or note and the rest of the course. Explain each connection and provide jumpable sources."))
+                    }
+                }
                 if store.hasSelectedMaterial {
                     starterChip(store.ui("梳理", "Outline"), systemImage: "text.alignleft", help: store.ui("梳理当前材料", "Outline current material")) {
                         askWith(store.ui("请基于当前材料提炼核心概念、关键公式和需要回看出处的位置。", "Extract the core concepts, key formulas, and places that need source review from the current material."))
@@ -1465,10 +1771,91 @@ struct AgentPaneView: View {
         withAnimation(WeiBeiMotion.panel) {
             store.agentDraft = prompt
         }
-        Task { await store.askAgent() }
+        store.askAgent()
+    }
+
+    private var sessionMenu: some View {
+        Menu {
+            Button {
+                store.createStudySession()
+            } label: {
+                Label(store.ui("新学习会话", "New Study Session"), systemImage: "plus")
+            }
+
+            Divider()
+
+            ForEach(store.orderedStudySessions) { session in
+                Button {
+                    store.activateStudySession(session.id)
+                } label: {
+                    if session.id == store.activeStudySessionID {
+                        Label(session.title, systemImage: "checkmark")
+                    } else {
+                        Text(session.title)
+                    }
+                }
+            }
+
+            if !store.orderedLearningMemoryEntries.isEmpty {
+                Divider()
+                Menu {
+                    ForEach(Array(store.orderedLearningMemoryEntries.prefix(20))) { memory in
+                        if memory.status == .resolved {
+                            Button {
+                                store.restoreLearningMemory(memory.id)
+                            } label: {
+                                Label(
+                                    "\(store.learningMemoryKindLabel(memory.kind))：\(String(memory.text.prefix(64)))",
+                                    systemImage: "arrow.uturn.backward"
+                                )
+                            }
+                        } else if memory.kind == .goal || memory.kind == .confusion || memory.kind == .nextStep {
+                            Button {
+                                store.resolveLearningMemory(memory.id)
+                            } label: {
+                                Label(
+                                    "\(store.learningMemoryKindLabel(memory.kind))：\(String(memory.text.prefix(64)))",
+                                    systemImage: "checkmark.circle"
+                                )
+                            }
+                        } else {
+                            Label(
+                                "\(store.learningMemoryKindLabel(memory.kind))：\(String(memory.text.prefix(64)))",
+                                systemImage: "brain.head.profile"
+                            )
+                        }
+                    }
+                } label: {
+                    Label(store.ui("学习记忆", "Learning Memory"), systemImage: "brain.head.profile")
+                }
+            }
+
+            if store.hasCurrentSessionInferredMemory {
+                Divider()
+                Button(role: .destructive) {
+                    store.clearCurrentSessionInferredMemory()
+                } label: {
+                    Label(store.ui("清除本会话推断记忆", "Clear Inferred Memory"), systemImage: "brain.head.profile")
+                }
+            }
+
+            if let activeID = store.activeStudySessionID, store.studySessions.count > 1 {
+                Button(role: .destructive) {
+                    store.deleteStudySession(activeID)
+                } label: {
+                    Label(store.ui("删除当前会话", "Delete Current Session"), systemImage: "trash")
+                }
+            }
+        } label: {
+            Image(systemName: "bubble.left.and.bubble.right")
+        }
+        .buttonStyle(WeiBeiIconButtonStyle(size: 24))
+        .accessibilityLabel(Text(store.ui("学习会话", "Study Sessions")))
+        .help(store.ui("新建或切换学习会话", "Create or switch study sessions"))
     }
 
     private func scrollAgentToBottom(_ proxy: ScrollViewProxy) {
+        guard agentFollowsLatest else { return }
         DispatchQueue.main.async {
             withAnimation(WeiBeiMotion.panel) {
                 proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)
@@ -1840,7 +2227,7 @@ struct AgentDrawerView: View {
                 sendTrailing: 6,
                 sendBottom: 6
             ) {
-                Task { await store.askAgent() }
+                store.askAgent()
             }
 
             HStack(spacing: 8) {
@@ -1912,7 +2299,7 @@ struct CornerAgentView: View {
                 sendTrailing: 5,
                 sendBottom: 5
             ) {
-                Task { await store.askAgent() }
+                store.askAgent()
             }
 
         }
@@ -2254,7 +2641,7 @@ struct FloatingSelectionAgentView: View {
             expanded = true
             store.agentDraft = store.ui("请整理和润色当前笔记，保留原意，并标出缺少来源的位置。", "Organize and polish the current note, preserve the meaning, and mark where sources are missing.")
         }
-        Task { await store.askAgent() }
+        store.askAgent()
     }
 
     private func sendDraft() {
@@ -2263,7 +2650,7 @@ struct FloatingSelectionAgentView: View {
         withAnimation(WeiBeiMotion.panel) {
             expanded = true
         }
-        Task { await store.askAgent() }
+        store.askAgent()
     }
 
     private func closeFloatingAgent() {
@@ -2421,188 +2808,6 @@ struct QuietInsightView: View {
     }
 }
 
-struct ContextRailItem: Identifiable {
-    var title: String
-    var help: String?
-    var systemImage: String?
-    var emphasized = false
-    var action: (() -> Void)?
-
-    var id: String {
-        title
-    }
-}
-
-struct ContextRailView: View {
-    var title: String
-    var items: [ContextRailItem]
-    var edge: HorizontalEdge = .trailing
-    @State private var appeared = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 11) {
-            HStack(spacing: 6) {
-                Rectangle()
-                    .fill(WeiBeiTheme.hairline.opacity(0.80))
-                    .frame(width: 12, height: 1)
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold, design: .serif))
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-            }
-            .padding(.horizontal, 4)
-
-            ForEach(items) { item in
-                ContextRailLine(item: item, inwardOffset: inwardOffset)
-                    .transition(WeiBeiTransition.message)
-            }
-
-            Spacer()
-        }
-        .padding(.top, 17)
-        .padding(.horizontal, 12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .foregroundStyle(WeiBeiTheme.ink)
-        .background(railBackground)
-        .overlay(alignment: separatorAlignment) {
-            LinearGradient(
-                colors: [
-                    .clear,
-                    WeiBeiTheme.hairline.opacity(0.34),
-                    .clear
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(width: 1)
-        }
-        .overlay(alignment: highlightAlignment) {
-            LinearGradient(
-                colors: [
-                    WeiBeiTheme.glassHighlight.opacity(0.22),
-                    .clear
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(width: 1)
-        }
-        .opacity(appeared ? 1 : 0)
-        .offset(y: appeared ? 0 : 8)
-        .onAppear {
-            withAnimation(WeiBeiMotion.reveal) {
-                appeared = true
-            }
-        }
-    }
-
-    private var inwardOffset: CGFloat {
-        edge == .leading ? -3 : 3
-    }
-
-    private var railBackground: some View {
-        ZStack(alignment: highlightAlignment) {
-            WeiBeiTheme.paperRaised.opacity(0.10)
-            LinearGradient(
-                colors: [
-                    WeiBeiTheme.paperRaised.opacity(0.26),
-                    WeiBeiTheme.paper.opacity(0.08),
-                    .clear
-                ],
-                startPoint: edge == .leading ? .leading : .trailing,
-                endPoint: edge == .leading ? .trailing : .leading
-            )
-            .frame(width: 22)
-            LinearGradient(
-                colors: [
-                    WeiBeiTheme.glassHighlight.opacity(0.12),
-                    .clear
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .frame(width: 1)
-        }
-    }
-
-    private var separatorAlignment: Alignment {
-        edge == .leading ? .leading : .trailing
-    }
-
-    private var highlightAlignment: Alignment {
-        edge == .leading ? .trailing : .leading
-    }
-}
-
-private struct ContextRailLine: View {
-    var item: ContextRailItem
-    var inwardOffset: CGFloat
-    @State private var hovering = false
-
-    var body: some View {
-        if let action = item.action {
-            Button(action: action) {
-                lineContent
-            }
-            .buttonStyle(.plain)
-            .contentShape(Rectangle())
-            .help(item.help ?? item.title)
-            .accessibilityLabel(Text(item.help ?? item.title))
-            .onHover { hovering in
-                setHovering(hovering)
-            }
-            .animation(WeiBeiMotion.micro, value: item.emphasized)
-        } else {
-            lineContent
-                .onHover { hovering in
-                    setHovering(hovering)
-                }
-                .animation(WeiBeiMotion.micro, value: item.emphasized)
-        }
-    }
-
-    private var lineContent: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Capsule()
-                .fill(railMarkColor)
-                .frame(width: 2, height: hovering || item.emphasized ? 15 : 10)
-            if let systemImage = item.systemImage {
-                Image(systemName: systemImage)
-                    .font(.system(size: 11, weight: .semibold))
-                    .frame(width: 14)
-                    .foregroundStyle(iconColor)
-            }
-            Text(item.title)
-                .lineLimit(2)
-        }
-        .font(.system(size: 12, weight: item.emphasized ? .semibold : .medium))
-        .foregroundStyle(item.emphasized || hovering ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
-        .padding(.horizontal, 5)
-        .padding(.vertical, 4)
-        .frame(minHeight: 24, alignment: .leading)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(WeiBeiTheme.paperInset.opacity(hovering ? 0.16 : item.emphasized ? 0.06 : 0))
-        .clipShape(RoundedRectangle(cornerRadius: 5))
-        .offset(x: hovering ? inwardOffset : 0)
-    }
-
-    private var railMarkColor: Color {
-        if item.emphasized { return WeiBeiTheme.cinnabar.opacity(hovering ? 0.54 : 0.38) }
-        if hovering { return WeiBeiTheme.cinnabar.opacity(0.28) }
-        return WeiBeiTheme.hairline.opacity(0.90)
-    }
-
-    private var iconColor: Color {
-        if item.emphasized || hovering { return WeiBeiTheme.cinnabar.opacity(0.74) }
-        return WeiBeiTheme.tertiaryInk
-    }
-
-    private func setHovering(_ hovering: Bool) {
-        withAnimation(WeiBeiMotion.hover) {
-            self.hovering = hovering
-        }
-    }
-}
-
 private struct AgentBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
     var message: AgentMessage
@@ -2716,6 +2921,24 @@ private struct AgentBubble: View {
             )
 
             if message.id == store.lastUsableAgentAnswerID {
+                if let update = store.latestAgentLearningUpdate,
+                   !update.entries.isEmpty || !update.resolutions.isEmpty || !update.suggestedNext.isEmpty {
+                    learningUpdateContent(update)
+                }
+                if let proposal = store.latestAgentNoteProposal, !proposal.evidence.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(store.ui("依据", "Evidence"))
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        ForEach(Array(proposal.evidence.enumerated()), id: \.offset) { _, evidence in
+                            Text("• \(evidence)")
+                                .font(.caption)
+                                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
                 HStack(spacing: 6) {
                     if store.selectionContext != nil {
                         Button(store.ui("摘录", "Excerpt")) {
@@ -2723,7 +2946,7 @@ private struct AgentBubble: View {
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
-                    Button(store.ui("写入回答", "Write Answer")) {
+                    Button(store.agentWriteActionTitle) {
                         store.applyLastAgentAnswerToNote()
                     }
                     .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
@@ -2739,11 +2962,82 @@ private struct AgentBubble: View {
         }
     }
 
+    private func learningUpdateContent(_ update: StudyAgentLearningUpdate) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Label(store.ui("本轮记住", "Remembered This Turn"), systemImage: "brain.head.profile")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+
+            ForEach(Array(update.entries.prefix(4).enumerated()), id: \.offset) { _, entry in
+                Text("\(memoryKindLabel(entry.kind))：\(entry.text)")
+                    .font(.caption)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            ForEach(Array(update.resolutions.prefix(4).enumerated()), id: \.offset) { _, resolution in
+                let isResolved = store.isLearningMemoryResolved(resolution.memoryID)
+                HStack(alignment: .top, spacing: 6) {
+                    Text(store.ui("建议结案：\(resolution.text)", "Suggested resolution: \(resolution.text)"))
+                        .font(.caption)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 4)
+                    Button {
+                        if isResolved {
+                            store.restoreLearningMemoryResolution(resolution)
+                        } else {
+                            store.confirmLearningMemoryResolution(resolution)
+                        }
+                    } label: {
+                        Image(systemName: isResolved ? "arrow.uturn.backward" : "checkmark.circle")
+                    }
+                    .buttonStyle(WeiBeiIconButtonStyle(active: isResolved, size: 22))
+                    .help(store.ui(isResolved ? "撤销结案" : "确认结案", isResolved ? "Undo resolution" : "Confirm resolution"))
+                }
+            }
+
+            ForEach(Array(update.suggestedNext.prefix(3).enumerated()), id: \.offset) { _, next in
+                Text("→ \(next)")
+                    .font(.caption)
+                    .foregroundStyle(WeiBeiTheme.link)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.leading, 9)
+        .padding(.vertical, 5)
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(WeiBeiTheme.cinnabar.opacity(0.34))
+                .frame(width: 1)
+        }
+    }
+
+    private func memoryKindLabel(_ kind: LearningMemoryKind) -> String {
+        switch kind {
+        case .goal:
+            return store.ui("目标", "Goal")
+        case .understood:
+            return store.ui("已理解", "Understood")
+        case .confusion:
+            return store.ui("困惑", "Confusion")
+        case .nextStep:
+            return store.ui("下一步", "Next Step")
+        case .preference:
+            return store.ui("偏好", "Preference")
+        }
+    }
+
     private var messageMetadata: some View {
         HStack(spacing: 6) {
             Text("WeiBei")
                 .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
                 .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.76))
+            if let backend = message.backend {
+                Text(backendLabel(backend))
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+            }
             if let source = message.source {
                 Text(source)
                     .font(.caption2)
@@ -2796,6 +3090,14 @@ private struct AgentBubble: View {
 
     private var assistantMarkColor: Color {
         (isCredentialNotice || isOfflineContextPreview) ? WeiBeiTheme.link.opacity(0.42) : WeiBeiTheme.cinnabar.opacity(0.50)
+    }
+
+    private func backendLabel(_ backend: StudyAgentBackend) -> String {
+        switch backend {
+        case .pi: return "PI"
+        case .openAI: return "API"
+        case .offline: return store.ui("离线", "Offline")
+        }
     }
 }
 
@@ -2854,7 +3156,7 @@ private struct AgentThinkingIndicator: View {
                         )
                 }
             }
-            Text(store.ui("正在读取上下文", "Reading context"))
+            Text(store.agentActivityText ?? store.ui("正在读取上下文", "Reading context"))
                 .font(.caption)
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
         }
@@ -2869,5 +3171,35 @@ private struct AgentThinkingIndicator: View {
         .onAppear {
             pulse = true
         }
+    }
+}
+
+private struct AgentStreamingResponse: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    var text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 6) {
+                Text("WeiBei")
+                    .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.76))
+                Text("PI")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+            }
+            AgentMessageMarkdownText(text: text, rendersRichMarkdown: false)
+        }
+        .padding(.vertical, 10)
+        .padding(.leading, 20)
+        .padding(.trailing, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .leading) {
+            Capsule()
+                .fill(WeiBeiTheme.cinnabar.opacity(0.42))
+                .frame(width: 2, height: 24)
+                .padding(.leading, 4)
+        }
+        .accessibilityLabel(Text(store.ui("PI 正在回答", "PI is responding")))
     }
 }
