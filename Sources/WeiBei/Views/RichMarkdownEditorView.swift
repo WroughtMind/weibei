@@ -542,10 +542,20 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard messageMatchesDocument(message.body) else { return }
+            // The SwiftUI document can change while the WebView is still booting.
+            // Its one ready callback still belongs to this WebView and must be
+            // accepted so we can push the latest document into it. Every later
+            // callback remains scoped to the current document identity.
+            if message.name != "editorReady" {
+                guard messageMatchesDocument(message.body) else { return }
+            }
             switch message.name {
             case "editorReady":
                 isReady = true
+                setDocumentID(documentID)
+                setMarkdownBaseURL(markdownBaseURLString)
+                setEditable(isEditable)
+                setInterfaceLanguage(interfaceLanguage)
                 if let text = (message.body as? [String: Any])?["markdown"] as? String {
                     webMarkdown = text
                     if markdown.wrappedValue == text {

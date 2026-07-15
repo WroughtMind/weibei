@@ -4346,6 +4346,7 @@ final class WorkspaceStore: ObservableObject {
                     "courseWorkspacePresented": courseWorkspacePresented,
                 ]
             )
+            recordVerificationStage("completed")
             return
         }
 
@@ -4461,6 +4462,7 @@ final class WorkspaceStore: ObservableObject {
                 "paneDismantleCount": paneDismantleCount,
             ]
         )
+        recordVerificationStage("completed")
     }
 
     private func writeCourseWorkspaceVerificationReport(name: String, payload: [String: Any]) {

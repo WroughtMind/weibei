@@ -394,7 +394,14 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
               Self.scheduledVerificationCaptures.insert(capturePath).inserted else { return }
 
         let scenario = environment["WEIBEI_VERIFY_SCENARIO"] ?? ""
-        if ["pi-learning-flow", "pi-course-memory-flow", "pane-toggle-continuity-flow", "reader-scroll-persistence-flow"].contains(scenario),
+        if [
+            "pi-learning-flow",
+            "pi-course-memory-flow",
+            "pane-toggle-continuity-flow",
+            "reader-scroll-persistence-flow",
+            "course-workspace-overview-flow",
+            "course-workspace-workflow-flow",
+        ].contains(scenario),
            let workspaceDirectory = environment["WEIBEI_WORKSPACE_DIR"] {
             let stateURL = URL(fileURLWithPath: workspaceDirectory)
                 .appendingPathComponent("verification-state.txt")
@@ -420,7 +427,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
     ) {
         let stages = (try? String(contentsOf: stateURL, encoding: .utf8)) ?? ""
         if stages.split(separator: "\n").contains("completed") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
                 capture(window, to: capturePath)
             }
             return
@@ -454,7 +461,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
             composite.lockFocus()
             baseImage.draw(in: bounds)
             for overlay in overlays {
-                overlay.image.draw(in: overlay.rect, from: .zero, operation: .copy, fraction: 1)
+                overlay.image.draw(in: overlay.rect, from: .zero, operation: .sourceOver, fraction: 1)
             }
             composite.unlockFocus()
             guard let tiff = composite.tiffRepresentation,
