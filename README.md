@@ -42,6 +42,7 @@ cd weibei
 ```bash
 ./script/build_and_run.sh check
 ./script/build_and_run.sh package
+./script/verify_release_metadata.sh --require-clean
 ./script/build_and_run.sh --verify
 ```
 
