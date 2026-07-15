@@ -1,0 +1,58 @@
+name: 魏碑合并请求检查
+
+on:
+  pull_request:
+    branches:
+      - codex/course-workspace
+      - main
+  push:
+    branches:
+      - codex/course-workspace
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-check-package:
+    name: 编译、自检与安装包追溯
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    steps:
+      - name: 取出完整源码历史
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: 记录构建工具链
+        run: |
+          swift --version
+          xcodebuild -version
+
+      - name: 编译
+        run: swift build
+
+      - name: 运行应用自检
+        run: swift run WeiBeiSelfCheck
+
+      - name: 运行 Pi 终止语义自检
+        if: ${{ hashFiles('Sources/WeiBeiSelfCheck/PiTerminalRuntimeSelfChecks.swift') != '' }}
+        run: WEIBEI_PI_TERMINAL_SELF_CHECK_ONLY=1 swift run WeiBeiSelfCheck
+
+      - name: 运行编辑器自检
+        run: swift run WeiBeiWebEditorCheck
+
+      - name: 生成可追溯安装包
+        run: ./script/build_and_run.sh package
+
+      - name: 校验版本、构建号与提交来源
+        run: ./script/verify_release_metadata.sh --require-clean
+
+      - name: 校验安装包签名
+        run: /usr/bin/codesign --verify --deep --strict "dist/魏碑.app"

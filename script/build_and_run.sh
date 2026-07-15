@@ -34,6 +34,7 @@ if [[ "$MODE" == "check" || "$MODE" == "--debug" || "$MODE" == "debug" ]]; then
 fi
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+VERSION_FILE="$ROOT_DIR/VERSION"
 FINAL_DIST_DIR="$ROOT_DIR/dist"
 FINAL_APP_BUNDLE="$FINAL_DIST_DIR/$APP_DISPLAY_NAME.app"
 FINAL_APP_BINARY="$FINAL_APP_BUNDLE/Contents/MacOS/$PRODUCT_NAME"
@@ -99,6 +100,28 @@ fi
 
 if [[ -d "$ROOT_DIR/node_modules" ]]; then
   npm run build:editor >/dev/null
+fi
+
+if [[ "$CHECK_ONLY" != true ]]; then
+  if [[ ! -f "$VERSION_FILE" ]]; then
+    echo "build failed: missing VERSION" >&2
+    exit 19
+  fi
+  APP_VERSION="$(/usr/bin/tr -d '\r\n' <"$VERSION_FILE")"
+  if [[ ! "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "build failed: VERSION must use numeric major.minor.patch" >&2
+    exit 20
+  fi
+  if [[ "$(git -C "$ROOT_DIR" rev-parse --is-shallow-repository)" == "true" ]]; then
+    echo "build failed: full Git history is required for a stable build number" >&2
+    exit 21
+  fi
+  GIT_COMMIT="$(git -C "$ROOT_DIR" rev-parse --verify HEAD)"
+  BUILD_NUMBER="$(git -C "$ROOT_DIR" rev-list --count "$GIT_COMMIT")"
+  SOURCE_DIRTY=false
+  if [[ -n "$(git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files=normal)" ]]; then
+    SOURCE_DIRTY=true
+  fi
 fi
 
 PI_RUNTIME_DIR="$("$ROOT_DIR/script/prepare_pi_runtime.sh")"
@@ -175,6 +198,14 @@ if [[ "$CHECK_ONLY" != true ]]; then
   <string>$APP_DISPLAY_NAME</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>$APP_VERSION</string>
+  <key>CFBundleVersion</key>
+  <string>$BUILD_NUMBER</string>
+  <key>WeiBeiGitCommit</key>
+  <string>$GIT_COMMIT</string>
+  <key>WeiBeiSourceDirty</key>
+  <$SOURCE_DIRTY/>
   <key>LSMinimumSystemVersion</key>
   <string>$MIN_SYSTEM_VERSION</string>
   <key>NSPrincipalClass</key>
@@ -227,6 +258,7 @@ PLIST
       echo "package failed: strict-audit copy changed the final app binary UUID" >&2
       exit 18
     fi
+    "$ROOT_DIR/script/verify_release_metadata.sh" "$FINAL_APP_BUNDLE"
   fi
 fi
 
