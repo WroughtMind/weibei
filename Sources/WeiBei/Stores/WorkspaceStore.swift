@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Darwin
 import Foundation
 import SwiftUI
 import UniformTypeIdentifiers
@@ -243,6 +244,7 @@ final class WorkspaceStore: ObservableObject {
 
     private var notesByItemID: [String: String] = [:]
     private let storageURL: URL
+    private let importedFileIdentityResolver: (URL) -> ImportedFileIdentity?
     private let piRuntime: PiAgentRuntime
     private let courseDocumentSearchIndex: CourseDocumentSearchIndex
     private var activeAgentRequestID: UUID?
@@ -322,6 +324,11 @@ final class WorkspaceStore: ObservableObject {
         var selectedMaterialIsTruncated: Bool
     }
 
+    private struct ResolvedImportedFileBookmark {
+        var url: URL
+        var isStale: Bool
+    }
+
     private var lastUsableAgentAnswer: AgentMessage? {
         guard lastAgentReplyContextRevision == agentContextRevision else { return nil }
         return messages.last { $0.isUsableAgentAnswer }
@@ -331,9 +338,18 @@ final class WorkspaceStore: ObservableObject {
 
     let sampleItems: [StudyItem] = WorkspaceStore.makeSampleItems()
 
-    init() {
-        let folder = Self.workspaceRootDirectory() ?? FileManager.default.temporaryDirectory.appendingPathComponent("WeiBei", isDirectory: true)
+    convenience init() {
+        let folder = Self.workspaceRootDirectory()
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("WeiBei", isDirectory: true)
+        self.init(workspaceDirectory: folder)
+    }
+
+    init(
+        workspaceDirectory folder: URL,
+        importedFileIdentityResolver: @escaping (URL) -> ImportedFileIdentity? = WorkspaceStore.resolveImportedFileIdentity
+    ) {
         storageURL = folder.appendingPathComponent("workspace.json")
+        self.importedFileIdentityResolver = importedFileIdentityResolver
         piRuntime = PiAgentRuntime(runtimeDirectory: folder.appendingPathComponent("AgentRuntime", isDirectory: true))
         let courseIndexDirectory = folder.appendingPathComponent("CourseIndex", isDirectory: true)
         Self.removeLegacyCourseIndex(in: courseIndexDirectory)
@@ -342,6 +358,8 @@ final class WorkspaceStore: ObservableObject {
         )
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         load()
+        let resolvedImportedFileBookmarks = resolvePersistedImportedFileBookmarks()
+        let migratedImportedItemIdentities = migrateLegacyImportedItemIdentities()
         let migratedStudyLocationTitles = refreshStudyLocationReferenceTitles()
         let sanitizedNoteSourceLinks = sanitizeNoteSourceLinks()
         courseDocumentSearchIndex.synchronize(allItems)
@@ -350,7 +368,10 @@ final class WorkspaceStore: ObservableObject {
             migrateNoteSourceLinksFromMarkdown()
             noteSourceLinksMigrationVersion = 1
             save()
-        } else if migratedStudyLocationTitles || sanitizedNoteSourceLinks {
+        } else if resolvedImportedFileBookmarks
+                    || migratedImportedItemIdentities
+                    || migratedStudyLocationTitles
+                    || sanitizedNoteSourceLinks {
             save()
         }
         floatingSelectionPrompt = ui("当前选区", "Current selection")
@@ -2311,7 +2332,6 @@ final class WorkspaceStore: ObservableObject {
         markdownNotePaths: Set<String>? = nil,
         reclassifiesExistingMarkdown: Bool = false
     ) -> [StudyItem] {
-        let existing = Set(importedItems.compactMap(\.urlPath))
         let supportedURLs = urls
             .flatMap(Self.supportedCourseFiles(at:))
             .reduce(into: [URL]()) { result, url in
@@ -2327,55 +2347,157 @@ final class WorkspaceStore: ObservableObject {
             return markdownNotePaths?.contains(url.path) ?? markdownAsNotes
         }
 
-        var roleChanged = false
         if reclassifiesExistingMarkdown || markdownNotePaths != nil {
             persistCurrentNote()
-            for url in expandedURLs where Self.isMarkdownFile(url) {
-                guard let index = importedItems.firstIndex(where: { $0.urlPath == url.path }) else { continue }
-                let nextRole = isNotebookNote(url)
-                guard importedItems[index].isNotebookNote != nextRole else { continue }
-                importedItems[index].isNotebookNote = nextRole
-                roleChanged = true
-            }
-            if roleChanged {
-                if let selectedItemID,
-                   importedItems.first(where: { $0.id == selectedItemID })?.isNotebookNote == true {
-                    self.selectedItemID = courseMaterials.first?.id ?? sampleItems.first?.id
-                    readerLocationTitle = selectedMaterialItem.map(displayTitle)
-                    restoreCurrentStudyLocation()
-                }
-                if let activeNotebookItemID,
-                   importedItems.first(where: { $0.id == activeNotebookItemID })?.isNotebookNote == false {
-                    self.activeNotebookItemID = courseNotebookItems.first?.id
-                    noteText = noteText(for: activeNoteItem)
-                }
-                _ = sanitizeNoteSourceLinks()
-                invalidateAgentContext()
-            }
         }
-        let newItems = expandedURLs
-            .filter { !existing.contains($0.path) }
-            .map { url in
-                StudyItem(
-                    id: "file:\(url.path)",
-                    title: url.deletingPathExtension().lastPathComponent,
-                    subtitle: url.lastPathComponent,
-                    kind: StudyItemKind.detect(from: url),
-                    urlPath: url.path,
-                    isSample: false,
-                    isNotebookNote: isNotebookNote(url)
-                )
+        var roleChanged = false
+        var importedIDs: [String] = []
+        var didChangeItems = false
+        for url in expandedURLs {
+            let identity = importedFileIdentityResolver(url)
+            let bookmarkData = identity.flatMap { _ in Self.makeImportedFileBookmark(for: url) }
+            if let identity {
+                for index in importedItems.indices
+                where importedItems[index].urlPath == url.path
+                    && importedItems[index].importedFileIdentity != nil
+                    && importedItems[index].importedFileIdentity != identity {
+                    importedItems[index].importedFileLastKnownPath = url.path
+                    importedItems[index].urlPath = nil
+                    didChangeItems = true
+                }
+            }
+            let matchingIndex = importedItems.firstIndex { item in
+                if let identity {
+                    return item.importedFileIdentity == identity
+                }
+                return item.importedFileIdentity == nil && item.urlPath == url.path
             }
 
-        importedItems.append(contentsOf: newItems)
+            if let matchingIndex {
+                if identity != nil, importedItems[matchingIndex].id.hasPrefix("file:") {
+                    let oldID = importedItems[matchingIndex].id
+                    let newID = Self.makeImportedItemID()
+                    importedItems[matchingIndex].id = newID
+                    replaceItemIDEverywhere(oldID, with: newID)
+                    didChangeItems = true
+                }
+                importedIDs.append(importedItems[matchingIndex].id)
+                let nextTitle = url.deletingPathExtension().lastPathComponent
+                let nextSubtitle = url.lastPathComponent
+                let nextKind = StudyItemKind.detect(from: url)
+                let nextRole = isNotebookNote(url)
+                if importedItems[matchingIndex].isNotebookNote != nextRole {
+                    roleChanged = true
+                }
+                if importedItems[matchingIndex].urlPath != url.path
+                    || importedItems[matchingIndex].title != nextTitle
+                    || importedItems[matchingIndex].subtitle != nextSubtitle
+                    || importedItems[matchingIndex].kind != nextKind
+                    || importedItems[matchingIndex].isNotebookNote != nextRole
+                    || importedItems[matchingIndex].importedFileIdentity != identity
+                    || importedItems[matchingIndex].importedFileBookmarkData != bookmarkData
+                    || importedItems[matchingIndex].importedFileLastKnownPath != url.path {
+                    importedItems[matchingIndex].urlPath = url.path
+                    importedItems[matchingIndex].title = nextTitle
+                    importedItems[matchingIndex].subtitle = nextSubtitle
+                    importedItems[matchingIndex].kind = nextKind
+                    importedItems[matchingIndex].isNotebookNote = nextRole
+                    importedItems[matchingIndex].importedFileIdentity = identity
+                    importedItems[matchingIndex].importedFileBookmarkData = bookmarkData
+                        ?? importedItems[matchingIndex].importedFileBookmarkData
+                    importedItems[matchingIndex].importedFileLastKnownPath = url.path
+                    didChangeItems = true
+                }
+                continue
+            }
+
+            let item = StudyItem(
+                id: Self.makeImportedItemID(),
+                title: url.deletingPathExtension().lastPathComponent,
+                subtitle: url.lastPathComponent,
+                kind: StudyItemKind.detect(from: url),
+                urlPath: url.path,
+                importedFileIdentity: identity,
+                importedFileBookmarkData: bookmarkData,
+                importedFileLastKnownPath: url.path,
+                isSample: false,
+                isNotebookNote: isNotebookNote(url)
+            )
+            importedItems.append(item)
+            importedIDs.append(item.id)
+            didChangeItems = true
+        }
+
+        if roleChanged {
+            if let selectedItemID,
+               importedItems.first(where: { $0.id == selectedItemID })?.isNotebookNote == true {
+                self.selectedItemID = courseMaterials.first?.id ?? sampleItems.first?.id
+                readerLocationTitle = selectedMaterialItem.map(displayTitle)
+                restoreCurrentStudyLocation()
+            }
+            if let activeNotebookItemID,
+               importedItems.first(where: { $0.id == activeNotebookItemID })?.isNotebookNote == false {
+                self.activeNotebookItemID = courseNotebookItems.first?.id
+                noteText = noteText(for: activeNoteItem)
+            }
+            _ = sanitizeNoteSourceLinks()
+            invalidateAgentContext()
+        }
         courseDocumentSearchIndex.synchronize(allItems)
-        if selectsFirstImportedItem, let first = newItems.first {
+        let importedIDSet = Set(importedIDs)
+        let selectedItems = importedItems.filter { importedIDSet.contains($0.id) && !$0.isNotebookNote }
+        if selectsFirstImportedItem, let first = selectedItems.first {
             select(itemID: first.id)
-        } else {
+        } else if didChangeItems {
             save()
         }
-        let selectedIDs = Set(expandedURLs.map { "file:\($0.path)" })
-        return allItems.filter { selectedIDs.contains($0.id) && !$0.isNotebookNote }
+        return selectedItems
+    }
+
+    nonisolated private static func resolveImportedFileIdentity(at url: URL) -> ImportedFileIdentity? {
+        var fileStat = Darwin.stat()
+        guard url.withUnsafeFileSystemRepresentation({ path in
+            guard let path else { return false }
+            return Darwin.lstat(path, &fileStat) == 0
+        }) else {
+            return nil
+        }
+        return ImportedFileIdentity(
+            volumeID: UInt64(fileStat.st_dev),
+            fileID: UInt64(fileStat.st_ino),
+            birthTimeSeconds: Int64(fileStat.st_birthtimespec.tv_sec),
+            birthTimeNanoseconds: Int64(fileStat.st_birthtimespec.tv_nsec)
+        )
+    }
+
+    nonisolated private static func makeImportedFileBookmark(for url: URL) -> Data? {
+        let resourceKeys: Set<URLResourceKey> = [
+            .fileResourceIdentifierKey,
+            .volumeIdentifierKey,
+            .creationDateKey,
+        ]
+        return try? url.bookmarkData(
+            options: [.withSecurityScope],
+            includingResourceValuesForKeys: resourceKeys,
+            relativeTo: nil
+        )
+    }
+
+    nonisolated private static func resolveImportedFileBookmark(_ data: Data) -> ResolvedImportedFileBookmark? {
+        var isStale = false
+        guard let url = try? URL(
+            resolvingBookmarkData: data,
+            options: [.withSecurityScope, .withoutUI],
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        ) else {
+            return nil
+        }
+        return ResolvedImportedFileBookmark(url: url.standardizedFileURL, isStale: isStale)
+    }
+
+    nonisolated private static func makeImportedItemID() -> String {
+        "imported:\(UUID().uuidString.lowercased())"
     }
 
     private func makeCourseFolderImportDraft(rootURLs: [URL]) -> CourseFolderImportDraft {
@@ -2462,19 +2584,27 @@ final class WorkspaceStore: ObservableObject {
         let oldItem = importedItems[index]
         let oldID = oldItem.id
         let oldTitle = displayTitle(for: oldItem)
+        let wasActiveNotebook = activeNotebookItemID == oldID
         let newURL = renamedNotebookURL(in: oldURL.deletingLastPathComponent(), title: title, currentURL: oldURL)
 
         do {
             if oldURL.path != newURL.path {
                 try FileManager.default.moveItem(at: oldURL, to: newURL)
             }
-            let newID = "file:\(newURL.path)"
+            let resolvedIdentity = importedFileIdentityResolver(newURL)
+            let newID = oldID.hasPrefix("file:") && resolvedIdentity != nil
+                ? Self.makeImportedItemID()
+                : (oldID.hasPrefix("file:") ? "file:\(newURL.path)" : oldID)
             importedItems[index].id = newID
             importedItems[index].title = newURL.deletingPathExtension().lastPathComponent
             importedItems[index].subtitle = newURL.lastPathComponent
             importedItems[index].urlPath = newURL.path
-            if activeNotebookItemID == oldID {
-                activeNotebookItemID = newID
+            importedItems[index].importedFileIdentity = resolvedIdentity ?? oldItem.importedFileIdentity
+            importedItems[index].importedFileBookmarkData = Self.makeImportedFileBookmark(for: newURL)
+                ?? oldItem.importedFileBookmarkData
+            importedItems[index].importedFileLastKnownPath = newURL.path
+            replaceItemIDEverywhere(oldID, with: newID)
+            if wasActiveNotebook {
                 noteText = retitledMarkdown(noteText, from: oldTitle, to: importedItems[index].title)
                 persistCurrentNote()
             } else if let markdown = try? String(contentsOf: newURL, encoding: .utf8) {
@@ -2483,21 +2613,9 @@ final class WorkspaceStore: ObservableObject {
                     try updated.write(to: newURL, atomically: true, encoding: .utf8)
                 }
             }
-            if let cached = notesByItemID.removeValue(forKey: oldID) {
+            if let cached = notesByItemID[newID] {
                 notesByItemID[newID] = retitledMarkdown(cached, from: oldTitle, to: importedItems[index].title)
             }
-            for linkIndex in noteSourceLinks.indices where noteSourceLinks[linkIndex].noteItemID == oldID {
-                noteSourceLinks[linkIndex].noteItemID = newID
-            }
-            for sessionIndex in studySessions.indices {
-                studySessions[sessionIndex].focusItemIDs = studySessions[sessionIndex].focusItemIDs.map {
-                    $0 == oldID ? newID : $0
-                }
-            }
-            if selectedItemID == oldID {
-                selectedItemID = newID
-            }
-            replaceNavigationItemID(oldID, with: newID)
             courseDocumentSearchIndex.synchronize(allItems)
             save()
             notebookRenameDraft = nil
@@ -2514,8 +2632,14 @@ final class WorkspaceStore: ObservableObject {
         let notesDirectory = appOwnedFilesDirectory().appendingPathComponent("Notes", isDirectory: true)
         let fileName = "\(safeFileStem(title)).md"
         let url = notesDirectory.appendingPathComponent(fileName)
+        let existingIdentity = importedFileIdentityResolver(url)
 
-        if let index = importedItems.firstIndex(where: { $0.urlPath == url.path }) {
+        if let index = importedItems.firstIndex(where: { item in
+            if let existingIdentity {
+                return item.importedFileIdentity == existingIdentity
+            }
+            return item.importedFileIdentity == nil && item.urlPath == url.path
+        }) {
             importedItems[index].isNotebookNote = true
             removeLinksWhereSourceItemID(importedItems[index].id)
             select(itemID: importedItems[index].id)
@@ -2529,13 +2653,26 @@ final class WorkspaceStore: ObservableObject {
             if !FileManager.default.fileExists(atPath: url.path) {
                 try "# \(title)\n\n".write(to: url, atomically: true, encoding: .utf8)
             }
+            let identity = importedFileIdentityResolver(url)
+            if let identity {
+                for index in importedItems.indices
+                where importedItems[index].urlPath == url.path
+                    && importedItems[index].importedFileIdentity != nil
+                    && importedItems[index].importedFileIdentity != identity {
+                    importedItems[index].importedFileLastKnownPath = url.path
+                    importedItems[index].urlPath = nil
+                }
+            }
 
             let item = StudyItem(
-                id: "file:\(url.path)",
+                id: Self.makeImportedItemID(),
                 title: title,
                 subtitle: url.lastPathComponent,
                 kind: .markdown,
                 urlPath: url.path,
+                importedFileIdentity: identity,
+                importedFileBookmarkData: identity.flatMap { _ in Self.makeImportedFileBookmark(for: url) },
+                importedFileLastKnownPath: url.path,
                 isSample: false,
                 isNotebookNote: true
             )
@@ -2572,8 +2709,8 @@ final class WorkspaceStore: ObservableObject {
         do {
             try FileManager.default.createDirectory(at: notesDirectory, withIntermediateDirectories: true)
             let url = nextNotebookNoteURL(in: notesDirectory, title: title)
-            let item = StudyItem(
-                id: "file:\(url.path)",
+            var item = StudyItem(
+                id: Self.makeImportedItemID(),
                 title: url.deletingPathExtension().lastPathComponent,
                 subtitle: url.lastPathComponent,
                 kind: .markdown,
@@ -2583,6 +2720,11 @@ final class WorkspaceStore: ObservableObject {
             )
             let markdown = defaultNotebookNote(title: item.title, sourceItem: sourceItem)
             try markdown.write(to: url, atomically: true, encoding: .utf8)
+            item.importedFileIdentity = importedFileIdentityResolver(url)
+            item.importedFileBookmarkData = item.importedFileIdentity.flatMap { _ in
+                Self.makeImportedFileBookmark(for: url)
+            }
+            item.importedFileLastKnownPath = url.path
             importedItems.append(item)
             courseDocumentSearchIndex.synchronize(allItems)
             if let sourceItem {
@@ -4891,6 +5033,169 @@ final class WorkspaceStore: ObservableObject {
         let prefix = "# \(oldTitle)\n"
         guard markdown.hasPrefix(prefix) else { return markdown }
         return "# \(newTitle)\n" + String(markdown.dropFirst(prefix.count))
+    }
+
+    @discardableResult
+    private func resolvePersistedImportedFileBookmarks() -> Bool {
+        var changed = false
+        for index in importedItems.indices {
+            guard let storedIdentity = importedItems[index].importedFileIdentity else { continue }
+            let currentURL = importedItems[index].urlPath
+                .map { URL(fileURLWithPath: $0).standardizedFileURL }
+            let currentPathIsValid = currentURL.map {
+                importedFileIdentityResolver($0) == storedIdentity
+            } ?? false
+            let bookmarkResolution = currentPathIsValid
+                ? nil
+                : importedItems[index].importedFileBookmarkData.flatMap(Self.resolveImportedFileBookmark)
+            let fallbackPath = importedItems[index].urlPath
+                ?? importedItems[index].importedFileLastKnownPath
+            let candidateURL = (currentPathIsValid ? currentURL : nil)
+                ?? bookmarkResolution?.url
+                ?? fallbackPath.map { URL(fileURLWithPath: $0).standardizedFileURL }
+            guard let candidateURL,
+                  importedFileIdentityResolver(candidateURL) == storedIdentity else {
+                if let path = importedItems[index].urlPath {
+                    importedItems[index].importedFileLastKnownPath = path
+                    importedItems[index].urlPath = nil
+                    changed = true
+                }
+                continue
+            }
+
+            let nextPath = candidateURL.path
+            let nextTitle = candidateURL.deletingPathExtension().lastPathComponent
+            let nextSubtitle = candidateURL.lastPathComponent
+            let nextKind = StudyItemKind.detect(from: candidateURL)
+            if importedItems[index].urlPath != nextPath
+                || importedItems[index].importedFileLastKnownPath != nextPath
+                || importedItems[index].title != nextTitle
+                || importedItems[index].subtitle != nextSubtitle
+                || importedItems[index].kind != nextKind {
+                importedItems[index].urlPath = nextPath
+                importedItems[index].importedFileLastKnownPath = nextPath
+                importedItems[index].title = nextTitle
+                importedItems[index].subtitle = nextSubtitle
+                importedItems[index].kind = nextKind
+                changed = true
+            }
+            let resolvedThroughFallback = !currentPathIsValid && bookmarkResolution == nil
+            if importedItems[index].importedFileBookmarkData == nil
+                || bookmarkResolution?.isStale == true
+                || resolvedThroughFallback,
+               let refreshedBookmark = Self.makeImportedFileBookmark(for: candidateURL),
+               importedItems[index].importedFileBookmarkData != refreshedBookmark {
+                importedItems[index].importedFileBookmarkData = refreshedBookmark
+                changed = true
+            }
+        }
+        return changed
+    }
+
+    @discardableResult
+    private func migrateLegacyImportedItemIdentities() -> Bool {
+        var changed = false
+        var canonicalIDByIdentity: [ImportedFileIdentity: String] = [:]
+        for item in importedItems
+        where item.importedFileIdentity != nil && !item.id.hasPrefix("file:") {
+            if let identity = item.importedFileIdentity {
+                canonicalIDByIdentity[identity] = item.id
+            }
+        }
+
+        var migratedItems: [StudyItem] = []
+        migratedItems.reserveCapacity(importedItems.count)
+        for var item in importedItems {
+            let resolvedIdentity = item.importedFileIdentity
+                ?? item.url.flatMap(importedFileIdentityResolver)
+            if item.importedFileIdentity != resolvedIdentity {
+                item.importedFileIdentity = resolvedIdentity
+                changed = true
+            }
+            if item.importedFileLastKnownPath == nil, let path = item.urlPath {
+                item.importedFileLastKnownPath = path
+                changed = true
+            }
+            if resolvedIdentity != nil,
+               item.importedFileBookmarkData == nil,
+               let url = item.url,
+               let bookmark = Self.makeImportedFileBookmark(for: url) {
+                item.importedFileBookmarkData = bookmark
+                changed = true
+            }
+
+            if let resolvedIdentity,
+               let canonicalID = canonicalIDByIdentity[resolvedIdentity],
+               canonicalID != item.id {
+                replaceItemIDEverywhere(item.id, with: canonicalID)
+                changed = true
+                continue
+            }
+
+            if resolvedIdentity != nil, item.id.hasPrefix("file:") {
+                let oldID = item.id
+                item.id = Self.makeImportedItemID()
+                replaceItemIDEverywhere(oldID, with: item.id)
+                changed = true
+            }
+            if let resolvedIdentity {
+                canonicalIDByIdentity[resolvedIdentity] = item.id
+            }
+            migratedItems.append(item)
+        }
+        importedItems = migratedItems
+        return changed
+    }
+
+    private func replaceItemIDEverywhere(_ oldID: String, with newID: String) {
+        guard oldID != newID else { return }
+
+        if let oldNote = notesByItemID.removeValue(forKey: oldID), notesByItemID[newID] == nil {
+            notesByItemID[newID] = oldNote
+        }
+        if selectedItemID == oldID { selectedItemID = newID }
+        if activeNotebookItemID == oldID { activeNotebookItemID = newID }
+        if courseWorkspaceTargetItemID == oldID { courseWorkspaceTargetItemID = newID }
+
+        noteSourceLinks = NoteSourceRelations(
+            links: noteSourceLinks.map { link in
+                var copy = link
+                if copy.noteItemID == oldID { copy.noteItemID = newID }
+                if copy.sourceItemID == oldID { copy.sourceItemID = newID }
+                return copy
+            }
+        ).links
+
+        if var location = studyLocationsByItemID.removeValue(forKey: oldID) {
+            location.itemID = newID
+            if studyLocationsByItemID[newID] == nil {
+                studyLocationsByItemID[newID] = location
+            }
+        }
+        for index in studySessions.indices {
+            var seen = Set<String>()
+            studySessions[index].focusItemIDs = studySessions[index].focusItemIDs.compactMap { itemID in
+                let migratedID = itemID == oldID ? newID : itemID
+                return seen.insert(migratedID).inserted ? migratedID : nil
+            }
+        }
+
+        if stagedNoteDraft?.itemID == oldID, let value = stagedNoteDraft?.value {
+            stagedNoteDraft = (newID, value)
+        }
+        if notebookCreationDraft?.sourceItemID == oldID {
+            notebookCreationDraft?.sourceItemID = newID
+        }
+        if notebookRenameDraft?.itemID == oldID {
+            notebookRenameDraft?.itemID = newID
+        }
+
+        pendingNotePersistenceTasks.removeValue(forKey: oldID)?.cancel()
+        if var pending = pendingNotePersistenceByItemID.removeValue(forKey: oldID) {
+            pending.item.id = newID
+            scheduleNotePersistence(pending.markdown, for: pending.item)
+        }
+        replaceNavigationItemID(oldID, with: newID)
     }
 
     private func replaceNavigationItemID(_ oldID: String, with newID: String) {

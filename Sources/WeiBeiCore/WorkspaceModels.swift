@@ -720,21 +720,57 @@ public enum SelectionFloatingAgentPlacement {
     }
 }
 
+public struct ImportedFileIdentity: Codable, Hashable, Sendable {
+    public var volumeID: UInt64
+    public var fileID: UInt64
+    public var birthTimeSeconds: Int64
+    public var birthTimeNanoseconds: Int64
+
+    public init(
+        volumeID: UInt64,
+        fileID: UInt64,
+        birthTimeSeconds: Int64,
+        birthTimeNanoseconds: Int64
+    ) {
+        self.volumeID = volumeID
+        self.fileID = fileID
+        self.birthTimeSeconds = birthTimeSeconds
+        self.birthTimeNanoseconds = birthTimeNanoseconds
+    }
+}
+
 public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
     public var id: String
     public var title: String
     public var subtitle: String
     public var kind: StudyItemKind
     public var urlPath: String?
+    public var importedFileIdentity: ImportedFileIdentity?
+    public var importedFileBookmarkData: Data?
+    public var importedFileLastKnownPath: String?
     public var isSample: Bool
     public var isNotebookNote: Bool
 
-    public init(id: String, title: String, subtitle: String, kind: StudyItemKind, urlPath: String?, isSample: Bool, isNotebookNote: Bool = false) {
+    public init(
+        id: String,
+        title: String,
+        subtitle: String,
+        kind: StudyItemKind,
+        urlPath: String?,
+        importedFileIdentity: ImportedFileIdentity? = nil,
+        importedFileBookmarkData: Data? = nil,
+        importedFileLastKnownPath: String? = nil,
+        isSample: Bool,
+        isNotebookNote: Bool = false
+    ) {
         self.id = id
         self.title = title
         self.subtitle = subtitle
         self.kind = kind
         self.urlPath = urlPath
+        self.importedFileIdentity = importedFileIdentity
+        self.importedFileBookmarkData = importedFileBookmarkData
+        self.importedFileLastKnownPath = importedFileLastKnownPath ?? urlPath
         self.isSample = isSample
         self.isNotebookNote = isNotebookNote
     }
@@ -745,6 +781,9 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         case subtitle
         case kind
         case urlPath
+        case importedFileIdentity
+        case importedFileBookmarkData
+        case importedFileLastKnownPath
         case isSample
         case isNotebookNote
     }
@@ -756,6 +795,9 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         subtitle = try container.decode(String.self, forKey: .subtitle)
         kind = try container.decode(StudyItemKind.self, forKey: .kind)
         urlPath = try container.decodeIfPresent(String.self, forKey: .urlPath)
+        importedFileIdentity = try container.decodeIfPresent(ImportedFileIdentity.self, forKey: .importedFileIdentity)
+        importedFileBookmarkData = try container.decodeIfPresent(Data.self, forKey: .importedFileBookmarkData)
+        importedFileLastKnownPath = try container.decodeIfPresent(String.self, forKey: .importedFileLastKnownPath) ?? urlPath
         isSample = try container.decode(Bool.self, forKey: .isSample)
         isNotebookNote = try container.decodeIfPresent(Bool.self, forKey: .isNotebookNote) ?? false
     }
