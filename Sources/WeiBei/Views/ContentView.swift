@@ -6,9 +6,7 @@ struct ContentView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @FocusState private var focusedPane: PaneFocus?
     @FocusState private var topSearchFocused: Bool
-    @SceneStorage("libraryPaneWidth") private var libraryPaneWidthStorage: Double = 292
     @State private var floatingAgentExpanded = false
-    @State private var libraryDragStartWidth: CGFloat?
     @State private var windowIsFullScreen = false
 
     var body: some View {
@@ -22,25 +20,32 @@ struct ContentView: View {
                     )
 
                     ZStack(alignment: .top) {
-                        HStack(spacing: 0) {
-                            if store.showLibrary {
-                                SidebarView()
-                                    .frame(width: libraryWidth(in: geometry.size.width))
-                                    .focused($focusedPane, equals: .library)
-                                    .transition(WeiBeiTransition.sidePanel)
-                                    .zIndex(2)
+                        LayoutContentView()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(WeiBeiTheme.paper)
+                            .animation(WeiBeiMotion.layout, value: store.layout)
 
-                                libraryResizeHandle(totalWidth: geometry.size.width)
-                                    .transition(.opacity)
+                        if store.showLibrary {
+                            ZStack(alignment: .leading) {
+                                WeiBeiTheme.ink.opacity(0.035)
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        withAnimation(WeiBeiMotion.panel) {
+                                            store.toggleLibrary()
+                                        }
+                                    }
+
+                                CourseImmersiveDrawerView {
+                                    withAnimation(WeiBeiMotion.panel) {
+                                        store.toggleLibrary()
+                                    }
+                                }
+                                .transition(.move(edge: .leading).combined(with: .opacity))
                             }
-
-                            LayoutContentView()
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .transition(.opacity)
+                            .zIndex(35)
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(WeiBeiTheme.paper)
-                        .animation(WeiBeiMotion.layout, value: store.showLibrary)
-                        .animation(WeiBeiMotion.layout, value: store.layout)
 
                         if store.commandPalettePresented {
                             CommandPaletteView()
@@ -74,13 +79,19 @@ struct ContentView: View {
                 }
             }
             .background {
-                if !store.courseWorkspacePresented && showsGlobalFloatingAgent {
+                if !store.courseWorkspacePresented && store.showLibrary {
+                    EscapeKeyBridge {
+                        store.toggleLibrary()
+                    }
+                }
+
+                if !store.courseWorkspacePresented && !store.showLibrary && showsGlobalFloatingAgent {
                     EscapeKeyBridge {
                         store.dismissFloatingSelectionAgent()
                     }
                 }
 
-                if !store.courseWorkspacePresented && store.showReaderSearch {
+                if !store.courseWorkspacePresented && !store.showLibrary && store.showReaderSearch {
                     EscapeKeyBridge {
                         store.hideReaderSearch()
                         topSearchFocused = false
@@ -131,58 +142,6 @@ struct ContentView: View {
 
     private var topBarHeight: CGFloat {
         store.topBarVariant.height
-    }
-
-    private func libraryWidth(in totalWidth: CGFloat) -> CGFloat {
-        min(libraryMaximumWidth(in: totalWidth), max(libraryMinimumWidth, CGFloat(libraryPaneWidthStorage)))
-    }
-
-    private func libraryMaximumWidth(in totalWidth: CGFloat) -> CGFloat {
-        max(libraryMinimumWidth, min(430, totalWidth - WeiBeiSplitView.thickness - minimumContentWidthWithLibrary))
-    }
-
-    private var libraryMinimumWidth: CGFloat {
-        220
-    }
-
-    private var minimumContentWidthWithLibrary: CGFloat {
-        switch store.layout {
-        case .documentAgentNotes, .documentNotesAgent:
-            store.showRightPane ? 780 : 560
-        case .documentNotesSplit:
-            store.showRightPane ? 680 : 560
-        case .immersiveConversation, .immersiveWriting:
-            720
-        case .immersiveReading:
-            560
-        }
-    }
-
-    private func libraryResizeHandle(totalWidth: CGFloat) -> some View {
-        Rectangle()
-            .fill(Color.clear)
-            .frame(width: WeiBeiSplitView.thickness)
-            .overlay {
-                Rectangle()
-                    .fill(WeiBeiTheme.hairline.opacity(0.34))
-                    .frame(width: 1)
-            }
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        if libraryDragStartWidth == nil {
-                            libraryDragStartWidth = libraryWidth(in: totalWidth)
-                        }
-                        let startWidth = libraryDragStartWidth ?? libraryWidth(in: totalWidth)
-                        let nextWidth = startWidth + value.translation.width
-                        libraryPaneWidthStorage = Double(min(libraryMaximumWidth(in: totalWidth), max(220, nextWidth)))
-                    }
-                    .onEnded { _ in
-                        libraryDragStartWidth = nil
-                    }
-            )
-            .help(store.ui("拖动调整课程目录宽度", "Drag to resize the course index"))
     }
 
 }
@@ -588,8 +547,8 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var libraryButton: some View {
-        topIconButton("sidebar.left", help: store.showLibrary ? store.ui("收起课程目录", "Hide course index") : store.ui("打开课程目录", "Show course index"), active: store.showLibrary) {
-            withAnimation(WeiBeiMotion.layout) {
+        topIconButton("sidebar.left", help: store.showLibrary ? store.ui("收起课程抽屉", "Hide course drawer") : store.ui("打开课程抽屉", "Show course drawer"), active: store.showLibrary) {
+            withAnimation(WeiBeiMotion.panel) {
                 store.toggleLibrary()
             }
         }

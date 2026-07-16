@@ -1,0 +1,809 @@
+import SwiftUI
+import WeiBeiCore
+
+struct CourseRelationPaperView: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @Binding var lens: CourseRelationLens
+    let search: String
+    @Binding var selectedNoteID: String?
+    @Binding var selectedMaterialID: String?
+    let isCompact: Bool
+
+    @State private var scope: CourseRelationPaperScope?
+    @State private var mode: CourseRelationPaperMode = .viewing
+    @State private var hoveredNodeID: String?
+    @State private var dropTargetNoteID: String?
+
+    private var effectiveScope: CourseRelationPaperScope {
+        let candidate = scope
+            ?? store.activeCourseID.map(CourseRelationPaperScope.course)
+            ?? .all
+        if case .course(let courseID) = candidate,
+           !store.courses.contains(where: { $0.id == courseID }) {
+            return store.activeCourseID.map(CourseRelationPaperScope.course) ?? .all
+        }
+        return candidate
+    }
+
+    private var graphModel: CourseRelationGraphModel {
+        CourseRelationGraphModel(
+            materials: scopedMaterials.map { graphItem(for: $0, kind: .material) },
+            notes: scopedNotes.map { graphItem(for: $0, kind: .note) },
+            links: store.noteSourceLinks,
+            query: search,
+            selectedNoteID: selectedNoteID,
+            selectedMaterialID: selectedMaterialID,
+            showsOnlyUnlinked: effectiveScope == .unlinked,
+            maxVisibleNodes: isCompact ? 36 : 72
+        )
+    }
+
+    private var scopedMaterials: [StudyItem] {
+        switch effectiveScope {
+        case .course(let courseID):
+            return store.courseMaterials(in: courseID)
+        case .all:
+            return store.courseMaterials
+        case .unassigned:
+            return store.unassignedCourseMaterials
+        case .unlinked:
+            return store.courseMaterials
+        }
+    }
+
+    private var scopedNotes: [StudyItem] {
+        switch effectiveScope {
+        case .course(let courseID):
+            return store.courseNotes(in: courseID)
+        case .all:
+            return store.courseNotebookItems
+        case .unassigned:
+            return store.unassignedCourseNotes
+        case .unlinked:
+            return store.courseNotebookItems
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header(model: graphModel)
+            CourseHairline()
+            GeometryReader { proxy in
+                if isCompact || proxy.size.width < 660 {
+                    compactPaper(model: graphModel)
+                } else {
+                    graphPaper(model: graphModel, availableSize: proxy.size)
+                }
+            }
+        }
+        .background(WeiBeiTheme.paper.opacity(0.94))
+        .animation(WeiBeiMotion.hover, value: hoveredNodeID)
+        .animation(WeiBeiMotion.panel, value: effectiveScope.id)
+        .animation(WeiBeiMotion.panel, value: mode)
+    }
+
+    private func header(model: CourseRelationGraphModel) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(store.ui("课程关系台", "Course Relations"))
+                    .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 17, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.ink)
+                Text(headerDetail(model: model))
+                    .font(.system(size: 11))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 12)
+
+            scopeMenu
+
+            paperModeButton(.viewing)
+            paperModeButton(.managing)
+        }
+        .padding(.horizontal, 20)
+        .frame(height: 58)
+        .background(WeiBeiTheme.paperRaised.opacity(0.32))
+    }
+
+    private var scopeMenu: some View {
+        Menu {
+            Button(store.ui("全部关系", "All relations")) {
+                setScope(.all)
+            }
+            Button(store.ui("未归属课程", "No course")) {
+                setScope(.unassigned)
+            }
+            Button(store.ui("未建立关系", "Unlinked")) {
+                setScope(.unlinked)
+            }
+            Divider()
+            ForEach(store.courses) { course in
+                Button(course.title) {
+                    setScope(.course(course.id))
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(scopeTitle(effectiveScope))
+                    .font(.system(size: 12, weight: .semibold))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+            }
+            .foregroundStyle(WeiBeiTheme.ink)
+            .padding(.horizontal, 10)
+            .frame(height: 28)
+            .background(WeiBeiTheme.paperInset.opacity(0.34), in: Capsule())
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+    }
+
+    private func paperModeButton(_ candidate: CourseRelationPaperMode) -> some View {
+        Button {
+            mode = candidate
+        } label: {
+            Text(candidate.label(language: store.interfaceLanguage))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(mode == candidate ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+                .padding(.horizontal, 10)
+                .frame(height: 28)
+                .background(
+                    (mode == candidate ? WeiBeiTheme.cinnabarSoft : WeiBeiTheme.paperInset.opacity(0.20)),
+                    in: Capsule()
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func graphPaper(model: CourseRelationGraphModel, availableSize: CGSize) -> some View {
+        let paperSize = model.paperSize(forWidth: availableSize.width, compact: false)
+        let layout = model.layout(in: paperSize)
+
+        return ScrollView([.vertical, .horizontal]) {
+            ZStack(alignment: .topLeading) {
+                paperBackground(size: paperSize)
+
+                Canvas { context, _ in
+                    for placedEdge in layout.edges {
+                        let prominence = model.edgeProminence(placedEdge.edge, hoveredNodeID: hoveredNodeID)
+                        var path = Path()
+                        path.move(to: placedEdge.from)
+                        let spread = max(120, abs(placedEdge.to.x - placedEdge.from.x) * 0.45)
+                        path.addCurve(
+                            to: placedEdge.to,
+                            control1: CGPoint(x: placedEdge.from.x + spread, y: placedEdge.from.y),
+                            control2: CGPoint(x: placedEdge.to.x - spread, y: placedEdge.to.y)
+                        )
+                        let width = edgeWidth(placedEdge.edge, prominence: prominence)
+                        context.stroke(
+                            path,
+                            with: .color(edgeHazeColor(for: placedEdge.edge, prominence: prominence)),
+                            style: StrokeStyle(
+                                lineWidth: width + edgeHazeWidth(prominence),
+                                lineCap: .round,
+                                lineJoin: .round
+                            )
+                        )
+                        context.stroke(
+                            path,
+                            with: .color(edgeColor(for: placedEdge.edge, prominence: prominence)),
+                            style: StrokeStyle(
+                                lineWidth: width,
+                                lineCap: .round,
+                                lineJoin: .round
+                            )
+                        )
+                    }
+                }
+                .frame(width: paperSize.width, height: paperSize.height)
+                .allowsHitTesting(false)
+
+                paperColumnMark(store.ui("课程资料", "MATERIALS"))
+                    .position(x: min(max(150, paperSize.width * 0.28), paperSize.width * 0.42), y: 38)
+
+                paperColumnMark(store.ui("课程笔记", "NOTES"))
+                    .position(x: max(min(paperSize.width - 150, paperSize.width * 0.72), paperSize.width * 0.58), y: 38)
+
+                ForEach(layout.nodes) { placedNode in
+                    paperNode(placedNode.node, model: model)
+                        .frame(width: placedNode.frame.width, height: placedNode.frame.height)
+                        .position(x: placedNode.frame.midX, y: placedNode.frame.midY)
+                }
+
+                if model.hiddenNodeCount > 0 {
+                    hiddenCountBadge(model.hiddenNodeCount)
+                        .position(x: paperSize.width / 2, y: paperSize.height - 42)
+                }
+
+                if !model.hasContent {
+                    CourseEmptyState(
+                        title: store.ui("没有匹配内容", "No matching content"),
+                        detail: store.ui("换个筛选或搜索词，再看看这张关系纸面。", "Try another scope or search query."),
+                        systemImage: "point.3.connected.trianglepath.dotted"
+                    )
+                    .frame(width: min(420, paperSize.width - 80), height: 260)
+                    .position(x: paperSize.width / 2, y: paperSize.height / 2)
+                }
+            }
+            .frame(width: paperSize.width, height: paperSize.height)
+        }
+    }
+
+    private func compactPaper(model: CourseRelationGraphModel) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                if !model.hasContent {
+                    CourseEmptyState(
+                        title: store.ui("没有匹配关系", "No matching relations"),
+                        detail: store.ui("换个搜索词，或切到全部关系查看。", "Try another query or switch to all relations."),
+                        systemImage: "point.3.connected.trianglepath.dotted"
+                    )
+                    .frame(maxWidth: .infinity, minHeight: 320)
+                } else {
+                    compactSection(title: store.ui("资料", "Materials"), nodes: model.materials, model: model)
+                    compactSection(title: store.ui("笔记", "Notes"), nodes: model.notes, model: model)
+                    if model.hiddenNodeCount > 0 {
+                        hiddenCountBadge(model.hiddenNodeCount)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+            }
+            .padding(18)
+        }
+        .background(WeiBeiTheme.paperRaised.opacity(0.18))
+    }
+
+    private func compactSection(
+        title: String,
+        nodes: [CourseRelationGraphNode],
+        model: CourseRelationGraphModel
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .padding(.horizontal, 4)
+
+            VStack(spacing: 10) {
+                ForEach(nodes) { node in
+                    paperNode(node, model: model)
+                        .frame(maxWidth: .infinity, minHeight: 72)
+                }
+            }
+        }
+    }
+
+    private func paperNode(
+        _ node: CourseRelationGraphNode,
+        model: CourseRelationGraphModel
+    ) -> some View {
+        let prominence = model.nodeProminence(node, hoveredNodeID: hoveredNodeID)
+        let isDropTarget = node.kind == .note && dropTargetNoteID == node.itemID
+        let showsHandle = mode == .managing
+            && node.kind == .material
+            && hoveredNodeID == node.id
+
+        return CourseRelationPaperNodeView(
+            node: node,
+            prominence: prominence,
+            accent: nodeAccent(for: node),
+            mode: mode,
+            showsHandle: showsHandle,
+            isDropTarget: isDropTarget,
+            select: { select(node) },
+            open: { open(node) },
+            hover: { hovering in hoveredNodeID = hovering ? node.id : (hoveredNodeID == node.id ? nil : hoveredNodeID) }
+        )
+        .contextMenu {
+            relationMenu(for: node)
+        }
+        .modifier(CourseRelationDropModifier(
+            node: node,
+            enabled: mode == .managing,
+            dropTargetNoteID: $dropTargetNoteID,
+            addLink: addLink(materialID:noteID:)
+        ))
+    }
+
+    @ViewBuilder
+    private func relationMenu(for node: CourseRelationGraphNode) -> some View {
+        Button(node.kind == .material ? store.ui("打开资料", "Open material") : store.ui("打开笔记", "Open note")) {
+            open(node)
+        }
+        if mode == .managing {
+            Divider()
+            if node.kind == .material {
+                let linkedNotes = linkedNoteItems(for: node.itemID)
+                if linkedNotes.isEmpty {
+                    Text(store.ui("没有可删除关系", "No links to remove"))
+                } else {
+                    Menu(store.ui("删除已关联笔记", "Remove linked note")) {
+                        ForEach(linkedNotes) { note in
+                            Button(role: .destructive) {
+                                removeLink(noteID: note.id, materialID: node.itemID)
+                            } label: {
+                                Text(store.displayTitle(for: note))
+                            }
+                        }
+                    }
+                }
+            } else {
+                let linkedMaterials = linkedMaterialItems(for: node.itemID)
+                if linkedMaterials.isEmpty {
+                    Text(store.ui("没有可删除关系", "No links to remove"))
+                } else {
+                    Menu(store.ui("删除已关联资料", "Remove linked material")) {
+                        ForEach(linkedMaterials) { material in
+                            Button(role: .destructive) {
+                                removeLink(noteID: node.itemID, materialID: material.id)
+                            } label: {
+                                Text(store.displayTitle(for: material))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func paperColumnMark(_ title: String) -> some View {
+        Text(title)
+            .font(WeiBeiTypography.englishBrandFont(size: 9.5, weight: .semibold))
+            .tracking(1.2)
+            .foregroundStyle(WeiBeiTheme.tertiaryInk.opacity(0.72))
+    }
+
+    private func paperBackground(size: CGSize) -> some View {
+        ZStack(alignment: .topLeading) {
+            Rectangle()
+                .fill(WeiBeiTheme.paperRaised.opacity(0.22))
+            Circle()
+                .fill(WeiBeiTheme.cinnabarSoft.opacity(0.15))
+                .frame(width: 480, height: 480)
+                .blur(radius: 78)
+                .offset(x: size.width * 0.12, y: -20)
+            Circle()
+                .fill(WeiBeiTheme.paperInset.opacity(0.28))
+                .frame(width: 560, height: 560)
+                .blur(radius: 92)
+                .offset(x: size.width * 0.48, y: size.height * 0.30)
+            Circle()
+                .fill(WeiBeiTheme.secondaryInk.opacity(0.025))
+                .frame(width: 440, height: 440)
+                .blur(radius: 84)
+                .offset(x: size.width * 0.28, y: size.height * 0.56)
+            VStack {
+                Spacer()
+                Rectangle()
+                    .fill(
+                        LinearGradient(
+                            colors: [.clear, WeiBeiTheme.paper.opacity(0.82)],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    )
+                    .frame(height: 150)
+            }
+        }
+        .frame(width: size.width, height: size.height)
+    }
+
+    private func hiddenCountBadge(_ count: Int) -> some View {
+        Text(store.ui("其余 \(count) 项已收起", "\(count) more items hidden"))
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .padding(.horizontal, 12)
+            .frame(height: 30)
+            .background(WeiBeiTheme.paper.opacity(0.82), in: Capsule())
+            .overlay(
+                Capsule()
+                    .stroke(WeiBeiTheme.hairline.opacity(0.72), lineWidth: 1)
+            )
+    }
+
+    private func graphItem(for item: StudyItem, kind: CourseRelationGraphItem.Kind) -> CourseRelationGraphItem {
+        let membershipIDs = Set(store.courseIDs(for: item.id))
+        let courseTitles = store.courses
+            .filter { membershipIDs.contains($0.id) }
+            .prefix(2)
+            .map(\.title)
+        let membershipLabel = courseTitles.isEmpty
+            ? item.kind.label(language: store.interfaceLanguage)
+            : courseTitles.joined(separator: " / ")
+        return CourseRelationGraphItem(
+            itemID: item.id,
+            kind: kind,
+            title: store.displayTitle(for: item),
+            subtitle: store.displaySubtitle(for: item),
+            kindLabel: membershipLabel,
+            symbolName: kind == .note ? "note.text" : item.kind.systemImage
+        )
+    }
+
+    private func headerDetail(model: CourseRelationGraphModel) -> String {
+        let scopeText = scopeTitle(effectiveScope)
+        let relationText = store.ui("\(model.edges.count) 条可见关系", "\(model.edges.count) visible links")
+        let nodeText = store.ui("\(model.visibleNodes.count) 个节点", "\(model.visibleNodes.count) nodes")
+        let saveText = mode == .managing
+            ? " · \(store.ui("更改自动保存", "Changes save automatically"))"
+            : ""
+        if model.hiddenNodeCount > 0 {
+            return "\(scopeText) · \(relationText) · \(nodeText) · \(store.ui("其余 \(model.hiddenNodeCount) 项", "\(model.hiddenNodeCount) hidden"))\(saveText)"
+        }
+        return "\(scopeText) · \(relationText) · \(nodeText)\(saveText)"
+    }
+
+    private func scopeTitle(_ scope: CourseRelationPaperScope) -> String {
+        switch scope {
+        case .course(let courseID):
+            return store.courses.first(where: { $0.id == courseID })?.title ?? store.ui("当前课程", "Active course")
+        case .all:
+            return store.ui("全部关系", "All relations")
+        case .unassigned:
+            return store.ui("未归属课程", "No course")
+        case .unlinked:
+            return store.ui("未建立关系", "Unlinked")
+        }
+    }
+
+    private func setScope(_ nextScope: CourseRelationPaperScope) {
+        scope = nextScope
+        switch nextScope {
+        case .course(let courseID):
+            store.activateCourse(courseID)
+        case .all, .unassigned, .unlinked:
+            store.activateCourse(nil)
+        }
+    }
+
+    private func select(_ node: CourseRelationGraphNode) {
+        switch node.kind {
+        case .material:
+            lens = .materials
+            selectedMaterialID = node.itemID
+            selectedNoteID = nil
+        case .note:
+            lens = .notes
+            selectedNoteID = node.itemID
+            selectedMaterialID = nil
+        }
+    }
+
+    private func open(_ node: CourseRelationGraphNode) {
+        select(node)
+        switch node.kind {
+        case .material:
+            store.openCourseMaterial(node.itemID)
+        case .note:
+            store.openCourseNote(node.itemID)
+        }
+    }
+
+    private func addLink(materialID: String, noteID: String) {
+        guard mode == .managing,
+              scopedMaterials.contains(where: { $0.id == materialID }),
+              scopedNotes.contains(where: { $0.id == noteID })
+        else { return }
+        var linkedNoteIDs = Set(store.linkedNoteIDs(for: materialID))
+        guard linkedNoteIDs.insert(noteID).inserted else {
+            selectedMaterialID = materialID
+            selectedNoteID = noteID
+            return
+        }
+        store.setLinkedNoteIDs(linkedNoteIDs, for: materialID)
+        selectedMaterialID = materialID
+        selectedNoteID = noteID
+    }
+
+    private func removeLink(noteID: String, materialID: String) {
+        var linkedMaterialIDs = Set(store.linkedCourseSourceIDs(for: noteID))
+        linkedMaterialIDs.remove(materialID)
+        store.setLinkedCourseSourceIDs(linkedMaterialIDs, for: noteID)
+        selectedMaterialID = materialID
+        selectedNoteID = noteID
+    }
+
+    private func linkedNoteItems(for materialID: String) -> [StudyItem] {
+        let ids = Set(store.linkedNoteIDs(for: materialID))
+        return store.courseNotebookItems.filter { ids.contains($0.id) }
+    }
+
+    private func linkedMaterialItems(for noteID: String) -> [StudyItem] {
+        let ids = Set(store.linkedCourseSourceIDs(for: noteID))
+        return store.courseMaterials.filter { ids.contains($0.id) }
+    }
+
+    private func nodeAccent(for node: CourseRelationGraphNode) -> Color {
+        if case .course(let courseID) = effectiveScope,
+           let course = store.course(withID: courseID) {
+            return courseAccent(colorIndex: course.colorIndex)
+        }
+        guard let courseID = store.courseIDs(for: node.itemID).first,
+              let course = store.course(withID: courseID)
+        else {
+            return node.kind == .note ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk
+        }
+        return courseAccent(colorIndex: course.colorIndex)
+    }
+
+    private func edgeAccent(for edge: CourseRelationGraphEdge) -> Color {
+        if case .course(let courseID) = effectiveScope,
+           let course = store.course(withID: courseID) {
+            return courseAccent(colorIndex: course.colorIndex)
+        }
+        let materialCourseIDs = Set(store.courseIDs(for: edge.materialID))
+        let noteCourseIDs = Set(store.courseIDs(for: edge.noteID))
+        let sharedCourseIDs = materialCourseIDs.intersection(noteCourseIDs)
+        let courseID = store.courses.first(where: { sharedCourseIDs.contains($0.id) })?.id
+            ?? store.courses.first(where: { materialCourseIDs.contains($0.id) })?.id
+        guard let courseID,
+              let course = store.course(withID: courseID)
+        else {
+            return WeiBeiTheme.secondaryInk
+        }
+        return courseAccent(colorIndex: course.colorIndex)
+    }
+
+    private func courseAccent(colorIndex: Int) -> Color {
+        switch ((colorIndex % 4) + 4) % 4 {
+        case 0:
+            return WeiBeiTheme.cinnabar
+        case 1:
+            return WeiBeiTheme.moss
+        case 2:
+            return WeiBeiTheme.link
+        default:
+            return WeiBeiTheme.secondaryInk
+        }
+    }
+
+    private func edgeColor(
+        for edge: CourseRelationGraphEdge,
+        prominence: CourseRelationGraphProminence
+    ) -> Color {
+        let accent = edgeAccent(for: edge)
+        switch prominence {
+        case .focused:
+            return accent.opacity(0.70)
+        case .related:
+            return accent.opacity(0.46)
+        case .normal:
+            return accent.opacity(0.20)
+        case .mist:
+            return accent.opacity(0.040)
+        }
+    }
+
+    private func edgeHazeColor(
+        for edge: CourseRelationGraphEdge,
+        prominence: CourseRelationGraphProminence
+    ) -> Color {
+        let accent = edgeAccent(for: edge)
+        switch prominence {
+        case .focused:
+            return accent.opacity(0.075)
+        case .related:
+            return accent.opacity(0.050)
+        case .normal:
+            return accent.opacity(0.028)
+        case .mist:
+            return accent.opacity(0.012)
+        }
+    }
+
+    private func edgeWidth(_ edge: CourseRelationGraphEdge, prominence: CourseRelationGraphProminence) -> CGFloat {
+        let base = CGFloat(min(9, 4 + max(0, edge.count - 1) * 2))
+        switch prominence {
+        case .focused:
+            return base + 7
+        case .related:
+            return base + 3
+        case .normal:
+            return base
+        case .mist:
+            return max(1.2, base * 0.38)
+        }
+    }
+
+    private func edgeHazeWidth(_ prominence: CourseRelationGraphProminence) -> CGFloat {
+        switch prominence {
+        case .focused:
+            return 18
+        case .related:
+            return 13
+        case .normal:
+            return 9
+        case .mist:
+            return 5
+        }
+    }
+}
+
+private enum CourseRelationPaperMode: Equatable {
+    case viewing
+    case managing
+
+    func label(language: WeiBeiInterfaceLanguage) -> String {
+        switch self {
+        case .viewing:
+            return language.text("查看", "View")
+        case .managing:
+            return language.text("管理", "Manage")
+        }
+    }
+}
+
+private struct CourseRelationPaperNodeView: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let node: CourseRelationGraphNode
+    let prominence: CourseRelationGraphProminence
+    let accent: Color
+    let mode: CourseRelationPaperMode
+    let showsHandle: Bool
+    let isDropTarget: Bool
+    let select: () -> Void
+    let open: () -> Void
+    let hover: (Bool) -> Void
+
+    var body: some View {
+        HStack(spacing: 9) {
+            Capsule()
+                .fill(markerColor)
+                .frame(width: prominence == .focused ? 3 : 2, height: 30)
+
+            Button(action: select) {
+                HStack(spacing: 9) {
+                    Image(systemName: node.item.symbolName)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(iconColor)
+                        .frame(width: 20)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(node.item.title)
+                            .font(.system(size: 13.5, weight: .semibold))
+                            .foregroundStyle(WeiBeiTheme.ink)
+                            .lineLimit(1)
+                        Text(detailText)
+                            .font(.system(size: 11))
+                            .foregroundStyle(WeiBeiTheme.secondaryInk)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 6)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if showsHandle {
+                handle
+            } else {
+                Button(action: open) {
+                    Image(systemName: "arrow.up.forward")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.plain)
+                .opacity(prominence == .mist ? 0.12 : 0.72)
+            }
+        }
+        .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .contentShape(Rectangle())
+        .opacity(opacity)
+        .background(nodeBackground, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .overlay(alignment: .bottomLeading) {
+            Rectangle()
+                .fill(underlineColor)
+                .frame(width: prominence == .focused ? 76 : 42, height: isDropTarget ? 2 : 1)
+                .padding(.leading, 12)
+        }
+        .onHover(perform: hover)
+    }
+
+    private var detailText: String {
+        let countText = node.relationCount == 0 ? "0" : "\(node.relationCount)"
+        return "\(node.item.kindLabel) · \(countText)"
+    }
+
+    private var handle: some View {
+        HStack(spacing: 5) {
+            Image(systemName: "smallcircle.filled.circle")
+                .font(.system(size: 12, weight: .bold))
+            Text(store.ui("拖到笔记", "Drag to note"))
+                .font(.system(size: 10.5, weight: .semibold))
+        }
+        .foregroundStyle(WeiBeiTheme.onCinnabar)
+        .padding(.horizontal, 8)
+        .frame(height: 26)
+        .background(WeiBeiTheme.cinnabar.opacity(0.86), in: Capsule())
+        .draggable(node.itemID)
+    }
+
+    private var iconColor: Color {
+        prominence == .mist ? WeiBeiTheme.tertiaryInk : accent
+    }
+
+    private var nodeBackground: Color {
+        if isDropTarget { return accent.opacity(0.14) }
+        switch prominence {
+        case .focused:
+            return accent.opacity(0.080)
+        case .related:
+            return accent.opacity(0.042)
+        case .normal:
+            return WeiBeiTheme.paperRaised.opacity(0.10)
+        case .mist:
+            return Color.clear
+        }
+    }
+
+    private var markerColor: Color {
+        if isDropTarget { return accent.opacity(0.92) }
+        switch prominence {
+        case .focused:
+            return accent.opacity(0.88)
+        case .related:
+            return accent.opacity(0.48)
+        case .normal:
+            return WeiBeiTheme.hairline.opacity(0.78)
+        case .mist:
+            return WeiBeiTheme.hairline.opacity(0.20)
+        }
+    }
+
+    private var underlineColor: Color {
+        if isDropTarget { return accent.opacity(0.82) }
+        switch prominence {
+        case .focused:
+            return accent.opacity(0.54)
+        case .related:
+            return accent.opacity(0.26)
+        case .normal:
+            return WeiBeiTheme.hairline.opacity(0.48)
+        case .mist:
+            return WeiBeiTheme.hairline.opacity(0.12)
+        }
+    }
+
+    private var opacity: Double {
+        switch prominence {
+        case .focused:
+            return 1
+        case .related:
+            return 0.92
+        case .normal:
+            return 0.82
+        case .mist:
+            return 0.28
+        }
+    }
+}
+
+private struct CourseRelationDropModifier: ViewModifier {
+    let node: CourseRelationGraphNode
+    let enabled: Bool
+    @Binding var dropTargetNoteID: String?
+    let addLink: (String, String) -> Void
+
+    func body(content: Content) -> some View {
+        if enabled, node.kind == .note {
+            content.dropDestination(
+                for: String.self,
+                action: { materialIDs, _ in
+                    guard let materialID = materialIDs.first else { return false }
+                    addLink(materialID, node.itemID)
+                    return true
+                },
+                isTargeted: { targeted in
+                    dropTargetNoteID = targeted ? node.itemID : nil
+                }
+            )
+        } else {
+            content
+        }
+    }
+}

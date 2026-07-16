@@ -14,7 +14,7 @@ enum CourseWorkspacePage: String, CaseIterable, Identifiable {
         case .overview:
             language.text("概览", "Overview")
         case .relations:
-            language.text("课程内容", "Course Content")
+            language.text("关系台", "Relations")
         case .records:
             language.text("学习记录", "Learning Records")
         }
