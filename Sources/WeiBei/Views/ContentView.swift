@@ -28,12 +28,7 @@ struct ContentView: View {
                         ZStack(alignment: .leading) {
                             if store.showLibrary {
                                 WeiBeiTheme.ink.opacity(0.035)
-                                    .contentShape(Rectangle())
-                                    .onTapGesture {
-                                        withAnimation(WeiBeiMotion.layout) {
-                                            store.toggleLibrary()
-                                        }
-                                    }
+                                    .allowsHitTesting(false)
                                     .transition(.opacity)
 
                                 CourseImmersiveDrawerView {
@@ -45,7 +40,6 @@ struct ContentView: View {
                             }
                         }
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .allowsHitTesting(store.showLibrary)
                         .zIndex(35)
 
                         if store.commandPalettePresented {
