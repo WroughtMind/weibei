@@ -89,7 +89,7 @@ struct CourseRelationGraphEdge: Identifiable, Hashable {
     }
 }
 
-enum CourseRelationGraphProminence {
+enum CourseRelationGraphProminence: Equatable {
     case focused
     case related
     case normal
@@ -342,17 +342,60 @@ struct CourseRelationGraphModel {
         }
         let placedNodes = materialNodes + noteNodes
         let framesByID = Dictionary(uniqueKeysWithValues: placedNodes.map { ($0.id, $0.frame) })
+        let materialFanOffsets = Self.fanOffsets(
+            groupedEdges: Dictionary(grouping: edges, by: { $0.materialID }),
+            oppositeNodeID: { $0.noteNodeID },
+            framesByID: framesByID
+        )
+        let noteFanOffsets = Self.fanOffsets(
+            groupedEdges: Dictionary(grouping: edges, by: { $0.noteID }),
+            oppositeNodeID: { $0.materialNodeID },
+            framesByID: framesByID
+        )
         let placedEdges = edges.compactMap { edge -> CourseRelationPlacedEdge? in
             guard let materialFrame = framesByID[edge.materialNodeID],
                   let noteFrame = framesByID[edge.noteNodeID]
             else { return nil }
             return CourseRelationPlacedEdge(
                 edge: edge,
-                from: CGPoint(x: materialFrame.maxX - 6, y: materialFrame.midY),
-                to: CGPoint(x: noteFrame.minX + 6, y: noteFrame.midY)
+                from: CGPoint(
+                    x: materialFrame.maxX - 2,
+                    y: materialFrame.midY + materialFanOffsets[edge.id, default: 0]
+                ),
+                to: CGPoint(
+                    x: noteFrame.minX + 2,
+                    y: noteFrame.midY + noteFanOffsets[edge.id, default: 0]
+                )
             )
         }
         return CourseRelationGraphLayout(nodes: placedNodes, edges: placedEdges, size: size)
+    }
+
+    private static func fanOffsets(
+        groupedEdges: [String: [CourseRelationGraphEdge]],
+        oppositeNodeID: (CourseRelationGraphEdge) -> String,
+        framesByID: [String: CGRect]
+    ) -> [String: CGFloat] {
+        var offsets: [String: CGFloat] = [:]
+        for groupedEdge in groupedEdges.values {
+            let sortedEdges = groupedEdge.sorted { lhs, rhs in
+                let lhsY = framesByID[oppositeNodeID(lhs)]?.midY ?? 0
+                let rhsY = framesByID[oppositeNodeID(rhs)]?.midY ?? 0
+                if lhsY == rhsY { return lhs.id < rhs.id }
+                return lhsY < rhsY
+            }
+            guard sortedEdges.count > 1 else {
+                if let edge = sortedEdges.first { offsets[edge.id] = 0 }
+                continue
+            }
+            let maximumSpan: CGFloat = 40
+            let step = min(11, maximumSpan / CGFloat(sortedEdges.count - 1))
+            let firstOffset = -step * CGFloat(sortedEdges.count - 1) / 2
+            for (index, edge) in sortedEdges.enumerated() {
+                offsets[edge.id] = firstOffset + CGFloat(index) * step
+            }
+        }
+        return offsets
     }
 
     private static func prioritizedItems(

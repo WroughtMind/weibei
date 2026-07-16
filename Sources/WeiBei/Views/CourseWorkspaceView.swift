@@ -3,7 +3,6 @@ import SwiftUI
 import WeiBeiCore
 
 enum CourseWorkspacePage: String, CaseIterable, Identifiable {
-    case overview
     case relations
     case records
 
@@ -11,10 +10,8 @@ enum CourseWorkspacePage: String, CaseIterable, Identifiable {
 
     func label(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
-        case .overview:
-            language.text("概览", "Overview")
         case .relations:
-            language.text("关系台", "Relations")
+            language.text("资料与笔记", "Materials & Notes")
         case .records:
             language.text("学习记录", "Learning Records")
         }
@@ -39,7 +36,7 @@ enum CourseRelationLens: String, CaseIterable, Identifiable {
 
 struct CourseWorkspaceView: View {
     @EnvironmentObject private var store: WorkspaceStore
-    @State private var page: CourseWorkspacePage = .overview
+    @State private var page: CourseWorkspacePage = .relations
     @State private var relationLens: CourseRelationLens = .notes
     @State private var selectedNoteID: String?
     @State private var selectedMaterialID: String?
@@ -114,28 +111,6 @@ struct CourseWorkspaceView: View {
     @ViewBuilder
     private func pageContent(size: CGSize) -> some View {
         switch page {
-        case .overview:
-            CourseOverviewView(
-                showUnlinkedNotes: {
-                    relationLens = .notes
-                    selectedNoteID = store.courseNotesWithoutSourceLinks.first?.id
-                    page = .relations
-                },
-                showUnlinkedMaterials: {
-                    relationLens = .materials
-                    selectedMaterialID = store.courseMaterialsWithoutNoteLinks.first?.id
-                    page = .relations
-                },
-                showMaterialsWithoutReadingPosition: {
-                    relationLens = .materials
-                    selectedMaterialID = store.courseMaterialsWithoutReadingPosition.first?.id
-                    page = .relations
-                },
-                showRecords: { sessionID in
-                    selectedSessionID = sessionID ?? store.recentCourseSessions.first?.id
-                    page = .records
-                }
-            )
         case .relations:
             CourseRelationsView(
                 lens: $relationLens,
@@ -173,8 +148,8 @@ struct CourseWorkspaceView: View {
 
     private func prepareInitialRoute() {
         switch store.courseWorkspaceDestination {
-        case .overview:
-            page = .overview
+        case .relations:
+            page = .relations
         case .materials:
             relationLens = .materials
             selectedMaterialID = store.courseWorkspaceTargetItemID ?? store.courseMaterials.first?.id
@@ -210,7 +185,7 @@ private struct CourseNewNoteSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(store.ui("新建课程笔记", "New course note"))
                     .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 20, weight: .semibold))
-                Text(store.ui("新笔记会进入课程首页，并保存到本地笔记目录。", "The note will appear in the course home and save locally."))
+                Text(store.ui("新笔记会进入当前课程的笔记栏，并保存到本地笔记目录。", "The note will appear in the current course and save locally."))
                     .font(.system(size: 12))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
@@ -416,12 +391,12 @@ struct CourseWorkspaceHeader: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(Text(store.ui("关闭课程首页并返回工作台", "Close course home")))
+            .accessibilityLabel(Text(store.ui("关闭资料关系台并返回工作台", "Close course relations")))
 
             VStack(alignment: .leading, spacing: 0) {
-                Text(store.ui("课程首页", "Course Home"))
+                Text(store.ui("资料关系台", "Course Relations"))
                     .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 20, weight: .semibold))
-                Text(store.interfaceLanguage == .chinese ? "COURSE HOME" : "WEIBEI")
+                Text(store.interfaceLanguage == .chinese ? "MATERIALS × NOTES" : "WEIBEI")
                     .font(WeiBeiTypography.englishBrandFont(size: 8.5, weight: .semibold))
                     .tracking(0.9)
                     .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.74))
@@ -468,18 +443,16 @@ struct CourseWorkspaceHeader: View {
                 .help(saveError)
             }
 
-            if page != .overview {
-                HStack(spacing: 7) {
-                    Image(systemName: "magnifyingglass")
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                    TextField(searchPrompt, text: $search)
-                        .textFieldStyle(.plain)
-                        .focused(searchFocused)
-                        .font(.system(size: 12))
-                }
-                .weibeiInputSurface(active: searchFocused.wrappedValue, height: 30)
-                .frame(width: isCompact ? 160 : 220)
+            HStack(spacing: 7) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                TextField(searchPrompt, text: $search)
+                    .textFieldStyle(.plain)
+                    .focused(searchFocused)
+                    .font(.system(size: 12))
             }
+            .weibeiInputSurface(active: searchFocused.wrappedValue, height: 30)
+            .frame(width: isCompact ? 160 : 220)
 
             Menu {
                 Button(action: importCourseFolder) {
@@ -515,8 +488,6 @@ struct CourseWorkspaceHeader: View {
 
     private var searchPrompt: String {
         switch page {
-        case .overview:
-            store.ui("搜索课程", "Search course")
         case .relations:
             store.ui("搜索课程内容", "Search course content")
         case .records:

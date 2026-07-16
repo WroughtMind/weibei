@@ -13,6 +13,14 @@ struct CourseRelationPaperView: View {
     @State private var mode: CourseRelationPaperMode = .viewing
     @State private var hoveredNodeID: String?
     @State private var dropTargetNoteID: String?
+    @State private var pendingConnection: CourseRelationConnectionAnchor?
+    @State private var zoomScale: CGFloat = 1
+    @State private var zoomGestureStartScale: CGFloat?
+    @State private var fitScrollRequest = 0
+
+    private var minimumZoomScale: CGFloat { 0.2 }
+    private var maximumZoomScale: CGFloat { 1.6 }
+    private static let paperOriginID = "course-relation-paper-origin"
 
     private var effectiveScope: CourseRelationPaperScope {
         let candidate = scope
@@ -78,21 +86,40 @@ struct CourseRelationPaperView: View {
         }
         .background(WeiBeiTheme.paper.opacity(0.94))
         .animation(WeiBeiMotion.hover, value: hoveredNodeID)
+        .animation(WeiBeiMotion.hover, value: pendingConnection)
         .animation(WeiBeiMotion.panel, value: effectiveScope.id)
         .animation(WeiBeiMotion.panel, value: mode)
+        .onChange(of: mode) { _, nextMode in
+            if nextMode != .managing { pendingConnection = nil }
+        }
+        .onChange(of: effectiveScope.id) { _, _ in
+            pendingConnection = nil
+        }
+        .onChange(of: search) { _, _ in
+            pendingConnection = nil
+        }
     }
 
     private func header(model: CourseRelationGraphModel) -> some View {
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(store.ui("课程关系台", "Course Relations"))
+            VStack(alignment: .leading, spacing: 1) {
+                Text(store.ui("资料与笔记的长期关联", "Long-term material–note links"))
                     .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 17, weight: .semibold))
                     .foregroundStyle(WeiBeiTheme.ink)
-                Text(headerDetail(model: model))
-                    .font(.system(size: 11))
+                Text(store.ui(
+                    "这里管理资料与笔记的长期关联，不表示当前打开状态。",
+                    "This manages long-term links between materials and notes, not what is currently open."
+                ))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .lineLimit(isCompact ? 2 : 1)
+                    .minimumScaleFactor(0.84)
+                Text(headerDetail(model: model))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
                     .lineLimit(1)
             }
+            .layoutPriority(1)
 
             Spacer(minLength: 12)
 
@@ -102,7 +129,7 @@ struct CourseRelationPaperView: View {
             paperModeButton(.managing)
         }
         .padding(.horizontal, 20)
-        .frame(height: 58)
+        .frame(height: 72)
         .background(WeiBeiTheme.paperRaised.opacity(0.32))
     }
 
@@ -161,73 +188,284 @@ struct CourseRelationPaperView: View {
         let paperSize = model.paperSize(forWidth: availableSize.width, compact: false)
         let layout = model.layout(in: paperSize)
 
-        return ScrollView([.vertical, .horizontal]) {
-            ZStack(alignment: .topLeading) {
-                paperBackground(size: paperSize)
+        return ZStack(alignment: .topTrailing) {
+            ScrollViewReader { scrollProxy in
+                ScrollView([.vertical, .horizontal]) {
+                    ZStack(alignment: .topLeading) {
+                        paperBackground(size: paperSize)
 
-                Canvas { context, _ in
-                    for placedEdge in layout.edges {
-                        let prominence = model.edgeProminence(placedEdge.edge, hoveredNodeID: hoveredNodeID)
-                        var path = Path()
-                        path.move(to: placedEdge.from)
-                        let spread = max(120, abs(placedEdge.to.x - placedEdge.from.x) * 0.45)
-                        path.addCurve(
-                            to: placedEdge.to,
-                            control1: CGPoint(x: placedEdge.from.x + spread, y: placedEdge.from.y),
-                            control2: CGPoint(x: placedEdge.to.x - spread, y: placedEdge.to.y)
-                        )
-                        let width = edgeWidth(placedEdge.edge, prominence: prominence)
-                        context.stroke(
-                            path,
-                            with: .color(edgeHazeColor(for: placedEdge.edge, prominence: prominence)),
-                            style: StrokeStyle(
-                                lineWidth: width + edgeHazeWidth(prominence),
-                                lineCap: .round,
-                                lineJoin: .round
+                    Canvas { context, _ in
+                        for placedEdge in layout.edges {
+                            let prominence = model.edgeProminence(placedEdge.edge, hoveredNodeID: hoveredNodeID)
+                            let path = edgePath(for: placedEdge)
+                            let width = edgeWidth(placedEdge.edge, prominence: prominence)
+                            context.stroke(
+                                path,
+                                with: .color(edgeHazeColor(for: placedEdge.edge, prominence: prominence)),
+                                style: StrokeStyle(
+                                    lineWidth: width + edgeHazeWidth(prominence),
+                                    lineCap: .round,
+                                    lineJoin: .round
+                                )
                             )
-                        )
-                        context.stroke(
-                            path,
-                            with: .color(edgeColor(for: placedEdge.edge, prominence: prominence)),
-                            style: StrokeStyle(
-                                lineWidth: width,
-                                lineCap: .round,
-                                lineJoin: .round
+                        }
+
+                        let orderedEdges = layout.edges.sorted { lhs, rhs in
+                            let lhsProminence = model.edgeProminence(lhs.edge, hoveredNodeID: hoveredNodeID)
+                            let rhsProminence = model.edgeProminence(rhs.edge, hoveredNodeID: hoveredNodeID)
+                            let lhsOrder = edgeDrawingOrder(lhsProminence)
+                            let rhsOrder = edgeDrawingOrder(rhsProminence)
+                            if lhsOrder == rhsOrder { return lhs.edge.id < rhs.edge.id }
+                            return lhsOrder < rhsOrder
+                        }
+                        for placedEdge in orderedEdges {
+                            let prominence = model.edgeProminence(placedEdge.edge, hoveredNodeID: hoveredNodeID)
+                            let path = edgePath(for: placedEdge)
+                            let width = edgeWidth(placedEdge.edge, prominence: prominence)
+                            context.stroke(
+                                path,
+                                with: edgeShading(
+                                    for: placedEdge.edge,
+                                    prominence: prominence,
+                                    from: placedEdge.from,
+                                    to: placedEdge.to
+                                ),
+                                style: StrokeStyle(
+                                    lineWidth: width,
+                                    lineCap: .round,
+                                    lineJoin: .round
+                                )
                             )
+                            if prominence == .focused || prominence == .related {
+                                context.stroke(
+                                    path,
+                                    with: .color(edgeThreadColor(prominence: prominence)),
+                                    style: StrokeStyle(
+                                        lineWidth: prominence == .focused ? 1.4 : 0.8,
+                                        lineCap: .round,
+                                        lineJoin: .round
+                                    )
+                                )
+                            }
+                        }
+                    }
+                    .frame(width: paperSize.width, height: paperSize.height)
+                    .allowsHitTesting(false)
+
+                    paperColumnMark(store.ui("课程资料", "MATERIALS"))
+                        .position(x: min(max(150, paperSize.width * 0.28), paperSize.width * 0.42), y: 38)
+
+                    paperColumnMark(store.ui("课程笔记", "NOTES"))
+                        .position(x: max(min(paperSize.width - 150, paperSize.width * 0.72), paperSize.width * 0.58), y: 38)
+
+                    ForEach(layout.nodes) { placedNode in
+                        paperNode(placedNode.node, model: model)
+                            .frame(width: placedNode.frame.width, height: placedNode.frame.height)
+                            .position(x: placedNode.frame.midX, y: placedNode.frame.midY)
+                    }
+
+                    if model.hiddenNodeCount > 0 {
+                        hiddenCountBadge(model.hiddenNodeCount)
+                            .position(x: paperSize.width / 2, y: paperSize.height - 42)
+                    }
+
+                    if !model.hasContent {
+                        CourseEmptyState(
+                            title: store.ui("没有匹配内容", "No matching content"),
+                            detail: store.ui("换个筛选或搜索词，再看看这张关系纸面。", "Try another scope or search query."),
+                            systemImage: "point.3.connected.trianglepath.dotted"
                         )
+                        .frame(width: min(420, paperSize.width - 80), height: 260)
+                        .position(x: paperSize.width / 2, y: paperSize.height / 2)
+                    }
+                    }
+                    .frame(width: paperSize.width, height: paperSize.height)
+                    .scaleEffect(zoomScale, anchor: .topLeading)
+                    .frame(
+                        width: paperSize.width * zoomScale,
+                        height: paperSize.height * zoomScale,
+                        alignment: .topLeading
+                    )
+                    .id(Self.paperOriginID)
+                }
+                .simultaneousGesture(magnificationGesture)
+                .onChange(of: fitScrollRequest) { _, _ in
+                    DispatchQueue.main.async {
+                        withAnimation(WeiBeiMotion.hover) {
+                            scrollProxy.scrollTo(Self.paperOriginID, anchor: .topLeading)
+                        }
                     }
                 }
-                .frame(width: paperSize.width, height: paperSize.height)
-                .allowsHitTesting(false)
-
-                paperColumnMark(store.ui("课程资料", "MATERIALS"))
-                    .position(x: min(max(150, paperSize.width * 0.28), paperSize.width * 0.42), y: 38)
-
-                paperColumnMark(store.ui("课程笔记", "NOTES"))
-                    .position(x: max(min(paperSize.width - 150, paperSize.width * 0.72), paperSize.width * 0.58), y: 38)
-
-                ForEach(layout.nodes) { placedNode in
-                    paperNode(placedNode.node, model: model)
-                        .frame(width: placedNode.frame.width, height: placedNode.frame.height)
-                        .position(x: placedNode.frame.midX, y: placedNode.frame.midY)
-                }
-
-                if model.hiddenNodeCount > 0 {
-                    hiddenCountBadge(model.hiddenNodeCount)
-                        .position(x: paperSize.width / 2, y: paperSize.height - 42)
-                }
-
-                if !model.hasContent {
-                    CourseEmptyState(
-                        title: store.ui("没有匹配内容", "No matching content"),
-                        detail: store.ui("换个筛选或搜索词，再看看这张关系纸面。", "Try another scope or search query."),
-                        systemImage: "point.3.connected.trianglepath.dotted"
-                    )
-                    .frame(width: min(420, paperSize.width - 80), height: 260)
-                    .position(x: paperSize.width / 2, y: paperSize.height / 2)
-                }
             }
-            .frame(width: paperSize.width, height: paperSize.height)
+
+            zoomControls(paperSize: paperSize, availableSize: availableSize)
+                .padding(14)
+        }
+    }
+
+    private var magnificationGesture: some Gesture {
+        MagnificationGesture()
+            .onChanged { magnification in
+                let startingScale = zoomGestureStartScale ?? zoomScale
+                if zoomGestureStartScale == nil {
+                    zoomGestureStartScale = zoomScale
+                }
+                zoomScale = clampedZoomScale(startingScale * magnification)
+            }
+            .onEnded { _ in
+                zoomScale = clampedZoomScale(zoomScale)
+                zoomGestureStartScale = nil
+            }
+    }
+
+    private func zoomControls(paperSize: CGSize, availableSize: CGSize) -> some View {
+        HStack(spacing: 0) {
+            Button {
+                setZoomScale(zoomScale - 0.1)
+            } label: {
+                Image(systemName: "minus")
+                    .font(.system(size: 10.5, weight: .bold))
+                    .frame(width: 30, height: 28)
+            }
+            .buttonStyle(.plain)
+            .disabled(zoomScale <= minimumZoomScale + 0.001)
+            .help(store.ui("缩小画布", "Zoom out"))
+
+            zoomControlDivider
+
+            Text("\(Int((zoomScale * 100).rounded()))%")
+                .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .frame(width: 48, height: 28)
+                .accessibilityLabel(store.ui("当前缩放 \(Int((zoomScale * 100).rounded()))%", "Current zoom \(Int((zoomScale * 100).rounded())) percent"))
+
+            zoomControlDivider
+
+            Button {
+                setZoomScale(zoomScale + 0.1)
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 10.5, weight: .bold))
+                    .frame(width: 30, height: 28)
+            }
+            .buttonStyle(.plain)
+            .disabled(zoomScale >= maximumZoomScale - 0.001)
+            .help(store.ui("放大画布", "Zoom in"))
+
+            zoomControlDivider
+
+            Button {
+                setZoomScale(fitZoomScale(paperSize: paperSize, availableSize: availableSize))
+                fitScrollRequest += 1
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 9.5, weight: .semibold))
+                    Text(store.ui("适合", "Fit"))
+                        .font(.system(size: 10.5, weight: .semibold))
+                }
+                .padding(.horizontal, 9)
+                .frame(height: 28)
+            }
+            .buttonStyle(.plain)
+            .help(store.ui("完整显示关系画布", "Fit the relationship canvas"))
+        }
+        .foregroundStyle(WeiBeiTheme.ink)
+        .background(WeiBeiTheme.paper.opacity(0.94), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                .stroke(WeiBeiTheme.hairline.opacity(0.74), lineWidth: 1)
+        )
+        .shadow(color: WeiBeiTheme.ink.opacity(0.055), radius: 8, y: 3)
+    }
+
+    private var zoomControlDivider: some View {
+        Rectangle()
+            .fill(WeiBeiTheme.hairline.opacity(0.64))
+            .frame(width: 1, height: 15)
+    }
+
+    private func fitZoomScale(paperSize: CGSize, availableSize: CGSize) -> CGFloat {
+        let horizontalScale = max(1, availableSize.width - 32) / max(1, paperSize.width)
+        let verticalScale = max(1, availableSize.height - 32) / max(1, paperSize.height)
+        return clampedZoomScale(min(horizontalScale, verticalScale))
+    }
+
+    private func setZoomScale(_ scale: CGFloat) {
+        withAnimation(WeiBeiMotion.hover) {
+            zoomScale = clampedZoomScale(scale)
+        }
+    }
+
+    private func clampedZoomScale(_ scale: CGFloat) -> CGFloat {
+        min(maximumZoomScale, max(minimumZoomScale, scale))
+    }
+
+    private func edgePath(for placedEdge: CourseRelationPlacedEdge) -> Path {
+        let from = placedEdge.from
+        let to = placedEdge.to
+        let horizontalDistance = max(1, to.x - from.x)
+        let middle = CGPoint(
+            x: from.x + horizontalDistance * 0.5,
+            y: (from.y + to.y) * 0.5 + min(16, max(-16, (to.y - from.y) * 0.035))
+        )
+        let departure = min(horizontalDistance * 0.40, max(88, horizontalDistance * 0.30))
+        let waist = min(horizontalDistance * 0.16, 72)
+
+        var path = Path()
+        path.move(to: from)
+        path.addCurve(
+            to: middle,
+            control1: CGPoint(x: from.x + departure, y: from.y),
+            control2: CGPoint(x: middle.x - waist, y: middle.y)
+        )
+        path.addCurve(
+            to: to,
+            control1: CGPoint(x: middle.x + waist, y: middle.y),
+            control2: CGPoint(x: to.x - departure, y: to.y)
+        )
+        return path
+    }
+
+    private func edgeDrawingOrder(_ prominence: CourseRelationGraphProminence) -> Int {
+        switch prominence {
+        case .mist:
+            return 0
+        case .normal:
+            return 1
+        case .related:
+            return 2
+        case .focused:
+            return 3
+        }
+    }
+
+    private func edgeShading(
+        for edge: CourseRelationGraphEdge,
+        prominence: CourseRelationGraphProminence,
+        from: CGPoint,
+        to: CGPoint
+    ) -> GraphicsContext.Shading {
+        let color = edgeColor(for: edge, prominence: prominence)
+        return .linearGradient(
+            Gradient(stops: [
+                .init(color: color.opacity(0.76), location: 0),
+                .init(color: color, location: 0.42),
+                .init(color: color.opacity(0.82), location: 1),
+            ]),
+            startPoint: from,
+            endPoint: to
+        )
+    }
+
+    private func edgeThreadColor(prominence: CourseRelationGraphProminence) -> Color {
+        switch prominence {
+        case .focused:
+            return WeiBeiTheme.paper.opacity(0.34)
+        case .related:
+            return WeiBeiTheme.paper.opacity(0.20)
+        case .normal, .mist:
+            return .clear
         }
     }
 
@@ -281,19 +519,18 @@ struct CourseRelationPaperView: View {
     ) -> some View {
         let prominence = model.nodeProminence(node, hoveredNodeID: hoveredNodeID)
         let isDropTarget = node.kind == .note && dropTargetNoteID == node.itemID
-        let showsHandle = mode == .managing
-            && node.kind == .material
-            && hoveredNodeID == node.id
+        let connectorState = mode == .managing ? connectionState(for: node) : nil
 
         return CourseRelationPaperNodeView(
             node: node,
             prominence: prominence,
             accent: nodeAccent(for: node),
             mode: mode,
-            showsHandle: showsHandle,
+            connectionState: connectorState,
             isDropTarget: isDropTarget,
             select: { select(node) },
             open: { open(node) },
+            connect: { handleConnectionTap(node) },
             hover: { hovering in hoveredNodeID = hovering ? node.id : (hoveredNodeID == node.id ? nil : hoveredNodeID) }
         )
         .contextMenu {
@@ -423,6 +660,15 @@ struct CourseRelationPaperView: View {
     }
 
     private func headerDetail(model: CourseRelationGraphModel) -> String {
+        if let pendingConnection {
+            let title = model.visibleNodes.first(where: {
+                $0.itemID == pendingConnection.itemID && $0.kind == pendingConnection.kind
+            })?.item.title ?? store.ui("当前项目", "Current item")
+            return store.ui(
+                "已选「\(title)」· 点另一侧的 + 建立关联，点当前 + 取消",
+                "Selected “\(title)” · choose + on the other side to link, or choose this + again to cancel"
+            )
+        }
         let scopeText = scopeTitle(effectiveScope)
         let relationText = store.ui("\(model.edges.count) 条可见关系", "\(model.edges.count) visible links")
         let nodeText = store.ui("\(model.visibleNodes.count) 个节点", "\(model.visibleNodes.count) nodes")
@@ -479,6 +725,37 @@ struct CourseRelationPaperView: View {
         case .note:
             store.openCourseNote(node.itemID)
         }
+    }
+
+    private func connectionState(for node: CourseRelationGraphNode) -> CourseRelationConnectionState {
+        guard let pendingConnection else { return .available }
+        let anchor = CourseRelationConnectionAnchor(itemID: node.itemID, kind: node.kind)
+        if pendingConnection == anchor { return .source }
+        return pendingConnection.kind == node.kind ? .alternate : .target
+    }
+
+    private func handleConnectionTap(_ node: CourseRelationGraphNode) {
+        guard mode == .managing else { return }
+        let anchor = CourseRelationConnectionAnchor(itemID: node.itemID, kind: node.kind)
+        guard let pendingConnection else {
+            self.pendingConnection = anchor
+            select(node)
+            return
+        }
+        if pendingConnection == anchor {
+            self.pendingConnection = nil
+            return
+        }
+        if pendingConnection.kind == anchor.kind {
+            self.pendingConnection = anchor
+            select(node)
+            return
+        }
+
+        let materialID = pendingConnection.kind == .material ? pendingConnection.itemID : anchor.itemID
+        let noteID = pendingConnection.kind == .note ? pendingConnection.itemID : anchor.itemID
+        addLink(materialID: materialID, noteID: noteID)
+        self.pendingConnection = nil
     }
 
     private func addLink(materialID: String, noteID: String) {
@@ -566,13 +843,13 @@ struct CourseRelationPaperView: View {
         let accent = edgeAccent(for: edge)
         switch prominence {
         case .focused:
-            return accent.opacity(0.70)
+            return accent.opacity(0.62)
         case .related:
-            return accent.opacity(0.46)
+            return accent.opacity(0.38)
         case .normal:
-            return accent.opacity(0.20)
+            return accent.opacity(0.15)
         case .mist:
-            return accent.opacity(0.040)
+            return accent.opacity(0.028)
         }
     }
 
@@ -583,13 +860,13 @@ struct CourseRelationPaperView: View {
         let accent = edgeAccent(for: edge)
         switch prominence {
         case .focused:
-            return accent.opacity(0.075)
+            return accent.opacity(0.060)
         case .related:
-            return accent.opacity(0.050)
+            return accent.opacity(0.042)
         case .normal:
-            return accent.opacity(0.028)
+            return accent.opacity(0.026)
         case .mist:
-            return accent.opacity(0.012)
+            return accent.opacity(0.010)
         }
     }
 
@@ -597,9 +874,9 @@ struct CourseRelationPaperView: View {
         let base = CGFloat(min(9, 4 + max(0, edge.count - 1) * 2))
         switch prominence {
         case .focused:
-            return base + 7
+            return base + 6
         case .related:
-            return base + 3
+            return base + 2.5
         case .normal:
             return base
         case .mist:
@@ -610,15 +887,27 @@ struct CourseRelationPaperView: View {
     private func edgeHazeWidth(_ prominence: CourseRelationGraphProminence) -> CGFloat {
         switch prominence {
         case .focused:
-            return 18
+            return 22
         case .related:
-            return 13
+            return 16
         case .normal:
-            return 9
+            return 11
         case .mist:
-            return 5
+            return 7
         }
     }
+}
+
+private struct CourseRelationConnectionAnchor: Equatable {
+    let itemID: String
+    let kind: CourseRelationGraphItem.Kind
+}
+
+private enum CourseRelationConnectionState: Equatable {
+    case available
+    case alternate
+    case source
+    case target
 }
 
 private enum CourseRelationPaperMode: Equatable {
@@ -641,14 +930,19 @@ private struct CourseRelationPaperNodeView: View {
     let prominence: CourseRelationGraphProminence
     let accent: Color
     let mode: CourseRelationPaperMode
-    let showsHandle: Bool
+    let connectionState: CourseRelationConnectionState?
     let isDropTarget: Bool
     let select: () -> Void
     let open: () -> Void
+    let connect: () -> Void
     let hover: (Bool) -> Void
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 8) {
+            if node.kind == .note, let connectionState {
+                connectionControl(connectionState)
+            }
+
             Capsule()
                 .fill(markerColor)
                 .frame(width: prominence == .focused ? 3 : 2, height: 30)
@@ -676,18 +970,15 @@ private struct CourseRelationPaperNodeView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .modifier(CourseRelationNodeDragModifier(
+                enabled: mode == .managing && node.kind == .material,
+                itemID: node.itemID
+            ))
 
-            if showsHandle {
-                handle
-            } else {
-                Button(action: open) {
-                    Image(systemName: "arrow.up.forward")
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                        .frame(width: 22, height: 22)
-                }
-                .buttonStyle(.plain)
-                .opacity(prominence == .mist ? 0.12 : 0.72)
+            if node.kind == .material, let connectionState {
+                connectionControl(connectionState)
+            } else if mode == .viewing {
+                openControl
             }
         }
         .padding(.horizontal, 8)
@@ -709,18 +1000,100 @@ private struct CourseRelationPaperNodeView: View {
         return "\(node.item.kindLabel) · \(countText)"
     }
 
-    private var handle: some View {
-        HStack(spacing: 5) {
-            Image(systemName: "smallcircle.filled.circle")
-                .font(.system(size: 12, weight: .bold))
-            Text(store.ui("拖到笔记", "Drag to note"))
+    private var openControl: some View {
+        Button(action: open) {
+            Image(systemName: "arrow.up.forward")
                 .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                .frame(width: 22, height: 22)
         }
-        .foregroundStyle(WeiBeiTheme.onCinnabar)
-        .padding(.horizontal, 8)
-        .frame(height: 26)
-        .background(WeiBeiTheme.cinnabar.opacity(0.86), in: Capsule())
-        .draggable(node.itemID)
+        .buttonStyle(.plain)
+        .opacity(prominence == .mist ? 0.12 : 0.72)
+    }
+
+    @ViewBuilder
+    private func connectionControl(_ state: CourseRelationConnectionState) -> some View {
+        connectionButton(state)
+    }
+
+    private func connectionButton(_ state: CourseRelationConnectionState) -> some View {
+        Button(action: connect) {
+            Image(systemName: state == .source ? "xmark" : "plus")
+                .font(.system(size: 10.5, weight: .bold))
+                .foregroundStyle(connectionForeground(state))
+                .frame(width: 27, height: 27)
+                .background(connectionBackground(state), in: Circle())
+                .overlay(
+                    Circle()
+                        .stroke(connectionBorder(state), lineWidth: state == .target ? 1.4 : 1)
+                )
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(node.item.title)：\(connectionLabel(state))")
+        .help(connectionHelp(state))
+    }
+
+    private func connectionForeground(_ state: CourseRelationConnectionState) -> Color {
+        switch state {
+        case .available:
+            return WeiBeiTheme.secondaryInk
+        case .alternate:
+            return WeiBeiTheme.secondaryInk.opacity(0.84)
+        case .source:
+            return WeiBeiTheme.onCinnabar
+        case .target:
+            return accent
+        }
+    }
+
+    private func connectionBackground(_ state: CourseRelationConnectionState) -> Color {
+        switch state {
+        case .available:
+            return WeiBeiTheme.paper.opacity(0.88)
+        case .alternate:
+            return WeiBeiTheme.paperInset.opacity(0.34)
+        case .source:
+            return accent.opacity(0.88)
+        case .target:
+            return accent.opacity(0.13)
+        }
+    }
+
+    private func connectionBorder(_ state: CourseRelationConnectionState) -> Color {
+        switch state {
+        case .available:
+            return WeiBeiTheme.hairline.opacity(0.82)
+        case .alternate:
+            return WeiBeiTheme.hairline.opacity(0.68)
+        case .source:
+            return accent.opacity(0.92)
+        case .target:
+            return accent.opacity(0.62)
+        }
+    }
+
+    private func connectionLabel(_ state: CourseRelationConnectionState) -> String {
+        switch state {
+        case .available:
+            return store.ui("选择为关联起点", "Choose as link start")
+        case .alternate:
+            return store.ui("切换为新的关联起点", "Switch to this link start")
+        case .source:
+            return store.ui("取消当前关联起点", "Cancel current link start")
+        case .target:
+            return store.ui("与当前起点建立关联", "Link with current start")
+        }
+    }
+
+    private func connectionHelp(_ state: CourseRelationConnectionState) -> String {
+        if state == .target {
+            return connectionLabel(state)
+        }
+        if node.kind == .material, state != .source {
+            return store.ui("点按选择资料；也可拖到笔记", "Choose this material, or drag it onto a note")
+        }
+        return connectionLabel(state)
     }
 
     private var iconColor: Color {
@@ -729,6 +1102,8 @@ private struct CourseRelationPaperNodeView: View {
 
     private var nodeBackground: Color {
         if isDropTarget { return accent.opacity(0.14) }
+        if connectionState == .source { return accent.opacity(0.11) }
+        if connectionState == .target { return accent.opacity(0.055) }
         switch prominence {
         case .focused:
             return accent.opacity(0.080)
@@ -743,6 +1118,8 @@ private struct CourseRelationPaperNodeView: View {
 
     private var markerColor: Color {
         if isDropTarget { return accent.opacity(0.92) }
+        if connectionState == .source { return accent.opacity(0.88) }
+        if connectionState == .target { return accent.opacity(0.42) }
         switch prominence {
         case .focused:
             return accent.opacity(0.88)
@@ -757,6 +1134,8 @@ private struct CourseRelationPaperNodeView: View {
 
     private var underlineColor: Color {
         if isDropTarget { return accent.opacity(0.82) }
+        if connectionState == .source { return accent.opacity(0.58) }
+        if connectionState == .target { return accent.opacity(0.30) }
         switch prominence {
         case .focused:
             return accent.opacity(0.54)
@@ -770,6 +1149,10 @@ private struct CourseRelationPaperNodeView: View {
     }
 
     private var opacity: Double {
+        if connectionState == .source { return 1 }
+        if connectionState == .target { return 0.90 }
+        if connectionState == .alternate { return 0.72 }
+        if connectionState == .available { return 0.82 }
         switch prominence {
         case .focused:
             return 1
@@ -779,6 +1162,20 @@ private struct CourseRelationPaperNodeView: View {
             return 0.82
         case .mist:
             return 0.28
+        }
+    }
+}
+
+private struct CourseRelationNodeDragModifier: ViewModifier {
+    let enabled: Bool
+    let itemID: String
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if enabled {
+            content.draggable(itemID)
+        } else {
+            content
         }
     }
 }

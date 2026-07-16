@@ -25,27 +25,28 @@ struct ContentView: View {
                             .background(WeiBeiTheme.paper)
                             .animation(WeiBeiMotion.layout, value: store.layout)
 
-                        if store.showLibrary {
-                            ZStack(alignment: .leading) {
+                        ZStack(alignment: .leading) {
+                            if store.showLibrary {
                                 WeiBeiTheme.ink.opacity(0.035)
                                     .contentShape(Rectangle())
                                     .onTapGesture {
-                                        withAnimation(WeiBeiMotion.panel) {
+                                        withAnimation(WeiBeiMotion.layout) {
                                             store.toggleLibrary()
                                         }
                                     }
+                                    .transition(.opacity)
 
                                 CourseImmersiveDrawerView {
-                                    withAnimation(WeiBeiMotion.panel) {
+                                    withAnimation(WeiBeiMotion.layout) {
                                         store.toggleLibrary()
                                     }
                                 }
-                                .transition(.move(edge: .leading).combined(with: .opacity))
+                                .transition(WeiBeiTransition.sidePanel)
                             }
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .transition(.opacity)
-                            .zIndex(35)
                         }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .allowsHitTesting(store.showLibrary)
+                        .zIndex(35)
 
                         if store.commandPalettePresented {
                             CommandPaletteView()
@@ -110,6 +111,7 @@ struct ContentView: View {
             focusedPane = store.focusedPane
         }
         .animation(WeiBeiMotion.appearance, value: store.appearanceMode)
+        .animation(WeiBeiMotion.layout, value: store.showLibrary)
         .animation(WeiBeiMotion.panel, value: store.courseWorkspacePresented)
     }
 
@@ -548,7 +550,7 @@ private struct UnifiedTopBarView: View {
     @ViewBuilder
     private var libraryButton: some View {
         topIconButton("sidebar.left", help: store.showLibrary ? store.ui("收起课程抽屉", "Hide course drawer") : store.ui("打开课程抽屉", "Show course drawer"), active: store.showLibrary) {
-            withAnimation(WeiBeiMotion.panel) {
+            withAnimation(WeiBeiMotion.layout) {
                 store.toggleLibrary()
             }
         }

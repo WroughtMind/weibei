@@ -160,7 +160,7 @@ enum PaneToggleContinuityVerifier {
 }
 
 enum CourseWorkspaceDestination: String, CaseIterable, Sendable {
-    case overview
+    case relations
     case materials
     case notes
     case sessions
@@ -244,7 +244,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     @Published var topBarVariant: TopBarVariant = TopBarVariant(rawValue: UserDefaults.standard.string(forKey: "topBarVariant") ?? "") ?? .balanced
     @Published var courseWorkspacePresented = false
-    @Published private(set) var courseWorkspaceDestination: CourseWorkspaceDestination = .overview
+    @Published private(set) var courseWorkspaceDestination: CourseWorkspaceDestination = .relations
     @Published private(set) var courseWorkspaceTargetItemID: String?
     @Published var courseFolderImportDraft: CourseFolderImportDraft?
     @Published private var backNavigationStack: [NavigationSnapshot] = []
@@ -1285,7 +1285,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func presentCourseWorkspace(
-        _ destination: CourseWorkspaceDestination = .overview,
+        _ destination: CourseWorkspaceDestination = .relations,
         selecting itemID: String? = nil
     ) {
         persistCurrentNote()
@@ -4570,7 +4570,7 @@ final class WorkspaceStore: ObservableObject {
             } else if requestedPage == "sessions" {
                 presentCourseWorkspace(.sessions, selecting: activeSession.id.uuidString)
             } else {
-                presentCourseWorkspace(.overview)
+                presentCourseWorkspace(.relations)
             }
             writeCourseWorkspaceVerificationReport(
                 name: "course-workspace-overview-report.json",
@@ -4679,7 +4679,7 @@ final class WorkspaceStore: ObservableObject {
             let baselineOrder = threePaneOrder
             let baselineLocation = selectedItemID.flatMap { studyLocationsByItemID[$0] }
             PaneToggleContinuityVerifier.beginMeasurement()
-            presentCourseWorkspace(.overview)
+            presentCourseWorkspace(.relations)
             try? await Task.sleep(nanoseconds: 500_000_000)
             dismissCourseWorkspace()
             try? await Task.sleep(nanoseconds: 500_000_000)
