@@ -86,8 +86,9 @@ public enum PiRPCIncomingMessage: Equatable, Sendable {
     case assistantError(String)
     case toolStarted(id: String, name: String)
     case contextRead(id: String, contextRevision: String)
-    case courseSourcesRead(id: String, contextRevision: String, labels: [String], jumpEvidence: [String: String])
+    case courseSourcesRead(id: String, contextRevision: String, labels: [String], assetIDs: [String], jumpEvidence: [String: String])
     case learningMemoryRead(id: String, contextRevision: String, memoryRevision: UInt64, labels: [String], jumpEvidence: [String: String])
+    case richAnswer(id: String, data: Data)
     case noteProposal(id: String, StudyAgentNoteProposal)
     case learningUpdate(id: String, StudyAgentLearningUpdate)
     case toolFailed(id: String, name: String, message: String)
@@ -204,6 +205,14 @@ public enum PiRPCMessageDecoder {
                     id: object["toolCallId"] as? String ?? "",
                     contextRevision: contextRevision,
                     labels: details["evidenceLabels"] as? [String] ?? legacyLabels,
+                    assetIDs: entries.compactMap { entry in
+                        guard let id = entry["id"] as? String,
+                              let searchText = entry["searchText"] as? String,
+                              !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                            return nil
+                        }
+                        return id
+                    },
                     jumpEvidence: details["jumpEvidence"] as? [String: String] ?? [:]
                 )
             }
@@ -232,6 +241,15 @@ public enum PiRPCMessageDecoder {
                     memoryRevision: memoryRevision.uint64Value,
                     labels: labels,
                     jumpEvidence: details["jumpEvidence"] as? [String: String] ?? [:]
+                )
+            }
+            if name == "weibei_rich_answer",
+               let details = result?["details"] as? [String: Any],
+               details["kind"] as? String == "rich_answer",
+               let envelopeData = jsonData(details["envelope"]) {
+                return .richAnswer(
+                    id: object["toolCallId"] as? String ?? "",
+                    data: envelopeData
                 )
             }
             if name == "weibei_note_proposal",

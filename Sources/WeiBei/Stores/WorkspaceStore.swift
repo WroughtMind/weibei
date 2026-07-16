@@ -3999,6 +3999,7 @@ final class WorkspaceStore: ObservableObject {
         guard scenario == "offline-learning-flow"
             || scenario == "pi-learning-flow"
             || scenario == "pi-course-memory-flow"
+            || scenario == "rich-answer-preview"
             || scenario == "immersive-conversation-flow"
             || scenario == "notebook-creation-flow"
             || scenario == "pure-writing-flow"
@@ -4029,6 +4030,10 @@ final class WorkspaceStore: ObservableObject {
             select(itemID: "sample-html")
             updateNote(ui("# 收起轨道验收\n\n悬浮简介必须越过收起边界显示。\n", "# Dormant rail check\n\nThe hover preview must cross the dormant pane boundary.\n"))
             save()
+            return
+        }
+        if scenario == "rich-answer-preview" {
+            configureRichAnswerPreviewVerification()
             return
         }
         if scenario == "course-workspace-overview-flow" || scenario == "course-workspace-workflow-flow" {
@@ -4153,6 +4158,35 @@ final class WorkspaceStore: ObservableObject {
                     .write(to: markerURL, atomically: true, encoding: .utf8)
             }
         }
+        recordVerificationStage("completed")
+    }
+
+    private func configureRichAnswerPreviewVerification() {
+        layout = .immersiveConversation
+        showLibrary = false
+        showReader = false
+        showAgent = true
+        showNotes = false
+        agentSurface = .hidden
+        select(itemID: "sample-html")
+        messages = []
+        appendAgentMessage(
+            AgentMessage(
+                role: .user,
+                text: "固定名义利率为 5%，用可调的富回答让我看懂通胀率怎样影响实际利率。",
+                source: "货币金融学课程 HTML"
+            )
+        )
+        appendAgentMessage(
+            AgentMessage(
+                role: .assistant,
+                text: "## 先看关系\n\n固定名义利率为 **5%** 时，通胀率每上升一个百分点，实际利率就近似下降一个百分点。拖动下方参数，观察这条关系。\n\n[材料：货币金融学课程 HTML]",
+                source: "货币金融学课程 HTML",
+                backend: .pi,
+                richAnswer: RichAnswerVerificationFixture.presentation()
+            )
+        )
+        focus(.agent)
         recordVerificationStage("completed")
     }
 
@@ -5087,7 +5121,8 @@ final class WorkspaceStore: ObservableObject {
                     role: .assistant,
                     text: reply.noteProposal?.markdown ?? reply.text,
                     source: sourceTitle,
-                    backend: reply.backend
+                    backend: reply.backend,
+                    richAnswer: reply.noteProposal == nil ? reply.richAnswer : nil
                 )
             )
         } catch PiAgentRuntimeError.cancelled, is CancellationError {
@@ -5235,6 +5270,8 @@ final class WorkspaceStore: ObservableObject {
                 agentActivityText = ui("正在整理学习进展", "Updating study progress")
             case "weibei_note_proposal":
                 agentActivityText = ui("正在整理写入建议", "Preparing a note proposal")
+            case "weibei_rich_answer":
+                agentActivityText = ui("正在组织富回答", "Building a rich answer")
             default:
                 agentActivityText = ui("正在处理", "Working")
             }

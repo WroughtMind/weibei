@@ -2902,10 +2902,12 @@ private struct AgentBubble: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
                 .overlay(alignment: .leading) {
-                    Capsule()
-                        .fill(assistantMarkColor.opacity(hovering ? 1.0 : 0.72))
-                        .frame(width: 2, height: hovering ? 34 : 24)
-                        .padding(.leading, 4)
+                    if !hasRenderableRichAnswer {
+                        Capsule()
+                            .fill(assistantMarkColor.opacity(hovering ? 1.0 : 0.72))
+                            .frame(width: 2, height: hovering ? 34 : 24)
+                            .padding(.leading, 4)
+                    }
                 }
         }
     }
@@ -2914,11 +2916,27 @@ private struct AgentBubble: View {
         VStack(alignment: .leading, spacing: 8) {
             messageMetadata
 
-            AgentMessageMarkdownText(
-                text: message.text,
-                rendersRichMarkdown: true,
-                onContentHeightChange: onMarkdownHeightChange
-            )
+            if hasRenderableRichAnswer {
+                RichAnswerNarrativeText(text: message.text)
+            } else {
+                AgentMessageMarkdownText(
+                    text: message.text,
+                    rendersRichMarkdown: true,
+                    onContentHeightChange: onMarkdownHeightChange
+                )
+            }
+
+            if let richAnswer = message.richAnswer,
+               richAnswer.mode == .rich,
+               !richAnswer.scenes.isEmpty {
+                RichAnswerHost(
+                    presentation: richAnswer,
+                    onOpenEvidence: openRichAnswerEvidence,
+                    onOpenAsset: openRichAnswerAsset
+                )
+                .id("rich-answer-\(message.id.uuidString)")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             if message.id == store.lastUsableAgentAnswerID {
                 if let update = store.latestAgentLearningUpdate,
@@ -3065,8 +3083,31 @@ private struct AgentBubble: View {
         }
     }
 
+    private func openRichAnswerEvidence(_ evidence: RichAnswerEvidence) {
+        var label = evidence.sourceLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        if label.hasPrefix("["), label.hasSuffix("]"), label.count > 2 {
+            label = String(label.dropFirst().dropLast())
+        }
+        for prefix in ["材料：", "笔记：", "选区："] where label.hasPrefix(prefix) {
+            label = String(label.dropFirst(prefix.count))
+            break
+        }
+        guard !label.isEmpty else { return }
+        store.openSourceReference("来源：\(label)")
+    }
+
+    private func openRichAnswerAsset(_ assetID: String) {
+        withAnimation(WeiBeiMotion.panel) {
+            store.select(itemID: assetID)
+        }
+    }
+
     private var isUser: Bool {
         message.role == .user
+    }
+
+    private var hasRenderableRichAnswer: Bool {
+        message.richAnswer?.mode == .rich && message.richAnswer?.scenes.isEmpty == false
     }
 
     private var isCredentialNotice: Bool {
@@ -3098,6 +3139,121 @@ private struct AgentBubble: View {
         case .openAI: return "API"
         case .offline: return store.ui("离线", "Offline")
         }
+    }
+}
+
+private struct RichAnswerNarrativeText: View {
+    let text: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                switch block.kind {
+                case let .heading(level):
+                    Text(attributed(block.text))
+                        .font(.system(size: level <= 2 ? 21 : 17, weight: .semibold))
+                        .foregroundStyle(WeiBeiTheme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .paragraph:
+                    Text(attributed(block.text))
+                        .font(.system(size: 14))
+                        .lineSpacing(4)
+                        .foregroundStyle(WeiBeiTheme.ink)
+                        .fixedSize(horizontal: false, vertical: true)
+                case .bullet:
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("•")
+                            .foregroundStyle(WeiBeiTheme.cinnabar)
+                        Text(attributed(block.text))
+                            .font(.system(size: 14))
+                            .lineSpacing(4)
+                            .foregroundStyle(WeiBeiTheme.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                case .quote:
+                    Text(attributed(block.text))
+                        .font(.system(size: 13.5))
+                        .lineSpacing(3)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, 10)
+                        .overlay(alignment: .leading) {
+                            Rectangle()
+                                .fill(WeiBeiTheme.hairline.opacity(0.72))
+                                .frame(width: 1)
+                        }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var blocks: [Block] {
+        var result: [Block] = []
+        var paragraphLines: [String] = []
+
+        func flushParagraph() {
+            guard !paragraphLines.isEmpty else { return }
+            result.append(Block(kind: .paragraph, text: paragraphLines.joined(separator: " ")))
+            paragraphLines.removeAll()
+        }
+
+        for rawLine in text.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.isEmpty {
+                flushParagraph()
+                continue
+            }
+            if isStandaloneSourceReference(line) {
+                flushParagraph()
+                continue
+            }
+            let headingMarkers = line.prefix { $0 == "#" }.count
+            if headingMarkers > 0, headingMarkers <= 6, line.dropFirst(headingMarkers).first == " " {
+                flushParagraph()
+                result.append(
+                    Block(
+                        kind: .heading(level: headingMarkers),
+                        text: String(line.dropFirst(headingMarkers)).trimmingCharacters(in: .whitespaces)
+                    )
+                )
+                continue
+            }
+            if line.hasPrefix("- ") || line.hasPrefix("* ") || line.hasPrefix("+ ") {
+                flushParagraph()
+                result.append(Block(kind: .bullet, text: String(line.dropFirst(2))))
+                continue
+            }
+            if line.hasPrefix("> ") {
+                flushParagraph()
+                result.append(Block(kind: .quote, text: String(line.dropFirst(2))))
+                continue
+            }
+            paragraphLines.append(line)
+        }
+        flushParagraph()
+        return result
+    }
+
+    private func isStandaloneSourceReference(_ line: String) -> Bool {
+        guard line.hasPrefix("["), line.hasSuffix("]") else { return false }
+        return ["[材料：", "[笔记：", "[选区："].contains { line.hasPrefix($0) }
+    }
+
+    private func attributed(_ value: String) -> AttributedString {
+        (try? AttributedString(markdown: value)) ?? AttributedString(value)
+    }
+
+    private struct Block {
+        enum Kind {
+            case heading(level: Int)
+            case paragraph
+            case bullet
+            case quote
+        }
+
+        let kind: Kind
+        let text: String
     }
 }
 

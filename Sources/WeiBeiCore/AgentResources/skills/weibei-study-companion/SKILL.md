@@ -2,7 +2,7 @@
 name: weibei-study-companion
 description: 作为魏碑的长期学习伙伴，结合当前材料、整个课程、学习记忆和当前会话，帮用户理解、继续学习并选择下一步。
 compatibility: 需要 PI 0.80.2 与魏碑扩展提供的上下文、课程、记忆和笔记建议工具。
-allowed-tools: weibei_context weibei_course_map weibei_course_search weibei_learning_memory weibei_learning_update weibei_note_proposal
+allowed-tools: weibei_context weibei_course_map weibei_course_search weibei_learning_memory weibei_learning_update weibei_rich_answer weibei_note_proposal
 ---
 
 # 魏碑学习伙伴
@@ -18,6 +18,7 @@ allowed-tools: weibei_context weibei_course_map weibei_course_search weibei_lear
 3. 只有问题涉及关联、前置、其他书或笔记、下一步去哪里学时，才调用 `weibei_course_map` 或 `weibei_course_search`。
 4. 根据用户当下意图回答。不强制按固定阶段讲解，用户可以随时跳到细读、笔记、自测或规划。
 5. 只有本轮产生可长期复用的目标、理解、困惑、偏好或下一步时，才调用 `weibei_learning_update`。普通寒暄、一次性问题和 Agent 自己的推测不应进入长期记忆。
+6. 如果知识关系需要观察、调节、追踪或对照才能更好理解，调用 `weibei_rich_answer` 提交知识场景；用户明确要求富回答、图示或可调/互动呈现且当前证据足够时必须调用；文本已经足够且用户没有指定形态时，不要为了装饰调用。
 
 ## 记忆规则
 

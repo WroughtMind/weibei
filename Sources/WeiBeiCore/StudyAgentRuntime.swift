@@ -48,6 +48,17 @@ public enum StudyAgentQuestionScope {
     }
 }
 
+public enum StudyAgentRichAnswerRequest {
+    public static func isExplicit(_ question: String) -> Bool {
+        let normalized = question.lowercased()
+        let terms = [
+            "富回答", "可调", "交互", "互动", "图示", "函数图", "关系图", "时间线", "图像叠层", "叠层", "模拟", "实验",
+            "rich answer", "interactive", "adjustable", "diagram", "function graph", "relationship graph", "timeline", "image overlay", "simulation", "experiment",
+        ]
+        return terms.contains(where: normalized.contains)
+    }
+}
+
 public enum StudyAgentResolutionEvidence {
     public static func matches(_ evidence: String, question: String) -> Bool {
         guard StudyAgentCurrentTurnEvidence.matches(evidence, question: question),
@@ -482,17 +493,20 @@ public struct StudyAgentLearningUpdate: Codable, Equatable, Sendable {
 public struct StudyAgentReply: Equatable, Sendable {
     public var text: String
     public var backend: StudyAgentBackend
+    public var richAnswer: RichAnswerPresentation?
     public var noteProposal: StudyAgentNoteProposal?
     public var learningUpdate: StudyAgentLearningUpdate?
 
     public init(
         text: String,
         backend: StudyAgentBackend,
+        richAnswer: RichAnswerPresentation? = nil,
         noteProposal: StudyAgentNoteProposal? = nil,
         learningUpdate: StudyAgentLearningUpdate? = nil
     ) {
         self.text = text
         self.backend = backend
+        self.richAnswer = richAnswer
         self.noteProposal = noteProposal
         self.learningUpdate = learningUpdate
     }

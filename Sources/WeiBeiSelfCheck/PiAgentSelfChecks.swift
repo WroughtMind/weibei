@@ -61,12 +61,13 @@ private func checkRPCDecoding() throws {
     let contextRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-context","toolName":"weibei_context","isError":false,"result":{"details":{"kind":"weibei_context","contextRevision":"revision-7"}}}"#.utf8))
     try piRequire(contextRead == .contextRead(id: "tool-context", contextRevision: "revision-7"), "PI context reads preserve the validated revision")
 
-    let courseRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-course","toolName":"weibei_course_search","isError":false,"result":{"details":{"kind":"course_search","contextRevision":"revision-7","results":[{"title":"利率","role":"material","searchText":"利率正文"},{"title":"课堂笔记","role":"note","searchText":"笔记正文"},{"title":"只有标题","role":"material","searchText":""}],"evidenceLabels":["[材料：利率，条目：2]","[笔记：课堂笔记]"],"jumpEvidence":{"来源：利率，条目：2，第 3 页":"[材料：利率，条目：2]"}}}}"#.utf8))
+    let courseRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-course","toolName":"weibei_course_search","isError":false,"result":{"details":{"kind":"course_search","contextRevision":"revision-7","results":[{"id":"material-rates","title":"利率","role":"material","searchText":"利率正文"},{"id":"note-rates","title":"课堂笔记","role":"note","searchText":"笔记正文"},{"id":"title-only","title":"只有标题","role":"material","searchText":""}],"evidenceLabels":["[材料：利率，条目：2]","[笔记：课堂笔记]"],"jumpEvidence":{"来源：利率，条目：2，第 3 页":"[材料：利率，条目：2]"}}}}"#.utf8))
     try piRequire(
         courseRead == .courseSourcesRead(
             id: "tool-course",
             contextRevision: "revision-7",
             labels: ["[材料：利率，条目：2]", "[笔记：课堂笔记]"],
+            assetIDs: ["material-rates", "note-rates"],
             jumpEvidence: ["来源：利率，条目：2，第 3 页": "[材料：利率，条目：2]"]
         ),
         "PI course tools expose only labels backed by non-empty source excerpts read this turn"
@@ -87,6 +88,45 @@ private func checkRPCDecoding() throws {
             jumpEvidence: [:]
         ),
         "PI learning-memory reads preserve the validated revision and expose only the memory evidence that actually exists"
+    )
+
+    let richAnswerData = try JSONSerialization.data(withJSONObject: [
+        "type": "tool_execution_end",
+        "toolCallId": "tool-rich",
+        "toolName": "weibei_rich_answer",
+        "isError": false,
+        "result": [
+            "details": [
+                "kind": "rich_answer",
+                "contextRevision": "revision-7",
+                "envelope": [
+                    "schemaVersion": 1,
+                    "contextRevision": "revision-7",
+                    "narrative": "利率关系说明",
+                    "expressionPlan": [
+                        "action": "explain",
+                        "summary": "解释利率关系",
+                        "families": ["quantityAndCoordinates"],
+                        "preferredSurface": "inline",
+                        "directManipulation": false,
+                    ],
+                    "scenes": [],
+                    "evidenceLedger": [],
+                    "fallback": ["text": "利率关系说明", "reason": "文本回退"],
+                ],
+            ],
+        ],
+    ])
+    let richAnswer = try PiRPCMessageDecoder.decode(richAnswerData)
+    guard case let .richAnswer(id, envelopeData) = richAnswer,
+          let envelope = try JSONSerialization.jsonObject(with: envelopeData) as? [String: Any] else {
+        throw PiAgentSelfCheckError.failed("PI rich-answer tool result did not decode")
+    }
+    try piRequire(
+        id == "tool-rich"
+            && envelope["contextRevision"] as? String == "revision-7"
+            && envelope["schemaVersion"] as? Int == 1,
+        "PI rich-answer results preserve their isolated semantic envelope"
     )
 
     let proposalData = try JSONSerialization.data(withJSONObject: [
@@ -492,13 +532,82 @@ private func checkStudyAgentContext() throws {
         "course index keeps every file name and ranks a relevant file beyond the first eighty into the search window"
     )
 
-    let message = AgentMessage(role: .assistant, text: "PI answer", source: "材料", backend: .pi)
+    let richEnvelope = RichAnswerEnvelope(
+        contextRevision: "message-revision",
+        narrative: "PI answer",
+        expressionPlan: RichAnswerExpressionPlan(
+            action: .explain,
+            summary: "对齐材料与解释",
+            families: [.textAndAlignment],
+            preferredSurface: .inline,
+            directManipulation: false
+        ),
+        scenes: [
+            RichAnswerScene(
+                id: "message-scene",
+                title: "材料解释",
+                family: .textAndAlignment,
+                objects: [RichAnswerObject(id: "message-claim", kind: .claim, label: "结论", text: "PI answer")],
+                evidenceIDs: ["message-evidence"]
+            ),
+        ],
+        evidenceLedger: [
+            RichAnswerEvidence(id: "message-evidence", sourceLabel: "[材料：材料]", excerpt: "PI answer"),
+        ],
+        fallback: RichAnswerFallback(text: "PI answer", reason: "scene unavailable")
+    )
+    let richPresentation = RichAnswerEngine.prepare(
+        envelope: richEnvelope,
+        environment: RichAnswerEnvironment(
+            contextRevision: "message-revision",
+            allowedSourceLabels: ["[材料：材料]"]
+        )
+    )
+    let message = AgentMessage(
+        role: .assistant,
+        text: "PI answer",
+        source: "材料",
+        backend: .pi,
+        richAnswer: richPresentation
+    )
     let encoded = try JSONEncoder().encode(message)
-    try piRequire(try JSONDecoder().decode(AgentMessage.self, from: encoded).backend == .pi, "agent backend round-trips")
+    let decodedMessage = try JSONDecoder().decode(AgentMessage.self, from: encoded)
+    try piRequire(
+        decodedMessage.backend == .pi
+            && decodedMessage.richAnswer?.mode == .rich
+            && decodedMessage.richAnswer?.scenes.first?.id == "message-scene",
+        "agent backend and validated rich-answer sidecar round-trip together"
+    )
     var legacyObject = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] ?? [:]
     legacyObject.removeValue(forKey: "backend")
+    legacyObject.removeValue(forKey: "richAnswer")
     let legacyData = try JSONSerialization.data(withJSONObject: legacyObject)
-    try piRequire(try JSONDecoder().decode(AgentMessage.self, from: legacyData).backend == nil, "legacy agent messages remain decodable")
+    let legacyMessage = try JSONDecoder().decode(AgentMessage.self, from: legacyData)
+    try piRequire(
+        legacyMessage.backend == nil && legacyMessage.richAnswer == nil,
+        "legacy agent messages remain decodable without rich-answer sidecars"
+    )
+    var malformedSidecarObject = try JSONSerialization.jsonObject(with: encoded) as? [String: Any] ?? [:]
+    malformedSidecarObject["richAnswer"] = ["mode": "future-unsupported-mode"]
+    let malformedSidecarData = try JSONSerialization.data(withJSONObject: malformedSidecarObject)
+    let messageWithMalformedSidecar = try JSONDecoder().decode(AgentMessage.self, from: malformedSidecarData)
+    try piRequire(
+        messageWithMalformedSidecar.id == message.id
+            && messageWithMalformedSidecar.text == message.text
+            && messageWithMalformedSidecar.backend == .pi
+            && messageWithMalformedSidecar.richAnswer == nil,
+        "a malformed rich-answer sidecar is discarded without losing the durable conversation message"
+    )
+    try piRequire(
+        StudyAgentRichAnswerRequest.isExplicit("请用可调的富回答解释这个函数")
+            && StudyAgentRichAnswerRequest.isExplicit("请用图示解释这段关系")
+            && StudyAgentRichAnswerRequest.isExplicit("请基于材料做个实验")
+            && StudyAgentRichAnswerRequest.isExplicit("Show this as an interactive timeline")
+            && StudyAgentRichAnswerRequest.isExplicit("Explain this with a diagram")
+            && StudyAgentRichAnswerRequest.isExplicit("Run an experiment from the source")
+            && !StudyAgentRichAnswerRequest.isExplicit("直接解释这段材料"),
+        "explicit rich-answer requests are detected without forcing ordinary questions into rich mode"
+    )
 
     let sessionID = UUID()
     let persisted = PersistedWorkspace(
@@ -591,8 +700,9 @@ private func checkBundledAgentResources() throws {
             "weibei_learning_memory",
             "weibei_learning_update",
             "weibei_note_proposal",
+            "weibei_rich_answer",
         ].allSatisfy(extensionSource.contains),
-        "PI extension bundles the WeiBei-owned course, memory, and note tools"
+        "PI extension bundles the WeiBei-owned course, memory, rich-answer, and note tools"
     )
     try piRequire(
         extensionSource.contains("contextFileBytes: 4 * 1024 * 1024")
@@ -624,6 +734,20 @@ private func checkBundledAgentResources() throws {
             && extensionSource.contains("用户陈述型记忆必须直接依据本轮用户原话"),
         "PI extension keeps a paged full catalog, stable file and section jumps, compact context output, strict ids, and read-backed memory evidence"
     )
+    try piRequire(
+        extensionSource.contains("richAnswerEnvelopeSchema")
+            && extensionSource.contains("additionalProperties: false")
+            && extensionSource.contains("富回答证据摘录不在对应来源中")
+            && extensionSource.contains("canonicalRichAnswerEvidenceLabel")
+            && extensionSource.contains("不得提交 HTML、CSS、JavaScript、SVG、URL")
+            && extensionSource.contains("本轮用户明确指定富回答或互动形态")
+            && extensionSource.contains("图示|函数图")
+            && extensionSource.contains("simulation|experiment")
+            && resources.systemPrompt.contains("文本是默认形态")
+            && resources.systemPrompt.contains("这个形态要求优先于你的默认选择")
+            && resources.systemPrompt.contains("禁止提交或夹带 HTML、CSS、JavaScript、SVG"),
+        "PI rich answers stay source-grounded and cannot escape into arbitrary web payloads"
+    )
 
     for skillName in PiAgentResources.requiredSkillNames {
         let skillURL = resources.skillsURL.appendingPathComponent(skillName).appendingPathComponent("SKILL.md")
@@ -638,6 +762,8 @@ private func checkBundledAgentResources() throws {
         runtimeSource.contains("answeredBeforeContext")
             && runtimeSource.contains("allowedSourceLabels")
             && runtimeSource.contains("allowedNoteSourceLabels")
+            && runtimeSource.contains("allowedAssetIDs")
+            && runtimeSource.contains("RichAnswerEngine.prepare")
             && runtimeSource.contains("memoryRevision")
             && runtimeSource.contains("courseSourcesRead")
             && runtimeSource.contains("allowedJumpReferences")

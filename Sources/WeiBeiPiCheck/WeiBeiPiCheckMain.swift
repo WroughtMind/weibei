@@ -3,11 +3,23 @@ import Foundation
 import WeiBeiCore
 
 @main
-struct WeiBeiPiCheck {
+struct WeiBeiPiCheckMain {
     static func main() async {
+        if CommandLine.arguments.contains("--rich-answer-protocol") {
+            do {
+                try runRichAnswerProtocolSelfCheck()
+                print("rich-answer-protocol-check passed")
+            } catch {
+                fputs("rich-answer-protocol-check failed: \(error.localizedDescription)\n", stderr)
+                exit(1)
+            }
+            return
+        }
+
         let environment = ProcessInfo.processInfo.environment
         let liveCheckSetting = environment["WEIBEI_PI_LIVE_CHECK"] ?? "auto"
         let runsEvaluation = environment["WEIBEI_PI_EVAL"] == "1"
+        let runsRichAnswerCheck = environment["WEIBEI_PI_RICH_ANSWER_CHECK"] == "1"
         let explicitPath = environment["WEIBEI_PI_EXECUTABLE"]?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let executableURL = explicitPath.isEmpty
@@ -46,12 +58,15 @@ struct WeiBeiPiCheck {
             if runsLiveCheck {
                 try await checkNoteMaking(runtime)
             }
+            if runsRichAnswerCheck || runsEvaluation {
+                try await checkRichAnswer(runtime)
+            }
             if runsEvaluation {
                 try await checkStudyCompanion(runtime)
                 try await checkCourseWayfinding(runtime)
                 try await checkCloseReading(runtime)
                 try await checkRecallPractice(runtime)
-                print("pi-eval passed: study-companion, course-wayfinding, close-reading, note-making, recall-practice")
+                print("pi-eval passed: study-companion, course-wayfinding, close-reading, rich-answer, note-making, recall-practice")
             }
             try verifyNoPersistedTurnState(runtimeRoot)
 
@@ -98,6 +113,36 @@ struct WeiBeiPiCheck {
               containsSourceLabel(reply.text) else {
             throw PiCheckError.invalidEvaluation("close-reading")
         }
+    }
+
+    private static func checkRichAnswer(_ runtime: PiAgentRuntime) async throws {
+        let reply = try await runtime.respond(
+            to: request(
+                workflow: .closeReading,
+                question: "请基于当前材料，用可调的富回答展示名义利率、通胀率和实际利率的近似关系；固定名义利率为 5%，让我调节通胀率。正文仍要简洁引用来源，不要输出场景 JSON。",
+                revision: "pi-check-rich-answer"
+            )
+        )
+        guard reply.backend == .pi,
+              reply.noteProposal == nil,
+              containsSourceLabel(reply.text),
+              let presentation = reply.richAnswer,
+              presentation.mode == .rich,
+              presentation.scenes.contains(where: {
+                  $0.family == .quantityAndCoordinates || $0.family == .calculationAndConstraints
+              }),
+              presentation.scenes.contains(where: { !$0.operations.isEmpty }) else {
+            let presentation = reply.richAnswer
+            let families = presentation?.scenes.map(\.family.rawValue).joined(separator: ",") ?? "none"
+            let operationCount = presentation?.scenes.reduce(0) { $0 + $1.operations.count } ?? 0
+            let diagnostics = presentation?.diagnostics.map(\.code.rawValue).joined(separator: ",") ?? "none"
+            throw PiCheckError.invalidEvaluation(
+                "rich-answer backend=\(reply.backend.rawValue) source=\(containsSourceLabel(reply.text)) "
+                    + "presentation=\(presentation != nil) mode=\(presentation?.mode.rawValue ?? "none") "
+                    + "families=\(families) operations=\(operationCount) diagnostics=\(diagnostics)"
+            )
+        }
+        print("pi-rich-answer passed: scenes=\(presentation.scenes.count) diagnostics=\(presentation.diagnostics.count)")
     }
 
     private static func checkStudyCompanion(_ runtime: PiAgentRuntime) async throws {
@@ -157,7 +202,7 @@ struct WeiBeiPiCheck {
             workflow: workflow,
             question: question,
             materialTitle: "利率课程",
-            materialText: "利率是资金使用价格的表达。名义利率以货币单位表示，实际利率扣除了通货膨胀后的购买力变化。",
+            materialText: "利率是资金使用价格的表达。名义利率以货币单位表示，实际利率扣除了通货膨胀后的购买力变化。在课程的近似计算中：实际利率 = 名义利率 - 通货膨胀率。",
             noteTitle: "课堂笔记",
             noteText: "# 利率\n\n## 待整理",
             selectionTitle: "利率定义",
@@ -174,7 +219,7 @@ struct WeiBeiPiCheck {
                         isCurrentMaterial: true,
                         linkedItemIDs: ["note-rates"],
                         headings: ["利率的含义", "名义利率与实际利率"],
-                        searchText: "利率是资金使用价格的表达。实际利率会扣除通货膨胀对购买力的影响。"
+                        searchText: "利率是资金使用价格的表达。实际利率会扣除通货膨胀对购买力的影响。在课程的近似计算中：实际利率 = 名义利率 - 通货膨胀率。"
                     ),
                     StudyAgentCourseItem(
                         id: "material-inflation",

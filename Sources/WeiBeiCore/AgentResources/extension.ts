@@ -10,6 +10,7 @@ const COURSE_SEARCH_TOOL = "weibei_course_search";
 const LEARNING_MEMORY_TOOL = "weibei_learning_memory";
 const LEARNING_UPDATE_TOOL = "weibei_learning_update";
 const NOTE_PROPOSAL_TOOL = "weibei_note_proposal";
+const RICH_ANSWER_TOOL = "weibei_rich_answer";
 const ALLOWED_TOOLS = new Set([
   CONTEXT_TOOL,
   COURSE_MAP_TOOL,
@@ -17,6 +18,7 @@ const ALLOWED_TOOLS = new Set([
   LEARNING_MEMORY_TOOL,
   LEARNING_UPDATE_TOOL,
   NOTE_PROPOSAL_TOOL,
+  RICH_ANSWER_TOOL,
 ]);
 
 const LIMITS = {
@@ -45,6 +47,16 @@ const LIMITS = {
   proposalMarkdown: 24_000,
   proposalEvidenceItems: 16,
   proposalEvidenceText: 500,
+  richAnswerNarrative: 12_000,
+  richAnswerSummary: 600,
+  richAnswerScenes: 6,
+  richAnswerObjects: 64,
+  richAnswerRelations: 128,
+  richAnswerOperations: 16,
+  richAnswerFrames: 12,
+  richAnswerEvidence: 32,
+  richAnswerExcerpt: 1_200,
+  richAnswerText: 2_000,
 } as const;
 
 interface SourceSnapshot {
@@ -216,6 +228,12 @@ interface NoteProposalDetails {
   markdown: string;
   evidence: string[];
   contextRevision: string;
+}
+
+interface RichAnswerToolDetails {
+  kind: "rich_answer";
+  contextRevision: string;
+  envelope: unknown;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -770,10 +788,324 @@ function learningLocationJumpReference(snapshot: ContextSnapshotV2): string | un
   return courseJumpReference(snapshot.course, item);
 }
 
+const richAnswerIdentifierSchema = Type.String({ minLength: 1, maxLength: LIMITS.identifier });
+const richAnswerPointSchema = Type.Object(
+  {
+    x: Type.Number(),
+    y: Type.Number(),
+  },
+  { additionalProperties: false },
+);
+const richAnswerRegionSchema = Type.Object(
+  {
+    x: Type.Number({ minimum: 0, maximum: 1 }),
+    y: Type.Number({ minimum: 0, maximum: 1 }),
+    width: Type.Number({ exclusiveMinimum: 0, maximum: 1 }),
+    height: Type.Number({ exclusiveMinimum: 0, maximum: 1 }),
+  },
+  { additionalProperties: false },
+);
+const richAnswerAxisSchema = Type.Object(
+  {
+    label: Type.String({ minLength: 1, maxLength: 200 }),
+    minimum: Type.Number(),
+    maximum: Type.Number(),
+    unit: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+  },
+  { additionalProperties: false },
+);
+const richAnswerObjectSchema = Type.Object(
+  {
+    id: richAnswerIdentifierSchema,
+    kind: Type.Union(
+      [
+        "text",
+        "quantity",
+        "formula",
+        "event",
+        "region",
+        "state",
+        "claim",
+        "image",
+        "dataPoint",
+        "step",
+        "constraint",
+        "option",
+      ].map((value) => Type.Literal(value)),
+    ),
+    label: Type.String({ minLength: 1, maxLength: 300 }),
+    text: Type.Optional(Type.String({ minLength: 1, maxLength: LIMITS.richAnswerText })),
+    number: Type.Optional(Type.Number()),
+    unit: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+    evidenceIDs: Type.Optional(
+      Type.Array(richAnswerIdentifierSchema, { maxItems: LIMITS.richAnswerEvidence }),
+    ),
+    assetID: Type.Optional(richAnswerIdentifierSchema),
+    frameID: Type.Optional(richAnswerIdentifierSchema),
+    coordinate: Type.Optional(richAnswerPointSchema),
+    bounds: Type.Optional(richAnswerRegionSchema),
+  },
+  { additionalProperties: false },
+);
+const richAnswerRelationSchema = Type.Object(
+  {
+    id: richAnswerIdentifierSchema,
+    kind: Type.Union(
+      [
+        "supports",
+        "refutes",
+        "causes",
+        "precedes",
+        "aligns",
+        "contains",
+        "transforms",
+        "dependsOn",
+        "contrasts",
+        "constrains",
+      ].map((value) => Type.Literal(value)),
+    ),
+    sourceID: richAnswerIdentifierSchema,
+    targetID: richAnswerIdentifierSchema,
+    label: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })),
+    evidenceIDs: Type.Optional(
+      Type.Array(richAnswerIdentifierSchema, { maxItems: LIMITS.richAnswerEvidence }),
+    ),
+  },
+  { additionalProperties: false },
+);
+const richAnswerParameterSchema = Type.Object(
+  {
+    id: richAnswerIdentifierSchema,
+    label: Type.String({ minLength: 1, maxLength: 200 }),
+    minimum: Type.Number(),
+    maximum: Type.Number(),
+    step: Type.Number({ exclusiveMinimum: 0 }),
+    initialValue: Type.Number(),
+    unit: Type.Optional(Type.String({ minLength: 1, maxLength: 64 })),
+  },
+  { additionalProperties: false },
+);
+const richAnswerOperationSchema = Type.Object(
+  {
+    id: richAnswerIdentifierSchema,
+    kind: Type.Union(
+      [
+        "adjust",
+        "toggle",
+        "step",
+        "zoom",
+        "pan",
+        "filter",
+        "sort",
+        "probe",
+        "reset",
+        "compare",
+        "reveal",
+        "select",
+        "scrub",
+        "playPause",
+        "measure",
+      ].map((value) => Type.Literal(value)),
+    ),
+    label: Type.String({ minLength: 1, maxLength: 300 }),
+    targetIDs: Type.Array(richAnswerIdentifierSchema, { minItems: 1, maxItems: 32 }),
+    parameter: Type.Optional(richAnswerParameterSchema),
+    frameID: Type.Optional(richAnswerIdentifierSchema),
+  },
+  { additionalProperties: false },
+);
+const richAnswerFrameSchema = Type.Object(
+  {
+    id: richAnswerIdentifierSchema,
+    kind: Type.Union(
+      ["cartesian", "numberLine", "timeline", "space", "image", "text", "table", "graph", "process"]
+        .map((value) => Type.Literal(value)),
+    ),
+    title: Type.String({ minLength: 1, maxLength: 300 }),
+    objectIDs: Type.Optional(
+      Type.Array(richAnswerIdentifierSchema, { maxItems: LIMITS.richAnswerObjects }),
+    ),
+    xAxis: Type.Optional(richAnswerAxisSchema),
+    yAxis: Type.Optional(richAnswerAxisSchema),
+    assetID: Type.Optional(richAnswerIdentifierSchema),
+    evidenceIDs: Type.Optional(
+      Type.Array(richAnswerIdentifierSchema, { maxItems: LIMITS.richAnswerEvidence }),
+    ),
+  },
+  { additionalProperties: false },
+);
+const richAnswerSceneSchema = Type.Object(
+  {
+    id: richAnswerIdentifierSchema,
+    title: Type.String({ minLength: 1, maxLength: 300 }),
+    family: Type.Union(
+      [
+        "textAndAlignment",
+        "quantityAndCoordinates",
+        "processAndState",
+        "relationAndEvidence",
+        "timeAndSpace",
+        "imageAndOverlay",
+        "comparisonAndEvaluation",
+        "calculationAndConstraints",
+      ].map((value) => Type.Literal(value)),
+    ),
+    objects: Type.Array(richAnswerObjectSchema, {
+      minItems: 1,
+      maxItems: LIMITS.richAnswerObjects,
+    }),
+    relations: Type.Optional(
+      Type.Array(richAnswerRelationSchema, { maxItems: LIMITS.richAnswerRelations }),
+    ),
+    operations: Type.Optional(
+      Type.Array(richAnswerOperationSchema, { maxItems: LIMITS.richAnswerOperations }),
+    ),
+    frames: Type.Optional(
+      Type.Array(richAnswerFrameSchema, { maxItems: LIMITS.richAnswerFrames }),
+    ),
+    evidenceIDs: Type.Array(richAnswerIdentifierSchema, {
+      minItems: 1,
+      maxItems: LIMITS.richAnswerEvidence,
+    }),
+    placement: Type.Optional(
+      Type.Union([Type.Literal("inline"), Type.Literal("expanded"), Type.Literal("focus")]),
+    ),
+  },
+  { additionalProperties: false },
+);
+const richAnswerEnvelopeSchema = Type.Object(
+  {
+    schemaVersion: Type.Literal(1),
+    contextRevision: richAnswerIdentifierSchema,
+    narrative: Type.String({ minLength: 1, maxLength: LIMITS.richAnswerNarrative }),
+    expressionPlan: Type.Object(
+      {
+        action: Type.Union(
+          ["explain", "compare", "derive", "trace", "calculate", "observe", "manipulate", "evaluate", "practice"]
+            .map((value) => Type.Literal(value)),
+        ),
+        summary: Type.String({ minLength: 1, maxLength: LIMITS.richAnswerSummary }),
+        families: Type.Array(
+          Type.Union(
+            [
+              "textAndAlignment",
+              "quantityAndCoordinates",
+              "processAndState",
+              "relationAndEvidence",
+              "timeAndSpace",
+              "imageAndOverlay",
+              "comparisonAndEvaluation",
+              "calculationAndConstraints",
+            ].map((value) => Type.Literal(value)),
+          ),
+          { minItems: 1, maxItems: 8 },
+        ),
+        preferredSurface: Type.Union([
+          Type.Literal("inline"),
+          Type.Literal("expanded"),
+          Type.Literal("focus"),
+        ]),
+        directManipulation: Type.Boolean(),
+      },
+      { additionalProperties: false },
+    ),
+    scenes: Type.Array(richAnswerSceneSchema, {
+      minItems: 1,
+      maxItems: LIMITS.richAnswerScenes,
+    }),
+    evidenceLedger: Type.Array(
+      Type.Object(
+        {
+          id: richAnswerIdentifierSchema,
+          sourceLabel: Type.String({ minLength: 1, maxLength: 400 }),
+          excerpt: Type.String({ minLength: 1, maxLength: LIMITS.richAnswerExcerpt }),
+          isTruncated: Type.Optional(Type.Boolean()),
+          tags: Type.Optional(
+            Type.Array(Type.String({ minLength: 1, maxLength: 120 }), { maxItems: 16 }),
+          ),
+          assetIDs: Type.Optional(
+            Type.Array(richAnswerIdentifierSchema, { maxItems: 16 }),
+          ),
+        },
+        { additionalProperties: false },
+      ),
+      { minItems: 1, maxItems: LIMITS.richAnswerEvidence },
+    ),
+    fallback: Type.Object(
+      {
+        text: Type.String({ minLength: 1, maxLength: LIMITS.richAnswerNarrative }),
+        reason: Type.String({ minLength: 1, maxLength: 600 }),
+      },
+      { additionalProperties: false },
+    ),
+  },
+  { additionalProperties: false },
+);
+
+function normalizedEvidenceText(value: string): string {
+  return value.normalize("NFKC").replace(/\s+/gu, " ").trim();
+}
+
+function canonicalRichAnswerEvidenceLabel(
+  rawLabel: string,
+  availableLabels: Iterable<string>,
+): string | undefined {
+  const raw = normalizedEvidenceText(rawLabel);
+  const matches = Array.from(availableLabels).filter((label) => {
+    const comparableLabel = normalizedEvidenceText(label);
+    if (raw === comparableLabel) return true;
+    const inner = comparableLabel.startsWith("[") && comparableLabel.endsWith("]")
+      ? comparableLabel.slice(1, -1)
+      : comparableLabel;
+    const separator = inner.search(/[:：]/u);
+    const title = separator >= 0 ? inner.slice(separator + 1) : inner;
+    return raw === inner || raw === title || raw === `[${title}]`;
+  });
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+interface RichAnswerEvidenceSource {
+  text: string;
+  isTruncated: boolean;
+}
+
+function richAnswerEvidenceText(
+  snapshot: ContextSnapshotV2,
+  searchedCourseItemIDs: ReadonlySet<string>,
+): Map<string, RichAnswerEvidenceSource> {
+  const evidence = new Map<string, RichAnswerEvidenceSource>();
+  if (snapshot.note.text.trim()) {
+    evidence.set(`[笔记：${snapshot.note.title}]`, {
+      text: snapshot.note.text,
+      isTruncated: snapshot.note.isTruncated,
+    });
+  }
+  if (snapshot.material?.text.trim()) {
+    evidence.set(`[材料：${snapshot.material.title}]`, {
+      text: snapshot.material.text,
+      isTruncated: snapshot.material.isTruncated,
+    });
+  }
+  if (snapshot.selection?.text.trim()) {
+    evidence.set(`[选区：${snapshot.selection.title}]`, {
+      text: snapshot.selection.text,
+      isTruncated: snapshot.selection.isTruncated,
+    });
+  }
+  snapshot.course.items
+    .filter((item) => searchedCourseItemIDs.has(item.id) && item.searchText.trim())
+    .forEach((item) => evidence.set(courseEvidenceLabel(snapshot.course, item), {
+      text: item.searchText,
+      isTruncated: item.isTruncated,
+    }));
+  return evidence;
+}
+
 export default function weibeiExtension(pi: ExtensionAPI) {
   let requiredContextRevision: string | undefined;
   let lastReadContextRevision: string | undefined;
   let lastReadMemoryRevision: number | undefined;
+  let richAnswerAttemptCount = 0;
   const searchedCourseItemIDs = new Set<string>();
 
   pi.registerTool({
@@ -973,6 +1305,194 @@ export default function weibeiExtension(pi: ExtensionAPI) {
               null,
               2,
             ),
+          },
+        ],
+        details,
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: RICH_ANSWER_TOOL,
+    label: "提交富回答场景",
+    description:
+      "当图、坐标、过程、时间空间、图像叠层、比较或计算能明显帮助理解时，提交受控的知识场景。不得提交 HTML、CSS、JavaScript、SVG、URL 或网页布局。",
+    promptSnippet: "先判断文本是否足够；只有学习收益明确时才提交有证据、可降级的知识场景",
+    parameters: richAnswerEnvelopeSchema,
+    executionMode: "sequential",
+    async execute(_toolCallId, params) {
+      richAnswerAttemptCount += 1;
+      if (richAnswerAttemptCount > 2) {
+        throw new Error("本轮富回答最多提交两次；请保留正常文本回答并停止重试");
+      }
+      const current = await readCurrentSnapshot();
+      if (lastReadContextRevision !== current.contextRevision) {
+        throw new Error(`必须先调用 ${CONTEXT_TOOL} 读取本轮当前上下文`);
+      }
+      if (params.contextRevision !== current.contextRevision) {
+        throw new Error("富回答的 contextRevision 与当前上下文不匹配");
+      }
+
+      const sceneIDs = params.scenes.map((scene) => scene.id);
+      if (new Set(sceneIDs).size !== sceneIDs.length) {
+        throw new Error("富回答场景 id 必须唯一");
+      }
+      const evidenceIDs = params.evidenceLedger.map((entry) => entry.id);
+      if (new Set(evidenceIDs).size !== evidenceIDs.length) {
+        throw new Error("富回答证据 id 必须唯一");
+      }
+
+      const allowedAssetIDs = new Set(
+        current.course.catalog
+          .filter((item) => item.isCurrentMaterial || searchedCourseItemIDs.has(item.id))
+          .map((item) => item.id),
+      );
+      const evidenceTextByLabel = richAnswerEvidenceText(current, searchedCourseItemIDs);
+      const normalizedEvidenceLedger = params.evidenceLedger.map((entry) => {
+        const sourceLabel = canonicalRichAnswerEvidenceLabel(
+          entry.sourceLabel,
+          evidenceTextByLabel.keys(),
+        );
+        const source = sourceLabel ? evidenceTextByLabel.get(sourceLabel) : undefined;
+        if (!source || !sourceLabel) {
+          throw new Error(
+            `富回答引用了本轮未读取或无法唯一对应的来源：${entry.sourceLabel}；可用标签：${Array.from(evidenceTextByLabel.keys()).join("、")}`,
+          );
+        }
+        const excerpt = normalizedEvidenceText(entry.excerpt);
+        if (!excerpt || !normalizedEvidenceText(source.text).includes(excerpt)) {
+          throw new Error(`富回答证据摘录不在对应来源中：${sourceLabel}`);
+        }
+        if ((entry.assetIDs ?? []).some((assetID) => !allowedAssetIDs.has(assetID))) {
+          throw new Error(`富回答证据引用了本轮未开放的本地资源：${sourceLabel}`);
+        }
+        return { ...entry, sourceLabel, isTruncated: source.isTruncated, tags: [] };
+      });
+
+      const allowedEvidenceIDs = new Set(evidenceIDs);
+      let operationCount = 0;
+      for (const scene of params.scenes) {
+        const objectIDs = scene.objects.map((object) => object.id);
+        const relationIDs = (scene.relations ?? []).map((relation) => relation.id);
+        const operationIDs = (scene.operations ?? []).map((operation) => operation.id);
+        const frameIDs = (scene.frames ?? []).map((frame) => frame.id);
+        const localIDs = [...objectIDs, ...relationIDs, ...operationIDs, ...frameIDs];
+        if (new Set(localIDs).size !== localIDs.length) {
+          throw new Error(`富回答场景 ${scene.id} 内的所有 id 必须唯一`);
+        }
+        const knownObjects = new Set(objectIDs);
+        const knownFrames = new Set(frameIDs);
+        const referableIDs = new Set([...objectIDs, ...relationIDs, ...frameIDs]);
+        if (
+          (scene.relations ?? []).some(
+            (relation) =>
+              !knownObjects.has(relation.sourceID) || !knownObjects.has(relation.targetID),
+          )
+        ) {
+          throw new Error(`富回答场景 ${scene.id} 存在悬空关系`);
+        }
+        if (
+          (scene.operations ?? []).some((operation) =>
+            operation.targetIDs.some((targetID) => !referableIDs.has(targetID)) ||
+            (operation.frameID !== undefined && !knownFrames.has(operation.frameID)),
+          )
+        ) {
+          throw new Error(`富回答场景 ${scene.id} 存在悬空操作目标`);
+        }
+        if (
+          (scene.frames ?? []).some((frame) =>
+            (frame.objectIDs ?? []).some((objectID) => !knownObjects.has(objectID)),
+          )
+        ) {
+          throw new Error(`富回答场景 ${scene.id} 存在悬空坐标框对象`);
+        }
+        if (
+          scene.objects.some(
+            (object) =>
+              (object.frameID !== undefined && !knownFrames.has(object.frameID)) ||
+              ((object.coordinate !== undefined || object.bounds !== undefined) &&
+                object.frameID === undefined),
+          )
+        ) {
+          throw new Error(`富回答场景 ${scene.id} 存在缺失坐标框的对象`);
+        }
+        if (
+          (scene.frames ?? []).some(
+            (frame) =>
+              (frame.xAxis !== undefined && frame.xAxis.maximum <= frame.xAxis.minimum) ||
+              (frame.yAxis !== undefined && frame.yAxis.maximum <= frame.yAxis.minimum),
+          )
+        ) {
+          throw new Error(`富回答场景 ${scene.id} 的坐标范围无效`);
+        }
+        if (
+          (scene.frames ?? []).some(
+            (frame) => frame.kind === "cartesian" &&
+              (frame.xAxis === undefined || frame.yAxis === undefined),
+          )
+        ) {
+          throw new Error(`富回答场景 ${scene.id} 的笛卡尔坐标框缺少横轴或纵轴`);
+        }
+        if (
+          (scene.operations ?? []).some((operation) => {
+            const parameter = operation.parameter;
+            return parameter !== undefined &&
+              (parameter.maximum <= parameter.minimum ||
+                parameter.initialValue < parameter.minimum ||
+                parameter.initialValue > parameter.maximum);
+          })
+        ) {
+          throw new Error(`富回答场景 ${scene.id} 的可调参数范围无效`);
+        }
+        if (
+          scene.objects.some(
+            (object) => object.assetID !== undefined && !allowedAssetIDs.has(object.assetID),
+          ) ||
+          (scene.frames ?? []).some(
+            (frame) => frame.assetID !== undefined && !allowedAssetIDs.has(frame.assetID),
+          )
+        ) {
+          throw new Error(`富回答场景 ${scene.id} 引用了本轮未开放的本地资源`);
+        }
+        if (
+          scene.objects.some(
+            (object) =>
+              object.bounds !== undefined &&
+              (object.bounds.x + object.bounds.width > 1 ||
+                object.bounds.y + object.bounds.height > 1),
+          )
+        ) {
+          throw new Error(`富回答场景 ${scene.id} 的图像区域超出归一化边界`);
+        }
+        const referencedEvidenceIDs = [
+          ...scene.evidenceIDs,
+          ...scene.objects.flatMap((object) => object.evidenceIDs ?? []),
+          ...(scene.relations ?? []).flatMap((relation) => relation.evidenceIDs ?? []),
+          ...(scene.frames ?? []).flatMap((frame) => frame.evidenceIDs ?? []),
+        ];
+        if (referencedEvidenceIDs.some((evidenceID) => !allowedEvidenceIDs.has(evidenceID))) {
+          throw new Error(`富回答场景 ${scene.id} 引用了不存在的证据`);
+        }
+        operationCount += (scene.operations ?? []).length;
+      }
+      if (params.expressionPlan.directManipulation !== (operationCount > 0)) {
+        throw new Error("富回答的直接操作计划与实际操作不一致");
+      }
+      const plannedFamilies = new Set(params.expressionPlan.families);
+      if (params.scenes.some((scene) => !plannedFamilies.has(scene.family))) {
+        throw new Error("富回答场景能力族没有包含在表达计划中");
+      }
+
+      const details: RichAnswerToolDetails = {
+        kind: "rich_answer",
+        contextRevision: current.contextRevision,
+        envelope: { ...params, evidenceLedger: normalizedEvidenceLedger },
+      };
+      return {
+        content: [
+          {
+            type: "text",
+            text: "富回答知识场景已通过魏碑的本轮证据、引用和资源边界校验。请继续给出简洁的文本回答；不要在正文中输出场景 JSON。",
           },
         ],
         details,
@@ -1269,14 +1789,21 @@ export default function weibeiExtension(pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event) => {
     lastReadContextRevision = undefined;
     lastReadMemoryRevision = undefined;
+    richAnswerAttemptCount = 0;
     searchedCourseItemIDs.clear();
 
     let purpose = "unavailable";
     let revision = "unavailable";
+    let explicitRichAnswerRequested = false;
     try {
       const snapshot = await readCurrentSnapshot();
       purpose = snapshot.purpose;
       revision = snapshot.contextRevision;
+      explicitRichAnswerRequested =
+        snapshot.workflow !== "noteMaking" &&
+        /(?:富回答|可调|交互|互动|图示|函数图|关系图|时间线|图像叠层|叠层|模拟|实验|rich answer|interactive|adjustable|diagram|function graph|relationship graph|timeline|image overlay|simulation|experiment)/iu.test(
+          snapshot.question,
+        );
       requiredContextRevision = revision;
     } catch {
       requiredContextRevision = undefined;
@@ -1286,9 +1813,12 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       "<weibei_turn>",
       `purpose: ${JSON.stringify(purpose)}`,
       `contextRevision: ${JSON.stringify(revision)}`,
-      "本轮第一次工具调用必须是 weibei_context。调用成功前不得回答事实问题，也不得提出笔记建议。",
+      "本轮第一次工具调用必须是 weibei_context。调用成功前不得回答事实问题，也不得提出富回答或笔记建议。",
       "当前材料、笔记和选区是本轮直接证据；课程关联需要读课程地图或搜索；学习历史需要读学习记忆。",
       "学习记忆只能说明用户的学习状态，不能作为课程事实证据。",
+      explicitRichAnswerRequested
+        ? "本轮用户明确指定富回答或互动形态。当前证据足够时必须调用 weibei_rich_answer；不能满足时必须在正文明确说明限制，不得静默退成纯文本。"
+        : "本轮没有检测到用户指定富回答形态；由你按学习收益判断是否调用 weibei_rich_answer。",
       "</weibei_turn>",
     ].join("\n");
 
@@ -1299,7 +1829,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     if (!ALLOWED_TOOLS.has(event.toolName)) {
       return {
         block: true,
-        reason: `魏碑 Agent 只允许调用受控的上下文、课程、记忆与笔记建议工具`,
+        reason: `魏碑 Agent 只允许调用受控的上下文、课程、记忆、富回答与笔记建议工具`,
       };
     }
 

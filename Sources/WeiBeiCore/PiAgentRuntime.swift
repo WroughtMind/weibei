@@ -304,6 +304,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var allowsLearningOnlyAnswer: Bool
         var resolvableMemoryIDs: Set<String>
         var allowedSourceLabels: Set<String>
+        var allowedAssetIDs: Set<String>
+        var persistentAssetIDsByContextID: [String: String]
         var allowedJumpReferences: Set<String>
         var jumpEvidenceLabels: [String: Set<String>]
         var allowedLearningLabels: Set<String> = []
@@ -313,6 +315,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var answeredBeforeContext = false
         var streamedText = ""
         var proposal: StudyAgentNoteProposal?
+        var richAnswer: RichAnswerPresentation?
         var learningUpdate: StudyAgentLearningUpdate?
         var lastError: String?
         var progressDelivery: ProgressDelivery?
@@ -398,6 +401,11 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 return memory.id.uuidString.lowercased()
             }),
             allowedSourceLabels: currentSourceLabels(in: context),
+            allowedAssetIDs: currentAssetIDs(in: context),
+            persistentAssetIDsByContextID: persistentAssetIDsByContextID(
+                request: request,
+                context: context
+            ),
             allowedJumpReferences: Set(currentJumpEvidence.keys),
             jumpEvidenceLabels: currentJumpEvidence,
             lastLocationSourceLabel: context.learning.lastLocation.map { "[材料：\($0.itemTitle)]" },
@@ -534,7 +542,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             "--offline",
             "--no-session",
             "--no-builtin-tools",
-            "--tools", "weibei_context,weibei_course_map,weibei_course_search,weibei_learning_memory,weibei_learning_update,weibei_note_proposal",
+            "--tools", "weibei_context,weibei_course_map,weibei_course_search,weibei_learning_memory,weibei_learning_update,weibei_note_proposal,weibei_rich_answer",
             "--no-extensions",
             "--extension", resources.extensionURL.path,
             "--no-skills",
@@ -587,6 +595,20 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             labels.append("[选区：\(selection.title)]")
         }
         return Set(labels)
+    }
+
+    private func currentAssetIDs(in context: StudyAgentContextEnvelope) -> Set<String> {
+        Set(context.course.catalog.lazy.filter(\.isCurrentMaterial).map(\.id))
+    }
+
+    private func persistentAssetIDsByContextID(
+        request: StudyAgentRequest,
+        context: StudyAgentContextEnvelope
+    ) -> [String: String] {
+        let persistentCatalog = request.courseContext.catalog.prefix(context.course.catalog.count)
+        return Dictionary(uniqueKeysWithValues: zip(context.course.catalog, persistentCatalog).map { contextItem, persistentItem in
+            (contextItem.id, persistentItem.id)
+        })
     }
 
     private func currentJumpEvidence(in context: StudyAgentContextEnvelope) -> [String: Set<String>] {
@@ -1026,6 +1048,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
         case let .toolStarted(_, name):
             guard let run = activeRun else { return }
+            trace("tool started name=\(name)")
             let allowedTools = Set([
                 "weibei_context",
                 "weibei_course_map",
@@ -1033,6 +1056,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 "weibei_learning_memory",
                 "weibei_learning_update",
                 "weibei_note_proposal",
+                "weibei_rich_answer",
             ])
             guard allowedTools.contains(name) else {
                 finishRun(
@@ -1057,10 +1081,11 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             activeRun = run
             refreshRunWatchdog()
 
-        case let .courseSourcesRead(_, contextRevision, labels, jumpEvidence):
+        case let .courseSourcesRead(_, contextRevision, labels, assetIDs, jumpEvidence):
             guard var run = activeRun, contextRevision == run.contextRevision else { return }
             run.allowedSourceLabels.formUnion(labels)
             run.allowedNoteSourceLabels.formUnion(labels)
+            run.allowedAssetIDs.formUnion(assetIDs)
             registerJumpEvidence(jumpEvidence, in: &run)
             activeRun = run
             refreshRunWatchdog()
@@ -1074,6 +1099,34 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             if labels.contains("[学习记录：上次位置]"),
                let lastLocationSourceLabel = run.lastLocationSourceLabel {
                 run.allowedSourceLabels.insert(lastLocationSourceLabel)
+            }
+            activeRun = run
+            refreshRunWatchdog()
+
+        case let .richAnswer(_, data):
+            guard var run = activeRun else { return }
+            trace("rich answer received bytes=\(data.count)")
+            guard run.workflow != .noteMaking else {
+                finishRun(
+                    id: run.id,
+                    with: .failure(PiAgentRuntimeError.agentFailed("PI proposed a rich answer inside the note-making workflow"))
+                )
+                return
+            }
+            let presentation = RichAnswerEngine.prepare(
+                data: data,
+                fallbackText: run.streamedText,
+                environment: RichAnswerEnvironment(
+                    contextRevision: run.contextRevision,
+                    allowedSourceLabels: run.allowedSourceLabels,
+                    allowedAssetIDs: run.allowedAssetIDs
+                )
+            ).resolvingAssetIDs(using: run.persistentAssetIDsByContextID)
+            if presentation.mode == .rich {
+                run.richAnswer = presentation
+            } else {
+                trace("rich answer rejected diagnostics=\(presentation.diagnostics.map(\.code.rawValue).joined(separator: ","))")
+                run.richAnswer = nil
             }
             activeRun = run
             refreshRunWatchdog()
@@ -1131,6 +1184,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
         case let .toolFailed(_, name, message):
             guard var run = activeRun else { return }
+            trace("tool failed name=\(name) message=\(sanitizedDiagnostic(message))")
             run.lastError = "\(name): \(sanitizedDiagnostic(message))"
             activeRun = run
             refreshRunWatchdog()
@@ -1138,6 +1192,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         case let .agentEnded(text, stopReason, modelError):
             guard let run = activeRun else { return }
             let cleanText = (text.isEmpty ? run.streamedText : text).trimmingCharacters(in: .whitespacesAndNewlines)
+            let disclosedText = textWithRichAnswerDisclosure(cleanText, run: run)
             if stopReason == "aborted" {
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.cancelled))
             } else if stopReason == "error" {
@@ -1161,6 +1216,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                         StudyAgentReply(
                             text: proposal.markdown,
                             backend: .pi,
+                            richAnswer: run.richAnswer,
                             noteProposal: proposal,
                             learningUpdate: run.learningUpdate
                         )
@@ -1173,8 +1229,9 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                     id: run.id,
                     with: .success(
                         StudyAgentReply(
-                            text: cleanText,
+                            text: disclosedText,
                             backend: .pi,
+                            richAnswer: run.richAnswer,
                             noteProposal: run.proposal,
                             learningUpdate: run.learningUpdate
                         )
@@ -1193,6 +1250,24 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         case .event:
             break
         }
+    }
+
+    private func textWithRichAnswerDisclosure(_ text: String, run: ActiveRun) -> String {
+        guard !text.isEmpty,
+              run.workflow != .noteMaking,
+              StudyAgentRichAnswerRequest.isExplicit(run.userQuestion),
+              run.richAnswer?.mode != .rich else {
+            return text
+        }
+        let limitationTerms = ["无法", "不能", "未能", "失败", "不足", "没有生成", "未生成", "could not", "cannot", "failed", "insufficient"]
+        if text.localizedCaseInsensitiveContains("rich answer")
+            && limitationTerms.contains(where: text.localizedCaseInsensitiveContains) {
+            return text
+        }
+        if text.contains("富回答") && limitationTerms.contains(where: text.contains) {
+            return text
+        }
+        return "富回答没有通过本轮证据与格式校验，本轮先保留文本解释。\n\n\(text)"
     }
 
     private func finishRun(id: UUID, with result: Result<StudyAgentReply, Error>) {
