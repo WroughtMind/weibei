@@ -880,6 +880,9 @@ public struct PersistedWorkspace: Codable {
     public var noteBackingContentDigestsByItemID: [String: String]?
     public var selectedItemID: String?
     public var activeNotebookItemID: String?
+    public var courses: [Course]?
+    public var courseItemMemberships: [CourseItemMembership]?
+    public var activeCourseID: UUID?
     public var noteSourceLinks: [NoteSourceLink]?
     public var noteSourceLinksMigrationVersion: Int?
     public var studyLocationsByItemID: [String: StudyLocation]?
@@ -902,13 +905,47 @@ public struct PersistedWorkspace: Codable {
     public var adaptImportedDocumentColors: Bool?
     public var interfaceLanguageRaw: String?
 
-    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], pendingNoteWritesByItemID: [String: PendingNoteWriteState]? = nil, noteBackingContentDigestsByItemID: [String: String]? = nil, selectedItemID: String? = nil, activeNotebookItemID: String? = nil, noteSourceLinks: [NoteSourceLink]? = nil, noteSourceLinksMigrationVersion: Int? = nil, studyLocationsByItemID: [String: StudyLocation]? = nil, learningMemoryEntries: [LearningMemoryEntry]? = nil, learningMemoryRevision: UInt64? = nil, studySessions: [StudySession]? = nil, activeStudySessionID: UUID? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, threePaneOrder: [WorkspacePaneRole]? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showReader: Bool? = nil, showAgent: Bool? = nil, showNotes: Bool? = nil, showRightPane: Bool? = nil, showDailyInspiration: Bool? = nil, appearanceModeRaw: String? = nil, adaptImportedDocumentColors: Bool? = nil, interfaceLanguageRaw: String? = nil) {
+    public init(
+        importedItems: [StudyItem] = [],
+        notesByItemID: [String: String] = [:],
+        pendingNoteWritesByItemID: [String: PendingNoteWriteState]? = nil,
+        noteBackingContentDigestsByItemID: [String: String]? = nil,
+        selectedItemID: String? = nil,
+        activeNotebookItemID: String? = nil,
+        courses: [Course]? = nil,
+        courseItemMemberships: [CourseItemMembership]? = nil,
+        activeCourseID: UUID? = nil,
+        noteSourceLinks: [NoteSourceLink]? = nil,
+        noteSourceLinksMigrationVersion: Int? = nil,
+        studyLocationsByItemID: [String: StudyLocation]? = nil,
+        learningMemoryEntries: [LearningMemoryEntry]? = nil,
+        learningMemoryRevision: UInt64? = nil,
+        studySessions: [StudySession]? = nil,
+        activeStudySessionID: UUID? = nil,
+        modelName: String? = nil,
+        workspaceLayout: WorkspaceLayout? = nil,
+        threePaneOrder: [WorkspacePaneRole]? = nil,
+        agentSurface: AgentSurface? = nil,
+        noteRenderMode: NoteRenderMode? = nil,
+        showLibrary: Bool? = nil,
+        showReader: Bool? = nil,
+        showAgent: Bool? = nil,
+        showNotes: Bool? = nil,
+        showRightPane: Bool? = nil,
+        showDailyInspiration: Bool? = nil,
+        appearanceModeRaw: String? = nil,
+        adaptImportedDocumentColors: Bool? = nil,
+        interfaceLanguageRaw: String? = nil
+    ) {
         self.importedItems = importedItems
         self.notesByItemID = notesByItemID
         self.pendingNoteWritesByItemID = pendingNoteWritesByItemID
         self.noteBackingContentDigestsByItemID = noteBackingContentDigestsByItemID
         self.selectedItemID = selectedItemID
         self.activeNotebookItemID = activeNotebookItemID
+        self.courses = courses
+        self.courseItemMemberships = courseItemMemberships
+        self.activeCourseID = activeCourseID
         self.noteSourceLinks = noteSourceLinks
         self.noteSourceLinksMigrationVersion = noteSourceLinksMigrationVersion
         self.studyLocationsByItemID = studyLocationsByItemID

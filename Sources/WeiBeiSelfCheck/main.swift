@@ -1464,8 +1464,16 @@ expect(contentViewSource.contains("dividerFill.setFill()")
     && contentViewSource.contains("rect.minY + 14")
     && !contentViewSource.contains("NSColor.clear.setFill()"), "native split divider uses the current paper surface instead of a transparent hard gap")
 expect(contentViewSource.contains("override func layout()"), "native split applies saved positions after first real layout")
-expect(contentViewSource.contains("libraryResizeHandle"), "library pane keeps SwiftUI resize handle")
-expect(contentViewSource.contains("minimumContentWidthWithLibrary"), "library leaves readable width for the workspace")
+expect(contentViewSource.contains("CourseImmersiveDrawerView")
+    && contentViewSource.contains("LayoutContentView()")
+    && contentViewSource.contains("ZStack(alignment: .leading)")
+    && contentViewSource.contains("WeiBeiTheme.ink.opacity(0.035)\n                                    .allowsHitTesting(false)")
+    && contentViewSource.contains(".transition(WeiBeiTransition.sidePanel)")
+    && contentViewSource.contains(".animation(WeiBeiMotion.layout, value: store.showLibrary)")
+    && contentViewSource.contains("withAnimation(WeiBeiMotion.layout)")
+    && !contentViewSource.contains(".allowsHitTesting(store.showLibrary)")
+    && !contentViewSource.contains("libraryResizeHandle")
+    && !contentViewSource.contains("minimumContentWidthWithLibrary"), "course drawer temporarily covers the living workspace without blocking pane resizing or rebuilding it")
 expect(contentViewSource.contains("private let railWidth = ContentRailMetrics.railOnlyWidth")
     && contentRailSource.contains("static let snapThreshold = ContentRailPolicy.snapThreshold")
     && contentRailSource.contains("static let readableWidth = ContentRailPolicy.readableWidth")
@@ -1486,7 +1494,7 @@ expect(contentViewSource.contains("store.toggleLibrary()")
     && contentViewSource.contains("sidebar.left")
     && contentViewSource.contains("private var libraryButton: some View")
     && contentViewSource.contains("active: store.showLibrary")
-    && contentViewSource.contains("store.showLibrary ? store.ui(\"收起课程目录\"")
+    && contentViewSource.contains("store.showLibrary ? store.ui(\"收起课程抽屉\"")
     && !contentViewSource.contains("恢复课程目录")
     && !contentViewSource.contains(".opacity(isImmersiveLayout ? 0.45 : 1)"), "immersive top bar keeps a clear stateful library chooser instead of dimming a live control")
 if let leftControlsStart = contentViewSource.range(of: "private var leftPrimaryControls: some View")?.lowerBound,
@@ -1596,7 +1604,7 @@ let sidebarSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectory
     .appendingPathComponent("Sources/WeiBei/Views/SidebarView.swift")
 let sidebarSource = (try? String(contentsOf: sidebarSourceURL, encoding: .utf8)) ?? ""
 expect(sidebarSource.contains("Text(store.ui(\"课程目录\", \"Course Index\")")
-    && sidebarSource.contains("Text(store.ui(\"课程首页\", \"Course Home\")")
+    && sidebarSource.contains("Text(store.ui(\"资料关系台\", \"Course Relations\")")
     && sidebarSource.contains("store.presentCourseWorkspace()")
     && sidebarSource.contains("prompt: Text(store.ui(\"搜索课程资料与笔记\"")
     && sidebarSource.contains(".foregroundStyle(WeiBeiTheme.placeholderInk)")
@@ -1675,9 +1683,18 @@ expect(notesAgentSource.contains("private func refreshSourcePresentation(in text
 expect(!sidebarSource.contains("commandPalettePresented.toggle()") && !sidebarSource.contains("Label(\"命令\", systemImage: \"command\")"), "sidebar does not duplicate the command palette entry")
 expect(sidebarSource.contains("ScrollView(showsIndicators: false)"), "sidebar hides the heavy system scroll indicator that reads as a divider")
 expect(sidebarSource.contains("sidebarSection(title: store.ui(\"内置示例\"")
-    && sidebarSource.contains("sidebarSection(title: store.ui(\"课程资料\"")
-    && sidebarSource.contains("sidebarSection(title: store.ui(\"课程笔记\""), "course index separates built-in examples, course materials, and course notes")
-expect(sidebarSource.contains("!$0.isSample && !$0.isNotebookNote") && sidebarSource.contains("store.filteredItems.filter(\\.isNotebookNote)"), "sidebar material list excludes notebook notes without hiding notes")
+    && sidebarSource.contains("courseSection")
+    && sidebarSource.contains("courseContents(for: course)")
+    && sidebarSource.contains("courseItemGroup(")
+    && sidebarSource.contains("title: store.ui(\"资料\", \"Materials\")")
+    && sidebarSource.contains("title: store.ui(\"笔记\", \"Notes\")")
+    && sidebarSource.contains("LinearGradient(")
+    && sidebarSource.contains("sidebarSection(title: store.ui(\"独立资料\"")
+    && sidebarSource.contains("sidebarSection(title: store.ui(\"独立笔记\""), "course drawer keeps the original styling while expanding each course into a visually nested material-note tree")
+expect(sidebarSource.contains("store.unassignedCourseMaterials")
+    && sidebarSource.contains("store.courseMaterials(in: courseID)")
+    && sidebarSource.contains("store.courseNotes(in: courseID)")
+    && sidebarSource.contains("store.filteredItems.filter(\\.isNotebookNote)"), "course drawer filters materials and notes by real membership without hiding notebook notes")
 expect(sidebarSource.contains("item.isNotebookNote ? store.activeNotebookItemID == item.id : store.selectedItemID == item.id"), "sidebar highlights the active notebook note separately from the selected reader material")
 expect(sidebarSource.contains(".contextMenu")
     && sidebarSource.contains("Button(store.ui(\"重命名笔记\"")
@@ -1688,7 +1705,8 @@ expect(sidebarSource.contains(".contextMenu")
 expect(sidebarSource.contains("private var tags: [String]")
     && sidebarSource.contains("store.displayTags(for: item)")
     && sidebarSource.contains("Text(tags.joined(separator: \" \"))")
-    && sidebarSource.contains(".frame(height: tags.isEmpty ? 48 : 58)"), "notebook rows surface Markdown tags without adding a separate tag management panel")
+    && sidebarSource.contains("if !compact, !tags.isEmpty")
+    && sidebarSource.contains("compact ? 38 : (tags.isEmpty ? 48 : 58)"), "full notebook rows surface Markdown tags while nested course rows stay compact")
 expect(contentViewSource.contains("topIconButton(\"command\", help: store.ui(\"命令面板\""), "top bar keeps the command palette entry")
 let commandPaletteSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/CommandPaletteView.swift")
@@ -2285,8 +2303,10 @@ let linkedSourcesSourceURL = URL(fileURLWithPath: FileManager.default.currentDir
 let linkedSourcesSource = (try? String(contentsOf: linkedSourcesSourceURL, encoding: .utf8)) ?? ""
 let courseWorkspaceSourceNames = [
     "CourseWorkspaceView.swift",
-    "CourseOverviewView.swift",
     "CourseRelationsView.swift",
+    "CourseRelationPaperView.swift",
+    "CourseRelationGraphModel.swift",
+    "CourseImmersiveDrawerView.swift",
     "CourseRecordsView.swift",
     "CourseWorkspaceComponents.swift",
 ]
@@ -2318,18 +2338,38 @@ expect(contentViewSource.contains("if store.courseWorkspacePresented")
     && contentViewSource.contains("LayoutContentView()")
     && contentViewSource.contains("container.isHidden = store.courseWorkspacePresented")
     && !contentViewSource.contains("if store.courseWorkspacePresented {\n                            CourseWorkspaceView()\n                        } else"), "course workspace covers and hides native pane hosts without replacing the persistent pane tree")
-expect(courseWorkspaceSource.contains("case overview")
-    && courseWorkspaceSource.contains("case relations")
+expect(courseWorkspaceSource.contains("case relations")
     && courseWorkspaceSource.contains("case records")
-    && courseWorkspaceSource.contains("打开只是当前动作，关联才是长期关系。")
-    && courseWorkspaceSource.contains("尚未建立资料关联")
-    && courseWorkspaceSource.contains("尚无阅读位置")
-    && !courseWorkspaceSource.contains("已消化")
-    && !courseWorkspaceSource.contains("消化率"), "course workspace exposes overview, relationships, and learning records using only evidence-backed status language")
+    && !courseWorkspaceSource.contains("case overview")
+    && courseWorkspaceSource.contains("资料与笔记")
+    && courseWorkspaceSource.contains("资料关系台")
+    && courseWorkspaceSource.contains("MATERIALS × NOTES"), "course workspace opens directly into an explicit material-note relationship surface instead of an ambiguous overview")
+expect(courseWorkspaceSource.contains("CourseRelationPaperView(")
+    && courseWorkspaceSource.contains("CourseImmersiveDrawerView")
+    && courseWorkspaceSource.contains(".frame(width: 292)")
+    && courseWorkspaceSource.contains("未归属课程")
+    && courseWorkspaceSource.contains("未建立关系")
+    && courseWorkspaceSource.contains("showsOnlyUnlinked")
+    && courseWorkspaceSource.contains("edgeHazeColor")
+    && courseWorkspaceSource.contains("nodeProminence")
+    && courseWorkspaceSource.contains("private struct CourseRelationPaperNodeView: View"), "course drawer and relation paper share explicit course membership while keeping course assignment separate from note-material links")
+expect(courseWorkspaceSource.contains("@State private var pendingConnection")
+    && courseWorkspaceSource.contains("private func handleConnectionTap")
+    && courseWorkspaceSource.contains("private func connectionButton")
+    && courseWorkspaceSource.contains("MagnificationGesture()")
+    && courseWorkspaceSource.contains("private func zoomControls")
+    && courseWorkspaceSource.contains("private func fitZoomScale")
+    && courseWorkspaceSource.contains("scrollProxy.scrollTo(Self.paperOriginID, anchor: .topLeading)")
+    && courseWorkspaceSource.contains("private struct CourseRelationNodeDragModifier")
+    && courseWorkspaceSource.contains(".accessibilityLabel(\"\\(node.item.title)：\\(connectionLabel(state))\")")
+    && courseWorkspaceSource.contains("private static func fanOffsets")
+    && courseWorkspaceSource.contains("这里管理资料与笔记的长期关联，不表示当前打开状态。"), "relationship paper explains its boundary, supports click-to-link and zoom, and fans dense bands at shared nodes")
 expect(courseWorkspaceSource.contains("更改自动保存")
-    && courseWorkspaceSource.contains("showRecords(session.id)")
-    && courseWorkspaceSource.contains("courseMaterialsWithoutReadingPosition.first?.id")
-    && !courseWorkspaceSource.contains("store.courseMaterials + store.sampleItems"), "course relationship edits save immediately, route to the selected fact, and keep built-in samples outside course counts")
+    && courseWorkspaceSource.contains("private func addLink(materialID: String, noteID: String)")
+    && courseWorkspaceSource.contains("private func removeLink(noteID: String, materialID: String)")
+    && courseWorkspaceSource.contains("store.setLinkedNoteIDs")
+    && courseWorkspaceSource.contains("store.setLinkedCourseSourceIDs")
+    && !courseWorkspaceSource.contains("store.courseMaterials + store.sampleItems"), "course relationship edits save immediately in both directions while built-in samples stay outside course counts")
 expect(workspaceStoreSource.contains("@Published private(set) var workspaceSaveError")
     && workspaceStoreSource.contains("func retryWorkspaceSave()")
     && workspaceStoreSource.contains("Course changes were not saved to disk")
@@ -2351,15 +2391,15 @@ expect(workspaceStoreSource.contains("func presentCourseWorkspace(")
     && courseWorkspaceSource.contains("确认 Markdown 的角色")
     && courseWorkspaceSource.contains("guard let noteID = store.createCourseNotebookNote")
     && courseWorkspaceSource.contains("newNoteError = store.noteFileError")
-    && appSource.contains("打开课程首页")
-    && commandPaletteSource.contains("打开课程首页")
+    && appSource.contains("打开资料关系台")
+    && commandPaletteSource.contains("打开资料关系台")
     && sidebarSource.contains("store.presentCourseWorkspace()")
     && linkedSourcesSource.contains("store.presentCourseWorkspace(.notes"), "course workspace is reachable from top-level commands and note relationships, while explicit open actions own navigation")
 expect(workspaceStoreSource.contains("scenario == \"course-index-navigation-flow\"")
+    && workspaceStoreSource.contains("course-material-unassigned")
+    && workspaceStoreSource.contains("activeCourseID = nil")
     && workspaceStoreSource.contains("showLibrary = true")
-    && workspaceStoreSource.contains("showReader = false")
-    && workspaceStoreSource.contains("showAgent = false")
-    && workspaceStoreSource.contains("showNotes = false"), "course-index verification owns a quiet real-window state for the unified navigation path")
+    && workspaceStoreSource.contains("CourseItemMemberships()"), "course-drawer verification uses isolated real courses, shared items, and one genuinely unassigned material")
 expect(workspaceStoreSource.contains("noteSourceRelationIndex = NoteSourceRelationIndex(links: noteSourceLinks)")
     && workspaceStoreSource.contains("func linkedNoteCount(for sourceItemID: String)")
     && workspaceStoreSource.contains("verifyCourseOverlayContinuity(itemID:")
@@ -2696,8 +2736,9 @@ if let updateSelectionStart = workspaceStoreSource.range(of: "func updateSelecti
     expect(false, "updateSelection animation policy source is readable")
 }
 expect(workspaceStoreSource.contains("let itemChanged = selectedItemID != itemID") && workspaceStoreSource.contains("clearUnpinnedFloatingSelection(keepContext: false)"), "selecting a different item clears the old selection context")
-expect(workspaceStoreSource.contains("func toggleLibrary() {\n        recordNavigationPoint()\n        showLibrary.toggle()\n        clearUnpinnedFloatingSelection()")
-    && workspaceStoreSource.contains("func toggleRightPane() {\n        guard layout.hasCollapsibleRightPane else { return }\n        recordNavigationPoint()\n        showRightPane.toggle()\n        clearUnpinnedFloatingSelection()"), "pane visibility changes record navigation and invalidate stale floating selection anchors")
+expect(workspaceStoreSource.contains("func toggleLibrary() {\n        showLibrary.toggle()\n        clearUnpinnedFloatingSelection()")
+    && !workspaceStoreSource.contains("func toggleLibrary() {\n        recordNavigationPoint()")
+    && workspaceStoreSource.contains("func toggleRightPane() {\n        guard layout.hasCollapsibleRightPane else { return }\n        recordNavigationPoint()\n        showRightPane.toggle()\n        clearUnpinnedFloatingSelection()"), "the transient course drawer stays out of navigation history while durable pane visibility still records navigation")
 expect(workspaceStoreSource.contains("collapseSelectionFloatIntoConversationIfVisible()\n        focusedPane = pane")
     && workspaceStoreSource.contains("private func collapseSelectionFloatIntoConversationIfVisible()")
     && workspaceStoreSource.contains("guard isConversationSurfaceVisible, agentSurface == .selectionFloat else { return }")
@@ -2708,8 +2749,9 @@ expect(workspaceStoreSource.contains("focus(showRightPane ? rightPaneRevealFocus
     && workspaceStoreSource.contains("return normalizedThreePaneOrder.last?.focus ?? .notes")
     && workspaceStoreSource.contains("case .documentNotesAgent, .immersiveConversation:\n            return .agent"), "right-pane reveal focuses the visible pane by current role order instead of legacy fixed layout names")
 expect(workspaceStoreSource.contains("func revealLibrary()")
-    && workspaceStoreSource.contains("if !showLibrary {\n            recordNavigationPoint()\n            clearUnpinnedFloatingSelection()\n        }")
-    && workspaceStoreSource.contains("focus(.library)\n        save()"), "library reveal uses the shared durable state path")
+    && workspaceStoreSource.contains("if !showLibrary {\n            clearUnpinnedFloatingSelection()\n        }")
+    && workspaceStoreSource.contains("showLibrary = true\n        focus(.library)")
+    && !workspaceStoreSource.contains("focus(.library)\n        save()"), "library reveal uses transient in-memory state without writing the workspace")
 expect(workspaceStoreSource.contains("layout == .immersiveReading || layout == .immersiveWriting") && workspaceStoreSource.contains("agentSurface = .cornerPanel") && !workspaceStoreSource.contains("layout = .immersiveConversation\n                showLibrary = false\n                showRightPane = true"), "agent focus in immersive layouts opens an overlay instead of switching layout")
 if let setLayoutStart = workspaceStoreSource.range(of: "func setLayout(_ layout: WorkspaceLayout)")?.lowerBound,
    let setAgentSurfaceStart = workspaceStoreSource.range(of: "func setAgentSurface")?.lowerBound {
@@ -3801,15 +3843,58 @@ expect(courseSummary.materialCount == 3
     && courseSummary.studySessionCount == 1
     && courseSummary.unresolvedConfusionCount == 2, "course workspace summary reports only durable facts from the imported course")
 
-let persisted = PersistedWorkspace(noteSourceLinks: [oldestLink], noteSourceLinksMigrationVersion: 1, threePaneOrder: [.agent, .reader, .notes], noteRenderMode: .preview, showLibrary: false, showReader: false, showAgent: true, showNotes: false, showRightPane: true, showDailyInspiration: false, adaptImportedDocumentColors: false)
+let courseA = Course(
+    id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
+    title: "货币金融学",
+    colorIndex: 0,
+    sourceRootPath: "/Courses/Money"
+)
+let courseB = Course(
+    id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
+    title: "经济思想史",
+    colorIndex: 1,
+    sourceRootPath: "/Courses/History"
+)
+var courseMemberships = CourseItemMemberships()
+courseMemberships.assign(itemIDs: Set(["material-a", "note-a"]), to: courseA.id)
+courseMemberships.assign(itemIDs: Set(["material-a", "material-b"]), to: courseB.id)
+expect(Set(courseMemberships.courseIDs(for: "material-a")) == Set([courseA.id, courseB.id])
+    && Set(courseMemberships.itemIDs(in: courseA.id)) == Set(["material-a", "note-a"])
+    && Set(courseMemberships.itemIDs(in: courseB.id)) == Set(["material-a", "material-b"]), "one item can belong to multiple real courses without duplicating the item")
+courseMemberships.replaceCourses(for: "note-a", courseIDs: Set([courseB.id]))
+expect(courseMemberships.courseIDs(for: "note-a") == [courseB.id]
+    && !courseMemberships.itemIDs(in: courseA.id).contains("note-a"), "changing course membership removes only the replaced item-course pair")
+
+let persisted = PersistedWorkspace(
+    courses: [courseA, courseB],
+    courseItemMemberships: courseMemberships.values,
+    activeCourseID: courseB.id,
+    noteSourceLinks: [oldestLink],
+    noteSourceLinksMigrationVersion: 1,
+    threePaneOrder: [.agent, .reader, .notes],
+    noteRenderMode: .preview,
+    showLibrary: false,
+    showReader: false,
+    showAgent: true,
+    showNotes: false,
+    showRightPane: true,
+    showDailyInspiration: false,
+    adaptImportedDocumentColors: false
+)
 let restored = try JSONDecoder().decode(PersistedWorkspace.self, from: try JSONEncoder().encode(persisted))
 expect(restored.showLibrary == false && restored.showReader == false && restored.showAgent == true && restored.showNotes == false && restored.showRightPane == true, "pane visibility state persists")
+expect(restored.courses == [courseA, courseB]
+    && restored.courseItemMemberships == courseMemberships.values
+    && restored.activeCourseID == courseB.id, "courses, many-to-many membership, and the active course persist together")
 expect(restored.showDailyInspiration == false, "daily inspiration can be disabled and restored from workspace persistence")
 let reenabledInspiration = try JSONDecoder().decode(PersistedWorkspace.self, from: try JSONEncoder().encode(PersistedWorkspace(showDailyInspiration: true)))
 expect(reenabledInspiration.showDailyInspiration == true, "daily inspiration can be re-enabled and restored from workspace persistence")
 let legacyWorkspace = try JSONDecoder().decode(PersistedWorkspace.self, from: Data(#"{"importedItems":[],"notesByItemID":{}}"#.utf8))
 expect(legacyWorkspace.showDailyInspiration == nil
-    && workspaceStoreSource.contains("showDailyInspiration = snapshot.showDailyInspiration ?? true"), "workspace snapshots created before daily inspiration remain decodable and default to enabled")
+    && legacyWorkspace.courses == nil
+    && legacyWorkspace.courseItemMemberships == nil
+    && legacyWorkspace.activeCourseID == nil
+    && workspaceStoreSource.contains("showDailyInspiration = snapshot.showDailyInspiration ?? true"), "older workspace snapshots remain decodable without inventing a fake course")
 expect(restored.adaptImportedDocumentColors == false
     && workspaceStoreSource.contains("adaptImportedDocumentColors = snapshot.adaptImportedDocumentColors ?? true")
     && workspaceStoreSource.contains("adaptImportedDocumentColors: adaptImportedDocumentColors"), "imported-document color adaptation persists while old workspaces default to adapted reading")

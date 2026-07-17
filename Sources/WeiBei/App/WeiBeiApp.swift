@@ -97,7 +97,7 @@ struct WeiBeiApp: App {
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandMenu(store.appDisplayName) {
-                Button(store.ui("打开课程首页", "Open Course Home")) { store.presentCourseWorkspace() }
+                Button(store.ui("打开资料关系台", "Open Course Relations")) { store.presentCourseWorkspace() }
                     .keyboardShortcut("0")
 
                 Divider()
