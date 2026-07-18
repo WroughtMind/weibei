@@ -550,8 +550,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         let resolvedURL = outputURL.standardizedFileURL.resolvingSymlinksInPath()
         var isDirectory = ObjCBool(false)
         guard FileManager.default.fileExists(atPath: resolvedURL.path, isDirectory: &isDirectory),
-              isDirectory.boolValue,
-              resolvedURL.lastPathComponent.hasPrefix("weibei-rich-answer-") else {
+              isDirectory.boolValue else {
             return false
         }
         let allowedRoots = [
@@ -559,7 +558,12 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
             FileManager.default.temporaryDirectory,
         ].map { $0.standardizedFileURL.resolvingSymlinksInPath().path }
         return allowedRoots.contains { rootPath in
-            isPath(resolvedURL.path, insideDirectory: rootPath)
+            let normalizedRoot = rootPath.hasSuffix("/") ? String(rootPath.dropLast()) : rootPath
+            let prefix = normalizedRoot + "/"
+            guard resolvedURL.path.hasPrefix(prefix) else { return false }
+            let relativePath = resolvedURL.path.dropFirst(prefix.count)
+            guard let evidenceRoot = relativePath.split(separator: "/").first else { return false }
+            return evidenceRoot.hasPrefix("weibei-rich-answer-")
         }
     }
 
