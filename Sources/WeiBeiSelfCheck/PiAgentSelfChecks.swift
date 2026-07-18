@@ -100,7 +100,7 @@ private func checkRPCDecoding() throws {
                 "kind": "rich_answer",
                 "contextRevision": "revision-7",
                 "envelope": [
-                    "schemaVersion": 1,
+                    "schemaVersion": 2,
                     "contextRevision": "revision-7",
                     "narrative": "利率关系说明",
                     "expressionPlan": [
@@ -125,7 +125,7 @@ private func checkRPCDecoding() throws {
     try piRequire(
         id == "tool-rich"
             && envelope["contextRevision"] as? String == "revision-7"
-            && envelope["schemaVersion"] as? Int == 1,
+            && envelope["schemaVersion"] as? Int == 2,
         "PI rich-answer results preserve their isolated semantic envelope"
     )
 
@@ -540,14 +540,22 @@ private func checkStudyAgentContext() throws {
             summary: "对齐材料与解释",
             families: [.textAndAlignment],
             preferredSurface: .inline,
-            directManipulation: false
+            directManipulation: true
         ),
         scenes: [
             RichAnswerScene(
                 id: "message-scene",
                 title: "材料解释",
                 family: .textAndAlignment,
-                objects: [RichAnswerObject(id: "message-claim", kind: .claim, label: "结论", text: "PI answer")],
+                objects: [RichAnswerObject(id: "message-claim", kind: .text, label: "结论", text: "PI answer")],
+                operations: [
+                    RichAnswerOperation(
+                        id: "message-select",
+                        kind: .select,
+                        label: "选择解释",
+                        targetIDs: ["message-claim"]
+                    ),
+                ],
                 evidenceIDs: ["message-evidence"]
             ),
         ],
@@ -605,6 +613,7 @@ private func checkStudyAgentContext() throws {
             && StudyAgentRichAnswerRequest.isExplicit("Show this as an interactive timeline")
             && StudyAgentRichAnswerRequest.isExplicit("Explain this with a diagram")
             && StudyAgentRichAnswerRequest.isExplicit("Run an experiment from the source")
+            && !StudyAgentRichAnswerRequest.isExplicit("自行选择最合适的回答形态；只有交互显著提高理解时才生成富回答")
             && !StudyAgentRichAnswerRequest.isExplicit("直接解释这段材料"),
         "explicit rich-answer requests are detected without forcing ordinary questions into rich mode"
     )
@@ -700,6 +709,7 @@ private func checkBundledAgentResources() throws {
             "weibei_learning_memory",
             "weibei_learning_update",
             "weibei_note_proposal",
+            "weibei_ui_catalog",
             "weibei_rich_answer",
         ].allSatisfy(extensionSource.contains),
         "PI extension bundles the WeiBei-owned course, memory, rich-answer, and note tools"
@@ -736,16 +746,73 @@ private func checkBundledAgentResources() throws {
     )
     try piRequire(
         extensionSource.contains("richAnswerEnvelopeSchema")
+            && extensionSource.contains("richAnswerUIProgramSchema")
+            && extensionSource.contains("validateRichAnswerProgram")
+            && extensionSource.contains("schemaVersion: Type.Literal(2)")
+            && extensionSource.contains("version: Type.Literal(\"weibei.openui.v1\")")
+            && extensionSource.contains("OPENUI_COMPONENT_CATALOG")
+            && extensionSource.contains("OPENUI_COMPONENT_GROUPS")
+            && extensionSource.contains("openUIComponentConstraintGuidance")
+            && extensionSource.contains("参数约束：")
+            && extensionSource.contains("小标题过密")
+            && extensionSource.contains("const structuralErrors: string[] = []")
+            && extensionSource.contains("const semanticErrors: string[] = []")
+            && extensionSource.contains("const validationIssues: string[] = []")
+            && extensionSource.contains("程序为空或超出 10,000 字符 / 48 条声明预算")
+            && extensionSource.contains("并控制在 8 项以内")
+            && extensionSource.contains("selectedOpenUIComponentGroups")
+            && extensionSource.contains("提交富回答前必须先调用 ${RICH_ANSWER_CATALOG_TOOL}")
+            && extensionSource.contains("富回答先过内容与专业性，再过视觉")
+            && extensionSource.contains("不能验证的结果不得交给界面假装计算")
+            && extensionSource.contains("组件 ${declaration.component} 不在本轮目录选择中")
+            && extensionSource.contains("FunctionPlot")
+            && extensionSource.contains("EvidenceSnippet")
+            && extensionSource.contains("FollowUpAction")
             && extensionSource.contains("additionalProperties: false")
             && extensionSource.contains("富回答证据摘录不在对应来源中")
             && extensionSource.contains("canonicalRichAnswerEvidenceLabel")
-            && extensionSource.contains("不得提交 HTML、CSS、JavaScript、SVG、URL")
+            && extensionSource.contains("不得自造组件")
+            && extensionSource.contains("SVG path、HTML、CSS、JavaScript、Query、Mutation、URL、iframe 或外部资源")
+            && extensionSource.contains("程序包含标记、网络地址或可执行工具")
+            && extensionSource.contains("validateRichAnswerNarrativeFlow")
+            && extensionSource.contains("LayeredSpatialView(visibilityStateName")
+            && extensionSource.contains("DistributionBrush(centerStateName")
+            && extensionSource.contains("DependencyFlow(valuesStateName")
+            && extensionSource.contains("narrative 没有就近标注已使用的真实来源")
+            && extensionSource.contains("richAnswerProgramSource: 10_000")
+            && extensionSource.contains("richAnswerUINodes: 32")
+            && extensionSource.contains("richAnswerUIRows: 64")
+            && extensionSource.contains("actionBus:")
+            && extensionSource.contains("learningActions: RICH_ANSWER_LEARNING_ACTIONS")
+            && extensionSource.contains("interactions: RICH_ANSWER_INTERACTION_ACTIONS")
+            && extensionSource.contains("\"focusEvidence\"")
+            && extensionSource.contains("\"probe\"")
+            && extensionSource.contains("richAnswerT1SceneSchema")
+            && extensionSource.contains("richAnswerT2SceneSchema")
+            && extensionSource.contains("richAnswerUIBoundControlNodeSchema")
+            && extensionSource.contains("场景从输入层就二选一")
+            && !extensionSource.contains("这个兼容字段必须为空数组")
+            && extensionSource.contains("label 是画布标注，必须引用带 label 的 dataset.rows")
+            && extensionSource.contains("单个问题默认只提交一个最有帮助的 scene")
             && extensionSource.contains("本轮用户明确指定富回答或互动形态")
             && extensionSource.contains("图示|函数图")
             && extensionSource.contains("simulation|experiment")
             && resources.systemPrompt.contains("文本是默认形态")
+            && resources.systemPrompt.contains("富回答先过内容与专业性，再过视觉")
+            && resources.systemPrompt.contains("不能用漂亮图形掩盖知识错误")
             && resources.systemPrompt.contains("这个形态要求优先于你的默认选择")
-            && resources.systemPrompt.contains("禁止提交或夹带 HTML、CSS、JavaScript、SVG"),
+            && resources.systemPrompt.contains("T1 深组件程序")
+            && resources.systemPrompt.contains("T2 受控渲染计划")
+            && resources.systemPrompt.contains("先形成表达计划，再调用 `weibei_ui_catalog`")
+            && resources.systemPrompt.contains("不要依赖旧回合或完整组件库记忆")
+            && resources.systemPrompt.contains("不得只把同一段文字改成卡片、时间线或网格")
+            && resources.systemPrompt.contains("默认只提交一个最有帮助的 scene")
+            && resources.systemPrompt.contains("`placement` 与 `preferredSurface` 默认选择 `inline`")
+            && resources.systemPrompt.contains("由魏碑内核计算")
+            && resources.systemPrompt.contains("禁止提交 HTML、CSS、JavaScript、任意 SVG 几何字符串")
+            && resources.systemPrompt.contains("任意颜色、任意字体、像素布局或外部资源")
+            && resources.systemPrompt.contains("`narrative` 就是本次富回答最终显示的完整正文")
+            && resources.systemPrompt.contains("weibei-scene:场景ID"),
         "PI rich answers stay source-grounded and cannot escape into arbitrary web payloads"
     )
 
@@ -753,6 +820,12 @@ private func checkBundledAgentResources() throws {
         let skillURL = resources.skillsURL.appendingPathComponent(skillName).appendingPathComponent("SKILL.md")
         let source = try String(contentsOf: skillURL, encoding: .utf8)
         try piRequire(source.contains("name: \(skillName)") && source.contains("description:"), "PI skill \(skillName) has valid frontmatter")
+        if source.contains("weibei_rich_answer") {
+            try piRequire(
+                source.contains("allowed-tools:") && source.contains("weibei_ui_catalog"),
+                "PI skill \(skillName) authorizes the catalog required before rich answers"
+            )
+        }
     }
 
     let runtimeSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
@@ -778,7 +851,15 @@ private func checkBundledAgentResources() throws {
             && runtimeSource.contains("StudyAgentResolutionEvidence.matches")
             && runtimeSource.contains("StudyAgentCurrentTurnEvidence.matches")
             && runtimeSource.contains("allowsLearningOnlyAnswer")
-            && runtimeSource.contains("PI returned a content answer without a source read in the current turn")
+            && runtimeSource.contains("private static let allowedToolNames")
+            && runtimeSource.contains("\"weibei_ui_catalog\"")
+            && runtimeSource.contains("Self.allowedToolNames.joined(separator: \",\")")
+            && runtimeSource.contains("Set(Self.allowedToolNames).contains(name)")
+            && runtimeSource.contains("let richNarrative = run.richAnswer?.narrative")
+            && runtimeSource.contains("let finalText: String")
+            && runtimeSource.contains("run.toolTrace.append(name)")
+            && runtimeSource.contains("toolTrace: run.toolTrace")
+            && runtimeSource.contains("PI returned a content answer without a current-turn source citation")
             && runtimeSource.contains("binary.sha256")
             && runtimeSource.contains("SecStaticCodeCheckValidity"),
         "PI host enforces context-first answers, source labels, binary integrity, and code signatures"

@@ -263,6 +263,16 @@ public enum PiAgentDiagnosticSanitizer {
 
 public actor PiAgentRuntime: StudyAgentRuntime {
     private static let processReadinessTimeoutSeconds: UInt64 = 12
+    private static let allowedToolNames = [
+        "weibei_context",
+        "weibei_course_map",
+        "weibei_course_search",
+        "weibei_learning_memory",
+        "weibei_learning_update",
+        "weibei_note_proposal",
+        "weibei_ui_catalog",
+        "weibei_rich_answer",
+    ]
 
     private struct ProgressDelivery: Sendable {
         let continuation: AsyncStream<StudyAgentProgress>.Continuation
@@ -317,6 +327,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var proposal: StudyAgentNoteProposal?
         var richAnswer: RichAnswerPresentation?
         var learningUpdate: StudyAgentLearningUpdate?
+        var toolTrace: [String] = []
         var lastError: String?
         var progressDelivery: ProgressDelivery?
         var continuation: CheckedContinuation<StudyAgentReply, Error>?
@@ -542,7 +553,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             "--offline",
             "--no-session",
             "--no-builtin-tools",
-            "--tools", "weibei_context,weibei_course_map,weibei_course_search,weibei_learning_memory,weibei_learning_update,weibei_note_proposal,weibei_rich_answer",
+            "--tools", Self.allowedToolNames.joined(separator: ","),
             "--no-extensions",
             "--extension", resources.extensionURL.path,
             "--no-skills",
@@ -711,7 +722,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         let learningLabels = citedLearningLabels(in: text)
         guard !contentLabels.isEmpty
                 || (run.allowsLearningOnlyAnswer && !learningLabels.isEmpty) else {
-            return "PI returned a content answer without a source read in the current turn"
+            return "PI returned a content answer without a current-turn source citation"
         }
         guard contentLabels.isSubset(of: run.allowedSourceLabels) else {
             return "PI cited a source that was not read in the current turn"
@@ -975,7 +986,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                     if data.isEmpty { break }
                     let lines = try framer.append(data)
                     for line in lines {
-                        await self?.trace("stdout line bytes=\(line.count)")
                         await self?.receiveStdoutLine(line)
                     }
                 }
@@ -1047,18 +1057,11 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             refreshRunWatchdog()
 
         case let .toolStarted(_, name):
-            guard let run = activeRun else { return }
+            guard var run = activeRun else { return }
             trace("tool started name=\(name)")
-            let allowedTools = Set([
-                "weibei_context",
-                "weibei_course_map",
-                "weibei_course_search",
-                "weibei_learning_memory",
-                "weibei_learning_update",
-                "weibei_note_proposal",
-                "weibei_rich_answer",
-            ])
-            guard allowedTools.contains(name) else {
+            run.toolTrace.append(name)
+            activeRun = run
+            guard Set(Self.allowedToolNames).contains(name) else {
                 finishRun(
                     id: run.id,
                     with: .failure(PiAgentRuntimeError.agentFailed("PI attempted an unavailable tool: \(name)"))
@@ -1079,6 +1082,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
             run.didReadContext = true
             activeRun = run
+            trace("context read revision matched")
             refreshRunWatchdog()
 
         case let .courseSourcesRead(_, contextRevision, labels, assetIDs, jumpEvidence):
@@ -1125,7 +1129,10 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             if presentation.mode == .rich {
                 run.richAnswer = presentation
             } else {
-                trace("rich answer rejected diagnostics=\(presentation.diagnostics.map(\.code.rawValue).joined(separator: ","))")
+                let rejectionDetails = presentation.diagnostics.map {
+                    "\($0.code.rawValue):\($0.message)"
+                }.joined(separator: " | ")
+                trace("rich answer rejected diagnostics=\(rejectionDetails)")
                 run.richAnswer = nil
             }
             activeRun = run
@@ -1191,8 +1198,21 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
         case let .agentEnded(text, stopReason, modelError):
             guard let run = activeRun else { return }
-            let cleanText = (text.isEmpty ? run.streamedText : text).trimmingCharacters(in: .whitespacesAndNewlines)
-            let disclosedText = textWithRichAnswerDisclosure(cleanText, run: run)
+            let modelClosureText = (text.isEmpty ? run.streamedText : text)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let richNarrative = run.richAnswer?.narrative
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let finalText: String
+            if let richNarrative, !richNarrative.isEmpty {
+                finalText = richNarrative
+            } else {
+                finalText = modelClosureText
+            }
+            let disclosedText = textWithRichAnswerDisclosure(finalText, run: run)
+            trace(
+                "agent ended stop=\(stopReason ?? "unknown") closureChars=\(modelClosureText.count) "
+                    + "finalChars=\(finalText.count) rich=\(run.richAnswer?.mode == .rich)"
+            )
             if stopReason == "aborted" {
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.cancelled))
             } else if stopReason == "error" {
@@ -1207,9 +1227,9 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             } else if run.workflow == .noteMaking, run.proposal == nil {
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed("PI returned no revision-matched note proposal")))
             } else if run.workflow != .noteMaking,
-                      let validationError = answerValidationError(text: cleanText, run: run) {
+                      let validationError = answerValidationError(text: finalText, run: run) {
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed(validationError)))
-            } else if cleanText.isEmpty, let proposal = run.proposal {
+            } else if finalText.isEmpty, let proposal = run.proposal {
                 finishRun(
                     id: run.id,
                     with: .success(
@@ -1218,11 +1238,12 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                             backend: .pi,
                             richAnswer: run.richAnswer,
                             noteProposal: proposal,
-                            learningUpdate: run.learningUpdate
+                            learningUpdate: run.learningUpdate,
+                            toolTrace: run.toolTrace
                         )
                     )
                 )
-            } else if cleanText.isEmpty {
+            } else if finalText.isEmpty {
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed(run.lastError ?? "PI returned no readable text")))
             } else {
                 finishRun(
@@ -1233,7 +1254,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                             backend: .pi,
                             richAnswer: run.richAnswer,
                             noteProposal: run.proposal,
-                            learningUpdate: run.learningUpdate
+                            learningUpdate: run.learningUpdate,
+                            toolTrace: run.toolTrace
                         )
                     )
                 )

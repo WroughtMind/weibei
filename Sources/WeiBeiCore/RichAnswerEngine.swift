@@ -29,6 +29,17 @@ public enum RichAnswerSurface: String, Codable, CaseIterable, Hashable, Sendable
     case focus
 }
 
+public enum RichAnswerKnowledgeNature: String, Codable, CaseIterable, Hashable, Sendable {
+    case functionOrDataCurve
+    case objectMechanism
+    case spatialStructure
+    case processOrState
+    case argumentOrEvidence
+    case imageObservation
+    case comparisonOrEvaluation
+    case calculationOrConstraint
+}
+
 public enum RichAnswerObjectKind: String, Codable, CaseIterable, Hashable, Sendable {
     case text
     case quantity
@@ -121,19 +132,37 @@ public struct RichAnswerExpressionPlan: Codable, Hashable, Sendable {
     public var families: Set<RichAnswerCapabilityFamily>
     public var preferredSurface: RichAnswerSurface
     public var directManipulation: Bool
+    public var knowledgeNatures: Set<RichAnswerKnowledgeNature>
+    public var knowledgeObjects: [String]
+    public var knowledgeRelations: [String]
+    public var knowledgeProcesses: [String]
+    public var visualPrimitives: [String]
+    public var visualRationale: [String]
 
     public init(
         action: RichAnswerAction,
         summary: String,
         families: Set<RichAnswerCapabilityFamily>,
         preferredSurface: RichAnswerSurface,
-        directManipulation: Bool
+        directManipulation: Bool,
+        knowledgeNatures: Set<RichAnswerKnowledgeNature> = [],
+        knowledgeObjects: [String] = [],
+        knowledgeRelations: [String] = [],
+        knowledgeProcesses: [String] = [],
+        visualPrimitives: [String] = [],
+        visualRationale: [String] = []
     ) {
         self.action = action
         self.summary = summary
         self.families = families
         self.preferredSurface = preferredSurface
         self.directManipulation = directManipulation
+        self.knowledgeNatures = knowledgeNatures
+        self.knowledgeObjects = knowledgeObjects
+        self.knowledgeRelations = knowledgeRelations
+        self.knowledgeProcesses = knowledgeProcesses
+        self.visualPrimitives = visualPrimitives
+        self.visualRationale = visualRationale
     }
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
@@ -142,6 +171,12 @@ public struct RichAnswerExpressionPlan: Codable, Hashable, Sendable {
         case families
         case preferredSurface
         case directManipulation
+        case knowledgeNatures
+        case knowledgeObjects
+        case knowledgeRelations
+        case knowledgeProcesses
+        case visualPrimitives
+        case visualRationale
     }
 
     public init(from decoder: Decoder) throws {
@@ -152,6 +187,12 @@ public struct RichAnswerExpressionPlan: Codable, Hashable, Sendable {
         families = try container.decode(Set<RichAnswerCapabilityFamily>.self, forKey: .families)
         preferredSurface = try container.decode(RichAnswerSurface.self, forKey: .preferredSurface)
         directManipulation = try container.decode(Bool.self, forKey: .directManipulation)
+        knowledgeNatures = try container.decodeIfPresent(Set<RichAnswerKnowledgeNature>.self, forKey: .knowledgeNatures) ?? []
+        knowledgeObjects = try container.decodeIfPresent([String].self, forKey: .knowledgeObjects) ?? []
+        knowledgeRelations = try container.decodeIfPresent([String].self, forKey: .knowledgeRelations) ?? []
+        knowledgeProcesses = try container.decodeIfPresent([String].self, forKey: .knowledgeProcesses) ?? []
+        visualPrimitives = try container.decodeIfPresent([String].self, forKey: .visualPrimitives) ?? []
+        visualRationale = try container.decodeIfPresent([String].self, forKey: .visualRationale) ?? []
     }
 }
 
@@ -215,6 +256,8 @@ public struct RichAnswerScene: Codable, Hashable, Sendable {
     public var frames: [RichAnswerFrame]
     public var evidenceIDs: [String]
     public var placement: RichAnswerSurface
+    public var ui: RichAnswerUIComposition?
+    public var program: RichAnswerUIProgram?
 
     public init(
         id: String,
@@ -225,7 +268,9 @@ public struct RichAnswerScene: Codable, Hashable, Sendable {
         operations: [RichAnswerOperation] = [],
         frames: [RichAnswerFrame] = [],
         evidenceIDs: [String] = [],
-        placement: RichAnswerSurface = .inline
+        placement: RichAnswerSurface = .inline,
+        ui: RichAnswerUIComposition? = nil,
+        program: RichAnswerUIProgram? = nil
     ) {
         self.id = id
         self.title = title
@@ -236,6 +281,8 @@ public struct RichAnswerScene: Codable, Hashable, Sendable {
         self.frames = frames
         self.evidenceIDs = evidenceIDs
         self.placement = placement
+        self.ui = ui
+        self.program = program
     }
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
@@ -248,6 +295,8 @@ public struct RichAnswerScene: Codable, Hashable, Sendable {
         case frames
         case evidenceIDs
         case placement
+        case ui
+        case program
     }
 
     public init(from decoder: Decoder) throws {
@@ -262,6 +311,8 @@ public struct RichAnswerScene: Codable, Hashable, Sendable {
         frames = try container.decodeIfPresent([RichAnswerFrame].self, forKey: .frames) ?? []
         evidenceIDs = try container.decodeIfPresent([String].self, forKey: .evidenceIDs) ?? []
         placement = try container.decodeIfPresent(RichAnswerSurface.self, forKey: .placement) ?? .inline
+        ui = try container.decodeIfPresent(RichAnswerUIComposition.self, forKey: .ui)
+        program = try container.decodeIfPresent(RichAnswerUIProgram.self, forKey: .program)
     }
 }
 
@@ -686,6 +737,9 @@ public struct RichAnswerResourceBudget: Codable, Hashable, Sendable {
     public var maxOperationsPerScene: Int
     public var maxFramesPerScene: Int
     public var maxEvidenceItems: Int
+    public var maxUINodesPerScene: Int
+    public var maxUIDataRowsPerScene: Int
+    public var maxUIBindingsPerScene: Int
 
     public init(
         maxScenes: Int = 6,
@@ -693,7 +747,10 @@ public struct RichAnswerResourceBudget: Codable, Hashable, Sendable {
         maxRelationsPerScene: Int = 128,
         maxOperationsPerScene: Int = 16,
         maxFramesPerScene: Int = 12,
-        maxEvidenceItems: Int = 32
+        maxEvidenceItems: Int = 32,
+        maxUINodesPerScene: Int = 48,
+        maxUIDataRowsPerScene: Int = 256,
+        maxUIBindingsPerScene: Int = 8
     ) {
         self.maxScenes = maxScenes
         self.maxObjectsPerScene = maxObjectsPerScene
@@ -701,6 +758,9 @@ public struct RichAnswerResourceBudget: Codable, Hashable, Sendable {
         self.maxOperationsPerScene = maxOperationsPerScene
         self.maxFramesPerScene = maxFramesPerScene
         self.maxEvidenceItems = maxEvidenceItems
+        self.maxUINodesPerScene = maxUINodesPerScene
+        self.maxUIDataRowsPerScene = maxUIDataRowsPerScene
+        self.maxUIBindingsPerScene = maxUIBindingsPerScene
     }
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
@@ -710,6 +770,9 @@ public struct RichAnswerResourceBudget: Codable, Hashable, Sendable {
         case maxOperationsPerScene
         case maxFramesPerScene
         case maxEvidenceItems
+        case maxUINodesPerScene
+        case maxUIDataRowsPerScene
+        case maxUIBindingsPerScene
     }
 
     public init(from decoder: Decoder) throws {
@@ -721,6 +784,9 @@ public struct RichAnswerResourceBudget: Codable, Hashable, Sendable {
         maxOperationsPerScene = try container.decodeIfPresent(Int.self, forKey: .maxOperationsPerScene) ?? 16
         maxFramesPerScene = try container.decodeIfPresent(Int.self, forKey: .maxFramesPerScene) ?? 12
         maxEvidenceItems = try container.decodeIfPresent(Int.self, forKey: .maxEvidenceItems) ?? 32
+        maxUINodesPerScene = try container.decodeIfPresent(Int.self, forKey: .maxUINodesPerScene) ?? 48
+        maxUIDataRowsPerScene = try container.decodeIfPresent(Int.self, forKey: .maxUIDataRowsPerScene) ?? 256
+        maxUIBindingsPerScene = try container.decodeIfPresent(Int.self, forKey: .maxUIBindingsPerScene) ?? 8
     }
 }
 
@@ -758,9 +824,35 @@ public struct RichAnswerDiagnostic: Codable, Hashable, Sendable {
     }
 }
 
+public enum RichAnswerPartKind: String, Codable, Hashable, Sendable {
+    case narrative
+    case scene
+}
+
+public struct RichAnswerPart: Codable, Hashable, Sendable {
+    public var kind: RichAnswerPartKind
+    public var text: String?
+    public var sceneID: String?
+
+    public init(kind: RichAnswerPartKind, text: String? = nil, sceneID: String? = nil) {
+        self.kind = kind
+        self.text = text
+        self.sceneID = sceneID
+    }
+
+    public static func narrative(_ text: String) -> RichAnswerPart {
+        RichAnswerPart(kind: .narrative, text: text)
+    }
+
+    public static func scene(_ sceneID: String) -> RichAnswerPart {
+        RichAnswerPart(kind: .scene, sceneID: sceneID)
+    }
+}
+
 public struct RichAnswerPresentation: Codable, Hashable, Sendable {
     public var mode: RichAnswerPresentationMode
     public var narrative: String
+    public var parts: [RichAnswerPart]?
     public var expressionPlan: RichAnswerExpressionPlan?
     public var scenes: [RichAnswerScene]
     public var evidenceLedger: [RichAnswerEvidence]
@@ -771,6 +863,7 @@ public struct RichAnswerPresentation: Codable, Hashable, Sendable {
     public init(
         mode: RichAnswerPresentationMode,
         narrative: String,
+        parts: [RichAnswerPart]? = nil,
         expressionPlan: RichAnswerExpressionPlan? = nil,
         scenes: [RichAnswerScene] = [],
         evidenceLedger: [RichAnswerEvidence] = [],
@@ -780,12 +873,26 @@ public struct RichAnswerPresentation: Codable, Hashable, Sendable {
     ) {
         self.mode = mode
         self.narrative = narrative
+        self.parts = parts
         self.expressionPlan = expressionPlan
         self.scenes = scenes
         self.evidenceLedger = evidenceLedger
         self.fallback = fallback
         self.diagnostics = diagnostics
         self.evidenceState = evidenceState
+    }
+
+    public var resolvedParts: [RichAnswerPart] {
+        if let parts, !parts.isEmpty {
+            return parts
+        }
+        var fallbackParts: [RichAnswerPart] = []
+        let trimmedNarrative = narrative.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedNarrative.isEmpty {
+            fallbackParts.append(.narrative(trimmedNarrative))
+        }
+        fallbackParts.append(contentsOf: scenes.map { .scene($0.id) })
+        return fallbackParts
     }
 
     public func resolvingAssetIDs(using aliases: [String: String]) -> RichAnswerPresentation {
@@ -807,6 +914,16 @@ public struct RichAnswerPresentation: Codable, Hashable, Sendable {
                 }
                 return resolvedFrame
             }
+            if var ui = scene.ui {
+                ui.nodes = ui.nodes.map { node in
+                    var resolvedNode = node
+                    if let assetID = node.assetID {
+                        resolvedNode.assetID = aliases[assetID] ?? assetID
+                    }
+                    return resolvedNode
+                }
+                resolvedScene.ui = ui
+            }
             return resolvedScene
         }
         resolved.evidenceLedger = evidenceLedger.map { evidence in
@@ -825,7 +942,7 @@ public enum RichAnswerEngine {
     ) -> RichAnswerPresentation {
         var diagnostics: [RichAnswerDiagnostic] = []
 
-        guard envelope.schemaVersion == 1 else {
+        guard envelope.schemaVersion == 1 || envelope.schemaVersion == 2 else {
             return narrativeFallback(
                 envelope: envelope,
                 diagnostics: [
@@ -851,9 +968,9 @@ public enum RichAnswerEngine {
         }
 
         guard !envelope.narrative.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              envelope.narrative.count <= 12_000,
+              envelope.narrative.count <= 3_200,
               !envelope.fallback.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              envelope.fallback.text.count <= 12_000,
+              envelope.fallback.text.count <= 3_200,
               !envelope.expressionPlan.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               envelope.expressionPlan.summary.count <= 600 else {
             return narrativeFallback(
@@ -875,6 +992,10 @@ public enum RichAnswerEngine {
                 )
             )
         }
+        if let issue = validateExpressionPlanIntentBudget(envelope.expressionPlan) {
+            diagnostics.append(issue)
+            return narrativeFallback(envelope: envelope, diagnostics: diagnostics)
+        }
 
         let evidenceResult = validateEvidenceLedger(
             envelope.evidenceLedger,
@@ -894,7 +1015,12 @@ public enum RichAnswerEngine {
             from: scenes,
             evidenceByID: evidenceResult.validEvidenceByID
         )
-        let hasDirectOperations = scenes.contains(where: { !$0.operations.isEmpty })
+        let directUIRoles: Set<RichAnswerUIRole> = [.slider, .toggle, .scrubber, .select, .probe, .sequence]
+        let hasDirectOperations = scenes.contains { scene in
+            !scene.operations.isEmpty
+                || scene.program?.directManipulation == true
+                || scene.ui?.nodes.contains(where: { directUIRoles.contains($0.role) }) == true
+        }
         guard envelope.expressionPlan.directManipulation == hasDirectOperations else {
             diagnostics.append(
                 RichAnswerDiagnostic(
@@ -905,11 +1031,26 @@ public enum RichAnswerEngine {
             return narrativeFallback(envelope: envelope, diagnostics: diagnostics)
         }
         let mode: RichAnswerPresentationMode = scenes.isEmpty ? .narrativeOnly : .rich
-        let narrative = scenes.isEmpty && !diagnostics.isEmpty ? envelope.fallback.text : envelope.narrative
+        let flow = contentFlow(
+            narrative: envelope.narrative,
+            scenes: scenes,
+            diagnostics: &diagnostics
+        )
+        guard mode != .rich || !flow.narrative.isEmpty else {
+            diagnostics.append(
+                RichAnswerDiagnostic(
+                    code: .invalidValue,
+                    message: "rich answer content flow must retain readable narrative"
+                )
+            )
+            return narrativeFallback(envelope: envelope, diagnostics: diagnostics)
+        }
+        let narrative = scenes.isEmpty && !diagnostics.isEmpty ? envelope.fallback.text : flow.narrative
 
         return RichAnswerPresentation(
             mode: mode,
             narrative: narrative,
+            parts: mode == .rich ? flow.parts : nil,
             expressionPlan: envelope.expressionPlan,
             scenes: scenes,
             evidenceLedger: evidenceLedger,
@@ -960,6 +1101,88 @@ public enum RichAnswerEngine {
             diagnostics: diagnostics,
             evidenceState: .missing
         )
+    }
+
+    private static func contentFlow(
+        narrative: String,
+        scenes: [RichAnswerScene],
+        diagnostics: inout [RichAnswerDiagnostic]
+    ) -> (narrative: String, parts: [RichAnswerPart]) {
+        let scenesByID = Dictionary(uniqueKeysWithValues: scenes.map { ($0.id, $0) })
+        var parts: [RichAnswerPart] = []
+        var narrativeLines: [String] = []
+        var referencedSceneIDs: Set<String> = []
+
+        func flushNarrative() {
+            let text = narrativeLines
+                .joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            narrativeLines.removeAll(keepingCapacity: true)
+            if !text.isEmpty {
+                parts.append(.narrative(text))
+            }
+        }
+
+        for line in narrative.components(separatedBy: .newlines) {
+            guard let sceneID = richAnswerSceneMarkerID(in: line) else {
+                if line.contains("weibei-scene:") {
+                    diagnostics.append(
+                        RichAnswerDiagnostic(
+                            code: .invalidValue,
+                            message: "rich answer narrative contains a malformed scene marker"
+                        )
+                    )
+                    continue
+                }
+                narrativeLines.append(line)
+                continue
+            }
+            flushNarrative()
+            guard scenesByID[sceneID] != nil else {
+                diagnostics.append(
+                    RichAnswerDiagnostic(
+                        code: .brokenReference,
+                        sceneID: sceneID,
+                        message: "rich answer narrative references an unknown scene"
+                    )
+                )
+                continue
+            }
+            guard referencedSceneIDs.insert(sceneID).inserted else {
+                diagnostics.append(
+                    RichAnswerDiagnostic(
+                        code: .duplicateID,
+                        sceneID: sceneID,
+                        message: "rich answer narrative references the same scene more than once"
+                    )
+                )
+                continue
+            }
+            parts.append(.scene(sceneID))
+        }
+        flushNarrative()
+
+        for scene in scenes where !referencedSceneIDs.contains(scene.id) {
+            parts.append(.scene(scene.id))
+        }
+
+        let plainNarrative = parts.compactMap { part -> String? in
+            guard part.kind == .narrative else { return nil }
+            return part.text
+        }.joined(separator: "\n\n")
+
+        return (plainNarrative, parts)
+    }
+
+    private static func richAnswerSceneMarkerID(in line: String) -> String? {
+        let marker = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        let prefix = "<!-- weibei-scene:"
+        let suffix = "-->"
+        guard marker.hasPrefix(prefix), marker.hasSuffix(suffix) else { return nil }
+        let start = marker.index(marker.startIndex, offsetBy: prefix.count)
+        let end = marker.index(marker.endIndex, offsetBy: -suffix.count)
+        let sceneID = marker[start..<end].trimmingCharacters(in: .whitespacesAndNewlines)
+        return isSafeIdentifier(sceneID) ? sceneID : nil
     }
 
     private static func validateEvidenceLedger(
@@ -1128,11 +1351,25 @@ public enum RichAnswerEngine {
                 message: "scene family is not declared by the expression plan"
             )
         }
-        guard !scene.objects.isEmpty else {
+        guard scene.ui != nil || scene.program != nil || !scene.objects.isEmpty else {
             return RichAnswerDiagnostic(
                 code: .emptyScene,
                 sceneID: scene.id,
-                message: "scene does not contain any knowledge objects"
+                message: "scene does not contain knowledge objects or a generated UI program"
+            )
+        }
+        guard scene.ui == nil || scene.program == nil else {
+            return RichAnswerDiagnostic(
+                code: .unsupportedField,
+                sceneID: scene.id,
+                message: "scene cannot submit both the legacy UI tree and an OpenUI program"
+            )
+        }
+        guard scene.program == nil || scene.operations.isEmpty else {
+            return RichAnswerDiagnostic(
+                code: .unsupportedField,
+                sceneID: scene.id,
+                message: "OpenUI program scenes cannot also submit legacy operations"
             )
         }
         guard !scene.evidenceIDs.isEmpty else {
@@ -1145,7 +1382,10 @@ public enum RichAnswerEngine {
         guard scene.objects.count <= environment.resourceBudget.maxObjectsPerScene,
               scene.relations.count <= environment.resourceBudget.maxRelationsPerScene,
               scene.operations.count <= environment.resourceBudget.maxOperationsPerScene,
-              scene.frames.count <= environment.resourceBudget.maxFramesPerScene else {
+              scene.frames.count <= environment.resourceBudget.maxFramesPerScene,
+              (scene.ui?.nodes.count ?? 0) <= environment.resourceBudget.maxUINodesPerScene,
+              (scene.ui?.datasets.flatMap(\.rows).count ?? 0) <= environment.resourceBudget.maxUIDataRowsPerScene,
+              (scene.ui?.bindings.count ?? 0) <= environment.resourceBudget.maxUIBindingsPerScene else {
             return RichAnswerDiagnostic(
                 code: .budgetExceeded,
                 sceneID: scene.id,
@@ -1224,7 +1464,1083 @@ public enum RichAnswerEngine {
             }
         }
 
+        if let program = scene.program {
+            if let issue = validateUIProgram(program, scene: scene) {
+                return issue
+            }
+            return validateGeneratedFamilyContract(scene)
+        }
+
+        if let ui = scene.ui {
+            if let issue = validateUIComposition(
+                ui,
+                sceneID: scene.id,
+                evidenceByID: evidenceByID,
+                environment: environment
+            ) {
+                return issue
+            }
+            let boundEvidenceIDs = reachableUIEvidenceIDs(in: ui)
+            guard Set(scene.evidenceIDs).isSubset(of: boundEvidenceIDs) else {
+                return missingEvidence(
+                    sceneID: scene.id,
+                    "generated UI does not bind every scene evidence item to a reachable node or data row"
+                )
+            }
+            if let issue = validateGeneratedIntentContract(scene, expressionPlan: expressionPlan) {
+                return issue
+            }
+            return validateGeneratedFamilyContract(scene)
+        }
+
+        if let issue = validateFamilyContract(scene) {
+            return issue
+        }
+
         return nil
+    }
+
+    private static func validateUIProgram(
+        _ program: RichAnswerUIProgram,
+        scene: RichAnswerScene
+    ) -> RichAnswerDiagnostic? {
+        let sceneID = scene.id
+        guard program.version == "weibei.openui.v1" else {
+            return RichAnswerDiagnostic(
+                code: .unsupportedSchema,
+                sceneID: sceneID,
+                message: "generated UI program uses an unsupported protocol version"
+            )
+        }
+
+        let source = program.source.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lines = source
+            .split(whereSeparator: { character in character.isNewline })
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !source.isEmpty,
+              source.count <= 10_000,
+              !lines.isEmpty,
+              lines.count <= 48,
+              (160...720).contains(program.maxHeight),
+              !program.capabilities.isEmpty,
+              program.capabilities.count <= 12,
+              Set(program.capabilities).count == program.capabilities.count else {
+            return RichAnswerDiagnostic(
+                code: .budgetExceeded,
+                sceneID: sceneID,
+                message: "generated UI program exceeds its source, capability, or height budget"
+            )
+        }
+
+        let forbiddenFragments = [
+            "<script", "</script", "<svg", "<iframe", "javascript:",
+            "http://", "https://", "Query(", "Mutation(", "OpenUrl(",
+        ]
+        guard forbiddenFragments.allSatisfy({ !source.localizedCaseInsensitiveContains($0) }) else {
+            return RichAnswerDiagnostic(
+                code: .unauthorizedAsset,
+                sceneID: sceneID,
+                message: "generated UI program attempted to use markup, network access, or executable tools"
+            )
+        }
+
+        if source.range(
+            of: #"NarrativeBlock\([^\n]*,\s*\"conclusion\"\s*\)"#,
+            options: .regularExpression
+        ) != nil {
+            return invalidValue(
+                sceneID: sceneID,
+                "generated UI lives inside the answer flow and cannot repeat the answer conclusion"
+            )
+        }
+
+        let allowedComponents: Set<String> = [
+            "RichAnswerRoot", "LearningStage", "NarrativeBlock", "ParameterSlider",
+            "ParameterReadout", "ValuePicker", "FunctionPlot", "ComparisonRow",
+            "ComparisonTable", "EvidenceSnippet", "ReasonStep", "ProcessStepper",
+            "QuadraticMechanism", "FollowUpAction", "ChartSeries", "LinkedDataChart",
+            "MetricItem", "MetricStrip", "ExecutionFrame", "ExecutionTrack",
+            "ArgumentUnit", "ArgumentReader", "CausalEvent", "CausalTrack",
+            "TwoPointLineLab", "BalanceExperiment", "SpatialLayer", "SpatialRegion",
+            "SpatialPath", "SpatialPoint", "LayeredSpatialView", "DistributionBrush",
+            "FlowAssumption", "DependencyNode", "FlowMetric", "DependencyFlow",
+        ]
+        var hasRoot = false
+        let evidenceBindingComponents: Set<String> = [
+            "EvidenceSnippet",
+            "ArgumentUnit",
+            "CausalEvent",
+            "SpatialPoint",
+        ]
+        var evidenceBindingLines: [String] = []
+        for line in lines {
+            if line.hasPrefix("$") {
+                guard line.range(
+                    of: #"^\$[A-Za-z][A-Za-z0-9_]*\s*=\s*.+$"#,
+                    options: .regularExpression
+                ) != nil else {
+                    return invalidValue(sceneID: sceneID, "generated UI program has an invalid state declaration")
+                }
+                continue
+            }
+
+            guard let equals = line.firstIndex(of: "="),
+                  let openParenthesis = line[equals...].firstIndex(of: "(") else {
+                return invalidValue(sceneID: sceneID, "generated UI program has an invalid component statement")
+            }
+            let statementID = line[..<equals].trimmingCharacters(in: .whitespacesAndNewlines)
+            let componentName = line[line.index(after: equals)..<openParenthesis]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard isSafeIdentifier(statementID), allowedComponents.contains(componentName) else {
+                return RichAnswerDiagnostic(
+                    code: .unsupportedField,
+                    sceneID: sceneID,
+                    message: "generated UI program references a component outside WeiBei's catalog"
+                )
+            }
+            if statementID == "root" {
+                hasRoot = componentName == "RichAnswerRoot"
+            }
+            if evidenceBindingComponents.contains(componentName) {
+                evidenceBindingLines.append(line)
+            }
+        }
+
+        guard hasRoot else {
+            return brokenReference(sceneID: sceneID, "generated UI program does not define a RichAnswerRoot")
+        }
+        let canvasComponents = [
+            "FunctionPlot(", "LinkedDataChart(", "TwoPointLineLab(",
+            "LayeredSpatialView(", "DistributionBrush(",
+        ]
+        if program.graphics == .dom,
+           canvasComponents.contains(where: source.contains) {
+            return invalidValue(sceneID: sceneID, "generated UI Canvas components require the Canvas graphics kernel")
+        }
+        let bindsEveryEvidence = scene.evidenceIDs.allSatisfy { evidenceID in
+            guard let data = try? JSONEncoder().encode(evidenceID),
+                  let quotedEvidenceID = String(data: data, encoding: .utf8) else { return false }
+            return evidenceBindingLines.contains { line in
+                line.contains(quotedEvidenceID)
+            }
+        }
+        guard bindsEveryEvidence else {
+            return missingEvidence(
+                sceneID: sceneID,
+                "generated UI program must bind every scene evidence item through EvidenceSnippet, ArgumentUnit, CausalEvent, or SpatialPoint"
+            )
+        }
+        return nil
+    }
+
+    private static func validateUIComposition(
+        _ ui: RichAnswerUIComposition,
+        sceneID: String,
+        evidenceByID: [String: RichAnswerEvidence],
+        environment: RichAnswerEnvironment
+    ) -> RichAnswerDiagnostic? {
+        guard !ui.nodes.isEmpty else {
+            return invalidValue(sceneID: sceneID, "generated UI requires at least one node")
+        }
+
+        let nodeIDs = ui.nodes.map(\.id)
+        let datasetIDs = ui.datasets.map(\.id)
+        let bindingIDs = ui.bindings.map(\.id)
+        let rowIDs = ui.datasets.flatMap { $0.rows.map(\.id) }
+        guard idsAreUniqueAndSafe(nodeIDs + datasetIDs + bindingIDs + rowIDs) else {
+            return RichAnswerDiagnostic(
+                code: .duplicateID,
+                sceneID: sceneID,
+                message: "generated UI node, dataset, row, and binding ids must be unique and safe"
+            )
+        }
+
+        let nodesByID = Dictionary(uniqueKeysWithValues: ui.nodes.map { ($0.id, $0) })
+        let datasetsByID = Dictionary(uniqueKeysWithValues: ui.datasets.map { ($0.id, $0) })
+        let bindingsByID = Dictionary(uniqueKeysWithValues: ui.bindings.map { ($0.id, $0) })
+        guard nodesByID[ui.rootID] != nil else {
+            return brokenReference(sceneID: sceneID, "generated UI root references a missing node")
+        }
+
+        var parentCounts: [String: Int] = [:]
+        for node in ui.nodes {
+            guard node.children.allSatisfy({ nodesByID[$0] != nil }) else {
+                return brokenReference(sceneID: sceneID, "generated UI node \(node.id) references a missing child")
+            }
+            for childID in node.children {
+                parentCounts[childID, default: 0] += 1
+            }
+            if let issue = validateUINode(
+                node,
+                sceneID: sceneID,
+                nodesByID: nodesByID,
+                datasetsByID: datasetsByID,
+                bindingsByID: bindingsByID,
+                evidenceByID: evidenceByID,
+                environment: environment
+            ) {
+                return issue
+            }
+        }
+
+        guard parentCounts[ui.rootID, default: 0] == 0,
+              parentCounts.values.allSatisfy({ $0 <= 1 }) else {
+            return invalidValue(sceneID: sceneID, "generated UI must be a tree with one parent per node")
+        }
+
+        var visited: Set<String> = []
+        var active: Set<String> = []
+        func visit(_ nodeID: String, depth: Int) -> Bool {
+            guard depth <= 7, let node = nodesByID[nodeID] else { return false }
+            if active.contains(nodeID) { return false }
+            if visited.contains(nodeID) { return true }
+            active.insert(nodeID)
+            for childID in node.children where !visit(childID, depth: depth + 1) {
+                return false
+            }
+            active.remove(nodeID)
+            visited.insert(nodeID)
+            return true
+        }
+        guard visit(ui.rootID, depth: 1), visited.count == ui.nodes.count else {
+            return invalidValue(sceneID: sceneID, "generated UI contains a cycle, unreachable node, or excessive nesting")
+        }
+        let reachableNodes = ui.nodes.filter { visited.contains($0.id) }
+
+        let primaryControlCount = ui.nodes.filter {
+            [.slider, .toggle, .scrubber, .select, .probe].contains($0.role)
+        }.count
+        guard primaryControlCount <= 2 else {
+            return RichAnswerDiagnostic(
+                code: .budgetExceeded,
+                sceneID: sceneID,
+                message: "generated UI exposes more than two primary controls"
+            )
+        }
+
+        for dataset in ui.datasets {
+            guard !dataset.rows.isEmpty else {
+                return invalidValue(sceneID: sceneID, "generated UI dataset \(dataset.id) is empty")
+            }
+            for row in dataset.rows {
+                guard row.x.isFinite,
+                      row.y.isFinite,
+                      row.x >= 0,
+                      row.x <= 1,
+                      row.y >= 0,
+                      row.y <= 1,
+                      row.value.map(\.isFinite) ?? true,
+                      row.result.map(\.isFinite) ?? true else {
+                    return invalidValue(sceneID: sceneID, "generated UI row \(row.id) has invalid normalized coordinates")
+                }
+                let hasSecondPoint = row.x2 != nil || row.y2 != nil
+                if hasSecondPoint {
+                    guard let x2 = row.x2, let y2 = row.y2,
+                          x2.isFinite,
+                          y2.isFinite,
+                          x2 >= 0,
+                          x2 <= 1,
+                          y2 >= 0,
+                          y2 <= 1 else {
+                        return invalidValue(sceneID: sceneID, "generated UI row \(row.id) has an invalid vector endpoint")
+                    }
+                }
+                guard row.evidenceIDs.allSatisfy({ evidenceByID[$0] != nil }) else {
+                    return missingEvidence(sceneID: sceneID, "generated UI row \(row.id) references missing evidence")
+                }
+            }
+        }
+
+        for binding in ui.bindings {
+            guard binding.minimum.isFinite,
+                  binding.maximum.isFinite,
+                  binding.step.isFinite,
+                  binding.initialValue.isFinite,
+                  binding.minimum < binding.maximum,
+                  binding.step > 0,
+                  binding.initialValue >= binding.minimum,
+                  binding.initialValue <= binding.maximum else {
+                return RichAnswerDiagnostic(
+                    code: .invalidParameter,
+                    sceneID: sceneID,
+                    message: "generated UI binding \(binding.id) has invalid bounds"
+                )
+            }
+            let controlRoles: Set<RichAnswerUIRole> = [.slider, .toggle, .scrubber, .probe]
+            let outputRoles: Set<RichAnswerUIRole> = [
+                .metric, .sequence, .line, .path, .point, .area, .shape, .bar,
+                .dotMatrix, .vector, .region, .image,
+            ]
+            let hasControl = reachableNodes.contains {
+                $0.bindingID == binding.id && controlRoles.contains($0.role)
+            }
+            let hasDrivenOutput = reachableNodes.contains {
+                $0.bindingID == binding.id && outputRoles.contains($0.role)
+            }
+            guard hasControl, hasDrivenOutput else {
+                return invalidValue(
+                    sceneID: sceneID,
+                    "generated UI binding \(binding.id) must connect a visible control to a driven mark or metric"
+                )
+            }
+            guard bindingHasChangingOutcome(
+                binding,
+                reachableNodes: reachableNodes,
+                datasetsByID: datasetsByID
+            ) else {
+                return invalidValue(
+                    sceneID: sceneID,
+                    "generated UI binding \(binding.id) must produce a verifiable semantic or quantitative outcome change"
+                )
+            }
+        }
+        return nil
+    }
+
+    private static func bindingHasChangingOutcome(
+        _ binding: RichAnswerUIBinding,
+        reachableNodes: [RichAnswerUINode],
+        datasetsByID: [String: RichAnswerUIDataset]
+    ) -> Bool {
+        let outputRoles: Set<RichAnswerUIRole> = [
+            .metric,
+            .sequence,
+            .line,
+            .path,
+            .point,
+            .area,
+            .shape,
+            .bar,
+            .dotMatrix,
+            .vector,
+            .region,
+            .image,
+        ]
+        let drivenOutputs = reachableNodes.filter {
+            $0.bindingID == binding.id && outputRoles.contains($0.role)
+        }
+        return drivenOutputs.contains { node in
+            guard let datasetID = node.datasetID,
+                  let dataset = datasetsByID[datasetID] else {
+                return false
+            }
+            return datasetRowsHaveChangingOutcome(
+                dataset.rows,
+                acceptsSemanticOnly: node.role == .sequence
+            )
+        }
+    }
+
+    private static func datasetRowsHaveChangingOutcome(
+        _ rows: [RichAnswerUIDataRow],
+        acceptsSemanticOnly: Bool
+    ) -> Bool {
+        guard rows.count >= 2 else { return false }
+        let signatures = Set(rows.map { row in
+            [
+                row.value.map { String(format: "%.6f", $0) } ?? "",
+                row.result.map { String(format: "%.6f", $0) } ?? "",
+                String(format: "%.6f", row.x),
+                String(format: "%.6f", row.y),
+                row.x2.map { String(format: "%.6f", $0) } ?? "",
+                row.y2.map { String(format: "%.6f", $0) } ?? "",
+                row.label?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? "",
+            ].joined(separator: "|")
+        })
+        let hasVaryingNumericState = Set(rows.compactMap(\.value)).count >= 2
+            || Set(rows.compactMap(\.result)).count >= 2
+            || Set(rows.map(\.x)).count >= 2
+            || Set(rows.map(\.y)).count >= 2
+            || Set(rows.compactMap(\.x2)).count >= 2
+            || Set(rows.compactMap(\.y2)).count >= 2
+        let hasVaryingSemanticState = Set(
+            rows.compactMap { row in
+                row.label?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            }.filter { !$0.isEmpty }
+        ).count >= 2
+        return signatures.count >= 2
+            && (hasVaryingNumericState || (acceptsSemanticOnly && hasVaryingSemanticState))
+    }
+
+    private static func reachableUIEvidenceIDs(in ui: RichAnswerUIComposition) -> Set<String> {
+        let nodesByID = Dictionary(uniqueKeysWithValues: ui.nodes.map { ($0.id, $0) })
+        var visited: Set<String> = []
+        var active: Set<String> = []
+        func visit(_ nodeID: String, depth: Int) {
+            guard depth <= 7,
+                  let node = nodesByID[nodeID],
+                  !active.contains(nodeID),
+                  !visited.contains(nodeID) else { return }
+            active.insert(nodeID)
+            for childID in node.children {
+                visit(childID, depth: depth + 1)
+            }
+            active.remove(nodeID)
+            visited.insert(nodeID)
+        }
+        visit(ui.rootID, depth: 1)
+        let reachableNodes = ui.nodes.filter { visited.contains($0.id) }
+        let reachableDatasetIDs = Set(reachableNodes.compactMap(\.datasetID))
+        let nodeEvidenceIDs = reachableNodes.flatMap(\.evidenceIDs)
+        let rowEvidenceIDs = ui.datasets
+            .filter { reachableDatasetIDs.contains($0.id) }
+            .flatMap { dataset in dataset.rows.flatMap(\.evidenceIDs) }
+        return Set(nodeEvidenceIDs + rowEvidenceIDs)
+    }
+
+    private static func validateUINode(
+        _ node: RichAnswerUINode,
+        sceneID: String,
+        nodesByID: [String: RichAnswerUINode],
+        datasetsByID: [String: RichAnswerUIDataset],
+        bindingsByID: [String: RichAnswerUIBinding],
+        evidenceByID: [String: RichAnswerEvidence],
+        environment: RichAnswerEnvironment
+    ) -> RichAnswerDiagnostic? {
+        let containerRoles: Set<RichAnswerUIRole> = [.vstack, .hstack, .zstack, .grid, .panel]
+        let canvasRoles: Set<RichAnswerUIRole> = [
+            .axis, .line, .path, .point, .area, .shape, .bar, .dotMatrix,
+            .vector, .region, .image, .label,
+        ]
+        let datasetRoles: Set<RichAnswerUIRole> = [
+            .metric, .sequence, .line, .path, .point, .area, .bar, .dotMatrix, .vector, .label,
+        ]
+        let bindingRoles: Set<RichAnswerUIRole> = [.slider, .toggle, .scrubber, .probe]
+
+        if containerRoles.contains(node.role) {
+            guard !node.children.isEmpty else {
+                return invalidValue(sceneID: sceneID, "generated UI container \(node.id) has no children")
+            }
+        } else if node.role == .canvas {
+            guard !node.children.isEmpty,
+                  node.children.allSatisfy({ childID in
+                      nodesByID[childID].map { canvasRoles.contains($0.role) } == true
+                  }) else {
+                return invalidValue(sceneID: sceneID, "generated UI canvas \(node.id) only accepts visual mark children")
+            }
+            guard node.xAxis.map({ $0.minimum.isFinite && $0.maximum.isFinite && $0.minimum < $0.maximum }) ?? true,
+                  node.yAxis.map({ $0.minimum.isFinite && $0.maximum.isFinite && $0.minimum < $0.maximum }) ?? true else {
+                return invalidValue(sceneID: sceneID, "generated UI canvas \(node.id) has an invalid axis")
+            }
+        } else {
+            guard node.children.isEmpty else {
+                return invalidValue(sceneID: sceneID, "generated UI leaf \(node.id) cannot have children")
+            }
+        }
+
+        if node.role == .grid {
+            guard let columns = node.columns, (2...3).contains(columns) else {
+                return invalidValue(sceneID: sceneID, "generated UI grid \(node.id) requires two or three columns")
+            }
+        } else if node.columns != nil {
+            return RichAnswerDiagnostic(
+                code: .unsupportedField,
+                sceneID: sceneID,
+                message: "generated UI node \(node.id) uses columns outside a grid"
+            )
+        }
+
+        if datasetRoles.contains(node.role) {
+            guard let datasetID = node.datasetID, datasetsByID[datasetID] != nil else {
+                return brokenReference(sceneID: sceneID, "generated UI node \(node.id) references a missing dataset")
+            }
+        } else if node.role == .shape, let datasetID = node.datasetID {
+            guard datasetsByID[datasetID] != nil else {
+                return brokenReference(sceneID: sceneID, "generated UI shape \(node.id) references a missing dataset")
+            }
+        } else if node.datasetID != nil && node.role != .select {
+            return RichAnswerDiagnostic(
+                code: .unsupportedField,
+                sceneID: sceneID,
+                message: "generated UI node \(node.id) cannot bind a dataset"
+            )
+        }
+
+        if bindingRoles.contains(node.role) {
+            guard let bindingID = node.bindingID, bindingsByID[bindingID] != nil else {
+                return brokenReference(sceneID: sceneID, "generated UI control \(node.id) references a missing binding")
+            }
+        } else if let bindingID = node.bindingID,
+                  bindingsByID[bindingID] == nil {
+            return brokenReference(sceneID: sceneID, "generated UI node \(node.id) references a missing binding")
+        }
+
+        if node.role == .text {
+            guard node.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+                return invalidValue(sceneID: sceneID, "generated UI text \(node.id) is empty")
+            }
+        }
+        if node.role == .sequence {
+            guard let datasetID = node.datasetID,
+                  let dataset = datasetsByID[datasetID],
+                  dataset.rows.count >= 2 else {
+                return invalidValue(sceneID: sceneID, "generated UI sequence \(node.id) requires at least two dataset rows")
+            }
+            guard dataset.rows.allSatisfy({ hasMeaningfulText($0.label) }) else {
+                return invalidValue(sceneID: sceneID, "generated UI sequence \(node.id) requires every row to expose a visible label")
+            }
+        }
+        if node.role == .region, node.region == nil {
+            return invalidValue(sceneID: sceneID, "generated UI region \(node.id) has no bounds")
+        }
+        if node.role == .shape {
+            guard node.shape != nil, node.region != nil, node.fill != nil else {
+                return invalidValue(sceneID: sceneID, "generated UI shape \(node.id) requires a shape kind, fill, and bounds")
+            }
+            if node.bindingID != nil, node.datasetID == nil {
+                return invalidValue(sceneID: sceneID, "generated UI movable shape \(node.id) requires a dataset")
+            }
+        } else if node.shape != nil {
+            return RichAnswerDiagnostic(
+                code: .unsupportedField,
+                sceneID: sceneID,
+                message: "generated UI node \(node.id) uses a shape kind outside a shape mark"
+            )
+        }
+        let fillRoles: Set<RichAnswerUIRole> = [.shape, .bar, .dotMatrix, .region, .area]
+        if node.fill != nil, !fillRoles.contains(node.role) {
+            return RichAnswerDiagnostic(
+                code: .unsupportedField,
+                sceneID: sceneID,
+                message: "generated UI node \(node.id) uses fill outside a filled visual mark"
+            )
+        }
+        if let region = node.region,
+           !(region.x.isFinite
+                && region.y.isFinite
+                && region.width.isFinite
+                && region.height.isFinite
+                && region.x >= 0
+                && region.y >= 0
+                && region.width > 0
+                && region.height > 0
+                && region.x + region.width <= 1
+                && region.y + region.height <= 1) {
+            return invalidValue(sceneID: sceneID, "generated UI node \(node.id) has invalid bounds")
+        }
+        if node.role == .image {
+            guard let assetID = node.assetID, isAllowedAssetID(assetID, environment: environment) else {
+                return RichAnswerDiagnostic(
+                    code: .unauthorizedAsset,
+                    sceneID: sceneID,
+                    message: "generated UI image \(node.id) references an unauthorized asset"
+                )
+            }
+        } else if node.assetID != nil {
+            return RichAnswerDiagnostic(
+                code: .unsupportedField,
+                sceneID: sceneID,
+                message: "generated UI node \(node.id) uses an asset outside an image mark"
+            )
+        }
+        guard node.evidenceIDs.allSatisfy({ evidenceByID[$0] != nil }) else {
+            return missingEvidence(sceneID: sceneID, "generated UI node \(node.id) references missing evidence")
+        }
+        if node.role == .evidence, node.evidenceIDs.isEmpty {
+            return missingEvidence(sceneID: sceneID, "generated UI evidence node \(node.id) has no source")
+        }
+        return nil
+    }
+
+    private static func validateFamilyContract(_ scene: RichAnswerScene) -> RichAnswerDiagnostic? {
+        if let issue = validateSupportedOperations(scene) {
+            return issue
+        }
+
+        switch scene.family {
+        case .textAndAlignment:
+            return validateTextAlignmentContract(scene)
+        case .quantityAndCoordinates:
+            return validateQuantityCoordinateContract(scene)
+        case .processAndState:
+            return validateProcessStateContract(scene)
+        case .relationAndEvidence:
+            return validateRelationEvidenceContract(scene)
+        case .timeAndSpace:
+            return validateTimeSpaceContract(scene)
+        case .imageAndOverlay:
+            return validateImageOverlayContract(scene)
+        case .comparisonAndEvaluation:
+            return validateComparisonEvaluationContract(scene)
+        case .calculationAndConstraints:
+            return validateCalculationConstraintContract(scene)
+        }
+    }
+
+    private static func validateExpressionPlanIntentBudget(
+        _ plan: RichAnswerExpressionPlan
+    ) -> RichAnswerDiagnostic? {
+        let groups = [
+            plan.knowledgeObjects,
+            plan.knowledgeRelations,
+            plan.knowledgeProcesses,
+            plan.visualPrimitives,
+            plan.visualRationale,
+        ]
+        guard plan.knowledgeNatures.count <= 8,
+              groups.allSatisfy({ $0.count <= 12 }),
+              groups.flatMap({ $0 }).allSatisfy({
+                  let trimmed = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                  return !trimmed.isEmpty && trimmed.count <= 240
+              }) else {
+            return RichAnswerDiagnostic(
+                code: .budgetExceeded,
+                message: "rich answer expression intent exceeded its declaration budget"
+            )
+        }
+        return nil
+    }
+
+    private static func validateGeneratedFamilyContract(_ scene: RichAnswerScene) -> RichAnswerDiagnostic? {
+        let programComponents = generatedProgramComponents(in: scene.program?.source)
+        let nodes = scene.ui?.nodes ?? []
+        let roles = Set(nodes.map(\.role))
+        let dataRowCount = scene.ui?.datasets.reduce(0) { $0 + $1.rows.count } ?? 0
+        let bindingCount = scene.ui?.bindings.count ?? 0
+
+        func usesProgram(_ names: Set<String>) -> Bool {
+            !programComponents.isDisjoint(with: names)
+        }
+
+        func usesRole(_ candidates: Set<RichAnswerUIRole>) -> Bool {
+            !roles.isDisjoint(with: candidates)
+        }
+        let hasEvidenceNode = roles.contains(.evidence)
+        let semanticRelationLabelCount = nodes.filter { node in
+            [.label, .text, .sequence, .metric].contains(node.role)
+                && (
+                    !node.evidenceIDs.isEmpty
+                        || node.datasetID != nil
+                        || node.text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                )
+        }.count
+        let hasQuantityCanvas = roles.contains(.canvas)
+            && usesRole([.axis, .line, .path, .point, .area, .bar, .dotMatrix, .vector, .metric])
+
+        let isValid: Bool
+        switch scene.family {
+        case .textAndAlignment:
+            isValid = usesProgram(["ArgumentReader", "ArgumentUnit", "ComparisonTable"])
+                || (roles.contains(.text) && (roles.contains(.evidence) || usesRole([.select, .toggle, .probe])))
+        case .quantityAndCoordinates:
+            isValid = usesProgram([
+                "FunctionPlot", "TwoPointLineLab", "LinkedDataChart", "DistributionBrush",
+                "DependencyFlow", "ComparisonTable", "MetricStrip",
+            ]) || (hasQuantityCanvas && dataRowCount > 0 && (bindingCount > 0 || roles.contains(.metric)))
+        case .processAndState:
+            isValid = usesProgram([
+                "ProcessStepper", "QuadraticMechanism", "ExecutionTrack", "BalanceExperiment",
+                "ArgumentReader", "CausalTrack",
+            ]) || roles.contains(.sequence)
+                || (usesRole([.scrubber, .select, .toggle, .probe])
+                && (dataRowCount >= 2 || roles.contains(.text) || roles.contains(.metric)))
+        case .relationAndEvidence:
+            isValid = usesProgram([
+                "ArgumentReader", "CausalTrack", "DependencyFlow", "LayeredSpatialView", "ComparisonTable",
+            ]) || (hasEvidenceNode && (
+                (roles.contains(.sequence) && dataRowCount >= 2)
+                    || (usesRole([.path, .line, .vector]) && semanticRelationLabelCount >= 2)
+            ))
+        case .timeAndSpace:
+            isValid = usesProgram(["CausalTrack", "LayeredSpatialView", "LinkedDataChart"])
+                || (usesRole([.canvas, .image]) && usesRole([.path, .point, .region, .vector, .area]))
+                || (roles.contains(.sequence) && dataRowCount >= 2)
+        case .imageAndOverlay:
+            isValid = roles.contains(.image) && usesRole([.region, .path, .point, .shape])
+        case .comparisonAndEvaluation:
+            let comparisonValueCount = scene.ui?.nodes.filter {
+                [.metric, .text, .label, .bar, .dotMatrix].contains($0.role)
+            }.count ?? 0
+            isValid = usesProgram([
+                "ComparisonTable", "LinkedDataChart", "DistributionBrush", "ArgumentReader",
+                "MetricStrip", "DependencyFlow",
+            ]) || (usesRole([.grid, .hstack, .vstack]) && comparisonValueCount >= 2)
+        case .calculationAndConstraints:
+            isValid = usesProgram([
+                "DependencyFlow", "FunctionPlot", "TwoPointLineLab", "QuadraticMechanism",
+                "DistributionBrush", "BalanceExperiment",
+            ]) || (bindingCount > 0 && roles.contains(.metric)
+                && usesRole([.slider, .scrubber, .probe])
+                && usesRole([.shape, .line, .path, .bar, .metric]))
+        }
+
+        guard isValid else {
+            return invalidValue(
+                sceneID: scene.id,
+                "generated UI structure does not satisfy the declared \(scene.family.rawValue) capability contract"
+            )
+        }
+        return nil
+    }
+
+    private static func validateGeneratedIntentContract(
+        _ scene: RichAnswerScene,
+        expressionPlan: RichAnswerExpressionPlan
+    ) -> RichAnswerDiagnostic? {
+        guard let ui = scene.ui else { return nil }
+        let planDeclaresIntent = !expressionPlan.knowledgeNatures.isEmpty
+            || !expressionPlan.knowledgeObjects.isEmpty
+            || !expressionPlan.knowledgeRelations.isEmpty
+            || !expressionPlan.knowledgeProcesses.isEmpty
+            || !expressionPlan.visualPrimitives.isEmpty
+            || !expressionPlan.visualRationale.isEmpty
+        guard planDeclaresIntent else { return nil }
+
+        let roles = Set(ui.nodes.map(\.role))
+        if !expressionPlan.visualPrimitives.isEmpty {
+            let primitiveRoles = expressionPlan.visualPrimitives.compactMap(RichAnswerUIRole.init(rawValue:))
+            guard primitiveRoles.count == expressionPlan.visualPrimitives.count else {
+                return invalidValue(
+                    sceneID: scene.id,
+                    "generated UI expression plan names primitives outside the T2 role catalog"
+                )
+            }
+            let missingRoles = Set(primitiveRoles).subtracting(roles)
+            guard missingRoles.isEmpty else {
+                return invalidValue(
+                    sceneID: scene.id,
+                    "generated UI does not use its declared visual primitives: \(missingRoles.map(\.rawValue).sorted().joined(separator: ", "))"
+                )
+            }
+        }
+
+        let declaredConcepts = expressionPlan.knowledgeObjects
+            + expressionPlan.knowledgeRelations
+            + expressionPlan.knowledgeProcesses
+        if !declaredConcepts.isEmpty {
+            let visibleText = visibleSemanticText(in: ui, sceneTitle: scene.title)
+            let missingConcepts = missingSemanticObligations(declaredConcepts, in: visibleText)
+            guard missingConcepts.isEmpty else {
+                return invalidValue(
+                    sceneID: scene.id,
+                    "generated UI does not visibly expose declared knowledge obligations: \(missingConcepts.joined(separator: ", "))"
+                )
+            }
+        }
+
+        let embodiedNatures: Set<RichAnswerKnowledgeNature> = [
+            .objectMechanism,
+            .spatialStructure,
+            .processOrState,
+            .argumentOrEvidence,
+            .imageObservation,
+        ]
+        let requiresEmbodiedVisual = !expressionPlan.knowledgeNatures.isDisjoint(with: embodiedNatures)
+            || !expressionPlan.knowledgeProcesses.isEmpty
+        if requiresEmbodiedVisual {
+            let embodiedRoles: Set<RichAnswerUIRole> = [
+                .shape,
+                .vector,
+                .region,
+                .image,
+                .area,
+                .sequence,
+                .bar,
+                .dotMatrix,
+            ]
+            guard !roles.isDisjoint(with: embodiedRoles) else {
+                return invalidValue(
+                    sceneID: scene.id,
+                    "object, space, evidence, or process knowledge cannot be expressed as only a curve, metric, and control"
+                )
+            }
+            if !ui.bindings.isEmpty {
+                let controlDrivesEmbodiedMark = ui.bindings.contains { binding in
+                    ui.nodes.contains { node in
+                        node.bindingID == binding.id && embodiedRoles.contains(node.role)
+                    }
+                }
+                guard controlDrivesEmbodiedMark else {
+                    return invalidValue(
+                        sceneID: scene.id,
+                        "object, space, evidence, or process controls must change a semantic mark, not only a curve or readout"
+                    )
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private static func visibleSemanticText(
+        in ui: RichAnswerUIComposition,
+        sceneTitle: String
+    ) -> String {
+        let nodeText = ui.nodes.flatMap { node in
+            [node.label, node.text, node.unit, node.xAxis?.label, node.yAxis?.label].compactMap { $0 }
+        }
+        let rowText = ui.datasets.flatMap { dataset in
+            dataset.rows.compactMap(\.label)
+        }
+        let bindingText = ui.bindings.map(\.label)
+        return ([sceneTitle] + nodeText + rowText + bindingText).joined(separator: " ")
+    }
+
+    private static func semanticText(_ haystack: String, contains needle: String) -> Bool {
+        let normalizedHaystack = semanticSearchText(haystack)
+        let normalizedNeedle = semanticSearchText(needle)
+        if normalizedNeedle.count == 1 {
+            return normalizedHaystack.contains(normalizedNeedle)
+        }
+        guard normalizedNeedle.count >= 2 else { return false }
+        if normalizedHaystack.contains(normalizedNeedle) { return true }
+        let needleCharacters = Set(normalizedNeedle.map(String.init))
+        guard !needleCharacters.isEmpty else { return false }
+        let matchedCharacters = needleCharacters.filter { normalizedHaystack.contains($0) }.count
+        let requiredRatio = normalizedNeedle.count <= 4 ? 1.0 : 0.70
+        return Double(matchedCharacters) / Double(needleCharacters.count) >= requiredRatio
+    }
+
+    private static func missingSemanticObligations(
+        _ obligations: [String],
+        in visibleText: String
+    ) -> [String] {
+        obligations.filter { obligation in
+            !semanticText(visibleText, contains: obligation)
+        }
+    }
+
+    private static func semanticSearchText(_ text: String) -> String {
+        text
+            .lowercased()
+            .filter { character in
+                character.isLetter || character.isNumber || character == "=" || character == "²" || character == "π"
+            }
+            .map(String.init)
+            .joined()
+    }
+
+    private static func generatedProgramComponents(in source: String?) -> Set<String> {
+        guard let source else { return [] }
+        return Set(source.split(whereSeparator: { $0.isNewline }).compactMap { rawLine in
+            let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.hasPrefix("$"),
+                  let equals = line.firstIndex(of: "="),
+                  let openParenthesis = line[equals...].firstIndex(of: "(") else {
+                return nil
+            }
+            return line[line.index(after: equals)..<openParenthesis]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        })
+    }
+
+    private static func validateSupportedOperations(_ scene: RichAnswerScene) -> RichAnswerDiagnostic? {
+        let supportedKinds = supportedOperationKinds(for: scene.family)
+        if let unsupportedOperation = scene.operations.first(where: { !supportedKinds.contains($0.kind) }) {
+            return RichAnswerDiagnostic(
+                code: .unsupportedField,
+                sceneID: scene.id,
+                message: "operation \(unsupportedOperation.kind.rawValue) is not supported by the \(scene.family.rawValue) renderer"
+            )
+        }
+        return nil
+    }
+
+    private static func supportedOperationKinds(
+        for family: RichAnswerCapabilityFamily
+    ) -> Set<RichAnswerOperationKind> {
+        switch family {
+        case .textAndAlignment:
+            return [.select, .reveal, .reset]
+        case .quantityAndCoordinates:
+            return [.adjust, .probe, .select, .reset]
+        case .processAndState:
+            return [.select, .step, .playPause, .reset]
+        case .relationAndEvidence:
+            return [.select, .reveal, .reset]
+        case .timeAndSpace:
+            return [.scrub, .toggle, .reset]
+        case .imageAndOverlay:
+            return [.select, .toggle, .zoom]
+        case .comparisonAndEvaluation:
+            return [.compare, .select, .reset]
+        case .calculationAndConstraints:
+            return [.adjust, .reset]
+        }
+    }
+
+    private static func validateTextAlignmentContract(_ scene: RichAnswerScene) -> RichAnswerDiagnostic? {
+        let selectableTextIDs = Set(
+            scene.objects.lazy
+                .filter { $0.kind == .text && hasMeaningfulText($0.text) }
+                .map(\.id)
+        )
+        guard !selectableTextIDs.isEmpty,
+              scene.operations.contains(where: {
+                  $0.kind == .select && $0.targetIDs.contains(where: selectableTextIDs.contains)
+              }) else {
+            return invalidValue(
+                sceneID: scene.id,
+                "text alignment scenes require a selectable text object"
+            )
+        }
+        return nil
+    }
+
+    private static func validateQuantityCoordinateContract(_ scene: RichAnswerScene) -> RichAnswerDiagnostic? {
+        let coordinateFrameIDs = Set(
+            scene.frames.lazy
+                .filter { $0.kind == .cartesian }
+                .map(\.id)
+        )
+        guard !coordinateFrameIDs.isEmpty else {
+            return invalidValue(sceneID: scene.id, "quantity scenes require a cartesian coordinate frame")
+        }
+
+        let plottedObjects = scene.objects.filter { object in
+            (object.kind == .quantity || object.kind == .dataPoint)
+                && object.coordinate?.isNormalized == true
+                && object.frameID.map(coordinateFrameIDs.contains) == true
+        }
+        guard plottedObjects.count >= 2 else {
+            return invalidValue(
+                sceneID: scene.id,
+                "quantity scenes require at least two coordinate points attached to a coordinate frame"
+            )
+        }
+        return nil
+    }
+
+    private static func validateProcessStateContract(_ scene: RichAnswerScene) -> RichAnswerDiagnostic? {
+        let processObjectIDs = Set(
+            scene.objects.lazy
+                .filter { $0.kind == .step || $0.kind == .state }
+                .map(\.id)
+        )
+        guard processObjectIDs.count >= 2 else {
+            return invalidValue(sceneID: scene.id, "process scenes require at least two step or state objects")
+        }
+        guard operationExists(in: scene, kind: .step, targetingAtLeast: 2, within: processObjectIDs),
+              operationExists(in: scene, kind: .playPause, targetingAtLeast: 2, within: processObjectIDs) else {
+            return invalidValue(sceneID: scene.id, "process scenes require step and play controls targeting process objects")
+        }
+        return nil
+    }
+
+    private static func validateRelationEvidenceContract(_ scene: RichAnswerScene) -> RichAnswerDiagnostic? {
+        guard !scene.relations.isEmpty else {
+            return invalidValue(sceneID: scene.id, "relation scenes require at least one relationship")
+        }
+        return nil
+    }
+
+    private static func validateTimeSpaceContract(_ scene: RichAnswerScene) -> RichAnswerDiagnostic? {
+        let navigableFrameIDs = Set(
+            scene.frames.lazy
+                .filter { $0.kind == .timeline || $0.kind == .space }
+                .map(\.id)
+        )
+        guard !navigableFrameIDs.isEmpty else {
+            return invalidValue(sceneID: scene.id, "time-space scenes require a timeline or space frame")
+        }
+
+        let navigableObjectIDs = Set(
+            scene.objects.lazy
+                .filter {
+                    $0.coordinate?.isNormalized == true
+                        && $0.frameID.map(navigableFrameIDs.contains) == true
+                }
+                .map(\.id)
+        )
+        guard navigableObjectIDs.count >= 2 else {
+            return invalidValue(
+                sceneID: scene.id,
+                "time-space scenes require at least two positioned objects on a timeline or space frame"
+            )
+        }
+        guard operationExists(in: scene, kind: .scrub, targetingAtLeast: 1, within: navigableObjectIDs.union(navigableFrameIDs)) else {
+            return invalidValue(sceneID: scene.id, "time-space scenes require a scrub operation")
+        }
+        return nil
+    }
+
+    private static func validateImageOverlayContract(_ scene: RichAnswerScene) -> RichAnswerDiagnostic? {
+        let imageFrames = scene.frames.filter { $0.kind == .image && $0.assetID != nil }
+        let imageFrameIDs = Set(imageFrames.map(\.id))
+        guard !imageFrameIDs.isEmpty else {
+            return invalidValue(sceneID: scene.id, "image overlay scenes require an image frame with an asset")
+        }
+
+        let frameAssetIDs = Set(imageFrames.compactMap(\.assetID))
+        let imageObjects = scene.objects.filter {
+            $0.kind == .image
+                && $0.assetID.map(frameAssetIDs.contains) == true
+                && $0.frameID.map(imageFrameIDs.contains) == true
+        }
+        let regionObjects = scene.objects.filter {
+            $0.kind == .region
+                && $0.bounds != nil
+                && $0.frameID.map(imageFrameIDs.contains) == true
+        }
+        guard !imageObjects.isEmpty, !regionObjects.isEmpty else {
+            return invalidValue(
+                sceneID: scene.id,
+                "image overlay scenes require an image object and a bounded region in the image frame"
+            )
+        }
+        return nil
+    }
+
+    private static func validateComparisonEvaluationContract(_ scene: RichAnswerScene) -> RichAnswerDiagnostic? {
+        let objectIDs = Set(scene.objects.map(\.id))
+        guard scene.operations.contains(where: { operation in
+            operation.kind == .compare
+                && Set(operation.targetIDs).intersection(objectIDs).count >= 2
+        }) else {
+            return invalidValue(sceneID: scene.id, "comparison scenes require a compare operation with at least two object targets")
+        }
+        return nil
+    }
+
+    private static func validateCalculationConstraintContract(_ scene: RichAnswerScene) -> RichAnswerDiagnostic? {
+        guard scene.objects.contains(where: { $0.kind == .formula && hasMeaningfulText($0.text) }),
+              scene.objects.contains(where: { $0.kind == .constraint && hasMeaningfulText($0.text) }) else {
+            return invalidValue(sceneID: scene.id, "calculation scenes require a formula and a constraint")
+        }
+
+        let frameIDs = Set(scene.frames.map(\.id))
+        guard scene.operations.contains(where: { operation in
+            guard operation.kind == .adjust, operation.parameter != nil else { return false }
+            let samples = numericCoordinateSamples(for: operation, in: scene, frameIDs: frameIDs)
+            return samples.count >= 2 && Set(samples.compactMap { $0.coordinate?.x }).count >= 2
+        }) else {
+            return invalidValue(
+                sceneID: scene.id,
+                "calculation scenes require an adjust operation targeting at least two numeric coordinate samples"
+            )
+        }
+        return nil
+    }
+
+    private static func operationExists(
+        in scene: RichAnswerScene,
+        kind: RichAnswerOperationKind,
+        targetingAtLeast minimumTargetCount: Int,
+        within allowedTargetIDs: Set<String>
+    ) -> Bool {
+        scene.operations.contains { operation in
+            operation.kind == kind
+                && Set(operation.targetIDs).intersection(allowedTargetIDs).count >= minimumTargetCount
+        }
+    }
+
+    private static func numericCoordinateSamples(
+        for operation: RichAnswerOperation,
+        in scene: RichAnswerScene,
+        frameIDs: Set<String>
+    ) -> [RichAnswerObject] {
+        let targetIDs = Set(operation.targetIDs)
+        return scene.objects.filter { object in
+            targetIDs.contains(object.id)
+                && object.number != nil
+                && object.coordinate?.isNormalized == true
+                && object.frameID.map(frameIDs.contains) == true
+        }
+    }
+
+    private static func hasMeaningfulText(_ text: String?) -> Bool {
+        text?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
     }
 
     private static func validateObject(
@@ -1464,6 +2780,10 @@ private extension RichAnswerPoint {
     var isFinite: Bool {
         x.isFinite && y.isFinite
     }
+
+    var isNormalized: Bool {
+        isFinite && x >= 0 && x <= 1 && y >= 0 && y <= 1
+    }
 }
 
 private extension RichAnswerRegion {
@@ -1487,6 +2807,7 @@ private extension RichAnswerScene {
             + objects.flatMap(\.evidenceIDs)
             + relations.flatMap(\.evidenceIDs)
             + frames.flatMap(\.evidenceIDs)
+            + (ui?.allEvidenceIDs ?? [])
     }
 }
 

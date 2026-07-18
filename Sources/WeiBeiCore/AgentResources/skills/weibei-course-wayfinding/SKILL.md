@@ -2,7 +2,7 @@
 name: weibei-course-wayfinding
 description: 在当前课程的多份材料与笔记中查找知识关联、前置与复习路径，并给出可点击的来源跳转。
 compatibility: 需要 PI 0.80.2 与魏碑扩展提供的课程地图、课程搜索和学习记忆工具。
-allowed-tools: weibei_context weibei_course_map weibei_course_search weibei_learning_memory weibei_learning_update weibei_rich_answer
+allowed-tools: weibei_context weibei_course_map weibei_course_search weibei_learning_memory weibei_learning_update weibei_ui_catalog weibei_rich_answer
 ---
 
 # 魏碑课程寻路
@@ -14,7 +14,12 @@ allowed-tools: weibei_context weibei_course_map weibei_course_search weibei_lear
 3. 把用户的问题、当前选区或核心概念组成简短查询，调用 `weibei_course_search`。如果用户问“下一步学什么”，再调用 `weibei_learning_memory`。
 4. 对每个候选项分别说明关联类型：同一概念、前置、解释、例子、对比、笔记归纳或待补证据。
 5. 只推荐工具真实返回的文件；索引片段被截断时，不声称已检查整本书。
-6. 多份材料之间的时间、空间、前置或证据关系用图式更清楚时，可调用 `weibei_rich_answer`；用户明确要求富回答或关系图且搜索证据足够时必须调用；只有文件清单时不要生成关系图。
+6. 多份材料之间的时间、空间、前置或证据关系用图式更清楚时，先调用 `weibei_ui_catalog` 取得本轮 T1/T2 能力子集，再调用 `weibei_rich_answer`；用户明确要求富回答或关系图且搜索证据足够时必须走这条目录先行链路；只有文件清单时不要生成关系图。
+
+## 富回答工具
+
+- 任何富回答提交前必须先调用 `weibei_ui_catalog`；目录不贴合时重新调用目录或诚实退回文本，不得凭旧记忆写组件。
+- 富回答只能使用本轮课程搜索实际读到的证据标签，不得把目录标题或学习记忆当课程事实。
 
 ## 输出
 

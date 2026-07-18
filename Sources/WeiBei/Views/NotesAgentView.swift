@@ -1,4 +1,5 @@
 import AppKit
+import PDFKit
 import SwiftUI
 import WeiBeiCore
 
@@ -14,6 +15,9 @@ struct NotesAgentView: View {
             AgentPaneView()
         }
         .weibeiPanel()
+        .task {
+            await store.runVerificationScenarioIfNeeded()
+        }
     }
 }
 
@@ -1437,6 +1441,7 @@ struct AgentPaneView: View {
     @State private var visibleAgentMessageID: UUID?
     @State private var activeAgentRailID: String?
     @State private var agentFollowsLatest = true
+    @State private var agentInputTrayHeight: CGFloat = 108
 
     private let agentBottomAnchorID = "agentConversationBottom"
 
@@ -1464,7 +1469,7 @@ struct AgentPaneView: View {
 
                         GeometryReader { geometry in
                             let availableWidth = max(geometry.size.width, 1)
-                            let contentWidth = min(max(availableWidth - 36, 320), agentContentMaxWidth ?? 760)
+                            let contentWidth = min(max(availableWidth - 36, 320), agentContentMaxWidth ?? 736)
 
                             ScrollView(showsIndicators: true) {
                                 LazyVStack(alignment: .leading, spacing: 12) {
@@ -1487,7 +1492,7 @@ struct AgentPaneView: View {
                                             .transition(WeiBeiTransition.message)
                                     }
                                     Color.clear
-                                        .frame(height: 1)
+                                        .frame(height: agentScrollBottomInset)
                                         .id(agentBottomAnchorID)
                                 }
                                 .scrollTargetLayout()
@@ -1499,8 +1504,19 @@ struct AgentPaneView: View {
                             }
                             .scrollPosition(id: $visibleAgentMessageID, anchor: .center)
                         }
+                        .clipped()
+                        .zIndex(0)
 
                         agentInputTray
+                            .zIndex(1)
+                            .background {
+                                GeometryReader { trayGeometry in
+                                    Color.clear.preference(
+                                        key: AgentInputTrayHeightKey.self,
+                                        value: trayGeometry.size.height
+                                    )
+                                }
+                            }
                     }
                     .opacity(railOnly ? 0 : 1)
                     .allowsHitTesting(!railOnly)
@@ -1513,7 +1529,7 @@ struct AgentPaneView: View {
                         isRailOnly: railOnly,
                         availableWidth: paneGeometry.size.width,
                         topInset: railOnly ? 0 : (showsPaneHeader ? 44 : 34),
-                        bottomInset: railOnly ? 0 : 108,
+                        bottomInset: railOnly ? 0 : agentRailBottomInset,
                         onActivate: { activateAgentRailItem($0, railOnly: railOnly, proxy: proxy) }
                     )
                     .zIndex(4)
@@ -1523,6 +1539,16 @@ struct AgentPaneView: View {
                 }
                 .onChange(of: visibleAgentMessageID) { _, messageID in
                     updateAgentRailPosition(for: messageID)
+                }
+                .onPreferenceChange(AgentInputTrayHeightKey.self) { height in
+                    guard height > 40 else { return }
+                    let nextHeight = min(max(height, 76), 180)
+                    guard abs(agentInputTrayHeight - nextHeight) > 0.5 else { return }
+                    agentInputTrayHeight = nextHeight
+                    scrollAgentToBottom(proxy)
+                }
+                .onRichAnswerVerificationStage { stage in
+                    handleRichAnswerVerificationStage(stage, proxy: proxy)
                 }
             }
         }
@@ -1558,10 +1584,19 @@ struct AgentPaneView: View {
 
     private func agentMessageRow(message: AgentMessage, geometryWidth: CGFloat, contentWidth: CGFloat, proxy: ScrollViewProxy) -> some View {
         let isUser = message.role == .user
-        // Both roles share one centered reading column. User bubbles trail inside the
-        // column (Codex-style), not against the window's right edge.
-        let readingWidth = max(contentWidth - 28, 240)
-        let readingLeadingInset = max((geometryWidth - contentWidth) / 2, 0)
+        let wideFamilies: Set<RichAnswerCapabilityFamily> = [
+            .quantityAndCoordinates,
+            .processAndState,
+            .timeAndSpace,
+            .imageAndOverlay,
+            .comparisonAndEvaluation,
+        ]
+        let needsWideCanvas = message.richAnswer?.scenes.contains {
+            wideFamilies.contains($0.family)
+        } == true
+        let readingLimit: CGFloat = needsWideCanvas ? 620 : 596
+        let readingWidth = min(max(contentWidth - 28, 240), readingLimit)
+        let readingLeadingInset = max((geometryWidth - readingWidth) / 2, 0)
 
         return AgentBubble(
             message: message,
@@ -1702,6 +1737,7 @@ struct AgentPaneView: View {
             .padding(.top, 4)
             .padding(.bottom, 16)
             .frame(maxWidth: .infinity)
+            .background(WeiBeiTheme.paper)
             .animation(WeiBeiMotion.reveal, value: store.agentDraft)
         }
         .background(alignment: .bottom) {
@@ -1720,11 +1756,26 @@ struct AgentPaneView: View {
     }
 
     private var agentInputMaxWidth: CGFloat? {
-        680
+        620
     }
 
     private var agentContentMaxWidth: CGFloat? {
-        760
+        736
+    }
+
+    private var agentScrollBottomInset: CGFloat {
+        let baseInset = min(max(agentInputTrayHeight * 0.42, 42), 82)
+        return hasVisibleRichAnswer ? max(baseInset, agentInputTrayHeight + 22) : baseInset
+    }
+
+    private var hasVisibleRichAnswer: Bool {
+        store.messages.contains { message in
+            message.richAnswer?.mode == .rich && message.richAnswer?.scenes.isEmpty == false
+        }
+    }
+
+    private var agentRailBottomInset: CGFloat {
+        min(max(agentInputTrayHeight + 10, 88), 190)
     }
 
     private var emptyAgentState: some View {
@@ -1863,6 +1914,40 @@ struct AgentPaneView: View {
         }
     }
 
+    private func handleRichAnswerVerificationStage(
+        _ stage: RichAnswerVerificationStage,
+        proxy: ScrollViewProxy
+    ) {
+        guard stage == .overview || stage == .before || stage == .after,
+              let targetID = latestRichAnswerSceneAnchorID else { return }
+        agentFollowsLatest = false
+        DispatchQueue.main.async {
+            proxy.scrollTo(targetID, anchor: .top)
+        }
+    }
+
+    private var latestRichAnswerSceneAnchorID: String? {
+        for message in store.messages.reversed() {
+            guard let richAnswer = message.richAnswer,
+                  richAnswer.mode == .rich,
+                  !richAnswer.scenes.isEmpty else { continue }
+            for (index, part) in richAnswer.resolvedParts.enumerated() {
+                guard case .scene = part.kind,
+                      let sceneID = part.sceneID else { continue }
+                return "rich-answer-\(message.id.uuidString)-\(sceneID)-\(index)"
+            }
+        }
+        return nil
+    }
+
+}
+
+private struct AgentInputTrayHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 108
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
+    }
 }
 
 private struct AgentStarterChip: View {
@@ -2897,8 +2982,8 @@ private struct AgentBubble: View {
         } else {
             regularMessageContent
                 .padding(.vertical, 10)
-                .padding(.leading, 20)
-                .padding(.trailing, 8)
+                .padding(.leading, hasRenderableRichAnswer ? 0 : 20)
+                .padding(.trailing, hasRenderableRichAnswer ? 0 : 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
                 .overlay(alignment: .leading) {
@@ -2916,26 +3001,16 @@ private struct AgentBubble: View {
         VStack(alignment: .leading, spacing: 8) {
             messageMetadata
 
-            if hasRenderableRichAnswer {
-                RichAnswerNarrativeText(text: message.text)
+            if let richAnswer = message.richAnswer,
+               richAnswer.mode == .rich,
+               !richAnswer.scenes.isEmpty {
+                richAnswerFlow(richAnswer)
             } else {
                 AgentMessageMarkdownText(
                     text: message.text,
                     rendersRichMarkdown: true,
                     onContentHeightChange: onMarkdownHeightChange
                 )
-            }
-
-            if let richAnswer = message.richAnswer,
-               richAnswer.mode == .rich,
-               !richAnswer.scenes.isEmpty {
-                RichAnswerHost(
-                    presentation: richAnswer,
-                    onOpenEvidence: openRichAnswerEvidence,
-                    onOpenAsset: openRichAnswerAsset
-                )
-                .id("rich-answer-\(message.id.uuidString)")
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             if message.id == store.lastUsableAgentAnswerID {
@@ -2978,6 +3053,53 @@ private struct AgentBubble: View {
                 .padding(.top, 2)
             }
         }
+    }
+
+    @ViewBuilder
+    private func richAnswerFlow(_ presentation: RichAnswerPresentation) -> some View {
+        ForEach(Array(presentation.resolvedParts.enumerated()), id: \.offset) { index, part in
+            switch part.kind {
+            case .narrative:
+                if let text = part.text, !text.isEmpty {
+                    RichAnswerNarrativeText(text: text)
+                        .frame(maxWidth: 588, alignment: .leading)
+                }
+            case .scene:
+                if let sceneID = part.sceneID,
+                   let scopedPresentation = scopedRichAnswer(presentation, sceneID: sceneID) {
+                    RichAnswerHost(
+                        presentation: scopedPresentation,
+                        onOpenEvidence: openRichAnswerEvidence,
+                        onOpenAsset: openRichAnswerAsset,
+                        assetPreview: richAnswerAssetPreview,
+                        onAction: submitRichAnswerAction
+                    )
+                    .id("rich-answer-\(message.id.uuidString)-\(sceneID)-\(index)")
+                    .frame(maxWidth: 620, alignment: .leading)
+                }
+            }
+        }
+    }
+
+    private func scopedRichAnswer(
+        _ presentation: RichAnswerPresentation,
+        sceneID: String
+    ) -> RichAnswerPresentation? {
+        guard let scene = presentation.scenes.first(where: { $0.id == sceneID }) else { return nil }
+        var scoped = presentation
+        scoped.scenes = [scene]
+        scoped.parts = nil
+        let evidenceIDs = Set(scene.evidenceIDs)
+        scoped.evidenceLedger = presentation.evidenceLedger.filter { evidenceIDs.contains($0.id) }
+        return scoped
+    }
+
+    private func submitRichAnswerAction(_ prompt: String) {
+        guard !store.isAskingAgent else { return }
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        store.agentDraft = trimmed
+        store.askAgent()
     }
 
     private func learningUpdateContent(_ update: StudyAgentLearningUpdate) -> some View {
@@ -3100,6 +3222,15 @@ private struct AgentBubble: View {
         withAnimation(WeiBeiMotion.panel) {
             store.select(itemID: assetID)
         }
+    }
+
+    private func richAnswerAssetPreview(_ assetID: String) -> NSImage? {
+        guard let item = store.item(withID: assetID), let url = item.url else { return nil }
+        if item.kind == .pdf,
+           let page = PDFDocument(url: url)?.page(at: 0) {
+            return page.thumbnail(of: NSSize(width: 1200, height: 1500), for: .mediaBox)
+        }
+        return NSImage(contentsOf: url)
     }
 
     private var isUser: Bool {

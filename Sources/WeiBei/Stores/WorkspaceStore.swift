@@ -3983,6 +3983,14 @@ final class WorkspaceStore: ObservableObject {
     func runVerificationScenarioIfNeeded() async {
         guard !didRunVerificationScenario else { return }
         guard Self.environmentValue("WEIBEI_SUPPRESS_ACTIVATION") == "1" else { return }
+        let richAnswerReplayPath = Self.environmentValue("WEIBEI_VERIFY_RICH_ANSWER_REPLAY")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !richAnswerReplayPath.isEmpty {
+            didRunVerificationScenario = true
+            recordVerificationStage("recognized:rich-answer-replay")
+            configureRichAnswerReplayVerification(path: richAnswerReplayPath)
+            return
+        }
         let scenario = Self.environmentValue("WEIBEI_VERIFY_SCENARIO")
         let emptyWorkspaceScenarios: Set<String> = [
             "empty-workspace-light-wide",
@@ -3999,7 +4007,7 @@ final class WorkspaceStore: ObservableObject {
         guard scenario == "offline-learning-flow"
             || scenario == "pi-learning-flow"
             || scenario == "pi-course-memory-flow"
-            || scenario == "rich-answer-preview"
+            || RichAnswerVerificationFixture.supports(scenario)
             || scenario == "immersive-conversation-flow"
             || scenario == "notebook-creation-flow"
             || scenario == "pure-writing-flow"
@@ -4032,8 +4040,8 @@ final class WorkspaceStore: ObservableObject {
             save()
             return
         }
-        if scenario == "rich-answer-preview" {
-            configureRichAnswerPreviewVerification()
+        if RichAnswerVerificationFixture.supports(scenario) {
+            configureRichAnswerPreviewVerification(scenario: scenario)
             return
         }
         if scenario == "course-workspace-overview-flow" || scenario == "course-workspace-workflow-flow" {
@@ -4161,10 +4169,12 @@ final class WorkspaceStore: ObservableObject {
         recordVerificationStage("completed")
     }
 
-    private func configureRichAnswerPreviewVerification() {
-        layout = .immersiveConversation
+    private func configureRichAnswerPreviewVerification(scenario: String) {
+        let presentation = RichAnswerVerificationFixture.presentation(for: scenario)
+        let verifiesInlinePane = scenario == RichAnswerVerificationFixture.inlineExtendedOpenUIProgramScenario
+        layout = verifiesInlinePane ? .documentAgentNotes : .immersiveConversation
         showLibrary = false
-        showReader = false
+        showReader = verifiesInlinePane
         showAgent = true
         showNotes = false
         agentSurface = .hidden
@@ -4173,21 +4183,147 @@ final class WorkspaceStore: ObservableObject {
         appendAgentMessage(
             AgentMessage(
                 role: .user,
-                text: "固定名义利率为 5%，用可调的富回答让我看懂通胀率怎样影响实际利率。",
+                text: RichAnswerVerificationFixture.question(for: scenario),
                 source: "货币金融学课程 HTML"
             )
         )
         appendAgentMessage(
             AgentMessage(
                 role: .assistant,
-                text: "## 先看关系\n\n固定名义利率为 **5%** 时，通胀率每上升一个百分点，实际利率就近似下降一个百分点。拖动下方参数，观察这条关系。\n\n[材料：货币金融学课程 HTML]",
+                text: presentation.narrative,
                 source: "货币金融学课程 HTML",
                 backend: .pi,
-                richAnswer: RichAnswerVerificationFixture.presentation()
+                richAnswer: presentation
             )
         )
+        let familySummary = presentation.scenes.map(\.family.rawValue).joined(separator: ",")
+        let verificationSummary = [
+            "scenario=\(scenario)",
+            "mode=\(presentation.mode.rawValue)",
+            "scenes=\(presentation.scenes.count)",
+            "families=\(familySummary)",
+            "diagnostics=\(presentation.diagnostics.count)",
+        ].joined(separator: "\n") + "\n"
+        let markerURL = storageURL.deletingLastPathComponent()
+            .appendingPathComponent("rich-answer-verified.txt")
+        try? verificationSummary.write(to: markerURL, atomically: true, encoding: .utf8)
+        recordVerificationStage("rich-answer:\(presentation.mode.rawValue):\(presentation.scenes.count):\(presentation.diagnostics.count)")
         focus(.agent)
         recordVerificationStage("completed")
+    }
+
+    private func configureRichAnswerReplayVerification(path: String) {
+        let baseURL = storageURL.deletingLastPathComponent()
+        do {
+            let artifactURL = RichAnswerReplayArtifact.url(fromEnvironmentValue: path, relativeTo: baseURL)
+            let artifact = try RichAnswerReplayArtifact.load(from: artifactURL)
+            let materialItem = try installRichAnswerReplayMaterial(artifact, baseURL: baseURL)
+            layout = .documentAgentNotes
+            showLibrary = false
+            showReader = true
+            showAgent = true
+            showNotes = false
+            agentSurface = .hidden
+            select(itemID: materialItem.id)
+            messages = []
+            latestAgentNoteProposal = nil
+            latestAgentLearningUpdate = nil
+            agentStreamingText = ""
+            agentActivityText = "真实回放：\(artifact.status)"
+            appendAgentMessage(
+                AgentMessage(
+                    role: .user,
+                    text: artifact.question,
+                    source: materialItem.title
+                )
+            )
+            appendAgentMessage(
+                AgentMessage(
+                    role: .assistant,
+                    text: artifact.visibleAssistantText,
+                    source: materialItem.title,
+                    backend: artifact.backend,
+                    richAnswer: artifact.presentationForDisplay
+                )
+            )
+            let verificationSummary = [
+                "artifact=\(artifact.artifactURL.path)",
+                "case=\(artifact.caseID)",
+                "status=\(artifact.status)",
+                "backend=\(artifact.backend?.rawValue ?? "none")",
+                "richAnswer=\(artifact.richAnswer?.mode.rawValue ?? "none")",
+                "scenes=\(artifact.richAnswer?.scenes.count ?? 0)",
+                "tools=\(artifact.toolTrace.joined(separator: ","))",
+            ].joined(separator: "\n") + "\n"
+            try verificationSummary.write(
+                to: baseURL.appendingPathComponent("rich-answer-replay-verified.txt"),
+                atomically: true,
+                encoding: .utf8
+            )
+            recordVerificationStage("rich-answer-replay:\(artifact.status):\(artifact.richAnswer?.mode.rawValue ?? "none"):\(artifact.richAnswer?.scenes.count ?? 0)")
+        } catch {
+            configureRichAnswerReplayFailure(path: path, error: error, baseURL: baseURL)
+        }
+        recordVerificationStage("completed")
+    }
+
+    private func installRichAnswerReplayMaterial(
+        _ artifact: RichAnswerReplayArtifact,
+        baseURL: URL
+    ) throws -> StudyItem {
+        let directory = baseURL.appendingPathComponent("RichAnswerReplay", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let materialURL = directory.appendingPathComponent("material.txt")
+        let body = """
+        \(artifact.materialTitle)
+
+        \(artifact.materialBody)
+        """
+        try body.write(to: materialURL, atomically: true, encoding: .utf8)
+        let item = StudyItem(
+            id: "rich-answer-replay-material",
+            title: artifact.materialTitle,
+            subtitle: "真实富回答回放材料",
+            kind: .text,
+            urlPath: materialURL.path,
+            isSample: false
+        )
+        importedItems.removeAll {
+            $0.id == item.id || $0.urlPath == materialURL.path
+        }
+        importedItems.append(item)
+        courseDocumentSearchIndex.synchronize(allItems)
+        save()
+        return item
+    }
+
+    private func configureRichAnswerReplayFailure(path: String, error: Error, baseURL: URL) {
+        layout = .immersiveConversation
+        showLibrary = false
+        showReader = false
+        showAgent = true
+        showNotes = false
+        agentSurface = .hidden
+        messages = []
+        latestAgentNoteProposal = nil
+        latestAgentLearningUpdate = nil
+        agentStreamingText = ""
+        agentActivityText = "真实回放失败"
+        let question = "回放富回答留档：\(path)"
+        let answer = """
+        富回答真实回放失败，已显式显示错误，避免空白误判。
+
+        路径：\(path)
+        错误：\(error.localizedDescription)
+        """
+        appendAgentMessage(AgentMessage(role: .user, text: question, source: "富回答回放"))
+        appendAgentMessage(AgentMessage(role: .assistant, text: answer, source: "富回答回放"))
+        try? answer.write(
+            to: baseURL.appendingPathComponent("rich-answer-replay-error.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        recordVerificationStage("rich-answer-replay-failure:\(error.localizedDescription)")
     }
 
     private func runCourseWorkspaceVerification(_ scenario: String) async {
@@ -5119,7 +5255,7 @@ final class WorkspaceStore: ObservableObject {
             appendAgentMessage(
                 AgentMessage(
                     role: .assistant,
-                    text: reply.noteProposal?.markdown ?? reply.text,
+                    text: reply.noteProposal?.markdown ?? reply.richAnswer?.narrative ?? reply.text,
                     source: sourceTitle,
                     backend: reply.backend,
                     richAnswer: reply.noteProposal == nil ? reply.richAnswer : nil

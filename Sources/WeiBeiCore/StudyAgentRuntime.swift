@@ -51,11 +51,25 @@ public enum StudyAgentQuestionScope {
 public enum StudyAgentRichAnswerRequest {
     public static func isExplicit(_ question: String) -> Bool {
         let normalized = question.lowercased()
-        let terms = [
-            "富回答", "可调", "交互", "互动", "图示", "函数图", "关系图", "时间线", "图像叠层", "叠层", "模拟", "实验",
-            "rich answer", "interactive", "adjustable", "diagram", "function graph", "relationship graph", "timeline", "image overlay", "simulation", "experiment",
+        let choiceTerms = [
+            "自行选择最合适的回答形态", "自行选择回答形态", "选择最合适的回答形态",
+            "只有交互或可视关系", "不要为了展示能力硬做", "无需富回答", "不需要富回答", "不要富回答",
+            "choose the best answer format", "choose the most suitable answer format",
+            "only generate a rich answer when", "do not force a rich answer", "no rich answer needed",
         ]
-        return terms.contains(where: normalized.contains)
+        guard !choiceTerms.contains(where: normalized.contains) else { return false }
+
+        let requestTerms = [
+            "用富回答", "用可调的富回答", "给我富回答", "生成富回答", "做成富回答", "以富回答", "富回答形式",
+            "做成可调", "给个可调", "做成可交互", "给个可交互", "做个交互", "做个互动",
+            "用图示", "画个函数图", "画出函数图", "做个关系图", "做个时间线", "时间线展示",
+            "做个图像叠层", "做个模拟", "做个实验", "实验演示", "演示这个实验",
+            "use a rich answer", "give me a rich answer", "generate a rich answer", "rich answer format",
+            "make it interactive", "show an interactive", "interactive timeline", "with a diagram", "draw a function graph", "show a relationship graph",
+            "show a timeline", "show an image overlay", "run a simulation", "show an experiment",
+            "run an experiment",
+        ]
+        return requestTerms.contains(where: normalized.contains)
     }
 }
 
@@ -496,19 +510,22 @@ public struct StudyAgentReply: Equatable, Sendable {
     public var richAnswer: RichAnswerPresentation?
     public var noteProposal: StudyAgentNoteProposal?
     public var learningUpdate: StudyAgentLearningUpdate?
+    public var toolTrace: [String]
 
     public init(
         text: String,
         backend: StudyAgentBackend,
         richAnswer: RichAnswerPresentation? = nil,
         noteProposal: StudyAgentNoteProposal? = nil,
-        learningUpdate: StudyAgentLearningUpdate? = nil
+        learningUpdate: StudyAgentLearningUpdate? = nil,
+        toolTrace: [String] = []
     ) {
         self.text = text
         self.backend = backend
         self.richAnswer = richAnswer
         self.noteProposal = noteProposal
         self.learningUpdate = learningUpdate
+        self.toolTrace = toolTrace
     }
 }
 

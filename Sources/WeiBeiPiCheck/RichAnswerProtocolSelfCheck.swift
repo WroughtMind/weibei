@@ -2,7 +2,22 @@ import Foundation
 import WeiBeiCore
 
 func runRichAnswerProtocolSelfCheck() throws {
+    try checkOpenUIProgramRenders()
+    try checkNarrativeAndScenesFormOneInlineFlow()
+    try checkOpenUIProgramRejectsUnsafeVariants()
+    try checkGeneratedUITreeRenders()
+    try checkGeneratedUISequencePrimitiveRenders()
+    try checkGeneratedUITreeRejectsUnboundEvidenceAndFalseFamily()
+    try checkGeneratedUITreeRejectsMalformedProtocol()
+    try checkGeneratedUITreeRejectsPseudoInteractionAndMissingObligations()
+    try checkProfessionalJudgmentContractsRejectReverseClaims()
+    try checkProfessionalJudgmentIgnoresEvidenceCitations()
+    try checkGeneratedUITreeIntentQualityContracts()
+    try checkComposablePendulumRendersWithoutSpecializedComponent()
+    try checkGeneratedUITreeRejectsCycles()
+    try checkGeneratedUITreeRejectsControlOverload()
     try checkAcceptedInteractiveScene()
+    try checkFamilySpecificContracts()
     try checkStaleEvidenceFallsBackToNarrative()
     try checkBrokenReferencesDropOnlyTheirScene()
     try checkRawWebPayloadIsRejected()
@@ -16,15 +31,1314 @@ func runRichAnswerProtocolSelfCheck() throws {
         "the first protocol covers all eight rich-answer capability families"
     )
     try richAnswerRequire(
-        RichAnswerPressureCases.learningQuestions.count == 15
-            && RichAnswerPressureCases.faultInjectionCases.count == 4,
-        "the first pressure matrix keeps fifteen learning domains and four controlled failures"
+        RichAnswerPressureCases.learningQuestions.count == 40
+            && RichAnswerPressureCases.faultInjectionCases.count == 10,
+        "the pressure matrix keeps forty learning cases and ten controlled failures"
+    )
+}
+
+private func checkProfessionalJudgmentContractsRejectReverseClaims() throws {
+    try RichAnswerLiveCases.assertMatrixMatchesPressureCases()
+    let casesWithoutReverseContracts = RichAnswerLiveCases.successes.filter {
+        $0.professionalJudgmentContract.forbiddenMisconceptions.isEmpty
+    }.map(\.id)
+    try richAnswerRequire(
+        casesWithoutReverseContracts.isEmpty,
+        "all forty success cases declare reverse-misconception contracts"
+    )
+    let casesWithoutRequiredClaims = RichAnswerLiveCases.successes.filter {
+        $0.professionalJudgmentContract.requiredClaims.isEmpty
+    }.map(\.id)
+    try richAnswerRequire(
+        casesWithoutRequiredClaims.isEmpty,
+        "all forty success cases declare positive professional claims"
+    )
+
+    let economicsCase = try liveSuccessCase("learning-economics-price-ceiling-shortage")
+    let reversedEconomicsText = """
+    均衡 P=20，价格上限、短缺、20 这些关键词都出现。价格上限15会形成短缺20。价格上限25会产生短缺，上限越高短缺越严重。结论只适用于给定曲线和有效执行。
+    """
+    let reversedEconomicsValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: reversedEconomicsText,
+        contract: economicsCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !reversedEconomicsValidation.passedDeterministicGates
+            && reversedEconomicsValidation.triggeredForbiddenClaims.contains("ceiling-25-shortage"),
+        "keyword-complete economics answer fails when the nonbinding ceiling conclusion is reversed"
+    )
+    let correctEconomicsText = """
+    均衡价格为 P=20。价格上限15低于均衡，会形成短缺20。价格上限25高于均衡，不形成约束，也不会由该上限产生短缺。结论只适用于给定曲线和有效执行。
+    """
+    let correctEconomicsValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: correctEconomicsText,
+        contract: economicsCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        correctEconomicsValidation.passedDeterministicGates,
+        "correct economics claim passes the same professional judgment contract"
+    )
+
+    let medicineCase = try liveSuccessCase("learning-medicine-cardiac-cycle")
+    let reversedMedicineText = """
+    S1、S2、房室瓣、半月瓣、压力、学习、诊断这些关键词都出现。S1对应半月瓣关闭，S2对应房室瓣关闭；材料用于生理学习，不足以诊断个体。
+    """
+    let reversedMedicineValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: reversedMedicineText,
+        contract: medicineCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !reversedMedicineValidation.passedDeterministicGates
+            && reversedMedicineValidation.triggeredForbiddenClaims.contains("s1-semilunar")
+            && reversedMedicineValidation.triggeredForbiddenClaims.contains("s2-av"),
+        "keyword-complete cardiac answer fails when S1 and S2 valve claims are swapped"
+    )
+    let correctMedicineText = """
+    S1对应房室瓣关闭；S2对应半月瓣关闭；压力交叉触发瓣膜开闭。材料用于生理学习，不足以诊断个体心脏问题。
+    """
+    let correctMedicineValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: correctMedicineText,
+        contract: medicineCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        correctMedicineValidation.passedDeterministicGates,
+        "correct cardiac valve claims pass the same professional judgment contract"
+    )
+
+    let biologyCase = try liveSuccessCase("learning-biology-mutation-to-protein")
+    let correctBiologyText = """
+    TAA 转录后对应 mRNA UAA；GAA 编码谷氨酸，UAA 是终止密码子；功能影响取决于突变位置和蛋白结构。
+    """
+    let correctBiologyValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: correctBiologyText,
+        contract: biologyCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        correctBiologyValidation.passedDeterministicGates,
+        "correct codon contrast keeps GAA-glutamate separate from UAA-stop"
+    )
+    let wrongBiologyText = """
+    TAA 转录后对应 mRNA UAA；UAA 是终止密码子，但也编码谷氨酸；功能影响取决于突变位置和蛋白结构。
+    """
+    let wrongBiologyValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: wrongBiologyText,
+        contract: biologyCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !wrongBiologyValidation.passedDeterministicGates
+            && wrongBiologyValidation.triggeredForbiddenClaims.contains("uaa-glutamate"),
+        "false UAA-glutamate claim still fails when attached to the UAA subject"
+    )
+
+    let safetyCase = try liveSuccessCase("learning-daily-skill-safe-troubleshooting")
+    let correctSafetyText = """
+    发热和绝缘裂口触发必须先断电停止使用；不要用胶带包好继续带电测试；适配器后续应更换或交由专业人员检查；只允许完全断电后的非侵入检查。
+    """
+    let correctSafetyValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: correctSafetyText,
+        contract: safetyCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        correctSafetyValidation.passedDeterministicGates,
+        "safety prohibition of live tape testing passes instead of triggering the forbidden action"
+    )
+    let wrongSafetyText = """
+    发热和绝缘裂口触发必须先断电停止使用，但也可以用胶带包好继续带电测试；适配器后续应更换或交由专业人员检查；只允许完全断电后的非侵入检查。
+    """
+    let wrongSafetyValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: wrongSafetyText,
+        contract: safetyCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !wrongSafetyValidation.passedDeterministicGates
+            && wrongSafetyValidation.triggeredForbiddenClaims.contains("tape-live-test"),
+        "actual live tape testing advice still fails"
+    )
+
+    let climateCase = try liveSuccessCase("learning-geography-climate-diagram-compare")
+    let correctClimateText = """
+    城市甲冬冷夏热且夏季多雨；城市乙全年高温，年末到年初更湿；仅凭两地数据不能代表区域气候。
+    """
+    let correctClimateValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: correctClimateText,
+        contract: climateCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        correctClimateValidation.passedDeterministicGates,
+        "climate comparison binds summer-rain to city A and year-end wetness to city B"
+    )
+    let wrongClimateText = """
+    城市甲全年高温，年末到年初多雨；城市乙冬冷夏热且夏季多雨；仅凭两地数据不能代表区域气候。
+    """
+    let wrongClimateValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: wrongClimateText,
+        contract: climateCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !wrongClimateValidation.passedDeterministicGates
+            && wrongClimateValidation.triggeredForbiddenClaims.contains("a-hot-wet-year-end")
+            && wrongClimateValidation.triggeredForbiddenClaims.contains("b-cold-hot-summer-rain"),
+        "actual city-role climate reversals still fail"
+    )
+
+    let reviewMarkedCases = Set(
+        RichAnswerLiveCases.successes
+            .filter { !$0.professionalJudgmentContract.modelOrHumanReviewNotes.isEmpty }
+            .map(\.id)
+    )
+    try richAnswerRequire(
+        reviewMarkedCases.contains("learning-literature-imagery-theme")
+            && reviewMarkedCases.contains("learning-philosophy-argument-boundary")
+            && reviewMarkedCases.contains("learning-earth-science-subduction-cross-section"),
+        "non-deterministic literature, philosophy, and image localization judgments are explicitly marked for model or human review"
+    )
+}
+
+private func liveSuccessCase(_ id: String) throws -> RichAnswerLiveSuccessCase {
+    guard let checkCase = RichAnswerLiveCases.successes.first(where: { $0.id == id }) else {
+        throw RichAnswerProtocolCheckError.failed("missing live success case \(id)")
+    }
+    return checkCase
+}
+
+private func checkProfessionalJudgmentIgnoresEvidenceCitations() throws {
+    let economicsCase = try liveSuccessCase("learning-economics-price-ceiling-shortage")
+    let correctSourceExcerpt = "均衡价格为 P=20。价格上限15形成短缺20。价格上限25高于均衡，不形成约束。结论只适用于给定曲线和有效执行。"
+    let missingClaimPresentation = RichAnswerPresentation(
+        mode: .rich,
+        narrative: "我把供需材料整理成了一个交互体验。",
+        expressionPlan: RichAnswerExpressionPlan(
+            action: .observe,
+            summary: "观察供需材料中的参数变化",
+            families: [.quantityAndCoordinates],
+            preferredSurface: .inline,
+            directManipulation: true
+        ),
+        scenes: [
+            RichAnswerScene(
+                id: "source-only-correct-fact",
+                title: "供需交互",
+                family: .quantityAndCoordinates,
+                objects: [],
+                evidenceIDs: ["source-correct"],
+                program: RichAnswerUIProgram(
+                    source: """
+                    root = RichAnswerRoot("经济学", "查看供需材料", "拖动参数", "workbench", [sources])
+                    sources = LearningStage("evidence", "来源", [evidence])
+                    evidence = EvidenceSnippet("source-correct", "材料", "\(correctSourceExcerpt)", "回到原文")
+                    """,
+                    capabilities: ["evidence-jump"],
+                    directManipulation: true,
+                    graphics: .dom
+                )
+            ),
+        ],
+        evidenceLedger: [
+            RichAnswerEvidence(
+                id: "source-correct",
+                sourceLabel: "[材料：价格上限供需材料]",
+                excerpt: correctSourceExcerpt
+            ),
+        ],
+        evidenceState: .complete
+    )
+    let missingClaimReply = StudyAgentReply(
+        text: missingClaimPresentation.narrative,
+        backend: .pi,
+        richAnswer: missingClaimPresentation
+    )
+    let missingClaimValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        units: WeiBeiPiCheckMain.professionalJudgmentUnits(
+            reply: missingClaimReply,
+            presentation: missingClaimPresentation
+        ),
+        contract: economicsCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !missingClaimValidation.passedDeterministicGates
+            && !missingClaimValidation.missingRequiredClaims.isEmpty,
+        "source ledger and EvidenceSnippet cannot supply a professional claim missing from model output"
+    )
+
+    let t2EvidenceOnlyDataPresentation = RichAnswerPresentation(
+        mode: .rich,
+        narrative: "我把供需来源放进了证据区。",
+        expressionPlan: RichAnswerExpressionPlan(
+            action: .observe,
+            summary: "查看供需来源",
+            families: [.relationAndEvidence],
+            preferredSurface: .inline,
+            directManipulation: false
+        ),
+        scenes: [
+            RichAnswerScene(
+                id: "t2-evidence-only-data",
+                title: "来源定位",
+                family: .relationAndEvidence,
+                objects: [],
+                evidenceIDs: ["source-correct"],
+                ui: RichAnswerUIComposition(
+                    rootID: "root",
+                    nodes: [
+                        RichAnswerUINode(
+                            id: "root",
+                            role: .panel,
+                            children: ["source"]
+                        ),
+                        RichAnswerUINode(
+                            id: "source",
+                            role: .evidence,
+                            label: "材料原文",
+                            datasetID: "source-only-dataset",
+                            bindingID: "source-only-binding",
+                            evidenceIDs: ["source-correct"]
+                        ),
+                    ],
+                    datasets: [
+                        RichAnswerUIDataset(
+                            id: "source-only-dataset",
+                            rows: [
+                                RichAnswerUIDataRow(
+                                    id: "source-only-row",
+                                    x: 0,
+                                    y: 0,
+                                    label: correctSourceExcerpt,
+                                    evidenceIDs: ["source-correct"]
+                                ),
+                            ]
+                        ),
+                    ],
+                    bindings: [
+                        RichAnswerUIBinding(
+                            id: "source-only-binding",
+                            label: correctSourceExcerpt,
+                            minimum: 0,
+                            maximum: 1,
+                            step: 1,
+                            initialValue: 0
+                        ),
+                    ]
+                )
+            ),
+        ],
+        evidenceLedger: [
+            RichAnswerEvidence(
+                id: "source-correct",
+                sourceLabel: "[材料：价格上限供需材料]",
+                excerpt: correctSourceExcerpt
+            ),
+        ],
+        evidenceState: .complete
+    )
+    let t2EvidenceOnlyDataReply = StudyAgentReply(
+        text: t2EvidenceOnlyDataPresentation.narrative,
+        backend: .pi,
+        richAnswer: t2EvidenceOnlyDataPresentation
+    )
+    let t2EvidenceOnlyDataValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        units: WeiBeiPiCheckMain.professionalJudgmentUnits(
+            reply: t2EvidenceOnlyDataReply,
+            presentation: t2EvidenceOnlyDataPresentation
+        ),
+        contract: economicsCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !t2EvidenceOnlyDataValidation.passedDeterministicGates
+            && !t2EvidenceOnlyDataValidation.missingRequiredClaims.isEmpty,
+        "T2 data and bindings referenced only by evidence nodes cannot supply professional claims"
+    )
+
+    let correctModelText = "均衡价格为 P=20。价格上限15形成短缺20。价格上限25高于均衡，不形成约束，也不会由该上限产生短缺。结论只适用于给定曲线和有效执行。"
+    let misleadingSourceExcerpt = "待反驳误解：价格上限25会产生短缺，上限越高短缺越严重。"
+    let explicitRefutationPresentation = RichAnswerPresentation(
+        mode: .rich,
+        narrative: correctModelText,
+        expressionPlan: RichAnswerExpressionPlan(
+            action: .explain,
+            summary: "解释有效与无约束价格上限的区别",
+            families: [.quantityAndCoordinates],
+            preferredSurface: .inline,
+            directManipulation: false
+        ),
+        scenes: [
+            RichAnswerScene(
+                id: "refuted-source-misconception",
+                title: "价格上限判断",
+                family: .quantityAndCoordinates,
+                objects: [],
+                evidenceIDs: ["source-misconception"],
+                ui: RichAnswerUIComposition(
+                    rootID: "root",
+                    nodes: [
+                        RichAnswerUINode(
+                            id: "root",
+                            role: .panel,
+                            children: ["explanation", "source"]
+                        ),
+                        RichAnswerUINode(
+                            id: "explanation",
+                            role: .text,
+                            text: "正文已经明确区分有效上限与无约束上限。"
+                        ),
+                        RichAnswerUINode(
+                            id: "source",
+                            role: .evidence,
+                            label: "材料中的待反驳说法",
+                            text: misleadingSourceExcerpt,
+                            evidenceIDs: ["source-misconception"]
+                        ),
+                    ]
+                )
+            ),
+        ],
+        evidenceLedger: [
+            RichAnswerEvidence(
+                id: "source-misconception",
+                sourceLabel: "[材料：价格上限误解辨析]",
+                excerpt: misleadingSourceExcerpt
+            ),
+        ],
+        evidenceState: .complete
+    )
+    let explicitRefutationReply = StudyAgentReply(
+        text: correctModelText,
+        backend: .pi,
+        richAnswer: explicitRefutationPresentation
+    )
+    let explicitRefutationValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        units: WeiBeiPiCheckMain.professionalJudgmentUnits(
+            reply: explicitRefutationReply,
+            presentation: explicitRefutationPresentation
+        ),
+        contract: economicsCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        explicitRefutationValidation.passedDeterministicGates
+            && explicitRefutationValidation.triggeredForbiddenClaims.isEmpty,
+        "a misconception quoted only as evidence cannot override the model's explicit refutation"
+    )
+}
+
+private func checkNarrativeAndScenesFormOneInlineFlow() throws {
+    var envelope = openUIProgramEnvelope()
+    envelope.narrative = """
+    先判断参数正负，它只决定开口方向。
+
+    <!-- weibei-scene:openui-function -->
+
+    再观察绝对值，它决定曲线宽窄。
+    """
+    let presentation = RichAnswerEngine.prepare(
+        envelope: envelope,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-openui",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+
+    try richAnswerRequire(
+        presentation.resolvedParts == [
+            .narrative("先判断参数正负，它只决定开口方向。"),
+            .scene("openui-function"),
+            .narrative("再观察绝对值，它决定曲线宽窄。"),
+        ],
+        "rich answers interleave narrative and generated UI instead of appending a mini-site"
+    )
+    try richAnswerRequire(
+        presentation.narrative == "先判断参数正负，它只决定开口方向。\n\n再观察绝对值，它决定曲线宽窄。",
+        "scene markers never leak into the readable narrative"
+    )
+
+    let encoded = try JSONEncoder().encode(presentation)
+    let decoded = try JSONDecoder().decode(RichAnswerPresentation.self, from: encoded)
+    try richAnswerRequire(decoded.resolvedParts == presentation.resolvedParts, "inline flow survives message persistence")
+
+    var legacyObject = try richAnswerJSONObject(from: encoded)
+    legacyObject.removeValue(forKey: "parts")
+    let legacyData = try JSONSerialization.data(withJSONObject: legacyObject)
+    let legacyPresentation = try JSONDecoder().decode(RichAnswerPresentation.self, from: legacyData)
+    try richAnswerRequire(
+        legacyPresentation.resolvedParts == [
+            .narrative(presentation.narrative),
+            .scene("openui-function"),
+        ],
+        "messages saved before inline flow support remain readable"
+    )
+}
+
+private func richAnswerJSONObject(from data: Data) throws -> [String: Any] {
+    guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        throw RichAnswerProtocolCheckError.failed("rich answer presentation encodes as a JSON object")
+    }
+    return object
+}
+
+private func checkOpenUIProgramRenders() throws {
+    let envelope = openUIProgramEnvelope()
+    let environment = RichAnswerEnvironment(
+        contextRevision: "revision-openui",
+        allowedSourceLabels: ["[材料：函数样例]"]
+    )
+    let presentation = RichAnswerEngine.prepare(envelope: envelope, environment: environment)
+
+    try richAnswerRequire(presentation.mode == .rich, "a valid OpenUI program stays rich")
+    try richAnswerRequire(
+        presentation.scenes.first?.program?.graphics == .canvas
+            && presentation.scenes.first?.program?.source.contains("FunctionPlot(") == true,
+        "the OpenUI program and its Canvas graphics contract survive validation"
+    )
+    let encoded = try JSONEncoder().encode(envelope)
+    let decoded = RichAnswerEngine.prepare(data: encoded, fallbackText: "fallback", environment: environment)
+    try richAnswerRequire(decoded == presentation, "the OpenUI program JSON boundary round-trips")
+}
+
+private func checkOpenUIProgramRejectsUnsafeVariants() throws {
+    var unknownComponent = openUIProgramEnvelope()
+    unknownComponent.scenes[0].program?.source += "\nrogue = UnknownWidget(\"x\")"
+    try assertOpenUIProgramRejected(
+        unknownComponent,
+        expectedCode: .unsupportedField,
+        "OpenUI rejects components outside WeiBei's catalog"
+    )
+
+    var missingRoot = openUIProgramEnvelope()
+    var rootProgram = missingRoot.scenes[0].program!
+    rootProgram.source = rootProgram.source
+        .replacingOccurrences(of: "root = RichAnswerRoot", with: "layout = RichAnswerRoot")
+    missingRoot.scenes[0].program = rootProgram
+    try assertOpenUIProgramRejected(
+        missingRoot,
+        expectedCode: .brokenReference,
+        "OpenUI requires a RichAnswerRoot statement"
+    )
+
+    var rawSVG = openUIProgramEnvelope()
+    rawSVG.scenes[0].program?.source += "\n<svg><path /></svg>"
+    try assertOpenUIProgramRejected(
+        rawSVG,
+        expectedCode: .unauthorizedAsset,
+        "OpenUI rejects model-authored SVG markup"
+    )
+
+    var wrongGraphicsKernel = openUIProgramEnvelope()
+    wrongGraphicsKernel.scenes[0].program?.graphics = .dom
+    try assertOpenUIProgramRejected(
+        wrongGraphicsKernel,
+        expectedCode: .invalidValue,
+        "function plots require the Canvas graphics kernel"
+    )
+
+    var missingEvidenceBinding = openUIProgramEnvelope()
+    var evidenceProgram = missingEvidenceBinding.scenes[0].program!
+    evidenceProgram.source = evidenceProgram.source
+        .replacingOccurrences(of: "\"program-source\"", with: "\"other-source\"")
+    missingEvidenceBinding.scenes[0].program = evidenceProgram
+    try assertOpenUIProgramRejected(
+        missingEvidenceBinding,
+        expectedCode: .missingEvidence,
+        "every scene evidence item must be bound inside the OpenUI program"
+    )
+
+    var quotedOnlyEvidence = openUIProgramEnvelope()
+    var quotedOnlyProgram = quotedOnlyEvidence.scenes[0].program!
+    quotedOnlyProgram.source = quotedOnlyProgram.source
+        .replacingOccurrences(
+            of: "evidence = EvidenceSnippet(\"program-source\", \"材料\", \"y = x²\", \"支撑函数关系\")",
+            with: "evidence = NarrativeBlock(\"来源\", \"program-source\", \"hint\")"
+        )
+    quotedOnlyEvidence.scenes[0].program = quotedOnlyProgram
+    try assertOpenUIProgramRejected(
+        quotedOnlyEvidence,
+        expectedCode: .missingEvidence,
+        "T1 cannot satisfy evidence binding by merely quoting an evidence id in a non-evidence component"
+    )
+
+    var mixedLegacyOperations = openUIProgramEnvelope()
+    mixedLegacyOperations.scenes[0].operations = [
+        RichAnswerOperation(id: "legacy-step", kind: .step, label: "旧操作", targetIDs: []),
+    ]
+    try assertOpenUIProgramRejected(
+        mixedLegacyOperations,
+        expectedCode: .unsupportedField,
+        "OpenUI scenes cannot mix in legacy native operations"
+    )
+
+    var repeatedConclusion = openUIProgramEnvelope()
+    repeatedConclusion.scenes[0].program?.source += "\nclosing = NarrativeBlock(\"结论\", \"把正文再讲一遍\", \"conclusion\")"
+    try assertOpenUIProgramRejected(
+        repeatedConclusion,
+        expectedCode: .invalidValue,
+        "inline OpenUI rejects a second conclusion inside the figure"
+    )
+}
+
+private func checkGeneratedUITreeRejectsMalformedProtocol() throws {
+    let unknownField = Data(
+        #"{"schemaVersion":2,"contextRevision":"revision-ui","narrative":"文本回答。","expressionPlan":{"action":"explain","summary":"说明","families":["textAndAlignment"],"preferredSurface":"inline","directManipulation":false},"scenes":[],"evidenceLedger":[],"fallback":{"text":"安全文本","reason":"坏协议"},"extraField":"bad"}"#.utf8
+    )
+    let unknownFieldPresentation = RichAnswerEngine.prepare(
+        data: unknownField,
+        fallbackText: "安全文本",
+        environment: RichAnswerEnvironment(contextRevision: "revision-ui", allowedSourceLabels: [])
+    )
+    try richAnswerRequire(unknownFieldPresentation.mode == .narrativeOnly, "unknown rich-answer fields never render")
+    try richAnswerRequire(
+        unknownFieldPresentation.diagnostics.contains(where: { $0.code == .unsupportedField }),
+        "unknown fields expose unsupportedField"
+    )
+
+    let unknownRole = Data(
+        #"{"schemaVersion":2,"contextRevision":"revision-ui","narrative":"说明 [材料：函数样例]\n\n<!-- weibei-scene:bad-role -->","expressionPlan":{"action":"explain","summary":"说明","families":["quantityAndCoordinates"],"preferredSurface":"inline","directManipulation":false},"scenes":[{"id":"bad-role","title":"坏节点","family":"quantityAndCoordinates","evidenceIDs":["ui-source"],"ui":{"rootID":"root","nodes":[{"id":"root","role":"card","children":[]}],"datasets":[],"bindings":[]}}],"evidenceLedger":[{"id":"ui-source","sourceLabel":"[材料：函数样例]","excerpt":"y = x²"}],"fallback":{"text":"安全文本","reason":"未知 role"}} "#.utf8
+    )
+    let unknownRolePresentation = RichAnswerEngine.prepare(
+        data: unknownRole,
+        fallbackText: "安全文本",
+        environment: RichAnswerEnvironment(contextRevision: "revision-ui", allowedSourceLabels: ["[材料：函数样例]"])
+    )
+    try richAnswerRequire(unknownRolePresentation.mode == .narrativeOnly, "unknown T2 roles never render")
+    try richAnswerRequire(
+        unknownRolePresentation.diagnostics.contains(where: { $0.code == .decodeFailed }),
+        "unknown roles expose a decode failure instead of rendering a bad tree"
+    )
+}
+
+private func checkGeneratedUITreeRejectsPseudoInteractionAndMissingObligations() throws {
+    var invalidBinding = generatedUIEnvelope()
+    invalidBinding.scenes[0].ui?.bindings[0].initialValue = 3
+    let invalidBindingPresentation = RichAnswerEngine.prepare(
+        envelope: invalidBinding,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-ui",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+    try richAnswerRequire(invalidBindingPresentation.mode == .narrativeOnly, "invalid T2 bindings never render")
+    try richAnswerRequire(
+        invalidBindingPresentation.diagnostics.contains(where: { $0.code == .invalidParameter }),
+        "invalid bindings expose invalidParameter"
+    )
+
+    var pseudoInteraction = generatedUIEnvelope()
+    for rowIndex in pseudoInteraction.scenes[0].ui!.datasets[0].rows.indices {
+        pseudoInteraction.scenes[0].ui!.datasets[0].rows[rowIndex].x = 0.5
+        pseudoInteraction.scenes[0].ui!.datasets[0].rows[rowIndex].y = 0.5
+        pseudoInteraction.scenes[0].ui!.datasets[0].rows[rowIndex].value = 0
+        pseudoInteraction.scenes[0].ui!.datasets[0].rows[rowIndex].result = 0
+        pseudoInteraction.scenes[0].ui!.datasets[0].rows[rowIndex].label = nil
+    }
+    let pseudoPresentation = RichAnswerEngine.prepare(
+        envelope: pseudoInteraction,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-ui",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+    try richAnswerRequire(pseudoPresentation.mode == .narrativeOnly, "controls that do not change a derived quantity or mark never render")
+    try richAnswerRequire(
+        pseudoPresentation.diagnostics.contains(where: { $0.code == .invalidValue }),
+        "pseudo interaction exposes invalidValue"
+    )
+
+    var missingObligation = composableFrictionEnvelope()
+    missingObligation.expressionPlan.knowledgeObjects.append("没有展示的关键对象")
+    let missingObligationPresentation = RichAnswerEngine.prepare(
+        envelope: missingObligation,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-friction-composable",
+            allowedSourceLabels: ["[材料：斜面摩擦]"]
+        )
+    )
+    try richAnswerRequire(missingObligationPresentation.mode == .narrativeOnly, "T2 must cover every declared object, relation, and process obligation")
+    try richAnswerRequire(
+        missingObligationPresentation.diagnostics.contains(where: { $0.code == .invalidValue }),
+        "missing semantic obligations expose invalidValue"
+    )
+
+    let repaired = RichAnswerEngine.prepare(
+        envelope: generatedUIEnvelope(),
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-ui",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+    try richAnswerRequire(repaired.mode == .rich, "after a rejected bad tree, a complete repaired rich-answer payload can pass")
+}
+
+private func assertOpenUIProgramRejected(
+    _ envelope: RichAnswerEnvelope,
+    expectedCode: RichAnswerDiagnosticCode,
+    _ message: String
+) throws {
+    let presentation = RichAnswerEngine.prepare(
+        envelope: envelope,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-openui",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+    try richAnswerRequire(presentation.mode == .narrativeOnly, message)
+    try richAnswerRequire(
+        presentation.diagnostics.contains(where: { $0.code == expectedCode }),
+        "\(message) exposes \(expectedCode.rawValue)"
+    )
+}
+
+private func openUIProgramEnvelope() -> RichAnswerEnvelope {
+    RichAnswerEnvelope(
+        schemaVersion: 2,
+        contextRevision: "revision-openui",
+        narrative: "拖动 a，观察二次函数开口和宽窄同步变化。",
+        expressionPlan: RichAnswerExpressionPlan(
+            action: .manipulate,
+            summary: "用参数实验连接符号、读数与函数图",
+            families: [.quantityAndCoordinates],
+            preferredSurface: .expanded,
+            directManipulation: true
+        ),
+        scenes: [
+            RichAnswerScene(
+                id: "openui-function",
+                title: "参数实验",
+                family: .quantityAndCoordinates,
+                objects: [],
+                evidenceIDs: ["program-source"],
+                placement: .expanded,
+                program: RichAnswerUIProgram(
+                    source: """
+                    $a = 1
+                    root = RichAnswerRoot("数学", "拖动 a", "观察开口和宽窄", "workbench", [controls, graph, sources])
+                    controls = LearningStage("controls", "改变参数", [slider, readout])
+                    graph = LearningStage("visual", "图像回应", [plot])
+                    sources = LearningStage("evidence", "", [evidence])
+                    slider = ParameterSlider("a", "参数 a", $a, -3, 3, 0.1, "跨过 0 观察翻转")
+                    readout = ParameterReadout("a", $a, "参数和图像共用状态")
+                    plot = FunctionPlot("y = ax²", "quadratic", "a", $a, [], -3, 3, 280)
+                    evidence = EvidenceSnippet("program-source", "材料", "y = x²", "支撑函数关系")
+                    """,
+                    capabilities: ["parameter-control", "function-plot", "evidence-jump"],
+                    directManipulation: true,
+                    maxHeight: 620,
+                    graphics: .canvas
+                )
+            ),
+        ],
+        evidenceLedger: [
+            RichAnswerEvidence(
+                id: "program-source",
+                sourceLabel: "[材料：函数样例]",
+                excerpt: "y = x²"
+            ),
+        ],
+        fallback: RichAnswerFallback(text: "保留函数文字解释。", reason: "OpenUI 不可用")
+    )
+}
+
+private func checkGeneratedUITreeRenders() throws {
+    let presentation = RichAnswerEngine.prepare(
+        envelope: generatedUIEnvelope(),
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-ui",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+
+    try richAnswerRequire(presentation.mode == .rich, "a valid generated UI tree stays rich")
+    try richAnswerRequire(
+        presentation.scenes.first?.ui?.nodes.count == 7,
+        "the generated UI node tree survives validation"
+    )
+    let encoded = try JSONEncoder().encode(generatedUIEnvelope())
+    let decoded = RichAnswerEngine.prepare(
+        data: encoded,
+        fallbackText: "fallback",
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-ui",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+    try richAnswerRequire(decoded == presentation, "the generated UI JSON boundary round-trips")
+}
+
+private func checkGeneratedUITreeRejectsUnboundEvidenceAndFalseFamily() throws {
+    var unboundEvidence = generatedUIEnvelope()
+    for nodeIndex in unboundEvidence.scenes[0].ui!.nodes.indices {
+        unboundEvidence.scenes[0].ui!.nodes[nodeIndex].evidenceIDs = []
+        if unboundEvidence.scenes[0].ui!.nodes[nodeIndex].role == .evidence {
+            unboundEvidence.scenes[0].ui!.nodes[nodeIndex].role = .text
+            unboundEvidence.scenes[0].ui!.nodes[nodeIndex].text = "来源位置"
+        }
+    }
+    for datasetIndex in unboundEvidence.scenes[0].ui!.datasets.indices {
+        for rowIndex in unboundEvidence.scenes[0].ui!.datasets[datasetIndex].rows.indices {
+            unboundEvidence.scenes[0].ui!.datasets[datasetIndex].rows[rowIndex].evidenceIDs = []
+        }
+    }
+    let unboundPresentation = RichAnswerEngine.prepare(
+        envelope: unboundEvidence,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-ui",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+    try richAnswerRequire(
+        unboundPresentation.mode == .narrativeOnly
+            && unboundPresentation.diagnostics.contains(where: { $0.code == .missingEvidence }),
+        "T2 evidence must reach an actual UI node or data row instead of living on the scene shell"
+    )
+
+    var unreachableEvidence = generatedUIEnvelope()
+    for nodeIndex in unreachableEvidence.scenes[0].ui!.nodes.indices {
+        unreachableEvidence.scenes[0].ui!.nodes[nodeIndex].evidenceIDs = []
+        if unreachableEvidence.scenes[0].ui!.nodes[nodeIndex].role == .evidence {
+            unreachableEvidence.scenes[0].ui!.nodes[nodeIndex].role = .text
+            unreachableEvidence.scenes[0].ui!.nodes[nodeIndex].text = "来源位置"
+        }
+    }
+    for datasetIndex in unreachableEvidence.scenes[0].ui!.datasets.indices {
+        for rowIndex in unreachableEvidence.scenes[0].ui!.datasets[datasetIndex].rows.indices {
+            unreachableEvidence.scenes[0].ui!.datasets[datasetIndex].rows[rowIndex].evidenceIDs = []
+        }
+    }
+    unreachableEvidence.scenes[0].ui!.datasets.append(
+        RichAnswerUIDataset(id: "unused-evidence", rows: [
+            RichAnswerUIDataRow(id: "unused-evidence-row", x: 0, y: 0, value: 0, evidenceIDs: ["ui-source"]),
+        ])
+    )
+    let unreachableEvidencePresentation = RichAnswerEngine.prepare(
+        envelope: unreachableEvidence,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-ui",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+    try richAnswerRequire(
+        unreachableEvidencePresentation.mode == .narrativeOnly
+            && unreachableEvidencePresentation.diagnostics.contains(where: { $0.code == .missingEvidence }),
+        "T2 evidence in an unused dataset cannot satisfy reachable UI binding"
+    )
+
+    var idleBinding = generatedUIEnvelope()
+    if let pathIndex = idleBinding.scenes[0].ui!.nodes.firstIndex(where: { $0.id == "ui-path" }) {
+        idleBinding.scenes[0].ui!.nodes[pathIndex].bindingID = nil
+    }
+    let idleBindingPresentation = RichAnswerEngine.prepare(
+        envelope: idleBinding,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-ui",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+    try richAnswerRequire(
+        idleBindingPresentation.mode == .narrativeOnly
+            && idleBindingPresentation.diagnostics.contains(where: { $0.code == .invalidValue }),
+        "T2 controls must drive a reachable mark or metric instead of sitting beside the graphic"
+    )
+
+    var falseFamily = generatedUIEnvelope()
+    falseFamily.expressionPlan.families = [.imageAndOverlay]
+    falseFamily.scenes[0].family = .imageAndOverlay
+    let falseFamilyPresentation = RichAnswerEngine.prepare(
+        envelope: falseFamily,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-ui",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+    try richAnswerRequire(
+        falseFamilyPresentation.mode == .narrativeOnly
+            && falseFamilyPresentation.diagnostics.contains(where: { $0.code == .invalidValue }),
+        "a generated UI cannot relabel a function plot as an image-overlay capability"
+    )
+
+    var falseRelationFamily = generatedUIEnvelope()
+    falseRelationFamily.expressionPlan.families = [.relationAndEvidence]
+    falseRelationFamily.scenes[0].family = .relationAndEvidence
+    let falseRelationPresentation = RichAnswerEngine.prepare(
+        envelope: falseRelationFamily,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-ui",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+    try richAnswerRequire(
+        falseRelationPresentation.mode == .narrativeOnly
+            && falseRelationPresentation.diagnostics.contains(where: { $0.code == .invalidValue }),
+        "T2 family contracts cannot relabel a function curve as an evidence relationship"
+    )
+}
+
+private func checkGeneratedUITreeIntentQualityContracts() throws {
+    var legalCurve = generatedUIEnvelope()
+    legalCurve.expressionPlan.knowledgeNatures = [.functionOrDataCurve]
+    legalCurve.expressionPlan.knowledgeObjects = ["x", "y = x²"]
+    legalCurve.expressionPlan.knowledgeRelations = ["x 改变时函数值 y 同步变化"]
+    legalCurve.expressionPlan.visualPrimitives = ["canvas", "path", "slider"]
+    legalCurve.expressionPlan.visualRationale = ["函数和数据关系适合用曲线、坐标和探针表达"]
+    if let titleIndex = legalCurve.scenes[0].ui?.nodes.firstIndex(where: { $0.id == "ui-title" }) {
+        legalCurve.scenes[0].ui?.nodes[titleIndex].text = "拖动 x，函数值 y 同步变化"
+    }
+    let legalCurvePresentation = RichAnswerEngine.prepare(
+        envelope: legalCurve,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-ui",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+    try richAnswerRequire(
+        legalCurvePresentation.mode == .rich,
+        "function and data relationships can still use a curve, coordinate canvas, and probe"
+    )
+
+    let weakPhysics = weakPhysicsLineOnlyEnvelope()
+    let weakPhysicsPresentation = RichAnswerEngine.prepare(
+        envelope: weakPhysics,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-weak-physics-line-only",
+            allowedSourceLabels: ["[材料：斜面摩擦]"]
+        )
+    )
+    try richAnswerRequire(
+        weakPhysicsPresentation.mode == .narrativeOnly
+            && weakPhysicsPresentation.diagnostics.contains(where: { $0.code == .invalidValue }),
+        "object and process questions cannot pass with only a control, metric, and line chart"
+    )
+
+    let compositePhysics = composableFrictionEnvelope()
+    let compositePhysicsPresentation = RichAnswerEngine.prepare(
+        envelope: compositePhysics,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-friction-composable",
+            allowedSourceLabels: ["[材料：斜面摩擦]"]
+        )
+    )
+    let roles = Set(compositePhysicsPresentation.scenes.first?.ui?.nodes.map(\.role) ?? [])
+    let diagnostics = compositePhysicsPresentation.diagnostics.map {
+        "\($0.code.rawValue):\($0.message)"
+    }.joined(separator: " | ")
+    let expectedCompositeRoles: Set<RichAnswerUIRole> = [.canvas, .shape, .vector, .sequence, .toggle]
+    try richAnswerRequire(
+        compositePhysicsPresentation.mode == .rich
+            && expectedCompositeRoles.isSubset(of: roles),
+        "object and process questions pass when generic shape, vector, sequence, and controls express the mechanism; diagnostics=\(diagnostics); roles=\(roles.map(\.rawValue).sorted().joined(separator: ","))"
+    )
+}
+
+private func checkGeneratedUISequencePrimitiveRenders() throws {
+    let envelope = generatedUISequenceEnvelope()
+    let presentation = RichAnswerEngine.prepare(
+        envelope: envelope,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-sequence-t2",
+            allowedSourceLabels: ["[材料：论证片段]"]
+        )
+    )
+
+    guard let scene = presentation.scenes.first,
+          let ui = scene.ui else {
+        throw RichAnswerProtocolCheckError.failed("the T2 sequence scene survives validation")
+    }
+    let sequence = ui.nodes.first(where: { $0.role == .sequence })
+    let scrubber = ui.nodes.first(where: { $0.role == .scrubber })
+    try richAnswerRequire(presentation.mode == .rich, "a generic sequence primitive stays rich")
+    try richAnswerRequire(scene.program == nil && sequence?.datasetID == "sequence-rows", "sequence is a T2 primitive backed by a dataset")
+    try richAnswerRequire(sequence?.bindingID == "sequence-step" && scrubber?.bindingID == "sequence-step", "sequence and scrubber share one binding")
+    try richAnswerRequire(
+        ui.datasets.first(where: { $0.id == "sequence-rows" })?.rows.allSatisfy { $0.label?.isEmpty == false } == true,
+        "sequence rows expose visible semantic labels"
+    )
+
+    var invalid = envelope
+    invalid.scenes[0].ui?.datasets[0].rows[1].label = nil
+    let rejected = RichAnswerEngine.prepare(
+        envelope: invalid,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-sequence-t2",
+            allowedSourceLabels: ["[材料：论证片段]"]
+        )
+    )
+    try richAnswerRequire(rejected.mode == .narrativeOnly, "sequence without visible row labels cannot render")
+    try richAnswerRequire(
+        rejected.diagnostics.contains(where: { $0.code == .invalidValue }),
+        "sequence label rejection exposes an invalid-value diagnostic"
+    )
+}
+
+private func checkComposablePendulumRendersWithoutSpecializedComponent() throws {
+    let envelope = composablePendulumEnvelope()
+    let presentation = RichAnswerEngine.prepare(
+        envelope: envelope,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-pendulum-t2",
+            allowedSourceLabels: ["[材料：单摆周期]"]
+        )
+    )
+
+    guard let scene = presentation.scenes.first else {
+        throw RichAnswerProtocolCheckError.failed("the T2 pendulum scene survives validation")
+    }
+    let roles = Set(scene.ui?.nodes.map(\.role) ?? [])
+    try richAnswerRequire(presentation.mode == .rich, "a problem without a specialized component stays rich through T2 primitives")
+    try richAnswerRequire(scene.program == nil && scene.ui != nil, "the pendulum acceptance case does not hide a specialized OpenUI component")
+    try richAnswerRequire(
+        [.canvas, .path, .point, .metric, .probe].allSatisfy(roles.contains),
+        "the pendulum acceptance case is composed from generic visual and interaction primitives"
+    )
+    try richAnswerRequire(presentation.diagnostics.isEmpty, "the generic pendulum composition needs no repair or text fallback")
+
+    let data = try JSONEncoder().encode(envelope)
+    let decoded = RichAnswerEngine.prepare(
+        data: data,
+        fallbackText: "fallback",
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-pendulum-t2",
+            allowedSourceLabels: ["[材料：单摆周期]"]
+        )
+    )
+    try richAnswerRequire(decoded == presentation, "the generic pendulum program round-trips through the Agent JSON boundary")
+}
+
+private func generatedUISequenceEnvelope() -> RichAnswerEnvelope {
+    RichAnswerEnvelope(
+        schemaVersion: 2,
+        contextRevision: "revision-sequence-t2",
+        narrative: "这条论证要按顺序读：先看前提，再看桥接关系，最后回到结论。",
+        expressionPlan: RichAnswerExpressionPlan(
+            action: .trace,
+            summary: "用通用 sequence 表达步骤和证据链",
+            families: [.relationAndEvidence],
+            preferredSurface: .inline,
+            directManipulation: true
+        ),
+        scenes: [
+            RichAnswerScene(
+                id: "sequence-primitive",
+                title: "证据链",
+                family: .relationAndEvidence,
+                objects: [],
+                evidenceIDs: ["sequence-source"],
+                placement: .inline,
+                ui: RichAnswerUIComposition(
+                    rootID: "sequence-root",
+                    nodes: [
+                        RichAnswerUINode(id: "sequence-root", role: .vstack, children: ["sequence-node", "sequence-scrubber", "sequence-evidence"]),
+                        RichAnswerUINode(id: "sequence-node", role: .sequence, label: "读法顺序", datasetID: "sequence-rows", bindingID: "sequence-step", evidenceIDs: ["sequence-source"]),
+                        RichAnswerUINode(id: "sequence-scrubber", role: .scrubber, label: "当前节点", bindingID: "sequence-step"),
+                        RichAnswerUINode(id: "sequence-evidence", role: .evidence, evidenceIDs: ["sequence-source"]),
+                    ],
+                    datasets: [
+                        RichAnswerUIDataset(id: "sequence-rows", rows: [
+                            RichAnswerUIDataRow(id: "sequence-row-a", x: 0, y: 0.5, value: 0, label: "前提：公共空间有价值", evidenceIDs: ["sequence-source"]),
+                            RichAnswerUIDataRow(id: "sequence-row-b", x: 0.5, y: 0.5, value: 1, label: "桥接：留停产生联系", evidenceIDs: ["sequence-source"]),
+                            RichAnswerUIDataRow(id: "sequence-row-c", x: 1, y: 0.5, value: 2, label: "结论：作者仍需证明因果", evidenceIDs: ["sequence-source"]),
+                        ]),
+                    ],
+                    bindings: [
+                        RichAnswerUIBinding(id: "sequence-step", label: "步骤", minimum: 0, maximum: 2, step: 1, initialValue: 0),
+                    ]
+                )
+            ),
+        ],
+        evidenceLedger: [
+            RichAnswerEvidence(id: "sequence-source", sourceLabel: "[材料：论证片段]", excerpt: "作者先提出公共空间价值，再讨论留停与联系。"),
+        ],
+        fallback: RichAnswerFallback(text: "按前提、桥接、结论读。", reason: "sequence 原语不可用")
+    )
+}
+
+private func checkGeneratedUITreeRejectsCycles() throws {
+    var envelope = generatedUIEnvelope()
+    envelope.scenes[0].ui?.nodes = [
+        RichAnswerUINode(id: "ui-root", role: .vstack, children: ["ui-panel"]),
+        RichAnswerUINode(id: "ui-panel", role: .panel, children: ["ui-root"]),
+    ]
+    envelope.scenes[0].ui?.rootID = "ui-root"
+    let presentation = RichAnswerEngine.prepare(
+        envelope: envelope,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-ui",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+
+    try richAnswerRequire(presentation.mode == .narrativeOnly, "a cyclic generated UI tree cannot render")
+    try richAnswerRequire(
+        presentation.diagnostics.contains(where: { $0.code == .invalidValue }),
+        "a cyclic generated UI tree exposes an invalid-value diagnostic"
+    )
+}
+
+private func checkGeneratedUITreeRejectsControlOverload() throws {
+    var envelope = generatedUIEnvelope()
+    envelope.scenes[0].ui?.nodes.append(contentsOf: [
+        RichAnswerUINode(id: "ui-slider-two", role: .slider, bindingID: "ui-x"),
+        RichAnswerUINode(id: "ui-slider-three", role: .probe, bindingID: "ui-x"),
+    ])
+    envelope.scenes[0].ui?.nodes[0].children.append(contentsOf: ["ui-slider-two", "ui-slider-three"])
+    let presentation = RichAnswerEngine.prepare(
+        envelope: envelope,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-ui",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+
+    try richAnswerRequire(presentation.mode == .narrativeOnly, "a control-heavy generated UI cannot render")
+    try richAnswerRequire(
+        presentation.diagnostics.contains(where: { $0.code == .budgetExceeded }),
+        "control overload exposes a budget diagnostic"
+    )
+}
+
+private func generatedUIEnvelope() -> RichAnswerEnvelope {
+    RichAnswerEnvelope(
+        schemaVersion: 2,
+        contextRevision: "revision-ui",
+        narrative: "拖动 x，观察 y = x² 的曲线与读数。",
+        expressionPlan: RichAnswerExpressionPlan(
+            action: .manipulate,
+            summary: "模型组合函数图、探针和来源",
+            families: [.quantityAndCoordinates],
+            preferredSurface: .expanded,
+            directManipulation: true
+        ),
+        scenes: [
+            RichAnswerScene(
+                id: "generated-function",
+                title: "函数探针",
+                family: .quantityAndCoordinates,
+                objects: [],
+                evidenceIDs: ["ui-source"],
+                placement: .expanded,
+                ui: RichAnswerUIComposition(
+                    rootID: "ui-root",
+                    nodes: [
+                        RichAnswerUINode(id: "ui-root", role: .vstack, children: ["ui-title", "ui-canvas", "ui-slider", "ui-evidence"]),
+                        RichAnswerUINode(id: "ui-title", role: .text, label: "y = x²", text: "拖动 x 查看函数值", evidenceIDs: ["ui-source"], emphasis: .strong),
+                        RichAnswerUINode(id: "ui-canvas", role: .canvas, children: ["ui-axis", "ui-path"], xAxis: RichAnswerAxis(label: "x", minimum: -1, maximum: 1), yAxis: RichAnswerAxis(label: "y", minimum: 0, maximum: 1)),
+                        RichAnswerUINode(id: "ui-axis", role: .axis),
+                        RichAnswerUINode(id: "ui-path", role: .path, datasetID: "ui-curve", bindingID: "ui-x", evidenceIDs: ["ui-source"]),
+                        RichAnswerUINode(id: "ui-slider", role: .slider, label: "x", bindingID: "ui-x"),
+                        RichAnswerUINode(id: "ui-evidence", role: .evidence, evidenceIDs: ["ui-source"]),
+                    ],
+                    datasets: [
+                        RichAnswerUIDataset(id: "ui-curve", rows: [
+                            RichAnswerUIDataRow(id: "ui-row-a", x: 0, y: 1, value: -1, result: 1, evidenceIDs: ["ui-source"]),
+                            RichAnswerUIDataRow(id: "ui-row-b", x: 0.5, y: 0, value: 0, result: 0, evidenceIDs: ["ui-source"]),
+                            RichAnswerUIDataRow(id: "ui-row-c", x: 1, y: 1, value: 1, result: 1, evidenceIDs: ["ui-source"]),
+                        ]),
+                    ],
+                    bindings: [
+                        RichAnswerUIBinding(id: "ui-x", label: "x", minimum: -1, maximum: 1, step: 0.25, initialValue: 0),
+                    ]
+                )
+            ),
+        ],
+        evidenceLedger: [
+            RichAnswerEvidence(id: "ui-source", sourceLabel: "[材料：函数样例]", excerpt: "y = x²"),
+        ],
+        fallback: RichAnswerFallback(text: "y = x²", reason: "生成式 UI 不可用")
+    )
+}
+
+private func composablePendulumEnvelope() -> RichAnswerEnvelope {
+    let lengths = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2.0]
+    let rows = lengths.enumerated().map { index, length in
+        let period = 2 * Double.pi * sqrt(length / 9.81)
+        return RichAnswerUIDataRow(
+            id: "pendulum-row-\(index)",
+            x: (length - 0.25) / 1.75,
+            y: period / 3.2,
+            value: length,
+            result: period,
+            label: "L=\(String(format: "%.2f", length)) m",
+            evidenceIDs: ["pendulum-source"]
+        )
+    }
+    return RichAnswerEnvelope(
+        schemaVersion: 2,
+        contextRevision: "revision-pendulum-t2",
+        narrative: "小角度近似下，周期随摆长的平方根增长。",
+        expressionPlan: RichAnswerExpressionPlan(
+            action: .manipulate,
+            summary: "用通用路径、探针和读数解释单摆关系",
+            families: [.quantityAndCoordinates],
+            preferredSurface: .inline,
+            directManipulation: true
+        ),
+        scenes: [
+            RichAnswerScene(
+                id: "pendulum-primitives",
+                title: "单摆关系",
+                family: .quantityAndCoordinates,
+                objects: [],
+                evidenceIDs: ["pendulum-source"],
+                placement: .inline,
+                ui: RichAnswerUIComposition(
+                    rootID: "pendulum-root",
+                    nodes: [
+                        RichAnswerUINode(id: "pendulum-root", role: .vstack, children: ["pendulum-formula", "pendulum-metric", "pendulum-canvas", "pendulum-probe", "pendulum-evidence"]),
+                        RichAnswerUINode(id: "pendulum-formula", role: .text, text: "T = 2π√(L/g)", evidenceIDs: ["pendulum-source"], emphasis: .strong),
+                        RichAnswerUINode(id: "pendulum-metric", role: .metric, label: "当前周期", unit: "s", datasetID: "pendulum-curve", bindingID: "pendulum-length", evidenceIDs: ["pendulum-source"], tone: .accent, emphasis: .strong),
+                        RichAnswerUINode(id: "pendulum-canvas", role: .canvas, children: ["pendulum-axis", "pendulum-path", "pendulum-points"], xAxis: RichAnswerAxis(label: "摆长 L", minimum: 0.25, maximum: 2, unit: "m"), yAxis: RichAnswerAxis(label: "周期 T", minimum: 0, maximum: 3.2, unit: "s")),
+                        RichAnswerUINode(id: "pendulum-axis", role: .axis),
+                        RichAnswerUINode(id: "pendulum-path", role: .path, datasetID: "pendulum-curve", evidenceIDs: ["pendulum-source"], emphasis: .strong),
+                        RichAnswerUINode(id: "pendulum-points", role: .point, datasetID: "pendulum-curve", bindingID: "pendulum-length", evidenceIDs: ["pendulum-source"]),
+                        RichAnswerUINode(id: "pendulum-probe", role: .probe, label: "摆长 L", bindingID: "pendulum-length"),
+                        RichAnswerUINode(id: "pendulum-evidence", role: .evidence, evidenceIDs: ["pendulum-source"]),
+                    ],
+                    datasets: [RichAnswerUIDataset(id: "pendulum-curve", rows: rows)],
+                    bindings: [RichAnswerUIBinding(id: "pendulum-length", label: "摆长 L", minimum: 0.25, maximum: 2, step: 0.05, initialValue: 1, unit: "m")]
+                )
+            ),
+        ],
+        evidenceLedger: [
+            RichAnswerEvidence(
+                id: "pendulum-source",
+                sourceLabel: "[材料：单摆周期]",
+                excerpt: "在小角度近似下，单摆周期 T = 2π√(L/g)。"
+            ),
+        ],
+        fallback: RichAnswerFallback(text: "周期随摆长的平方根增长。", reason: "T2 原语不可用")
+    )
+}
+
+private func weakPhysicsLineOnlyEnvelope() -> RichAnswerEnvelope {
+    RichAnswerEnvelope(
+        schemaVersion: 2,
+        contextRevision: "revision-weak-physics-line-only",
+        narrative: "摩擦方向取决于潜在相对运动趋势。",
+        expressionPlan: RichAnswerExpressionPlan(
+            action: .manipulate,
+            summary: "声明要解释斜面物块和摩擦反转，却只给读数曲线",
+            families: [.processAndState],
+            preferredSurface: .inline,
+            directManipulation: true,
+            knowledgeNatures: [.objectMechanism, .processOrState],
+            knowledgeObjects: ["斜面物块", "静摩擦力"],
+            knowledgeRelations: ["摩擦力阻碍潜在相对运动"],
+            knowledgeProcesses: ["外力向上足够大时摩擦方向反转"],
+            visualPrimitives: ["canvas", "line", "metric", "slider"],
+            visualRationale: ["这个反例故意只给线图和读数，用于验证弱 UI 会被拒绝"]
+        ),
+        scenes: [
+            RichAnswerScene(
+                id: "weak-friction-line",
+                title: "斜面摩擦弱反例",
+                family: .processAndState,
+                objects: [],
+                evidenceIDs: ["friction-source"],
+                placement: .inline,
+                ui: RichAnswerUIComposition(
+                    rootID: "weak-friction-root",
+                    nodes: [
+                        RichAnswerUINode(id: "weak-friction-root", role: .vstack, children: ["weak-friction-text", "weak-friction-metric", "weak-friction-canvas", "weak-friction-slider", "weak-friction-evidence"]),
+                        RichAnswerUINode(id: "weak-friction-text", role: .text, text: "斜面物块的静摩擦力会随潜在运动趋势反转。", evidenceIDs: ["friction-source"]),
+                        RichAnswerUINode(id: "weak-friction-metric", role: .metric, label: "摩擦方向读数", datasetID: "weak-friction-data", bindingID: "applied-force", evidenceIDs: ["friction-source"]),
+                        RichAnswerUINode(id: "weak-friction-canvas", role: .canvas, children: ["weak-friction-line"], xAxis: RichAnswerAxis(label: "外力", minimum: 0, maximum: 2), yAxis: RichAnswerAxis(label: "摩擦方向", minimum: -1, maximum: 1)),
+                        RichAnswerUINode(id: "weak-friction-line", role: .line, datasetID: "weak-friction-data", bindingID: "applied-force", evidenceIDs: ["friction-source"]),
+                        RichAnswerUINode(id: "weak-friction-slider", role: .slider, label: "外力", bindingID: "applied-force"),
+                        RichAnswerUINode(id: "weak-friction-evidence", role: .evidence, evidenceIDs: ["friction-source"]),
+                    ],
+                    datasets: [
+                        RichAnswerUIDataset(id: "weak-friction-data", rows: [
+                            RichAnswerUIDataRow(id: "weak-friction-a", x: 0, y: 0.2, value: 0, result: 1, evidenceIDs: ["friction-source"]),
+                            RichAnswerUIDataRow(id: "weak-friction-b", x: 1, y: 0.8, value: 1, result: -1, evidenceIDs: ["friction-source"]),
+                        ]),
+                    ],
+                    bindings: [
+                        RichAnswerUIBinding(id: "applied-force", label: "外力", minimum: 0, maximum: 2, step: 1, initialValue: 0),
+                    ]
+                )
+            ),
+        ],
+        evidenceLedger: [
+            RichAnswerEvidence(
+                id: "friction-source",
+                sourceLabel: "[材料：斜面摩擦]",
+                excerpt: "摩擦力阻碍潜在相对运动，方向取决于物块相对斜面的运动趋势。"
+            ),
+        ],
+        fallback: RichAnswerFallback(text: "摩擦方向取决于潜在运动趋势。", reason: "T2 弱反例不可用")
+    )
+}
+
+private func composableFrictionEnvelope() -> RichAnswerEnvelope {
+    RichAnswerEnvelope(
+        schemaVersion: 2,
+        contextRevision: "revision-friction-composable",
+        narrative: "摩擦力不是固定向左或向右，而是阻碍潜在相对运动。",
+        expressionPlan: RichAnswerExpressionPlan(
+            action: .manipulate,
+            summary: "用斜面形状、力向量、状态序列和开关表达摩擦方向反转",
+            families: [.processAndState, .timeAndSpace],
+            preferredSurface: .inline,
+            directManipulation: true,
+            knowledgeNatures: [.objectMechanism, .spatialStructure, .processOrState],
+            knowledgeObjects: ["斜面物块", "重力分量", "支持力", "静摩擦力"],
+            knowledgeRelations: ["摩擦力阻碍潜在相对运动"],
+            knowledgeProcesses: ["外力改变潜在运动趋势时摩擦方向反转"],
+            visualPrimitives: ["canvas", "shape", "vector", "sequence", "toggle"],
+            visualRationale: ["物体、空间和过程题需要用形状、方向向量和状态序列表达机制"]
+        ),
+        scenes: [
+            RichAnswerScene(
+                id: "friction-primitives",
+                title: "斜面摩擦机制",
+                family: .processAndState,
+                objects: [],
+                evidenceIDs: ["friction-source"],
+                placement: .inline,
+                ui: RichAnswerUIComposition(
+                    rootID: "friction-root",
+                    nodes: [
+                        RichAnswerUINode(id: "friction-root", role: .vstack, children: ["friction-canvas", "friction-toggle", "friction-sequence", "friction-evidence"]),
+                        RichAnswerUINode(id: "friction-canvas", role: .canvas, children: ["incline-shape", "block-shape", "gravity-vector", "normal-vector", "friction-vector"]),
+                        RichAnswerUINode(id: "incline-shape", role: .shape, label: "粗糙斜面", evidenceIDs: ["friction-source"], region: RichAnswerRegion(x: 0.08, y: 0.48, width: 0.74, height: 0.36), shape: .triangle, fill: .soft),
+                        RichAnswerUINode(id: "block-shape", role: .shape, label: "物块", evidenceIDs: ["friction-source"], region: RichAnswerRegion(x: 0.42, y: 0.36, width: 0.14, height: 0.11), shape: .rectangle, fill: .solid),
+                        RichAnswerUINode(id: "gravity-vector", role: .vector, label: "重力沿斜面分量向下", datasetID: "gravity-vector-data", evidenceIDs: ["friction-source"]),
+                        RichAnswerUINode(id: "normal-vector", role: .vector, label: "支持力垂直斜面", datasetID: "normal-vector-data", evidenceIDs: ["friction-source"]),
+                        RichAnswerUINode(id: "friction-vector", role: .vector, label: "静摩擦方向随趋势反转", datasetID: "friction-vector-data", bindingID: "force-state", evidenceIDs: ["friction-source"], tone: .accent),
+                        RichAnswerUINode(id: "friction-toggle", role: .toggle, label: "施加向上外力", bindingID: "force-state"),
+                        RichAnswerUINode(id: "friction-sequence", role: .sequence, label: "潜在相对运动 → 阻碍 → 方向", datasetID: "friction-states", bindingID: "force-state", evidenceIDs: ["friction-source"]),
+                        RichAnswerUINode(id: "friction-evidence", role: .evidence, evidenceIDs: ["friction-source"]),
+                    ],
+                    datasets: [
+                        RichAnswerUIDataset(id: "gravity-vector-data", rows: [
+                            RichAnswerUIDataRow(id: "gravity-vector-row", x: 0.50, y: 0.42, x2: 0.35, y2: 0.58, label: "沿斜面向下", evidenceIDs: ["friction-source"]),
+                        ]),
+                        RichAnswerUIDataset(id: "normal-vector-data", rows: [
+                            RichAnswerUIDataRow(id: "normal-vector-row", x: 0.50, y: 0.42, x2: 0.56, y2: 0.26, label: "垂直斜面", evidenceIDs: ["friction-source"]),
+                        ]),
+                        RichAnswerUIDataset(id: "friction-vector-data", rows: [
+                            RichAnswerUIDataRow(id: "friction-vector-up", x: 0.50, y: 0.42, x2: 0.64, y2: 0.34, value: 0, label: "无外力：摩擦沿斜面向上", evidenceIDs: ["friction-source"]),
+                            RichAnswerUIDataRow(id: "friction-vector-down", x: 0.50, y: 0.42, x2: 0.35, y2: 0.58, value: 1, label: "外力足够大：摩擦沿斜面向下", evidenceIDs: ["friction-source"]),
+                        ]),
+                        RichAnswerUIDataset(id: "friction-states", rows: [
+                            RichAnswerUIDataRow(id: "friction-state-a", x: 0, y: 0, value: 0, label: "无外力：潜在下滑，摩擦向上", evidenceIDs: ["friction-source"]),
+                            RichAnswerUIDataRow(id: "friction-state-b", x: 1, y: 1, value: 1, label: "向上外力足够大：潜在上滑，摩擦向下", evidenceIDs: ["friction-source"]),
+                        ]),
+                    ],
+                    bindings: [
+                        RichAnswerUIBinding(id: "force-state", label: "外力状态", minimum: 0, maximum: 1, step: 1, initialValue: 0),
+                    ]
+                )
+            ),
+        ],
+        evidenceLedger: [
+            RichAnswerEvidence(
+                id: "friction-source",
+                sourceLabel: "[材料：斜面摩擦]",
+                excerpt: "静摩擦力阻碍潜在相对运动；若再施加足够大的沿斜面向上外力，静摩擦方向会反转。"
+            ),
+        ],
+        fallback: RichAnswerFallback(text: "摩擦方向取决于潜在运动趋势。", reason: "T2 原语不可用")
     )
 }
 
 private func checkAssetAliasesResolveBeforePersistence() throws {
     var envelope = minimalEnvelope(contextRevision: "revision-7")
     envelope.expressionPlan.families = [.imageAndOverlay]
+    envelope.expressionPlan.directManipulation = false
     envelope.scenes = [
         RichAnswerScene(
             id: "image-scene",
@@ -39,13 +1353,21 @@ private func checkAssetAliasesResolveBeforePersistence() throws {
                     assetID: "course-item-1",
                     frameID: "image-frame"
                 ),
+                RichAnswerObject(
+                    id: "region",
+                    kind: .region,
+                    label: "关键段落",
+                    evidenceIDs: ["source-1"],
+                    frameID: "image-frame",
+                    bounds: RichAnswerRegion(x: 0.12, y: 0.16, width: 0.42, height: 0.18)
+                ),
             ],
             frames: [
                 RichAnswerFrame(
                     id: "image-frame",
                     kind: .image,
                     title: "材料原图",
-                    objectIDs: ["image"],
+                    objectIDs: ["image", "region"],
                     assetID: "course-item-1",
                     evidenceIDs: ["source-1"]
                 ),
@@ -74,7 +1396,7 @@ private func checkAssetAliasesResolveBeforePersistence() throws {
 
 private func checkDirectManipulationPlanMatchesOperations() throws {
     var envelope = minimalEnvelope(contextRevision: "revision-7")
-    envelope.expressionPlan.directManipulation = true
+    envelope.expressionPlan.directManipulation = false
     let presentation = RichAnswerEngine.prepare(
         envelope: envelope,
         environment: RichAnswerEnvironment(
@@ -83,7 +1405,7 @@ private func checkDirectManipulationPlanMatchesOperations() throws {
         )
     )
 
-    try richAnswerRequire(presentation.mode == .narrativeOnly, "a false interaction promise cannot render")
+    try richAnswerRequire(presentation.mode == .narrativeOnly, "an understated interaction plan cannot render")
     try richAnswerRequire(
         presentation.diagnostics.contains(where: { $0.code == .invalidParameter }),
         "an interaction-plan mismatch exposes a protocol diagnostic"
@@ -149,6 +1471,7 @@ private func checkDefaultSceneBudgetIsBounded() throws {
         var scene = envelope.scenes[0]
         scene.id = "scene-\(index)"
         scene.objects[0].id = "claim-\(index)"
+        scene.operations[0].targetIDs = ["claim-\(index)"]
         return scene
     }
     let presentation = RichAnswerEngine.prepare(
@@ -163,6 +1486,65 @@ private func checkDefaultSceneBudgetIsBounded() throws {
     try richAnswerRequire(
         presentation.diagnostics.contains(where: { $0.code == .budgetExceeded }),
         "scene budget clipping remains inspectable"
+    )
+}
+
+private func checkFamilySpecificContracts() throws {
+    try assertFamilySceneRenders(validTextFamilyScene(), "text family accepts selectable text")
+    var invalidText = validTextFamilyScene()
+    invalidText.operations = []
+    try assertFamilySceneRejected(invalidText, expectedCode: .invalidValue, "text family rejects unselectable text")
+
+    try assertFamilySceneRenders(validQuantityFamilyScene(), "quantity family accepts coordinate samples")
+    var invalidQuantity = validQuantityFamilyScene()
+    invalidQuantity.objects.removeLast()
+    invalidQuantity.frames[0].objectIDs = ["quantity-a"]
+    invalidQuantity.operations[0].targetIDs = ["quantity-a"]
+    try assertFamilySceneRejected(invalidQuantity, expectedCode: .invalidValue, "quantity family rejects single-point charts")
+
+    try assertFamilySceneRenders(validProcessFamilyScene(), "process family accepts step and play controls")
+    var invalidProcess = validProcessFamilyScene()
+    invalidProcess.operations.removeAll { $0.kind == .playPause }
+    try assertFamilySceneRejected(invalidProcess, expectedCode: .invalidValue, "process family rejects missing play controls")
+
+    try assertFamilySceneRenders(validRelationFamilyScene(), "relation family accepts grounded relationships")
+    var invalidRelation = validRelationFamilyScene()
+    invalidRelation.relations = []
+    invalidRelation.operations = []
+    try assertFamilySceneRejected(invalidRelation, expectedCode: .invalidValue, "relation family rejects relation-free scenes")
+
+    try assertFamilySceneRenders(validTimeSpaceFamilyScene(), "time-space family accepts scrubbed timeline")
+    var invalidTimeSpace = validTimeSpaceFamilyScene()
+    invalidTimeSpace.operations = []
+    try assertFamilySceneRejected(invalidTimeSpace, expectedCode: .invalidValue, "time-space family rejects missing scrub controls")
+
+    try assertFamilySceneRenders(validImageOverlayFamilyScene(), "image family accepts asset-backed regions")
+    var invalidImage = validImageOverlayFamilyScene()
+    invalidImage.objects.removeAll { $0.kind == .region }
+    invalidImage.frames[0].objectIDs = ["image-object"]
+    invalidImage.operations = [
+        RichAnswerOperation(id: "image-zoom", kind: .zoom, label: "缩放原图", targetIDs: ["image-frame"], frameID: "image-frame"),
+    ]
+    try assertFamilySceneRejected(invalidImage, expectedCode: .invalidValue, "image family rejects overlays without regions")
+
+    try assertFamilySceneRenders(validComparisonFamilyScene(), "comparison family accepts two compare targets")
+    var invalidComparison = validComparisonFamilyScene()
+    invalidComparison.operations[0].targetIDs = ["comparison-a"]
+    try assertFamilySceneRejected(invalidComparison, expectedCode: .invalidValue, "comparison family rejects single-target compare")
+
+    try assertFamilySceneRenders(validCalculationFamilyScene(), "calculation family accepts deterministic sampled adjust")
+    var invalidCalculation = validCalculationFamilyScene()
+    invalidCalculation.operations[0].targetIDs = ["calculation-zero"]
+    try assertFamilySceneRejected(invalidCalculation, expectedCode: .invalidValue, "calculation family rejects under-sampled adjust")
+
+    var unsupportedOperation = validQuantityFamilyScene()
+    unsupportedOperation.operations.append(
+        RichAnswerOperation(id: "quantity-sort", kind: .sort, label: "排序", targetIDs: ["quantity-a"])
+    )
+    try assertFamilySceneRejected(
+        unsupportedOperation,
+        expectedCode: .unsupportedField,
+        "quantity family rejects operations that the renderer does not support"
     )
 }
 
@@ -188,14 +1570,18 @@ private func checkAcceptedInteractiveScene() throws {
                         kind: .quantity,
                         label: "名义利率",
                         number: 5,
-                        unit: "%"
+                        unit: "%",
+                        frameID: "rate-comparison",
+                        coordinate: RichAnswerPoint(x: 0.20, y: 0.70)
                     ),
                     RichAnswerObject(
                         id: "inflation-rate",
                         kind: .quantity,
                         label: "通胀率",
                         number: 2,
-                        unit: "%"
+                        unit: "%",
+                        frameID: "rate-comparison",
+                        coordinate: RichAnswerPoint(x: 0.50, y: 0.40)
                     ),
                     RichAnswerObject(
                         id: "real-rate",
@@ -344,7 +1730,7 @@ private func minimalEnvelope(contextRevision: String) -> RichAnswerEnvelope {
             summary: "对齐原文和解释",
             families: [.textAndAlignment],
             preferredSurface: .inline,
-            directManipulation: false
+            directManipulation: true
         ),
         scenes: [
             RichAnswerScene(
@@ -354,6 +1740,9 @@ private func minimalEnvelope(contextRevision: String) -> RichAnswerEnvelope {
                 objects: [
                     RichAnswerObject(id: "claim", kind: .text, label: "解释", text: "概念说明"),
                 ],
+                operations: [
+                    RichAnswerOperation(id: "select-claim", kind: .select, label: "选择文本", targetIDs: ["claim"]),
+                ],
                 evidenceIDs: ["source-1"]
             ),
         ],
@@ -361,6 +1750,268 @@ private func minimalEnvelope(contextRevision: String) -> RichAnswerEnvelope {
             RichAnswerEvidence(id: "source-1", sourceLabel: "[材料：样例]", excerpt: "原文片段"),
         ],
         fallback: RichAnswerFallback(text: "概念说明", reason: "场景不可用")
+    )
+}
+
+private func assertFamilySceneRenders(_ scene: RichAnswerScene, _ message: String) throws {
+    let presentation = RichAnswerEngine.prepare(
+        envelope: familyEnvelope(scene: scene),
+        environment: familyEnvironment()
+    )
+
+    try richAnswerRequire(presentation.mode == .rich, message)
+    try richAnswerRequire(presentation.scenes.map(\.id) == [scene.id], "\(message) and keeps the family scene")
+}
+
+private func assertFamilySceneRejected(
+    _ scene: RichAnswerScene,
+    expectedCode: RichAnswerDiagnosticCode,
+    _ message: String
+) throws {
+    let presentation = RichAnswerEngine.prepare(
+        envelope: familyEnvelope(scene: scene),
+        environment: familyEnvironment()
+    )
+
+    try richAnswerRequire(presentation.mode == .narrativeOnly, message)
+    try richAnswerRequire(
+        presentation.diagnostics.contains(where: { $0.sceneID == scene.id && $0.code == expectedCode }),
+        "\(message) with \(expectedCode.rawValue)"
+    )
+}
+
+private func familyEnvelope(scene: RichAnswerScene) -> RichAnswerEnvelope {
+    let hasOperations = !scene.operations.isEmpty
+    return RichAnswerEnvelope(
+        contextRevision: "revision-7",
+        narrative: "这个场景有证据、对象和可降级文本。",
+        expressionPlan: RichAnswerExpressionPlan(
+            action: hasOperations ? .manipulate : .explain,
+            summary: "校验 \(scene.family.rawValue) 的最小可渲染条件",
+            families: [scene.family],
+            preferredSurface: scene.placement,
+            directManipulation: hasOperations
+        ),
+        scenes: [scene],
+        evidenceLedger: [
+            RichAnswerEvidence(
+                id: "source-1",
+                sourceLabel: "[材料：样例]",
+                excerpt: "原文片段",
+                assetIDs: ["asset-1"]
+            ),
+        ],
+        fallback: RichAnswerFallback(text: "富回答不可用，保留文字解释。", reason: "协议样例被拒绝")
+    )
+}
+
+private func familyEnvironment() -> RichAnswerEnvironment {
+    RichAnswerEnvironment(
+        contextRevision: "revision-7",
+        allowedSourceLabels: ["[材料：样例]"],
+        allowedAssetIDs: ["asset-1"]
+    )
+}
+
+private func validTextFamilyScene() -> RichAnswerScene {
+    RichAnswerScene(
+        id: "family-text",
+        title: "原文选择",
+        family: .textAndAlignment,
+        objects: [
+            RichAnswerObject(id: "text-a", kind: .text, label: "关键原文", text: "实际利率扣除了通胀影响。", evidenceIDs: ["source-1"]),
+        ],
+        operations: [
+            RichAnswerOperation(id: "text-select", kind: .select, label: "选择原文", targetIDs: ["text-a"]),
+        ],
+        evidenceIDs: ["source-1"]
+    )
+}
+
+private func validQuantityFamilyScene() -> RichAnswerScene {
+    RichAnswerScene(
+        id: "family-quantity",
+        title: "坐标样本",
+        family: .quantityAndCoordinates,
+        objects: [
+            RichAnswerObject(
+                id: "quantity-a",
+                kind: .dataPoint,
+                label: "低通胀样本",
+                number: 3,
+                unit: "%",
+                evidenceIDs: ["source-1"],
+                frameID: "quantity-frame",
+                coordinate: RichAnswerPoint(x: 0.25, y: 0.70)
+            ),
+            RichAnswerObject(
+                id: "quantity-b",
+                kind: .dataPoint,
+                label: "高通胀样本",
+                number: 1,
+                unit: "%",
+                evidenceIDs: ["source-1"],
+                frameID: "quantity-frame",
+                coordinate: RichAnswerPoint(x: 0.75, y: 0.35)
+            ),
+        ],
+        operations: [
+            RichAnswerOperation(
+                id: "quantity-adjust",
+                kind: .adjust,
+                label: "调节观察点",
+                targetIDs: ["quantity-a", "quantity-b"],
+                parameter: RichAnswerParameter(id: "quantity-probe", label: "观察位置", minimum: 0, maximum: 10, step: 1, initialValue: 5)
+            ),
+        ],
+        frames: [
+            RichAnswerFrame(
+                id: "quantity-frame",
+                kind: .cartesian,
+                title: "通胀与实际利率",
+                objectIDs: ["quantity-a", "quantity-b"],
+                xAxis: RichAnswerAxis(label: "通胀率", minimum: 0, maximum: 10, unit: "%"),
+                yAxis: RichAnswerAxis(label: "实际利率", minimum: -2, maximum: 6, unit: "%")
+            ),
+        ],
+        evidenceIDs: ["source-1"]
+    )
+}
+
+private func validProcessFamilyScene() -> RichAnswerScene {
+    RichAnswerScene(
+        id: "family-process",
+        title: "推导过程",
+        family: .processAndState,
+        objects: [
+            RichAnswerObject(id: "process-a", kind: .step, label: "读名义利率", text: "先确认合同报价。", evidenceIDs: ["source-1"]),
+            RichAnswerObject(id: "process-b", kind: .state, label: "扣除通胀", text: "再切换到购买力口径。", evidenceIDs: ["source-1"]),
+        ],
+        relations: [
+            RichAnswerRelation(id: "process-r", kind: .precedes, sourceID: "process-a", targetID: "process-b", evidenceIDs: ["source-1"]),
+        ],
+        operations: [
+            RichAnswerOperation(id: "process-step", kind: .step, label: "逐步查看", targetIDs: ["process-a", "process-b"]),
+            RichAnswerOperation(id: "process-play", kind: .playPause, label: "播放过程", targetIDs: ["process-a", "process-b"]),
+        ],
+        evidenceIDs: ["source-1"]
+    )
+}
+
+private func validRelationFamilyScene() -> RichAnswerScene {
+    RichAnswerScene(
+        id: "family-relation",
+        title: "依据关系",
+        family: .relationAndEvidence,
+        objects: [
+            RichAnswerObject(id: "relation-a", kind: .claim, label: "名义利率", evidenceIDs: ["source-1"]),
+            RichAnswerObject(id: "relation-b", kind: .claim, label: "实际利率", evidenceIDs: ["source-1"]),
+        ],
+        relations: [
+            RichAnswerRelation(id: "relation-r", kind: .dependsOn, sourceID: "relation-b", targetID: "relation-a", label: "以名义利率为起点", evidenceIDs: ["source-1"]),
+        ],
+        operations: [
+            RichAnswerOperation(id: "relation-reveal", kind: .reveal, label: "展开证据", targetIDs: ["relation-r"]),
+        ],
+        evidenceIDs: ["source-1"]
+    )
+}
+
+private func validTimeSpaceFamilyScene() -> RichAnswerScene {
+    RichAnswerScene(
+        id: "family-time-space",
+        title: "时间线观察",
+        family: .timeAndSpace,
+        objects: [
+            RichAnswerObject(id: "time-a", kind: .event, label: "报价", text: "看到名义利率。", evidenceIDs: ["source-1"], frameID: "time-frame", coordinate: RichAnswerPoint(x: 0.15, y: 0.50)),
+            RichAnswerObject(id: "time-b", kind: .event, label: "解释", text: "扣除通胀解释购买力。", evidenceIDs: ["source-1"], frameID: "time-frame", coordinate: RichAnswerPoint(x: 0.85, y: 0.50)),
+        ],
+        relations: [
+            RichAnswerRelation(id: "time-r", kind: .precedes, sourceID: "time-a", targetID: "time-b", evidenceIDs: ["source-1"]),
+        ],
+        operations: [
+            RichAnswerOperation(id: "time-scrub", kind: .scrub, label: "拖动时间尺", targetIDs: ["time-a", "time-b"]),
+        ],
+        frames: [
+            RichAnswerFrame(id: "time-frame", kind: .timeline, title: "学习顺序", objectIDs: ["time-a", "time-b"], evidenceIDs: ["source-1"]),
+        ],
+        evidenceIDs: ["source-1"]
+    )
+}
+
+private func validImageOverlayFamilyScene() -> RichAnswerScene {
+    RichAnswerScene(
+        id: "family-image",
+        title: "图像叠层",
+        family: .imageAndOverlay,
+        objects: [
+            RichAnswerObject(id: "image-object", kind: .image, label: "教材页面", evidenceIDs: ["source-1"], assetID: "asset-1", frameID: "image-frame"),
+            RichAnswerObject(id: "image-region", kind: .region, label: "关键定义", text: "这块区域解释实际利率。", evidenceIDs: ["source-1"], frameID: "image-frame", bounds: RichAnswerRegion(x: 0.12, y: 0.20, width: 0.48, height: 0.18)),
+        ],
+        operations: [
+            RichAnswerOperation(id: "image-select", kind: .select, label: "选择区域", targetIDs: ["image-region"], frameID: "image-frame"),
+            RichAnswerOperation(id: "image-toggle", kind: .toggle, label: "开关叠层", targetIDs: ["image-region"], frameID: "image-frame"),
+            RichAnswerOperation(id: "image-zoom", kind: .zoom, label: "缩放原图", targetIDs: ["image-frame"], frameID: "image-frame"),
+        ],
+        frames: [
+            RichAnswerFrame(id: "image-frame", kind: .image, title: "教材页面", objectIDs: ["image-object", "image-region"], assetID: "asset-1", evidenceIDs: ["source-1"]),
+        ],
+        evidenceIDs: ["source-1"]
+    )
+}
+
+private func validComparisonFamilyScene() -> RichAnswerScene {
+    RichAnswerScene(
+        id: "family-comparison",
+        title: "概念比较",
+        family: .comparisonAndEvaluation,
+        objects: [
+            RichAnswerObject(id: "comparison-a", kind: .option, label: "名义利率", text: "合同中先看到的报价。", evidenceIDs: ["source-1"]),
+            RichAnswerObject(id: "comparison-b", kind: .option, label: "实际利率", text: "扣除通胀后的购买力口径。", evidenceIDs: ["source-1"]),
+        ],
+        relations: [
+            RichAnswerRelation(id: "comparison-r", kind: .contrasts, sourceID: "comparison-a", targetID: "comparison-b", evidenceIDs: ["source-1"]),
+        ],
+        operations: [
+            RichAnswerOperation(id: "comparison-compare", kind: .compare, label: "突出差异", targetIDs: ["comparison-a", "comparison-b"]),
+        ],
+        evidenceIDs: ["source-1"]
+    )
+}
+
+private func validCalculationFamilyScene() -> RichAnswerScene {
+    RichAnswerScene(
+        id: "family-calculation",
+        title: "确定性计算",
+        family: .calculationAndConstraints,
+        objects: [
+            RichAnswerObject(id: "calculation-formula", kind: .formula, label: "公式", text: "实际利率 ≈ 名义利率 − 通胀率", evidenceIDs: ["source-1"]),
+            RichAnswerObject(id: "calculation-constraint", kind: .constraint, label: "约束", text: "名义利率固定为 5%，通胀率可调。", evidenceIDs: ["source-1"]),
+            RichAnswerObject(id: "calculation-zero", kind: .dataPoint, label: "通胀 0%", number: 5, unit: "%", evidenceIDs: ["source-1"], frameID: "calculation-frame", coordinate: RichAnswerPoint(x: 0, y: 0.90)),
+            RichAnswerObject(id: "calculation-five", kind: .dataPoint, label: "通胀 5%", number: 0, unit: "%", evidenceIDs: ["source-1"], frameID: "calculation-frame", coordinate: RichAnswerPoint(x: 0.625, y: 0.35)),
+        ],
+        operations: [
+            RichAnswerOperation(
+                id: "calculation-adjust",
+                kind: .adjust,
+                label: "当前实际利率",
+                targetIDs: ["calculation-zero", "calculation-five"],
+                parameter: RichAnswerParameter(id: "inflation", label: "通胀率", minimum: 0, maximum: 8, step: 0.5, initialValue: 2, unit: "%"),
+                frameID: "calculation-frame"
+            ),
+            RichAnswerOperation(id: "calculation-reset", kind: .reset, label: "恢复初值", targetIDs: ["calculation-formula", "calculation-constraint"]),
+        ],
+        frames: [
+            RichAnswerFrame(
+                id: "calculation-frame",
+                kind: .cartesian,
+                title: "实际利率样本",
+                objectIDs: ["calculation-zero", "calculation-five"],
+                xAxis: RichAnswerAxis(label: "通胀率", minimum: 0, maximum: 8, unit: "%"),
+                yAxis: RichAnswerAxis(label: "实际利率", minimum: -2, maximum: 6, unit: "%")
+            ),
+        ],
+        evidenceIDs: ["source-1"]
     )
 }
 

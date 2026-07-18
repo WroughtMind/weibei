@@ -1,0 +1,5 @@
+{
+  "backend": "mock-backend",
+  "text": "这是二次函数交互答复，用户拖动参数 a 后可观察开口方向与宽窄变化。",
+  "richAnswer": { "canvas": "canvas-graph", "nodes": [1,2,3] }
+}

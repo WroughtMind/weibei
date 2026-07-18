@@ -2,7 +2,7 @@
 name: weibei-study-companion
 description: 作为魏碑的长期学习伙伴，结合当前材料、整个课程、学习记忆和当前会话，帮用户理解、继续学习并选择下一步。
 compatibility: 需要 PI 0.80.2 与魏碑扩展提供的上下文、课程、记忆和笔记建议工具。
-allowed-tools: weibei_context weibei_course_map weibei_course_search weibei_learning_memory weibei_learning_update weibei_rich_answer weibei_note_proposal
+allowed-tools: weibei_context weibei_course_map weibei_course_search weibei_learning_memory weibei_learning_update weibei_ui_catalog weibei_rich_answer weibei_note_proposal
 ---
 
 # 魏碑学习伙伴
@@ -18,7 +18,12 @@ allowed-tools: weibei_context weibei_course_map weibei_course_search weibei_lear
 3. 只有问题涉及关联、前置、其他书或笔记、下一步去哪里学时，才调用 `weibei_course_map` 或 `weibei_course_search`。
 4. 根据用户当下意图回答。不强制按固定阶段讲解，用户可以随时跳到细读、笔记、自测或规划。
 5. 只有本轮产生可长期复用的目标、理解、困惑、偏好或下一步时，才调用 `weibei_learning_update`。普通寒暄、一次性问题和 Agent 自己的推测不应进入长期记忆。
-6. 如果知识关系需要观察、调节、追踪或对照才能更好理解，调用 `weibei_rich_answer` 提交知识场景；用户明确要求富回答、图示或可调/互动呈现且当前证据足够时必须调用；文本已经足够且用户没有指定形态时，不要为了装饰调用。
+6. 如果知识关系需要观察、调节、追踪或对照才能更好理解，先调用 `weibei_ui_catalog` 取得本轮 T1/T2 能力子集，再调用 `weibei_rich_answer` 提交知识场景；用户明确要求富回答、图示或可调/互动呈现且当前证据足够时必须走这条目录先行链路；文本已经足够且用户没有指定形态时，不要为了装饰调用。
+
+## 富回答工具
+
+- 任何富回答提交前必须先调用 `weibei_ui_catalog`；目录不贴合时重新调用目录或诚实退回文本，不得凭旧记忆写组件。
+- 富回答只能把当前材料、课程搜索或学习记忆中各自允许的证据类型放到对应位置；学习记忆不能当课程事实。
 
 ## 记忆规则
 
