@@ -92,7 +92,7 @@ public enum PiRPCIncomingMessage: Equatable, Sendable {
     case noteProposal(id: String, StudyAgentNoteProposal)
     case learningUpdate(id: String, StudyAgentLearningUpdate)
     case toolFailed(id: String, name: String, message: String)
-    case agentEnded(text: String, stopReason: String?, error: String?)
+    case agentEnded(text: String, stopReason: String?, error: String?, provider: String?, model: String?)
     case extensionError(String)
     case event(String)
 }
@@ -315,13 +315,23 @@ public enum PiRPCMessageDecoder {
             var finalText = ""
             var stopReason: String?
             var finalError: String?
+            var provider: String?
+            var model: String?
             for message in messages where message["role"] as? String == "assistant" {
                 let text = assistantText(in: message)
                 if !text.isEmpty { finalText = text }
                 stopReason = message["stopReason"] as? String ?? stopReason
                 finalError = assistantError(in: message) ?? finalError
+                provider = message["provider"] as? String ?? provider
+                model = message["model"] as? String ?? model
             }
-            return .agentEnded(text: finalText, stopReason: stopReason, error: finalError)
+            return .agentEnded(
+                text: finalText,
+                stopReason: stopReason,
+                error: finalError,
+                provider: provider,
+                model: model
+            )
 
         case "extension_error":
             let path = object["extensionPath"] as? String ?? "WeiBei extension"

@@ -1196,8 +1196,15 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             activeRun = run
             refreshRunWatchdog()
 
-        case let .agentEnded(text, stopReason, modelError):
+        case let .agentEnded(text, stopReason, modelError, provider, model):
             guard let run = activeRun else { return }
+            var replyTrace = run.toolTrace
+            if let provider = provider?.trimmingCharacters(in: .whitespacesAndNewlines), !provider.isEmpty {
+                replyTrace.append("provider=\(provider)")
+            }
+            if let model = model?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty {
+                replyTrace.append("model=\(model)")
+            }
             let modelClosureText = (text.isEmpty ? run.streamedText : text)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             let richNarrative = run.richAnswer?.narrative
@@ -1239,7 +1246,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                             richAnswer: run.richAnswer,
                             noteProposal: proposal,
                             learningUpdate: run.learningUpdate,
-                            toolTrace: run.toolTrace
+                            toolTrace: replyTrace
                         )
                     )
                 )
@@ -1255,7 +1262,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                             richAnswer: run.richAnswer,
                             noteProposal: run.proposal,
                             learningUpdate: run.learningUpdate,
-                            toolTrace: run.toolTrace
+                            toolTrace: replyTrace
                         )
                     )
                 )

@@ -218,8 +218,17 @@ private func checkRPCDecoding() throws {
         "PI learning updates preserve context, memory revision, evidence, and flow"
     )
 
-    let ended = try PiRPCMessageDecoder.decode(Data(#"{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"第一轮"}],"stopReason":"toolUse"},{"role":"assistant","content":[{"type":"text","text":"最终回答"}],"stopReason":"stop"}]}"#.utf8))
-    try piRequire(ended == .agentEnded(text: "最终回答", stopReason: "stop", error: nil), "PI agent_end selects the final assistant answer")
+    let ended = try PiRPCMessageDecoder.decode(Data(#"{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"第一轮"}],"stopReason":"toolUse","provider":"openai","model":"older-model"},{"role":"assistant","content":[{"type":"text","text":"最终回答"}],"stopReason":"stop","provider":"openai","model":"gpt-test"}]}"#.utf8))
+    try piRequire(
+        ended == .agentEnded(
+            text: "最终回答",
+            stopReason: "stop",
+            error: nil,
+            provider: "openai",
+            model: "gpt-test"
+        ),
+        "PI agent_end preserves the final assistant answer and model provenance"
+    )
 
     let messageEndError = try PiRPCMessageDecoder.decode(Data(#"{"type":"message_end","message":{"role":"assistant","stopReason":"error","errorMessage":"上游服务拒绝了这次请求"}}"#.utf8))
     try piRequire(
@@ -242,7 +251,13 @@ private func checkRPCDecoding() throws {
 
     let endedWithError = try PiRPCMessageDecoder.decode(Data(#"{"type":"agent_end","messages":[{"role":"assistant","content":[],"stopReason":"error","diagnostics":[{"error":{"message":"真实模型错误"}}]}]}"#.utf8))
     try piRequire(
-        endedWithError == .agentEnded(text: "", stopReason: "error", error: "真实模型错误"),
+        endedWithError == .agentEnded(
+            text: "",
+            stopReason: "error",
+            error: "真实模型错误",
+            provider: nil,
+            model: nil
+        ),
         "PI agent_end preserves the terminal model error"
     )
     try piRequire(try PiRPCMessageDecoder.decode(Data(#"{"type":"future_event"}"#.utf8)) == .event("future_event"), "PI decoder tolerates unknown future events")
@@ -858,7 +873,8 @@ private func checkBundledAgentResources() throws {
             && runtimeSource.contains("let richNarrative = run.richAnswer?.narrative")
             && runtimeSource.contains("let finalText: String")
             && runtimeSource.contains("run.toolTrace.append(name)")
-            && runtimeSource.contains("toolTrace: run.toolTrace")
+            && runtimeSource.contains("replyTrace.append(\"model=\\(model)\")")
+            && runtimeSource.contains("toolTrace: replyTrace")
             && runtimeSource.contains("PI returned a content answer without a current-turn source citation")
             && runtimeSource.contains("binary.sha256")
             && runtimeSource.contains("SecStaticCodeCheckValidity"),
