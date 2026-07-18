@@ -2,6 +2,7 @@ import Foundation
 import WeiBeiCore
 
 func runRichAnswerProtocolSelfCheck() throws {
+    try checkRichAnswerInlineMathDisplayNormalization()
     try checkOpenUIProgramRenders()
     try checkNarrativeAndScenesFormOneInlineFlow()
     try checkOpenUIProgramRejectsUnsafeVariants()
@@ -11,6 +12,7 @@ func runRichAnswerProtocolSelfCheck() throws {
     try checkGeneratedUITreeRejectsMalformedProtocol()
     try checkGeneratedUITreeRejectsPseudoInteractionAndMissingObligations()
     try checkProfessionalJudgmentContractsRejectReverseClaims()
+    try checkProfessionalJudgmentObservedLanguageVariants()
     try checkProfessionalJudgmentIgnoresEvidenceCitations()
     try checkGeneratedUITreeIntentQualityContracts()
     try checkComposablePendulumRendersWithoutSpecializedComponent()
@@ -34,6 +36,19 @@ func runRichAnswerProtocolSelfCheck() throws {
         RichAnswerPressureCases.learningQuestions.count == 40
             && RichAnswerPressureCases.faultInjectionCases.count == 10,
         "the pressure matrix keeps forty learning cases and ten controlled failures"
+    )
+}
+
+private func checkRichAnswerInlineMathDisplayNormalization() throws {
+    let source = #"小角度近似：\(T=2\pi\sqrt{L/g}\)，摆长加倍时周期乘以 \(\sqrt2\)，且 \(a\le b\)。"#
+    let display = RichAnswerDisplayText.normalizedInlineMath(source)
+    try richAnswerRequire(
+        display.contains("T=2π√(L/g)")
+            && display.contains("√2")
+            && display.contains("a≤b")
+            && !display.contains(#"\sqrt"#)
+            && !display.contains(#"\("#),
+        "inline rich-answer math displays as readable text without leaking LaTeX delimiters: \(display)"
     )
 }
 
@@ -154,6 +169,216 @@ private func checkProfessionalJudgmentContractsRejectReverseClaims() throws {
             && wrongSafetyValidation.triggeredForbiddenClaims.contains("tape-live-test"),
         "actual live tape testing advice still fails"
     )
+    let coordinatedSafetyList = """
+    发热加绝缘裂口必须先断电并停止使用；自己不要弯折裂口、拆开适配器或用胶带继续带电测试；后续应更换合规适配器或交由专业人员检查；只允许完全断电后的非侵入检查。
+    """
+    let coordinatedSafetyValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: coordinatedSafetyList,
+        contract: safetyCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        coordinatedSafetyValidation.triggeredForbiddenClaims.isEmpty,
+        "one prohibition must keep its scope across a coordinated unsafe-action list"
+    )
+    let compressedSafetyStepValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "步骤 2：禁止继续试：不弯折、不拆开、不胶带带电测试。",
+        contract: safetyCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        compressedSafetyStepValidation.triggeredForbiddenClaims.isEmpty,
+        "a compact negated action label must not be reclassified as the unsafe positive action"
+    )
+    let coordinatedCannotSafetyValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "材料进一步把可做与不可做分开：但不能弯折裂口、拆开适配器或用胶带继续带电测试。",
+        contract: safetyCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        coordinatedCannotSafetyValidation.triggeredForbiddenClaims.isEmpty,
+        "cannot must keep its prohibition scope across a coordinated unsafe-action list"
+    )
+
+    let pendulumCase = try liveSuccessCase("learning-physics-pendulum-length-period")
+    let wrongPendulumWithUnrelatedNegation = """
+    材料未说明空气阻力；周期与摆长本身成正比。摆长加倍时周期乘以 √2，小角度近似只适用于较小初始角。
+    """
+    let wrongPendulumValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: wrongPendulumWithUnrelatedNegation,
+        contract: pendulumCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        wrongPendulumValidation.triggeredForbiddenClaims.contains("period-proportional-length"),
+        "an unrelated earlier negation must not hide a later false pendulum proposition"
+    )
+    let correctPendulumWithInlineBoundary = """
+    T 与 √L 成正比；摆长加倍时周期乘以 √2。适用范围：小角度近似；初始角超过约 10° 后误差会增大。
+    """
+    let correctPendulumValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: correctPendulumWithInlineBoundary,
+        contract: pendulumCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        correctPendulumValidation.passedDeterministicGates,
+        "a square-root relation must not be misread as direct proportionality, and an explicit applicability range satisfies the boundary contract: forbidden=\(correctPendulumValidation.triggeredForbiddenClaims.joined(separator: ",")) boundary=\(correctPendulumValidation.missingBoundaryClaims.joined(separator: ","))"
+    )
+    let latexPendulumValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: #"小角度近似下，T 随 \(\sqrt{L}\) 增大，按平方根增长；摆长加倍时周期乘以 \(\sqrt2\)，而不是加倍。"#,
+        contract: pendulumCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        latexPendulumValidation.missingRequiredClaims.isEmpty
+            && latexPendulumValidation.triggeredForbiddenClaims.isEmpty,
+        "correct LaTeX square-root notation and equivalent growth wording satisfy the same pendulum claims: missing=\(latexPendulumValidation.missingRequiredClaims.joined(separator: ",")) forbidden=\(latexPendulumValidation.triggeredForbiddenClaims.joined(separator: ","))"
+    )
+    let negatedRootRelationValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "周期 T 与 √L 并非成正比；摆长加倍时周期乘以 √2。适用范围是小角度近似。",
+        contract: pendulumCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        negatedRootRelationValidation.missingRequiredClaims.contains("period-square-root-length"),
+        "a negation scoped inside the square-root claim must still reject that required professional relation"
+    )
+
+    let rcCase = try liveSuccessCase("learning-physics-rc-circuit-transient")
+    let correctRCText = """
+    RC 充电时 Vc 上升、电流 I 下降。时间常数 τ=1.0 s，t=τ 时 Vc≈3.16 V；5τ 只是接近稳态，并非精确到达。
+    """
+    let correctRCValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: correctRCText,
+        contract: rcCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        correctRCValidation.triggeredForbiddenClaims.isEmpty,
+        "correct RC charge directions do not satisfy the reverse-direction contract"
+    )
+    let qualifiedRCContrastValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "充电时 Vc 上升，放电时 Vc 下降。",
+        contract: rcCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !qualifiedRCContrastValidation.triggeredForbiddenClaims.contains("vc-down-during-charge"),
+        "a new explicit qualifier must stop the previous qualifier from drifting into the next clause"
+    )
+    let rcWrongAfterReminderValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "不要只看读数，充电时电流 I 会上升。",
+        contract: rcCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        rcWrongAfterReminderValidation.triggeredForbiddenClaims.contains("current-up-during-charge"),
+        "a reminder separated by a comma must not negate a later independent false proposition"
+    )
+    let rcSymbolBoundaryValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "充电时 Pi 的估计会上升。",
+        contract: rcCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !rcSymbolBoundaryValidation.triggeredForbiddenClaims.contains("current-up-during-charge"),
+        "a single-letter current symbol must not match inside another identifier"
+    )
+    let wrongRCText = """
+    RC 充电时 Vc 下降、电流 I 上升。时间常数 τ=1.0 s，t=τ 时 Vc≈3.16 V；5τ 只是接近稳态，并非精确到达。
+    """
+    let wrongRCValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: wrongRCText,
+        contract: rcCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        wrongRCValidation.triggeredForbiddenClaims.contains("vc-down-during-charge")
+            && wrongRCValidation.triggeredForbiddenClaims.contains("current-up-during-charge"),
+        "actual RC reverse directions still fail as two bound propositions"
+    )
+
+    let doubleSlitCase = try liveSuccessCase("learning-physics-double-slit-interference")
+    let doubleSlitWrongAfterUnrelatedNegation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "材料未标出修正项，但缝距 d 增大时条纹变疏。",
+        contract: doubleSlitCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        doubleSlitWrongAfterUnrelatedNegation.triggeredForbiddenClaims.contains("d-larger-sparser"),
+        "an unrelated negation before an adversative clause must not hide a later false proposition"
+    )
+
+    let feedbackCase = try liveSuccessCase("learning-engineering-feedback-overshoot")
+    let unrelatedTopicAfterGain = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "增益 K 在图例中，外部缓存越大，稳定越快且无代价。",
+        contract: feedbackCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !unrelatedTopicAfterGain.triggeredForbiddenClaims.contains("larger-k-always-faster-stable"),
+        "a subject mentioned in an earlier complete proposition must not drift into an unrelated later topic"
+    )
+
+    let meiosisCase = try liveSuccessCase("learning-biology-meiosis-separation")
+    let correctMeiosisText = """
+    后期 I 分离同源染色体、姐妹染色单体仍相连；后期 II 才分离姐妹染色单体；两次分裂之间不再复制 DNA。
+    """
+    let correctMeiosisValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: correctMeiosisText,
+        contract: meiosisCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        correctMeiosisValidation.triggeredForbiddenClaims.isEmpty,
+        "connected sister chromatids and no replication refute the meiosis reverse claims: \(correctMeiosisValidation.triggeredForbiddenClaims.joined(separator: ","))"
+    )
+    let wrongMeiosisText = """
+    后期 I 分离姐妹染色单体；后期 II 分离同源染色体；两次分裂之间再次复制 DNA。
+    """
+    let wrongMeiosisValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: wrongMeiosisText,
+        contract: meiosisCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        wrongMeiosisValidation.triggeredForbiddenClaims.contains("anaphase-one-sisters")
+            && wrongMeiosisValidation.triggeredForbiddenClaims.contains("dna-replicates-between-divisions"),
+        "actual meiosis separation and replication reversals still fail"
+    )
+
+    let similarityCase = try liveSuccessCase("learning-math-geometric-similarity-proof")
+    let correctSimilarityText = """
+    DE ∥ BC 给出对应角相等，因此△ADE∽△ABC，对应边比为 1/2；坐标不能替代平行条件和角相等证明。
+    """
+    let correctSimilarityValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: correctSimilarityText,
+        contract: similarityCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !correctSimilarityValidation.triggeredForbiddenClaims.contains("wrong-ratio"),
+        "numeric token 2 must not be extracted from the correct fraction 1/2"
+    )
+    let wrongSimilarityText = """
+    DE ∥ BC 给出对应角相等，但对应边比等于 2；坐标不能替代平行条件和角相等证明。
+    """
+    let wrongSimilarityValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: wrongSimilarityText,
+        contract: similarityCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        wrongSimilarityValidation.triggeredForbiddenClaims.contains("wrong-ratio"),
+        "standalone wrong ratio 2 remains a high-confidence contradiction"
+    )
+
+    let lawCase = try liveSuccessCase("learning-law-clause-exception-hierarchy")
+    let correctLawText = """
+    供应方应在 24 小时内通知，但实际 36 小时后才通知，因此晚于期限。8.3 将 8.2 例外拉回 8.1 主规则。
+    """
+    let correctLawValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: correctLawText,
+        contract: lawCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !correctLawValidation.triggeredForbiddenClaims.contains("thirty-six-within-twenty-four"),
+        "the correct deadline sentence cannot borrow the earlier preposition to invent compliance"
+    )
+    let wrongLawText = """
+    36 小时仍在 24 小时内，所以通知没有超期。8.3 将 8.2 例外拉回 8.1 主规则。
+    """
+    let wrongLawValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: wrongLawText,
+        contract: lawCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        wrongLawValidation.triggeredForbiddenClaims.contains("thirty-six-within-twenty-four"),
+        "actual deadline reversal still fails with ordered numeric binding"
+    )
 
     let climateCase = try liveSuccessCase("learning-geography-climate-diagram-compare")
     let correctClimateText = """
@@ -191,6 +416,170 @@ private func checkProfessionalJudgmentContractsRejectReverseClaims() throws {
             && reviewMarkedCases.contains("learning-philosophy-argument-boundary")
             && reviewMarkedCases.contains("learning-earth-science-subduction-cross-section"),
         "non-deterministic literature, philosophy, and image localization judgments are explicitly marked for model or human review"
+    )
+}
+
+private func checkProfessionalJudgmentObservedLanguageVariants() throws {
+    try requireProfessionalLanguage(
+        caseID: "learning-math-quadratic-vertex",
+        corpus: "当前材料用 y=2x²-8x+5 演示同一配方逻辑，并读出顶点 (2,-3)。这是同一个二次函数的等价表达和合法变形链，最后改写成顶点式 2(x-2)²-3。",
+        required: ["vertex-is-2-minus-3", "equivalent-vertex-form"]
+    )
+    try requireProfessionalLanguage(
+        caseID: "learning-computer-loop-trace",
+        corpus: "这段循环一共走 4 轮：i=1,2,3,4；最终输出 4。",
+        required: ["range-four-iterations"]
+    )
+    try requireProfessionalLanguage(
+        caseID: "learning-literature-imagery-theme",
+        corpus: "最后一班车驶远提供不可逆的离开感，因此支持错过。",
+        required: ["bus-leaving-image"]
+    )
+    try requireProfessionalLanguage(
+        caseID: "learning-history-multi-source-timeline",
+        corpus: "动员和最后通牒这一升级机制推动危机升级，被材料归为直接升级机制。",
+        required: ["mobilization-escalation"]
+    )
+    try requireProfessionalLanguage(
+        caseID: "learning-art-design-composition-overlay",
+        corpus: "下面的内联叠图把构图区域和标注直接压到当前海报底图上。",
+        boundary: ["image-grounding-boundary"]
+    )
+    try requireProfessionalLanguage(
+        caseID: "learning-geography-contour-river-slope",
+        corpus: "等高线越密集，坡度越陡。材料未给出可读的河道沿程高程数字，所以不能确认绝对流向。",
+        required: ["dense-contours-steeper"],
+        boundary: ["observable-density-only"]
+    )
+    try requireProfessionalLanguage(
+        caseID: "learning-economics-price-ceiling-shortage",
+        corpus: "均衡价是 20。上限 15 会让需求量 70 大于供给量 50，因此短缺 20。若给定曲线或有效执行变化，结论不能直接套用。",
+        required: ["equilibrium-price-20", "binding-ceiling-shortage-20"],
+        boundary: ["given-curves-enforcement-boundary"]
+    )
+    try requireProfessionalLanguage(
+        caseID: "learning-law-policy-notice-duty",
+        corpus: "当前上下文只支持依据给定条文作合规风险判断；事实不足处需另证。",
+        boundary: ["given-clause-boundary"]
+    )
+    try requireProfessionalLanguage(
+        caseID: "learning-chemistry-vsepr-molecular-shape",
+        corpus: "不要把电子域构型和分子构型混在一起。",
+        boundary: ["domain-vs-molecular-shape-boundary"]
+    )
+    try requireProfessionalLanguage(
+        caseID: "learning-biology-food-web-perturbation",
+        corpus: "箭头方向是食物→消费者。狗鱼减少后，小鱼受到的直接捕食压力下降。材料没有长期种群数据，所以间接效应只能作为方向性推断，不能说成已证实结果。",
+        required: ["arrow-food-to-consumer", "pike-reduction-direct-effect"],
+        boundary: ["directional-inference-boundary"]
+    )
+    try requireProfessionalLanguage(
+        caseID: "learning-computer-recursion-call-stack",
+        corpus: "factorial(4) 不是一次算出 24，而是先沿 4→3→2→1 创建栈帧。要区分两个方向：向下调用与向上回传。",
+        required: ["four-stack-frames"],
+        boundary: ["call-return-phase-boundary"]
+    )
+    try requireProfessionalLanguage(
+        caseID: "learning-math-geometric-similarity-proof",
+        corpus: "平行条件先推出对应角相等；不能只靠坐标示意替代证明。",
+        boundary: ["coordinate-not-proof-boundary"]
+    )
+    try requireProfessionalLanguage(
+        caseID: "learning-physics-double-slit-interference",
+        corpus: "相邻亮纹间距 Δx≈3.0 mm。",
+        required: ["fringe-spacing-three-mm"]
+    )
+    try requireProfessionalLanguage(
+        caseID: "learning-law-clause-exception-hierarchy",
+        corpus: "把条款层级和事实触发点放在一起，再逐项核对当前事实落在 8.1、8.2、8.3 的哪一层。",
+        boundary: ["given-clause-not-advice-boundary"]
+    )
+    try requireProfessionalLanguage(
+        caseID: "learning-medicine-cardiac-cycle",
+        corpus: "拖动阶段时看压力触发条件，不要把它当作个体诊断。",
+        boundary: ["learning-not-diagnosis-boundary"]
+    )
+    try requireProfessionalLanguage(
+        caseID: "learning-philosophy-modal-counterexample",
+        corpus: "材料中的前提只支持可能存在，并且在存在的世界中具有 F，不支持必然具有 F；失效点正是从可能跨到必然。",
+        required: ["weak-not-necessary"],
+        boundary: ["modal-strength-boundary"]
+    )
+    try requireProfessionalLanguage(
+        caseID: "learning-psychology-experiment-confound",
+        corpus: "结果是咖啡因组平均 310 ms、对照组 345 ms，差值为 35 ms。",
+        required: ["mean-difference-35"]
+    )
+
+    let acidCase = try liveSuccessCase("learning-chemistry-redox-balance")
+    let equationOnlyAcidValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "酸性条件下配平得到 MnO₄⁻ + 5Fe²⁺ + 8H⁺ → Mn²⁺ + 5Fe³⁺ + 4H₂O。",
+        contract: acidCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        equationOnlyAcidValidation.missingBoundaryClaims.contains("acidic-condition-boundary"),
+        "an equation that merely contains H⁺ and H₂O cannot replace explaining why the acidic condition requires them"
+    )
+
+    let foodWebCase = try liveSuccessCase("learning-biology-food-web-perturbation")
+    let reversedFoodArrowValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "箭头画成消费者→食物。狗鱼减少后，小鱼直接捕食压力上升。",
+        contract: foodWebCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        reversedFoodArrowValidation.triggeredForbiddenClaims.contains("arrow-consumer-to-food")
+            && reversedFoodArrowValidation.missingRequiredClaims.contains("arrow-food-to-consumer")
+            && reversedFoodArrowValidation.missingRequiredClaims.contains("pike-reduction-direct-effect"),
+        "reversed food-web direction and pressure remain rejected"
+    )
+
+    let recursionCase = try liveSuccessCase("learning-computer-recursion-call-stack")
+    let negatedStackValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "factorial(4) 没有沿 4→3→2→1 创建栈帧。",
+        contract: recursionCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        negatedStackValidation.missingRequiredClaims.contains("four-stack-frames"),
+        "a negated stack-frame claim cannot pass through the observed arrow-sequence synonym"
+    )
+
+    let doubleSlitCase = try liveSuccessCase("learning-physics-double-slit-interference")
+    let wrongSpacingValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "相邻亮纹间距 Δx≈30 mm。",
+        contract: doubleSlitCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        wrongSpacingValidation.missingRequiredClaims.contains("fringe-spacing-three-mm"),
+        "approximation normalization cannot turn 30 mm into the required 3.0 mm"
+    )
+
+    let psychologyCase = try liveSuccessCase("learning-psychology-experiment-confound")
+    let wrongPsychologyValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "结果是咖啡因组平均 310 ms、对照组 340 ms，差值为 30 ms。非随机分组可能造成混淆；当前设计只支持相关差异，不能确认因果。",
+        contract: psychologyCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        wrongPsychologyValidation.missingRequiredClaims.contains("mean-difference-35"),
+        "different reaction-time values cannot satisfy the observed 310/345/35 ms claim"
+    )
+}
+
+private func requireProfessionalLanguage(
+    caseID: String,
+    corpus: String,
+    required: [String] = [],
+    boundary: [String] = []
+) throws {
+    let checkCase = try liveSuccessCase(caseID)
+    let validation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: corpus,
+        contract: checkCase.professionalJudgmentContract
+    )
+    let missingRequired = required.filter(validation.missingRequiredClaims.contains)
+    let missingBoundary = boundary.filter(validation.missingBoundaryClaims.contains)
+    try richAnswerRequire(
+        missingRequired.isEmpty && missingBoundary.isEmpty,
+        "observed professional language must be recognized for \(caseID): required=\(missingRequired.joined(separator: ",")) boundary=\(missingBoundary.joined(separator: ","))"
     )
 }
 
@@ -640,7 +1029,7 @@ private func checkGeneratedUITreeRejectsPseudoInteractionAndMissingObligations()
     )
 
     var missingObligation = composableFrictionEnvelope()
-    missingObligation.expressionPlan.knowledgeObjects.append("没有展示的关键对象")
+    missingObligation.expressionPlan.knowledgeObjects = ["没有展示的关键对象"]
     let missingObligationPresentation = RichAnswerEngine.prepare(
         envelope: missingObligation,
         environment: RichAnswerEnvironment(
@@ -648,7 +1037,7 @@ private func checkGeneratedUITreeRejectsPseudoInteractionAndMissingObligations()
             allowedSourceLabels: ["[材料：斜面摩擦]"]
         )
     )
-    try richAnswerRequire(missingObligationPresentation.mode == .narrativeOnly, "T2 must cover every declared object, relation, and process obligation")
+    try richAnswerRequire(missingObligationPresentation.mode == .narrativeOnly, "T2 must expose a real visible anchor for every declared semantic category")
     try richAnswerRequire(
         missingObligationPresentation.diagnostics.contains(where: { $0.code == .invalidValue }),
         "missing semantic obligations expose invalidValue"
@@ -889,6 +1278,69 @@ private func checkGeneratedUITreeIntentQualityContracts() throws {
         "function and data relationships can still use a curve, coordinate canvas, and probe"
     )
 
+    var relationWithoutAnchors = generatedUISequenceEnvelope()
+    relationWithoutAnchors.expressionPlan.knowledgeNatures = [.argumentOrEvidence]
+    relationWithoutAnchors.expressionPlan.knowledgeObjects = []
+    relationWithoutAnchors.expressionPlan.knowledgeRelations = ["港口拥堵通过交付延迟推高安全库存"]
+    let relationWithoutAnchorsPresentation = RichAnswerEngine.prepare(
+        envelope: relationWithoutAnchors,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-sequence-t2",
+            allowedSourceLabels: ["[材料：论证片段]"]
+        )
+    )
+    try richAnswerRequire(
+        relationWithoutAnchorsPresentation.mode == .narrativeOnly
+            && relationWithoutAnchorsPresentation.diagnostics.contains(where: { $0.code == .invalidValue }),
+        "a relation intent with no visible semantic anchor still fails"
+    )
+
+    var formulaAnchoredLongRelation = composablePendulumEnvelope()
+    formulaAnchoredLongRelation.expressionPlan.knowledgeNatures = [.functionOrDataCurve]
+    formulaAnchoredLongRelation.expressionPlan.knowledgeObjects = ["摆长 L", "周期 T", "T = 2π√(L/g)"]
+    formulaAnchoredLongRelation.expressionPlan.knowledgeRelations = [
+        "T = 2π√(L/g)：摆长 L 从 0.25 m 到 2.0 m 时周期 T 增长",
+    ]
+    formulaAnchoredLongRelation.expressionPlan.visualPrimitives = ["canvas", "path", "point", "metric", "probe"]
+    let formulaAnchoredLongRelationPresentation = RichAnswerEngine.prepare(
+        envelope: formulaAnchoredLongRelation,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-pendulum-t2",
+            allowedSourceLabels: ["[材料：单摆周期]"]
+        )
+    )
+    try richAnswerRequire(
+        formulaAnchoredLongRelationPresentation.mode == .rich,
+        "long relationship paraphrases pass when formula and numeric anchors are visible"
+    )
+
+    var meaninglessWeakUI = generatedUIEnvelope()
+    meaninglessWeakUI.scenes[0].title = "变化面板"
+    if let titleIndex = meaninglessWeakUI.scenes[0].ui?.nodes.firstIndex(where: { $0.id == "ui-title" }) {
+        meaninglessWeakUI.scenes[0].ui?.nodes[titleIndex].label = "数值"
+        meaninglessWeakUI.scenes[0].ui?.nodes[titleIndex].text = "调一调，看变化"
+    }
+    if let sliderIndex = meaninglessWeakUI.scenes[0].ui?.nodes.firstIndex(where: { $0.id == "ui-slider" }) {
+        meaninglessWeakUI.scenes[0].ui?.nodes[sliderIndex].label = "参数"
+    }
+    meaninglessWeakUI.scenes[0].ui?.bindings[0].label = "参数"
+    meaninglessWeakUI.expressionPlan.knowledgeNatures = [.functionOrDataCurve]
+    meaninglessWeakUI.expressionPlan.knowledgeObjects = ["边际成本", "供给曲线"]
+    meaninglessWeakUI.expressionPlan.knowledgeRelations = ["边际成本递增导致供给曲线向上倾斜"]
+    meaninglessWeakUI.expressionPlan.visualPrimitives = ["canvas", "path", "slider"]
+    let meaninglessWeakUIPresentation = RichAnswerEngine.prepare(
+        envelope: meaninglessWeakUI,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-ui",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+    try richAnswerRequire(
+        meaninglessWeakUIPresentation.mode == .narrativeOnly
+            && meaninglessWeakUIPresentation.diagnostics.contains(where: { $0.code == .invalidValue }),
+        "meaningless weak_ui with generic labels still fails"
+    )
+
     let weakPhysics = weakPhysicsLineOnlyEnvelope()
     let weakPhysicsPresentation = RichAnswerEngine.prepare(
         envelope: weakPhysics,
@@ -897,10 +1349,12 @@ private func checkGeneratedUITreeIntentQualityContracts() throws {
             allowedSourceLabels: ["[材料：斜面摩擦]"]
         )
     )
+    let weakPhysicsDiagnostics = weakPhysicsPresentation.diagnostics.map {
+        "\($0.code.rawValue):\($0.message)"
+    }.joined(separator: " | ")
     try richAnswerRequire(
-        weakPhysicsPresentation.mode == .narrativeOnly
-            && weakPhysicsPresentation.diagnostics.contains(where: { $0.code == .invalidValue }),
-        "object and process questions cannot pass with only a control, metric, and line chart"
+        weakPhysicsPresentation.mode == .rich,
+        "a semantically labeled line, changing readout, and real control may express a process without a forced shape component; diagnostics=\(weakPhysicsDiagnostics)"
     )
 
     let compositePhysics = composableFrictionEnvelope()
@@ -920,6 +1374,53 @@ private func checkGeneratedUITreeIntentQualityContracts() throws {
         compositePhysicsPresentation.mode == .rich
             && expectedCompositeRoles.isSubset(of: roles),
         "object and process questions pass when generic shape, vector, sequence, and controls express the mechanism; diagnostics=\(diagnostics); roles=\(roles.map(\.rawValue).sorted().joined(separator: ","))"
+    )
+
+    var sliderBoundCurveReadout = generatedUIEnvelope()
+    sliderBoundCurveReadout.expressionPlan.knowledgeNatures = [.functionOrDataCurve]
+    sliderBoundCurveReadout.expressionPlan.knowledgeObjects = ["x", "y = x²"]
+    sliderBoundCurveReadout.expressionPlan.knowledgeRelations = ["x 改变时 y 按曲线同步变化"]
+    sliderBoundCurveReadout.expressionPlan.knowledgeProcesses = ["拖动观察联动"]
+    sliderBoundCurveReadout.expressionPlan.visualPrimitives = ["canvas", "path", "slider", "metric"]
+    sliderBoundCurveReadout.expressionPlan.visualRationale = ["滑杆共享绑定，曲线和读数同时响应"]
+    if let titleIndex = sliderBoundCurveReadout.scenes[0].ui?.nodes.firstIndex(where: { $0.id == "ui-title" }) {
+        sliderBoundCurveReadout.scenes[0].ui?.nodes[titleIndex].text = "x 与函数值 y 共享同一状态"
+    }
+    sliderBoundCurveReadout.scenes[0].ui?.nodes.append(
+        RichAnswerUINode(
+            id: "ui-readout",
+            role: .metric,
+            label: "函数值 y",
+            datasetID: "ui-curve",
+            bindingID: "ui-x",
+            evidenceIDs: ["ui-source"],
+            tone: .accent
+        )
+    )
+    sliderBoundCurveReadout.scenes[0].ui?.nodes[0].children.insert("ui-readout", at: 2)
+    let sliderBoundRoles = Set(sliderBoundCurveReadout.scenes[0].ui?.nodes.map(\.role) ?? [])
+    let sliderBoundIDs = Set(
+        sliderBoundCurveReadout.scenes[0].ui?.nodes.compactMap(\.bindingID) ?? []
+    )
+    try richAnswerRequire(
+        [.path, .slider, .metric].allSatisfy(sliderBoundRoles.contains)
+            && sliderBoundIDs.contains("ui-x")
+            && sliderBoundCurveReadout.scenes[0].ui?.bindings.first?.id == "ui-x",
+        "regression fixture binds one slider to both curve and readout"
+    )
+    let sliderBoundCurveReadoutPresentation = RichAnswerEngine.prepare(
+        envelope: sliderBoundCurveReadout,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-ui",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+    let sliderBoundDiagnostics = sliderBoundCurveReadoutPresentation.diagnostics.map {
+        "\($0.code.rawValue):\($0.message)"
+    }.joined(separator: " | ")
+    try richAnswerRequire(
+        sliderBoundCurveReadoutPresentation.mode == .rich,
+        "slider-bound curve and readout satisfy drag-observe linkage without copying the exact phrase; diagnostics=\(sliderBoundDiagnostics)"
     )
 }
 

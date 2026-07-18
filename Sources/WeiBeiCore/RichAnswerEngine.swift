@@ -824,6 +824,83 @@ public struct RichAnswerDiagnostic: Codable, Hashable, Sendable {
     }
 }
 
+public enum RichAnswerDisplayText {
+    public static func normalizedInlineMath(_ text: String) -> String {
+        var result = text
+            .replacingOccurrences(of: #"\("#, with: "")
+            .replacingOccurrences(of: #"\)"#, with: "")
+            .replacingOccurrences(of: #"\["#, with: "")
+            .replacingOccurrences(of: #"\]"#, with: "")
+
+        result = replacing(
+            #"\\(?:text|mathrm|operatorname)\s*\{([^{}]+)\}"#,
+            in: result,
+            with: "$1"
+        )
+        result = replacing(
+            #"\\frac\s*\{([^{}]+)\}\s*\{([^{}]+)\}"#,
+            in: result,
+            with: "($1)/($2)"
+        )
+        result = replacing(
+            #"\\sqrt\s*\{([^{}]+)\}"#,
+            in: result,
+            with: "√($1)"
+        )
+        result = replacing(
+            #"\\sqrt\s*([A-Za-z0-9.]+)"#,
+            in: result,
+            with: "√$1"
+        )
+
+        let commandReplacements = [
+            (#"\left"#, ""),
+            (#"\right"#, ""),
+            (#"\times"#, "×"),
+            (#"\cdot"#, "·"),
+            (#"\pi"#, "π"),
+            (#"\Delta"#, "Δ"),
+            (#"\delta"#, "δ"),
+            (#"\theta"#, "θ"),
+            (#"\lambda"#, "λ"),
+            (#"\leq"#, "≤"),
+            (#"\le"#, "≤"),
+            (#"\geq"#, "≥"),
+            (#"\ge"#, "≥"),
+            (#"\neq"#, "≠"),
+            (#"\approx"#, "≈"),
+            (#"\propto"#, "∝"),
+            (#"\pm"#, "±"),
+            (#"\,"#, ""),
+            (#"\;"#, ""),
+            (#"\!"#, ""),
+        ]
+        for (command, replacement) in commandReplacements {
+            result = result.replacingOccurrences(of: command, with: replacement)
+        }
+
+        result = replacing(#"\s*([≤≥≠≈∝])\s*"#, in: result, with: "$1")
+        result = replacing(#"√\(([A-Za-z0-9.]+)\)"#, in: result, with: "√$1")
+        result = replacing(#"\^\{([^{}]+)\}"#, in: result, with: "^$1")
+        result = replacing(#"_\{([^{}]+)\}"#, in: result, with: "_$1")
+        return result
+    }
+
+    private static func replacing(
+        _ pattern: String,
+        in text: String,
+        with template: String
+    ) -> String {
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return text }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return expression.stringByReplacingMatches(
+            in: text,
+            range: range,
+            withTemplate: template
+        )
+    }
+}
+
 public enum RichAnswerPartKind: String, Codable, Hashable, Sendable {
     case narrative
     case scene
@@ -2133,7 +2210,7 @@ public enum RichAnswerEngine {
                 "ProcessStepper", "QuadraticMechanism", "ExecutionTrack", "BalanceExperiment",
                 "ArgumentReader", "CausalTrack",
             ]) || roles.contains(.sequence)
-                || (usesRole([.scrubber, .select, .toggle, .probe])
+                || (usesRole([.slider, .scrubber, .select, .toggle, .probe])
                 && (dataRowCount >= 2 || roles.contains(.text) || roles.contains(.metric)))
         case .relationAndEvidence:
             isValid = usesProgram([
@@ -2205,29 +2282,69 @@ public enum RichAnswerEngine {
             }
         }
 
-        let declaredConcepts = expressionPlan.knowledgeObjects
-            + expressionPlan.knowledgeRelations
-            + expressionPlan.knowledgeProcesses
-        if !declaredConcepts.isEmpty {
-            let visibleText = visibleSemanticText(in: ui, sceneTitle: scene.title)
-            let missingConcepts = missingSemanticObligations(declaredConcepts, in: visibleText)
-            guard missingConcepts.isEmpty else {
-                return invalidValue(
-                    sceneID: scene.id,
-                    "generated UI does not visibly expose declared knowledge obligations: \(missingConcepts.joined(separator: ", "))"
+        let visibleText = visibleSemanticText(in: ui, sceneTitle: scene.title)
+        var missingCategories: [String] = []
+        if !expressionPlan.knowledgeObjects.isEmpty {
+            let matchedObjectCount = expressionPlan.knowledgeObjects.filter {
+                semanticText(visibleText, contains: $0)
+            }.count
+            let requiredObjectCount = min(2, expressionPlan.knowledgeObjects.count)
+            if matchedObjectCount < requiredObjectCount {
+                missingCategories.append(
+                    "knowledge objects (show at least \(requiredObjectCount)): \(declarationSamples(expressionPlan.knowledgeObjects))"
                 )
             }
+        }
+
+        if !expressionPlan.knowledgeRelations.isEmpty,
+           !expressionPlan.knowledgeRelations.contains(where: {
+               semanticText(visibleText, contains: $0)
+           }),
+           !generatedUIHasSemanticRelationStructure(
+               ui,
+               relations: expressionPlan.knowledgeRelations,
+               visibleText: visibleText
+           ) {
+            missingCategories.append(
+                "knowledge relation: \(declarationSamples(expressionPlan.knowledgeRelations))"
+            )
+        }
+
+        if !expressionPlan.knowledgeProcesses.isEmpty {
+            let hasVisibleProcess = expressionPlan.knowledgeProcesses.contains {
+                semanticText(visibleText, contains: $0)
+            }
+            let declaresInteractiveProcess = expressionPlan.knowledgeProcesses.contains {
+                declaresInteractionProcess($0)
+            }
+            let processHasVisibleAnchors = expressionPlan.knowledgeProcesses.contains {
+                relationHasVisibleAnchors($0, visibleText: visibleText)
+            }
+            let hasStructuredProcess =
+                (ui.nodes.contains(where: { $0.role == .sequence }) && processHasVisibleAnchors)
+                || (generatedUIHasBoundSemanticInteraction(ui)
+                    && (declaresInteractiveProcess || processHasVisibleAnchors))
+            if !hasVisibleProcess && !hasStructuredProcess {
+                missingCategories.append(
+                    "knowledge process: \(declarationSamples(expressionPlan.knowledgeProcesses))"
+                )
+            }
+        }
+
+        if !missingCategories.isEmpty {
+            return invalidValue(
+                sceneID: scene.id,
+                "generated UI misses declared semantic categories: \(missingCategories.joined(separator: "; ")); "
+                    + "visible semantic summary: \(boundedVisibleSemanticSummary(in: ui, sceneTitle: scene.title))"
+            )
         }
 
         let embodiedNatures: Set<RichAnswerKnowledgeNature> = [
             .objectMechanism,
             .spatialStructure,
-            .processOrState,
-            .argumentOrEvidence,
             .imageObservation,
         ]
         let requiresEmbodiedVisual = !expressionPlan.knowledgeNatures.isDisjoint(with: embodiedNatures)
-            || !expressionPlan.knowledgeProcesses.isEmpty
         if requiresEmbodiedVisual {
             let embodiedRoles: Set<RichAnswerUIRole> = [
                 .shape,
@@ -2238,11 +2355,15 @@ public enum RichAnswerEngine {
                 .sequence,
                 .bar,
                 .dotMatrix,
+                .line,
+                .path,
+                .point,
+                .metric,
             ]
             guard !roles.isDisjoint(with: embodiedRoles) else {
                 return invalidValue(
                     sceneID: scene.id,
-                    "object, space, evidence, or process knowledge cannot be expressed as only a curve, metric, and control"
+                    "object, space, or image knowledge must bind to a visible semantic mark"
                 )
             }
             if !ui.bindings.isEmpty {
@@ -2254,7 +2375,7 @@ public enum RichAnswerEngine {
                 guard controlDrivesEmbodiedMark else {
                     return invalidValue(
                         sceneID: scene.id,
-                        "object, space, evidence, or process controls must change a semantic mark, not only a curve or readout"
+                        "object, space, or image controls must change a visible semantic mark or readout"
                     )
                 }
             }
@@ -2273,7 +2394,9 @@ public enum RichAnswerEngine {
         let rowText = ui.datasets.flatMap { dataset in
             dataset.rows.compactMap(\.label)
         }
-        let bindingText = ui.bindings.map(\.label)
+        let bindingText = ui.bindings.flatMap { binding in
+            [binding.label, binding.unit].compactMap { $0 }
+        }
         return ([sceneTitle] + nodeText + rowText + bindingText).joined(separator: " ")
     }
 
@@ -2281,34 +2404,162 @@ public enum RichAnswerEngine {
         let normalizedHaystack = semanticSearchText(haystack)
         let normalizedNeedle = semanticSearchText(needle)
         if normalizedNeedle.count == 1 {
+            if normalizedNeedle.range(of: #"^[a-z]$"#, options: [.regularExpression, .caseInsensitive]) != nil {
+                let escaped = NSRegularExpression.escapedPattern(for: normalizedNeedle)
+                return haystack.range(
+                    of: "(^|[^A-Za-z0-9])\(escaped)($|[^A-Za-z0-9])",
+                    options: [.regularExpression, .caseInsensitive]
+                ) != nil
+            }
             return normalizedHaystack.contains(normalizedNeedle)
         }
         guard normalizedNeedle.count >= 2 else { return false }
         if normalizedHaystack.contains(normalizedNeedle) { return true }
-        let needleCharacters = Set(normalizedNeedle.map(String.init))
-        guard !needleCharacters.isEmpty else { return false }
-        let matchedCharacters = needleCharacters.filter { normalizedHaystack.contains($0) }.count
-        let requiredRatio = normalizedNeedle.count <= 4 ? 1.0 : 0.70
-        return Double(matchedCharacters) / Double(needleCharacters.count) >= requiredRatio
-    }
-
-    private static func missingSemanticObligations(
-        _ obligations: [String],
-        in visibleText: String
-    ) -> [String] {
-        obligations.filter { obligation in
-            !semanticText(visibleText, contains: obligation)
-        }
+        guard normalizedNeedle.count > 4 else { return false }
+        let characters = Array(normalizedNeedle)
+        let bigrams = Set((0..<(characters.count - 1)).map { index in
+            String(characters[index...index + 1])
+        })
+        guard !bigrams.isEmpty else { return false }
+        let matchedBigrams = bigrams.filter { normalizedHaystack.contains($0) }.count
+        let requiredRatio = normalizedNeedle.count <= 8 ? 0.60 : 0.45
+        return matchedBigrams >= 2
+            && Double(matchedBigrams) / Double(bigrams.count) >= requiredRatio
     }
 
     private static func semanticSearchText(_ text: String) -> String {
-        text
+        let semanticSymbols: Set<Character> = ["=", "²", "π", "√", "∝", "Δ", "<", ">", "/", "≤", "≥", "±"]
+        return text
             .lowercased()
             .filter { character in
-                character.isLetter || character.isNumber || character == "=" || character == "²" || character == "π"
+                character.isLetter || character.isNumber || semanticSymbols.contains(character)
             }
             .map(String.init)
             .joined()
+    }
+
+    private static func declaresInteractionProcess(_ text: String) -> Bool {
+        let interactionTerms = [
+            "拖动", "滑动", "调节", "调整", "切换", "选择", "点击", "探查", "探针",
+            "观察", "联动", "播放", "暂停", "步进", "筛选", "缩放", "旋转", "重置", "对照", "比较",
+        ]
+        return interactionTerms.contains(where: text.contains)
+    }
+
+    private static func generatedUIHasBoundSemanticInteraction(
+        _ ui: RichAnswerUIComposition
+    ) -> Bool {
+        let controlRoles: Set<RichAnswerUIRole> = [.slider, .toggle, .scrubber, .probe]
+        let datasetsByID = Dictionary(uniqueKeysWithValues: ui.datasets.map { ($0.id, $0) })
+        return ui.bindings.contains { binding in
+            let hasControl = ui.nodes.contains {
+                $0.bindingID == binding.id && controlRoles.contains($0.role)
+            }
+            return hasControl && bindingHasChangingOutcome(
+                binding,
+                reachableNodes: ui.nodes,
+                datasetsByID: datasetsByID
+            )
+        }
+    }
+
+    private static let genericRelationBigrams: Set<String> = [
+        "通过", "变化", "观察", "对应", "关系", "增加", "减少", "上升", "下降", "影响", "结果", "条件", "数据",
+    ]
+
+    private static func semanticAnchorTokens(_ text: String) -> [String] {
+        let pattern = #"[A-Za-z]+|[0-9]+(?:\.[0-9]+)?|[πΔ√][A-Za-z0-9]+"#
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return Array(Set(expression.matches(in: text, range: range).compactMap { match in
+            Range(match.range, in: text).map { text[$0].lowercased() }
+        }))
+    }
+
+    private static func hanBigrams(_ text: String) -> [String] {
+        guard let expression = try? NSRegularExpression(pattern: #"[一-鿿]+"#) else {
+            return []
+        }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        let bigrams = expression.matches(in: text, range: range).flatMap { match -> [String] in
+            guard let matchRange = Range(match.range, in: text) else { return [] }
+            let characters = Array(text[matchRange])
+            guard characters.count >= 2 else { return [] }
+            return (0..<(characters.count - 1)).map { index in
+                String(characters[index...index + 1])
+            }
+        }.filter { !genericRelationBigrams.contains($0) }
+        return Array(Set(bigrams))
+    }
+
+    private static func relationHasVisibleAnchors(
+        _ relation: String,
+        visibleText: String
+    ) -> Bool {
+        if semanticText(visibleText, contains: relation) { return true }
+        let tokenMatches = semanticAnchorTokens(relation).filter {
+            semanticText(visibleText, contains: $0)
+        }.count
+        let bigramMatches = hanBigrams(relation).filter { visibleText.contains($0) }.count
+        return tokenMatches >= 2
+            || bigramMatches >= 2
+            || (tokenMatches >= 1 && bigramMatches >= 1)
+    }
+
+    private static func generatedUIHasSemanticRelationStructure(
+        _ ui: RichAnswerUIComposition,
+        relations: [String],
+        visibleText: String
+    ) -> Bool {
+        guard relations.contains(where: {
+            relationHasVisibleAnchors($0, visibleText: visibleText)
+        }) else {
+            return false
+        }
+        let relationRoles: Set<RichAnswerUIRole> = [
+            .line, .path, .point, .area, .bar, .dotMatrix, .vector, .sequence, .metric,
+        ]
+        let datasetsByID = Dictionary(uniqueKeysWithValues: ui.datasets.map { ($0.id, $0) })
+        let hasNamedAxis = ui.nodes.contains { node in
+            node.xAxis?.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                || node.yAxis?.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
+        let hasNamedBinding = ui.bindings.contains {
+            !$0.label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return ui.nodes.contains { node in
+            guard relationRoles.contains(node.role),
+                  let datasetID = node.datasetID,
+                  let dataset = datasetsByID[datasetID],
+                  datasetRowsHaveChangingOutcome(
+                      dataset.rows,
+                      acceptsSemanticOnly: node.role == .sequence
+                  ) else {
+                return false
+            }
+            let hasVisibleLabel = node.label?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                || dataset.rows.contains {
+                    $0.label?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+                }
+            return hasVisibleLabel || hasNamedAxis || hasNamedBinding
+        }
+    }
+
+    private static func boundedVisibleSemanticSummary(
+        in ui: RichAnswerUIComposition,
+        sceneTitle: String
+    ) -> String {
+        let roles = Set(ui.nodes.map { $0.role.rawValue }).sorted().joined(separator: ",")
+        let visible = visibleSemanticText(in: ui, sceneTitle: sceneTitle)
+            .split(whereSeparator: { $0.isWhitespace })
+            .joined(separator: " ")
+        let summary = "roles=\(roles.isEmpty ? "none" : roles); text=\(visible.isEmpty ? "none" : visible)"
+        guard summary.count > 360 else { return summary }
+        return String(summary.prefix(357)) + "..."
+    }
+
+    private static func declarationSamples(_ values: [String]) -> String {
+        values.prefix(2).joined(separator: "、")
     }
 
     private static func generatedProgramComponents(in source: String?) -> Set<String> {

@@ -14,6 +14,8 @@ LIMIT=""
 ONLY_CASE=""
 FIXTURE_SMOKE=0
 MIN_FREE_KB="${RICH_ANSWER_MIN_FREE_KB:-20971520}"
+KEEP_APP_CACHE="${RICH_ANSWER_KEEP_APP_CACHE:-0}"
+BUILD_CACHE_DIR=""
 
 available_free_kb() {
   df -Pk "$1" | awk 'NR == 2 { print $4 }'
@@ -34,6 +36,12 @@ ensure_free_space() {
   fi
 }
 
+cleanup_app_cache() {
+  if [[ "$KEEP_APP_CACHE" != "1" && -n "$BUILD_CACHE_DIR" && -d "$BUILD_CACHE_DIR" ]]; then
+    rm -rf -- "$BUILD_CACHE_DIR"
+  fi
+}
+
 usage() {
   cat <<'USAGE'
 usage:
@@ -45,6 +53,7 @@ notes:
   - Uses WEIBEI_VERIFY_RICH_ANSWER_REPLAY for each record.
   - Default is serial. Only --jobs 2 enables two lanes; 4/6 lanes are intentionally rejected.
   - --resume skips only when record/image SHA-256, case id, round, qualityGate, and reviewStatus all match.
+  - The temporary app build cache is removed on exit unless RICH_ANSWER_KEEP_APP_CACHE=1.
 USAGE
 }
 
@@ -173,6 +182,28 @@ expected_screenshot_kinds() {
     printf 'before\nafter\n'
   else
     printf 'single\n'
+  fi
+}
+
+manifest_expected_screenshot_kinds() {
+  local manifest_file="$1"
+  local case_kind="$2"
+  local capture_kind
+  if [[ -f "$manifest_file" ]] && jq -e 'has("captureKind") and ((.captureKind // "") != "")' "$manifest_file" >/dev/null; then
+    capture_kind="$(jq -r '.captureKind // ""' "$manifest_file")"
+    case "$capture_kind" in
+      rich-interaction)
+        printf 'before\nafter\n'
+        ;;
+      single)
+        printf 'single\n'
+        ;;
+      *)
+        return 2
+        ;;
+    esac
+  else
+    expected_screenshot_kinds "$case_kind"
   fi
 }
 
@@ -438,6 +469,7 @@ QUEUE_FILE="$OUTPUT_DIR/screenshot-queue.tsv"
 BATCH_MANIFEST="$OUTPUT_DIR/screenshot-batch-manifest.json"
 CURRENT_MANIFEST_LIST="$OUTPUT_DIR/.current-screenshot-manifests"
 BUILD_CACHE_DIR="$OUTPUT_DIR/_app-cache"
+trap cleanup_app_cache EXIT
 FIRST_ROUND_ROOT="$OUTPUT_DIR/screenshots/repetition-1"
 BASELINE_MANIFEST="$FIRST_ROUND_ROOT/baseline-manifest.json"
 SOURCE_LOCK_ABORT_FILE="$OUTPUT_DIR/source-lock-abort.json"
@@ -500,8 +532,9 @@ if [[ "$FIXTURE_SMOKE" != "1" && -z "$LIMIT" && -z "$ONLY_CASE" ]]; then
   OBSERVED_REPETITIONS="$(awk -F '\t' 'NF >= 3 && $3 != "" { reps[$3] = 1 } END { for (rep in reps) print rep }' "$QUEUE_FILE" | sort -n | paste -sd, -)"
   if [[ "$UNIQUE_CASES" != "56" ]] \
     || ! { [[ "$QUEUE_TOTAL" == "56" && "$OBSERVED_REPETITIONS" == "1" ]] \
+      || [[ "$QUEUE_TOTAL" == "168" && "$OBSERVED_REPETITIONS" == "2,3,4" ]] \
       || [[ "$QUEUE_TOTAL" == "224" && "$OBSERVED_REPETITIONS" == "1,2,3,4" ]]; }; then
-    echo "rich-answer screenshot batch requires either first-round baseline queue or full evidence queue: got total=$QUEUE_TOTAL uniqueCases=$UNIQUE_CASES repetitions=$OBSERVED_REPETITIONS; expected first-round total=56 uniqueCases=56 repetitions=1, or full total=224 uniqueCases=56 repetitions=1,2,3,4." >&2
+    echo "rich-answer screenshot batch requires first-round, stability-only, or full evidence queue: got total=$QUEUE_TOTAL uniqueCases=$UNIQUE_CASES repetitions=$OBSERVED_REPETITIONS; expected total=56 repetitions=1, total=168 repetitions=2,3,4, or total=224 repetitions=1,2,3,4, always with uniqueCases=56." >&2
     exit 2
   fi
 fi
@@ -615,6 +648,7 @@ manifest_complete_for_resume() {
   local actual_sha
   local actual_bytes
   local expected_source_lock_id
+  local expected_kinds_file
 
   [[ -f "$manifest_file" && -f "$record_abs" ]] || return 1
   record_sha="$(sha256_file "$record_abs")"
@@ -640,18 +674,24 @@ manifest_complete_for_resume() {
       and .recordPath == $recordPath
       and .recordSHA256 == $recordSHA256' "$manifest_file" >/dev/null || return 1
 
+  expected_kinds_file="$(mktemp "${TMPDIR:-/tmp}/weibei-expected-screenshot-kinds.XXXXXX")"
+  if ! manifest_expected_screenshot_kinds "$manifest_file" "$case_kind" >"$expected_kinds_file"; then
+    rm -f "$expected_kinds_file"
+    return 1
+  fi
   while IFS= read -r kind; do
     screenshot_path="$(jq -r --arg kind "$kind" '.screenshotEvidence[$kind].path // .screenshots[$kind] // ""' "$manifest_file")"
     expected_sha="$(jq -r --arg kind "$kind" '.screenshotEvidence[$kind].sha256 // .screenshotSHA256[$kind] // ""' "$manifest_file")"
     expected_bytes="$(jq -r --arg kind "$kind" '.screenshotEvidence[$kind].bytes // ""' "$manifest_file")"
-    [[ -n "$screenshot_path" && -f "$screenshot_path" && -n "$expected_sha" ]] || return 1
+    [[ -n "$screenshot_path" && -f "$screenshot_path" && -n "$expected_sha" ]] || { rm -f "$expected_kinds_file"; return 1; }
     actual_sha="$(sha256_file "$screenshot_path")"
-    [[ "$actual_sha" == "$expected_sha" ]] || return 1
+    [[ "$actual_sha" == "$expected_sha" ]] || { rm -f "$expected_kinds_file"; return 1; }
     if [[ -n "$expected_bytes" && "$expected_bytes" != "null" ]]; then
       actual_bytes="$(file_size_bytes "$screenshot_path")"
-      [[ "$actual_bytes" == "$expected_bytes" ]] || return 1
+      [[ "$actual_bytes" == "$expected_bytes" ]] || { rm -f "$expected_kinds_file"; return 1; }
     fi
-  done < <(expected_screenshot_kinds "$case_kind")
+  done <"$expected_kinds_file"
+  rm -f "$expected_kinds_file"
   if jq -e '(.screenshotEvidence.overview.path // .screenshots.overview // "") != ""' "$manifest_file" >/dev/null; then
     kind="overview"
     screenshot_path="$(jq -r --arg kind "$kind" '.screenshotEvidence[$kind].path // .screenshots[$kind] // ""' "$manifest_file")"
@@ -771,7 +811,7 @@ run_one() {
 }
 
 export ROOT_DIR SMOKE_SCRIPT SMOKE_RUNNER VISUAL_SCRIPT BATCH_SCRIPT OUTPUT_DIR RUN_DIR INDEX_PATH RUN_ID RESUME BUILD_CACHE_DIR MIN_FREE_KB CURRENT_MANIFEST_LIST FIRST_ROUND_ROOT BASELINE_MANIFEST BASELINE_ID SOURCE_LOCK_ABORT_FILE ASSERT_BASELINE_CURRENT_ID
-export -f available_free_kb ensure_free_space sanitize_name sha256_file file_size_bytes tracked_diff_sha256 hash_paths_json append_lock_file append_lock_tree append_lock_matches write_participating_source_list write_untracked_participating_source_list append_current_manifest expected_screenshot_kinds write_baseline_state_json baseline_id_for_state assert_baseline_current assert_batch_not_aborted annotate_manifest manifest_complete_for_resume run_one
+export -f available_free_kb ensure_free_space sanitize_name sha256_file file_size_bytes tracked_diff_sha256 hash_paths_json append_lock_file append_lock_tree append_lock_matches write_participating_source_list write_untracked_participating_source_list append_current_manifest expected_screenshot_kinds manifest_expected_screenshot_kinds write_baseline_state_json baseline_id_for_state assert_baseline_current assert_batch_not_aborted annotate_manifest manifest_complete_for_resume run_one
 
 SOURCE_LOCK_ABORTED=0
 while IFS=$'\t' read -r sequence case_id repetition case_kind status record_path actual_shape; do
@@ -855,7 +895,6 @@ if [[ "${#manifest_files[@]}" -gt 0 ]]; then
 fi
 
 if [[ "${#manifest_files[@]}" -gt 0 ]]; then
-  EXPECTED_SCREENSHOT_IMAGES="$(awk -F '\t' 'NF >= 4 && $2 != "" { if ($4 == "rich") images += 2; else images += 1 } END { print images + 0 }' "$QUEUE_FILE")"
   SOURCE_LOCK_ABORT_JSON="null"
   if [[ -f "$SOURCE_LOCK_ABORT_FILE" ]]; then
     SOURCE_LOCK_ABORT_JSON="$(jq -c . "$SOURCE_LOCK_ABORT_FILE")"
@@ -871,13 +910,31 @@ if [[ "${#manifest_files[@]}" -gt 0 ]]; then
     --arg jobs "$JOBS" \
     --arg resume "$RESUME" \
     --arg expectedRecords "$QUEUE_TOTAL" \
-    --arg expectedScreenshotImages "$EXPECTED_SCREENSHOT_IMAGES" \
     --argjson sourceLockAbort "$SOURCE_LOCK_ABORT_JSON" \
     '
-      def expectedKinds($record): if $record.caseKind == "rich" then ["before", "after"] else ["single"] end;
+      def hasUsableCaptureKind($record): ($record | has("captureKind")) and (($record.captureKind // "") != "");
+      def expectedKindsFromCase($record): if $record.caseKind == "rich" then ["before", "after"] else ["single"] end;
+      def expectedKinds($record):
+        if hasUsableCaptureKind($record) then
+          if $record.captureKind == "rich-interaction" then ["before", "after"]
+          elif $record.captureKind == "single" then ["single"]
+          else []
+          end
+        else expectedKindsFromCase($record)
+        end;
+      def captureKindValid($record):
+        (hasUsableCaptureKind($record) | not) or ($record.captureKind == "rich-interaction" or $record.captureKind == "single");
       def verifiedImageCount($record):
-        [expectedKinds($record)[] | select((($record.screenshotEvidence[.].path // $record.screenshots[.] // "") != "") and (($record.screenshotEvidence[.].sha256 // $record.screenshotSHA256[.] // "") != ""))]
+        [expectedKinds($record)[] as $kind
+          | ($record.screenshotEvidence[$kind] // {}) as $evidence
+          | select(
+              (($evidence.path // $record.screenshots[$kind] // "") != "")
+              and (($evidence.sha256 // $record.screenshotSHA256[$kind] // "") | test("^[0-9a-f]{64}$"))
+              and (($evidence.bytes // 0) > 0)
+            )]
         | length;
+      def expectedImageCount:
+        ([.[] | expectedKinds(.) | length] | add // 0);
       def overviewValid($record):
         (($record.screenshotEvidence.overview.path // $record.screenshots.overview // "") == "")
         or (($record.screenshotEvidence.overview.sha256 // $record.screenshotSHA256.overview // "") != "" and ($record.screenshotEvidence.overview.bytes // 0) > 0);
@@ -888,7 +945,8 @@ if [[ "${#manifest_files[@]}" -gt 0 ]]; then
         $sourceLockAbort == null
         and
         length == ($expectedRecords | tonumber)
-        and (([.[] | verifiedImageCount(.)] | add // 0) >= ($expectedScreenshotImages | tonumber))
+        and all(.[]; captureKindValid(.))
+        and (([.[] | verifiedImageCount(.)] | add // 0) >= expectedImageCount)
         and all(.[]; overviewValid(.))
         and all(.[]; .baselineID == $baselineID)
         and all(.[]; .status == "succeeded" and .captureStatus == "succeeded" and (.qualityGate.status == "pass" or .qualityGate.status == "warn") and ((.reviewStatus // "") != ""))
@@ -903,7 +961,7 @@ if [[ "${#manifest_files[@]}" -gt 0 ]]; then
       jobs: ($jobs | tonumber),
       resume: ($resume == "1"),
       expectedRecords: ($expectedRecords | tonumber),
-      expectedScreenshotImages: ($expectedScreenshotImages | tonumber),
+      expectedScreenshotImages: expectedImageCount,
       total: length,
       succeeded: ([.[] | select(.status == "succeeded")] | length),
       failed: ([.[] | select(.status != "succeeded")] | length),

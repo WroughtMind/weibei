@@ -28,6 +28,7 @@ struct RichAnswerProfessionalJudgmentClaim {
     let relationGroups: [[String]]
     let objectGroups: [[String]]
     let qualifierGroups: [[String]]
+    let allowsApplicabilityMarkerFallback: Bool
 }
 
 struct RichAnswerProfessionalJudgmentContract {
@@ -52,6 +53,11 @@ struct RichAnswerProfessionalJudgmentValidation {
 }
 
 enum RichAnswerProfessionalJudgmentValidator {
+    private struct SemanticClause {
+        let text: String
+        let inheritsProhibition: Bool
+    }
+
     static func validate(
         corpus: String,
         contract: RichAnswerProfessionalJudgmentContract
@@ -70,7 +76,7 @@ enum RichAnswerProfessionalJudgmentValidator {
             units.contains { unitMatchesForbiddenClaim(claim, in: $0) } ? claim.id : nil
         }
         let missingBoundaryClaims = contract.boundaryClaims.compactMap { claim in
-            units.contains { unitMatchesClaim(claim, in: $0, allowsNegatedRequiredClaim: true) } ? nil : claim.id
+            units.contains { unitMatchesBoundaryClaim(claim, in: $0) } ? nil : claim.id
         }
         return RichAnswerProfessionalJudgmentValidation(
             missingRequiredClaims: missingRequiredClaims,
@@ -89,13 +95,20 @@ enum RichAnswerProfessionalJudgmentValidator {
     }
 
     static func normalizedText(_ text: String) -> String {
-        text
+        RichAnswerDisplayText.normalizedInlineMath(text)
             .lowercased()
             .replacingOccurrences(of: "−", with: "-")
             .replacingOccurrences(of: "—", with: "-")
+            .replacingOccurrences(of: "–", with: "-")
             .replacingOccurrences(of: "（", with: "(")
             .replacingOccurrences(of: "）", with: ")")
             .replacingOccurrences(of: "：", with: ":")
+            .replacingOccurrences(of: "，", with: ",")
+            .replacingOccurrences(of: "、", with: ",")
+            .replacingOccurrences(of: "＝", with: "=")
+            .replacingOccurrences(of: "≈", with: "约")
+            .replacingOccurrences(of: "≃", with: "约")
+            .replacingOccurrences(of: "=", with: "等于")
             .components(separatedBy: .whitespacesAndNewlines)
             .joined()
     }
@@ -109,7 +122,7 @@ enum RichAnswerProfessionalJudgmentValidator {
         if allowsNegatedRequiredClaim || claimContainsNegation(claim) {
             return true
         }
-        return !unitRefutesAffirmativeClaim(unit)
+        return !unitRefutesAffirmativeClaim(unit, claim: claim)
     }
 
     private static func unitMatchesForbiddenClaim(
@@ -117,9 +130,55 @@ enum RichAnswerProfessionalJudgmentValidator {
         in unit: String
     ) -> Bool {
         forbiddenClaimCandidateUnits(claim, in: unit).contains { candidateUnit in
-            claimGroupsMatch(claim, in: candidateUnit)
+            forbiddenClaimGroupsMatch(claim, in: candidateUnit)
                 && !unitRefutesForbiddenClaim(candidateUnit, claim: claim)
         }
+    }
+
+    private static func unitMatchesBoundaryClaim(
+        _ claim: RichAnswerProfessionalJudgmentClaim,
+        in unit: String
+    ) -> Bool {
+        if unitMatchesClaim(claim, in: unit, allowsNegatedRequiredClaim: true) {
+            return true
+        }
+        let boundaryObjectGroups = claim.objectGroups + claim.qualifierGroups
+        guard !boundaryObjectGroups.isEmpty,
+              groupsMatch(boundaryObjectGroups, in: unit) else {
+            return false
+        }
+        if !claim.relationGroups.isEmpty,
+           groupsMatch(claim.relationGroups, in: unit) {
+            return true
+        }
+        guard claim.allowsApplicabilityMarkerFallback else {
+            return false
+        }
+        return containsAnyNormalized(unit, [
+            "适用范围",
+            "适用条件",
+            "只在",
+            "仅在",
+            "前提是",
+            "条件下",
+            "范围内",
+            "超出范围",
+            "边界条件",
+        ])
+    }
+
+    private static func forbiddenClaimGroupsMatch(
+        _ claim: RichAnswerProfessionalJudgmentClaim,
+        in unit: String
+    ) -> Bool {
+        let subjectRelationObject = claim.subjectGroups + claim.relationGroups + claim.objectGroups
+        let subjectObjectRelation = claim.subjectGroups + claim.objectGroups + claim.relationGroups
+        guard !subjectRelationObject.isEmpty,
+              orderedGroupsMatch(subjectRelationObject, in: unit)
+                || orderedGroupsMatch(subjectObjectRelation, in: unit) else {
+            return false
+        }
+        return claim.qualifierGroups.isEmpty || groupsMatch(claim.qualifierGroups, in: unit)
     }
 
     private static func claimGroupsMatch(
@@ -145,7 +204,110 @@ enum RichAnswerProfessionalJudgmentValidator {
         guard !groups.isEmpty else { return false }
         let normalizedUnit = normalizedText(unit)
         return groups.allSatisfy { group in
-            group.contains { normalizedUnit.contains(normalizedText($0)) }
+            firstMatchingRange(for: group, in: normalizedUnit, after: normalizedUnit.startIndex) != nil
+        }
+    }
+
+    private static func orderedGroupsMatch(_ groups: [[String]], in unit: String) -> Bool {
+        let normalizedUnit = normalizedText(unit)
+        var cursor = normalizedUnit.startIndex
+        for group in groups {
+            guard let range = firstMatchingRange(for: group, in: normalizedUnit, after: cursor) else {
+                return false
+            }
+            cursor = range.upperBound
+        }
+        return true
+    }
+
+    private static func firstMatchingRange(
+        for group: [String],
+        in normalizedUnit: String,
+        after lowerBound: String.Index
+    ) -> Range<String.Index>? {
+        var bestRange: Range<String.Index>?
+        for fragment in group {
+            let normalizedFragment = normalizedText(fragment)
+            guard !normalizedFragment.isEmpty else { continue }
+            var searchStart = lowerBound
+            while searchStart < normalizedUnit.endIndex,
+                  let range = normalizedUnit.range(
+                    of: normalizedFragment,
+                    range: searchStart..<normalizedUnit.endIndex
+                  ) {
+                if fragmentBoundaryMatches(
+                    normalizedFragment,
+                    range: range,
+                    in: normalizedUnit
+                ) {
+                    if bestRange == nil
+                        || range.lowerBound < bestRange!.lowerBound
+                        || (range.lowerBound == bestRange!.lowerBound
+                            && range.upperBound > bestRange!.upperBound) {
+                        bestRange = range
+                    }
+                    break
+                }
+                searchStart = normalizedUnit.index(after: range.lowerBound)
+            }
+        }
+        return bestRange
+    }
+
+    private static func fragmentBoundaryMatches(
+        _ normalizedFragment: String,
+        range: Range<String.Index>,
+        in normalizedUnit: String
+    ) -> Bool {
+        let isStandaloneNumber = normalizedFragment.range(
+            of: #"^[+-]?\d+(?:\.\d+)?$"#,
+            options: .regularExpression
+        ) != nil
+        if range.lowerBound > normalizedUnit.startIndex {
+            let previous = normalizedUnit[normalizedUnit.index(before: range.lowerBound)]
+            if isStandaloneNumber, isNumericContinuation(previous) { return false }
+            if isSingleASCIIIdentifier(normalizedFragment),
+               isIdentifierTransformationPrefix(previous) {
+                return false
+            }
+        }
+        if range.upperBound < normalizedUnit.endIndex {
+            let next = normalizedUnit[range.upperBound]
+            if isStandaloneNumber, isNumericContinuation(next) { return false }
+            if let last = normalizedFragment.last,
+               isASCIIAlphaNumeric(last),
+               isASCIIAlphaNumeric(next) {
+                return false
+            }
+        }
+        return true
+    }
+
+    private static func isSingleASCIIIdentifier(_ fragment: String) -> Bool {
+        guard fragment.count == 1,
+              let scalar = fragment.unicodeScalars.first else {
+            return false
+        }
+        return (65...90).contains(scalar.value)
+            || (97...122).contains(scalar.value)
+    }
+
+    private static func isIdentifierTransformationPrefix(_ character: Character) -> Bool {
+        isASCIIAlphaNumeric(character)
+            || character.isLetter
+            || character == "√"
+            || character == "∛"
+    }
+
+    private static func isNumericContinuation(_ character: Character) -> Bool {
+        character.isNumber || character == "." || character == "/"
+    }
+
+    private static func isASCIIAlphaNumeric(_ character: Character) -> Bool {
+        character.unicodeScalars.allSatisfy { scalar in
+            (48...57).contains(scalar.value)
+                || (65...90).contains(scalar.value)
+                || (97...122).contains(scalar.value)
         }
     }
 
@@ -154,21 +316,56 @@ enum RichAnswerProfessionalJudgmentValidator {
         in unit: String
     ) -> [String] {
         let clauses = semanticClauses(from: unit)
-        guard clauses.count > 1 else { return clauses }
+        guard clauses.count > 1 else { return clauses.map(\.text) }
 
-        var candidates: [String] = clauses
+        var candidates: [String] = []
         var carriedSubjectClause: String?
-        var previousClause: String?
+        var carriedQualifierClause: String?
+        var inheritedProhibition: String?
 
-        for clause in clauses {
-            let hasClaimSubject = claimSubjectMatches(claim, in: clause)
-            if hasClaimSubject,
-               let previousClause,
-               !clauseIntroducesNewTopic(previousClause, claim: claim) {
-                candidates.append("\(previousClause) \(clause)")
+        for semanticClause in clauses {
+            let rawClause = semanticClause.text
+            if clauseStartsAdversativeOrPermission(rawClause) {
+                inheritedProhibition = nil
+                carriedQualifierClause = nil
             }
+            if !semanticClause.inheritsProhibition {
+                inheritedProhibition = nil
+            }
+            if carriedQualifierClause != nil,
+               clauseIntroducesExplicitQualifier(rawClause),
+               !groupsMatch(claim.qualifierGroups, in: rawClause) {
+                carriedQualifierClause = nil
+            }
+            let explicitProhibition = explicitProhibitionPrefix(in: rawClause)
+            let clause: String
+            if explicitProhibition == nil,
+               let inheritedProhibition,
+               !clauseStartsAdversativeOrPermission(rawClause) {
+                clause = "\(inheritedProhibition) \(rawClause)"
+            } else {
+                clause = rawClause
+            }
+            candidates.append(clause)
+
+            if let carriedQualifierClause,
+               !claim.qualifierGroups.isEmpty,
+               !groupsMatch(claim.qualifierGroups, in: clause),
+               orderedGroupsMatch(
+                claim.subjectGroups + claim.relationGroups + claim.objectGroups,
+                in: clause
+               ) {
+                candidates.append("\(carriedQualifierClause) \(clause)")
+            }
+
+            let hasClaimSubject = claimSubjectMatches(claim, in: clause)
             if let carriedSubjectClause,
                !hasClaimSubject,
+               claimPredicateCanContinue(
+                claim,
+                subjectClause: carriedSubjectClause,
+                continuationClause: clause
+               ),
                !clauseIntroducesNewTopic(clause, claim: claim) {
                 candidates.append("\(carriedSubjectClause) \(clause)")
             }
@@ -178,18 +375,94 @@ enum RichAnswerProfessionalJudgmentValidator {
             } else if clauseIntroducesNewTopic(clause, claim: claim) {
                 carriedSubjectClause = nil
             }
-            previousClause = clause
+            if !claim.qualifierGroups.isEmpty,
+               groupsMatch(claim.qualifierGroups, in: clause) {
+                carriedQualifierClause = clause
+            }
+            if let explicitProhibition {
+                inheritedProhibition = explicitProhibition
+            }
         }
 
         return candidates
     }
 
-    private static func semanticClauses(from unit: String) -> [String] {
+    private static func claimPredicateCanContinue(
+        _ claim: RichAnswerProfessionalJudgmentClaim,
+        subjectClause: String,
+        continuationClause: String
+    ) -> Bool {
+        let completePredicateGroups = claim.relationGroups + claim.objectGroups + claim.qualifierGroups
+        if !completePredicateGroups.isEmpty,
+           orderedGroupsMatch(completePredicateGroups, in: continuationClause) {
+            return true
+        }
+        let trailingGroups = claim.objectGroups + claim.qualifierGroups
+        return !claim.relationGroups.isEmpty
+            && !trailingGroups.isEmpty
+            && groupsMatch(claim.relationGroups, in: subjectClause)
+            && orderedGroupsMatch(trailingGroups, in: continuationClause)
+    }
+
+    private static func explicitProhibitionPrefix(in clause: String) -> String? {
+        let normalized = normalizedText(clause)
+        let prohibitions = [
+            "严禁", "请勿", "不要", "不得", "不可", "不许", "禁止", "避免",
+            "不能", "不应", "不宜", "不可以",
+        ]
+        return prohibitions.first { normalized.contains(normalizedText($0)) }
+    }
+
+    private static func clauseStartsAdversativeOrPermission(_ clause: String) -> Bool {
+        let normalized = normalizedText(clause)
+        let prefixes = ["但是", "但", "然而", "不过", "却", "反而", "可是", "而是", "而可以", "可以", "也可以", "允许", "建议"]
+        return prefixes.contains { normalized.hasPrefix(normalizedText($0)) }
+    }
+
+    private static func clauseIntroducesExplicitQualifier(_ clause: String) -> Bool {
+        var normalized = normalizedText(clause)
+        ["同时", "此时", "这时", "届时"].forEach {
+            normalized = normalized.replacingOccurrences(of: normalizedText($0), with: "")
+        }
+        return containsAnyNormalized(normalized, [
+            "阶段",
+            "期间",
+            "条件下",
+            "情况下",
+            "状态下",
+        ]) || normalized.contains("时")
+    }
+
+    private static func semanticClauses(from unit: String) -> [SemanticClause] {
         let separators = CharacterSet(charactersIn: "\n\r。！？!?；;，,、")
-        return unit
-            .components(separatedBy: separators)
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+        var clauses: [SemanticClause] = []
+        var buffer = ""
+        var inheritsProhibition = false
+        func appendBuffer() {
+            let text = buffer.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty {
+                clauses.append(
+                    SemanticClause(
+                        text: text,
+                        inheritsProhibition: inheritsProhibition
+                    )
+                )
+            }
+            buffer = ""
+        }
+        for character in unit {
+            let isSeparator = character.unicodeScalars.allSatisfy {
+                separators.contains($0)
+            }
+            if isSeparator {
+                appendBuffer()
+                inheritsProhibition = character == "、"
+            } else {
+                buffer.append(character)
+            }
+        }
+        appendBuffer()
+        return clauses
     }
 
     private static func clauseIntroducesNewTopic(
@@ -199,6 +472,18 @@ enum RichAnswerProfessionalJudgmentValidator {
         if claimSubjectMatches(claim, in: clause) { return false }
         let normalized = strippedLeadingClauseConnectors(clause)
         if normalized.isEmpty { return false }
+        let predicateGroups = claim.relationGroups + claim.objectGroups + claim.qualifierGroups
+        let predicateRanges = predicateGroups.compactMap { group in
+            firstMatchingRange(for: group, in: normalized, after: normalized.startIndex)
+        }
+        if let firstPredicateRange = predicateRanges.min(by: { $0.lowerBound < $1.lowerBound }) {
+            let leadingTopic = strippedLeadingClauseConnectors(
+                String(normalized[..<firstPredicateRange.lowerBound])
+            )
+            if leadingTopic.count >= 2 {
+                return true
+            }
+        }
         let topicPatterns = [
             #"^(城市)?[甲乙丙丁戊己庚辛壬癸]"#,
             #"^[a-z]{2,}[0-9]*"#,
@@ -247,19 +532,82 @@ enum RichAnswerProfessionalJudgmentValidator {
         ])
     }
 
-    private static func unitRefutesAffirmativeClaim(_ unit: String) -> Bool {
-        containsAnyNormalized(unit, [
+    private static func unitRefutesAffirmativeClaim(
+        _ unit: String,
+        claim: RichAnswerProfessionalJudgmentClaim
+    ) -> Bool {
+        let normalizedUnit = normalizedText(unit)
+        let subjectRanges = claim.subjectGroups
+            .compactMap { group in
+                firstMatchingRange(
+                    for: group,
+                    in: normalizedUnit,
+                    after: normalizedUnit.startIndex
+                )
+            }
+        let predicateRanges = (claim.relationGroups + claim.objectGroups + claim.qualifierGroups)
+            .compactMap { group in
+                firstMatchingRange(
+                    for: group,
+                    in: normalizedUnit,
+                    after: normalizedUnit.startIndex
+                )
+            }
+        let anchorRanges = subjectRanges + predicateRanges
+        guard let firstAnchor = anchorRanges.min(by: { $0.lowerBound < $1.lowerBound }),
+              let lastAnchor = anchorRanges.max(by: { $0.upperBound < $1.upperBound }) else {
+            return false
+        }
+        let firstPredicate = predicateRanges.min(by: { $0.lowerBound < $1.lowerBound })
+        let negations = [
             "不是",
             "并非",
             "不等于",
             "不支持",
             "不能推出",
             "不能证明",
+            "没有",
+            "并未",
+            "未曾",
             "没有证明",
             "不足以",
             "不代表",
             "不一定",
-        ])
+        ].map(normalizedText)
+        return negations.contains { negation in
+            var searchStart = normalizedUnit.startIndex
+            while searchStart < normalizedUnit.endIndex,
+                  let range = normalizedUnit.range(
+                    of: negation,
+                    range: searchStart..<normalizedUnit.endIndex
+                  ) {
+                if range.lowerBound < lastAnchor.upperBound,
+                   range.upperBound > firstAnchor.lowerBound {
+                    if let firstPredicate,
+                       range.upperBound <= firstPredicate.lowerBound {
+                        let bridge = String(normalizedUnit[range.upperBound..<firstPredicate.lowerBound])
+                        if containsAnyNormalized(bridge, ["而是", "但实际", "实际上", "相反是"]) {
+                            searchStart = normalizedUnit.index(after: range.lowerBound)
+                            continue
+                        }
+                    }
+                    return true
+                }
+                if range.upperBound <= firstAnchor.lowerBound,
+                   normalizedUnit.distance(from: range.upperBound, to: firstAnchor.lowerBound) <= 6 {
+                    return true
+                }
+                if range.lowerBound >= lastAnchor.upperBound,
+                   normalizedUnit.distance(from: lastAnchor.upperBound, to: range.lowerBound) <= 8 {
+                    let bridge = String(normalizedUnit[lastAnchor.upperBound..<range.lowerBound])
+                    if !bridge.hasSuffix("而") {
+                        return true
+                    }
+                }
+                searchStart = normalizedUnit.index(after: range.lowerBound)
+            }
+            return false
+        }
     }
 
     private static func unitRefutesForbiddenClaim(
@@ -283,6 +631,9 @@ enum RichAnswerProfessionalJudgmentValidator {
         ]) || containsUnnegatedProhibition(unit)
         if metaRefutes { return true }
         if claimContainsNegation(claim) { return false }
+        if hasScopedNegationBeforeClaimAnchor(unit, claim: claim) {
+            return true
+        }
         if containsAnyNormalized(unit, ["不禁止", "不能禁止", "不应禁止", "不得禁止", "没有禁止", "未禁止", "无需禁止", "不用禁止"]) {
             return false
         }
@@ -291,6 +642,12 @@ enum RichAnswerProfessionalJudgmentValidator {
             "不能",
             "不应",
             "不得",
+            "不再",
+            "未再",
+            "不在",
+            "并不",
+            "绝不",
+            "绝非",
             "没有",
             "并非",
             "不是",
@@ -298,9 +655,35 @@ enum RichAnswerProfessionalJudgmentValidator {
             "不支持",
             "不足以",
             "不代表",
+            "没有分离",
+            "未分离",
+            "仍相连",
+            "保持相连",
             "无",
             "未",
         ])
+    }
+
+    private static func hasScopedNegationBeforeClaimAnchor(
+        _ unit: String,
+        claim: RichAnswerProfessionalJudgmentClaim
+    ) -> Bool {
+        let normalizedUnit = normalizedText(unit)
+        let anchorRanges = (claim.subjectGroups + claim.relationGroups + claim.objectGroups)
+            .compactMap { group in
+                firstMatchingRange(
+                    for: group,
+                    in: normalizedUnit,
+                    after: normalizedUnit.startIndex
+                )
+            }
+        guard let firstAnchor = anchorRanges.min(by: { $0.lowerBound < $1.lowerBound }) else {
+            return false
+        }
+        let prefix = String(normalizedUnit[..<firstAnchor.lowerBound].suffix(4))
+        return ["不", "未", "无", "非", "勿"].contains { negation in
+            prefix.hasSuffix(normalizedText(negation))
+        }
     }
 
     private static func containsUnnegatedProhibition(_ unit: String) -> Bool {
@@ -605,15 +988,15 @@ enum RichAnswerProfessionalJudgmentContracts {
                     "vertex-is-2-minus-3",
                     "顶点必须是 (2,-3)",
                     subject: [["顶点"]],
-                    relation: [["是", "等于"]],
+                    relation: [["是", "等于", "读出", "对应"]],
                     object: [["(2,-3)", "(2, -3)"]]
                 ),
                 requiredClaim(
                     "equivalent-vertex-form",
                     "原式与顶点式必须保持等价",
-                    subject: [["y=2x²-8x+5", "原式"]],
-                    relation: [["等价", "变形"]],
-                    object: [["2(x-2)²-3", "顶点式"]]
+                    subject: [["y=2x²-8x+5", "原式", "同一个二次函数"]],
+                    relation: [["等价", "变形", "改写"]],
+                    object: [["2(x-2)²-3", "顶点式", "等价表达", "合法变形链"]]
                 ),
             ],
             forbiddenMisconceptions: [
@@ -742,7 +1125,8 @@ enum RichAnswerProfessionalJudgmentContracts {
                     "配平必须保留酸性条件与 H⁺/H₂O",
                     subject: [["酸性"]],
                     relation: [["使用", "参与", "需要"]],
-                    object: [["H⁺", "H+", "H₂O", "H2O"]]
+                    object: [["H⁺", "H+", "H₂O", "H2O"]],
+                    allowsApplicabilityMarkerFallback: false
                 ),
             ],
             reviewNotes: ["需模型或人工判断氧化/还原角色和酸性条件意义是否讲准"]
@@ -805,8 +1189,8 @@ enum RichAnswerProfessionalJudgmentContracts {
                 requiredClaim(
                     "range-four-iterations",
                     "range(1,5) 只能产生 1 到 4",
-                    subject: [["range(1,5)", "range(1, 5)"]],
-                    relation: [["产生", "包含"]],
+                    subject: [["range(1,5)", "range(1, 5)", "这段循环", "循环"]],
+                    relation: [["产生", "包含", "走", "遍历"]],
                     object: [["1,2,3,4", "1、2、3、4"]]
                 ),
                 requiredClaim(
@@ -901,8 +1285,8 @@ enum RichAnswerProfessionalJudgmentContracts {
                 requiredClaim(
                     "bus-leaving-image",
                     "末班车驶远形成离开意象",
-                    subject: [["末班车"]],
-                    relation: [["形成", "象征", "构成"]],
+                    subject: [["末班车", "最后一班车"]],
+                    relation: [["形成", "象征", "构成", "提供", "支持", "指向", "压出"]],
                     object: [["离开", "错过"]]
                 ),
                 requiredClaim(
@@ -961,7 +1345,7 @@ enum RichAnswerProfessionalJudgmentContracts {
                     "mobilization-escalation",
                     "动员和最后通牒是直接升级机制",
                     subject: [["动员", "最后通牒"]],
-                    relation: [["是", "推动", "属于"]],
+                    relation: [["是", "推动", "属于", "归为", "作为", "这一", "包括"]],
                     object: [["直接升级", "升级机制"]]
                 ),
             ],
@@ -1096,9 +1480,9 @@ enum RichAnswerProfessionalJudgmentContracts {
                 boundaryClaim(
                     "image-grounding-boundary",
                     "图像分析必须叠在真实材料图上",
-                    subject: [["构图", "标注"]],
-                    relation: [["回到", "叠在"]],
-                    object: [["真实图像", "原图"]]
+                    subject: [["构图", "标注", "叠图", "叠层"]],
+                    relation: [["回到", "叠在", "叠加", "压到"]],
+                    object: [["真实图像", "原图", "当前图像", "底图", "海报"]]
                 ),
             ],
             reviewNotes: ["需模型或人工判断构图解释是否符合图像内容且不臆造"]
@@ -1111,7 +1495,7 @@ enum RichAnswerProfessionalJudgmentContracts {
                     "等高线越密坡度越陡",
                     subject: [["等高线"]],
                     relation: [["密集", "越密"]],
-                    object: [["坡度更陡", "更陡"]]
+                    object: [["坡度更陡", "更陡", "坡度越陡", "越陡"]]
                 ),
                 requiredClaim(
                     "topographic-map-evidence",
@@ -1148,9 +1532,9 @@ enum RichAnswerProfessionalJudgmentContracts {
                 boundaryClaim(
                     "observable-density-only",
                     "看不清高程时只能说可观察密度差异",
-                    subject: [["看不清", "不能读出"]],
-                    relation: [["只能", "不得"]],
-                    object: [["可观察", "密度差异", "编造"]]
+                    subject: [["看不清", "不能读出", "未给出可读", "缺少可读"]],
+                    relation: [["只能", "不得", "不能确认", "需要核对", "需核对"]],
+                    object: [["可观察", "密度差异", "编造", "绝对流向", "高程证据", "高程数字"]]
                 ),
             ],
             reviewNotes: ["需模型或人工判断河流和坡度解释是否真的由图像支持"]
@@ -1163,13 +1547,13 @@ enum RichAnswerProfessionalJudgmentContracts {
                     "均衡价格必须是 20",
                     subject: [["均衡"]],
                     relation: [["是", "等于", "为"]],
-                    object: [["P=20", "P = 20", "价格20", "价格 20"]]
+                    object: [["P=20", "P = 20", "价格20", "价格 20", "均衡价是20", "均衡价格是20"]]
                 ),
                 requiredClaim(
                     "binding-ceiling-shortage-20",
                     "上限 15 必须形成 20 短缺",
                     subject: [["上限15", "价格上限15", "价格上限 15"]],
-                    relation: [["形成", "产生"]],
+                    relation: [["形成", "产生", "造成", "导致", "会让"]],
                     object: [["短缺20", "短缺 20"]]
                 ),
                 requiredClaim(
@@ -1208,7 +1592,7 @@ enum RichAnswerProfessionalJudgmentContracts {
                     "given-curves-enforcement-boundary",
                     "结论只适用于给定曲线和有效执行",
                     subject: [["结论"]],
-                    relation: [["只适用于", "限于"]],
+                    relation: [["只适用于", "限于", "不能直接套用", "依赖"]],
                     object: [["给定曲线", "有效执行"]]
                 ),
             ],
@@ -1259,9 +1643,9 @@ enum RichAnswerProfessionalJudgmentContracts {
                 boundaryClaim(
                     "given-clause-boundary",
                     "必须限定为给定条文内推理且事实不足处提示风险",
-                    subject: [["推理", "结论"]],
-                    relation: [["限于", "只按"]],
-                    object: [["给定条文", "事实不足", "风险"]]
+                    subject: [["推理", "结论", "判断", "当前上下文"]],
+                    relation: [["限于", "只按", "依据", "只支持依据"]],
+                    object: [["给定条文", "事实不足", "风险", "合规风险"]]
                 ),
             ],
             reviewNotes: ["需模型或人工判断条款层级解释和法律边界是否可靠"]
@@ -1377,7 +1761,7 @@ enum RichAnswerProfessionalJudgmentContracts {
                     "period-square-root-length",
                     "周期与摆长平方根成正比",
                     subject: [["周期", "T"]],
-                    relation: [["正比", "成正比"]],
+                    relation: [["正比", "成正比", "按平方根增长", "随√L增长", "随√L增大", "随之增加"]],
                     object: [["√L", "平方根"]]
                 ),
                 requiredClaim(
@@ -1468,8 +1852,8 @@ enum RichAnswerProfessionalJudgmentContracts {
                     "coordinate-not-proof-boundary",
                     "坐标定位不能替代平行条件和角证明",
                     subject: [["坐标", "示意图坐标"]],
-                    relation: [["不能替代", "不得替代"]],
-                    object: [["平行条件", "角相等证明"]]
+                    relation: [["不能替代", "不得替代", "不能只靠", "不能靠"]],
+                    object: [["平行条件", "角相等证明", "证明"]]
                 ),
             ],
             reviewNotes: ["需模型或人工判断证明逻辑是否把坐标定位误当证明"]
@@ -1546,11 +1930,20 @@ enum RichAnswerProfessionalJudgmentContracts {
             ],
             forbiddenMisconceptions: [
                 forbiddenClaim(
-                    "vc-down-current-up",
-                    "充电时 Vc 不能下降而 I 上升",
-                    subject: [["Vc", "电流", "I"]],
-                    relation: [["下降", "上升"]],
-                    object: [["充电"]]
+                    "vc-down-during-charge",
+                    "充电时 Vc 不能下降",
+                    subject: [["Vc"]],
+                    relation: [["下降"]],
+                    object: [],
+                    qualifiers: [["充电"]]
+                ),
+                forbiddenClaim(
+                    "current-up-during-charge",
+                    "充电时电流 I 不能上升",
+                    subject: [["电流", "I"]],
+                    relation: [["上升"]],
+                    object: [],
+                    qualifiers: [["充电"]]
                 ),
                 forbiddenClaim(
                     "wrong-tau",
@@ -1675,9 +2068,9 @@ enum RichAnswerProfessionalJudgmentContracts {
                 boundaryClaim(
                     "domain-vs-molecular-shape-boundary",
                     "必须区分电子域构型和分子构型",
-                    subject: [["电子域构型", "分子构型"]],
-                    relation: [["区分", "不同"]],
-                    object: [["孤电子对", "分子形状"]]
+                    subject: [["电子域构型"], ["分子构型"]],
+                    relation: [["区分", "不同", "不要把", "不能把", "混在一起"]],
+                    object: []
                 ),
             ],
             reviewNotes: ["需模型或人工判断电子域构型与分子构型区分是否清楚"]
@@ -1740,25 +2133,26 @@ enum RichAnswerProfessionalJudgmentContracts {
                 requiredClaim(
                     "arrow-food-to-consumer",
                     "箭头必须从食物指向消费者",
-                    subject: [["箭头"]],
-                    relation: [["从", "指向"]],
-                    object: [["食物", "消费者"]]
+                    subject: [["食物→消费者", "食物 -> 消费者", "食物指向消费者"]],
+                    relation: [],
+                    object: []
                 ),
                 requiredClaim(
                     "pike-reduction-direct-effect",
                     "狗鱼减少会直接减轻小鱼捕食压力",
-                    subject: [["狗鱼减少"]],
-                    relation: [["直接", "减轻"]],
-                    object: [["小鱼", "捕食压力"]]
+                    subject: [["狗鱼减少", "移除狗鱼", "狗鱼"]],
+                    relation: [["下降", "降低", "减轻"]],
+                    object: [["小鱼"], ["捕食压力"]],
+                    qualifiers: [["直接", "最先"]]
                 ),
             ],
             forbiddenMisconceptions: [
                 forbiddenClaim(
                     "arrow-consumer-to-food",
                     "箭头不能从消费者指向食物",
-                    subject: [["箭头"]],
-                    relation: [["从", "指向"]],
-                    object: [["消费者", "食物"]]
+                    subject: [["消费者→食物", "消费者 -> 食物", "消费者指向食物"]],
+                    relation: [],
+                    object: []
                 ),
                 forbiddenClaim(
                     "pike-less-algae-certain-decrease",
@@ -1780,8 +2174,8 @@ enum RichAnswerProfessionalJudgmentContracts {
                     "directional-inference-boundary",
                     "长期数据不足时只能方向性推断",
                     subject: [["材料", "长期种群数据"]],
-                    relation: [["没有", "不足"]],
-                    object: [["方向性推断", "间接效应"]]
+                    relation: [["没有", "不足", "不能"]],
+                    object: [["方向性推断", "间接效应", "已证实结果", "长期确定"]]
                 ),
             ],
             reviewNotes: ["需模型或人工判断生态推断是否过度确定"]
@@ -1794,7 +2188,7 @@ enum RichAnswerProfessionalJudgmentContracts {
                     "factorial(4) 建立 4、3、2、1 四个栈帧",
                     subject: [["factorial(4)", "栈帧"]],
                     relation: [["建立", "创建"]],
-                    object: [["4、3、2、1", "4,3,2,1"]]
+                    object: [["4、3、2、1", "4,3,2,1", "4→3→2→1"]]
                 ),
                 requiredClaim(
                     "return-final-24",
@@ -1831,9 +2225,9 @@ enum RichAnswerProfessionalJudgmentContracts {
                 boundaryClaim(
                     "call-return-phase-boundary",
                     "向下调用和向上回传必须区分",
-                    subject: [["向下调用", "向上回传"]],
+                    subject: [["向下调用"], ["向上回传"]],
                     relation: [["区分", "不同"]],
-                    object: [["阶段"]]
+                    object: [["阶段", "方向"]]
                 ),
             ],
             reviewNotes: ["需模型或人工判断解释是否区分调用和回传"]
@@ -2267,8 +2661,8 @@ enum RichAnswerProfessionalJudgmentContracts {
                 requiredClaim(
                     "mean-difference-35",
                     "咖啡因组 310ms、对照组 345ms，差 35ms",
-                    subject: [["咖啡因组", "对照组"]],
-                    relation: [["310", "345"]],
+                    subject: [["咖啡因组"], ["对照组"]],
+                    relation: [["310ms", "310 ms"], ["345ms", "345 ms"]],
                     object: [["35ms", "35 ms"]]
                 ),
                 requiredClaim(
@@ -2358,9 +2752,9 @@ enum RichAnswerProfessionalJudgmentContracts {
                 boundaryClaim(
                     "given-clause-not-advice-boundary",
                     "条款解释需绑定给定条款和事实",
-                    subject: [["条款", "事实"]],
-                    relation: [["绑定", "逐层"]],
-                    object: [["8.1", "8.2", "8.3"]]
+                    subject: [["条款"], ["事实"]],
+                    relation: [["绑定", "逐层", "放在一起", "逐项核对"]],
+                    object: [["8.1", "8.2", "8.3", "触发点", "层级"]]
                 ),
             ],
             reviewNotes: ["需模型或人工判断法律条款层级语言是否严谨"]
@@ -2378,9 +2772,9 @@ enum RichAnswerProfessionalJudgmentContracts {
                 requiredClaim(
                     "weak-not-necessary",
                     "材料只支持弱结论，不支持必然结论",
-                    subject: [["两世界", "材料"]],
+                    subject: [["两世界", "材料", "前提"]],
                     relation: [["只支持", "不支持"]],
-                    object: [["弱结论", "必然结论"]]
+                    object: [["弱结论", "可能存在"], ["必然结论", "必然具有"]]
                 ),
             ],
             forbiddenMisconceptions: [
@@ -2410,9 +2804,9 @@ enum RichAnswerProfessionalJudgmentContracts {
                 boundaryClaim(
                     "modal-strength-boundary",
                     "错误在从可能到必然的模态强度增强",
-                    subject: [["错误"]],
-                    relation: [["发生在", "在于"]],
-                    object: [["可能到必然", "模态强度"]]
+                    subject: [["错误", "失效点"]],
+                    relation: [["发生在", "在于", "从", "跨到"]],
+                    object: [["可能", "可能到必然", "模态强度"], ["必然", "可能到必然", "模态强度"]]
                 ),
             ],
             reviewNotes: ["需模型或人工判断模态逻辑表达是否没有偷换"]
@@ -2566,9 +2960,9 @@ enum RichAnswerProfessionalJudgmentContracts {
                 boundaryClaim(
                     "learning-not-diagnosis-boundary",
                     "必须标明生理学习用途非诊断",
-                    subject: [["材料", "结论"]],
-                    relation: [["用于", "不足以"]],
-                    object: [["生理学习", "诊断"]]
+                    subject: [["诊断"]],
+                    relation: [["不是", "不能", "不足以", "不要把"]],
+                    object: [["个体", "生理学习", "教材"]]
                 ),
             ],
             reviewNotes: ["需模型或人工判断生理因果解释是否专业"]
@@ -2732,7 +3126,8 @@ enum RichAnswerProfessionalJudgmentContracts {
             subject: subject,
             relation: relation,
             object: object,
-            qualifiers: qualifiers
+            qualifiers: qualifiers,
+            allowsApplicabilityMarkerFallback: false
         )
     }
 
@@ -2751,7 +3146,8 @@ enum RichAnswerProfessionalJudgmentContracts {
             subject: subject,
             relation: relation,
             object: object,
-            qualifiers: qualifiers
+            qualifiers: qualifiers,
+            allowsApplicabilityMarkerFallback: false
         )
     }
 
@@ -2761,7 +3157,8 @@ enum RichAnswerProfessionalJudgmentContracts {
         subject: [[String]],
         relation: [[String]],
         object: [[String]],
-        qualifiers: [[String]] = []
+        qualifiers: [[String]] = [],
+        allowsApplicabilityMarkerFallback: Bool = true
     ) -> RichAnswerProfessionalJudgmentClaim {
         claim(
             id,
@@ -2770,7 +3167,8 @@ enum RichAnswerProfessionalJudgmentContracts {
             subject: subject,
             relation: relation,
             object: object,
-            qualifiers: qualifiers
+            qualifiers: qualifiers,
+            allowsApplicabilityMarkerFallback: allowsApplicabilityMarkerFallback
         )
     }
 
@@ -2781,7 +3179,8 @@ enum RichAnswerProfessionalJudgmentContracts {
         subject: [[String]],
         relation: [[String]],
         object: [[String]],
-        qualifiers: [[String]]
+        qualifiers: [[String]],
+        allowsApplicabilityMarkerFallback: Bool
     ) -> RichAnswerProfessionalJudgmentClaim {
         RichAnswerProfessionalJudgmentClaim(
             id: id,
@@ -2790,7 +3189,8 @@ enum RichAnswerProfessionalJudgmentContracts {
             subjectGroups: subject,
             relationGroups: relation,
             objectGroups: object,
-            qualifierGroups: qualifiers
+            qualifierGroups: qualifiers,
+            allowsApplicabilityMarkerFallback: allowsApplicabilityMarkerFallback
         )
     }
 }
@@ -2999,7 +3399,7 @@ enum RichAnswerLiveCases {
                     id: "scale-honesty-boundary",
                     description: "比例、图例或尺度不应靠固定词命中，允许用示意关系和可观察密度差异诚实限定",
                     evidenceGroups: [
-                        ["比例尺", "图例", "尺度", "示意关系", "密度差异", "可观察", "不编造"],
+                        ["比例尺", "图例", "尺度", "示意关系", "密度差异", "可观察", "可确认", "不能确认", "未确认", "不编造"],
                     ]
                 ),
             ],

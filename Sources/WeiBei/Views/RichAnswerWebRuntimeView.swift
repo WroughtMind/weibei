@@ -20,6 +20,7 @@ struct RichAnswerWebRuntimeView: View {
     @State private var contentHeight: CGFloat = 240
     @State private var contentOverflowed = false
     @State private var runtimeError: String?
+    @State private var verificationAfterRequestID = 0
 
     init(
         scene: RichAnswerScene,
@@ -70,6 +71,7 @@ struct RichAnswerWebRuntimeView: View {
                     contentHeight: $contentHeight,
                     contentOverflowed: $contentOverflowed,
                     runtimeError: $runtimeError,
+                    verificationAfterRequestID: verificationAfterRequestID,
                     onOpenEvidence: onOpenEvidence,
                     onAction: onAction,
                     onRuntimeReady: onRuntimeReady
@@ -96,6 +98,10 @@ struct RichAnswerWebRuntimeView: View {
             }
         }
         .accessibilityLabel(entries.map(\.scene.title).joined(separator: "；"))
+        .onRichAnswerVerificationStage { stage in
+            guard stage == .after else { return }
+            verificationAfterRequestID &+= 1
+        }
     }
 
     private var collapsedHeightLimit: CGFloat {
@@ -265,6 +271,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
     @Binding var contentHeight: CGFloat
     @Binding var contentOverflowed: Bool
     @Binding var runtimeError: String?
+    let verificationAfterRequestID: Int
     var onOpenEvidence: (RichAnswerEvidence) -> Void
     var onAction: (String) -> Void
     var onRuntimeReady: () -> Void
@@ -345,6 +352,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             onRuntimeReady: onRuntimeReady
         )
         context.coordinator.sendProgramsIfReady()
+        context.coordinator.handleVerificationAfterRequest(verificationAfterRequestID)
     }
 
     static func dismantleNSView(_ container: RichAnswerWebClippingView, coordinator: Coordinator) {
@@ -394,6 +402,8 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         private var readinessWorkItem: DispatchWorkItem?
         private var heightRecoveryWorkItem: DispatchWorkItem?
         private var heightUpdateWorkItem: DispatchWorkItem?
+        private var verificationWorkItem: DispatchWorkItem?
+        private var handledVerificationAfterRequestID = 0
         private var hasRuntimeHeight = false
 
         init(
@@ -558,6 +568,16 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             heightRecoveryWorkItem = nil
             heightUpdateWorkItem?.cancel()
             heightUpdateWorkItem = nil
+            verificationWorkItem?.cancel()
+            verificationWorkItem = nil
+        }
+
+        func handleVerificationAfterRequest(_ requestID: Int) {
+            guard RichAnswerVerificationBridge.isEnabled,
+                  requestID > 0,
+                  requestID != handledVerificationAfterRequestID else { return }
+            handledVerificationAfterRequestID = requestID
+            scheduleVerificationInteraction(requestID: requestID)
         }
 
         private func scheduleReadinessTimeout() {
@@ -601,6 +621,34 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
                     contentOverflowed.wrappedValue = nextHeight > heightLimit + 1
                 }
                 scheduleHeightRecovery(attempt: attempt + 1)
+            }
+        }
+
+        private func scheduleVerificationInteraction(requestID: Int, attempt: Int = 0) {
+            verificationWorkItem?.cancel()
+            guard RichAnswerVerificationBridge.isEnabled, attempt < 5 else { return }
+            let delay: TimeInterval = attempt == 0 ? 0.08 : min(0.16 * Double(attempt + 1), 0.72)
+            let workItem = DispatchWorkItem { [weak self] in
+                self?.performVerificationInteraction(requestID: requestID, attempt: attempt)
+            }
+            verificationWorkItem = workItem
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+        }
+
+        private func performVerificationInteraction(requestID: Int, attempt: Int) {
+            guard RichAnswerVerificationBridge.isEnabled else { return }
+            guard isReady,
+                  hasRuntimeHeight,
+                  sentPayloadFingerprint != nil,
+                  let webView else {
+                scheduleVerificationInteraction(requestID: requestID, attempt: attempt + 1)
+                return
+            }
+            webView.evaluateJavaScript(Self.verificationInteractionScript) { [weak self] value, error in
+                guard let self else { return }
+                if error != nil || !Self.verificationInteractionSucceeded(value) {
+                    scheduleVerificationInteraction(requestID: requestID, attempt: attempt + 1)
+                }
             }
         }
 
@@ -712,6 +760,106 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         })();
         """
 
+        private static let verificationInteractionScript = """
+        (() => {
+          const visible = (element) => {
+            if (!element || element.disabled) return false;
+            const style = window.getComputedStyle(element);
+            if (style.display === "none" || style.visibility === "hidden" || Number(style.opacity) === 0) return false;
+            const rect = element.getBoundingClientRect();
+            return rect.width > 1 && rect.height > 1 && rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth;
+          };
+          const labelOf = (element) => String(element?.textContent || element?.getAttribute("aria-label") || "").trim().toLowerCase();
+          const dispatchPointer = (element, type) => {
+            const eventInit = { bubbles: true, pointerId: 1, pointerType: "mouse", isPrimary: true };
+            const event = typeof PointerEvent === "function" ? new PointerEvent(type, eventInit) : new MouseEvent(type === "pointerdown" ? "mousedown" : "mouseup", { bubbles: true });
+            element.dispatchEvent(event);
+          };
+          const press = (element) => {
+            if (!visible(element)) return false;
+            element.scrollIntoView({ block: "center", inline: "nearest" });
+            dispatchPointer(element, "pointerdown");
+            dispatchPointer(element, "pointerup");
+            element.click();
+            return true;
+          };
+          const first = (selectors) => {
+            for (const selector of selectors) {
+              const found = Array.from(document.querySelectorAll(selector)).find(visible);
+              if (found) return found;
+            }
+            return null;
+          };
+          const byText = (selectors, patterns, rejectPatterns = []) => {
+            const candidates = selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector)));
+            return candidates.find((element) => {
+              if (!visible(element)) return false;
+              const label = labelOf(element);
+              return patterns.some((pattern) => pattern.test(label)) && !rejectPatterns.some((pattern) => pattern.test(label));
+            }) || null;
+          };
+          const advanceRange = () => {
+            const range = Array.from(document.querySelectorAll('input[type="range"]')).find(visible);
+            if (!range) return false;
+            const minimum = Number(range.min || 0);
+            const maximum = Number(range.max || 100);
+            const step = Number(range.step || ((maximum - minimum) / 8));
+            const current = Number(range.value || minimum);
+            if (!Number.isFinite(minimum) || !Number.isFinite(maximum) || minimum >= maximum) return false;
+            const safeStep = Number.isFinite(step) && step > 0 ? step : (maximum - minimum) / 8;
+            const next = current + Math.max(safeStep, (maximum - minimum) * 0.28);
+            range.value = String(next <= maximum ? next : minimum + (maximum - minimum) * 0.35);
+            range.dispatchEvent(new Event("input", { bubbles: true }));
+            range.dispatchEvent(new Event("change", { bubbles: true }));
+            return true;
+          };
+          const executionNext = first([
+            '[data-action="execution-next"]',
+            '[data-testid="execution-next"]',
+            '[aria-label*="execution-next" i]',
+            'button.execution-next',
+            '.execution-controls button:not(:disabled):last-of-type',
+            '.ra-execution-controls button:not(:disabled):last-of-type'
+          ]) || byText(["button"], [/下一步|next|step/], [/上一步|previous|prev|back/]);
+          if (press(executionNext)) return true;
+          const processStep = first([
+            '[data-action="process-next"]',
+            '[data-testid="process-next"]',
+            '.ra-process button:not(.is-active):not(.is-selected)',
+            '.process-step button:not(.is-active):not(.is-selected)',
+            '[role="listitem"] button:not(.is-active):not(.is-selected)'
+          ]) || byText(["button"], [/过程|阶段|step|process/], [/reset|重置|证据|来源/]);
+          if (press(processStep)) return true;
+          const argumentUnit = first([
+            '.ra-argument-reader__copy button:not(.is-active)',
+            '[data-component="ArgumentUnit"]:not(.is-active) button',
+            '[data-role="ArgumentUnit"]:not(.is-active) button'
+          ]);
+          if (press(argumentUnit)) return true;
+          const causalEvent = first([
+            '.ra-causal-track__rail button:not(.is-active):not(.is-selected)',
+            '.policy-river button:not(.is-selected)',
+            '[data-component="CausalEvent"]:not(.is-active) button',
+            '[data-role="CausalEvent"]:not(.is-active) button'
+          ]);
+          if (press(causalEvent)) return true;
+          const valueOption = first([
+            '[role="option"]:not([aria-selected="true"])',
+            '.value-picker button:not(.is-active):not(.is-selected)',
+            '[data-component="ValuePicker"] button:not(.is-active):not(.is-selected)',
+            '[data-role="value-option"]:not(.is-active):not(.is-selected)'
+          ]);
+          if (press(valueOption)) return true;
+          const spatialToggle = first([
+            '.ra-spatial-view__layers input[type="checkbox"]',
+            '[data-component="SpatialToggle"] input[type="checkbox"]',
+            '[data-role="spatial-toggle"] input[type="checkbox"]'
+          ]);
+          if (press(spatialToggle)) return true;
+          return advanceRange();
+        })();
+        """
+
         private static func heightValue(from value: Any?) -> CGFloat? {
             if let number = value as? NSNumber {
                 return CGFloat(number.doubleValue)
@@ -723,6 +871,16 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
                 return value
             }
             return nil
+        }
+
+        private static func verificationInteractionSucceeded(_ value: Any?) -> Bool {
+            if let number = value as? NSNumber {
+                return number.boolValue
+            }
+            if let value = value as? Bool {
+                return value
+            }
+            return false
         }
     }
 }

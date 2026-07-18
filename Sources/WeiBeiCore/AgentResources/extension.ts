@@ -282,10 +282,49 @@ interface RichAnswerFaultPayload extends RichAnswerFaultInput {
   remainingAttempts: number;
   mustDiscardRejectedPayload: true;
   mayPatchPreviousPayload: false;
+  audience: "model_replanning_only";
+  userVisibleFailureTextAllowed: false;
+  preserveDiagnostic: {
+    code: RichAnswerFaultCode;
+    jsonPath: string;
+    humanFixHint: string;
+    sceneID?: string;
+    nodeID?: string;
+    field?: string;
+    line?: number;
+    column?: number;
+  };
+  replanningFeedback:
+    | {
+        mode: "repair";
+        primarySignal: {
+          code: RichAnswerFaultCode;
+          meaning: string;
+          requiredAction: string;
+        };
+        layerChoice: {
+          allowed: Array<"program" | "ui" | "plain_text">;
+          chooseProgramWhen: string;
+          chooseUIWhen: string;
+          choosePlainTextWhen: string;
+        };
+        nextAttemptChecklist: string[];
+        forbiddenActions: string[];
+        pathSpecificRepair: string;
+      }
+    | {
+        mode: "plain_text_fallback";
+        primarySignal: {
+          code: RichAnswerFaultCode;
+          meaning: string;
+          requiredAction: string;
+        };
+        forbiddenActions: string[];
+      };
   nextSubmission:
     | "resubmit_complete_rich_answer_payload"
     | "stop_rich_answer_and_answer_plain_text";
-  fullResubmissionRequired: string;
+  nextActionInstruction: string;
 }
 
 class RichAnswerFaultError extends Error {
@@ -299,11 +338,91 @@ function richAnswerFault(input: RichAnswerFaultInput): never {
   throw new RichAnswerFaultError(input);
 }
 
-function richAnswerFullResubmissionInstruction(remainingAttempts: number): string {
+function richAnswerNextActionInstruction(remainingAttempts: number): string {
   if (remainingAttempts <= 0) {
-    return "三次富回答提交已耗尽：停止提交 weibei_rich_answer，改用普通文本诚实降级，不能声称富回答已生成。";
+    return "三次富回答提交已耗尽：停止提交 weibei_rich_answer，改用普通文本诚实降级；正文只回答用户问题和真实限制，不得提富回答校验、协议失败、repair_fault、payload 或内部工具错误，也不能声称富回答已生成。";
   }
   return "丢弃被拒绝的坏 payload，下一次必须重新提交完整 weibei_rich_answer payload（schemaVersion、contextRevision、narrative、expressionPlan、完整 scenes、evidenceLedger、fallback 全部重发）；不能只解释原因，也不能在坏树基础上局部 patch。";
+}
+
+function richAnswerPathSpecificRepair(input: RichAnswerFaultInput): string {
+  if (input.jsonPath && input.jsonPath !== "$") {
+    const target = [
+      input.sceneID ? `sceneID=${input.sceneID}` : undefined,
+      input.nodeID ? `nodeID=${input.nodeID}` : undefined,
+      input.field ? `field=${input.field}` : undefined,
+      input.line !== undefined ? `line=${input.line}` : undefined,
+      input.column !== undefined ? `column=${input.column}` : undefined,
+    ].filter(Boolean).join("，");
+    return `先修 ${input.jsonPath}${target ? `（${target}）` : ""}：${input.humanFixHint}；然后检查同一层的所有引用、证据绑定和 narrative 场景标记，最后完整重发。`;
+  }
+  return `没有更深 jsonPath 时，不要猜局部补丁；根据 code=${input.code} 和 humanFixHint 重新规划整个表达层，再完整重发。`;
+}
+
+function richAnswerLayerReplanHint(input: RichAnswerFaultInput): string {
+  switch (input.code) {
+    case "invalid_openui_program":
+      return "当前 T1 program 未过受控程序校验：若只是签名、状态类型、引用或行列错误，按目录签名修正 T1；若目录组件不贴合本题学习对象，重新选择 T2 ui。";
+    case "invalid_t2_ui":
+    case "weak_ui":
+      return "当前 T2 ui 未兑现知识对象、语义绑定、能力合同或交互结果：先对照错误里的可见语义摘要；未呈现的对象或关系用短标签、坐标、读数或序列补足，已由 binding 驱动图元或读数实现的互动不要逐字复制过程长句。若表达计划声明过度，收窄为 UI 实际编码的对象、关系和过程；若 T2 确实不贴合，再改选 T1 或更朴素的 T2。";
+    case "scene_layer_choice":
+      return "每个 scene 必须只选一层：选择 T1 program 或 T2 ui，不要同时提交、不要两层都空。";
+    case "catalog_required":
+      return "先重新调用 weibei_ui_catalog 取得本轮相关能力，再基于返回子集选择 T1 program 或 T2 ui。";
+    default:
+      return "先保留当前学习目标和来源结论，再按错误位置修复；如果修复会让所选层变成硬凑或无法表达，重新在 T1 program 与 T2 ui 之间选择。";
+  }
+}
+
+function richAnswerReplanningFeedback(
+  input: RichAnswerFaultInput,
+  remainingAttempts: number,
+): RichAnswerFaultPayload["replanningFeedback"] {
+  const primarySignal = {
+    code: input.code,
+    meaning: input.message,
+    requiredAction: remainingAttempts > 0
+      ? `${richAnswerLayerReplanHint(input)} ${richAnswerPathSpecificRepair(input)}`
+      : "停止调用富回答工具，直接正常回答用户问题；只说明真实材料限制，不得暴露校验、协议、payload、repair_fault 或内部工具错误。",
+  };
+
+  if (remainingAttempts <= 0) {
+    return {
+      mode: "plain_text_fallback",
+      primarySignal,
+      forbiddenActions: [
+        "不要再次提交富回答或局部 patch。",
+        "不要把富回答校验、协议失败、payload、repair_fault 或内部工具错误写进用户正文。",
+        "不要声称富回答已经生成。",
+      ],
+    };
+  }
+
+  return {
+    mode: "repair",
+    primarySignal,
+    layerChoice: {
+      allowed: ["program", "ui", "plain_text"],
+      chooseProgramWhen: "目录返回的 T1 深组件签名能真实表达当前知识对象、状态联动和来源绑定，并且不需要自造组件、脚本、SVG、网页壳或任意配置。",
+      chooseUIWhen: "没有贴合的 T1 深组件，或当前问题需要用受控节点、数据集、图层、binding、证据位置和读数组合成长尾形态。",
+      choosePlainTextWhen: "证据不足、目录能力不足、三次提交耗尽，或继续做 UI 会误导用户；文本要直接回答问题和限制，不提内部校验失败。",
+    },
+    nextAttemptChecklist: [
+      "先保持原问题的学习目标、专业结论和真实来源，不把修复变成换题或删减关键信息。",
+      richAnswerLayerReplanHint(input),
+      "expressionPlan 必须覆盖 scene.family、学习收益、交互结果、来源绑定和首选表面；scenes 必须与 narrative 的场景标记一一对应。",
+      "T1 program 与 T2 ui 二选一；如果换层，删除另一层全部字段，并同步 evidenceLedger、scene.evidenceIDs 和 narrative。",
+      "完整重发 schemaVersion、contextRevision、narrative、expressionPlan、scenes、evidenceLedger、fallback；不要只补 jsonPath 那一个字段。",
+    ],
+    forbiddenActions: [
+      "不要把“富回答校验失败”“协议未通过”“payload 错误”“repair_fault”写进用户正文。",
+      "不要提交局部 patch、解释原因代替工具调用，或在坏 payload 上改几个字段继续赌。",
+      "不要写 56 题 caseID、不要新增专属场景组件、不要固定某几个外部渲染器或技术栈名单。",
+      "不要用自造 HTML、CSS、JavaScript、SVG path、网页外壳或装饰性卡片伪装成生成式 UI。",
+    ],
+    pathSpecificRepair: richAnswerPathSpecificRepair(input),
+  };
 }
 
 function richAnswerFaultMessage(
@@ -316,10 +435,23 @@ function richAnswerFaultMessage(
     remainingAttempts,
     mustDiscardRejectedPayload: true,
     mayPatchPreviousPayload: false,
+    audience: "model_replanning_only",
+    userVisibleFailureTextAllowed: false,
+    preserveDiagnostic: {
+      code: input.code,
+      jsonPath: input.jsonPath,
+      humanFixHint: input.humanFixHint,
+      sceneID: input.sceneID,
+      nodeID: input.nodeID,
+      field: input.field,
+      line: input.line,
+      column: input.column,
+    },
+    replanningFeedback: richAnswerReplanningFeedback(input, remainingAttempts),
     nextSubmission: remainingAttempts > 0
       ? "resubmit_complete_rich_answer_payload"
       : "stop_rich_answer_and_answer_plain_text",
-    fullResubmissionRequired: richAnswerFullResubmissionInstruction(remainingAttempts),
+    nextActionInstruction: richAnswerNextActionInstruction(remainingAttempts),
   };
   return JSON.stringify(payload, undefined, 2);
 }
@@ -332,7 +464,7 @@ function rethrowRichAnswerFault(error: unknown, remainingAttempts: number): neve
     code: "invalid_plan",
     jsonPath: "$",
     message: error instanceof Error ? error.message : String(error),
-    humanFixHint: "按错误位置重新生成完整富回答 payload；如果无法确定修复点，停止富回答并保留普通文本。",
+    humanFixHint: "按错误位置重新生成完整富回答 payload；如果无法确定修复点，先重查目录并在 T1 program 与 T2 ui 之间重新选择；三次耗尽后停止富回答并正常回答用户问题，不暴露内部校验失败。",
   }, remainingAttempts));
 }
 
@@ -784,8 +916,8 @@ function currentTurnEvidenceStatement(evidence: string): string | undefined {
 
 function courseSearchTerms(query: string): string[] {
   const lower = query.toLowerCase();
-  const terms = lower.match(/[\p{L}\p{N}_-]{2,}/gu) ?? [];
-  const chineseRuns = lower.match(/[\u4e00-\u9fff]{2,}/g) ?? [];
+  const terms: string[] = lower.match(/[\p{L}\p{N}_-]{2,}/gu) ?? [];
+  const chineseRuns: string[] = lower.match(/[\u4e00-\u9fff]{2,}/g) ?? [];
   for (const run of chineseRuns) {
     if (run.length <= 20) terms.push(run);
     for (let index = 0; index < run.length - 1; index += 1) {
@@ -1207,7 +1339,7 @@ const RICH_ANSWER_FAMILY_CONTRACT = [
   "所有状态名和组件 id 必须唯一；$状态、组件引用和 root 组件树必须完整可达，不能有重复、悬空、循环或孤立声明。",
   "EvidenceSnippet、ArgumentUnit、CausalEvent、SpatialPoint 中的 evidenceID 必须属于 scene.evidenceIDs，并与本轮 evidenceLedger 中的真实材料对应；普通文本里出现 id 不算证据绑定。",
   "工具会在拒绝 program 时批量返回场景、行列、预期组件签名和修正动作。按完整诊断修正；仍有遗漏时可再修一轮，不要用改写字符串绕过校验。",
-  "工具拒绝富回答时会返回 weibei.rich_answer.repair_fault；必须丢弃坏 payload 并重发完整 RichAnswerUI，不能解释原因代替提交，也不能在坏树基础上局部 patch。remainingAttempts 为 0 时停止富回答并诚实使用普通文本。",
+  "工具拒绝富回答时会返回 weibei.rich_answer.repair_fault；必须保留其中的 code、jsonPath 与 humanFixHint，并按 replanningFeedback 在 T1 program 与 T2 ui 之间重新选择或修正后完整重发 RichAnswerUI。不能解释原因代替提交，也不能在坏树基础上局部 patch。remainingAttempts 为 0 时停止富回答并诚实使用普通文本；正文只回答用户问题和真实限制，不得提富回答校验、协议失败、repair_fault、payload 或内部工具错误。",
   OPENUI_STATE_SHAPE_GUIDANCE,
   COMPOSABLE_PRIMITIVE_CATALOG,
 ].join("\n");
@@ -3866,15 +3998,6 @@ function validateRichAnswerUI(
     ) {
       issue(`富回答场景 ${scene.id} 的节点 ${node.id} 不能声明 fill`);
     }
-    if (node.role === "bar") {
-      const dataset = node.datasetID === undefined ? undefined : datasetsByID.get(node.datasetID);
-      if (
-        dataset === undefined ||
-        dataset.rows.some((row) => row.value === undefined || !Number.isFinite(row.value))
-      ) {
-        issue(`富回答场景 ${scene.id} 的 bar 节点 ${node.id} 每个数据行都必须提供 x/y/value`);
-      }
-    }
     if (node.region !== undefined) {
       if (
         (node.region.x + node.region.width > 1 || node.region.y + node.region.height > 1)
@@ -4092,7 +4215,7 @@ function validateGeneratedRichAnswerFamilyContract(scene: RichAnswerSceneParam):
         "ProcessStepper", "QuadraticMechanism", "ExecutionTrack", "BalanceExperiment",
         "ArgumentReader", "CausalTrack",
       ) || roles.has("sequence") || (
-        usesRole("scrubber", "select", "toggle", "probe") &&
+        usesRole("slider", "scrubber", "select", "toggle", "probe") &&
         (dataRowCount >= 2 || roles.has("text") || roles.has("metric"))
       );
       break;
@@ -4164,21 +4287,127 @@ function visibleRichAnswerUISemanticText(scene: RichAnswerSceneParam): string {
 function semanticTextIncludes(haystack: string, needle: string): boolean {
   const normalizedHaystack = richAnswerSemanticSearchText(haystack);
   const normalizedNeedle = richAnswerSemanticSearchText(needle);
-  if (normalizedNeedle.length === 1) return normalizedHaystack.includes(normalizedNeedle);
+  if (normalizedNeedle.length === 1) {
+    if (/^[a-z]$/i.test(normalizedNeedle)) {
+      const escaped = normalizedNeedle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      return new RegExp(`(^|[^a-z0-9])${escaped}($|[^a-z0-9])`, "iu").test(haystack);
+    }
+    return normalizedHaystack.includes(normalizedNeedle);
+  }
   if (normalizedNeedle.length < 2) return false;
   if (normalizedHaystack.includes(normalizedNeedle)) return true;
-  const needleCharacters = new Set(Array.from(normalizedNeedle));
-  if (needleCharacters.size === 0) return false;
-  const matchedCharacters = Array.from(needleCharacters)
-    .filter((character) => normalizedHaystack.includes(character)).length;
-  const requiredRatio = normalizedNeedle.length <= 4 ? 1 : 0.7;
-  return matchedCharacters / needleCharacters.size >= requiredRatio;
+  if (normalizedNeedle.length <= 4) return false;
+  const characters = Array.from(normalizedNeedle);
+  const bigrams = new Set(characters.slice(0, -1).map((character, index) =>
+    `${character}${characters[index + 1]}`
+  ));
+  if (bigrams.size === 0) return false;
+  const matchedBigrams = Array.from(bigrams)
+    .filter((bigram) => normalizedHaystack.includes(bigram)).length;
+  const requiredRatio = normalizedNeedle.length <= 8 ? 0.6 : 0.45;
+  return matchedBigrams >= 2 && matchedBigrams / bigrams.size >= requiredRatio;
 }
 
 function richAnswerSemanticSearchText(text: string): string {
   return Array.from(text.toLocaleLowerCase())
-    .filter((character) => /[\p{Letter}\p{Number}=²π]/u.test(character))
+    .filter((character) => /[\p{Letter}\p{Number}=²π√∝Δ<>\/≤≥±]/u.test(character))
     .join("");
+}
+
+const RICH_ANSWER_INTERACTION_PROCESS_PATTERN =
+  /(?:拖动|滑动|调节|调整|切换|选择|点击|探查|探针|观察|联动|播放|暂停|步进|筛选|缩放|旋转|重置|对照|比较)/u;
+
+function richAnswerUIHasBoundSemanticInteraction(scene: RichAnswerSceneParam): boolean {
+  const ui = scene.ui;
+  if (ui === undefined || (ui.bindings ?? []).length === 0) return false;
+  const datasetsByID = new Map((ui.datasets ?? []).map((dataset) => [dataset.id, dataset]));
+  return (ui.bindings ?? []).some((binding) => {
+    const hasControl = ui.nodes.some((node) =>
+      node.bindingID === binding.id && RICH_ANSWER_UI_BINDING_ROLES.has(node.role)
+    );
+    const drivenNodes = ui.nodes.filter((node) =>
+      node.bindingID === binding.id && RICH_ANSWER_UI_BINDING_OUTPUT_ROLES.has(node.role)
+    );
+    return hasControl && drivenNodes.some((node) => {
+      if (node.datasetID === undefined) return false;
+      const dataset = datasetsByID.get(node.datasetID);
+      return dataset !== undefined && richAnswerRowsHaveChangingOutcome(
+        dataset.rows,
+        node.role === "sequence",
+      );
+    });
+  });
+}
+
+const RICH_ANSWER_GENERIC_RELATION_BIGRAMS = new Set([
+  "通过", "变化", "观察", "对应", "关系", "增加", "减少", "上升", "下降", "影响", "结果", "条件", "数据",
+]);
+
+function richAnswerSemanticAnchorTokens(text: string): string[] {
+  const matches = text.match(/[A-Za-z]+|[0-9]+(?:\.[0-9]+)?|[πΔ√][A-Za-z0-9]+/gu) ?? [];
+  return Array.from(new Set(matches.map((match) => match.toLocaleLowerCase())));
+}
+
+function richAnswerHanBigrams(text: string): string[] {
+  const runs = text.match(/[\p{Script=Han}]+/gu) ?? [];
+  const bigrams = runs.flatMap((run) => {
+    const characters = Array.from(run);
+    return characters.slice(0, -1).map((character, index) =>
+      `${character}${characters[index + 1]}`
+    );
+  }).filter((bigram) => !RICH_ANSWER_GENERIC_RELATION_BIGRAMS.has(bigram));
+  return Array.from(new Set(bigrams));
+}
+
+function richAnswerRelationHasVisibleAnchors(visibleText: string, relation: string): boolean {
+  if (semanticTextIncludes(visibleText, relation)) return true;
+  const tokenMatches = richAnswerSemanticAnchorTokens(relation)
+    .filter((token) => semanticTextIncludes(visibleText, token)).length;
+  const bigramMatches = richAnswerHanBigrams(relation)
+    .filter((bigram) => visibleText.includes(bigram)).length;
+  return tokenMatches >= 2 || bigramMatches >= 2 || (tokenMatches >= 1 && bigramMatches >= 1);
+}
+
+function richAnswerUIHasSemanticRelationStructure(
+  scene: RichAnswerSceneParam,
+  relations: string[],
+  visibleText: string,
+): boolean {
+  const ui = scene.ui;
+  if (ui === undefined) return false;
+  if (!relations.some((relation) => richAnswerRelationHasVisibleAnchors(visibleText, relation))) {
+    return false;
+  }
+  const relationRoles = new Set([
+    "line", "path", "point", "area", "bar", "dotMatrix", "vector", "sequence", "metric",
+  ]);
+  const datasetsByID = new Map((ui.datasets ?? []).map((dataset) => [dataset.id, dataset]));
+  const hasNamedAxis = ui.nodes.some((node) =>
+    (node.xAxis?.label?.trim().length ?? 0) > 0 || (node.yAxis?.label?.trim().length ?? 0) > 0
+  );
+  const hasNamedBinding = (ui.bindings ?? []).some((binding) => binding.label.trim().length > 0);
+  return ui.nodes.some((node) => {
+    if (!relationRoles.has(node.role) || node.datasetID === undefined) return false;
+    const dataset = datasetsByID.get(node.datasetID);
+    if (dataset === undefined || !richAnswerRowsHaveChangingOutcome(
+      dataset.rows,
+      node.role === "sequence",
+    )) return false;
+    const hasVisibleLabel = (node.label?.trim().length ?? 0) > 0 ||
+      dataset.rows.some((row) => (row.label?.trim().length ?? 0) > 0);
+    return hasVisibleLabel || hasNamedAxis || hasNamedBinding;
+  });
+}
+
+function richAnswerBoundedVisibleSemanticSummary(scene: RichAnswerSceneParam): string {
+  const roles = Array.from(new Set(scene.ui?.nodes.map((node) => node.role) ?? [])).join(",");
+  const visibleText = visibleRichAnswerUISemanticText(scene).replace(/\s+/g, " ").trim();
+  const summary = `roles=${roles || "none"}; text=${visibleText || "none"}`;
+  return summary.length <= 360 ? summary : `${summary.slice(0, 357)}...`;
+}
+
+function richAnswerDeclarationSamples(values: string[]): string {
+  return values.slice(0, 2).join("、");
 }
 
 function validateGeneratedRichAnswerIntentContract(
@@ -4204,29 +4433,63 @@ function validateGeneratedRichAnswerIntentContract(
     }
   }
 
-  const declaredConcepts = [
-    ...(plan.knowledgeObjects ?? []),
-    ...(plan.knowledgeRelations ?? []),
-    ...(plan.knowledgeProcesses ?? []),
-  ];
-  if (declaredConcepts.length > 0) {
-    const visibleText = visibleRichAnswerUISemanticText(scene);
-    const missingConcepts = declaredConcepts.filter((concept) => !semanticTextIncludes(visibleText, concept));
-    if (missingConcepts.length > 0) {
-      throw new Error(`富回答场景 ${scene.id} 没有在可见 UI 中呈现已声明知识义务：${missingConcepts.join("、")}`);
+  const visibleText = visibleRichAnswerUISemanticText(scene);
+  const missingCategories: string[] = [];
+  const knowledgeObjects = plan.knowledgeObjects ?? [];
+  if (knowledgeObjects.length > 0) {
+    const matchedObjectCount = knowledgeObjects.filter((concept) =>
+      semanticTextIncludes(visibleText, concept)
+    ).length;
+    const requiredObjectCount = Math.min(2, knowledgeObjects.length);
+    if (matchedObjectCount < requiredObjectCount) {
+      missingCategories.push(`知识对象（至少可见 ${requiredObjectCount} 项）：${richAnswerDeclarationSamples(knowledgeObjects)}`);
     }
+  }
+
+  const knowledgeRelations = plan.knowledgeRelations ?? [];
+  if (
+    knowledgeRelations.length > 0 &&
+    !knowledgeRelations.some((relation) => semanticTextIncludes(visibleText, relation)) &&
+    !richAnswerUIHasSemanticRelationStructure(scene, knowledgeRelations, visibleText)
+  ) {
+    missingCategories.push(`知识关系：${richAnswerDeclarationSamples(knowledgeRelations)}`);
+  }
+
+  const knowledgeProcesses = plan.knowledgeProcesses ?? [];
+  if (knowledgeProcesses.length > 0) {
+    const hasVisibleProcess = knowledgeProcesses.some((process) =>
+      semanticTextIncludes(visibleText, process)
+    );
+    const declaresInteractiveProcess = knowledgeProcesses.some((process) =>
+      RICH_ANSWER_INTERACTION_PROCESS_PATTERN.test(process)
+    );
+    const processHasVisibleAnchors = knowledgeProcesses.some((process) =>
+      richAnswerRelationHasVisibleAnchors(visibleText, process)
+    );
+    const hasStructuredProcess =
+      (scene.ui.nodes.some((node) => node.role === "sequence") && processHasVisibleAnchors) ||
+      (richAnswerUIHasBoundSemanticInteraction(scene) &&
+        (declaresInteractiveProcess || processHasVisibleAnchors));
+    if (!hasVisibleProcess && !hasStructuredProcess) {
+      missingCategories.push(`知识过程：${richAnswerDeclarationSamples(knowledgeProcesses)}`);
+    }
+  }
+
+  if (missingCategories.length > 0) {
+    throw new Error(
+      `富回答场景 ${scene.id} 没有呈现声明的语义类别：${missingCategories.join("；")}；` +
+      `可见语义摘要：${richAnswerBoundedVisibleSemanticSummary(scene)}`,
+    );
   }
 
   const embodiedNatures = new Set([
     "objectMechanism",
     "spatialStructure",
-    "processOrState",
-    "argumentOrEvidence",
     "imageObservation",
   ]);
   const requiresEmbodiedVisual = (plan.knowledgeNatures ?? []).some((nature) =>
     embodiedNatures.has(nature)
-  ) || (plan.knowledgeProcesses?.length ?? 0) > 0;
+  );
   if (!requiresEmbodiedVisual) return;
 
   const embodiedRoles = new Set([
@@ -4238,9 +4501,13 @@ function validateGeneratedRichAnswerIntentContract(
     "sequence",
     "bar",
     "dotMatrix",
+    "line",
+    "path",
+    "point",
+    "metric",
   ]);
   if (!Array.from(embodiedRoles).some((role) => roles.has(role))) {
-    throw new Error(`富回答场景 ${scene.id} 的物体、空间、证据或过程知识不能只用曲线、读数和控件表达`);
+    throw new Error(`富回答场景 ${scene.id} 必须把物体、空间或图像知识绑定到可见语义图元`);
   }
   const bindings = scene.ui.bindings ?? [];
   if (bindings.length > 0) {
@@ -4248,7 +4515,7 @@ function validateGeneratedRichAnswerIntentContract(
       scene.ui!.nodes.some((node) => node.bindingID === binding.id && embodiedRoles.has(node.role))
     );
     if (!controlDrivesEmbodiedMark) {
-      throw new Error(`富回答场景 ${scene.id} 的控件必须改变语义图元，不能只改曲线或读数`);
+      throw new Error(`富回答场景 ${scene.id} 的控件必须改变与知识对象绑定的可见图元或读数`);
     }
   }
 }
@@ -4730,8 +4997,11 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           useWhen: "返回的 T1 组件无法诚实表达当前知识形状时，组合通用原语；不要为题目另造专属整页组件。",
           guidance: COMPOSABLE_PRIMITIVE_CATALOG.split("\n"),
           intentGuidance: [
-            "如果 knowledgeNatures 只有 functionOrDataCurve，曲线、点、坐标、探针和读数可以是主表达。",
-            "如果 knowledgeNatures 包含 objectMechanism、spatialStructure、processOrState、argumentOrEvidence 或 imageObservation，不能只给 line/path/metric/control；必须用 shape、vector、region、area、sequence、image、bar、dotMatrix 等通用图元表达对象、空间、状态或过程。",
+            "不要按 knowledgeNatures 机械套固定 role 组合；曲线、点、区域、图像、形状、序列、读数都只是可组合的视觉语法。",
+            "line/path/point/metric 可以在函数、过程、机制、论证或证据场景中成为主表达，前提是它们真实编码了知识对象、关系或状态，而不是装饰线。",
+            "只有当材料和问题确实依赖空间位置、图像局部或对象外形时，才需要选择 image、region、shape、area 等对应图元；不要为通过形式检查而硬凑。",
+            "有控件时，控件必须改变与学习目标绑定的可见图元或读数；可以同时协调多个控件、图层和状态。",
+            "knowledgeObjects 要在可见标签里留下关键锨点；knowledgeRelations 可由有标注的曲线、数据、读数或序列结构编码；knowledgeProcesses 若是拖动、切换、观察等互动，可由真实 binding 结构兑现，不必把计划长句逐字复制进 UI。",
             "visualPrimitives 必须列出实际会使用的 T2 role，后续 weibei_rich_answer 会校验声明与 UI 节点一致。",
           ],
         },
@@ -4773,7 +5043,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           code: "attempts_exhausted",
           jsonPath: "$",
           message: "本轮富回答最多提交三次；坏 payload 不会被渲染。",
-          humanFixHint: "停止调用 weibei_rich_answer，用普通文本诚实降级，并说明富回答协议未通过。",
+          humanFixHint: "停止调用 weibei_rich_answer，用普通文本诚实降级；正文只回答用户问题和真实限制，不要提富回答校验、协议失败、repair_fault、payload 或内部工具错误。",
         }, 0));
       }
       try {
@@ -4831,7 +5101,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           humanFixHint: "修正正文中的来源标签与 <!-- weibei-scene:场景ID --> 插入点，然后完整重发 RichAnswerUI。",
         });
       }
-      const evidenceIDs = params.evidenceLedger.map((entry) => entry.id);
+      const evidenceIDs: string[] = params.evidenceLedger.map((entry) => entry.id);
       if (new Set(evidenceIDs).size !== evidenceIDs.length) {
         richAnswerFault({
           code: "duplicate_id",
@@ -4842,7 +5112,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         });
       }
 
-      const allowedAssetIDs = new Set(
+      const allowedAssetIDs = new Set<string>(
         current.course.catalog
           .filter((item) => item.isCurrentMaterial || searchedCourseItemIDs.has(item.id))
           .map((item) => item.id),
@@ -4885,7 +5155,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         return { ...entry, sourceLabel, isTruncated: source.isTruncated, tags: [] };
       });
       const missingNarrativeSources = Array.from(
-        new Set(normalizedEvidenceLedger.map((entry) => entry.sourceLabel)),
+        new Set<string>(normalizedEvidenceLedger.map((entry) => entry.sourceLabel)),
       ).filter((sourceLabel) => !plainNarrative.includes(sourceLabel));
       if (missingNarrativeSources.length > 0) {
         richAnswerFault({
@@ -4897,7 +5167,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         });
       }
 
-      const allowedEvidenceIDs = new Set(evidenceIDs);
+      const allowedEvidenceIDs = new Set<string>(evidenceIDs);
       let operationCount = 0;
       for (const [sceneIndex, scene] of params.scenes.entries()) {
         const scenePath = `$.scenes[${sceneIndex}]`;
@@ -5117,7 +5387,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
             sceneID: scene.id,
             field: scene.program !== undefined ? "program" : "ui",
             message: error instanceof Error ? error.message : String(error),
-            humanFixHint: "重新选择更能表达知识对象、关系、过程和交互结果的 T1/T2 形态；弱 UI 不会被渲染，必须完整重发。",
+            humanFixHint: "对照 message 里的可见语义摘要：未呈现的对象或关系用短标签、坐标、读数或序列补足；已有控件通过 binding 驱动可变图元或读数时，不要重复互动长句；如果 expressionPlan 声明过度，收窄为 UI 真正编码的内容。必须完整重发。",
           });
         }
       }

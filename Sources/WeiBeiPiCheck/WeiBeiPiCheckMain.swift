@@ -88,6 +88,7 @@ struct WeiBeiPiCheckMain {
                 )
                 let coverage = RichAnswerLiveCases.matrixCoverage(for: selectedRuns)
                 print("pi-rich-answer evidence plan: \(runConfiguration.runDescription)")
+                print("sourceHash=\(runConfiguration.sourceHash) matrixHash=\(runConfiguration.matrixHash)")
                 print("selected=\(selectedRuns.count) repetitions=\(runConfiguration.repetitions.count) totalAttempts=\(selectedRuns.count * runConfiguration.repetitions.count)")
                 print("coverage=\(coverage.isComplete ? "full-matrix" : "partial") \(coverage.summary)")
                 for repetition in runConfiguration.repetitions {
@@ -97,6 +98,48 @@ struct WeiBeiPiCheckMain {
                 }
             } catch {
                 fputs("pi-rich-answer evidence plan failed: \(error.localizedDescription)\n", stderr)
+                exit(1)
+            }
+            return
+        }
+
+        if CommandLine.arguments.contains("--rich-answer-evidence-revalidate-degradations") {
+            do {
+                let recordURLs = try richAnswerOfflineRevalidationRecordURLs(
+                    from: CommandLine.arguments,
+                    after: "--rich-answer-evidence-revalidate-degradations"
+                )
+                let result = try revalidateRichAnswerDegradationRecords(recordURLs)
+                print(
+                    "pi-rich-answer offline degradation revalidation completed: automatedPassed=\(result.automatedPassed) reviewRequired=\(result.reviewRequired.count) failed=\(result.failures.count)"
+                )
+                if !result.failures.isEmpty {
+                    fputs(result.failures.joined(separator: "\n") + "\n", stderr)
+                    exit(1)
+                }
+            } catch {
+                fputs("pi-rich-answer offline degradation revalidation failed: \(error.localizedDescription)\n", stderr)
+                exit(1)
+            }
+            return
+        }
+
+        if CommandLine.arguments.contains("--rich-answer-evidence-revalidate-rich") {
+            do {
+                let recordURLs = try richAnswerOfflineRevalidationRecordURLs(
+                    from: CommandLine.arguments,
+                    after: "--rich-answer-evidence-revalidate-rich"
+                )
+                let result = try revalidateRichAnswerSuccessRecords(recordURLs)
+                print(
+                    "pi-rich-answer offline rich revalidation completed: automatedPassed=\(result.automatedPassed) reviewRequired=\(result.reviewRequired.count) failed=\(result.failures.count)"
+                )
+                if !result.failures.isEmpty {
+                    fputs(result.failures.joined(separator: "\n") + "\n", stderr)
+                    exit(1)
+                }
+            } catch {
+                fputs("pi-rich-answer offline rich revalidation failed: \(error.localizedDescription)\n", stderr)
                 exit(1)
             }
             return
@@ -337,6 +380,9 @@ struct WeiBeiPiCheckMain {
                     print("pi-rich-answer technical record completed: rep=\(repetition) \(runCase.id) final-gates=pending")
                     fflush(stdout)
                 } catch {
+                    if let rejectedReply = error as? PiAgentRejectedReplyError {
+                        reply = rejectedReply.reply
+                    }
                     let elapsedSeconds = Date().timeIntervalSince(startedAt)
                     let validation: RichAnswerEvidenceValidationSnapshot
                     if case .invalidProtocol = runCase {
@@ -587,6 +633,174 @@ struct WeiBeiPiCheckMain {
                 let key = recordAttemptKey(repetition: repetition, runCase: runCase)
                 return recordedAttempts.contains(key) ? nil : key
             }
+        }
+    }
+
+    private static func richAnswerOfflineRevalidationRecordURLs(
+        from arguments: [String],
+        after flag: String
+    ) throws -> [URL] {
+        guard let flagIndex = arguments.firstIndex(of: flag) else {
+            return []
+        }
+        let paths = arguments.dropFirst(flagIndex + 1).filter { !$0.hasPrefix("--") }
+        guard !paths.isEmpty else {
+            throw PiCheckError.invalidEvaluation(
+                "offline degradation revalidation needs one or more record.json paths"
+            )
+        }
+        return paths.map { URL(fileURLWithPath: String($0)) }
+    }
+
+    private static func revalidateRichAnswerSuccessRecords(
+        _ recordURLs: [URL]
+    ) throws -> RichAnswerOfflineRevalidation {
+        let casesByID = Dictionary(uniqueKeysWithValues: RichAnswerLiveCases.successes.map {
+            ($0.id, $0)
+        })
+        let decoder = JSONDecoder()
+        var passed = 0
+        var reviewRequired: [String] = []
+        var failures: [String] = []
+        for recordURL in recordURLs {
+            do {
+                let record = try decoder.decode(
+                    RichAnswerOfflineEvidenceRecord.self,
+                    from: Data(contentsOf: recordURL)
+                )
+                guard record.caseSnapshot.caseKind == "rich" else {
+                    throw PiCheckError.invalidEvaluation(
+                        "\(record.caseSnapshot.id) is \(record.caseSnapshot.caseKind), not rich"
+                    )
+                }
+                guard let checkCase = casesByID[record.caseSnapshot.id] else {
+                    throw PiCheckError.invalidEvaluation(
+                        "unknown rich case \(record.caseSnapshot.id)"
+                    )
+                }
+                let reply = try record.studyAgentReply()
+                let presentation = try validateRichAnswer(reply, for: checkCase)
+                let layer = presentation.scenes.contains(where: { $0.program != nil }) ? "t1" : "t2"
+                let judgment = professionalJudgmentValidation(
+                    reply: reply,
+                    presentation: presentation,
+                    for: checkCase
+                )
+                let reviewReasons = (
+                    judgment.missingRequiredClaims.map { "missing-required:\($0)" }
+                        + judgment.missingBoundaryClaims.map { "missing-boundary:\($0)" }
+                        + judgment.modelOrHumanReviewNotes.map { "human-review:\($0)" }
+                )
+                if reviewReasons.isEmpty {
+                    passed += 1
+                    print("offline-revalidate\tautomated-pass\t\(record.caseSnapshot.id)\t\(layer)\t\(recordURL.path)")
+                } else {
+                    let review = "offline-revalidate\treview-required\t\(record.caseSnapshot.id)\t\(layer)\t\(reviewReasons.joined(separator: "+"))\t\(recordURL.path)"
+                    reviewRequired.append(review)
+                    print(review)
+                }
+            } catch {
+                failures.append(
+                    "offline-revalidate\tfail\t\(recordURL.path)\t\(error.localizedDescription)"
+                )
+            }
+        }
+        return RichAnswerOfflineRevalidation(
+            automatedPassed: passed,
+            reviewRequired: reviewRequired,
+            failures: failures
+        )
+    }
+
+    private static func revalidateRichAnswerDegradationRecords(
+        _ recordURLs: [URL]
+    ) throws -> RichAnswerOfflineRevalidation {
+        let casesByID = Dictionary(uniqueKeysWithValues: RichAnswerLiveCases.degradations.map {
+            ($0.id, $0)
+        })
+        let decoder = JSONDecoder()
+        var passed = 0
+        var failures: [String] = []
+        for recordURL in recordURLs {
+            do {
+                let record = try decoder.decode(
+                    RichAnswerOfflineEvidenceRecord.self,
+                    from: Data(contentsOf: recordURL)
+                )
+                guard record.caseSnapshot.caseKind == "degradation" else {
+                    throw PiCheckError.invalidEvaluation(
+                        "\(record.caseSnapshot.id) is \(record.caseSnapshot.caseKind), not degradation"
+                    )
+                }
+                guard let checkCase = casesByID[record.caseSnapshot.id] else {
+                    throw PiCheckError.invalidEvaluation(
+                        "unknown degradation case \(record.caseSnapshot.id)"
+                    )
+                }
+                let reply = try record.studyAgentReply()
+                try validateRichAnswerDegradation(reply, for: checkCase)
+                passed += 1
+                print("offline-revalidate\tautomated-pass\t\(record.caseSnapshot.id)\t\(recordURL.path)")
+            } catch {
+                failures.append(
+                    "offline-revalidate\tfail\t\(recordURL.path)\t\(error.localizedDescription)"
+                )
+            }
+        }
+        return RichAnswerOfflineRevalidation(
+            automatedPassed: passed,
+            reviewRequired: [],
+            failures: failures
+        )
+    }
+
+    private struct RichAnswerOfflineRevalidation {
+        let automatedPassed: Int
+        let reviewRequired: [String]
+        let failures: [String]
+    }
+
+    private struct RichAnswerOfflineEvidenceRecord: Decodable {
+        let caseSnapshot: CaseSnapshot
+        let modelRawReply: ModelReply?
+
+        struct CaseSnapshot: Decodable {
+            let id: String
+            let caseKind: String
+        }
+
+        struct ModelReply: Decodable {
+            let backend: StudyAgentBackend?
+            let text: String?
+            let richAnswer: RichAnswerPresentation?
+            let noteProposal: StudyAgentNoteProposal?
+            let toolTrace: [String]?
+        }
+
+        func studyAgentReply() throws -> StudyAgentReply {
+            guard let modelRawReply else {
+                throw PiCheckError.invalidEvaluation(
+                    "\(caseSnapshot.id) has no modelRawReply to revalidate"
+                )
+            }
+            guard let backend = modelRawReply.backend else {
+                throw PiCheckError.invalidEvaluation(
+                    "\(caseSnapshot.id) modelRawReply missing backend"
+                )
+            }
+            guard let text = modelRawReply.text,
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw PiCheckError.invalidEvaluation(
+                    "\(caseSnapshot.id) modelRawReply missing text"
+                )
+            }
+            return StudyAgentReply(
+                text: text,
+                backend: backend,
+                richAnswer: modelRawReply.richAnswer,
+                noteProposal: modelRawReply.noteProposal,
+                toolTrace: modelRawReply.toolTrace ?? []
+            )
         }
     }
 
@@ -864,17 +1078,7 @@ struct WeiBeiPiCheckMain {
 
         let hasValidT1 = presentation.scenes.contains { validT1Scene($0, in: presentation, for: checkCase) }
         let hasValidT2 = presentation.scenes.contains { validT2Scene($0, for: checkCase) }
-        let rendererMatches: Bool
-        switch checkCase.rendererRequirement {
-        case .either:
-            rendererMatches = hasValidT1 || hasValidT2
-        case .t1:
-            rendererMatches = hasValidT1
-        case .t2:
-            rendererMatches = hasValidT2
-        }
-
-        guard rendererMatches,
+        guard hasValidT1 || hasValidT2,
               richAnswerLooksInterleaved(reply.text, presentation: presentation) else {
             throw richAnswerFailure(reply, checkCase: checkCase)
         }
@@ -885,41 +1089,104 @@ struct WeiBeiPiCheckMain {
         _ reply: StudyAgentReply,
         for checkCase: RichAnswerLiveDegradationCase
     ) throws {
-        guard reply.backend == .pi,
-              reply.noteProposal == nil,
-              replyToolTraceContains(reply, token: "weibei_context"),
-              containsEveryGroup(reply.text, checkCase.expectedTextGroups),
-              checkCase.forbiddenTextFragments.allSatisfy({ !reply.text.localizedCaseInsensitiveContains($0) }),
-              !reply.text.contains("```json"),
-              !reply.text.contains("weibei.openui.v1") else {
+        let issues = richAnswerDegradationValidationIssues(reply, for: checkCase)
+        guard issues.isEmpty else {
             throw PiCheckError.invalidEvaluation(
-                "\(checkCase.id) did not produce an honest readable degradation"
+                "\(checkCase.id) degradation checks failed: \(issues.joined(separator: ","))"
             )
         }
+    }
 
+    private static func richAnswerDegradationValidationIssues(
+        _ reply: StudyAgentReply,
+        for checkCase: RichAnswerLiveDegradationCase
+    ) -> [String] {
+        var issues: [String] = []
+        issues.append(contentsOf: richAnswerDegradationInvocationIssues(reply))
+        issues.append(contentsOf: richAnswerDegradationReadableLimitationIssues(reply, for: checkCase))
+        issues.append(contentsOf: richAnswerDegradationSourceIssues(reply, for: checkCase))
+        issues.append(contentsOf: richAnswerDegradationRichSceneIssues(reply, for: checkCase))
+        return issues
+    }
+
+    private static func richAnswerDegradationInvocationIssues(
+        _ reply: StudyAgentReply
+    ) -> [String] {
+        var issues: [String] = []
+        if reply.backend != .pi { issues.append("backend-not-pi") }
+        if reply.noteProposal != nil { issues.append("unexpected-note-proposal") }
+        if !replyToolTraceContains(reply, token: "weibei_context") {
+            issues.append("missing-context-read")
+        }
+        return issues
+    }
+
+    private static func richAnswerDegradationReadableLimitationIssues(
+        _ reply: StudyAgentReply,
+        for checkCase: RichAnswerLiveDegradationCase
+    ) -> [String] {
+        var issues: [String] = []
+        if !containsEveryGroup(reply.text, checkCase.expectedTextGroups) {
+            issues.append("missing-expected-limitation")
+        }
+        let forbiddenClaims = forbiddenPositiveClaims(
+            in: reply.text,
+            fragments: checkCase.forbiddenTextFragments
+        )
+        if !forbiddenClaims.isEmpty {
+            issues.append("forbidden-positive-claim:\(forbiddenClaims.joined(separator: "+"))")
+        }
+        if reply.text.contains("```json") || reply.text.contains("weibei.openui.v1") {
+            issues.append("protocol-leakage-in-text")
+        }
+        return issues
+    }
+
+    private static func richAnswerDegradationSourceIssues(
+        _ reply: StudyAgentReply,
+        for checkCase: RichAnswerLiveDegradationCase
+    ) -> [String] {
         if checkCase.expectsSourceCitation {
-            guard containsSourceLabel(reply.text),
-                  reply.text.contains("[材料：\(checkCase.materialTitle)")
-                    || checkCase.selectionTitle.map({ reply.text.contains("[选区：\($0)") }) == true else {
-                throw PiCheckError.invalidEvaluation("\(checkCase.id) omitted its visible source")
+            if !containsSourceLabel(reply.text) {
+                return ["missing-visible-source-label"]
+            }
+            let citesMaterial = reply.text.contains("[材料：\(checkCase.materialTitle)")
+            let citesSelection = checkCase.selectionTitle.map {
+                reply.text.contains("[选区：\($0)")
+            } == true
+            if !citesMaterial && !citesSelection {
+                return ["missing-expected-source-label"]
             }
         }
+        return []
+    }
 
+    private static func richAnswerDegradationRichSceneIssues(
+        _ reply: StudyAgentReply,
+        for checkCase: RichAnswerLiveDegradationCase
+    ) -> [String] {
         guard checkCase.allowsPartialRichAnswer || reply.richAnswer == nil else {
-            throw PiCheckError.invalidEvaluation("\(checkCase.id) should not render a rich scene")
+            return ["rich-scene-not-allowed"]
         }
-        guard let presentation = reply.richAnswer else { return }
-        guard presentation.mode == .rich,
-              presentation.diagnostics.isEmpty,
-              replyToolTraceShowsCatalogBeforeRichAnswer(reply),
-              richAnswerLooksInterleaved(reply.text, presentation: presentation),
-              !checkCase.materialIsTruncated || presentation.evidenceState == .partial,
-              presentation.scenes.compactMap({ $0.program?.source }).allSatisfy({ source in
-                  ["<svg", "<script", "<iframe", "http://", "https://", "~/", "file://"]
-                      .allSatisfy { !source.localizedCaseInsensitiveContains($0) }
-              }) else {
-            throw PiCheckError.invalidEvaluation("\(checkCase.id) returned an unsafe or dishonest partial rich answer")
+        guard let presentation = reply.richAnswer else { return [] }
+
+        var issues: [String] = []
+        if presentation.mode != .rich { issues.append("partial-rich-not-rich-mode") }
+        if !presentation.diagnostics.isEmpty { issues.append("partial-rich-diagnostics-present") }
+        if !replyToolTraceShowsCatalogBeforeRichAnswer(reply) {
+            issues.append("partial-rich-missing-catalog-trace")
         }
+        if !richAnswerLooksInterleaved(reply.text, presentation: presentation) {
+            issues.append("partial-rich-not-interleaved")
+        }
+        if checkCase.materialIsTruncated, presentation.evidenceState != .partial {
+            issues.append("truncated-material-rich-not-partial")
+        }
+        let unsafeProgramFragments = unsafePartialRichProgramFragments(in: presentation)
+        if !unsafeProgramFragments.isEmpty {
+            issues.append("unsafe-partial-rich-program:\(unsafeProgramFragments.joined(separator: "+"))")
+        }
+        return issues
     }
 
     private static func validateRichAnswerTextOnly(
@@ -975,6 +1242,8 @@ struct WeiBeiPiCheckMain {
                 .isDisjoint(with: checkCase.pressureCase.expectedCapabilityFamilies)
         let hasEvidenceBinding = componentNames.contains { componentName in
             ["EvidenceSnippet", "ArgumentUnit", "CausalEvent", "SpatialPoint"].contains(componentName)
+        } && scene.evidenceIDs.contains { evidenceID in
+            source.contains("\"\(evidenceID)\"")
         }
         let semanticGroupMatches = checkCase.knowledgeTargets.filter {
             containsAny(source, $0)
@@ -1150,15 +1419,16 @@ struct WeiBeiPiCheckMain {
         let professionalJudgment = presentation.map {
             professionalJudgmentValidation(reply: reply, presentation: $0, for: checkCase)
         }
-        let rendererMatches: Bool
+        let preferredRendererMatches: Bool
         switch checkCase.rendererRequirement {
         case .either:
-            rendererMatches = hasValidT1 || hasValidT2
+            preferredRendererMatches = hasValidT1 || hasValidT2
         case .t1:
-            rendererMatches = hasValidT1
+            preferredRendererMatches = hasValidT1
         case .t2:
-            rendererMatches = hasValidT2
+            preferredRendererMatches = hasValidT2
         }
+        let rendererMatches = hasValidT1 || hasValidT2
         let familyMatches = presentation.map { richAnswerFamilyMatches($0, for: checkCase) } ?? false
         let interleaved = presentation.map {
             richAnswerLooksInterleaved(reply.text, presentation: $0)
@@ -1194,7 +1464,7 @@ struct WeiBeiPiCheckMain {
                 + "evidence=\(presentation?.evidenceState.rawValue ?? "none") "
                 + "preferred=\(presentation?.expressionPlan?.preferredSurface.rawValue ?? "none") "
                 + "direct=\(presentation?.expressionPlan?.directManipulation ?? false) "
-                + "placements=\(placements) familyMatch=\(familyMatches) renderer=\(rendererMatches) "
+                + "placements=\(placements) familyMatch=\(familyMatches) renderer=\(rendererMatches) preferredRenderer=\(preferredRendererMatches) "
                 + "validT1=\(hasValidT1) validT2=\(hasValidT2) interleaved=\(interleaved) "
                 + "interleavingIssues=\(interleavingIssues) parts=\(partSummary) "
                 + "families=\(families) components=\(programComponents) roles=\(roles) "
@@ -1391,7 +1661,7 @@ struct WeiBeiPiCheckMain {
                 reply: reply,
                 presentation: presentation,
                 for: checkCase
-            ).passedDeterministicGates
+            ).triggeredForbiddenClaims.isEmpty
     }
 
     private static func missingProfessionalFactObligations(
@@ -1400,20 +1670,11 @@ struct WeiBeiPiCheckMain {
         for checkCase: RichAnswerLiveSuccessCase
     ) -> [String] {
         let corpus = professionalFactCorpus(reply: reply, presentation: presentation)
-        var missingObligations = checkCase.professionalFactObligations.compactMap { obligation in
+        return checkCase.professionalFactObligations.compactMap { obligation in
             obligation.evidenceGroups.allSatisfy { containsAny(corpus, $0) }
                 ? nil
                 : obligation.id
         }
-        let professionalJudgment = professionalJudgmentValidation(
-            reply: reply,
-            presentation: presentation,
-            for: checkCase
-        )
-        missingObligations += professionalJudgment.missingRequiredClaims.map { "required:\($0)" }
-        missingObligations += professionalJudgment.triggeredForbiddenClaims.map { "forbidden:\($0)" }
-        missingObligations += professionalJudgment.missingBoundaryClaims.map { "boundary:\($0)" }
-        return missingObligations
     }
 
     private static func professionalFactCorpus(
@@ -1554,6 +1815,57 @@ struct WeiBeiPiCheckMain {
 
     private static func containsEveryGroup(_ text: String, _ groups: [[String]]) -> Bool {
         groups.allSatisfy { containsAny(text, $0) }
+    }
+
+    private static func forbiddenPositiveClaims(
+        in text: String,
+        fragments: [String]
+    ) -> [String] {
+        let sentences = text.components(
+            separatedBy: CharacterSet(charactersIn: "。！？；\n\r")
+        )
+        return fragments.filter { fragment in
+            sentences.contains { sentence in
+                sentence.localizedCaseInsensitiveContains(fragment)
+                    && !sentenceNegatesForbiddenClaim(fragment, in: sentence)
+            }
+        }
+    }
+
+    private static func sentenceNegatesForbiddenClaim(
+        _ fragment: String,
+        in sentence: String
+    ) -> Bool {
+        guard let range = sentence.range(
+            of: fragment,
+            options: [.caseInsensitive, .diacriticInsensitive]
+        ) else {
+            return false
+        }
+        let before = String(sentence[..<range.lowerBound].suffix(24))
+        let after = String(sentence[range.upperBound...].prefix(12))
+        let localContext = before + fragment + after
+        let localNegationCues = [
+            "不能", "无法", "不得", "不要", "不应", "不可以", "不可", "禁止",
+            "拒绝", "未", "尚未", "没有", "并非", "不是", "不再",
+        ]
+        if localNegationCues.contains(where: { before.contains($0) || localContext.contains($0) }) {
+            return true
+        }
+        let explicitSpeechCues = [
+            "不能声称", "不得声称", "不要声称", "不应声称", "不可声称",
+            "不能说", "不得说", "不要说", "不应说",
+        ]
+        return explicitSpeechCues.contains { localContext.contains($0) }
+    }
+
+    private static func unsafePartialRichProgramFragments(
+        in presentation: RichAnswerPresentation
+    ) -> [String] {
+        let unsafeFragments = ["<svg", "<script", "<iframe", "http://", "https://", "~/", "file://"]
+        return Array(Set(presentation.scenes.compactMap(\.program?.source).flatMap { source in
+            unsafeFragments.filter { source.localizedCaseInsensitiveContains($0) }
+        })).sorted()
     }
 
     private static func latencyCheck(_ elapsedSeconds: TimeInterval, threshold: TimeInterval) -> String {

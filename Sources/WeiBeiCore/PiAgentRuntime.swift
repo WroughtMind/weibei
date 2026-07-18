@@ -236,6 +236,18 @@ public enum PiAgentRuntimeError: LocalizedError, Equatable, Sendable {
     }
 }
 
+public struct PiAgentRejectedReplyError: LocalizedError, Sendable {
+    public let reason: String
+    public let reply: StudyAgentReply
+
+    public init(reason: String, reply: StudyAgentReply) {
+        self.reason = reason
+        self.reply = reply
+    }
+
+    public var errorDescription: String? { reason }
+}
+
 public enum PiAgentDiagnosticSanitizer {
     public static func sanitize(_ value: String, secret: String? = nil) -> String {
         var result = value
@@ -1133,6 +1145,10 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                     "\($0.code.rawValue):\($0.message)"
                 }.joined(separator: " | ")
                 trace("rich answer rejected diagnostics=\(rejectionDetails)")
+                run.toolTrace.append(
+                    "weibei_rich_answer:host_rejected=\(sanitizedDiagnostic(rejectionDetails).prefix(600))"
+                )
+                run.lastError = "PI 返回的可视化结果未通过本地安全与来源校验"
                 run.richAnswer = nil
             }
             activeRun = run
@@ -1192,7 +1208,13 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         case let .toolFailed(_, name, message):
             guard var run = activeRun else { return }
             trace("tool failed name=\(name) message=\(sanitizedDiagnostic(message))")
-            run.lastError = "\(name): \(sanitizedDiagnostic(message))"
+            if name == "weibei_rich_answer",
+               let faultTrace = richAnswerFaultTrace(message) {
+                run.toolTrace.append(faultTrace)
+            }
+            run.lastError = name == "weibei_rich_answer"
+                ? "PI 模型未完成本轮回答"
+                : "\(name): \(boundedDiagnostic(message))"
             activeRun = run
             refreshRunWatchdog()
 
@@ -1215,15 +1237,22 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             } else {
                 finalText = modelClosureText
             }
-            let disclosedText = textWithRichAnswerDisclosure(finalText, run: run)
             trace(
                 "agent ended stop=\(stopReason ?? "unknown") closureChars=\(modelClosureText.count) "
                     + "finalChars=\(finalText.count) rich=\(run.richAnswer?.mode == .rich)"
             )
+            let replyCandidate = StudyAgentReply(
+                text: finalText,
+                backend: .pi,
+                richAnswer: run.richAnswer,
+                noteProposal: run.proposal,
+                learningUpdate: run.learningUpdate,
+                toolTrace: replyTrace
+            )
             if stopReason == "aborted" {
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.cancelled))
             } else if stopReason == "error" {
-                let detail = modelError.map(sanitizedDiagnostic)
+                let detail = modelError.map(userFacingFailureDetail)
                     ?? run.lastError
                     ?? "PI 模型请求失败，但运行时没有返回错误详情"
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed(detail)))
@@ -1235,7 +1264,10 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed("PI returned no revision-matched note proposal")))
             } else if run.workflow != .noteMaking,
                       let validationError = answerValidationError(text: finalText, run: run) {
-                finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed(validationError)))
+                finishRun(
+                    id: run.id,
+                    with: .failure(PiAgentRejectedReplyError(reason: validationError, reply: replyCandidate))
+                )
             } else if finalText.isEmpty, let proposal = run.proposal {
                 finishRun(
                     id: run.id,
@@ -1256,20 +1288,13 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 finishRun(
                     id: run.id,
                     with: .success(
-                        StudyAgentReply(
-                            text: disclosedText,
-                            backend: .pi,
-                            richAnswer: run.richAnswer,
-                            noteProposal: run.proposal,
-                            learningUpdate: run.learningUpdate,
-                            toolTrace: replyTrace
-                        )
+                        replyCandidate
                     )
                 )
             }
 
         case let .extensionError(message):
-            let message = sanitizedDiagnostic(message)
+            let message = userFacingFailureDetail(message)
             if let runID = activeRun?.id {
                 finishRun(id: runID, with: .failure(PiAgentRuntimeError.agentFailed(message)))
             } else {
@@ -1279,24 +1304,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         case .event:
             break
         }
-    }
-
-    private func textWithRichAnswerDisclosure(_ text: String, run: ActiveRun) -> String {
-        guard !text.isEmpty,
-              run.workflow != .noteMaking,
-              StudyAgentRichAnswerRequest.isExplicit(run.userQuestion),
-              run.richAnswer?.mode != .rich else {
-            return text
-        }
-        let limitationTerms = ["无法", "不能", "未能", "失败", "不足", "没有生成", "未生成", "could not", "cannot", "failed", "insufficient"]
-        if text.localizedCaseInsensitiveContains("rich answer")
-            && limitationTerms.contains(where: text.localizedCaseInsensitiveContains) {
-            return text
-        }
-        if text.contains("富回答") && limitationTerms.contains(where: text.contains) {
-            return text
-        }
-        return "富回答没有通过本轮证据与格式校验，本轮先保留文本解释。\n\n\(text)"
     }
 
     private func finishRun(id: UUID, with result: Result<StudyAgentReply, Error>) {
@@ -1313,6 +1320,29 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             run.completed = result
             activeRun = run
         }
+    }
+
+    private func richAnswerFaultTrace(_ message: String) -> String? {
+        guard message.contains("weibei.rich_answer.repair_fault"),
+              let start = message.firstIndex(of: "{") else {
+            return nil
+        }
+        let json = String(message[start...])
+        guard let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["type"] as? String == "weibei.rich_answer.repair_fault",
+              let code = object["code"] as? String else {
+            return "weibei_rich_answer:repair_fault=unparsed"
+        }
+        let path = (object["jsonPath"] as? String) ?? "$"
+        let remainingAttempts = (object["remainingAttempts"] as? NSNumber)?.intValue ?? -1
+        let reason = sanitizedDiagnostic((object["message"] as? String) ?? "unknown")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\t", with: " ")
+        let hint = sanitizedDiagnostic((object["humanFixHint"] as? String) ?? "")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\t", with: " ")
+        return "weibei_rich_answer:repair_fault=\(code):path=\(path):remaining=\(remainingAttempts):reason=\(reason.prefix(240)):hint=\(hint.prefix(240))"
     }
 
     private func discardRun(id: UUID) {
@@ -1409,6 +1439,21 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private func sanitizedDiagnostic(_ value: String) -> String {
         PiAgentDiagnosticSanitizer.sanitize(value, secret: providerConfiguration.apiKey)
+    }
+
+    private func boundedDiagnostic(_ value: String, limit: Int = 1_024) -> String {
+        String(sanitizedDiagnostic(value).prefix(limit))
+    }
+
+    private func userFacingFailureDetail(_ value: String) -> String {
+        let sanitized = sanitizedDiagnostic(value)
+        if sanitized.contains("weibei.rich_answer.repair_fault")
+            || sanitized.contains("repair_fault")
+            || sanitized.contains("RichAnswerUI")
+            || sanitized.contains("payload") {
+            return "PI 模型未完成本轮回答"
+        }
+        return String(sanitized.prefix(1_024))
     }
 
     private func shutdownProcess(reason: Error) {

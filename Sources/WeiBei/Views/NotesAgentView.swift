@@ -279,6 +279,24 @@ private struct AgentComposerField: View {
     }
 }
 
+private struct AccessibilityFrameProbe: NSViewRepresentable {
+    let identifier: String
+
+    func makeNSView(context: Context) -> NSView {
+        let probe = NSView()
+        probe.wantsLayer = true
+        probe.setAccessibilityElement(true)
+        probe.setAccessibilityRole(.group)
+        probe.setAccessibilityIdentifier(identifier)
+        probe.setAccessibilityLabel("weibei pane frame anchor")
+        return probe
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        nsView.setAccessibilityIdentifier(identifier)
+    }
+}
+
 struct NotePaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @State private var hoveredNoteMode: NoteRenderMode?
@@ -343,6 +361,11 @@ struct NotePaneView: View {
         .frame(minHeight: 280)
         .foregroundStyle(WeiBeiTheme.ink)
         .background(WeiBeiTheme.paper)
+        .overlay(alignment: .topLeading) {
+            AccessibilityFrameProbe(identifier: "stable-document-slot-reader")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+        }
         .overlay(alignment: .top) {
             if !showsPaneHeader {
                 immersiveNoteHeader
@@ -388,6 +411,9 @@ struct NotePaneView: View {
                 flushNoteDraft(immediate: true)
             }
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("stable-document-slot-reader")
+        .accessibilityLabel(Text("notes reader pane"))
     }
 
     @ViewBuilder
@@ -1555,6 +1581,11 @@ struct AgentPaneView: View {
         .frame(minHeight: 260)
         .foregroundStyle(WeiBeiTheme.ink)
         .background(showsPaneHeader ? WeiBeiTheme.paper : Color.clear)
+        .overlay(alignment: .topLeading) {
+            AccessibilityFrameProbe(identifier: "stable-document-slot-agent")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .allowsHitTesting(false)
+        }
         .overlay(alignment: .top) {
             ZStack(alignment: .top) {
                 if showsPaneHeader {
@@ -1580,6 +1611,9 @@ struct AgentPaneView: View {
         .onAppear {
             draftFocused = store.focusedPane == .agent
         }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("stable-document-slot-agent")
+        .accessibilityLabel(Text("agent chat pane"))
     }
 
     private func agentMessageRow(message: AgentMessage, geometryWidth: CGFloat, contentWidth: CGFloat, proxy: ScrollViewProxy) -> some View {
@@ -3372,7 +3406,8 @@ private struct RichAnswerNarrativeText: View {
     }
 
     private func attributed(_ value: String) -> AttributedString {
-        (try? AttributedString(markdown: value)) ?? AttributedString(value)
+        let displayValue = RichAnswerDisplayText.normalizedInlineMath(value)
+        return (try? AttributedString(markdown: displayValue)) ?? AttributedString(displayValue)
     }
 
     private struct Block {
