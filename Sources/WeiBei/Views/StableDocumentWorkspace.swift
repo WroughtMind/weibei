@@ -76,6 +76,9 @@ struct StableDocumentWorkspace: NSViewRepresentable {
         host.identifier = NSUserInterfaceItemIdentifier(identifier)
         host.translatesAutoresizingMaskIntoConstraints = true
         host.autoresizingMask = []
+        host.sizingOptions = []
+        host.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        host.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         host.wantsLayer = true
         host.layer?.masksToBounds = true
         return host
@@ -889,7 +892,6 @@ final class StableDocumentSplitCoordinator {
         animateVisibleWidths(target, duration: layoutAnimationDuration, in: splitView) { [weak self, weak splitView] in
             guard let self, let splitView else { return }
             self.captureReadableWidths(in: splitView)
-            self.persistRatios(in: splitView)
             self.reportFrames(in: splitView)
             self.onExpansionRequestHandled?(request.id)
             self.applyPendingWork(in: splitView)
@@ -897,23 +899,54 @@ final class StableDocumentSplitCoordinator {
     }
 
     private func expandedWidths(_ widths: [CGFloat], requestedIndex: Int, role: WorkspacePaneRole) -> [CGFloat] {
-        guard widths.indices.contains(requestedIndex) else { return widths }
+        guard widths.indices.contains(requestedIndex), displayedVisibleOrder.count == widths.count else { return widths }
         let total = widths.reduce(0, +)
         let minimum = minimumPaneWidth(total: total, count: widths.count)
-        let maxRequested = max(minimum, total - minimum * CGFloat(widths.count - 1))
+        let otherIndices = widths.indices.filter { $0 != requestedIndex }
+        let otherMinimums = otherIndices.map { index -> CGFloat in
+            guard displayedVisibleOrder[index] == .reader else { return minimum }
+            return min(
+                readableWidthThreshold,
+                max(minimum, total - minimum * CGFloat(widths.count - 1))
+            )
+        }
+        let maxRequested = max(minimum, total - otherMinimums.reduce(0, +))
+        let requestedMinimum = min(readableWidthThreshold, maxRequested)
         let requested = clamped(
-            ContentRailPolicy.expansionWidth(recentWidth: recentReadableWidths[role]),
-            min: minimum,
+            max(widths[requestedIndex], ContentRailPolicy.expansionWidth(recentWidth: recentReadableWidths[role])),
+            min: requestedMinimum,
             max: maxRequested
         )
         let remaining = max(0, total - requested)
-        let otherIndices = widths.indices.filter { $0 != requestedIndex }
         let otherDesired = otherIndices.map { widths[$0] }
-        let allocated = normalizedWidths(otherDesired, total: remaining)
+        let allocated = normalizedWidths(otherDesired, total: remaining, minimums: otherMinimums)
         var result = widths
         result[requestedIndex] = requested
         for (offset, index) in otherIndices.enumerated() {
             result[index] = allocated[safe: offset] ?? minimum
+        }
+        return result
+    }
+
+    private func normalizedWidths(_ desired: [CGFloat], total: CGFloat, minimums: [CGFloat]) -> [CGFloat] {
+        guard desired.count == minimums.count, !desired.isEmpty else { return desired }
+        let minimumTotal = minimums.reduce(0, +)
+        guard minimumTotal <= total else {
+            return normalizedWidths(minimums, total: total)
+        }
+        let extraAvailable = total - minimumTotal
+        let extras = zip(desired, minimums).map { pair in max(0, pair.0 - pair.1) }
+        let extraTotal = extras.reduce(0, +)
+        var result = zip(minimums, extras).map { pair -> CGFloat in
+            let minimum = pair.0
+            let extra = pair.1
+            if extraTotal > 0.5 {
+                return minimum + extraAvailable * extra / extraTotal
+            }
+            return minimum + extraAvailable / CGFloat(desired.count)
+        }
+        if let lastIndex = result.indices.last {
+            result[lastIndex] += total - result.reduce(0, +)
         }
         return result
     }

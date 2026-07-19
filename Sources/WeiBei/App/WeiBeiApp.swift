@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import SwiftUI
 import WebKit
 import WeiBeiCore
@@ -337,6 +338,9 @@ private struct WeiBeiAppearanceTransition: ViewModifier {
 @MainActor
 private struct WindowChromeConfigurator: NSViewRepresentable {
     private static var scheduledVerificationCaptures: Set<String> = []
+    private static var scheduledVerificationCaptureChannels: Set<String> = []
+    private static var processedVerificationCaptureRequests: Set<String> = []
+    private static let webViewSnapshotTimeoutSeconds: TimeInterval = 4
 
     var appearanceMode: WeiBeiAppearanceMode
 
@@ -366,6 +370,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         window.isMovableByWindowBackground = true
         applyVerificationWindowSize(to: window)
         captureVerificationWindowIfRequested(window)
+        listenForVerificationCaptureRequestsIfRequested(window)
     }
 
     private func applyVerificationWindowSize(to window: NSWindow) {
@@ -419,6 +424,269 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         }
     }
 
+    private struct VerificationCaptureRequest: Decodable {
+        var id: String
+        var capturePath: String
+        var stage: String?
+    }
+
+    private struct VerificationCaptureResult {
+        var pngPath: String
+        var bytes: Int
+        var sha256: String
+        var capturedAt: String
+        var webViewSnapshotCount: Int
+    }
+
+    private func listenForVerificationCaptureRequestsIfRequested(_ window: NSWindow) {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1",
+              let rawChannelPath = environment["WEIBEI_VERIFY_CAPTURE_REQUEST_DIR"],
+              !rawChannelPath.isEmpty,
+              let rawOutputPath = environment["WEIBEI_VERIFY_CAPTURE_OUTPUT_DIR"],
+              !rawOutputPath.isEmpty else { return }
+
+        let channelURL = URL(fileURLWithPath: rawChannelPath, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let outputURL = URL(fileURLWithPath: rawOutputPath, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let channelID = "\(channelURL.path)#\(ObjectIdentifier(window).hashValue)"
+        guard Self.scheduledVerificationCaptureChannels.insert(channelID).inserted else { return }
+        guard Self.isSafeVerificationOutputRoot(outputURL) else {
+            fputs("WeiBei verification capture output root is unsafe: \(outputURL.path)\n", stderr)
+            return
+        }
+        guard Self.isCaptureURL(channelURL, inside: outputURL) else {
+            fputs("WeiBei verification capture channel must stay inside output root: \(channelURL.path)\n", stderr)
+            return
+        }
+
+        try? FileManager.default.createDirectory(at: channelURL, withIntermediateDirectories: true)
+        Self.scheduleVerificationCapturePoll(
+            in: window,
+            channelURL: channelURL,
+            outputURL: outputURL
+        )
+    }
+
+    private static func scheduleVerificationCapturePoll(
+        in window: NSWindow,
+        channelURL: URL,
+        outputURL: URL
+    ) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak window] in
+            guard let window else { return }
+            pollVerificationCaptureRequests(
+                in: window,
+                channelURL: channelURL,
+                outputURL: outputURL
+            )
+        }
+    }
+
+    private static func pollVerificationCaptureRequests(
+        in window: NSWindow,
+        channelURL: URL,
+        outputURL: URL
+    ) {
+        let requestURL = channelURL.appendingPathComponent("request.json")
+        guard let data = try? Data(contentsOf: requestURL),
+              let request = try? JSONDecoder().decode(VerificationCaptureRequest.self, from: data),
+              !request.id.isEmpty else {
+            scheduleVerificationCapturePoll(in: window, channelURL: channelURL, outputURL: outputURL)
+            return
+        }
+
+        let requestKey = "\(channelURL.path)::\(request.id)"
+        guard processedVerificationCaptureRequests.insert(requestKey).inserted else {
+            scheduleVerificationCapturePoll(in: window, channelURL: channelURL, outputURL: outputURL)
+            return
+        }
+
+        let captureURL = URL(fileURLWithPath: request.capturePath)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        guard isCaptureURL(captureURL, inside: outputURL),
+              captureURL.pathExtension.lowercased() == "png" else {
+            writeVerificationCaptureAcknowledgement(
+                request: request,
+                status: "failed",
+                failureReason: "capture path must be a PNG inside the configured output directory",
+                channelURL: channelURL
+            )
+            scheduleVerificationCapturePoll(in: window, channelURL: channelURL, outputURL: outputURL)
+            return
+        }
+
+        let verificationStage = request.stage?.lowercased()
+        let stageDelay: TimeInterval
+        if let verificationStage, ["overview", "before", "after"].contains(verificationStage) {
+            NotificationCenter.default.post(
+                name: .weiBeiRichAnswerVerificationStage,
+                object: nil,
+                userInfo: ["stage": verificationStage]
+            )
+            stageDelay = verificationStage == "after" ? 1.1 : 0.8
+        } else {
+            stageDelay = 0
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + stageDelay) {
+            capture(window, to: captureURL.path) { captureResult, failureReason in
+                writeVerificationCaptureAcknowledgement(
+                    request: request,
+                    status: failureReason == nil ? "succeeded" : "failed",
+                    failureReason: failureReason,
+                    captureResult: captureResult,
+                    channelURL: channelURL
+                )
+                scheduleVerificationCapturePoll(in: window, channelURL: channelURL, outputURL: outputURL)
+            }
+        }
+    }
+
+    private static func isSafeVerificationOutputRoot(_ outputURL: URL) -> Bool {
+        let resolvedURL = outputURL.standardizedFileURL.resolvingSymlinksInPath()
+        var isDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: resolvedURL.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            return false
+        }
+        let allowedRoots = [
+            URL(fileURLWithPath: "/private/tmp", isDirectory: true),
+            FileManager.default.temporaryDirectory,
+        ].map { $0.standardizedFileURL.resolvingSymlinksInPath().path }
+        return allowedRoots.contains { rootPath in
+            let normalizedRoot = rootPath.hasSuffix("/") ? String(rootPath.dropLast()) : rootPath
+            let prefix = normalizedRoot + "/"
+            guard resolvedURL.path.hasPrefix(prefix) else { return false }
+            let relativePath = resolvedURL.path.dropFirst(prefix.count)
+            guard let evidenceRoot = relativePath.split(separator: "/").first else { return false }
+            return evidenceRoot.hasPrefix("weibei-rich-answer-")
+        }
+    }
+
+    private static func isCaptureURL(_ captureURL: URL, inside outputURL: URL) -> Bool {
+        let rootPath = outputURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let captureParentPath = captureURL.deletingLastPathComponent()
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+        return isPath(captureParentPath, insideDirectory: rootPath)
+    }
+
+    private static func isPath(_ path: String, insideDirectory rootPath: String) -> Bool {
+        let normalizedRoot = rootPath.hasSuffix("/") ? String(rootPath.dropLast()) : rootPath
+        let prefix = normalizedRoot + "/"
+        return path == normalizedRoot || path.hasPrefix(prefix)
+    }
+
+    private static func writeVerificationCaptureAcknowledgement(
+        request: VerificationCaptureRequest,
+        status: String,
+        failureReason: String?,
+        captureResult: VerificationCaptureResult? = nil,
+        channelURL: URL
+    ) {
+        let acknowledgementURL = channelURL.appendingPathComponent("ack.json")
+        var payload: [String: Any] = [
+            "id": request.id,
+            "requestID": request.id,
+            "requestCapturePath": request.capturePath,
+            "stage": request.stage ?? NSNull(),
+            "capturePath": captureResult?.pngPath ?? request.capturePath,
+            "status": status,
+            "failureReason": failureReason ?? NSNull(),
+            "acknowledgedAt": iso8601String(Date()),
+            "renderReady": renderReadyEvidencePayload(),
+            "webViewSnapshotTimeoutSeconds": webViewSnapshotTimeoutSeconds,
+        ]
+        if let captureResult {
+            payload["actualPNG"] = [
+                "path": captureResult.pngPath,
+                "bytes": captureResult.bytes,
+                "sha256": captureResult.sha256,
+                "hash": "sha256:\(captureResult.sha256)",
+                "capturedAt": captureResult.capturedAt,
+            ]
+            payload["actualPNGPath"] = captureResult.pngPath
+            payload["pngBytes"] = captureResult.bytes
+            payload["pngSHA256"] = captureResult.sha256
+            payload["pngHash"] = "sha256:\(captureResult.sha256)"
+            payload["webViewSnapshotCount"] = captureResult.webViewSnapshotCount
+        } else {
+            payload["actualPNG"] = NSNull()
+            payload["actualPNGPath"] = NSNull()
+            payload["pngBytes"] = NSNull()
+            payload["pngSHA256"] = NSNull()
+            payload["pngHash"] = NSNull()
+            payload["webViewSnapshotCount"] = NSNull()
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else { return }
+        do {
+            try data.write(to: acknowledgementURL, options: .atomic)
+        } catch {
+            fputs("WeiBei verification capture acknowledgement failed: \(error.localizedDescription)\n", stderr)
+        }
+    }
+
+    private static func renderReadyEvidencePayload() -> [String: Any] {
+        let observedAt = iso8601String(Date())
+        guard let workspaceDirectory = ProcessInfo.processInfo.environment["WEIBEI_WORKSPACE_DIR"],
+              !workspaceDirectory.isEmpty else {
+            return [
+                "seen": false,
+                "observedAt": observedAt,
+                "failureReason": "WEIBEI_WORKSPACE_DIR is unavailable",
+            ]
+        }
+        let markerURL = URL(fileURLWithPath: workspaceDirectory, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .appendingPathComponent("rich-answer-renderer-ready.txt")
+        guard FileManager.default.fileExists(atPath: markerURL.path) else {
+            return [
+                "seen": false,
+                "path": markerURL.path,
+                "observedAt": observedAt,
+                "failureReason": "renderer-ready marker is absent",
+            ]
+        }
+        guard let markerData = try? Data(contentsOf: markerURL),
+              !markerData.isEmpty else {
+            return [
+                "seen": false,
+                "path": markerURL.path,
+                "observedAt": observedAt,
+                "failureReason": "renderer-ready marker is empty or unreadable",
+            ]
+        }
+        let attributes = try? FileManager.default.attributesOfItem(atPath: markerURL.path)
+        let modifiedAt = (attributes?[.modificationDate] as? Date).map(iso8601String)
+        let sha256 = sha256Hex(for: markerData)
+        return [
+            "seen": true,
+            "path": markerURL.path,
+            "bytes": markerData.count,
+            "sha256": sha256,
+            "signature": "sha256:\(sha256)",
+            "readyAt": modifiedAt ?? observedAt,
+            "observedAt": observedAt,
+            "modifiedAt": modifiedAt ?? NSNull(),
+        ]
+    }
+
+    private static func iso8601String(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: date)
+    }
+
+    private static func sha256Hex(for data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
     private static func waitForVerificationCompletion(
         in window: NSWindow,
         capturePath: String,
@@ -443,20 +711,40 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         }
     }
 
-    private static func capture(_ window: NSWindow, to capturePath: String) {
-        guard !FileManager.default.fileExists(atPath: capturePath),
-              let contentView = window.contentView else { return }
+    private static func capture(
+        _ window: NSWindow,
+        to capturePath: String,
+        completion: @escaping (VerificationCaptureResult?, String?) -> Void = { _, _ in }
+    ) {
+        guard !FileManager.default.fileExists(atPath: capturePath) else {
+            completion(nil, "capture target already exists")
+            return
+        }
+        guard let contentView = window.contentView else {
+            completion(nil, "window content view is unavailable")
+            return
+        }
         contentView.layoutSubtreeIfNeeded()
         window.displayIfNeeded()
         let bounds = contentView.bounds
         guard bounds.width >= 600,
-              bounds.height >= 400,
-              let bitmap = contentView.bitmapImageRepForCachingDisplay(in: bounds) else { return }
+              bounds.height >= 400 else {
+            completion(nil, "window content bounds are smaller than the verification minimum")
+            return
+        }
+        guard let bitmap = contentView.bitmapImageRepForCachingDisplay(in: bounds) else {
+            completion(nil, "window content bitmap could not be allocated")
+            return
+        }
         contentView.cacheDisplay(in: bounds, to: bitmap)
         let baseImage = NSImage(size: bounds.size)
         baseImage.addRepresentation(bitmap)
         let webViews = visibleWebViews(in: contentView)
-        captureWebViews(webViews, at: 0, relativeTo: contentView, overlays: []) { overlays in
+        captureWebViews(webViews, at: 0, relativeTo: contentView, overlays: []) { overlays, webViewFailure in
+            if let webViewFailure {
+                completion(nil, webViewFailure)
+                return
+            }
             let composite = NSImage(size: bounds.size)
             composite.lockFocus()
             baseImage.draw(in: bounds)
@@ -466,8 +754,94 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
             composite.unlockFocus()
             guard let tiff = composite.tiffRepresentation,
                   let representation = NSBitmapImageRep(data: tiff),
-                  let png = representation.representation(using: .png, properties: [:]) else { return }
-            try? png.write(to: URL(fileURLWithPath: capturePath), options: .atomic)
+                  let png = representation.representation(using: .png, properties: [:]) else {
+                completion(nil, "captured window could not be encoded as PNG")
+                return
+            }
+            let captureURL = URL(fileURLWithPath: capturePath)
+                .standardizedFileURL
+                .resolvingSymlinksInPath()
+            do {
+                try png.write(to: captureURL, options: .atomic)
+            } catch {
+                completion(nil, "captured PNG could not be written: \(error.localizedDescription)")
+                return
+            }
+            guard let writtenData = try? Data(contentsOf: captureURL),
+                  !writtenData.isEmpty else {
+                completion(nil, "captured PNG could not be verified after write")
+                return
+            }
+            let attributes = try? FileManager.default.attributesOfItem(atPath: captureURL.path)
+            let bytes = (attributes?[.size] as? NSNumber)?.intValue ?? writtenData.count
+            completion(
+                VerificationCaptureResult(
+                    pngPath: captureURL.path,
+                    bytes: bytes,
+                    sha256: sha256Hex(for: writtenData),
+                    capturedAt: iso8601String(Date()),
+                    webViewSnapshotCount: overlays.count
+                ),
+                nil
+            )
+        }
+    }
+
+    private final class WebViewSnapshotState {
+        var isCompleted = false
+    }
+
+    private static func completeWebViewSnapshotOnce(
+        state: WebViewSnapshotState,
+        completion: @escaping (NSImage?, String?) -> Void,
+        image: NSImage?,
+        failureReason: String?
+    ) {
+        guard !state.isCompleted else { return }
+        state.isCompleted = true
+        completion(image, failureReason)
+    }
+
+    private static func captureWebViewSnapshot(
+        _ webView: WKWebView,
+        completion: @escaping (NSImage?, String?) -> Void
+    ) {
+        let state = WebViewSnapshotState()
+        DispatchQueue.main.asyncAfter(deadline: .now() + webViewSnapshotTimeoutSeconds) {
+            completeWebViewSnapshotOnce(
+                state: state,
+                completion: completion,
+                image: nil,
+                failureReason: "web content snapshot timed out after \(String(format: "%.1f", webViewSnapshotTimeoutSeconds)) seconds"
+            )
+        }
+        webView.takeSnapshot(with: nil) { image, error in
+            DispatchQueue.main.async {
+                if let error {
+                    completeWebViewSnapshotOnce(
+                        state: state,
+                        completion: completion,
+                        image: nil,
+                        failureReason: "web content snapshot failed: \(error.localizedDescription)"
+                    )
+                    return
+                }
+                guard let image else {
+                    completeWebViewSnapshotOnce(
+                        state: state,
+                        completion: completion,
+                        image: nil,
+                        failureReason: "web content snapshot returned no image"
+                    )
+                    return
+                }
+                completeWebViewSnapshotOnce(
+                    state: state,
+                    completion: completion,
+                    image: image,
+                    failureReason: nil
+                )
+            }
         }
     }
 
@@ -491,10 +865,10 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         at index: Int,
         relativeTo contentView: NSView,
         overlays: [WebViewSnapshot],
-        completion: @escaping ([WebViewSnapshot]) -> Void
+        completion: @escaping ([WebViewSnapshot], String?) -> Void
     ) {
         guard webViews.indices.contains(index) else {
-            completion(overlays)
+            completion(overlays, nil)
             return
         }
         let webView = webViews[index]
@@ -502,20 +876,34 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         let rect = contentView.isFlipped
             ? NSRect(x: converted.minX, y: contentView.bounds.height - converted.maxY, width: converted.width, height: converted.height)
             : converted
-        webView.takeSnapshot(with: nil) { image, _ in
-            DispatchQueue.main.async {
-                var nextOverlays = overlays
-                if let image, rect.width > 1, rect.height > 1 {
-                    nextOverlays.append(WebViewSnapshot(rect: rect, image: image))
-                }
-                captureWebViews(
-                    webViews,
-                    at: index + 1,
-                    relativeTo: contentView,
-                    overlays: nextOverlays,
-                    completion: completion
-                )
+        guard rect.width > 1, rect.height > 1 else {
+            captureWebViews(
+                webViews,
+                at: index + 1,
+                relativeTo: contentView,
+                overlays: overlays,
+                completion: completion
+            )
+            return
+        }
+        captureWebViewSnapshot(webView) { image, failureReason in
+            if let failureReason {
+                completion(overlays, failureReason)
+                return
             }
+            guard let image else {
+                completion(overlays, "web content snapshot returned no image")
+                return
+            }
+            var nextOverlays = overlays
+            nextOverlays.append(WebViewSnapshot(rect: rect, image: image))
+            captureWebViews(
+                webViews,
+                at: index + 1,
+                relativeTo: contentView,
+                overlays: nextOverlays,
+                completion: completion
+            )
         }
     }
 }

@@ -836,6 +836,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public var text: String
     public var source: String?
     public var backend: StudyAgentBackend?
+    public var richAnswer: RichAnswerPresentation?
     public var createdAt: Date
 
     public init(
@@ -844,6 +845,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         text: String,
         source: String?,
         backend: StudyAgentBackend? = nil,
+        richAnswer: RichAnswerPresentation? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -851,7 +853,40 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         self.text = text
         self.source = source
         self.backend = backend
+        self.richAnswer = richAnswer
         self.createdAt = createdAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case role
+        case text
+        case source
+        case backend
+        case richAnswer
+        case createdAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        role = try container.decode(AgentRole.self, forKey: .role)
+        text = try container.decode(String.self, forKey: .text)
+        source = try container.decodeIfPresent(String.self, forKey: .source)
+        backend = try container.decodeIfPresent(StudyAgentBackend.self, forKey: .backend)
+        richAnswer = try? container.decodeIfPresent(RichAnswerPresentation.self, forKey: .richAnswer)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(role, forKey: .role)
+        try container.encode(text, forKey: .text)
+        try container.encodeIfPresent(source, forKey: .source)
+        try container.encodeIfPresent(backend, forKey: .backend)
+        try container.encodeIfPresent(richAnswer, forKey: .richAnswer)
+        try container.encode(createdAt, forKey: .createdAt)
     }
 
     public var isUsableAgentAnswer: Bool {

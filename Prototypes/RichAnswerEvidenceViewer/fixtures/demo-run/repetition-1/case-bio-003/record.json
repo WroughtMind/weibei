@@ -1,0 +1,48 @@
+{
+  "status": "invalid-protocol",
+  "state": "rejected",
+  "elapsedSeconds": 1.11,
+  "caseKind": "invalid-protocol",
+  "subject": "生物",
+  "caseSnapshot": {
+    "caseID": "case-bio-003",
+    "question": "单摆周期与摆长关系的可视化",
+    "subject": "生物",
+    "materialTitle": "课堂实验记录",
+    "materialKind": "实验记录",
+    "materialText": "样本数据需从实验日志提取。",
+    "selectionTitle": "记录片段",
+    "selectionText": "请做动态图+公式推导"
+  },
+  "shapeDecision": {
+    "preferredShape": "rich",
+    "actualShape": "invalid-protocol",
+    "expectedShape": "rich",
+    "directManipulation": false
+  },
+  "expressionPlan": {
+    "t1Programs": [],
+    "t2Compositions": []
+  },
+  "repairAndRetest": {
+    "failureReason": "材料缺失导致协议校验不通过",
+    "previousRunID": "none",
+    "previousStatus": "invalid-protocol",
+    "repairNote": "协议拒绝，要求补齐 evidence protocol",
+    "isRetest": false
+  },
+  "sourceBinding": {
+    "textSourceLabels": [],
+    "evidenceLedgerLabels": [],
+    "sceneEvidenceIDs": [],
+    "evidenceState": "missing",
+    "hasExpectedSource": false
+  },
+  "toolAndProtocolValidation": {
+    "status": "failed",
+    "validationKind": "invalid-protocol",
+    "passedChecks": ["schema"],
+    "issues": ["缺少 required sourceBinding.evidenceLedgerLabels"],
+    "protocolDiagnostics": ["protocol validation failed"]
+  }
+}

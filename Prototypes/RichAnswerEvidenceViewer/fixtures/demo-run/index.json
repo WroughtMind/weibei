@@ -1,0 +1,41 @@
+{
+  "runId": "demo-run-56-local",
+  "records": [
+    {
+      "caseID": "case-math-001",
+      "subject": "数学",
+      "repetition": 1,
+      "recordPath": "repetition-1/case-math-001/record.json",
+      "requestPath": "repetition-1/case-math-001/request.json",
+      "replyPath": "repetition-1/case-math-001/reply.json",
+      "validationPath": "repetition-1/case-math-001/validation.json"
+    },
+    {
+      "caseID": "case-math-001",
+      "subject": "数学",
+      "repetition": 2,
+      "recordPath": "repetition-2/case-math-001/record.json",
+      "requestPath": "repetition-2/case-math-001/request.json",
+      "replyPath": "repetition-2/case-math-001/reply.json",
+      "validationPath": "repetition-2/case-math-001/validation.json"
+    },
+    {
+      "caseID": "case-ling-002",
+      "subject": "语言",
+      "repetition": 1,
+      "recordPath": "repetition-1/case-ling-002/record.json",
+      "requestPath": "repetition-1/case-ling-002/request.json",
+      "replyPath": "repetition-1/case-ling-002/reply.json",
+      "validationPath": "repetition-1/case-ling-002/validation.json"
+    },
+    {
+      "caseID": "case-bio-003",
+      "subject": "生物",
+      "repetition": 1,
+      "recordPath": "repetition-1/case-bio-003/record.json",
+      "requestPath": "repetition-1/case-bio-003/request.json",
+      "replyPath": "repetition-1/case-bio-003/reply.json",
+      "validationPath": "repetition-1/case-bio-003/validation.json"
+    }
+  ]
+}
