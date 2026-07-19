@@ -2448,7 +2448,7 @@ struct FloatingSelectionAgentView: View {
     }
 
     private func floatingColor(for message: AgentMessage) -> Color {
-        if message.text.hasPrefix("请求失败：") || message.text.hasPrefix("Agent 请求失败：") || message.text.hasPrefix("Request failed:") {
+        if WorkspaceStore.isAgentFailureMessage(message.text) {
             return WeiBeiTheme.cinnabar
         }
         if message.role == .user {
@@ -2657,7 +2657,23 @@ private struct AgentBubble: View {
                 )
             }
 
-            if message.id == store.lastUsableAgentAnswerID {
+            if isFailureMessage {
+                HStack(spacing: 6) {
+                    if store.canRetryLastFailedAgentRequest {
+                        Button(store.ui("重试", "Retry")) {
+                            store.retryLastFailedAgentRequest()
+                        }
+                        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                    }
+                    Button(store.ui("回填问题", "Restore question")) {
+                        if let question = store.lastFailedAgentQuestion, !question.isEmpty {
+                            store.agentDraft = question
+                        }
+                    }
+                    .buttonStyle(WeiBeiTextActionButtonStyle())
+                }
+                .padding(.top, 2)
+            } else if message.id == store.lastUsableAgentAnswerID {
                 if let update = store.latestAgentLearningUpdate,
                    !update.entries.isEmpty || !update.resolutions.isEmpty || !update.suggestedNext.isEmpty {
                     learningUpdateContent(update)
@@ -2888,6 +2904,10 @@ private struct AgentBubble: View {
     private var isCredentialNotice: Bool {
         message.role == .assistant
             && (message.text.hasPrefix("未配置密钥") || message.text.hasPrefix("未配置 OPENAI_API_KEY") || message.text.hasPrefix("No key is configured"))
+    }
+
+    private var isFailureMessage: Bool {
+        message.role == .assistant && WorkspaceStore.isAgentFailureMessage(message.text)
     }
 
     private var displayText: String {

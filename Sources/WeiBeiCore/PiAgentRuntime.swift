@@ -367,7 +367,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     public init(
         executableURL: URL? = nil,
         runtimeDirectory: URL? = nil,
-        runInactivityTimeoutNanoseconds: UInt64 = 300_000_000_000
+        // Idle hang detection: 90s without events (was 5 minutes).
+        runInactivityTimeoutNanoseconds: UInt64 = 90_000_000_000
     ) {
         executableOverride = executableURL
         self.runtimeDirectory = runtimeDirectory
@@ -1392,7 +1393,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private func runTimedOut(id: UUID) async {
         guard activeRun?.id == id else { return }
-        finishRun(id: id, with: .failure(PiAgentRuntimeError.agentFailed("PI produced no events for five minutes")))
+        finishRun(id: id, with: .failure(PiAgentRuntimeError.commandTimedOut("prompt")))
         do {
             _ = try await sendCommand(type: "abort", timeoutSeconds: 2)
         } catch {

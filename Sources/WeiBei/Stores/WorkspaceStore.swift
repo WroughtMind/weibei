@@ -184,6 +184,9 @@ final class WorkspaceStore: ObservableObject {
     @Published var isAskingAgent = false
     @Published var agentStreamingText = ""
     @Published var agentActivityText: String?
+    /// Last failed user question for precise one-tap retry.
+    @Published private(set) var lastFailedAgentQuestion: String?
+    @Published private(set) var lastAgentFailureKind: AgentFailureKind?
     @Published private(set) var latestAgentNoteProposal: StudyAgentNoteProposal?
     @Published private(set) var latestAgentLearningUpdate: StudyAgentLearningUpdate?
     @Published private(set) var noteSourceLinks: [NoteSourceLink] = [] {
@@ -5517,6 +5520,7 @@ final class WorkspaceStore: ObservableObject {
                agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 agentDraft = question
             }
+            lastAgentFailureKind = .cancelled
             return
         } catch {
             guard activeAgentRequestID == requestID else { return }
@@ -5526,13 +5530,14 @@ final class WorkspaceStore: ObservableObject {
             if agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 agentDraft = question
             }
+            let kind = AgentFailureKind.classify(error)
+            lastAgentFailureKind = kind
+            lastFailedAgentQuestion = question
+            let detail = error.localizedDescription
             appendAgentMessage(
                 AgentMessage(
                     role: .assistant,
-                    text: ui(
-                        "请求失败：\(error.localizedDescription) 问题已保留在输入框。",
-                        "Request failed: \(error.localizedDescription) The question remains in the composer."
-                    ),
+                    text: kind.userMessage(language: interfaceLanguage, detail: detail),
                     source: sourceTitle
                 )
             )
@@ -5548,6 +5553,35 @@ final class WorkspaceStore: ObservableObject {
         isAskingAgent = false
         agentStreamingText = ""
         agentActivityText = nil
+        lastAgentFailureKind = .cancelled
+        Task { await piRuntime.cancel() }
+    }
+
+    /// Re-send the last failed user question (precise retry).
+    func retryLastFailedAgentRequest() {
+        guard !isAskingAgent else { return }
+        let question = (lastFailedAgentQuestion ?? agentDraft)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !question.isEmpty else { return }
+        agentDraft = question
+        lastFailedAgentQuestion = nil
+        lastAgentFailureKind = nil
+        askAgent()
+    }
+
+    var canRetryLastFailedAgentRequest: Bool {
+        guard !isAskingAgent else { return false }
+        if let kind = lastAgentFailureKind, !kind.isRetryable { return false }
+        let question = (lastFailedAgentQuestion ?? agentDraft)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return !question.isEmpty
+    }
+
+    static func isAgentFailureMessage(_ text: String) -> Bool {
+        text.hasPrefix("请求失败：")
+            || text.hasPrefix("Agent 请求失败：")
+            || text.hasPrefix("Request failed:")
+            || text.hasPrefix("Request failed: ")
     }
 
     private func executeStudyAgentRequest(_ request: StudyAgentRequest) async throws -> StudyAgentReply {
