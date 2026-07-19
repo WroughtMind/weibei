@@ -238,6 +238,55 @@ function screenshotPath(value) {
   return null;
 }
 
+function resolveEvidencePath(value, runRoot) {
+  if (!value) return null;
+  return path.isAbsolute(value) ? value : path.join(runRoot, value);
+}
+
+function captureEvidenceSummary(entry, runRoot) {
+  const manifestPath = resolveEvidencePath(
+    entry.repairEvidence?.manifestPath || entry.screenshotManifest,
+    runRoot
+  );
+  const manifestResult = manifestPath ? readJSON(manifestPath) : { ok: false, value: null };
+  const manifest = manifestResult.value || {};
+  const qualityGate = manifest.qualityGate || {};
+  const inputs = qualityGate.inputs || {};
+  const visibleCheck = (qualityGate.checks || []).find((check) => check?.id === "visible-content");
+  const caseKind = normalizeRunKind(entry.caseKind);
+  const requiredStages = caseKind === "rich" ? ["overview", "before", "after"] : ["single"];
+  const screenshots = entry.screenshots || {};
+  const missingStages = requiredStages.filter((stage) => !screenshotPath(screenshots[stage]));
+  const unprovenStages = requiredStages.filter((stage) => {
+    const acknowledgement = inputs[`${stage}Ack`];
+    return acknowledgement?.present !== true || acknowledgement?.stablePaneFrames !== true;
+  });
+  const visibleContentPassed = visibleCheck?.status === "pass";
+  const verified = manifestResult.ok
+    && manifest.status === "succeeded"
+    && manifest.captureStatus === "succeeded"
+    && missingStages.length === 0
+    && unprovenStages.length === 0
+    && visibleContentPassed;
+
+  let reason = "真实窗口、正文可见性与稳定窗格回执均已核对";
+  if (!manifestResult.ok) reason = "截图清单缺失或不可读";
+  else if (manifest.status !== "succeeded" || manifest.captureStatus !== "succeeded") reason = "截图捕获链失败";
+  else if (missingStages.length > 0) reason = `缺少截图：${missingStages.join("、")}`;
+  else if (unprovenStages.length > 0) reason = `旧截图未证明正文与窗格稳定：${unprovenStages.join("、")}`;
+  else if (!visibleContentPassed) reason = "自动可见内容检查未通过";
+
+  return {
+    status: verified ? "verified" : "failed",
+    reason,
+    manifestPath: manifestPath || "缺失",
+    qualityStatus: toString(qualityGate.status, "缺失"),
+    visibleContentStatus: toString(visibleCheck?.status, "缺失"),
+    missingStages,
+    unprovenStages,
+  };
+}
+
 function materializeAsset(source, target, report) {
   fs.rmSync(target, { force: true });
   if (report.assetMode === "symlink") {
@@ -342,6 +391,7 @@ function readRecordFromEntry(entry, runRoot, outputAssetsDir, report) {
   const sequence = safeNumber(record.sequence ?? entry.sequence);
 
   const images = collectImageAssets(caseDir, outputAssetsDir, caseID, repetition, entry, report);
+  const visibleEvidence = captureEvidenceSummary(entry, runRoot);
   const t1Programs = Array.isArray(expr.t1Programs) ? expr.t1Programs : [];
   const t2Compositions = Array.isArray(expr.t2Compositions) ? expr.t2Compositions : [];
 
@@ -432,6 +482,7 @@ function readRecordFromEntry(entry, runRoot, outputAssetsDir, report) {
       repairEvidence: entry.repairEvidence || null,
       screenshotManifest: toString(entry.screenshotManifest, "缺失"),
     },
+    visibleEvidence,
     expectedCapabilityFamilies: caseSnapshot.expectedCapabilityFamilies || [],
     userBenefitCriteria: caseSnapshot.userBenefitCriteria || [],
     rejectedOrDegradedBehaviors: caseSnapshot.rejectedOrDegradedBehaviors || [],
@@ -984,7 +1035,7 @@ function makeHtml(outputPath, payload) {
         <p class="mode-note" id="review-mode-note">当前只展示真正要求富回答的题目；每题默认显示最新一轮，点击截图可放大。</p>
         <h3>筛选</h3>
         <div class="filter-row">
-          <select id="filter-status"><option value="__all">全部状态</option></select>
+          <select id="filter-status"><option value="__all">全部模型/协议记录</option></select>
           <select id="filter-subject"><option value="__all">全部学科</option></select>
           <select id="filter-shape"><option value="__all">全部形态</option></select>
           <select id="filter-repetition"><option value="__latest">最新一轮</option><option value="__all">全部轮次</option></select>
@@ -1058,7 +1109,12 @@ function buildOptions() {
   const shapeList = all((filters.shapes || []).concat(cases.flatMap((c) => c.attempts || []).map((a) => a.actualShape)));
   const repetitionList = all((filters.repetitions || []).concat(cases.flatMap((c) => c.attempts || []).map((a) => String(a.repetition))));
 
-  statusList.forEach((status) => statusEl.appendChild(new Option(status, status)));
+  const statusLabel = (status) => status === "passed"
+    ? "模型/协议记录正常"
+    : status === "failed"
+      ? "模型/协议记录待修"
+      : status;
+  statusList.forEach((status) => statusEl.appendChild(new Option(statusLabel(status), status)));
   subjectList.forEach((subject) => subjectEl.appendChild(new Option(subject, subject)));
   shapeList.forEach((shape) => shapeEl.appendChild(new Option(shape, shape)));
   repetitionList.forEach((rep) => repEl.appendChild(new Option(`第 ${rep} 轮`, rep)));
@@ -1124,10 +1180,13 @@ function renderVisualReview(attempt) {
 
 function reviewBadges(attempt) {
   const protocol = attempt.status === "passed"
-    ? `<span class="badge ok">${attempt.caseKind === "rich" ? "协议检查通过" : "边界行为检查通过"}</span>`
+    ? `<span class="badge">${attempt.caseKind === "rich" ? "模型与协议记录正常" : "安全边界判断正确（仅逻辑）"}</span>`
     : `<span class="badge warn">协议或模型结果待修</span>`;
+  const visibleEvidence = attempt.visibleEvidence?.status === "verified"
+    ? `<span class="badge ok">真实窗口正文已呈现</span>`
+    : `<span class="badge warn">真实显示失败：${e(attempt.visibleEvidence?.reason || "缺少可验证证据")}</span>`;
   if (attempt.caseKind !== "rich") {
-    return `${protocol}<span class="badge">本题按要求不生成 UI</span><span class="badge warn">不代表视觉质量通过</span>`;
+    return `${protocol}${visibleEvidence}<span class="badge">本题按要求不生成 UI</span><span class="badge warn">仍待用户验收</span>`;
   }
   const generated = isRichAttempt(attempt)
     ? `<span class="badge ok">已产生生成式 UI</span>`
@@ -1135,7 +1194,7 @@ function reviewBadges(attempt) {
   const screenshot = screenshotAssets(attempt).length > 0
     ? `<span class="badge">真实窗口截图已留档</span>`
     : `<span class="badge warn">截图缺失</span>`;
-  return `${protocol}${generated}${screenshot}<span class="badge warn">待用户审美与学习效果验收</span>`;
+  return `${protocol}${generated}${visibleEvidence}${screenshot}<span class="badge warn">待用户审美与学习效果验收</span>`;
 }
 
 function renderAttempt(attempt) {
@@ -1159,7 +1218,7 @@ function renderAttempt(attempt) {
     `<li>expectedMatch: ${attempt.sourceBinding?.hasExpectedSource ? "是" : "否"}</li>`,
   ].join("");
 
-  const delta = `耗时:${e(attempt.elapsedSeconds)}s / 形态:${e(attempt.actualShape)} / 直操:${e(attempt.directManipulation)} / 预期:${e(attempt.expectedShape)} / 状态:${e(attempt.status)}`;
+  const delta = `耗时:${e(attempt.elapsedSeconds)}s / 形态:${e(attempt.actualShape)} / 直操:${e(attempt.directManipulation)} / 预期:${e(attempt.expectedShape)} / 模型与协议记录:${e(attempt.status)}`;
 
   return `
       <div class="attempt">
@@ -1232,7 +1291,7 @@ function buildDiff(attempts) {
     const delta = safeDelta(prev.elapsedSeconds, cur.elapsedSeconds);
     lines.push({
       label: `第${prev.repetition}→第${cur.repetition}轮`,
-      text: `状态 ${e(prev.status)}→${e(cur.status)}；形态 ${e(prev.actualShape)}→${e(cur.actualShape)}；耗时 ${e(delta)}`,
+      text: `模型与协议记录 ${e(prev.status)}→${e(cur.status)}；形态 ${e(prev.actualShape)}→${e(cur.actualShape)}；耗时 ${e(delta)}`,
     });
   }
   return `<div class="diff">${lines.map((line) => `<div class="item"><strong>${line.label}</strong><br/>${line.text}</div>`).join("")}</div>`;
@@ -1260,6 +1319,7 @@ function newestAttempt(attempts) {
 function caseNeedsReview(caseItem) {
   return (caseItem.attempts || []).some((attempt) => {
     if (attempt.status !== "passed") return true;
+    if (attempt.visibleEvidence?.status !== "verified") return true;
     if (caseItem.caseKind === "rich" && !isRichAttempt(attempt)) return true;
     return screenshotAssets(attempt).length === 0;
   });
