@@ -1507,16 +1507,13 @@ struct AgentPaneView: View {
                                             .id("agent-streaming-response")
                                             .transition(WeiBeiTransition.message)
                                     }
-                                    if store.showLoadingIndicatorSamples {
-                                        AgentThinkingSampleBoard()
-                                            .id("agent-thinking-samples")
-                                            .transition(WeiBeiTransition.message)
-                                    } else if store.isAskingAgent {
+                                    // Loading motion only before the first stream token; never with streaming text.
+                                    if store.isAskingAgent && store.agentStreamingText.isEmpty {
                                         AgentThinkingIndicator()
-                                            .id("agent-thinking")
+                                            .id("agent-thinking-\(store.agentActivityText ?? "default")")
                                             .transition(WeiBeiTransition.message)
                                     }
-                                    if store.messages.isEmpty && !store.showLoadingIndicatorSamples {
+                                    if store.messages.isEmpty && !(store.isAskingAgent && store.agentStreamingText.isEmpty) {
                                         emptyAgentState
                                             .frame(maxWidth: .infinity, alignment: .leading)
                                             .transition(WeiBeiTransition.message)
@@ -3113,175 +3110,224 @@ private struct AgentMessageMarkdownText: View {
     }
 }
 
-/// Loading-motion style for the agent thinking chip.
-/// Samples A/B/C were presented for 1.0 selection; default is ink-dots (A).
-enum AgentThinkingMotionStyle: String {
-    case inkDots      // A: 朱砂墨点渐染
-    case brushStroke  // B: 笔画生长
-    case sealPulse    // C: 印记呼吸
-
-    /// Locked for 1.0 after user selection (2026-07-19): 朱砂墨点.
-    static var current: AgentThinkingMotionStyle { .inkDots }
-}
-
+/// Product loading motion — 「行文进行中 V3」.
+/// Driven solely by `store.agentActivityText` (no demo status carousel).
 private struct AgentThinkingIndicator: View {
     @EnvironmentObject private var store: WorkspaceStore
-    var style: AgentThinkingMotionStyle = .current
-    var labelOverride: String? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Epoch resets when activity text changes so orbit restarts from first bottom pass.
+    @State private var motionEpoch = Date()
 
-    var body: some View {
-        HStack(spacing: 10) {
-            switch style {
-            case .inkDots:
-                AgentThinkingInkDots()
-            case .brushStroke:
-                AgentThinkingBrushStroke()
-            case .sealPulse:
-                AgentThinkingSealPulse()
-            }
-            Text(labelOverride ?? store.agentActivityText ?? store.ui("正在读取上下文", "Reading context"))
-                .font(.caption)
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                .lineLimit(1)
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 32)
-        .background(WeiBeiTheme.paperRaised.opacity(0.34))
-        .clipShape(RoundedRectangle(cornerRadius: 7))
-        .overlay {
-            RoundedRectangle(cornerRadius: 7)
-                .stroke(WeiBeiTheme.hairline, lineWidth: 1)
-        }
+    private static let statusFontSize: CGFloat = 12
+    private static let pathHeight: CGFloat = 22
+    private static let orbitPadding: CGFloat = 4.25
+    private static let baselineOffset: CGFloat = -0.625
+    private static let segmentLength: CGFloat = 10
+    private static let lineWidth: CGFloat = 1.25
+    private static let firstPassDuration: TimeInterval = 0.88
+    private static let orbitDuration: TimeInterval = 2.25
+    private static let cinnabarOpacity = 0.82
+
+    private var statusText: String {
+        store.agentActivityText ?? store.ui("正在读取上下文", "Reading context")
     }
-}
-
-/// A — 朱砂墨点渐染：三点依次洇开，最贴「墨色」气质。
-private struct AgentThinkingInkDots: View {
-    @State private var phase = false
 
     var body: some View {
-        HStack(spacing: 5) {
-            ForEach(0..<3, id: \.self) { index in
-                Circle()
-                    .fill(WeiBeiTheme.cinnabar.opacity(phase ? 0.78 : 0.28))
-                    .frame(width: phase ? 6.5 : 4.5, height: phase ? 6.5 : 4.5)
-                    .blur(radius: phase ? 0.15 : 0.6)
-                    .animation(
-                        .easeInOut(duration: 0.85)
-                            .repeatForever(autoreverses: true)
-                            .delay(Double(index) * 0.16),
-                        value: phase
-                    )
-            }
-        }
-        .frame(width: 28, height: 14)
-        .onAppear { phase = true }
-    }
-}
-
-/// B — 笔画生长：细横线自左向右生长再回落，像落笔。
-private struct AgentThinkingBrushStroke: View {
-    @State private var progress: CGFloat = 0.18
-
-    var body: some View {
-        Capsule()
-            .fill(WeiBeiTheme.cinnabar.opacity(0.72))
-            .frame(width: 22 * progress, height: 2.2)
-            .frame(width: 28, height: 14, alignment: .leading)
-            .overlay(alignment: .leading) {
-                Capsule()
-                    .stroke(WeiBeiTheme.cinnabar.opacity(0.22), lineWidth: 1)
-                    .frame(width: 28, height: 2.2)
-            }
-            .onAppear {
-                withAnimation(.easeInOut(duration: 1.05).repeatForever(autoreverses: true)) {
-                    progress = 1.0
+        let text = statusText
+        Group {
+            if reduceMotion {
+                staticStatusText(text)
+            } else {
+                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
+                    let elapsed = max(0, context.date.timeIntervalSince(motionEpoch))
+                    animatedStatusText(text, elapsed: elapsed)
                 }
             }
-    }
-}
-
-/// C — 印记呼吸：单圆印加外环轻扩，像钤印。
-private struct AgentThinkingSealPulse: View {
-    @State private var pulse = false
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .stroke(WeiBeiTheme.cinnabar.opacity(pulse ? 0.34 : 0.12), lineWidth: 1)
-                .frame(width: pulse ? 14 : 10, height: pulse ? 14 : 10)
-            Circle()
-                .fill(WeiBeiTheme.cinnabar.opacity(pulse ? 0.72 : 0.40))
-                .frame(width: 6, height: 6)
         }
-        .frame(width: 16, height: 16)
-        .animation(.easeInOut(duration: 0.95).repeatForever(autoreverses: true), value: pulse)
-        .onAppear { pulse = true }
-    }
-}
-
-/// Side-by-side sample board for 1.0 loading-motion selection.
-struct AgentThinkingSampleBoard: View {
-    @EnvironmentObject private var store: WorkspaceStore
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text(store.ui("加载动效小样（请选其一）", "Loading motion samples (pick one)"))
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(WeiBeiTheme.ink)
-            sampleRow(
-                code: "A",
-                title: store.ui("朱砂墨点", "Ink Dots"),
-                detail: store.ui("三点依次洇开，轻、静、贴墨色。", "Three dots bloom in turn — quiet and ink-like.")
-            ) {
-                AgentThinkingIndicator(style: .inkDots, labelOverride: store.ui("正在读取上下文", "Reading context"))
-            }
-            sampleRow(
-                code: "B",
-                title: store.ui("笔画生长", "Brush Stroke"),
-                detail: store.ui("细线自左生长，像落笔铺开。", "A thin stroke grows left-to-right like a brush.")
-            ) {
-                AgentThinkingIndicator(style: .brushStroke, labelOverride: store.ui("正在读取上下文", "Reading context"))
-            }
-            sampleRow(
-                code: "C",
-                title: store.ui("印记呼吸", "Seal Pulse"),
-                detail: store.ui("单圆钤印轻扩，更符号、更安静。", "A seal circle breathes — symbolic and still.")
-            ) {
-                AgentThinkingIndicator(style: .sealPulse, labelOverride: store.ui("正在读取上下文", "Reading context"))
-            }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(text)
+        .onAppear {
+            motionEpoch = Date()
         }
-        .padding(28)
-        .frame(maxWidth: 520, alignment: .leading)
-        .background(WeiBeiTheme.paper.opacity(0.92))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .onChange(of: statusText) { _, _ in
+            // Interrupt mid-orbit immediately; restart first bottom proofreading pass.
+            motionEpoch = Date()
+        }
+    }
+
+    private func staticStatusText(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: Self.statusFontSize, weight: .medium))
+            .foregroundStyle(WeiBeiTheme.ink.opacity(0.93))
+            .lineLimit(1)
+            .frame(height: Self.pathHeight, alignment: .leading)
+            .offset(y: Self.baselineOffset)
+    }
+
+    private func animatedStatusText(_ text: String, elapsed: TimeInterval) -> some View {
+        let textWidth = Self.measuredWidth(for: text)
+        let orbitWidth = textWidth + Self.orbitPadding * 2
+        let reveal = Self.revealProgress(at: elapsed)
+        let firstPass = elapsed < Self.firstPassDuration
+        let cursorProgress = firstPass ? reveal : 1
+        let cursorOpacity = firstPass
+            ? Self.smootherStep(Self.clamp(reveal / 0.14))
+                * (1 - Self.smootherStep(Self.clamp((elapsed - 0.82) / 0.16)))
+            : 0
+        let orbitOpacity = firstPass
+            ? Self.smootherStep(Self.clamp((elapsed - 0.82) / 0.18))
+            : 1
+        let orbitProgress = Self.orbitProgress(at: elapsed)
+        let cinnabar = WeiBeiTheme.cinnabar.opacity(Self.cinnabarOpacity)
+
+        return ZStack(alignment: .leading) {
+            Text(text)
+                .foregroundStyle(WeiBeiTheme.tertiaryInk.opacity(0.70))
+
+            Text(text)
+                .foregroundStyle(WeiBeiTheme.ink.opacity(0.93))
+                .mask(alignment: .leading) {
+                    // Fixed-width mask + scaleEffect — do not change layout width per frame.
+                    Rectangle()
+                        .frame(width: textWidth)
+                        .scaleEffect(x: max(0.001, reveal), y: 1, anchor: .leading)
+                }
+        }
+        .font(.system(size: Self.statusFontSize, weight: .medium))
+        .lineLimit(1)
+        .frame(width: textWidth, height: Self.pathHeight, alignment: .leading)
+        .offset(y: Self.baselineOffset)
         .overlay {
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(WeiBeiTheme.hairline.opacity(0.6), lineWidth: 1)
+            ZStack(alignment: .bottomLeading) {
+                // First pass: short cinnabar segment under the text left → right.
+                Capsule(style: .continuous)
+                    .fill(cinnabar)
+                    .frame(width: Self.segmentLength, height: Self.lineWidth)
+                    .offset(x: max(0, (orbitWidth - Self.segmentLength) * cursorProgress))
+                    .opacity(cursorOpacity)
+
+                // Continuous orbit after first pass (clockwise, no reverse).
+                TextOrbitSegment(
+                    progress: orbitProgress,
+                    width: orbitWidth,
+                    segmentLength: Self.segmentLength,
+                    color: cinnabar
+                )
+                .opacity(orbitOpacity)
+            }
+            .frame(width: orbitWidth, height: Self.pathHeight)
         }
     }
 
-    private func sampleRow<Content: View>(
-        code: String,
-        title: String,
-        detail: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text(code)
-                    .font(.system(size: 12, weight: .bold, design: .monospaced))
-                    .foregroundStyle(WeiBeiTheme.cinnabar)
-                Text(title)
-                    .font(.system(size: 13.5, weight: .semibold))
-                    .foregroundStyle(WeiBeiTheme.ink)
+    private static func measuredWidth(for text: String) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: statusFontSize, weight: .medium)
+        let size = (text as NSString).size(withAttributes: [.font: font])
+        return ceil(size.width)
+    }
+
+    private static func revealProgress(at elapsed: TimeInterval) -> Double {
+        // Match V3 prototype: ~0.10s lead-in, ~0.78s ease to full ink (total first pass 0.88s).
+        let raw = clamp((elapsed - 0.10) / 0.78)
+        return 1 - pow(1 - raw, 3.2)
+    }
+
+    private static func orbitProgress(at elapsed: TimeInterval) -> Double {
+        guard elapsed >= firstPassDuration else { return 0 }
+        let t = (elapsed - firstPassDuration) / orbitDuration
+        let remainder = t.truncatingRemainder(dividingBy: 1)
+        return remainder >= 0 ? remainder : remainder + 1
+    }
+
+    private static func clamp(_ value: Double) -> Double {
+        min(max(value, 0), 1)
+    }
+
+    private static func smootherStep(_ value: Double) -> Double {
+        let x = clamp(value)
+        return x * x * x * (x * (x * 6 - 15) + 10)
+    }
+}
+
+/// Short cinnabar segment orbiting a measured text box (V3 path geometry).
+private struct TextOrbitSegment: View {
+    let progress: Double
+    let width: CGFloat
+    let segmentLength: CGFloat
+    let color: Color
+
+    private let height: CGFloat = 22
+
+    var body: some View {
+        let normalizedProgress = CGFloat(progress.truncatingRemainder(dividingBy: 1))
+        let fraction = min(0.08, segmentLength / estimatedPerimeter)
+        let end = normalizedProgress + fraction
+
+        ZStack {
+            if end <= 1 {
+                orbitPath(from: normalizedProgress, to: end)
+            } else {
+                orbitPath(from: normalizedProgress, to: 1)
+                orbitPath(from: 0, to: end - 1)
             }
-            Text(detail)
-                .font(.caption)
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-            content()
-                .environmentObject(store)
         }
+        .frame(width: width, height: height)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private var estimatedPerimeter: CGFloat {
+        let radius: CGFloat = 3
+        return max(1, 2 * (width + height) - 8 * radius + 2 * .pi * radius)
+    }
+
+    private func orbitPath(from start: CGFloat, to end: CGFloat) -> some View {
+        TextOrbitPath()
+            .trim(from: start, to: end)
+            .stroke(
+                color,
+                style: StrokeStyle(
+                    lineWidth: 1.25,
+                    lineCap: .round,
+                    lineJoin: .round
+                )
+            )
+    }
+}
+
+private struct TextOrbitPath: Shape {
+    func path(in rect: CGRect) -> Path {
+        let inset: CGFloat = 0.75
+        let radius: CGFloat = 3
+        let minX = rect.minX + inset
+        let maxX = rect.maxX - inset
+        let minY = rect.minY + inset
+        let maxY = rect.maxY - inset
+
+        // Start bottom-right, go up the right edge, left across the top, down the left, right along the bottom.
+        var path = Path()
+        path.move(to: CGPoint(x: maxX - radius, y: maxY))
+        path.addQuadCurve(
+            to: CGPoint(x: maxX, y: maxY - radius),
+            control: CGPoint(x: maxX, y: maxY)
+        )
+        path.addLine(to: CGPoint(x: maxX, y: minY + radius))
+        path.addQuadCurve(
+            to: CGPoint(x: maxX - radius, y: minY),
+            control: CGPoint(x: maxX, y: minY)
+        )
+        path.addLine(to: CGPoint(x: minX + radius, y: minY))
+        path.addQuadCurve(
+            to: CGPoint(x: minX, y: minY + radius),
+            control: CGPoint(x: minX, y: minY)
+        )
+        path.addLine(to: CGPoint(x: minX, y: maxY - radius))
+        path.addQuadCurve(
+            to: CGPoint(x: minX + radius, y: maxY),
+            control: CGPoint(x: minX, y: maxY)
+        )
+        path.addLine(to: CGPoint(x: maxX - radius, y: maxY))
+        return path
     }
 }
 

@@ -4295,6 +4295,19 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         if scenario == "loading-indicator-samples" {
+            // Shows product V3 「行文进行中」thinking indicator in the agent stream.
+            let appearanceRaw = Self.environmentValue("WEIBEI_VERIFY_APPEARANCE").lowercased()
+            if appearanceRaw == "ink" || appearanceRaw == "inkstone" || appearanceRaw == "dark" {
+                appearanceMode = .inkstone
+            } else {
+                appearanceMode = .paper
+            }
+            let languageRaw = Self.environmentValue("WEIBEI_VERIFY_LANGUAGE").lowercased()
+            if languageRaw == "en" || languageRaw == "english" {
+                interfaceLanguage = .english
+            } else {
+                interfaceLanguage = .chinese
+            }
             layout = .immersiveConversation
             showLibrary = false
             showReader = false
@@ -4305,7 +4318,7 @@ final class WorkspaceStore: ObservableObject {
             agentActivityText = ui("正在读取上下文", "Reading context")
             agentStreamingText = ""
             messages = []
-            showLoadingIndicatorSamples = true
+            showLoadingIndicatorSamples = false
             recordVerificationStage("loading-samples")
             recordVerificationStage("completed")
             return

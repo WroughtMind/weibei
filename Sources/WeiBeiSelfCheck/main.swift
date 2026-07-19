@@ -3917,6 +3917,26 @@ if let messageTextStart = notesAgentSource.range(of: "private struct AgentMessag
 } else {
     expect(false, "agent message text source is inspectable")
 }
+// WP9: 行文进行中 V3 loading motion — no three-dot pulse card; orbit segment + reduce motion.
+if let thinkingStart = notesAgentSource.range(of: "private struct AgentThinkingIndicator")?.lowerBound,
+   let streamingStart = notesAgentSource[thinkingStart...].range(of: "private struct AgentStreamingResponse")?.lowerBound {
+    let thinkingSource = String(notesAgentSource[thinkingStart..<streamingStart])
+    expect(!thinkingSource.contains("ForEach(0..<3")
+        && !thinkingSource.contains("repeatForever")
+        && !thinkingSource.contains("AgentThinkingInkDots")
+        && !thinkingSource.contains("pulse = true"), "AgentThinkingIndicator no longer uses a three-dot pulse implementation")
+    expect(!thinkingSource.contains("RoundedRectangle(cornerRadius: 7)")
+        && !thinkingSource.contains("paperRaised.opacity(0.34)")
+        && !thinkingSource.contains(".clipShape(RoundedRectangle"), "AgentThinkingIndicator has no loading-card chrome (fill/stroke/rounded rect)")
+    expect(thinkingSource.contains("accessibilityReduceMotion")
+        && thinkingSource.contains("TextOrbitSegment")
+        && thinkingSource.contains("TimelineView(.animation(minimumInterval: 1.0 / 30.0")
+        && thinkingSource.contains("store.agentActivityText"), "AgentThinkingIndicator uses reduce-motion, TextOrbitSegment, TimelineView, and agentActivityText")
+} else {
+    expect(false, "AgentThinkingIndicator and AgentStreamingResponse source bounds are inspectable")
+}
+expect(notesAgentSource.contains("if store.isAskingAgent && store.agentStreamingText.isEmpty")
+    && notesAgentSource.contains("AgentThinkingIndicator()"), "loading motion appears only while asking and streaming text is still empty")
 // Deleted overlay views (drawer / corner / quiet insight / compact previews) are gone.
 expect(!notesAgentSource.contains("struct AgentDrawerView")
     && !notesAgentSource.contains("struct CornerAgentView")
