@@ -184,6 +184,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var isAskingAgent = false
     @Published var agentStreamingText = ""
     @Published var agentActivityText: String?
+    @Published var showLoadingIndicatorSamples = false
     /// Last failed user question for precise one-tap retry.
     @Published private(set) var lastFailedAgentQuestion: String?
     @Published private(set) var lastAgentFailureKind: AgentFailureKind?
@@ -4275,11 +4276,28 @@ final class WorkspaceStore: ObservableObject {
             || scenario == "course-workspace-overview-flow"
             || scenario == "course-workspace-workflow-flow"
             || scenario == "course-index-navigation-flow"
+            || scenario == "loading-indicator-samples"
             || emptyWorkspaceScenarios.contains(scenario) else { return }
         didRunVerificationScenario = true
         recordVerificationStage("recognized:\(scenario)")
         if emptyWorkspaceScenarios.contains(scenario) {
             configureEmptyWorkspaceVerificationScenario(scenario)
+            return
+        }
+        if scenario == "loading-indicator-samples" {
+            layout = .immersiveConversation
+            showLibrary = false
+            showReader = false
+            showAgent = true
+            showNotes = false
+            agentSurface = .hidden
+            isAskingAgent = true
+            agentActivityText = ui("正在读取上下文", "Reading context")
+            agentStreamingText = ""
+            messages = []
+            showLoadingIndicatorSamples = true
+            recordVerificationStage("loading-samples")
+            recordVerificationStage("completed")
             return
         }
         if scenario == "content-rail-dormant-preview" || scenario == "content-rail-activation-preview" {
