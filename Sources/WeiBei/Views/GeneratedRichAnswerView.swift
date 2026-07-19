@@ -48,9 +48,26 @@ struct GeneratedRichAnswerSceneView: View {
         .onAppear(perform: onSceneReady)
         .onRichAnswerVerificationStage { stage in
             guard stage == .after else { return }
-            runtime.advanceVerificationInteraction(composition)
+            let before = runtime.verificationStateSnapshot()
+            let advance = runtime.advanceVerificationInteraction(composition)
+            let after = runtime.verificationStateSnapshot()
+            RichAnswerVerificationBridge.writeInteractionReceipt(
+                sceneID: scene.id,
+                sceneTitle: scene.title,
+                target: advance.target,
+                kind: advance.kind,
+                before: before,
+                after: after,
+                changed: RichAnswerVerificationBridge.changed(before, after),
+                source: "generated-ui"
+            )
         }
     }
+}
+
+private struct GeneratedVerificationAdvanceResult {
+    var target: [String: Any]
+    var kind: String
 }
 
 private struct GeneratedRichAnswerRuntime: Equatable {
@@ -66,19 +83,52 @@ private struct GeneratedRichAnswerRuntime: Equatable {
         selectedID = nil
     }
 
-    mutating func advanceVerificationInteraction(_ composition: RichAnswerUIComposition) {
+    func verificationStateSnapshot() -> [String: Any] {
+        [
+            "values": Dictionary(uniqueKeysWithValues: values.map { ($0.key, $0.value) }),
+            "selectedID": selectedID ?? NSNull(),
+        ]
+    }
+
+    mutating func advanceVerificationInteraction(_ composition: RichAnswerUIComposition) -> GeneratedVerificationAdvanceResult {
+        var target: [String: Any] = [:]
+        var kind = "generated-ui"
         if let binding = composition.bindings.first {
-            values[binding.id] = RichAnswerVerificationBridge.nextVerificationValue(
-                current: values[binding.id] ?? binding.initialValue,
+            let beforeValue = values[binding.id] ?? binding.initialValue
+            let afterValue = RichAnswerVerificationBridge.nextVerificationValue(
+                current: beforeValue,
                 minimum: binding.minimum,
                 maximum: binding.maximum,
                 step: binding.step
             )
+            values[binding.id] = afterValue
+            target = [
+                "id": binding.id,
+                "label": binding.label,
+                "control": "binding",
+                "beforeValue": beforeValue,
+                "afterValue": afterValue,
+            ]
+            kind = "binding"
         }
         if selectedID == nil,
            let selectableID = firstSelectableID(in: composition) {
             selectedID = selectableID
+            if target.isEmpty {
+                target = [
+                    "id": selectableID,
+                    "control": "selectable-node",
+                ]
+                kind = "select"
+            }
         }
+        if target.isEmpty {
+            target = [
+                "id": composition.rootID,
+                "control": "composition-root",
+            ]
+        }
+        return GeneratedVerificationAdvanceResult(target: target, kind: kind)
     }
 
     private func firstSelectableID(in composition: RichAnswerUIComposition) -> String? {

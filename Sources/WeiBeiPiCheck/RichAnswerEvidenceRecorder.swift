@@ -260,7 +260,7 @@ struct RichAnswerEvidenceRunConfiguration {
     private static func computeMatrixHash() throws -> String {
         try sha256(
             of: encodeForHash(
-                RichAnswerLiveCases.fullMatrixRuns.map(RichAnswerEvidenceCaseSnapshot.init)
+                RichAnswerLiveCases.fullMatrixRuns.map { RichAnswerEvidenceCaseSnapshot($0) }
             )
         )
     }
@@ -533,7 +533,7 @@ final class RichAnswerEvidenceRecorder {
             repetition: repetition,
             sequence: sequence,
             totalSelectedCases: total,
-            caseSnapshot: .init(runCase),
+            caseSnapshot: .init(runCase, request: request),
             startedAt: Self.timestamp(startedAt),
             finishedAt: Self.timestamp(),
             elapsedSeconds: elapsedSeconds,
@@ -813,6 +813,10 @@ final class RichAnswerEvidenceRecorder {
 
         - 文本来源：\(source.textSourceLabels.joined(separator: " | "))
         - 账本来源：\(source.evidenceLedgerLabels.joined(separator: " | "))
+        - materialItemID：\(record.caseSnapshot.materialItemID ?? "无")
+        - verificationAssetID：\(record.caseSnapshot.verificationAssetID ?? "无")
+        - sourceFingerprint：\(record.caseSnapshot.sourceFingerprint ?? "无")
+        - verificationAssetFingerprint：\(record.caseSnapshot.verificationAssetFingerprint ?? "无")
         - 证据状态：\(source.evidenceState ?? "无")
         - 场景证据：\(source.sceneEvidenceIDs.joined(separator: ", "))
         - 命中预期来源：\(source.hasExpectedSource)
@@ -1364,6 +1368,10 @@ private struct RichAnswerEvidenceCaseSnapshot: Codable {
     var question: String
     var materialTitle: String?
     var materialKind: String?
+    var materialItemID: String?
+    var verificationAssetID: String?
+    var sourceFingerprint: String?
+    var verificationAssetFingerprint: String?
     var materialText: String?
     var selectionTitle: String?
     var selectionText: String?
@@ -1372,20 +1380,116 @@ private struct RichAnswerEvidenceCaseSnapshot: Codable {
     var userBenefitCriteria: [String]
     var rejectedOrDegradedBehaviors: [String]
 
-    init(_ runCase: RichAnswerLiveRunCase) {
+    init(_ runCase: RichAnswerLiveRunCase, request: StudyAgentRequest? = nil) {
         id = runCase.id
         caseKind = runCase.caseKind
         subject = runCase.subject
         question = runCase.question
-        materialTitle = runCase.materialTitle
-        materialKind = runCase.materialKind
-        materialText = runCase.materialText
-        selectionTitle = runCase.selectionTitle
-        selectionText = runCase.selectionText
+        let resolvedMaterialTitle = runCase.materialTitle
+        let resolvedMaterialKind = runCase.materialKind
+        let resolvedMaterialItemID = Self.currentMaterialID(in: request?.courseContext)
+            ?? runCase.materialItemID
+        let resolvedVerificationAssetID = runCase.verificationAssetID
+        let resolvedMaterialText = runCase.materialText
+        let resolvedSelectionTitle = runCase.selectionTitle
+        let resolvedSelectionText = runCase.selectionText
+        materialTitle = resolvedMaterialTitle
+        materialKind = resolvedMaterialKind
+        materialItemID = resolvedMaterialItemID
+        verificationAssetID = resolvedVerificationAssetID
+        sourceFingerprint = Self.sourceFingerprint(
+            materialTitle: resolvedMaterialTitle,
+            materialKind: resolvedMaterialKind,
+            materialItemID: resolvedMaterialItemID,
+            verificationAssetID: resolvedVerificationAssetID,
+            materialText: resolvedMaterialText,
+            selectionTitle: resolvedSelectionTitle,
+            selectionText: resolvedSelectionText
+        )
+        verificationAssetFingerprint = Self.verificationAssetFingerprint(for: resolvedVerificationAssetID)
+        materialText = resolvedMaterialText
+        selectionTitle = resolvedSelectionTitle
+        selectionText = resolvedSelectionText
         expectedRenderer = runCase.expectedRenderer
         expectedCapabilityFamilies = runCase.expectedCapabilityFamilies.sorted()
         userBenefitCriteria = runCase.userBenefitCriteria
         rejectedOrDegradedBehaviors = runCase.rejectedOrDegradedBehaviors
+    }
+
+    private static func currentMaterialID(in context: StudyAgentCourseContext?) -> String? {
+        if let id = context?.items.first(where: \.isCurrentMaterial)?.id,
+           !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return id
+        }
+        if let id = context?.catalog.first(where: \.isCurrentMaterial)?.id,
+           !id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return id
+        }
+        return nil
+    }
+
+    private static func sourceFingerprint(
+        materialTitle: String?,
+        materialKind: String?,
+        materialItemID: String?,
+        verificationAssetID: String?,
+        materialText: String?,
+        selectionTitle: String?,
+        selectionText: String?
+    ) -> String? {
+        let fields = [
+            "materialTitle": materialTitle,
+            "materialKind": materialKind,
+            "materialItemID": materialItemID,
+            "verificationAssetID": verificationAssetID,
+            "materialText": materialText,
+            "selectionTitle": selectionTitle,
+            "selectionText": selectionText,
+        ]
+        let normalizedFields = fields.compactMap { key, value -> String? in
+            let trimmed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return trimmed.isEmpty ? nil : "\(key)=\(trimmed)"
+        }
+        guard !normalizedFields.isEmpty else { return nil }
+        let payload = normalizedFields.sorted().joined(separator: "\n")
+        return SHA256.hash(data: Data(payload.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func verificationAssetFingerprint(for assetID: String?) -> String? {
+        guard let assetID,
+              !assetID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        guard let manifestURL = verificationAssetManifestURL(),
+              let manifestData = try? Data(contentsOf: manifestURL),
+              let manifestObject = try? JSONSerialization.jsonObject(with: manifestData) as? [String: Any],
+              let manifestAssets = manifestObject["assets"] as? [[String: Any]] else {
+            return nil
+        }
+        for entry in manifestAssets {
+            guard entry["id"] as? String == assetID,
+                  let derivative = entry["derivative"] as? [String: Any],
+                  let sha256 = derivative["sha256"] as? String,
+                  !sha256.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                continue
+            }
+            return sha256
+        }
+        return nil
+    }
+
+    private static func verificationAssetManifestURL() -> URL? {
+        var cursor = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        for _ in 0..<8 {
+            let candidate = cursor
+                .appendingPathComponent("Sources/WeiBei/Resources/RichAnswerVerificationAssets")
+                .appendingPathComponent("manifest.json")
+            if FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+            cursor.deleteLastPathComponent()
+        }
+        return nil
     }
 }
 
@@ -1711,6 +1815,24 @@ extension RichAnswerLiveRunCase {
         }
     }
 
+    var materialItemID: String? {
+        switch self {
+        case .invalidProtocol:
+            nil
+        case let .success(checkCase):
+            checkCase.materialID
+        case let .textOnly(checkCase):
+            "material-\(checkCase.id)"
+        case let .degradation(checkCase):
+            "material-\(checkCase.id)"
+        }
+    }
+
+    var verificationAssetID: String? {
+        guard materialKind == "image" else { return nil }
+        return RichAnswerEvidenceCaseSnapshotVerificationAssetParser.assetID(in: materialText)
+    }
+
     var selectionText: String? {
         switch self {
         case .invalidProtocol:
@@ -1816,6 +1938,22 @@ extension RichAnswerLiveRunCase {
         RichAnswerPressureCases.faultInjectionCases.first {
             $0.id == RichAnswerLiveCases.invalidProtocolCaseID
         }
+    }
+}
+
+private enum RichAnswerEvidenceCaseSnapshotVerificationAssetParser {
+    static func assetID(in materialText: String?) -> String? {
+        guard let materialText else { return nil }
+        let prefixes = ["来源登记 ID：", "来源登记 ID:"]
+        for line in materialText.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            for prefix in prefixes where trimmed.hasPrefix(prefix) {
+                let value = String(trimmed.dropFirst(prefix.count))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return value.isEmpty ? nil : value
+            }
+        }
+        return nil
     }
 }
 

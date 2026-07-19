@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import WeiBeiCore
 
@@ -10,6 +11,11 @@ struct RichAnswerReplayArtifact {
     var elapsedSeconds: TimeInterval?
     var question: String
     var materialTitle: String
+    var materialKind: String
+    var materialItemID: String
+    var verificationAssetID: String?
+    var sourceFingerprint: String?
+    var verificationAssetFingerprint: String?
     var materialText: String
     var assistantText: String
     var backend: StudyAgentBackend?
@@ -45,7 +51,12 @@ struct RichAnswerReplayArtifact {
     }
 
     var presentationForDisplay: RichAnswerPresentation? {
-        richAnswer
+        richAnswer?.resolvingAssetIDs(using: replayAssetAliases)
+    }
+
+    var referencesCurrentMaterialAsset: Bool {
+        guard let presentation = presentationForDisplay else { return false }
+        return Self.assetIDs(in: presentation).contains(materialItemID)
     }
 
     private var explicitEmptyResultText: String {
@@ -70,6 +81,29 @@ struct RichAnswerReplayArtifact {
         }
         return rawURL
     }
+
+    private var replayAssetAliases: [String: String] {
+        guard let assetID = Self.nonEmpty(verificationAssetID),
+              assetID != materialItemID else {
+            return [:]
+        }
+        return [assetID: materialItemID]
+    }
+
+    private static func assetIDs(in presentation: RichAnswerPresentation) -> Set<String> {
+        var assetIDs = Set(presentation.evidenceLedger.flatMap(\.assetIDs))
+        for scene in presentation.scenes {
+            assetIDs.formUnion(scene.objects.compactMap(\.assetID))
+            assetIDs.formUnion(scene.frames.compactMap(\.assetID))
+            assetIDs.formUnion(scene.ui?.nodes.compactMap(\.assetID) ?? [])
+        }
+        return assetIDs
+    }
+
+    private static func nonEmpty(_ rawValue: String?) -> String? {
+        let value = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty ? nil : value
+    }
 }
 
 extension RichAnswerReplayArtifact {
@@ -90,6 +124,7 @@ private struct EvidenceRecord: Decodable {
     var promptAndMaterial: PromptSnapshot?
     var modelRawReply: ReplySnapshot?
     var toolAndProtocolValidation: ValidationSnapshot?
+    var traceability: TraceabilitySnapshot?
 
     func replayArtifact(artifactURL: URL) -> RichAnswerReplayArtifact {
         let question = promptAndMaterial?.question
@@ -98,6 +133,20 @@ private struct EvidenceRecord: Decodable {
         let materialTitle = promptAndMaterial?.materialTitle
             ?? caseSnapshot?.materialTitle
             ?? "富回答回放材料"
+        let materialIdentity = ReplayMaterialIdentity(
+            caseSnapshot: caseSnapshot,
+            prompt: promptAndMaterial
+        )
+        let materialText = promptAndMaterial?.materialText ?? caseSnapshot?.materialText ?? ""
+        let sourceFingerprint = ReplaySourceFingerprint.resolve(
+            explicit: caseSnapshot?.sourceFingerprint,
+            traceabilityPromptHash: traceability?.promptHash,
+            materialTitle: materialTitle,
+            materialKind: materialIdentity.kind,
+            materialItemID: materialIdentity.itemID,
+            verificationAssetID: materialIdentity.verificationAssetID,
+            materialText: materialText
+        )
         let validation = toolAndProtocolValidation
         return RichAnswerReplayArtifact(
             artifactURL: artifactURL,
@@ -108,7 +157,15 @@ private struct EvidenceRecord: Decodable {
             elapsedSeconds: elapsedSeconds,
             question: question,
             materialTitle: materialTitle,
-            materialText: promptAndMaterial?.materialText ?? "",
+            materialKind: materialIdentity.kind,
+            materialItemID: materialIdentity.itemID,
+            verificationAssetID: materialIdentity.verificationAssetID,
+            sourceFingerprint: sourceFingerprint,
+            verificationAssetFingerprint: caseSnapshot?.verificationAssetFingerprint
+                ?? ReplaySourceFingerprint.verificationAssetFingerprint(
+                    for: materialIdentity.verificationAssetID
+                ),
+            materialText: materialText,
             assistantText: modelRawReply?.text ?? "",
             backend: modelRawReply.flatMap(\.backendValue),
             richAnswer: modelRawReply?.richAnswer,
@@ -124,12 +181,19 @@ private struct CaseSnapshot: Decodable {
     var caseKind: String
     var question: String
     var materialTitle: String?
+    var materialKind: String?
+    var materialItemID: String?
+    var verificationAssetID: String?
+    var sourceFingerprint: String?
+    var verificationAssetFingerprint: String?
+    var materialText: String?
 }
 
 private struct PromptSnapshot: Decodable {
     var question: String
     var materialTitle: String
     var materialText: String
+    var courseContext: StudyAgentCourseContext?
 }
 
 private struct ReplySnapshot: Decodable {
@@ -152,6 +216,11 @@ private struct ReplySnapshot: Decodable {
             elapsedSeconds: nil,
             question: "留档器只提供了 reply.json；没有写入用户问题。",
             materialTitle: "富回答回放材料",
+            materialKind: "text",
+            materialItemID: "rich-answer-replay-material",
+            verificationAssetID: nil,
+            sourceFingerprint: nil,
+            verificationAssetFingerprint: nil,
             materialText: "",
             assistantText: text,
             backend: backendValue,
@@ -163,10 +232,120 @@ private struct ReplySnapshot: Decodable {
     }
 }
 
+private struct ReplayMaterialIdentity {
+    var itemID: String
+    var kind: String
+    var verificationAssetID: String?
+
+    init(caseSnapshot: CaseSnapshot?, prompt: PromptSnapshot?) {
+        let currentMaterial = Self.currentMaterial(in: prompt?.courseContext)
+        let resolvedVerificationAssetID = Self.nonEmpty(caseSnapshot?.verificationAssetID)
+            ?? Self.verificationAssetID(in: prompt?.materialText)
+        itemID = Self.nonEmpty(caseSnapshot?.materialItemID)
+            ?? currentMaterial?.id
+            ?? "rich-answer-replay-material"
+        kind = Self.nonEmpty(caseSnapshot?.materialKind)
+            ?? (resolvedVerificationAssetID == nil ? currentMaterial?.kind : "image")
+            ?? "text"
+        verificationAssetID = resolvedVerificationAssetID
+    }
+
+    private static func currentMaterial(
+        in context: StudyAgentCourseContext?
+    ) -> (id: String, kind: String)? {
+        if let item = context?.items.first(where: \.isCurrentMaterial),
+           let id = nonEmpty(item.id),
+           let kind = nonEmpty(item.kind) {
+            return (id, kind)
+        }
+        if let item = context?.catalog.first(where: \.isCurrentMaterial),
+           let id = nonEmpty(item.id),
+           let kind = nonEmpty(item.kind) {
+            return (id, kind)
+        }
+        return nil
+    }
+
+    private static func verificationAssetID(in materialText: String?) -> String? {
+        guard let materialText else { return nil }
+        let prefixes = ["来源登记 ID：", "来源登记 ID:"]
+        for line in materialText.components(separatedBy: .newlines) {
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            for prefix in prefixes where trimmed.hasPrefix(prefix) {
+                return nonEmpty(String(trimmed.dropFirst(prefix.count)))
+            }
+        }
+        return nil
+    }
+
+    private static func nonEmpty(_ rawValue: String?) -> String? {
+        let value = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty ? nil : value
+    }
+}
+
+private enum ReplaySourceFingerprint {
+    static func resolve(
+        explicit: String?,
+        traceabilityPromptHash: String?,
+        materialTitle: String,
+        materialKind: String,
+        materialItemID: String,
+        verificationAssetID: String?,
+        materialText: String
+    ) -> String? {
+        if let value = nonEmpty(explicit) {
+            return value
+        }
+        if materialKind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "image",
+           let value = verificationAssetFingerprint(for: verificationAssetID) {
+            return value
+        }
+        if let value = nonEmpty(traceabilityPromptHash) {
+            return value
+        }
+        return sha256(
+            [
+                "materialTitle": materialTitle,
+                "materialKind": materialKind,
+                "materialItemID": materialItemID,
+                "verificationAssetID": verificationAssetID ?? "",
+                "materialText": materialText,
+            ]
+        )
+    }
+
+    static func verificationAssetFingerprint(for assetID: String?) -> String? {
+        guard let assetID = nonEmpty(assetID) else { return nil }
+        return RichAnswerVerificationAssets.asset(for: assetID)?.sha256
+    }
+
+    private static func sha256(_ fields: [String: String]) -> String? {
+        let payload = fields
+            .map { "\($0.key)=\($0.value.trimmingCharacters(in: .whitespacesAndNewlines))" }
+            .sorted()
+            .joined(separator: "\n")
+        guard !payload.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return SHA256.hash(data: Data(payload.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func nonEmpty(_ rawValue: String?) -> String? {
+        let value = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty ? nil : value
+    }
+}
+
 private struct ValidationSnapshot: Decodable {
     var issues: [String]
     var toolTrace: [String]
     var protocolDiagnostics: [String]
+}
+
+private struct TraceabilitySnapshot: Decodable {
+    var sourceHash: String?
+    var promptHash: String?
 }
 
 private enum ReplayError: LocalizedError {

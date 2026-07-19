@@ -12,6 +12,8 @@ enum RichAnswerVerificationStage: String {
 }
 
 enum RichAnswerVerificationBridge {
+    static let actionReceiptFileName = "rich-answer-action-receipt.json"
+
     static var isEnabled: Bool {
         ProcessInfo.processInfo.environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1"
     }
@@ -36,6 +38,102 @@ enum RichAnswerVerificationBridge {
             return target
         }
         return minimum + span * 0.35
+    }
+
+    static func writeInteractionReceipt(
+        sceneID: String,
+        sceneTitle: String,
+        target: [String: Any],
+        kind: String,
+        before: Any?,
+        after: Any?,
+        changed: Bool,
+        source: String = "app"
+    ) {
+        guard isEnabled,
+              changed,
+              let workspaceDirectory = ProcessInfo.processInfo.environment["WEIBEI_WORKSPACE_DIR"],
+              !workspaceDirectory.isEmpty else { return }
+
+        let environment = ProcessInfo.processInfo.environment
+        let receipt: [String: Any] = [
+            "schemaVersion": 1,
+            "source": source,
+            "stage": RichAnswerVerificationStage.after.rawValue,
+            "timestamp": ISO8601DateFormatter().string(from: Date()),
+            "case": [
+                "id": environment["WEIBEI_VERIFY_CASE_ID"] ?? "",
+                "kind": environment["WEIBEI_VERIFY_CASE_KIND"] ?? "",
+                "recordPath": environment["WEIBEI_VERIFY_RECORD_PATH"] ?? "",
+            ],
+            "scene": [
+                "id": sceneID,
+                "title": sceneTitle,
+            ],
+            "target": sanitizedJSONValue(target),
+            "kind": kind,
+            "before": sanitizedJSONValue(before ?? NSNull()),
+            "after": sanitizedJSONValue(after ?? NSNull()),
+            "changed": changed,
+        ]
+        guard JSONSerialization.isValidJSONObject(receipt),
+              let data = try? JSONSerialization.data(withJSONObject: receipt, options: [.prettyPrinted, .sortedKeys]) else { return }
+
+        let baseURL = URL(fileURLWithPath: workspaceDirectory, isDirectory: true)
+        let receiptURL = baseURL.appendingPathComponent(actionReceiptFileName)
+        try? FileManager.default.createDirectory(at: baseURL, withIntermediateDirectories: true)
+        try? data.write(to: receiptURL, options: [.atomic])
+    }
+
+    static func changed(_ before: Any?, _ after: Any?) -> Bool {
+        canonicalString(for: sanitizedJSONValue(before ?? NSNull()))
+            != canonicalString(for: sanitizedJSONValue(after ?? NSNull()))
+    }
+
+    static func sanitizedJSONValue(_ value: Any) -> Any {
+        switch value {
+        case is NSNull:
+            return NSNull()
+        case let string as String:
+            return string
+        case let bool as Bool:
+            return bool
+        case let number as NSNumber:
+            return number
+        case let int as Int:
+            return int
+        case let double as Double:
+            if double.isFinite {
+                return double
+            }
+            return String(describing: double)
+        case let float as Float:
+            if float.isFinite {
+                return float
+            }
+            return String(describing: float)
+        case let dictionary as [String: Any]:
+            return Dictionary(
+                uniqueKeysWithValues: dictionary.map { key, value in
+                    (key, sanitizedJSONValue(value))
+                }
+            )
+        case let array as [Any]:
+            return array.map(sanitizedJSONValue)
+        case let set as Set<String>:
+            return Array(set).sorted()
+        default:
+            return String(describing: value)
+        }
+    }
+
+    private static func canonicalString(for value: Any) -> String {
+        guard JSONSerialization.isValidJSONObject(["value": value]),
+              let data = try? JSONSerialization.data(withJSONObject: ["value": value], options: [.sortedKeys]),
+              let string = String(data: data, encoding: .utf8) else {
+            return String(describing: value)
+        }
+        return string
     }
 }
 

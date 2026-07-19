@@ -17,10 +17,16 @@ struct Arguments {
     var overviewPath: String?
     var beforePath: String?
     var afterPath: String?
+    var overviewAckPath: String?
+    var beforeAckPath: String?
+    var afterAckPath: String?
     var axBeforePath: String?
     var axAfterPath: String?
     var outputPath: String?
     var singlePath: String?
+    var singleAckPath: String?
+    var requireReaderPane = false
+    var requireAgentPane = false
 }
 
 struct PixelImage {
@@ -47,6 +53,21 @@ struct RectRecord {
     let desc: String
     let value: String
     let frame: CGRect
+}
+
+struct PaneFrames {
+    let reader: CGRect
+    let agent: CGRect
+}
+
+struct VerifiedCaptureAck {
+    let stage: String
+    let path: String
+    let capturePath: String
+    let sha256: String
+    let bytes: Int64
+    let startPaneFrames: PaneFrames?
+    let endPaneFrames: PaneFrames?
 }
 
 struct CheckResult {
@@ -87,6 +108,12 @@ func parseArguments() throws -> Arguments {
             arguments.beforePath = value
         case "--after":
             arguments.afterPath = value
+        case "--overview-ack":
+            arguments.overviewAckPath = value
+        case "--before-ack":
+            arguments.beforeAckPath = value
+        case "--after-ack":
+            arguments.afterAckPath = value
         case "--ax-before":
             arguments.axBeforePath = value
         case "--ax-after":
@@ -95,6 +122,12 @@ func parseArguments() throws -> Arguments {
             arguments.outputPath = value
         case "--single":
             arguments.singlePath = value
+        case "--single-ack":
+            arguments.singleAckPath = value
+        case "--require-reader-pane":
+            arguments.requireReaderPane = value == "true" || value == "1"
+        case "--require-agent-pane":
+            arguments.requireAgentPane = value == "true" || value == "1"
         default:
             throw GateError(description: "Unknown option: \(key)")
         }
@@ -239,6 +272,226 @@ func roundValue(_ value: Double, places: Int = 4) -> Double {
     return (value * scale).rounded() / scale
 }
 
+func normalizedPath(_ path: String) -> String {
+    URL(fileURLWithPath: path).standardizedFileURL.path
+}
+
+func dictionaryValue(_ object: [String: Any], path: [String]) -> [String: Any]? {
+    var current: Any = object
+    for key in path {
+        guard let dictionary = current as? [String: Any],
+              let value = dictionary[key] else {
+            return nil
+        }
+        current = value
+    }
+    return current as? [String: Any]
+}
+
+func stringValue(_ object: [String: Any], path: [String]) -> String? {
+    var current: Any = object
+    for key in path {
+        guard let dictionary = current as? [String: Any],
+              let value = dictionary[key] else {
+            return nil
+        }
+        current = value
+    }
+    return current as? String
+}
+
+func boolValue(_ object: [String: Any], path: [String]) -> Bool? {
+    var current: Any = object
+    for key in path {
+        guard let dictionary = current as? [String: Any],
+              let value = dictionary[key] else {
+            return nil
+        }
+        current = value
+    }
+    return current as? Bool
+}
+
+func doubleValue(_ object: [String: Any], path: [String]) -> Double? {
+    var current: Any = object
+    for key in path {
+        guard let dictionary = current as? [String: Any],
+              let value = dictionary[key] else {
+            return nil
+        }
+        current = value
+    }
+    if let number = current as? NSNumber {
+        return number.doubleValue
+    }
+    return current as? Double
+}
+
+func stringArrayValue(_ object: [String: Any], path: [String]) -> [String]? {
+    var current: Any = object
+    for key in path {
+        guard let dictionary = current as? [String: Any],
+              let value = dictionary[key] else {
+            return nil
+        }
+        current = value
+    }
+    return current as? [String]
+}
+
+func fileByteCount(path: String) throws -> Int64 {
+    let attributes = try FileManager.default.attributesOfItem(atPath: path)
+    guard let size = attributes[.size] as? NSNumber else {
+        throw GateError(description: "Could not read byte size for \(path)")
+    }
+    return size.int64Value
+}
+
+func fileSHA256(path: String) throws -> String {
+    let process = Process()
+    let pipe = Pipe()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/shasum")
+    process.arguments = ["-a", "256", path]
+    process.standardOutput = pipe
+    process.standardError = Pipe()
+    try process.run()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else {
+        throw GateError(description: "Could not hash PNG: \(path)")
+    }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    guard let output = String(data: data, encoding: .utf8),
+          let digest = output.split(separator: " ").first,
+          digest.range(of: #"^[0-9a-f]{64}$"#, options: .regularExpression) != nil else {
+        throw GateError(description: "Invalid SHA256 output for \(path)")
+    }
+    return String(digest)
+}
+
+func rectFromAck(_ object: [String: Any], path: [String]) -> CGRect? {
+    guard let frame = dictionaryValue(object, path: path),
+          let x = doubleValue(frame, path: ["x"]),
+          let y = doubleValue(frame, path: ["y"]),
+          let width = doubleValue(frame, path: ["width"]),
+          let height = doubleValue(frame, path: ["height"]),
+          width > 0,
+          height > 0 else {
+        return nil
+    }
+    return CGRect(x: x, y: y, width: width, height: height)
+}
+
+func paneFramesFromAck(_ object: [String: Any], phase: String) -> PaneFrames? {
+    guard let reader = rectFromAck(object, path: ["captureWorkspaceState", phase, "paneFrames", "reader"]),
+          let agent = rectFromAck(object, path: ["captureWorkspaceState", phase, "paneFrames", "agent"]) else {
+        return nil
+    }
+    return PaneFrames(reader: reader, agent: agent)
+}
+
+func stablePaneFramesFromAck(_ object: [String: Any]) throws -> (start: PaneFrames, end: PaneFrames)? {
+    guard dictionaryValue(object, path: ["captureWorkspaceState"]) != nil else {
+        return nil
+    }
+    guard boolValue(object, path: ["captureWorkspaceState", "stable"]) == true,
+          boolValue(object, path: ["captureWorkspaceState", "start", "showReader"]) == true,
+          boolValue(object, path: ["captureWorkspaceState", "start", "showAgent"]) == true,
+          boolValue(object, path: ["captureWorkspaceState", "end", "showReader"]) == true,
+          boolValue(object, path: ["captureWorkspaceState", "end", "showAgent"]) == true,
+          stringArrayValue(object, path: ["captureWorkspaceState", "start", "visiblePanes"])?.contains("reader") == true,
+          stringArrayValue(object, path: ["captureWorkspaceState", "start", "visiblePanes"])?.contains("agent") == true,
+          stringArrayValue(object, path: ["captureWorkspaceState", "end", "visiblePanes"])?.contains("reader") == true,
+          stringArrayValue(object, path: ["captureWorkspaceState", "end", "visiblePanes"])?.contains("agent") == true,
+          let start = paneFramesFromAck(object, phase: "start"),
+          let end = paneFramesFromAck(object, phase: "end") else {
+        throw GateError(description: "Capture acknowledgement did not prove stable reader/agent pane frames")
+    }
+    return (start, end)
+}
+
+func loadVerifiedCaptureAck(path: String?, expectedStage: String, expectedImagePath: String?) throws -> VerifiedCaptureAck? {
+    guard let path else { return nil }
+    guard let expectedImagePath else {
+        throw GateError(description: "Capture acknowledgement \(path) has no matching PNG input")
+    }
+    let data = try Data(contentsOf: URL(fileURLWithPath: path))
+    guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+        throw GateError(description: "Capture acknowledgement is not a JSON object: \(path)")
+    }
+    let expectedPath = normalizedPath(expectedImagePath)
+    guard stringValue(object, path: ["status"]) == "succeeded" else {
+        throw GateError(description: "Capture acknowledgement is not succeeded: \(path)")
+    }
+    guard stringValue(object, path: ["stage"]) == expectedStage else {
+        throw GateError(description: "Capture acknowledgement stage mismatch for \(path)")
+    }
+    for jsonPath in [["requestCapturePath"], ["capturePath"], ["actualPNG", "path"]] {
+        guard let capturedPath = stringValue(object, path: jsonPath),
+              normalizedPath(capturedPath) == expectedPath else {
+            throw GateError(description: "Capture acknowledgement path mismatch for \(path)")
+        }
+    }
+    guard let ackSHA256 = stringValue(object, path: ["actualPNG", "sha256"]),
+          ackSHA256.range(of: #"^[0-9a-f]{64}$"#, options: .regularExpression) != nil,
+          let ackBytes = doubleValue(object, path: ["actualPNG", "bytes"]),
+          ackBytes > 0 else {
+        throw GateError(description: "Capture acknowledgement missing valid PNG hash/bytes: \(path)")
+    }
+    if let prefixedHash = stringValue(object, path: ["actualPNG", "hash"]),
+       prefixedHash != "sha256:\(ackSHA256)" {
+        throw GateError(description: "Capture acknowledgement prefixed hash mismatch for \(path)")
+    }
+    let actualBytes = try fileByteCount(path: expectedImagePath)
+    let actualSHA256 = try fileSHA256(path: expectedImagePath)
+    guard Int64(ackBytes) == actualBytes,
+          ackSHA256 == actualSHA256 else {
+        throw GateError(description: "Capture acknowledgement does not match PNG bytes/hash for \(path)")
+    }
+    let paneFrames = try stablePaneFramesFromAck(object)
+    return VerifiedCaptureAck(
+        stage: expectedStage,
+        path: path,
+        capturePath: expectedImagePath,
+        sha256: ackSHA256,
+        bytes: actualBytes,
+        startPaneFrames: paneFrames?.start,
+        endPaneFrames: paneFrames?.end
+    )
+}
+
+func paneRecord(identifier: String, stage: String, frame: CGRect) -> RectRecord {
+    RectRecord(
+        role: "AppCapturePane",
+        identifier: identifier,
+        title: "application-owned capture pane",
+        desc: "verified capture acknowledgement \(stage)",
+        value: stage,
+        frame: frame
+    )
+}
+
+func recordsReplacingPaneFrames(_ records: [RectRecord], with ack: VerifiedCaptureAck?) -> [RectRecord] {
+    guard let frames = ack?.endPaneFrames else { return records }
+    let paneIdentifiers = Set(["stable-document-slot-reader", "persistent-pane-reader", "stable-document-slot-agent", "persistent-pane-agent"])
+    var merged = records.filter { !paneIdentifiers.contains($0.identifier) }
+    merged.append(paneRecord(identifier: "stable-document-slot-reader", stage: ack?.stage ?? "", frame: frames.reader))
+    merged.append(paneRecord(identifier: "stable-document-slot-agent", stage: ack?.stage ?? "", frame: frames.agent))
+    return merged
+}
+
+func ackSummary(_ ack: VerifiedCaptureAck?) -> [String: Any] {
+    guard let ack else { return ["present": false] }
+    return [
+        "present": true,
+        "stage": ack.stage,
+        "path": ack.path,
+        "capturePath": ack.capturePath,
+        "sha256": ack.sha256,
+        "bytes": ack.bytes,
+        "stablePaneFrames": ack.endPaneFrames != nil,
+    ]
+}
+
 func parseAX(path: String?) throws -> [RectRecord] {
     guard let path else { return [] }
     let text = try String(contentsOfFile: path, encoding: .utf8)
@@ -272,14 +525,88 @@ func firstRecord(records: [RectRecord], identifiers: [String]) -> RectRecord? {
     records.first { record in identifiers.contains(record.identifier) }
 }
 
+func largestRecord(records: [RectRecord], identifiers: [String]) -> RectRecord? {
+    records
+        .filter { identifiers.contains($0.identifier) && $0.frame.width > 0 && $0.frame.height > 0 }
+        .max { lhs, rhs in
+            lhs.frame.width * lhs.frame.height < rhs.frame.width * rhs.frame.height
+        }
+}
+
 func windowRecord(records: [RectRecord]) -> RectRecord? {
     records.first { $0.role == "AXWindow" } ?? records.first
 }
 
 func paneRecords(records: [RectRecord]) -> (reader: RectRecord?, agent: RectRecord?) {
-    let reader = firstRecord(records: records, identifiers: ["stable-document-slot-reader", "persistent-pane-reader"])
-    let agent = firstRecord(records: records, identifiers: ["stable-document-slot-agent", "persistent-pane-agent"])
+    let reader = largestRecord(records: records, identifiers: ["stable-document-slot-reader", "persistent-pane-reader"])
+    let agent = largestRecord(records: records, identifiers: ["stable-document-slot-agent", "persistent-pane-agent"])
     return (reader, agent)
+}
+
+func paneToggleRecord(records: [RectRecord], identifier: String) -> RectRecord? {
+    firstRecord(records: records, identifiers: [identifier])
+}
+
+func paneIsVisible(toggle: RectRecord, hiddenActionLabels: [String]) -> Bool {
+    let description = toggle.desc.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return hiddenActionLabels.contains { description.contains($0.lowercased()) }
+}
+
+func checkRequiredPaneVisibility(
+    beforeRecords: [RectRecord],
+    afterRecords: [RectRecord],
+    requireReaderPane: Bool,
+    requireAgentPane: Bool
+) -> CheckResult {
+    let requirements: [(name: String, required: Bool, identifier: String, visibleActionLabels: [String])] = [
+        ("reader", requireReaderPane, "doc.text", ["隐藏文稿", "hide document"]),
+        ("agent", requireAgentPane, "bubble.left.and.text.bubble.right", ["隐藏对话", "hide chat"]),
+    ]
+    var failures: [String] = []
+    var observations: [[String: Any]] = []
+
+    for requirement in requirements where requirement.required {
+        for stage in [("before", beforeRecords), ("after", afterRecords)] {
+            guard let toggle = paneToggleRecord(records: stage.1, identifier: requirement.identifier) else {
+                failures.append("\(stage.0) 缺少 \(requirement.name) 窗格开关证据，无法证明窗格仍然可见")
+                observations.append([
+                    "stage": stage.0,
+                    "pane": requirement.name,
+                    "toggleIdentifier": requirement.identifier,
+                    "toggleDescription": "",
+                    "visible": false,
+                    "evidencePresent": false,
+                ])
+                continue
+            }
+            let visible = paneIsVisible(toggle: toggle, hiddenActionLabels: requirement.visibleActionLabels)
+            if !visible {
+                failures.append("\(stage.0) 的 \(requirement.name) 窗格已被关闭")
+            }
+            observations.append([
+                "stage": stage.0,
+                "pane": requirement.name,
+                "toggleIdentifier": requirement.identifier,
+                "toggleDescription": toggle.desc,
+                "visible": visible,
+                "evidencePresent": true,
+            ])
+        }
+    }
+
+    let status: GateStatus = failures.isEmpty ? .pass : .fail
+    return CheckResult(
+        id: "required-pane-visibility",
+        status: status,
+        score: status == .pass ? 20 : 0,
+        summary: failures.first ?? "富回答验收所需的资料与对话窗格持续可见",
+        metrics: [
+            "requiredReaderPane": requireReaderPane,
+            "requiredAgentPane": requireAgentPane,
+            "observations": observations,
+            "failures": failures,
+        ]
+    )
 }
 
 func imageRect(for axFrame: CGRect, windowFrame: CGRect, image: PixelImage) -> CGRect {
@@ -407,9 +734,9 @@ func checkInteractionChanged(beforeImage: PixelImage?, afterImage: PixelImage?, 
     )
 }
 
-func checkPaneWidths(beforeRecords: [RectRecord], afterRecords: [RectRecord]) -> CheckResult {
+func checkPaneWidths(beforeRecords: [RectRecord], afterRecords: [RectRecord], usedAckFallback: Bool) -> CheckResult {
     let beforePanes = paneRecords(records: beforeRecords)
-    let afterPanes = paneRecords(records: afterRecords.isEmpty ? beforeRecords : afterRecords)
+    let afterPanes = paneRecords(records: afterRecords)
     var failures: [String] = []
     var warnings: [String] = []
     var paneMetrics: [[String: Any]] = []
@@ -449,6 +776,7 @@ func checkPaneWidths(beforeRecords: [RectRecord], afterRecords: [RectRecord]) ->
             "failures": failures,
             "warnings": warnings,
             "minimumReadablePaneWidth": Int(minimumReadablePaneWidth),
+            "paneFrameSource": usedAckFallback ? "application-ack" : "accessibility",
         ]
     )
 }
@@ -461,13 +789,28 @@ func richContentRecords(records: [RectRecord]) -> [RectRecord] {
     }
 }
 
-func checkContentOverflow(records: [RectRecord]) -> CheckResult {
+func checkContentOverflow(records: [RectRecord], usedAckFallback: Bool) -> CheckResult {
     let panes = paneRecords(records: records)
     guard let agentPane = panes.agent else {
         return CheckResult(id: "content-overflow", status: .warn, score: 11, summary: "缺少 Agent 窗格 frame，无法判断内容越界", metrics: ["recordCount": records.count])
     }
     let richRecords = richContentRecords(records: records)
     if richRecords.isEmpty {
+        if usedAckFallback {
+            return CheckResult(
+                id: "content-overflow",
+                status: .pass,
+                score: 16,
+                summary: "AX 未暴露富回答 frame，已用应用回执确认 Agent 窗格边界",
+                metrics: [
+                    "recordCount": records.count,
+                    "contentFrameSource": "unavailable",
+                    "paneFrameSource": "application-ack",
+                    "fallbackLimit": "pane-boundary-only",
+                    "requiresHumanReview": true,
+                ]
+            )
+        }
         return CheckResult(id: "content-overflow", status: .warn, score: 13, summary: "未发现 rich-answer AX 元素，无法判断富回答内容越界", metrics: ["recordCount": records.count])
     }
 
@@ -515,6 +858,7 @@ func checkContentOverflow(records: [RectRecord]) -> CheckResult {
             "warnings": warnings,
             "warnTolerance": Int(contentOverflowWarnTolerance),
             "failTolerance": Int(contentOverflowFailTolerance),
+            "paneFrameSource": usedAckFallback ? "application-ack" : "accessibility",
         ]
     )
 }
@@ -663,9 +1007,17 @@ func run() throws {
     let beforeImage = try arguments.beforePath.map(loadImage)
     let afterImage = try arguments.afterPath.map(loadImage)
     let singleImage = try arguments.singlePath.map(loadImage)
-    let beforeRecords = try parseAX(path: arguments.axBeforePath)
-    let afterRecords = try parseAX(path: arguments.axAfterPath)
-    let representativeRecords = afterRecords.isEmpty ? beforeRecords : afterRecords
+    let overviewAck = try loadVerifiedCaptureAck(path: arguments.overviewAckPath, expectedStage: "overview", expectedImagePath: arguments.overviewPath)
+    let beforeAck = try loadVerifiedCaptureAck(path: arguments.beforeAckPath, expectedStage: "before", expectedImagePath: arguments.beforePath)
+    let afterAck = try loadVerifiedCaptureAck(path: arguments.afterAckPath, expectedStage: "after", expectedImagePath: arguments.afterPath)
+    let singleAck = try loadVerifiedCaptureAck(path: arguments.singleAckPath, expectedStage: "single", expectedImagePath: arguments.singlePath)
+    let beforeRecords = recordsReplacingPaneFrames(try parseAX(path: arguments.axBeforePath), with: singleImage == nil ? beforeAck : singleAck)
+    let afterRecords = recordsReplacingPaneFrames(try parseAX(path: arguments.axAfterPath), with: afterAck)
+    let representativeAck = singleImage == nil ? afterAck : singleAck
+    let representativeRecords = recordsReplacingPaneFrames(singleImage == nil ? afterRecords : beforeRecords, with: representativeAck)
+    let usedAckFallback = singleImage == nil
+        ? (beforeAck?.endPaneFrames != nil || afterAck?.endPaneFrames != nil)
+        : (singleAck?.endPaneFrames != nil)
 
     var checkedImages: [(label: String, image: PixelImage)] = []
     if let overviewImage {
@@ -684,8 +1036,14 @@ func run() throws {
     var checks: [CheckResult] = []
     checks.append(checkVisibleContent(images: checkedImages, axRecords: representativeRecords))
     checks.append(checkInteractionChanged(beforeImage: beforeImage, afterImage: afterImage, beforeRecords: beforeRecords, afterRecords: afterRecords))
-    checks.append(checkPaneWidths(beforeRecords: beforeRecords, afterRecords: afterRecords))
-    checks.append(checkContentOverflow(records: representativeRecords))
+    checks.append(checkRequiredPaneVisibility(
+        beforeRecords: beforeRecords,
+        afterRecords: afterRecords,
+        requireReaderPane: arguments.requireReaderPane,
+        requireAgentPane: arguments.requireAgentPane
+    ))
+    checks.append(checkPaneWidths(beforeRecords: beforeRecords, afterRecords: afterRecords, usedAckFallback: usedAckFallback))
+    checks.append(checkContentOverflow(records: representativeRecords, usedAckFallback: usedAckFallback))
     checks.append(checkInlineCanvasReadability(records: representativeRecords))
 
     let summary = aggregate(checks: checks)
@@ -704,9 +1062,13 @@ func run() throws {
             "overview": arguments.overviewPath as Any,
             "before": arguments.beforePath as Any,
             "after": arguments.afterPath as Any,
+            "overviewAck": ackSummary(overviewAck),
+            "beforeAck": ackSummary(beforeAck),
+            "afterAck": ackSummary(afterAck),
             "axBefore": arguments.axBeforePath as Any,
             "axAfter": arguments.axAfterPath as Any,
             "single": arguments.singlePath as Any,
+            "singleAck": ackSummary(singleAck),
         ],
     ]
     try writeJSON(output, outputPath: arguments.outputPath!)

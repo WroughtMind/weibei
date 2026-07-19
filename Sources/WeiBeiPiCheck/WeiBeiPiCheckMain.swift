@@ -47,6 +47,7 @@ struct WeiBeiPiCheckMain {
 
         if CommandLine.arguments.contains("--rich-answer-protocol") {
             do {
+                try runRichAnswerSemanticGateSelfCheck()
                 try runRichAnswerProtocolSelfCheck()
                 print("rich-answer-protocol-check completed: invalid protocol rejected; final evidence gates still pending user acceptance")
             } catch {
@@ -440,6 +441,161 @@ struct WeiBeiPiCheckMain {
             )
         }
         print("pi-rich-answer matrix technical run completed: \(summaries.joined(separator: "; ")); final-gates=pending-screenshots-review-package; status=待用户验收")
+    }
+
+    private static func runRichAnswerSemanticGateSelfCheck() throws {
+        try assertRichAnswerSemanticGate(
+            containsEveryGroup(
+                "实际利率约等于名义利率 − 预期通胀率。",
+                [["实际利率"], ["名义利率"], ["通货膨胀", "通胀"], ["减"]]
+            ),
+            "binary-minus-counts-as-subtract"
+        )
+        try assertRichAnswerSemanticGate(
+            containsEveryGroup(
+                "顶点式 y = 2(x − 2)²，横向平移由 x − 2 决定。",
+                [["x"], ["2"], ["减"]]
+            ),
+            "variable-minus-number-counts-as-subtract"
+        )
+        try assertRichAnswerSemanticGate(
+            containsEveryGroup(
+                "函数 y = x² − 3 的整体下移量是 3。",
+                [["x²"], ["3"], ["减"]]
+            ),
+            "superscript-minus-number-counts-as-subtract"
+        )
+        try assertRichAnswerSemanticGate(
+            containsAny("20% 折现 NPV 约 -3.81。", ["-3.81"]),
+            "unary-negative-number-preserved"
+        )
+
+        let rcContract = RichAnswerProfessionalJudgmentContracts.contract(
+            for: "learning-physics-rc-circuit-transient"
+        )
+        let rcCorrect = RichAnswerProfessionalJudgmentValidator.validate(
+            units: RichAnswerProfessionalJudgmentValidator.claimUnits(
+                from: "时间常数 tau 等于 1.0 s；t = tau 时 Vc 约 3.16 V；5 tau 只是接近稳态而非精确到达。"
+            ),
+            contract: rcContract
+        )
+        try assertRichAnswerSemanticGate(
+            rcCorrect.missingRequiredClaims.isEmpty
+                && !rcCorrect.triggeredForbiddenClaims.contains("five-tau-exact"),
+            "local-tau-alias-and-negative-boundary"
+        )
+        let rcWrong = RichAnswerProfessionalJudgmentValidator.validate(
+            units: ["5 tau 完全到达稳态"],
+            contract: rcContract
+        )
+        try assertRichAnswerSemanticGate(
+            rcWrong.triggeredForbiddenClaims.contains("five-tau-exact"),
+            "wrong-local-tau-claim-still-blocked"
+        )
+        let rcWrongWithTrailingException = RichAnswerProfessionalJudgmentValidator.validate(
+            units: ["5 tau 完全到达稳态不是近似"],
+            contract: rcContract
+        )
+        try assertRichAnswerSemanticGate(
+            rcWrongWithTrailingException.triggeredForbiddenClaims.contains("five-tau-exact"),
+            "trailing-negation-does-not-clear-positive-forbidden-claim"
+        )
+
+        let doubleSlitContract = RichAnswerProfessionalJudgmentContracts.contract(
+            for: "learning-physics-double-slit-interference"
+        )
+        let doubleSlitCorrect = RichAnswerProfessionalJudgmentValidator.validate(
+            units: RichAnswerProfessionalJudgmentValidator.claimUnits(
+                from: "当前亮纹间距约 3 mm。lambda 和 L 增大条纹变疏，缝距 d 增大条纹变密。材料没有给出单缝宽度，只能小角度示意，不能精确画出衍射包络。"
+            ),
+            contract: doubleSlitContract
+        )
+        try assertRichAnswerSemanticGate(
+            doubleSlitCorrect.missingRequiredClaims.isEmpty
+                && doubleSlitCorrect.triggeredForbiddenClaims.isEmpty,
+            "local-lambda-d-aliases"
+        )
+
+        let titleOnlyPresentation = RichAnswerPresentation(
+            mode: .rich,
+            narrative: "",
+            scenes: [
+                RichAnswerScene(
+                    id: "title-only",
+                    title: "时间常数 tau 等于 1.0 s",
+                    family: .quantityAndCoordinates,
+                    objects: []
+                ),
+            ],
+            evidenceState: .complete
+        )
+        let titleOnlyReply = StudyAgentReply(
+            text: "",
+            backend: .pi,
+            richAnswer: titleOnlyPresentation
+        )
+        let titleOnlyJudgment = RichAnswerProfessionalJudgmentValidator.validate(
+            units: professionalJudgmentUnits(reply: titleOnlyReply, presentation: titleOnlyPresentation),
+            contract: rcContract
+        )
+        try assertRichAnswerSemanticGate(
+            titleOnlyJudgment.missingRequiredClaims.contains("tau-one-second"),
+            "scene-title-alone-does-not-satisfy-claim"
+        )
+
+        guard let quantityCase = RichAnswerLiveCases.successes.first(where: {
+            $0.id == "learning-math-quadratic-vertex"
+        }) else {
+            throw PiCheckError.invalidEvaluation("semantic-gate-self-check missing quantity case")
+        }
+        let weakUI = RichAnswerUIComposition(
+            rootID: "root",
+            nodes: [
+                RichAnswerUINode(id: "root", role: .vstack, children: ["control", "steps", "value"]),
+                RichAnswerUINode(id: "control", role: .scrubber, label: "步骤", bindingID: "step"),
+                RichAnswerUINode(id: "steps", role: .sequence, datasetID: "states", bindingID: "step"),
+                RichAnswerUINode(id: "value", role: .metric, label: "读数", datasetID: "states", bindingID: "step"),
+            ],
+            datasets: [
+                RichAnswerUIDataset(
+                    id: "states",
+                    rows: [
+                        RichAnswerUIDataRow(id: "a", x: 0, y: 0, value: 0, label: "只换成步骤一"),
+                        RichAnswerUIDataRow(id: "b", x: 0, y: 0, value: 1, label: "只换成步骤二"),
+                    ]
+                ),
+            ],
+            bindings: [
+                RichAnswerUIBinding(
+                    id: "step",
+                    label: "步骤",
+                    minimum: 0,
+                    maximum: 1,
+                    step: 1,
+                    initialValue: 0
+                ),
+            ]
+        )
+        let weakScene = RichAnswerScene(
+            id: "weak",
+            title: "弱可视化",
+            family: .quantityAndCoordinates,
+            objects: [],
+            ui: weakUI
+        )
+        try assertRichAnswerSemanticGate(
+            t2SceneIssues(weakScene, for: quantityCase).contains("missing-stateful-nontext-encoding"),
+            "sequence-metric-text-reflow-blocked-for-nonprocess"
+        )
+    }
+
+    private static func assertRichAnswerSemanticGate(
+        _ condition: Bool,
+        _ name: String
+    ) throws {
+        guard condition else {
+            throw PiCheckError.invalidEvaluation("rich-answer semantic gate self-check failed: \(name)")
+        }
     }
 
     private static func checkStudyCompanion(_ runtime: PiAgentRuntime) async throws {
@@ -1306,6 +1462,30 @@ struct WeiBeiPiCheckMain {
         if visualRoleCount < 2 {
             issues.append("weak-visual-value:\(visualRoleCount)")
         }
+        let expectedFamilies = checkCase.pressureCase.expectedCapabilityFamilies
+        let familiesNeedingStatefulNonTextEncoding: Set<RichAnswerCapabilityFamily> = [
+            .quantityAndCoordinates,
+            .timeAndSpace,
+            .relationAndEvidence,
+            .imageAndOverlay,
+            .comparisonAndEvaluation,
+            .calculationAndConstraints,
+        ]
+        let needsStatefulNonTextEncoding =
+            familiesNeedingStatefulNonTextEncoding.contains(scene.family)
+            || !expectedFamilies.isDisjoint(with: familiesNeedingStatefulNonTextEncoding)
+        if needsStatefulNonTextEncoding,
+           !t2HasStateChangingNonTextEncoding(ui) {
+            issues.append("missing-stateful-nontext-encoding")
+        }
+        if needsStatefulNonTextEncoding {
+            let textReflowRoles = layoutOnlyT2Roles
+                .union(directRoles)
+                .union([.metric, .sequence])
+            if roles.isSubset(of: textReflowRoles) {
+                issues.append("text-reflow-ui")
+            }
+        }
         let layoutOnlyRoles: Set<RichAnswerUIRole> = [
             .vstack,
             .hstack,
@@ -1386,6 +1566,69 @@ struct WeiBeiPiCheckMain {
             }
         }
         return issues
+    }
+
+    private static var layoutOnlyT2Roles: Set<RichAnswerUIRole> {
+        [
+            .vstack,
+            .hstack,
+            .zstack,
+            .grid,
+            .panel,
+            .text,
+            .label,
+            .divider,
+            .evidence,
+        ]
+    }
+
+    private static func t2HasStateChangingNonTextEncoding(_ ui: RichAnswerUIComposition) -> Bool {
+        let controlRoles: Set<RichAnswerUIRole> = [.slider, .toggle, .scrubber, .probe]
+        let statefulNonTextRoles: Set<RichAnswerUIRole> = [
+            .axis,
+            .line,
+            .path,
+            .point,
+            .area,
+            .shape,
+            .bar,
+            .dotMatrix,
+            .vector,
+            .region,
+            .image,
+        ]
+        let datasetsByID = Dictionary(
+            ui.datasets.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return ui.bindings.contains { binding in
+            let hasControl = ui.nodes.contains {
+                $0.bindingID == binding.id && controlRoles.contains($0.role)
+            }
+            guard hasControl else { return false }
+            return ui.nodes.contains { node in
+                guard node.bindingID == binding.id,
+                      statefulNonTextRoles.contains(node.role),
+                      let datasetID = node.datasetID,
+                      let dataset = datasetsByID[datasetID] else {
+                    return false
+                }
+                return t2RowsHaveChangingNumericOutcome(dataset.rows)
+            }
+        }
+    }
+
+    private static func t2RowsHaveChangingNumericOutcome(_ rows: [RichAnswerUIDataRow]) -> Bool {
+        guard rows.count >= 2 else { return false }
+        let numericSets: [[Double]] = [
+            rows.map(\.x),
+            rows.map(\.y),
+            rows.compactMap(\.x2),
+            rows.compactMap(\.y2),
+            rows.compactMap(\.value),
+            rows.compactMap(\.result),
+        ]
+        return numericSets.contains { Set($0).count >= 2 }
     }
 
     private static func richAnswerFailure(
@@ -1727,8 +1970,7 @@ struct WeiBeiPiCheckMain {
             presentation.expressionPlan?.summary,
         ].compactMap { $0 }
             + presentation.scenes.flatMap { scene in
-                [scene.title]
-                    + (scene.program.map { t1ProfessionalClaimUnits($0.source) } ?? [])
+                (scene.program.map { t1ProfessionalClaimUnits($0.source) } ?? [])
                     + (scene.ui.map(t2ProfessionalClaimUnits) ?? [])
             }
     }
@@ -1891,12 +2133,7 @@ struct WeiBeiPiCheckMain {
     }
 
     private static func normalizedSemanticText(_ text: String) -> String {
-        text
-            .lowercased()
-            .replacingOccurrences(of: "−", with: "-")
-            .replacingOccurrences(of: "—", with: "-")
-            .components(separatedBy: .whitespacesAndNewlines)
-            .joined()
+        RichAnswerProfessionalJudgmentValidator.normalizedText(text)
     }
 
     private static func replyToolTraceShowsCatalogBeforeRichAnswer(_ reply: StudyAgentReply) -> Bool {

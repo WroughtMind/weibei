@@ -96,7 +96,9 @@ enum RichAnswerProfessionalJudgmentValidator {
     }
 
     static func normalizedText(_ text: String) -> String {
-        RichAnswerDisplayText.normalizedInlineMath(text)
+        normalizeBinaryMinus(
+            RichAnswerDisplayText.normalizedInlineMath(text)
+        )
             .lowercased()
             .replacingOccurrences(of: "−", with: "-")
             .replacingOccurrences(of: "—", with: "-")
@@ -112,6 +114,94 @@ enum RichAnswerProfessionalJudgmentValidator {
             .replacingOccurrences(of: "=", with: "等于")
             .components(separatedBy: .whitespacesAndNewlines)
             .joined()
+    }
+
+    private static func normalizeBinaryMinus(_ text: String) -> String {
+        let characters = Array(
+            text
+                .replacingOccurrences(of: "−", with: "-")
+                .replacingOccurrences(of: "—", with: "-")
+                .replacingOccurrences(of: "–", with: "-")
+        )
+        var result = ""
+        for (index, character) in characters.enumerated() {
+            if character == "-",
+               isBinaryMinus(at: index, in: characters) {
+                result.append("减")
+            } else {
+                result.append(character)
+            }
+        }
+        return result
+    }
+
+    private static func isBinaryMinus(at index: Int, in characters: [Character]) -> Bool {
+        guard let previous = nearestNonSpace(before: index, in: characters),
+              let next = nearestNonSpace(after: index, in: characters),
+              isMinusLeftOperand(previous),
+              isMinusRightOperand(next) else {
+            return false
+        }
+        if next.isNumber,
+           !previous.isNumber,
+           previous != "%",
+           previous != ")",
+           previous != "²",
+           !isMathVariableOperand(previous) {
+            return false
+        }
+        return true
+    }
+
+    private static func nearestNonSpace(before index: Int, in characters: [Character]) -> Character? {
+        guard index > 0 else { return nil }
+        for cursor in stride(from: index - 1, through: 0, by: -1) {
+            if !characters[cursor].isWhitespace {
+                return characters[cursor]
+            }
+        }
+        return nil
+    }
+
+    private static func nearestNonSpace(after index: Int, in characters: [Character]) -> Character? {
+        guard index + 1 < characters.count else { return nil }
+        for cursor in (index + 1)..<characters.count {
+            if !characters[cursor].isWhitespace {
+                return characters[cursor]
+            }
+        }
+        return nil
+    }
+
+    private static func isMinusLeftOperand(_ character: Character) -> Bool {
+        character.isNumber
+            || character.isLetter
+            || character == "%"
+            || character == ")"
+            || character == "²"
+            || character == "τ"
+            || character == "λ"
+    }
+
+    private static func isMinusRightOperand(_ character: Character) -> Bool {
+        character.isNumber
+            || character.isLetter
+            || character == "("
+            || character == "τ"
+            || character == "λ"
+    }
+
+    private static func isMathVariableOperand(_ character: Character) -> Bool {
+        if character == "τ" || character == "λ" || character == "π" || character == "Δ" {
+            return true
+        }
+        guard character.unicodeScalars.count == 1,
+              let scalar = character.unicodeScalars.first else {
+            return false
+        }
+        return (65...90).contains(scalar.value)
+            || (97...122).contains(scalar.value)
+            || (0x0370...0x03FF).contains(scalar.value)
     }
 
     private static func unitMatchesClaim(
@@ -697,30 +787,101 @@ enum RichAnswerProfessionalJudgmentValidator {
         if containsAnyNormalized(unit, ["不禁止", "不能禁止", "不应禁止", "不得禁止", "没有禁止", "未禁止", "无需禁止", "不用禁止"]) {
             return false
         }
-        return containsAnyNormalized(unit, [
-            "不会",
-            "不能",
-            "不应",
-            "不得",
-            "不再",
-            "未再",
-            "不在",
-            "并不",
-            "绝不",
-            "绝非",
-            "没有",
-            "并非",
-            "不是",
-            "不等于",
-            "不支持",
-            "不足以",
-            "不代表",
+        if localPolarityRefutesForbiddenClaim(
+            unit,
+            claim: claim,
+            cues: [
+                "不会", "不能", "不应", "不得", "不再", "未再", "不在", "并不",
+                "绝不", "绝非", "没有", "并非", "不是", "而非", "不等于",
+                "不支持", "不足以", "不代表", "没有分离", "未分离", "仍相连",
+                "保持相连", "无", "未",
+            ]
+        ) {
+            return true
+        }
+        return false
+    }
+
+    private static func localPolarityRefutesForbiddenClaim(
+        _ unit: String,
+        claim: RichAnswerProfessionalJudgmentClaim,
+        cues: [String]
+    ) -> Bool {
+        let normalizedUnit = normalizedText(unit)
+        let anchorRanges = (claim.subjectGroups + claim.relationGroups + claim.objectGroups + claim.qualifierGroups)
+            .compactMap { group in
+                firstMatchingRange(
+                    for: group,
+                    in: normalizedUnit,
+                    after: normalizedUnit.startIndex
+                )
+            }
+        guard let firstAnchor = anchorRanges.min(by: { $0.lowerBound < $1.lowerBound }),
+              let lastAnchor = anchorRanges.max(by: { $0.upperBound < $1.upperBound }) else {
+            return false
+        }
+        return cues.map(normalizedText).contains { cue in
+            var searchStart = normalizedUnit.startIndex
+            while searchStart < normalizedUnit.endIndex,
+                  let range = normalizedUnit.range(
+                    of: cue,
+                    range: searchStart..<normalizedUnit.endIndex
+                  ) {
+                let overlapsClaimSpan = range.lowerBound < lastAnchor.upperBound
+                    && range.upperBound > firstAnchor.lowerBound
+                let justBeforeClaim = range.upperBound <= firstAnchor.lowerBound
+                    && normalizedUnit.distance(from: range.upperBound, to: firstAnchor.lowerBound) <= 10
+                let justAfterClaim = range.lowerBound >= lastAnchor.upperBound
+                    && normalizedUnit.distance(from: lastAnchor.upperBound, to: range.lowerBound) <= 8
+                if overlapsClaimSpan
+                    || justBeforeClaim
+                    || (justAfterClaim && (
+                        trailingStateCueRefutesClaim(cue)
+                            || trailingNegationRefersToClaim(
+                                range: range,
+                                in: normalizedUnit
+                            )
+                    )) {
+                    return true
+                }
+                searchStart = normalizedUnit.index(after: range.lowerBound)
+            }
+            return false
+        }
+    }
+
+    private static func trailingStateCueRefutesClaim(_ normalizedCue: String) -> Bool {
+        [
             "没有分离",
             "未分离",
             "仍相连",
             "保持相连",
-            "无",
-            "未",
+        ].map(normalizedText).contains(normalizedCue)
+    }
+
+    private static func trailingNegationRefersToClaim(
+        range: Range<String.Index>,
+        in normalizedUnit: String
+    ) -> Bool {
+        let tailEnd = normalizedUnit.index(
+            range.lowerBound,
+            offsetBy: 12,
+            limitedBy: normalizedUnit.endIndex
+        ) ?? normalizedUnit.endIndex
+        let tail = String(normalizedUnit[range.lowerBound..<tailEnd])
+        return containsAnyNormalized(tail, [
+            "不是事实",
+            "不是正确",
+            "不是准确",
+            "不是合理",
+            "不是结论",
+            "不是说法",
+            "不能成立",
+            "不成立",
+            "不可靠",
+            "不应采用",
+            "没有根据",
+            "无依据",
         ])
     }
 
@@ -1931,7 +2092,7 @@ enum RichAnswerProfessionalJudgmentContracts {
                 requiredClaim(
                     "spacing-param-directions",
                     "λ 与 L 增大变疏，d 增大变密",
-                    subject: [["λ", "L", "d", "缝距"]],
+                    subject: [["λ", "lambda", "波长", "L", "屏距", "d", "缝距"]],
                     relation: [["增大", "变疏", "变密"]],
                     object: [["分子", "分母", "条纹"]]
                 ),
@@ -1947,7 +2108,7 @@ enum RichAnswerProfessionalJudgmentContracts {
                 forbiddenClaim(
                     "lambda-larger-denser",
                     "波长增大不能说条纹变密",
-                    subject: [["λ", "波长"]],
+                    subject: [["λ", "lambda", "波长"]],
                     relation: [["增大"]],
                     object: [["变密"]]
                 ),
@@ -1976,14 +2137,14 @@ enum RichAnswerProfessionalJudgmentContracts {
                 requiredClaim(
                     "tau-one-second",
                     "时间常数 τ 必须是 1.0 s",
-                    subject: [["τ", "时间常数"]],
+                    subject: [["τ", "tau", "时间常数"]],
                     relation: [["是", "等于", "为"]],
                     object: [["1.0s", "1.0 s", "1秒", "1 秒"]]
                 ),
                 requiredClaim(
                     "vc-at-tau",
                     "t=τ 时 Vc 约 3.16V",
-                    subject: [["t=τ", "t = τ"]],
+                    subject: [["t=τ", "t = τ", "t=tau", "t = tau"]],
                     relation: [["Vc", "电压"]],
                     object: [["3.16V", "3.16 V"]]
                 ),
@@ -2008,7 +2169,7 @@ enum RichAnswerProfessionalJudgmentContracts {
                 forbiddenClaim(
                     "wrong-tau",
                     "τ 不能写成 0.1s 或 10s",
-                    subject: [["τ", "时间常数"]],
+                    subject: [["τ", "tau", "时间常数"]],
                     relation: [["是", "等于", "为"]],
                     object: [["0.1s", "0.1 s", "10s", "10 s"]]
                 ),

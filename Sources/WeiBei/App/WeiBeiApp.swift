@@ -23,8 +23,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if shouldActivateOnLaunch {
             NSApp.activate(ignoringOtherApps: true)
         }
-        shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            sharedWorkspaceStore.handleAppShortcut(event) ? nil : event
+        if shouldActivateOnLaunch {
+            shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+                sharedWorkspaceStore.handleAppShortcut(event) ? nil : event
+            }
         }
     }
 
@@ -369,6 +371,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         window.isOpaque = true
         window.backgroundColor = appearanceMode.windowBackground
         window.isMovableByWindowBackground = true
+        window.ignoresMouseEvents = ProcessInfo.processInfo.environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1"
         applyVerificationWindowSize(to: window)
         captureVerificationWindowIfRequested(window)
         listenForVerificationCaptureRequestsIfRequested(window)
@@ -420,8 +423,15 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
             return
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            Self.capture(window, to: capturePath)
+        Self.waitForSingleCaptureReadiness(in: window, remainingAttempts: 50) { result in
+            switch result {
+            case .ready:
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    Self.capture(window, to: capturePath)
+                }
+            case .failed(let failureReason):
+                fputs("WeiBei verification legacy single capture failed: \(failureReason)\n", stderr)
+            }
         }
     }
 
@@ -437,6 +447,41 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         var sha256: String
         var capturedAt: String
         var webViewSnapshotCount: Int
+        var workspaceStateAtStart: VerificationWorkspaceState
+        var workspaceStateAtEnd: VerificationWorkspaceState
+    }
+
+    private struct VerificationWorkspaceState: Equatable {
+        var layout: String
+        var showReader: Bool
+        var showAgent: Bool
+        var showNotes: Bool
+        var selectedItemID: String?
+        var visiblePanes: [String]
+        var paneFrames: [String: CGRect]
+
+        var payload: [String: Any] {
+            [
+                "layout": layout,
+                "showReader": showReader,
+                "showAgent": showAgent,
+                "showNotes": showNotes,
+                "selectedItemID": selectedItemID ?? NSNull(),
+                "visiblePanes": visiblePanes,
+                "paneFrames": paneFrames.mapValues { frame in
+                    [
+                        "x": frame.minX,
+                        "y": frame.minY,
+                        "width": frame.width,
+                        "height": frame.height,
+                    ]
+                },
+            ]
+        }
+
+        var diagnosticDescription: String {
+            "layout=\(layout),reader=\(showReader),agent=\(showAgent),notes=\(showNotes),visible=\(visiblePanes.joined(separator: ",")),selected=\(selectedItemID ?? "none")"
+        }
     }
 
     private func listenForVerificationCaptureRequestsIfRequested(_ window: NSWindow) {
@@ -522,6 +567,35 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         }
 
         let verificationStage = request.stage?.lowercased()
+        if verificationStage == "single" {
+            waitForSingleCaptureReadiness(in: window, remainingAttempts: 50) { result in
+                switch result {
+                case .ready:
+                    completeVerificationCaptureRequest(
+                        request: request,
+                        in: window,
+                        captureURL: captureURL,
+                        channelURL: channelURL,
+                        outputURL: outputURL,
+                        delay: 0.25
+                    )
+                case .failed(let failureReason):
+                    writeVerificationCaptureAcknowledgement(
+                        request: request,
+                        status: "failed",
+                        failureReason: failureReason,
+                        channelURL: channelURL
+                    )
+                    scheduleVerificationCapturePoll(
+                        in: window,
+                        channelURL: channelURL,
+                        outputURL: outputURL
+                    )
+                }
+            }
+            return
+        }
+
         let stageDelay: TimeInterval
         if let verificationStage, ["overview", "before", "after"].contains(verificationStage) {
             NotificationCenter.default.post(
@@ -533,7 +607,25 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         } else {
             stageDelay = 0
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + stageDelay) {
+        completeVerificationCaptureRequest(
+            request: request,
+            in: window,
+            captureURL: captureURL,
+            channelURL: channelURL,
+            outputURL: outputURL,
+            delay: stageDelay
+        )
+    }
+
+    private static func completeVerificationCaptureRequest(
+        request: VerificationCaptureRequest,
+        in window: NSWindow,
+        captureURL: URL,
+        channelURL: URL,
+        outputURL: URL,
+        delay: TimeInterval
+    ) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             capture(window, to: captureURL.path) { captureResult, failureReason in
                 writeVerificationCaptureAcknowledgement(
                     request: request,
@@ -602,6 +694,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
             "acknowledgedAt": iso8601String(Date()),
             "renderReady": renderReadyEvidencePayload(),
             "webViewSnapshotTimeoutSeconds": webViewSnapshotTimeoutSeconds,
+            "workspaceState": verificationWorkspaceState().payload,
         ]
         if let captureResult {
             payload["actualPNG"] = [
@@ -616,6 +709,11 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
             payload["pngSHA256"] = captureResult.sha256
             payload["pngHash"] = "sha256:\(captureResult.sha256)"
             payload["webViewSnapshotCount"] = captureResult.webViewSnapshotCount
+            payload["captureWorkspaceState"] = [
+                "start": captureResult.workspaceStateAtStart.payload,
+                "end": captureResult.workspaceStateAtEnd.payload,
+                "stable": captureResult.workspaceStateAtStart == captureResult.workspaceStateAtEnd,
+            ]
         } else {
             payload["actualPNG"] = NSNull()
             payload["actualPNGPath"] = NSNull()
@@ -623,6 +721,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
             payload["pngSHA256"] = NSNull()
             payload["pngHash"] = NSNull()
             payload["webViewSnapshotCount"] = NSNull()
+            payload["captureWorkspaceState"] = NSNull()
         }
         guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else { return }
         do {
@@ -678,6 +777,31 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         ]
     }
 
+    private static func verificationWorkspaceState() -> VerificationWorkspaceState {
+        let visiblePaneRoles = sharedWorkspaceStore.visibleDocumentPaneOrder
+        let frameList = sharedWorkspaceStore.threePaneReorderFrameList(
+            order: visiblePaneRoles,
+            fallback: []
+        )
+        let frames: [String: CGRect]
+        if frameList.count == visiblePaneRoles.count {
+            frames = Dictionary(uniqueKeysWithValues: zip(visiblePaneRoles, frameList).map { role, frame in
+                (role.rawValue, frame)
+            })
+        } else {
+            frames = [:]
+        }
+        return VerificationWorkspaceState(
+            layout: sharedWorkspaceStore.layout.rawValue,
+            showReader: sharedWorkspaceStore.showReader,
+            showAgent: sharedWorkspaceStore.showAgent,
+            showNotes: sharedWorkspaceStore.showNotes,
+            selectedItemID: sharedWorkspaceStore.selectedItemID,
+            visiblePanes: visiblePaneRoles.map(\.rawValue),
+            paneFrames: frames
+        )
+    }
+
     private static func iso8601String(_ date: Date) -> String {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
@@ -712,11 +836,180 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         }
     }
 
+    private enum SingleCaptureReadinessResult {
+        case ready
+        case failed(String)
+    }
+
+    private struct CompactPreviewReadiness {
+        var compactCount: Int
+        var pendingCount: Int
+        var evaluationFailureCount: Int
+        var measuredHeights: [Int]
+
+        var isReady: Bool {
+            pendingCount == 0 && evaluationFailureCount == 0
+        }
+
+        func isStable(comparedTo previous: CompactPreviewReadiness) -> Bool {
+            isReady
+                && previous.isReady
+                && compactCount == previous.compactCount
+                && measuredHeights == previous.measuredHeights
+        }
+    }
+
+    private static func waitForSingleCaptureReadiness(
+        in window: NSWindow,
+        remainingAttempts: Int,
+        previousReadiness: CompactPreviewReadiness? = nil,
+        completion: @escaping (SingleCaptureReadinessResult) -> Void
+    ) {
+        guard let contentView = window.contentView else {
+            completion(.failed("window content view is unavailable while waiting for compact preview readiness"))
+            return
+        }
+        contentView.layoutSubtreeIfNeeded()
+        window.displayIfNeeded()
+        let webViews = visibleWebViews(in: contentView)
+        guard !webViews.isEmpty else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                completion(.ready)
+            }
+            return
+        }
+        compactPreviewReadiness(in: webViews) { readiness in
+            if let previousReadiness,
+               readiness.isStable(comparedTo: previousReadiness) {
+                completion(.ready)
+                return
+            }
+            guard remainingAttempts > 0 else {
+                completion(
+                    .failed(
+                        "compact preview readiness timed out "
+                            + "(compact: \(readiness.compactCount), "
+                            + "pending: \(readiness.pendingCount), "
+                            + "evaluation failures: \(readiness.evaluationFailureCount))"
+                    )
+                )
+                return
+            }
+            let nextPreviousReadiness = readiness.isReady ? readiness : nil
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                waitForSingleCaptureReadiness(
+                    in: window,
+                    remainingAttempts: remainingAttempts - 1,
+                    previousReadiness: nextPreviousReadiness,
+                    completion: completion
+                )
+            }
+        }
+    }
+
+    private static func compactPreviewReadiness(
+        in webViews: [WKWebView],
+        completion: @escaping (CompactPreviewReadiness) -> Void
+    ) {
+        compactPreviewReadiness(
+            in: webViews,
+            at: 0,
+            current: CompactPreviewReadiness(
+                compactCount: 0,
+                pendingCount: 0,
+                evaluationFailureCount: 0,
+                measuredHeights: []
+            ),
+            completion: completion
+        )
+    }
+
+    private static func compactPreviewReadiness(
+        in webViews: [WKWebView],
+        at index: Int,
+        current: CompactPreviewReadiness,
+        completion: @escaping (CompactPreviewReadiness) -> Void
+    ) {
+        guard webViews.indices.contains(index) else {
+            completion(current)
+            return
+        }
+        let script = """
+        (() => {
+          const compact = window.weiBeiMarkdownCompactPreview === true
+            || document.documentElement.dataset.weibeiCompactPreview === 'true';
+          if (!compact) return { compact: false, ready: true };
+          const nodes = [
+            document.querySelector('#editor'),
+            document.querySelector('.milkdown'),
+            document.querySelector('.ProseMirror')
+          ].filter(Boolean);
+          const nodeHeight = (node) => {
+            const rect = node.getBoundingClientRect?.();
+            return Math.max(
+              0,
+              node.scrollHeight || 0,
+              node.offsetHeight || 0,
+              node.clientHeight || 0,
+              rect?.height || 0
+            );
+          };
+          const height = Math.ceil(Math.max(0, ...nodes.map(nodeHeight)));
+          const reportedHeight = Number(window.WeiBeiCompactPreviewHeight || 0);
+          const measuredAt = Number(window.WeiBeiCompactPreviewMeasuredAt || 0);
+          const ready = nodes.length > 0
+            && Number.isFinite(height)
+            && height > 0
+            && Number.isFinite(reportedHeight)
+            && reportedHeight > 0
+            && Math.abs(reportedHeight - height) <= 1
+            && Number.isFinite(measuredAt)
+            && measuredAt > 0;
+          return { compact: true, ready, height, reportedHeight, measuredAt };
+        })();
+        """
+        webViews[index].evaluateJavaScript(script) { result, error in
+            var next = current
+            if error != nil {
+                next.evaluationFailureCount += 1
+            } else if let payload = result as? [String: Any],
+                      let isCompact = payload["compact"] as? Bool {
+                guard isCompact else {
+                    compactPreviewReadiness(
+                        in: webViews,
+                        at: index + 1,
+                        current: next,
+                        completion: completion
+                    )
+                    return
+                }
+                next.compactCount += 1
+                if payload["ready"] as? Bool == true,
+                   let height = payload["height"] as? NSNumber,
+                   height.doubleValue.isFinite,
+                   height.doubleValue > 0 {
+                    next.measuredHeights.append(height.intValue)
+                } else {
+                    next.pendingCount += 1
+                }
+            } else {
+                next.evaluationFailureCount += 1
+            }
+            compactPreviewReadiness(
+                in: webViews,
+                at: index + 1,
+                current: next,
+                completion: completion
+            )
+        }
+    }
+
     private static func capture(
         _ window: NSWindow,
         to capturePath: String,
         completion: @escaping (VerificationCaptureResult?, String?) -> Void = { _, _ in }
     ) {
+        let workspaceStateAtStart = verificationWorkspaceState()
         guard !FileManager.default.fileExists(atPath: capturePath) else {
             completion(nil, "capture target already exists")
             return
@@ -744,6 +1037,14 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         captureWebViews(webViews, at: 0, relativeTo: contentView, overlays: []) { overlays, webViewFailure in
             if let webViewFailure {
                 completion(nil, webViewFailure)
+                return
+            }
+            let workspaceStateAtEnd = verificationWorkspaceState()
+            guard workspaceStateAtStart == workspaceStateAtEnd else {
+                completion(
+                    nil,
+                    "workspace state changed during capture: \(workspaceStateAtStart.diagnosticDescription) -> \(workspaceStateAtEnd.diagnosticDescription)"
+                )
                 return
             }
             let composite = NSImage(size: bounds.size)
@@ -781,7 +1082,9 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
                     bytes: bytes,
                     sha256: sha256Hex(for: writtenData),
                     capturedAt: iso8601String(Date()),
-                    webViewSnapshotCount: overlays.count
+                    webViewSnapshotCount: overlays.count,
+                    workspaceStateAtStart: workspaceStateAtStart,
+                    workspaceStateAtEnd: workspaceStateAtEnd
                 ),
                 nil
             )

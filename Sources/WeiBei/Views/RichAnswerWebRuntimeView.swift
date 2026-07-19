@@ -88,13 +88,21 @@ struct RichAnswerWebRuntimeView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: renderedHeight)
-            .clipped()
 
             if contentOverflowed, !expandsOverflow, let onRequestExpansion {
-                Button("展开完整视觉体验") {
+                Button {
                     onRequestExpansion()
+                } label: {
+                    Label("放大操作", systemImage: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 11, weight: .medium))
+                        .symbolRenderingMode(.hierarchical)
                 }
-                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                .buttonStyle(.plain)
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .contentShape(Rectangle())
+                .help("在更大空间中操作这段富回答")
+                .accessibilityIdentifier("rich-answer-expand-visual-experience")
             }
         }
         .accessibilityLabel(entries.map(\.scene.title).joined(separator: "；"))
@@ -104,13 +112,17 @@ struct RichAnswerWebRuntimeView: View {
         }
     }
 
-    private var collapsedHeightLimit: CGFloat {
+    private var requestedHeightBudget: CGFloat {
         let requested = entries.reduce(0) { $0 + $1.program.maxHeight }
         return CGFloat(max(160, min(720, requested)))
     }
 
+    private var inlineHeightLimit: CGFloat {
+        min(1_200, max(640, requestedHeightBudget * 2 + 160))
+    }
+
     private var heightLimit: CGFloat {
-        expandsOverflow ? 2_400 : collapsedHeightLimit
+        expandsOverflow ? 5_000 : inlineHeightLimit
     }
 
     private var renderedHeight: CGFloat {
@@ -591,8 +603,30 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             }
             webView.evaluateJavaScript(Self.verificationInteractionScript) { [weak self] value, error in
                 guard let self else { return }
-                if error != nil || !Self.verificationInteractionSucceeded(value) {
+                guard error == nil, Self.verificationInteractionStarted(value) else {
                     scheduleVerificationInteraction(requestID: requestID, attempt: attempt + 1)
+                    return
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) { [weak self, weak webView] in
+                    guard let self, let webView else { return }
+                    webView.evaluateJavaScript(Self.verificationInteractionResultScript) { value, error in
+                        guard error == nil,
+                              let receipt = Self.verificationInteractionReceipt(from: value, entries: self.entries),
+                              receipt.changed else {
+                            self.scheduleVerificationInteraction(requestID: requestID, attempt: attempt + 1)
+                            return
+                        }
+                        RichAnswerVerificationBridge.writeInteractionReceipt(
+                            sceneID: receipt.sceneID,
+                            sceneTitle: receipt.sceneTitle,
+                            target: receipt.target,
+                            kind: receipt.kind,
+                            before: receipt.before,
+                            after: receipt.after,
+                            changed: receipt.changed,
+                            source: "web-runtime"
+                        )
+                    }
                 }
             }
         }
@@ -714,7 +748,41 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             const rect = element.getBoundingClientRect();
             return rect.width > 1 && rect.height > 1 && rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth;
           };
-          const labelOf = (element) => String(element?.textContent || element?.getAttribute("aria-label") || "").trim().toLowerCase();
+          const labelOf = (element) => String(element?.getAttribute("aria-label") || element?.textContent || "").trim();
+          const normalizedLabelOf = (element) => labelOf(element).toLowerCase();
+          const controlName = (element) => String(element?.getAttribute("data-weibei-control") || "");
+          const controlID = (element) => String(element?.getAttribute("data-weibei-control-id") || element?.id || labelOf(element) || "");
+          const sceneContainerFor = (element) => element?.closest("[data-weibei-scene-id], [data-scene-id], .generation-answer__program, .generation-answer")
+            || document.querySelector("[data-weibei-scene-id], [data-scene-id], .generation-answer__program, .generation-answer");
+          const sceneIDFor = (element) => sceneContainerFor(element)?.getAttribute("data-weibei-scene-id")
+            || sceneContainerFor(element)?.getAttribute("data-scene-id")
+            || element?.getAttribute("data-weibei-scene-id")
+            || "";
+          const sceneTitleFor = (element) => sceneContainerFor(element)?.getAttribute("aria-label")
+            || element?.closest(".generation-answer")?.getAttribute("aria-label")
+            || document.querySelector(".generation-answer__program")?.getAttribute("aria-label")
+            || document.querySelector(".generation-answer")?.getAttribute("aria-label")
+            || document.title
+            || "";
+          const controlState = (element) => {
+            if (!element) return {};
+            return {
+              control: controlName(element),
+              controlID: controlID(element),
+              tag: String(element.tagName || "").toLowerCase(),
+              role: element.getAttribute("role") || "",
+              label: labelOf(element),
+              value: "value" in element ? String(element.value) : "",
+              checked: "checked" in element ? Boolean(element.checked) : null,
+              selected: element.getAttribute("aria-selected") || "",
+              disabled: Boolean(element.disabled || element.getAttribute("aria-disabled") === "true"),
+              className: String(element.className || "")
+            };
+          };
+          const stateSnapshot = () => Array.from(document.querySelectorAll("[data-weibei-control]"))
+            .filter((element) => visible(element) || element.getAttribute("aria-selected") === "true")
+            .map(controlState);
+          const fingerprint = (value) => JSON.stringify(value);
           const dispatchPointer = (element, type) => {
             const eventInit = { bubbles: true, pointerId: 1, pointerType: "mouse", isPrimary: true };
             const event = typeof PointerEvent === "function" ? new PointerEvent(type, eventInit) : new MouseEvent(type === "pointerdown" ? "mousedown" : "mouseup", { bubbles: true });
@@ -728,9 +796,9 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             element.click();
             return true;
           };
-          const first = (selectors) => {
+          const first = (selectors, predicate = () => true) => {
             for (const selector of selectors) {
-              const found = Array.from(document.querySelectorAll(selector)).find(visible);
+              const found = Array.from(document.querySelectorAll(selector)).find((element) => visible(element) && predicate(element));
               if (found) return found;
             }
             return null;
@@ -739,13 +807,12 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             const candidates = selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector)));
             return candidates.find((element) => {
               if (!visible(element)) return false;
-              const label = labelOf(element);
+              const label = normalizedLabelOf(element);
               return patterns.some((pattern) => pattern.test(label)) && !rejectPatterns.some((pattern) => pattern.test(label));
             }) || null;
           };
-          const advanceRange = () => {
-            const range = Array.from(document.querySelectorAll('input[type="range"]')).find(visible);
-            if (!range) return false;
+          const advanceRange = (range) => {
+            if (!range || !visible(range)) return false;
             const minimum = Number(range.min || 0);
             const maximum = Number(range.max || 100);
             const step = Number(range.step || ((maximum - minimum) / 8));
@@ -758,7 +825,21 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             range.dispatchEvent(new Event("change", { bubbles: true }));
             return true;
           };
-          const executionNext = first([
+          const inactive = (element) => {
+            if (element.disabled || element.getAttribute("aria-disabled") === "true") return false;
+            if (element.getAttribute("aria-selected") === "true") return false;
+            return !String(element.className || "").split(/\\s+/).some((name) => name === "is-active" || name === "is-selected");
+          };
+          const dataControl = (names, predicate = inactive) => first(
+            names.map((name) => `[data-weibei-control="${name}"]`),
+            predicate
+          );
+          const rangeControl = dataControl([
+            "parameter-slider",
+            "distribution-span-slider",
+            "dependency-input-slider"
+          ], (element) => element.matches('input[type="range"]'));
+          const executionNext = dataControl(["execution-next"]) || first([
             '[data-action="execution-next"]',
             '[data-testid="execution-next"]',
             '[aria-label*="execution-next" i]',
@@ -766,43 +847,78 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             '.execution-controls button:not(:disabled):last-of-type',
             '.ra-execution-controls button:not(:disabled):last-of-type'
           ]) || byText(["button"], [/下一步|next|step/], [/上一步|previous|prev|back/]);
-          if (press(executionNext)) return true;
-          const processStep = first([
+          const processStep = dataControl(["process-step"]) || first([
             '[data-action="process-next"]',
             '[data-testid="process-next"]',
             '.ra-process button:not(.is-active):not(.is-selected)',
             '.process-step button:not(.is-active):not(.is-selected)',
             '[role="listitem"] button:not(.is-active):not(.is-selected)'
           ]) || byText(["button"], [/过程|阶段|step|process/], [/reset|重置|证据|来源/]);
-          if (press(processStep)) return true;
-          const argumentUnit = first([
+          const argumentUnit = dataControl(["argument-unit"]) || first([
             '.ra-argument-reader__copy button:not(.is-active)',
             '[data-component="ArgumentUnit"]:not(.is-active) button',
             '[data-role="ArgumentUnit"]:not(.is-active) button'
           ]);
-          if (press(argumentUnit)) return true;
-          const causalEvent = first([
+          const causalEvent = dataControl(["causal-event"]) || first([
             '.ra-causal-track__rail button:not(.is-active):not(.is-selected)',
             '.policy-river button:not(.is-selected)',
             '[data-component="CausalEvent"]:not(.is-active) button',
             '[data-role="CausalEvent"]:not(.is-active) button'
           ]);
-          if (press(causalEvent)) return true;
-          const valueOption = first([
+          const valueOption = dataControl(["value-picker-option"]) || first([
             '[role="option"]:not([aria-selected="true"])',
             '.value-picker button:not(.is-active):not(.is-selected)',
             '[data-component="ValuePicker"] button:not(.is-active):not(.is-selected)',
             '[data-role="value-option"]:not(.is-active):not(.is-selected)'
           ]);
-          if (press(valueOption)) return true;
-          const spatialToggle = first([
+          const spatialToggle = dataControl(["spatial-layer-toggle"], () => true) || first([
             '.ra-spatial-view__layers input[type="checkbox"]',
             '[data-component="SpatialToggle"] input[type="checkbox"]',
             '[data-role="spatial-toggle"] input[type="checkbox"]'
           ]);
-          if (press(spatialToggle)) return true;
-          return advanceRange();
+          const target = rangeControl || executionNext || processStep || argumentUnit || causalEvent || valueOption || spatialToggle || first(['input[type="range"]']);
+          const beforeState = stateSnapshot();
+          const targetBefore = controlState(target);
+          window.WeiBeiVerificationInteractionResult = null;
+          let acted = false;
+          if (target?.matches?.('input[type="range"]')) {
+            acted = advanceRange(target);
+          } else {
+            acted = press(target);
+          }
+          const finish = () => {
+            const afterState = stateSnapshot();
+            const targetAfter = controlState(target);
+            window.WeiBeiVerificationInteractionResult = {
+              ok: acted,
+              changed: acted && fingerprint({ target: targetBefore, controls: beforeState }) !== fingerprint({ target: targetAfter, controls: afterState }),
+              kind: controlName(target) || (target?.matches?.('input[type="range"]') ? "range" : "press"),
+              sceneID: sceneIDFor(target),
+              sceneTitle: sceneTitleFor(target),
+              target: target ? {
+                control: controlName(target),
+                id: controlID(target),
+                label: labelOf(target),
+                tag: String(target.tagName || "").toLowerCase(),
+                role: target.getAttribute("role") || ""
+              } : {},
+              before: {
+                target: targetBefore,
+                controls: beforeState
+              },
+              after: {
+                target: targetAfter,
+                controls: afterState
+              }
+            };
+          };
+          window.setTimeout(finish, 180);
+          return { started: acted };
         })();
+        """
+
+        private static let verificationInteractionResultScript = """
+        (() => window.WeiBeiVerificationInteractionResult || null)();
         """
 
         private static func heightValue(from value: Any?) -> CGFloat? {
@@ -818,14 +934,42 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             return nil
         }
 
-        private static func verificationInteractionSucceeded(_ value: Any?) -> Bool {
-            if let number = value as? NSNumber {
-                return number.boolValue
-            }
-            if let value = value as? Bool {
-                return value
-            }
-            return false
+        private static func verificationInteractionReceipt(
+            from value: Any?,
+            entries: [RichAnswerWebRuntimeEntry]
+        ) -> (
+            sceneID: String,
+            sceneTitle: String,
+            target: [String: Any],
+            kind: String,
+            before: Any?,
+            after: Any?,
+            changed: Bool
+        )? {
+            guard let dictionary = value as? [String: Any] else { return nil }
+            let sceneID = dictionary["sceneID"] as? String ?? ""
+            let sceneTitle = dictionary["sceneTitle"] as? String ?? ""
+            let titleMatches = entries.filter { $0.scene.title == sceneTitle }
+            let entry = entries.first(where: { $0.scene.id == sceneID })
+                ?? (titleMatches.count == 1 ? titleMatches[0] : nil)
+                ?? (entries.count == 1 ? entries[0] : nil)
+            guard let scene = entry?.scene else { return nil }
+            let before = dictionary["before"]
+            let after = dictionary["after"]
+            return (
+                sceneID: scene.id,
+                sceneTitle: scene.title,
+                target: dictionary["target"] as? [String: Any] ?? [:],
+                kind: dictionary["kind"] as? String ?? "web-runtime",
+                before: before,
+                after: after,
+                changed: RichAnswerVerificationBridge.changed(before, after)
+            )
+        }
+
+        private static func verificationInteractionStarted(_ value: Any?) -> Bool {
+            guard let dictionary = value as? [String: Any] else { return false }
+            return dictionary["started"] as? Bool ?? false
         }
     }
 }

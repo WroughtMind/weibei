@@ -1488,9 +1488,12 @@ struct MarkdownPreviewView: View {
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
     var onSelectionChange: (String, CGPoint?) -> Void = { _, _ in }
     var onContentHeightChange: () -> Void = {}
+    private static let compactPreviewLoadingHeight: CGFloat = 44
+    private static let compactPreviewMaximumHeight: CGFloat = 20_000
+
     var onMeasuredHeight: (CGFloat) -> Void = { _ in }
     @State private var command: NoteEditorCommand?
-    @State private var contentHeight: CGFloat = 44
+    @State private var contentHeight: CGFloat = Self.compactPreviewLoadingHeight
     @State private var heightFrozen = false
     @State private var lastWidthBucket = 0
 
@@ -1507,16 +1510,20 @@ struct MarkdownPreviewView: View {
             onAskAgentWithSelection: onSelectionChange,
             onContentHeightChange: { height in
                 guard compact && fitsContentHeight else { return }
+                guard height.isFinite,
+                      height > 0,
+                      height <= Self.compactPreviewMaximumHeight else { return }
                 if freezeHeightAfterMeasure, heightFrozen { return }
-                let next = max(height, 44)
+                let next = max(ceil(height), Self.compactPreviewLoadingHeight)
                 // Ignore sub-pixel ResizeObserver jitter once we have a real measure.
-                if contentHeight >= 44, abs(contentHeight - next) < 2 {
+                if contentHeight >= Self.compactPreviewLoadingHeight,
+                   abs(contentHeight - next) < 2 {
                     if freezeHeightAfterMeasure { heightFrozen = true }
                     return
                 }
                 contentHeight = next
                 onMeasuredHeight(next)
-                if freezeHeightAfterMeasure, next > 44 {
+                if freezeHeightAfterMeasure, next > Self.compactPreviewLoadingHeight {
                     heightFrozen = true
                 }
                 onContentHeightChange()
@@ -1526,10 +1533,10 @@ struct MarkdownPreviewView: View {
             onAppShortcut: onAppShortcut
         )
         .background(compact ? Color.clear : WeiBeiTheme.paper)
-        .frame(height: compact && fitsContentHeight ? max(contentHeight, 44) : nil)
+        .frame(height: compact && fitsContentHeight ? max(contentHeight, Self.compactPreviewLoadingHeight) : nil)
         .onAppear {
             lastWidthBucket = layoutWidthBucket
-            if let seed = seedContentHeight, seed > 44 {
+            if let seed = seedContentHeight, seed > Self.compactPreviewLoadingHeight {
                 contentHeight = seed
                 if freezeHeightAfterMeasure {
                     heightFrozen = true
@@ -1541,9 +1548,15 @@ struct MarkdownPreviewView: View {
             lastWidthBucket = bucket
             // Window / selection-float resize: allow a fresh measure for the new width.
             heightFrozen = false
-            if let seed = seedContentHeight, seed > 44 {
+            if let seed = seedContentHeight, seed > Self.compactPreviewLoadingHeight {
                 contentHeight = seed
             }
+        }
+        .onChange(of: markdown) { _, _ in
+            guard compact && fitsContentHeight else { return }
+            heightFrozen = false
+            contentHeight = Self.compactPreviewLoadingHeight
+            onContentHeightChange()
         }
     }
 }

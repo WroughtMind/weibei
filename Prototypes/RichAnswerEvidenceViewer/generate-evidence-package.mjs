@@ -103,6 +103,7 @@ function parseArgs() {
     source: DATASET_PATH,
     force: false,
     output: null,
+    assetMode: "copy",
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -131,6 +132,11 @@ function parseArgs() {
       out.force = true;
       continue;
     }
+    if (arg === "--asset-mode") {
+      out.assetMode = args[index + 1];
+      index += 1;
+      continue;
+    }
     if (arg === "--help" || arg === "-h") {
       out.help = true;
       continue;
@@ -153,6 +159,7 @@ function usage() {
     "  --run-id       指定 runID（与 --source 一起使用）",
     "  --source       run 目录父路径，默认 .build/rich-answer-evidence",
     "  --output/--out 输出目录",
+    "  --asset-mode   图片落档方式：copy / hardlink / symlink，默认 copy",
     "  --force        如输出目录已存在，允许覆盖",
     "  --help         显示此帮助",
   ].join("\n");
@@ -225,32 +232,68 @@ function safeNumber(value) {
   return n;
 }
 
-function collectImageAssets(caseDir, outputAssetsDir, caseID, repetition, report) {
+function screenshotPath(value) {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && typeof value.path === "string") return value.path;
+  return null;
+}
+
+function materializeAsset(source, target, report) {
+  fs.rmSync(target, { force: true });
+  if (report.assetMode === "symlink") {
+    fs.symlinkSync(source, target);
+    report.linkedFiles += 1;
+    return;
+  }
+  if (report.assetMode === "hardlink") {
+    try {
+      fs.linkSync(source, target);
+      report.linkedFiles += 1;
+      return;
+    } catch {}
+  }
+  fs.copyFileSync(source, target);
+  report.copiedFiles += 1;
+}
+
+function collectImageAssets(caseDir, outputAssetsDir, caseID, repetition, entry, report) {
   const screenshots = pickScreenshots(caseDir);
+  const explicit = entry.screenshots || {};
+  const explicitOverview = screenshotPath(explicit.overview);
+  const explicitSingle = screenshotPath(explicit.single);
+  const explicitInteractionBefore = screenshotPath(explicit.before);
+  const explicitBefore = explicitInteractionBefore || explicitSingle;
+  const explicitAfter = screenshotPath(explicit.after);
+  const expectsAfter = explicitSingle && !explicitInteractionBefore && !explicitAfter
+    ? false
+    : normalizeRunKind(entry.caseKind) === "rich";
   const asset = {
+    overview: null,
     before: null,
     after: null,
     missing: [],
+    expectsAfter,
   };
 
   const assetBase = toAssetId(caseID, repetition);
   ensureDir(outputAssetsDir);
 
-  const copyIfExist = (kind, filename) => {
-    if (!filename) return null;
-    const source = path.join(caseDir, filename);
-    if (!fileExists(source)) return null;
+  const materializeIfExist = (kind, source) => {
+    if (!source) return null;
+    const resolvedSource = path.isAbsolute(source) ? source : path.join(caseDir, source);
+    if (!fileExists(resolvedSource)) return null;
+    const filename = path.basename(resolvedSource);
     const targetName = `${assetBase}-${kind}-${filename}`;
     const target = path.join(outputAssetsDir, targetName);
-    fs.copyFileSync(source, target);
-    report.copiedFiles += 1;
+    materializeAsset(resolvedSource, target, report);
     return `assets/${targetName}`;
   };
 
-  asset.before = copyIfExist("before", screenshots.before) || null;
-  asset.after = copyIfExist("after", screenshots.after) || null;
+  asset.overview = materializeIfExist("overview", explicitOverview) || null;
+  asset.before = materializeIfExist("before", explicitBefore || screenshots.before) || null;
+  asset.after = materializeIfExist("after", explicitAfter || screenshots.after) || null;
   if (!asset.before) asset.missing.push("before截图缺失");
-  if (!asset.after) asset.missing.push("after截图缺失");
+  if (expectsAfter && !asset.after) asset.missing.push("after截图缺失");
   return asset;
 }
 
@@ -298,7 +341,7 @@ function readRecordFromEntry(entry, runRoot, outputAssetsDir, report) {
   const repetition = safeNumber(record.repetition ?? entry.repetition);
   const sequence = safeNumber(record.sequence ?? entry.sequence);
 
-  const images = collectImageAssets(caseDir, outputAssetsDir, caseID, repetition, report);
+  const images = collectImageAssets(caseDir, outputAssetsDir, caseID, repetition, entry, report);
   const t1Programs = Array.isArray(expr.t1Programs) ? expr.t1Programs : [];
   const t2Compositions = Array.isArray(expr.t2Compositions) ? expr.t2Compositions : [];
 
@@ -382,14 +425,24 @@ function readRecordFromEntry(entry, runRoot, outputAssetsDir, report) {
       repairNote: toString(repair.repairNote),
       isRetest: boolText(repair.isRetest),
     },
+    screenshotEvidence: {
+      originalStatus: toString(entry.originalScreenshotStatus || entry.screenshotStatus, "缺失"),
+      qualityStatus: toString(entry.qualityStatus, "缺失"),
+      replaced: Boolean(entry.repairEvidence),
+      repairEvidence: entry.repairEvidence || null,
+      screenshotManifest: toString(entry.screenshotManifest, "缺失"),
+    },
     expectedCapabilityFamilies: caseSnapshot.expectedCapabilityFamilies || [],
     userBenefitCriteria: caseSnapshot.userBenefitCriteria || [],
     rejectedOrDegradedBehaviors: caseSnapshot.rejectedOrDegradedBehaviors || [],
     beforeImage: images.before,
     afterImage: images.after,
+    overviewImage: images.overview,
+    interactionEvidence: images.expectsAfter,
     missing: {
+      overviewScreenshot: images.overview ? "已提供" : "不适用",
       beforeScreenshot: images.before ? "已提供" : "缺失",
-      afterScreenshot: images.after ? "已提供" : "缺失",
+      afterScreenshot: images.expectsAfter ? (images.after ? "已提供" : "缺失") : "不适用",
       request: prompt.ok ? "已提供" : "缺失",
       reply: reply.ok ? "已提供" : "缺失",
       validation: validation.ok ? "已提供" : "缺失",
@@ -496,6 +549,11 @@ function buildGroupData(records) {
       return acc;
     }, {}),
     byKind: kindCounts,
+    byCaseKind: groups.reduce((acc, group) => {
+      const kind = group.caseKind || "unknown";
+      acc[kind] = (acc[kind] || 0) + 1;
+      return acc;
+    }, { rich: 0, "text-only": 0, degradation: 0, "invalid-protocol": 0, unknown: 0 }),
     repetitionCounts: Array.from(repetitions).sort((a, b) => Number(a) - Number(b)).reduce((acc, value) => {
       acc[value] = records.filter((item) => String(item.repetition) === String(value)).length;
       return acc;
@@ -530,18 +588,18 @@ function buildPayload(runDir, runID, runData, report) {
   }, {});
   expectedTotals.total = TARGET_TOTAL;
 
-  const actualTotalByKind = Object.entries(grouped.counts.byKind).reduce((acc, [kind, count]) => {
+  const actualTotalByKind = Object.entries(grouped.counts.byCaseKind).reduce((acc, [kind, count]) => {
     acc[kind] = count;
     return acc;
   }, {});
-  actualTotalByKind.total = runData.records.length;
+  actualTotalByKind.total = grouped.groups.length;
 
   const subjectGap = runData.records.reduce((acc, item) => {
     acc[item.subject] = (acc[item.subject] || 0) + 1;
     return acc;
   }, {});
 
-  const missingFlags = Object.entries(grouped.counts.byKind).map(([kind, count]) => {
+  const missingFlags = Object.entries(grouped.counts.byCaseKind).map(([kind, count]) => {
     const expected = TARGET_BREAKDOWN[kind] || 0;
     return {
       kind,
@@ -567,23 +625,21 @@ function buildPayload(runDir, runID, runData, report) {
     },
     overview: {
       totalActualRecords: runData.records.length,
+      totalActualCases: grouped.groups.length,
       totalExpectedTarget: TARGET_TOTAL,
       expectedByKind: expectedTotals,
       actualByKind: actualTotalByKind,
       statusCount: statusCountActual,
-      subjectCount: subjectCount,
+      subjectCount: Object.keys(subjectGap).length,
       missingGapByKind: missingFlags,
       filterOptions: grouped.filters,
       repetitionCount: grouped.filters.repetitions.length,
-      completionState: actualTotalByKind.total > 0 ? "待用户验收" : "未开始",
+      completionState: grouped.groups.length > 0 ? "待用户验收" : "未开始",
     },
     cases: grouped.groups,
     missingFields: report.missingFields,
   };
 
-  function subjectCount() {
-    return Object.keys(subjectGap).length;
-  }
 }
 
 function makeHtml(outputPath, payload) {
@@ -798,7 +854,8 @@ function makeHtml(outputPath, payload) {
           <div>run 目录: ${escapeHtml(payload.run.sourceRunDir)}</div>
           <div>生成时间: ${escapeHtml(payload.generatedAt)}</div>
           <div>目标总数: ${payload.overview.totalExpectedTarget}</div>
-          <div>实际条目: ${payload.overview.totalActualRecords}</div>
+          <div>实际题目: ${payload.overview.totalActualCases}</div>
+          <div>实际尝试: ${payload.overview.totalActualRecords}</div>
           <div>轮次数量: ${payload.overview.repetitionCount}</div>
         </div>
         <div class="badges">
@@ -815,7 +872,7 @@ function makeHtml(outputPath, payload) {
             <tr><td>text-only（纯文本）</td><td>6</td><td>${payload.overview.actualByKind["text-only"]}</td><td>${payload.overview.missingGapByKind.find((i) => i.kind === "text-only").gap}</td><td>${(payload.overview.actualByKind["text-only"] >= 6 ? "达标" : "不足")}</td></tr>
             <tr><td>degradation（降级）</td><td>9</td><td>${payload.overview.actualByKind["degradation"]}</td><td>${payload.overview.missingGapByKind.find((i) => i.kind === "degradation").gap}</td><td>${(payload.overview.actualByKind["degradation"] >= 9 ? "达标" : "不足")}</td></tr>
             <tr><td>invalid-protocol（非法协议）</td><td>1</td><td>${payload.overview.actualByKind["invalid-protocol"]}</td><td>${payload.overview.missingGapByKind.find((i) => i.kind === "invalid-protocol").gap}</td><td>${(payload.overview.actualByKind["invalid-protocol"] >= 1 ? "达标" : "不足")}</td></tr>
-            <tr><td>总计</td><td>56</td><td>${payload.overview.totalActualRecords}</td><td>${TARGET_TOTAL - payload.overview.totalActualRecords}</td><td>${payload.overview.totalActualRecords >= 56 ? "达标" : "不足"}</td></tr>
+            <tr><td>总计</td><td>56</td><td>${payload.overview.totalActualCases}</td><td>${TARGET_TOTAL - payload.overview.totalActualCases}</td><td>${payload.overview.totalActualCases >= 56 ? "达标" : "不足"}</td></tr>
           </tbody>
         </table>
       </section>
@@ -853,7 +910,10 @@ function makeHtml(outputPath, payload) {
 }
 
 function buildClientScript() {
-  return `
+  return `(${evidenceViewerRuntime.toString()})();\n`;
+}
+
+function evidenceViewerRuntime() {
 const data = window.__EVIDENCE_DATA || {};
 const cases = Array.isArray(data.cases) ? data.cases : [];
 const filters = data.overview && data.overview.filterOptions ? data.overview.filterOptions : {};
@@ -930,6 +990,7 @@ function safeJson(txt) {
 
 function renderAttempt(attempt) {
   const missing = attempt.missing || {};
+  const screenshotEvidence = attempt.screenshotEvidence || {};
   const t1Rows = (attempt.expressionPlan?.t1Programs || []).map((item) => {
     return `<li>scene:${e(item.sceneID)} / family:${e(item.family)} / version:${e(item.version)} / direct:${e(item.directManipulation)} / maxHeight:${e(item.maxHeight)} / components:${e((item.componentNames || []).join(",") || "无")}</li>`;
   }).join("");
@@ -966,6 +1027,7 @@ function renderAttempt(attempt) {
           <span class="badge">T1 ${e(attempt.t1SceneCount)} / T2 ${e(attempt.t2SceneCount)}</span>
           <span class="badge">耗时 ${e(attempt.elapsedSeconds ?? "缺失")}s</span>
           <span class="badge ${attempt.status === "passed" ? "ok" : "warn"}">${attempt.status === "passed" ? "已达标" : "待复核"}</span>
+          <span class="badge ${screenshotEvidence.replaced ? "ok" : ""}">${screenshotEvidence.replaced ? "已补真实窗口证据" : "原始截图链"}</span>
         </div>
         <div class="small">T1/T2 计划摘要：${e(delta)}</div>
         <div class="badges">
@@ -973,10 +1035,12 @@ function renderAttempt(attempt) {
           <span class="badge">reply: ${e(missing.reply)}</span>
           <span class="badge">validation: ${e(missing.validation)}</span>
           <span class="badge">record: ${e(missing.record)}</span>
+          <span class="badge">完整窗口: ${e(missing.overviewScreenshot)}</span>
           <span class="badge">before截图: ${e(missing.beforeScreenshot)}</span>
           <span class="badge">after截图: ${e(missing.afterScreenshot)}</span>
         </div>
         <p><strong>失败原因:</strong> ${e(attempt.failureReason || "无")}</p>
+        <p><strong>截图证据:</strong> 原状态 ${e(screenshotEvidence.originalStatus)} / 当前质量 ${e(screenshotEvidence.qualityStatus)}${screenshotEvidence.replaced ? ` / 修复记录 ${e(screenshotEvidence.repairEvidence?.manifestPath || "已登记")}` : ""}</p>
         <details>
           <summary>题目与材料</summary>
           <p><strong>题目：</strong>${e(attempt.question)}</p>
@@ -1011,8 +1075,9 @@ function renderAttempt(attempt) {
           <ul>${sourceLines || "<li>无</li>"}</ul>
         </details>
         <div class="images">
+          ${attempt.overviewImage ? imageBlock("完整窗口", attempt.overviewImage, "overview截图缺失") : ""}
           ${imageBlock("操作前", attempt.beforeImage, "before截图缺失")}
-          ${imageBlock("操作后", attempt.afterImage, "after截图缺失")}
+          ${attempt.interactionEvidence ? imageBlock("操作后", attempt.afterImage, "after截图缺失") : ""}
         </div>
       </div>
   `;
@@ -1081,7 +1146,6 @@ document.getElementById("filter-keyword").addEventListener("input", render);
 buildOptions();
 fillMissingList();
 render();
-`;
 }
 
 function escapeHtml(value) {
@@ -1124,7 +1188,10 @@ function run() {
   }
   ensureDir(output);
 
-  const report = { missingFields: [], outputDir: output, copiedFiles: 0 };
+  if (!new Set(["copy", "hardlink", "symlink"]).has(argv.assetMode)) {
+    throw new Error(`不支持的 --asset-mode：${argv.assetMode}`);
+  }
+  const report = { missingFields: [], outputDir: output, copiedFiles: 0, linkedFiles: 0, assetMode: argv.assetMode };
   const runData = collectRecordsFromRunDir(runDir, report);
   if (!Array.isArray(runData.records) || runData.records.length === 0) {
     report.missingFields.push("未识别到任何 record.json，验收包仍可生成但不可用于实际验收");
@@ -1140,6 +1207,8 @@ function run() {
     `记录数: ${payload.overview.totalActualRecords}`,
     `缺失项: ${payload.missingFields.length}`,
     `已复制图片: ${report.copiedFiles}`,
+    `已链接图片: ${report.linkedFiles}`,
+    `图片模式: ${report.assetMode}`,
     `生成时间: ${payload.generatedAt}`,
   ];
   console.log("富回答验收包已生成：\n" + summary.join("\n"));
