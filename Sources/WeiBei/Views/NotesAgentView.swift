@@ -1864,20 +1864,33 @@ struct AgentPaneView: View {
             Button {
                 store.createStudySession()
             } label: {
-                Label(store.ui("新学习会话", "New Study Session"), systemImage: "plus")
+                Label(store.ui("新对话", "New Conversation"), systemImage: "plus")
+            }
+
+            Button {
+                store.setShowAllStudySessions(!store.showAllStudySessions)
+            } label: {
+                Label(
+                    store.showAllStudySessions
+                        ? store.ui("按当前资料", "By Current Material")
+                        : store.ui("查看全部", "View All"),
+                    systemImage: store.showAllStudySessions ? "folder" : "list.bullet"
+                )
             }
 
             Divider()
 
-            ForEach(store.orderedStudySessions) { session in
-                Button {
-                    store.activateStudySession(session.id)
-                } label: {
-                    if session.id == store.activeStudySessionID {
-                        Label(session.title, systemImage: "checkmark")
-                    } else {
-                        Text(session.title)
+            if store.showAllStudySessions {
+                ForEach(Array(store.studySessionsGroupedByMaterial.enumerated()), id: \.offset) { _, group in
+                    Section(group.title) {
+                        ForEach(group.sessions) { session in
+                            sessionMenuButton(session)
+                        }
                     }
+                }
+            } else {
+                ForEach(store.studySessionsForMenu) { session in
+                    sessionMenuButton(session)
                 }
             }
 
@@ -1932,11 +1945,24 @@ struct AgentPaneView: View {
                 }
             }
         } label: {
-            Image(systemName: "bubble.left.and.bubble.right")
+            Image(systemName: "clock")
         }
         .buttonStyle(WeiBeiIconButtonStyle(size: 24))
         .accessibilityLabel(Text(store.ui("学习会话", "Study Sessions")))
-        .help(store.ui("新建或切换学习会话", "Create or switch study sessions"))
+        .help(store.ui("按资料查看、新建或切换对话", "Browse by material, create, or switch conversations"))
+    }
+
+    @ViewBuilder
+    private func sessionMenuButton(_ session: StudySession) -> some View {
+        Button {
+            store.activateStudySession(session.id)
+        } label: {
+            if session.id == store.activeStudySessionID {
+                Label(session.title, systemImage: "checkmark")
+            } else {
+                Text(session.title)
+            }
+        }
     }
 
     private func scrollAgentToBottom(_ proxy: ScrollViewProxy) {

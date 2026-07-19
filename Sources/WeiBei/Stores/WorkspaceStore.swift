@@ -200,6 +200,8 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var learningMemoryRevision: UInt64 = 0
     @Published private(set) var studySessions: [StudySession] = []
     @Published private(set) var activeStudySessionID: UUID?
+    /// When true, session picker lists every session; otherwise groups by material with a View All entry.
+    @Published var showAllStudySessions = false
     @Published var showLibrary = false
     @Published var showReader = true
     @Published var showAgent = true
@@ -662,6 +664,39 @@ final class WorkspaceStore: ObservableObject {
         studySessions.sorted { $0.updatedAt > $1.updatedAt }
     }
 
+    /// Sessions for the session menu: either all, or material-grouped with current material first.
+    var studySessionsForMenu: [StudySession] {
+        if showAllStudySessions {
+            return orderedStudySessions
+        }
+        if let materialID = selectedMaterialItem?.id {
+            let matching = orderedStudySessions.filter { $0.groupingMaterialItemID == materialID }
+            if !matching.isEmpty { return matching }
+        }
+        return orderedStudySessions
+    }
+
+    /// Grouped history for the expanded "view all" picker: material title → sessions.
+    var studySessionsGroupedByMaterial: [(materialID: String?, title: String, sessions: [StudySession])] {
+        var groups: [String?: [StudySession]] = [:]
+        for session in orderedStudySessions {
+            groups[session.groupingMaterialItemID, default: []].append(session)
+        }
+        return groups.keys.sorted { lhs, rhs in
+            let leftDate = groups[lhs]?.first?.updatedAt ?? .distantPast
+            let rightDate = groups[rhs]?.first?.updatedAt ?? .distantPast
+            return leftDate > rightDate
+        }.map { materialID in
+            let title: String
+            if let materialID, let item = allItems.first(where: { $0.id == materialID }) {
+                title = displayTitle(item)
+            } else {
+                title = ui("未关联资料", "Unlinked")
+            }
+            return (materialID, title, groups[materialID] ?? [])
+        }
+    }
+
     var orderedLearningMemoryEntries: [LearningMemoryEntry] {
         learningMemoryEntries.sorted { $0.updatedAt > $1.updatedAt }
     }
@@ -698,7 +733,12 @@ final class WorkspaceStore: ObservableObject {
     func createStudySession() {
         cancelAgentRequest()
         syncActiveStudySession()
-        let session = StudySession(title: ui("新学习会话", "New Study Session"))
+        let materialID = selectedMaterialItem?.id
+        let session = StudySession(
+            title: ui("新学习会话", "New Study Session"),
+            focusItemIDs: [materialID].compactMap { $0 },
+            materialItemID: materialID
+        )
         studySessions.append(session)
         activeStudySessionID = session.id
         messages = []
@@ -707,6 +747,10 @@ final class WorkspaceStore: ObservableObject {
         lastAgentReplyContextRevision = nil
         invalidateAgentContext()
         save()
+    }
+
+    func setShowAllStudySessions(_ enabled: Bool) {
+        showAllStudySessions = enabled
     }
 
     func activateStudySession(_ id: UUID) {
@@ -796,6 +840,10 @@ final class WorkspaceStore: ObservableObject {
         if let titleSeed,
            studySessions[index].messages.filter({ $0.role == .user }).count == 1 {
             studySessions[index].title = Self.sessionTitle(from: titleSeed)
+        }
+        if studySessions[index].materialItemID == nil,
+           let materialID = selectedMaterialItem?.id {
+            studySessions[index].materialItemID = materialID
         }
         for itemID in [selectedItemID, activeNoteItemID].compactMap({ $0 }) {
             if !studySessions[index].focusItemIDs.contains(itemID) {
@@ -1231,6 +1279,11 @@ final class WorkspaceStore: ObservableObject {
         if itemChanged {
             readerLocationTitle = selectedMaterialItem.map(displayTitle)
             restoreCurrentStudyLocation()
+            // Scheme A: hang current conversation, switch to the material's latest session
+            // without wiping history. Messages stay on the StudySession record.
+            if let materialID = selectedMaterialItem?.id {
+                activateLatestStudySession(forMaterialID: materialID)
+            }
         } else if readerLocationTitle == nil {
             readerLocationTitle = selectedMaterialItem.map(displayTitle)
         }
@@ -1243,6 +1296,33 @@ final class WorkspaceStore: ObservableObject {
         clearGeneratedQuietInsight()
         refreshQuietInsightIfNeeded()
         save()
+    }
+
+    /// Activate the most recently updated session for a material, or keep the current empty one.
+    private func activateLatestStudySession(forMaterialID materialID: String) {
+        syncActiveStudySession()
+        if let active = activeStudySession,
+           active.groupingMaterialItemID == materialID {
+            return
+        }
+        if let match = orderedStudySessions.first(where: { $0.groupingMaterialItemID == materialID }) {
+            activeStudySessionID = match.id
+            messages = match.messages
+            latestAgentNoteProposal = nil
+            latestAgentLearningUpdate = nil
+            lastAgentReplyContextRevision = nil
+            invalidateAgentContext()
+            return
+        }
+        // No session for this material yet: keep current session and re-tag it if empty.
+        if let activeStudySessionID,
+           let index = studySessions.firstIndex(where: { $0.id == activeStudySessionID }),
+           studySessions[index].messages.isEmpty {
+            studySessions[index].materialItemID = materialID
+            if !studySessions[index].focusItemIDs.contains(materialID) {
+                studySessions[index].focusItemIDs.insert(materialID, at: 0)
+            }
+        }
     }
 
     private func alignActiveCourse(with itemID: String) {
