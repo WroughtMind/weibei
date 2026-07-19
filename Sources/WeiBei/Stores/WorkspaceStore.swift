@@ -291,6 +291,10 @@ final class WorkspaceStore: ObservableObject {
     private let notePersistenceDebounceDelay: UInt64 = 420_000_000
     private var studyProgressSaveTask: Task<Void, Never>?
     private let studyProgressSaveDelay: UInt64 = 900_000_000
+    /// Coalesce the 70+ main-thread full-workspace JSON saves that fire on every UI toggle.
+    private var pendingWorkspaceSaveTask: Task<Void, Never>?
+    private var workspaceSaveGeneration: UInt64 = 0
+    private let workspaceSaveDebounceNanoseconds: UInt64 = 280_000_000
     private var noteSourceLinksMigrationVersion = 0
     private var noteSourceRelationIndex = NoteSourceRelationIndex(links: [])
     private var courseMembershipIndex = CourseItemMemberships()
@@ -6575,7 +6579,8 @@ final class WorkspaceStore: ObservableObject {
         studyProgressSaveTask?.cancel()
         studyProgressSaveTask = nil
         syncActiveStudySession()
-        save()
+        // Note flush is a durability boundary: write the workspace now, not after debounce.
+        _ = flushPendingWorkspaceSave()
     }
 
     private func scheduleNotePersistence(_ markdown: String, for item: StudyItem) {
@@ -6799,8 +6804,47 @@ final class WorkspaceStore: ObservableObject {
             .replacingOccurrences(of: "\n- <br />", with: "")
     }
 
+    /// Schedule a coalesced workspace snapshot write. Verification and explicit flushes write immediately.
     @discardableResult
     private func save() -> Bool {
+        if Self.mustSaveImmediately {
+            return performSaveNow()
+        }
+        scheduleDebouncedWorkspaceSave()
+        return true
+    }
+
+    /// Flush any coalesced save (quit / resign active / note flush / agent send).
+    @discardableResult
+    func flushPendingWorkspaceSave() -> Bool {
+        pendingWorkspaceSaveTask?.cancel()
+        pendingWorkspaceSaveTask = nil
+        workspaceSaveGeneration &+= 1
+        return performSaveNow()
+    }
+
+    private static var mustSaveImmediately: Bool {
+        // Keep verification / self-check / packaging paths synchronous and deterministic.
+        let environment = ProcessInfo.processInfo.environment
+        if environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1" { return true }
+        if environment["WEIBEI_FORCE_IMMEDIATE_SAVE"] == "1" { return true }
+        if ProcessInfo.processInfo.arguments.contains("--self-check-imported-identity") { return true }
+        return false
+    }
+
+    private func scheduleDebouncedWorkspaceSave() {
+        workspaceSaveGeneration &+= 1
+        let generation = workspaceSaveGeneration
+        pendingWorkspaceSaveTask?.cancel()
+        pendingWorkspaceSaveTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: self?.workspaceSaveDebounceNanoseconds ?? 280_000_000)
+            guard let self, !Task.isCancelled, self.workspaceSaveGeneration == generation else { return }
+            _ = self.performSaveNow()
+        }
+    }
+
+    @discardableResult
+    private func performSaveNow() -> Bool {
         WeiBeiPerf.measure("workspace.save") {
             let snapshot = PersistedWorkspace(
                 importedItems: importedItems,

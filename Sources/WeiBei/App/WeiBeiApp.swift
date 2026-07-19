@@ -45,10 +45,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         sharedWorkspaceStore.flushPendingNotePersistence()
+        sharedWorkspaceStore.flushPendingWorkspaceSave()
         sharedWorkspaceStore.shutdownAgentRuntime()
         if let shortcutMonitor {
             NSEvent.removeMonitor(shortcutMonitor)
         }
+    }
+
+    func applicationDidResignActive(_ notification: Notification) {
+        // Durability + less work at quit: flush pending note/workspace saves on focus loss.
+        sharedWorkspaceStore.flushPendingNotePersistence()
+        sharedWorkspaceStore.flushPendingWorkspaceSave()
     }
 
     private var shouldActivateOnLaunch: Bool {
