@@ -3120,13 +3120,8 @@ enum AgentThinkingMotionStyle: String {
     case brushStroke  // B: 笔画生长
     case sealPulse    // C: 印记呼吸
 
-    static var current: AgentThinkingMotionStyle {
-        switch ProcessInfo.processInfo.environment["WEIBEI_THINKING_STYLE"] {
-        case "brush", "B", "b": return .brushStroke
-        case "seal", "C", "c": return .sealPulse
-        default: return .inkDots
-        }
-    }
+    /// Locked for 1.0 after user selection (2026-07-19): 朱砂墨点.
+    static var current: AgentThinkingMotionStyle { .inkDots }
 }
 
 private struct AgentThinkingIndicator: View {

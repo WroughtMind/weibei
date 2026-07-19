@@ -1243,6 +1243,12 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func select(itemID: String?) {
+        WeiBeiPerf.measure("workspace.select") {
+            selectMeasured(itemID: itemID)
+        }
+    }
+
+    private func selectMeasured(itemID: String?) {
         invalidateAgentContext()
         persistCurrentNote()
         notebookCreationDraft = nil
@@ -6795,51 +6801,53 @@ final class WorkspaceStore: ObservableObject {
 
     @discardableResult
     private func save() -> Bool {
-        let snapshot = PersistedWorkspace(
-            importedItems: importedItems,
-            notesByItemID: notesByItemID,
-            pendingNoteWritesByItemID: pendingNoteWritesByItemID,
-            noteBackingContentDigestsByItemID: noteBackingContentDigestsByItemID,
-            selectedItemID: selectedItemID,
-            activeNotebookItemID: activeNotebookItemID,
-            courses: courses,
-            courseItemMemberships: courseItemMemberships,
-            activeCourseID: activeCourseID,
-            noteSourceLinks: noteSourceLinks,
-            noteSourceLinksMigrationVersion: noteSourceLinksMigrationVersion,
-            studyLocationsByItemID: studyLocationsByItemID,
-            learningMemoryEntries: learningMemoryEntries,
-            learningMemoryRevision: learningMemoryRevision,
-            studySessions: studySessions,
-            activeStudySessionID: activeStudySessionID,
-            modelName: modelName,
-            agentProviderID: agentProviderID.rawValue,
-            agentBaseURL: agentBaseURL.isEmpty ? nil : agentBaseURL,
-            workspaceLayout: layout,
-            threePaneOrder: normalizedThreePaneOrder,
-            agentSurface: agentSurface == .selectionFloat ? .hidden : agentSurface,
-            noteRenderMode: noteRenderMode,
-            showLibrary: nil,
-            showReader: showReader,
-            showAgent: showAgent,
-            showNotes: showNotes,
-            showRightPane: showRightPane,
-            showDailyInspiration: showDailyInspiration,
-            appearanceModeRaw: appearanceMode.rawValue,
-            adaptImportedDocumentColors: adaptImportedDocumentColors,
-            interfaceLanguageRaw: interfaceLanguage.rawValue
-        )
-        do {
-            let data = try JSONEncoder().encode(snapshot)
-            try workspaceSnapshotWriter(data, storageURL)
-            workspaceSaveError = nil
-            return true
-        } catch {
-            workspaceSaveError = ui(
-                "课程更改尚未写入磁盘：\(error.localizedDescription)",
-                "Course changes were not saved to disk: \(error.localizedDescription)"
+        WeiBeiPerf.measure("workspace.save") {
+            let snapshot = PersistedWorkspace(
+                importedItems: importedItems,
+                notesByItemID: notesByItemID,
+                pendingNoteWritesByItemID: pendingNoteWritesByItemID,
+                noteBackingContentDigestsByItemID: noteBackingContentDigestsByItemID,
+                selectedItemID: selectedItemID,
+                activeNotebookItemID: activeNotebookItemID,
+                courses: courses,
+                courseItemMemberships: courseItemMemberships,
+                activeCourseID: activeCourseID,
+                noteSourceLinks: noteSourceLinks,
+                noteSourceLinksMigrationVersion: noteSourceLinksMigrationVersion,
+                studyLocationsByItemID: studyLocationsByItemID,
+                learningMemoryEntries: learningMemoryEntries,
+                learningMemoryRevision: learningMemoryRevision,
+                studySessions: studySessions,
+                activeStudySessionID: activeStudySessionID,
+                modelName: modelName,
+                agentProviderID: agentProviderID.rawValue,
+                agentBaseURL: agentBaseURL.isEmpty ? nil : agentBaseURL,
+                workspaceLayout: layout,
+                threePaneOrder: normalizedThreePaneOrder,
+                agentSurface: agentSurface == .selectionFloat ? .hidden : agentSurface,
+                noteRenderMode: noteRenderMode,
+                showLibrary: nil,
+                showReader: showReader,
+                showAgent: showAgent,
+                showNotes: showNotes,
+                showRightPane: showRightPane,
+                showDailyInspiration: showDailyInspiration,
+                appearanceModeRaw: appearanceMode.rawValue,
+                adaptImportedDocumentColors: adaptImportedDocumentColors,
+                interfaceLanguageRaw: interfaceLanguage.rawValue
             )
-            return false
+            do {
+                let data = try JSONEncoder().encode(snapshot)
+                try workspaceSnapshotWriter(data, storageURL)
+                workspaceSaveError = nil
+                return true
+            } catch {
+                workspaceSaveError = ui(
+                    "课程更改尚未写入磁盘：\(error.localizedDescription)",
+                    "Course changes were not saved to disk: \(error.localizedDescription)"
+                )
+                return false
+            }
         }
     }
 

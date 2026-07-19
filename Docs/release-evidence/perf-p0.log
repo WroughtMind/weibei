@@ -1,0 +1,7 @@
+=== scenario=offline-learning-flow ===
+[PERF-weibei-2] name=workspace.select ms=14.4
+=== scenario=loading-indicator-samples ===
+[PERF-weibei-2] name=workspace.save ms=9.3
+=== scenario=immersive-conversation-flow ===
+[PERF-weibei-2] name=workspace.select ms=12.4
+=== PERF summary ===
