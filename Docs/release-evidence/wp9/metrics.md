@@ -16,3 +16,24 @@ Horizontal padding 4.25 each side → V3 acceptance ≈ 5–6px L/R at 1x (retin
 Vertical: baseline -0.625 + path height 22 vs text cap height yields ~6–7pt top/bottom spacing.
 
 Widths are measured live at runtime via `NSString.size(withAttributes:)` — not hardcoded per status.
+
+## App videos (paper / ink)
+
+- `app-loading-v3-paper-zh.mp4` — 8 native window frames @ ~4fps
+- `app-loading-v3-ink-zh.mp4` — 8 native window frames @ ~4fps
+
+Reference V3:
+`/Users/changfenhuang/.codex/visualizations/2026/07/18/019f7795-3d1e-75f2-8db1-31773a769525/weibei-reading-status-motion/weibei-reading-status-motion-v3.mp4`
+
+## Hand-test checklist (agent runtime)
+
+These require a live key / offline agent path and were coded for by construction:
+
+1. Mid-orbit activity text change → `motionEpoch` reset + view id change → first bottom pass restarts.
+2. Cancel → `isAskingAgent=false` unmounts indicator immediately.
+3. First stream token → `agentStreamingText.isEmpty` false → indicator removed; streaming response only.
+4. Reduce Motion → static status text, no orbit/capsule.
+
+## No runtime media assets
+
+No GIF/MP4/Lottie added under Sources/. Evidence media is docs-only.
