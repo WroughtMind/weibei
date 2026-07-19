@@ -96,25 +96,40 @@ public struct KeychainPasswordStore {
 
 public enum OpenAIAPIKeyStore {
     public static let service = "com.changfenhuang.weibei.openai"
+    /// Legacy single-account name kept for backward compatibility with openai keys.
     public static let account = "OPENAI_API_KEY"
 
-    private static var store: KeychainPasswordStore {
+    private static func store(forAccount account: String) -> KeychainPasswordStore {
         KeychainPasswordStore(service: service, account: account)
+    }
+
+    public static func accountName(forProvider provider: String) -> String {
+        let cleaned = cleaned(provider).lowercased()
+        if cleaned.isEmpty || cleaned == "openai" {
+            return account
+        }
+        return "PROVIDER_KEY_\(cleaned)"
     }
 
     public static func cleaned(_ value: String) -> String {
         KeychainPasswordStore.cleaned(value)
     }
 
-    public static func load() -> String {
-        store.load()
+    public static func load(provider: String = "openai") -> String {
+        let named = store(forAccount: accountName(forProvider: provider)).load()
+        if !named.isEmpty { return named }
+        // Fallback to legacy openai account for the default provider.
+        if provider == "openai" || provider.isEmpty {
+            return store(forAccount: account).load()
+        }
+        return ""
     }
 
-    public static func save(_ value: String) throws {
-        try store.save(value)
+    public static func save(_ value: String, provider: String = "openai") throws {
+        try store(forAccount: accountName(forProvider: provider)).save(value)
     }
 
-    public static func delete() throws {
-        try store.delete()
+    public static func delete(provider: String = "openai") throws {
+        try store(forAccount: accountName(forProvider: provider)).delete()
     }
 }

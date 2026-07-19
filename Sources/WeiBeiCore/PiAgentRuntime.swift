@@ -833,9 +833,63 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
         }
         if let apiKey = providerConfiguration.apiKey, !apiKey.isEmpty {
+            // Pass the key under both OPENAI_API_KEY (compat) and the provider-specific env when known.
             environment["OPENAI_API_KEY"] = apiKey
+            if let provider = providerConfiguration.provider?.lowercased() {
+                switch provider {
+                case "anthropic":
+                    environment["ANTHROPIC_API_KEY"] = apiKey
+                case "google":
+                    environment["GEMINI_API_KEY"] = apiKey
+                case "openrouter":
+                    environment["OPENROUTER_API_KEY"] = apiKey
+                default:
+                    break
+                }
+            }
         }
         return environment
+    }
+
+    /// Inject a custom provider into PI_CODING_AGENT_DIR/models.json when baseURL is set.
+    public func writeCustomModelsJSONIfNeeded(
+        providerID: AgentProviderID,
+        baseURL: String,
+        model: String
+    ) async {
+        let trimmedBase = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard providerID == .custom || !trimmedBase.isEmpty else {
+            // Leave existing models.json alone for built-in providers without custom baseURL.
+            return
+        }
+        guard !trimmedBase.isEmpty else { return }
+        do {
+            let destination = try preparePiConfigurationDirectory()
+            let modelsURL = destination.appendingPathComponent("models.json")
+            let providerKey = providerID.piProviderName
+            let modelID = model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? providerID.defaultModelHint
+                : model.trimmingCharacters(in: .whitespacesAndNewlines)
+            let payload: [String: Any] = [
+                "providers": [
+                    providerKey: [
+                        "baseUrl": trimmedBase,
+                        "api": "openai-completions",
+                        "models": [
+                            [
+                                "id": modelID,
+                                "name": modelID,
+                            ],
+                        ],
+                    ],
+                ],
+            ]
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: modelsURL, options: .atomic)
+            trace("wrote custom models.json provider=\(providerKey) baseUrl=\(trimmedBase)")
+        } catch {
+            trace("failed to write models.json: \(error.localizedDescription)")
+        }
     }
 
     private func promptSubmissionFailure(from error: Error) -> PiAgentRuntimeError {

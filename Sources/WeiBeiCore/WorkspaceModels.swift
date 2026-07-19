@@ -481,6 +481,61 @@ public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable {
 /// Conversation presentation overlays retained for 1.0.
 /// Primary chat lives in the immersive conversation layout / agent pane;
 /// only selection-float and hidden remain as `AgentSurface` cases.
+/// Built-in model providers that Pi can serve, plus custom baseURL injection.
+public enum AgentProviderID: String, Codable, CaseIterable, Identifiable, Sendable {
+    case openai
+    case anthropic
+    case google
+    case openrouter
+    case custom
+
+    public var id: String { rawValue }
+
+    public var piProviderName: String {
+        switch self {
+        case .openai: return "openai"
+        case .anthropic: return "anthropic"
+        case .google: return "google"
+        case .openrouter: return "openrouter"
+        case .custom: return "weibei-custom"
+        }
+    }
+
+    public var environmentAPIKeyName: String {
+        switch self {
+        case .openai: return "OPENAI_API_KEY"
+        case .anthropic: return "ANTHROPIC_API_KEY"
+        case .google: return "GEMINI_API_KEY"
+        case .openrouter: return "OPENROUTER_API_KEY"
+        case .custom: return "OPENAI_API_KEY"
+        }
+    }
+
+    public var supportsOpenAIHTTPFallback: Bool {
+        self == .openai
+    }
+
+    public func label(language: WeiBeiInterfaceLanguage) -> String {
+        switch self {
+        case .openai: return "OpenAI"
+        case .anthropic: return "Anthropic"
+        case .google: return language.text("Google", "Google")
+        case .openrouter: return "OpenRouter"
+        case .custom: return language.text("自定义", "Custom")
+        }
+    }
+
+    public var defaultModelHint: String {
+        switch self {
+        case .openai: return "gpt-5.1"
+        case .anthropic: return "claude-sonnet-4-20250514"
+        case .google: return "gemini-2.5-pro"
+        case .openrouter: return "openai/gpt-4.1"
+        case .custom: return "model-id"
+        }
+    }
+}
+
 public enum AgentSurface: String, Codable, CaseIterable, Identifiable {
     case selectionFloat
     case hidden
@@ -932,6 +987,8 @@ public struct PersistedWorkspace: Codable {
     public var studySessions: [StudySession]?
     public var activeStudySessionID: UUID?
     public var modelName: String?
+    public var agentProviderID: String?
+    public var agentBaseURL: String?
     public var workspaceLayout: WorkspaceLayout?
     public var threePaneOrder: [WorkspacePaneRole]?
     public var agentSurface: AgentSurface?
@@ -964,6 +1021,8 @@ public struct PersistedWorkspace: Codable {
         studySessions: [StudySession]? = nil,
         activeStudySessionID: UUID? = nil,
         modelName: String? = nil,
+        agentProviderID: String? = nil,
+        agentBaseURL: String? = nil,
         workspaceLayout: WorkspaceLayout? = nil,
         threePaneOrder: [WorkspacePaneRole]? = nil,
         agentSurface: AgentSurface? = nil,
@@ -995,6 +1054,8 @@ public struct PersistedWorkspace: Codable {
         self.studySessions = studySessions
         self.activeStudySessionID = activeStudySessionID
         self.modelName = modelName
+        self.agentProviderID = agentProviderID
+        self.agentBaseURL = agentBaseURL
         self.workspaceLayout = workspaceLayout
         self.threePaneOrder = threePaneOrder
         self.agentSurface = agentSurface

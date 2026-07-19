@@ -240,7 +240,9 @@ final class WorkspaceStore: ObservableObject {
     @Published var notebookCreationDraft: NotebookCreationDraft?
     @Published var notebookRenameDraft: NotebookRenameDraft?
     @Published var modelName: String = ProcessInfo.processInfo.environment["WEIBEI_OPENAI_MODEL"] ?? "gpt-5.1"
-    @Published var openAIAPIKey: String = OpenAIAPIKeyStore.load()
+    @Published var agentProviderID: AgentProviderID = .openai
+    @Published var agentBaseURL: String = ""
+    @Published var openAIAPIKey: String = OpenAIAPIKeyStore.load(provider: "openai")
     @Published var openAIKeyStatus: String?
     @Published var appearanceMode: WeiBeiAppearanceMode = .paper
     @Published var adaptImportedDocumentColors = true
@@ -2340,6 +2342,21 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
+    func setAgentProviderID(_ provider: AgentProviderID) {
+        guard agentProviderID != provider else { return }
+        agentProviderID = provider
+        openAIAPIKey = OpenAIAPIKeyStore.load(provider: provider.piProviderName)
+        if modelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            modelName = provider.defaultModelHint
+        }
+        save()
+    }
+
+    func updateAgentBaseURL(_ value: String) {
+        agentBaseURL = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        save()
+    }
+
     func toggleAppearanceMode() {
         appearanceMode = appearanceMode.toggled
         save()
@@ -2378,7 +2395,7 @@ final class WorkspaceStore: ObservableObject {
     func saveOpenAIAPIKey() {
         do {
             let cleanedKey = OpenAIAPIKeyStore.cleaned(openAIAPIKey)
-            try OpenAIAPIKeyStore.save(cleanedKey)
+            try OpenAIAPIKeyStore.save(cleanedKey, provider: agentProviderID.piProviderName)
             openAIAPIKey = cleanedKey
             openAIKeyStatus = cleanedKey.isEmpty ? ui("已清除密钥。", "Key cleared.") : ui("密钥已保存。", "Key saved.")
         } catch {
@@ -5592,20 +5609,26 @@ final class WorkspaceStore: ObservableObject {
             return try await OfflineStudyAgentRuntime().respond(to: request)
         }
 
-        let credential = resolvedOpenAIAPIKey()
+        let credential = resolvedAPIKey()
         var piFailure: Error?
         if Self.environmentValue("WEIBEI_PI_DISABLED") != "1" {
             let explicitProvider = Self.environmentValue("WEIBEI_PI_PROVIDER")
             let explicitModel = Self.environmentValue("WEIBEI_PI_MODEL")
             let thinking = Self.environmentValue("WEIBEI_PI_THINKING")
-            let usesOpenAIKey = explicitProvider == "openai" || (explicitProvider.isEmpty && credential != nil)
+            let selectedProvider = agentProviderID
+            let providerName = explicitProvider.isEmpty ? selectedProvider.piProviderName : explicitProvider
             let configuration = PiAgentProviderConfiguration(
-                provider: explicitProvider.isEmpty ? (credential == nil ? nil : "openai") : explicitProvider,
-                model: explicitModel.isEmpty ? (usesOpenAIKey ? resolvedModelName : nil) : explicitModel,
-                apiKey: usesOpenAIKey ? credential?.key : nil,
+                provider: providerName,
+                model: explicitModel.isEmpty ? resolvedModelName : explicitModel,
+                apiKey: credential?.key,
                 thinkingLevel: thinking.isEmpty ? "medium" : thinking
             )
             await piRuntime.configure(configuration)
+            await piRuntime.writeCustomModelsJSONIfNeeded(
+                providerID: selectedProvider,
+                baseURL: agentBaseURL,
+                model: resolvedModelName
+            )
 
             do {
                 return try await piRuntime.respond(to: request) { [weak self] progress in
@@ -5635,7 +5658,8 @@ final class WorkspaceStore: ObservableObject {
             throw piFailure ?? PiAgentRuntimeError.unavailable
         }
 
-        if let credential {
+        // OpenAI HTTP fallback only for the openai provider; other providers go Offline with a clear note.
+        if agentProviderID.supportsOpenAIHTTPFallback, let credential {
             do {
                 let client = OpenAIResponsesClient(apiKey: credential.key, model: resolvedModelName)
                 return try await client.respond(to: request) { [weak self] progress in
@@ -5650,6 +5674,11 @@ final class WorkspaceStore: ObservableObject {
                     "Online request failed; using an offline draft: \(error.localizedDescription)"
                 )
             }
+        } else if !agentProviderID.supportsOpenAIHTTPFallback {
+            openAIKeyStatus = ui(
+                "当前提供商不支持 OpenAI HTTP 回退，已改用离线草稿。",
+                "This provider has no OpenAI HTTP fallback; using an offline draft."
+            )
         } else {
             openAIKeyStatus = ui(
                 "PI 与在线密钥均不可用，当前使用离线草稿。",
@@ -6600,6 +6629,13 @@ final class WorkspaceStore: ObservableObject {
         if let modelName = snapshot.modelName {
             self.modelName = modelName
         }
+        if let agentProviderID = snapshot.agentProviderID.flatMap(AgentProviderID.init(rawValue:)) {
+            self.agentProviderID = agentProviderID
+        }
+        if let agentBaseURL = snapshot.agentBaseURL {
+            self.agentBaseURL = agentBaseURL
+        }
+        openAIAPIKey = OpenAIAPIKeyStore.load(provider: agentProviderID.piProviderName)
         // Legacy field: still read so older workspaces restore immersion/multi-pane;
         // free drag order lives in threePaneOrder and is the source of truth for columns.
         if let workspaceLayout = snapshot.workspaceLayout {
@@ -6679,6 +6715,8 @@ final class WorkspaceStore: ObservableObject {
             studySessions: studySessions,
             activeStudySessionID: activeStudySessionID,
             modelName: modelName,
+            agentProviderID: agentProviderID.rawValue,
+            agentBaseURL: agentBaseURL.isEmpty ? nil : agentBaseURL,
             workspaceLayout: layout,
             threePaneOrder: normalizedThreePaneOrder,
             agentSurface: agentSurface == .selectionFloat ? .hidden : agentSurface,
@@ -6707,22 +6745,35 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func resolvedOpenAIAPIKey() -> (key: String, source: String)? {
+    private func resolvedAPIKey() -> (key: String, source: String)? {
         if Self.environmentValue("WEIBEI_FORCE_OFFLINE_AGENT") == "1" {
             return nil
         }
 
-        let environmentKey = Self.environmentValue("OPENAI_API_KEY")
+        let envName = agentProviderID.environmentAPIKeyName
+        let environmentKey = Self.environmentValue(envName)
         if !environmentKey.isEmpty {
             return (environmentKey, ui("本机环境变量", "local environment variable"))
         }
+        // Always honor OPENAI_API_KEY as a last-resort env for openai-compatible keys.
+        if agentProviderID != .openai {
+            let openaiEnv = Self.environmentValue("OPENAI_API_KEY")
+            if !openaiEnv.isEmpty {
+                return (openaiEnv, ui("本机环境变量", "local environment variable"))
+            }
+        }
 
-        let savedKey = OpenAIAPIKeyStore.load()
+        let savedKey = OpenAIAPIKeyStore.load(provider: agentProviderID.piProviderName)
         if !savedKey.isEmpty {
             return (savedKey, ui("macOS 钥匙串", "macOS Keychain"))
         }
 
         return nil
+    }
+
+    /// Backward-compatible alias used by remaining call sites / SelfCheck slices.
+    private func resolvedOpenAIAPIKey() -> (key: String, source: String)? {
+        resolvedAPIKey()
     }
 
     private var resolvedModelName: String {

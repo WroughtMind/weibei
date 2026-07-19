@@ -1132,7 +1132,36 @@ struct SettingsView: View {
 
     private var overviewSettings: some View {
         VStack(alignment: .leading, spacing: 16) {
-            settingsGroup(store.ui("当前工作台", "Current Workspace")) {
+            settingsGroup(store.ui("连接状态", "Connection")) {
+                settingsRow(
+                    title: store.ui("提供商", "Provider"),
+                    detail: store.ui("当前对话路由。", "Current chat routing.")
+                ) {
+                    settingsPill(
+                        title: store.agentProviderID.label(language: store.interfaceLanguage),
+                        icon: "network",
+                        active: true
+                    )
+                }
+                settingsRow(
+                    title: store.ui("密钥", "API Key"),
+                    detail: store.openAIKeyHelpText
+                ) {
+                    settingsPill(
+                        title: store.openAIAPIKey.isEmpty ? store.ui("未配置", "Not set") : store.ui("已配置", "Configured"),
+                        icon: store.openAIAPIKey.isEmpty ? "key" : "checkmark.seal",
+                        active: !store.openAIAPIKey.isEmpty
+                    )
+                }
+                settingsRow(
+                    title: store.ui("模型", "Model"),
+                    detail: store.modelName
+                ) {
+                    settingsPill(title: store.modelName, icon: "cpu", active: true)
+                }
+            }
+
+            settingsGroup(store.ui("数据", "Data")) {
                 settingsRow(
                     title: store.ui("资料", "Material"),
                     detail: store.selectedMaterialItem.map(store.displayTitle) ?? store.ui("还没有打开资料。", "No material is open.")
@@ -1143,27 +1172,12 @@ struct SettingsView: View {
                         active: store.selectedMaterialItem != nil
                     )
                 }
-
                 settingsRow(
                     title: store.ui("笔记", "Note"),
                     detail: store.selectedItem.map(store.displayTitle) ?? store.ui("当前是新笔记。", "The current note is new.")
                 ) {
                     settingsPill(title: store.noteRenderMode.label(language: store.interfaceLanguage), icon: "square.and.pencil", active: true)
                 }
-
-                settingsRow(
-                    title: store.ui("对话上下文", "Chat Context"),
-                    detail: store.hasSelectionAttachments ? store.ui("已选文本片段会作为对话上下文。", "Selected fragments will be used as chat context.") : store.ui("未附加选区，将读取当前资料和笔记。", "No selection is attached; the current material and note will be used.")
-                ) {
-                    settingsPill(
-                        title: store.hasSelectionAttachments ? store.ui("\(store.selectionAttachments.count) 个片段", "\(store.selectionAttachments.count) fragments") : store.ui("默认上下文", "Default"),
-                        icon: "text.bubble",
-                        active: store.hasSelectionAttachments
-                    )
-                }
-            }
-
-            settingsGroup(store.ui("空白页", "Empty Workspace")) {
                 settingsRow(
                     title: store.ui("每日灵感", "Daily Inspiration"),
                     detail: store.ui("关闭后只隐藏语录；文稿、对话和笔记入口始终保留。", "Hides sourced quotations only; document, chat, and notes entries always remain.")
@@ -1190,7 +1204,7 @@ struct SettingsView: View {
                 )
                 settingsRouteRow(
                     title: store.ui("对话设置", "Chat Settings"),
-                    detail: store.ui("密钥、模型、显示形态和选区上下文。", "Key, model, surface, and selection context."),
+                    detail: store.ui("提供商、密钥、模型与 Base URL。", "Provider, key, model, and Base URL."),
                     target: .agent
                 )
                 settingsRouteRow(
@@ -1198,6 +1212,25 @@ struct SettingsView: View {
                     detail: store.ui("导入资料、当前资料、当前笔记。", "Import, current material, and current note."),
                     target: .data
                 )
+            }
+
+            settingsGroup(store.ui("关于", "About")) {
+                settingsRow(
+                    title: store.ui("版本", "Version"),
+                    detail: store.ui("正式法律文案与许可证在发布 closeout 前定稿，此处只保留信息架构。", "Final legal copy and license land at release closeout; this is the info architecture only.")
+                ) {
+                    settingsPill(
+                        title: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—",
+                        icon: "info.circle",
+                        active: false
+                    )
+                }
+                settingsRow(
+                    title: store.ui("隐私占位", "Privacy placeholder"),
+                    detail: store.ui("密钥存本机钥匙串；材料仅在用户发问时发送给所选提供商。最终隐私文案待发布定稿。", "Keys stay in the local keychain; materials are sent only when the user asks. Final privacy copy is deferred.")
+                ) {
+                    settingsPill(title: store.ui("待定稿", "TBD"), icon: "hand.raised", active: false)
+                }
             }
         }
     }
@@ -1378,7 +1411,22 @@ struct SettingsView: View {
 
     private var agentSettings: some View {
         VStack(alignment: .leading, spacing: 16) {
-            settingsGroup(store.ui("密钥与模型", "Key & Model")) {
+            settingsGroup(store.ui("提供商与模型", "Provider & Model")) {
+                settingsRow(
+                    title: store.ui("提供商", "Provider"),
+                    detail: store.ui("通过 Pi 透传；自定义需填写 Base URL。", "Routed through Pi; custom providers need a Base URL.")
+                ) {
+                    compactMenu(store.agentProviderID.label(language: store.interfaceLanguage)) {
+                        ForEach(AgentProviderID.allCases) { provider in
+                            Button(provider.label(language: store.interfaceLanguage)) {
+                                withAnimation(WeiBeiMotion.panel) {
+                                    store.setAgentProviderID(provider)
+                                }
+                            }
+                        }
+                    }
+                }
+
                 settingsRow(
                     title: store.ui("对话密钥", "Chat API Key"),
                     detail: store.openAIKeyHelpText
@@ -1413,7 +1461,7 @@ struct SettingsView: View {
 
                 settingsRow(
                     title: store.ui("模型", "Model"),
-                    detail: store.ui("本机环境里的模型设置会覆盖这里。", "The model configured in your local environment overrides this field.")
+                    detail: store.ui("本机环境 WEIBEI_OPENAI_MODEL / WEIBEI_PI_MODEL 会覆盖这里。", "Local WEIBEI_OPENAI_MODEL / WEIBEI_PI_MODEL override this field.")
                 ) {
                     TextField(
                         "",
@@ -1421,7 +1469,7 @@ struct SettingsView: View {
                             get: { store.modelName },
                             set: { store.updateModelName($0) }
                         ),
-                        prompt: Text(store.ui("模型", "Model"))
+                        prompt: Text(store.agentProviderID.defaultModelHint)
                             .font(.system(size: 13))
                             .foregroundStyle(WeiBeiTheme.placeholderInk)
                     )
@@ -1431,6 +1479,29 @@ struct SettingsView: View {
                     .font(.system(size: 13))
                     .weibeiInputSurface(active: focusedField == .model, height: 38)
                     .frame(width: 250)
+                }
+
+                if store.agentProviderID == .custom || !store.agentBaseURL.isEmpty {
+                    settingsRow(
+                        title: store.ui("Base URL", "Base URL"),
+                        detail: store.ui("写入 Pi models.json；OpenAI 兼容接口。", "Written into Pi models.json for OpenAI-compatible APIs.")
+                    ) {
+                        TextField(
+                            "",
+                            text: Binding(
+                                get: { store.agentBaseURL },
+                                set: { store.updateAgentBaseURL($0) }
+                            ),
+                            prompt: Text("https://api.example.com/v1")
+                                .font(.system(size: 13))
+                                .foregroundStyle(WeiBeiTheme.placeholderInk)
+                        )
+                        .textFieldStyle(.plain)
+                        .foregroundColor(WeiBeiTheme.ink)
+                        .font(.system(size: 13))
+                        .weibeiInputSurface(active: false, height: 38)
+                        .frame(width: 280)
+                    }
                 }
             }
 
@@ -1474,10 +1545,18 @@ struct SettingsView: View {
             (store.ui("命令面板", "Command Palette"), "⌘K", store.ui("搜索并执行魏碑动作。", "Search and run WeiBei actions.")),
             (store.ui("课程目录", "Course Index"), "⌘B", store.ui("打开或收起课程目录。", "Show or hide the course index.")),
             (store.ui("资料内搜索", "Search in Material"), "⌘F", store.ui("搜索当前打开的资料。", "Search the current material.")),
+            (store.ui("聚焦课程目录", "Focus Course Index"), "⌘1", store.ui("把键盘焦点交给课程目录。", "Move keyboard focus to the course index.")),
             (store.ui("聚焦阅读", "Focus Reader"), "⌘2", store.ui("把键盘焦点交给阅读区。", "Move keyboard focus to the reader.")),
             (store.ui("聚焦笔记", "Focus Notes"), "⌘3", store.ui("把键盘焦点交给笔记区。", "Move keyboard focus to notes.")),
             (store.ui("聚焦对话", "Focus Chat"), "⌘4", store.ui("把键盘焦点交给对话区。", "Move keyboard focus to chat.")),
-            (store.ui("明暗切换", "Toggle Theme"), "⌥⌘T", store.ui("在纸面和墨石之间切换。", "Switch between paper and inkstone."))
+            (store.ui("沉浸阅读", "Immersive Reading"), "⌥⌘R", store.ui("进入沉浸阅读布局。", "Enter immersive reading layout.")),
+            (store.ui("沉浸对话", "Immersive Chat"), "⌥⌘A", store.ui("进入沉浸对话布局。", "Enter immersive conversation layout.")),
+            (store.ui("沉浸写作", "Immersive Writing"), "⌥⌘N", store.ui("进入沉浸写作布局。", "Enter immersive writing layout.")),
+            (store.ui("选区轻提示", "Selection Prompt"), "⌃⌥3", store.ui("在有选区时打开选区浮层。", "Open the selection float when a selection exists.")),
+            (store.ui("隐藏对话浮层", "Hide Chat Overlay"), "⌃⌥0", store.ui("隐藏选区轻提示。", "Hide the selection prompt.")),
+            (store.ui("明暗切换", "Toggle Theme"), "⌥⌘T", store.ui("在纸面和墨石之间切换。", "Switch between paper and inkstone.")),
+            (store.ui("后退", "Back"), "⌘[", store.ui("回到上一个工作区位置。", "Go back in workspace history.")),
+            (store.ui("前进", "Forward"), "⌘]", store.ui("前进到下一个工作区位置。", "Go forward in workspace history.")),
         ]
     }
 
