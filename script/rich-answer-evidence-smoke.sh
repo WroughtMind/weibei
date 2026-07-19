@@ -1527,7 +1527,7 @@ finish_with_quality_gate() {
   local capture_kind="$1"
   local gate_status
   gate_status="$(jq -r '.status // "fail"' "$QUALITY_GATE_JSON" 2>/dev/null || printf 'fail')"
-  if [[ "$gate_status" == "fail" ]]; then
+  if [[ "$gate_status" != "pass" ]]; then
     json_manifest "failed" "automatic technical layout quality gate failed" "$capture_kind"
     echo "rich-answer evidence captured, but automatic quality gate failed: $QUALITY_GATE_JSON" >&2
     exit 31
