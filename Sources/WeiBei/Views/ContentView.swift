@@ -563,39 +563,19 @@ private struct LayoutContentView: View {
             case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
                 documentPaneLayoutView()
             case .immersiveReading:
-                ZStack(alignment: .topTrailing) {
-                    PersistentPaneHost(role: .reader, registry: paneHostRegistry)
-                    if store.showQuietInsight && store.agentSurface != .hidden {
-                        QuietInsightView(compact: true)
-                            .padding(.trailing, 28)
-                            .padding(.top, 24)
-                            .transition(WeiBeiTransition.rightPanel)
-                    }
-                }
-                .overlay(alignment: agentAlignment) {
-                    if store.agentSurface != .quietInsight {
-                        agentOverlay
-                    }
-                }
+                PersistentPaneHost(role: .reader, registry: paneHostRegistry)
             case .immersiveConversation:
                 PersistentPaneHost(role: .agent, registry: paneHostRegistry)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .transition(WeiBeiTransition.layout)
             case .immersiveWriting:
-                ZStack(alignment: agentAlignment) {
-                    PersistentPaneHost(role: .notes, registry: paneHostRegistry)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                    if store.agentSurface != .quietInsight {
-                        agentOverlay
-                    }
-                }
+                PersistentPaneHost(role: .notes, registry: paneHostRegistry)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .transition(WeiBeiTransition.layout)
         .animation(WeiBeiMotion.layout, value: store.layout)
         .animation(WeiBeiMotion.panel, value: store.agentSurface)
-        .animation(WeiBeiMotion.panel, value: store.showQuietInsight)
     }
 
     private var firstSplit: Binding<CGFloat> {
@@ -742,45 +722,6 @@ private struct LayoutContentView: View {
         )
     }
 
-    private var agentAlignment: Alignment {
-        switch store.agentSurface {
-        case .bottomDrawer:
-            .bottom
-        case .cornerPanel:
-            .bottomTrailing
-        case .selectionFloat:
-            .center
-        case .quietInsight:
-            .trailing
-        case .hidden:
-            .bottom
-        }
-    }
-
-    @ViewBuilder
-    private var agentOverlay: some View {
-        switch store.agentSurface {
-        case .bottomDrawer:
-            AgentDrawerView()
-                .padding(18)
-                .transition(WeiBeiTransition.drawer)
-                .zIndex(4)
-        case .cornerPanel:
-            CornerAgentView()
-                .padding(18)
-                .transition(WeiBeiTransition.floating)
-                .zIndex(4)
-        case .selectionFloat:
-            EmptyView()
-        case .quietInsight:
-            QuietInsightView()
-                .padding(.trailing, 28)
-                .transition(WeiBeiTransition.rightPanel)
-                .zIndex(4)
-        case .hidden:
-            EmptyView()
-        }
-    }
 }
 
 struct OwnerToken: Equatable {

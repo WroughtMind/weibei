@@ -478,25 +478,31 @@ public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// Conversation presentation overlays retained for 1.0.
+/// Primary chat lives in the immersive conversation layout / agent pane;
+/// only selection-float and hidden remain as `AgentSurface` cases.
 public enum AgentSurface: String, Codable, CaseIterable, Identifiable {
-    case bottomDrawer
-    case cornerPanel
     case selectionFloat
-    case quietInsight
     case hidden
 
     public var id: String { rawValue }
 
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        // Legacy surfaces (bottomDrawer / cornerPanel / quietInsight) fall back to hidden.
+        self = AgentSurface(rawValue: raw) ?? .hidden
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
     public func label(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
-        case .bottomDrawer:
-            return language.text("底部对话栏", "Bottom Chat")
-        case .cornerPanel:
-            return language.text("右下轻问", "Corner Ask")
         case .selectionFloat:
             return language.text("选区轻提示", "Selection Prompt")
-        case .quietInsight:
-            return language.text("页边洞察", "Margin Insight")
         case .hidden:
             return language.text("隐藏对话", "Hide Chat")
         }
@@ -506,7 +512,7 @@ public enum AgentSurface: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .hidden:
             return label(language: language)
-        default:
+        case .selectionFloat:
             return language.text("使用\(label(language: language))", "Use \(label(language: language))")
         }
     }

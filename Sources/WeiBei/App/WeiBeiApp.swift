@@ -181,16 +181,10 @@ struct WeiBeiApp: App {
 
                 Divider()
 
-                Button(AgentSurface.bottomDrawer.actionLabel(language: store.interfaceLanguage)) { setAgentSurface(.bottomDrawer) }
-                    .keyboardShortcut("1", modifiers: [.control, .option])
-                Button(AgentSurface.cornerPanel.actionLabel(language: store.interfaceLanguage)) { setAgentSurface(.cornerPanel) }
-                    .keyboardShortcut("2", modifiers: [.control, .option])
                 if store.canUseSelectionAgentSurface {
                     Button(AgentSurface.selectionFloat.actionLabel(language: store.interfaceLanguage)) { setAgentSurface(.selectionFloat) }
                         .keyboardShortcut("3", modifiers: [.control, .option])
                 }
-                Button(AgentSurface.quietInsight.actionLabel(language: store.interfaceLanguage)) { setAgentSurface(.quietInsight) }
-                    .keyboardShortcut("4", modifiers: [.control, .option])
                 Button(AgentSurface.hidden.actionLabel(language: store.interfaceLanguage)) { setAgentSurface(.hidden) }
                     .keyboardShortcut("0", modifiers: [.control, .option])
 
@@ -1319,17 +1313,6 @@ struct SettingsView: View {
                     )
                 }
 
-                settingsRow(
-                    title: store.ui("页边洞察", "Margin Insight"),
-                    detail: store.ui("把对话能力作为低干扰阅读线索，而不是大弹窗。", "Uses low-distraction reading clues instead of large popovers.")
-                ) {
-                    Button(AgentSurface.quietInsight.label(language: store.interfaceLanguage)) {
-                        withAnimation(WeiBeiMotion.panel) {
-                            store.setAgentSurface(.quietInsight)
-                        }
-                    }
-                    .buttonStyle(WeiBeiTextActionButtonStyle(active: store.agentSurface == .quietInsight))
-                }
             }
         }
     }
@@ -1455,22 +1438,16 @@ struct SettingsView: View {
                 }
             }
 
-            settingsGroup(store.ui("对话形态", "Chat Surface")) {
+            settingsGroup(store.ui("对话入口", "Chat Entry")) {
                 settingsRow(
-                    title: store.ui("默认显示", "Default Surface"),
-                    detail: store.ui("完整对话区保留，小选区浮层只作为临时入口。", "The full chat area stays; the selection layer is only a temporary entry.")
+                    title: store.ui("入口说明", "Entry Notes"),
+                    detail: store.ui("完整对话在主栏与沉浸对话布局；选区轻提示仅作临时入口，可 ⌃⌥0 隐藏。", "Full chat lives in the agent pane and immersive conversation; selection prompt is temporary and can be hidden with ⌃⌥0.")
                 ) {
-                    compactMenu(store.agentSurface.label(language: store.interfaceLanguage)) {
-                        ForEach(AgentSurface.allCases) { surface in
-                            if surface != .selectionFloat || store.canUseSelectionAgentSurface {
-                                Button(surface.label(language: store.interfaceLanguage)) {
-                                    withAnimation(WeiBeiMotion.panel) {
-                                        store.setAgentSurface(surface)
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    settingsPill(
+                        title: store.agentSurface.label(language: store.interfaceLanguage),
+                        icon: "bubble.left.and.bubble.right",
+                        active: store.agentSurface == .selectionFloat
+                    )
                 }
             }
         }

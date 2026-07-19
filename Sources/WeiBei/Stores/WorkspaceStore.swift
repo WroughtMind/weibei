@@ -221,7 +221,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var threePaneOrder: [WorkspacePaneRole] = WorkspacePaneRole.defaultThreePaneOrder
     @Published var threePaneReorderDrag: ThreePaneReorderDrag?
     @Published private(set) var paneExpansionRequest: PaneExpansionRequest?
-    @Published var agentSurface: AgentSurface = .bottomDrawer
+    @Published var agentSurface: AgentSurface = .hidden
     @Published var noteRenderMode: NoteRenderMode = .rich
     @Published var showQuietInsight = true
     @Published var generatedQuietInsight: QuietInsight?
@@ -1103,6 +1103,12 @@ final class WorkspaceStore: ObservableObject {
         return generatedQuietInsight == nil ? ui("来自当前材料", "From current material") : ui("来自材料和笔记", "From material and note")
     }
 
+    private var quietInsightReferenceTitle: String {
+        selectionContext?.ownerTitle
+            ?? (hasSelectedMaterial ? currentSourceReferenceTitle : activeNoteItem.map(displayTitle))
+            ?? ui("当前笔记", "Current note")
+    }
+
     var openAIKeyHelpText: String {
         if !Self.environmentValue("OPENAI_API_KEY").isEmpty {
             return ui("正在使用本机环境密钥。保存的密钥会在没有环境密钥时接管。", "Using the local environment key. The saved key is used only when no environment key is present.")
@@ -1483,15 +1489,16 @@ final class WorkspaceStore: ObservableObject {
             showLibrary = true
         }
         if pane == .agent {
-            if layout == .documentNotesSplit, !showAgent, agentSurface == .hidden {
-                agentSurface = .bottomDrawer
+            if layout == .documentNotesSplit, !showAgent {
+                showAgent = true
             } else if layout == .immersiveReading || layout == .immersiveWriting {
-                if agentSurface == .hidden
-                    || agentSurface == .quietInsight
-                    || (agentSurface == .selectionFloat && !canUseSelectionAgentSurface) {
-                    agentSurface = .cornerPanel
-                    showQuietInsight = false
+                // Primary chat is immersive conversation, not a deleted overlay surface.
+                layout = .immersiveConversation
+                showAgent = true
+                if agentSurface != .selectionFloat {
+                    agentSurface = .hidden
                 }
+                showQuietInsight = false
             }
         }
         collapseSelectionFloatIntoConversationIfVisible()
@@ -1839,14 +1846,13 @@ final class WorkspaceStore: ObservableObject {
             .reader
         }
         if layout == .immersiveReading {
-            showQuietInsight = agentSurface == .quietInsight
+            showQuietInsight = false
         }
         if layout == .immersiveConversation {
             showReaderSearch = false
             readerSearch = ""
         }
         focus(nextFocus)
-        refreshQuietInsightIfNeeded()
         save()
     }
 
@@ -1996,7 +2002,9 @@ final class WorkspaceStore: ObservableObject {
         case .immersiveConversation:
             return true
         case .immersiveReading, .immersiveWriting:
-            return agentSurface == .bottomDrawer || agentSurface == .cornerPanel
+            // Overlay chat surfaces (bottom drawer / corner) were removed; only the
+            // primary agent pane / immersive conversation counts as formal chat.
+            return false
         }
     }
 
@@ -2015,10 +2023,7 @@ final class WorkspaceStore: ObservableObject {
         guard agentSurface != surface else { return }
         recordNavigationPoint()
         agentSurface = surface
-        showQuietInsight = surface == .quietInsight
-        if surface == .quietInsight {
-            refreshQuietInsightIfNeeded()
-        }
+        showQuietInsight = false
         save()
     }
 
@@ -2126,10 +2131,9 @@ final class WorkspaceStore: ObservableObject {
         latestAgentLearningUpdate = nil
         syncActiveStudySession()
         recordCurrentStudyLocation(incrementVisit: false)
-        showQuietInsight = agentSurface == .quietInsight
+        showQuietInsight = false
         clearUnpinnedFloatingSelection(keepContext: false)
         clearReaderSearchIfNeeded()
-        refreshQuietInsightIfNeeded()
         save()
     }
 
@@ -2148,15 +2152,9 @@ final class WorkspaceStore: ObservableObject {
     func handleAppShortcut(key: String, modifiers: NSEvent.ModifierFlags) -> Bool {
         if modifiers == [.control, .option] {
             switch key {
-            case "1":
-                animatePanelChange { setAgentSurface(.bottomDrawer) }
-            case "2":
-                animatePanelChange { setAgentSurface(.cornerPanel) }
             case "3":
                 guard canUseSelectionAgentSurface else { return false }
                 animatePanelChange { setAgentSurface(.selectionFloat) }
-            case "4":
-                animatePanelChange { setAgentSurface(.quietInsight) }
             case "0":
                 animatePanelChange { setAgentSurface(.hidden) }
             default:
@@ -4043,8 +4041,12 @@ final class WorkspaceStore: ObservableObject {
                     "请根据\(agentPromptScope)，帮我梳理重点和可追问的问题。",
                     "Use \(agentPromptScope) to summarize key points and follow-up questions."
                 )
-                if layout == .immersiveReading || layout == .documentNotesSplit {
-                    agentSurface = .cornerPanel
+                if layout == .immersiveReading {
+                    layout = .immersiveConversation
+                    showAgent = true
+                    agentSurface = .hidden
+                } else if layout == .documentNotesSplit {
+                    showAgent = true
                 }
                 focus(.agent)
             }
@@ -4104,90 +4106,25 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func acceptQuietInsight() {
-        guard !quietInsight.noteBlock.isEmpty else { return }
-        updateNote(noteText + "\n\n\(quietInsight.noteBlock)\n")
+        // Quiet insight surface removed for 1.0; keep no-op for any residual callers.
         showQuietInsight = false
-        focus(.notes)
     }
 
     func askQuietInsight() {
-        let evidenceText = hasSelectedMaterial ? ui("未在材料中确认", "not confirmed in the material") : ui("未在笔记或选区中确认", "not confirmed in the note or selection")
-        agentDraft = """
-        \(ui("请根据这条阅读线索继续解释，并结合\(agentPromptScope)回答。没有证据就说\(evidenceText)。", "Continue from this reading clue and answer using \(agentPromptScope). If there is no evidence, say \(evidenceText)."))
-
-        \(ui("阅读线索", "Reading clue")):
-        \(quietInsight.body)
-        """
+        // Quiet insight surface removed for 1.0 — open primary conversation instead.
         showQuietInsight = false
-        agentSurface = .cornerPanel
+        layout = .immersiveConversation
+        showAgent = true
+        agentSurface = .hidden
         focus(.agent)
     }
 
     func refreshQuietInsight() async {
-        guard !isAskingAgent, !isGeneratingQuietInsight else { return }
-        isGeneratingQuietInsight = true
-        defer { isGeneratingQuietInsight = false }
-
-        let materialTitle = quietInsightReferenceTitle
-        let materialItem = selectedMaterialItem
-        let cachedMaterialText = selectedContextText
-        let loadedMaterialText: String?
-        if cachedMaterialText.isEmpty, let materialItem {
-            loadedMaterialText = await Task.detached(priority: .utility) {
-                DocumentTextExtractor.text(for: materialItem)
-            }.value
-        } else {
-            loadedMaterialText = nil
-        }
-        guard !Task.isCancelled,
-              materialItem?.id == selectedMaterialItem?.id else { return }
-        let materialText = loadedMaterialText ?? cachedMaterialText
-        let currentNoteText = noteText
-        let selectionText = selectionContext?.text
-        let contextScope = hasSelectedMaterial ? ui("当前材料、当前选区和当前笔记", "the current material, current selection, and current note") : ui("当前选区和当前笔记", "the current selection and current note")
-        let evidenceText = hasSelectedMaterial ? ui("如果材料没有证据，就直接说未在材料中确认。", "If the material has no evidence, say it is not confirmed in the material.") : ui("如果笔记和选区没有证据，就直接说未在笔记或选区中确认。", "If the note and selection have no evidence, say it is not confirmed in the note or selection.")
-        let signature = makeQuietInsightSignature(materialText: materialText, noteText: currentNoteText, selectionText: selectionText)
-        guard signature != quietInsightSignature else { return }
-
-        let requestID = UUID()
-        let requestWorkspaceRevision = agentContextRevision
-        let request = StudyAgentRequest(
-            id: requestID,
-            purpose: .quietInsight,
-            workflow: .closeReading,
-            question: ui(
-                "请静默阅读\(contextScope)，只输出一条最值得提示给用户的洞察。要温和、短、可执行；\(evidenceText)",
-                "Read \(contextScope) quietly and output only the single most useful insight for the user. Keep it gentle, short, and actionable. \(evidenceText)"
-            ),
-            materialTitle: materialTitle,
-            materialText: materialText,
-            noteTitle: agentNoteTitle,
-            noteText: currentNoteText,
-            selectionTitle: selectionContext?.ownerTitle,
-            selectionText: selectionText,
-            recentMessages: [],
-            language: interfaceLanguage,
-            contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())"
-        )
-
-        do {
-            let reply = try await executeStudyAgentRequest(request)
-            guard requestWorkspaceRevision == agentContextRevision,
-                  materialItem?.id == selectedMaterialItem?.id else { return }
-            guard reply.backend != .offline else {
-                generatedQuietInsight = nil
-                return
-            }
-            generatedQuietInsight = QuietInsight.agent(materialTitle: materialTitle, answer: reply.text, language: interfaceLanguage)
-            quietInsightSignature = signature
-        } catch {
-            generatedQuietInsight = nil
-        }
+        // Quiet insight generation disabled for 1.0 (no silent API spend).
+        showQuietInsight = false
+        isGeneratingQuietInsight = false
     }
 
-    private var quietInsightReferenceTitle: String {
-        selectionContext?.ownerTitle ?? (hasSelectedMaterial ? currentSourceReferenceTitle : activeNoteItem.map(displayTitle)) ?? ui("当前笔记", "Current note")
-    }
 
     func applyLastAgentAnswerToNote() {
         guard let answer = lastUsableAgentAnswer else { return }
@@ -6346,20 +6283,12 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func refreshQuietInsightIfNeeded() {
-        guard agentSurface == .quietInsight, showQuietInsight else { return }
-        let previousTask = quietInsightTask
-        previousTask?.cancel()
-        let taskID = UUID()
-        quietInsightTaskID = taskID
-        quietInsightTask = Task { @MainActor [weak self] in
-            await previousTask?.value
-            guard !Task.isCancelled else {
-                self?.finishQuietInsightTask(id: taskID)
-                return
-            }
-            await self?.refreshQuietInsight()
-            self?.finishQuietInsightTask(id: taskID)
-        }
+        // Quiet insight surface removed for 1.0: never schedule background generation.
+        quietInsightTask?.cancel()
+        quietInsightTask = nil
+        quietInsightTaskID = nil
+        isGeneratingQuietInsight = false
+        showQuietInsight = false
     }
 
     private func finishQuietInsightTask(id: UUID) {
