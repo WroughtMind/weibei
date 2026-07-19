@@ -1370,9 +1370,10 @@ const COMPOSABLE_PRIMITIVE_CATALOG = [
   "容器：vstack|hstack|zstack|grid|panel；画布：canvas；正文内优先透明容器，不把 panel 堆成卡片墙。",
   "图元：axis|line|path|point|area|shape|bar|dotMatrix|vector|region|image|label；统一使用归一化坐标与魏碑主题令牌。label 是画布标注，必须引用带 label 的 dataset.rows；画布外说明文字使用 text。",
   "函数曲线与真实数据关系本来适合 line/path/point/metric；但物体、空间、过程、机制、证据链不能只剩曲线和读数，必须加入 shape/vector/region/area/sequence/image/bar/dotMatrix 等能表达对象或状态的通用图元。",
+  "非过程题不能只用 sequence、metric、text、label 或 grid 改排版；数量、空间、机制、证据、图像、比较和计算题，可绑定控件必须驱动 line/path/point/area/shape/bar/dotMatrix/vector 等非文字图元或空间编码产生可检查变化。",
   "图像材料：当路线、区域、比例或构图判断依赖原图位置时，必须把 weibei_context.course.catalog 中当前材料的 item.id 写入 image.assetID，并在对应 evidenceLedger.assetIDs 中声明，再作为 canvas 底图叠加 path/region/point/label；只有材料已给出完整数值几何时才可重绘，并明确标成示意关系。",
   "序列：sequence 用于通用步骤、证据链、周期节点、过程状态和时间节点；必须引用 dataset，至少两行，每行 label 是用户可见语义，bindingID 可选；不要自造 stepList/list/items 字段。",
-  "控件：slider|toggle|scrubber|select|reset|probe；通过 bindingID 连接共享数值状态，最多两个主要控件，但允许多个联动读数与图元。每个 binding 必须同时连接一个可见控件和至少一个可达的 metric、sequence 或视觉图元，不能只放一个不会改变画面的滑杆。",
+  "控件：slider|toggle|scrubber|probe 通过 bindingID 连接共享数值状态；select/reset 用作选择或重置入口，不冒充数值 binding。最多两个主要控件，但允许多个联动读数与图元。每个 binding 必须同时连接一个可见可绑定控件和至少一个可达的 metric、sequence 或视觉图元，不能只放一个不会改变画面的滑杆。",
   "数据：dataset.rows 提供 x/y、可选 x2/y2、value/result/label；带 bindingID 的图元和 metric 会按 value 插值或选择当前行。",
   "语义：决定结论的条件、变量、方向或关系必须出现在可见的 label/text/axis/dataset 标签里，并随对应图元或状态可检查；不能只画无标注路径，也不能只在 UI 外正文里解释。",
   "证据：evidence 节点与数据行的 evidenceIDs 必须来自本轮 evidenceLedger；只做定位，不复制原文。",
@@ -1394,6 +1395,7 @@ const RICH_ANSWER_FAMILY_CONTRACT = [
   "优先选择最贴合问题的表达层：已有深组件能真实解决问题时用 program；没有贴合深组件时必须先尝试 ui 通用原语组合，不能仅因目录缺少专属实验室就退回文字。",
   "program 中模型负责选择深组件、布局、数据、$state 反应变量和动作；ui 中模型负责组合容器、画布图元、数据集与 bindings；魏碑本地运行时统一负责渲染、联动与风格。",
   "T2 的画面必须能独立读出支撑结论的关键语义：用可见标签标明决定性条件、变量、方向、对应关系和当前状态，并把标签与实际图元、数据行或 binding 联动；禁止只画漂亮但无语义的线、点和区域。",
+  "sequence 单独只适合真实过程或状态演进；数量、空间、机制、证据、图像、比较和计算题必须让可绑定控件改变非文字图元或空间编码，不能只把正文拆成步骤、指标、卡片、表格或时间线。",
   "图像、地图和设计题若结论依赖原图中的空间位置，T2 必须使用 weibei_context.course.catalog 中当前材料的 item.id 作为 image.assetID，在对应 evidenceLedger.assetIDs 中声明，并作为画布底图叠加标注；不得脱离原图凭空重画路线、区域、比例或构图。材料已提供完整数值坐标时可画明确标注为示意的关系图。",
   "不要用固定的一图一控件或单场景模板限制表达。单个问题默认只提交一个最有帮助的 scene、一个主要操作和必要联动读数；相互关联的视觉、控件、读数和步骤优先组合进同一个 scene，只有两个体验确实独立时才拆分。每个元素都必须服务当前问题，不得用装饰、重复内容或穷举节点凑页面。",
   "保持多学科、多形态：根据知识对象选择函数图、数据图、执行轨、论证阅读、因果时间线、坐标实验、平衡实验或其他目录能力，不要把不同问题压成同一种外观。",
@@ -2420,6 +2422,19 @@ const RICH_ANSWER_UI_BINDING_ROLES = new Set(["slider", "toggle", "scrubber", "p
 const RICH_ANSWER_UI_BINDING_OUTPUT_ROLES = new Set([
   "metric",
   "sequence",
+  "line",
+  "path",
+  "point",
+  "area",
+  "shape",
+  "bar",
+  "dotMatrix",
+  "vector",
+  "region",
+  "image",
+]);
+const RICH_ANSWER_UI_STATEFUL_NON_TEXT_OUTPUT_ROLES = new Set([
+  "axis",
   "line",
   "path",
   "point",
@@ -4201,6 +4216,29 @@ function richAnswerBindingHasChangingOutcome(
     });
 }
 
+function richAnswerUIHasStateChangingNonTextEncoding(scene: RichAnswerSceneParam): boolean {
+  const ui = scene.ui;
+  if (ui === undefined) return false;
+  const datasetsByID = new Map((ui.datasets ?? []).map((dataset) => [dataset.id, dataset]));
+  return (ui.bindings ?? []).some((binding) => {
+    const hasControl = ui.nodes.some((node) =>
+      node.bindingID === binding.id && RICH_ANSWER_UI_BINDING_ROLES.has(node.role)
+    );
+    if (!hasControl) return false;
+    return ui.nodes.some((node) => {
+      if (
+        node.bindingID !== binding.id ||
+        !RICH_ANSWER_UI_STATEFUL_NON_TEXT_OUTPUT_ROLES.has(node.role) ||
+        node.datasetID === undefined
+      ) {
+        return false;
+      }
+      const dataset = datasetsByID.get(node.datasetID);
+      return dataset !== undefined && richAnswerRowsHaveChangingOutcome(dataset.rows, false);
+    });
+  });
+}
+
 function richAnswerRowsHaveChangingOutcome(
   rows: RichAnswerUIDataRowParam[],
   acceptsSemanticOnly: boolean,
@@ -4264,6 +4302,27 @@ function validateGeneratedRichAnswerFamilyContract(scene: RichAnswerSceneParam):
   ).length;
   const hasQuantityCanvas = usesRole("canvas") &&
     usesRole("axis", "line", "path", "point", "area", "bar", "dotMatrix", "vector", "metric");
+  const familiesNeedingStatefulNonTextEncoding = new Set([
+    "quantityAndCoordinates",
+    "timeAndSpace",
+    "relationAndEvidence",
+    "imageAndOverlay",
+    "comparisonAndEvaluation",
+    "calculationAndConstraints",
+  ]);
+  if (scene.ui !== undefined && familiesNeedingStatefulNonTextEncoding.has(scene.family)) {
+    if (!richAnswerUIHasStateChangingNonTextEncoding(scene)) {
+      throw new Error(`富回答场景 ${scene.id} 的 ${scene.family} 不能只用 sequence、metric 或文字排版，必须让可绑定控件驱动非文字图元或空间编码发生可检查变化`);
+    }
+    const textReflowRoles = new Set([
+      "vstack", "hstack", "zstack", "grid", "panel", "text", "label", "divider",
+      "evidence", "metric", "sequence", "slider", "toggle", "scrubber", "select",
+      "reset", "probe",
+    ]);
+    if (Array.from(roles).every((role) => textReflowRoles.has(role))) {
+      throw new Error(`富回答场景 ${scene.id} 只是文字、指标或序列换排版，不构成 ${scene.family} 富可视化`);
+    }
+  }
 
   let isValid = false;
   switch (scene.family) {
@@ -4567,13 +4626,11 @@ function validateGeneratedRichAnswerIntentContract(
     "region",
     "image",
     "area",
-    "sequence",
     "bar",
     "dotMatrix",
     "line",
     "path",
     "point",
-    "metric",
   ]);
   if (!Array.from(embodiedRoles).some((role) => roles.has(role))) {
     throw new Error(`富回答场景 ${scene.id} 必须把物体、空间或图像知识绑定到可见语义图元`);
@@ -5072,6 +5129,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           intentGuidance: [
             "不要按 knowledgeNatures 机械套固定 role 组合；曲线、点、区域、图像、形状、序列、读数都只是可组合的视觉语法。",
             "line/path/point/metric 可以在函数、过程、机制、论证或证据场景中成为主表达，前提是它们真实编码了知识对象、关系或状态，而不是装饰线。",
+            "非过程题不要只用 sequence、metric、text、label、grid 变换排版；数量、空间、机制、证据、图像、比较和计算题要让可绑定控件驱动非文字图元或空间编码出现可检查状态变化。",
             "只有当材料和问题确实依赖空间位置、图像局部或对象外形时，才需要选择 image、region、shape、area 等对应图元；不要为通过形式检查而硬凑。",
             "有控件时，控件必须改变与学习目标绑定的可见图元或读数；可以同时协调多个控件、图层和状态。",
             "用户或材料明确指定的观察动作、测量方法和结论边界必须进入可见节点语义；不要只写在 expressionPlan，也不要用不相干的通用控件替代。",

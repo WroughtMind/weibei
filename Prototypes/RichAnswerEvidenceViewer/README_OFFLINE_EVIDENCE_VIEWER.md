@@ -27,6 +27,18 @@ node Prototypes/RichAnswerEvidenceViewer/generate-offline-evidence-package.mjs \
   --force
 ```
 
+需要浏览 56 题 × 4 轮的大包时，使用支持显式截图路径与节省磁盘模式的生成器：
+
+```bash
+node Prototypes/RichAnswerEvidenceViewer/generate-evidence-package.mjs \
+  --run-dir <run目录> \
+  --output <验收包目录> \
+  --asset-mode symlink \
+  --force
+```
+
+`--asset-mode` 支持 `copy`、`hardlink`、`symlink`。本机大包优先使用 `symlink`，不会再次复制数百张 PNG；移动或交付到另一台机器时再使用 `copy`。
+
 ## 4. 读取输入数据规则
 - 读取 `run.json` 与 `index.json`
 - 优先读取 `index.records` 中给定的：
@@ -41,7 +53,7 @@ node Prototypes/RichAnswerEvidenceViewer/generate-offline-evidence-package.mjs \
 - `index.html`：离线浏览主页面
 - `viewer.js`：过滤、对比、图文渲染脚本
 - `data.json`：脱敏后的证据数据快照（离线可核）
-- `assets/*.png`：原始截图拷贝（只读本地引用）
+- `assets/*.png`：按 `--asset-mode` 复制、硬链接或符号链接原始截图
 
 ## 6. 验证标准（本地）
 - 运行 `--force` 生成时，旧目录会被覆盖

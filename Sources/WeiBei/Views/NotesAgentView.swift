@@ -1423,8 +1423,11 @@ struct MarkdownPreviewView: View {
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
     var onSelectionChange: (String, CGPoint?) -> Void = { _, _ in }
     var onContentHeightChange: () -> Void = {}
+    private static let compactPreviewLoadingHeight: CGFloat = 24
+    private static let compactPreviewMaximumHeight: CGFloat = 20_000
+
     @State private var command: NoteEditorCommand?
-    @State private var contentHeight: CGFloat = 44
+    @State private var contentHeight: CGFloat = 24
 
     var body: some View {
         RichMarkdownEditorView(
@@ -1439,7 +1442,10 @@ struct MarkdownPreviewView: View {
             onAskAgentWithSelection: onSelectionChange,
             onContentHeightChange: { height in
                 guard compact && fitsContentHeight else { return }
-                contentHeight = height
+                guard height.isFinite,
+                      height > 0,
+                      height <= Self.compactPreviewMaximumHeight else { return }
+                contentHeight = ceil(height)
                 onContentHeightChange()
             },
             onWikiLink: onWikiLink,
@@ -1447,7 +1453,12 @@ struct MarkdownPreviewView: View {
             onAppShortcut: onAppShortcut
         )
         .background(compact ? Color.clear : WeiBeiTheme.paper)
-        .frame(height: compact && fitsContentHeight ? max(contentHeight, 44) : nil)
+        .frame(height: compact && fitsContentHeight ? max(contentHeight, Self.compactPreviewLoadingHeight) : nil)
+        .onChange(of: markdown) { _, _ in
+            guard compact && fitsContentHeight else { return }
+            contentHeight = Self.compactPreviewLoadingHeight
+            onContentHeightChange()
+        }
     }
 }
 

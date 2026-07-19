@@ -4251,6 +4251,11 @@ final class WorkspaceStore: ObservableObject {
                 "case=\(artifact.caseID)",
                 "status=\(artifact.status)",
                 "backend=\(artifact.backend?.rawValue ?? "none")",
+                "materialItemID=\(artifact.materialItemID)",
+                "materialKind=\(artifact.materialKind)",
+                "verificationAssetID=\(artifact.verificationAssetID ?? "none")",
+                "sourceFingerprint=\(artifact.sourceFingerprint ?? "none")",
+                "verificationAssetFingerprint=\(artifact.verificationAssetFingerprint ?? "none")",
                 "richAnswer=\(artifact.richAnswer?.mode.rawValue ?? "none")",
                 "scenes=\(artifact.richAnswer?.scenes.count ?? 0)",
                 "tools=\(artifact.toolTrace.joined(separator: ","))",
@@ -4273,28 +4278,117 @@ final class WorkspaceStore: ObservableObject {
     ) throws -> StudyItem {
         let directory = baseURL.appendingPathComponent("RichAnswerReplay", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let materialURL = directory.appendingPathComponent("material.txt")
-        let body = """
-        \(artifact.materialTitle)
-
-        \(artifact.materialBody)
-        """
-        try body.write(to: materialURL, atomically: true, encoding: .utf8)
+        let materialURL = try richAnswerReplayMaterialURL(for: artifact, directory: directory)
         let item = StudyItem(
-            id: "rich-answer-replay-material",
+            id: artifact.materialItemID,
             title: artifact.materialTitle,
-            subtitle: "真实富回答回放材料",
-            kind: .text,
+            subtitle: "真实富回答回放材料 · \(artifact.materialKind)",
+            kind: richAnswerReplayStudyItemKind(for: artifact.materialKind),
             urlPath: materialURL.path,
             isSample: false
         )
         importedItems.removeAll {
-            $0.id == item.id || $0.urlPath == materialURL.path
+            $0.id == item.id
+                || $0.id == "rich-answer-replay-material"
+                || $0.urlPath == materialURL.path
         }
         importedItems.append(item)
         courseDocumentSearchIndex.synchronize(allItems)
         save()
         return item
+    }
+
+    private func richAnswerReplayMaterialURL(
+        for artifact: RichAnswerReplayArtifact,
+        directory: URL
+    ) throws -> URL {
+        let normalizedKind = artifact.materialKind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let isImageMaterial = normalizedKind == "image"
+        let verificationAssetID = artifact.verificationAssetID?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let assetID = verificationAssetID, !assetID.isEmpty {
+            guard isImageMaterial else {
+                throw RichAnswerReplayMaterialInstallError.unexpectedVerificationAssetID(
+                    assetID,
+                    artifact.materialKind
+                )
+            }
+            try RichAnswerVerificationAssets.validateBundledResources()
+            guard let url = RichAnswerVerificationAssets.url(for: assetID) else {
+                throw RichAnswerReplayMaterialInstallError.missingBundledVerificationAsset(assetID)
+            }
+            return url
+        }
+        if isImageMaterial {
+            throw RichAnswerReplayMaterialInstallError.missingVerificationAssetID(artifact.materialItemID)
+        }
+        if artifact.referencesCurrentMaterialAsset {
+            throw RichAnswerReplayMaterialInstallError.missingReferencedAsset(artifact.materialItemID)
+        }
+
+        if normalizedKind == "html" {
+            let escapedTitle = artifact.materialTitle
+                .replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
+            let paragraphs = artifact.materialBody
+                .split(whereSeparator: \.isNewline)
+                .map(String.init)
+                .map {
+                    $0.replacingOccurrences(of: "&", with: "&amp;")
+                        .replacingOccurrences(of: "<", with: "&lt;")
+                        .replacingOccurrences(of: ">", with: "&gt;")
+                }
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .map { "<p>\($0)</p>" }
+                .joined(separator: "\n")
+            let escapedBody = paragraphs.isEmpty
+                ? "<p>当前材料没有可显示的正文。</p>"
+                : paragraphs
+            let materialURL = directory.appendingPathComponent("material.html")
+            let document = """
+            <!doctype html>
+            <html lang="zh-CN">
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <style>
+                html, body { margin: 0; background: transparent; }
+                main { box-sizing: border-box; max-width: 760px; margin: 0 auto; padding: 34px 38px 64px; }
+                h1 { margin: 0 0 24px; font-family: "Songti SC", "STSong", serif; font-size: 28px; line-height: 1.35; font-weight: 600; }
+                p { margin: 0 0 14px; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; font-size: 16px; line-height: 1.82; }
+              </style>
+            </head>
+            <body><main data-weibei-paper-surface><h1>\(escapedTitle)</h1>\(escapedBody)</main></body>
+            </html>
+            """
+            try document.write(to: materialURL, atomically: true, encoding: .utf8)
+            return materialURL
+        }
+
+        let body = """
+        \(artifact.materialTitle)
+
+        \(artifact.materialBody)
+        """
+        let materialURL = directory.appendingPathComponent("material.txt")
+        try body.write(to: materialURL, atomically: true, encoding: .utf8)
+        return materialURL
+    }
+
+    private func richAnswerReplayStudyItemKind(for materialKind: String) -> StudyItemKind {
+        switch materialKind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "image":
+            .html
+        case "html":
+            .html
+        case "pdf":
+            .pdf
+        case "markdown", "md":
+            .markdown
+        default:
+            .text
+        }
     }
 
     private func configureRichAnswerReplayFailure(path: String, error: Error, baseURL: URL) {
@@ -4324,6 +4418,26 @@ final class WorkspaceStore: ObservableObject {
             encoding: .utf8
         )
         recordVerificationStage("rich-answer-replay-failure:\(error.localizedDescription)")
+    }
+
+    private enum RichAnswerReplayMaterialInstallError: LocalizedError {
+        case missingVerificationAssetID(String)
+        case missingBundledVerificationAsset(String)
+        case missingReferencedAsset(String)
+        case unexpectedVerificationAssetID(String, String)
+
+        var errorDescription: String? {
+            switch self {
+            case let .missingVerificationAssetID(materialItemID):
+                return "富回答图片回放缺少 verificationAssetID，材料 \(materialItemID) 不显示空 Canvas。"
+            case let .missingBundledVerificationAsset(assetID):
+                return "富回答图片回放找不到已校验的打包图片资源：\(assetID)。"
+            case let .missingReferencedAsset(assetID):
+                return "富回答回放引用了材料资产 \(assetID)，但没有可解析的真实图片资源。"
+            case let .unexpectedVerificationAssetID(assetID, materialKind):
+                return "富回答回放记录了图片资源 \(assetID)，但材料类型是 \(materialKind)，已停止安装。"
+            }
+        }
     }
 
     private func runCourseWorkspaceVerification(_ scenario: String) async {
