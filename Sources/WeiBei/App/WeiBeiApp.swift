@@ -1116,7 +1116,7 @@ struct SettingsView: View {
         case .overview:
             return store.ui("先看当前状态，再进入具体设置。", "Start with the current state, then drill into details.")
         case .appearance:
-            return store.ui("统一控制语言、主题和工作区布局。", "Control language, theme, and workspace layout.")
+            return store.ui("统一控制语言与主题。", "Control language and theme.")
         case .reading:
             return store.ui("阅读设置只放当前已经接入真实行为的开关。", "Reading settings only expose behavior that is already wired.")
         case .writing:
@@ -1185,7 +1185,7 @@ struct SettingsView: View {
             settingsGroup(store.ui("快速进入", "Jump To")) {
                 settingsRouteRow(
                     title: store.ui("外观与语言", "Appearance & Language"),
-                    detail: store.ui("字体、明暗模式、布局。", "Fonts, theme mode, and layout."),
+                    detail: store.ui("字体、明暗模式。", "Fonts and theme mode."),
                     target: .appearance
                 )
                 settingsRouteRow(
@@ -1236,18 +1236,14 @@ struct SettingsView: View {
 
             settingsGroup(store.ui("工作区", "Workspace")) {
                 settingsRow(
-                    title: store.ui("当前布局", "Current Layout"),
-                    detail: store.ui("设置会立即作用到主窗口，方便检查真实效果。", "Changes apply to the main window immediately for real inspection.")
+                    title: store.ui("布局说明", "Layout Notes"),
+                    detail: store.ui("栏位用顶栏显隐与拖拽重排；沉浸阅读/对话/写作用 ⌥⌘R / ⌥⌘A / ⌥⌘N。设置页不再切换布局预设。", "Use top-bar pane toggles and drag-reorder for columns; immersive reading/chat/writing use ⌥⌘R / ⌥⌘A / ⌥⌘N. Settings no longer switches layout presets.")
                 ) {
-                    compactMenu(store.layout.label(language: store.interfaceLanguage)) {
-                        ForEach(WorkspaceLayout.allCases) { layout in
-                            Button(layout.label(language: store.interfaceLanguage)) {
-                                withAnimation(WeiBeiMotion.layout) {
-                                    store.setLayout(layout)
-                                }
-                            }
-                        }
-                    }
+                    settingsPill(
+                        title: store.layout.label(language: store.interfaceLanguage),
+                        icon: "rectangle.split.3x1",
+                        active: false
+                    )
                 }
 
                 settingsRow(

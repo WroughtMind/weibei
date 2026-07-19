@@ -6566,6 +6566,8 @@ final class WorkspaceStore: ObservableObject {
         if let modelName = snapshot.modelName {
             self.modelName = modelName
         }
+        // Legacy field: still read so older workspaces restore immersion/multi-pane;
+        // free drag order lives in threePaneOrder and is the source of truth for columns.
         if let workspaceLayout = snapshot.workspaceLayout {
             layout = workspaceLayout
             if let order = workspaceLayout.defaultThreePaneOrder {
