@@ -23,6 +23,8 @@ const ALLOWED_TOOLS = new Set([
   RICH_ANSWER_TOOL,
 ]);
 
+type AnswerFormPolicy = "automatic" | "textOnly" | "partialRichAllowed";
+
 const LIMITS = {
   contextFileBytes: 4 * 1024 * 1024,
   identifier: 256,
@@ -159,6 +161,7 @@ interface ContextSnapshotV2 {
   schemaVersion: 2;
   requestID: string;
   contextRevision: string;
+  answerFormPolicy: AnswerFormPolicy;
   purpose: string;
   workflow: string;
   language: string;
@@ -508,6 +511,15 @@ function requireIdentifier(value: unknown, field: string): string {
   return text;
 }
 
+function readAnswerFormPolicy(value: unknown): AnswerFormPolicy {
+  if (value === undefined || value === null) return "automatic";
+  const policy = requireString(value, "answerFormPolicy");
+  if (policy === "automatic" || policy === "textOnly" || policy === "partialRichAllowed") {
+    return policy;
+  }
+  throw new Error("魏碑上下文字段 answerFormPolicy 无效");
+}
+
 function truncate(text: string, maximumCharacters: number): string {
   if (text.length <= maximumCharacters) return text;
 
@@ -809,6 +821,7 @@ async function readCurrentSnapshot(): Promise<ContextSnapshotV2> {
     schemaVersion: 2,
     requestID: requireIdentifier(envelope.requestID, "requestID"),
     contextRevision: requireIdentifier(envelope.contextRevision, "contextRevision"),
+    answerFormPolicy: readAnswerFormPolicy(envelope.answerFormPolicy),
     purpose: requireIdentifier(envelope.purpose, "purpose"),
     workflow: requireIdentifier(envelope.workflow, "workflow"),
     language: requireIdentifier(envelope.language, "language"),
@@ -833,6 +846,62 @@ function evidenceLabels(snapshot: ContextSnapshotV2): string[] {
   if (snapshot.material?.text.trim()) labels.push(`[材料：${snapshot.material.title}]`);
   if (snapshot.selection?.text.trim()) labels.push(`[选区：${snapshot.selection.title}]`);
   return labels;
+}
+
+function richAnswerCurrentItems(
+  snapshot: ContextSnapshotV2,
+  searchedCourseItemIDs: ReadonlySet<string> = new Set<string>(),
+) {
+  return snapshot.course.catalog
+    .filter(
+      (item) =>
+        item.isCurrentMaterial || item.isCurrentNote || searchedCourseItemIDs.has(item.id),
+    )
+    .map((item) => ({
+      id: item.id,
+      title: item.title,
+      role: item.role,
+      currentMaterial: item.isCurrentMaterial,
+      currentNote: item.isCurrentNote,
+    }));
+}
+
+function richAnswerAllowedAssetIDs(
+  snapshot: ContextSnapshotV2,
+  searchedCourseItemIDs: ReadonlySet<string> = new Set<string>(),
+): string[] {
+  return richAnswerCurrentItems(snapshot, searchedCourseItemIDs)
+    .filter((item) => item.currentMaterial || searchedCourseItemIDs.has(item.id))
+    .map((item) => item.id);
+}
+
+function richAnswerSourceBindings(
+  snapshot: ContextSnapshotV2,
+  searchedCourseItemIDs: ReadonlySet<string> = new Set<string>(),
+) {
+  return {
+    answerFormPolicy: snapshot.answerFormPolicy,
+    readableSourceLabels: Array.from(
+      richAnswerEvidenceText(snapshot, searchedCourseItemIDs).keys(),
+    ),
+    allowedAssetIDs: richAnswerAllowedAssetIDs(snapshot, searchedCourseItemIDs),
+    currentItems: richAnswerCurrentItems(snapshot, searchedCourseItemIDs),
+    rules: {
+      sourceLabels:
+        "evidenceLedger.sourceLabel 必须逐字使用 readableSourceLabels 或本轮课程搜索返回的 evidenceLabel；不要引用空材料、空笔记、文件名、目录标题或学习记忆来支持课程事实。",
+      assetIDs:
+        "图像、地图和设计叠层只能使用 allowedAssetIDs 中的当前材料 item.id；image.assetID 与 evidenceLedger.assetIDs 都必须写 item.id，不写文件名、标签、注册名或标题。",
+      excerpts:
+        "evidenceLedger.excerpt 必须来自同一来源标签当前可读文本中的短摘录；没有可读来源时保持纯文本，说明材料缺口，不调用富回答。",
+    },
+    imageOverlayGuidance: [
+      "只有当前材料真实提供图像、地图或设计资产，且 allowedAssetIDs 非空时，才做图像叠层。",
+      "T2 结构使用 image/canvas 作为真实当前材料底图，再叠加 region/path/point/label/vector 等 overlay primitives。",
+      "保留 1–2 个有意义 binding，例如切换观察层、探查区域或对比标注；不要把图像题做成专题模板、整页看板或凭空重绘。",
+      "若材料里的采样窗口、测量方法、抗锯齿、近似条件或阈值适用范围会改变结论，必须把这些解释边界同时写进 narrative 与可见 T2 标签、读数或证据节点，不能只留下最终数值。",
+      "材料明确要求放大、探查、切换图层或前后对比时，要用对应的可见控件与 binding 兑现；不要用无关的通用滑杆替代指定观察动作。",
+    ],
+  };
 }
 
 function currentTurnEvidenceMatches(snapshot: ContextSnapshotV2, evidence: string): boolean {
@@ -4672,6 +4741,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
   let richAnswerAttemptCount = 0;
   let richAnswerCatalogRevision: string | undefined;
   let richAnswerCatalogSelection: Set<OpenUIComponentName> | undefined;
+  let activeAnswerFormPolicy: AnswerFormPolicy = "automatic";
   const searchedCourseItemIDs = new Set<string>();
 
   pi.registerTool({
@@ -4688,6 +4758,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       lastReadContextRevision = snapshot.contextRevision;
       richAnswerCatalogRevision = undefined;
       richAnswerCatalogSelection = undefined;
+      activeAnswerFormPolicy = snapshot.answerFormPolicy;
 
       const details: ContextToolDetails = {
         kind: "weibei_context",
@@ -4703,6 +4774,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
             text: JSON.stringify(
               {
                 contextRevision: snapshot.contextRevision,
+                richAnswerGrounding: richAnswerSourceBindings(snapshot),
                 material: snapshot.material,
                 note: snapshot.note,
                 selection: snapshot.selection,
@@ -4978,6 +5050,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           id: group,
           label: OPENUI_COMPONENT_GROUPS[group].label,
         })),
+        sourceBindings: richAnswerSourceBindings(current, searchedCourseItemIDs),
         actionBus: {
           learningActions: RICH_ANSWER_LEARNING_ACTIONS,
           interactions: RICH_ANSWER_INTERACTION_ACTIONS,
@@ -5001,6 +5074,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
             "line/path/point/metric 可以在函数、过程、机制、论证或证据场景中成为主表达，前提是它们真实编码了知识对象、关系或状态，而不是装饰线。",
             "只有当材料和问题确实依赖空间位置、图像局部或对象外形时，才需要选择 image、region、shape、area 等对应图元；不要为通过形式检查而硬凑。",
             "有控件时，控件必须改变与学习目标绑定的可见图元或读数；可以同时协调多个控件、图层和状态。",
+            "用户或材料明确指定的观察动作、测量方法和结论边界必须进入可见节点语义；不要只写在 expressionPlan，也不要用不相干的通用控件替代。",
             "knowledgeObjects 要在可见标签里留下关键锨点；knowledgeRelations 可由有标注的曲线、数据、读数或序列结构编码；knowledgeProcesses 若是拖动、切换、观察等互动，可由真实 binding 结构兑现，不必把计划长句逐字复制进 UI。",
             "visualPrimitives 必须列出实际会使用的 T2 role，后续 weibei_rich_answer 会校验声明与 UI 节点一致。",
           ],
@@ -5723,34 +5797,55 @@ export default function weibeiExtension(pi: ExtensionAPI) {
 
     let purpose = "unavailable";
     let revision = "unavailable";
+    let answerFormPolicy: AnswerFormPolicy = "automatic";
+    let readableSourceLabels: string[] = [];
     let explicitRichAnswerRequested = false;
     try {
       const snapshot = await readCurrentSnapshot();
       purpose = snapshot.purpose;
       revision = snapshot.contextRevision;
+      answerFormPolicy = snapshot.answerFormPolicy;
+      readableSourceLabels = evidenceLabels(snapshot);
       explicitRichAnswerRequested =
+        answerFormPolicy === "automatic" &&
         snapshot.workflow !== "noteMaking" &&
         /(?:富回答|可调|交互|互动|图示|函数图|关系图|时间线|图像叠层|叠层|模拟|实验|rich answer|interactive|adjustable|diagram|function graph|relationship graph|timeline|image overlay|simulation|experiment)/iu.test(
           snapshot.question,
         );
       requiredContextRevision = revision;
+      activeAnswerFormPolicy = answerFormPolicy;
     } catch {
       requiredContextRevision = undefined;
+      activeAnswerFormPolicy = "automatic";
     }
+
+    const answerFormPolicyInstruction =
+      answerFormPolicy === "textOnly"
+        ? "本轮 answerFormPolicy=textOnly：即使问题文本出现“富回答、图示、互动、实验、叠层”等词，也必须保持普通文本；不得调用 weibei_ui_catalog 或 weibei_rich_answer；不要向用户暴露这是内部策略。"
+        : answerFormPolicy === "partialRichAllowed"
+          ? "本轮 answerFormPolicy=partialRichAllowed：允许在证据充分且学习收益明显时使用富回答，但问题文本里的“富回答、图示、互动、实验、叠层”等词不构成强制调用。"
+          : explicitRichAnswerRequested
+            ? "本轮用户明确指定富回答或互动形态。当前证据足够时必须调用 weibei_rich_answer；不能满足时必须在正文明确说明限制，不得静默退成纯文本。"
+            : "本轮没有检测到用户指定富回答形态；由你按学习收益判断是否调用 weibei_rich_answer。";
+
+    const sourceAvailabilityInstruction =
+      readableSourceLabels.length === 0
+        ? "本轮没有可读材料、笔记或选区来源标签：不得引用空材料/空笔记标签，不得提交富回答；只用普通文本诚实说明当前缺少可读材料证据。"
+        : `本轮可读来源标签：${readableSourceLabels.join("、")}；课程事实引用必须逐字使用这些标签或本轮课程搜索返回的 evidenceLabel。`;
 
     const turnContract = [
       "<weibei_turn>",
       `purpose: ${JSON.stringify(purpose)}`,
       `contextRevision: ${JSON.stringify(revision)}`,
+      `answerFormPolicy: ${JSON.stringify(answerFormPolicy)}`,
       "本轮第一次工具调用必须是 weibei_context。调用成功前不得回答事实问题，也不得提出富回答或笔记建议。",
       "当前材料、笔记和选区是本轮直接证据；课程关联需要读课程地图或搜索；学习历史需要读学习记忆。",
       "学习记忆只能说明用户的学习状态，不能作为课程事实证据。",
+      sourceAvailabilityInstruction,
       "富回答必须提交 schemaVersion 2，并为每个 scene 选择 T1 深组件 program 或 T2 通用原语 ui；它作为 Agent 回答流中的生成式视觉体验块，可以组合多个视觉、控件、读数和实验步骤，但不是第二篇回答或完整网页。模型负责组合组件或原语、数据、状态和动作，魏碑宿主用本地渲染内核呈现。",
       `提交富回答前必须调用 ${RICH_ANSWER_CATALOG_TOOL}，按本轮知识形状取得相关组件子集；不要让完整目录或旧回合组件记忆代替本轮选择。`,
       RICH_ANSWER_FAMILY_CONTRACT,
-      explicitRichAnswerRequested
-        ? "本轮用户明确指定富回答或互动形态。当前证据足够时必须调用 weibei_rich_answer；不能满足时必须在正文明确说明限制，不得静默退成纯文本。"
-        : "本轮没有检测到用户指定富回答形态；由你按学习收益判断是否调用 weibei_rich_answer。",
+      answerFormPolicyInstruction,
       "</weibei_turn>",
     ].join("\n");
 
@@ -5762,6 +5857,17 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       return {
         block: true,
         reason: `魏碑 Agent 只允许调用受控的上下文、课程、记忆、富回答与笔记建议工具`,
+      };
+    }
+
+    if (
+      activeAnswerFormPolicy === "textOnly" &&
+      (event.toolName === RICH_ANSWER_CATALOG_TOOL || event.toolName === RICH_ANSWER_TOOL)
+    ) {
+      return {
+        block: true,
+        reason:
+          "本轮 answerFormPolicy=textOnly：只能普通文本回答。不要调用富回答目录或富回答工具，也不要向用户暴露内部策略、工具名称或被阻止原因。",
       };
     }
 

@@ -331,7 +331,9 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var memoryRevision: UInt64
         var userQuestion: String
         var workflow: StudyAgentWorkflow
+        var answerFormPolicy: StudyAgentAnswerFormPolicy
         var allowsLearningOnlyAnswer: Bool
+        var allowsSourcelessLimitation: Bool
         var resolvableMemoryIDs: Set<String>
         var allowedSourceLabels: Set<String>
         var allowedAssetIDs: Set<String>
@@ -418,13 +420,16 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         let progressDelivery = progress.map(ProgressDelivery.init(handler:))
 
         let currentJumpEvidence = currentJumpEvidence(in: context)
+        let currentSourceLabels = currentSourceLabels(in: context)
         activeRun = ActiveRun(
             id: request.id,
             contextRevision: request.contextRevision,
             memoryRevision: request.learningContext.memoryRevision,
             userQuestion: request.question,
             workflow: request.resolvedWorkflow,
+            answerFormPolicy: request.answerFormPolicy,
             allowsLearningOnlyAnswer: StudyAgentQuestionScope.allowsLearningOnlyAnswer(request.question),
+            allowsSourcelessLimitation: currentSourceLabels.isEmpty,
             resolvableMemoryIDs: Set(request.learningContext.memories.compactMap { memory in
                 guard memory.status == .active,
                       memory.kind == .goal || memory.kind == .confusion || memory.kind == .nextStep else {
@@ -432,7 +437,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 }
                 return memory.id.uuidString.lowercased()
             }),
-            allowedSourceLabels: currentSourceLabels(in: context),
+            allowedSourceLabels: currentSourceLabels,
             allowedAssetIDs: currentAssetIDs(in: context),
             persistentAssetIDsByContextID: persistentAssetIDsByContextID(
                 request: request,
@@ -441,7 +446,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             allowedJumpReferences: Set(currentJumpEvidence.keys),
             jumpEvidenceLabels: currentJumpEvidence,
             lastLocationSourceLabel: context.learning.lastLocation.map { "[材料：\($0.itemTitle)]" },
-            allowedNoteSourceLabels: currentSourceLabels(in: context),
+            allowedNoteSourceLabels: currentSourceLabels,
             progressDelivery: progressDelivery
         )
         progressDelivery?.yield(.readingContext)
@@ -741,6 +746,20 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     private func answerValidationError(text: String, run: ActiveRun) -> String? {
         let contentLabels = citedContentLabels(in: text)
         let learningLabels = citedLearningLabels(in: text)
+        if contentLabels.isEmpty,
+           run.allowsSourcelessLimitation,
+           !run.allowsLearningOnlyAnswer {
+            guard run.richAnswer == nil else {
+                return "PI returned a rich answer without any readable current-turn source"
+            }
+            guard learningLabels.isEmpty else {
+                return "PI cited learning memory instead of explaining the missing current-turn source"
+            }
+            guard StudyAgentSourceLimitation.isHonest(text) else {
+                return "PI returned an uncited answer without clearly explaining the missing source evidence"
+            }
+            return nil
+        }
         guard !contentLabels.isEmpty
                 || (run.allowsLearningOnlyAnswer && !learningLabels.isEmpty) else {
             return "PI returned a content answer without a current-turn source citation"
@@ -1231,6 +1250,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             run.allowedSourceLabels.formUnion(labels)
             run.allowedNoteSourceLabels.formUnion(labels)
             run.allowedAssetIDs.formUnion(assetIDs)
+            run.allowsSourcelessLimitation = run.allowedSourceLabels.isEmpty
             registerJumpEvidence(jumpEvidence, in: &run)
             activeRun = run
             refreshRunWatchdog()
@@ -1244,6 +1264,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             if labels.contains("[学习记录：上次位置]"),
                let lastLocationSourceLabel = run.lastLocationSourceLabel {
                 run.allowedSourceLabels.insert(lastLocationSourceLabel)
+                run.allowsSourcelessLimitation = false
             }
             activeRun = run
             refreshRunWatchdog()
@@ -1256,6 +1277,15 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                     id: run.id,
                     with: .failure(PiAgentRuntimeError.agentFailed("PI proposed a rich answer inside the note-making workflow"))
                 )
+                return
+            }
+            if run.answerFormPolicy == .textOnly {
+                trace("rich answer rejected by text-only answer-form policy")
+                run.toolTrace.append("weibei_rich_answer:host_rejected=text_only_policy")
+                run.lastError = "PI 尝试在纯文本回合生成富回答"
+                run.richAnswer = nil
+                activeRun = run
+                refreshRunWatchdog()
                 return
             }
             let presentation = RichAnswerEngine.prepare(
