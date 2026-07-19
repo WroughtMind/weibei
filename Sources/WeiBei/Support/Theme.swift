@@ -264,6 +264,7 @@ enum WeiBeiMetric {
     static let iconButton: CGFloat = 26
     static let inputHeight: CGFloat = 30
     static let controlRadius: CGFloat = 7
+    static let topBarHeight: CGFloat = 38
 }
 
 enum WeiBeiMotion {
@@ -328,61 +329,6 @@ enum WeiBeiTransition {
             active: WeiBeiRevealModifier(opacity: 0, x: x, y: y, scale: scale, blur: blur, anchor: anchor),
             identity: WeiBeiRevealModifier(opacity: 1, x: 0, y: 0, scale: 1, blur: 0, anchor: anchor)
         )
-    }
-}
-
-enum TopBarVariant: String, CaseIterable, Identifiable {
-    case balanced
-    case compact
-    case reader
-    case glyph
-    case wide
-
-    var id: String { rawValue }
-
-    func label(language: WeiBeiInterfaceLanguage) -> String {
-        switch self {
-        case .balanced:
-            return language.text("标准", "Balanced")
-        case .compact:
-            return language.text("紧凑", "Compact")
-        case .reader:
-            return language.text("阅读", "Reading")
-        case .glyph:
-            return language.text("印记", "Mark")
-        case .wide:
-            return language.text("宽松", "Wide")
-        }
-    }
-
-    var iconName: String {
-        switch self {
-        case .balanced:
-            return "rectangle.topthird.inset.filled"
-        case .compact:
-            return "rectangle.compress.vertical"
-        case .reader:
-            return "doc.text.magnifyingglass"
-        case .glyph:
-            return "circle.grid.cross"
-        case .wide:
-            return "rectangle.expand.vertical"
-        }
-    }
-
-    var height: CGFloat {
-        switch self {
-        case .glyph:
-            return 36
-        case .compact:
-            return 38
-        case .reader:
-            return 40
-        case .balanced:
-            return 42
-        case .wide:
-            return 46
-        }
     }
 }
 

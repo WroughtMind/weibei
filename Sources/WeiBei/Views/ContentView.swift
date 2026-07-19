@@ -137,7 +137,7 @@ struct ContentView: View {
     }
 
     private var topBarHeight: CGFloat {
-        store.topBarVariant.height
+        WeiBeiMetric.topBarHeight
     }
 
 }
@@ -294,15 +294,10 @@ private struct UnifiedTopBarView: View {
         }
         .animation(WeiBeiMotion.panel, value: store.showReaderSearch)
         .animation(WeiBeiMotion.layout, value: isImmersiveLayout)
-        .animation(WeiBeiMotion.layout, value: store.topBarVariant)
-    }
-
-    private var variant: TopBarVariant {
-        store.topBarVariant
     }
 
     private var barHeight: CGFloat {
-        variant.height
+        WeiBeiMetric.topBarHeight
     }
 
     private var leftInset: CGFloat {
@@ -310,27 +305,11 @@ private struct UnifiedTopBarView: View {
     }
 
     private var topBarSpacing: CGFloat {
-        switch variant {
-        case .compact, .glyph:
-            return 7
-        case .reader:
-            return 8
-        case .balanced:
-            return 9
-        case .wide:
-            return 11
-        }
+        7
     }
 
     private var controlHeight: CGFloat {
-        switch variant {
-        case .compact, .glyph:
-            return 28
-        case .wide:
-            return 28
-        default:
-            return 26
-        }
+        28
     }
 
     private var shouldShowSearchAction: Bool {
@@ -343,21 +322,6 @@ private struct UnifiedTopBarView: View {
 
     private var hasReaderScopedTopActions: Bool {
         store.isPaneToggleActive(.reader)
-    }
-
-    private var shortLayoutLabel: String {
-        switch store.layout {
-        case .documentAgentNotes, .documentNotesAgent:
-            return store.threePaneOrderLabel(compact: true)
-        case .documentNotesSplit:
-            return store.ui("文笔对半", "Half Split")
-        case .immersiveReading:
-            return store.ui("阅读", "Reading")
-        case .immersiveConversation:
-            return store.ui("对话", "Chat")
-        case .immersiveWriting:
-            return store.ui("写作", "Writing")
-        }
     }
 
     private var primaryText: Color {
@@ -373,7 +337,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private var controlFill: Color {
-        WeiBeiTheme.paperInset.opacity(variant == .glyph ? 0.30 : 0.38)
+        WeiBeiTheme.paperInset.opacity(0.38)
     }
 
     private var topHighlight: Color {
@@ -388,33 +352,11 @@ private struct UnifiedTopBarView: View {
     }
 
     private var backgroundPaperOpacity: Double {
-        switch variant {
-        case .glyph:
-            return 0.78
-        case .compact:
-            return 0.80
-        case .reader:
-            return 0.84
-        case .balanced:
-            return 0.82
-        case .wide:
-            return 0.86
-        }
+        0.80
     }
 
     private var backgroundMaterialOpacity: Double {
-        switch variant {
-        case .glyph:
-            return 0.10
-        case .compact:
-            return 0.09
-        case .reader:
-            return 0.08
-        case .balanced:
-            return 0.09
-        case .wide:
-            return 0.08
-        }
+        0.09
     }
 
     @ViewBuilder
@@ -432,47 +374,11 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var brandBlock: some View {
-        switch variant {
-        case .glyph:
-            HStack(spacing: 5) {
-                Image(systemName: "seal")
-                    .font(.system(size: 13.5, weight: .semibold))
-                    .foregroundStyle(primaryText.opacity(0.82))
-                Text(store.brandLatinName)
-                    .font(WeiBeiTypography.englishBrandFont(size: 14.2, weight: .semibold))
-                    .tracking(0.15)
-                    .foregroundStyle(primaryText)
-            }
-            .frame(width: 78, height: controlHeight, alignment: .leading)
-        case .compact:
-            Text(store.brandLatinName)
-                .font(WeiBeiTypography.englishBrandFont(size: 15.5, weight: .semibold))
-                .tracking(0.15)
-                .foregroundStyle(primaryText)
-                .frame(width: 62, alignment: .leading)
-        case .reader:
-            VStack(alignment: .leading, spacing: 0) {
-                Text(store.brandLatinName)
-                    .font(WeiBeiTypography.englishBrandFont(size: 14, weight: .semibold))
-                    .tracking(0.15)
-                    .foregroundStyle(secondaryText)
-                Text(shortLayoutLabel)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(tertiaryText)
-            }
-            .frame(width: 56, alignment: .leading)
-        case .balanced, .wide:
-            VStack(alignment: .leading, spacing: 0) {
-                Text(store.brandLatinName)
-                    .font(WeiBeiTypography.englishBrandFont(size: variant == .wide ? 17 : 16, weight: .semibold))
-                    .tracking(0.15)
-                    .foregroundStyle(primaryText)
-                Text(shortLayoutLabel)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(tertiaryText)
-            }
-            .frame(width: variant == .wide ? 96 : 86, alignment: .leading)
-        }
+        Text(store.brandLatinName)
+            .font(WeiBeiTypography.englishBrandFont(size: 15.5, weight: .semibold))
+            .tracking(0.15)
+            .foregroundStyle(primaryText)
+            .frame(width: 62, alignment: .leading)
     }
 
     @ViewBuilder
@@ -604,16 +510,6 @@ private struct UnifiedTopBarView: View {
                 }
             }
 
-            Section(store.ui("顶部栏", "Top Bar")) {
-                ForEach(TopBarVariant.allCases) { candidate in
-                    Button {
-                        setTopBarVariant(candidate)
-                    } label: {
-                        Label(candidate.label(language: store.interfaceLanguage), systemImage: candidate == variant ? "checkmark" : candidate.iconName)
-                    }
-                }
-            }
-
             Section(store.ui("对话形态", "Chat Surface")) {
                 ForEach(store.visibleAgentSurfaces) { surface in
                     Button(surface.label(language: store.interfaceLanguage)) {
@@ -626,15 +522,9 @@ private struct UnifiedTopBarView: View {
         } label: {
             Image(systemName: "gearshape")
         }
-        .buttonStyle(WeiBeiIconButtonStyle(size: variant == .glyph || variant == .compact ? 24 : WeiBeiMetric.iconButton))
+        .buttonStyle(WeiBeiIconButtonStyle(size: 24))
         .accessibilityLabel(Text(store.ui("设置", "Settings")))
         .help(store.ui("设置", "Settings"))
-    }
-
-    private func setTopBarVariant(_ next: TopBarVariant) {
-        withAnimation(WeiBeiMotion.layout) {
-            store.setTopBarVariant(next)
-        }
     }
 
     private func toggleReaderSearch() {
@@ -654,7 +544,7 @@ private struct UnifiedTopBarView: View {
             Image(systemName: systemName)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(WeiBeiIconButtonStyle(active: active, size: variant == .glyph || variant == .compact ? 24 : WeiBeiMetric.iconButton))
+        .buttonStyle(WeiBeiIconButtonStyle(active: active, size: 24))
         .accessibilityLabel(Text(help))
         .help(help)
     }

@@ -242,7 +242,6 @@ final class WorkspaceStore: ObservableObject {
     @Published var appearanceMode: WeiBeiAppearanceMode = .paper
     @Published var adaptImportedDocumentColors = true
     @Published var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
-    @Published var topBarVariant: TopBarVariant = TopBarVariant(rawValue: UserDefaults.standard.string(forKey: "topBarVariant") ?? "") ?? .balanced
     @Published var courseWorkspacePresented = false
     @Published private(set) var courseWorkspaceDestination: CourseWorkspaceDestination = .relations
     @Published private(set) var courseWorkspaceTargetItemID: String?
@@ -2365,12 +2364,6 @@ final class WorkspaceStore: ObservableObject {
         guard adaptImportedDocumentColors != enabled else { return }
         adaptImportedDocumentColors = enabled
         save()
-    }
-
-    func setTopBarVariant(_ variant: TopBarVariant) {
-        guard topBarVariant != variant else { return }
-        topBarVariant = variant
-        UserDefaults.standard.set(variant.rawValue, forKey: "topBarVariant")
     }
 
     func setInterfaceLanguage(_ language: WeiBeiInterfaceLanguage) {

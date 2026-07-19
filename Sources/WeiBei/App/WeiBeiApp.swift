@@ -1122,7 +1122,7 @@ struct SettingsView: View {
         case .overview:
             return store.ui("先看当前状态，再进入具体设置。", "Start with the current state, then drill into details.")
         case .appearance:
-            return store.ui("统一控制语言、主题、顶部栏和工作区布局。", "Control language, theme, top bar, and workspace layout.")
+            return store.ui("统一控制语言、主题和工作区布局。", "Control language, theme, and workspace layout.")
         case .reading:
             return store.ui("阅读设置只放当前已经接入真实行为的开关。", "Reading settings only expose behavior that is already wired.")
         case .writing:
@@ -1191,7 +1191,7 @@ struct SettingsView: View {
             settingsGroup(store.ui("快速进入", "Jump To")) {
                 settingsRouteRow(
                     title: store.ui("外观与语言", "Appearance & Language"),
-                    detail: store.ui("字体、明暗模式、顶部栏、布局。", "Fonts, theme mode, top bar, and layout."),
+                    detail: store.ui("字体、明暗模式、布局。", "Fonts, theme mode, and layout."),
                     target: .appearance
                 )
                 settingsRouteRow(
@@ -1235,21 +1235,6 @@ struct SettingsView: View {
                     } action: { mode in
                         withAnimation(WeiBeiMotion.appearance) {
                             store.setAppearanceMode(mode)
-                        }
-                    }
-                }
-
-                settingsRow(
-                    title: store.ui("顶部栏样式", "Top Bar Style"),
-                    detail: store.ui("这些方案会直接影响主窗口顶部栏，不做未接入的假预览。", "These variants directly change the main window top bar; no fake previews.")
-                ) {
-                    compactMenu(store.topBarVariant.label(language: store.interfaceLanguage)) {
-                        ForEach(TopBarVariant.allCases) { variant in
-                            Button(variant.label(language: store.interfaceLanguage)) {
-                                withAnimation(WeiBeiMotion.appearance) {
-                                    store.setTopBarVariant(variant)
-                                }
-                            }
                         }
                     }
                 }
