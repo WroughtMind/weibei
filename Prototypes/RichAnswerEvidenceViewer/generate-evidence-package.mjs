@@ -764,9 +764,10 @@ function makeHtml(outputPath, payload) {
     .badge.warn { border-color: #e8cb95; color: var(--warn); background: #fff3dd; }
     .case-item {
       border: 1px solid var(--line);
-      margin-top: 10px;
-      background: #fffaf1;
-      padding: 10px 12px;
+      margin-top: 18px;
+      background: #fffdf8;
+      padding: 0;
+      overflow: hidden;
     }
     .case-head {
       display: flex;
@@ -774,36 +775,124 @@ function makeHtml(outputPath, payload) {
       align-items: center;
       justify-content: space-between;
       flex-wrap: wrap;
+      padding: 16px 18px 12px;
+      border-bottom: 1px solid var(--line);
+      background: #f8f3e8;
     }
-    .case-head b { font-size: 16px; }
+    .case-head b { font-size: 18px; }
+    .case-head .question { max-width: 820px; color: var(--ink-soft); }
     .small { font-size: 12px; color: var(--ink-soft);}
     .attempt {
-      border-top: 1px dashed var(--line);
-      margin-top: 10px;
-      padding-top: 10px;
+      padding: 14px 18px 18px;
     }
     .attempt h4 {
       margin: 0 0 5px 0;
       font-size: 14px;
     }
-    .images {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+    .mode-bar {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin: 12px 0 8px;
+    }
+    .mode-button, .visual-choice, .dialog-close {
+      appearance: none;
+      border: 1px solid var(--line);
+      background: #fffdf8;
+      color: var(--ink);
+      padding: 8px 12px;
+      font: inherit;
+      cursor: pointer;
+    }
+    .mode-button.active, .visual-choice.active {
+      border-color: #8f563f;
+      background: #8f563f;
+      color: #fff;
+    }
+    .mode-note {
+      margin: 0;
+      color: var(--ink-soft);
+      font-size: 13px;
+    }
+    .case-summary {
+      padding: 0 18px;
+    }
+    .visual-review {
+      margin-bottom: 14px;
+    }
+    .visual-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
       gap: 10px;
-      margin-top: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
     }
-    .img-block {
-      border: 1px dashed var(--line);
-      padding: 6px;
-      text-align: center;
-      background: #fff;
+    .visual-choices {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
     }
-    .img-block img {
-      max-width: 100%;
-      max-height: 220px;
+    .visual-choice {
+      padding: 5px 9px;
+      font-size: 12px;
+    }
+    .visual-frame {
+      display: block;
+      width: 100%;
+      border: 1px solid var(--line);
+      padding: 0;
+      background: #ece5d8;
+      cursor: zoom-in;
+    }
+    .visual-frame img {
+      width: 100%;
+      max-height: 760px;
+      object-fit: contain;
       display: block;
       margin: 0 auto;
-      background: #eee;
+      background: #ece5d8;
+    }
+    .visual-empty {
+      border: 1px dashed #d6b270;
+      background: #fff5df;
+      color: #76531c;
+      padding: 18px;
+    }
+    .review-status {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin: 10px 0;
+    }
+    .evidence-details {
+      margin-top: 10px;
+      border-top: 1px dashed var(--line);
+      padding-top: 10px;
+    }
+    dialog {
+      width: min(96vw, 1540px);
+      max-height: 94vh;
+      border: 1px solid var(--line);
+      padding: 12px;
+      background: #f8f3e8;
+      color: var(--ink);
+    }
+    dialog::backdrop { background: rgba(24, 20, 15, 0.82); }
+    .dialog-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .dialog-image {
+      display: block;
+      width: 100%;
+      max-height: calc(94vh - 72px);
+      object-fit: contain;
+      background: #ece5d8;
     }
     .code {
       white-space: pre-wrap;
@@ -829,21 +918,29 @@ function makeHtml(outputPath, payload) {
       min-width: 130px;
       font-size: 12px;
     }
+    @media (max-width: 720px) {
+      body { padding: 12px 8px; }
+      .panel { padding: 10px; }
+      .filter-row { grid-template-columns: 1fr 1fr; }
+      .attempt { padding: 10px; }
+      .case-head { padding: 12px 10px; }
+      .case-summary { padding: 0 10px; }
+    }
   `;
   const html = `<!DOCTYPE html>
   <html lang="zh">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>富回答56题验收包</title>
+    <title>富回答生成式 UI 验收</title>
     <style>${css}</style>
   </head>
   <body>
     <div class="page">
       <div class="title">
-        <h1>富回答验收包（离线浏览）</h1>
-        <div class="meta-line">用于 40+6+9+1 场景的验收展示；读取来源：<strong>${escapeHtml(payload.run.sourceRunDir)}</strong></div>
-        <div class="meta-line">本包仅聚合原始留档，不执行任何联网请求；未完成用户验收前请勿对外结项</div>
+        <h1>富回答生成式 UI 验收</h1>
+        <div class="meta-line">默认只展示 40 个真实富回答截图；纯文本、诚实降级和非法协议另放在“边界验证”。</div>
+        <div class="meta-line">协议通过不等于视觉通过；这里保留原始留档，最终仍由用户验收。</div>
         <div class="pending-pill">${payload.overview.completionState}</div>
       </div>
 
@@ -865,25 +962,32 @@ function makeHtml(outputPath, payload) {
         </div>
         <table class="summary-table">
           <thead>
-            <tr><th>维度</th><th>应有</th><th>实际</th><th>差值</th><th>判定</th></tr>
+            <tr><th>维度</th><th>应有</th><th>实际</th><th>差值</th><th>覆盖</th></tr>
           </thead>
           <tbody>
-            <tr><td>rich（参数/可视化）</td><td>40</td><td>${payload.overview.actualByKind["rich"]}</td><td>${payload.overview.missingGapByKind.find((i) => i.kind === "rich").gap}</td><td>${(payload.overview.actualByKind["rich"] >= 40 ? "达标" : "不足")}</td></tr>
-            <tr><td>text-only（纯文本）</td><td>6</td><td>${payload.overview.actualByKind["text-only"]}</td><td>${payload.overview.missingGapByKind.find((i) => i.kind === "text-only").gap}</td><td>${(payload.overview.actualByKind["text-only"] >= 6 ? "达标" : "不足")}</td></tr>
-            <tr><td>degradation（降级）</td><td>9</td><td>${payload.overview.actualByKind["degradation"]}</td><td>${payload.overview.missingGapByKind.find((i) => i.kind === "degradation").gap}</td><td>${(payload.overview.actualByKind["degradation"] >= 9 ? "达标" : "不足")}</td></tr>
-            <tr><td>invalid-protocol（非法协议）</td><td>1</td><td>${payload.overview.actualByKind["invalid-protocol"]}</td><td>${payload.overview.missingGapByKind.find((i) => i.kind === "invalid-protocol").gap}</td><td>${(payload.overview.actualByKind["invalid-protocol"] >= 1 ? "达标" : "不足")}</td></tr>
-            <tr><td>总计</td><td>56</td><td>${payload.overview.totalActualCases}</td><td>${TARGET_TOTAL - payload.overview.totalActualCases}</td><td>${payload.overview.totalActualCases >= 56 ? "达标" : "不足"}</td></tr>
+            <tr><td>rich（生成式 UI）</td><td>40</td><td>${payload.overview.actualByKind["rich"]}</td><td>${payload.overview.missingGapByKind.find((i) => i.kind === "rich").gap}</td><td>${(payload.overview.actualByKind["rich"] >= 40 ? "完整" : "不足")}</td></tr>
+            <tr><td>text-only（纯文本边界）</td><td>6</td><td>${payload.overview.actualByKind["text-only"]}</td><td>${payload.overview.missingGapByKind.find((i) => i.kind === "text-only").gap}</td><td>${(payload.overview.actualByKind["text-only"] >= 6 ? "完整" : "不足")}</td></tr>
+            <tr><td>degradation（诚实降级边界）</td><td>9</td><td>${payload.overview.actualByKind["degradation"]}</td><td>${payload.overview.missingGapByKind.find((i) => i.kind === "degradation").gap}</td><td>${(payload.overview.actualByKind["degradation"] >= 9 ? "完整" : "不足")}</td></tr>
+            <tr><td>invalid-protocol（非法协议边界）</td><td>1</td><td>${payload.overview.actualByKind["invalid-protocol"]}</td><td>${payload.overview.missingGapByKind.find((i) => i.kind === "invalid-protocol").gap}</td><td>${(payload.overview.actualByKind["invalid-protocol"] >= 1 ? "完整" : "不足")}</td></tr>
+            <tr><td>总计</td><td>56</td><td>${payload.overview.totalActualCases}</td><td>${TARGET_TOTAL - payload.overview.totalActualCases}</td><td>${payload.overview.totalActualCases >= 56 ? "完整" : "不足"}</td></tr>
           </tbody>
         </table>
       </section>
 
       <section class="panel">
-        <h2>状态 / 学科 / 形态 / 轮次过滤</h2>
+        <h2>验收范围</h2>
+        <div class="mode-bar" id="review-mode-bar">
+          <button class="mode-button active" type="button" data-review-mode="rich">生成式 UI（40）</button>
+          <button class="mode-button" type="button" data-review-mode="boundary">边界验证（16）</button>
+          <button class="mode-button" type="button" data-review-mode="all">全部证据（56）</button>
+        </div>
+        <p class="mode-note" id="review-mode-note">当前只展示真正要求富回答的题目；每题默认显示最新一轮，点击截图可放大。</p>
+        <h3>筛选</h3>
         <div class="filter-row">
           <select id="filter-status"><option value="__all">全部状态</option></select>
           <select id="filter-subject"><option value="__all">全部学科</option></select>
           <select id="filter-shape"><option value="__all">全部形态</option></select>
-          <select id="filter-repetition"><option value="__all">全部轮次</option></select>
+          <select id="filter-repetition"><option value="__latest">最新一轮</option><option value="__all">全部轮次</option></select>
         </div>
         <input id="filter-keyword" type="text" placeholder="关键词搜索（题目 / caseID）" />
       </section>
@@ -894,10 +998,17 @@ function makeHtml(outputPath, payload) {
       </section>
 
       <section>
-        <h2>逐题验收（支持三轮差异对照）</h2>
+        <h2 id="case-list-title">生成式 UI 逐题验收</h2>
         <div id="case-list"></div>
       </section>
     </div>
+    <dialog id="image-dialog">
+      <div class="dialog-head">
+        <strong id="image-dialog-title">真实魏碑窗口</strong>
+        <button class="dialog-close" type="button" id="image-dialog-close">关闭</button>
+      </div>
+      <img class="dialog-image" id="image-dialog-image" alt="真实魏碑窗口截图" />
+    </dialog>
     <script>
       const EVIDENCE_DATA = ${safeJsonString(payload)};
       window.__EVIDENCE_DATA = EVIDENCE_DATA;
@@ -917,6 +1028,7 @@ function evidenceViewerRuntime() {
 const data = window.__EVIDENCE_DATA || {};
 const cases = Array.isArray(data.cases) ? data.cases : [];
 const filters = data.overview && data.overview.filterOptions ? data.overview.filterOptions : {};
+let reviewMode = "rich";
 
 function e(v) {
   if (v === undefined || v === null) return "";
@@ -954,6 +1066,7 @@ function buildOptions() {
 
 function getFilters() {
   return {
+    reviewMode,
     status: document.getElementById("filter-status").value,
     subject: document.getElementById("filter-subject").value,
     shape: document.getElementById("filter-shape").value,
@@ -967,7 +1080,7 @@ function isMatchedAttempt(attempt, filter) {
   if (filter.status !== "__all" && attempt.status !== filter.status) return false;
   if (filter.subject !== "__all" && attempt.subject !== filter.subject) return false;
   if (filter.shape !== "__all" && attempt.actualShape !== filter.shape) return false;
-  if (filter.repetition !== "__all" && String(attempt.repetition) !== String(filter.repetition)) return false;
+  if (filter.repetition !== "__all" && filter.repetition !== "__latest" && String(attempt.repetition) !== String(filter.repetition)) return false;
   if (filter.keyword) {
     const keyword = filter.keyword;
     const fields = [attempt.caseID, attempt.question, attempt.subject, attempt.caseKind];
@@ -977,15 +1090,52 @@ function isMatchedAttempt(attempt, filter) {
   return true;
 }
 
-function statusBadge(value) {
-  const isPass = value === "passed";
-  const cls = isPass ? "ok" : "warn";
-  return `<span class="badge ${cls}">${e(value || "缺失")}</span>`;
+function isRichAttempt(attempt) {
+  return attempt?.caseKind === "rich"
+    && String(attempt?.actualShape || "").includes("rich")
+    && Boolean(attempt?.modelRawReply?.richAnswerExists);
 }
 
-function safeJson(txt) {
-  if (!txt) return "缺失";
-  return `<div class="code">${e(txt)}</div>`;
+function screenshotAssets(attempt) {
+  return [
+    { key: "overview", label: "完整窗口", src: attempt?.overviewImage },
+    { key: "before", label: "操作前", src: attempt?.beforeImage },
+    { key: "after", label: "操作后", src: attempt?.interactionEvidence ? attempt?.afterImage : null },
+  ].filter((item) => Boolean(item.src));
+}
+
+function renderVisualReview(attempt) {
+  const assets = screenshotAssets(attempt);
+  if (assets.length === 0) {
+    return `<div class="visual-empty">没有可展示的真实窗口截图，本轮不能进入视觉验收。</div>`;
+  }
+  const preferred = assets.find((item) => item.key === "overview") || assets[0];
+  const choices = assets.map((item) => `<button class="visual-choice ${item.key === preferred.key ? "active" : ""}" type="button" data-src="${e(item.src)}" data-label="${e(item.label)}">${e(item.label)}</button>`).join("");
+  return `<div class="visual-review">
+    <div class="visual-toolbar">
+      <div class="visual-choices">${choices}</div>
+      <span class="small">第 ${e(attempt.repetition)} 轮真实魏碑窗口 · 点击图片放大</span>
+    </div>
+    <button class="visual-frame" type="button" data-image-title="${e(attempt.caseID)} · ${e(preferred.label)}">
+      <img src="${e(preferred.src)}" alt="${e(attempt.caseID)} · ${e(preferred.label)}" loading="lazy" />
+    </button>
+  </div>`;
+}
+
+function reviewBadges(attempt) {
+  const protocol = attempt.status === "passed"
+    ? `<span class="badge ok">${attempt.caseKind === "rich" ? "协议检查通过" : "边界行为检查通过"}</span>`
+    : `<span class="badge warn">协议或模型结果待修</span>`;
+  if (attempt.caseKind !== "rich") {
+    return `${protocol}<span class="badge">本题按要求不生成 UI</span><span class="badge warn">不代表视觉质量通过</span>`;
+  }
+  const generated = isRichAttempt(attempt)
+    ? `<span class="badge ok">已产生生成式 UI</span>`
+    : `<span class="badge warn">没有真实生成式 UI</span>`;
+  const screenshot = screenshotAssets(attempt).length > 0
+    ? `<span class="badge">真实窗口截图已留档</span>`
+    : `<span class="badge warn">截图缺失</span>`;
+  return `${protocol}${generated}${screenshot}<span class="badge warn">待用户审美与学习效果验收</span>`;
 }
 
 function renderAttempt(attempt) {
@@ -998,13 +1148,6 @@ function renderAttempt(attempt) {
   const t2Rows = (attempt.expressionPlan?.t2Compositions || []).map((item) => {
     return `<li>scene:${e(item.sceneID)} / family:${e(item.family)} / rootID:${e(item.rootID)} / roles:${e((item.roles || []).join(",") || "无")} / nodes:${e(item.nodeCount)} / rows:${e(item.dataRowCount)}</li>`;
   }).join("");
-
-  const imageBlock = (label, src, miss) => {
-    if (src) {
-      return `<div class="img-block"><div>${label}</div><img src="${e(src)}" alt="${label}" loading="lazy" /></div>`;
-    }
-    return `<div class="img-block missing">${label}：${miss}</div>`;
-  };
 
   const protocolItems = (attempt.toolAndProtocolValidation?.passedChecks || []).map((item) => `<li>${e(item)}</li>`).join("");
   const issueItems = (attempt.toolAndProtocolValidation?.issues || []).map((item) => `<li>${e(item)}</li>`).join("");
@@ -1020,27 +1163,29 @@ function renderAttempt(attempt) {
 
   return `
       <div class="attempt">
-        <h4>第 ${e(attempt.repetition)} 轮</h4>
-        <div class="badges">
-          ${statusBadge(attempt.status)}
+        ${renderVisualReview(attempt)}
+        <div class="review-status">
+          ${reviewBadges(attempt)}
           <span class="badge">形态 ${e(attempt.actualShape)}</span>
           <span class="badge">T1 ${e(attempt.t1SceneCount)} / T2 ${e(attempt.t2SceneCount)}</span>
           <span class="badge">耗时 ${e(attempt.elapsedSeconds ?? "缺失")}s</span>
-          <span class="badge ${attempt.status === "passed" ? "ok" : "warn"}">${attempt.status === "passed" ? "已达标" : "待复核"}</span>
           <span class="badge ${screenshotEvidence.replaced ? "ok" : ""}">${screenshotEvidence.replaced ? "已补真实窗口证据" : "原始截图链"}</span>
         </div>
-        <div class="small">T1/T2 计划摘要：${e(delta)}</div>
-        <div class="badges">
-          <span class="badge">request: ${e(missing.request)}</span>
-          <span class="badge">reply: ${e(missing.reply)}</span>
-          <span class="badge">validation: ${e(missing.validation)}</span>
-          <span class="badge">record: ${e(missing.record)}</span>
-          <span class="badge">完整窗口: ${e(missing.overviewScreenshot)}</span>
-          <span class="badge">before截图: ${e(missing.beforeScreenshot)}</span>
-          <span class="badge">after截图: ${e(missing.afterScreenshot)}</span>
-        </div>
-        <p><strong>失败原因:</strong> ${e(attempt.failureReason || "无")}</p>
-        <p><strong>截图证据:</strong> 原状态 ${e(screenshotEvidence.originalStatus)} / 当前质量 ${e(screenshotEvidence.qualityStatus)}${screenshotEvidence.replaced ? ` / 修复记录 ${e(screenshotEvidence.repairEvidence?.manifestPath || "已登记")}` : ""}</p>
+        <details class="evidence-details">
+          <summary>查看本轮协议、来源和原始记录</summary>
+          <div class="small">运行摘要：${e(delta)}</div>
+          <div class="badges">
+            <span class="badge">request: ${e(missing.request)}</span>
+            <span class="badge">reply: ${e(missing.reply)}</span>
+            <span class="badge">validation: ${e(missing.validation)}</span>
+            <span class="badge">record: ${e(missing.record)}</span>
+            <span class="badge">完整窗口: ${e(missing.overviewScreenshot)}</span>
+            <span class="badge">before截图: ${e(missing.beforeScreenshot)}</span>
+            <span class="badge">after截图: ${e(missing.afterScreenshot)}</span>
+          </div>
+          <p><strong>失败原因:</strong> ${e(attempt.failureReason || "无")}</p>
+          <p><strong>截图技术状态:</strong> 原状态 ${e(screenshotEvidence.originalStatus)} / 自动检查 ${e(screenshotEvidence.qualityStatus)}${screenshotEvidence.replaced ? ` / 修复记录 ${e(screenshotEvidence.repairEvidence?.manifestPath || "已登记")}` : ""}</p>
+        </details>
         <details>
           <summary>题目与材料</summary>
           <p><strong>题目：</strong>${e(attempt.question)}</p>
@@ -1074,11 +1219,6 @@ function renderAttempt(attempt) {
           <div>sourceBinding</div>
           <ul>${sourceLines || "<li>无</li>"}</ul>
         </details>
-        <div class="images">
-          ${attempt.overviewImage ? imageBlock("完整窗口", attempt.overviewImage, "overview截图缺失") : ""}
-          ${imageBlock("操作前", attempt.beforeImage, "before截图缺失")}
-          ${attempt.interactionEvidence ? imageBlock("操作后", attempt.afterImage, "after截图缺失") : ""}
-        </div>
       </div>
   `;
 }
@@ -1107,22 +1247,46 @@ function safeDelta(prev, next) {
   return `${prefix}${v}s`;
 }
 
+function matchesReviewMode(caseItem, mode) {
+  if (mode === "rich") return caseItem.caseKind === "rich";
+  if (mode === "boundary") return caseItem.caseKind !== "rich";
+  return true;
+}
+
+function newestAttempt(attempts) {
+  return [...attempts].sort((left, right) => Number(right.repetition || 0) - Number(left.repetition || 0))[0];
+}
+
+function caseNeedsReview(caseItem) {
+  return (caseItem.attempts || []).some((attempt) => {
+    if (attempt.status !== "passed") return true;
+    if (caseItem.caseKind === "rich" && !isRichAttempt(attempt)) return true;
+    return screenshotAssets(attempt).length === 0;
+  });
+}
+
 function renderCase(caseItem, filter) {
-  const visibleAttempts = (caseItem.attempts || []).filter((attempt) => isMatchedAttempt(attempt, filter));
-  if (visibleAttempts.length === 0) return "";
+  if (!matchesReviewMode(caseItem, filter.reviewMode)) return "";
+  const matchedAttempts = (caseItem.attempts || []).filter((attempt) => isMatchedAttempt(attempt, filter));
+  if (matchedAttempts.length === 0) return "";
+  const visibleAttempts = filter.repetition === "__latest"
+    ? [newestAttempt(matchedAttempts)]
+    : matchedAttempts;
 
   const caseTag = caseItem.caseID || "unknown";
-  const head = `<div class="case-head"><b>${e(caseItem.caseID || "unknown")}</b><span class="small">${e(caseItem.subject || "未定义学科")} / ${e(caseItem.caseKind || "unknown")} / ${e(caseItem.question || "").slice(0, 90)}</span></div>`;
+  const head = `<div class="case-head"><div><b>${e(caseItem.subject || "未定义学科")}</b><div class="question">${e(caseItem.question || "")}</div></div><span class="small">${e(caseTag)}</span></div>`;
   const attemptsBlocks = visibleAttempts.map(renderAttempt).join("");
-  const diffHtml = buildDiff(visibleAttempts);
+  const diffHtml = filter.repetition === "__all" ? buildDiff(visibleAttempts) : "";
+  const needsReview = caseNeedsReview(caseItem);
   return `<article class="case-item">
     ${head}
-    <div class="badges">
-      ${caseItem.attempts.some((item) => item.status !== "passed") ? '<span class="badge warn">待用户验收</span>' : '<span class="badge ok">已通过形态</span>'}
+    <div class="case-summary badges">
+      ${needsReview ? '<span class="badge warn">存在待修或待复核轮次</span>' : '<span class="badge">四轮协议记录完整</span>'}
+      <span class="badge warn">视觉仍待用户验收</span>
       <span class="badge">重复数：${caseItem.attempts.length}</span>
-      <span class="badge">caseID：${e(caseTag)}</span>
+      <span class="badge">类型：${e(caseItem.caseKind)}</span>
     </div>
-    ${diffHtml ? `<div><strong>三轮差异</strong>${diffHtml}</div>` : ""}
+    ${diffHtml ? `<div class="case-summary"><strong>四轮差异</strong>${diffHtml}</div>` : ""}
     ${attemptsBlocks}
   </article>`;
 }
@@ -1130,7 +1294,14 @@ function renderCase(caseItem, filter) {
 function render() {
   const filter = getFilters();
   const list = document.getElementById("case-list");
-  const rendered = cases
+  const orderedCases = [...cases].sort((left, right) => {
+    const reviewDelta = Number(caseNeedsReview(left)) - Number(caseNeedsReview(right));
+    if (reviewDelta !== 0) return reviewDelta;
+    const subjectDelta = String(left.subject || "").localeCompare(String(right.subject || ""), "zh-CN");
+    if (subjectDelta !== 0) return subjectDelta;
+    return String(left.caseID || "").localeCompare(String(right.caseID || ""));
+  });
+  const rendered = orderedCases
     .map((item) => renderCase(item, filter))
     .filter(Boolean)
     .join("");
@@ -1142,6 +1313,55 @@ document.getElementById("filter-subject").addEventListener("change", render);
 document.getElementById("filter-shape").addEventListener("change", render);
 document.getElementById("filter-repetition").addEventListener("change", render);
 document.getElementById("filter-keyword").addEventListener("input", render);
+document.getElementById("review-mode-bar").addEventListener("click", (event) => {
+  const button = event.target.closest("[data-review-mode]");
+  if (!button) return;
+  reviewMode = button.dataset.reviewMode || "rich";
+  document.querySelectorAll("[data-review-mode]").forEach((item) => item.classList.toggle("active", item === button));
+  const notes = {
+    rich: "当前只展示真正要求富回答的 40 道题；每题默认显示最新一轮，点击截图可放大。",
+    boundary: "这里验证应保持纯文本、诚实降级或拦截非法协议；协议通过不代表生成式 UI 或视觉质量通过。",
+    all: "这里展示全部 56 题证据；生成式 UI 与边界题仍使用不同标记，不能混为整体视觉通过。",
+  };
+  document.getElementById("review-mode-note").textContent = notes[reviewMode] || notes.rich;
+  document.getElementById("case-list-title").textContent = reviewMode === "rich"
+    ? "生成式 UI 逐题验收"
+    : reviewMode === "boundary" ? "边界行为逐题核对" : "全部证据";
+  render();
+});
+
+const caseList = document.getElementById("case-list");
+const imageDialog = document.getElementById("image-dialog");
+const imageDialogImage = document.getElementById("image-dialog-image");
+const imageDialogTitle = document.getElementById("image-dialog-title");
+
+caseList.addEventListener("click", (event) => {
+  const choice = event.target.closest(".visual-choice");
+  if (choice) {
+    const review = choice.closest(".visual-review");
+    const image = review?.querySelector(".visual-frame img");
+    const frame = review?.querySelector(".visual-frame");
+    if (!review || !image || !frame) return;
+    review.querySelectorAll(".visual-choice").forEach((item) => item.classList.toggle("active", item === choice));
+    image.src = choice.dataset.src || image.src;
+    image.alt = `${choice.closest(".case-item")?.querySelector(".case-head .small")?.textContent || "富回答"} · ${choice.dataset.label || "窗口截图"}`;
+    frame.dataset.imageTitle = image.alt;
+    return;
+  }
+  const frame = event.target.closest(".visual-frame");
+  if (!frame) return;
+  const image = frame.querySelector("img");
+  if (!image) return;
+  imageDialogImage.src = image.src;
+  imageDialogImage.alt = image.alt;
+  imageDialogTitle.textContent = frame.dataset.imageTitle || image.alt || "真实魏碑窗口";
+  imageDialog.showModal();
+});
+
+document.getElementById("image-dialog-close").addEventListener("click", () => imageDialog.close());
+imageDialog.addEventListener("click", (event) => {
+  if (event.target === imageDialog) imageDialog.close();
+});
 
 buildOptions();
 fillMissingList();
