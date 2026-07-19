@@ -663,7 +663,7 @@ manifest_complete_for_resume() {
     --arg sourceLockID "$expected_source_lock_id" \
     '.status == "succeeded"
       and .captureStatus == "succeeded"
-      and (.qualityGate.status == "pass" or .qualityGate.status == "warn")
+      and .qualityGate.status == "pass"
       and ((.reviewStatus // "") != "")
       and .caseID == $caseID
       and ((.repetition | tostring) == $repetition)

@@ -470,10 +470,9 @@ func paneRecord(identifier: String, stage: String, frame: CGRect) -> RectRecord 
     )
 }
 
-func recordsReplacingPaneFrames(_ records: [RectRecord], with ack: VerifiedCaptureAck?) -> [RectRecord] {
+func recordsAppendingPaneFrames(_ records: [RectRecord], with ack: VerifiedCaptureAck?) -> [RectRecord] {
     guard let frames = ack?.endPaneFrames else { return records }
-    let paneIdentifiers = Set(["stable-document-slot-reader", "persistent-pane-reader", "stable-document-slot-agent", "persistent-pane-agent"])
-    var merged = records.filter { !paneIdentifiers.contains($0.identifier) }
+    var merged = records
     merged.append(paneRecord(identifier: "stable-document-slot-reader", stage: ack?.stage ?? "", frame: frames.reader))
     merged.append(paneRecord(identifier: "stable-document-slot-agent", stage: ack?.stage ?? "", frame: frames.agent))
     return merged
@@ -550,6 +549,107 @@ func paneToggleRecord(records: [RectRecord], identifier: String) -> RectRecord? 
 func paneIsVisible(toggle: RectRecord, hiddenActionLabels: [String]) -> Bool {
     let description = toggle.desc.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
     return hiddenActionLabels.contains { description.contains($0.lowercased()) }
+}
+
+func paneIsHiddenByVisibleAction(toggle: RectRecord, visibleActionLabels: [String]) -> Bool {
+    let description = toggle.desc.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return visibleActionLabels.contains { description.contains($0.lowercased()) }
+}
+
+func frameObject(_ frame: CGRect) -> [String: Any] {
+    [
+        "x": roundValue(frame.minX),
+        "y": roundValue(frame.minY),
+        "width": roundValue(frame.width),
+        "height": roundValue(frame.height),
+        "area": roundValue(frame.width * frame.height),
+    ]
+}
+
+func structuredFailure(stage: String, category: String, reason: String, details: [String: Any] = [:]) -> [String: Any] {
+    var object: [String: Any] = [
+        "stage": stage,
+        "category": category,
+        "reason": reason,
+    ]
+    for (key, value) in details {
+        object[key] = value
+    }
+    return object
+}
+
+func checkSourceGroundedRichInteractionEvidence(
+    beforeRecords: [RectRecord],
+    afterRecords: [RectRecord]
+) -> CheckResult {
+    var failures: [[String: Any]] = []
+    var stageMetrics: [[String: Any]] = []
+
+    for stage in [("before", beforeRecords), ("after", afterRecords)] {
+        let records = stage.1
+        let panes = paneRecords(records: records)
+        var paneMetrics: [[String: Any]] = []
+
+        if records.isEmpty {
+            failures.append(structuredFailure(
+                stage: stage.0,
+                category: "ax-empty",
+                reason: "\(stage.0) AX 快照为空，不能把富回答真实显示判为通过"
+            ))
+        }
+
+        for pane in [("reader", panes.reader), ("agent", panes.agent)] {
+            if let record = pane.1 {
+                paneMetrics.append([
+                    "pane": pane.0,
+                    "identifier": record.identifier,
+                    "frame": frameObject(record.frame),
+                ])
+            } else {
+                failures.append(structuredFailure(
+                    stage: stage.0,
+                    category: "pane-missing",
+                    reason: "\(stage.0) 缺少 \(pane.0) 正面积窗格",
+                    details: ["pane": pane.0]
+                ))
+            }
+        }
+
+        if let readerToggle = paneToggleRecord(records: records, identifier: "doc.text"),
+           paneIsHiddenByVisibleAction(toggle: readerToggle, visibleActionLabels: ["显示文稿", "show document"]) {
+            failures.append(structuredFailure(
+                stage: stage.0,
+                category: "reader-hidden",
+                reason: "\(stage.0) reader 开关显示“显示文稿/Show document”，说明 reader 已隐藏",
+                details: [
+                    "pane": "reader",
+                    "toggleIdentifier": readerToggle.identifier,
+                    "toggleDescription": readerToggle.desc,
+                    "toggleFrame": frameObject(readerToggle.frame),
+                ]
+            ))
+        }
+
+        stageMetrics.append([
+            "stage": stage.0,
+            "recordCount": records.count,
+            "panes": paneMetrics,
+            "readerToggleDescription": paneToggleRecord(records: records, identifier: "doc.text")?.desc ?? "",
+        ])
+    }
+
+    let status: GateStatus = failures.isEmpty ? .pass : .fail
+    return CheckResult(
+        id: "source-grounded-rich-interaction-evidence",
+        status: status,
+        score: status == .pass ? 20 : 0,
+        summary: failures.first?["reason"] as? String ?? "source-grounded 富回答 before/after AX、reader 与 agent 窗格证据完整",
+        metrics: [
+            "mode": "rich-interaction",
+            "failures": failures,
+            "stages": stageMetrics,
+        ]
+    )
 }
 
 func checkRequiredPaneVisibility(
@@ -1011,10 +1111,12 @@ func run() throws {
     let beforeAck = try loadVerifiedCaptureAck(path: arguments.beforeAckPath, expectedStage: "before", expectedImagePath: arguments.beforePath)
     let afterAck = try loadVerifiedCaptureAck(path: arguments.afterAckPath, expectedStage: "after", expectedImagePath: arguments.afterPath)
     let singleAck = try loadVerifiedCaptureAck(path: arguments.singleAckPath, expectedStage: "single", expectedImagePath: arguments.singlePath)
-    let beforeRecords = recordsReplacingPaneFrames(try parseAX(path: arguments.axBeforePath), with: singleImage == nil ? beforeAck : singleAck)
-    let afterRecords = recordsReplacingPaneFrames(try parseAX(path: arguments.axAfterPath), with: afterAck)
+    let rawBeforeRecords = try parseAX(path: arguments.axBeforePath)
+    let rawAfterRecords = try parseAX(path: arguments.axAfterPath)
+    let beforeRecords = recordsAppendingPaneFrames(rawBeforeRecords, with: singleImage == nil ? beforeAck : singleAck)
+    let afterRecords = recordsAppendingPaneFrames(rawAfterRecords, with: afterAck)
     let representativeAck = singleImage == nil ? afterAck : singleAck
-    let representativeRecords = recordsReplacingPaneFrames(singleImage == nil ? afterRecords : beforeRecords, with: representativeAck)
+    let representativeRecords = recordsAppendingPaneFrames(singleImage == nil ? afterRecords : beforeRecords, with: representativeAck)
     let usedAckFallback = singleImage == nil
         ? (beforeAck?.endPaneFrames != nil || afterAck?.endPaneFrames != nil)
         : (singleAck?.endPaneFrames != nil)
@@ -1034,6 +1136,12 @@ func run() throws {
     }
 
     var checks: [CheckResult] = []
+    if singleImage == nil {
+        checks.append(checkSourceGroundedRichInteractionEvidence(
+            beforeRecords: rawBeforeRecords,
+            afterRecords: rawAfterRecords
+        ))
+    }
     checks.append(checkVisibleContent(images: checkedImages, axRecords: representativeRecords))
     checks.append(checkInteractionChanged(beforeImage: beforeImage, afterImage: afterImage, beforeRecords: beforeRecords, afterRecords: afterRecords))
     checks.append(checkRequiredPaneVisibility(
