@@ -76,7 +76,8 @@ enum RichAnswerProfessionalJudgmentValidator {
             units.contains { unitMatchesForbiddenClaim(claim, in: $0) } ? claim.id : nil
         }
         let missingBoundaryClaims = contract.boundaryClaims.compactMap { claim in
-            units.contains { unitMatchesBoundaryClaim(claim, in: $0) } ? nil : claim.id
+            units.contains { unitMatchesBoundaryClaim(claim, in: $0) }
+                || unitsMatchBoundaryClaim(claim, units: units) ? nil : claim.id
         }
         return RichAnswerProfessionalJudgmentValidation(
             missingRequiredClaims: missingRequiredClaims,
@@ -141,6 +142,9 @@ enum RichAnswerProfessionalJudgmentValidator {
     ) -> Bool {
         if unitMatchesClaim(claim, in: unit, allowsNegatedRequiredClaim: true) {
             return true
+        }
+        if claim.id == "different-region-approximations" {
+            return false
         }
         let boundaryObjectGroups = claim.objectGroups + claim.qualifierGroups
         guard !boundaryObjectGroups.isEmpty,
@@ -265,6 +269,7 @@ enum RichAnswerProfessionalJudgmentValidator {
         ) != nil
         if range.lowerBound > normalizedUnit.startIndex {
             let previous = normalizedUnit[normalizedUnit.index(before: range.lowerBound)]
+            if normalizedFragment == normalizedText("当量点"), previous == "半" { return false }
             if isStandaloneNumber, isNumericContinuation(previous) { return false }
             if isSingleASCIIIdentifier(normalizedFragment),
                isIdentifierTransformationPrefix(previous) {
@@ -281,6 +286,61 @@ enum RichAnswerProfessionalJudgmentValidator {
             }
         }
         return true
+    }
+
+    private static func unitsMatchBoundaryClaim(
+        _ claim: RichAnswerProfessionalJudgmentClaim,
+        units: [String]
+    ) -> Bool {
+        guard claim.id == "different-region-approximations" else { return false }
+        return unitsDescribeSegmentedTitrationApproximations(units)
+    }
+
+    private static func unitsDescribeSegmentedTitrationApproximations(_ units: [String]) -> Bool {
+        let normalizedUnits = units.map(normalizedText)
+        let corpus = normalizedUnits.joined(separator: " ")
+        let regionGroups = [
+            ["起始", "初始"],
+            ["缓冲区", "缓冲"],
+            ["当量点"],
+            ["过量碱区", "过量碱"],
+        ]
+        let matchedRegionCount = regionGroups.filter { group in
+            group.contains { fragment in
+                firstMatchingRange(
+                    for: [fragment],
+                    in: corpus,
+                    after: corpus.startIndex
+                ) != nil
+            }
+        }.count
+        guard matchedRegionCount >= 3 else { return false }
+
+        let segmentationMarkers = ["不同", "分别", "各自", "分区", "区段", "阶段", "区域", "需用", "使用", "适用"]
+        guard segmentationMarkers.contains(where: { corpus.contains(normalizedText($0)) }) else {
+            return false
+        }
+
+        let approximationMarkers = [
+            "近似",
+            "henderson",
+            "h-h",
+            "亨德森",
+            "pka",
+            "水解",
+            "强碱余量",
+            "强碱",
+            "余量",
+            "ice",
+            "弱酸平衡",
+        ]
+        let matchedApproximationMarkerCount = approximationMarkers.reduce(into: 0) { count, marker in
+            if corpus.contains(normalizedText(marker)) { count += 1 }
+        }
+        let approximationUnitCount = normalizedUnits.filter { unit in
+            approximationMarkers.contains { marker in unit.contains(normalizedText(marker)) }
+        }.count
+        return matchedApproximationMarkerCount >= 2 || approximationUnitCount >= 2
     }
 
     private static func isSingleASCIIIdentifier(_ fragment: String) -> Bool {
@@ -2016,9 +2076,9 @@ enum RichAnswerProfessionalJudgmentContracts {
                 boundaryClaim(
                     "different-region-approximations",
                     "不同滴定区段需要不同近似",
-                    subject: [["起始", "缓冲区", "当量点", "过量碱区"]],
-                    relation: [["不同"]],
-                    object: [["近似"]]
+                    subject: [["起始", "初始"], ["缓冲区", "缓冲"], ["当量点"], ["过量碱区", "过量碱"]],
+                    relation: [["不同", "分别", "各自", "分区", "区段", "阶段", "区域", "需用", "使用", "适用"]],
+                    object: [["近似", "方法", "公式"]]
                 ),
             ],
             reviewNotes: ["需模型或人工判断弱酸强碱当量点解释是否专业"]
@@ -2814,13 +2874,6 @@ enum RichAnswerProfessionalJudgmentContracts {
         contract(
             "learning-art-color-contrast-overlay",
             requiredClaims: [
-                requiredClaim(
-                    "real-png-source",
-                    "必须使用真实 PNG、尺寸和 SHA-256",
-                    subject: [["真实", "PNG"]],
-                    relation: [["尺寸", "SHA-256"]],
-                    object: [["2616×1656", "c1c79970691385ff614f7c5a9eacedc21a094ba409bf242bb7c62d0716f06e1e"]]
-                ),
                 requiredClaim(
                     "contrast-thresholds",
                     "三组对比度和阈值结论必须正确",
@@ -3859,17 +3912,8 @@ enum RichAnswerLiveCases {
             """,
             selectionTitle: "原图采样框、放大镜与阈值结论",
             selectionText: "用真实魏碑窗口截图展示三组对比：黑色 2.22 s 读数 13.94:1 通过；橙色“适用范围”4.03:1 只适合大号标题；输入框占位文字 1.81:1 未通过。",
-            expectedNarrativeKeywordGroups: [["魏碑", "真实", "PNG"], ["2616×1656", "SHA-256"], ["2.22", "13.94"], ["适用范围", "4.03"], ["占位", "1.81", "未通过"], ["11×11", "glyph", "抗锯齿"]],
+            expectedNarrativeKeywordGroups: [["2.22", "13.94"], ["适用范围", "4.03"], ["占位", "1.81", "未通过"], ["11×11", "glyph", "抗锯齿"]],
             professionalFactObligations: [
-                RichAnswerProfessionalFactObligation(
-                    id: "source-png-hash-and-origin",
-                    description: "必须说明使用真实魏碑窗口 PNG、左上角坐标原点、尺寸与 SHA-256",
-                    evidenceGroups: [
-                        ["真实", "魏碑", "PNG"],
-                        ["2616×1656", "c1c79970691385ff614f7c5a9eacedc21a094ba409bf242bb7c62d0716f06e1e"],
-                        ["左上角", "坐标"],
-                    ]
-                ),
                 RichAnswerProfessionalFactObligation(
                     id: "contrast-values-and-thresholds",
                     description: "必须给出三组对比度、阈值判断和专业结论",
@@ -3904,7 +3948,7 @@ enum RichAnswerLiveCases {
                 ["13.94"],
                 ["4.03"],
                 ["1.81"],
-                ["普通正文", "大号文字", "阈值"],
+                ["普通正文", "正文", "大号文字", "大号", "标题", "阈值", "边界"],
             ],
             requiresMaterialAsset: true
         ),

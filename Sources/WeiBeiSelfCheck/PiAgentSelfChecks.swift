@@ -298,6 +298,7 @@ private func checkStudyAgentContext() throws {
     }
     let request = StudyAgentRequest(
         purpose: .conversation,
+        answerFormPolicy: .textOnly,
         question: "请根据当前材料出题",
         materialTitle: String(repeating: "材", count: 320),
         materialText: String(repeating: "材", count: 18_100),
@@ -336,6 +337,14 @@ private func checkStudyAgentContext() throws {
         contextRevision: "revision-9"
     )
     try piRequire(request.resolvedWorkflow == .recallPractice, "study-agent automatic routing selects recall practice")
+    try piRequire(
+        StudyAgentSourceLimitation.isHonest("当前没有可读材料或数据，因此无法给出剂量结论。")
+            && StudyAgentSourceLimitation.isHonest("No readable source data was provided, so I cannot calculate a dose.")
+            && !StudyAgentSourceLimitation.isHonest("我不能回答这个问题。")
+            && !StudyAgentSourceLimitation.isHonest("材料显示安全剂量为 10 mg。")
+            && !StudyAgentSourceLimitation.isHonest("当前缺少材料，所以我估计安全剂量约为 10 mg。"),
+        "source-free answers are limited to explicit evidence-gap explanations"
+    )
     let noteRequest = StudyAgentRequest(
         purpose: .conversation,
         question: "整理成笔记",
@@ -435,6 +444,7 @@ private func checkStudyAgentContext() throws {
     let envelope = StudyAgentContextEnvelope(request: request)
     try piRequire(envelope.schemaVersion == 2 && envelope.contextRevision == "revision-9", "study-agent context carries schema and revision")
     try piRequire(envelope.workflow == StudyAgentWorkflow.recallPractice.rawValue, "study-agent context carries resolved workflow")
+    try piRequire(envelope.answerFormPolicy == StudyAgentAnswerFormPolicy.textOnly.rawValue, "study-agent context carries structured answer-form policy")
     try piRequire(envelope.material?.text.count == 18_000 && envelope.note.text.count == 6_000 && envelope.selection?.text.count == 2_000, "study-agent context applies source limits")
     try piRequire(envelope.material?.title.count == 300 && envelope.note.title.count == 300 && envelope.selection?.title.count == 300, "study-agent context bounds source labels consistently")
     try piRequire(envelope.material?.isTruncated == true && envelope.note.isTruncated && envelope.selection?.isTruncated == true, "study-agent context marks every truncated source")
@@ -812,10 +822,21 @@ private func checkBundledAgentResources() throws {
             && extensionSource.contains("本轮用户明确指定富回答或互动形态")
             && extensionSource.contains("图示|函数图")
             && extensionSource.contains("simulation|experiment")
+            && extensionSource.contains("answerFormPolicy")
+            && extensionSource.contains("activeAnswerFormPolicy === \"textOnly\"")
+            && extensionSource.contains("richAnswerGrounding")
+            && extensionSource.contains("sourceBindings: richAnswerSourceBindings")
+            && extensionSource.contains("readableSourceLabels")
+            && extensionSource.contains("allowedAssetIDs")
+            && extensionSource.contains("解释边界同时写进 narrative 与可见 T2 标签")
+            && extensionSource.contains("不要用不相干的通用控件替代")
             && resources.systemPrompt.contains("文本是默认形态")
             && resources.systemPrompt.contains("富回答先过内容与专业性，再过视觉")
             && resources.systemPrompt.contains("不能用漂亮图形掩盖知识错误")
-            && resources.systemPrompt.contains("这个形态要求优先于你的默认选择")
+            && resources.systemPrompt.contains("材料给出的采样窗口、测量方法")
+            && resources.systemPrompt.contains("必须由对应控件和 binding 真实兑现")
+            && resources.systemPrompt.contains("richAnswerGrounding.answerFormPolicy")
+            && resources.systemPrompt.contains("partialRichAllowed")
             && resources.systemPrompt.contains("T1 深组件程序")
             && resources.systemPrompt.contains("T2 受控渲染计划")
             && resources.systemPrompt.contains("先形成表达计划，再调用 `weibei_ui_catalog`")
@@ -866,6 +887,9 @@ private func checkBundledAgentResources() throws {
             && runtimeSource.contains("StudyAgentResolutionEvidence.matches")
             && runtimeSource.contains("StudyAgentCurrentTurnEvidence.matches")
             && runtimeSource.contains("allowsLearningOnlyAnswer")
+            && runtimeSource.contains("allowsSourcelessLimitation")
+            && runtimeSource.contains("StudyAgentSourceLimitation.isHonest")
+            && runtimeSource.contains("text_only_policy")
             && runtimeSource.contains("private static let allowedToolNames")
             && runtimeSource.contains("\"weibei_ui_catalog\"")
             && runtimeSource.contains("Self.allowedToolNames.joined(separator: \",\")")

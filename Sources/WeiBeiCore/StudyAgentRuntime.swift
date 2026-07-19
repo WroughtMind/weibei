@@ -14,6 +14,39 @@ public enum StudyAgentWorkflow: String, Codable, Sendable {
     case recallPractice
 }
 
+public enum StudyAgentAnswerFormPolicy: String, Codable, Equatable, Sendable {
+    case automatic
+    case textOnly
+    case partialRichAllowed
+}
+
+public enum StudyAgentSourceLimitation {
+    public static func isHonest(_ text: String) -> Bool {
+        let normalized = text.lowercased()
+        let limitationTerms = [
+            "没有", "缺少", "不足", "无法", "不能", "未提供", "无可读", "缺失", "尚未",
+            "no readable", "no source", "missing", "insufficient", "cannot", "can't", "unable",
+        ]
+        let evidenceTerms = [
+            "材料", "来源", "证据", "数据", "原文", "文档", "内容", "上下文",
+            "material", "source", "evidence", "data", "document", "context",
+        ]
+        let unsupportedClaimTerms = [
+            "安全剂量为", "安全剂量是", "建议剂量为", "建议剂量是", "推荐剂量",
+            "可以服用", "应服用", "病因是", "诊断为", "我估计", "推测为", "大约为", "约为",
+            "safe dose is", "recommended dose", "should take", "diagnosis is", "i estimate",
+        ]
+        let containsQuantifiedClaim = normalized.range(
+            of: #"\d+(?:\.\d+)?\s*(?:mg|g|ml|mcg|μg|%|毫克|克|毫升|微克)"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+        return limitationTerms.contains(where: normalized.contains)
+            && evidenceTerms.contains(where: normalized.contains)
+            && !unsupportedClaimTerms.contains(where: normalized.contains)
+            && !containsQuantifiedClaim
+    }
+}
+
 public enum StudyAgentQuestionScope {
     public static func allowsLearningOnlyAnswer(_ question: String) -> Bool {
         var remainder = question.lowercased().unicodeScalars.filter {
@@ -361,6 +394,7 @@ public struct StudyAgentRequest: Sendable {
     public var id: UUID
     public var purpose: StudyAgentPurpose
     public var workflow: StudyAgentWorkflow
+    public var answerFormPolicy: StudyAgentAnswerFormPolicy
     public var question: String
     public var materialTitle: String
     public var materialText: String
@@ -379,6 +413,7 @@ public struct StudyAgentRequest: Sendable {
         id: UUID = UUID(),
         purpose: StudyAgentPurpose,
         workflow: StudyAgentWorkflow = .automatic,
+        answerFormPolicy: StudyAgentAnswerFormPolicy = .automatic,
         question: String,
         materialTitle: String,
         materialText: String,
@@ -396,6 +431,7 @@ public struct StudyAgentRequest: Sendable {
         self.id = id
         self.purpose = purpose
         self.workflow = workflow
+        self.answerFormPolicy = answerFormPolicy
         self.question = question
         self.materialTitle = materialTitle
         self.materialText = materialText
@@ -604,6 +640,7 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
     public var contextRevision: String
     public var purpose: String
     public var workflow: String
+    public var answerFormPolicy: String
     public var language: String
     public var question: String
     public var material: Source?
@@ -619,6 +656,7 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
         contextRevision = request.contextRevision
         purpose = request.purpose.rawValue
         workflow = request.resolvedWorkflow.rawValue
+        answerFormPolicy = request.answerFormPolicy.rawValue
         language = request.language.rawValue
         question = String(request.question.prefix(4_000))
 

@@ -958,7 +958,8 @@ struct WeiBeiPiCheckMain {
         return StudyAgentRequest(
             purpose: .conversation,
             workflow: .closeReading,
-            question: "这是富回答失败与降级验收题。第一步必须读取魏碑当前上下文和可用来源。不得用常识、示例数据或假执行补齐缺口；来源、安全或协议条件不满足时，保留简短可读正文并诚实说明限制。\(checkCase.question)",
+            answerFormPolicy: checkCase.allowsPartialRichAnswer ? .partialRichAllowed : .textOnly,
+            question: "这是回答失败与诚实降级验收题。第一步必须读取魏碑当前上下文和可用来源。不得用常识、示例数据或假执行补齐缺口；来源、安全或协议条件不满足时，保留简短可读正文并诚实说明限制。\(checkCase.question)",
             materialTitle: checkCase.materialTitle,
             materialText: checkCase.materialText,
             materialIsTruncated: checkCase.materialIsTruncated,
@@ -1102,7 +1103,7 @@ struct WeiBeiPiCheckMain {
         for checkCase: RichAnswerLiveDegradationCase
     ) -> [String] {
         var issues: [String] = []
-        issues.append(contentsOf: richAnswerDegradationInvocationIssues(reply))
+        issues.append(contentsOf: richAnswerDegradationInvocationIssues(reply, for: checkCase))
         issues.append(contentsOf: richAnswerDegradationReadableLimitationIssues(reply, for: checkCase))
         issues.append(contentsOf: richAnswerDegradationSourceIssues(reply, for: checkCase))
         issues.append(contentsOf: richAnswerDegradationRichSceneIssues(reply, for: checkCase))
@@ -1110,13 +1111,25 @@ struct WeiBeiPiCheckMain {
     }
 
     private static func richAnswerDegradationInvocationIssues(
-        _ reply: StudyAgentReply
+        _ reply: StudyAgentReply,
+        for checkCase: RichAnswerLiveDegradationCase
     ) -> [String] {
         var issues: [String] = []
         if reply.backend != .pi { issues.append("backend-not-pi") }
         if reply.noteProposal != nil { issues.append("unexpected-note-proposal") }
         if !replyToolTraceContains(reply, token: "weibei_context") {
             issues.append("missing-context-read")
+        }
+        if !checkCase.allowsPartialRichAnswer {
+            if replyToolTraceContains(reply, token: "weibei_ui_catalog") {
+                issues.append("text-only-degradation-called-ui-catalog")
+            }
+            if replyToolTraceContains(reply, token: "host_rejected=text_only_policy") {
+                issues.append("text-only-degradation-hit-host-rejection")
+            }
+            if !textOnlyChoiceHasNoDegradationDisclosure(reply.text) {
+                issues.append("text-only-degradation-leaked-rich-answer-failure")
+            }
         }
         return issues
     }

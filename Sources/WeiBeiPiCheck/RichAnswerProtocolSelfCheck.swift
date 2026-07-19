@@ -12,6 +12,8 @@ func runRichAnswerProtocolSelfCheck() throws {
     try checkGeneratedUITreeRejectsMalformedProtocol()
     try checkGeneratedUITreeRejectsPseudoInteractionAndMissingObligations()
     try checkProfessionalJudgmentContractsRejectReverseClaims()
+    try checkTitrationProfessionalJudgmentRegressions()
+    try checkArtColorContrastObligationsDoNotRequireHash()
     try checkProfessionalJudgmentObservedLanguageVariants()
     try checkProfessionalJudgmentIgnoresEvidenceCitations()
     try checkGeneratedUITreeIntentQualityContracts()
@@ -416,6 +418,90 @@ private func checkProfessionalJudgmentContractsRejectReverseClaims() throws {
             && reviewMarkedCases.contains("learning-philosophy-argument-boundary")
             && reviewMarkedCases.contains("learning-earth-science-subduction-cross-section"),
         "non-deterministic literature, philosophy, and image localization judgments are explicitly marked for model or human review"
+    )
+}
+
+private func checkTitrationProfessionalJudgmentRegressions() throws {
+    let titrationCase = try liveSuccessCase("learning-chemistry-titration-buffer-region")
+    let correctTitrationText = """
+    12.5 mL 是半当量点，pH=pKa≈4.74；25.0 mL 是当量点且 pH 大于 7。起始、缓冲区、25.0 mL 当量点和过量碱区分别标出近似方法：起始弱酸近似、缓冲近似、乙酸根水解近似、过量强碱余量近似。
+    """
+    let correctTitrationValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: correctTitrationText,
+        contract: titrationCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        correctTitrationValidation.passedDeterministicGates,
+        "correct titration half-equivalence and segmented approximations must pass: missing=\(correctTitrationValidation.missingRequiredClaims.joined(separator: ",")) forbidden=\(correctTitrationValidation.triggeredForbiddenClaims.joined(separator: ",")) boundary=\(correctTitrationValidation.missingBoundaryClaims.joined(separator: ","))"
+    )
+
+    let wrongHalfEquivalenceValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "12.5 mL 是当量点；25.0 mL 是当量点且 pH 大于 7。起始、缓冲区、25.0 mL 当量点和过量碱区分别标出近似方法。",
+        contract: titrationCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        wrongHalfEquivalenceValidation.triggeredForbiddenClaims.contains("half-as-equivalence"),
+        "12.5 mL as equivalence point must still trigger half-as-equivalence"
+    )
+
+    let splitVisibleSceneValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        units: [
+            "起始：需用起始近似",
+            "缓冲区：需用缓冲近似",
+            "25.0 mL 当量点：乙酸根水解近似",
+            "过量碱区：强碱余量近似",
+        ],
+        contract: titrationCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !splitVisibleSceneValidation.missingBoundaryClaims.contains("different-region-approximations"),
+        "same-scene staged approximation labels must satisfy different-region-approximations"
+    )
+
+    let singleApproximationValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "起始阶段使用近似。12.5 mL 是半当量点；25.0 mL 是当量点且 pH 大于 7。",
+        contract: titrationCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        singleApproximationValidation.missingBoundaryClaims.contains("different-region-approximations"),
+        "one isolated approximation label must not satisfy the multi-region titration boundary"
+    )
+}
+
+private func checkArtColorContrastObligationsDoNotRequireHash() throws {
+    let artCase = try liveSuccessCase("learning-art-color-contrast-overlay")
+    let requiredClaimIDs = Set(artCase.professionalJudgmentContract.requiredClaims.map(\.id))
+    try richAnswerRequire(
+        !requiredClaimIDs.contains("real-png-source"),
+        "color contrast professional judgment no longer requires model text to repeat PNG hash/source"
+    )
+    let obligationIDs = Set(artCase.professionalFactObligations.map(\.id))
+    try richAnswerRequire(
+        !obligationIDs.contains("source-png-hash-and-origin"),
+        "color contrast fact obligations no longer require model text to repeat PNG hash/source"
+    )
+    let expectedNarrativeText = artCase.expectedNarrativeKeywordGroups.flatMap { $0 }.joined(separator: " ")
+    try richAnswerRequire(
+        !expectedNarrativeText.contains("SHA-256")
+            && !expectedNarrativeText.contains("c1c79970691385ff614f7c5a9eacedc21a094ba409bf242bb7c62d0716f06e1e")
+            && !(expectedNarrativeText.contains("真实") && expectedNarrativeText.contains("PNG")),
+        "color contrast narrative targets no longer pressure the model to repeat asset provenance"
+    )
+    try richAnswerRequire(
+        artCase.requiresMaterialAsset,
+        "color contrast still requires the trusted material asset binding"
+    )
+
+    let hashFreeContrastText = """
+    三组采样结论是：2.22 s 的黑色读数对比度 13.94:1，普通正文和大号文字都通过；“适用范围”的橙色小标题为 4.03:1，普通正文未通过但大号/加粗标题通过；输入框占位文字为 1.81:1，普通正文与大号文字均未通过。11×11 样本会被抗锯齿和背景稀释吞掉时，应说明 glyph interior 小窗。
+    """
+    let hashFreeValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: hashFreeContrastText,
+        contract: artCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        hashFreeValidation.passedDeterministicGates,
+        "hash-free color contrast answer still passes real semantic obligations: missing=\(hashFreeValidation.missingRequiredClaims.joined(separator: ",")) forbidden=\(hashFreeValidation.triggeredForbiddenClaims.joined(separator: ",")) boundary=\(hashFreeValidation.missingBoundaryClaims.joined(separator: ","))"
     )
 }
 

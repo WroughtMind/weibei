@@ -1394,6 +1394,7 @@ private struct RichAnswerEvidencePromptSnapshot: Codable {
     var purpose: String
     var workflow: String
     var resolvedWorkflow: String
+    var answerFormPolicy: String?
     var question: String
     var materialTitle: String
     var materialText: String
@@ -1411,6 +1412,7 @@ private struct RichAnswerEvidencePromptSnapshot: Codable {
         purpose = request.purpose.rawValue
         workflow = request.workflow.rawValue
         resolvedWorkflow = request.resolvedWorkflow.rawValue
+        answerFormPolicy = request.answerFormPolicy.rawValue
         question = request.question
         materialTitle = request.materialTitle
         materialText = request.materialText
