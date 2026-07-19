@@ -434,10 +434,11 @@ private struct SidebarCourseRow: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(alignment: .leading) {
             if expanded {
+                // Course group: hairline only — selection focus lives on LibraryRow.
                 Capsule()
-                    .fill(accent.opacity(0.72))
-                    .frame(width: 3, height: 24)
-                    .padding(.leading, 2)
+                    .fill(WeiBeiTheme.hairline.opacity(0.72))
+                    .frame(width: 1, height: 20)
+                    .padding(.leading, 3)
             }
         }
         .weibeiHoverLift(active: hovering && !expanded, amount: 1)
@@ -572,12 +573,6 @@ private struct NotebookRenameRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(WeiBeiTheme.paperInset.opacity(selected ? 0.74 : 0.44))
         .clipShape(RoundedRectangle(cornerRadius: compact ? 6 : 8))
-        .overlay(alignment: .leading) {
-            Capsule()
-                .fill(accent.opacity(canRename ? 0.72 : 0.34))
-                .frame(width: compact ? 2 : 3, height: compact ? 18 : 24)
-                .padding(.leading, 2)
-        }
         .onAppear {
             focused = true
         }

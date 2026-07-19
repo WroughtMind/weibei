@@ -136,8 +136,9 @@ struct CourseWorkspaceRow: View {
             .background(selected ? WeiBeiTheme.paperInset.opacity(0.38) : hovering ? WeiBeiTheme.paperInset.opacity(0.18) : Color.clear)
             .overlay(alignment: .leading) {
                 if selected {
+                    // Neutral mark — primary focus bar stays on the course index sidebar.
                     Capsule()
-                        .fill(WeiBeiTheme.cinnabar)
+                        .fill(WeiBeiTheme.secondaryInk.opacity(0.42))
                         .frame(width: 2, height: 24)
                         .padding(.leading, 3)
                 }

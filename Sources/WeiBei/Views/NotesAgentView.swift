@@ -134,7 +134,7 @@ struct PaneHeaderReorderModifier: ViewModifier {
                         HStack {
                             Spacer(minLength: 0)
                             Capsule()
-                                .fill(WeiBeiTheme.cinnabar.opacity(0.62))
+                                .fill(WeiBeiTheme.secondaryInk.opacity(0.42))
                                 .frame(width: 2, height: 28)
                             Spacer(minLength: 0)
                         }
@@ -2636,14 +2636,8 @@ private struct AgentBubble: View {
                 .padding(.trailing, hasRenderableRichAnswer ? 0 : 8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
-                .overlay(alignment: .leading) {
-                    if !hasRenderableRichAnswer {
-                        Capsule()
-                            .fill(assistantMarkColor.opacity(hovering ? 1.0 : 0.72))
-                            .frame(width: 2, height: hovering ? 34 : 24)
-                            .padding(.leading, 4)
-                    }
-                }
+                // Assistant messages no longer carry a cinnabar leading mark;
+                // only credential notices keep a link-blue affordance.
         }
     }
 
@@ -2798,7 +2792,7 @@ private struct AgentBubble: View {
         .padding(.vertical, 5)
         .overlay(alignment: .leading) {
             Rectangle()
-                .fill(WeiBeiTheme.cinnabar.opacity(0.34))
+                .fill(WeiBeiTheme.hairline.opacity(0.72))
                 .frame(width: 1)
         }
     }
@@ -2908,10 +2902,6 @@ private struct AgentBubble: View {
     private var isOfflineContextPreview: Bool {
         message.text.contains("## 离线草稿")
             || message.text.contains("## Offline Draft")
-    }
-
-    private var assistantMarkColor: Color {
-        (isCredentialNotice || isOfflineContextPreview) ? WeiBeiTheme.link.opacity(0.42) : WeiBeiTheme.cinnabar.opacity(0.50)
     }
 
     private func backendLabel(_ backend: StudyAgentBackend) -> String {
@@ -3132,12 +3122,6 @@ private struct AgentStreamingResponse: View {
         .padding(.leading, 20)
         .padding(.trailing, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .overlay(alignment: .leading) {
-            Capsule()
-                .fill(WeiBeiTheme.cinnabar.opacity(0.42))
-                .frame(width: 2, height: 24)
-                .padding(.leading, 4)
-        }
         .accessibilityLabel(Text(store.ui("PI 正在回答", "PI is responding")))
     }
 }

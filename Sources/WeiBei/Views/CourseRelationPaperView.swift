@@ -1117,16 +1117,17 @@ private struct CourseRelationPaperNodeView: View {
     }
 
     private var markerColor: Color {
-        if isDropTarget { return accent.opacity(0.92) }
-        if connectionState == .source { return accent.opacity(0.88) }
-        if connectionState == .target { return accent.opacity(0.42) }
+        // Relation-paper markers stay hairline-grade; course accent only for transient connect/drop.
+        if isDropTarget { return WeiBeiTheme.secondaryInk.opacity(0.72) }
+        if connectionState == .source { return WeiBeiTheme.secondaryInk.opacity(0.62) }
+        if connectionState == .target { return WeiBeiTheme.hairline.opacity(0.72) }
         switch prominence {
         case .focused:
-            return accent.opacity(0.88)
+            return WeiBeiTheme.secondaryInk.opacity(0.58)
         case .related:
-            return accent.opacity(0.48)
-        case .normal:
             return WeiBeiTheme.hairline.opacity(0.78)
+        case .normal:
+            return WeiBeiTheme.hairline.opacity(0.62)
         case .mist:
             return WeiBeiTheme.hairline.opacity(0.20)
         }
