@@ -689,7 +689,7 @@ final class WorkspaceStore: ObservableObject {
         }.map { materialID in
             let title: String
             if let materialID, let item = allItems.first(where: { $0.id == materialID }) {
-                title = displayTitle(item)
+                title = displayTitle(for: item)
             } else {
                 title = ui("未关联资料", "Unlinked")
             }
