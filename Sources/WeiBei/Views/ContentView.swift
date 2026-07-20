@@ -232,6 +232,7 @@ private struct LibraryAwareEscapeBridge: View {
 private struct UnifiedTopBarView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @EnvironmentObject private var libraryDrawer: LibraryDrawerState
+    @Environment(\.openSettings) private var openSettings
     let isImmersiveLayout: Bool
     let isFullScreen: Bool
     var searchFocused: FocusState<Bool>.Binding
@@ -287,6 +288,11 @@ private struct UnifiedTopBarView: View {
                 withAnimation(WeiBeiMotion.panel) {
                     store.commandPalettePresented.toggle()
                 }
+            }
+
+            // Full Settings window (agent keys, appearance, data) — not the old mini menu.
+            topIconButton("slider.horizontal.3", help: store.ui("打开设置", "Open Settings")) {
+                openSettings()
             }
 
             Spacer()
@@ -391,8 +397,6 @@ private struct UnifiedTopBarView: View {
             navigationButtons
 
             appearanceToggleButton
-
-            settingsMenu
         }
     }
 
@@ -496,61 +500,6 @@ private struct UnifiedTopBarView: View {
                 store.toggleAppearanceMode()
             }
         }
-    }
-
-    @ViewBuilder
-    private var settingsMenu: some View {
-        Menu {
-            Section(store.ui("界面", "Interface")) {
-                ForEach(WeiBeiAppearanceMode.allCases) { mode in
-                    Button {
-                        withAnimation(WeiBeiMotion.appearance) {
-                            store.setAppearanceMode(mode)
-                        }
-                    } label: {
-                        Label(mode.label(language: store.interfaceLanguage), systemImage: mode == store.appearanceMode ? "checkmark" : mode.systemImage)
-                    }
-                }
-            }
-
-            Section(store.ui("文稿", "Document")) {
-                Toggle(
-                    isOn: Binding(
-                        get: { store.adaptImportedDocumentColors },
-                        set: { store.setImportedDocumentColorAdaptation($0) }
-                    )
-                ) {
-                    Label(store.ui("导入文稿适配", "Adapt Imported Documents"), systemImage: "eyeglasses")
-                }
-            }
-
-            Section(store.ui("语言", "Language")) {
-                ForEach(WeiBeiInterfaceLanguage.allCases) { language in
-                    Button {
-                        withAnimation(WeiBeiMotion.appearance) {
-                            store.setInterfaceLanguage(language)
-                        }
-                    } label: {
-                        Label(language.settingsLabel, systemImage: language == store.interfaceLanguage ? "checkmark" : "character.book.closed")
-                    }
-                }
-            }
-
-            Section(store.ui("对话形态", "Chat Surface")) {
-                ForEach(store.visibleAgentSurfaces) { surface in
-                    Button(surface.label(language: store.interfaceLanguage)) {
-                        withAnimation(WeiBeiMotion.panel) {
-                            store.setAgentSurface(surface)
-                        }
-                    }
-                }
-            }
-        } label: {
-            Image(systemName: "gearshape")
-        }
-        .buttonStyle(WeiBeiIconButtonStyle(size: 24))
-        .accessibilityLabel(Text(store.ui("设置", "Settings")))
-        .help(store.ui("设置", "Settings"))
     }
 
     private func toggleReaderSearch() {

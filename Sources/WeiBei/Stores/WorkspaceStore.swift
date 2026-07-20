@@ -271,6 +271,8 @@ final class WorkspaceStore: ObservableObject {
     @Published var selectionAnchor: CGPoint?
     @Published var noteEditorCommand: NoteEditorCommand?
     @Published var noteFileError: String?
+    /// Success / info banner for note create/switch — separate from errors so it auto-dismisses cleanly.
+    @Published var transientNoteStatus: String?
     @Published private(set) var workspaceSaveError: String?
     @Published var notebookCreationDraft: NotebookCreationDraft?
     @Published var notebookRenameDraft: NotebookRenameDraft?
@@ -279,6 +281,11 @@ final class WorkspaceStore: ObservableObject {
     @Published var agentBaseURL: String = ""
     @Published var openAIAPIKey: String = OpenAIAPIKeyStore.load(provider: "openai")
     @Published var openAIKeyStatus: String?
+    @Published var agentAuthMethod: AgentAuthMethod = .apiKey
+    @Published var agentCredentialProfiles: [AgentCredentialProfile] = AgentCredentialProfileStore.loadProfiles()
+    @Published var activeAgentProfileID: UUID = AgentCredentialProfileStore.activeProfileID()
+        ?? AgentCredentialProfileStore.loadProfiles().first?.id
+        ?? AgentCredentialProfileStore.defaultProfile().id
     @Published var appearanceMode: WeiBeiAppearanceMode = .paper
     @Published var adaptImportedDocumentColors = true
     @Published var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
@@ -2505,27 +2512,34 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    func updateModelName(_ value: String) {
-        modelName = value
-        save()
-    }
-
     func setAgentProviderID(_ provider: AgentProviderID) {
         guard agentProviderID != provider else { return }
         let previousDefault = agentProviderID.defaultModelHint
         agentProviderID = provider
-        openAIAPIKey = OpenAIAPIKeyStore.load(provider: provider.piProviderName)
+        // Prefer profile-scoped key; fall back to legacy per-provider keychain.
+        let profileKey = AgentCredentialProfileStore.loadAPIKey(profileID: activeAgentProfileID)
+        openAIAPIKey = profileKey.isEmpty
+            ? OpenAIAPIKeyStore.load(provider: provider.piProviderName)
+            : profileKey
         // Switch model when empty or still on the previous provider's default hint.
         let trimmedModel = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedModel.isEmpty || trimmedModel == previousDefault {
             modelName = provider.defaultModelHint
         }
         openAIKeyStatus = nil
+        touchActiveAgentProfileMetadata()
         save()
     }
 
     func updateAgentBaseURL(_ value: String) {
         agentBaseURL = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        touchActiveAgentProfileMetadata()
+        save()
+    }
+
+    func updateModelName(_ value: String) {
+        modelName = value
+        touchActiveAgentProfileMetadata()
         save()
     }
 
@@ -2567,9 +2581,14 @@ final class WorkspaceStore: ObservableObject {
     func saveOpenAIAPIKey() {
         do {
             let cleanedKey = OpenAIAPIKeyStore.cleaned(openAIAPIKey)
+            // Keep legacy per-provider key for compatibility with older paths.
             try OpenAIAPIKeyStore.save(cleanedKey, provider: agentProviderID.piProviderName)
+            try AgentCredentialProfileStore.saveAPIKey(cleanedKey, profileID: activeAgentProfileID)
             openAIAPIKey = cleanedKey
-            openAIKeyStatus = cleanedKey.isEmpty ? ui("已清除密钥。", "Key cleared.") : ui("密钥已保存。", "Key saved.")
+            touchActiveAgentProfileMetadata()
+            openAIKeyStatus = cleanedKey.isEmpty
+                ? ui("已清除密钥。", "Key cleared.")
+                : ui("密钥已保存到当前配置。", "Key saved to the current profile.")
         } catch {
             openAIKeyStatus = ui("保存失败：\(error.localizedDescription)", "Save failed: \(error.localizedDescription)")
         }
@@ -2578,6 +2597,122 @@ final class WorkspaceStore: ObservableObject {
     func clearOpenAIAPIKey() {
         openAIAPIKey = ""
         saveOpenAIAPIKey()
+    }
+
+    func setAgentAuthMethod(_ method: AgentAuthMethod) {
+        guard agentAuthMethod != method else { return }
+        agentAuthMethod = method
+        touchActiveAgentProfileMetadata()
+    }
+
+    func selectAgentCredentialProfile(_ id: UUID) {
+        guard let profile = agentCredentialProfiles.first(where: { $0.id == id }) else { return }
+        activeAgentProfileID = id
+        AgentCredentialProfileStore.setActiveProfileID(id)
+        agentProviderID = profile.provider
+        agentAuthMethod = profile.authMethod
+        modelName = profile.modelName
+        agentBaseURL = profile.baseURL
+        openAIAPIKey = AgentCredentialProfileStore.loadAPIKey(profileID: id)
+        if openAIAPIKey.isEmpty {
+            openAIAPIKey = OpenAIAPIKeyStore.load(provider: profile.provider.piProviderName)
+        }
+        openAIKeyStatus = nil
+        save()
+    }
+
+    @discardableResult
+    func createAgentCredentialProfile(name: String? = nil) -> UUID {
+        let cleanedName = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let profile = AgentCredentialProfile(
+            name: cleanedName.isEmpty
+                ? ui("配置 \(agentCredentialProfiles.count + 1)", "Profile \(agentCredentialProfiles.count + 1)")
+                : cleanedName,
+            provider: agentProviderID,
+            authMethod: agentAuthMethod,
+            modelName: modelName,
+            baseURL: agentBaseURL
+        )
+        agentCredentialProfiles.append(profile)
+        AgentCredentialProfileStore.saveProfiles(agentCredentialProfiles)
+        // Seed keychain from current key if any.
+        if !openAIAPIKey.isEmpty {
+            try? AgentCredentialProfileStore.saveAPIKey(openAIAPIKey, profileID: profile.id)
+        }
+        selectAgentCredentialProfile(profile.id)
+        return profile.id
+    }
+
+    func renameActiveAgentCredentialProfile(_ name: String) {
+        let cleaned = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return }
+        guard let index = agentCredentialProfiles.firstIndex(where: { $0.id == activeAgentProfileID }) else { return }
+        agentCredentialProfiles[index].name = cleaned
+        agentCredentialProfiles[index].updatedAt = Date()
+        AgentCredentialProfileStore.saveProfiles(agentCredentialProfiles)
+    }
+
+    func deleteActiveAgentCredentialProfile() {
+        guard agentCredentialProfiles.count > 1,
+              let index = agentCredentialProfiles.firstIndex(where: { $0.id == activeAgentProfileID }) else { return }
+        let removed = agentCredentialProfiles.remove(at: index)
+        try? AgentCredentialProfileStore.deleteAPIKey(profileID: removed.id)
+        AgentCredentialProfileStore.saveProfiles(agentCredentialProfiles)
+        if let next = agentCredentialProfiles.first {
+            selectAgentCredentialProfile(next.id)
+        }
+    }
+
+    func openAgentProviderConsole(login: Bool) {
+        let url = login
+            ? AgentProviderConsoleLinks.accountURL(for: agentProviderID)
+                ?? AgentProviderConsoleLinks.loginURL(for: agentProviderID)
+            : AgentProviderConsoleLinks.loginURL(for: agentProviderID)
+        guard let url else {
+            openAIKeyStatus = ui(
+                "自定义提供商请在本页填写 Base URL 与密钥。",
+                "For a custom provider, enter Base URL and API key on this page."
+            )
+            return
+        }
+        NSWorkspace.shared.open(url)
+        openAIKeyStatus = ui(
+            "已在浏览器打开提供商页面。登录后创建密钥并粘贴回来。",
+            "Opened the provider page in your browser. Sign in, create a key, then paste it here."
+        )
+    }
+
+    private func touchActiveAgentProfileMetadata() {
+        guard let index = agentCredentialProfiles.firstIndex(where: { $0.id == activeAgentProfileID }) else {
+            bootstrapAgentCredentialProfilesIfNeeded()
+            return
+        }
+        agentCredentialProfiles[index].provider = agentProviderID
+        agentCredentialProfiles[index].authMethod = agentAuthMethod
+        agentCredentialProfiles[index].modelName = modelName
+        agentCredentialProfiles[index].baseURL = agentBaseURL
+        agentCredentialProfiles[index].updatedAt = Date()
+        AgentCredentialProfileStore.saveProfiles(agentCredentialProfiles)
+        AgentCredentialProfileStore.setActiveProfileID(activeAgentProfileID)
+    }
+
+    private func bootstrapAgentCredentialProfilesIfNeeded() {
+        if agentCredentialProfiles.isEmpty {
+            let seeded = AgentCredentialProfile(
+                name: ui("默认", "Default"),
+                provider: agentProviderID,
+                authMethod: agentAuthMethod,
+                modelName: modelName,
+                baseURL: agentBaseURL
+            )
+            agentCredentialProfiles = [seeded]
+            activeAgentProfileID = seeded.id
+            AgentCredentialProfileStore.saveProfiles(agentCredentialProfiles)
+            AgentCredentialProfileStore.setActiveProfileID(seeded.id)
+            if !openAIAPIKey.isEmpty {
+                try? AgentCredentialProfileStore.saveAPIKey(openAIAPIKey, profileID: seeded.id)
+            }
+        }
     }
 
     func importFilesFromPanel() {
@@ -6472,11 +6607,15 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func showTransientNoteStatus(_ message: String) {
-        noteFileError = message
+        // Success toasts use a dedicated field so real errors are not overwritten / stuck.
+        noteFileError = nil
+        transientNoteStatus = message
+        let token = message
         Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 2_200_000_000)
-            if self?.noteFileError == message {
-                self?.noteFileError = nil
+            try? await Task.sleep(nanoseconds: 2_400_000_000)
+            guard let self else { return }
+            if self.transientNoteStatus == token {
+                self.transientNoteStatus = nil
             }
         }
     }

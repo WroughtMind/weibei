@@ -42,7 +42,8 @@ struct CourseRelationPaperView: View {
             selectedNoteID: selectedNoteID,
             selectedMaterialID: selectedMaterialID,
             showsOnlyUnlinked: effectiveScope == .unlinked,
-            maxVisibleNodes: isCompact ? 36 : 72
+            // Cap node count hard — large courses were rebuilding the full graph every frame.
+            maxVisibleNodes: isCompact ? 24 : 48
         )
     }
 
@@ -85,10 +86,7 @@ struct CourseRelationPaperView: View {
             }
         }
         .background(WeiBeiTheme.paper.opacity(0.94))
-        .animation(WeiBeiMotion.hover, value: hoveredNodeID)
-        .animation(WeiBeiMotion.hover, value: pendingConnection)
-        .animation(WeiBeiMotion.panel, value: effectiveScope.id)
-        .animation(WeiBeiMotion.panel, value: mode)
+        // Avoid animating the whole graph graphModel on every hover — that lagged hard.
         .onChange(of: mode) { _, nextMode in
             if nextMode != .managing { pendingConnection = nil }
         }
@@ -840,16 +838,17 @@ struct CourseRelationPaperView: View {
         for edge: CourseRelationGraphEdge,
         prominence: CourseRelationGraphProminence
     ) -> Color {
+        // Hairline ink/cinnabar — less "thick diagram", more paper annotation.
         let accent = edgeAccent(for: edge)
         switch prominence {
         case .focused:
-            return accent.opacity(0.62)
+            return WeiBeiTheme.cinnabar.opacity(0.42)
         case .related:
-            return accent.opacity(0.38)
+            return accent.opacity(0.28)
         case .normal:
-            return accent.opacity(0.15)
+            return WeiBeiTheme.hairline.opacity(0.55)
         case .mist:
-            return accent.opacity(0.028)
+            return WeiBeiTheme.hairline.opacity(0.18)
         }
     }
 
@@ -857,26 +856,23 @@ struct CourseRelationPaperView: View {
         for edge: CourseRelationGraphEdge,
         prominence: CourseRelationGraphProminence
     ) -> Color {
-        let accent = edgeAccent(for: edge)
         switch prominence {
         case .focused:
-            return accent.opacity(0.060)
+            return WeiBeiTheme.cinnabar.opacity(0.06)
         case .related:
-            return accent.opacity(0.042)
-        case .normal:
-            return accent.opacity(0.026)
-        case .mist:
-            return accent.opacity(0.010)
+            return WeiBeiTheme.ink.opacity(0.03)
+        case .normal, .mist:
+            return .clear
         }
     }
 
     private func edgeWidth(_ edge: CourseRelationGraphEdge, prominence: CourseRelationGraphProminence) -> CGFloat {
-        let base = CGFloat(min(9, 4 + max(0, edge.count - 1) * 2))
+        let base = min(2.4 as CGFloat, 1.1 + CGFloat(max(0, edge.count - 1)) * 0.25)
         switch prominence {
         case .focused:
-            return base + 6
+            return base + 0.9
         case .related:
-            return base + 2.5
+            return base + 0.35
         case .normal:
             return base
         case .mist:

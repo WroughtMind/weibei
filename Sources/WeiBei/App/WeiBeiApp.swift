@@ -1052,6 +1052,7 @@ struct SettingsView: View {
     private var settingsDetail: some View {
         VStack(spacing: 0) {
             settingsHeader
+            // No whole-scroll animation on section change — that was thrashing settings UI.
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 18) {
                     switch selectedSection {
@@ -1074,8 +1075,8 @@ struct SettingsView: View {
                 .padding(.horizontal, 28)
                 .padding(.top, 24)
                 .padding(.bottom, 34)
-                .animation(WeiBeiMotion.panel, value: selectedSection)
             }
+            .id(selectedSection)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(WeiBeiTheme.paper)
@@ -1308,6 +1309,24 @@ struct SettingsView: View {
 
     private var readingSettings: some View {
         VStack(alignment: .leading, spacing: 16) {
+            settingsGroup(store.ui("导入文稿", "Imported Documents")) {
+                settingsRow(
+                    title: store.ui("导入文稿适配", "Adapt Imported Documents"),
+                    detail: store.ui("让 PDF/HTML 跟随魏碑纸面与墨石阅读环境。", "Let PDF/HTML follow WeiBei paper and inkstone reading.")
+                ) {
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { store.adaptImportedDocumentColors },
+                            set: { store.setImportedDocumentColorAdaptation($0) }
+                        )
+                    )
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                    .accessibilityLabel(Text(store.ui("导入文稿适配", "Adapt Imported Documents")))
+                }
+            }
+
             settingsGroup(store.ui("阅读入口", "Reader Entry")) {
                 settingsRow(
                     title: store.ui("资料内搜索", "Search in Material"),
@@ -1418,17 +1437,82 @@ struct SettingsView: View {
 
     private var agentSettings: some View {
         VStack(alignment: .leading, spacing: 16) {
+            settingsGroup(store.ui("连接配置", "Connection Profiles")) {
+                settingsRow(
+                    title: store.ui("当前配置", "Active Profile"),
+                    detail: store.ui("可保存多套提供商与密钥，随时切换。", "Save multiple provider + key sets and switch anytime.")
+                ) {
+                    HStack(spacing: 8) {
+                        compactMenu(
+                            store.agentCredentialProfiles.first(where: { $0.id == store.activeAgentProfileID })?.name
+                                ?? store.ui("默认", "Default")
+                        ) {
+                            ForEach(store.agentCredentialProfiles) { profile in
+                                Button(profile.name) {
+                                    store.selectAgentCredentialProfile(profile.id)
+                                }
+                            }
+                        }
+                        Button(store.ui("新建", "New")) {
+                            store.createAgentCredentialProfile()
+                        }
+                        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                        if store.agentCredentialProfiles.count > 1 {
+                            Button(store.ui("删除", "Delete")) {
+                                store.deleteActiveAgentCredentialProfile()
+                            }
+                            .buttonStyle(WeiBeiTextActionButtonStyle())
+                        }
+                    }
+                }
+            }
+
+            settingsGroup(store.ui("接入方式", "How to Connect")) {
+                settingsRow(
+                    title: store.ui("方式", "Method"),
+                    detail: store.agentAuthMethod.detail(language: store.interfaceLanguage)
+                ) {
+                    HStack(spacing: 6) {
+                        ForEach(AgentAuthMethod.allCases) { method in
+                            Button(method.label(language: store.interfaceLanguage)) {
+                                store.setAgentAuthMethod(method)
+                            }
+                            .buttonStyle(WeiBeiTextActionButtonStyle(active: store.agentAuthMethod == method))
+                        }
+                    }
+                }
+
+                if store.agentAuthMethod == .subscription {
+                    settingsRow(
+                        title: store.ui("浏览器登录", "Browser Sign-In"),
+                        detail: store.ui(
+                            "Pi 通过 API 调用模型。先登录提供商账号/订阅控制台，再创建密钥粘贴回来。",
+                            "Pi calls models via API. Sign into the provider account/console, create a key, then paste it back."
+                        )
+                    ) {
+                        VStack(alignment: .trailing, spacing: 8) {
+                            Button(store.ui("打开账号 / 订阅页", "Open Account / Subscription")) {
+                                store.openAgentProviderConsole(login: true)
+                            }
+                            .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                            Button(store.ui("打开 API Key 页", "Open API Key Page")) {
+                                store.openAgentProviderConsole(login: false)
+                            }
+                            .buttonStyle(WeiBeiTextActionButtonStyle())
+                        }
+                    }
+                }
+            }
+
             settingsGroup(store.ui("提供商与模型", "Provider & Model")) {
                 settingsRow(
                     title: store.ui("提供商", "Provider"),
-                    detail: store.ui("通过 Pi 透传；自定义需填写 Base URL。", "Routed through Pi; custom providers need a Base URL.")
+                    detail: store.ui("经 Pi 路由：OpenAI / Anthropic / Google / OpenRouter / 自定义。", "Routed through Pi: OpenAI, Anthropic, Google, OpenRouter, or custom.")
                 ) {
                     compactMenu(store.agentProviderID.label(language: store.interfaceLanguage)) {
                         ForEach(AgentProviderID.allCases) { provider in
                             Button(provider.label(language: store.interfaceLanguage)) {
-                                withAnimation(WeiBeiMotion.panel) {
-                                    store.setAgentProviderID(provider)
-                                }
+                                store.setAgentProviderID(provider)
                             }
                         }
                     }
@@ -1436,13 +1520,13 @@ struct SettingsView: View {
 
                 settingsRow(
                     title: store.ui("对话密钥", "Chat API Key"),
-                    detail: store.openAIKeyHelpText
+                    detail: AgentProviderConsoleLinks.keyHelp(language: store.interfaceLanguage, provider: store.agentProviderID)
                 ) {
                     VStack(alignment: .trailing, spacing: 8) {
                         SecureField(
                             "",
                             text: $store.openAIAPIKey,
-                            prompt: Text(store.ui("对话密钥", "Chat API key"))
+                            prompt: Text(store.ui("粘贴 API Key", "Paste API key"))
                                 .font(.system(size: 13))
                                 .foregroundStyle(WeiBeiTheme.placeholderInk)
                         )
@@ -1454,14 +1538,13 @@ struct SettingsView: View {
                         .frame(width: 250)
                         .onSubmit { store.saveOpenAIAPIKey() }
                         .onChange(of: focusedField) { _, field in
-                            // Persist when leaving the key field so typed keys are not lost.
                             if field != .apiKey {
                                 store.saveOpenAIAPIKey()
                             }
                         }
 
                         HStack(spacing: 8) {
-                            Button(store.ui("保存到钥匙串", "Save to Keychain")) { store.saveOpenAIAPIKey() }
+                            Button(store.ui("保存到当前配置", "Save to Profile")) { store.saveOpenAIAPIKey() }
                                 .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                             Button(store.ui("清除", "Clear")) { store.clearOpenAIAPIKey() }
                                 .buttonStyle(WeiBeiTextActionButtonStyle())
@@ -1475,7 +1558,7 @@ struct SettingsView: View {
 
                 settingsRow(
                     title: store.ui("模型", "Model"),
-                    detail: store.ui("本机环境 WEIBEI_OPENAI_MODEL / WEIBEI_PI_MODEL 会覆盖这里。", "Local WEIBEI_OPENAI_MODEL / WEIBEI_PI_MODEL override this field.")
+                    detail: store.ui("环境变量 WEIBEI_OPENAI_MODEL / WEIBEI_PI_MODEL 会覆盖这里。", "Env WEIBEI_OPENAI_MODEL / WEIBEI_PI_MODEL override this field.")
                 ) {
                     TextField(
                         "",
@@ -1522,7 +1605,7 @@ struct SettingsView: View {
             settingsGroup(store.ui("对话入口", "Chat Entry")) {
                 settingsRow(
                     title: store.ui("入口说明", "Entry Notes"),
-                    detail: store.ui("完整对话在主栏与沉浸对话布局；选区轻提示仅作临时入口，可 ⌃⌥0 隐藏。", "Full chat lives in the agent pane and immersive conversation; selection prompt is temporary and can be hidden with ⌃⌥0.")
+                    detail: store.ui("完整对话在主栏与沉浸对话；选区轻提示可 ⌃⌥0 隐藏。", "Full chat lives in the agent pane and immersive conversation; hide selection prompt with ⌃⌥0.")
                 ) {
                     settingsPill(
                         title: store.agentSurface.label(language: store.interfaceLanguage),
