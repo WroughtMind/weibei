@@ -7,12 +7,20 @@ public struct PiAgentProviderConfiguration: Equatable, Sendable {
     public var provider: String?
     public var model: String?
     public var apiKey: String?
+    public var baseURL: String?
     public var thinkingLevel: String
 
-    public init(provider: String? = nil, model: String? = nil, apiKey: String? = nil, thinkingLevel: String = "medium") {
+    public init(
+        provider: String? = nil,
+        model: String? = nil,
+        apiKey: String? = nil,
+        baseURL: String? = nil,
+        thinkingLevel: String = "medium"
+    ) {
         self.provider = provider?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.model = model?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.baseURL = baseURL?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.thinkingLevel = thinkingLevel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "medium"
             : thinkingLevel.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -827,39 +835,79 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             "TERM": "dumb",
         ]
         let hostEnvironment = ProcessInfo.processInfo.environment
-        for key in ["LANG", "LC_ALL"] {
-            if let value = hostEnvironment[key], value.count <= 128, !value.contains("\n") {
+        for key in [
+            "LANG", "LC_ALL",
+            // Cloud / multi-part provider credentials from the host shell.
+            "AWS_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION",
+            "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+            "AWS_BEARER_TOKEN_BEDROCK", "AWS_ENDPOINT_URL_BEDROCK_RUNTIME",
+            "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_GATEWAY_ID", "CLOUDFLARE_API_KEY",
+            "AZURE_OPENAI_BASE_URL", "AZURE_OPENAI_RESOURCE_NAME",
+            "AZURE_OPENAI_API_VERSION", "AZURE_OPENAI_DEPLOYMENT_NAME_MAP",
+        ] {
+            if let value = hostEnvironment[key], !value.isEmpty, value.count <= 2048, !value.contains("\n") {
                 environment[key] = value
             }
         }
         if let apiKey = providerConfiguration.apiKey, !apiKey.isEmpty {
-            // Pass the key under both OPENAI_API_KEY (compat) and the provider-specific env when known.
-            environment["OPENAI_API_KEY"] = apiKey
-            if let provider = providerConfiguration.provider?.lowercased() {
-                switch provider {
-                case "anthropic":
-                    environment["ANTHROPIC_API_KEY"] = apiKey
-                case "google":
-                    environment["GEMINI_API_KEY"] = apiKey
-                case "openrouter":
-                    environment["OPENROUTER_API_KEY"] = apiKey
-                default:
-                    break
-                }
+            // Inject into the provider's canonical env var (Pi resolution order).
+            if let providerID = providerConfiguration.provider.flatMap(AgentProviderID.init(rawValue:)) {
+                environment[providerID.environmentAPIKeyName] = apiKey
+            } else if let provider = providerConfiguration.provider?.lowercased() {
+                // Fallback map for ids that may not be in the enum yet.
+                let envName = Self.legacyEnvName(forPiProvider: provider) ?? "OPENAI_API_KEY"
+                environment[envName] = apiKey
+            } else {
+                environment["OPENAI_API_KEY"] = apiKey
+            }
+            // Many OpenAI-compatible stacks still read OPENAI_API_KEY.
+            if environment["OPENAI_API_KEY"] == nil {
+                environment["OPENAI_API_KEY"] = apiKey
+            }
+        }
+        // Base URL: Azure uses dedicated env; OpenAI-compatible stacks still get models.json.
+        if let base = providerConfiguration.baseURL, !base.isEmpty {
+            let provider = providerConfiguration.provider?.lowercased() ?? ""
+            if provider == "azure-openai-responses" {
+                environment["AZURE_OPENAI_BASE_URL"] = base
             }
         }
         return environment
     }
 
-    /// Inject a custom provider into PI_CODING_AGENT_DIR/models.json when baseURL is set.
+    private static func legacyEnvName(forPiProvider provider: String) -> String? {
+        switch provider {
+        case "openai", "openai-codex": return "OPENAI_API_KEY"
+        case "anthropic": return "ANTHROPIC_API_KEY"
+        case "google": return "GEMINI_API_KEY"
+        case "openrouter": return "OPENROUTER_API_KEY"
+        case "github-copilot": return "COPILOT_GITHUB_TOKEN"
+        case "xai": return "XAI_API_KEY"
+        case "deepseek": return "DEEPSEEK_API_KEY"
+        case "groq": return "GROQ_API_KEY"
+        case "mistral": return "MISTRAL_API_KEY"
+        case "together": return "TOGETHER_API_KEY"
+        case "fireworks": return "FIREWORKS_API_KEY"
+        case "huggingface": return "HF_TOKEN"
+        case "moonshotai", "moonshotai-cn": return "MOONSHOT_API_KEY"
+        case "kimi-coding": return "KIMI_API_KEY"
+        case "minimax": return "MINIMAX_API_KEY"
+        case "minimax-cn": return "MINIMAX_CN_API_KEY"
+        default: return nil
+        }
+    }
+
+    /// Inject a custom / local OpenAI-compatible provider into PI_CODING_AGENT_DIR/models.json.
+    /// Built-in Pi providers (including Azure) use auth + env vars instead.
     public func writeCustomModelsJSONIfNeeded(
         providerID: AgentProviderID,
         baseURL: String,
         model: String
     ) async {
         let trimmedBase = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard providerID == .custom || !trimmedBase.isEmpty else {
-            // Leave existing models.json alone for built-in providers without custom baseURL.
+        guard providerID == .custom || providerID == .llamaCpp else {
             return
         }
         guard !trimmedBase.isEmpty else { return }

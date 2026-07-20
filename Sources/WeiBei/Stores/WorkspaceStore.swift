@@ -5957,23 +5957,23 @@ final class WorkspaceStore: ObservableObject {
                 from: FileManager.default.homeDirectoryForCurrentUser
                     .appendingPathComponent(".pi/agent/auth.json")
             )
-            // Prefer Pi OAuth subscription ids (openai-codex / anthropic) when linked in auth.json.
+            // Prefer explicit Pi provider id; map legacy OpenAI API selection to openai-codex when OAuth-linked.
             let providerName: String = {
                 if !explicitProvider.isEmpty { return explicitProvider }
-                if selectedProvider == .openai, linkedOAuth.contains("openai-codex") {
+                if selectedProvider == .openaiCodex { return "openai-codex" }
+                if selectedProvider == .openai, linkedOAuth.contains("openai-codex"), agentAuthMethod == .subscription {
                     return "openai-codex"
-                }
-                if selectedProvider == .anthropic, linkedOAuth.contains("anthropic") {
-                    return "anthropic"
                 }
                 return selectedProvider.piProviderName
             }()
             // OAuth tokens live in auth.json — do not force API key env when subscription is active.
             let usesOAuth = linkedOAuth.contains(providerName)
+                || (providerName == "openai-codex" && linkedOAuth.contains("openai-codex"))
             let configuration = PiAgentProviderConfiguration(
                 provider: providerName,
                 model: explicitModel.isEmpty ? resolvedModelName : explicitModel,
                 apiKey: usesOAuth ? nil : credential?.key,
+                baseURL: agentBaseURL.isEmpty ? nil : agentBaseURL,
                 thinkingLevel: thinking.isEmpty ? "medium" : thinking
             )
             await piRuntime.configure(configuration)

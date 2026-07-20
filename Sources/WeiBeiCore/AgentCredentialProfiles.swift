@@ -3,9 +3,9 @@ import Security
 
 /// How the user wants to attach a model provider for Pi.
 public enum AgentAuthMethod: String, Codable, CaseIterable, Identifiable, Sendable {
-    /// Paste / store an API key (Pi's primary path: env vars + --provider / --model).
+    /// Paste / store an API key (Pi env vars + auth.json api_key).
     case apiKey
-    /// Open the provider's account / console (OAuth or dashboard login), then paste a key or token.
+    /// Pi `/login` style OAuth subscription (tokens in auth.json).
     case subscription
 
     public var id: String { rawValue }
@@ -15,7 +15,7 @@ public enum AgentAuthMethod: String, Codable, CaseIterable, Identifiable, Sendab
         case .apiKey:
             return language.text("API 密钥", "API Key")
         case .subscription:
-            return language.text("订阅 / 账号", "Subscription / Account")
+            return language.text("订阅 OAuth", "Subscription OAuth")
         }
     }
 
@@ -23,13 +23,13 @@ public enum AgentAuthMethod: String, Codable, CaseIterable, Identifiable, Sendab
         switch self {
         case .apiKey:
             return language.text(
-                "在提供商控制台创建 API Key，粘贴后保存到钥匙串。适合 OpenAI、Anthropic、Google、OpenRouter 与自定义 OpenAI 兼容接口。",
-                "Create an API key in the provider console, paste it, and save to Keychain. Works with OpenAI, Anthropic, Google, OpenRouter, and custom OpenAI-compatible endpoints."
+                "选择任意 Pi 支持的提供商，粘贴 API Key 并保存。密钥按配置写入钥匙串，并注入 Pi 对应环境变量。",
+                "Pick any Pi-supported provider, paste an API key, and save. Keys are stored per profile in Keychain and passed as Pi env vars."
             )
         case .subscription:
             return language.text(
-                "与 Pi 的 /login 相同：浏览器完成 OAuth（ChatGPT Plus/Pro、Claude Pro/Max），凭证写入 auth.json，自动用于对话。",
-                "Same as Pi’s /login: complete browser OAuth (ChatGPT Plus/Pro, Claude Pro/Max); tokens are stored in auth.json and used automatically."
+                "与 Pi `/login` 相同：浏览器 OAuth 连接 ChatGPT Plus/Pro、Claude Pro/Max 等订阅；凭证写入 ~/.pi/agent/auth.json。",
+                "Same as Pi `/login`: browser OAuth for ChatGPT Plus/Pro, Claude Pro/Max, etc. Credentials go to ~/.pi/agent/auth.json."
             )
         }
     }
@@ -66,63 +66,138 @@ public struct AgentCredentialProfile: Identifiable, Codable, Equatable, Sendable
 }
 
 public enum AgentProviderConsoleLinks {
-    /// Official pages for account login / API key creation. Pi itself consumes keys via env / CLI flags.
+    /// Dashboard / key-creation pages for API-key providers.
     public static func loginURL(for provider: AgentProviderID) -> URL? {
         switch provider {
-        case .openai:
+        case .openai, .openaiCodex:
             return URL(string: "https://platform.openai.com/api-keys")
         case .anthropic:
             return URL(string: "https://console.anthropic.com/settings/keys")
+        case .githubCopilot:
+            return URL(string: "https://github.com/settings/copilot")
+        case .xai:
+            return URL(string: "https://console.x.ai/")
+        case .antLing:
+            return nil
+        case .azureOpenAI:
+            return URL(string: "https://portal.azure.com/")
+        case .deepseek:
+            return URL(string: "https://platform.deepseek.com/api_keys")
+        case .nvidia:
+            return URL(string: "https://build.nvidia.com/")
         case .google:
             return URL(string: "https://aistudio.google.com/apikey")
+        case .googleVertex:
+            return URL(string: "https://console.cloud.google.com/vertex-ai")
+        case .amazonBedrock:
+            return URL(string: "https://console.aws.amazon.com/bedrock")
+        case .mistral:
+            return URL(string: "https://console.mistral.ai/")
+        case .groq:
+            return URL(string: "https://console.groq.com/keys")
+        case .cerebras:
+            return URL(string: "https://cloud.cerebras.ai/")
+        case .cloudflareAIGateway, .cloudflareWorkersAI:
+            return URL(string: "https://dash.cloudflare.com/")
         case .openrouter:
             return URL(string: "https://openrouter.ai/keys")
-        case .custom:
+        case .vercelAIGateway:
+            return URL(string: "https://vercel.com/docs/ai-gateway")
+        case .zai, .zaiCodingCN:
+            return URL(string: "https://z.ai/")
+        case .opencode, .opencodeGo:
+            return URL(string: "https://opencode.ai/")
+        case .huggingface:
+            return URL(string: "https://huggingface.co/settings/tokens")
+        case .fireworks:
+            return URL(string: "https://fireworks.ai/account/api-keys")
+        case .together:
+            return URL(string: "https://api.together.xyz/settings/api-keys")
+        case .kimiCoding, .moonshotai, .moonshotaiCN:
+            return URL(string: "https://platform.moonshot.cn/")
+        case .minimax, .minimaxCN:
+            return URL(string: "https://www.minimaxi.com/")
+        case .xiaomi, .xiaomiTokenPlanCN, .xiaomiTokenPlanAMS, .xiaomiTokenPlanSGP:
+            return nil
+        case .llamaCpp, .custom:
             return nil
         }
     }
 
     public static func accountURL(for provider: AgentProviderID) -> URL? {
         switch provider {
-        case .openai:
+        case .openaiCodex:
             return URL(string: "https://chatgpt.com/")
         case .anthropic:
             return URL(string: "https://claude.ai/")
-        case .google:
-            return URL(string: "https://gemini.google.com/")
-        case .openrouter:
-            return URL(string: "https://openrouter.ai/")
-        case .custom:
-            return nil
+        case .githubCopilot:
+            return URL(string: "https://github.com/login")
+        case .xai:
+            return URL(string: "https://x.ai/")
+        case .openai:
+            return URL(string: "https://platform.openai.com/")
+        default:
+            return loginURL(for: provider)
         }
     }
 
     public static func keyHelp(language: WeiBeiInterfaceLanguage, provider: AgentProviderID) -> String {
+        let env = provider.environmentAPIKeyName
         switch provider {
-        case .openai:
+        case .openaiCodex:
             return language.text(
-                "OpenAI：在 platform.openai.com 创建 sk-… 密钥。ChatGPT 网页订阅与 API 计费是分开的。",
-                "OpenAI: create an sk-… key on platform.openai.com. ChatGPT web subscription is billed separately from API usage."
+                "ChatGPT Plus/Pro：用「订阅 OAuth」登录（Pi /login openai-codex）。无需粘贴 sk-。",
+                "ChatGPT Plus/Pro: use Subscription OAuth (Pi /login openai-codex). No sk- paste required."
             )
         case .anthropic:
             return language.text(
-                "Anthropic：在 console.anthropic.com 创建 API Key（sk-ant-…）。",
-                "Anthropic: create an API key (sk-ant-…) in console.anthropic.com."
+                "Claude 订阅用 OAuth；或粘贴 API Key（\(env)）。",
+                "Claude subscription via OAuth, or paste an API key (\(env))."
             )
-        case .google:
+        case .githubCopilot:
             return language.text(
-                "Google：在 Google AI Studio 创建 Gemini API Key。",
-                "Google: create a Gemini API key in Google AI Studio."
+                "GitHub Copilot：在 Pi 中 /login github-copilot，或设置 \(env)。",
+                "GitHub Copilot: use Pi /login github-copilot, or set \(env)."
             )
-        case .openrouter:
+        case .azureOpenAI:
             return language.text(
-                "OpenRouter：登录后在 Keys 页创建密钥，可路由多家模型。",
-                "OpenRouter: sign in, create a key on the Keys page, and route multiple model providers."
+                "环境变量：\(env)。还需 AZURE_OPENAI_BASE_URL 或资源名（可写在 Base URL）。",
+                "Env: \(env). Also need AZURE_OPENAI_BASE_URL or resource name (use Base URL)."
+            )
+        case .googleVertex:
+            return language.text(
+                "可用 \(env)，或 gcloud ADC + GOOGLE_CLOUD_PROJECT / LOCATION。",
+                "Use \(env), or gcloud ADC with GOOGLE_CLOUD_PROJECT / LOCATION."
+            )
+        case .amazonBedrock:
+            return language.text(
+                "Bearer \(env)，或 AWS_PROFILE / IAM 密钥（由系统环境提供）。",
+                "Bearer \(env), or AWS_PROFILE / IAM keys from the host environment."
+            )
+        case .cloudflareAIGateway:
+            return language.text(
+                "\(env) + CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_GATEWAY_ID。",
+                "\(env) + CLOUDFLARE_ACCOUNT_ID + CLOUDFLARE_GATEWAY_ID."
+            )
+        case .cloudflareWorkersAI:
+            return language.text(
+                "\(env) + CLOUDFLARE_ACCOUNT_ID。",
+                "\(env) + CLOUDFLARE_ACCOUNT_ID."
             )
         case .custom:
             return language.text(
-                "自定义：填写 OpenAI 兼容 Base URL，并粘贴该服务的 API Key。",
-                "Custom: set an OpenAI-compatible Base URL and paste that service’s API key."
+                "自定义：填写 OpenAI 兼容 Base URL，并粘贴该服务的 API Key（注入 \(env)）。",
+                "Custom: set an OpenAI-compatible Base URL and paste the API key (injected as \(env))."
+            )
+        case .llamaCpp:
+            return language.text(
+                "llama.cpp：填写本地 OpenAI 兼容 Base URL；密钥通常可留空。",
+                "llama.cpp: set local OpenAI-compatible Base URL; key is often empty."
+            )
+        default:
+            return language.text(
+                "环境变量：\(env)。粘贴密钥后保存到当前配置。",
+                "Env: \(env). Paste the key and save to the current profile."
             )
         }
     }

@@ -3,51 +3,51 @@ import Foundation
 import WeiBeiCore
 
 /// Subscription providers that Pi authenticates via OAuth (`/login`), stored in `~/.pi/agent/auth.json`.
+/// In-app browser OAuth is implemented for openai-codex + anthropic; Copilot surfaces terminal guidance.
 enum PiSubscriptionProvider: String, CaseIterable, Identifiable, Sendable {
     case openaiCodex = "openai-codex"
     case anthropic = "anthropic"
+    case githubCopilot = "github-copilot"
 
     var id: String { rawValue }
 
     var piProviderFlag: String { rawValue }
 
-    func label(language: WeiBeiInterfaceLanguage) -> String {
+    var supportsInAppOAuth: Bool {
         switch self {
-        case .openaiCodex:
-            return language.text("OpenAI Codex（ChatGPT Plus/Pro）", "OpenAI Codex (ChatGPT Plus/Pro)")
-        case .anthropic:
-            return language.text("Claude Pro/Max", "Claude Pro/Max")
+        case .openaiCodex, .anthropic: return true
+        case .githubCopilot: return false
         }
+    }
+
+    func label(language: WeiBeiInterfaceLanguage) -> String {
+        agentProviderID.label(language: language)
     }
 
     func detail(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
         case .openaiCodex:
             return language.text(
-                "浏览器 OAuth 登录 ChatGPT 订阅账号（与 Pi `/login openai-codex` 相同），凭证写入 auth.json。",
-                "Browser OAuth for your ChatGPT subscription (same as Pi `/login openai-codex`); credentials go into auth.json."
+                "浏览器 OAuth（Pi `/login openai-codex`）→ ~/.pi/agent/auth.json",
+                "Browser OAuth (Pi `/login openai-codex`) → ~/.pi/agent/auth.json"
             )
         case .anthropic:
             return language.text(
-                "浏览器 OAuth 登录 Claude Pro/Max（与 Pi `/login anthropic` 相同）。",
-                "Browser OAuth for Claude Pro/Max (same as Pi `/login anthropic`)."
+                "浏览器 OAuth（Pi `/login anthropic`）→ auth.json",
+                "Browser OAuth (Pi `/login anthropic`) → auth.json"
+            )
+        case .githubCopilot:
+            return language.text(
+                "请在终端运行 pi 后执行 /login github-copilot（或 gh auth login）。",
+                "In a terminal run pi, then /login github-copilot (or gh auth login)."
             )
         }
     }
 
-    /// Default model hints after subscription login.
-    var defaultModel: String {
-        switch self {
-        case .openaiCodex: return "gpt-5.1"
-        case .anthropic: return "claude-sonnet-4-20250514"
-        }
-    }
+    var defaultModel: String { agentProviderID.defaultModelHint }
 
     var agentProviderID: AgentProviderID {
-        switch self {
-        case .openaiCodex: return .openai
-        case .anthropic: return .anthropic
-        }
+        AgentProviderID(rawValue: rawValue) ?? .openai
     }
 }
 

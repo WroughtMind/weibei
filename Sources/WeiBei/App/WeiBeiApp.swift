@@ -1518,20 +1518,30 @@ struct SettingsView: View {
                                             active: true
                                         )
                                     }
-                                    Button {
-                                        oauthService.startLogin(provider)
-                                    } label: {
-                                        Text(
-                                            oauthService.isLoggingIn
-                                                ? store.ui("登录中…", "Signing in…")
-                                                : store.ui(
-                                                    "登录 \(provider.label(language: store.interfaceLanguage))",
-                                                    "Sign in \(provider.label(language: store.interfaceLanguage))"
-                                                )
-                                        )
+                                    if provider.supportsInAppOAuth {
+                                        Button {
+                                            guard !oauthService.isLoggingIn else { return }
+                                            oauthService.startLogin(provider)
+                                        } label: {
+                                            Text(
+                                                oauthService.isLoggingIn
+                                                    ? store.ui("登录中…", "Signing in…")
+                                                    : store.ui(
+                                                        "OAuth 登录 \(provider.label(language: store.interfaceLanguage))",
+                                                        "OAuth \(provider.label(language: store.interfaceLanguage))"
+                                                    )
+                                            )
+                                        }
+                                        .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isLoggingIn))
+                                    } else {
+                                        Button {
+                                            store.setAgentProviderID(provider.agentProviderID)
+                                            store.openAIKeyStatus = provider.detail(language: store.interfaceLanguage)
+                                        } label: {
+                                            Text(store.ui("选择并查看说明", "Select & show help"))
+                                        }
+                                        .buttonStyle(WeiBeiTextActionButtonStyle())
                                     }
-                                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                                    .disabled(oauthService.isLoggingIn)
                                 }
                             }
                             if oauthService.isLoggingIn {
@@ -1564,12 +1574,36 @@ struct SettingsView: View {
             settingsGroup(store.ui("提供商与模型", "Provider & Model")) {
                 settingsRow(
                     title: store.ui("提供商", "Provider"),
-                    detail: store.ui("经 Pi 路由：OpenAI / Anthropic / Google / OpenRouter / 自定义。", "Routed through Pi: OpenAI, Anthropic, Google, OpenRouter, or custom.")
+                    detail: store.ui(
+                        "Pi 支持的全部供应商（订阅 OAuth + API Key + 本地/自定义）。",
+                        "All Pi-supported providers (subscription OAuth + API keys + local/custom)."
+                    )
                 ) {
                     compactMenu(store.agentProviderID.label(language: store.interfaceLanguage)) {
-                        ForEach(AgentProviderID.allCases) { provider in
-                            Button(provider.label(language: store.interfaceLanguage)) {
-                                store.setAgentProviderID(provider)
+                        Section(AgentProviderKind.subscription.label(language: store.interfaceLanguage)) {
+                            ForEach(AgentProviderID.subscriptionProviders) { provider in
+                                Button(provider.label(language: store.interfaceLanguage)) {
+                                    store.setAgentProviderID(provider)
+                                    if provider.kind == .subscription {
+                                        store.setAgentAuthMethod(.subscription)
+                                    }
+                                }
+                            }
+                        }
+                        Section(AgentProviderKind.apiKey.label(language: store.interfaceLanguage)) {
+                            ForEach(AgentProviderID.apiKeyProviders) { provider in
+                                Button(provider.label(language: store.interfaceLanguage)) {
+                                    store.setAgentProviderID(provider)
+                                    store.setAgentAuthMethod(.apiKey)
+                                }
+                            }
+                        }
+                        Section(AgentProviderKind.localOrCustom.label(language: store.interfaceLanguage)) {
+                            ForEach(AgentProviderID.localOrCustomProviders) { provider in
+                                Button(provider.label(language: store.interfaceLanguage)) {
+                                    store.setAgentProviderID(provider)
+                                    store.setAgentAuthMethod(.apiKey)
+                                }
                             }
                         }
                     }
@@ -1605,6 +1639,13 @@ struct SettingsView: View {
                                 .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                             Button(store.ui("清除", "Clear")) { store.clearOpenAIAPIKey() }
                                 .buttonStyle(WeiBeiTextActionButtonStyle())
+                            if AgentProviderConsoleLinks.loginURL(for: store.agentProviderID) != nil
+                                || AgentProviderConsoleLinks.accountURL(for: store.agentProviderID) != nil {
+                                Button(store.ui("打开控制台", "Open Console")) {
+                                    store.openAgentProviderConsole(login: false)
+                                }
+                                .buttonStyle(WeiBeiTextActionButtonStyle())
+                            }
                         }
                     }
                 }
@@ -1635,10 +1676,13 @@ struct SettingsView: View {
                     .frame(width: 250)
                 }
 
-                if store.agentProviderID == .custom || !store.agentBaseURL.isEmpty {
+                if store.agentProviderID.showsBaseURLField || !store.agentBaseURL.isEmpty {
                     settingsRow(
                         title: store.ui("Base URL", "Base URL"),
-                        detail: store.ui("写入 Pi models.json；OpenAI 兼容接口。", "Written into Pi models.json for OpenAI-compatible APIs.")
+                        detail: store.ui(
+                            "自定义 / llama.cpp 写入 Pi models.json；Azure 填资源 endpoint。",
+                            "Custom / llama.cpp write Pi models.json; Azure uses the resource endpoint."
+                        )
                     ) {
                         TextField(
                             "",
@@ -1646,7 +1690,11 @@ struct SettingsView: View {
                                 get: { store.agentBaseURL },
                                 set: { store.updateAgentBaseURL($0) }
                             ),
-                            prompt: Text("https://api.example.com/v1")
+                            prompt: Text(
+                                store.agentProviderID == .azureOpenAI
+                                    ? "https://YOUR.openai.azure.com"
+                                    : "https://api.example.com/v1"
+                            )
                                 .font(.system(size: 13))
                                 .foregroundStyle(WeiBeiTheme.placeholderInk)
                         )
