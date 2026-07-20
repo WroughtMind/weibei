@@ -1524,13 +1524,14 @@ private struct AgentRailTurn {
 /// than `availableWidth`, or multi-pane text centers as if the strip were full-window wide.
 private enum AgentChatLayoutMetrics {
     static let compactMaxWidth: CGFloat = 560
-    /// Immersive conversation reading column — wide Codex-like band.
-    static let wideMaxWidth: CGFloat = 1000
+    /// Immersive conversation: nearly full pane (not a skinny centered strip).
+    static let wideMaxWidth: CGFloat = 1400
     static let compactSideGutter: CGFloat = 12
-    static let wideSideGutter: CGFloat = 18
+    /// Tight gutters so the reading column owns the immersive canvas.
+    static let wideSideGutter: CGFloat = 40
     static let compactComposerHeight: CGFloat = 52
-    /// Tall real composer (not a search-field strip).
-    static let wideComposerHeight: CGFloat = 108
+    /// Tall real composer — empty state must still read as a writing surface, not a search field.
+    static let wideComposerHeight: CGFloat = 132
     static let compactFontSize: CGFloat = 14.5
     static let wideFontSize: CGFloat = 16.5
 
@@ -1541,10 +1542,9 @@ private enum AgentChatLayoutMetrics {
     static func contentWidth(availableWidth: CGFloat, wide: Bool) -> CGFloat {
         let gutter = (wide ? wideSideGutter : compactSideGutter) * 2
         let usable = max(availableWidth - gutter, 1)
-        let maxWidth = wide ? wideMaxWidth : compactMaxWidth
-        // Fit the pane first; only then apply the design ceiling. No artificial 280 floor
+        // Fit the pane first; only then apply the design ceiling. No artificial floor
         // that can exceed a narrow multi-pane strip.
-        return min(usable, maxWidth)
+        return min(usable, wide ? wideMaxWidth : compactMaxWidth)
     }
 
     static func composerHeight(wide: Bool) -> CGFloat {
@@ -1965,14 +1965,14 @@ struct AgentPaneView: View {
                     focused: $draftFocused,
                     font: .system(size: fontSize),
                     promptFont: .system(size: fontSize),
-                    lineLimit: wide ? 1...10 : 1...6,
+                    lineLimit: wide ? 1...12 : 1...6,
                     height: fieldHeight,
-                    sendButtonSize: wide ? 36 : 28,
-                    trailingPadding: wide ? 52 : 40,
-                    sendTrailing: wide ? 16 : 10,
-                    sendBottom: wide ? 22 : 8,
-                    horizontalPadding: wide ? 20 : 12,
-                    verticalPadding: wide ? 18 : 8
+                    sendButtonSize: wide ? 38 : 28,
+                    trailingPadding: wide ? 56 : 40,
+                    sendTrailing: wide ? 18 : 10,
+                    sendBottom: wide ? 24 : 8,
+                    horizontalPadding: wide ? 22 : 12,
+                    verticalPadding: wide ? 20 : 8
                 ) {
                     store.askAgent()
                 }
@@ -1980,8 +1980,8 @@ struct AgentPaneView: View {
             .font(.system(size: fontSize))
             // Fixed width = reading column. Fixed height = real composer block.
             .frame(width: contentWidth, height: fieldHeight, alignment: .bottom)
-            .padding(.top, wide ? 10 : 4)
-            .padding(.bottom, wide ? 24 : 12)
+            .padding(.top, wide ? 12 : 4)
+            .padding(.bottom, wide ? 28 : 12)
             .frame(maxWidth: .infinity)
             .background(WeiBeiTheme.paper)
             .animation(WeiBeiMotion.reveal, value: store.agentDraft)
@@ -3143,14 +3143,22 @@ private struct AgentBubble: View {
 
     private func activateCitation(_ citation: AgentCitation) {
         switch citation.kind {
-        case .material, .note, .selection:
-            let opened = store.openSourceReference("来源：\(citation.value)")
-            if !opened {
-                // Fallback: bare title / note name.
-                _ = store.openSourceReference(citation.value)
+        case .material:
+            withAnimation(WeiBeiMotion.panel) {
+                _ = store.openAgentCitation(kind: "material", value: citation.value)
+            }
+        case .note:
+            withAnimation(WeiBeiMotion.panel) {
+                _ = store.openAgentCitation(kind: "note", value: citation.value)
+            }
+        case .selection:
+            withAnimation(WeiBeiMotion.panel) {
+                _ = store.openAgentCitation(kind: "selection", value: citation.value)
             }
         case .learningRecord:
-            store.resumePreviousStudy()
+            withAnimation(WeiBeiMotion.panel) {
+                store.resumePreviousStudy()
+            }
         case .learningMemory:
             withAnimation(WeiBeiMotion.panel) {
                 store.presentCourseWorkspace(.sessions)

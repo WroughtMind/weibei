@@ -845,8 +845,16 @@ final class WorkspaceStore: ObservableObject {
 
     func resumePreviousStudy() {
         guard let location = lastStudyLocation,
-              allItems.contains(where: { $0.id == location.itemID }) else { return }
+              let item = allItems.first(where: { $0.id == location.itemID }) else { return }
+        if layout == .immersiveConversation || layout == .immersiveWriting {
+            setLayout(item.isNotebookNote ? .immersiveWriting : .immersiveReading)
+        }
         select(itemID: location.itemID)
+        if item.isNotebookNote {
+            showNotes = true
+            focus(.notes)
+            return
+        }
         requestReaderPDFPage(location.pageIndex, recordsLocation: false)
         requestReaderHTMLLocation(id: location.locationID, title: location.locationTitle)
         showReader = true
@@ -1983,11 +1991,21 @@ final class WorkspaceStore: ObservableObject {
     func openSourceReference(_ rawReference: String) -> Bool {
         guard let item = sourceReferenceItem(from: rawReference) else { return false }
         let reference = SourceReferenceTitle.parse(rawReference)
+        // Immersive chat only shows the agent pane — leave it so the reader/note is visible.
+        if layout == .immersiveConversation || layout == .immersiveWriting {
+            if item.isNotebookNote {
+                setLayout(.immersiveWriting)
+            } else {
+                setLayout(.immersiveReading)
+            }
+        }
         select(itemID: item.id)
         if item.isNotebookNote {
+            showNotes = true
             focus(.notes)
             return true
         }
+        showReader = true
         requestReaderPDFPage(
             item.kind == .pdf ? reference.pageIndex : nil,
             recordsLocation: item.kind == .pdf && reference.pageIndex != nil
@@ -2001,6 +2019,29 @@ final class WorkspaceStore: ObservableObject {
             title: item.kind == .html ? reference.sectionTitle : nil
         )
         focus(.reader)
+        return true
+    }
+
+    /// Open a material/note citation from chat tags when the label is only a human title.
+    @discardableResult
+    func openAgentCitation(kind: String, value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        // Prefer the structured "来源：" parser (handles section markers).
+        if openSourceReference("来源：\(trimmed)") { return true }
+        if openSourceReference(trimmed) { return true }
+        // Fuzzy title match for Pi short labels like "货币金融学课程 HTML".
+        guard let item = resolveStudyItem(matchingCitationTitle: trimmed) else { return false }
+        if item.isNotebookNote || kind == "note" {
+            if layout == .immersiveConversation || layout == .immersiveReading {
+                setLayout(.immersiveWriting)
+            }
+            select(itemID: item.id)
+            showNotes = true
+            focus(.notes)
+            return true
+        }
+        openCourseMaterial(item.id)
         return true
     }
 
@@ -3928,13 +3969,82 @@ final class WorkspaceStore: ObservableObject {
             guard catalog.indices.contains(index) else { return nil }
             let item = catalog[index]
             guard displayTitle(for: item) == reference.title
-                    || displaySubtitle(for: item) == reference.title else { return nil }
+                    || displaySubtitle(for: item) == reference.title
+                    || titlesLooselyMatch(displayTitle(for: item), reference.title)
+                    || titlesLooselyMatch(displaySubtitle(for: item), reference.title) else { return nil }
             return item
         }
+        // Exact unique title first — never guess between duplicate file titles for note jump links.
         let matches = allItems.filter {
             displayTitle(for: $0) == reference.title || displaySubtitle(for: $0) == reference.title
         }
-        return matches.count == 1 ? matches[0] : nil
+        if !matches.isEmpty {
+            return matches.count == 1 ? matches[0] : nil
+        }
+        // Chat citation tags often use short human labels; only fuzzy after exact miss.
+        return resolveStudyItem(matchingCitationTitle: reference.title)
+    }
+
+    /// Resolve a study item from a human citation title (exact → loose → unique contains).
+    private func resolveStudyItem(matchingCitationTitle rawTitle: String) -> StudyItem? {
+        let needle = normalizeCitationTitle(rawTitle)
+        guard !needle.isEmpty else { return nil }
+
+        let exact = allItems.filter {
+            normalizeCitationTitle(displayTitle(for: $0)) == needle
+                || normalizeCitationTitle(displaySubtitle(for: $0)) == needle
+        }
+        if exact.count == 1 { return exact[0] }
+        if exact.count > 1 {
+            // Prefer materials over notes when the label says "material".
+            if let material = exact.first(where: { !$0.isNotebookNote }) { return material }
+            return exact[0]
+        }
+
+        let loose = allItems.filter {
+            titlesLooselyMatch(displayTitle(for: $0), rawTitle)
+                || titlesLooselyMatch(displaySubtitle(for: $0), rawTitle)
+        }
+        if loose.count == 1 { return loose[0] }
+        if loose.count > 1 {
+            if let material = loose.first(where: { !$0.isNotebookNote }) { return material }
+            return loose[0]
+        }
+
+        // Unique contains: "货币金融学课程 HTML" vs longer catalog titles.
+        let contained = allItems.filter {
+            let title = normalizeCitationTitle(displayTitle(for: $0))
+            let subtitle = normalizeCitationTitle(displaySubtitle(for: $0))
+            return title.contains(needle) || needle.contains(title)
+                || subtitle.contains(needle) || (!subtitle.isEmpty && needle.contains(subtitle))
+        }
+        if contained.count == 1 { return contained[0] }
+        if contained.count > 1 {
+            // Prefer shortest title distance (closest match).
+            return contained.min { lhs, rhs in
+                abs(normalizeCitationTitle(displayTitle(for: lhs)).count - needle.count)
+                    < abs(normalizeCitationTitle(displayTitle(for: rhs)).count - needle.count)
+            }
+        }
+        return nil
+    }
+
+    private func titlesLooselyMatch(_ lhs: String, _ rhs: String) -> Bool {
+        let a = normalizeCitationTitle(lhs)
+        let b = normalizeCitationTitle(rhs)
+        guard !a.isEmpty, !b.isEmpty else { return false }
+        if a == b { return true }
+        // Strip common kind suffixes the model often appends.
+        let strippedA = a.replacingOccurrences(of: #"\s+(html|pdf|md|markdown|text)$"#, with: "", options: .regularExpression)
+        let strippedB = b.replacingOccurrences(of: #"\s+(html|pdf|md|markdown|text)$"#, with: "", options: .regularExpression)
+        return strippedA == strippedB || strippedA == b || a == strippedB
+    }
+
+    private func normalizeCitationTitle(_ raw: String) -> String {
+        raw
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .lowercased()
     }
 
     private func addNoteSourceLink(noteItemID: String, sourceItemID: String) {
