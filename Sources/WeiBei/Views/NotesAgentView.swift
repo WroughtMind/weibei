@@ -1525,26 +1525,29 @@ private struct AgentRailTurn {
 private enum AgentChatLayoutMetrics {
     static let compactMaxWidth: CGFloat = 560
     /// Immersive conversation: nearly full pane (not a skinny centered strip).
-    static let wideMaxWidth: CGFloat = 1400
+    static let wideMaxWidth: CGFloat = 1600
     static let compactSideGutter: CGFloat = 12
     /// Tight gutters so the reading column owns the immersive canvas.
-    static let wideSideGutter: CGFloat = 40
+    static let wideSideGutter: CGFloat = 48
     static let compactComposerHeight: CGFloat = 52
     /// Tall real composer — empty state must still read as a writing surface, not a search field.
-    static let wideComposerHeight: CGFloat = 132
+    static let wideComposerHeight: CGFloat = 148
     static let compactFontSize: CGFloat = 14.5
-    static let wideFontSize: CGFloat = 16.5
+    static let wideFontSize: CGFloat = 17
 
     static func isWide(layout: WorkspaceLayout) -> Bool {
+        // Immersive conversation only — document multi-pane keeps compact strip metrics.
         layout == .immersiveConversation
     }
 
     static func contentWidth(availableWidth: CGFloat, wide: Bool) -> CGFloat {
         let gutter = (wide ? wideSideGutter : compactSideGutter) * 2
         let usable = max(availableWidth - gutter, 1)
-        // Fit the pane first; only then apply the design ceiling. No artificial floor
-        // that can exceed a narrow multi-pane strip.
-        return min(usable, wide ? wideMaxWidth : compactMaxWidth)
+        // Wide: use nearly the whole measured pane (gutter only). Cap only for ultra-wide displays.
+        if wide {
+            return min(usable, wideMaxWidth)
+        }
+        return min(usable, compactMaxWidth)
     }
 
     static func composerHeight(wide: Bool) -> CGFloat {
@@ -2509,7 +2512,7 @@ struct FloatingSelectionAgentView: View {
         .weibeiFloatingPanel(cornerRadius: 7)
         .scaleEffect(showsExpandedBody ? 1 : 0.985)
         .animation(WeiBeiMotion.panel, value: expanded)
-        .animation(WeiBeiMotion.panel, value: routesToConversation)
+        .animation(WeiBeiMotion.panel, value: store.keepFloatingSelectionForAnswer)
         .offset(dragOffset)
         .gesture(
             DragGesture()
@@ -2527,7 +2530,7 @@ struct FloatingSelectionAgentView: View {
                 }
         )
         .onChange(of: store.selectionContext) { previous, next in
-            guard !store.pinnedFloatingAgent else { return }
+            guard !store.pinnedFloatingAgent, !store.keepFloatingSelectionForAnswer else { return }
             // Same content with a new id (or drag ticks) must not re-spring the capsule.
             let sameContent = previous?.text == next?.text
                 && previous?.source == next?.source
@@ -2540,12 +2543,14 @@ struct FloatingSelectionAgentView: View {
                 settledOffset = .zero
             }
         }
-        .onChange(of: routesToConversation) { _, routesToConversation in
-            guard routesToConversation else { return }
-            withAnimation(WeiBeiMotion.panel) {
-                expanded = false
-                dragOffset = .zero
-                settledOffset = .zero
+        .onChange(of: store.keepFloatingSelectionForAnswer) { _, keep in
+            if keep {
+                withAnimation(WeiBeiMotion.panel) { expanded = true }
+            }
+        }
+        .onChange(of: store.isAskingAgent) { _, asking in
+            if asking {
+                withAnimation(WeiBeiMotion.panel) { expanded = true }
             }
         }
         .onChange(of: store.focusRequest) { _, _ in
@@ -2553,14 +2558,18 @@ struct FloatingSelectionAgentView: View {
         }
         .onAppear {
             draftFocused = store.focusedPane == .agent
+            if store.keepFloatingSelectionForAnswer || store.activeSelectionAskThreadID != nil {
+                expanded = true
+            }
         }
         .onExitCommand {
             closeFloatingAgent()
         }
     }
 
+    /// Expanded body shows the full selection Q&A surface (not collapsed by conversation visibility).
     private var showsExpandedBody: Bool {
-        expanded && !routesToConversation
+        expanded || store.keepFloatingSelectionForAnswer || store.isAskingAgent
     }
 
     private var promptBody: some View {
@@ -2613,7 +2622,6 @@ struct FloatingSelectionAgentView: View {
                 if store.selectionContext != nil {
                     actionButton(store.ui("摘录", "Excerpt")) {
                         store.appendSelectionToNote()
-                        closeFloatingAgent()
                     }
                 }
                 if canPolishNoteSelection {
@@ -2622,7 +2630,13 @@ struct FloatingSelectionAgentView: View {
                 if store.canReplaceNoteSelection {
                     actionButton(store.ui("替换", "Replace")) {
                         store.replaceSelectionWithLastAgentAnswer()
-                        closeFloatingAgent()
+                    }
+                }
+                if store.isConversationSurfaceVisible, store.activeSelectionAskThreadID != nil {
+                    actionButton(store.ui("跳到对话", "Jump to chat")) {
+                        if let id = store.activeSelectionAskThreadID {
+                            store.openSelectionAskThread(id, jumpToConversation: true)
+                        }
                     }
                 }
                 Spacer(minLength: 0)
@@ -2634,76 +2648,102 @@ struct FloatingSelectionAgentView: View {
                         togglePinnedFloatingAgent()
                     }
                 }
+                iconButton("xmark", help: store.ui("关闭", "Close")) {
+                    closeFloatingAgent()
+                }
             }
 
             ScrollView(showsIndicators: false) {
-                LazyVStack(alignment: .leading, spacing: 8) {
+                LazyVStack(alignment: .leading, spacing: 10) {
                     if let selection = store.selectionContext?.text {
                         Text(selection)
-                            .font(.caption2)
-                            .lineLimit(2)
+                            .font(.system(size: 11.5, weight: .medium))
+                            .lineLimit(4)
                             .foregroundStyle(WeiBeiTheme.secondaryInk)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.bottom, 2)
+                        Rectangle()
+                            .fill(WeiBeiTheme.hairline.opacity(0.55))
+                            .frame(height: 1)
                     }
 
                     if store.isAskingAgent {
-                        Text(store.ui("正在读选区...", "Reading selection..."))
-                            .font(.caption2)
-                            .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        if !store.agentStreamingText.isEmpty {
+                            Text(store.agentStreamingText)
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(WeiBeiTheme.ink)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .allowsHitTesting(false)
+                        } else {
+                            Text(store.ui("正在读选区...", "Reading selection..."))
+                                .font(.caption)
+                                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        }
                     }
 
                     ForEach(visibleFloatingMessages) { message in
-                        Text(floatingText(for: message))
-                            .font(.caption2)
-                            .foregroundStyle(floatingColor(for: message))
-                            .lineLimit(message.role == .user ? 3 : nil)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(message.role == .user
+                                 ? store.ui("你", "You")
+                                 : "WeiBei")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(message.role == .user ? WeiBeiTheme.link : WeiBeiTheme.cinnabar.opacity(0.78))
+                            Text(floatingText(for: message))
+                                .font(.system(size: 12.5))
+                                .foregroundStyle(floatingColor(for: message))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .allowsHitTesting(false)
+                        }
                     }
                 }
             }
-            .frame(maxHeight: floatingFeedHeight)
-            .fixedSize(horizontal: false, vertical: true)
+            .frame(minHeight: floatingFeedHeight, maxHeight: 380)
 
             AgentComposerField(
-                prompt: store.ui("继续追问", "Ask a follow-up"),
+                prompt: store.ui("问选区或继续追问", "Ask about selection…"),
                 focused: $draftFocused,
-                font: .caption,
-                promptFont: .caption,
-                lineLimit: 1...2,
-                height: 34,
-                sendButtonSize: 22,
-                trailingPadding: 30,
-                sendTrailing: 6,
-                sendBottom: 6,
-                horizontalPadding: 8
+                font: .system(size: 13),
+                promptFont: .system(size: 13),
+                lineLimit: 1...4,
+                height: 52,
+                sendButtonSize: 26,
+                trailingPadding: 36,
+                sendTrailing: 8,
+                sendBottom: 8,
+                horizontalPadding: 10,
+                verticalPadding: 8
             ) {
                 sendDraft()
             }
         }
-        .padding(10)
+        .padding(12)
         .frame(width: CGFloat(SelectionFloatingAgentPlacement.expandedHalfWidth * 2), alignment: .leading)
+        .frame(minWidth: 360)
         .onAppear {
             draftFocused = true
         }
     }
 
     private var visibleFloatingMessages: [AgentMessage] {
+        // Prefer the active selection-ask thread's messages so the float is a real transcript.
+        if let threadID = store.activeSelectionAskThreadID,
+           let thread = store.selectionAskThreads.first(where: { $0.id == threadID }),
+           !thread.messageIDs.isEmpty {
+            let idSet = Set(thread.messageIDs)
+            return store.messages.filter { idSet.contains($0.id) }
+        }
+
         var result: [AgentMessage] = []
         var includedCredentialNotice = false
-
-        for message in store.messages.suffix(6).reversed() {
-            if isGeneratedSelectionPrompt(message) {
-                continue
-            }
+        for message in store.messages.suffix(12).reversed() {
+            if isGeneratedSelectionPrompt(message) { continue }
             if isCredentialNotice(message) {
                 guard !includedCredentialNotice else { continue }
                 includedCredentialNotice = true
             }
-
             result.append(message)
-            if result.count == 3 { break }
+            if result.count == 8 { break }
         }
-
         return result.reversed()
     }
 
@@ -2712,16 +2752,13 @@ struct FloatingSelectionAgentView: View {
     }
 
     private var floatingFeedHeight: CGFloat {
-        if visibleFloatingMessages.isEmpty && !store.isAskingAgent { return 42 }
+        if store.isAskingAgent { return 160 }
+        if visibleFloatingMessages.isEmpty { return 64 }
         switch visibleFloatingMessages.count {
-        case 0:
-            return 56
-        case 1:
-            return 96
-        case 2:
-            return 150
-        default:
-            return 220
+        case 1: return 120
+        case 2: return 180
+        case 3: return 240
+        default: return 300
         }
     }
 
@@ -2790,23 +2827,30 @@ struct FloatingSelectionAgentView: View {
 
     private func explainSelection() {
         withAnimation(WeiBeiMotion.panel) {
-            expanded = !routesToConversation
-            if routesToConversation {
-                dragOffset = .zero
-                settledOffset = .zero
-            }
+            expanded = true
+            store.keepFloatingSelectionForAnswer = true
+            store.pinnedFloatingAgent = true
             store.askSelection()
+            // Seed a default explain prompt when the draft is empty so one click asks.
+            if store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                store.agentDraft = store.ui(
+                    "请解释当前选区，结合上下文说明要点，并标明依据。",
+                    "Explain the current selection with context, key points, and evidence."
+                )
+            }
+            store.askAgent()
         }
     }
 
     private func openSourceReference() {
         store.openSelectedSourceReference()
-        closeFloatingAgent()
     }
 
     private func polishNote() {
         withAnimation(WeiBeiMotion.panel) {
             expanded = true
+            store.keepFloatingSelectionForAnswer = true
+            store.pinnedFloatingAgent = true
             store.agentDraft = store.ui("请整理和润色当前笔记，保留原意，并标出缺少来源的位置。", "Organize and polish the current note, preserve the meaning, and mark where sources are missing.")
         }
         store.askAgent()
@@ -2817,6 +2861,11 @@ struct FloatingSelectionAgentView: View {
               !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         withAnimation(WeiBeiMotion.panel) {
             expanded = true
+            store.keepFloatingSelectionForAnswer = true
+            store.pinnedFloatingAgent = true
+            if let selection = store.selectionContext {
+                _ = store.beginOrReuseSelectionAskThread(for: selection)
+            }
         }
         store.askAgent()
     }

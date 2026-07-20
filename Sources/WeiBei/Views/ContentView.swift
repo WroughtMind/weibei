@@ -50,6 +50,12 @@ struct ContentView: View {
                                 .position(floatingAgentPosition(in: geometry.size))
                                 .transition(WeiBeiTransition.floating)
                                 .zIndex(30)
+                                .onChange(of: store.keepFloatingSelectionForAnswer) { _, keep in
+                                    if keep { floatingAgentExpanded = true }
+                                }
+                                .onChange(of: store.activeSelectionAskThreadID) { _, id in
+                                    if id != nil { floatingAgentExpanded = true }
+                                }
                         }
 
                     }

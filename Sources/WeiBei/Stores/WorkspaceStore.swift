@@ -269,6 +269,12 @@ final class WorkspaceStore: ObservableObject {
     @Published var selectionContext: SelectionContext?
     @Published var selectionAttachments: [SelectionContext] = []
     @Published var selectionAnchor: CGPoint?
+    /// Durable selection→chat threads (underline marks + reopen floating Q&A).
+    @Published var selectionAskThreads: [SelectionAskThread] = []
+    /// Thread currently shown in the floating selection agent (full answer surface).
+    @Published var activeSelectionAskThreadID: UUID?
+    /// Keeps the floating agent open while a selection-based answer streams.
+    @Published var keepFloatingSelectionForAnswer = false
     @Published var noteEditorCommand: NoteEditorCommand?
     @Published var noteFileError: String?
     /// Success / info banner for note create/switch — separate from errors so it auto-dismisses cleanly.
@@ -445,6 +451,7 @@ final class WorkspaceStore: ObservableObject {
         )
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         load()
+        loadSelectionAskThreadsIfNeeded()
         let recoveredPendingNotebookRename = recoverPendingNotebookRenameIfNeeded()
         let resolvedImportedFileBookmarks = resolvePersistedImportedFileBookmarks()
         let migratedImportedItemIdentities = migrateLegacyImportedItemIdentities()
@@ -2254,6 +2261,8 @@ final class WorkspaceStore: ObservableObject {
         selectionContext = nil
         selectionAnchor = nil
         pinnedFloatingAgent = false
+        keepFloatingSelectionForAnswer = false
+        // Keep activeSelectionAskThreadID so hover can reopen; clear only the surface.
         save()
     }
 
@@ -4460,15 +4469,23 @@ final class WorkspaceStore: ObservableObject {
 
     func askSelection() {
         if let selectionContext {
-            if isConversationSurfaceVisible {
-                routeSelectionToConversation(selectionContext)
-            } else {
-                withAnimation(WeiBeiMotion.panel) {
-                    cancelPendingSelectionAttachment()
-                    addSelectionAttachment(selectionContext)
-                    floatingSelectionPrompt = selectionContext.label(language: interfaceLanguage)
-                    agentSurface = .selectionFloat
-                    showQuietInsight = false
+            // Always attach selection + keep/show the floating agent so the answer can
+            // stream there. Main conversation also receives the turn (dual surface).
+            withAnimation(WeiBeiMotion.panel) {
+                cancelPendingSelectionAttachment()
+                addSelectionAttachment(selectionContext)
+                floatingSelectionPrompt = selectionContext.label(language: interfaceLanguage)
+                agentSurface = .selectionFloat
+                pinnedFloatingAgent = true
+                keepFloatingSelectionForAnswer = true
+                showQuietInsight = false
+                let thread = beginOrReuseSelectionAskThread(for: selectionContext)
+                activeSelectionAskThreadID = thread.id
+                if isConversationSurfaceVisible {
+                    // Dual: also focus the formal chat pane without killing the float.
+                    focusedPane = .agent
+                    focusRequest += 1
+                } else {
                     focus(.agent)
                 }
             }
@@ -4497,16 +4514,114 @@ final class WorkspaceStore: ObservableObject {
                 cancelPendingSelectionAttachment()
                 addSelectionAttachment(context)
                 floatingSelectionPrompt = context.label(language: interfaceLanguage)
+                _ = beginOrReuseSelectionAskThread(for: context)
             }
-            if agentSurface == .selectionFloat {
+            // Prefer keeping float if user is mid answer; otherwise collapse into chat.
+            if !keepFloatingSelectionForAnswer, agentSurface == .selectionFloat {
                 agentSurface = .hidden
+                pinnedFloatingAgent = false
             }
-            selectionAnchor = nil
-            pinnedFloatingAgent = false
+            if !keepFloatingSelectionForAnswer {
+                selectionAnchor = nil
+            }
             showQuietInsight = false
             focusedPane = .agent
             focusRequest += 1
         }
+    }
+
+    /// Reopen the floating agent for a past selection-ask thread (hover / mark click).
+    func openSelectionAskThread(_ threadID: UUID, jumpToConversation: Bool = false) {
+        guard let thread = selectionAskThreads.first(where: { $0.id == threadID }) else { return }
+        withAnimation(WeiBeiMotion.panel) {
+            activeSelectionAskThreadID = thread.id
+            floatingSelectionPrompt = thread.ownerTitle
+            keepFloatingSelectionForAnswer = true
+            pinnedFloatingAgent = true
+            agentSurface = .selectionFloat
+            // Restore a synthetic selection context so the float shows the excerpt.
+            selectionContext = SelectionContext(
+                id: thread.id,
+                text: thread.selectionText,
+                source: thread.source,
+                ownerTitle: thread.ownerTitle,
+                isEditable: thread.source == .note
+            )
+            if jumpToConversation, isConversationSurfaceVisible,
+               let lastID = thread.messageIDs.last {
+                focusedPane = .agent
+                focusRequest += 1
+                NotificationCenter.default.post(
+                    name: .weiBeiScrollAgentToMessage,
+                    object: nil,
+                    userInfo: ["messageID": lastID.uuidString]
+                )
+            }
+        }
+    }
+
+    @discardableResult
+    func beginOrReuseSelectionAskThread(for selection: SelectionContext) -> SelectionAskThread {
+        let normalized = SelectionAttachmentMerge.normalized(selection.text)
+        let itemID = selection.source == .note ? activeNotebookItemID : selectedItemID
+        if let index = selectionAskThreads.firstIndex(where: {
+            $0.normalizedText == normalized
+                && $0.source == selection.source
+                && ($0.itemID == nil || $0.itemID == itemID || itemID == nil)
+        }) {
+            selectionAskThreads[index].updatedAt = Date()
+            selectionAskThreads[index].itemID = selectionAskThreads[index].itemID ?? itemID
+            persistSelectionAskThreads()
+            return selectionAskThreads[index]
+        }
+        let thread = SelectionAskThread(
+            selectionText: selection.text,
+            source: selection.source,
+            ownerTitle: selection.ownerTitle,
+            itemID: itemID
+        )
+        selectionAskThreads.insert(thread, at: 0)
+        if selectionAskThreads.count > 80 {
+            selectionAskThreads = Array(selectionAskThreads.prefix(80))
+        }
+        persistSelectionAskThreads()
+        return thread
+    }
+
+    func appendMessageToActiveSelectionAskThread(_ messageID: UUID) {
+        guard let threadID = activeSelectionAskThreadID,
+              let index = selectionAskThreads.firstIndex(where: { $0.id == threadID }) else { return }
+        if !selectionAskThreads[index].messageIDs.contains(messageID) {
+            selectionAskThreads[index].messageIDs.append(messageID)
+            selectionAskThreads[index].updatedAt = Date()
+            persistSelectionAskThreads()
+        }
+    }
+
+    func selectionAskThreads(forItemID itemID: String?) -> [SelectionAskThread] {
+        guard let itemID else { return selectionAskThreads }
+        return selectionAskThreads.filter { $0.itemID == nil || $0.itemID == itemID }
+    }
+
+    func selectionAskThread(matchingText text: String) -> SelectionAskThread? {
+        let normalized = SelectionAttachmentMerge.normalized(text)
+        guard !normalized.isEmpty else { return nil }
+        return selectionAskThreads.first { $0.normalizedText == normalized }
+    }
+
+    private func persistSelectionAskThreads() {
+        let key = "weibei.selectionAskThreads.v1"
+        if let data = try? JSONEncoder().encode(selectionAskThreads) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
+    func loadSelectionAskThreadsIfNeeded() {
+        let key = "weibei.selectionAskThreads.v1"
+        guard selectionAskThreads.isEmpty,
+              let data = UserDefaults.standard.data(forKey: key),
+              let decoded = try? JSONDecoder().decode([SelectionAskThread].self, from: data) else { return }
+        selectionAskThreads = decoded
     }
 
     func appendSelectionToNote() {
@@ -5907,8 +6022,13 @@ final class WorkspaceStore: ObservableObject {
                 lastSelectionUpdateDate = nil
             }
         }
-        if shouldClearSentDocumentSelection {
+        // Keep the floating selection agent open while answering — do not dismiss it mid-stream.
+        // (Previously clearUnpinnedFloatingSelection killed the float as soon as ask started.)
+        if shouldClearSentDocumentSelection, !keepFloatingSelectionForAnswer, !pinnedFloatingAgent {
             clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)
+        } else if keepFloatingSelectionForAnswer || pinnedFloatingAgent {
+            agentSurface = .selectionFloat
+            pinnedFloatingAgent = true
         }
         isAskingAgent = true
         activeAgentRequestID = requestID
@@ -5921,6 +6041,11 @@ final class WorkspaceStore: ObservableObject {
                 agentStreamingText = ""
                 agentActivityText = nil
                 agentRequestTask = nil
+                // Answer finished: keep float pinned so the user can scroll the reply.
+                if keepFloatingSelectionForAnswer {
+                    pinnedFloatingAgent = true
+                    agentSurface = .selectionFloat
+                }
             }
         }
 
@@ -5952,7 +6077,9 @@ final class WorkspaceStore: ObservableObject {
                 language: sentLanguage,
                 contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())"
             )
-            appendAgentMessage(AgentMessage(role: .user, text: question, source: sourceTitle))
+            let userMessage = AgentMessage(role: .user, text: question, source: sourceTitle)
+            appendAgentMessage(userMessage)
+            appendMessageToActiveSelectionAskThread(userMessage.id)
             didAppendUserMessage = true
             agentActivityText = ui("正在读取上下文", "Reading context")
             if isGeneratingQuietInsight {
@@ -5970,15 +6097,15 @@ final class WorkspaceStore: ObservableObject {
                 expectedUserQuestion: request.question
             )
             lastAgentReplyContextRevision = requestWorkspaceRevision
-            appendAgentMessage(
-                AgentMessage(
-                    role: .assistant,
-                    text: reply.noteProposal?.markdown ?? reply.richAnswer?.narrative ?? reply.text,
-                    source: sourceTitle,
-                    backend: reply.backend,
-                    richAnswer: reply.noteProposal == nil ? reply.richAnswer : nil
-                )
+            let assistantMessage = AgentMessage(
+                role: .assistant,
+                text: reply.noteProposal?.markdown ?? reply.richAnswer?.narrative ?? reply.text,
+                source: sourceTitle,
+                backend: reply.backend,
+                richAnswer: reply.noteProposal == nil ? reply.richAnswer : nil
             )
+            appendAgentMessage(assistantMessage)
+            appendMessageToActiveSelectionAskThread(assistantMessage.id)
         } catch PiAgentRuntimeError.cancelled, is CancellationError {
             if !didAppendUserMessage,
                agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -6784,6 +6911,10 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func clearUnpinnedFloatingSelection(keepContext: Bool = true, invalidatesAgentContext: Bool = true) {
+        // Never kill the float while a selection answer is streaming / pinned for reading.
+        if keepFloatingSelectionForAnswer || (pinnedFloatingAgent && agentSurface == .selectionFloat && isAskingAgent) {
+            return
+        }
         if !keepContext {
             if invalidatesAgentContext, selectionContext != nil {
                 invalidateAgentContext()
@@ -6806,6 +6937,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func collapseSelectionFloatIntoConversationIfVisible() {
+        // Keep dual-surface answer: do not auto-collapse float into chat while answering.
+        guard !keepFloatingSelectionForAnswer else { return }
         guard isConversationSurfaceVisible, agentSurface == .selectionFloat else { return }
         agentSurface = .hidden
         selectionAnchor = nil

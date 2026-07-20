@@ -847,6 +847,45 @@ public struct SelectionContext: Identifiable, Codable, Hashable {
     }
 }
 
+/// A durable link between a selected text span the user asked about and the chat turns that followed.
+/// Used for underline marks in the reader/note and for reopening the floating selection agent.
+public struct SelectionAskThread: Identifiable, Codable, Hashable, Sendable {
+    public var id: UUID
+    public var selectionText: String
+    public var source: SelectionSource
+    public var ownerTitle: String
+    /// Material or notebook item id when known.
+    public var itemID: String?
+    /// Conversation message ids (user + assistant) belonging to this selection thread.
+    public var messageIDs: [UUID]
+    public var createdAt: Date
+    public var updatedAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        selectionText: String,
+        source: SelectionSource,
+        ownerTitle: String,
+        itemID: String? = nil,
+        messageIDs: [UUID] = [],
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.selectionText = selectionText
+        self.source = source
+        self.ownerTitle = ownerTitle
+        self.itemID = itemID
+        self.messageIDs = messageIDs
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    public var normalizedText: String {
+        SelectionAttachmentMerge.normalized(selectionText)
+    }
+}
+
 public enum SelectionAttachmentMerge {
     public static func mergedText(existing: String, incoming: String, withinSelectionGesture: Bool) -> String? {
         let existingText = existing.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -920,7 +959,7 @@ public enum SelectionAnchorCoordinate {
 }
 
 public enum SelectionFloatingAgentPlacement {
-    public static let expandedHalfWidth = 156.0
+    public static let expandedHalfWidth = 200.0
     public static let compactHalfWidth = 82.0
 
     public static func isVisible(

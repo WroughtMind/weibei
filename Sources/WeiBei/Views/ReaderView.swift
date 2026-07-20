@@ -6,6 +6,7 @@ import WebKit
 
 extension Notification.Name {
     static let weiBeiVerificationUserScroll = Notification.Name("WeiBeiVerificationUserScroll")
+    static let weiBeiScrollAgentToMessage = Notification.Name("WeiBeiScrollAgentToMessage")
 }
 
 struct ImmersiveHoverTitleView<Actions: View>: View {
@@ -266,6 +267,22 @@ struct ReaderView: View {
         .onChange(of: store.readerTargetLocationRequestID) { _, _ in
             applyPendingHTMLLocationIfReady()
         }
+    }
+
+    private func selectionAskMarksJSON(for itemID: String) -> String {
+        let marks = store.selectionAskThreads(forItemID: itemID)
+            .prefix(40)
+            .map { thread -> [String: String] in
+                [
+                    "id": thread.id.uuidString,
+                    "text": String(thread.selectionText.prefix(240)),
+                ]
+            }
+        guard let data = try? JSONSerialization.data(withJSONObject: Array(marks), options: []),
+              let json = String(data: data, encoding: .utf8) else {
+            return "[]"
+        }
+        return json
     }
 
     private func syncReaderLocationTitle() {
@@ -774,9 +791,15 @@ struct ReaderView: View {
                         appearanceMode: store.appearanceMode,
                         adaptsDocumentColors: store.adaptImportedDocumentColors,
                         contentRailTarget: htmlContentRailTarget,
+                        selectionAskMarks: selectionAskMarksJSON(for: item.id),
                         onContentRailChange: applyHTMLContentRailSections,
                         onContentRailActiveChange: applyHTMLContentRailActiveID,
-                        onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
+                        onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) },
+                        onSelectionAskMark: { threadID in
+                            if let uuid = UUID(uuidString: threadID) {
+                                store.openSelectionAskThread(uuid, jumpToConversation: false)
+                            }
+                        }
                     ) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
                     }
@@ -787,9 +810,15 @@ struct ReaderView: View {
                         appearanceMode: store.appearanceMode,
                         adaptsDocumentColors: true,
                         contentRailTarget: htmlContentRailTarget,
+                        selectionAskMarks: selectionAskMarksJSON(for: item.id),
                         onContentRailChange: applyHTMLContentRailSections,
                         onContentRailActiveChange: applyHTMLContentRailActiveID,
-                        onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
+                        onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) },
+                        onSelectionAskMark: { threadID in
+                            if let uuid = UUID(uuidString: threadID) {
+                                store.openSelectionAskThread(uuid, jumpToConversation: false)
+                            }
+                        }
                     ) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
                     }
@@ -1658,13 +1687,17 @@ struct WebReaderRepresentable: NSViewRepresentable {
     var appearanceMode: WeiBeiAppearanceMode
     var adaptsDocumentColors: Bool
     var contentRailTarget: WebReaderContentRailTarget?
+    /// JSON array of `{id,text}` for selection-ask underline marks.
+    var selectionAskMarks: String = "[]"
     var onContentRailChange: ([WebReaderContentRailSection]) -> Void
     var onContentRailActiveChange: (WebReaderContentRailActiveChange) -> Void
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool
     var onSelectionChange: (String, CGPoint?) -> Void
+    var onSelectionAskMark: (String) -> Void = { _ in }
 
     private static let scriptMessageNames = [
         "selection",
+        "selectionAskMark",
         "appShortcut",
         "contentRailSections",
         "contentRailActive"
@@ -1676,9 +1709,11 @@ struct WebReaderRepresentable: NSViewRepresentable {
         appearanceMode: WeiBeiAppearanceMode = .paper,
         adaptsDocumentColors: Bool = true,
         contentRailTarget: WebReaderContentRailTarget? = nil,
+        selectionAskMarks: String = "[]",
         onContentRailChange: @escaping ([WebReaderContentRailSection]) -> Void = { _ in },
         onContentRailActiveChange: @escaping (WebReaderContentRailActiveChange) -> Void = { _ in },
         onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false },
+        onSelectionAskMark: @escaping (String) -> Void = { _ in },
         onSelectionChange: @escaping (String, CGPoint?) -> Void
     ) {
         self.html = html
@@ -1687,9 +1722,11 @@ struct WebReaderRepresentable: NSViewRepresentable {
         self.appearanceMode = appearanceMode
         self.adaptsDocumentColors = adaptsDocumentColors
         self.contentRailTarget = contentRailTarget
+        self.selectionAskMarks = selectionAskMarks
         self.onContentRailChange = onContentRailChange
         self.onContentRailActiveChange = onContentRailActiveChange
         self.onAppShortcut = onAppShortcut
+        self.onSelectionAskMark = onSelectionAskMark
         self.onSelectionChange = onSelectionChange
     }
 
@@ -1699,9 +1736,11 @@ struct WebReaderRepresentable: NSViewRepresentable {
         appearanceMode: WeiBeiAppearanceMode = .paper,
         adaptsDocumentColors: Bool = true,
         contentRailTarget: WebReaderContentRailTarget? = nil,
+        selectionAskMarks: String = "[]",
         onContentRailChange: @escaping ([WebReaderContentRailSection]) -> Void = { _ in },
         onContentRailActiveChange: @escaping (WebReaderContentRailActiveChange) -> Void = { _ in },
         onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false },
+        onSelectionAskMark: @escaping (String) -> Void = { _ in },
         onSelectionChange: @escaping (String, CGPoint?) -> Void
     ) {
         self.html = nil
@@ -1710,9 +1749,11 @@ struct WebReaderRepresentable: NSViewRepresentable {
         self.appearanceMode = appearanceMode
         self.adaptsDocumentColors = adaptsDocumentColors
         self.contentRailTarget = contentRailTarget
+        self.selectionAskMarks = selectionAskMarks
         self.onContentRailChange = onContentRailChange
         self.onContentRailActiveChange = onContentRailActiveChange
         self.onAppShortcut = onAppShortcut
+        self.onSelectionAskMark = onSelectionAskMark
         self.onSelectionChange = onSelectionChange
     }
 
@@ -1724,7 +1765,8 @@ struct WebReaderRepresentable: NSViewRepresentable {
             onContentRailChange: onContentRailChange,
             onContentRailActiveChange: onContentRailActiveChange,
             onAppShortcut: onAppShortcut,
-            onSelectionChange: onSelectionChange
+            onSelectionChange: onSelectionChange,
+            onSelectionAskMark: onSelectionAskMark
         )
     }
 
@@ -1770,7 +1812,9 @@ struct WebReaderRepresentable: NSViewRepresentable {
         context.coordinator.onAppShortcut = onAppShortcut
         context.coordinator.onContentRailChange = onContentRailChange
         context.coordinator.onContentRailActiveChange = onContentRailActiveChange
+        context.coordinator.onSelectionAskMark = onSelectionAskMark
         context.coordinator.contentRailTarget = contentRailTarget
+        context.coordinator.selectionAskMarks = selectionAskMarks
         if context.coordinator.appearanceMode != appearanceMode
             || context.coordinator.adaptsDocumentColors != adaptsDocumentColors {
             context.coordinator.appearanceMode = appearanceMode
@@ -1781,17 +1825,21 @@ struct WebReaderRepresentable: NSViewRepresentable {
             let signature = "file:\(url.path)"
             if context.coordinator.loadedSignature != signature {
                 context.coordinator.loadedSignature = signature
+                context.coordinator.lastAppliedSelectionAskMarks = ""
                 view.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
             } else {
                 context.coordinator.applySearch(in: view)
+                context.coordinator.applySelectionAskMarksIfNeeded()
             }
         } else if let html {
             let signature = "html:\(html.hashValue)"
             if context.coordinator.loadedSignature != signature {
                 context.coordinator.loadedSignature = signature
+                context.coordinator.lastAppliedSelectionAskMarks = ""
                 view.loadHTMLString(html, baseURL: nil)
             } else {
                 context.coordinator.applySearch(in: view)
+                context.coordinator.applySelectionAskMarksIfNeeded()
             }
         }
         context.coordinator.applyContentRailTarget(in: view)
@@ -1885,6 +1933,70 @@ struct WebReaderRepresentable: NSViewRepresentable {
       document.addEventListener("mouseup", reportSelection);
       document.addEventListener("keyup", reportSelection);
       document.addEventListener("touchend", reportSelection);
+
+      // Underline spans for selection-ask history; click reopens floating Q&A.
+      window.WeiBeiSelectionAskMarks = {
+        apply: function(marks) {
+          try {
+            document.querySelectorAll(".weibei-selection-ask-mark").forEach((el) => {
+              const parent = el.parentNode;
+              if (!parent) return;
+              while (el.firstChild) parent.insertBefore(el.firstChild, el);
+              parent.removeChild(el);
+              parent.normalize();
+            });
+            const list = Array.isArray(marks) ? marks : [];
+            list.forEach((mark) => {
+              const needle = String(mark.text || "").trim();
+              const id = String(mark.id || "");
+              if (!needle || !id || needle.length < 4) return;
+              const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+                acceptNode: function(node) {
+                  if (!node.parentElement) return NodeFilter.FILTER_REJECT;
+                  if (node.parentElement.closest(".weibei-selection-ask-mark, script, style")) {
+                    return NodeFilter.FILTER_REJECT;
+                  }
+                  return node.nodeValue && node.nodeValue.indexOf(needle) >= 0
+                    ? NodeFilter.FILTER_ACCEPT
+                    : NodeFilter.FILTER_SKIP;
+                }
+              });
+              const hits = [];
+              while (walker.nextNode()) hits.push(walker.currentNode);
+              hits.slice(0, 3).forEach((textNode) => {
+                const value = textNode.nodeValue || "";
+                const idx = value.indexOf(needle);
+                if (idx < 0) return;
+                const range = document.createRange();
+                range.setStart(textNode, idx);
+                range.setEnd(textNode, idx + needle.length);
+                const span = document.createElement("span");
+                span.className = "weibei-selection-ask-mark";
+                span.dataset.threadId = id;
+                span.title = "打开当时的选区问答";
+                try {
+                  range.surroundContents(span);
+                } catch (e) {
+                  // ignore partial-node failures
+                }
+              });
+            });
+            document.querySelectorAll(".weibei-selection-ask-mark").forEach((el) => {
+              el.onclick = function(ev) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                const threadId = el.dataset.threadId || "";
+                if (window.webkit?.messageHandlers?.selectionAskMark) {
+                  window.webkit.messageHandlers.selectionAskMark.postMessage({
+                    threadId,
+                    text: el.textContent || ""
+                  });
+                }
+              };
+            });
+          } catch (e) {}
+        }
+      };
     })();
     """
 
@@ -2143,9 +2255,37 @@ struct WebReaderRepresentable: NSViewRepresentable {
         let selectionCSS: String
         switch mode {
         case .paper:
-            selectionCSS = "::selection { background: rgba(145, 38, 27, 0.20); color: #1d1814; }"
+            selectionCSS = """
+            ::selection { background: rgba(145, 38, 27, 0.20); color: #1d1814; }
+            .weibei-selection-ask-mark {
+              text-decoration-line: underline;
+              text-decoration-color: rgba(145, 38, 27, 0.72);
+              text-decoration-thickness: 1.5px;
+              text-underline-offset: 3px;
+              cursor: pointer;
+              background: rgba(145, 38, 27, 0.06);
+              border-radius: 2px;
+            }
+            .weibei-selection-ask-mark:hover {
+              background: rgba(145, 38, 27, 0.12);
+            }
+            """
         case .inkstone:
-            selectionCSS = "::selection { background: rgba(166, 54, 43, 0.35); color: #F5E7C8; }"
+            selectionCSS = """
+            ::selection { background: rgba(166, 54, 43, 0.35); color: #F5E7C8; }
+            .weibei-selection-ask-mark {
+              text-decoration-line: underline;
+              text-decoration-color: rgba(200, 120, 100, 0.85);
+              text-decoration-thickness: 1.5px;
+              text-underline-offset: 3px;
+              cursor: pointer;
+              background: rgba(166, 54, 43, 0.12);
+              border-radius: 2px;
+            }
+            .weibei-selection-ask-mark:hover {
+              background: rgba(166, 54, 43, 0.22);
+            }
+            """
         }
 
         let adaptiveCSS: String
@@ -2234,6 +2374,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
 
     final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         var onSelectionChange: (String, CGPoint?) -> Void
+        var onSelectionAskMark: (String) -> Void
         var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool
         var onContentRailChange: ([WebReaderContentRailSection]) -> Void
         var onContentRailActiveChange: (WebReaderContentRailActiveChange) -> Void
@@ -2242,7 +2383,9 @@ struct WebReaderRepresentable: NSViewRepresentable {
         var searchQuery = ""
         var appearanceMode: WeiBeiAppearanceMode = .paper
         var adaptsDocumentColors = true
+        var selectionAskMarks = "[]"
         private var lastAppliedSearchQuery = ""
+        var lastAppliedSelectionAskMarks = ""
         private var lastAppliedContentRailTargetRequestID: UUID?
         private var observesVerificationScroll = false
         weak var webView: WKWebView?
@@ -2254,7 +2397,8 @@ struct WebReaderRepresentable: NSViewRepresentable {
             onContentRailChange: @escaping ([WebReaderContentRailSection]) -> Void,
             onContentRailActiveChange: @escaping (WebReaderContentRailActiveChange) -> Void,
             onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool,
-            onSelectionChange: @escaping (String, CGPoint?) -> Void
+            onSelectionChange: @escaping (String, CGPoint?) -> Void,
+            onSelectionAskMark: @escaping (String) -> Void
         ) {
             self.appearanceMode = appearanceMode
             self.adaptsDocumentColors = adaptsDocumentColors
@@ -2263,6 +2407,14 @@ struct WebReaderRepresentable: NSViewRepresentable {
             self.onContentRailActiveChange = onContentRailActiveChange
             self.onAppShortcut = onAppShortcut
             self.onSelectionChange = onSelectionChange
+            self.onSelectionAskMark = onSelectionAskMark
+        }
+
+        func applySelectionAskMarksIfNeeded() {
+            guard let webView, selectionAskMarks != lastAppliedSelectionAskMarks else { return }
+            lastAppliedSelectionAskMarks = selectionAskMarks
+            let js = "window.WeiBeiSelectionAskMarks && window.WeiBeiSelectionAskMarks.apply(\(selectionAskMarks));"
+            webView.evaluateJavaScript(js, completionHandler: nil)
         }
 
         func installVerificationScrollObserverIfNeeded() {
@@ -2301,6 +2453,21 @@ struct WebReaderRepresentable: NSViewRepresentable {
                 guard let body = message.body as? [String: Any],
                       let key = body["key"] as? String else { return }
                 _ = onAppShortcut(key, Self.modifiers(from: body))
+                return
+            }
+
+            if message.name == "selectionAskMark" {
+                let threadID: String
+                if let body = message.body as? [String: Any] {
+                    threadID = (body["threadId"] as? String) ?? ""
+                } else if let body = message.body as? String {
+                    threadID = body
+                } else {
+                    return
+                }
+                Task { @MainActor in
+                    self.onSelectionAskMark(threadID)
+                }
                 return
             }
 
@@ -2392,9 +2559,11 @@ struct WebReaderRepresentable: NSViewRepresentable {
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             lastAppliedSearchQuery = ""
             lastAppliedContentRailTargetRequestID = nil
+            lastAppliedSelectionAskMarks = ""
             webView.evaluateJavaScript(WebReaderRepresentable.readerStyleScript(for: appearanceMode, adaptsDocumentColors: adaptsDocumentColors))
             applySearch(in: webView)
             applyContentRailTarget(in: webView)
+            applySelectionAskMarksIfNeeded()
         }
 
         func applySearch(in view: WKWebView) {
