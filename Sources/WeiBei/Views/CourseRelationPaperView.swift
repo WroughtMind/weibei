@@ -78,7 +78,11 @@ struct CourseRelationPaperView: View {
             header(model: graphModel)
             CourseHairline()
             GeometryReader { proxy in
-                if isCompact || proxy.size.width < 660 {
+                // When one side is much larger, dual lists beat a sparse impact graph for finding links.
+                let materials = graphModel.materials.count
+                let notes = graphModel.notes.count
+                let unbalanced = materials > max(8, notes * 3) || notes > max(8, materials * 3)
+                if isCompact || proxy.size.width < 720 || unbalanced {
                     compactPaper(model: graphModel)
                 } else {
                     graphPaper(model: graphModel, availableSize: proxy.size)

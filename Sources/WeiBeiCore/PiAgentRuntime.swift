@@ -925,14 +925,40 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     private func seedLocalPiAuth(from sourceDirectory: URL, to destinationDirectory: URL) {
         let fileManager = FileManager.default
         let destination = destinationDirectory.appendingPathComponent("auth.json")
-        guard !fileManager.fileExists(atPath: destination.path) else { return }
         let source = sourceDirectory.appendingPathComponent("auth.json")
         guard let attributes = try? fileManager.attributesOfItem(atPath: source.path),
               let size = attributes[.size] as? NSNumber,
               size.intValue <= 1_048_576,
-              let data = try? Data(contentsOf: source),
-              (try? JSONSerialization.jsonObject(with: data)) is [String: Any] else { return }
+              let sourceData = try? Data(contentsOf: source),
+              let sourceObject = try? JSONSerialization.jsonObject(with: sourceData) as? [String: Any]
+        else { return }
+
+        // Merge home auth.json into the isolated PiConfig so OAuth logins from WeiBei Settings
+        // (and Pi `/login`) keep working on every launch — not only the first seed.
+        var merged = sourceObject
+        if let existingData = try? Data(contentsOf: destination),
+           let existing = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any] {
+            for (key, value) in existing {
+                // Prefer newer OAuth tokens from home; keep local-only keys.
+                if let sourceEntry = sourceObject[key] as? [String: Any],
+                   sourceEntry["type"] as? String == "oauth" {
+                    merged[key] = sourceEntry
+                } else if merged[key] == nil {
+                    merged[key] = value
+                }
+            }
+            // Always take home OAuth entries (subscription login).
+            for (key, value) in sourceObject {
+                if let entry = value as? [String: Any], entry["type"] as? String == "oauth" {
+                    merged[key] = value
+                } else if merged[key] == nil {
+                    merged[key] = value
+                }
+            }
+        }
+
         do {
+            let data = try JSONSerialization.data(withJSONObject: merged, options: [.prettyPrinted, .sortedKeys])
             try data.write(to: destination, options: [.atomic])
             try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
         } catch {

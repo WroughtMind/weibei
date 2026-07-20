@@ -911,6 +911,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
 
 struct SettingsView: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @StateObject private var oauthService = PiOAuthService.shared
     @State private var selectedSection: SettingsSection = .overview
     @FocusState private var focusedField: Field?
 
@@ -928,6 +929,23 @@ struct SettingsView: View {
         .modifier(WeiBeiAppearanceTransition(mode: store.appearanceMode))
         .onAppear {
             selectedSection = .overview
+            oauthService.refreshLinkedStatus()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .weiBeiPiOAuthDidSucceed)) { note in
+            guard let raw = note.userInfo?["provider"] as? String,
+                  let subscription = PiSubscriptionProvider(rawValue: raw) else { return }
+            // After OAuth, point chat at the subscription provider + default model.
+            store.setAgentAuthMethod(.subscription)
+            store.setAgentProviderID(subscription.agentProviderID)
+            store.updateModelName(subscription.defaultModel)
+            if raw == "openai-codex" {
+                // Pi expects provider id openai-codex for ChatGPT subscription tokens.
+                store.updateModelName(subscription.defaultModel)
+            }
+            store.openAIKeyStatus = store.ui(
+                "订阅已连接：\(subscription.label(language: store.interfaceLanguage))",
+                "Subscription linked: \(subscription.label(language: store.interfaceLanguage))"
+            )
         }
     }
 
@@ -1484,22 +1502,61 @@ struct SettingsView: View {
 
                 if store.agentAuthMethod == .subscription {
                     settingsRow(
-                        title: store.ui("浏览器登录", "Browser Sign-In"),
+                        title: store.ui("OAuth 订阅登录", "OAuth Subscription Login"),
                         detail: store.ui(
-                            "Pi 通过 API 调用模型。先登录提供商账号/订阅控制台，再创建密钥粘贴回来。",
-                            "Pi calls models via API. Sign into the provider account/console, create a key, then paste it back."
+                            "与 Pi 的 /login 相同：浏览器完成 OAuth 后，凭证写入 ~/.pi/agent/auth.json，Agent 自动使用。",
+                            "Same as Pi’s /login: complete browser OAuth; credentials go to ~/.pi/agent/auth.json and the agent uses them automatically."
                         )
                     ) {
                         VStack(alignment: .trailing, spacing: 8) {
-                            Button(store.ui("打开账号 / 订阅页", "Open Account / Subscription")) {
-                                store.openAgentProviderConsole(login: true)
+                            ForEach(PiSubscriptionProvider.allCases) { provider in
+                                HStack(spacing: 8) {
+                                    if oauthService.isLinked(provider) {
+                                        settingsPill(
+                                            title: store.ui("已连接", "Linked"),
+                                            icon: "checkmark.seal.fill",
+                                            active: true
+                                        )
+                                    }
+                                    Button {
+                                        oauthService.startLogin(provider)
+                                    } label: {
+                                        Text(
+                                            oauthService.isLoggingIn
+                                                ? store.ui("登录中…", "Signing in…")
+                                                : store.ui(
+                                                    "登录 \(provider.label(language: store.interfaceLanguage))",
+                                                    "Sign in \(provider.label(language: store.interfaceLanguage))"
+                                                )
+                                        )
+                                    }
+                                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                                    .disabled(oauthService.isLoggingIn)
+                                }
                             }
-                            .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                            Button(store.ui("打开 API Key 页", "Open API Key Page")) {
-                                store.openAgentProviderConsole(login: false)
+                            if oauthService.isLoggingIn {
+                                Button(store.ui("取消登录", "Cancel login")) {
+                                    oauthService.cancelLogin()
+                                }
+                                .buttonStyle(WeiBeiTextActionButtonStyle())
                             }
-                            .buttonStyle(WeiBeiTextActionButtonStyle())
                         }
+                    }
+
+                    if let progress = oauthService.statusMessage {
+                        settingsNote(progress, icon: "arrow.triangle.2.circlepath")
+                    }
+                    if let error = oauthService.lastError {
+                        settingsNote(error, icon: "exclamationmark.triangle")
+                    }
+                    if !oauthService.linkedProviders.isEmpty {
+                        settingsNote(
+                            store.ui(
+                                "已链接：\(oauthService.linkedProviders.joined(separator: ", "))",
+                                "Linked: \(oauthService.linkedProviders.joined(separator: ", "))"
+                            ),
+                            icon: "link"
+                        )
                     }
                 }
             }

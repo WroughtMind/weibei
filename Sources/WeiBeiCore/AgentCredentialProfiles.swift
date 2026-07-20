@@ -28,8 +28,8 @@ public enum AgentAuthMethod: String, Codable, CaseIterable, Identifiable, Sendab
             )
         case .subscription:
             return language.text(
-                "先在浏览器登录提供商账号（订阅或控制台）。Pi 仍通过密钥调用模型；登录后把控制台里的 Key 粘贴回来即可。",
-                "Sign in to the provider account in a browser first (subscription or console). Pi still calls models with a key—paste the console key after login."
+                "与 Pi 的 /login 相同：浏览器完成 OAuth（ChatGPT Plus/Pro、Claude Pro/Max），凭证写入 auth.json，自动用于对话。",
+                "Same as Pi’s /login: complete browser OAuth (ChatGPT Plus/Pro, Claude Pro/Max); tokens are stored in auth.json and used automatically."
             )
         }
     }

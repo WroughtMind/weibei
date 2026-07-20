@@ -5953,11 +5953,27 @@ final class WorkspaceStore: ObservableObject {
             let explicitModel = Self.environmentValue("WEIBEI_PI_MODEL")
             let thinking = Self.environmentValue("WEIBEI_PI_THINKING")
             let selectedProvider = agentProviderID
-            let providerName = explicitProvider.isEmpty ? selectedProvider.piProviderName : explicitProvider
+            let linkedOAuth = PiOAuthService.readLinkedOAuthProviders(
+                from: FileManager.default.homeDirectoryForCurrentUser
+                    .appendingPathComponent(".pi/agent/auth.json")
+            )
+            // Prefer Pi OAuth subscription ids (openai-codex / anthropic) when linked in auth.json.
+            let providerName: String = {
+                if !explicitProvider.isEmpty { return explicitProvider }
+                if selectedProvider == .openai, linkedOAuth.contains("openai-codex") {
+                    return "openai-codex"
+                }
+                if selectedProvider == .anthropic, linkedOAuth.contains("anthropic") {
+                    return "anthropic"
+                }
+                return selectedProvider.piProviderName
+            }()
+            // OAuth tokens live in auth.json — do not force API key env when subscription is active.
+            let usesOAuth = linkedOAuth.contains(providerName)
             let configuration = PiAgentProviderConfiguration(
                 provider: providerName,
                 model: explicitModel.isEmpty ? resolvedModelName : explicitModel,
-                apiKey: credential?.key,
+                apiKey: usesOAuth ? nil : credential?.key,
                 thinkingLevel: thinking.isEmpty ? "medium" : thinking
             )
             await piRuntime.configure(configuration)
