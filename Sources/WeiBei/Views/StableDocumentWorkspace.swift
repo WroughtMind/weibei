@@ -200,6 +200,12 @@ final class StableDocumentSplitView: NSView {
 
     override func layout() {
         super.layout()
+        // Divider frames move with layout — keep bidirectional resize cursors accurate.
+        window?.invalidateCursorRects(for: self)
+        for divider in dividerViews where !divider.isHidden {
+            window?.invalidateCursorRects(for: divider)
+            divider.window?.invalidateCursorRects(for: divider)
+        }
         coordinator?.containerDidLayout(self)
     }
 }
@@ -224,7 +230,17 @@ private final class StableDocumentDividerView: NSView {
     }
 
     override func resetCursorRects() {
+        // Full bounds of the 10pt gutter — not just the 1pt line.
         addCursorRect(bounds, cursor: .resizeLeftRight)
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        NSCursor.resizeLeftRight.set()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.invalidateCursorRects(for: self)
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -239,7 +255,24 @@ private final class StableDocumentDividerView: NSView {
         NSRect(x: bounds.midX - 0.5, y: bounds.minY + 14, width: 1, height: max(0, bounds.height - 28)).fill()
     }
 
+    override func mouseEntered(with event: NSEvent) {
+        NSCursor.resizeLeftRight.set()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        let options: NSTrackingArea.Options = [
+            .activeInKeyWindow,
+            .mouseEnteredAndExited,
+            .cursorUpdate,
+            .inVisibleRect
+        ]
+        addTrackingArea(NSTrackingArea(rect: bounds, options: options, owner: self, userInfo: nil))
+    }
+
     override func mouseDown(with event: NSEvent) {
+        NSCursor.resizeLeftRight.set()
         dragStartX = event.locationInWindow.x
         onDragStart?()
     }
@@ -300,6 +333,7 @@ final class StableDocumentSplitCoordinator {
     private let railSnapThreshold = ContentRailMetrics.snapThreshold
     private let readableWidthThreshold = ContentRailMetrics.readableWidth
     private let defaultReadableWidth = ContentRailMetrics.defaultReadableWidth
+    // Restored from 8a172fe5「保持分栏切换连续」— known-smooth pane show/hide motion.
     private let layoutAnimationDuration = 0.24
     private let snapAnimationDuration = 0.18
     private let animationFallbackGrace: TimeInterval = 0.25
@@ -491,36 +525,16 @@ final class StableDocumentSplitCoordinator {
         }
 
         if preserveCurrentWidths, appliedState != nil {
-            let minimum = minimumPaneWidth(total: usable, count: count)
-            let enteringRoles = visibleOrder.filter { !displayedVisibleOrder.contains($0) }
-            let retainedRoles = visibleOrder.filter { displayedVisibleOrder.contains($0) }
-            if !enteringRoles.isEmpty {
-                let enteringDesired = enteringRoles.map { role in
-                    max(minimum, recentReadableWidths[role] ?? defaultReadableWidth)
-                }
-                let maximumEnteringTotal = max(
-                    minimum * CGFloat(enteringRoles.count),
-                    usable - minimum * CGFloat(retainedRoles.count)
-                )
-                let enteringTotal = retainedRoles.isEmpty
-                    ? usable
-                    : min(maximumEnteringTotal, enteringDesired.reduce(0, +))
-                let enteringWidths = normalizedWidths(enteringDesired, total: enteringTotal)
-                let retainedDesired = retainedRoles.map { role in
-                    splitView.roleHosts[role]?.frame.width ?? defaultReadableWidth
-                }
-                let retainedWidths = normalizedWidths(
-                    retainedDesired,
-                    total: max(0, usable - enteringWidths.reduce(0, +))
-                )
-                let widthsByRole = Dictionary(
-                    uniqueKeysWithValues: Array(zip(enteringRoles, enteringWidths))
-                        + Array(zip(retainedRoles, retainedWidths))
-                )
-                return visibleOrder.map { widthsByRole[$0] ?? minimum }
+            // Opening more columns (incl. empty board progression): always even left→right
+            // so 文稿/对话/笔记 land as equal L/C/R slots instead of crushing neighbors.
+            if visibleOrder.count > displayedVisibleOrder.count || displayedVisibleOrder.isEmpty {
+                return equalPaneWidths(count: count, total: usable)
             }
+            // Closing columns: keep remaining relative widths.
             let desired = visibleOrder.map { role -> CGFloat in
-                if displayedVisibleOrder.contains(role), let width = splitView.roleHosts[role]?.frame.width, width > 0.5 {
+                if displayedVisibleOrder.contains(role),
+                   let width = splitView.roleHosts[role]?.frame.width,
+                   width > 0.5 {
                     return width
                 }
                 return recentReadableWidths[role] ?? defaultReadableWidth
@@ -528,8 +542,18 @@ final class StableDocumentSplitCoordinator {
             return normalizedWidths(desired, total: usable)
         }
 
+        // Fresh layout (no applied state): still prefer even L/C/R over stale SceneStorage ratios
+        // when the user is rebuilding from an empty visible set.
+        if displayedVisibleOrder.isEmpty || displayedVisibleOrder.count != count {
+            return equalPaneWidths(count: count, total: usable)
+        }
+
         if count == 2 {
-            let first = clamped(state.halfSplit * usable, min: minimumPaneWidth(total: usable, count: count), max: usable - minimumPaneWidth(total: usable, count: count))
+            let first = clamped(
+                state.halfSplit * usable,
+                min: minimumPaneWidth(total: usable, count: count),
+                max: usable - minimumPaneWidth(total: usable, count: count)
+            )
             return [first, usable - first]
         }
 
@@ -537,6 +561,17 @@ final class StableDocumentSplitCoordinator {
         let first = clamped(state.firstSplit * usable, min: minimum, max: usable - 2 * minimum)
         let second = clamped((state.secondSplit - state.firstSplit) * usable, min: minimum, max: usable - first - minimum)
         return [first, second, max(minimum, usable - first - second)]
+    }
+
+    /// Even left→right split for the current visible set (empty-board open progression).
+    private func equalPaneWidths(count: Int, total: CGFloat) -> [CGFloat] {
+        guard count > 0 else { return [] }
+        let base = (total / CGFloat(count) * 100).rounded(.down) / 100
+        var widths = Array(repeating: max(0, base), count: count)
+        if let last = widths.indices.last {
+            widths[last] = max(0, total - base * CGFloat(count - 1))
+        }
+        return widths
     }
 
     private func normalizedWidths(_ desired: [CGFloat], total: CGFloat) -> [CGFloat] {
@@ -622,13 +657,18 @@ final class StableDocumentSplitCoordinator {
         targetFrames: [WorkspacePaneRole: CGRect],
         in splitView: StableDocumentSplitView
     ) {
+        // 8a172fe5 behavior: enter from zero width at target x, then expand.
         for role in nextVisible.subtracting(previousVisible) {
             guard let host = splitView.roleHosts[role], let target = targetFrames[role] else { continue }
+            host.alphaValue = 1
             host.frame = CGRect(x: target.minX, y: 0, width: 0, height: target.height)
             host.isHidden = false
         }
         for role in previousVisible.union(nextVisible) {
             splitView.roleHosts[role]?.isHidden = false
+            if nextVisible.contains(role) {
+                splitView.roleHosts[role]?.alphaValue = 1
+            }
         }
         if nextVisible.isEmpty {
             splitView.emptyHost?.isHidden = false
@@ -671,6 +711,7 @@ final class StableDocumentSplitCoordinator {
         visibleOrder: [WorkspacePaneRole],
         in splitView: StableDocumentSplitView
     ) {
+        // Width-only animation (8a172fe5) — no concurrent alpha thrash on WebView hosts.
         for (role, frame) in roleFrames {
             splitView.roleHosts[role]?.animator().frame = frame
         }

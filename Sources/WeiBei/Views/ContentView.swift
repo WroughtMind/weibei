@@ -3,6 +3,8 @@ import SwiftUI
 import WeiBeiCore
 
 struct ContentView: View {
+    /// Intentionally does NOT observe `libraryDrawer` — drawer open must not rebuild this body
+    /// (reader / agent / notes live here).
     @EnvironmentObject private var store: WorkspaceStore
     @FocusState private var focusedPane: PaneFocus?
     @FocusState private var topSearchFocused: Bool
@@ -23,23 +25,15 @@ struct ContentView: View {
                         LayoutContentView()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .background(WeiBeiTheme.paper)
-                            .animation(WeiBeiMotion.layout, value: store.layout)
+                            // Only cross-fade immersive ↔ document families. Pane show/hide inside
+                            // the document family is owned by AppKit StableDocumentWorkspace animation
+                            // — a second SwiftUI layout animation here made toggles feel split/janky.
+                            .animation(WeiBeiMotion.layout, value: store.layout.isImmersiveFamily)
 
-                        ZStack(alignment: .leading) {
-                            if store.showLibrary {
-                                WeiBeiTheme.ink.opacity(0.035)
-                                    .allowsHitTesting(false)
-                                    .transition(.opacity)
-
-                                CourseImmersiveDrawerView {
-                                    withAnimation(WeiBeiMotion.layout) {
-                                        store.toggleLibrary()
-                                    }
-                                }
-                                .transition(WeiBeiTransition.sidePanel)
-                            }
+                        // AppKit drawer: slide starts immediately; sidebar not store-synced while closed.
+                        CourseLibraryDrawerLayer {
+                            store.toggleLibrary()
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .zIndex(35)
 
                         if store.commandPalettePresented {
@@ -74,24 +68,17 @@ struct ContentView: View {
                 }
             }
             .background {
-                if !store.courseWorkspacePresented && store.showLibrary {
-                    EscapeKeyBridge {
-                        store.toggleLibrary()
-                    }
-                }
-
-                if !store.courseWorkspacePresented && !store.showLibrary && showsGlobalFloatingAgent {
-                    EscapeKeyBridge {
-                        store.dismissFloatingSelectionAgent()
-                    }
-                }
-
-                if !store.courseWorkspacePresented && !store.showLibrary && store.showReaderSearch {
-                    EscapeKeyBridge {
+                LibraryAwareEscapeBridge(
+                    courseWorkspacePresented: store.courseWorkspacePresented,
+                    showReaderSearch: store.showReaderSearch,
+                    showsGlobalFloatingAgent: showsGlobalFloatingAgent,
+                    onToggleLibrary: { store.toggleLibrary() },
+                    onDismissFloatingAgent: { store.dismissFloatingSelectionAgent() },
+                    onHideReaderSearch: {
                         store.hideReaderSearch()
                         topSearchFocused = false
                     }
-                }
+                )
             }
         }
         .background(WindowFullScreenReader(isFullScreen: $windowIsFullScreen))
@@ -105,7 +92,7 @@ struct ContentView: View {
             focusedPane = store.focusedPane
         }
         .animation(WeiBeiMotion.appearance, value: store.appearanceMode)
-        .animation(WeiBeiMotion.layout, value: store.showLibrary)
+        // showLibrary animation is scoped to the drawer ZStack only (above).
         .animation(WeiBeiMotion.panel, value: store.courseWorkspacePresented)
     }
 
@@ -206,8 +193,45 @@ private struct WindowFullScreenReader: NSViewRepresentable {
     }
 }
 
+/// AppKit course drawer layer. Observes only `LibraryDrawerState` (+ store for content).
+private struct CourseLibraryDrawerLayer: View {
+    @EnvironmentObject private var libraryDrawer: LibraryDrawerState
+    let dismiss: () -> Void
+
+    var body: some View {
+        CourseDrawerHost(drawer: libraryDrawer, onDismiss: dismiss)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .allowsHitTesting(libraryDrawer.isOpen)
+            .accessibilityHidden(!libraryDrawer.isOpen)
+    }
+}
+
+/// Escape routing that can observe drawer open without forcing ContentView to do so.
+private struct LibraryAwareEscapeBridge: View {
+    @EnvironmentObject private var libraryDrawer: LibraryDrawerState
+    let courseWorkspacePresented: Bool
+    let showReaderSearch: Bool
+    let showsGlobalFloatingAgent: Bool
+    let onToggleLibrary: () -> Void
+    let onDismissFloatingAgent: () -> Void
+    let onHideReaderSearch: () -> Void
+
+    var body: some View {
+        Group {
+            if !courseWorkspacePresented && libraryDrawer.isOpen {
+                EscapeKeyBridge(onEscape: onToggleLibrary)
+            } else if !courseWorkspacePresented && !libraryDrawer.isOpen && showsGlobalFloatingAgent {
+                EscapeKeyBridge(onEscape: onDismissFloatingAgent)
+            } else if !courseWorkspacePresented && !libraryDrawer.isOpen && showReaderSearch {
+                EscapeKeyBridge(onEscape: onHideReaderSearch)
+            }
+        }
+    }
+}
+
 private struct UnifiedTopBarView: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @EnvironmentObject private var libraryDrawer: LibraryDrawerState
     let isImmersiveLayout: Bool
     let isFullScreen: Bool
     var searchFocused: FocusState<Bool>.Binding
@@ -449,10 +473,12 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var libraryButton: some View {
-        topIconButton("sidebar.left", help: store.showLibrary ? store.ui("收起课程抽屉", "Hide course drawer") : store.ui("打开课程抽屉", "Show course drawer"), active: store.showLibrary) {
-            withAnimation(WeiBeiMotion.layout) {
-                store.toggleLibrary()
-            }
+        topIconButton(
+            "sidebar.left",
+            help: libraryDrawer.isOpen ? store.ui("收起课程抽屉", "Hide course drawer") : store.ui("打开课程抽屉", "Show course drawer"),
+            active: libraryDrawer.isOpen
+        ) {
+            store.toggleLibrary()
         }
     }
 
@@ -550,6 +576,76 @@ private struct UnifiedTopBarView: View {
     }
 }
 
+/// Observes only `ThreePaneReorderState` for live drag chrome + dimming.
+private struct ThreePaneWorkspaceChrome: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @EnvironmentObject private var paneReorder: ThreePaneReorderState
+    @Binding var firstSplit: CGFloat
+    @Binding var secondSplit: CGFloat
+    @Binding var halfSplit: CGFloat
+    let registry: PersistentPaneHostRegistry
+    let normalizedOrder: [WorkspacePaneRole]
+    let visibleOrder: [WorkspacePaneRole]
+    let expansionRequest: PaneExpansionRequest?
+    let frames: [CGRect]
+    let canvasSize: CGSize
+    let onFramesChange: ([WorkspacePaneRole], [CGRect]) -> Void
+    let onExpansionRequestHandled: (UUID) -> Void
+
+    var body: some View {
+        ZStack {
+            StableDocumentWorkspace(
+                firstSplit: $firstSplit,
+                secondSplit: $secondSplit,
+                halfSplit: $halfSplit,
+                registry: registry,
+                normalizedOrder: normalizedOrder,
+                visibleOrder: visibleOrder,
+                draggedRole: paneReorder.drag?.role,
+                expansionRequest: expansionRequest,
+                onFramesChange: onFramesChange,
+                onExpansionRequestHandled: onExpansionRequestHandled
+            )
+
+            threePaneReorderOverlay
+        }
+    }
+
+    @ViewBuilder
+    private var threePaneReorderOverlay: some View {
+        if let drag = paneReorder.drag,
+           let sourceIndex = visibleOrder.firstIndex(of: drag.role),
+           frames.indices.contains(sourceIndex) {
+            let sourceFrame = frames[sourceIndex]
+            if let targetIndex = drag.targetIndex, frames.indices.contains(targetIndex) {
+                PaneDropTargetView(role: visibleOrder[targetIndex])
+                    .frame(width: frames[targetIndex].width, height: frames[targetIndex].height)
+                    .position(x: frames[targetIndex].midX, y: frames[targetIndex].midY)
+            }
+
+            PaneReorderPreviewView(role: drag.role)
+                .frame(width: sourceFrame.width, height: sourceFrame.height)
+                .clipped()
+                .allowsHitTesting(false)
+                .opacity(0.11)
+                .overlay {
+                    Rectangle()
+                        .stroke(WeiBeiTheme.cinnabar.opacity(0.22), lineWidth: 1)
+                }
+                .position(
+                    x: sourceFrame.midX + min(max(drag.translation, -canvasSize.width), canvasSize.width),
+                    y: sourceFrame.midY
+                )
+                .shadow(
+                    color: WeiBeiTheme.ink.opacity(store.appearanceMode == .inkstone ? 0.38 : 0.14),
+                    radius: 22,
+                    y: 12
+                )
+                .zIndex(8)
+        }
+    }
+}
+
 private struct LayoutContentView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @StateObject private var paneHostRegistry = PersistentPaneHostRegistry()
@@ -574,7 +670,8 @@ private struct LayoutContentView: View {
             }
         }
         .transition(WeiBeiTransition.layout)
-        .animation(WeiBeiMotion.layout, value: store.layout)
+        // Document-internal pane toggles must not re-trigger SwiftUI layout animation.
+        .animation(WeiBeiMotion.layout, value: store.layout.isImmersiveFamily)
         .animation(WeiBeiMotion.panel, value: store.agentSurface)
     }
 
@@ -608,15 +705,18 @@ private struct LayoutContentView: View {
             let fallbackFrames = estimatedDocumentPaneFrames(order: order, size: geometry.size)
             let frames = store.threePaneReorderFrameList(order: order, fallback: fallbackFrames)
             ZStack {
-                StableDocumentWorkspace(
+                // Drag chrome observes ThreePaneReorderState separately so live drag
+                // does not rebuild this workspace through WorkspaceStore.
+                ThreePaneWorkspaceChrome(
                     firstSplit: firstSplit,
                     secondSplit: secondSplit,
                     halfSplit: halfSplit,
                     registry: paneHostRegistry,
                     normalizedOrder: store.normalizedThreePaneOrder,
                     visibleOrder: order,
-                    draggedRole: store.threePaneReorderDrag?.role,
                     expansionRequest: store.paneExpansionRequest,
+                    frames: frames,
+                    canvasSize: geometry.size,
                     onFramesChange: { reportedOrder, frames in
                         store.updateThreePaneReorderFrames(order: reportedOrder, frames: frames)
                     },
@@ -624,41 +724,6 @@ private struct LayoutContentView: View {
                         store.completePaneExpansionRequest(requestID)
                     }
                 )
-
-                threePaneReorderOverlay(order: order, size: geometry.size, frames: frames)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func threePaneReorderOverlay(order: [WorkspacePaneRole], size: CGSize, frames: [CGRect]) -> some View {
-        if let drag = store.threePaneReorderDrag,
-           let sourceIndex = order.firstIndex(of: drag.role) {
-            if frames.indices.contains(sourceIndex) {
-                let sourceFrame = frames[sourceIndex]
-                if let targetIndex = drag.targetIndex, frames.indices.contains(targetIndex) {
-                    PaneDropTargetView(role: order[targetIndex])
-                        .frame(width: frames[targetIndex].width, height: frames[targetIndex].height)
-                        .position(x: frames[targetIndex].midX, y: frames[targetIndex].midY)
-                        .transition(WeiBeiTransition.floating)
-                }
-
-                PaneReorderPreviewView(role: drag.role)
-                    .frame(width: sourceFrame.width, height: sourceFrame.height)
-                    .clipped()
-                    .allowsHitTesting(false)
-                    .opacity(0.11)
-                    .overlay {
-                        Rectangle()
-                            .stroke(WeiBeiTheme.cinnabar.opacity(0.22), lineWidth: 1)
-                    }
-                    .position(
-                        x: sourceFrame.midX + clamped(drag.translation, min: -size.width, max: size.width),
-                        y: sourceFrame.midY
-                    )
-                    .transition(WeiBeiTransition.floating)
-                    .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode == .inkstone ? 0.38 : 0.14), radius: 22, y: 12)
-                    .zIndex(8)
             }
         }
     }
@@ -1152,7 +1217,22 @@ private final class WeiBeiSplitView: NSSplitView {
 
     override func layout() {
         super.layout()
+        // Divider geometry changed — refresh bidirectional resize cursors.
+        window?.invalidateCursorRects(for: self)
         onLayout?(self)
+    }
+
+    override func resetCursorRects() {
+        // Custom thickness + drawDivider can drop NSSplitView's default cursor rects.
+        let count = arrangedSubviews.count
+        guard count >= 2 else { return }
+        var x: CGFloat = 0
+        for index in 0..<(count - 1) {
+            x += arrangedSubviews[index].frame.width
+            let rect = NSRect(x: x, y: 0, width: dividerThickness, height: bounds.height)
+            addCursorRect(rect, cursor: .resizeLeftRight)
+            x += dividerThickness
+        }
     }
 
     override func drawDivider(in rect: NSRect) {

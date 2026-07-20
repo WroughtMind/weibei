@@ -76,14 +76,8 @@ struct SidebarView: View {
                 .padding(.horizontal, 10)
                 .padding(.vertical, 10)
             }
-            .background {
-                ZStack {
-                    WeiBeiTheme.paperRaised.opacity(0.64)
-                    Rectangle()
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.035)
-                }
-            }
+            // Solid fill only — animating ultraThinMaterial on open/close was expensive.
+            .background(WeiBeiTheme.paperRaised.opacity(0.72))
         }
         .weibeiPanel()
         .onChange(of: store.focusRequest) { _, _ in
@@ -189,7 +183,8 @@ struct SidebarView: View {
                 ForEach(filteredCourses) { course in
                     VStack(alignment: .leading, spacing: 0) {
                         Button {
-                            withAnimation(WeiBeiMotion.layout) {
+                            // Local reveal only — layout spring was animating the whole app shell.
+                            withAnimation(WeiBeiMotion.reveal) {
                                 store.activateCourse(store.activeCourseID == course.id ? nil : course.id)
                             }
                         } label: {
@@ -323,7 +318,7 @@ struct SidebarView: View {
                 .transition(WeiBeiTransition.message)
         } else {
             Button {
-                withAnimation(WeiBeiMotion.layout) {
+                withAnimation(WeiBeiMotion.micro) {
                     open(item)
                 }
             } label: {

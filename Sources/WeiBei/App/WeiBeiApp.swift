@@ -87,6 +87,8 @@ struct WeiBeiApp: App {
         WindowGroup("魏碑", id: "main") {
             ContentView()
                 .environmentObject(store)
+                .environmentObject(store.libraryDrawer)
+                .environmentObject(store.threePaneReorder)
                 .preferredColorScheme(store.appearanceMode.colorScheme)
                 .modifier(WeiBeiAppearanceTransition(mode: store.appearanceMode))
                 .background(WindowChromeConfigurator(appearanceMode: store.appearanceMode))
@@ -142,9 +144,7 @@ struct WeiBeiApp: App {
                 Divider()
 
                 Button(store.showLibrary ? store.ui("收起课程目录", "Hide Course Index") : store.ui("打开课程目录", "Show Course Index")) {
-                    animateLayout {
-                        store.toggleLibrary()
-                    }
+                    store.toggleLibrary()
                 }
                     .keyboardShortcut("b")
                 if store.layout.hasCollapsibleRightPane {
@@ -1452,9 +1452,16 @@ struct SettingsView: View {
                         .font(.system(size: 13))
                         .weibeiInputSurface(active: focusedField == .apiKey, height: 38)
                         .frame(width: 250)
+                        .onSubmit { store.saveOpenAIAPIKey() }
+                        .onChange(of: focusedField) { _, field in
+                            // Persist when leaving the key field so typed keys are not lost.
+                            if field != .apiKey {
+                                store.saveOpenAIAPIKey()
+                            }
+                        }
 
                         HStack(spacing: 8) {
-                            Button(store.ui("保存", "Save")) { store.saveOpenAIAPIKey() }
+                            Button(store.ui("保存到钥匙串", "Save to Keychain")) { store.saveOpenAIAPIKey() }
                                 .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                             Button(store.ui("清除", "Clear")) { store.clearOpenAIAPIKey() }
                                 .buttonStyle(WeiBeiTextActionButtonStyle())

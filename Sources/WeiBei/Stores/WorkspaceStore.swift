@@ -39,6 +39,12 @@ struct ThreePaneReorderDrag: Equatable {
     var targetIndex: Int?
 }
 
+/// Isolated from `WorkspaceStore` so drag-translation updates do not rebuild reader/agent/notes.
+@MainActor
+final class ThreePaneReorderState: ObservableObject {
+    @Published var drag: ThreePaneReorderDrag?
+}
+
 struct PaneExpansionRequest: Equatable {
     let id = UUID()
     let role: WorkspacePaneRole
@@ -166,6 +172,14 @@ enum CourseWorkspaceDestination: String, CaseIterable, Sendable {
     case sessions
 }
 
+/// Isolated chrome state for the course drawer.
+/// Kept off `WorkspaceStore`'s `@Published` surface so opening/closing the drawer
+/// does not invalidate reader/agent/notes bodies (that was the multi-second pre-slide lag).
+@MainActor
+final class LibraryDrawerState: ObservableObject {
+    @Published var isOpen = false
+}
+
 @MainActor
 final class WorkspaceStore: ObservableObject {
     @Published var importedItems: [StudyItem] = []
@@ -203,7 +217,16 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var activeStudySessionID: UUID?
     /// When true, session picker lists every session; otherwise groups by material with a View All entry.
     @Published var showAllStudySessions = false
-    @Published var showLibrary = false
+    /// Drawer open flag lives on `libraryDrawer` so toggles only refresh drawer chrome.
+    let libraryDrawer = LibraryDrawerState()
+    var showLibrary: Bool {
+        get { libraryDrawer.isOpen }
+        set {
+            if libraryDrawer.isOpen != newValue {
+                libraryDrawer.isOpen = newValue
+            }
+        }
+    }
     @Published var showReader = true
     @Published var showAgent = true
     @Published var showNotes = true
@@ -225,7 +248,16 @@ final class WorkspaceStore: ObservableObject {
     @Published var focusRequest = 0
     @Published var layout: WorkspaceLayout = .documentAgentNotes
     @Published var threePaneOrder: [WorkspacePaneRole] = WorkspacePaneRole.defaultThreePaneOrder
-    @Published var threePaneReorderDrag: ThreePaneReorderDrag?
+    /// Live drag chrome only — not `@Published` on the main store (avoids full-tree thrash).
+    let threePaneReorder = ThreePaneReorderState()
+    var threePaneReorderDrag: ThreePaneReorderDrag? {
+        get { threePaneReorder.drag }
+        set {
+            if threePaneReorder.drag != newValue {
+                threePaneReorder.drag = newValue
+            }
+        }
+    }
     @Published private(set) var paneExpansionRequest: PaneExpansionRequest?
     @Published var agentSurface: AgentSurface = .hidden
     @Published var noteRenderMode: NoteRenderMode = .rich
@@ -1168,15 +1200,36 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var openAIKeyHelpText: String {
-        if !Self.environmentValue("OPENAI_API_KEY").isEmpty {
-            return ui("正在使用本机环境密钥。保存的密钥会在没有环境密钥时接管。", "Using the local environment key. The saved key is used only when no environment key is present.")
+        let envName = agentProviderID.environmentAPIKeyName
+        if !Self.environmentValue(envName).isEmpty {
+            return ui(
+                "正在使用本机环境变量 \(envName)。设置里的密钥在没有环境变量时才会使用。",
+                "Using local environment variable \(envName). The Settings key is used only when that env is empty."
+            )
         }
-        if !OpenAIAPIKeyStore.load().isEmpty {
-            return ui("密钥已保存，可直接用于对话。", "Key saved. Chat is ready.")
+        if agentProviderID != .openai, !Self.environmentValue("OPENAI_API_KEY").isEmpty {
+            return ui(
+                "正在回退使用 OPENAI_API_KEY 环境变量。",
+                "Falling back to the OPENAI_API_KEY environment variable."
+            )
+        }
+        let fieldKey = OpenAIAPIKeyStore.cleaned(openAIAPIKey)
+        let savedKey = OpenAIAPIKeyStore.load(provider: agentProviderID.piProviderName)
+        if !fieldKey.isEmpty {
+            return ui(
+                "当前提供商：\(agentProviderID.label(language: interfaceLanguage))。输入框中的密钥会直接用于请求；点「保存到钥匙串」可跨次启动保留。",
+                "Provider: \(agentProviderID.label(language: interfaceLanguage)). The key in this field is used for requests; Save to Keychain keeps it across launches."
+            )
+        }
+        if !savedKey.isEmpty {
+            return ui(
+                "密钥已在钥匙串，可直接用于 \(agentProviderID.label(language: interfaceLanguage)) 对话。",
+                "Key is in Keychain and ready for \(agentProviderID.label(language: interfaceLanguage)) chat."
+            )
         }
         return ui(
-            "未保存密钥。保存后对话会结合\(agentPromptScope)，并在有已选文本片段时一并作答。",
-            "No key saved. After saving, chat will use \(agentPromptScope) and any selected text fragments."
+            "未配置 \(agentProviderID.label(language: interfaceLanguage)) 密钥。填入后即可提问（建议再保存到钥匙串）。",
+            "No \(agentProviderID.label(language: interfaceLanguage)) key yet. Enter one to chat (and Save to Keychain when ready)."
         )
     }
 
@@ -1603,9 +1656,27 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func toggleLibrary() {
-        showLibrary.toggle()
-        clearUnpinnedFloatingSelection()
-        focus(showLibrary ? .library : .reader)
+        let willShow = !showLibrary
+
+        // 1) Flip drawer chrome first — publishes only on `libraryDrawer`, so reader/agent/notes
+        //    do not re-render and the slide can start on the next frame.
+        showLibrary = willShow
+
+        // 2) Focus / selection side effects next run-loop tick (touches WorkspaceStore @Published).
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            var quiet = Transaction()
+            quiet.disablesAnimations = true
+            withTransaction(quiet) {
+                if willShow {
+                    self.clearUnpinnedFloatingSelection()
+                    self.focusedPane = .library
+                } else if self.focusedPane == .library {
+                    self.focusedPane = .reader
+                }
+                self.focusRequest += 1
+            }
+        }
     }
 
     func revealLibrary() {
@@ -1669,7 +1740,13 @@ final class WorkspaceStore: ObservableObject {
         if layoutIsImmersive {
             toggleDocumentPaneFromImmersive(role)
         } else {
-            setDocumentPane(!isPaneVisible(role), role)
+            let openingFromEmptyBoard = !showReader && !showAgent && !showNotes
+            let willShow = !isPaneVisible(role)
+            setDocumentPane(willShow, role)
+            // Empty board → first open: restore canonical 文稿 | 对话 | 笔记 left→right order.
+            if willShow && openingFromEmptyBoard {
+                threePaneOrder = WorkspacePaneRole.defaultThreePaneOrder
+            }
             layout = layoutMatchingThreePaneOrder(normalizedThreePaneOrder)
         }
         focus(isPaneVisible(role) ? role.focus : fallbackDocumentPaneFocus())
@@ -2435,11 +2512,15 @@ final class WorkspaceStore: ObservableObject {
 
     func setAgentProviderID(_ provider: AgentProviderID) {
         guard agentProviderID != provider else { return }
+        let previousDefault = agentProviderID.defaultModelHint
         agentProviderID = provider
         openAIAPIKey = OpenAIAPIKeyStore.load(provider: provider.piProviderName)
-        if modelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        // Switch model when empty or still on the previous provider's default hint.
+        let trimmedModel = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedModel.isEmpty || trimmedModel == previousDefault {
             modelName = provider.defaultModelHint
         }
+        openAIKeyStatus = nil
         save()
     }
 
@@ -6924,6 +7005,13 @@ final class WorkspaceStore: ObservableObject {
             if !openaiEnv.isEmpty {
                 return (openaiEnv, ui("本机环境变量", "local environment variable"))
             }
+        }
+
+        // Prefer the in-settings field even before the user clicks Save — otherwise
+        // typed keys look "configured" in the UI but never reach the request.
+        let fieldKey = OpenAIAPIKeyStore.cleaned(openAIAPIKey)
+        if !fieldKey.isEmpty {
+            return (fieldKey, ui("设置中的密钥", "key from Settings"))
         }
 
         let savedKey = OpenAIAPIKeyStore.load(provider: agentProviderID.piProviderName)

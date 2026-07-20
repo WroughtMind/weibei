@@ -150,21 +150,16 @@ struct PaneHeaderReorderModifier: ViewModifier {
                     DragGesture(minimumDistance: 12, coordinateSpace: .global)
                         .onChanged { value in
                             guard abs(value.translation.width) > 2 else { return }
-                            withAnimation(WeiBeiMotion.micro) {
-                                if !dragActive {
-                                    store.beginThreePaneReorder(role)
-                                }
+                            // No withAnimation on drag updates — that was thrashing the whole workspace.
+                            if !dragActive {
+                                store.beginThreePaneReorder(role)
                                 dragActive = true
                             }
                             store.updateThreePaneReorder(role, horizontalDelta: value.translation.width)
                         }
                         .onEnded { value in
-                            withAnimation(WeiBeiMotion.layout) {
-                                store.finishThreePaneReorder(role, horizontalDelta: value.translation.width)
-                            }
-                            withAnimation(WeiBeiMotion.micro) {
-                                dragActive = false
-                            }
+                            store.finishThreePaneReorder(role, horizontalDelta: value.translation.width)
+                            dragActive = false
                         }
                 )
                 .onHover { value in
@@ -234,6 +229,8 @@ private struct AgentComposerField: View {
     }
 
     var body: some View {
+        // Tall Codex-like composer uses a fixed outer height; short fields still hug content.
+        let locksHeight = height >= 72
         ZStack(alignment: .bottomTrailing) {
             TextField(
                 "",
@@ -245,15 +242,28 @@ private struct AgentComposerField: View {
             )
             .textFieldStyle(.plain)
             .lineLimit(lineLimit)
-            .fixedSize(horizontal: false, vertical: true)
+            .fixedSize(horizontal: false, vertical: !locksHeight)
             .font(font)
             .foregroundColor(WeiBeiTheme.ink)
             .focused(focused)
             .onSubmit(submit)
             .padding(.vertical, verticalPadding)
             .padding(.trailing, showsControl ? trailingPadding : 0)
-            .frame(maxWidth: .infinity, alignment: .bottomLeading)
-            .weibeiInputSurface(active: focused.wrappedValue, height: height, horizontalPadding: horizontalPadding)
+            .frame(maxWidth: .infinity, maxHeight: locksHeight ? .infinity : nil, alignment: .topLeading)
+            .padding(.horizontal, horizontalPadding)
+            .frame(maxWidth: .infinity, minHeight: height, maxHeight: locksHeight ? height : nil, alignment: .topLeading)
+            .background {
+                RoundedRectangle(cornerRadius: locksHeight ? 14 : WeiBeiMetric.controlRadius)
+                    .fill(WeiBeiTheme.paperRaised.opacity(focused.wrappedValue ? 0.72 : 0.62))
+            }
+            .clipShape(RoundedRectangle(cornerRadius: locksHeight ? 14 : WeiBeiMetric.controlRadius))
+            .overlay {
+                RoundedRectangle(cornerRadius: locksHeight ? 14 : WeiBeiMetric.controlRadius)
+                    .stroke(
+                        focused.wrappedValue ? WeiBeiTheme.link.opacity(0.36) : WeiBeiTheme.hairline.opacity(0.54),
+                        lineWidth: 1
+                    )
+            }
 
             if showsControl {
                 Button {
@@ -271,11 +281,13 @@ private struct AgentComposerField: View {
                 .animation(WeiBeiMotion.micro, value: showsControl)
             }
         }
+        .frame(height: locksHeight ? height : nil, alignment: .bottom)
         .contentShape(Rectangle())
         .onTapGesture {
             focused.wrappedValue = true
         }
         .animation(WeiBeiMotion.micro, value: showsControl)
+        .accessibilityIdentifier(locksHeight ? "agent-composer-codex" : "agent-composer-compact")
     }
 }
 
@@ -1459,125 +1471,191 @@ private struct AgentRailTurn {
     var answer: String
 }
 
+/// Standard chat column metrics — one centered axis shared by messages and composer.
+/// Compact = three-pane agent strip; wide = immersive conversation (Codex-like full chat).
+private enum AgentChatLayoutMetrics {
+    static let compactMaxWidth: CGFloat = 560
+    /// Matches Codex immersive chat column (~880pt ceiling, gutters keep it centered).
+    static let wideMaxWidth: CGFloat = 880
+    static let compactSideGutter: CGFloat = 16
+    static let wideSideGutter: CGFloat = 24
+    static let compactComposerHeight: CGFloat = 52
+    /// Tall enough to read as a real chat composer, not a search field.
+    static let wideComposerHeight: CGFloat = 88
+    static let compactFontSize: CGFloat = 14.5
+    static let wideFontSize: CGFloat = 16
+
+    static func isWide(layout: WorkspaceLayout) -> Bool {
+        layout == .immersiveConversation
+    }
+
+    static func contentWidth(availableWidth: CGFloat, wide: Bool) -> CGFloat {
+        let gutter = (wide ? wideSideGutter : compactSideGutter) * 2
+        let maxWidth = wide ? wideMaxWidth : compactMaxWidth
+        return min(max(availableWidth - gutter, 280), maxWidth)
+    }
+
+    static func composerHeight(wide: Bool) -> CGFloat {
+        wide ? wideComposerHeight : compactComposerHeight
+    }
+
+    static func composerFontSize(wide: Bool) -> CGFloat {
+        wide ? wideFontSize : compactFontSize
+    }
+}
+
 struct AgentPaneView: View {
     @EnvironmentObject private var store: WorkspaceStore
     var showsPaneHeader = true
     var reorderRole: WorkspacePaneRole? = nil
     @FocusState private var draftFocused: Bool
-    @State private var visibleAgentMessageID: UUID?
     @State private var activeAgentRailID: String?
     @State private var agentFollowsLatest = true
-    @State private var agentInputTrayHeight: CGFloat = 108
+    @State private var agentPaneWidth: CGFloat = 960
 
     private let agentBottomAnchorID = "agentConversationBottom"
 
+    private var isImmersiveConversation: Bool {
+        store.layout == .immersiveConversation
+    }
+
+    private var usesWideChatLayout: Bool {
+        AgentChatLayoutMetrics.isWide(layout: store.layout)
+    }
+
     var body: some View {
-        GeometryReader { paneGeometry in
-            let railOnly = ContentRailMetrics.isRailOnly(
-                availableWidth: paneGeometry.size.width,
-                allowed: store.layout.allowsRailOnlyPanes
-            )
-            let railItems = agentRailItems
-            ScrollViewReader { proxy in
-                ZStack(alignment: .topLeading) {
-                    VStack(spacing: 0) {
-                        if showsPaneHeader {
-                            WeiBeiPaneHeader(
-                                title: store.ui("对话", "Chat"),
-                                latinMark: store.interfaceLanguage == .chinese ? "CHAT" : nil,
-                                subtitle: store.agentConversationSubtitle,
-                                appearanceMode: store.appearanceMode,
-                                reorderRole: reorderRole
-                            ) {
-                                sessionMenu
-                            }
+        // Hang-proof structure:
+        // NEVER put GeometryReader as an ancestor of ScrollView+LazyVStack.
+        // Sampled freezes were GeometryReaderLayout → ScrollView.sizeThatFits → LazyVStack thrash.
+        // Pane width is measured only via background preference (sibling, not parent).
+        let wide = AgentChatLayoutMetrics.isWide(layout: store.layout)
+        let availableWidth = max(agentPaneWidth, 1)
+        let railOnly = ContentRailMetrics.isRailOnly(
+            availableWidth: availableWidth,
+            allowed: store.layout.allowsRailOnlyPanes
+        )
+        let showsContentRail = !wide && store.layout.allowsRailOnlyPanes
+        let railItems = showsContentRail ? agentRailItems : []
+        let contentWidth = AgentChatLayoutMetrics.contentWidth(
+            availableWidth: availableWidth,
+            wide: wide
+        )
+        let geometryWidth = availableWidth
+
+        ScrollViewReader { proxy in
+            ZStack(alignment: .topLeading) {
+                VStack(spacing: 0) {
+                    if showsPaneHeader {
+                        WeiBeiPaneHeader(
+                            title: store.ui("对话", "Chat"),
+                            latinMark: store.interfaceLanguage == .chinese ? "CHAT" : nil,
+                            subtitle: store.agentConversationSubtitle,
+                            appearanceMode: store.appearanceMode,
+                            reorderRole: reorderRole
+                        ) {
+                            sessionMenu
                         }
-
-                        GeometryReader { geometry in
-                            let availableWidth = max(geometry.size.width, 1)
-                            let contentWidth = min(max(availableWidth - 36, 320), agentContentMaxWidth ?? 736)
-
-                            ScrollView(showsIndicators: true) {
-                                LazyVStack(alignment: .leading, spacing: 12) {
-                                    ForEach(store.messages) { message in
-                                        agentMessageRow(message: message, geometryWidth: geometry.size.width, contentWidth: contentWidth, proxy: proxy)
-                                    }
-                                    if store.isAskingAgent && !store.agentStreamingText.isEmpty {
-                                        AgentStreamingResponse(text: store.agentStreamingText)
-                                            .id("agent-streaming-response")
-                                            .transition(WeiBeiTransition.message)
-                                    }
-                                    // Loading motion only before the first stream token; never with streaming text.
-                                    if store.isAskingAgent && store.agentStreamingText.isEmpty {
-                                        AgentThinkingIndicator()
-                                            .id("agent-thinking-\(store.agentActivityText ?? "default")")
-                                            .transition(WeiBeiTransition.message)
-                                    }
-                                    if store.messages.isEmpty && !(store.isAskingAgent && store.agentStreamingText.isEmpty) {
-                                        emptyAgentState
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .transition(WeiBeiTransition.message)
-                                    }
-                                    Color.clear
-                                        .frame(height: agentScrollBottomInset)
-                                        .id(agentBottomAnchorID)
-                                }
-                                .scrollTargetLayout()
-                                .padding(14)
-                                .padding(.top, store.messages.isEmpty ? 22 : 0)
-                                .frame(width: geometry.size.width, alignment: .topLeading)
-                                .frame(minHeight: geometry.size.height, alignment: .topLeading)
-                                .animation(WeiBeiMotion.panel, value: store.messages.count)
-                            }
-                            .scrollPosition(id: $visibleAgentMessageID, anchor: .center)
-                        }
-                        .clipped()
-                        .zIndex(0)
-
-                        agentInputTray
-                            .zIndex(1)
-                            .background {
-                                GeometryReader { trayGeometry in
-                                    Color.clear.preference(
-                                        key: AgentInputTrayHeightKey.self,
-                                        value: trayGeometry.size.height
-                                    )
-                                }
-                            }
                     }
-                    .opacity(railOnly ? 0 : 1)
-                    .allowsHitTesting(!railOnly)
 
+                    ScrollView(showsIndicators: true) {
+                        // No scrollTargetLayout / scrollPosition / minHeight:viewport /
+                        // GeometryReader parent — all thrash sizeThatFits on LazyVStack.
+                        LazyVStack(alignment: .leading, spacing: wide ? 16 : 12) {
+                            ForEach(store.messages) { message in
+                                agentMessageRow(
+                                    message: message,
+                                    geometryWidth: geometryWidth,
+                                    contentWidth: contentWidth,
+                                    wide: wide
+                                )
+                            }
+                            if store.isAskingAgent && !store.agentStreamingText.isEmpty {
+                                agentReadingColumn(
+                                    geometryWidth: geometryWidth,
+                                    contentWidth: contentWidth,
+                                    wideLayout: wide,
+                                    alignment: .leading
+                                ) {
+                                    AgentStreamingResponse(text: store.agentStreamingText)
+                                }
+                                .id("agent-streaming-response")
+                                .transition(WeiBeiTransition.message)
+                            }
+                            if store.isAskingAgent && store.agentStreamingText.isEmpty {
+                                agentReadingColumn(
+                                    geometryWidth: geometryWidth,
+                                    contentWidth: contentWidth,
+                                    wideLayout: wide,
+                                    alignment: .leading
+                                ) {
+                                    AgentThinkingIndicator()
+                                }
+                                .id("agent-thinking")
+                                .transition(WeiBeiTransition.message)
+                            }
+                            if store.messages.isEmpty && !(store.isAskingAgent && store.agentStreamingText.isEmpty) {
+                                emptyAgentState
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .transition(WeiBeiTransition.message)
+                            }
+                            Color.clear
+                                .frame(height: agentScrollBottomInset)
+                                .id(agentBottomAnchorID)
+                        }
+                        .padding(.horizontal, wide ? 12 : 14)
+                        .padding(.vertical, wide ? 10 : 14)
+                        .padding(.top, store.messages.isEmpty ? 22 : 0)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+                    .zIndex(0)
+
+                    agentInputTray(wide: wide, contentWidth: contentWidth)
+                        .zIndex(1)
+                        .animation(WeiBeiMotion.panel, value: store.layout)
+                        .animation(WeiBeiMotion.panel, value: wide)
+                }
+                .opacity(railOnly ? 0 : 1)
+                .allowsHitTesting(!railOnly)
+
+                if showsContentRail {
                     ContentRailView(
                         label: store.ui("对话轨道", "Conversation rail"),
                         items: railItems,
                         activeID: activeAgentRailID ?? railItems.first?.id,
                         appearanceMode: store.appearanceMode,
                         isRailOnly: railOnly,
-                        availableWidth: paneGeometry.size.width,
+                        availableWidth: availableWidth,
                         topInset: railOnly ? 0 : (showsPaneHeader ? 44 : 34),
                         bottomInset: railOnly ? 0 : agentRailBottomInset,
                         onActivate: { activateAgentRailItem($0, railOnly: railOnly, proxy: proxy) }
                     )
                     .zIndex(4)
                 }
-                .onChange(of: store.messages.count) { _, _ in
-                    scrollAgentToBottom(proxy)
-                }
-                .onChange(of: visibleAgentMessageID) { _, messageID in
-                    updateAgentRailPosition(for: messageID)
-                }
-                .onPreferenceChange(AgentInputTrayHeightKey.self) { height in
-                    guard height > 40 else { return }
-                    let nextHeight = min(max(height, 76), 180)
-                    guard abs(agentInputTrayHeight - nextHeight) > 0.5 else { return }
-                    agentInputTrayHeight = nextHeight
-                    scrollAgentToBottom(proxy)
-                }
-                .onRichAnswerVerificationStage { stage in
-                    handleRichAnswerVerificationStage(stage, proxy: proxy)
-                }
             }
+            .onChange(of: store.messages.count) { _, _ in
+                if showsContentRail, let lastID = store.messages.last?.id {
+                    updateAgentRailPosition(for: lastID)
+                }
+                scrollAgentToBottom(proxy)
+            }
+            .onRichAnswerVerificationStage { stage in
+                handleRichAnswerVerificationStage(stage, proxy: proxy)
+            }
+        }
+        // Width probe as background sibling — never parent of ScrollView.
+        .background {
+            GeometryReader { geo in
+                Color.clear.preference(
+                    key: AgentPaneWidthKey.self,
+                    value: geo.size.width
+                )
+            }
+        }
+        .onPreferenceChange(AgentPaneWidthKey.self) { width in
+            guard width > 1, abs(agentPaneWidth - width) > 1 else { return }
+            agentPaneWidth = width
         }
         .frame(minHeight: 260)
         .foregroundStyle(WeiBeiTheme.ink)
@@ -1617,7 +1695,12 @@ struct AgentPaneView: View {
         .accessibilityLabel(Text("agent chat pane"))
     }
 
-    private func agentMessageRow(message: AgentMessage, geometryWidth: CGFloat, contentWidth: CGFloat, proxy: ScrollViewProxy) -> some View {
+    private func agentMessageRow(
+        message: AgentMessage,
+        geometryWidth: CGFloat,
+        contentWidth: CGFloat,
+        wide: Bool
+    ) -> some View {
         let isUser = message.role == .user
         let wideFamilies: Set<RichAnswerCapabilityFamily> = [
             .quantityAndCoordinates,
@@ -1629,21 +1712,44 @@ struct AgentPaneView: View {
         let needsWideCanvas = message.richAnswer?.scenes.contains {
             wideFamilies.contains($0.family)
         } == true
-        let readingLimit: CGFloat = needsWideCanvas ? 620 : 596
-        let readingWidth = min(max(contentWidth - 28, 240), readingLimit)
-        let readingLeadingInset = max((geometryWidth - readingWidth) / 2, 0)
 
-        return AgentBubble(
-            message: message,
-            onMarkdownHeightChange: message.id == store.messages.last?.id ? {
-                scrollAgentToBottom(proxy)
-            } : {}
-        )
-        .frame(maxWidth: readingWidth, alignment: isUser ? .trailing : .leading)
-        .padding(.leading, readingLeadingInset)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // Native text rows: no per-message WKWebView height callbacks that thrash scroll.
+        return agentReadingColumn(
+            geometryWidth: geometryWidth,
+            contentWidth: contentWidth,
+            wideLayout: wide,
+            canvasWide: needsWideCanvas,
+            alignment: isUser ? .trailing : .leading
+        ) {
+            AgentBubble(message: message)
+        }
         .id(message.id)
         .transition(WeiBeiTransition.message)
+    }
+
+    /// One centered reading column for messages, streaming, and loading.
+    private func agentReadingColumn<Content: View>(
+        geometryWidth: CGFloat,
+        contentWidth: CGFloat,
+        wideLayout: Bool,
+        canvasWide: Bool = false,
+        alignment: HorizontalAlignment,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        let readingWidth: CGFloat = {
+            if wideLayout {
+                // Rich-answer canvas can use a slightly wider band inside the same axis.
+                let limit = canvasWide ? min(contentWidth + 40, geometryWidth - 32) : contentWidth
+                return min(contentWidth, limit)
+            }
+            let limit: CGFloat = canvasWide ? 540 : 500
+            return min(max(contentWidth - 12, 240), limit)
+        }()
+        let readingLeadingInset = max((geometryWidth - readingWidth) / 2, 0)
+        return content()
+            .frame(maxWidth: readingWidth, alignment: Alignment(horizontal: alignment, vertical: .center))
+            .padding(.leading, readingLeadingInset)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var agentRailTurns: [AgentRailTurn] {
@@ -1728,8 +1834,10 @@ struct AgentPaneView: View {
         store.agentInputPrompt
     }
 
-    private var agentInputTray: some View {
-        VStack(spacing: 0) {
+    private func agentInputTray(wide: Bool, contentWidth: CGFloat) -> some View {
+        let fieldHeight = AgentChatLayoutMetrics.composerHeight(wide: wide)
+        let fontSize = AgentChatLayoutMetrics.composerFontSize(wide: wide)
+        return VStack(spacing: 0) {
             LinearGradient(
                 colors: [
                     .clear,
@@ -1739,7 +1847,7 @@ struct AgentPaneView: View {
                 startPoint: .top,
                 endPoint: .bottom
             )
-            .frame(height: 22)
+            .frame(height: wide ? 16 : 22)
             .allowsHitTesting(false)
 
             VStack(alignment: .leading, spacing: 8) {
@@ -1751,29 +1859,30 @@ struct AgentPaneView: View {
                 AgentComposerField(
                     prompt: agentPrompt,
                     focused: $draftFocused,
-                    font: .system(size: 15),
-                    promptFont: .system(size: 15),
-                    lineLimit: 1...6,
-                    height: 56,
-                    sendButtonSize: 30,
-                    trailingPadding: 40,
-                    sendTrailing: 10,
-                    sendBottom: 10,
-                    horizontalPadding: 14,
-                    verticalPadding: 10
+                    font: .system(size: fontSize),
+                    promptFont: .system(size: fontSize),
+                    lineLimit: wide ? 1...8 : 1...6,
+                    height: fieldHeight,
+                    sendButtonSize: wide ? 34 : 28,
+                    trailingPadding: wide ? 48 : 40,
+                    sendTrailing: wide ? 14 : 10,
+                    sendBottom: wide ? 18 : 8,
+                    horizontalPadding: wide ? 18 : 12,
+                    verticalPadding: wide ? 16 : 8
                 ) {
                     store.askAgent()
                 }
             }
-            .font(.system(size: 15))
-            .frame(minHeight: 56, alignment: .bottom)
-            .frame(maxWidth: agentInputMaxWidth)
-            .padding(.horizontal, 18)
-            .padding(.top, 4)
-            .padding(.bottom, 16)
+            .font(.system(size: fontSize))
+            // Fixed width = reading column. Fixed height = real composer block.
+            .frame(width: contentWidth, height: fieldHeight, alignment: .bottom)
+            .padding(.top, wide ? 8 : 4)
+            .padding(.bottom, wide ? 20 : 12)
             .frame(maxWidth: .infinity)
             .background(WeiBeiTheme.paper)
             .animation(WeiBeiMotion.reveal, value: store.agentDraft)
+            .animation(WeiBeiMotion.panel, value: fieldHeight)
+            .accessibilityIdentifier(wide ? "agent-input-tray-wide" : "agent-input-tray-compact")
         }
         .background(alignment: .bottom) {
             WeiBeiGlassHeaderBackground(
@@ -1791,16 +1900,30 @@ struct AgentPaneView: View {
     }
 
     private var agentInputMaxWidth: CGFloat? {
-        620
+        AgentChatLayoutMetrics.contentWidth(
+            availableWidth: max(agentPaneWidth, 1),
+            wide: usesWideChatLayout
+        )
     }
 
     private var agentContentMaxWidth: CGFloat? {
-        736
+        agentInputMaxWidth
+    }
+
+    private var composerFieldHeight: CGFloat {
+        AgentChatLayoutMetrics.composerHeight(wide: usesWideChatLayout)
+    }
+
+    private var composerFontSize: CGFloat {
+        AgentChatLayoutMetrics.composerFontSize(wide: usesWideChatLayout)
     }
 
     private var agentScrollBottomInset: CGFloat {
-        let baseInset = min(max(agentInputTrayHeight * 0.42, 42), 82)
-        return hasVisibleRichAnswer ? max(baseInset, agentInputTrayHeight + 22) : baseInset
+        // Fixed inset only — tray GeometryReader preference → LazyVStack height feedback
+        // re-entered sizeThatFits every scroll frame and froze the app.
+        hasVisibleRichAnswer
+            ? (usesWideChatLayout ? 120 : 100)
+            : (usesWideChatLayout ? 88 : 64)
     }
 
     private var hasVisibleRichAnswer: Bool {
@@ -1810,7 +1933,7 @@ struct AgentPaneView: View {
     }
 
     private var agentRailBottomInset: CGFloat {
-        min(max(agentInputTrayHeight + 10, 88), 190)
+        usesWideChatLayout ? 120 : 100
     }
 
     private var emptyAgentState: some View {
@@ -2003,8 +2126,8 @@ struct AgentPaneView: View {
 
 }
 
-private struct AgentInputTrayHeightKey: PreferenceKey {
-    static var defaultValue: CGFloat = 108
+private struct AgentPaneWidthKey: PreferenceKey {
+    static var defaultValue: CGFloat = 960
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = max(value, nextValue())
@@ -2573,7 +2696,6 @@ struct FloatingSelectionAgentView: View {
 private struct AgentBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
     var message: AgentMessage
-    var onMarkdownHeightChange: () -> Void = {}
     @State private var hovering = false
 
     var body: some View {
@@ -2589,7 +2711,6 @@ private struct AgentBubble: View {
                 self.hovering = hovering
             }
         }
-        .animation(WeiBeiMotion.panel, value: message.id)
     }
 
     @ViewBuilder
@@ -2607,8 +2728,7 @@ private struct AgentBubble: View {
 
             AgentMessageMarkdownText(
                 text: message.text,
-                rendersRichMarkdown: false,
-                onContentHeightChange: onMarkdownHeightChange
+                rendersRichMarkdown: false
             )
             .padding(.horizontal, 13)
             .padding(.vertical, 9)
@@ -2677,10 +2797,10 @@ private struct AgentBubble: View {
                !richAnswer.scenes.isEmpty {
                 richAnswerFlow(richAnswer)
             } else {
+                // Hang-proof agent chat: native AttributedString, never per-message WKWebView.
                 AgentMessageMarkdownText(
                     text: message.text,
-                    rendersRichMarkdown: true,
-                    onContentHeightChange: onMarkdownHeightChange
+                    rendersRichMarkdown: true
                 )
             }
 
@@ -2749,7 +2869,12 @@ private struct AgentBubble: View {
             case .narrative:
                 if let text = part.text, !text.isEmpty {
                     RichAnswerNarrativeText(text: text)
-                        .frame(maxWidth: 588, alignment: .leading)
+                        .frame(
+                            maxWidth: AgentChatLayoutMetrics.isWide(layout: store.layout)
+                                ? AgentChatLayoutMetrics.wideMaxWidth
+                                : AgentChatLayoutMetrics.compactMaxWidth,
+                            alignment: .leading
+                        )
                 }
             case .scene:
                 if let sceneID = part.sceneID,
@@ -2762,7 +2887,12 @@ private struct AgentBubble: View {
                         onAction: submitRichAnswerAction
                     )
                     .id("rich-answer-\(message.id.uuidString)-\(sceneID)-\(index)")
-                    .frame(maxWidth: 620, alignment: .leading)
+                    .frame(
+                        maxWidth: AgentChatLayoutMetrics.isWide(layout: store.layout)
+                            ? AgentChatLayoutMetrics.wideMaxWidth
+                            : AgentChatLayoutMetrics.compactMaxWidth,
+                        alignment: .leading
+                    )
                 }
             }
         }
@@ -3076,258 +3206,627 @@ private struct RichAnswerNarrativeText: View {
     }
 }
 
+/// Agent chat markdown — always native SwiftUI text (no per-message WKWebView).
+/// - Assistant (`rendersRichMarkdown`): fills the reading column width.
+/// - User (`!rendersRichMarkdown`): **hugs content** so the paper bubble stays a chip
+///   on the right — not a full-width bar (maxWidth infinity broke that).
 private struct AgentMessageMarkdownText: View {
-    @EnvironmentObject private var store: WorkspaceStore
     var text: String
     var rendersRichMarkdown: Bool
-    var onContentHeightChange: () -> Void = {}
 
     var body: some View {
-        if rendersRichMarkdown {
-            MarkdownPreviewView(
-                markdown: text,
-                markdownBaseURL: store.currentMarkdownBaseURL,
-                appearanceMode: store.appearanceMode,
-                interfaceLanguage: store.interfaceLanguage,
-                compact: true,
-                onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
-                onSourceReference: { reference in store.openSourceReference(reference) },
-                onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) },
-                onContentHeightChange: onContentHeightChange
-            )
-            .frame(maxWidth: .infinity, alignment: .leading)
-        } else {
-            Text(renderedText)
-                .font(.system(size: 14))
-                .lineSpacing(4)
-                .foregroundStyle(WeiBeiTheme.ink)
-                .allowsHitTesting(false)
-        }
+        Text(renderedText)
+            .font(.system(size: rendersRichMarkdown ? 14.5 : 14))
+            .lineSpacing(rendersRichMarkdown ? 5 : 4)
+            .foregroundStyle(WeiBeiTheme.ink)
+            .multilineTextAlignment(rendersRichMarkdown ? .leading : .leading)
+            .fixedSize(horizontal: false, vertical: true)
+            .modifier(AgentMessageTextWidthModifier(fillsReadingColumn: rendersRichMarkdown))
+            // Let wheel events reach the conversation ScrollView (no textSelection).
+            .allowsHitTesting(false)
     }
 
     private var renderedText: AttributedString {
-        (try? AttributedString(markdown: text)) ?? AttributedString(text)
+        if rendersRichMarkdown {
+            var options = AttributedString.MarkdownParsingOptions()
+            options.interpretedSyntax = .inlineOnlyPreservingWhitespace
+            return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
+        }
+        return (try? AttributedString(markdown: text)) ?? AttributedString(text)
+    }
+}
+
+private struct AgentMessageTextWidthModifier: ViewModifier {
+    let fillsReadingColumn: Bool
+
+    func body(content: Content) -> some View {
+        if fillsReadingColumn {
+            content.frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            // Hug text width (wraps within the bubble's maxWidth: 520), not a full-width bar.
+            content
+        }
     }
 }
 
 /// Product loading motion — 「行文进行中 V3」.
 /// Driven solely by `store.agentActivityText` (no demo status carousel).
+///
+/// Hang-proof: motion runs in a fixed-size `NSView` + `CADisplayLink` that only
+/// `setNeedsDisplay()`. It never enters SwiftUI `TimelineView`, so parent
+/// `ScrollView` / `LazyVStack` do not re-run `sizeThatFits` every frame
+/// (that thrash was freezing the app after a couple of scrolls).
+///
+/// Geometry: cinnabar orbit keeps equal padding on all four sides of the status text.
+///
+/// Model (view coords, flipped):
+/// ```
+/// ┌──────── path (stroke centerline) ────────┐
+/// │  pad                                     │
+/// │     ┌──── glyph / line box ────┐         │
+/// │ pad │  加载词                  │ pad     │
+/// │     └──────────────────────────┘         │
+/// │  pad                                     │
+/// └──────────────────────────────────────────┘
+/// ```
+/// `orbitPadding` is the clear gap from the line-box edge to the stroke *centerline*
+/// on every side. Half the stroke width sits outside that centerline, so the view
+/// grows by `lineWidth` total to avoid clipping.
 private struct AgentThinkingIndicator: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    /// Epoch resets when activity text changes so orbit restarts from first bottom pass.
+    @State private var cachedText = ""
+    @State private var cachedTextWidth: CGFloat = 1
     @State private var motionEpoch = Date()
 
     private static let statusFontSize: CGFloat = 12
-    private static let pathHeight: CGFloat = 22
-    private static let orbitPadding: CGFloat = 4.25
-    private static let baselineOffset: CGFloat = -0.625
-    private static let segmentLength: CGFloat = 10
+    /// Clear gap from line-box edge → stroke centerline (all four sides).
+    private static let orbitPadding: CGFloat = 5.5
     private static let lineWidth: CGFloat = 1.25
-    private static let firstPassDuration: TimeInterval = 0.88
-    private static let orbitDuration: TimeInterval = 2.25
-    private static let cinnabarOpacity = 0.82
+    /// Line box height matches the font’s typographic bounds so top/bottom pad stay equal.
+    private static var textLineHeight: CGFloat {
+        let font = NSFont.systemFont(ofSize: statusFontSize, weight: .medium)
+        return max(1, ceil(font.ascender - font.descender))
+    }
+    /// Outer view size = line box + equal pad on both sides + half stroke outside the path.
+    private static var pathOuterInset: CGFloat { orbitPadding + lineWidth / 2 }
+    private static var pathHeight: CGFloat { textLineHeight + pathOuterInset * 2 }
 
     private var statusText: String {
         store.agentActivityText ?? store.ui("正在读取上下文", "Reading context")
     }
 
     var body: some View {
-        let text = statusText
+        let text = cachedText.isEmpty ? statusText : cachedText
+        let textWidth = max(1, cachedTextWidth)
+        let orbitWidth = textWidth + Self.pathOuterInset * 2
+        let pathHeight = Self.pathHeight
+
         Group {
             if reduceMotion {
-                staticStatusText(text)
+                Text(text)
+                    .font(.system(size: Self.statusFontSize, weight: .medium))
+                    .foregroundStyle(WeiBeiTheme.ink.opacity(0.93))
+                    .lineLimit(1)
+                    .frame(width: textWidth, height: Self.textLineHeight, alignment: .leading)
+                    .padding(Self.pathOuterInset)
             } else {
-                TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: false)) { context in
-                    let elapsed = max(0, context.date.timeIntervalSince(motionEpoch))
-                    animatedStatusText(text, elapsed: elapsed)
-                }
+                // AppKit host: fixed intrinsic size; ticks only repaint the NSView.
+                AgentThinkingOrbitHost(
+                    text: text,
+                    textWidth: textWidth,
+                    orbitWidth: orbitWidth,
+                    pathHeight: pathHeight,
+                    orbitPadding: Self.orbitPadding,
+                    textLineHeight: Self.textLineHeight,
+                    lineWidth: Self.lineWidth,
+                    motionEpoch: motionEpoch,
+                    appearanceMode: store.appearanceMode
+                )
+                .frame(width: orbitWidth, height: pathHeight, alignment: .leading)
+                .allowsHitTesting(false)
             }
         }
+        .frame(width: orbitWidth, height: pathHeight, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: true, vertical: true)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(text)
         .onAppear {
+            refreshCache(for: statusText)
             motionEpoch = Date()
         }
-        .onChange(of: statusText) { _, _ in
+        .onChange(of: statusText) { _, newText in
             // Interrupt mid-orbit immediately; restart first bottom proofreading pass.
+            refreshCache(for: newText)
             motionEpoch = Date()
         }
     }
 
-    private func staticStatusText(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: Self.statusFontSize, weight: .medium))
-            .foregroundStyle(WeiBeiTheme.ink.opacity(0.93))
-            .lineLimit(1)
-            .frame(height: Self.pathHeight, alignment: .leading)
-            .offset(y: Self.baselineOffset)
-    }
-
-    private func animatedStatusText(_ text: String, elapsed: TimeInterval) -> some View {
-        let textWidth = Self.measuredWidth(for: text)
-        let orbitWidth = textWidth + Self.orbitPadding * 2
-        let reveal = Self.revealProgress(at: elapsed)
-        let firstPass = elapsed < Self.firstPassDuration
-        let cursorProgress = firstPass ? reveal : 1
-        let cursorOpacity = firstPass
-            ? Self.smootherStep(Self.clamp(reveal / 0.14))
-                * (1 - Self.smootherStep(Self.clamp((elapsed - 0.82) / 0.16)))
-            : 0
-        let orbitOpacity = firstPass
-            ? Self.smootherStep(Self.clamp((elapsed - 0.82) / 0.18))
-            : 1
-        let orbitProgress = Self.orbitProgress(at: elapsed)
-        let cinnabar = WeiBeiTheme.cinnabar.opacity(Self.cinnabarOpacity)
-
-        return ZStack(alignment: .leading) {
-            Text(text)
-                .foregroundStyle(WeiBeiTheme.tertiaryInk.opacity(0.70))
-
-            Text(text)
-                .foregroundStyle(WeiBeiTheme.ink.opacity(0.93))
-                .mask(alignment: .leading) {
-                    // Fixed-width mask + scaleEffect — do not change layout width per frame.
-                    Rectangle()
-                        .frame(width: textWidth)
-                        .scaleEffect(x: max(0.001, reveal), y: 1, anchor: .leading)
-                }
-        }
-        .font(.system(size: Self.statusFontSize, weight: .medium))
-        .lineLimit(1)
-        .frame(width: textWidth, height: Self.pathHeight, alignment: .leading)
-        .offset(y: Self.baselineOffset)
-        .overlay {
-            ZStack(alignment: .bottomLeading) {
-                // First pass: short cinnabar segment under the text left → right.
-                Capsule(style: .continuous)
-                    .fill(cinnabar)
-                    .frame(width: Self.segmentLength, height: Self.lineWidth)
-                    .offset(x: max(0, (orbitWidth - Self.segmentLength) * cursorProgress))
-                    .opacity(cursorOpacity)
-
-                // Continuous orbit after first pass (clockwise, no reverse).
-                TextOrbitSegment(
-                    progress: orbitProgress,
-                    width: orbitWidth,
-                    segmentLength: Self.segmentLength,
-                    color: cinnabar
-                )
-                .opacity(orbitOpacity)
-            }
-            .frame(width: orbitWidth, height: Self.pathHeight)
-        }
+    private func refreshCache(for text: String) {
+        cachedText = text
+        cachedTextWidth = Self.measuredWidth(for: text)
     }
 
     private static func measuredWidth(for text: String) -> CGFloat {
         let font = NSFont.systemFont(ofSize: statusFontSize, weight: .medium)
         let size = (text as NSString).size(withAttributes: [.font: font])
-        return ceil(size.width)
+        return max(1, ceil(size.width))
+    }
+}
+
+/// Bridges V3 orbit motion into AppKit so SwiftUI layout never sees per-frame updates.
+private struct AgentThinkingOrbitHost: NSViewRepresentable {
+    let text: String
+    let textWidth: CGFloat
+    let orbitWidth: CGFloat
+    let pathHeight: CGFloat
+    let orbitPadding: CGFloat
+    let textLineHeight: CGFloat
+    let lineWidth: CGFloat
+    let motionEpoch: Date
+    let appearanceMode: WeiBeiAppearanceMode
+
+    func makeNSView(context: Context) -> AgentThinkingOrbitNSView {
+        let view = AgentThinkingOrbitNSView()
+        view.wantsLayer = true
+        view.apply(
+            text: text,
+            textWidth: textWidth,
+            orbitWidth: orbitWidth,
+            pathHeight: pathHeight,
+            orbitPadding: orbitPadding,
+            textLineHeight: textLineHeight,
+            lineWidth: lineWidth,
+            motionEpoch: motionEpoch,
+            appearanceMode: appearanceMode
+        )
+        return view
     }
 
-    private static func revealProgress(at elapsed: TimeInterval) -> Double {
-        // Match V3 prototype: ~0.10s lead-in, ~0.78s ease to full ink (total first pass 0.88s).
+    func updateNSView(_ nsView: AgentThinkingOrbitNSView, context: Context) {
+        nsView.apply(
+            text: text,
+            textWidth: textWidth,
+            orbitWidth: orbitWidth,
+            pathHeight: pathHeight,
+            orbitPadding: orbitPadding,
+            textLineHeight: textLineHeight,
+            lineWidth: lineWidth,
+            motionEpoch: motionEpoch,
+            appearanceMode: appearanceMode
+        )
+    }
+}
+
+/// Fixed-size AppKit painter for 「行文进行中 V3」: reveal + first-pass underline + TextOrbitSegment.
+/// Text sits in a line box; orbit stroke centerline keeps equal `orbitPadding` on all four sides.
+final class AgentThinkingOrbitNSView: NSView {
+    private static let statusFontSize: CGFloat = 12
+    private static let segmentLength: CGFloat = 10
+    private static let firstPassDuration: TimeInterval = 0.88
+    private static let orbitDuration: TimeInterval = 2.25
+
+    private var statusText = ""
+    private var textWidth: CGFloat = 1
+    private var orbitWidth: CGFloat = 1
+    private var pathHeight: CGFloat = 26
+    private var orbitPadding: CGFloat = 5.5
+    private var textLineHeight: CGFloat = 15
+    private var lineWidth: CGFloat = 1.25
+    private var motionEpoch = Date()
+    private var appearanceMode: WeiBeiAppearanceMode = .paper
+    private var displayLink: CADisplayLink?
+
+    override var isFlipped: Bool { true }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: orbitWidth, height: pathHeight)
+    }
+
+    deinit {
+        stopDisplayLink()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil {
+            startDisplayLink()
+        } else {
+            stopDisplayLink()
+        }
+    }
+
+    func apply(
+        text: String,
+        textWidth: CGFloat,
+        orbitWidth: CGFloat,
+        pathHeight: CGFloat,
+        orbitPadding: CGFloat,
+        textLineHeight: CGFloat,
+        lineWidth: CGFloat,
+        motionEpoch: Date,
+        appearanceMode: WeiBeiAppearanceMode
+    ) {
+        let sizeChanged = abs(self.orbitWidth - orbitWidth) > 0.5
+            || abs(self.pathHeight - pathHeight) > 0.5
+        statusText = text
+        self.textWidth = max(1, textWidth)
+        self.orbitWidth = max(1, orbitWidth)
+        self.pathHeight = max(1, pathHeight)
+        self.orbitPadding = max(1, orbitPadding)
+        self.textLineHeight = max(1, textLineHeight)
+        self.lineWidth = max(0.5, lineWidth)
+        self.motionEpoch = motionEpoch
+        self.appearanceMode = appearanceMode
+        if sizeChanged {
+            invalidateIntrinsicContentSize()
+        }
+        // Paint only — do not call setNeedsLayout / invalidate parent SwiftUI layout.
+        needsDisplay = true
+        if window != nil {
+            startDisplayLink()
+        }
+    }
+
+    private func startDisplayLink() {
+        guard displayLink == nil else { return }
+        let link = displayLink(target: self, selector: #selector(handleDisplayTick))
+        link.preferredFrameRateRange = CAFrameRateRange(minimum: 20, maximum: 30, preferred: 30)
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+    }
+
+    private func stopDisplayLink() {
+        displayLink?.invalidate()
+        displayLink = nil
+    }
+
+    @objc private func handleDisplayTick() {
+        // Local repaint only. Never touch SwiftUI state from here.
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        let bounds = CGRect(x: 0, y: 0, width: orbitWidth, height: pathHeight)
+        context.clear(bounds)
+
+        let elapsed = max(0, Date().timeIntervalSince(motionEpoch))
+        let reveal = TextOrbitSegment.revealProgress(at: elapsed)
+        let firstPass = elapsed < Self.firstPassDuration
+        let cursorProgress = firstPass ? reveal : 1
+        let cursorOpacity = firstPass
+            ? TextOrbitSegment.smootherStep(TextOrbitSegment.clamp(reveal / 0.14))
+                * (1 - TextOrbitSegment.smootherStep(TextOrbitSegment.clamp((elapsed - 0.82) / 0.16)))
+            : 0
+        let orbitOpacity = firstPass
+            ? TextOrbitSegment.smootherStep(TextOrbitSegment.clamp((elapsed - 0.82) / 0.18))
+            : 1
+        let orbitProgress = TextOrbitSegment.orbitProgress(at: elapsed)
+
+        let ink: NSColor
+        let dim: NSColor
+        let cinnabar: NSColor
+        switch appearanceMode {
+        case .inkstone:
+            ink = NSColor(calibratedRed: 0.843, green: 0.796, blue: 0.690, alpha: 0.93)
+            dim = NSColor(calibratedRed: 0.435, green: 0.400, blue: 0.333, alpha: 0.70)
+            cinnabar = NSColor(calibratedRed: 0.651, green: 0.212, blue: 0.169, alpha: 0.82)
+        case .paper:
+            ink = NSColor(calibratedRed: 0.115, green: 0.095, blue: 0.080, alpha: 0.93)
+            dim = NSColor(calibratedRed: 0.490, green: 0.430, blue: 0.365, alpha: 0.70)
+            cinnabar = NSColor(calibratedRed: 0.570, green: 0.150, blue: 0.105, alpha: 0.82)
+        }
+
+        let font = NSFont.systemFont(ofSize: Self.statusFontSize, weight: .medium)
+        // Line box inset so every side has the same gap to the stroke centerline.
+        // view edge → stroke center = lineWidth/2
+        // stroke center → line box edge = orbitPadding
+        let contentOrigin = orbitPadding + lineWidth / 2
+        let textRect = CGRect(
+            x: contentOrigin,
+            y: contentOrigin,
+            width: textWidth,
+            height: textLineHeight
+        )
+        // draw(in:) top-aligns in the flipped line box. Line-box height == ascender−descender,
+        // so ink fills the box and all four sides keep the same gap to the stroke centerline.
+        // Do not add capHeight/descender fudge — that broke equal top/bottom padding.
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .left
+        paragraph.lineBreakMode = .byClipping
+        let dimAttributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: dim,
+            .paragraphStyle: paragraph
+        ]
+        (statusText as NSString).draw(in: textRect, withAttributes: dimAttributes)
+
+        if reveal > 0.001 {
+            context.saveGState()
+            context.clip(
+                to: CGRect(
+                    x: textRect.minX,
+                    y: 0,
+                    width: textWidth * CGFloat(reveal),
+                    height: pathHeight
+                )
+            )
+            let inkAttributes: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: ink,
+                .paragraphStyle: paragraph
+            ]
+            (statusText as NSString).draw(in: textRect, withAttributes: inkAttributes)
+            context.restoreGState()
+        }
+
+        // First-pass proofread line: center of the bottom equal-padding band.
+        if cursorOpacity > 0.01 {
+            let bottomBandCenterY = textRect.maxY + orbitPadding / 2
+            let x = textRect.minX + max(0, (textWidth - Self.segmentLength) * CGFloat(cursorProgress))
+            let y = bottomBandCenterY - lineWidth / 2
+            let segment = CGRect(x: x, y: y, width: Self.segmentLength, height: lineWidth)
+            context.saveGState()
+            context.setAlpha(CGFloat(cursorOpacity))
+            context.setFillColor(cinnabar.cgColor)
+            let path = CGPath(
+                roundedRect: segment,
+                cornerWidth: lineWidth / 2,
+                cornerHeight: lineWidth / 2,
+                transform: nil
+            )
+            context.addPath(path)
+            context.fillPath()
+            context.restoreGState()
+        }
+
+        // Orbit stroke centerline: equal orbitPadding from the line box on all four sides.
+        if orbitOpacity > 0.01 {
+            context.saveGState()
+            context.setAlpha(CGFloat(orbitOpacity))
+            TextOrbitSegment.stroke(
+                progress: orbitProgress,
+                width: orbitWidth,
+                height: pathHeight,
+                segmentLength: Self.segmentLength,
+                lineWidth: lineWidth,
+                color: cinnabar,
+                in: context
+            )
+            context.restoreGState()
+        }
+    }
+}
+
+/// Short cinnabar segment orbiting a measured text box (V3 path geometry).
+/// Pure geometry/paint helper — not a SwiftUI View — so it cannot thrash ScrollView layout.
+enum TextOrbitSegment {
+    static let firstPassDuration: TimeInterval = 0.88
+    static let orbitDuration: TimeInterval = 2.25
+
+    static func revealProgress(at elapsed: TimeInterval) -> Double {
         let raw = clamp((elapsed - 0.10) / 0.78)
         return 1 - pow(1 - raw, 3.2)
     }
 
-    private static func orbitProgress(at elapsed: TimeInterval) -> Double {
+    static func orbitProgress(at elapsed: TimeInterval) -> Double {
         guard elapsed >= firstPassDuration else { return 0 }
         let t = (elapsed - firstPassDuration) / orbitDuration
         let remainder = t.truncatingRemainder(dividingBy: 1)
         return remainder >= 0 ? remainder : remainder + 1
     }
 
-    private static func clamp(_ value: Double) -> Double {
+    static func clamp(_ value: Double) -> Double {
         min(max(value, 0), 1)
     }
 
-    private static func smootherStep(_ value: Double) -> Double {
+    static func smootherStep(_ value: Double) -> Double {
         let x = clamp(value)
         return x * x * x * (x * (x * 6 - 15) + 10)
     }
-}
 
-/// Short cinnabar segment orbiting a measured text box (V3 path geometry).
-private struct TextOrbitSegment: View {
-    let progress: Double
-    let width: CGFloat
-    let segmentLength: CGFloat
-    let color: Color
+    static func stroke(
+        progress: Double,
+        width: CGFloat,
+        height: CGFloat,
+        segmentLength: CGFloat,
+        lineWidth: CGFloat,
+        color: NSColor,
+        in context: CGContext
+    ) {
+        let normalized = CGFloat(((progress.truncatingRemainder(dividingBy: 1)) + 1).truncatingRemainder(dividingBy: 1))
+        let perimeter = TextOrbitPath.estimatedPerimeter(width: width, height: height, lineWidth: lineWidth)
+        let fraction = min(0.08, segmentLength / max(1, perimeter))
+        let end = normalized + fraction
+        let fullPath = TextOrbitPath.cgPath(width: width, height: height, lineWidth: lineWidth)
 
-    private let height: CGFloat = 22
+        context.setStrokeColor(color.cgColor)
+        context.setLineWidth(lineWidth)
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
 
-    var body: some View {
-        let normalizedProgress = CGFloat(progress.truncatingRemainder(dividingBy: 1))
-        let fraction = min(0.08, segmentLength / estimatedPerimeter)
-        let end = normalizedProgress + fraction
-
-        ZStack {
-            if end <= 1 {
-                orbitPath(from: normalizedProgress, to: end)
-            } else {
-                orbitPath(from: normalizedProgress, to: 1)
-                orbitPath(from: 0, to: end - 1)
-            }
+        if end <= 1 {
+            strokeTrimmed(fullPath, from: normalized, to: end, in: context)
+        } else {
+            strokeTrimmed(fullPath, from: normalized, to: 1, in: context)
+            strokeTrimmed(fullPath, from: 0, to: end - 1, in: context)
         }
-        .frame(width: width, height: height)
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
     }
 
-    private var estimatedPerimeter: CGFloat {
-        let radius: CGFloat = 3
-        return max(1, 2 * (width + height) - 8 * radius + 2 * .pi * radius)
-    }
-
-    private func orbitPath(from start: CGFloat, to end: CGFloat) -> some View {
-        TextOrbitPath()
-            .trim(from: start, to: end)
-            .stroke(
-                color,
-                style: StrokeStyle(
-                    lineWidth: 1.25,
-                    lineCap: .round,
-                    lineJoin: .round
-                )
-            )
+    private static func strokeTrimmed(_ path: CGPath, from start: CGFloat, to end: CGFloat, in context: CGContext) {
+        guard end > start else { return }
+        let trimmed = path.trimmedPath(from: start, to: end)
+        context.addPath(trimmed)
+        context.strokePath()
     }
 }
 
-private struct TextOrbitPath: Shape {
-    func path(in rect: CGRect) -> Path {
-        let inset: CGFloat = 0.75
-        let radius: CGFloat = 3
-        let minX = rect.minX + inset
-        let maxX = rect.maxX - inset
-        let minY = rect.minY + inset
-        let maxY = rect.maxY - inset
+/// V3 orbit geometry: rounded rectangle starting bottom-right, clockwise.
+/// Path centerline sits `lineWidth/2` inside the view so the stroke is fully visible
+/// and the clear gap to the text line box is equal on all four sides.
+enum TextOrbitPath {
+    /// Matches AgentThinkingOrbitNSView lineWidth default; stroke() passes the live width via inset.
+    static let defaultLineWidth: CGFloat = 1.25
 
-        // Start bottom-right, go up the right edge, left across the top, down the left, right along the bottom.
-        var path = Path()
+    static func estimatedPerimeter(width: CGFloat, height: CGFloat, lineWidth: CGFloat = defaultLineWidth) -> CGFloat {
+        let inset = lineWidth / 2
+        let radius: CGFloat = 3
+        let w = max(1, width - inset * 2)
+        let h = max(1, height - inset * 2)
+        return max(1, 2 * (w + h) - 8 * radius + 2 * .pi * radius)
+    }
+
+    static func cgPath(width: CGFloat, height: CGFloat, lineWidth: CGFloat = defaultLineWidth) -> CGPath {
+        // Stroke centerline inset = half line width → equal visual margins when text box
+        // is placed at (pad + lineWidth/2) with the same pad on every side.
+        let inset = lineWidth / 2
+        let radius: CGFloat = 3
+        let minX = inset
+        let maxX = width - inset
+        let minY = inset
+        let maxY = height - inset
+
+        let path = CGMutablePath()
         path.move(to: CGPoint(x: maxX - radius, y: maxY))
-        path.addQuadCurve(
-            to: CGPoint(x: maxX, y: maxY - radius),
-            control: CGPoint(x: maxX, y: maxY)
-        )
+        path.addQuadCurve(to: CGPoint(x: maxX, y: maxY - radius), control: CGPoint(x: maxX, y: maxY))
         path.addLine(to: CGPoint(x: maxX, y: minY + radius))
-        path.addQuadCurve(
-            to: CGPoint(x: maxX - radius, y: minY),
-            control: CGPoint(x: maxX, y: minY)
-        )
+        path.addQuadCurve(to: CGPoint(x: maxX - radius, y: minY), control: CGPoint(x: maxX, y: minY))
         path.addLine(to: CGPoint(x: minX + radius, y: minY))
-        path.addQuadCurve(
-            to: CGPoint(x: minX, y: minY + radius),
-            control: CGPoint(x: minX, y: minY)
-        )
+        path.addQuadCurve(to: CGPoint(x: minX, y: minY + radius), control: CGPoint(x: minX, y: minY))
         path.addLine(to: CGPoint(x: minX, y: maxY - radius))
-        path.addQuadCurve(
-            to: CGPoint(x: minX + radius, y: maxY),
-            control: CGPoint(x: minX, y: maxY)
-        )
+        path.addQuadCurve(to: CGPoint(x: minX + radius, y: maxY), control: CGPoint(x: minX, y: maxY))
         path.addLine(to: CGPoint(x: maxX - radius, y: maxY))
+        path.closeSubpath()
         return path
+    }
+}
+
+private extension CGPath {
+    /// Approximate trim for a closed path by walking the flattened polyline.
+    func trimmedPath(from start: CGFloat, to end: CGFloat) -> CGPath {
+        let points = flattenedPoints()
+        guard points.count >= 2 else { return self }
+
+        var lengths: [CGFloat] = [0]
+        var total: CGFloat = 0
+        for index in 1..<points.count {
+            total += hypot(points[index].x - points[index - 1].x, points[index].y - points[index - 1].y)
+            lengths.append(total)
+        }
+        guard total > 0 else { return self }
+
+        let startDistance = max(0, min(1, start)) * total
+        let endDistance = max(0, min(1, end)) * total
+        guard endDistance > startDistance else { return CGMutablePath() }
+
+        let result = CGMutablePath()
+        var started = false
+        for index in 1..<points.count {
+            let segmentStart = lengths[index - 1]
+            let segmentEnd = lengths[index]
+            if segmentEnd < startDistance { continue }
+            if segmentStart > endDistance { break }
+
+            let fromT = segmentEnd == segmentStart
+                ? 0
+                : max(0, (startDistance - segmentStart) / (segmentEnd - segmentStart))
+            let toT = segmentEnd == segmentStart
+                ? 1
+                : min(1, (endDistance - segmentStart) / (segmentEnd - segmentStart))
+            let p0 = points[index - 1]
+            let p1 = points[index]
+            let fromPoint = CGPoint(
+                x: p0.x + (p1.x - p0.x) * fromT,
+                y: p0.y + (p1.y - p0.y) * fromT
+            )
+            let toPoint = CGPoint(
+                x: p0.x + (p1.x - p0.x) * toT,
+                y: p0.y + (p1.y - p0.y) * toT
+            )
+            if !started {
+                result.move(to: fromPoint)
+                started = true
+            }
+            result.addLine(to: toPoint)
+        }
+        return result
+    }
+
+    func flattenedPoints() -> [CGPoint] {
+        var points: [CGPoint] = []
+        applyWithBlock { elementPointer in
+            Self.appendFlattened(element: elementPointer.pointee, into: &points)
+        }
+        return points
+    }
+
+    private static func appendFlattened(element: CGPathElement, into points: inout [CGPoint]) {
+        switch element.type {
+        case .moveToPoint:
+            points.append(element.points[0])
+        case .addLineToPoint:
+            points.append(element.points[0])
+        case .addQuadCurveToPoint:
+            appendQuad(
+                from: points.last ?? element.points[1],
+                control: element.points[0],
+                to: element.points[1],
+                into: &points
+            )
+        case .addCurveToPoint:
+            appendCubic(
+                from: points.last ?? element.points[2],
+                c1: element.points[0],
+                c2: element.points[1],
+                to: element.points[2],
+                into: &points
+            )
+        case .closeSubpath:
+            if let first = points.first {
+                points.append(first)
+            }
+        @unknown default:
+            break
+        }
+    }
+
+    private static func appendQuad(
+        from start: CGPoint,
+        control: CGPoint,
+        to end: CGPoint,
+        into points: inout [CGPoint]
+    ) {
+        for step in 1...8 {
+            let t = CGFloat(step) / 8
+            let mt = 1 - t
+            let x = mt * mt * start.x + 2 * mt * t * control.x + t * t * end.x
+            let y = mt * mt * start.y + 2 * mt * t * control.y + t * t * end.y
+            points.append(CGPoint(x: x, y: y))
+        }
+    }
+
+    private static func appendCubic(
+        from start: CGPoint,
+        c1: CGPoint,
+        c2: CGPoint,
+        to end: CGPoint,
+        into points: inout [CGPoint]
+    ) {
+        for step in 1...8 {
+            let t = CGFloat(step) / 8
+            let mt = 1 - t
+            let x = mt * mt * mt * start.x
+                + 3 * mt * mt * t * c1.x
+                + 3 * mt * t * t * c2.x
+                + t * t * t * end.x
+            let y = mt * mt * mt * start.y
+                + 3 * mt * mt * t * c1.y
+                + 3 * mt * t * t * c2.y
+                + t * t * t * end.y
+            points.append(CGPoint(x: x, y: y))
+        }
     }
 }
 

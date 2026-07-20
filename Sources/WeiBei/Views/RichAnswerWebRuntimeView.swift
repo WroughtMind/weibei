@@ -120,11 +120,6 @@ struct RichAnswerWebRuntimeView: View {
 
 private final class RichAnswerWebClippingView: NSView {
     let webView: WKWebView
-    private weak var viewportClipView: NSClipView?
-    private var viewportObservers: [NSObjectProtocol] = []
-    private var pendingClipPath: String?
-    private var appliedClipPath: String?
-    private var clipUpdateScheduled = false
 
     init(webView: WKWebView) {
         self.webView = webView
@@ -132,16 +127,14 @@ private final class RichAnswerWebClippingView: NSView {
         wantsLayer = true
         layer?.backgroundColor = NSColor.clear.cgColor
         layer?.masksToBounds = true
+        webView.wantsLayer = true
+        webView.layer?.masksToBounds = true
         addSubview(webView)
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         nil
-    }
-
-    deinit {
-        viewportObservers.forEach(NotificationCenter.default.removeObserver)
     }
 
     override func viewDidMoveToSuperview() {
@@ -156,111 +149,63 @@ private final class RichAnswerWebClippingView: NSView {
         super.layout()
         webView.frame = bounds
         enforceScrollClipping()
-        updateViewportMask()
+        // No per-scroll CALayer mask: bounds observers + mask rebuilds thrash during fling.
+        webView.layer?.mask = nil
+        webView.isHidden = false
+    }
+
+    /// Let the conversation ScrollView own vertical wheel — rich-answer UI is not a nested scroller.
+    override func scrollWheel(with event: NSEvent) {
+        if abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX),
+           let outer = nearestConversationScrollView() {
+            outer.scrollWheel(with: event)
+            return
+        }
+        super.scrollWheel(with: event)
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        // While the user is scrolling, don't trap the event inside WKWebView.
+        if let event = NSApp.currentEvent, event.type == .scrollWheel,
+           abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX) {
+            return nil
+        }
+        return super.hitTest(point)
+    }
+
+    private func nearestConversationScrollView() -> NSScrollView? {
+        var candidate: NSView? = superview
+        while let view = candidate {
+            if let scrollView = view as? NSScrollView {
+                return scrollView
+            }
+            candidate = view.superview
+        }
+        return nil
     }
 
     private func enforceScrollClipping() {
+        // Clip only — never attach boundsDidChange observers (those froze immersive scroll).
         var ancestor = superview
         while let current = ancestor {
             if let clipView = current as? NSClipView {
                 clipView.wantsLayer = true
                 clipView.layer?.masksToBounds = true
-                observeViewport(clipView)
                 return
             }
             if let scrollView = current as? NSScrollView {
                 scrollView.contentView.wantsLayer = true
                 scrollView.contentView.layer?.masksToBounds = true
-                observeViewport(scrollView.contentView)
                 return
             }
             ancestor = current.superview
         }
     }
 
-    private func observeViewport(_ clipView: NSClipView) {
-        guard viewportClipView !== clipView else {
-            updateViewportMask()
-            return
-        }
-        viewportObservers.forEach(NotificationCenter.default.removeObserver)
-        viewportObservers.removeAll()
-        viewportClipView = clipView
-        clipView.postsBoundsChangedNotifications = true
-        clipView.postsFrameChangedNotifications = true
-        let center = NotificationCenter.default
-        viewportObservers.append(
-            center.addObserver(
-                forName: NSView.boundsDidChangeNotification,
-                object: clipView,
-                queue: .main
-            ) { [weak self] _ in
-                self?.updateViewportMask()
-            }
-        )
-        viewportObservers.append(
-            center.addObserver(
-                forName: NSView.frameDidChangeNotification,
-                object: clipView,
-                queue: .main
-            ) { [weak self] _ in
-                self?.updateViewportMask()
-            }
-        )
-        updateViewportMask()
-    }
-
-    private func updateViewportMask() {
-        guard let clipView = viewportClipView,
-              window != nil,
-              window === clipView.window,
-              bounds.width > 1,
-              bounds.height > 1 else { return }
-        layer?.mask = nil
-        let viewportInWindow = clipView.convert(clipView.bounds, to: nil)
-        let viewportRect = convert(viewportInWindow, from: nil)
-        let visibleRect = bounds.intersection(viewportRect)
-        guard !visibleRect.isNull, !visibleRect.isEmpty else {
-            webView.isHidden = true
-            return
-        }
-        webView.isHidden = false
-        let top = max(0, bounds.height - visibleRect.maxY)
-        let right = max(0, bounds.width - visibleRect.maxX)
-        let bottom = max(0, visibleRect.minY)
-        let left = max(0, visibleRect.minX)
-        let clipPath: String
-        if max(top, right, bottom, left) < 0.5 {
-            clipPath = "none"
-        } else {
-            clipPath = "inset(\(top)px \(right)px \(bottom)px \(left)px)"
-        }
-        scheduleClipPath(clipPath)
-    }
-
     func refreshViewportClipping() {
-        appliedClipPath = nil
-        updateViewportMask()
-    }
-
-    private func scheduleClipPath(_ clipPath: String) {
-        pendingClipPath = clipPath
-        guard !clipUpdateScheduled else { return }
-        clipUpdateScheduled = true
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            clipUpdateScheduled = false
-            guard let clipPath = pendingClipPath else { return }
-            pendingClipPath = nil
-            guard appliedClipPath != clipPath else { return }
-            appliedClipPath = clipPath
-            let script = "document.documentElement.style.clipPath = '\(clipPath)'; document.documentElement.style.webkitClipPath = '\(clipPath)';"
-            webView.evaluateJavaScript(script) { [weak self] _, error in
-                if error != nil {
-                    self?.appliedClipPath = nil
-                }
-            }
-        }
+        enforceScrollClipping()
+        webView.layer?.mask = nil
+        webView.isHidden = false
     }
 }
 

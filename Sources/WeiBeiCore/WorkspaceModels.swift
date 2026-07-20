@@ -431,6 +431,17 @@ public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// Document family (multi-pane) vs immersive single-pane — used so SwiftUI only animates family switches,
+    /// not every document-internal pane toggle (those are animated by AppKit).
+    public var isImmersiveFamily: Bool {
+        switch self {
+        case .immersiveReading, .immersiveConversation, .immersiveWriting:
+            return true
+        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+            return false
+        }
+    }
+
     public var allowsRailOnlyPanes: Bool {
         switch self {
         case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
