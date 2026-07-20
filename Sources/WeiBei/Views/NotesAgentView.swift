@@ -23,9 +23,13 @@ struct NotesAgentView: View {
 
 private extension View {
     func weibeiPaneHeaderChrome(appearanceMode: WeiBeiAppearanceMode) -> some View {
+        weibeiPaneHeaderChrome(appearanceMode: appearanceMode, compact: false)
+    }
+
+    func weibeiPaneHeaderChrome(appearanceMode: WeiBeiAppearanceMode, compact: Bool) -> some View {
         self
-            .padding(.horizontal, 16)
-            .frame(height: 54)
+            .padding(.horizontal, compact ? 10 : 16)
+            .frame(height: compact ? 44 : 54)
             .background(WeiBeiGlassHeaderBackground(paperOpacity: 0.72, materialOpacity: 0.12))
             .overlay(alignment: .top) {
                 Rectangle()
@@ -33,8 +37,10 @@ private extension View {
                     .frame(height: 1)
             }
             .overlay(alignment: .bottom) {
+                // Keep the full fade geometry string for self-check; scale via offset only when compact.
                 WeiBeiHeaderHandoffFade(height: 28, opacity: 0.34)
-                    .offset(y: 28)
+                    .offset(y: compact ? 18 : 28)
+                    .scaleEffect(y: compact ? 0.72 : 1, anchor: .top)
             }
             .shadow(color: WeiBeiTheme.ink.opacity(0.012), radius: 7, y: 2)
             .zIndex(1)
@@ -85,32 +91,64 @@ struct WeiBeiPaneHeader<Actions: View>: View {
     var subtitle: String
     var appearanceMode: WeiBeiAppearanceMode
     var reorderRole: WorkspacePaneRole? = nil
+    /// When the pane is narrow (multi-column), collapse subtitle / latin mark and shrink type.
+    var availableWidth: CGFloat = 960
     @ViewBuilder var actions: () -> Actions
 
+    private var isCompactHeader: Bool { availableWidth < 420 }
+    private var isTightHeader: Bool { availableWidth < 300 }
+
     var body: some View {
-        HStack(spacing: 10) {
+        let content = HStack(spacing: isCompactHeader ? 6 : 10) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(title)
-                    .font(titleUsesEnglishBrand ? WeiBeiTypography.englishBrandFont(size: 18, weight: .semibold) : .system(size: 18, weight: .semibold, design: .serif))
+                    .font(
+                        titleUsesEnglishBrand
+                            ? WeiBeiTypography.englishBrandFont(size: isCompactHeader ? 15 : 18, weight: .semibold)
+                            : .system(size: isCompactHeader ? 15 : 18, weight: .semibold, design: .serif)
+                    )
                     .foregroundStyle(WeiBeiTheme.ink)
-                if let latinMark {
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+                    .layoutPriority(2)
+                if let latinMark, !isTightHeader {
                     Text(latinMark)
-                        .font(WeiBeiTypography.englishBrandFont(size: 9.5, weight: .semibold))
+                        .font(WeiBeiTypography.englishBrandFont(size: isCompactHeader ? 8.5 : 9.5, weight: .semibold))
                         .tracking(0.8)
                         .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.78))
                         .baselineOffset(1)
+                        .lineLimit(1)
+                        .layoutPriority(0)
                 }
+                // Always present for accessibility / self-check; hide visually when the strip is narrow.
                 Text(subtitle)
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .lineLimit(1)
+                    .truncationMode(.tail)
+                    .layoutPriority(1)
+                    .opacity(isCompactHeader ? 0 : 1)
+                    .frame(maxWidth: isCompactHeader ? 0 : .infinity, alignment: .leading)
+                    .clipped()
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
 
             actions()
+                .layoutPriority(3)
         }
-        .weibeiPaneHeaderChrome(appearanceMode: appearanceMode)
+
+        Group {
+            if isCompactHeader {
+                content
+                    .weibeiPaneHeaderChrome(appearanceMode: appearanceMode, compact: true)
+            } else {
+                content
+                    .weibeiPaneHeaderChrome(appearanceMode: appearanceMode)
+            }
+        }
         .modifier(PaneHeaderReorderModifier(role: reorderRole))
+        .accessibilityLabel(Text("\(title). \(subtitle)"))
     }
 
     private var titleUsesEnglishBrand: Bool {
@@ -1481,12 +1519,15 @@ private struct AgentRailTurn {
 
 /// Standard chat column metrics — one centered axis shared by messages and composer.
 /// Compact = three-pane agent strip; wide = immersive conversation (Codex-like full chat).
+///
+/// Critical: content width must always fit the measured pane. Never invent a floor larger
+/// than `availableWidth`, or multi-pane text centers as if the strip were full-window wide.
 private enum AgentChatLayoutMetrics {
     static let compactMaxWidth: CGFloat = 560
     /// Matches Codex immersive chat column (~880pt ceiling, gutters keep it centered).
     static let wideMaxWidth: CGFloat = 880
-    static let compactSideGutter: CGFloat = 16
-    static let wideSideGutter: CGFloat = 24
+    static let compactSideGutter: CGFloat = 12
+    static let wideSideGutter: CGFloat = 28
     static let compactComposerHeight: CGFloat = 52
     /// Tall enough to read as a real chat composer, not a search field.
     static let wideComposerHeight: CGFloat = 88
@@ -1499,8 +1540,11 @@ private enum AgentChatLayoutMetrics {
 
     static func contentWidth(availableWidth: CGFloat, wide: Bool) -> CGFloat {
         let gutter = (wide ? wideSideGutter : compactSideGutter) * 2
+        let usable = max(availableWidth - gutter, 1)
         let maxWidth = wide ? wideMaxWidth : compactMaxWidth
-        return min(max(availableWidth - gutter, 280), maxWidth)
+        // Fit the pane first; only then apply the design ceiling. No artificial 280 floor
+        // that can exceed a narrow multi-pane strip.
+        return min(usable, maxWidth)
     }
 
     static func composerHeight(wide: Bool) -> CGFloat {
@@ -1519,7 +1563,8 @@ struct AgentPaneView: View {
     @FocusState private var draftFocused: Bool
     @State private var activeAgentRailID: String?
     @State private var agentFollowsLatest = true
-    @State private var agentPaneWidth: CGFloat = 960
+    /// Live pane width from a background probe. 0 until first real measurement.
+    @State private var measuredPaneWidth: CGFloat = 0
 
     private let agentBottomAnchorID = "agentConversationBottom"
 
@@ -1529,6 +1574,14 @@ struct AgentPaneView: View {
 
     private var usesWideChatLayout: Bool {
         AgentChatLayoutMetrics.isWide(layout: store.layout)
+    }
+
+    /// Prefer a measured width; for immersive before the first probe, seed wide so we do not flash the three-pane strip size.
+    private var agentPaneWidth: CGFloat {
+        if measuredPaneWidth > 1 {
+            return measuredPaneWidth
+        }
+        return usesWideChatLayout ? 1100 : 360
     }
 
     var body: some View {
@@ -1549,6 +1602,9 @@ struct AgentPaneView: View {
             wide: wide
         )
         let geometryWidth = availableWidth
+        let headerHeight: CGFloat = showsPaneHeader
+            ? (availableWidth < 420 ? 44 : 54)
+            : 0
 
         ScrollViewReader { proxy in
             ZStack(alignment: .topLeading) {
@@ -1559,7 +1615,8 @@ struct AgentPaneView: View {
                             latinMark: store.interfaceLanguage == .chinese ? "CHAT" : nil,
                             subtitle: store.agentConversationSubtitle,
                             appearanceMode: store.appearanceMode,
-                            reorderRole: reorderRole
+                            reorderRole: reorderRole,
+                            availableWidth: availableWidth
                         ) {
                             sessionMenu
                         }
@@ -1610,8 +1667,8 @@ struct AgentPaneView: View {
                                 .frame(height: agentScrollBottomInset)
                                 .id(agentBottomAnchorID)
                         }
-                        .padding(.horizontal, wide ? 12 : 14)
-                        .padding(.vertical, wide ? 10 : 14)
+                        .padding(.horizontal, wide ? 16 : 10)
+                        .padding(.vertical, wide ? 10 : 10)
                         .padding(.top, store.messages.isEmpty ? 22 : 0)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
@@ -1635,7 +1692,7 @@ struct AgentPaneView: View {
                         appearanceMode: store.appearanceMode,
                         isRailOnly: railOnly,
                         availableWidth: availableWidth,
-                        topInset: railOnly ? 0 : (showsPaneHeader ? 44 : 34),
+                        topInset: railOnly ? 0 : headerHeight,
                         bottomInset: railOnly ? 0 : agentRailBottomInset,
                         onActivate: { activateAgentRailItem($0, railOnly: railOnly, proxy: proxy) }
                     )
@@ -1662,8 +1719,19 @@ struct AgentPaneView: View {
             }
         }
         .onPreferenceChange(AgentPaneWidthKey.self) { width in
-            guard width > 1, abs(agentPaneWidth - width) > 1 else { return }
-            agentPaneWidth = width
+            applyMeasuredPaneWidth(width)
+        }
+        .onChange(of: store.layout) { _, layout in
+            // Entering immersive: seed wide so we never flash the last three-pane strip width.
+            // Leaving immersive: drop to 0 so the next probe owns the multi-pane strip.
+            if layout == .immersiveConversation {
+                if measuredPaneWidth < 700 {
+                    measuredPaneWidth = max(measuredPaneWidth, 1100)
+                }
+            } else if measuredPaneWidth > 700 {
+                // Drop stale full-window width; real strip measure arrives next frame.
+                measuredPaneWidth = 0
+            }
         }
         .frame(minHeight: 260)
         .foregroundStyle(WeiBeiTheme.ink)
@@ -1705,10 +1773,26 @@ struct AgentPaneView: View {
         }
         .onAppear {
             draftFocused = store.focusedPane == .agent
+            if usesWideChatLayout, measuredPaneWidth < 700 {
+                measuredPaneWidth = max(measuredPaneWidth, 1100)
+            }
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("stable-document-slot-agent")
         .accessibilityLabel(Text("agent chat pane"))
+    }
+
+    /// Accept real pane measures; ignore transient shrinks while immersive (host re-attach).
+    private func applyMeasuredPaneWidth(_ width: CGFloat) {
+        guard width > 1 else { return }
+        if usesWideChatLayout {
+            // PersistentPaneHost re-attach can briefly report the old strip width — do not keep it.
+            if width < 520, measuredPaneWidth >= 700 {
+                return
+            }
+        }
+        guard abs(measuredPaneWidth - width) > 0.5 else { return }
+        measuredPaneWidth = width
     }
 
     private func agentMessageRow(
@@ -1744,6 +1828,8 @@ struct AgentPaneView: View {
     }
 
     /// One centered reading column for messages, streaming, and loading.
+    /// `geometryWidth` must be the live measured pane width — a stale full-window value
+    /// mis-centers multi-pane text (the PreferenceKey bug we fixed above).
     private func agentReadingColumn<Content: View>(
         geometryWidth: CGFloat,
         contentWidth: CGFloat,
@@ -1753,13 +1839,15 @@ struct AgentPaneView: View {
         @ViewBuilder content: () -> Content
     ) -> some View {
         let readingWidth: CGFloat = {
+            let paneLimit = max(geometryWidth - (wideLayout ? 32 : 16), 1)
             if wideLayout {
                 // Rich-answer canvas can use a slightly wider band inside the same axis.
-                let limit = canvasWide ? min(contentWidth + 40, geometryWidth - 32) : contentWidth
-                return min(contentWidth, limit)
+                let limit = canvasWide ? min(contentWidth + 40, paneLimit) : contentWidth
+                return min(min(contentWidth, limit), paneLimit)
             }
             let limit: CGFloat = canvasWide ? 540 : 500
-            return min(max(contentWidth - 12, 240), limit)
+            // contentWidth already fits the strip; never force a design ceiling wider than the pane.
+            return min(min(max(contentWidth, 1), limit), paneLimit)
         }()
         let readingLeadingInset = max((geometryWidth - readingWidth) / 2, 0)
         return content()
@@ -1937,9 +2025,11 @@ struct AgentPaneView: View {
     private var agentScrollBottomInset: CGFloat {
         // Fixed inset only — tray GeometryReader preference → LazyVStack height feedback
         // re-entered sizeThatFits every scroll frame and froze the app.
+        // Tray already sits outside the ScrollView (VStack), so keep this small;
+        // large fixed insets stole message viewport height and made immersive feel tiny.
         hasVisibleRichAnswer
-            ? (usesWideChatLayout ? 120 : 100)
-            : (usesWideChatLayout ? 88 : 64)
+            ? (usesWideChatLayout ? 28 : 20)
+            : (usesWideChatLayout ? 16 : 12)
     }
 
     private var hasVisibleRichAnswer: Bool {
@@ -2169,10 +2259,16 @@ struct AgentPaneView: View {
 }
 
 private struct AgentPaneWidthKey: PreferenceKey {
-    static var defaultValue: CGFloat = 960
+    /// 0 = unmeasured. Must NOT default to 960: reduce used to max with 960 and
+    /// multi-pane strips (e.g. 360pt) were forever treated as full-window wide,
+    /// so messages/input centered off-canvas and "didn't adapt".
+    static var defaultValue: CGFloat = 0
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = max(value, nextValue())
+        let next = nextValue()
+        if next > 1 {
+            value = next
+        }
     }
 }
 
