@@ -51,7 +51,7 @@ usage:
 
 notes:
   - Uses WEIBEI_VERIFY_RICH_ANSWER_REPLAY for each record.
-  - Default is serial. Only --jobs 2 enables two lanes; 4/6 lanes are intentionally rejected.
+  - Default is serial. Non-fixture mode enforces --jobs 1; fixture-smoke can use --jobs 2. 4/6 lanes are intentionally rejected.
   - --resume skips only when record/image SHA-256, case id, round, qualityGate, and reviewStatus all match.
   - The temporary app build cache is removed on exit unless RICH_ANSWER_KEEP_APP_CACHE=1.
 USAGE
@@ -448,6 +448,10 @@ if [[ -z "$INPUT_PATH" ]]; then
 fi
 if [[ "$JOBS" != "1" && "$JOBS" != "2" ]]; then
   echo "rich-answer screenshot batch rejects --jobs $JOBS; use 1 or 2 only." >&2
+  exit 2
+fi
+if [[ "$FIXTURE_SMOKE" != "1" && "$JOBS" != "1" ]]; then
+  echo "rich-answer screenshot batch disables concurrent jobs for non-fixture modes: --jobs $JOBS would collide in the same app bundle and is unsafe. Use --jobs 1 or --fixture-smoke for lane>1." >&2
   exit 2
 fi
 

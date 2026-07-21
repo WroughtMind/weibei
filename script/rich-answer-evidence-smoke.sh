@@ -40,8 +40,9 @@ PARTIAL_DIR="$OUTPUT_DIR/_partial-unregistered"
 QUALITY_GATE_JSON="$OUTPUT_DIR/quality-gate.json"
 VISUAL_GATE_SOURCE="$ROOT_DIR/script/rich-answer-visual-gate.swift"
 VISUAL_GATE_BINARY="$OUTPUT_DIR/rich-answer-visual-gate"
-AX_HELPER_CACHE_DIR="${RICH_ANSWER_EVIDENCE_AX_HELPER_CACHE_DIR:-${RICH_ANSWER_EVIDENCE_BUILD_CACHE_DIR:-}}"
+AX_HELPER_CACHE_DIR="${RICH_ANSWER_EVIDENCE_AX_HELPER_CACHE_DIR:-}"
 MIN_FREE_KB="${RICH_ANSWER_MIN_FREE_KB:-20971520}"
+MANUAL_REVIEW_HOLD_SECONDS="${RICH_ANSWER_EVIDENCE_MANUAL_REVIEW_HOLD_SECONDS:-0}"
 SWIFT_SDKROOT="${RICH_ANSWER_SWIFT_SDKROOT:-/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk}"
 SWIFT_CLANG_MODULE_CACHE_DIR="${RICH_ANSWER_SWIFT_CLANG_MODULE_CACHE_DIR:-/private/tmp/weibei-clang-module-cache}"
 SWIFTPM_MODULE_CACHE_DIR="${RICH_ANSWER_SWIFTPM_MODULE_CACHE_DIR:-/private/tmp/weibei-swiftpm-module-cache}"
@@ -172,8 +173,20 @@ SINGLE_CAPTURE_ACK="$OUTPUT_DIR/single.ack.json"
 CAPTURE_COUNTER=0
 
 if [[ -n "${RICH_ANSWER_EVIDENCE_BUILD_CACHE_DIR:-}" ]]; then
-  SWIFT_CLANG_MODULE_CACHE_DIR="$RICH_ANSWER_EVIDENCE_BUILD_CACHE_DIR/clang-module-cache"
-  SWIFTPM_MODULE_CACHE_DIR="$RICH_ANSWER_EVIDENCE_BUILD_CACHE_DIR/swiftpm-module-cache"
+  sdk_settings_path="$SWIFT_SDKROOT/SDKSettings.json"
+  sdk_settings_signature="missing"
+  if [[ -f "$sdk_settings_path" ]]; then
+    sdk_settings_signature="$(stat -f '%m:%z' "$sdk_settings_path")"
+  fi
+  swift_cache_fingerprint="$({
+    /usr/bin/swiftc --version
+    printf '%s\n' "$SWIFT_SDKROOT" "$sdk_settings_signature"
+  } | shasum -a 256 | awk '{print substr($1, 1, 16)}')"
+  SWIFT_CLANG_MODULE_CACHE_DIR="$RICH_ANSWER_EVIDENCE_BUILD_CACHE_DIR/clang-module-cache-$swift_cache_fingerprint"
+  SWIFTPM_MODULE_CACHE_DIR="$RICH_ANSWER_EVIDENCE_BUILD_CACHE_DIR/swiftpm-module-cache-$swift_cache_fingerprint"
+  if [[ -z "$AX_HELPER_CACHE_DIR" ]]; then
+    AX_HELPER_CACHE_DIR="$RICH_ANSWER_EVIDENCE_BUILD_CACHE_DIR/helper-cache-$swift_cache_fingerprint"
+  fi
 fi
 mkdir -p "$SWIFT_CLANG_MODULE_CACHE_DIR" "$SWIFTPM_MODULE_CACHE_DIR"
 
@@ -566,10 +579,26 @@ func doubleAttribute(_ element: AXUIElement, _ name: String) -> Double? {
 }
 
 func children(of element: AXUIElement) -> [AXUIElement] {
-    if let children = copyAttribute(element, kAXChildrenAttribute as String) as? [AXUIElement] {
-        return children
+    elementArrayAttribute(element, kAXChildrenAttribute as String)
+}
+
+func elementArrayAttribute(_ element: AXUIElement, _ name: String) -> [AXUIElement] {
+    var valueCount: CFIndex = 0
+    guard AXUIElementGetAttributeValueCount(element, name as CFString, &valueCount) == .success,
+          valueCount > 0 else {
+        return []
     }
-    return []
+    var values: CFArray?
+    guard AXUIElementCopyAttributeValues(element, name as CFString, 0, valueCount, &values) == .success,
+          let array = values else {
+        return []
+    }
+    return (0..<CFArrayGetCount(array)).compactMap { index in
+        guard let pointer = CFArrayGetValueAtIndex(array, index) else { return nil }
+        let candidate = Unmanaged<AXUIElement>.fromOpaque(pointer).takeUnretainedValue()
+        guard CFGetTypeID(candidate) == AXUIElementGetTypeID() else { return nil }
+        return candidate
+    }
 }
 
 func frame(of element: AXUIElement) -> CGRect? {
@@ -698,7 +727,8 @@ func focusedWindow(in app: AXUIElement) -> AXUIElement {
     if let window = copyAttribute(app, kAXMainWindowAttribute as String) as! AXUIElement?, isPlausibleWindowRoot(window) {
         return window
     }
-    if let windows = copyAttribute(app, kAXWindowsAttribute as String) as? [AXUIElement] {
+    let windows = elementArrayAttribute(app, kAXWindowsAttribute as String)
+    if !windows.isEmpty {
         if let window = windows.first(where: { isWindow($0) }) {
             return window
         }
@@ -719,15 +749,17 @@ func focusedWindow(in app: AXUIElement) -> AXUIElement {
     var attributeNames: CFArray?
     let namesResult = AXUIElementCopyAttributeNames(app, &attributeNames)
     let namesCount = (attributeNames as? [String])?.count ?? 0
-    let windowCount = (copyAttribute(app, kAXWindowsAttribute as String) as? [AXUIElement])?.count ?? 0
-    let childCount = (copyAttribute(app, kAXChildrenAttribute as String) as? [AXUIElement])?.count ?? 0
+    let windowElements = elementArrayAttribute(app, kAXWindowsAttribute as String)
+    let childElements = elementArrayAttribute(app, kAXChildrenAttribute as String)
+    let windowCount = windowElements.count
+    let childCount = childElements.count
     let role = stringAttribute(app, kAXRoleAttribute as String)
     let hidden = copyAttribute(app, kAXHiddenAttribute as String).map { String(describing: $0) } ?? "nil"
     let frontmost = copyAttribute(app, kAXFrontmostAttribute as String).map { String(describing: $0) } ?? "nil"
-    let windowSummaries = (copyAttribute(app, kAXWindowsAttribute as String) as? [AXUIElement] ?? [])
+    let windowSummaries = windowElements
         .map(elementSummary)
         .joined(separator: " || ")
-    let childSummaries = (copyAttribute(app, kAXChildrenAttribute as String) as? [AXUIElement] ?? [])
+    let childSummaries = childElements
         .map(elementSummary)
         .joined(separator: " || ")
     FileHandle.standardError.write(Data((
@@ -1263,6 +1295,15 @@ env_args=(
   "WEIBEI_VERIFY_CASE_KIND=$CASE_KIND"
   "WEIBEI_VERIFY_RECORD_PATH=$RECORD_PATH"
 )
+if [[ -n "${WEIBEI_VERIFY_WINDOW_SIZE:-}" ]]; then
+  env_args+=("WEIBEI_VERIFY_WINDOW_SIZE=$WEIBEI_VERIFY_WINDOW_SIZE")
+fi
+if [[ -n "${WEIBEI_VERIFY_AGENT_PANE_RATIO:-}" ]]; then
+  env_args+=("WEIBEI_VERIFY_AGENT_PANE_RATIO=$WEIBEI_VERIFY_AGENT_PANE_RATIO")
+fi
+if [[ -n "${WEIBEI_VERIFY_RICH_ANSWER_CAPTURE_ANCHOR:-}" ]]; then
+  env_args+=("WEIBEI_VERIFY_RICH_ANSWER_CAPTURE_ANCHOR=$WEIBEI_VERIFY_RICH_ANSWER_CAPTURE_ANCHOR")
+fi
 if [[ "${RICH_ANSWER_CAPTURE_LEGACY_INITIAL:-0}" == "1" ]]; then
   env_args+=("WEIBEI_VERIFY_CAPTURE_PATH=$OUTPUT_DIR/app-owned-initial.png")
 fi
@@ -1519,6 +1560,9 @@ run_visual_gate() {
       --after-ack "$AFTER_CAPTURE_ACK" \
       --ax-before "$AX_BEFORE" \
       --ax-after "$AX_AFTER" \
+      --action-receipt "$ACTION_RECEIPT_ARCHIVE" \
+      --case-id "$CASE_ID" \
+      --case-kind "$CASE_KIND" \
       --output "$QUALITY_GATE_JSON" >"$gate_log"
   fi
 }
@@ -1527,7 +1571,7 @@ finish_with_quality_gate() {
   local capture_kind="$1"
   local gate_status
   gate_status="$(jq -r '.status // "fail"' "$QUALITY_GATE_JSON" 2>/dev/null || printf 'fail')"
-  if [[ "$gate_status" != "pass" ]]; then
+  if [[ "$gate_status" == "fail" ]]; then
     json_manifest "failed" "automatic technical layout quality gate failed" "$capture_kind"
     echo "rich-answer evidence captured, but automatic quality gate failed: $QUALITY_GATE_JSON" >&2
     exit 31
@@ -1580,6 +1624,11 @@ fi
 capture_window "$OVERVIEW_SCREENSHOT" 1 || fail_with_manifest 14 "rich-answer evidence smoke failed: could not capture overview window screenshot" "rich-interaction"
 capture_window "$BEFORE_SCREENSHOT" 1 || fail_with_manifest 14 "rich-answer evidence smoke failed: could not capture before window screenshot" "rich-interaction"
 capture_ax_snapshot "$AX_BEFORE" "$OUTPUT_DIR/ax-before.err"
+
+if [[ "$MANUAL_REVIEW_HOLD_SECONDS" =~ ^[0-9]+$ ]] && (( MANUAL_REVIEW_HOLD_SECONDS > 0 )); then
+  printf '%s\n' "$APP_PID" >"$OUTPUT_DIR/manual-review-hold-ready.txt"
+  sleep "$MANUAL_REVIEW_HOLD_SECONDS"
+fi
 
 rm -f "$ACTION_RECEIPT_WORKSPACE" "$ACTION_RECEIPT_ARCHIVE"
 capture_window "$AFTER_SCREENSHOT" 1 || fail_with_manifest 14 "rich-answer evidence smoke failed: could not capture after window screenshot" "rich-interaction"

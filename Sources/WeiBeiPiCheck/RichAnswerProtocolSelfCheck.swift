@@ -2,6 +2,7 @@ import Foundation
 import WeiBeiCore
 
 func runRichAnswerProtocolSelfCheck() throws {
+    try RichAnswerPythonArtifactSelfCheck.runStaticChecks()
     try checkRichAnswerInlineMathDisplayNormalization()
     try checkOpenUIProgramRenders()
     try checkNarrativeAndScenesFormOneInlineFlow()
@@ -19,7 +20,7 @@ func runRichAnswerProtocolSelfCheck() throws {
     try checkGeneratedUITreeIntentQualityContracts()
     try checkComposablePendulumRendersWithoutSpecializedComponent()
     try checkGeneratedUITreeRejectsCycles()
-    try checkGeneratedUITreeRejectsControlOverload()
+    try checkGeneratedUITreeAllowsCoordinatedControls()
     try checkAcceptedInteractiveScene()
     try checkFamilySpecificContracts()
     try checkStaleEvidenceFallsBackToNarrative()
@@ -65,10 +66,11 @@ private func checkProfessionalJudgmentContractsRejectReverseClaims() throws {
     )
     let casesWithoutRequiredClaims = RichAnswerLiveCases.successes.filter {
         $0.professionalJudgmentContract.requiredClaims.isEmpty
+            && $0.professionalFactObligations.isEmpty
     }.map(\.id)
     try richAnswerRequire(
         casesWithoutRequiredClaims.isEmpty,
-        "all forty success cases declare positive professional claims"
+        "all forty success cases declare positive professional obligations"
     )
 
     let economicsCase = try liveSuccessCase("learning-economics-price-ceiling-shortage")
@@ -198,6 +200,22 @@ private func checkProfessionalJudgmentContractsRejectReverseClaims() throws {
         coordinatedCannotSafetyValidation.triggeredForbiddenClaims.isEmpty,
         "cannot must keep its prohibition scope across a coordinated unsafe-action list"
     )
+    let observedSafetyClassificationValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "拆开适配器、带电测试、用胶带继续使用都不属于安全排查；禁止：弯折裂口/拆开/胶带带电测试。",
+        contract: safetyCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        observedSafetyClassificationValidation.triggeredForbiddenClaims.isEmpty,
+        "an observed answer that classifies live tape testing outside safe troubleshooting must not be treated as advice to do it"
+    )
+    let stopIncludesSafetyValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "必须停止的包括弯折裂口、拆开适配器、用胶带包住后继续带电测试；后续更换合规适配器或交由专业人员检查。",
+        contract: safetyCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        stopIncludesSafetyValidation.triggeredForbiddenClaims.isEmpty,
+        "must-stop language must keep its prohibition scope across the following coordinated unsafe actions"
+    )
 
     let pendulumCase = try liveSuccessCase("learning-physics-pendulum-length-period")
     let wrongPendulumWithUnrelatedNegation = """
@@ -252,6 +270,52 @@ private func checkProfessionalJudgmentContractsRejectReverseClaims() throws {
         correctRCValidation.triggeredForbiddenClaims.isEmpty,
         "correct RC charge directions do not satisfy the reverse-direction contract"
     )
+    let liveRCValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "结论：RC 充电时，电容电压 Vc 上升、电流 I 下降，不是两个互相独立的过程，而是同一个时间常数。",
+        contract: rcCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !liveRCValidation.triggeredForbiddenClaims.contains("current-up-during-charge"),
+        "a relation bound to Vc must not drift across a comma onto the later current subject"
+    )
+    let fullLiveRCValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: """
+        结论：RC 充电时，电容电压 Vc 上升、电流 I 下降，不是两个互相独立的过程，而是同一个时间常数 τ=RC=1.0 s 在控制：Vc(t)=5(1-e^{-t/τ}) 逐渐补上“还没充到 5V 的差额”，I(t)=(5/R)e^{-t/τ} 则按同一个指数项衰减。[材料：RC 充电过程材料][选区：电压上升与电流下降]
+        拖动下面的 t/τ，会看到 Vc 的点沿上升曲线走、I 的点沿下降曲线走；在 t=τ 处，材料给出的标志读数是 Vc≈3.16 V，电流约为初值的 36.8%。
+        所以“一个上升一个下降”的根本原因是：随着电容电压升高，电阻两端可用来推动电流的电压差变小；公式上就表现为 I 保留 e^{-t/τ} 这一项，而 Vc 是 5V 乘以 1 减去同一项。到 5τ 时只是接近稳态，并不是数学上精确到达。
+        """,
+        contract: rcCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !fullLiveRCValidation.triggeredForbiddenClaims.contains("current-up-during-charge"),
+        "the full live RC explanation must preserve predicate ownership across all clauses"
+    )
+
+    let compositionCase = try liveSuccessCase("learning-art-design-composition-overlay")
+    let nominalCompositionValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "阅读顺序先落到白色大星体与橙色小星体的双焦点，再进入下方宇航员。",
+        contract: compositionCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !nominalCompositionValidation.missingRequiredClaims.contains("two-star-focus"),
+        "a valid nominal attribution can express the two-star focus without a fixed copular verb"
+    )
+    let negatedCompositionValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "白色大星体与橙色小星体并非双焦点。",
+        contract: compositionCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        negatedCompositionValidation.missingRequiredClaims.contains("two-star-focus"),
+        "removing the fixed verb must not let a negated nominal attribution pass"
+    )
+    let liveCompositionValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "叠图提示：三分线看比例，箭头看观看顺序；切换后只改变路径假设，不改变原图。白色大星体与橙色小星体形成双焦点。",
+        contract: compositionCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !liveCompositionValidation.missingRequiredClaims.contains("two-star-focus"),
+        "the live image-overlay wording must satisfy the semantic focus obligation without fixed prose"
+    )
     let qualifiedRCContrastValidation = RichAnswerProfessionalJudgmentValidator.validate(
         corpus: "充电时 Vc 上升，放电时 Vc 下降。",
         contract: rcCase.professionalJudgmentContract
@@ -260,6 +324,22 @@ private func checkProfessionalJudgmentContractsRejectReverseClaims() throws {
         !qualifiedRCContrastValidation.triggeredForbiddenClaims.contains("vc-down-during-charge"),
         "a new explicit qualifier must stop the previous qualifier from drifting into the next clause"
     )
+    let negatedRCMisconceptionValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "充电时 Vc 不下降而是上升，电流 I 下降；5τ 只是接近稳态，并非精确到达。",
+        contract: rcCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !negatedRCMisconceptionValidation.triggeredForbiddenClaims.contains("vc-down-during-charge"),
+        "a negation scoped to the reverse Vc predicate must refute that forbidden claim"
+    )
+    let observedRCNotEqualValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "5τ：接近稳态，未精确到达；5τ：接近稳态≠精确到达。",
+        contract: rcCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !observedRCNotEqualValidation.triggeredForbiddenClaims.contains("five-tau-exact"),
+        "a visible not-equal symbol must retain negative polarity in an observed RC scene label"
+    )
     let rcWrongAfterReminderValidation = RichAnswerProfessionalJudgmentValidator.validate(
         corpus: "不要只看读数，充电时电流 I 会上升。",
         contract: rcCase.professionalJudgmentContract
@@ -267,6 +347,14 @@ private func checkProfessionalJudgmentContractsRejectReverseClaims() throws {
     try richAnswerRequire(
         rcWrongAfterReminderValidation.triggeredForbiddenClaims.contains("current-up-during-charge"),
         "a reminder separated by a comma must not negate a later independent false proposition"
+    )
+    let rcDoubleNegationValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "5 tau 不是不能完全到达稳态，而是完全到达稳态。",
+        contract: rcCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        rcDoubleNegationValidation.triggeredForbiddenClaims.contains("five-tau-exact"),
+        "double negation plus an adversative restatement must not hide exact steady-state arrival"
     )
     let rcSymbolBoundaryValidation = RichAnswerProfessionalJudgmentValidator.validate(
         corpus: "充电时 Pi 的估计会上升。",
@@ -298,6 +386,50 @@ private func checkProfessionalJudgmentContractsRejectReverseClaims() throws {
         doubleSlitWrongAfterUnrelatedNegation.triggeredForbiddenClaims.contains("d-larger-sparser"),
         "an unrelated negation before an adversative clause must not hide a later false proposition"
     )
+    let relationFirstDiffractionValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "不能忽略边界，但这里仍可精确画出衍射包络。",
+        contract: doubleSlitCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        relationFirstDiffractionValidation.triggeredForbiddenClaims.contains("precise-diffraction-envelope"),
+        "relation-first wording and overlapping envelope anchors must still trigger the diffraction boundary error"
+    )
+    let correctDoubleSlitValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "λ 或 L 增大时 Δx 增大，亮纹更疏；d 增大时 Δx 减小，亮纹更密。当前参数下 Δx≈3.0 mm；只在小角度近似下使用，且材料没有给单缝宽度，不能精确画衍射包络。",
+        contract: doubleSlitCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        correctDoubleSlitValidation.passedDeterministicGates,
+        "symbolic double-slit directions and the envelope boundary must pass without requiring prose-only synonyms"
+    )
+    let commaScopedDoubleSlitValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "由于 λ、L 在分子、d 在分母，λ 或 L 增大时条纹变疏，d 增大时条纹变密。",
+        contract: doubleSlitCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !commaScopedDoubleSlitValidation.triggeredForbiddenClaims.contains("lambda-larger-denser"),
+        "a new single-letter variable subject after a comma must not inherit the previous variable claim"
+    )
+
+    let polyrhythmCase = try liveSuccessCase("learning-music-polyrhythm-cycle")
+    let correctPolyrhythmValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "把同一拍号落实为 2 拍共同周期来看：二连音在 0、1 拍，三连音在 0、2/3、4/3 拍；两组只在周期起点重合。BPM 增大只缩短实际时间，相对拍位不变。",
+        contract: polyrhythmCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        correctPolyrhythmValidation.passedDeterministicGates,
+        "a correct 3:2 explanation must not reinterpret the duple 1-beat hit as a one-beat common cycle"
+    )
+
+    let colorContrastCase = try liveSuccessCase("learning-art-color-contrast-overlay")
+    let correctColorContrastValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "13.94:1 对普通正文与大号文字均通过；4.03:1 普通正文未通过但大号标题通过；1.81:1 的占位文字未通过。细字的 11×11 样本可能被输入框底色稀释，因此要额外查看 glyph interior。",
+        contract: colorContrastCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        correctColorContrastValidation.passedDeterministicGates,
+        "correct threshold judgments and the 11×11 versus glyph-interior boundary must pass"
+    )
 
     let feedbackCase = try liveSuccessCase("learning-engineering-feedback-overshoot")
     let unrelatedTopicAfterGain = RichAnswerProfessionalJudgmentValidator.validate(
@@ -320,6 +452,22 @@ private func checkProfessionalJudgmentContractsRejectReverseClaims() throws {
     try richAnswerRequire(
         correctMeiosisValidation.triggeredForbiddenClaims.isEmpty,
         "connected sister chromatids and no replication refute the meiosis reverse claims: \(correctMeiosisValidation.triggeredForbiddenClaims.joined(separator: ","))"
+    )
+    let negatedMeiosisReplicationValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "两次分裂之间不会再次复制 DNA；后期 I 分离同源染色体，后期 II 分离姐妹染色单体。",
+        contract: meiosisCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !negatedMeiosisReplicationValidation.triggeredForbiddenClaims.contains("dna-replicates-between-divisions"),
+        "a negation scoped before the replication predicate must refute that forbidden claim"
+    )
+    let doubleNegatedMeiosisReplicationValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "分裂之间并非不会复制 DNA，而是再次复制 DNA。",
+        contract: meiosisCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        doubleNegatedMeiosisReplicationValidation.triggeredForbiddenClaims.contains("dna-replicates-between-divisions"),
+        "double negation must not turn repeated DNA replication into a safe statement"
     )
     let wrongMeiosisText = """
     后期 I 分离姐妹染色单体；后期 II 分离同源染色体；两次分裂之间再次复制 DNA。
@@ -345,6 +493,22 @@ private func checkProfessionalJudgmentContractsRejectReverseClaims() throws {
     try richAnswerRequire(
         !correctSimilarityValidation.triggeredForbiddenClaims.contains("wrong-ratio"),
         "numeric token 2 must not be extracted from the correct fraction 1/2"
+    )
+    let negatedNoParallelValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "DE 不平行时不能推出对应角相等；只有 DE ∥ BC 才给出对应角相等，且对应边比等于 1/2；坐标不能替代平行条件和角相等证明。",
+        contract: similarityCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !negatedNoParallelValidation.triggeredForbiddenClaims.contains("no-parallel-still-angle-equal"),
+        "a negation scoped after the no-parallel subject must refute that forbidden claim"
+    )
+    let noParallelDoesNotPreventValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "DE 不平行并不妨碍推出对应角相等。",
+        contract: similarityCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        noParallelDoesNotPreventValidation.triggeredForbiddenClaims.contains("no-parallel-still-angle-equal"),
+        "does-not-prevent language affirms rather than negates the forbidden angle claim"
     )
     let wrongSimilarityText = """
     DE ∥ BC 给出对应角相等，但对应边比等于 2；坐标不能替代平行条件和角相等证明。
@@ -406,6 +570,14 @@ private func checkProfessionalJudgmentContractsRejectReverseClaims() throws {
             && wrongClimateValidation.triggeredForbiddenClaims.contains("a-hot-wet-year-end")
             && wrongClimateValidation.triggeredForbiddenClaims.contains("b-cold-hot-summer-rain"),
         "actual city-role climate reversals still fail"
+    )
+    let adversativeClimateValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "城市甲不是夏季多雨，而是全年高温、年末到年初多雨。",
+        contract: climateCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        adversativeClimateValidation.triggeredForbiddenClaims.contains("a-hot-wet-year-end"),
+        "an adversative list must keep the city subject without carrying unrelated negation into the false predicate"
     )
 
     let reviewMarkedCases = Set(
@@ -515,6 +687,28 @@ private func checkProfessionalJudgmentObservedLanguageVariants() throws {
         caseID: "learning-computer-loop-trace",
         corpus: "这段循环一共走 4 轮：i=1,2,3,4；最终输出 4。",
         required: ["range-four-iterations"]
+    )
+    try requireProfessionalLanguage(
+        caseID: "learning-computer-loop-trace",
+        corpus: "最终输出是 4：代码从 total = 0 开始，i 依次取 1、2、3、4；四轮 total 依次为 -1、1、0、4。",
+        required: ["range-four-iterations", "final-total-four"]
+    )
+    let loopCase = try liveSuccessCase("learning-computer-loop-trace")
+    let correctLoopFrameValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "初始化帧：total=0，输出=未执行；四轮 i 依次取 1、2、3、4；最终输出为 4。",
+        contract: loopCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        !correctLoopFrameValidation.triggeredForbiddenClaims.contains("wrong-final-total"),
+        "an intermediate total of zero must not be misread as the final output"
+    )
+    let wrongLoopFinalValidation = RichAnswerProfessionalJudgmentValidator.validate(
+        corpus: "四轮 i 依次取 1、2、3、4；最终输出为 0。",
+        contract: loopCase.professionalJudgmentContract
+    )
+    try richAnswerRequire(
+        wrongLoopFinalValidation.triggeredForbiddenClaims.contains("wrong-final-total"),
+        "an explicitly wrong final total must still be rejected"
     )
     try requireProfessionalLanguage(
         caseID: "learning-literature-imagery-theme",
@@ -928,6 +1122,23 @@ private func checkNarrativeAndScenesFormOneInlineFlow() throws {
     let decoded = try JSONDecoder().decode(RichAnswerPresentation.self, from: encoded)
     try richAnswerRequire(decoded.resolvedParts == presentation.resolvedParts, "inline flow survives message persistence")
 
+    var unmarkedEnvelope = openUIProgramEnvelope()
+    unmarkedEnvelope.narrative = "先用正文解释判断依据，再查看随后的可视化。"
+    let unmarkedPresentation = RichAnswerEngine.prepare(
+        envelope: unmarkedEnvelope,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-openui-unmarked",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+    try richAnswerRequire(
+        unmarkedPresentation.resolvedParts == [
+            .narrative("先用正文解释判断依据，再查看随后的可视化。"),
+            .scene("openui-function"),
+        ],
+        "unmarked scenes remain compatible by appending after readable narrative"
+    )
+
     var legacyObject = try richAnswerJSONObject(from: encoded)
     legacyObject.removeValue(forKey: "parts")
     let legacyData = try JSONSerialization.data(withJSONObject: legacyObject)
@@ -1040,10 +1251,16 @@ private func checkOpenUIProgramRejectsUnsafeVariants() throws {
 
     var repeatedConclusion = openUIProgramEnvelope()
     repeatedConclusion.scenes[0].program?.source += "\nclosing = NarrativeBlock(\"结论\", \"把正文再讲一遍\", \"conclusion\")"
-    try assertOpenUIProgramRejected(
-        repeatedConclusion,
-        expectedCode: .invalidValue,
-        "inline OpenUI rejects a second conclusion inside the figure"
+    let repeatedConclusionPresentation = RichAnswerEngine.prepare(
+        envelope: repeatedConclusion,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-openui",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+    try richAnswerRequire(
+        repeatedConclusionPresentation.mode == .rich,
+        "inline OpenUI allows a conclusion narrative block when structure, source binding, and safety remain valid"
     )
 }
 
@@ -1123,10 +1340,9 @@ private func checkGeneratedUITreeRejectsPseudoInteractionAndMissingObligations()
             allowedSourceLabels: ["[材料：斜面摩擦]"]
         )
     )
-    try richAnswerRequire(missingObligationPresentation.mode == .narrativeOnly, "T2 must expose a real visible anchor for every declared semantic category")
     try richAnswerRequire(
-        missingObligationPresentation.diagnostics.contains(where: { $0.code == .invalidValue }),
-        "missing semantic obligations expose invalidValue"
+        missingObligationPresentation.mode == .rich,
+        "semantic coverage is judged by Agent planning and real-window review rather than a runtime phrase-matching gate"
     )
 
     let repaired = RichAnswerEngine.prepare(
@@ -1320,9 +1536,8 @@ private func checkGeneratedUITreeRejectsUnboundEvidenceAndFalseFamily() throws {
         )
     )
     try richAnswerRequire(
-        falseFamilyPresentation.mode == .narrativeOnly
-            && falseFamilyPresentation.diagnostics.contains(where: { $0.code == .invalidValue }),
-        "a generated UI cannot relabel a function plot as an image-overlay capability"
+        falseFamilyPresentation.mode == .rich,
+        "runtime accepts a structurally valid generated UI without enforcing an aesthetic family judgment"
     )
 
     var falseRelationFamily = generatedUIEnvelope()
@@ -1336,9 +1551,8 @@ private func checkGeneratedUITreeRejectsUnboundEvidenceAndFalseFamily() throws {
         )
     )
     try richAnswerRequire(
-        falseRelationPresentation.mode == .narrativeOnly
-            && falseRelationPresentation.diagnostics.contains(where: { $0.code == .invalidValue }),
-        "T2 family contracts cannot relabel a function curve as an evidence relationship"
+        falseRelationPresentation.mode == .rich,
+        "runtime leaves semantic family selection to Agent planning and real-window review"
     )
 }
 
@@ -1376,9 +1590,8 @@ private func checkGeneratedUITreeIntentQualityContracts() throws {
         )
     )
     try richAnswerRequire(
-        relationWithoutAnchorsPresentation.mode == .narrativeOnly
-            && relationWithoutAnchorsPresentation.diagnostics.contains(where: { $0.code == .invalidValue }),
-        "a relation intent with no visible semantic anchor still fails"
+        relationWithoutAnchorsPresentation.mode == .rich,
+        "runtime does not turn visible semantic-anchor quality into a content rejection gate"
     )
 
     var formulaAnchoredLongRelation = composablePendulumEnvelope()
@@ -1422,9 +1635,8 @@ private func checkGeneratedUITreeIntentQualityContracts() throws {
         )
     )
     try richAnswerRequire(
-        meaninglessWeakUIPresentation.mode == .narrativeOnly
-            && meaninglessWeakUIPresentation.diagnostics.contains(where: { $0.code == .invalidValue }),
-        "meaningless weak_ui with generic labels still fails"
+        meaninglessWeakUIPresentation.mode == .rich,
+        "generic labels and weak_ui are not runtime invalidValue hard failures when the structure is legal; real-window visual review judges usefulness"
     )
 
     let weakPhysics = weakPhysicsLineOnlyEnvelope()
@@ -1654,7 +1866,7 @@ private func checkGeneratedUITreeRejectsCycles() throws {
     )
 }
 
-private func checkGeneratedUITreeRejectsControlOverload() throws {
+private func checkGeneratedUITreeAllowsCoordinatedControls() throws {
     var envelope = generatedUIEnvelope()
     envelope.scenes[0].ui?.nodes.append(contentsOf: [
         RichAnswerUINode(id: "ui-slider-two", role: .slider, bindingID: "ui-x"),
@@ -1669,10 +1881,9 @@ private func checkGeneratedUITreeRejectsControlOverload() throws {
         )
     )
 
-    try richAnswerRequire(presentation.mode == .narrativeOnly, "a control-heavy generated UI cannot render")
     try richAnswerRequire(
-        presentation.diagnostics.contains(where: { $0.code == .budgetExceeded }),
-        "control overload exposes a budget diagnostic"
+        presentation.mode == .rich,
+        "multiple coordinated controls remain available when they share one learning goal"
     )
 }
 
@@ -1805,7 +2016,7 @@ private func weakPhysicsLineOnlyEnvelope() -> RichAnswerEnvelope {
             knowledgeRelations: ["摩擦力阻碍潜在相对运动"],
             knowledgeProcesses: ["外力向上足够大时摩擦方向反转"],
             visualPrimitives: ["canvas", "line", "metric", "slider"],
-            visualRationale: ["这个反例故意只给线图和读数，用于验证弱 UI 会被拒绝"]
+            visualRationale: ["这个反例故意只给线图和读数，用于验证结构合法时仍可进入 rich，视觉质量交给真实窗口审查"]
         ),
         scenes: [
             RichAnswerScene(
@@ -1959,7 +2170,36 @@ private func checkAssetAliasesResolveBeforePersistence() throws {
                     evidenceIDs: ["source-1"]
                 ),
             ],
-            evidenceIDs: ["source-1"]
+            evidenceIDs: ["source-1"],
+            renderPlan: RichAnswerRenderPlan(
+                renderer: RichAnswerRendererRegistry.imageOverlayRenderer,
+                specVersion: "weibei.image-overlay.v1",
+                spec: RichAnswerRenderSpec(fields: [
+                    "image": .object([
+                        "kind": .string("assetRef"),
+                        "source": .string("course-item-1"),
+                    ]),
+                    "layers": .array([
+                        .object([
+                            "id": .string("observation"),
+                            "features": .array([]),
+                        ]),
+                    ]),
+                ]),
+                sourceBindings: [
+                    RichAnswerRenderSourceBinding(
+                        id: "source-image",
+                        evidenceID: "source-1",
+                        target: "image.source",
+                        role: "artifact"
+                    ),
+                ],
+                fallback: RichAnswerRenderFallback(
+                    mode: .narrativeOnly,
+                    reason: "图像叠层不可用",
+                    text: "保留来源绑定的文字说明。"
+                )
+            )
         ),
     ]
     envelope.evidenceLedger[0].assetIDs = ["course-item-1"]
@@ -1976,8 +2216,12 @@ private func checkAssetAliasesResolveBeforePersistence() throws {
     try richAnswerRequire(
         presentation.scenes[0].objects[0].assetID == "persistent-material-id"
             && presentation.scenes[0].frames[0].assetID == "persistent-material-id"
+            && presentation.scenes[0].renderPlan?.spec["image"] == .object([
+                "kind": .string("assetRef"),
+                "source": .string("persistent-material-id"),
+            ])
             && presentation.evidenceLedger[0].assetIDs == ["persistent-material-id"],
-        "request-local asset aliases resolve before the answer is persisted"
+        "request-local asset aliases resolve across legacy, UI, renderPlan, and evidence before persistence"
     )
 }
 

@@ -88,6 +88,18 @@ public enum PiRPCIncomingMessage: Equatable, Sendable {
     case contextRead(id: String, contextRevision: String)
     case courseSourcesRead(id: String, contextRevision: String, labels: [String], assetIDs: [String], jumpEvidence: [String: String])
     case learningMemoryRead(id: String, contextRevision: String, memoryRevision: UInt64, labels: [String], jumpEvidence: [String: String])
+    case skillsLoaded(id: String, contextRevision: String, skills: [StudyAgentLoadedSkill])
+    case artifactComputed(
+        id: String,
+        contextRevision: String,
+        requestID: String,
+        operation: String,
+        workerVersion: String,
+        requestSHA256: String,
+        outputSHA256: String,
+        artifactSHA256s: [String],
+        durationMS: Int
+    )
     case richAnswer(id: String, data: Data)
     case noteProposal(id: String, StudyAgentNoteProposal)
     case learningUpdate(id: String, StudyAgentLearningUpdate)
@@ -241,6 +253,57 @@ public enum PiRPCMessageDecoder {
                     memoryRevision: memoryRevision.uint64Value,
                     labels: labels,
                     jumpEvidence: details["jumpEvidence"] as? [String: String] ?? [:]
+                )
+            }
+            if name == "read",
+               let details = result?["details"] as? [String: Any],
+               details["kind"] as? String == "weibei_skill_read",
+               let contextRevision = details["contextRevision"] as? String,
+               let entry = details["loaded"] as? [String: Any],
+               let id = entry["id"] as? String,
+               let skillName = entry["name"] as? String,
+               let version = entry["version"] as? String,
+               let sha256 = entry["sha256"] as? String,
+               let byteCount = entry["byteCount"] as? NSNumber,
+               let relativePath = entry["relativePath"] as? String,
+               let loadedAtContextRevision = entry["loadedAtContextRevision"] as? String {
+                let skill = StudyAgentLoadedSkill(
+                    id: id,
+                    name: skillName,
+                    version: version,
+                    sha256: sha256,
+                    byteCount: byteCount.intValue,
+                    relativePath: relativePath,
+                    loadedAtContextRevision: loadedAtContextRevision
+                )
+                return .skillsLoaded(
+                    id: object["toolCallId"] as? String ?? "",
+                    contextRevision: contextRevision,
+                    skills: [skill]
+                )
+            }
+            if name == "weibei_compute_artifact",
+               let details = result?["details"] as? [String: Any],
+               details["kind"] as? String == "compute_artifact",
+               let contextRevision = details["contextRevision"] as? String,
+               let requestID = details["requestID"] as? String,
+               let operation = details["operation"] as? String,
+               let workerVersion = details["workerVersion"] as? String,
+               let requestSHA256 = details["requestSHA256"] as? String,
+               let outputSHA256 = details["outputSHA256"] as? String,
+               let durationMS = details["durationMS"] as? NSNumber {
+                let artifactSHA256s = (details["artifacts"] as? [[String: Any]] ?? [])
+                    .compactMap { $0["sha256"] as? String }
+                return .artifactComputed(
+                    id: object["toolCallId"] as? String ?? "",
+                    contextRevision: contextRevision,
+                    requestID: requestID,
+                    operation: operation,
+                    workerVersion: workerVersion,
+                    requestSHA256: requestSHA256,
+                    outputSHA256: outputSHA256,
+                    artifactSHA256s: artifactSHA256s,
+                    durationMS: durationMS.intValue
                 )
             }
             if name == "weibei_rich_answer",

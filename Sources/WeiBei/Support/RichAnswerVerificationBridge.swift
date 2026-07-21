@@ -33,11 +33,19 @@ enum RichAnswerVerificationBridge {
         guard minimum < maximum else { return current }
         let span = maximum - minimum
         let safeStep = step > 0 ? step : span / 8
-        let target = current + max(safeStep, span * 0.28)
-        if target <= maximum {
-            return target
+        var target = current + max(safeStep, span * 0.28)
+        if target > maximum {
+            target = minimum
         }
-        return minimum + span * 0.35
+        guard step > 0 else { return target }
+        let snapped = minimum + ((target - minimum) / step).rounded() * step
+        let bounded = min(maximum, max(minimum, snapped))
+        if abs(bounded - current) > 0.000_001 {
+            return bounded
+        }
+        return current < maximum
+            ? min(maximum, current + step)
+            : minimum
     }
 
     static func writeInteractionReceipt(

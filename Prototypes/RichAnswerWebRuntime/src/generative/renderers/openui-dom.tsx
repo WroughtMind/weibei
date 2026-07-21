@@ -12,7 +12,7 @@ import {
 } from "../renderer-registry";
 
 const OPENUI_DOM_RENDERER = "weibei.openui.dom";
-const OPENUI_DOM_SPEC_VERSION = "1.0";
+const OPENUI_DOM_SPEC_VERSION = "weibei.openui.v1";
 
 const renderBudgetSchema = z.object({
   maxHeight: z.number().int().min(160).max(720),
@@ -54,14 +54,21 @@ function guardOpenUISpec(plan: RenderPlan, spec: OpenUISpec) {
   if (plan.specVersion !== OPENUI_DOM_SPEC_VERSION) {
     return createRendererIssue("capability_mismatch", plan.renderer, `OpenUI DOM 适配器只支持规格 ${OPENUI_DOM_SPEC_VERSION}。`);
   }
+  if (plan.qualityBudget.allowNetwork) {
+    return createRendererIssue("capability_mismatch", plan.renderer, "OpenUI DOM 适配器不允许使用外部网络资源。");
+  }
+  if (spec.budget.graphics === "webgl" && !plan.qualityBudget.allowWebGL) {
+    return createRendererIssue("capability_mismatch", plan.renderer, "OpenUI DOM 程序声明 WebGL，但 renderPlan 未开放 WebGL 预算。");
+  }
 
   const statementCount = spec.source.split("\n").filter((line) => line.trim()).length;
-  if (statementCount > spec.budget.maxNodes || statementCount > plan.qualityBudget.maxNodes) {
+  const planNodeBudget = plan.qualityBudget.maxNodes ?? spec.budget.maxNodes;
+  if (statementCount > spec.budget.maxNodes || statementCount > planNodeBudget) {
     return createRendererIssue(
       "validation_error",
       plan.renderer,
       `界面程序有 ${statementCount} 条语句，超过节点预算。`,
-      [`program=${spec.budget.maxNodes}`, `renderPlan=${plan.qualityBudget.maxNodes}`],
+      [`program=${spec.budget.maxNodes}`, `renderPlan=${planNodeBudget}`],
     );
   }
   if (/<\/?(?:svg|script|iframe|html)\b|javascript:/i.test(spec.source)) {
@@ -76,15 +83,6 @@ function guardOpenUISpec(plan: RenderPlan, spec: OpenUISpec) {
   if (spec.budget.graphics === "dom" && canvasComponents.some((component) => spec.source.includes(component))) {
     return createRendererIssue("validation_error", plan.renderer, "当前程序使用 Canvas 图形组件，但没有声明 Canvas 图形预算。");
   }
-  if (!plan.qualityBudget.graphics || plan.qualityBudget.graphics !== spec.budget.graphics) {
-    return createRendererIssue(
-      "capability_mismatch",
-      plan.renderer,
-      "renderPlan 的图形预算与 OpenUI program 不一致，请重新协商能力。",
-      [`program=${spec.budget.graphics}`, `renderPlan=${plan.qualityBudget.graphics}`],
-    );
-  }
-
   return null;
 }
 
@@ -191,12 +189,11 @@ export const openUIDomRenderer: RichAnswerRenderer = {
     version: "0.1.0",
     specVersions: [OPENUI_DOM_SPEC_VERSION],
     displayName: "OpenUI DOM 适配器",
-    graphics: ["dom", "canvas"],
     data: ["inline-openui-state", "bounded-series", "source-bound-evidence"],
     interactions: ["state-update", "agent-action", "evidence-jump"],
     resources: ["react-lang-library", "trusted-echarts-wrapper"],
     maxNodes: 120,
-    maxSeries: 12,
+    maxDataPoints: 1200,
     fallback: ["structured_error"],
   },
   validate(plan) {

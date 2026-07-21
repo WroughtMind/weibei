@@ -22,6 +22,11 @@ function formatNumber(value: number, digits = 1) {
   return Number.isInteger(value) ? String(value) : value.toFixed(digits).replace(/\.0+$/, "");
 }
 
+function visibleUnit(value: string) {
+  const unit = value.trim();
+  return ["", "无单位", "unitless", "dimensionless", "none"].includes(unit.toLowerCase()) ? "" : unit;
+}
+
 const chartColors = ["#8f3f2f", "#3f716b", "#b0793b", "#5d6385", "#7f6558", "#607344"];
 
 export const ChartSeries = defineComponent({
@@ -162,7 +167,7 @@ export const LinkedDataChart = defineComponent({
             <span key={series.props.name}>
               <small>{series.props.name}</small>
               <strong>{formatNumber(series.props.values[focusIndex] ?? 0)}</strong>
-              <i>{series.props.unit}</i>
+              {visibleUnit(series.props.unit) ? <i>{visibleUnit(series.props.unit)}</i> : null}
             </span>
           ))}
         </div>
@@ -193,14 +198,17 @@ export const MetricStrip = defineComponent({
   }),
   component: ({ props }) => (
     <div className="ra-metric-strip">
-      {props.items.map((item) => (
-        <div key={`${item.props.label}-${item.props.value}`} data-tone={item.props.tone}>
-          <span>{item.props.label}</span>
-          <strong>{item.props.value}</strong>
-          <i>{item.props.unit}</i>
-          <small>{item.props.detail}</small>
-        </div>
-      ))}
+      {props.items.map((item) => {
+        const unit = visibleUnit(item.props.unit);
+        return (
+          <div key={`${item.props.label}-${item.props.value}`} data-tone={item.props.tone}>
+            <span>{item.props.label}</span>
+            <strong>{item.props.value}</strong>
+            {unit ? <i>{unit}</i> : null}
+            <small>{item.props.detail}</small>
+          </div>
+        );
+      })}
     </div>
   ),
 });

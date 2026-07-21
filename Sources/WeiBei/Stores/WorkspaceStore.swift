@@ -987,6 +987,12 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var openAIKeyHelpText: String {
+        if piChatGPTSubscriptionConnected {
+            return ui(
+                "已复用 Pi 中的 ChatGPT 订阅登录（openai-codex），无需 API key。",
+                "Using Pi's ChatGPT subscription sign-in (openai-codex). No API key is required."
+            )
+        }
         if !Self.environmentValue("OPENAI_API_KEY").isEmpty {
             return ui("正在使用本机环境密钥。保存的密钥会在没有环境密钥时接管。", "Using the local environment key. The saved key is used only when no environment key is present.")
         }
@@ -997,6 +1003,50 @@ final class WorkspaceStore: ObservableObject {
             "未保存密钥。保存后对话会结合\(agentPromptScope)，并在有已选文本片段时一并作答。",
             "No key saved. After saving, chat will use \(agentPromptScope) and any selected text fragments."
         )
+    }
+
+    var piChatGPTSubscriptionConnected: Bool {
+        Self.localPiSubscriptionAuthIsAvailable()
+    }
+
+    var piChatGPTSubscriptionModelLabel: String {
+        let settings = Self.localPiSubscriptionSettings()
+        let model = settings["defaultModel"] ?? "gpt-5.5"
+        let thinking = settings["defaultThinkingLevel"]
+        return thinking.map { "\(model) · \($0)" } ?? model
+    }
+
+    private static func localPiSubscriptionAuthIsAvailable() -> Bool {
+        let authURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".pi/agent/auth.json")
+        guard let data = try? Data(contentsOf: authURL),
+              data.count <= 1_048_576,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let credential = root["openai-codex"] as? [String: Any],
+              credential["type"] as? String == "oauth",
+              let access = credential["access"] as? String,
+              !access.isEmpty,
+              let refresh = credential["refresh"] as? String,
+              !refresh.isEmpty else {
+            return false
+        }
+        return true
+    }
+
+    private static func localPiSubscriptionSettings() -> [String: String] {
+        let settingsURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".pi/agent/settings.json")
+        guard let data = try? Data(contentsOf: settingsURL),
+              data.count <= 1_048_576,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              root["defaultProvider"] as? String == "openai-codex" else {
+            return [:]
+        }
+        return ["defaultModel", "defaultThinkingLevel"].reduce(into: [:]) { result, key in
+            if let value = root[key] as? String, !value.isEmpty {
+                result[key] = value
+            }
+        }
     }
 
     var appDisplayName: String {
@@ -5427,12 +5477,12 @@ final class WorkspaceStore: ObservableObject {
             let explicitProvider = Self.environmentValue("WEIBEI_PI_PROVIDER")
             let explicitModel = Self.environmentValue("WEIBEI_PI_MODEL")
             let thinking = Self.environmentValue("WEIBEI_PI_THINKING")
-            let usesOpenAIKey = explicitProvider == "openai" || (explicitProvider.isEmpty && credential != nil)
+            let usesOpenAIKey = explicitProvider == "openai"
             let configuration = PiAgentProviderConfiguration(
-                provider: explicitProvider.isEmpty ? (credential == nil ? nil : "openai") : explicitProvider,
+                provider: explicitProvider.isEmpty ? nil : explicitProvider,
                 model: explicitModel.isEmpty ? (usesOpenAIKey ? resolvedModelName : nil) : explicitModel,
                 apiKey: usesOpenAIKey ? credential?.key : nil,
-                thinkingLevel: thinking.isEmpty ? "medium" : thinking
+                thinkingLevel: thinking.isEmpty ? nil : thinking
             )
             await piRuntime.configure(configuration)
 

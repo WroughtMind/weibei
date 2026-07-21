@@ -1431,7 +1431,7 @@ struct SettingsView: View {
         case .writing:
             return store.ui("设置 Markdown 写作形态和笔记默认视图。", "Set Markdown writing behavior and the default note view.")
         case .agent:
-            return store.ui("管理对话、上下文、密钥和默认入口。", "Manage chat, context, API key, and the default entry.")
+            return store.ui("管理对话、上下文、登录和默认入口。", "Manage chat, context, sign-in, and the default entry.")
         case .data:
             return store.ui("管理资料导入、笔记和本地数据入口。", "Manage material import, notes, and local data entry points.")
         case .shortcuts:
@@ -1499,7 +1499,7 @@ struct SettingsView: View {
                 )
                 settingsRouteRow(
                     title: store.ui("对话设置", "Chat Settings"),
-                    detail: store.ui("密钥、模型、显示形态和选区上下文。", "Key, model, surface, and selection context."),
+                    detail: store.ui("登录、模型、显示形态和选区上下文。", "Sign-in, model, surface, and selection context."),
                     target: .agent
                 )
                 settingsRouteRow(
@@ -1717,31 +1717,39 @@ struct SettingsView: View {
 
     private var agentSettings: some View {
         VStack(alignment: .leading, spacing: 16) {
-            settingsGroup(store.ui("密钥与模型", "Key & Model")) {
+            settingsGroup(store.ui("登录与模型", "Sign-in & Model")) {
                 settingsRow(
-                    title: store.ui("对话密钥", "Chat API Key"),
+                    title: store.ui("对话登录", "Chat Sign-in"),
                     detail: store.openAIKeyHelpText
                 ) {
-                    VStack(alignment: .trailing, spacing: 8) {
-                        SecureField(
-                            "",
-                            text: $store.openAIAPIKey,
-                            prompt: Text(store.ui("对话密钥", "Chat API key"))
-                                .font(.system(size: 13))
-                                .foregroundStyle(WeiBeiTheme.placeholderInk)
+                    if store.piChatGPTSubscriptionConnected {
+                        settingsPill(
+                            title: store.ui("ChatGPT 订阅已连接", "ChatGPT Subscription Connected"),
+                            icon: "checkmark.seal",
+                            active: true
                         )
-                        .textFieldStyle(.plain)
-                        .foregroundColor(WeiBeiTheme.ink)
-                        .focused($focusedField, equals: .apiKey)
-                        .font(.system(size: 13))
-                        .weibeiInputSurface(active: focusedField == .apiKey, height: 38)
-                        .frame(width: 250)
+                    } else {
+                        VStack(alignment: .trailing, spacing: 8) {
+                            SecureField(
+                                "",
+                                text: $store.openAIAPIKey,
+                                prompt: Text(store.ui("开发者 API key（备用）", "Developer API key (fallback)"))
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(WeiBeiTheme.placeholderInk)
+                            )
+                            .textFieldStyle(.plain)
+                            .foregroundColor(WeiBeiTheme.ink)
+                            .focused($focusedField, equals: .apiKey)
+                            .font(.system(size: 13))
+                            .weibeiInputSurface(active: focusedField == .apiKey, height: 38)
+                            .frame(width: 250)
 
-                        HStack(spacing: 8) {
-                            Button(store.ui("保存", "Save")) { store.saveOpenAIAPIKey() }
-                                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                            Button(store.ui("清除", "Clear")) { store.clearOpenAIAPIKey() }
-                                .buttonStyle(WeiBeiTextActionButtonStyle())
+                            HStack(spacing: 8) {
+                                Button(store.ui("保存", "Save")) { store.saveOpenAIAPIKey() }
+                                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                                Button(store.ui("清除", "Clear")) { store.clearOpenAIAPIKey() }
+                                    .buttonStyle(WeiBeiTextActionButtonStyle())
+                            }
                         }
                     }
                 }
@@ -1752,24 +1760,34 @@ struct SettingsView: View {
 
                 settingsRow(
                     title: store.ui("模型", "Model"),
-                    detail: store.ui("本机环境里的模型设置会覆盖这里。", "The model configured in your local environment overrides this field.")
+                    detail: store.piChatGPTSubscriptionConnected
+                        ? store.ui("跟随 Pi 的 ChatGPT 订阅设置。", "Using Pi's ChatGPT subscription settings.")
+                        : store.ui("本机环境里的模型设置会覆盖这里。", "The model configured in your local environment overrides this field.")
                 ) {
-                    TextField(
-                        "",
-                        text: Binding(
-                            get: { store.modelName },
-                            set: { store.updateModelName($0) }
-                        ),
-                        prompt: Text(store.ui("模型", "Model"))
-                            .font(.system(size: 13))
-                            .foregroundStyle(WeiBeiTheme.placeholderInk)
-                    )
-                    .textFieldStyle(.plain)
-                    .foregroundColor(WeiBeiTheme.ink)
-                    .focused($focusedField, equals: .model)
-                    .font(.system(size: 13))
-                    .weibeiInputSurface(active: focusedField == .model, height: 38)
-                    .frame(width: 250)
+                    if store.piChatGPTSubscriptionConnected {
+                        settingsPill(
+                            title: store.piChatGPTSubscriptionModelLabel,
+                            icon: "brain.head.profile",
+                            active: true
+                        )
+                    } else {
+                        TextField(
+                            "",
+                            text: Binding(
+                                get: { store.modelName },
+                                set: { store.updateModelName($0) }
+                            ),
+                            prompt: Text(store.ui("模型", "Model"))
+                                .font(.system(size: 13))
+                                .foregroundStyle(WeiBeiTheme.placeholderInk)
+                        )
+                        .textFieldStyle(.plain)
+                        .foregroundColor(WeiBeiTheme.ink)
+                        .focused($focusedField, equals: .model)
+                        .font(.system(size: 13))
+                        .weibeiInputSurface(active: focusedField == .model, height: 38)
+                        .frame(width: 250)
+                    }
                 }
             }
 

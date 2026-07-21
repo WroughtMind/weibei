@@ -372,7 +372,12 @@ final class StableDocumentSplitCoordinator {
         }
 
         if !state.hasSameStructure(as: appliedState) {
-            apply(state: state, in: splitView, animated: true, preserveCurrentWidths: true)
+            apply(
+                state: state,
+                in: splitView,
+                animated: true,
+                preserveCurrentWidths: ProcessInfo.processInfo.environment["WEIBEI_VERIFY_AGENT_PANE_RATIO"] == nil
+            )
             return
         }
 

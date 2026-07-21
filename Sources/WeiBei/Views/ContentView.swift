@@ -773,7 +773,22 @@ private struct LayoutContentView: View {
     }
 
     private var halfSplit: Binding<CGFloat> {
-        numericBinding($halfSplitStorage)
+        if let agentRatio = Self.verificationAgentPaneRatio {
+            let order = store.visibleDocumentPaneOrder
+            if order.count == 2, let agentIndex = order.firstIndex(of: .agent) {
+                return .constant(agentIndex == 0 ? agentRatio : 1 - agentRatio)
+            }
+        }
+        return numericBinding($halfSplitStorage)
+    }
+
+    private static var verificationAgentPaneRatio: CGFloat? {
+        guard let rawValue = ProcessInfo.processInfo.environment["WEIBEI_VERIFY_AGENT_PANE_RATIO"],
+              let ratio = Double(rawValue)
+        else {
+            return nil
+        }
+        return CGFloat(min(max(ratio, 0.20), 0.80))
     }
 
     @ViewBuilder

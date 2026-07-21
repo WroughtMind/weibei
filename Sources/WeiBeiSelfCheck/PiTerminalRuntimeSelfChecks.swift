@@ -348,7 +348,7 @@ int main(void) {
         if (strcmp(type, "get_state") == 0) {
             respond(id, type, "{\"isStreaming\":false}");
         } else if (strcmp(type, "get_commands") == 0) {
-            respond(id, type, "{\"commands\":[{\"name\":\"skill:weibei-study-companion\"},{\"name\":\"skill:weibei-course-wayfinding\"},{\"name\":\"skill:weibei-close-reading\"},{\"name\":\"skill:weibei-note-making\"},{\"name\":\"skill:weibei-recall-practice\"},{\"name\":\"skill:weibei-interactive-study\"}]}");
+            respond(id, type, "{\"commands\":[{\"name\":\"skill:weibei-study-companion\"},{\"name\":\"skill:weibei-course-wayfinding\"},{\"name\":\"skill:weibei-close-reading\"},{\"name\":\"skill:weibei-note-making\"},{\"name\":\"skill:weibei-recall-practice\"},{\"name\":\"skill:rich-answer-director\"},{\"name\":\"skill:professional-visualization\"},{\"name\":\"skill:deep-interaction-components\"},{\"name\":\"skill:generative-composition\"},{\"name\":\"skill:weibei-interactive-study\"}]}");
         } else if (strcmp(type, "prompt") == 0) {
             respond(id, type, "{}");
             start_emitter();
