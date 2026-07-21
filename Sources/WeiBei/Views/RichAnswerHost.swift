@@ -86,11 +86,6 @@ struct RichAnswerHost: View {
                     )
                 }
             }
-            if !presentation.diagnostics.isEmpty {
-                Text("部分内容因证据或宿主能力不足已自动收敛，正文结论仍然保留。")
-                    .font(.caption)
-                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
-            }
             RichAnswerEvidenceLedger(
                 evidence: ledgerEvidence,
                 onOpenEvidence: onOpenEvidence
