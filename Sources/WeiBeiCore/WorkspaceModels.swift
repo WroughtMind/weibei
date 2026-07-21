@@ -837,6 +837,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public var source: String?
     public var backend: StudyAgentBackend?
     public var richAnswer: RichAnswerPresentation?
+    public var toolTrace: [String]
     public var createdAt: Date
 
     public init(
@@ -846,6 +847,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         source: String?,
         backend: StudyAgentBackend? = nil,
         richAnswer: RichAnswerPresentation? = nil,
+        toolTrace: [String] = [],
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -854,6 +856,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         self.source = source
         self.backend = backend
         self.richAnswer = richAnswer
+        self.toolTrace = toolTrace
         self.createdAt = createdAt
     }
 
@@ -864,6 +867,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         case source
         case backend
         case richAnswer
+        case toolTrace
         case createdAt
     }
 
@@ -875,6 +879,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         source = try container.decodeIfPresent(String.self, forKey: .source)
         backend = try container.decodeIfPresent(StudyAgentBackend.self, forKey: .backend)
         richAnswer = try? container.decodeIfPresent(RichAnswerPresentation.self, forKey: .richAnswer)
+        toolTrace = try container.decodeIfPresent([String].self, forKey: .toolTrace) ?? []
         createdAt = try container.decode(Date.self, forKey: .createdAt)
     }
 
@@ -886,6 +891,9 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         try container.encodeIfPresent(source, forKey: .source)
         try container.encodeIfPresent(backend, forKey: .backend)
         try container.encodeIfPresent(richAnswer, forKey: .richAnswer)
+        if !toolTrace.isEmpty {
+            try container.encode(toolTrace, forKey: .toolTrace)
+        }
         try container.encode(createdAt, forKey: .createdAt)
     }
 
