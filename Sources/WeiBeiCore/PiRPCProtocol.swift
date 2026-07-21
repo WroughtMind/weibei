@@ -87,6 +87,7 @@ public enum PiRPCIncomingMessage: Equatable, Sendable {
     case toolStarted(id: String, name: String)
     case contextRead(id: String, contextRevision: String)
     case courseSourcesRead(id: String, contextRevision: String, labels: [String], assetIDs: [String], jumpEvidence: [String: String])
+    case visualAssetRead(id: String, contextRevision: String, assetID: String, sha256: String, byteCount: Int)
     case learningMemoryRead(id: String, contextRevision: String, memoryRevision: UInt64, labels: [String], jumpEvidence: [String: String])
     case skillsLoaded(id: String, contextRevision: String, skills: [StudyAgentLoadedSkill])
     case artifactComputed(
@@ -226,6 +227,21 @@ public enum PiRPCMessageDecoder {
                         return id
                     },
                     jumpEvidence: details["jumpEvidence"] as? [String: String] ?? [:]
+                )
+            }
+            if name == "weibei_visual_asset",
+               let details = result?["details"] as? [String: Any],
+               details["kind"] as? String == "visual_asset_read",
+               let contextRevision = details["contextRevision"] as? String,
+               let assetID = details["assetID"] as? String,
+               let sha256 = details["sha256"] as? String,
+               let byteCount = details["byteCount"] as? NSNumber {
+                return .visualAssetRead(
+                    id: object["toolCallId"] as? String ?? "",
+                    contextRevision: contextRevision,
+                    assetID: assetID,
+                    sha256: sha256,
+                    byteCount: byteCount.intValue
                 )
             }
             if name == "weibei_learning_memory",

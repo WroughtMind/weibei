@@ -354,6 +354,9 @@ func runRichAnswerEmbeddingSelfChecks() {
         && extensionComponentNames == libraryComponentNames
         && extensionComponentNames == swiftComponentNames, "the model catalog, Web renderer, and native safety validator expose the same open-ended T1 component vocabulary")
     expect(richAnswerExtensionSource.contains("const RICH_ANSWER_CATALOG_TOOL = \"weibei_ui_catalog\"")
+        && richAnswerExtensionSource.contains("const VISUAL_ASSET_TOOL = \"weibei_visual_asset\"")
+        && richAnswerExtensionSource.contains("visualInspection:")
+        && richAnswerExtensionSource.contains("visualAssetMagicMatches(")
         && richAnswerExtensionSource.contains("const OPENUI_COMPONENT_GROUPS = {")
         && richAnswerExtensionSource.contains("selectedOpenUIComponentGroups(")
         && richAnswerExtensionSource.contains("openUIComponentConstraintGuidance(")

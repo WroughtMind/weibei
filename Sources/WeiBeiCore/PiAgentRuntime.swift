@@ -328,6 +328,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         "weibei_context",
         "weibei_course_map",
         "weibei_course_search",
+        "weibei_visual_asset",
         "weibei_learning_memory",
         "weibei_learning_update",
         "read",
@@ -1319,6 +1320,16 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             run.allowedAssetIDs.formUnion(assetIDs)
             run.allowsSourcelessLimitation = run.allowedSourceLabels.isEmpty
             registerJumpEvidence(jumpEvidence, in: &run)
+            activeRun = run
+            refreshRunWatchdog()
+
+        case let .visualAssetRead(_, contextRevision, assetID, sha256, byteCount):
+            guard var run = activeRun,
+                  contextRevision == run.contextRevision,
+                  run.allowedAssetIDs.contains(assetID) else { return }
+            run.toolTrace.append(
+                "weibei_visual_asset:asset=\(assetID) sha256=\(sha256.prefix(12)) bytes=\(byteCount)"
+            )
             activeRun = run
             refreshRunWatchdog()
 

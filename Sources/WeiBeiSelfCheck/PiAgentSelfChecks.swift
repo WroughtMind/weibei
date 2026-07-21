@@ -140,6 +140,18 @@ private func checkRPCDecoding() throws {
     let contextRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-context","toolName":"weibei_context","isError":false,"result":{"details":{"kind":"weibei_context","contextRevision":"revision-7"}}}"#.utf8))
     try piRequire(contextRead == .contextRead(id: "tool-context", contextRevision: "revision-7"), "PI context reads preserve the validated revision")
 
+    let visualAssetRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-visual","toolName":"weibei_visual_asset","isError":false,"result":{"details":{"kind":"visual_asset_read","contextRevision":"revision-7","assetID":"course-item-1","sha256":"abc123","byteCount":2048}}}"#.utf8))
+    try piRequire(
+        visualAssetRead == .visualAssetRead(
+            id: "tool-visual",
+            contextRevision: "revision-7",
+            assetID: "course-item-1",
+            sha256: "abc123",
+            byteCount: 2_048
+        ),
+        "PI visual asset reads preserve source ID, hash, and byte count"
+    )
+
     let skillRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-skill","toolName":"read","isError":false,"result":{"details":{"kind":"weibei_skill_read","contextRevision":"revision-7","loaded":{"id":"rich-answer-director","name":"富回答导演","version":"1.0.0","sha256":"abc123","byteCount":1524,"relativePath":"skills/rich-answer/rich-answer-director/SKILL.md","loadedAtContextRevision":"revision-7"}}}}"#.utf8))
     try piRequire(
         skillRead == .skillsLoaded(
@@ -587,6 +599,49 @@ private func checkStudyAgentContext() throws {
         "study-agent context bounds location and session state, uses opaque ids, and exposes one-based page numbers"
     )
 
+    let visualEnvelope = StudyAgentContextEnvelope(
+        request: StudyAgentRequest(
+            purpose: .conversation,
+            question: "观察当前地图",
+            materialTitle: "当前地图",
+            materialText: "地图材料",
+            noteTitle: "笔记",
+            noteText: "",
+            courseContext: StudyAgentCourseContext(
+                title: "地图课程",
+                items: [
+                    StudyAgentCourseItem(
+                        id: "current-map",
+                        title: "当前地图",
+                        subtitle: "PNG",
+                        kind: "image",
+                        role: "material",
+                        isCurrentMaterial: true
+                    ),
+                    StudyAgentCourseItem(
+                        id: "other-map",
+                        title: "其他地图",
+                        subtitle: "PNG",
+                        kind: "image",
+                        role: "material"
+                    ),
+                ]
+            ),
+            visualAssets: [
+                StudyAgentVisualAsset(id: "current-map", filePath: "/private/tmp/current-map.png", mediaType: "image/png"),
+                StudyAgentVisualAsset(id: "other-map", filePath: "/private/tmp/other-map.png", mediaType: "image/png"),
+                StudyAgentVisualAsset(id: "current-map", filePath: "/private/tmp/current-map.svg", mediaType: "image/svg+xml"),
+            ],
+            contextRevision: "visual-assets-test"
+        )
+    )
+    try piRequire(
+        visualEnvelope.visualAssets == [
+            StudyAgentVisualAsset(id: "course-item-1", filePath: "/private/tmp/current-map.png", mediaType: "image/png"),
+        ],
+        "study-agent context only carries bounded raster assets for the current material and remaps their ids"
+    )
+
     let privatePath = "/Users/student/Private Course/secret.pdf"
     let privateItem = StudyAgentCourseItem(
         id: "file:\(privatePath)",
@@ -851,6 +906,7 @@ private func checkBundledAgentResources() throws {
             "weibei_note_proposal",
             "weibei_ui_catalog",
             "weibei_compute_artifact",
+            "weibei_visual_asset",
             "weibei_rich_answer",
         ].allSatisfy(extensionSource.contains),
         "PI extension bundles the WeiBei-owned course, memory, rich-answer, and note tools"
@@ -1002,8 +1058,9 @@ private func checkBundledAgentResources() throws {
             try piRequire(
                 source.contains("allowed-tools:")
                     && source.contains("weibei_ui_catalog")
-                    && source.contains("weibei_compute_artifact"),
-                "PI skill \(skillName) authorizes the catalog and optional controlled computation before rich answers"
+                    && source.contains("weibei_compute_artifact")
+                    && source.contains("weibei_visual_asset"),
+                "PI skill \(skillName) authorizes the catalog, current-material visual inspection, and optional controlled computation before rich answers"
             )
         }
     }
@@ -1063,6 +1120,7 @@ private func checkBundledAgentResources() throws {
             && runtimeSource.contains("skill-read:")
             && runtimeSource.contains("\"weibei_ui_catalog\"")
             && runtimeSource.contains("\"weibei_compute_artifact\"")
+            && runtimeSource.contains("\"weibei_visual_asset\"")
             && runtimeSource.contains("Self.allowedToolNames.joined(separator: \",\")")
             && runtimeSource.contains("Set(Self.allowedToolNames).contains(name)")
             && runtimeSource.contains("let richNarrative = run.richAnswer?.narrative")

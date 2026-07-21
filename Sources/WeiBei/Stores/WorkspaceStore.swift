@@ -6284,6 +6284,27 @@ final class WorkspaceStore: ObservableObject {
         await agentRequestTask?.value
     }
 
+    private func currentVisualAssetsForAgent() -> [StudyAgentVisualAsset] {
+        guard let item = selectedMaterialItem,
+              !item.isNotebookNote,
+              let path = item.urlPath ?? item.importedFileLastKnownPath else {
+            return []
+        }
+        let mediaType: String
+        switch URL(fileURLWithPath: path).pathExtension.lowercased() {
+        case "jpg", "jpeg":
+            mediaType = "image/jpeg"
+        case "png":
+            mediaType = "image/png"
+        case "webp":
+            mediaType = "image/webp"
+        default:
+            return []
+        }
+        guard FileManager.default.isReadableFile(atPath: path) else { return [] }
+        return [StudyAgentVisualAsset(id: item.id, filePath: path, mediaType: mediaType)]
+    }
+
     private func performAgentRequest() async {
         flushStagedNoteDraftForAgentContext()
         let question = agentDraft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -6312,6 +6333,7 @@ final class WorkspaceStore: ObservableObject {
         let sentNoteTitle = agentNoteTitle
         let sentNoteText = noteText
         let sentLearningContext = makeLearningContext()
+        let sentVisualAssets = currentVisualAssetsForAgent()
         let sentLanguage = interfaceLanguage
         let courseQuery = [question, sentSelectionText ?? "", String(sentNoteText.prefix(2_000))]
             .joined(separator: "\n\n")
@@ -6384,6 +6406,7 @@ final class WorkspaceStore: ObservableObject {
                 selectionText: sentSelectionText,
                 recentMessages: recentMessages,
                 courseContext: courseBuild.context,
+                visualAssets: sentVisualAssets,
                 learningContext: sentLearningContext,
                 language: sentLanguage,
                 contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())"

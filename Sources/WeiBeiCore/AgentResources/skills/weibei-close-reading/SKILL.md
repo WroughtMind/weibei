@@ -2,7 +2,7 @@
 name: weibei-close-reading
 description: 对当前材料、当前笔记或当前选区做细读、解释、论证拆解、概念辨析和证据核对。用户要求解释一段内容、比较观点、总结论证或追问“这段是什么意思”时使用。
 compatibility: 需要 PI 0.80.2 与魏碑扩展提供的上下文和课程搜索工具。
-allowed-tools: read weibei_context weibei_course_map weibei_course_search weibei_ui_catalog weibei_compute_artifact weibei_rich_answer
+allowed-tools: read weibei_context weibei_course_map weibei_course_search weibei_visual_asset weibei_ui_catalog weibei_compute_artifact weibei_rich_answer
 ---
 
 # 魏碑细读

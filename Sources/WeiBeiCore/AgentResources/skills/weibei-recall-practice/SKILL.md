@@ -2,7 +2,7 @@
 name: weibei-recall-practice
 description: 根据当前材料、当前笔记或当前选区生成主动回忆、自测题、答案核对和薄弱点反馈。用户要求出题、考我、复习、自测或检查掌握程度时使用。
 compatibility: 需要 PI 0.80.2 与魏碑扩展提供的上下文、学习记忆和学习状态建议工具。
-allowed-tools: read weibei_context weibei_learning_memory weibei_learning_update weibei_ui_catalog weibei_compute_artifact weibei_rich_answer
+allowed-tools: read weibei_context weibei_visual_asset weibei_learning_memory weibei_learning_update weibei_ui_catalog weibei_compute_artifact weibei_rich_answer
 ---
 
 # 魏碑回忆练习
