@@ -917,6 +917,15 @@ public enum RichAnswerDisplayText {
             (#"\delta"#, "δ"),
             (#"\theta"#, "θ"),
             (#"\lambda"#, "λ"),
+            (#"\alpha"#, "α"),
+            (#"\beta"#, "β"),
+            (#"\gamma"#, "γ"),
+            (#"\mu"#, "μ"),
+            (#"\rho"#, "ρ"),
+            (#"\sigma"#, "σ"),
+            (#"\omega"#, "ω"),
+            (#"\sum"#, "Σ"),
+            (#"\infty"#, "∞"),
             (#"\leq"#, "≤"),
             (#"\le"#, "≤"),
             (#"\geq"#, "≥"),
@@ -940,14 +949,35 @@ public enum RichAnswerDisplayText {
         result = replacing(#"√\(([A-Za-z0-9.]+)\)"#, in: result, with: "√$1")
         result = replacing(#"\^\{([^{}]+)\}"#, in: result, with: "^$1")
         result = replacing(#"_\{([^{}]+)\}"#, in: result, with: "_$1")
-        // Common single-char subscripts after normalize (y_i → yᵢ).
-        let subscripts: [(String, String)] = [
-            ("_0", "₀"), ("_1", "₁"), ("_2", "₂"), ("_3", "₃"), ("_4", "₄"),
-            ("_5", "₅"), ("_6", "₆"), ("_7", "₇"), ("_8", "₈"), ("_9", "₉"),
-            ("_i", "ᵢ"), ("_j", "ⱼ"), ("_n", "ₙ"), ("_t", "ₜ"), ("_x", "ₓ"),
+        let simpleScripts = [
+            (#"_0(?![A-Za-z0-9])"#, "₀"),
+            (#"_1(?![A-Za-z0-9])"#, "₁"),
+            (#"_2(?![A-Za-z0-9])"#, "₂"),
+            (#"_3(?![A-Za-z0-9])"#, "₃"),
+            (#"_4(?![A-Za-z0-9])"#, "₄"),
+            (#"_5(?![A-Za-z0-9])"#, "₅"),
+            (#"_6(?![A-Za-z0-9])"#, "₆"),
+            (#"_7(?![A-Za-z0-9])"#, "₇"),
+            (#"_8(?![A-Za-z0-9])"#, "₈"),
+            (#"_9(?![A-Za-z0-9])"#, "₉"),
+            (#"_i(?![A-Za-z0-9])"#, "ᵢ"),
+            (#"_j(?![A-Za-z0-9])"#, "ⱼ"),
+            (#"_n(?![A-Za-z0-9])"#, "ₙ"),
+            (#"_t(?![A-Za-z0-9])"#, "ₜ"),
+            (#"_x(?![A-Za-z0-9])"#, "ₓ"),
+            (#"\^0(?![A-Za-z0-9])"#, "⁰"),
+            (#"\^1(?![A-Za-z0-9])"#, "¹"),
+            (#"\^2(?![A-Za-z0-9])"#, "²"),
+            (#"\^3(?![A-Za-z0-9])"#, "³"),
+            (#"\^4(?![A-Za-z0-9])"#, "⁴"),
+            (#"\^5(?![A-Za-z0-9])"#, "⁵"),
+            (#"\^6(?![A-Za-z0-9])"#, "⁶"),
+            (#"\^7(?![A-Za-z0-9])"#, "⁷"),
+            (#"\^8(?![A-Za-z0-9])"#, "⁸"),
+            (#"\^9(?![A-Za-z0-9])"#, "⁹"),
         ]
-        for (from, to) in subscripts {
-            result = result.replacingOccurrences(of: from, with: to)
+        for (script, replacement) in simpleScripts {
+            result = replacing(script, in: result, with: replacement)
         }
         return result
     }

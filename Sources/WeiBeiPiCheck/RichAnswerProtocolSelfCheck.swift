@@ -57,6 +57,18 @@ private func checkRichAnswerInlineMathDisplayNormalization() throws {
             && !display.contains(#"\sum"#),
         "inline rich-answer math displays as readable text without leaking LaTeX delimiters: \(display)"
     )
+
+    let olsSource = #"OLS 核对：\hat y=1.44+0.8x，Cov_n(x,\hat u)=0，(\bar x,\bar y) 在回归线上，且 \sum_i \hat u_i=0。"#
+    let olsDisplay = RichAnswerDisplayText.normalizedInlineMath(olsSource)
+    try richAnswerRequire(
+        olsDisplay.contains("ŷ=1.44+0.8x")
+            && olsDisplay.contains("Covₙ(x,û)=0")
+            && olsDisplay.contains("(x̄,ȳ)")
+            && olsDisplay.contains("Σᵢ ûᵢ=0")
+            && !olsDisplay.contains(#"\hat"#)
+            && !olsDisplay.contains(#"\bar"#),
+        "OLS rich-answer math displays hats, bars, sums, and subscripts without raw LaTeX: \(olsDisplay)"
+    )
 }
 
 private func checkProfessionalJudgmentContractsRejectReverseClaims() throws {
@@ -1127,6 +1139,7 @@ private func checkNarrativeAndScenesFormOneInlineFlow() throws {
     try richAnswerRequire(decoded.resolvedParts == presentation.resolvedParts, "inline flow survives message persistence")
 
     var unmarkedEnvelope = openUIProgramEnvelope()
+    unmarkedEnvelope.contextRevision = "revision-openui-unmarked"
     unmarkedEnvelope.narrative = "先用正文解释判断依据，再查看随后的可视化。"
     let unmarkedPresentation = RichAnswerEngine.prepare(
         envelope: unmarkedEnvelope,
