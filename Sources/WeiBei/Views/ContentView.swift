@@ -114,6 +114,8 @@ struct ContentView: View {
     }
 
     private var showsGlobalFloatingAgent: Bool {
+        // Formal conversation pane already open → ask/answer there; don't stack a float.
+        guard !store.isConversationSurfaceVisible else { return false }
         return !store.courseWorkspacePresented
             && store.canShowSelectionPromptSurface && SelectionFloatingAgentPlacement.isVisible(
             surface: store.agentSurface,
