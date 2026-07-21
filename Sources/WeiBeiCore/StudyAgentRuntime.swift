@@ -57,7 +57,7 @@ public enum StudyAgentQuestionScope {
             "介绍一下你自己", "自我介绍一下", "你能做什么", "你可以做什么",
             "你会做什么", "你是干什么的",
             "早上好", "下午好", "晚上好", "你好", "您好", "哈喽", "嗨", "在吗",
-            "连通测试", "连接测试", "只回复", "仅回复", "pi订阅登录已连通",
+            "连通测试", "连接测试", "连通复核", "连接复核", "只回复", "仅回复", "pi订阅登录已连通",
             "不要生成富回答", "不生成富回答", "不要用富回答",
             "谢谢你", "谢谢", "多谢", "明白了", "知道了", "收到", "好的", "再见",
             "tellmeajoke", "tellajoke", "whatisyourname", "whatsyourname", "whoareyou",
@@ -71,11 +71,13 @@ public enum StudyAgentQuestionScope {
         guard matchedSourceFreePhrase else { return false }
         let benignWords = [
             "请", "一下", "可以吗", "行吗", "呀", "啊", "呢", "吧", "嘛", "哈",
+            "候选包", "当前包", "本次", "本轮", "版本",
             "please", "me", "a", "the", "and",
         ]
         for word in benignWords {
             remainder = remainder.replacingOccurrences(of: word, with: "")
         }
+        remainder.removeAll { $0.isNumber }
         return remainder.isEmpty
     }
 
