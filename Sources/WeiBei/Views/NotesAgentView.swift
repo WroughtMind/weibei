@@ -3492,7 +3492,7 @@ private struct AgentMessageMarkdownText: View {
     var body: some View {
         if rendersRichMarkdown {
             MarkdownPreviewView(
-                markdown: text,
+                markdown: RichAnswerDisplayText.normalizedMarkdownInlineMath(text),
                 markdownBaseURL: store.currentMarkdownBaseURL,
                 appearanceMode: store.appearanceMode,
                 interfaceLanguage: store.interfaceLanguage,

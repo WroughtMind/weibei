@@ -830,6 +830,29 @@ public struct RichAnswerDiagnostic: Codable, Hashable, Sendable {
 }
 
 public enum RichAnswerDisplayText {
+    public static func normalizedMarkdownInlineMath(_ markdown: String) -> String {
+        var activeFence: (character: Character, count: Int)?
+        return markdown
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { substring in
+                let line = String(substring)
+                if let fence = activeFence {
+                    if let delimiter = fencedCodeDelimiter(in: line),
+                       delimiter.character == fence.character,
+                       delimiter.count >= fence.count {
+                        activeFence = nil
+                    }
+                    return line
+                }
+                if let delimiter = fencedCodeDelimiter(in: line) {
+                    activeFence = delimiter
+                    return line
+                }
+                return normalizedInlineMathOutsideCodeSpans(line)
+            }
+            .joined(separator: "\n")
+    }
+
     public static func normalizedInlineMath(_ text: String) -> String {
         var result = text
             .replacingOccurrences(of: #"\("#, with: "")
@@ -856,6 +879,11 @@ public enum RichAnswerDisplayText {
             #"\\sqrt\s*([A-Za-z0-9.]+)"#,
             in: result,
             with: "√$1"
+        )
+        result = replacing(
+            #"\\bar\s*\{\s*\\hat\s*\{?([A-Za-z])\}?\s*\}"#,
+            in: result,
+            with: "$1\u{0302}\u{0304}"
         )
         result = replacing(
             #"\\hat\s*\{?([A-Za-z])\}?"#,
@@ -892,6 +920,8 @@ public enum RichAnswerDisplayText {
             (#"\omega"#, "ω"),
             (#"\sum"#, "Σ"),
             (#"\infty"#, "∞"),
+            (#"\qquad"#, "  "),
+            (#"\quad"#, " "),
             (#"\leq"#, "≤"),
             (#"\le"#, "≤"),
             (#"\geq"#, "≥"),
@@ -940,6 +970,33 @@ public enum RichAnswerDisplayText {
         for (script, replacement) in simpleScripts {
             result = replacing(script, in: result, with: replacement)
         }
+        return result
+    }
+
+    private static func fencedCodeDelimiter(in line: String) -> (character: Character, count: Int)? {
+        let trimmed = line.drop(while: { $0 == " " || $0 == "\t" })
+        guard let character = trimmed.first, character == "`" || character == "~" else { return nil }
+        let count = trimmed.prefix(while: { $0 == character }).count
+        return count >= 3 ? (character, count) : nil
+    }
+
+    private static func normalizedInlineMathOutsideCodeSpans(_ line: String) -> String {
+        var result = ""
+        var cursor = line.startIndex
+        while cursor < line.endIndex,
+              let opening = line[cursor...].firstIndex(of: "`") {
+            result += normalizedInlineMath(String(line[cursor..<opening]))
+            let markerEnd = line[opening...].firstIndex(where: { $0 != "`" }) ?? line.endIndex
+            let marker = String(line[opening..<markerEnd])
+            guard markerEnd < line.endIndex,
+                  let closing = line.range(of: marker, range: markerEnd..<line.endIndex) else {
+                result += String(line[opening...])
+                return result
+            }
+            result += String(line[opening..<closing.upperBound])
+            cursor = closing.upperBound
+        }
+        result += normalizedInlineMath(String(line[cursor...]))
         return result
     }
 

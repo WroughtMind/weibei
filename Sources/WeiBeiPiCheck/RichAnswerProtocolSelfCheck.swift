@@ -54,16 +54,34 @@ private func checkRichAnswerInlineMathDisplayNormalization() throws {
         "inline rich-answer math displays as readable text without leaking LaTeX delimiters: \(display)"
     )
 
-    let olsSource = #"OLS 核对：\hat y=1.44+0.8x，Cov_n(x,\hat u)=0，(\bar x,\bar y) 在回归线上，且 \sum_i \hat u_i=0。"#
+    let olsSource = #"OLS 核对：\hat y=1.44+0.8x，Cov_n(x,\hat u)=0，(\bar x,\bar y) 在回归线上，且 \bar{\hat u}=0、\sum_i \hat u_i=0。"#
     let olsDisplay = RichAnswerDisplayText.normalizedInlineMath(olsSource)
     try richAnswerRequire(
         olsDisplay.contains("ŷ=1.44+0.8x")
             && olsDisplay.contains("Covₙ(x,û)=0")
             && olsDisplay.contains("(x̄,ȳ)")
+            && olsDisplay.contains("û̄=0")
             && olsDisplay.contains("Σᵢ ûᵢ=0")
             && !olsDisplay.contains(#"\hat"#)
             && !olsDisplay.contains(#"\bar"#),
         "OLS rich-answer math displays hats, bars, sums, and subscripts without raw LaTeX: \(olsDisplay)"
+    )
+
+    let markdownSource = """
+    正文：\\hat y 与 \\bar x。
+
+    行内代码 `\\hat y` 不改。
+
+    ```latex
+    \\hat y = \\bar x
+    ```
+    """
+    let markdownDisplay = RichAnswerDisplayText.normalizedMarkdownInlineMath(markdownSource)
+    try richAnswerRequire(
+        markdownDisplay.contains("正文：ŷ 与 x̄。")
+            && markdownDisplay.contains("行内代码 `\\hat y` 不改。")
+            && markdownDisplay.contains("```latex\n\\hat y = \\bar x\n```"),
+        "assistant markdown normalizes visible formulas without altering inline or fenced code: \(markdownDisplay)"
     )
 }
 
