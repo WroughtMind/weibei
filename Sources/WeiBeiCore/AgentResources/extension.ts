@@ -643,11 +643,10 @@ interface RichAnswerFaultPayload extends RichAnswerFaultInput {
           requiredAction: string;
         };
         layerChoice: {
-          allowed: Array<"program" | "renderPlan" | "ui" | "plain_text">;
+          allowed: Array<"program" | "renderPlan" | "ui">;
           chooseProgramWhen: string;
           chooseRenderPlanWhen: string;
           chooseUIWhen: string;
-          choosePlainTextWhen: string;
         };
         nextAttemptChecklist: string[];
         forbiddenActions: string[];
@@ -750,15 +749,15 @@ function richAnswerReplanningFeedback(
     mode: "repair",
     primarySignal,
     layerChoice: {
-      allowed: ["program", "renderPlan", "ui", "plain_text"],
+      allowed: ["program", "renderPlan", "ui"],
       chooseProgramWhen: "目录返回的深组件签名能真实表达当前知识对象、状态联动和来源绑定，并且不需要自造组件、脚本、SVG、网页壳或任意配置。",
       chooseRenderPlanWhen: "本轮目录返回的注册专业渲染器匹配知识形状，且模型只需给高层 spec、交互绑定、来源绑定和质量预算，不需要 raw option、脚本、HTML 或 SVG path。",
       chooseUIWhen: "没有贴合的深组件或注册专业渲染器，或当前问题需要用受控节点、数据集、图层、binding、证据位置和读数组合成长尾形态。",
-      choosePlainTextWhen: "证据不足、目录能力不足、三次提交耗尽，或继续做 UI 会误导用户；文本要直接回答问题和限制，不提内部校验失败。",
     },
     nextAttemptChecklist: [
       "先保持原问题的学习目标、专业结论和真实来源，不把修复变成换题或删减关键信息。",
       richAnswerLayerReplanHint(input),
+      "remainingAttempts 仍大于 0，当前轮必须先完成一次完整富回答重试；只有次数耗尽，或重新核对后确认本轮来源/目录客观不足且继续生成会误导用户时，才停止工具并使用正常文本。",
       "expressionPlan 必须覆盖 scene.family、学习收益、交互结果、来源绑定和首选表面；scenes 必须与 narrative 的场景标记一一对应。",
       "program、renderPlan、ui 三选一；如果换出口，删除另外两条出口的全部字段，并同步 evidenceLedger、scene.evidenceIDs 和 narrative。",
       "完整重发 schemaVersion、contextRevision、narrative、expressionPlan、scenes、evidenceLedger、fallback；不要只补 jsonPath 那一个字段。",
@@ -1238,11 +1237,31 @@ function richAnswerSourceBindings(
   snapshot: ContextSnapshotV2,
   searchedCourseItemIDs: ReadonlySet<string> = new Set<string>(),
 ) {
+  const exactExcerptCandidates = Array.from(
+    richAnswerEvidenceText(snapshot, searchedCourseItemIDs).entries(),
+  ).map(([sourceLabel, source]) => {
+    const normalizedSource = normalizedEvidenceText(source.text);
+    const excerpts = normalizedSource
+      .split(/[。！？.!?]\s*/u)
+      .map((excerpt) => excerpt.trim())
+      .filter((excerpt) => excerpt.length >= 12)
+      .map((excerpt) => excerpt.slice(0, 140))
+      .slice(0, 3);
+    return {
+      sourceLabel,
+      excerpts: excerpts.length > 0
+        ? excerpts
+        : normalizedSource
+          ? [normalizedSource.slice(0, 140)]
+          : [],
+    };
+  });
   return {
     answerFormPolicy: snapshot.answerFormPolicy,
     readableSourceLabels: Array.from(
       richAnswerEvidenceText(snapshot, searchedCourseItemIDs).keys(),
     ),
+    exactExcerptCandidates,
     allowedAssetIDs: richAnswerAllowedAssetIDs(snapshot, searchedCourseItemIDs),
     currentItems: richAnswerCurrentItems(snapshot, searchedCourseItemIDs),
     rules: {
@@ -1251,7 +1270,7 @@ function richAnswerSourceBindings(
       assetIDs:
         "图像、地图和设计叠层只能使用 allowedAssetIDs 中的当前材料 item.id；image.assetID 与 evidenceLedger.assetIDs 都必须写 item.id，不写文件名、标签、注册名或标题。",
       excerpts:
-        "evidenceLedger.excerpt 必须来自同一来源标签当前可读文本中的短摘录；没有可读来源时保持纯文本，说明材料缺口，不调用富回答。",
+        "evidenceLedger.excerpt 必须来自同一来源标签当前可读文本中的短摘录；可直接逐字复制 exactExcerptCandidates，也可从本轮已读原文选择其他真实短句。没有可读来源时保持纯文本，说明材料缺口，不调用富回答。",
     },
     imageOverlayGuidance: [
       "只有当前材料真实提供图像、地图或设计资产，且 allowedAssetIDs 非空时，才做图像叠层。",
@@ -1995,7 +2014,7 @@ const RICH_ANSWER_RENDERER_REGISTRATIONS: readonly RichAnswerRendererRegistratio
     label: "受限二维几何与确定性实验渲染器",
     specVersion: "weibei.geometry-2d.v1",
     validatorKind: "geometry2D",
-    knowledgeShapes: ["customGeometry", "formula", "process", "comparison"],
+    knowledgeShapes: ["customGeometry", "process"],
     interactionActions: ["none", "adjust", "dragPoints", "probe", "select"],
     interactionBindingKinds: ["probe", "select", "slider", "toggle", "zoomPan"],
     standardKinds: [],
@@ -2470,6 +2489,49 @@ function richAnswerRendererMinimalSpecSkeleton(
   return skeleton;
 }
 
+function richAnswerRendererNestedFieldContracts(
+  registration: RichAnswerRendererRegistration,
+): Record<string, unknown> | undefined {
+  if (registration.id === "weibei.echarts.chart") {
+    return {
+      series: {
+        requiredFields: ["name", "values"],
+        optionalFields: ["xValues", "chartKind", "unit"],
+        scatterRule: "scatter 的每个 series 必须提交等长的 xValues/values，且不能提交 xLabels。",
+        categoricalRule: "line/bar/area/mixed 不提交 xValues，series.values 必须与 xLabels 等长。",
+      },
+    };
+  }
+  if (registration.id === "weibei.geometry.2d") {
+    return {
+      controls: {
+        presentation: ["slider", "segmented"],
+        bindingVariants: [
+          {
+            kind: "pointCoordinate",
+            requiredFields: ["kind", "pointID", "axis"],
+            axis: ["x", "y"],
+            optionalFields: ["multiplier", "offset", "minimum", "maximum"],
+          },
+          {
+            kind: "pointOnConstraint",
+            requiredFields: ["kind", "pointID"],
+            optionalFields: ["multiplier", "offset"],
+          },
+          {
+            kind: "circleRadius",
+            requiredFields: ["kind", "shapeID"],
+            optionalFields: ["multiplier", "offset", "minimum", "maximum"],
+          },
+        ],
+        unboundControlRule:
+          "bindings 可以为空，但该控件必须由某个 shape.visibleWhen 或 state readout 的 controlID 使用；bindings 中每一项都必须是对象，不能写字符串。",
+      },
+    };
+  }
+  return undefined;
+}
+
 function richAnswerRendererCapabilityDeclarations(
   knowledgeShapes: readonly string[],
   interactions: readonly string[],
@@ -2512,6 +2574,7 @@ function richAnswerRendererCapabilityDeclarations(
       modelSpecContract: {
         allowedTopLevelSpecFields: registration.allowedSpecFields,
         allowedSeriesFields: registration.allowedSeriesFields,
+        nestedFieldContracts: richAnswerRendererNestedFieldContracts(registration),
         forbiddenFields: registration.forbiddenSpecFields,
         guidance: registration.specGuidance,
         minimalSpecSkeleton: richAnswerRendererMinimalSpecSkeleton(
@@ -3104,6 +3167,12 @@ const richAnswerRenderPlanChartSeriesSchema = Type.Object(
       minItems: 1,
       maxItems: LIMITS.richAnswerRenderPlanDataPoints,
     }),
+    xValues: Type.Optional(
+      Type.Array(Type.Number(), {
+        minItems: 1,
+        maxItems: LIMITS.richAnswerRenderPlanDataPoints,
+      }),
+    ),
     chartKind: Type.Optional(
       Type.Union([Type.Literal("line"), Type.Literal("bar")]),
     ),
@@ -3140,7 +3209,7 @@ const richAnswerRenderPlanChartSpecSchema = Type.Object(
   {
     additionalProperties: false,
     description:
-      "注册专业渲染器的高层图表 spec；series 只允许 name、values、chartKind、unit；mixed 图每个 series 必须声明同一个 unit。不得给 raw option、script、HTML、SVG path 或渲染器私有配置。",
+      "注册专业渲染器的高层图表 spec；series 只允许 name、values、xValues、chartKind、unit。scatter 用等长 xValues/values 数值对且不提交 xLabels；line/bar/area/mixed 使用 xLabels，mixed 图每个 series 必须声明同一个 unit。不得给 raw option、script、HTML、SVG path 或渲染器私有配置。",
   },
 );
 const richAnswerMathFunctionParameterSchema = Type.Object(
@@ -4284,6 +4353,17 @@ function validateRichAnswerChartSpec(
       dataPointCount += values.length;
       longestSeriesLength = Math.max(longestSeriesLength, values.length);
     }
+    const xValues = richAnswerRenderPlanNumberArray(rawSeries.xValues);
+    if (rawSeries.xValues !== undefined && xValues === undefined) {
+      issue(`富回答场景 ${scene.id} 的 series[${seriesIndex}].xValues 必须是有限数字数组`);
+    }
+    if (chartKind === "scatter") {
+      if (xValues === undefined || values === undefined || xValues.length !== values.length) {
+        issue(`富回答场景 ${scene.id} 的 scatter series[${seriesIndex}] 必须提供与 values 等长的 xValues`);
+      }
+    } else if (rawSeries.xValues !== undefined) {
+      issue(`富回答场景 ${scene.id} 只有 scatter 图可以提供 series[${seriesIndex}].xValues`);
+    }
   }
 
   if (chartKind === "mixed") {
@@ -4299,7 +4379,7 @@ function validateRichAnswerChartSpec(
   if (spec.xLabels !== undefined && xLabels === undefined) {
     issue(`富回答场景 ${scene.id} 的 xLabels 必须是非空字符串数组`);
   }
-  if (xLabels !== undefined && longestSeriesLength > 0 && xLabels.length !== longestSeriesLength) {
+  if (chartKind !== "scatter" && xLabels !== undefined && longestSeriesLength > 0 && xLabels.length !== longestSeriesLength) {
     issue(
       `富回答场景 ${scene.id} 的 xLabels 数量必须与 series.values 对齐：${xLabels.length}/${longestSeriesLength}`,
     );
@@ -4328,7 +4408,9 @@ function validateRichAnswerChartSpec(
     if (series.length === 0) {
       issue(`富回答场景 ${scene.id} 的 ${String(chartKind)} 图必须提供至少一个 series`);
     }
-    if (xLabels === undefined || xLabels.length === 0) {
+    if (chartKind === "scatter" && spec.xLabels !== undefined) {
+      issue(`富回答场景 ${scene.id} 的 scatter 使用 series[].xValues，不接受分类 xLabels`);
+    } else if (chartKind !== "scatter" && (xLabels === undefined || xLabels.length === 0)) {
       issue(`富回答场景 ${scene.id} 的 ${String(chartKind)} 图必须提供 xLabels`);
     }
     if (spec.samples !== undefined || spec.binCount !== undefined) {
@@ -9335,9 +9417,12 @@ export default function weibeiExtension(pi: ExtensionAPI) {
                       return "按注册 renderer、specVersion、高层 spec、interactionBindings、sourceBindings、fallback 和 qualityBudget 诊断修正 renderPlan；不要改成 raw option、脚本、HTML 或 SVG path。";
                     }
                     return [
-                      `优先保留当前 renderer ${registration.id}@${registration.specVersion} 并修正高层规格，不要仅因字段形状错误退回低级通用点线。`,
+                      `若当前 renderer ${registration.id}@${registration.specVersion} 仍与本题知识对象和学习动作匹配，就按目录字段形状修正高层规格；若错误暴露的是路线不匹配，返回本轮目录重新对称比较 renderer、program 与 ui，不要机械保留当前路线，也不要直接退回低级通用点线。`,
                       registration.specGuidance,
-                      `最小可执行骨架：${JSON.stringify(registration.minimalSpecSkeleton)}`,
+                      `字段形状：${JSON.stringify({
+                        minimalSpecSkeleton: registration.minimalSpecSkeleton,
+                        nestedFieldContracts: richAnswerRendererNestedFieldContracts(registration),
+                      })}`,
                       "仍需完整重发 envelope、scenes 与 evidenceLedger；禁止 raw option、脚本、HTML 或 SVG path。",
                     ].join(" ");
                   })()

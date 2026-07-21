@@ -782,6 +782,48 @@ public struct RichAnswerRendererRegistry: Sendable {
                 ),
             ]
         }
+        if chartKind == "scatter" {
+            if plan.spec["xLabels"] != nil {
+                return [
+                    RichAnswerCapabilityMismatchIssue(
+                        code: .specContractViolation,
+                        renderer: standardChartRenderer,
+                        field: "spec.xLabels",
+                        message: "scatter 使用 series[].xValues，不接受分类 xLabels",
+                        repairHint: "删除 xLabels，并为每个 series 提供与 values 等长的 xValues。"
+                    ),
+                ]
+            }
+            guard case let .array(rawSeries)? = plan.spec["series"], !rawSeries.isEmpty else {
+                return [
+                    RichAnswerCapabilityMismatchIssue(
+                        code: .specContractViolation,
+                        renderer: standardChartRenderer,
+                        field: "spec.series",
+                        message: "scatter 必须提供至少一个数值系列",
+                        repairHint: "为每个系列提交 name、values 和等长的 xValues。"
+                    ),
+                ]
+            }
+            for (index, value) in rawSeries.enumerated() {
+                guard case let .object(series) = value,
+                      case let .array(values)? = series["values"],
+                      case let .array(xValues)? = series["xValues"],
+                      !values.isEmpty,
+                      values.count == xValues.count else {
+                    return [
+                        RichAnswerCapabilityMismatchIssue(
+                            code: .specContractViolation,
+                            renderer: standardChartRenderer,
+                            field: "spec.series[\(index)].xValues",
+                            message: "scatter 的 xValues 必须存在并与 values 等长",
+                            repairHint: "提交成对的 xValues/values 数值，不要改用分类 xLabels。"
+                        ),
+                    ]
+                }
+            }
+            return []
+        }
         guard chartKind == "mixed" else { return [] }
         guard case let .array(rawSeries)? = plan.spec["series"] else {
             return [
@@ -1196,6 +1238,51 @@ public enum RichAnswerRendererRegistrySelfCheck {
         )
         let chartAccepted = registry.negotiate(plan: chartPlan)
 
+        let scatterPlan = RichAnswerRenderPlan(
+            renderer: RichAnswerRendererRegistry.standardChartRenderer,
+            specVersion: "weibei.chart.v1",
+            spec: RichAnswerRenderSpec(
+                fields: [
+                    "chartKind": .string("scatter"),
+                    "series": .array([
+                        .object([
+                            "name": .string("观测"),
+                            "xValues": .array([.number(1), .number(2), .number(3)]),
+                            "values": .array([.number(2.1), .number(2.9), .number(4.2)]),
+                        ]),
+                    ]),
+                    "title": .string("成对观测"),
+                ]
+            ),
+            interactionBindings: [
+                RichAnswerRenderInteractionBinding(
+                    id: "probe_observation",
+                    kind: .probe,
+                    target: "series",
+                    stateKey: "observation",
+                    knowledgeStateEffect: "查看成对观测"
+                ),
+            ],
+            sourceBindings: [
+                RichAnswerRenderSourceBinding(
+                    id: "source_scatter",
+                    evidenceID: "ev_scatter",
+                    target: "series",
+                    role: "data_basis"
+                ),
+            ],
+            fallback: RichAnswerRenderFallback(
+                mode: .narrativeOnly,
+                reason: "散点图不可用时保留带来源的数据解释",
+                text: "暂时无法渲染散点图，保留来源绑定的数据解释。"
+            ),
+            qualityBudget: RichAnswerRenderQualityBudget(maxNodes: 8, maxDataPoints: 3, maxHeight: 360)
+        )
+        let scatterAccepted = registry.negotiate(plan: scatterPlan)
+        var invalidScatterPlan = scatterPlan
+        invalidScatterPlan.spec["xLabels"] = .array([.string("一"), .string("二"), .string("三")])
+        let invalidScatter = registry.negotiate(plan: invalidScatterPlan)
+
         let mismatchPlan = RichAnswerRenderPlan(
             renderer: "weibei.unregistered.renderer",
             specVersion: "v1",
@@ -1222,12 +1309,21 @@ public enum RichAnswerRendererRegistrySelfCheck {
         if chartAccepted.status != .accepted {
             diagnostics.append("standard chart plan was not accepted")
         }
+        if scatterAccepted.status != .accepted {
+            diagnostics.append("paired scatter plan was not accepted")
+        }
+        if invalidScatter.status != .capabilityMismatch
+            || invalidScatter.mismatch?.issues.first?.field != "spec.xLabels" {
+            diagnostics.append("scatter chart did not reject categorical xLabels")
+        }
         if mismatch.status != .capabilityMismatch
             || mismatch.mismatch?.issues.first?.code != .unknownRenderer {
             diagnostics.append("unknown renderer did not report capability_mismatch")
         }
         return RichAnswerRendererRegistrySelfCheckReport(
-            acceptedCompatibilityPlan: accepted.status == .accepted && chartAccepted.status == .accepted,
+            acceptedCompatibilityPlan: accepted.status == .accepted
+                && chartAccepted.status == .accepted
+                && scatterAccepted.status == .accepted,
             reportsCapabilityMismatch: mismatch.status == .capabilityMismatch,
             diagnostics: diagnostics
         )
