@@ -17,6 +17,7 @@ private func checkAnswerGrounding() throws {
         "你叫什么",
         "你好",
         "连通测试：只回复“Pi订阅登录已连通”，不要生成富回答。",
+        "2026-07-21 候选包连通测试：只回复“Pi订阅登录已连通”，不要生成富回答。",
     ] {
         try piRequire(
             StudyAgentQuestionScope.allowsSourceFreeAnswer(question),
@@ -42,6 +43,7 @@ private func checkAnswerGrounding() throws {
         "讲一个关于费雪方程的笑话",
         "你是谁写的这本教材？",
         "连通测试，顺便解释费雪方程",
+        "2026-07-21 候选包连通测试，顺便解释费雪方程",
     ] {
         try piRequire(
             !StudyAgentQuestionScope.allowsSourceFreeAnswer(question),
