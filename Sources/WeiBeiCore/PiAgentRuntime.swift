@@ -1577,7 +1577,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         run.watchdogTask?.cancel()
         run.watchdogTask = nil
         run.progressDelivery?.finish()
-        clearContextSnapshot()
         if let continuation = run.continuation {
             activeRun = nil
             continuation.resume(with: result)
@@ -1616,7 +1615,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         run.watchdogTask?.cancel()
         run.progressDelivery?.finish()
         activeRun = nil
-        clearContextSnapshot()
         scheduleIdleShutdown()
     }
 
