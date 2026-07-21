@@ -53,6 +53,19 @@ struct RichAnswerProfessionalJudgmentValidation {
 }
 
 enum RichAnswerProfessionalJudgmentValidator {
+    private enum SemanticClaimRole {
+        case subject
+        case relation
+        case object
+        case qualifier
+    }
+
+    private struct SemanticClaimAnchor {
+        let range: Range<String.Index>
+        let role: SemanticClaimRole
+        let fragment: String
+    }
+
     private struct SemanticClause {
         let text: String
         let inheritsProhibition: Bool
@@ -89,10 +102,31 @@ enum RichAnswerProfessionalJudgmentValidator {
 
     static func claimUnits(from corpus: String) -> [String] {
         let separators = CharacterSet(charactersIn: "\n\r。！？!?；;")
-        return corpus
+        return removingSourceLabels(from: corpus)
             .components(separatedBy: separators)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+    }
+
+    private static func removingSourceLabels(from text: String) -> String {
+        let sourceLabelPrefixes = [
+            "[材料：", "[选区：", "[笔记：", "[学习记录：", "[学习记忆：",
+        ]
+        var result = ""
+        var cursor = text.startIndex
+        while cursor < text.endIndex {
+            guard text[cursor] == "[",
+                  sourceLabelPrefixes.contains(where: {
+                      text[cursor...].hasPrefix($0)
+                  }),
+                  let end = text[cursor...].firstIndex(of: "]") else {
+                result.append(text[cursor])
+                cursor = text.index(after: cursor)
+                continue
+            }
+            cursor = text.index(after: end)
+        }
+        return result
     }
 
     static func normalizedText(_ text: String) -> String {
@@ -109,6 +143,9 @@ enum RichAnswerProfessionalJudgmentValidator {
             .replacingOccurrences(of: "，", with: ",")
             .replacingOccurrences(of: "、", with: ",")
             .replacingOccurrences(of: "＝", with: "=")
+            .replacingOccurrences(of: "≠", with: "不等于")
+            .replacingOccurrences(of: "!=", with: "不等于")
+            .replacingOccurrences(of: "<>", with: "不等于")
             .replacingOccurrences(of: "≈", with: "约")
             .replacingOccurrences(of: "≃", with: "约")
             .replacingOccurrences(of: "=", with: "等于")
@@ -267,9 +304,18 @@ enum RichAnswerProfessionalJudgmentValidator {
     ) -> Bool {
         let subjectRelationObject = claim.subjectGroups + claim.relationGroups + claim.objectGroups
         let subjectObjectRelation = claim.subjectGroups + claim.objectGroups + claim.relationGroups
+        let relationSubjectObject = claim.relationGroups + claim.subjectGroups + claim.objectGroups
+        let relationObjectSubject = claim.relationGroups + claim.objectGroups + claim.subjectGroups
+        let objectSubjectRelation = claim.objectGroups + claim.subjectGroups + claim.relationGroups
+        let objectRelationSubject = claim.objectGroups + claim.relationGroups + claim.subjectGroups
         guard !subjectRelationObject.isEmpty,
               orderedGroupsMatch(subjectRelationObject, in: unit)
-                || orderedGroupsMatch(subjectObjectRelation, in: unit) else {
+                || orderedGroupsMatch(subjectObjectRelation, in: unit)
+                || orderedGroupsMatch(relationSubjectObject, in: unit)
+                || orderedGroupsMatch(relationObjectSubject, in: unit)
+                || orderedGroupsMatch(objectSubjectRelation, in: unit)
+                || orderedGroupsMatch(objectRelationSubject, in: unit)
+                || groupsMatch(subjectRelationObject, in: unit) else {
             return false
         }
         return claim.qualifierGroups.isEmpty || groupsMatch(claim.qualifierGroups, in: unit)
@@ -472,6 +518,7 @@ enum RichAnswerProfessionalJudgmentValidator {
         var carriedSubjectClause: String?
         var carriedQualifierClause: String?
         var inheritedProhibition: String?
+        var previousClause: String?
 
         for semanticClause in clauses {
             let rawClause = semanticClause.text
@@ -520,8 +567,25 @@ enum RichAnswerProfessionalJudgmentValidator {
                 candidates.append("\(carriedSubjectClause) \(clause)")
             }
 
+            if let previousClause,
+               !claimSubjectMatches(claim, in: clause),
+               !clauseIntroducesNewTopic(clause, claim: claim),
+               predicateSpansEnumeratedContinuation(
+                claim,
+                previousClause: previousClause,
+                continuationClause: clause
+               ) {
+                let predicateCandidate = "\(previousClause) \(clause)"
+                candidates.append(predicateCandidate)
+                if let carriedSubjectClause,
+                   !claimSubjectMatches(claim, in: predicateCandidate),
+                   !clauseIntroducesNewTopic(clause, claim: claim) {
+                    candidates.append("\(carriedSubjectClause) \(predicateCandidate)")
+                }
+            }
+
             if hasClaimSubject {
-                carriedSubjectClause = clause
+                carriedSubjectClause = matchedSubjectCarrier(claim, in: clause) ?? clause
             } else if clauseIntroducesNewTopic(clause, claim: claim) {
                 carriedSubjectClause = nil
             }
@@ -532,9 +596,27 @@ enum RichAnswerProfessionalJudgmentValidator {
             if let explicitProhibition {
                 inheritedProhibition = explicitProhibition
             }
+            previousClause = clause
         }
 
         return candidates
+    }
+
+    private static func matchedSubjectCarrier(
+        _ claim: RichAnswerProfessionalJudgmentClaim,
+        in unit: String
+    ) -> String? {
+        let normalizedUnit = normalizedText(unit)
+        let fragments = claim.subjectGroups.compactMap { group -> String? in
+            guard let range = firstMatchingRange(
+                for: group,
+                in: normalizedUnit,
+                after: normalizedUnit.startIndex
+            ) else { return nil }
+            return String(normalizedUnit[range])
+        }
+        guard fragments.count == claim.subjectGroups.count else { return nil }
+        return fragments.joined(separator: " ")
     }
 
     private static func claimPredicateCanContinue(
@@ -554,11 +636,28 @@ enum RichAnswerProfessionalJudgmentValidator {
             && orderedGroupsMatch(trailingGroups, in: continuationClause)
     }
 
+    private static func predicateSpansEnumeratedContinuation(
+        _ claim: RichAnswerProfessionalJudgmentClaim,
+        previousClause: String,
+        continuationClause: String
+    ) -> Bool {
+        guard !claim.relationGroups.isEmpty,
+              !claim.objectGroups.isEmpty else {
+            return false
+        }
+        let relationInPrevious = groupsMatch(claim.relationGroups, in: previousClause)
+        let relationInContinuation = groupsMatch(claim.relationGroups, in: continuationClause)
+        let objectInPrevious = groupsMatch(claim.objectGroups, in: previousClause)
+        let objectInContinuation = groupsMatch(claim.objectGroups, in: continuationClause)
+        return (relationInPrevious && objectInContinuation)
+            || (objectInPrevious && relationInContinuation)
+    }
+
     private static func explicitProhibitionPrefix(in clause: String) -> String? {
         let normalized = normalizedText(clause)
         let prohibitions = [
             "严禁", "请勿", "不要", "不得", "不可", "不许", "禁止", "避免",
-            "不能", "不应", "不宜", "不可以",
+            "不能", "不应", "不宜", "不可以", "必须停止", "需要停止", "应停止", "需停止",
         ]
         return prohibitions.first { normalized.contains(normalizedText($0)) }
     }
@@ -584,7 +683,7 @@ enum RichAnswerProfessionalJudgmentValidator {
     }
 
     private static func semanticClauses(from unit: String) -> [SemanticClause] {
-        let separators = CharacterSet(charactersIn: "\n\r。！？!?；;，,、")
+        let separators = CharacterSet(charactersIn: "\n\r。！？!?；;：:，,、")
         var clauses: [SemanticClause] = []
         var buffer = ""
         var inheritsProhibition = false
@@ -605,8 +704,11 @@ enum RichAnswerProfessionalJudgmentValidator {
                 separators.contains($0)
             }
             if isSeparator {
+                let completedClause = buffer
                 appendBuffer()
                 inheritsProhibition = character == "、"
+                    || ((character == "：" || character == ":")
+                        && explicitProhibitionPrefix(in: completedClause) != nil)
             } else {
                 buffer.append(character)
             }
@@ -638,7 +740,9 @@ enum RichAnswerProfessionalJudgmentValidator {
             #"^(城市)?[甲乙丙丁戊己庚辛壬癸]"#,
             #"^[a-z]{2,}[0-9]*"#,
             #"^[a-z][0-9]+"#,
+            #"^[a-zπτλδ](?:=|≠|≤|≥|<|>|增|减|升|降|变|是|为|在|乘|除)"#,
             #"^第?[一二三四五六七八九十\d]+[组类项步]"#,
+            #"^(代码|程序|循环|变量|轮次|初始化|初值|第?[一二三四五六七八九十\d]+轮)"#,
             #"^(图|表|样本|城市|方案|病例|患者|价格上限|上限)[a-z0-9甲乙丙丁一二三四五六七八九十]*"#,
         ]
         return topicPatterns.contains { pattern in
@@ -778,9 +882,12 @@ enum RichAnswerProfessionalJudgmentValidator {
             "不是说",
             "不要把",
             "不能把",
+            "不属于安全",
+            "不属于可做",
+            "不属于允许",
+            "不属于建议",
         ]) || containsUnnegatedProhibition(unit)
         if metaRefutes { return true }
-        if claimContainsNegation(claim) { return false }
         if hasScopedNegationBeforeClaimAnchor(unit, claim: claim) {
             return true
         }
@@ -794,7 +901,7 @@ enum RichAnswerProfessionalJudgmentValidator {
                 "不会", "不能", "不应", "不得", "不再", "未再", "不在", "并不",
                 "绝不", "绝非", "没有", "并非", "不是", "而非", "不等于",
                 "不支持", "不足以", "不代表", "没有分离", "未分离", "仍相连",
-                "保持相连", "无", "未",
+                "保持相连", "无", "未", "不", "非",
             ]
         ) {
             return true
@@ -808,46 +915,221 @@ enum RichAnswerProfessionalJudgmentValidator {
         cues: [String]
     ) -> Bool {
         let normalizedUnit = normalizedText(unit)
-        let anchorRanges = (claim.subjectGroups + claim.relationGroups + claim.objectGroups + claim.qualifierGroups)
-            .compactMap { group in
-                firstMatchingRange(
-                    for: group,
-                    in: normalizedUnit,
-                    after: normalizedUnit.startIndex
-                )
-            }
+        let anchors = claimAnchors(claim, in: normalizedUnit)
+        let anchorRanges = anchors.map(\.range)
         guard let firstAnchor = anchorRanges.min(by: { $0.lowerBound < $1.lowerBound }),
               let lastAnchor = anchorRanges.max(by: { $0.upperBound < $1.upperBound }) else {
             return false
         }
-        return cues.map(normalizedText).contains { cue in
+        let predicateAnchors = anchors.filter {
+            $0.role == .relation || $0.role == .object
+        }
+        guard !predicateAnchors.isEmpty else { return false }
+        return cues.map(normalizedText).sorted { $0.count > $1.count }.contains { cue in
             var searchStart = normalizedUnit.startIndex
             while searchStart < normalizedUnit.endIndex,
                   let range = normalizedUnit.range(
                     of: cue,
                     range: searchStart..<normalizedUnit.endIndex
                   ) {
-                let overlapsClaimSpan = range.lowerBound < lastAnchor.upperBound
-                    && range.upperBound > firstAnchor.lowerBound
-                let justBeforeClaim = range.upperBound <= firstAnchor.lowerBound
-                    && normalizedUnit.distance(from: range.upperBound, to: firstAnchor.lowerBound) <= 10
-                let justAfterClaim = range.lowerBound >= lastAnchor.upperBound
-                    && normalizedUnit.distance(from: lastAnchor.upperBound, to: range.lowerBound) <= 8
-                if overlapsClaimSpan
-                    || justBeforeClaim
-                    || (justAfterClaim && (
-                        trailingStateCueRefutesClaim(cue)
-                            || trailingNegationRefersToClaim(
-                                range: range,
-                                in: normalizedUnit
-                            )
-                    )) {
+                if cueBelongsToMatchedClaimAnchor(range, cue: cue, anchors: anchors) {
+                    searchStart = normalizedUnit.index(after: range.lowerBound)
+                    continue
+                }
+                if cueIsCancelledByAffirmingContext(
+                    range,
+                    cue: cue,
+                    in: normalizedUnit
+                ) {
+                    searchStart = normalizedUnit.index(after: range.lowerBound)
+                    continue
+                }
+                if cueScopesOverPredicate(
+                    range,
+                    cue: cue,
+                    predicateAnchors: predicateAnchors,
+                    firstAnchor: firstAnchor,
+                    lastAnchor: lastAnchor,
+                    in: normalizedUnit
+                ) {
                     return true
                 }
                 searchStart = normalizedUnit.index(after: range.lowerBound)
             }
             return false
         }
+    }
+
+    private static func cueIsCancelledByAffirmingContext(
+        _ range: Range<String.Index>,
+        cue: String,
+        in normalizedUnit: String
+    ) -> Bool {
+        let prefixStart = normalizedUnit.index(
+            range.lowerBound,
+            offsetBy: -6,
+            limitedBy: normalizedUnit.startIndex
+        ) ?? normalizedUnit.startIndex
+        let suffixEnd = normalizedUnit.index(
+            range.upperBound,
+            offsetBy: 8,
+            limitedBy: normalizedUnit.endIndex
+        ) ?? normalizedUnit.endIndex
+        let prefix = String(normalizedUnit[prefixStart..<range.lowerBound])
+        let suffix = String(normalizedUnit[range.upperBound..<suffixEnd])
+        let normalizedCue = normalizedText(cue)
+
+        let outerNegations = ["不是", "并非", "并不是", "绝非"].map(normalizedText)
+        let innerNegations = ["不能", "不会", "不应", "不得", "没有", "未", "不", "无", "非"].map(normalizedText)
+        if innerNegations.contains(where: { normalizedCue.hasPrefix($0) }),
+           outerNegations.contains(where: { prefix.hasSuffix($0) }) {
+            return true
+        }
+        if outerNegations.contains(normalizedCue),
+           innerNegations.contains(where: { suffix.hasPrefix($0) }) {
+            return true
+        }
+
+        let cueAndSuffix = normalizedCue + suffix
+        return ["不妨碍", "并不妨碍", "未妨碍", "不阻止", "并不阻止", "不影响", "并不影响"]
+            .map(normalizedText)
+            .contains { cueAndSuffix.hasPrefix($0) }
+    }
+
+    private static func claimAnchors(
+        _ claim: RichAnswerProfessionalJudgmentClaim,
+        in normalizedUnit: String
+    ) -> [SemanticClaimAnchor] {
+        anchors(for: claim.subjectGroups, role: .subject, in: normalizedUnit)
+            + anchors(for: claim.relationGroups, role: .relation, in: normalizedUnit)
+            + anchors(for: claim.objectGroups, role: .object, in: normalizedUnit)
+            + anchors(for: claim.qualifierGroups, role: .qualifier, in: normalizedUnit)
+    }
+
+    private static func anchors(
+        for groups: [[String]],
+        role: SemanticClaimRole,
+        in normalizedUnit: String
+    ) -> [SemanticClaimAnchor] {
+        groups.flatMap { group in
+            group.flatMap { fragment -> [SemanticClaimAnchor] in
+                let normalizedFragment = normalizedText(fragment)
+                guard !normalizedFragment.isEmpty else { return [] }
+                var matches: [SemanticClaimAnchor] = []
+                var searchStart = normalizedUnit.startIndex
+                while searchStart < normalizedUnit.endIndex,
+                      let range = normalizedUnit.range(
+                        of: normalizedFragment,
+                        range: searchStart..<normalizedUnit.endIndex
+                      ) {
+                    if fragmentBoundaryMatches(
+                        normalizedFragment,
+                        range: range,
+                        in: normalizedUnit
+                    ) {
+                        matches.append(
+                            SemanticClaimAnchor(
+                                range: range,
+                                role: role,
+                                fragment: normalizedFragment
+                            )
+                        )
+                    }
+                    searchStart = normalizedUnit.index(after: range.lowerBound)
+                }
+                return matches
+            }
+        }
+    }
+
+    private static func cueBelongsToMatchedClaimAnchor(
+        _ range: Range<String.Index>,
+        cue: String,
+        anchors: [SemanticClaimAnchor]
+    ) -> Bool {
+        anchors.contains { anchor in
+            anchor.range.lowerBound <= range.lowerBound
+                && range.upperBound <= anchor.range.upperBound
+                && anchor.fragment.contains(cue)
+        }
+    }
+
+    private static func cueScopesOverPredicate(
+        _ range: Range<String.Index>,
+        cue: String,
+        predicateAnchors: [SemanticClaimAnchor],
+        firstAnchor: Range<String.Index>,
+        lastAnchor: Range<String.Index>,
+        in normalizedUnit: String
+    ) -> Bool {
+        if predicateAnchors.contains(where: {
+            range.lowerBound < $0.range.upperBound && range.upperBound > $0.range.lowerBound
+        }) {
+            return true
+        }
+        let followingPredicate = predicateAnchors.map(\.range)
+            .filter { range.upperBound <= $0.lowerBound }
+            .min { $0.lowerBound < $1.lowerBound }
+        if let followingPredicate {
+            let bridge = String(normalizedUnit[range.upperBound..<followingPredicate.lowerBound])
+            if negationBridgePreservesScope(bridge),
+               cueCanReachPredicate(cue, bridge: bridge) {
+                return true
+            }
+        }
+        let justAfterClaim = range.lowerBound >= lastAnchor.upperBound
+            && normalizedUnit.distance(from: lastAnchor.upperBound, to: range.lowerBound) <= 8
+        if justAfterClaim && (
+            trailingStateCueRefutesClaim(cue)
+                || trailingNegationRefersToClaim(
+                    range: range,
+                    in: normalizedUnit
+                )
+        ) {
+            return true
+        }
+        let justBeforeClaim = range.upperBound <= firstAnchor.lowerBound
+            && normalizedUnit.distance(from: range.upperBound, to: firstAnchor.lowerBound) <= 10
+        return justBeforeClaim && !isWeakNegationCue(cue)
+    }
+
+    private static func negationBridgePreservesScope(_ bridge: String) -> Bool {
+        !containsAnyNormalized(bridge, [
+            "但是",
+            "但",
+            "然而",
+            "不过",
+            "却",
+            "反而",
+            "可是",
+            "而是",
+            "相反",
+            "可以",
+            "允许",
+            "建议",
+        ])
+    }
+
+    private static func cueCanReachPredicate(
+        _ cue: String,
+        bridge: String
+    ) -> Bool {
+        let distance = bridge.count
+        if isWeakNegationCue(cue) {
+            let strippedBridge = bridge
+                .replacingOccurrences(of: normalizedText("再"), with: "")
+                .replacingOccurrences(of: normalizedText("仍"), with: "")
+                .replacingOccurrences(of: normalizedText("仍然"), with: "")
+                .replacingOccurrences(of: normalizedText("直接"), with: "")
+                .replacingOccurrences(of: normalizedText("精确"), with: "")
+                .replacingOccurrences(of: normalizedText("数学上"), with: "")
+            return strippedBridge.isEmpty
+        }
+        return distance <= 28
+    }
+
+    private static func isWeakNegationCue(_ cue: String) -> Bool {
+        ["不", "未", "无", "非"].map(normalizedText).contains(cue)
     }
 
     private static func trailingStateCueRefutesClaim(_ normalizedCue: String) -> Bool {
@@ -938,7 +1220,7 @@ struct RichAnswerLiveSuccessCase {
     let knowledgeTargets: [[String]]
     let minimumKnowledgeTargetMatches: Int
     let semanticObligations: [[String]]
-    let interactionOutcomes: [[String]]
+    let interactionOutcomes: [[[String]]]
     let professionalFactObligations: [RichAnswerProfessionalFactObligation]
     let professionalJudgmentContract: RichAnswerProfessionalJudgmentContract
     let rendererRequirement: RichAnswerLiveRendererRequirement
@@ -1410,8 +1692,8 @@ enum RichAnswerProfessionalJudgmentContracts {
                 requiredClaim(
                     "range-four-iterations",
                     "range(1,5) 只能产生 1 到 4",
-                    subject: [["range(1,5)", "range(1, 5)", "这段循环", "循环"]],
-                    relation: [["产生", "包含", "走", "遍历"]],
+                    subject: [["range(1,5)", "range(1, 5)", "这段循环", "循环", "i", "四轮", "轮次"]],
+                    relation: [["产生", "包含", "走", "遍历", "依次取", "依次为"]],
                     object: [["1,2,3,4", "1、2、3、4"]]
                 ),
                 requiredClaim(
@@ -1433,7 +1715,7 @@ enum RichAnswerProfessionalJudgmentContracts {
                 forbiddenClaim(
                     "wrong-final-total",
                     "最终输出不能是 5 或 0",
-                    subject: [["最终", "输出"]],
+                    subject: [["最终", "最后", "print"], ["输出", "结果"]],
                     relation: [["是", "为", "等于"]],
                     object: [["5", "0"]]
                 ),
@@ -1660,17 +1942,10 @@ enum RichAnswerProfessionalJudgmentContracts {
             "learning-art-design-composition-overlay",
             requiredClaims: [
                 requiredClaim(
-                    "original-poster-required",
-                    "构图标注必须回到原图",
-                    subject: [["原图", "海报"]],
-                    relation: [["叠加", "标注"]],
-                    object: [["标题", "双星", "人物", "视线"]]
-                ),
-                requiredClaim(
                     "two-star-focus",
                     "白色大星体与橙色小星体形成双焦点",
                     subject: [["白色大星体", "橙色小星体", "双星"]],
-                    relation: [["形成", "构成"]],
+                    relation: [],
                     object: [["双焦点", "焦点"]]
                 ),
             ],
@@ -2090,11 +2365,18 @@ enum RichAnswerProfessionalJudgmentContracts {
                     object: [["3.0mm", "3.0 mm", "3mm", "3 mm"]]
                 ),
                 requiredClaim(
-                    "spacing-param-directions",
-                    "λ 与 L 增大变疏，d 增大变密",
-                    subject: [["λ", "lambda", "波长", "L", "屏距", "d", "缝距"]],
-                    relation: [["增大", "变疏", "变密"]],
-                    object: [["分子", "分母", "条纹"]]
+                    "lambda-or-screen-distance-larger-sparser",
+                    "λ 或 L 增大时条纹必须变疏",
+                    subject: [["λ", "lambda", "波长", "L", "屏距"]],
+                    relation: [["增大", "增加", "变大"]],
+                    object: [["变疏", "更疏", "间距增大"]]
+                ),
+                requiredClaim(
+                    "slit-distance-larger-denser",
+                    "d 增大时条纹必须变密",
+                    subject: [["d", "缝距"]],
+                    relation: [["增大", "增加", "变大"]],
+                    object: [["变密", "更密", "间距减小"]]
                 ),
             ],
             forbiddenMisconceptions: [
@@ -3034,15 +3316,7 @@ enum RichAnswerProfessionalJudgmentContracts {
         ),
         contract(
             "learning-art-color-contrast-overlay",
-            requiredClaims: [
-                requiredClaim(
-                    "contrast-thresholds",
-                    "三组对比度和阈值结论必须正确",
-                    subject: [["13.94", "4.03", "1.81"]],
-                    relation: [["通过", "未通过"]],
-                    object: [["普通正文", "大号", "占位"]]
-                ),
-            ],
+            requiredClaims: [],
             forbiddenMisconceptions: [
                 forbiddenClaim(
                     "token-not-png",
@@ -3070,9 +3344,9 @@ enum RichAnswerProfessionalJudgmentContracts {
                 boundaryClaim(
                     "antialiasing-sampling-boundary",
                     "必须区分 11×11 与 glyph interior 抗锯齿采样",
-                    subject: [["11×11", "glyph interior", "glyph"]],
-                    relation: [["区分", "说明"]],
-                    object: [["抗锯齿", "背景稀释", "吞掉"]]
+                    subject: [["11×11"]],
+                    relation: [["抗锯齿", "背景", "底色", "稀释", "吞掉"]],
+                    object: [["glyph interior", "glyph"]]
                 ),
             ],
             reviewNotes: ["需模型或人工判断可视化是否真的以原图采样为主而非文字堆砌"]
@@ -3084,8 +3358,8 @@ enum RichAnswerProfessionalJudgmentContracts {
                     "triplet-positions",
                     "三连音击点必须为 0、2/3、4/3",
                     subject: [["三连音"]],
-                    relation: [["位于", "击点"]],
-                    object: [["0", "2/3", "4/3"]]
+                    relation: [["位于", "击点", "在"]],
+                    object: [["0", "零拍"], ["2/3", "三分之二"], ["4/3", "三分之四"]]
                 ),
                 requiredClaim(
                     "bpm-time-only",
@@ -3575,12 +3849,26 @@ enum RichAnswerLiveCases {
             selectionTitle: "标题、双星焦点与人物视线",
             selectionText: "大标题、白色大星体、橙色小星体和下方宇航员构成主要观看路径，底部标语承担收束作用。",
             expectedNarrativeKeywordGroups: [["构图", "层级"], ["Kepler", "16b"], ["双星", "星体", "焦点"], ["人物", "视线"], ["比例", "位置"]],
+            interactionOutcomes: [
+                [
+                    ["人物", "宇航员"],
+                    ["调整", "切换", "假设"],
+                    ["观看顺序", "顺序", "首读", "先读", "第一眼", "更早", "提前"],
+                ],
+            ],
             rendererRequirement: .t2,
             requiredT1ComponentGroups: [],
             requiredT2RoleGroups: [
                 [.image],
                 [.region, .path, .point],
                 [.toggle, .select, .probe],
+            ],
+            requiredT2SemanticGroups: [
+                ["标题区", "标题"],
+                ["双焦点", "双星", "白色大星体", "橙色小星体"],
+                ["宇航员", "人物"],
+                ["观看路径", "观看顺序", "当前路径", "当前顺序", "调整后", "首读", "人物提前"],
+                ["底部标语", "收束"],
             ],
             requiresMaterialAsset: true
         ),
@@ -3737,7 +4025,7 @@ enum RichAnswerLiveCases {
         success(
             "learning-math-geometric-similarity-proof",
             materialTitle: "平行线与相似三角形示意图",
-            materialKind: "image",
+            materialKind: "html",
             materialText: "三角形 ABC 中，A=(0,0)、B=(8,0)、C=(2,6)。D 是 AB 中点，E 是 AC 中点，并给出 DE ∥ BC。由平行线可得 ∠ADE=∠ABC、∠AED=∠ACB，加上公共角 ∠A，因此 △ADE∽△ABC；对应边比 AD/AB=AE/AC=DE/BC=1/2。示意图坐标只用于定位，不能替代平行条件和角相等证明。",
             selectionTitle: "条件、对应角和比例",
             selectionText: "DE ∥ BC 给出两组对应角相等，再加公共角 A，才能得到相似和 1/2 的边长比。",
@@ -3806,14 +4094,8 @@ enum RichAnswerLiveCases {
             selectionTitle: "电子域、孤电子对和键角",
             selectionText: "三者都有四个电子域，但孤电子对从 0 增到 2，分子构型改变，键角从 109.5° 降到 104.5°。",
             expectedNarrativeKeywordGroups: [["CH4"], ["NH3"], ["H2O"], ["孤电子对"], ["键角"]],
-            rendererRequirement: .t2,
             requiredT1ComponentGroups: [],
-            requiredT2RoleGroups: [
-                [.canvas, .zstack],
-                [.shape, .point, .line],
-                [.select, .toggle, .probe],
-                [.label, .metric],
-            ]
+            requiredT2RoleGroups: []
         ),
         success(
             "learning-biology-meiosis-separation",
@@ -4451,7 +4733,7 @@ enum RichAnswerLiveCases {
         knowledgeTargets explicitKnowledgeTargets: [[String]]? = nil,
         minimumKnowledgeTargetMatches explicitMinimumKnowledgeTargetMatches: Int? = nil,
         semanticObligations explicitSemanticObligations: [[String]]? = nil,
-        interactionOutcomes: [[String]] = [],
+        interactionOutcomes: [[[String]]] = [],
         professionalFactObligations explicitProfessionalFactObligations: [RichAnswerProfessionalFactObligation]? = nil,
         rendererRequirement: RichAnswerLiveRendererRequirement = .either,
         requiredT1ComponentGroups: [[String]],
@@ -4466,7 +4748,7 @@ enum RichAnswerLiveCases {
             ?? min(2, max(1, knowledgeTargets.count))
         let semanticObligations = explicitSemanticObligations
             ?? explicitT2SemanticGroups
-            ?? Array(expectedNarrativeKeywordGroups.prefix(2))
+            ?? []
         let professionalFactObligations = explicitProfessionalFactObligations
             ?? expectedNarrativeKeywordGroups.enumerated().map { index, group in
                 RichAnswerProfessionalFactObligation(

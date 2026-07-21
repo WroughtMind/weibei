@@ -234,7 +234,7 @@ private struct GeneratedRichAnswerNodeView: View {
 
     @ViewBuilder
     private func childViews(_ node: RichAnswerUINode) -> some View {
-        ForEach(node.children, id: \.self) { childID in
+        ForEach(deduplicatedChildIDs(for: node), id: \.self) { childID in
             GeneratedRichAnswerNodeView(
                 nodeID: childID,
                 composition: composition,
@@ -244,6 +244,21 @@ private struct GeneratedRichAnswerNodeView: View {
                 onOpenAsset: onOpenAsset,
                 assetPreview: assetPreview
             )
+        }
+    }
+
+    private func deduplicatedChildIDs(for node: RichAnswerUINode) -> [String] {
+        var seenSourceLabels: Set<String> = []
+        return node.children.filter { childID in
+            guard let child = composition.nodes.first(where: { $0.id == childID }),
+                  child.role == .evidence else {
+                return true
+            }
+            let sourceLabels = child.evidenceIDs.compactMap { evidenceByID[$0]?.sourceLabel }
+            guard !sourceLabels.isEmpty else { return true }
+            let introducesSource = sourceLabels.contains { !seenSourceLabels.contains($0) }
+            seenSourceLabels.formUnion(sourceLabels)
+            return introducesSource
         }
     }
 
@@ -354,17 +369,26 @@ private struct GeneratedRichAnswerMetric: View {
         let value: Double
         if let bindingID = node.bindingID,
            let binding = composition.bindings.first(where: { $0.id == bindingID }) {
-            value = interpolatedY(
-                in: dataset,
-                at: runtime.values[bindingID] ?? binding.initialValue
-            )
+            if generatedBindingIsDiscrete(binding, in: composition),
+               let row = generatedActiveRows(
+                   in: dataset,
+                   binding: binding,
+                   runtimeValue: runtime.values[bindingID]
+               ).first {
+                value = row.result ?? row.y
+            } else {
+                value = interpolatedY(
+                    in: dataset,
+                    at: runtime.values[bindingID] ?? binding.initialValue
+                )
+            }
         } else {
             value = dataset.rows.first?.result ?? dataset.rows.first?.value ?? dataset.rows.first?.y ?? 0
         }
         let formatted = abs(value.rounded() - value) < 0.0001
             ? String(format: "%.0f", value)
             : String(format: "%.2f", value)
-        return node.unit.map { "\(formatted) \($0)" } ?? formatted
+        return generatedMeaningfulUnit(node.unit).map { "\(formatted) \($0)" } ?? formatted
     }
 }
 
@@ -591,7 +615,7 @@ private struct GeneratedRichAnswerEvidence: View {
     var onOpenEvidence: (RichAnswerEvidence) -> Void
 
     var body: some View {
-        let evidence = node.evidenceIDs.compactMap { evidenceByID[$0] }
+        let evidence = deduplicatedEvidence
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 10) {
                 evidenceButtons(evidence)
@@ -599,6 +623,13 @@ private struct GeneratedRichAnswerEvidence: View {
             VStack(alignment: .leading, spacing: 5) {
                 evidenceButtons(evidence)
             }
+        }
+    }
+
+    private var deduplicatedEvidence: [RichAnswerEvidence] {
+        var seenSourceLabels: Set<String> = []
+        return node.evidenceIDs.compactMap { evidenceByID[$0] }.filter { item in
+            seenSourceLabels.insert(item.sourceLabel).inserted
         }
     }
 
@@ -746,11 +777,24 @@ private struct GeneratedRichAnswerCanvas: View {
                 drawBarLabels(node, context: &context, rect: drawingRect)
             case .region:
                 drawRegion(node, context: &context, rect: drawingRect, includeLabel: true)
-            case .label:
-                drawLabels(node, context: &context, rect: drawingRect)
             default:
                 break
             }
+        }
+        var sharedLabelFrames: [CGRect] = []
+        let labelNodes = visibleNodes
+            .filter { $0.role == .label }
+            .sorted {
+                if $0.emphasis != $1.emphasis { return $0.emphasis == .strong }
+                return $0.id < $1.id
+            }
+        for node in labelNodes {
+            drawLabels(
+                node,
+                context: &context,
+                rect: drawingRect,
+                sharedOccupiedFrames: &sharedLabelFrames
+            )
         }
         drawProbe(context: &context, rect: drawingRect, includeGuide: false, includeLabel: true)
     }
@@ -794,10 +838,22 @@ private struct GeneratedRichAnswerCanvas: View {
 
     private func drawPath(_ node: RichAnswerUINode, context: inout GraphicsContext, rect: CGRect) {
         guard let dataset = dataset(for: node) else { return }
-        let rows = dataset.rows.sorted { $0.x < $1.x }
         let style = node.emphasis == .quiet
             ? StrokeStyle(lineWidth: 1, dash: [4, 4])
             : StrokeStyle(lineWidth: node.emphasis == .strong ? 2.2 : 1.5)
+        if let bindingID = node.bindingID,
+           let binding = binding(for: bindingID),
+           generatedBindingIsDiscrete(binding, in: composition) {
+            let rows = activeRows(in: dataset, bindingID: bindingID).sorted { $0.x < $1.x }
+            guard !rows.isEmpty else { return }
+            context.stroke(
+                path(for: rows, in: rect),
+                with: .color(generatedToneColor(node.tone).opacity(node.emphasis == .quiet ? 0.48 : 0.78)),
+                style: style
+            )
+            return
+        }
+        let rows = dataset.rows.sorted { $0.x < $1.x }
         let wholePath = path(for: rows, in: rect)
         if let bindingID = node.bindingID,
            let binding = binding(for: bindingID),
@@ -847,6 +903,20 @@ private struct GeneratedRichAnswerCanvas: View {
         guard let dataset = dataset(for: node) else { return }
         if let bindingID = node.bindingID,
            let binding = binding(for: bindingID),
+           generatedBindingIsDiscrete(binding, in: composition) {
+            for row in activeRows(in: dataset, bindingID: bindingID) {
+                let point = canvasPoint(row.x, row.y, in: rect)
+                let selected = runtime.selectedID == row.id
+                let radius: CGFloat = selected ? 5.2 : 3.4
+                context.fill(
+                    Path(ellipseIn: CGRect(x: point.x - radius, y: point.y - radius, width: radius * 2, height: radius * 2)),
+                    with: .color(selected ? WeiBeiTheme.cinnabar : generatedToneColor(node.tone).opacity(0.72))
+                )
+            }
+            return
+        }
+        if let bindingID = node.bindingID,
+           let binding = binding(for: bindingID),
            let currentRow = interpolatedRow(in: dataset, binding: binding) {
             for row in dataset.rows {
                 let point = canvasPoint(row.x, row.y, in: rect)
@@ -880,8 +950,16 @@ private struct GeneratedRichAnswerCanvas: View {
     }
 
     private func drawArea(_ node: RichAnswerUINode, context: inout GraphicsContext, rect: CGRect) {
-        guard let dataset = dataset(for: node), dataset.rows.count >= 3 else { return }
-        let rows = dataset.rows.sorted { $0.x < $1.x }
+        guard let dataset = dataset(for: node) else { return }
+        let rows: [RichAnswerUIDataRow]
+        if let bindingID = node.bindingID,
+           let binding = binding(for: bindingID),
+           generatedBindingIsDiscrete(binding, in: composition) {
+            rows = activeRows(in: dataset, bindingID: bindingID).sorted { $0.x < $1.x }
+        } else {
+            rows = dataset.rows.sorted { $0.x < $1.x }
+        }
+        guard rows.count >= 3 else { return }
         var path = Path()
         path.move(to: canvasPoint(rows[0].x, rows[0].y, in: rect))
         for row in rows.dropFirst() {
@@ -943,7 +1021,7 @@ private struct GeneratedRichAnswerCanvas: View {
         includeLabels: Bool
     ) {
         guard let dataset = dataset(for: node) else { return }
-        let activeID = activeRow(in: dataset, bindingID: node.bindingID)?.id
+        let activeID = continuousActiveRowID(in: dataset, bindingID: node.bindingID)
         for instance in barInstances(for: node, rect: rect) {
             let selected = runtime.selectedID == instance.id || activeID == instance.id
             let path = Path(roundedRect: instance.rect, cornerRadius: min(5, instance.rect.width * 0.18))
@@ -956,15 +1034,36 @@ private struct GeneratedRichAnswerCanvas: View {
 
     private func drawBarLabels(_ node: RichAnswerUINode, context: inout GraphicsContext, rect: CGRect) {
         guard let dataset = dataset(for: node) else { return }
-        let activeID = activeRow(in: dataset, bindingID: node.bindingID)?.id
-        let instances = barInstances(for: node, rect: rect)
-        let endpointIDs = Set([instances.first?.id, instances.last?.id].compactMap(\.self))
-        let slotWidth = rect.width / CGFloat(max(1, dataset.rows.count))
+        let activeID = continuousActiveRowID(in: dataset, bindingID: node.bindingID)
+        let instances = barInstances(for: node, rect: rect).sorted { $0.rect.midX < $1.rect.midX }
+        let minimumSeparation = max(38, min(64, rect.width / CGFloat(max(4, instances.count + 1))))
+        var groups: [[GeneratedCanvasMarkInstance]] = []
         for instance in instances {
-            let selected = runtime.selectedID == instance.id || activeID == instance.id
-            let endpoint = endpointIDs.contains(instance.id)
-            guard selected || endpoint || slotWidth >= 34 else { continue }
-            drawBarLabel(instance: instance, node: node, selected: selected, rect: rect, context: &context)
+            if let last = groups.last?.last,
+               instance.rect.midX - last.rect.midX < minimumSeparation {
+                groups[groups.count - 1].append(instance)
+            } else {
+                groups.append([instance])
+            }
+        }
+        for group in groups {
+            guard let first = group.first, let last = group.last else { continue }
+            let selected = group.contains { runtime.selectedID == $0.id || activeID == $0.id }
+            if group.count == 1 {
+                drawBarLabel(instance: first, node: node, selected: selected, rect: rect, context: &context)
+                continue
+            }
+            let cluster = GeneratedCanvasMarkInstance(
+                id: "\(first.id)-\(last.id)-label-cluster",
+                rect: CGRect(
+                    x: first.rect.minX,
+                    y: min(first.rect.minY, last.rect.minY),
+                    width: max(1, last.rect.maxX - first.rect.minX),
+                    height: max(first.rect.height, last.rect.height)
+                ),
+                label: generatedBarRangeLabel(first.label, last.label)
+            )
+            drawBarLabel(instance: cluster, node: node, selected: selected, rect: rect, context: &context)
         }
     }
 
@@ -978,11 +1077,16 @@ private struct GeneratedRichAnswerCanvas: View {
         guard let label = instance.label, !label.isEmpty else { return }
         let maxWidth = max(18, min(74, rect.width / 6))
         let displayLabel = trimmedCanvasLabel(label, maxWidth: maxWidth)
+        let labelSize = measuredCanvasLabelSize(displayLabel, maxWidth: maxWidth, required: selected)
+        let labelCenterX = min(
+            rect.maxX - labelSize.width / 2,
+            max(rect.minX + labelSize.width / 2, instance.rect.midX)
+        )
         context.draw(
             Text(displayLabel)
                 .font(.system(size: 8.3, weight: selected ? .semibold : .medium))
                 .foregroundStyle(selected ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk),
-            at: CGPoint(x: instance.rect.midX, y: rect.maxY + 7),
+            at: CGPoint(x: labelCenterX, y: rect.maxY + 7),
             anchor: .top
         )
     }
@@ -1089,9 +1193,14 @@ private struct GeneratedRichAnswerCanvas: View {
         }
     }
 
-    private func drawLabels(_ node: RichAnswerUINode, context: inout GraphicsContext, rect: CGRect) {
+    private func drawLabels(
+        _ node: RichAnswerUINode,
+        context: inout GraphicsContext,
+        rect: CGRect,
+        sharedOccupiedFrames: inout [CGRect]
+    ) {
         guard let dataset = dataset(for: node) else { return }
-        let occupiedFrames = labelObstacles(excluding: node.id, in: rect)
+        let occupiedFrames = labelObstacles(excluding: node.id, in: rect) + sharedOccupiedFrames
         if let bindingID = node.bindingID,
            let binding = binding(for: bindingID),
            let currentRow = interpolatedRow(in: dataset, binding: binding) {
@@ -1106,7 +1215,9 @@ private struct GeneratedRichAnswerCanvas: View {
                 priority: 100,
                 in: rect
             )
-            drawPlacedLabels(placeCanvasLabels([label], in: rect, occupiedFrames: occupiedFrames), context: &context)
+            let placements = placeCanvasLabels([label], in: rect, occupiedFrames: occupiedFrames)
+            drawPlacedLabels(placements, context: &context)
+            sharedOccupiedFrames.append(contentsOf: placements.map { $0.frame.insetBy(dx: -2, dy: -2) })
             return
         }
         let labelledRows = dataset.rows.filter { $0.label?.isEmpty == false }
@@ -1127,7 +1238,9 @@ private struct GeneratedRichAnswerCanvas: View {
                 in: rect
             )
         }
-        drawPlacedLabels(placeCanvasLabels(labels, in: rect, occupiedFrames: occupiedFrames), context: &context)
+        let placements = placeCanvasLabels(labels, in: rect, occupiedFrames: occupiedFrames)
+        drawPlacedLabels(placements, context: &context)
+        sharedOccupiedFrames.append(contentsOf: placements.map { $0.frame.insetBy(dx: -2, dy: -2) })
     }
 
     private func drawPlacedLabels(_ placements: [GeneratedCanvasLabelPlacement], context: inout GraphicsContext) {
@@ -1237,12 +1350,23 @@ private struct GeneratedRichAnswerCanvas: View {
                 frames.append(contentsOf: barInstances(for: node, rect: rect).map { $0.rect.insetBy(dx: -1, dy: -1) })
             case .region:
                 guard let region = node.region else { continue }
-                frames.append(CGRect(
+                let regionRect = CGRect(
                     x: rect.minX + rect.width * region.x,
                     y: rect.minY + rect.height * region.y,
                     width: rect.width * region.width,
                     height: rect.height * region.height
-                ).insetBy(dx: -2, dy: -2))
+                )
+                if let label = node.label?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty {
+                    let maxWidth = max(20, regionRect.width - 10)
+                    let displayLabel = trimmedCanvasLabel(label, maxWidth: maxWidth)
+                    let labelSize = measuredCanvasLabelSize(displayLabel, maxWidth: maxWidth, required: true)
+                    frames.append(CGRect(
+                        x: regionRect.minX + 5,
+                        y: regionRect.minY + 4,
+                        width: labelSize.width,
+                        height: labelSize.height
+                    ).insetBy(dx: -2, dy: -2))
+                }
             case .vector:
                 guard let dataset = dataset(for: node) else { continue }
                 let rows = node.bindingID.flatMap { activeRow(in: dataset, bindingID: $0) }.map { [$0] } ?? dataset.rows
@@ -1353,6 +1477,18 @@ private struct GeneratedRichAnswerCanvas: View {
         let height = max(8, rect.height * region.height)
         if let dataset = dataset(for: node) {
             if let bindingID = node.bindingID,
+               let binding = binding(for: bindingID),
+               generatedBindingIsDiscrete(binding, in: composition) {
+                return activeRows(in: dataset, bindingID: bindingID).map { row in
+                    let point = canvasPoint(row.x, row.y, in: rect)
+                    return GeneratedCanvasMarkInstance(
+                        id: row.id,
+                        rect: CGRect(x: point.x - width / 2, y: point.y - height / 2, width: width, height: height),
+                        label: row.label ?? node.label
+                    )
+                }
+            }
+            if let bindingID = node.bindingID,
                let point = interpolatedPoint(in: dataset, bindingID: bindingID, rect: rect),
                let row = activeRow(in: dataset, bindingID: bindingID) {
                 return [GeneratedCanvasMarkInstance(
@@ -1384,8 +1520,23 @@ private struct GeneratedRichAnswerCanvas: View {
 
     private func barInstances(for node: RichAnswerUINode, rect: CGRect) -> [GeneratedCanvasMarkInstance] {
         guard let dataset = dataset(for: node) else { return [] }
-        let width = max(8, min(46, rect.width / CGFloat(max(1, dataset.rows.count)) * 0.58))
-        return dataset.rows.map { row in
+        let rows: [RichAnswerUIDataRow]
+        if let bindingID = node.bindingID,
+           let binding = binding(for: bindingID),
+           generatedBindingIsDiscrete(binding, in: composition) {
+            rows = activeRows(in: dataset, bindingID: bindingID)
+        } else {
+            rows = dataset.rows
+        }
+        let sortedX = rows.map(\.x).sorted()
+        let minimumCoordinateGap = zip(sortedX, sortedX.dropFirst())
+            .map { $1 - $0 }
+            .filter { $0 > 0.000_001 }
+            .min()
+        let countBasedWidth = rect.width / CGFloat(max(1, rows.count)) * 0.58
+        let coordinateBasedWidth = minimumCoordinateGap.map { rect.width * CGFloat($0) * 0.72 } ?? 46
+        let width = max(5, min(46, min(countBasedWidth, coordinateBasedWidth)))
+        return rows.map { row in
             let height = max(2, rect.height * row.y)
             let centerX = rect.minX + rect.width * row.x
             return GeneratedCanvasMarkInstance(
@@ -1402,6 +1553,10 @@ private struct GeneratedRichAnswerCanvas: View {
         rect: CGRect
     ) -> CGPoint? {
         guard let binding = composition.bindings.first(where: { $0.id == bindingID }) else { return nil }
+        if generatedBindingIsDiscrete(binding, in: composition),
+           let row = activeRows(in: dataset, bindingID: bindingID).first {
+            return canvasPoint(row.x, row.y, in: rect)
+        }
         let rows = dataset.rows.sorted { ($0.value ?? $0.x) < ($1.value ?? $1.x) }
         guard let first = rows.first else { return nil }
         let value = runtime.values[bindingID] ?? binding.initialValue
@@ -1429,6 +1584,10 @@ private struct GeneratedRichAnswerCanvas: View {
     }
 
     private func interpolatedRow(in dataset: RichAnswerUIDataset, binding: RichAnswerUIBinding) -> RichAnswerUIDataRow? {
+        if generatedBindingIsDiscrete(binding, in: composition),
+           let row = activeRows(in: dataset, bindingID: binding.id).first {
+            return boundRow(from: row, binding: binding)
+        }
         let rows = dataset.rows.sorted { rowBindingValue($0, binding: binding) < rowBindingValue($1, binding: binding) }
         guard let first = rows.first else { return nil }
         let value = boundValue(for: binding)
@@ -1516,6 +1675,22 @@ private struct GeneratedRichAnswerCanvas: View {
             abs(($0.value ?? binding.minimum + $0.x * (binding.maximum - binding.minimum)) - value)
                 < abs(($1.value ?? binding.minimum + $1.x * (binding.maximum - binding.minimum)) - value)
         }
+    }
+
+    private func activeRows(in dataset: RichAnswerUIDataset, bindingID: String) -> [RichAnswerUIDataRow] {
+        guard let binding = binding(for: bindingID) else { return [] }
+        return generatedActiveRows(
+            in: dataset,
+            binding: binding,
+            runtimeValue: runtime.values[bindingID]
+        )
+    }
+
+    private func continuousActiveRowID(in dataset: RichAnswerUIDataset, bindingID: String?) -> String? {
+        guard let bindingID,
+              let binding = binding(for: bindingID),
+              !generatedBindingIsDiscrete(binding, in: composition) else { return nil }
+        return activeRow(in: dataset, bindingID: bindingID)?.id
     }
 
     private func isVisible(_ node: RichAnswerUINode) -> Bool {
@@ -1681,7 +1856,33 @@ private func trimmedCanvasLabel(_ text: String, maxWidth: CGFloat) -> String {
     let cleanText = text.trimmingCharacters(in: .whitespacesAndNewlines)
     let maxCharacters = max(4, Int(maxWidth / 7.2))
     guard cleanText.count > maxCharacters else { return cleanText }
+    for separator in ["：", "（", "(", "；", ";"] {
+        guard let range = cleanText.range(of: separator) else { continue }
+        let semanticPrefix = cleanText[..<range.lowerBound].trimmingCharacters(in: .whitespacesAndNewlines)
+        if semanticPrefix.count >= 4, semanticPrefix.count <= maxCharacters {
+            return semanticPrefix
+        }
+    }
     return String(cleanText.prefix(max(1, maxCharacters - 1))) + "…"
+}
+
+private func generatedBarRangeLabel(_ firstLabel: String?, _ lastLabel: String?) -> String? {
+    guard let firstLabel = firstLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !firstLabel.isEmpty else { return lastLabel }
+    guard let lastLabel = lastLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !lastLabel.isEmpty else { return firstLabel }
+    func prefix(_ label: String) -> String {
+        for separator in ["：", ":"] {
+            if let range = label.range(of: separator) {
+                return String(label[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        return label
+    }
+    let first = prefix(firstLabel)
+    let last = prefix(lastLabel)
+    guard first != last else { return first }
+    return "\(first)–\(last)"
 }
 
 private func constrainCanvasLabelFrame(_ frame: CGRect, to allowedRect: CGRect) -> CGRect {
@@ -1741,6 +1942,42 @@ private func generatedShapePath(_ shape: RichAnswerUIShape, in rect: CGRect) -> 
     case .capsule:
         return Path(roundedRect: rect, cornerRadius: min(rect.width, rect.height) / 2)
     }
+}
+
+private func generatedBindingIsDiscrete(
+    _ binding: RichAnswerUIBinding,
+    in composition: RichAnswerUIComposition
+) -> Bool {
+    composition.nodes.contains { node in
+        node.bindingID == binding.id && [.toggle, .sequence].contains(node.role)
+    }
+}
+
+private func generatedActiveRows(
+    in dataset: RichAnswerUIDataset,
+    binding: RichAnswerUIBinding,
+    runtimeValue: Double?
+) -> [RichAnswerUIDataRow] {
+    guard !dataset.rows.isEmpty else { return [] }
+    let currentValue = min(
+        binding.maximum,
+        max(binding.minimum, runtimeValue ?? binding.initialValue)
+    )
+    func rowValue(_ row: RichAnswerUIDataRow) -> Double {
+        row.value ?? binding.minimum + row.x * (binding.maximum - binding.minimum)
+    }
+    guard let nearestValue = dataset.rows.min(by: {
+        abs(rowValue($0) - currentValue) < abs(rowValue($1) - currentValue)
+    }).map(rowValue) else { return [] }
+    let tolerance = max(0.000_001, abs(binding.step) * 0.000_001)
+    return dataset.rows.filter { abs(rowValue($0) - nearestValue) <= tolerance }
+}
+
+private func generatedMeaningfulUnit(_ rawUnit: String?) -> String? {
+    guard let unit = rawUnit?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !unit.isEmpty else { return nil }
+    let placeholderUnits: Set<String> = ["值", "数值", "value", "values"]
+    return placeholderUnits.contains(unit.lowercased()) ? nil : unit
 }
 
 private func interpolatedY(in dataset: RichAnswerUIDataset, at value: Double) -> Double {

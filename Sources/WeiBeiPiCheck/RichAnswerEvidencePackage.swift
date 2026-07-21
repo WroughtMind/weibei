@@ -1004,6 +1004,14 @@ enum RichAnswerEvidencePackageBuilder {
             let labels = strings(composition["bindingLabels"]).joined(separator: "、")
             return "<li><strong>\(escapeHTML(string(composition["family"]) ?? "T2"))</strong> · 原语 \(escapeHTML(roles.isEmpty ? "未记录" : roles)) · 绑定 \(escapeHTML(labels.isEmpty ? "未记录" : labels)) · 节点 \(integer(composition["nodeCount"]) ?? 0)</li>"
         }.joined(separator: "")
+        let renderPlanItems = record.renderPlans.map { plan in
+            let renderer = string(plan["renderer"]) ?? "未记录渲染器"
+            let specVersion = string(plan["specVersion"]) ?? "未记录版本"
+            let interactions = strings(plan["interactionKinds"]).joined(separator: "、")
+            let sources = strings(plan["sourceEvidenceIDs"]).joined(separator: "、")
+            let negotiation = string(plan["negotiationStatus"]) ?? "未记录协商"
+            return "<li><strong>\(escapeHTML(renderer))@\(escapeHTML(specVersion))</strong> · 交互 \(escapeHTML(interactions.isEmpty ? "无" : interactions)) · 来源 \(escapeHTML(sources.isEmpty ? "未记录" : sources)) · 能力协商 \(escapeHTML(negotiation))</li>"
+        }.joined(separator: "")
         let validationIssues = record.validationIssues.isEmpty ? "无" : record.validationIssues.joined(separator: "；")
         let protocolDiagnostics = record.protocolDiagnostics.isEmpty ? "无" : record.protocolDiagnostics.joined(separator: "；")
         let sourceLabels = (record.textSourceLabels + record.evidenceLedgerLabels).uniqued().joined(separator: "；")
@@ -1032,7 +1040,8 @@ enum RichAnswerEvidencePackageBuilder {
             <p class="\(invocation.cssClass)">\(escapeHTML(invocation.label))</p>
           </div>
           <table class="facts">
-            <tr><th>运行状态</th><td>\(escapeHTML(record.status))</td><th>耗时</th><td>\(String(format: "%.3f", record.elapsedSeconds)) 秒</td></tr>
+            <tr><th>本轮验收状态</th><td>\(escapeHTML(attempt.acceptanceStatus))</td><th>耗时</th><td>\(String(format: "%.3f", record.elapsedSeconds)) 秒</td></tr>
+            <tr><th>模型/协议状态</th><td>\(escapeHTML(record.status))</td><th>视觉技术门禁</th><td>\(escapeHTML(attempt.screenshot.qualityGateStatus ?? "未记录"))</td></tr>
             <tr><th>模型调用</th><td>\(optionalBool(record.modelInvocation))</td><th>夹具调用</th><td>\(optionalBool(record.fixtureInvocation))</td></tr>
             <tr><th>预期形态</th><td>\(escapeHTML(record.expectedShape))</td><th>实际形态</th><td>\(escapeHTML(record.actualShape))</td></tr>
             <tr><th>来源 run</th><td>\(escapeHTML(record.reference.sourceRunID))</td><th>包内原始文件</th><td>\(artifactLinks.isEmpty ? "缺失" : artifactLinks)</td></tr>
@@ -1042,9 +1051,9 @@ enum RichAnswerEvidencePackageBuilder {
           \(screenshots)
           <div class="evidence-grid">
             <section>
-              <h3>形态与 T1/T2 计划</h3>
+              <h3>形态与表达计划</h3>
               <p>\(escapeHTML(record.expressionSummary ?? "未记录表达计划摘要"))</p>
-              <ul>\(t1Items.isEmpty ? "<li>T1：无</li>" : t1Items)\(t2Items.isEmpty ? "<li>T2：无</li>" : t2Items)</ul>
+              <ul>\(t1Items.isEmpty ? "<li>T1：无</li>" : t1Items)\(t2Items.isEmpty ? "<li>T2：无</li>" : t2Items)\(renderPlanItems.isEmpty ? "<li>renderPlan：无</li>" : renderPlanItems)</ul>
             </section>
             <section>
               <h3>协议与来源</h3>
@@ -1331,6 +1340,7 @@ private struct RichAnswerEvidencePackageCaseSummary: Codable {
 private struct RichAnswerEvidencePackageAttemptSummary: Codable {
     let repetition: Int
     let status: String
+    let acceptanceStatus: String
     let invocationKind: String
     let trustedInvocation: Bool
     let modelInvocation: Bool?
@@ -1371,10 +1381,19 @@ private struct RichAnswerEvidencePackageAttempt {
         invocationKind == .model || invocationKind == .deterministic
     }
 
+    var acceptanceStatus: String {
+        guard record.status == "passed" else { return "运行失败" }
+        guard isTrustedInvocation else { return "非可信调用" }
+        guard screenshot.isComplete else { return "截图证据不完整" }
+        guard screenshot.qualityGateStatus == "pass" else { return "视觉门禁待复核" }
+        return "待用户验收"
+    }
+
     var summary: RichAnswerEvidencePackageAttemptSummary {
         RichAnswerEvidencePackageAttemptSummary(
             repetition: record.repetition,
             status: record.status,
+            acceptanceStatus: acceptanceStatus,
             invocationKind: invocationKind.rawValue,
             trustedInvocation: isTrustedInvocation,
             modelInvocation: record.modelInvocation,
@@ -1819,6 +1838,7 @@ private struct RichAnswerEvidencePackageRecord {
     let expressionSummary: String?
     let t1Programs: [[String: Any]]
     let t2Compositions: [[String: Any]]
+    let renderPlans: [[String: Any]]
     let validationStatus: String?
     let validationKind: String?
     let validationIssues: [String]
@@ -1879,6 +1899,7 @@ private struct RichAnswerEvidencePackageRecord {
         expressionSummary = string(expressionPlan["summary"])
         t1Programs = dictionaries(expression["t1Programs"])
         t2Compositions = dictionaries(expression["t2Compositions"])
+        renderPlans = dictionaries(expression["renderPlans"])
         validationStatus = string(validation["status"])
         validationKind = string(validation["validationKind"])
         validationIssues = strings(validation["issues"])

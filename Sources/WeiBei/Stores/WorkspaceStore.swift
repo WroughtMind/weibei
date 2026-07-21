@@ -1324,6 +1324,50 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
+    var piChatGPTSubscriptionConnected: Bool {
+        Self.localPiSubscriptionAuthIsAvailable()
+    }
+
+    var piChatGPTSubscriptionModelLabel: String {
+        let settings = Self.localPiSubscriptionSettings()
+        let model = settings["defaultModel"] ?? "gpt-5.5"
+        let thinking = settings["defaultThinkingLevel"]
+        return thinking.map { "\(model) · \($0)" } ?? model
+    }
+
+    private static func localPiSubscriptionAuthIsAvailable() -> Bool {
+        let authURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".pi/agent/auth.json")
+        guard let data = try? Data(contentsOf: authURL),
+              data.count <= 1_048_576,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let credential = root["openai-codex"] as? [String: Any],
+              credential["type"] as? String == "oauth",
+              let access = credential["access"] as? String,
+              !access.isEmpty,
+              let refresh = credential["refresh"] as? String,
+              !refresh.isEmpty else {
+            return false
+        }
+        return true
+    }
+
+    private static func localPiSubscriptionSettings() -> [String: String] {
+        let settingsURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".pi/agent/settings.json")
+        guard let data = try? Data(contentsOf: settingsURL),
+              data.count <= 1_048_576,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              root["defaultProvider"] as? String == "openai-codex" else {
+            return [:]
+        }
+        return ["defaultModel", "defaultThinkingLevel"].reduce(into: [:]) { result, key in
+            if let value = root[key] as? String, !value.isEmpty {
+                result[key] = value
+            }
+        }
+    }
+
     var appDisplayName: String {
         ui("魏碑", "WeiBei")
     }

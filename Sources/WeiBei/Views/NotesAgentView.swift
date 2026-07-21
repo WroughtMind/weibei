@@ -2293,8 +2293,11 @@ struct AgentPaneView: View {
         guard stage == .overview || stage == .before || stage == .after,
               let targetID = latestRichAnswerSceneAnchorID else { return }
         agentFollowsLatest = false
+        let anchor: UnitPoint = ProcessInfo.processInfo.environment["WEIBEI_VERIFY_RICH_ANSWER_CAPTURE_ANCHOR"] == "bottom"
+            ? .bottom
+            : .top
         DispatchQueue.main.async {
-            proxy.scrollTo(targetID, anchor: .top)
+            proxy.scrollTo(targetID, anchor: anchor)
         }
     }
 

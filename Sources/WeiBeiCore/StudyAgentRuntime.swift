@@ -48,11 +48,39 @@ public enum StudyAgentSourceLimitation {
 }
 
 public enum StudyAgentQuestionScope {
+    public static func allowsSourceFreeAnswer(_ question: String) -> Bool {
+        var remainder = normalized(question)
+        let sourceFreePhrases = [
+            "请给我讲一个笑话", "给我讲一个笑话", "请给我讲个笑话", "给我讲个笑话",
+            "讲一个笑话", "讲个笑话", "说一个笑话", "说个笑话",
+            "你叫什么名字", "你的名字是什么", "你叫什么", "你是谁",
+            "介绍一下你自己", "自我介绍一下", "你能做什么", "你可以做什么",
+            "你会做什么", "你是干什么的",
+            "早上好", "下午好", "晚上好", "你好", "您好", "哈喽", "嗨", "在吗",
+            "连通测试", "连接测试", "只回复", "仅回复", "pi订阅登录已连通",
+            "不要生成富回答", "不生成富回答", "不要用富回答",
+            "谢谢你", "谢谢", "多谢", "明白了", "知道了", "收到", "好的", "再见",
+            "tellmeajoke", "tellajoke", "whatisyourname", "whatsyourname", "whoareyou",
+            "introduceyourself", "whatcanyoudo", "hello", "hi", "hey", "thankyou", "thanks", "goodbye", "bye",
+        ].sorted { $0.count > $1.count }
+        var matchedSourceFreePhrase = false
+        for phrase in sourceFreePhrases where remainder.contains(phrase) {
+            remainder = remainder.replacingOccurrences(of: phrase, with: "")
+            matchedSourceFreePhrase = true
+        }
+        guard matchedSourceFreePhrase else { return false }
+        let benignWords = [
+            "请", "一下", "可以吗", "行吗", "呀", "啊", "呢", "吧", "嘛", "哈",
+            "please", "me", "a", "the", "and",
+        ]
+        for word in benignWords {
+            remainder = remainder.replacingOccurrences(of: word, with: "")
+        }
+        return remainder.isEmpty
+    }
+
     public static func allowsLearningOnlyAnswer(_ question: String) -> Bool {
-        var remainder = question.lowercased().unicodeScalars.filter {
-            CharacterSet.alphanumerics.contains($0)
-                || (0x4E00...0x9FFF).contains(Int($0.value))
-        }.map(String.init).joined()
+        var remainder = normalized(question)
         let statePhrases = [
             "你记得我的学习情况吗", "你记得我学到哪吗", "我上次学习到哪了", "我上次学习到哪",
             "我上次学到哪了", "我上次学到哪", "上次学习到哪了", "上次学习到哪",
@@ -78,6 +106,13 @@ public enum StudyAgentQuestionScope {
             remainder = remainder.replacingOccurrences(of: word, with: "")
         }
         return remainder.isEmpty
+    }
+
+    private static func normalized(_ question: String) -> String {
+        question.lowercased().unicodeScalars.filter {
+            CharacterSet.alphanumerics.contains($0)
+                || (0x4E00...0x9FFF).contains(Int($0.value))
+        }.map(String.init).joined()
     }
 }
 
@@ -540,12 +575,41 @@ public struct StudyAgentLearningUpdate: Codable, Equatable, Sendable {
     }
 }
 
+public struct StudyAgentLoadedSkill: Codable, Equatable, Sendable {
+    public var id: String
+    public var name: String
+    public var version: String
+    public var sha256: String
+    public var byteCount: Int
+    public var relativePath: String
+    public var loadedAtContextRevision: String
+
+    public init(
+        id: String,
+        name: String,
+        version: String,
+        sha256: String,
+        byteCount: Int,
+        relativePath: String,
+        loadedAtContextRevision: String
+    ) {
+        self.id = id
+        self.name = name
+        self.version = version
+        self.sha256 = sha256
+        self.byteCount = byteCount
+        self.relativePath = relativePath
+        self.loadedAtContextRevision = loadedAtContextRevision
+    }
+}
+
 public struct StudyAgentReply: Equatable, Sendable {
     public var text: String
     public var backend: StudyAgentBackend
     public var richAnswer: RichAnswerPresentation?
     public var noteProposal: StudyAgentNoteProposal?
     public var learningUpdate: StudyAgentLearningUpdate?
+    public var loadedSkills: [StudyAgentLoadedSkill]
     public var toolTrace: [String]
 
     public init(
@@ -554,6 +618,7 @@ public struct StudyAgentReply: Equatable, Sendable {
         richAnswer: RichAnswerPresentation? = nil,
         noteProposal: StudyAgentNoteProposal? = nil,
         learningUpdate: StudyAgentLearningUpdate? = nil,
+        loadedSkills: [StudyAgentLoadedSkill] = [],
         toolTrace: [String] = []
     ) {
         self.text = text
@@ -561,6 +626,7 @@ public struct StudyAgentReply: Equatable, Sendable {
         self.richAnswer = richAnswer
         self.noteProposal = noteProposal
         self.learningUpdate = learningUpdate
+        self.loadedSkills = loadedSkills
         self.toolTrace = toolTrace
     }
 }

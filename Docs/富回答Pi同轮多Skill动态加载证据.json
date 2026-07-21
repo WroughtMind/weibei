@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "testedAt": "2026-07-20T22:21:55Z",
+  "provider": "openai-codex",
+  "model": "gpt-5.5",
+  "result": "passed",
+  "readCalls": [
+    {
+      "toolName": "read",
+      "path": "Sources/WeiBeiCore/AgentResources/skills/rich-answer/rich-answer-director/SKILL.md",
+      "isError": false
+    },
+    {
+      "toolName": "read",
+      "path": "Sources/WeiBeiCore/AgentResources/skills/rich-answer/professional-visualization/SKILL.md",
+      "isError": false
+    }
+  ],
+  "finalResult": {
+    "loadedSkills": [
+      "rich-answer-director",
+      "professional-visualization"
+    ],
+    "directorFirstHeading": "富回答导演",
+    "visualizationFirstHeading": "专业可视化"
+  },
+  "skills": {
+    "rich-answer-director": {
+      "sha256": "c971c06d30d8727d212542f477a73fe05f4f8f0eea4d2e9571425a2cccc297b8"
+    },
+    "professional-visualization": {
+      "sha256": "5bee30cfe18fbdf5d61707ca39ca7a462d90b2338db0db44a6a55cbd3d25e8f7"
+    }
+  },
+  "rawLog": {
+    "sha256": "3dd598e86913c00d24bf4600ad05716d95101ab21fe0a60d6fab0e645a77d443",
+    "bytes": 367341,
+    "retained": false
+  },
+  "privacy": {
+    "skillBodiesStored": false,
+    "credentialsStored": false,
+    "sessionStored": false
+  }
+}

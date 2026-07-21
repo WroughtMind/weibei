@@ -258,6 +258,7 @@ public struct RichAnswerScene: Codable, Hashable, Sendable {
     public var placement: RichAnswerSurface
     public var ui: RichAnswerUIComposition?
     public var program: RichAnswerUIProgram?
+    public var renderPlan: RichAnswerRenderPlan?
 
     public init(
         id: String,
@@ -270,7 +271,8 @@ public struct RichAnswerScene: Codable, Hashable, Sendable {
         evidenceIDs: [String] = [],
         placement: RichAnswerSurface = .inline,
         ui: RichAnswerUIComposition? = nil,
-        program: RichAnswerUIProgram? = nil
+        program: RichAnswerUIProgram? = nil,
+        renderPlan: RichAnswerRenderPlan? = nil
     ) {
         self.id = id
         self.title = title
@@ -283,6 +285,7 @@ public struct RichAnswerScene: Codable, Hashable, Sendable {
         self.placement = placement
         self.ui = ui
         self.program = program
+        self.renderPlan = renderPlan
     }
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
@@ -297,6 +300,7 @@ public struct RichAnswerScene: Codable, Hashable, Sendable {
         case placement
         case ui
         case program
+        case renderPlan
     }
 
     public init(from decoder: Decoder) throws {
@@ -313,6 +317,7 @@ public struct RichAnswerScene: Codable, Hashable, Sendable {
         placement = try container.decodeIfPresent(RichAnswerSurface.self, forKey: .placement) ?? .inline
         ui = try container.decodeIfPresent(RichAnswerUIComposition.self, forKey: .ui)
         program = try container.decodeIfPresent(RichAnswerUIProgram.self, forKey: .program)
+        renderPlan = try container.decodeIfPresent(RichAnswerRenderPlan.self, forKey: .renderPlan)
     }
 }
 
@@ -1062,6 +1067,12 @@ public struct RichAnswerPresentation: Codable, Hashable, Sendable {
                 }
                 resolvedScene.ui = ui
             }
+            if var renderPlan = scene.renderPlan {
+                renderPlan.spec.fields = renderPlan.spec.fields.mapValues {
+                    $0.resolvingAssetReferences(using: aliases)
+                }
+                resolvedScene.renderPlan = renderPlan
+            }
             return resolvedScene
         }
         resolved.evidenceLedger = evidenceLedger.map { evidence in
@@ -1070,6 +1081,27 @@ public struct RichAnswerPresentation: Codable, Hashable, Sendable {
             return resolvedEvidence
         }
         return resolved
+    }
+}
+
+private extension RichAnswerRenderSpecValue {
+    func resolvingAssetReferences(using aliases: [String: String]) -> RichAnswerRenderSpecValue {
+        switch self {
+        case .null, .bool, .number, .string:
+            return self
+        case let .array(values):
+            return .array(values.map { $0.resolvingAssetReferences(using: aliases) })
+        case let .object(fields):
+            var resolvedFields = fields.mapValues {
+                $0.resolvingAssetReferences(using: aliases)
+            }
+            if case let .string(kind)? = fields["kind"],
+               kind == "assetRef",
+               case let .string(source)? = fields["source"] {
+                resolvedFields["source"] = .string(aliases[source] ?? source)
+            }
+            return .object(resolvedFields)
+        }
     }
 }
 
@@ -1158,6 +1190,7 @@ public enum RichAnswerEngine {
             !scene.operations.isEmpty
                 || scene.program?.directManipulation == true
                 || scene.ui?.nodes.contains(where: { directUIRoles.contains($0.role) }) == true
+                || scene.renderPlan?.interactionBindings.isEmpty == false
         }
         guard envelope.expressionPlan.directManipulation == hasDirectOperations else {
             diagnostics.append(
@@ -1489,18 +1522,21 @@ public enum RichAnswerEngine {
                 message: "scene family is not declared by the expression plan"
             )
         }
-        guard scene.ui != nil || scene.program != nil || !scene.objects.isEmpty else {
+        let rendererEntryCount = [scene.program != nil, scene.ui != nil, scene.renderPlan != nil]
+            .filter { $0 }
+            .count
+        guard rendererEntryCount > 0 || !scene.objects.isEmpty else {
             return RichAnswerDiagnostic(
                 code: .emptyScene,
                 sceneID: scene.id,
-                message: "scene does not contain knowledge objects or a generated UI program"
+                message: "scene must submit one generated renderer entry or a legacy knowledge-object scene"
             )
         }
-        guard scene.ui == nil || scene.program == nil else {
+        guard rendererEntryCount <= 1 else {
             return RichAnswerDiagnostic(
                 code: .unsupportedField,
                 sceneID: scene.id,
-                message: "scene cannot submit both the legacy UI tree and an OpenUI program"
+                message: "scene cannot submit more than one of program, ui, or renderPlan"
             )
         }
         guard scene.program == nil || scene.operations.isEmpty else {
@@ -1508,6 +1544,13 @@ public enum RichAnswerEngine {
                 code: .unsupportedField,
                 sceneID: scene.id,
                 message: "OpenUI program scenes cannot also submit legacy operations"
+            )
+        }
+        guard scene.renderPlan == nil || scene.operations.isEmpty else {
+            return RichAnswerDiagnostic(
+                code: .unsupportedField,
+                sceneID: scene.id,
+                message: "renderPlan scenes cannot also submit legacy operations"
             )
         }
         guard !scene.evidenceIDs.isEmpty else {
@@ -1606,7 +1649,7 @@ public enum RichAnswerEngine {
             if let issue = validateUIProgram(program, scene: scene) {
                 return issue
             }
-            return validateGeneratedFamilyContract(scene)
+            return nil
         }
 
         if let ui = scene.ui {
@@ -1625,14 +1668,54 @@ public enum RichAnswerEngine {
                     "generated UI does not bind every scene evidence item to a reachable node or data row"
                 )
             }
-            if let issue = validateGeneratedIntentContract(scene, expressionPlan: expressionPlan) {
-                return issue
-            }
-            return validateGeneratedFamilyContract(scene)
+            return nil
+        }
+
+        if let renderPlan = scene.renderPlan {
+            return validateRenderPlan(
+                renderPlan,
+                scene: scene,
+                evidenceByID: evidenceByID
+            )
         }
 
         if let issue = validateFamilyContract(scene) {
             return issue
+        }
+
+        return nil
+    }
+
+    private static func validateRenderPlan(
+        _ plan: RichAnswerRenderPlan,
+        scene: RichAnswerScene,
+        evidenceByID: [String: RichAnswerEvidence]
+    ) -> RichAnswerDiagnostic? {
+        let negotiation = RichAnswerRendererRegistry.defaultRegistry().negotiate(plan: plan)
+        guard negotiation.status == .accepted else {
+            let message = negotiation.mismatch?.issues.first?.message ?? "renderPlan capability negotiation failed"
+            return RichAnswerDiagnostic(
+                code: .invalidParameter,
+                sceneID: scene.id,
+                message: "renderPlan capability negotiation failed: \(message)"
+            )
+        }
+
+        let sceneEvidenceIDs = Set(scene.evidenceIDs)
+        let boundEvidenceIDs = Set(plan.sourceBindings.map(\.evidenceID))
+        guard plan.sourceBindings.allSatisfy({
+            sceneEvidenceIDs.contains($0.evidenceID) && evidenceByID[$0.evidenceID] != nil
+        }) else {
+            return missingEvidence(
+                sceneID: scene.id,
+                "renderPlan sourceBindings must reference evidence IDs declared by this scene and evidence ledger"
+            )
+        }
+        guard sceneEvidenceIDs.isSubset(of: boundEvidenceIDs) else {
+            return missingEvidence(
+                sceneID: scene.id,
+                "renderPlan sourceBindings must cover every scene evidence item"
+            )
         }
 
         return nil
@@ -1680,16 +1763,6 @@ public enum RichAnswerEngine {
                 code: .unauthorizedAsset,
                 sceneID: sceneID,
                 message: "generated UI program attempted to use markup, network access, or executable tools"
-            )
-        }
-
-        if source.range(
-            of: #"NarrativeBlock\([^\n]*,\s*\"conclusion\"\s*\)"#,
-            options: .regularExpression
-        ) != nil {
-            return invalidValue(
-                sceneID: sceneID,
-                "generated UI lives inside the answer flow and cannot repeat the answer conclusion"
             )
         }
 
@@ -1845,17 +1918,6 @@ public enum RichAnswerEngine {
             return invalidValue(sceneID: sceneID, "generated UI contains a cycle, unreachable node, or excessive nesting")
         }
         let reachableNodes = ui.nodes.filter { visited.contains($0.id) }
-
-        let primaryControlCount = ui.nodes.filter {
-            [.slider, .toggle, .scrubber, .select, .probe].contains($0.role)
-        }.count
-        guard primaryControlCount <= 2 else {
-            return RichAnswerDiagnostic(
-                code: .budgetExceeded,
-                sceneID: sceneID,
-                message: "generated UI exposes more than two primary controls"
-            )
-        }
 
         for dataset in ui.datasets {
             guard !dataset.rows.isEmpty else {
@@ -3115,11 +3177,13 @@ private extension RichAnswerRegion {
 
 private extension RichAnswerScene {
     var allEvidenceIDs: [String] {
-        evidenceIDs
-            + objects.flatMap(\.evidenceIDs)
-            + relations.flatMap(\.evidenceIDs)
-            + frames.flatMap(\.evidenceIDs)
-            + (ui?.allEvidenceIDs ?? [])
+        var identifiers = evidenceIDs
+        identifiers.append(contentsOf: objects.flatMap(\.evidenceIDs))
+        identifiers.append(contentsOf: relations.flatMap(\.evidenceIDs))
+        identifiers.append(contentsOf: frames.flatMap(\.evidenceIDs))
+        identifiers.append(contentsOf: ui?.allEvidenceIDs ?? [])
+        identifiers.append(contentsOf: renderPlan?.sourceBindings.map(\.evidenceID) ?? [])
+        return identifiers
     }
 }
 

@@ -15,6 +15,7 @@ enum RichAnswerEvidenceCommandLine {
       --case <id> / --cases <id,id>          选择单题或多题
       --filter <group> / --group <group>     按 rich/text-only/degradation/invalid/t1/t2/学科/能力过滤
       --repetitions <1-4|1,2,3,4>            显式指定重复轮次；默认只跑第 1 轮
+      --thinking <level>                     仅为本次证据运行设置 Pi 思考级别，不修改全局配置
       --resume                               已有 passed 记录则断点跳过，不覆盖原始记录
       --evidence-dir <path>                  指定证据根目录
       --offset <n> --limit <n>               分片运行
@@ -52,6 +53,7 @@ enum RichAnswerEvidenceCommandLine {
                  "--filter", "--group", "--rich-answer-filter",
                  "--run-id", "--rich-answer-run-id",
                  "--repetition", "--repetitions", "--rich-answer-repetition", "--rich-answer-repetitions",
+                 "--thinking", "--thinking-level", "--pi-thinking",
                  "--offset", "--rich-answer-offset",
                  "--limit", "--rich-answer-limit",
                  "--evidence-dir", "--rich-answer-evidence-dir",
@@ -104,6 +106,8 @@ enum RichAnswerEvidenceCommandLine {
             environment["WEIBEI_PI_RICH_ANSWER_REPETITION"] = trimmed
         case "--repetitions", "--rich-answer-repetitions":
             environment["WEIBEI_PI_RICH_ANSWER_REPETITIONS"] = trimmed
+        case "--thinking", "--thinking-level", "--pi-thinking":
+            environment["WEIBEI_PI_THINKING_LEVEL"] = trimmed
         case "--offset", "--rich-answer-offset":
             environment["WEIBEI_PI_RICH_ANSWER_OFFSET"] = trimmed
         case "--limit", "--rich-answer-limit":
@@ -148,6 +152,7 @@ struct RichAnswerEvidenceRunConfiguration {
     let continueAfterFailure: Bool
     let repairNote: String?
     let retestOfRunID: String?
+    let thinkingLevel: String?
     let sourceHash: String
     let matrixHash: String
 
@@ -183,12 +188,22 @@ struct RichAnswerEvidenceRunConfiguration {
             || evidenceEnabled
         repairNote = Self.nonEmpty(environment["WEIBEI_PI_RICH_ANSWER_REPAIR_NOTE"])
         retestOfRunID = Self.nonEmpty(environment["WEIBEI_PI_RICH_ANSWER_RETEST_OF"])
+        thinkingLevel = Self.nonEmpty(environment["WEIBEI_PI_THINKING_LEVEL"])
+        if let thinkingLevel,
+           !["off", "minimal", "low", "medium", "high", "xhigh"].contains(thinkingLevel.lowercased()) {
+            throw RichAnswerEvidenceError.invalidConfiguration("invalid Pi thinking level: \(thinkingLevel)")
+        }
         sourceHash = try Self.computeSourceHash()
         matrixHash = try Self.computeMatrixHash()
+        try RichAnswerEvidenceModelProofSnapshot.assertBackendProviderSeparationSelfCheck()
     }
 
     var runDescription: String {
-        "\(runID) repetitions=\(repetitions.map(String.init).joined(separator: ",")) root=\(rootURL.path)"
+        "\(runID) repetitions=\(repetitions.map(String.init).joined(separator: ",")) thinking=\(thinkingLevel ?? "inherited") root=\(rootURL.path)"
+    }
+
+    var piProviderConfiguration: PiAgentProviderConfiguration {
+        PiAgentProviderConfiguration(thinkingLevel: thinkingLevel)
     }
 
     private static func parseList(_ rawValue: String?) -> [String] {
@@ -423,6 +438,7 @@ final class RichAnswerEvidenceRecorder {
             guard probe.modelInvocation == true,
                   probe.traceability.modelProof.trustedModelInvocation == true,
                   probe.traceability.modelProof.fixtureInvocation == false,
+                  Self.nonEmpty(probe.traceability.modelProof.backend) == "pi",
                   Self.nonEmpty(probe.traceability.modelProof.provider) != nil,
                   Self.nonEmpty(probe.traceability.modelProof.model) != nil,
                   Self.nonEmpty(probe.traceability.modelProof.requestID) != nil,
@@ -464,6 +480,7 @@ final class RichAnswerEvidenceRecorder {
             expressionPlan: .empty,
             toolAndProtocolValidation: .skipped(reason: "resume found an existing passed record"),
             sourceBinding: .empty,
+            expertObservation: .init(runCase: runCase, reply: nil),
             traceability: try traceabilitySnapshot(
                 runCase: runCase,
                 request: nil,
@@ -518,14 +535,29 @@ final class RichAnswerEvidenceRecorder {
             request: promptSnapshot,
             reply: replySnapshot
         )
+        let caseSnapshot = RichAnswerEvidenceCaseSnapshot(runCase, request: request)
+        let objectiveIssues = Self.objectiveRenderPlanEvidenceIssues(
+            caseSnapshot: caseSnapshot,
+            reply: reply
+        )
         let finalValidation = validation.checkedAgainstModelProof(
             traceability.modelProof,
             requiresModel: runCase.invokesModel
+        ).checkedAgainstObjectiveEvidenceIssues(
+            objectiveIssues
         )
-        let finalFailureReason = Self.failureReason(
+        let modelProofFailureReason = Self.failureReason(
             existing: failureReason,
             proof: traceability.modelProof,
             requiresModel: runCase.invokesModel
+        )
+        let finalFailureReason = Self.failureReason(
+            existing: modelProofFailureReason,
+            objectiveIssues: objectiveIssues
+        )
+        let expertObservation = RichAnswerEvidenceExpertObservationSnapshot(
+            runCase: runCase,
+            reply: reply
         )
         let record = RichAnswerEvidenceRecord(
             schemaVersion: 1,
@@ -533,7 +565,7 @@ final class RichAnswerEvidenceRecorder {
             repetition: repetition,
             sequence: sequence,
             totalSelectedCases: total,
-            caseSnapshot: .init(runCase, request: request),
+            caseSnapshot: caseSnapshot,
             startedAt: Self.timestamp(startedAt),
             finishedAt: Self.timestamp(),
             elapsedSeconds: elapsedSeconds,
@@ -546,6 +578,7 @@ final class RichAnswerEvidenceRecorder {
             expressionPlan: RichAnswerEvidenceExpressionSnapshot(reply: reply),
             toolAndProtocolValidation: finalValidation,
             sourceBinding: RichAnswerEvidenceSourceBinding(runCase: runCase, reply: reply),
+            expertObservation: expertObservation,
             traceability: traceability,
             failureReason: finalFailureReason,
             repairAndRetest: repairSnapshot(previousStatus: previousStatus)
@@ -697,6 +730,111 @@ final class RichAnswerEvidenceRecorder {
         return "\(existing) | \(proofReason)"
     }
 
+    private static func failureReason(
+        existing: String?,
+        objectiveIssues: [String]
+    ) -> String? {
+        guard !objectiveIssues.isEmpty else { return existing }
+        let objectiveReason = "objective renderPlan evidence check failed: \(objectiveIssues.joined(separator: "; "))"
+        guard let existing = nonEmpty(existing) else { return objectiveReason }
+        return "\(existing) | \(objectiveReason)"
+    }
+
+    private static func objectiveRenderPlanEvidenceIssues(
+        caseSnapshot: RichAnswerEvidenceCaseSnapshot,
+        reply: StudyAgentReply?
+    ) -> [String] {
+        guard let presentation = reply?.richAnswer else { return [] }
+        let ledgerAssetIDs = Set(
+            presentation.evidenceLedger.flatMap(\.assetIDs).compactMap(nonEmpty)
+        )
+        var issues: [String] = []
+        for scene in presentation.scenes {
+            guard let plan = scene.renderPlan else { continue }
+            let scenePrefix = "scene \(scene.id) renderPlan"
+            if nonEmpty(plan.renderer) == nil {
+                issues.append("\(scenePrefix) missing renderer")
+            }
+            if plan.spec.fields.isEmpty {
+                issues.append("\(scenePrefix) missing spec")
+            }
+            let visualAssetRefs = visualAssetRefs(in: plan.spec.fields)
+            for assetRef in visualAssetRefs {
+                guard let source = nonEmpty(assetRef.source) else {
+                    issues.append("\(scenePrefix) \(assetRef.path) assetRef source is empty")
+                    continue
+                }
+                if !ledgerAssetIDs.contains(source) {
+                    issues.append("\(scenePrefix) \(assetRef.path) assetRef source \(source) is absent from evidenceLedger.assetIDs")
+                }
+                if source == caseSnapshot.materialItemID,
+                   !isParseableVisualMaterialKind(caseSnapshot.materialKind) {
+                    issues.append("\(scenePrefix) \(assetRef.path) uses materialItemID \(source) as a visual asset while materialKind is \(caseSnapshot.materialKind ?? "nil")")
+                }
+            }
+        }
+        return issues
+    }
+
+    private static func visualAssetRefs(
+        in fields: [String: RichAnswerRenderSpecValue]
+    ) -> [(path: String, source: String?)] {
+        fields.flatMap { key, value in
+            visualAssetRefs(in: value, path: "spec.\(key)", visualContext: isVisualAssetContext(key))
+        }
+    }
+
+    private static func visualAssetRefs(
+        in value: RichAnswerRenderSpecValue,
+        path: String,
+        visualContext: Bool
+    ) -> [(path: String, source: String?)] {
+        switch value {
+        case .null, .bool, .number, .string:
+            return []
+        case let .array(items):
+            return items.enumerated().flatMap { index, item in
+                visualAssetRefs(in: item, path: "\(path)[\(index)]", visualContext: visualContext)
+            }
+        case let .object(object):
+            if isAssetRefObject(object), visualContext {
+                return [(path, stringField("source", in: object))]
+            }
+            return object.flatMap { key, child in
+                visualAssetRefs(
+                    in: child,
+                    path: "\(path).\(key)",
+                    visualContext: visualContext || isVisualAssetContext(key)
+                )
+            }
+        }
+    }
+
+    private static func isAssetRefObject(_ object: [String: RichAnswerRenderSpecValue]) -> Bool {
+        guard case let .string(kind)? = object["kind"] else { return false }
+        return kind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "assetref"
+    }
+
+    private static func stringField(
+        _ key: String,
+        in object: [String: RichAnswerRenderSpecValue]
+    ) -> String? {
+        guard case let .string(value)? = object[key] else { return nil }
+        return value
+    }
+
+    private static func isVisualAssetContext(_ key: String) -> Bool {
+        let normalizedKey = key
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return normalizedKey.contains("image") || normalizedKey.contains("map")
+    }
+
+    private static func isParseableVisualMaterialKind(_ materialKind: String?) -> Bool {
+        guard let kind = nonEmpty(materialKind)?.lowercased() else { return false }
+        return ["image", "pdf"].contains(kind)
+    }
+
     private static func nonEmpty(_ rawValue: String?) -> String? {
         let value = rawValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return value.isEmpty ? nil : value
@@ -761,6 +899,7 @@ final class RichAnswerEvidenceRecorder {
         | actualShape | \(record.shapeDecision.actualShape) |
         | T1 scenes | \(record.shapeDecision.t1SceneCount) |
         | T2 scenes | \(record.shapeDecision.t2SceneCount) |
+        | renderPlan scenes | \(record.shapeDecision.renderPlanSceneCount ?? 0) |
         | record | \(recordPath) |
 
         ## 题目与材料
@@ -784,6 +923,14 @@ final class RichAnswerEvidenceRecorder {
         ## 模型原始回答
 
         \(fenced(reply?.text ?? "无模型回复"))
+
+        ## 专家观察（不作为运行时硬拒绝）
+
+        - 策略：\(record.expertObservation.policy)
+        - 期望文本组：\(record.expertObservation.expectedTextGroups.map { $0.joined(separator: "/") }.joined(separator: " | "))
+        - 已命中文本组：\(record.expertObservation.matchedExpectedTextGroups.map { $0.joined(separator: "/") }.joined(separator: " | "))
+        - 缺失文本组：\(record.expertObservation.missingExpectedTextGroups.map { $0.joined(separator: "/") }.joined(separator: " | "))
+        - 命中完整度：\(record.expertObservation.satisfiedExpectedTextGroups)
 
         ## 形态判断
 
@@ -826,6 +973,7 @@ final class RichAnswerEvidenceRecorder {
         - sourceHash：\(record.traceability.sourceHash)
         - matrixHash：\(record.traceability.matrixHash)
         - promptHash：\(record.traceability.promptHash)
+        - backend：\(record.traceability.modelProof.backend ?? "无")
         - provider：\(record.traceability.modelProof.provider ?? "无")
         - model：\(record.traceability.modelProof.model ?? "无")
         - requestID：\(record.traceability.modelProof.requestID ?? "无")
@@ -1078,6 +1226,14 @@ struct RichAnswerEvidenceValidationSnapshot: Codable {
         updated.issues.append(contentsOf: proof.issues.map { "model-proof:\($0)" })
         return updated
     }
+
+    fileprivate func checkedAgainstObjectiveEvidenceIssues(_ issues: [String]) -> Self {
+        guard !issues.isEmpty else { return self }
+        var updated = self
+        updated.status = "failed"
+        updated.issues.append(contentsOf: issues.map { "objective-evidence:\($0)" })
+        return updated
+    }
 }
 
 private struct RichAnswerEvidenceRecord: Codable {
@@ -1099,6 +1255,7 @@ private struct RichAnswerEvidenceRecord: Codable {
     var expressionPlan: RichAnswerEvidenceExpressionSnapshot
     var toolAndProtocolValidation: RichAnswerEvidenceValidationSnapshot
     var sourceBinding: RichAnswerEvidenceSourceBinding
+    var expertObservation: RichAnswerEvidenceExpertObservationSnapshot
     var traceability: RichAnswerEvidenceTraceabilitySnapshot
     var failureReason: String?
     var repairAndRetest: RichAnswerEvidenceRepairSnapshot
@@ -1180,6 +1337,7 @@ private struct RichAnswerEvidenceResumeModelProofSnapshot: Decodable {
     var provider: String?
     var model: String?
     var requestID: String?
+    var backend: String?
     var nonFixtureEvidence: [String]
     var trustedModelInvocation: Bool
     var fixtureInvocation: Bool
@@ -1246,7 +1404,7 @@ private struct RichAnswerEvidenceModelProofSnapshot: Codable {
         request: RichAnswerEvidencePromptSnapshot?,
         reply: RichAnswerEvidenceReplySnapshot?
     ) {
-        backend = reply?.backend
+        backend = Self.normalized(reply?.backend)
         requestID = request?.requestID
         provider = Self.provider(from: reply)
         model = Self.model(from: reply)
@@ -1264,22 +1422,24 @@ private struct RichAnswerEvidenceModelProofSnapshot: Codable {
         if let provider, !provider.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             evidence.append("provider=\(provider)")
         } else {
-            proofIssues.append("missing provider in model reply metadata")
+            proofIssues.append("missing upstream provider in toolTrace")
         }
         if let model, !model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             evidence.append("model=\(model)")
         } else {
-            proofIssues.append("missing model in model reply metadata")
+            proofIssues.append("missing model in toolTrace")
         }
         if let requestID, !requestID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             evidence.append("requestID=\(requestID)")
         } else {
             proofIssues.append("missing requestID in prompt snapshot")
         }
-        if let backend, backend != "offline" {
+        if let backend, backend == "pi" {
             evidence.append("backend=\(backend)")
+        } else if let backend, !backend.isEmpty {
+            proofIssues.append("backend is \(backend); expected pi")
         } else {
-            proofIssues.append("backend is missing or offline")
+            proofIssues.append("backend is missing")
         }
         if let text = reply?.text,
            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -1296,24 +1456,23 @@ private struct RichAnswerEvidenceModelProofSnapshot: Codable {
     }
 
     private static func provider(from reply: RichAnswerEvidenceReplySnapshot?) -> String? {
-        guard let backend = reply?.backend,
-              !backend.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              backend != "offline" else {
+        guard let reply,
+              let value = traceValue(
+                  in: reply.toolTrace,
+                  keys: ["provider", "upstreamProvider", "upstream-provider", "llmProvider", "llm-provider"]
+              ) else { return nil }
+        let backend = normalized(reply.backend)
+        let normalizedValue = value.lowercased()
+        guard backend.map({ normalizedValue != $0 }) ?? true,
+              !["offline", "fixture", "mock"].contains(normalizedValue) else {
             return nil
         }
-        return backend
+        return value
     }
 
     private static func model(from reply: RichAnswerEvidenceReplySnapshot?) -> String? {
-        let candidates = reply?.toolTrace.compactMap { trace -> String? in
-            for prefix in ["model=", "model:", "llm=", "llm:"] where trace.hasPrefix(prefix) {
-                let value = String(trace.dropFirst(prefix.count))
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                return value.isEmpty ? nil : value
-            }
-            return nil
-        } ?? []
-        return candidates.first
+        guard let reply else { return nil }
+        return traceValue(in: reply.toolTrace, keys: ["model", "llm"])
     }
 
     private static func isFixture(reply: RichAnswerEvidenceReplySnapshot?) -> Bool {
@@ -1322,6 +1481,116 @@ private struct RichAnswerEvidenceModelProofSnapshot: Codable {
         return reply.toolTrace.contains { trace in
             trace.range(of: "fixture", options: [.caseInsensitive]) != nil
         }
+    }
+
+    static func assertBackendProviderSeparationSelfCheck() throws {
+        guard let runCase = RichAnswerLiveCases.fullMatrixRuns.first(where: { $0.invokesModel }) else {
+            throw RichAnswerEvidenceError.invalidConfiguration(
+                "model proof self-check cannot find a model-backed rich-answer case"
+            )
+        }
+        let requestSnapshot = RichAnswerEvidencePromptSnapshot(
+            StudyAgentRequest(
+                purpose: .conversation,
+                question: "证明 backend 与 provider 分离",
+                materialTitle: "model proof self-check",
+                materialText: "provider=openai-codex 必须来自 toolTrace，backend=pi 只能证明运行入口。",
+                noteTitle: "model proof self-check",
+                noteText: "",
+                contextRevision: "model-proof-self-check"
+            )
+        )
+        let replySnapshot = RichAnswerEvidenceReplySnapshot(
+            StudyAgentReply(
+                text: "真实上游通过 trace 声明。",
+                backend: .pi,
+                toolTrace: [
+                    "provider=openai-codex",
+                    "model=gpt-proof-check",
+                ]
+            )
+        )
+        let proof = RichAnswerEvidenceModelProofSnapshot(
+            runCase: runCase,
+            request: requestSnapshot,
+            reply: replySnapshot
+        )
+        guard proof.backend == "pi",
+              proof.provider == "openai-codex",
+              proof.model == "gpt-proof-check",
+              proof.trustedModelInvocation,
+              proof.nonFixtureEvidence.contains("backend=pi"),
+              !proof.nonFixtureEvidence.contains(where: { $0.contains("Optional(") }) else {
+            throw RichAnswerEvidenceError.invalidConfiguration(
+                "model proof self-check failed to separate backend=pi from provider=openai-codex"
+            )
+        }
+
+        let backendOnlyReplySnapshot = RichAnswerEvidenceReplySnapshot(
+            StudyAgentReply(
+                text: "backend 不能冒充 provider。",
+                backend: .pi,
+                toolTrace: [
+                    "provider=pi",
+                    "model=gpt-proof-check",
+                ]
+            )
+        )
+        let backendOnlyProof = RichAnswerEvidenceModelProofSnapshot(
+            runCase: runCase,
+            request: requestSnapshot,
+            reply: backendOnlyReplySnapshot
+        )
+        guard backendOnlyProof.provider == nil,
+              !backendOnlyProof.trustedModelInvocation else {
+            throw RichAnswerEvidenceError.invalidConfiguration(
+                "model proof self-check accepted backend=pi as upstream provider"
+            )
+        }
+    }
+
+    private static func traceValue(in traces: [String], keys: [String]) -> String? {
+        for trace in traces {
+            if let value = traceValue(in: trace, keys: keys) {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private static func traceValue(in trace: String, keys: [String]) -> String? {
+        let trimmedTrace = trace.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTrace.isEmpty else { return nil }
+        for key in keys {
+            let escapedKey = NSRegularExpression.escapedPattern(for: key)
+            let pattern = "(?:^|[\\s,;])\(escapedKey)\\s*[:=]\\s*([^\\s,;]+)"
+            guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(trimmedTrace.startIndex..<trimmedTrace.endIndex, in: trimmedTrace)
+            guard let match = expression.firstMatch(in: trimmedTrace, range: range),
+                  match.numberOfRanges > 1,
+                  let valueRange = Range(match.range(at: 1), in: trimmedTrace) else {
+                continue
+            }
+            let value = cleanTraceValue(String(trimmedTrace[valueRange]))
+            if !value.isEmpty { return value }
+        }
+        return nil
+    }
+
+    private static func cleanTraceValue(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'`[](){}"))
+    }
+
+    private static func normalized(_ value: String?) -> String? {
+        guard let normalizedValue = value?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased(),
+              !normalizedValue.isEmpty else {
+            return nil
+        }
+        return normalizedValue
     }
 }
 
@@ -1535,6 +1804,7 @@ private struct RichAnswerEvidenceReplySnapshot: Codable {
     var text: String
     var backend: String
     var toolTrace: [String]
+    var loadedSkills: [StudyAgentLoadedSkill]
     var richAnswer: RichAnswerPresentation?
     var noteProposal: StudyAgentNoteProposal?
     var learningUpdate: StudyAgentLearningUpdate?
@@ -1543,6 +1813,7 @@ private struct RichAnswerEvidenceReplySnapshot: Codable {
         text = reply.text
         backend = reply.backend.rawValue
         toolTrace = reply.toolTrace
+        loadedSkills = reply.loadedSkills
         richAnswer = reply.richAnswer
         noteProposal = reply.noteProposal
         learningUpdate = reply.learningUpdate
@@ -1557,6 +1828,7 @@ private struct RichAnswerEvidenceShapeDecision: Codable {
     var sceneCount: Int
     var t1SceneCount: Int
     var t2SceneCount: Int
+    var renderPlanSceneCount: Int?
     var narrativeCharacterCount: Int
 
     init(runCase: RichAnswerLiveRunCase, reply: StudyAgentReply?) {
@@ -1564,19 +1836,24 @@ private struct RichAnswerEvidenceShapeDecision: Codable {
         let presentation = reply?.richAnswer
         let t1Count = presentation?.scenes.filter { $0.program != nil }.count ?? 0
         let t2Count = presentation?.scenes.filter { $0.ui != nil }.count ?? 0
+        let renderPlanCount = presentation?.scenes.filter { $0.renderPlan != nil }.count ?? 0
         sceneCount = presentation?.scenes.count ?? 0
         t1SceneCount = t1Count
         t2SceneCount = t2Count
+        renderPlanSceneCount = renderPlanCount
         preferredSurface = presentation?.expressionPlan?.preferredSurface.rawValue
         directManipulation = presentation?.expressionPlan?.directManipulation
         narrativeCharacterCount = reply?.text.count ?? 0
         if presentation?.mode == .rich {
-            if t1Count > 0 && t2Count > 0 {
-                actualShape = "rich-mixed-t1-t2"
+            let activeRoutes = [t1Count > 0, t2Count > 0, renderPlanCount > 0].filter { $0 }.count
+            if activeRoutes > 1 {
+                actualShape = "rich-mixed-render-routes"
             } else if t1Count > 0 {
                 actualShape = "rich-t1-openui-program"
             } else if t2Count > 0 {
                 actualShape = "rich-t2-composable-ui"
+            } else if renderPlanCount > 0 {
+                actualShape = "rich-render-plan"
             } else {
                 actualShape = "rich-without-renderer"
             }
@@ -1598,6 +1875,7 @@ private struct RichAnswerEvidenceExpressionSnapshot: Codable {
     var expressionPlan: RichAnswerExpressionPlan?
     var t1Programs: [RichAnswerEvidenceT1ProgramSnapshot]
     var t2Compositions: [RichAnswerEvidenceT2CompositionSnapshot]
+    var renderPlans: [RichAnswerEvidenceRenderPlanSnapshot]?
 
     static let empty = RichAnswerEvidenceExpressionSnapshot(reply: nil)
 
@@ -1608,6 +1886,48 @@ private struct RichAnswerEvidenceExpressionSnapshot: Codable {
         } ?? []
         t2Compositions = reply?.richAnswer?.scenes.compactMap { scene in
             scene.ui.map { RichAnswerEvidenceT2CompositionSnapshot(scene: scene, ui: $0) }
+        } ?? []
+        renderPlans = reply?.richAnswer?.scenes.compactMap { scene in
+            scene.renderPlan.map { RichAnswerEvidenceRenderPlanSnapshot(scene: scene, plan: $0) }
+        } ?? []
+    }
+}
+
+private struct RichAnswerEvidenceRenderPlanSnapshot: Codable {
+    var sceneID: String
+    var family: String
+    var renderer: String
+    var specVersion: String
+    var specFields: [String]
+    var interactionKinds: [String]
+    var interactionIDs: [String]
+    var actionNames: [String]
+    var stateKeys: [String]
+    var sourceEvidenceIDs: [String]
+    var sourceRoles: [String]
+    var artifactKinds: [String]
+    var fallbackMode: String
+    var negotiationStatus: String
+    var negotiationIssues: [String]
+
+    init(scene: RichAnswerScene, plan: RichAnswerRenderPlan) {
+        let negotiation = RichAnswerRendererRegistry.defaultRegistry().negotiate(plan: plan)
+        sceneID = scene.id
+        family = scene.family.rawValue
+        renderer = plan.renderer
+        specVersion = plan.specVersion
+        specFields = plan.spec.fields.keys.sorted()
+        interactionKinds = Array(Set(plan.interactionBindings.map(\.kind.rawValue))).sorted()
+        interactionIDs = plan.interactionBindings.map(\.id).sorted()
+        actionNames = plan.interactionBindings.compactMap(\.actionName).sorted()
+        stateKeys = plan.interactionBindings.compactMap(\.stateKey).sorted()
+        sourceEvidenceIDs = Array(Set(plan.sourceBindings.map(\.evidenceID))).sorted()
+        sourceRoles = Array(Set(plan.sourceBindings.map(\.role))).sorted()
+        artifactKinds = Array(Set(plan.artifactRefs.map(\.kind))).sorted()
+        fallbackMode = plan.fallback.mode.rawValue
+        negotiationStatus = negotiation.status.rawValue
+        negotiationIssues = negotiation.mismatch?.issues.map { issue in
+            "\(issue.code.rawValue):\(issue.field ?? "unknown"):\(issue.message)"
         } ?? []
     }
 }
@@ -1712,6 +2032,35 @@ private struct RichAnswerEvidenceSourceBinding: Codable {
             remainder = remainder[remainder.index(after: end)...]
         }
         return Array(Set(labels)).sorted()
+    }
+}
+
+private struct RichAnswerEvidenceExpertObservationSnapshot: Codable {
+    var policy: String
+    var expectedTextGroups: [[String]]
+    var expectedLimitationGroups: [[String]]
+    var matchedExpectedTextGroups: [[String]]
+    var missingExpectedTextGroups: [[String]]
+    var satisfiedExpectedTextGroups: Bool
+
+    static let empty = RichAnswerEvidenceExpertObservationSnapshot(runCase: .invalidProtocol("none"), reply: nil)
+
+    init(runCase: RichAnswerLiveRunCase, reply: StudyAgentReply?) {
+        policy = "development-observation-not-runtime-hard-gate"
+        expectedTextGroups = runCase.expertExpectedTextGroups
+        expectedLimitationGroups = runCase.expertExpectedLimitationGroups
+        let corpus = reply?.text ?? ""
+        matchedExpectedTextGroups = expectedTextGroups.filter {
+            Self.containsAny(in: corpus, group: $0)
+        }
+        missingExpectedTextGroups = expectedTextGroups.filter {
+            !Self.containsAny(in: corpus, group: $0)
+        }
+        satisfiedExpectedTextGroups = missingExpectedTextGroups.isEmpty
+    }
+
+    private static func containsAny(in text: String, group: [String]) -> Bool {
+        group.contains { text.localizedCaseInsensitiveContains($0) }
     }
 }
 
@@ -1914,6 +2263,26 @@ extension RichAnswerLiveRunCase {
             checkCase.forbiddenTextFragments
         case let .degradation(checkCase):
             checkCase.pressureCase.rejectedOrDegradedBehaviors + checkCase.forbiddenTextFragments
+        }
+    }
+
+    var expertExpectedTextGroups: [[String]] {
+        switch self {
+        case .invalidProtocol, .success:
+            []
+        case let .textOnly(checkCase):
+            checkCase.expectedTextGroups
+        case let .degradation(checkCase):
+            checkCase.expectedTextGroups
+        }
+    }
+
+    var expertExpectedLimitationGroups: [[String]] {
+        switch self {
+        case let .degradation(checkCase):
+            checkCase.expectedTextGroups
+        case .invalidProtocol, .success, .textOnly:
+            []
         }
     }
 

@@ -65,13 +65,19 @@ struct RichAnswerEvidenceMergeResult {
     let mergedRunID: String
     let rootURL: URL
     let inputRunIDs: [String]
+    let mergeScope: String
     let repetitions: [Int]
     let totalRecords: Int
     let reviewPackageURL: URL
 }
 
 enum RichAnswerEvidenceMerger {
-    private static let targetRepetitions = [1, 2, 3, 4]
+    private static let allSupportedRepetitions = [1, 2, 3, 4]
+    private static let supportedRepetitionSets = [
+        [1],
+        [2, 3, 4],
+        [1, 2, 3, 4],
+    ]
     private static let requiredCaseCount = 56
 
     static func merge(configuration: RichAnswerEvidenceMergeConfiguration) throws -> RichAnswerEvidenceMergeResult {
@@ -108,6 +114,11 @@ enum RichAnswerEvidenceMerger {
             }
 
             let metadata = try readSourceMetadataIfPresent(runURL: runURL)
+            if let metadata, metadata.runID != runID {
+                throw RichAnswerEvidenceError.invalidConfiguration(
+                    "source run metadata runID mismatch at \(runURL.path): expected \(runID), got \(metadata.runID)"
+                )
+            }
             metadata?.repetitions.forEach { sourceRepetitions.insert($0) }
             let recordURLs = try sourceRecordURLs(runURL: runURL)
             guard !recordURLs.isEmpty else {
@@ -115,6 +126,7 @@ enum RichAnswerEvidenceMerger {
             }
 
             var sourceRecordCount = 0
+            var observedSourceRepetitions = Set<Int>()
             for recordURL in recordURLs {
                 let record = try readRecord(recordURL: recordURL)
                 guard record.runID == runID else {
@@ -127,12 +139,13 @@ enum RichAnswerEvidenceMerger {
                         "unknown caseID in source record: \(record.caseSnapshot.id) at \(recordURL.path)"
                     )
                 }
-                guard targetRepetitions.contains(record.repetition) else {
+                guard allSupportedRepetitions.contains(record.repetition) else {
                     throw RichAnswerEvidenceError.invalidConfiguration(
-                        "unexpected repetition \(record.repetition) in \(recordURL.path); expected \(targetRepetitions.map(String.init).joined(separator: ","))"
+                        "unexpected repetition \(record.repetition) in \(recordURL.path); expected \(allSupportedRepetitions.map(String.init).joined(separator: ","))"
                     )
                 }
                 sourceRepetitions.insert(record.repetition)
+                observedSourceRepetitions.insert(record.repetition)
                 let key = RichAnswerEvidenceMergeRecordKey(
                     repetition: record.repetition,
                     caseID: record.caseSnapshot.id
@@ -160,6 +173,7 @@ enum RichAnswerEvidenceMerger {
                     runID: runID,
                     rootPath: runURL.path,
                     declaredRepetitions: metadata?.repetitions ?? [],
+                    observedRepetitions: observedSourceRepetitions.sorted(),
                     rawRecordCount: sourceRecordCount
                 )
             )
@@ -172,11 +186,13 @@ enum RichAnswerEvidenceMerger {
         }
 
         let repetitions = sourceRepetitions.sorted()
-        guard repetitions == targetRepetitions else {
+        guard supportedRepetitionSets.contains(repetitions) else {
             throw RichAnswerEvidenceError.invalidConfiguration(
-                "merge requires complete repetitions \(targetRepetitions.map(String.init).joined(separator: ",")); got \(repetitions.map(String.init).joined(separator: ","))"
+                "merge supports only complete repetition scopes \(supportedRepetitionScopeDescription); got \(repetitions.map(String.init).joined(separator: ","))"
             )
         }
+        let mergeScope = repetitionScopeDescription(repetitions)
+        let expectedRecordCount = matrixCases.count * repetitions.count
 
         let missing = missingKeys(
             repetitions: repetitions,
@@ -252,9 +268,10 @@ enum RichAnswerEvidenceMerger {
             createdAt: createdAt,
             rootPath: configuration.mergedRootURL.path,
             sourceRuns: sourceRuns,
+            mergeScope: mergeScope,
             repetitions: repetitions,
             expectedCaseCount: matrixCases.count,
-            expectedRecordCount: matrixCases.count * repetitions.count,
+            expectedRecordCount: expectedRecordCount,
             totalRecords: entries.count,
             completionState: packageResult.summary.completionState,
             reviewPackagePath: "review-package/index.html",
@@ -266,9 +283,10 @@ enum RichAnswerEvidenceMerger {
             updatedAt: createdAt,
             rootPath: configuration.mergedRootURL.path,
             inputRunIDs: configuration.inputRunIDs,
+            mergeScope: mergeScope,
             repetitions: repetitions,
             expectedCaseCount: matrixCases.count,
-            expectedRecordCount: matrixCases.count * repetitions.count,
+            expectedRecordCount: expectedRecordCount,
             totalRecords: entries.count,
             statusCounts: statusCounts,
             completionState: packageResult.summary.completionState,
@@ -289,6 +307,7 @@ enum RichAnswerEvidenceMerger {
             mergedRunID: configuration.mergedRunID,
             rootURL: configuration.mergedRootURL,
             inputRunIDs: configuration.inputRunIDs,
+            mergeScope: mergeScope,
             repetitions: repetitions,
             totalRecords: entries.count,
             reviewPackageURL: packageResult.indexURL
@@ -373,6 +392,7 @@ enum RichAnswerEvidenceMerger {
         - root: \(index.rootPath)
         - updatedAt: \(index.updatedAt)
         - inputRunIDs: \(index.inputRunIDs.joined(separator: ", "))
+        - mergeScope: \(index.mergeScope)
         - repetitions: \(index.repetitions.map(String.init).joined(separator: ", "))
         - expected: \(index.expectedRecordCount) records = \(index.expectedCaseCount) cases × \(index.repetitions.count) repetitions
         - totalRecords: \(index.totalRecords)
@@ -433,6 +453,7 @@ enum RichAnswerEvidenceMerger {
           <p><strong>runID</strong>: \(escapeHTML(index.runID))</p>
           <p><strong>root</strong>: \(escapeHTML(index.rootPath))</p>
           <p><strong>inputRunIDs</strong>: \(escapeHTML(index.inputRunIDs.joined(separator: ", ")))</p>
+          <p><strong>mergeScope</strong>: \(escapeHTML(index.mergeScope))</p>
           <p><strong>expected</strong>: \(index.expectedRecordCount) records = \(index.expectedCaseCount) cases × \(index.repetitions.count) repetitions</p>
           <p><strong>statusCounts</strong>: \(escapeHTML(index.statusCounts.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ", ")))</p>
           <p><strong>completionState</strong>: \(escapeHTML(index.completionState))</p>
@@ -456,6 +477,23 @@ enum RichAnswerEvidenceMerger {
         let head = values.prefix(limit).joined(separator: " | ")
         let remaining = values.count - min(values.count, limit)
         return remaining > 0 ? "\(head) | ... +\(remaining) more" : head
+    }
+
+    private static var supportedRepetitionScopeDescription: String {
+        supportedRepetitionSets.map(repetitionScopeDescription).joined(separator: ", ")
+    }
+
+    private static func repetitionScopeDescription(_ repetitions: [Int]) -> String {
+        switch repetitions {
+        case [1]:
+            return "rep1(56)"
+        case [2, 3, 4]:
+            return "rep2-4(168)"
+        case [1, 2, 3, 4]:
+            return "rep1-4(224)"
+        default:
+            return "rep\(repetitions.map(String.init).joined(separator: ","))(\(repetitions.count * requiredCaseCount))"
+        }
     }
 
     private static func escapeHTML(_ value: String) -> String {
@@ -517,6 +555,7 @@ private struct RichAnswerEvidenceMergeSourceRun: Codable {
     var runID: String
     var rootPath: String
     var declaredRepetitions: [Int]
+    var observedRepetitions: [Int]
     var rawRecordCount: Int
 }
 
@@ -526,6 +565,7 @@ private struct RichAnswerEvidenceMergedRunMetadata: Codable {
     var createdAt: String
     var rootPath: String
     var sourceRuns: [RichAnswerEvidenceMergeSourceRun]
+    var mergeScope: String
     var repetitions: [Int]
     var expectedCaseCount: Int
     var expectedRecordCount: Int
@@ -541,6 +581,7 @@ private struct RichAnswerEvidenceMergedRunIndex: Codable {
     var updatedAt: String
     var rootPath: String
     var inputRunIDs: [String]
+    var mergeScope: String
     var repetitions: [Int]
     var expectedCaseCount: Int
     var expectedRecordCount: Int

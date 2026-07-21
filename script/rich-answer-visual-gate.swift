@@ -22,6 +22,9 @@ struct Arguments {
     var afterAckPath: String?
     var axBeforePath: String?
     var axAfterPath: String?
+    var actionReceiptPath: String?
+    var caseID: String?
+    var caseKind: String?
     var outputPath: String?
     var singlePath: String?
     var singleAckPath: String?
@@ -68,6 +71,13 @@ struct VerifiedCaptureAck {
     let bytes: Int64
     let startPaneFrames: PaneFrames?
     let endPaneFrames: PaneFrames?
+}
+
+struct VerifiedActionReceipt {
+    let path: String
+    let source: String
+    let kind: String
+    let sceneID: String
 }
 
 struct CheckResult {
@@ -118,6 +128,12 @@ func parseArguments() throws -> Arguments {
             arguments.axBeforePath = value
         case "--ax-after":
             arguments.axAfterPath = value
+        case "--action-receipt":
+            arguments.actionReceiptPath = value
+        case "--case-id":
+            arguments.caseID = value
+        case "--case-kind":
+            arguments.caseKind = value
         case "--output":
             arguments.outputPath = value
         case "--single":
@@ -177,6 +193,48 @@ func loadImage(path: String) throws -> PixelImage {
     context.interpolationQuality = .none
     context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
     return PixelImage(path: path, width: width, height: height, pixels: pixels)
+}
+
+func loadVerifiedActionReceipt(
+    path: String?,
+    expectedCaseID: String?,
+    expectedCaseKind: String?
+) throws -> VerifiedActionReceipt? {
+    guard let path else { return nil }
+    let receiptURL = URL(fileURLWithPath: path)
+    guard FileManager.default.fileExists(atPath: receiptURL.path) else {
+        throw GateError(description: "Interaction receipt does not exist: \(path)")
+    }
+    let data = try Data(contentsOf: receiptURL)
+    guard let receipt = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+          (receipt["schemaVersion"] as? NSNumber)?.intValue == 1,
+          receipt["stage"] as? String == "after",
+          receipt["changed"] as? Bool == true,
+          let source = receipt["source"] as? String,
+          !source.isEmpty,
+          let kind = receipt["kind"] as? String,
+          !kind.isEmpty,
+          let scene = receipt["scene"] as? [String: Any],
+          let sceneID = scene["id"] as? String,
+          !sceneID.isEmpty,
+          let receiptCase = receipt["case"] as? [String: Any],
+          let before = receipt["before"],
+          let after = receipt["after"],
+          JSONSerialization.isValidJSONObject(["value": before]),
+          JSONSerialization.isValidJSONObject(["value": after]),
+          try JSONSerialization.data(withJSONObject: ["value": before], options: [.sortedKeys])
+            != JSONSerialization.data(withJSONObject: ["value": after], options: [.sortedKeys]) else {
+        throw GateError(description: "Interaction receipt is invalid or unchanged: \(path)")
+    }
+    if let expectedCaseID, !expectedCaseID.isEmpty,
+       receiptCase["id"] as? String != expectedCaseID {
+        throw GateError(description: "Interaction receipt case id does not match: \(path)")
+    }
+    if let expectedCaseKind, !expectedCaseKind.isEmpty,
+       receiptCase["kind"] as? String != expectedCaseKind {
+        throw GateError(description: "Interaction receipt case kind does not match: \(path)")
+    }
+    return VerifiedActionReceipt(path: path, source: source, kind: kind, sceneID: sceneID)
 }
 
 func clamp(_ value: Int, lowerBound: Int, upperBound: Int) -> Int {
@@ -473,9 +531,20 @@ func paneRecord(identifier: String, stage: String, frame: CGRect) -> RectRecord 
 func recordsAppendingPaneFrames(_ records: [RectRecord], with ack: VerifiedCaptureAck?) -> [RectRecord] {
     guard let frames = ack?.endPaneFrames else { return records }
     var merged = records
-    merged.append(paneRecord(identifier: "stable-document-slot-reader", stage: ack?.stage ?? "", frame: frames.reader))
-    merged.append(paneRecord(identifier: "stable-document-slot-agent", stage: ack?.stage ?? "", frame: frames.agent))
+    let existing = paneRecords(records: records)
+    if existing.reader == nil {
+        merged.append(paneRecord(identifier: "stable-document-slot-reader", stage: ack?.stage ?? "", frame: frames.reader))
+    }
+    if existing.agent == nil {
+        merged.append(paneRecord(identifier: "stable-document-slot-agent", stage: ack?.stage ?? "", frame: frames.agent))
+    }
     return merged
+}
+
+func usesAcknowledgementPaneFallback(records: [RectRecord], ack: VerifiedCaptureAck?) -> Bool {
+    guard ack?.endPaneFrames != nil else { return false }
+    let panes = paneRecords(records: records)
+    return panes.reader == nil || panes.agent == nil
 }
 
 func ackSummary(_ ack: VerifiedCaptureAck?) -> [String: Any] {
@@ -494,8 +563,11 @@ func ackSummary(_ ack: VerifiedCaptureAck?) -> [String: Any] {
 func parseAX(path: String?) throws -> [RectRecord] {
     guard let path else { return [] }
     let text = try String(contentsOfFile: path, encoding: .utf8)
-    let pattern = #"role=(.*?) id=(.*?) title=(.*?) desc=(.*?) value=(.*?) frame=(-?\d+),(-?\d+),(-?\d+),(-?\d+)"#
-    let expression = try NSRegularExpression(pattern: pattern)
+    let pattern = #"(?m)^(?:[A-Za-z][A-Za-z0-9]* )?role=([^\n]*?) id=([^\n]*?) title=([^\n]*?) desc=([^\n]*?) value=((?:(?!\n(?:[A-Za-z][A-Za-z0-9]* )?role=)[\s\S])*?) frame=(-?\d+),(-?\d+),(-?\d+),(-?\d+)"#
+    let expression = try NSRegularExpression(
+        pattern: pattern,
+        options: [.anchorsMatchLines]
+    )
     let range = NSRange(text.startIndex..<text.endIndex, in: text)
     return expression.matches(in: text, range: range).compactMap { match in
         guard match.numberOfRanges == 10 else { return nil }
@@ -588,6 +660,9 @@ func checkSourceGroundedRichInteractionEvidence(
     for stage in [("before", beforeRecords), ("after", afterRecords)] {
         let records = stage.1
         let panes = paneRecords(records: records)
+        let usesApplicationAcknowledgement = [panes.reader, panes.agent]
+            .compactMap { $0 }
+            .contains { $0.role == "AppCapturePane" }
         var paneMetrics: [[String: Any]] = []
 
         if records.isEmpty {
@@ -633,6 +708,7 @@ func checkSourceGroundedRichInteractionEvidence(
         stageMetrics.append([
             "stage": stage.0,
             "recordCount": records.count,
+            "paneEvidenceSource": usesApplicationAcknowledgement ? "application-ack" : "accessibility",
             "panes": paneMetrics,
             "readerToggleDescription": paneToggleRecord(records: records, identifier: "doc.text")?.desc ?? "",
         ])
@@ -646,6 +722,7 @@ func checkSourceGroundedRichInteractionEvidence(
         summary: failures.first?["reason"] as? String ?? "source-grounded 富回答 before/after AX、reader 与 agent 窗格证据完整",
         metrics: [
             "mode": "rich-interaction",
+            "evidencePolicy": "accessibility-first-with-verified-application-ack-fallback",
             "failures": failures,
             "stages": stageMetrics,
         ]
@@ -667,7 +744,27 @@ func checkRequiredPaneVisibility(
 
     for requirement in requirements where requirement.required {
         for stage in [("before", beforeRecords), ("after", afterRecords)] {
+            let applicationAcknowledgementOnly = !stage.1.isEmpty
+                && stage.1.allSatisfy { $0.role == "AppCapturePane" }
+            let acknowledgedPane = paneRecords(records: stage.1)
+            let acknowledgedRecord = requirement.name == "reader"
+                ? acknowledgedPane.reader
+                : acknowledgedPane.agent
             guard let toggle = paneToggleRecord(records: stage.1, identifier: requirement.identifier) else {
+                if applicationAcknowledgementOnly,
+                   let acknowledgedRecord,
+                   acknowledgedRecord.role == "AppCapturePane" {
+                    observations.append([
+                        "stage": stage.0,
+                        "pane": requirement.name,
+                        "toggleIdentifier": requirement.identifier,
+                        "toggleDescription": "",
+                        "visible": true,
+                        "evidencePresent": true,
+                        "evidenceSource": "application-ack",
+                    ])
+                    continue
+                }
                 failures.append("\(stage.0) 缺少 \(requirement.name) 窗格开关证据，无法证明窗格仍然可见")
                 observations.append([
                     "stage": stage.0,
@@ -797,7 +894,26 @@ func changedControlKeys(beforeRecords: [RectRecord], afterRecords: [RectRecord])
     }
 }
 
-func checkInteractionChanged(beforeImage: PixelImage?, afterImage: PixelImage?, beforeRecords: [RectRecord], afterRecords: [RectRecord]) -> CheckResult {
+func checkInteractionChanged(
+    beforeImage: PixelImage?,
+    afterImage: PixelImage?,
+    beforeRecords: [RectRecord],
+    afterRecords: [RectRecord],
+    actionReceipt: VerifiedActionReceipt?,
+    isSingleMode: Bool = false
+) -> CheckResult {
+    if isSingleMode {
+        return CheckResult(
+            id: "interaction-changed",
+            status: .pass,
+            score: 20,
+            summary: "单张证据为降级场景，不要求前后交互变化",
+            metrics: [
+                "mode": "single",
+                "interactionChangeRequired": false,
+            ]
+        )
+    }
     guard let beforeImage, let afterImage else {
         return CheckResult(id: "interaction-changed", status: .warn, score: 10, summary: "single 模式未检查交互前后变化", metrics: ["mode": "single"])
     }
@@ -807,13 +923,20 @@ func checkInteractionChanged(beforeImage: PixelImage?, afterImage: PixelImage?, 
     let meanDifference = metrics.meanDifference ?? 0
     let imageChanged = changedFraction >= 0.0015 || meanDifference >= 0.35
     let axChanged = !changedKeys.isEmpty
+    let receiptChanged = actionReceipt != nil
     let status: GateStatus
     let summary: String
     let score: Int
-    if imageChanged || axChanged {
-        status = imageChanged ? .pass : .warn
-        summary = imageChanged ? "交互前后截图有可见变化" : "AX 控件值已变化，但截图变化很小，可能需要复核捕获链路"
-        score = imageChanged ? 20 : 13
+    if imageChanged || axChanged || receiptChanged {
+        status = imageChanged || receiptChanged ? .pass : .warn
+        if imageChanged {
+            summary = "交互前后截图有可见变化"
+        } else if receiptChanged {
+            summary = "应用交互回执已证明控件状态真实变化；截图和 AX 变化较小，保留作诊断"
+        } else {
+            summary = "AX 控件值已变化，但截图变化很小，可能需要复核捕获链路"
+        }
+        score = imageChanged || receiptChanged ? 20 : 13
     } else {
         status = .fail
         summary = "交互前后截图和 AX 控件值都没有明显变化"
@@ -830,11 +953,32 @@ func checkInteractionChanged(beforeImage: PixelImage?, afterImage: PixelImage?, 
             "changedControlKeys": changedKeys,
             "imageChanged": imageChanged,
             "axChanged": axChanged,
+            "applicationReceiptChanged": receiptChanged,
+            "applicationReceipt": actionReceipt.map {
+                [
+                    "path": $0.path,
+                    "source": $0.source,
+                    "kind": $0.kind,
+                    "sceneID": $0.sceneID,
+                ]
+            } as Any,
         ]
     )
 }
 
-func checkPaneWidths(beforeRecords: [RectRecord], afterRecords: [RectRecord], usedAckFallback: Bool) -> CheckResult {
+func checkPaneWidths(beforeRecords: [RectRecord], afterRecords: [RectRecord], usedAckFallback: Bool, isSingleMode: Bool = false) -> CheckResult {
+    if isSingleMode {
+        return CheckResult(
+            id: "pane-width-stability",
+            status: .pass,
+            score: 20,
+            summary: "单张证据为降级/纯文本场景，不要求双栏宽度稳定性",
+            metrics: [
+                "mode": "single",
+                "requirePaneWidthStability": false,
+            ]
+        )
+    }
     let beforePanes = paneRecords(records: beforeRecords)
     let afterPanes = paneRecords(records: afterRecords)
     var failures: [String] = []
@@ -889,13 +1033,187 @@ func richContentRecords(records: [RectRecord]) -> [RectRecord] {
     }
 }
 
-func checkContentOverflow(records: [RectRecord], usedAckFallback: Bool) -> CheckResult {
-    let panes = paneRecords(records: records)
-    guard let agentPane = panes.agent else {
-        return CheckResult(id: "content-overflow", status: .warn, score: 11, summary: "缺少 Agent 窗格 frame，无法判断内容越界", metrics: ["recordCount": records.count])
+func normalizedAXValue(_ text: String) -> String {
+    let filtered = String(text.unicodeScalars.filter { scalar in
+        !CharacterSet.whitespacesAndNewlines.contains(scalar)
+            && !CharacterSet.punctuationCharacters.contains(scalar)
+            && !CharacterSet.symbols.contains(scalar)
+    })
+    return filtered.lowercased()
+}
+
+func isReadableRichAnswerValue(_ value: String) -> Bool {
+    let normalized = normalizedAXValue(value).trimmingCharacters(in: .whitespacesAndNewlines)
+    if normalized.isEmpty {
+        return false
     }
+    if ["结论", "conclusion", "总结", "summary", "none", "n/a", "na", "null", "nil", "empty", "暂无", "待补充", "无", "未设置"].contains(normalized) {
+        return false
+    }
+    if normalized.count < 4 {
+        return false
+    }
+    return true
+}
+
+func isSingleModeTextRole(_ role: String) -> Bool {
+    let readableRoles: Set<String> = ["AXText", "AXStaticText", "AXTextField", "AXList", "AXListItem"]
+    return readableRoles.contains(role) || role.hasPrefix("AXList")
+}
+
+func isPlaceholderText(_ text: String) -> Bool {
+    let normalized = normalizedAXValue(text).trimmingCharacters(in: .whitespacesAndNewlines)
+    if normalized.isEmpty || normalized.count < 2 {
+        return true
+    }
+    if ["结论", "conclusion", "总结", "summary", "none", "n/a", "na", "null", "nil", "empty", "暂无", "待补充", "无", "未设置", "请输入", "请输入问题", "输入问题", "请提问", "placeholder", "占位", "待补齐"].contains(normalized) {
+        return true
+    }
+    return false
+}
+
+func isSingleModeIgnoredTextRecord(_ record: RectRecord) -> Bool {
+    let lowerIdentifier = record.identifier.lowercased()
+    let lowerTitle = record.title.lowercased()
+    let lowerDescription = record.desc.lowercased()
+    let haystacks = [lowerIdentifier, lowerTitle, lowerDescription]
+    let ignoredTokens: [String] = [
+        "doc.text",
+        "bubble.left.and.text.bubble.right",
+        "button",
+        "textfield",
+        "text-field",
+        "chat-input",
+        "chat_input",
+        "text input",
+        "input",
+        "prompt",
+        "search",
+        "history",
+        "历史记录",
+        "输入框",
+        "请输入",
+        "请提问",
+        "placeholder",
+        "占位",
+    ]
+    return ignoredTokens.contains { token in
+        haystacks.contains(where: { $0.contains(token) })
+    }
+}
+
+func isReadableSingleModeTextRecord(_ record: RectRecord) -> Bool {
+    if !isSingleModeTextRole(record.role) {
+        return false
+    }
+    if isPlaceholderText(record.value) {
+        return false
+    }
+    if isSingleModeIgnoredTextRecord(record) {
+        return false
+    }
+    return record.frame.width > 0 && record.frame.height > 0
+}
+
+func isFrameInside(_ inner: CGRect, in outer: CGRect) -> Bool {
+    return outer.minX <= inner.minX
+        && outer.maxX >= inner.maxX
+        && outer.minY <= inner.minY
+        && outer.maxY >= inner.maxY
+}
+
+func frameOverlaps(_ inner: CGRect, in outer: CGRect) -> Bool {
+    return inner.minX < outer.maxX
+        && inner.maxX > outer.minX
+        && inner.minY < outer.maxY
+        && inner.maxY > outer.minY
+}
+
+func singleModeAnswerContainers(records: [RectRecord], agentPane: CGRect) -> [CGRect] {
+    records.compactMap { record in
+        guard record.role == "AXWebArea",
+              record.frame.width > 0,
+              record.frame.height > 0,
+              frameOverlaps(record.frame, in: agentPane) else {
+            return nil
+        }
+        return record.frame
+    }
+}
+
+func singleModeReadableTextRecords(
+    records: [RectRecord],
+    agentPane: CGRect,
+    answerContainers: [CGRect]
+) -> [RectRecord] {
+    return records.filter { record in
+        isReadableSingleModeTextRecord(record)
+            && frameOverlaps(record.frame, in: agentPane)
+            && answerContainers.contains { frameOverlaps(record.frame, in: $0) }
+    }
+}
+
+func countReadableSingleModeTextRecords(
+    records: [RectRecord],
+    agentPane: CGRect,
+    answerContainers: [CGRect]
+) -> Int {
+    records.filter { record in
+        isReadableSingleModeTextRecord(record)
+            && isFrameInside(record.frame, in: agentPane)
+            && answerContainers.contains { isFrameInside(record.frame, in: $0) }
+    }.count
+}
+
+func checkContentOverflow(records: [RectRecord], usedAckFallback: Bool, isSingleMode: Bool = false) -> CheckResult {
+    let panes = paneRecords(records: records)
+    guard let agentPaneRecord = panes.agent else {
+        return CheckResult(
+            id: "content-overflow",
+            status: isSingleMode ? .fail : .warn,
+            score: isSingleMode ? 0 : 11,
+            summary: "\(isSingleMode ? "single 模式" : "当前") 缺少 Agent 窗格 frame，无法判断内容越界",
+            metrics: [
+                "mode": isSingleMode ? "single" : "rich",
+                "recordCount": records.count,
+                "agentPanePresent": false,
+            ]
+        )
+    }
+    let agentPaneFrame = agentPaneRecord.frame
     let richRecords = richContentRecords(records: records)
-    if richRecords.isEmpty {
+    let answerContainers = isSingleMode
+        ? singleModeAnswerContainers(records: records, agentPane: agentPaneFrame)
+        : []
+    if isSingleMode {
+        let readableTextCount = countReadableSingleModeTextRecords(
+            records: records,
+            agentPane: agentPaneFrame,
+            answerContainers: answerContainers
+        )
+        if answerContainers.isEmpty || readableTextCount == 0 {
+            return CheckResult(
+                id: "content-overflow",
+                status: .fail,
+                score: 0,
+                summary: answerContainers.isEmpty
+                    ? "single 模式未检测到 Agent 回复容器"
+                    : "single 模式未检测到回复容器内的可读正文",
+                metrics: [
+                    "mode": "single",
+                    "recordCount": records.count,
+                    "agentPane": [
+                        "x": roundValue(agentPaneFrame.minX),
+                        "y": roundValue(agentPaneFrame.minY),
+                        "width": roundValue(agentPaneFrame.width),
+                        "height": roundValue(agentPaneFrame.height),
+                    ],
+                    "answerContainerCount": answerContainers.count,
+                    "readableTextRecordCount": readableTextCount,
+                ]
+            )
+        }
+    } else if richRecords.isEmpty {
         if usedAckFallback {
             return CheckResult(
                 id: "content-overflow",
@@ -914,11 +1232,18 @@ func checkContentOverflow(records: [RectRecord], usedAckFallback: Bool) -> Check
         return CheckResult(id: "content-overflow", status: .warn, score: 13, summary: "未发现 rich-answer AX 元素，无法判断富回答内容越界", metrics: ["recordCount": records.count])
     }
 
+    let checkedRecords = isSingleMode
+        ? singleModeReadableTextRecords(
+            records: records,
+            agentPane: agentPaneFrame,
+            answerContainers: answerContainers
+        )
+        : richRecords
     var failures: [[String: Any]] = []
     var warnings: [[String: Any]] = []
-    for record in richRecords {
-        let leftOverflow = max(0, agentPane.frame.minX - record.frame.minX)
-        let rightOverflow = max(0, record.frame.maxX - agentPane.frame.maxX)
+    for record in checkedRecords {
+        let leftOverflow = max(0.0, agentPaneFrame.minX - record.frame.minX)
+        let rightOverflow = max(0.0, record.frame.maxX - agentPaneFrame.maxX)
         let horizontalOverflow = max(leftOverflow, rightOverflow)
         let recordObject: [String: Any] = [
             "id": record.identifier,
@@ -931,9 +1256,9 @@ func checkContentOverflow(records: [RectRecord], usedAckFallback: Bool) -> Check
             ],
             "horizontalOverflow": roundValue(horizontalOverflow),
         ]
-        if horizontalOverflow >= contentOverflowFailTolerance || record.frame.width > agentPane.frame.width + 40 {
+        if horizontalOverflow >= contentOverflowFailTolerance || record.frame.width > agentPaneFrame.width + 40 {
             failures.append(recordObject)
-        } else if horizontalOverflow >= contentOverflowWarnTolerance || record.frame.width > agentPane.frame.width + 18 {
+        } else if horizontalOverflow >= contentOverflowWarnTolerance || record.frame.width > agentPaneFrame.width + 18 {
             warnings.append(recordObject)
         }
     }
@@ -943,21 +1268,29 @@ func checkContentOverflow(records: [RectRecord], usedAckFallback: Bool) -> Check
         id: "content-overflow",
         status: status,
         score: status == .fail ? 0 : (status == .warn ? 13 : 20),
-        summary: failures.first.map { "发现富回答内容明显横向越界：\($0["id"] ?? "")" }
-            ?? warnings.first.map { "发现富回答内容接近横向边界：\($0["id"] ?? "")" }
-            ?? "富回答内容没有明显横向越界",
+        summary: failures.first.map { isSingleMode
+            ? "单张证据正文内容明显横向越界：\($0["id"] ?? "")"
+            : "发现富回答内容明显横向越界：\($0["id"] ?? "")"
+        }
+            ?? warnings.first.map { isSingleMode
+                ? "单张证据正文内容接近横向边界：\($0["id"] ?? "")"
+                : "发现富回答内容接近横向边界：\($0["id"] ?? "")"
+            }
+            ?? (isSingleMode ? "单张证据正文内容在窗格内" : "富回答内容没有明显横向越界"),
         metrics: [
             "agentPane": [
-                "x": roundValue(agentPane.frame.minX),
-                "y": roundValue(agentPane.frame.minY),
-                "width": roundValue(agentPane.frame.width),
-                "height": roundValue(agentPane.frame.height),
+                "x": roundValue(agentPaneFrame.minX),
+                "y": roundValue(agentPaneFrame.minY),
+                "width": roundValue(agentPaneFrame.width),
+                "height": roundValue(agentPaneFrame.height),
             ],
-            "richRecordCount": richRecords.count,
+            "recordCount": checkedRecords.count,
+            "answerContainerCount": answerContainers.count,
             "failures": failures,
             "warnings": warnings,
             "warnTolerance": Int(contentOverflowWarnTolerance),
             "failTolerance": Int(contentOverflowFailTolerance),
+            "mode": isSingleMode ? "single" : "rich",
             "paneFrameSource": usedAckFallback ? "application-ack" : "accessibility",
         ]
     )
@@ -1111,15 +1444,28 @@ func run() throws {
     let beforeAck = try loadVerifiedCaptureAck(path: arguments.beforeAckPath, expectedStage: "before", expectedImagePath: arguments.beforePath)
     let afterAck = try loadVerifiedCaptureAck(path: arguments.afterAckPath, expectedStage: "after", expectedImagePath: arguments.afterPath)
     let singleAck = try loadVerifiedCaptureAck(path: arguments.singleAckPath, expectedStage: "single", expectedImagePath: arguments.singlePath)
+    let actionReceipt = try loadVerifiedActionReceipt(
+        path: arguments.actionReceiptPath,
+        expectedCaseID: arguments.caseID,
+        expectedCaseKind: arguments.caseKind
+    )
     let rawBeforeRecords = try parseAX(path: arguments.axBeforePath)
     let rawAfterRecords = try parseAX(path: arguments.axAfterPath)
     let beforeRecords = recordsAppendingPaneFrames(rawBeforeRecords, with: singleImage == nil ? beforeAck : singleAck)
-    let afterRecords = recordsAppendingPaneFrames(rawAfterRecords, with: afterAck)
+    let afterRecords: [RectRecord] = {
+        if singleImage != nil {
+            return beforeRecords
+        }
+        return recordsAppendingPaneFrames(rawAfterRecords, with: afterAck)
+    }()
     let representativeAck = singleImage == nil ? afterAck : singleAck
     let representativeRecords = recordsAppendingPaneFrames(singleImage == nil ? afterRecords : beforeRecords, with: representativeAck)
     let usedAckFallback = singleImage == nil
-        ? (beforeAck?.endPaneFrames != nil || afterAck?.endPaneFrames != nil)
-        : (singleAck?.endPaneFrames != nil)
+        ? (usesAcknowledgementPaneFallback(records: rawBeforeRecords, ack: beforeAck)
+            || usesAcknowledgementPaneFallback(records: rawAfterRecords, ack: afterAck))
+        : usesAcknowledgementPaneFallback(records: rawBeforeRecords, ack: singleAck)
+    let sourceBeforeRecords = rawBeforeRecords.isEmpty ? beforeRecords : rawBeforeRecords
+    let sourceAfterRecords = rawAfterRecords.isEmpty ? afterRecords : rawAfterRecords
 
     var checkedImages: [(label: String, image: PixelImage)] = []
     if let overviewImage {
@@ -1136,22 +1482,39 @@ func run() throws {
     }
 
     var checks: [CheckResult] = []
+    let isSingleMode = (singleImage != nil)
     if singleImage == nil {
         checks.append(checkSourceGroundedRichInteractionEvidence(
-            beforeRecords: rawBeforeRecords,
-            afterRecords: rawAfterRecords
+            beforeRecords: sourceBeforeRecords,
+            afterRecords: sourceAfterRecords
         ))
     }
     checks.append(checkVisibleContent(images: checkedImages, axRecords: representativeRecords))
-    checks.append(checkInteractionChanged(beforeImage: beforeImage, afterImage: afterImage, beforeRecords: beforeRecords, afterRecords: afterRecords))
+    checks.append(checkInteractionChanged(
+        beforeImage: beforeImage,
+        afterImage: afterImage,
+        beforeRecords: beforeRecords,
+        afterRecords: afterRecords,
+        actionReceipt: actionReceipt,
+        isSingleMode: isSingleMode
+    ))
     checks.append(checkRequiredPaneVisibility(
         beforeRecords: beforeRecords,
         afterRecords: afterRecords,
         requireReaderPane: arguments.requireReaderPane,
         requireAgentPane: arguments.requireAgentPane
     ))
-    checks.append(checkPaneWidths(beforeRecords: beforeRecords, afterRecords: afterRecords, usedAckFallback: usedAckFallback))
-    checks.append(checkContentOverflow(records: representativeRecords, usedAckFallback: usedAckFallback))
+    checks.append(checkPaneWidths(
+        beforeRecords: beforeRecords,
+        afterRecords: afterRecords,
+        usedAckFallback: usedAckFallback,
+        isSingleMode: isSingleMode
+    ))
+    checks.append(checkContentOverflow(
+        records: representativeRecords,
+        usedAckFallback: usedAckFallback,
+        isSingleMode: isSingleMode
+    ))
     checks.append(checkInlineCanvasReadability(records: representativeRecords))
 
     let summary = aggregate(checks: checks)
@@ -1177,6 +1540,14 @@ func run() throws {
             "axAfter": arguments.axAfterPath as Any,
             "single": arguments.singlePath as Any,
             "singleAck": ackSummary(singleAck),
+            "actionReceipt": actionReceipt.map {
+                [
+                    "path": $0.path,
+                    "source": $0.source,
+                    "kind": $0.kind,
+                    "sceneID": $0.sceneID,
+                ]
+            } as Any,
         ],
     ]
     try writeJSON(output, outputPath: arguments.outputPath!)

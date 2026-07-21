@@ -126,7 +126,7 @@ struct RichAnswerHost: View {
         maxWidth: CGFloat,
         expandsOverflow: Bool
     ) -> some View {
-        if scenes.allSatisfy({ $0.program != nil }) {
+        if rendersInlineWebRuntimeGroup(scenes) {
             RichAnswerWebRuntimeView(
                 scenes: scenes,
                 evidenceByID: evidenceByID,
@@ -137,6 +137,7 @@ struct RichAnswerHost: View {
                 },
                 onOpenEvidence: onOpenEvidence,
                 onAction: onAction,
+                assetPreview: assetPreview,
                 onRuntimeReady: {
                     readySceneIDs.formUnion(scenes.map(\.id))
                 }
@@ -152,6 +153,11 @@ struct RichAnswerHost: View {
                 )
             }
         }
+    }
+
+    private func rendersInlineWebRuntimeGroup(_ scenes: [RichAnswerScene]) -> Bool {
+        guard scenes.allSatisfy(\.usesWebRuntime) else { return false }
+        return scenes.allSatisfy(\.hasProgram) || scenes.allSatisfy(\.hasRenderPlan)
     }
 
     private func sceneContent(
@@ -177,8 +183,8 @@ struct RichAnswerHost: View {
         )
         .id(scene.id)
         .frame(
-            minWidth: scene.program == nil ? nil : 0,
-            maxWidth: scene.program == nil ? nil : maxWidth,
+            minWidth: scene.usesWebRuntime ? 0 : nil,
+            maxWidth: scene.usesWebRuntime ? maxWidth : nil,
             alignment: .leading
         )
     }
@@ -234,12 +240,12 @@ struct RichAnswerHost: View {
 
     private var firstVerificationSceneID: String? {
         presentation.scenes.first {
-            $0.program != nil || $0.ui != nil || !$0.operations.isEmpty
+            $0.usesWebRuntime || $0.ui != nil || !$0.operations.isEmpty
         }?.id ?? presentation.scenes.first?.id
     }
 
     private var preferredContentWidth: CGFloat {
-        if selectedScene?.program != nil || selectedScene?.ui != nil {
+        if selectedScene?.usesWebRuntime == true || selectedScene?.ui != nil {
             return preferredSurface == .inline ? 620 : 708
         }
         guard let family = selectedScene?.family else { return 588 }
@@ -282,7 +288,7 @@ struct RichAnswerHost: View {
     }
 
     private func scenePickerLabel(_ scene: RichAnswerScene) -> String {
-        if scene.program != nil || scene.ui != nil {
+        if scene.usesWebRuntime || scene.ui != nil {
             return scene.title
         }
         switch scene.family {
@@ -334,6 +340,20 @@ private struct RichAnswerHostSizeKey: PreferenceKey {
     static var defaultValue: CGSize = .zero
     static func reduce(value: inout CGSize, nextValue: () -> CGSize) {
         value = nextValue()
+    }
+}
+
+private extension RichAnswerScene {
+    var usesWebRuntime: Bool {
+        program != nil || renderPlan != nil
+    }
+
+    var hasProgram: Bool {
+        program != nil
+    }
+
+    var hasRenderPlan: Bool {
+        renderPlan != nil
     }
 }
 
@@ -443,6 +463,19 @@ private struct RichAnswerSceneHost: View {
                 onRequestExpansion: onRequestExpansion,
                 onOpenEvidence: onOpenEvidence,
                 onAction: onAction,
+                assetPreview: assetPreview,
+                onRuntimeReady: onSceneReady
+            )
+        } else if let renderPlan = scene.renderPlan {
+            RichAnswerWebRuntimeView(
+                scene: scene,
+                renderPlan: renderPlan,
+                evidenceByID: evidenceByID,
+                expandsOverflow: expandsOverflow,
+                onRequestExpansion: onRequestExpansion,
+                onOpenEvidence: onOpenEvidence,
+                onAction: onAction,
+                assetPreview: assetPreview,
                 onRuntimeReady: onSceneReady
             )
         } else if let composition = scene.ui {
