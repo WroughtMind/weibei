@@ -6413,7 +6413,8 @@ final class WorkspaceStore: ObservableObject {
                 text: reply.noteProposal?.markdown ?? reply.richAnswer?.narrative ?? reply.text,
                 source: sourceTitle,
                 backend: reply.backend,
-                richAnswer: reply.noteProposal == nil ? reply.richAnswer : nil
+                richAnswer: reply.noteProposal == nil ? reply.richAnswer : nil,
+                toolTrace: reply.toolTrace
             )
             appendAgentMessage(assistantMessage)
             appendMessageToActiveSelectionAskThread(assistantMessage.id)
