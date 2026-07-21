@@ -16,6 +16,7 @@ import {
 import {
   GEOMETRY_2D_RENDERER,
   GEOMETRY_2D_SPEC_VERSION,
+  geometry2DSurfaceMetrics,
   parseGeometry2DSpec,
   type Geometry2DSpec,
   type GeometryBounds,
@@ -1025,14 +1026,17 @@ function GeometryFallback({ issue }: { issue: ReturnType<typeof createRendererIs
 
 function Geometry2DMount({ compiled, context }: { compiled: GeometryCompiled; context: RendererLifecycleContext }) {
   const { spec } = compiled;
+  const surfaceMetrics = useMemo(
+    () => geometry2DSurfaceMetrics(spec, compiled.plan.qualityBudget.maxHeight),
+    [compiled.plan.qualityBudget.maxHeight, spec],
+  );
   const containerRef = useRef<HTMLDivElement>(null);
-  const [viewport, setViewport] = useState<Viewport>({ width: 560, height: 360 });
+  const [viewport, setViewport] = useState<Viewport>(surfaceMetrics.initialViewport);
   const [controlValues, setControlValues] = useState<Record<string, GeometryControlValue>>(() => initialControlValues(spec.controls));
   const [pointOverrides, setPointOverrides] = useState<Record<string, GeometryCoordinate>>({});
   const [dragging, setDragging] = useState<DragState | null>(null);
   const [focusID, setFocusID] = useState<string | null>(null);
   const specKey = useMemo(() => JSON.stringify(spec), [spec]);
-  const surfaceHeight = Math.max(260, Math.min(640, compiled.plan.qualityBudget.maxHeight ?? 420));
   const projection = useMemo(() => createProjection(spec, viewport), [spec, viewport.height, viewport.width]);
   const scene = useMemo(
     () => computeScene(spec, controlValues, pointOverrides),
@@ -1043,7 +1047,8 @@ function Geometry2DMount({ compiled, context }: { compiled: GeometryCompiled; co
     setControlValues(initialControlValues(spec.controls));
     setPointOverrides({});
     setFocusID(null);
-  }, [specKey, spec.controls]);
+    setViewport(surfaceMetrics.initialViewport);
+  }, [specKey, spec.controls, surfaceMetrics.initialViewport]);
 
   useEffect(() => {
     const element = containerRef.current;
@@ -1051,7 +1056,7 @@ function Geometry2DMount({ compiled, context }: { compiled: GeometryCompiled; co
     const resize = (box: DOMRectReadOnly | DOMRect) => {
       setViewport({
         width: Math.max(280, Math.round(box.width)),
-        height: Math.max(240, Math.round(box.height)),
+        height: Math.max(surfaceMetrics.minHeight, Math.round(box.height)),
       });
     };
     const observer = new ResizeObserver((entries) => {
@@ -1061,7 +1066,7 @@ function Geometry2DMount({ compiled, context }: { compiled: GeometryCompiled; co
     observer.observe(element);
     resize(element.getBoundingClientRect());
     return () => observer.disconnect();
-  }, []);
+  }, [surfaceMetrics.minHeight]);
 
   useEffect(() => {
     const element = containerRef.current;
@@ -1356,8 +1361,9 @@ function Geometry2DMount({ compiled, context }: { compiled: GeometryCompiled; co
         })}
         style={{
           width: "100%",
-          height: `min(${surfaceHeight}px, max(260px, 62vw))`,
-          minHeight: 260,
+          aspectRatio: surfaceMetrics.cssAspectRatio,
+          minHeight: surfaceMetrics.minHeight,
+          maxHeight: surfaceMetrics.maxHeight,
           position: "relative",
           overflow: "hidden",
           border: "1px solid rgba(91, 73, 54, 0.16)",
@@ -1390,7 +1396,7 @@ function Geometry2DMount({ compiled, context }: { compiled: GeometryCompiled; co
               <polygon points="0,0 10,5 0,10" fill="context-stroke" />
             </marker>
           </defs>
-          <rect x={projection.plot.left} y={projection.plot.top} width={projection.plot.width} height={projection.plot.height} fill="rgba(255, 255, 255, 0.26)" />
+          <rect x={projection.plot.left} y={projection.plot.top} width={projection.plot.width} height={projection.plot.height} fill="transparent" />
           <g>{gridNodes(spec, projection)}</g>
           <g>{axisNodes(spec, projection)}</g>
           <g>{trackNodes}</g>

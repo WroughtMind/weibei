@@ -194,6 +194,7 @@ struct RichAnswerWebRuntimeView: View {
 
 private final class RichAnswerWebClippingView: NSView {
     let webView: WKWebView
+    var onViewportLayout: ((CGSize) -> Void)?
     private weak var viewportClipView: NSClipView?
     private var viewportObservers: [NSObjectProtocol] = []
     private var pendingClipPath: String?
@@ -241,6 +242,7 @@ private final class RichAnswerWebClippingView: NSView {
     override func layout() {
         super.layout()
         webView.frame = bounds
+        onViewportLayout?(bounds.size)
         enforceScrollClipping()
         updateViewportMask()
     }
@@ -394,6 +396,9 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         context.coordinator.webView = webView
         let clippingView = RichAnswerWebClippingView(webView: webView)
         context.coordinator.clippingView = clippingView
+        clippingView.onViewportLayout = { [weak coordinator = context.coordinator] size in
+            coordinator?.viewportDidLayout(size)
+        }
 
         guard let entryURL = WeiBeiResources.bundle.url(
             forResource: "rich-answer",
@@ -433,6 +438,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
 
     static func dismantleNSView(_ container: RichAnswerWebClippingView, coordinator: Coordinator) {
         let webView = container.webView
+        container.onViewportLayout = nil
         coordinator.stop()
         webView.stopLoading()
         webView.configuration.userContentController.removeScriptMessageHandler(
@@ -483,6 +489,8 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         private var handledVerificationAfterRequestID = 0
         private var hasRuntimeHeight = false
         private var payloadPreparationError: String?
+        private var viewportSize: CGSize = .zero
+        private var pendingViewportResizeNotification = false
 
         init(
             entries: [RichAnswerWebRuntimeEntry],
@@ -535,6 +543,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         func sendEntriesIfReady() {
             payloadPreparationError = nil
             guard isReady,
+                  hasUsableViewport,
                   let webView,
                   let payloads = runtimePayloads() else { return }
             let jsonPayloads = payloads.compactMap(Self.jsonString)
@@ -549,6 +558,17 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             heightUpdateWorkItem?.cancel()
             heightUpdateWorkItem = nil
             sendRuntimePayloads(jsonPayloads, using: webView)
+        }
+
+        func viewportDidLayout(_ size: CGSize) {
+            let previousSize = viewportSize
+            viewportSize = size
+            if hasUsableViewport {
+                sendEntriesIfReady()
+            }
+            guard sentPayloadFingerprint != nil,
+                  abs(previousSize.width - size.width) >= 1 || abs(previousSize.height - size.height) >= 1 else { return }
+            notifyRuntimeViewportChanged()
         }
 
         func userContentController(
@@ -672,7 +692,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
 
         private func scheduleHeightRecovery(attempt: Int = 0) {
             heightRecoveryWorkItem?.cancel()
-            guard isReady, attempt < 5, !hasRuntimeHeight else { return }
+            guard isReady, hasUsableViewport, attempt < 5, !hasRuntimeHeight else { return }
             let delay: TimeInterval = attempt == 0 ? 0.12 : min(0.24 * Double(attempt + 1), 1.2)
             let workItem = DispatchWorkItem { [weak self] in
                 self?.recoverHeight(attempt: attempt)
@@ -1011,6 +1031,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
 
         private func sendRuntimePayloads(_ jsonPayloads: [String], using webView: WKWebView, index: Int = 0) {
             guard index < jsonPayloads.count else {
+                notifyRuntimeViewportChanged()
                 scheduleHeightRecovery()
                 return
             }
@@ -1023,6 +1044,20 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
                 }
                 guard let webView else { return }
                 sendRuntimePayloads(jsonPayloads, using: webView, index: index + 1)
+            }
+        }
+
+        private var hasUsableViewport: Bool {
+            viewportSize.width >= 24 && viewportSize.height >= 24
+        }
+
+        private func notifyRuntimeViewportChanged() {
+            guard let webView, !pendingViewportResizeNotification else { return }
+            pendingViewportResizeNotification = true
+            DispatchQueue.main.async { [weak self, weak webView] in
+                guard let self else { return }
+                pendingViewportResizeNotification = false
+                webView?.evaluateJavaScript(Self.viewportResizeScript) { _, _ in }
             }
         }
 
@@ -1148,6 +1183,13 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             body && body.getBoundingClientRect && body.getBoundingClientRect().height
           ].filter((value) => Number.isFinite(value) && value > 0);
           return values.length ? Math.max(...values) : 0;
+        })();
+        """
+
+        private static let viewportResizeScript = """
+        (() => {
+          window.dispatchEvent(new Event("resize"));
+          window.requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
         })();
         """
 

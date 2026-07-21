@@ -319,6 +319,42 @@ export type GeometryReadout = z.infer<typeof readoutSchema>;
 export type GeometryCoordinate = z.infer<typeof coordinateSchema>;
 export type GeometryBounds = z.infer<typeof boundsSchema>;
 
+export type Geometry2DSurfaceMetrics = {
+  aspectRatio: number;
+  cssAspectRatio: string;
+  initialViewport: { width: number; height: number };
+  minHeight: number;
+  maxHeight: number;
+};
+
+function clampNumber(value: number, minimum: number, maximum: number) {
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
+export function geometry2DSurfaceMetrics(spec: Pick<Geometry2DSpec, "coordinateSpace">, maxHeightBudget = 420): Geometry2DSurfaceMetrics {
+  const spanX = Math.max(spec.coordinateSpace.xMax - spec.coordinateSpace.xMin, 1e-6);
+  const spanY = Math.max(spec.coordinateSpace.yMax - spec.coordinateSpace.yMin, 1e-6);
+  const aspectRatio = clampNumber(spanX / spanY, 0.35, 8);
+  const maxHeight = clampNumber(maxHeightBudget, 220, 640);
+  const minHeight = aspectRatio >= 3.2
+    ? 160
+    : aspectRatio >= 2
+      ? 190
+      : aspectRatio <= 0.65
+        ? 300
+        : 240;
+  const initialWidth = 560;
+  const initialHeight = clampNumber(Math.round(initialWidth / aspectRatio), minHeight, maxHeight);
+
+  return {
+    aspectRatio,
+    cssAspectRatio: `${spanX} / ${spanY}`,
+    initialViewport: { width: initialWidth, height: initialHeight },
+    minHeight,
+    maxHeight,
+  };
+}
+
 type CheckResult =
   | { ok: true; spec: Geometry2DSpec }
   | { ok: false; issue: ReturnType<typeof createRendererIssue> };
@@ -876,4 +912,15 @@ export function runGeometry2DSelfChecks() {
       issueCode: result.ok ? null : result.issue.code,
     };
   });
+}
+
+export function runGeometry2DSurfaceSelfCheck() {
+  const metrics = geometry2DSurfaceMetrics({
+    coordinateSpace: { xMin: 0, xMax: 14, yMin: 0, yMax: 3, preserveAspectRatio: true },
+  }, 520);
+  return {
+    name: "二维几何宽坐标系初始画布不过度留白",
+    passed: metrics.initialViewport.height <= 220 && metrics.minHeight <= 190,
+    metrics,
+  };
 }
