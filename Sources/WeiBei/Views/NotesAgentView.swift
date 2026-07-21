@@ -1476,13 +1476,23 @@ struct MarkdownPreviewView: View {
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     var compact = false
     var fitsContentHeight = true
+    /// When true, lock height after the first stable measure so chat LazyVStack
+    /// does not thrash on ResizeObserver jitter (hang-proof for agent turns).
+    var freezeHeightAfterMeasure = false
+    /// Seed from a session cache so recycled rows do not collapse then grow.
+    var seedContentHeight: CGFloat? = nil
+    /// When this changes (window / panel width bucket), unfreeze and remeasure.
+    var layoutWidthBucket: Int = 0
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
     var onSelectionChange: (String, CGPoint?) -> Void = { _, _ in }
     var onContentHeightChange: () -> Void = {}
+    var onMeasuredHeight: (CGFloat) -> Void = { _ in }
     @State private var command: NoteEditorCommand?
     @State private var contentHeight: CGFloat = 44
+    @State private var heightFrozen = false
+    @State private var lastWidthBucket = 0
 
     var body: some View {
         RichMarkdownEditorView(
@@ -1497,7 +1507,18 @@ struct MarkdownPreviewView: View {
             onAskAgentWithSelection: onSelectionChange,
             onContentHeightChange: { height in
                 guard compact && fitsContentHeight else { return }
-                contentHeight = height
+                if freezeHeightAfterMeasure, heightFrozen { return }
+                let next = max(height, 44)
+                // Ignore sub-pixel ResizeObserver jitter once we have a real measure.
+                if contentHeight >= 44, abs(contentHeight - next) < 2 {
+                    if freezeHeightAfterMeasure { heightFrozen = true }
+                    return
+                }
+                contentHeight = next
+                onMeasuredHeight(next)
+                if freezeHeightAfterMeasure, next > 44 {
+                    heightFrozen = true
+                }
                 onContentHeightChange()
             },
             onWikiLink: onWikiLink,
@@ -1506,6 +1527,24 @@ struct MarkdownPreviewView: View {
         )
         .background(compact ? Color.clear : WeiBeiTheme.paper)
         .frame(height: compact && fitsContentHeight ? max(contentHeight, 44) : nil)
+        .onAppear {
+            lastWidthBucket = layoutWidthBucket
+            if let seed = seedContentHeight, seed > 44 {
+                contentHeight = seed
+                if freezeHeightAfterMeasure {
+                    heightFrozen = true
+                }
+            }
+        }
+        .onChange(of: layoutWidthBucket) { _, bucket in
+            guard bucket != lastWidthBucket else { return }
+            lastWidthBucket = bucket
+            // Window / selection-float resize: allow a fresh measure for the new width.
+            heightFrozen = false
+            if let seed = seedContentHeight, seed > 44 {
+                contentHeight = seed
+            }
+        }
     }
 }
 
@@ -1672,6 +1711,7 @@ struct AgentPaneView: View {
                         }
                         .padding(.horizontal, wide ? 16 : 10)
                         .padding(.vertical, wide ? 10 : 10)
+                        .environment(\.agentChatLayoutWidth, contentWidth)
                         .padding(.top, store.messages.isEmpty ? 22 : 0)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
@@ -1738,36 +1778,36 @@ struct AgentPaneView: View {
         }
         .frame(minHeight: 260)
         .foregroundStyle(WeiBeiTheme.ink)
-        .background(showsPaneHeader ? WeiBeiTheme.paper : Color.clear)
+        // Same opaque paper as notes/reader — clear background lets
+        // isMovableByWindowBackground steal header drags as window moves.
+        .background(WeiBeiTheme.paper)
         .overlay(alignment: .topLeading) {
             AccessibilityFrameProbe(identifier: "stable-document-slot-agent")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .allowsHitTesting(false)
         }
         .overlay(alignment: .top) {
-            ZStack(alignment: .top) {
-                if showsPaneHeader {
-                    LinearGradient(
-                        colors: [
-                            WeiBeiTheme.glassHighlight.opacity(0.18),
-                            .clear
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                    .frame(height: 10)
-                }
-
-                if !showsPaneHeader {
-                    ImmersiveHoverTitleView(
-                        mark: "CHAT",
-                        title: store.agentConversationSubtitle,
-                        appearanceMode: store.appearanceMode,
-                        actionsAlignedTrailing: true,
-                        reorderRole: reorderRole
-                    ) {
-                        agentSessionCatalogMenu
-                    }
+            if showsPaneHeader {
+                LinearGradient(
+                    colors: [
+                        WeiBeiTheme.glassHighlight.opacity(0.18),
+                        .clear
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: 10)
+                .allowsHitTesting(false)
+            } else {
+                // Match notes: floating slip overlay only — no extra clear ZStack.
+                ImmersiveHoverTitleView(
+                    mark: "CHAT",
+                    title: store.agentConversationSubtitle,
+                    appearanceMode: store.appearanceMode,
+                    actionsAlignedTrailing: true,
+                    reorderRole: reorderRole
+                ) {
+                    agentSessionCatalogMenu
                 }
             }
         }
@@ -2496,6 +2536,11 @@ struct FloatingSelectionAgentView: View {
     var routesToConversation = false
     @State private var dragOffset = CGSize.zero
     @State private var settledOffset = CGSize.zero
+    /// User-resizable panel; default matches placement constant (half-width × 2).
+    @State private var panelWidth = CGFloat(SelectionFloatingAgentPlacement.expandedHalfWidth * 2)
+    @State private var feedMaxHeight: CGFloat = 380
+    @State private var resizeOriginWidth: CGFloat = 0
+    @State private var resizeOriginFeedHeight: CGFloat = 0
     @FocusState private var draftFocused: Bool
     @Namespace private var floatingNamespace
 
@@ -2512,7 +2557,8 @@ struct FloatingSelectionAgentView: View {
         .modifier(SelectionFloatChrome(expanded: showsExpandedBody, pinned: store.pinnedFloatingAgent))
         .scaleEffect(showsExpandedBody ? 1 : 0.985)
         .animation(WeiBeiMotion.panel, value: expanded)
-        .animation(WeiBeiMotion.panel, value: store.keepFloatingSelectionForAnswer)
+        .animation(WeiBeiMotion.panel, value: store.pinnedFloatingAgent)
+        .animation(WeiBeiMotion.panel, value: store.isAskingAgent)
         .offset(x: dragOffset.width + settledOffset.width, y: dragOffset.height + settledOffset.height)
         .gesture(
             DragGesture()
@@ -2531,21 +2577,47 @@ struct FloatingSelectionAgentView: View {
                 }
         )
         .onChange(of: store.selectionContext) { previous, next in
-            guard !store.pinnedFloatingAgent, !store.keepFloatingSelectionForAnswer else { return }
+            guard !store.pinnedFloatingAgent, !store.isAskingAgent else { return }
             let sameContent = previous?.text == next?.text
                 && previous?.source == next?.source
                 && previous?.ownerTitle == next?.ownerTitle
                 && previous?.isEditable == next?.isEditable
             guard !sameContent else { return }
+            // Reopen uses SelectionContext.id == thread.id — expand beside the mark.
+            let isThreadReopen = next.map { store.activeSelectionAskThreadID == $0.id } ?? false
+            if isThreadReopen, store.keepFloatingSelectionForAnswer {
+                withAnimation(WeiBeiMotion.panel) {
+                    expanded = true
+                    dragOffset = .zero
+                    settledOffset = .zero
+                }
+                return
+            }
+            // Live reselection → capsule only.
             withAnimation(WeiBeiMotion.panel) {
                 expanded = false
+                store.keepFloatingSelectionForAnswer = false
+                store.activeSelectionAskThreadID = nil
                 dragOffset = .zero
                 settledOffset = .zero
             }
         }
         .onChange(of: store.keepFloatingSelectionForAnswer) { _, keep in
             if keep {
-                withAnimation(WeiBeiMotion.panel) { expanded = true }
+                withAnimation(WeiBeiMotion.panel) {
+                    expanded = true
+                    dragOffset = .zero
+                    settledOffset = .zero
+                }
+            }
+        }
+        .onChange(of: store.activeSelectionAskThreadID) { _, id in
+            if id != nil, store.keepFloatingSelectionForAnswer {
+                withAnimation(WeiBeiMotion.panel) {
+                    expanded = true
+                    dragOffset = .zero
+                    settledOffset = .zero
+                }
             }
         }
         .onChange(of: store.isAskingAgent) { _, asking in
@@ -2558,7 +2630,7 @@ struct FloatingSelectionAgentView: View {
         }
         .onAppear {
             draftFocused = store.focusedPane == .agent
-            if store.keepFloatingSelectionForAnswer || store.activeSelectionAskThreadID != nil {
+            if store.pinnedFloatingAgent || store.isAskingAgent || store.keepFloatingSelectionForAnswer {
                 expanded = true
             }
         }
@@ -2568,7 +2640,8 @@ struct FloatingSelectionAgentView: View {
     }
 
     private var showsExpandedBody: Bool {
-        expanded || store.keepFloatingSelectionForAnswer || store.isAskingAgent
+        // Capsule for bare selection; expand for 问 / pin / stream / 红线回访(keepOpen).
+        expanded || store.pinnedFloatingAgent || store.isAskingAgent || store.keepFloatingSelectionForAnswer
     }
 
     private var promptBody: some View {
@@ -2611,18 +2684,14 @@ struct FloatingSelectionAgentView: View {
 
     private var expandedBody: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Header
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Text(store.ui("选区对话", "Selection chat"))
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(WeiBeiTheme.ink)
                 if store.pinnedFloatingAgent {
                     Text(store.ui("已固定", "Pinned"))
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(WeiBeiTheme.cinnabar)
-                        .padding(.horizontal, 6)
-                        .frame(height: 18)
-                        .background(WeiBeiTheme.cinnabarSoft.opacity(0.7), in: Capsule())
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.9))
                 }
                 Spacer(minLength: 4)
                 if store.isConversationSurfaceVisible, store.activeSelectionAskThreadID != nil {
@@ -2637,13 +2706,9 @@ struct FloatingSelectionAgentView: View {
                     withAnimation(WeiBeiMotion.micro) { togglePinnedFloatingAgent() }
                 } label: {
                     Image(systemName: store.pinnedFloatingAgent ? "pin.fill" : "pin")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(store.pinnedFloatingAgent ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
-                        .frame(width: 28, height: 28)
-                        .background(
-                            (store.pinnedFloatingAgent ? WeiBeiTheme.cinnabarSoft.opacity(0.65) : WeiBeiTheme.paperInset.opacity(0.35)),
-                            in: RoundedRectangle(cornerRadius: 7, style: .continuous)
-                        )
+                        .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.plain)
                 .help(store.pinnedFloatingAgent
@@ -2655,73 +2720,46 @@ struct FloatingSelectionAgentView: View {
                     closeFloatingAgent()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .bold))
+                        .font(.system(size: 10, weight: .bold))
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .frame(width: 28, height: 28)
-                        .background(WeiBeiTheme.paperInset.opacity(0.35), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.plain)
                 .help(store.ui("关闭", "Close"))
                 .accessibilityLabel(Text(store.ui("关闭", "Close")))
             }
-            .padding(.horizontal, 14)
-            .padding(.top, 12)
-            .padding(.bottom, 10)
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+            .padding(.bottom, 8)
 
-            // Soft cinnabar accent under header
             Rectangle()
-                .fill(
-                    LinearGradient(
-                        colors: [WeiBeiTheme.cinnabar.opacity(0.45), WeiBeiTheme.cinnabar.opacity(0.05)],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                )
-                .frame(height: 1.5)
-                .padding(.horizontal, 14)
+                .fill(WeiBeiTheme.hairline.opacity(0.55))
+                .frame(height: 1)
+                .padding(.horizontal, 12)
 
-            // Excerpt card
             if let selection = store.selectionContext?.text, !selection.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
                     Text(store.ui("选区", "Selection"))
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                    Text(selection)
-                        .font(.system(size: 12.5))
+                        .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.9))
+                        .padding(.horizontal, 7)
+                        .frame(height: 20)
+                        .background(WeiBeiTheme.cinnabarSoft.opacity(0.62), in: Capsule())
+                    Text(Self.selectionTagLabel(selection))
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .lineLimit(3)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
                 }
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(WeiBeiTheme.paperInset.opacity(0.42))
-                )
-                .overlay(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 1)
-                        .fill(WeiBeiTheme.cinnabar.opacity(0.55))
-                        .frame(width: 2.5)
-                        .padding(.vertical, 8)
-                }
-                .padding(.horizontal, 14)
-                .padding(.top, 12)
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+                .padding(.bottom, 2)
             }
 
-            // Message feed
             ScrollView(showsIndicators: false) {
+                // Same order as immersive chat: messages → streaming → thinking.
                 LazyVStack(alignment: .leading, spacing: 12) {
-                    if store.isAskingAgent {
-                        if !store.agentStreamingText.isEmpty {
-                            floatBubble(roleLabel: "WeiBei", text: store.agentStreamingText, isUser: false)
-                        } else {
-                            Text(store.ui("正在读选区...", "Reading selection..."))
-                                .font(.system(size: 12))
-                                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                                .padding(.horizontal, 4)
-                        }
-                    }
-
-                    if visibleFloatingMessages.isEmpty && !store.isAskingAgent {
+                    if visibleFloatingMessages.isEmpty && !(store.isAskingAgent && store.agentStreamingText.isEmpty) {
                         Text(store.ui("写下问题后发送，回答会出现在这里。", "Write a question and send — the reply appears here."))
                             .font(.system(size: 12))
                             .foregroundStyle(WeiBeiTheme.tertiaryInk)
@@ -2731,30 +2769,42 @@ struct FloatingSelectionAgentView: View {
 
                     ForEach(visibleFloatingMessages) { message in
                         floatBubble(
+                            messageID: message.id,
                             roleLabel: message.role == .user ? store.ui("你", "You") : "WeiBei",
                             text: floatingText(for: message),
                             isUser: message.role == .user,
                             isError: WorkspaceStore.isAgentFailureMessage(message.text)
                         )
                     }
+
+                    if store.isAskingAgent && !store.agentStreamingText.isEmpty {
+                        floatStreamingBubble(text: store.agentStreamingText)
+                            .id("selection-float-streaming")
+                    }
+
+                    if store.isAskingAgent && store.agentStreamingText.isEmpty {
+                        AgentThinkingIndicator()
+                            .id("selection-float-thinking")
+                            .padding(.vertical, 4)
+                    }
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 12)
+                .environment(\.agentChatLayoutWidth, max(panelWidth - 28, 1))
             }
-            .frame(minHeight: floatingFeedHeight, maxHeight: 340)
+            .frame(minHeight: floatingFeedHeight, maxHeight: feedMaxHeight)
 
-            // Composer
             VStack(spacing: 0) {
                 Rectangle()
-                    .fill(WeiBeiTheme.hairline.opacity(0.55))
+                    .fill(WeiBeiTheme.hairline.opacity(0.45))
                     .frame(height: 1)
                 AgentComposerField(
                     prompt: store.ui("问选区或继续追问", "Ask about selection…"),
                     focused: $draftFocused,
                     font: .system(size: 13.5),
                     promptFont: .system(size: 13.5),
-                    lineLimit: 1...4,
-                    height: 52,
+                    lineLimit: 1...5,
+                    height: 56,
                     sendButtonSize: 26,
                     trailingPadding: 36,
                     sendTrailing: 8,
@@ -2768,60 +2818,114 @@ struct FloatingSelectionAgentView: View {
                 .padding(.vertical, 10)
             }
         }
-        .frame(width: CGFloat(SelectionFloatingAgentPlacement.expandedHalfWidth * 2), alignment: .leading)
-        .frame(minWidth: 360)
+        .frame(width: panelWidth, alignment: .leading)
+        .frame(minWidth: 420)
+        .overlay(alignment: .bottomTrailing) {
+            floatResizeHandle
+        }
         .onAppear {
             draftFocused = true
         }
     }
 
-    private func floatBubble(roleLabel: String, text: String, isUser: Bool, isError: Bool = false) -> some View {
+    private var floatResizeHandle: some View {
+        Image(systemName: "arrow.up.left.and.arrow.down.right")
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(WeiBeiTheme.tertiaryInk.opacity(0.9))
+            .frame(width: 22, height: 22)
+            .contentShape(Rectangle())
+            .padding(6)
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        if resizeOriginWidth == 0 {
+                            resizeOriginWidth = panelWidth
+                            resizeOriginFeedHeight = feedMaxHeight
+                        }
+                        panelWidth = min(max(resizeOriginWidth + value.translation.width, 420), 720)
+                        feedMaxHeight = min(max(resizeOriginFeedHeight + value.translation.height, 160), 640)
+                    }
+                    .onEnded { _ in
+                        resizeOriginWidth = 0
+                        resizeOriginFeedHeight = 0
+                    }
+            )
+            .help(store.ui("拖拽调整选区对话大小", "Drag to resize selection chat"))
+            .accessibilityLabel(Text(store.ui("调整选区对话大小", "Resize selection chat")))
+    }
+
+    private func floatBubble(messageID: UUID, roleLabel: String, text: String, isUser: Bool, isError: Bool = false) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(roleLabel)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(isError ? WeiBeiTheme.cinnabar : (isUser ? WeiBeiTheme.link : WeiBeiTheme.secondaryInk))
-            Text(text)
-                .font(.system(size: 13))
-                .foregroundStyle(isError ? WeiBeiTheme.cinnabar : WeiBeiTheme.ink)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .fixedSize(horizontal: false, vertical: true)
-                .allowsHitTesting(false)
-        }
-        .padding(.horizontal, 11)
-        .padding(.vertical, 9)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(isUser ? WeiBeiTheme.link.opacity(0.06) : WeiBeiTheme.paperInset.opacity(0.38))
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(
-                    isUser ? WeiBeiTheme.link.opacity(0.12) : WeiBeiTheme.hairline.opacity(0.4),
-                    lineWidth: 1
+            if isUser {
+                Text(roleLabel)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(WeiBeiTheme.link.opacity(0.85))
+            } else {
+                HStack(spacing: 6) {
+                    Text("WeiBei")
+                        .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
+                        .foregroundStyle(isError ? WeiBeiTheme.cinnabar : WeiBeiTheme.cinnabar.opacity(0.76))
+                    if !isError {
+                        Text("PI")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    }
+                }
+            }
+            if isError {
+                Text(text)
+                    .font(.system(size: 13))
+                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .allowsHitTesting(false)
+            } else {
+                // Same markdown path as immersive chat (`AgentMessageMarkdownText`).
+                AgentMessageMarkdownText(
+                    text: text,
+                    rendersRichMarkdown: !isUser,
+                    compact: true,
+                    usesFinalizedKaTeX: !isUser,
+                    messageID: messageID
                 )
+            }
         }
+        .padding(.vertical, 3)
+    }
+
+    private func floatStreamingBubble(text: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text("WeiBei")
+                    .font(WeiBeiTypography.englishBrandFont(size: 9.8, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.76))
+                Text("PI")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+            }
+            // Streaming: native text only (no KaTeX WebView mid-stream).
+            AgentStreamingMarkdownText(text: text, compact: true)
+        }
+        .padding(.vertical, 3)
+        .accessibilityLabel(Text(store.ui("PI 正在回答", "PI is responding")))
+    }
+
+    private static func selectionTagLabel(_ text: String, limit: Int = 18) -> String {
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\n", with: " ")
+        guard cleaned.count > limit else { return cleaned }
+        return String(cleaned.prefix(limit)) + "…"
     }
 
     private var visibleFloatingMessages: [AgentMessage] {
-        if let threadID = store.activeSelectionAskThreadID,
-           let thread = store.selectionAskThreads.first(where: { $0.id == threadID }),
-           !thread.messageIDs.isEmpty {
-            let idSet = Set(thread.messageIDs)
-            return store.messages.filter { idSet.contains($0.id) }
+        // Strict isolation: only messages belonging to the active selection-ask thread.
+        // Never fall back to the global conversation feed.
+        guard let threadID = store.activeSelectionAskThreadID,
+              let thread = store.selectionAskThreads.first(where: { $0.id == threadID }) else {
+            return []
         }
-
-        var result: [AgentMessage] = []
-        var includedCredentialNotice = false
-        for message in store.messages.suffix(12).reversed() {
-            if isGeneratedSelectionPrompt(message) { continue }
-            if isCredentialNotice(message) {
-                guard !includedCredentialNotice else { continue }
-                includedCredentialNotice = true
-            }
-            result.append(message)
-            if result.count == 8 { break }
-        }
-        return result.reversed()
+        let idSet = Set(thread.messageIDs)
+        return store.messages.filter { idSet.contains($0.id) }
     }
 
     private var canPolishNoteSelection: Bool {
@@ -2829,13 +2933,13 @@ struct FloatingSelectionAgentView: View {
     }
 
     private var floatingFeedHeight: CGFloat {
-        if store.isAskingAgent { return 140 }
-        if visibleFloatingMessages.isEmpty { return 72 }
+        if store.isAskingAgent { return 160 }
+        if visibleFloatingMessages.isEmpty { return 88 }
         switch visibleFloatingMessages.count {
-        case 1: return 110
-        case 2: return 170
-        case 3: return 230
-        default: return 280
+        case 1: return 130
+        case 2: return 200
+        case 3: return 260
+        default: return 320
         }
     }
 
@@ -2872,6 +2976,11 @@ struct FloatingSelectionAgentView: View {
         if next {
             store.agentSurface = .selectionFloat
             store.keepFloatingSelectionForAnswer = true
+        } else {
+            // Unpin must not dismiss — keepOpen holds the float without a drag anchor.
+            store.keepFloatingSelectionForAnswer = true
+            store.agentSurface = .selectionFloat
+            expanded = true
         }
     }
 
@@ -2913,7 +3022,7 @@ struct FloatingSelectionAgentView: View {
     }
 }
 
-/// Paper float chrome: softer radius, cinnabar edge when pinned.
+/// Paper float chrome: quieter radius; cinnabar edge only when pinned.
 private struct SelectionFloatChrome: ViewModifier {
     var expanded: Bool
     var pinned: Bool
@@ -2922,23 +3031,18 @@ private struct SelectionFloatChrome: ViewModifier {
         content
             .foregroundColor(WeiBeiTheme.ink)
             .background {
-                ZStack {
-                    RoundedRectangle(cornerRadius: expanded ? 14 : 10, style: .continuous)
-                        .fill(WeiBeiTheme.paperRaised.opacity(0.99))
-                    RoundedRectangle(cornerRadius: expanded ? 14 : 10, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.04)
-                }
+                RoundedRectangle(cornerRadius: expanded ? 12 : 9, style: .continuous)
+                    .fill(WeiBeiTheme.paperRaised.opacity(0.98))
             }
-            .clipShape(RoundedRectangle(cornerRadius: expanded ? 14 : 10, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: expanded ? 12 : 9, style: .continuous))
             .overlay {
-                RoundedRectangle(cornerRadius: expanded ? 14 : 10, style: .continuous)
+                RoundedRectangle(cornerRadius: expanded ? 12 : 9, style: .continuous)
                     .strokeBorder(
-                        pinned ? WeiBeiTheme.cinnabar.opacity(0.38) : WeiBeiTheme.hairline.opacity(0.72),
-                        lineWidth: pinned ? 1.2 : 1
+                        pinned ? WeiBeiTheme.cinnabar.opacity(0.34) : WeiBeiTheme.hairline.opacity(0.65),
+                        lineWidth: 1
                     )
             }
-            .shadow(color: WeiBeiTheme.ink.opacity(pinned ? 0.12 : 0.08), radius: pinned ? 16 : 12, y: pinned ? 6 : 4)
+            .shadow(color: WeiBeiTheme.ink.opacity(pinned ? 0.1 : 0.06), radius: pinned ? 12 : 8, y: pinned ? 4 : 3)
     }
 }
 
@@ -3041,11 +3145,13 @@ private struct AgentBubble: View {
                !richAnswer.scenes.isEmpty {
                 richAnswerFlow(richAnswer)
             } else {
-                // Hang-proof agent chat: native AttributedString, never per-message WKWebView.
-                // Citation brackets are stripped from body text and rendered as tappable tags.
+                // Hang-proof agent chat: finalized turns use KaTeX with frozen height;
+                // failures stay native text (no WebView). Never height→scroll.
                 AgentMessageMarkdownText(
                     text: citationParse.displayText,
-                    rendersRichMarkdown: true
+                    rendersRichMarkdown: true,
+                    usesFinalizedKaTeX: !isFailureMessage,
+                    messageID: message.id
                 )
             }
 
@@ -3740,33 +3846,133 @@ private struct AgentCitationTag: View {
     }
 }
 
-/// Agent chat markdown — always native SwiftUI text (no per-message WKWebView).
-/// - Assistant (`rendersRichMarkdown`): fills the reading column width.
-/// - User (`!rendersRichMarkdown`): **hugs content** so the paper bubble stays a chip
-///   on the right — not a full-width bar (maxWidth infinity broke that).
+/// Session-scoped height cache for finalized agent KaTeX rows.
+/// Key includes a width bucket so resize can remeasure without thrash.
+private enum AgentFinalizedMarkdownHeightCache {
+    private static let lock = NSLock()
+    private static var values: [String: CGFloat] = [:]
+
+    static func height(for key: String) -> CGFloat? {
+        lock.lock(); defer { lock.unlock() }
+        return values[key]
+    }
+
+    static func store(_ height: CGFloat, for key: String) {
+        guard height > 44 else { return }
+        lock.lock(); defer { lock.unlock() }
+        if let existing = values[key], abs(existing - height) < 2 { return }
+        values[key] = height
+    }
+
+    static func cacheKey(messageID: UUID?, text: String, widthBucket: Int) -> String {
+        let id = messageID?.uuidString ?? "anon"
+        let prefix = text.prefix(64)
+        return "\(id):\(text.count):\(prefix):w\(widthBucket)"
+    }
+
+    static func widthBucket(_ width: CGFloat) -> Int {
+        max(Int((width / 24.0).rounded(.down)) * 24, 0)
+    }
+}
+
+private struct AgentChatLayoutWidthKey: EnvironmentKey {
+    static let defaultValue: CGFloat = 0
+}
+
+private extension EnvironmentValues {
+    var agentChatLayoutWidth: CGFloat {
+        get { self[AgentChatLayoutWidthKey.self] }
+        set { self[AgentChatLayoutWidthKey.self] = newValue }
+    }
+}
+
+/// Agent chat markdown — shared by immersive conversation and selection float.
+/// - Finalized assistant turns: hang-proof KaTeX via `MarkdownPreviewView` with width-aware height.
+/// - Streaming / user / failures / no-math: native `AttributedString`.
 private struct AgentMessageMarkdownText: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.agentChatLayoutWidth) private var layoutWidth
     var text: String
     var rendersRichMarkdown: Bool
+    /// Selection-float / narrow surfaces: smaller type, still fills available width.
+    var compact: Bool = false
+    /// Completed assistant turns only — never streaming, user, or failure bubbles.
+    var usesFinalizedKaTeX: Bool = false
+    var messageID: UUID? = nil
+
+    private var katexMarkdown: String {
+        AgentChatKaTeXMarkdown.prepare(text)
+    }
+
+    private var widthBucket: Int {
+        AgentFinalizedMarkdownHeightCache.widthBucket(layoutWidth)
+    }
+
+    private var shouldUseKaTeX: Bool {
+        usesFinalizedKaTeX
+            && rendersRichMarkdown
+            && AgentChatKaTeXMarkdown.containsRecognizableMath(katexMarkdown)
+    }
 
     var body: some View {
+        Group {
+            if shouldUseKaTeX {
+                finalizedKaTeXBody
+            } else {
+                nativeBody
+            }
+        }
+        .modifier(AgentMessageTextWidthModifier(fillsReadingColumn: rendersRichMarkdown || compact))
+    }
+
+    private var cacheKey: String {
+        AgentFinalizedMarkdownHeightCache.cacheKey(
+            messageID: messageID,
+            text: katexMarkdown,
+            widthBucket: widthBucket
+        )
+    }
+
+    @ViewBuilder
+    private var finalizedKaTeXBody: some View {
+        // Hang-proof KaTeX: compact preview forwards wheel to the conversation ScrollView.
+        // Height freezes per width-bucket; resize changes the bucket and remasures.
+        // NEVER wire onContentHeightChange to scrollAgentToBottom.
+        MarkdownPreviewView(
+            markdown: katexMarkdown,
+            markdownBaseURL: store.currentMarkdownBaseURL,
+            appearanceMode: store.appearanceMode,
+            interfaceLanguage: store.interfaceLanguage,
+            compact: true,
+            fitsContentHeight: true,
+            freezeHeightAfterMeasure: true,
+            seedContentHeight: AgentFinalizedMarkdownHeightCache.height(for: cacheKey),
+            layoutWidthBucket: widthBucket,
+            onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
+            onSourceReference: { reference in store.openSourceReference(reference) },
+            onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) },
+            onMeasuredHeight: { height in
+                AgentFinalizedMarkdownHeightCache.store(height, for: cacheKey)
+            }
+        )
+        .id("\(messageID?.uuidString ?? "msg")-\(widthBucket)")
+    }
+
+    private var nativeBody: some View {
         Text(renderedText)
-            .font(.system(size: rendersRichMarkdown ? 15 : 14.5))
-            .lineSpacing(rendersRichMarkdown ? 5.5 : 4.5)
+            .font(.system(size: compact ? 13.2 : (rendersRichMarkdown ? 15 : 14.5)))
+            .lineSpacing(compact ? 4.2 : (rendersRichMarkdown ? 5.5 : 4.5))
             .foregroundStyle(WeiBeiTheme.ink)
-            .multilineTextAlignment(rendersRichMarkdown ? .leading : .leading)
+            .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
-            .modifier(AgentMessageTextWidthModifier(fillsReadingColumn: rendersRichMarkdown))
             // Let wheel events reach the conversation ScrollView (no textSelection).
             .allowsHitTesting(false)
     }
 
     private var renderedText: AttributedString {
-        if rendersRichMarkdown {
-            var options = AttributedString.MarkdownParsingOptions()
-            options.interpretedSyntax = .inlineOnlyPreservingWhitespace
-            return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
-        }
-        return (try? AttributedString(markdown: text)) ?? AttributedString(text)
+        // Streaming / no-math path: Unicode math readability without WKWebView.
+        let display = RichAnswerDisplayText.normalizedInlineMath(text)
+        return (try? AttributedString(markdown: display)) ?? AttributedString(display)
     }
 }
 
@@ -4378,12 +4584,44 @@ private struct AgentStreamingResponse: View {
                     .font(.system(size: 9.5, weight: .semibold))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
-            AgentMessageMarkdownText(text: text, rendersRichMarkdown: false)
+            // Streaming stays native + throttled — KaTeX only after the turn finalizes.
+            AgentStreamingMarkdownText(text: text, compact: false)
         }
         .padding(.vertical, 10)
         .padding(.leading, 20)
         .padding(.trailing, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityLabel(Text(store.ui("PI 正在回答", "PI is responding")))
+    }
+}
+
+/// Throttled native markdown for in-flight tokens (avoids per-token AttributedString thrash).
+private struct AgentStreamingMarkdownText: View {
+    var text: String
+    var compact: Bool = false
+    @State private var displayedText = ""
+    @State private var flushTask: Task<Void, Never>?
+
+    var body: some View {
+        AgentMessageMarkdownText(
+            text: displayedText.isEmpty ? text : displayedText,
+            rendersRichMarkdown: true,
+            compact: compact,
+            usesFinalizedKaTeX: false
+        )
+        .onAppear {
+            displayedText = text
+        }
+        .onChange(of: text) { _, newValue in
+            flushTask?.cancel()
+            flushTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+                guard !Task.isCancelled else { return }
+                displayedText = newValue
+            }
+        }
+        .onDisappear {
+            flushTask?.cancel()
+        }
     }
 }

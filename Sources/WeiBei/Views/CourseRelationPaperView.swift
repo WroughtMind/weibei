@@ -23,12 +23,11 @@ struct CourseRelationPaperView: View {
     private static let paperOriginID = "course-relation-paper-origin"
 
     private var effectiveScope: CourseRelationPaperScope {
-        let candidate = scope
-            ?? store.activeCourseID.map(CourseRelationPaperScope.course)
-            ?? .all
+        // Relations desk defaults to the whole workspace; course filters are opt-in.
+        let candidate = scope ?? .all
         if case .course(let courseID) = candidate,
            !store.courses.contains(where: { $0.id == courseID }) {
-            return store.activeCourseID.map(CourseRelationPaperScope.course) ?? .all
+            return .all
         }
         return candidate
     }
@@ -103,16 +102,16 @@ struct CourseRelationPaperView: View {
     private func header(model: CourseRelationGraphModel) -> some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 1) {
-                Text(store.ui("资料与笔记的长期关联", "Long-term material–note links"))
+                Text(store.ui("工作区资料与笔记关系", "Workspace material–note links"))
                     .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 17, weight: .semibold))
                     .foregroundStyle(WeiBeiTheme.ink)
                 Text(store.ui(
-                    "这里管理资料与笔记的长期关联，不表示当前打开状态。",
-                    "This manages long-term links between materials and notes, not what is currently open."
+                    "默认看整份工作区的资料↔笔记关联；右上角可筛到某门课。不表示当前打开状态。",
+                    "Defaults to the whole workspace’s material↔note links; filter by course above. Not current open state."
                 ))
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    .lineLimit(isCompact ? 2 : 1)
+                    .lineLimit(isCompact ? 3 : 2)
                     .minimumScaleFactor(0.84)
                 Text(headerDetail(model: model))
                     .font(.system(size: 10.5))

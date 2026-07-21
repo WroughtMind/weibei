@@ -3,6 +3,7 @@ import SwiftUI
 import WeiBeiCore
 
 enum CourseWorkspacePage: String, CaseIterable, Identifiable {
+    case hub
     case relations
     case records
 
@@ -10,8 +11,10 @@ enum CourseWorkspacePage: String, CaseIterable, Identifiable {
 
     func label(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
+        case .hub:
+            language.text("课程空间", "Course Space")
         case .relations:
-            language.text("资料与笔记", "Materials & Notes")
+            language.text("关系台", "Relations")
         case .records:
             language.text("学习记录", "Learning Records")
         }
@@ -36,7 +39,7 @@ enum CourseRelationLens: String, CaseIterable, Identifiable {
 
 struct CourseWorkspaceView: View {
     @EnvironmentObject private var store: WorkspaceStore
-    @State private var page: CourseWorkspacePage = .relations
+    @State private var page: CourseWorkspacePage = .hub
     @State private var relationLens: CourseRelationLens = .notes
     @State private var selectedNoteID: String?
     @State private var selectedMaterialID: String?
@@ -84,6 +87,11 @@ struct CourseWorkspaceView: View {
         .onChange(of: page) { _, _ in
             search = ""
         }
+        .onChange(of: store.activeCourseID) { _, newCourseID in
+            selectedMaterialID = newCourseID.flatMap { store.courseMaterials(in: $0).first?.id }
+            selectedNoteID = nil
+            selectedSessionID = nil
+        }
         .sheet(isPresented: $showsNewNotePrompt) {
             CourseNewNoteSheet(
                 title: $newNoteTitle,
@@ -111,6 +119,21 @@ struct CourseWorkspaceView: View {
     @ViewBuilder
     private func pageContent(size: CGSize) -> some View {
         switch page {
+        case .hub:
+            CourseHubView(
+                search: search,
+                selectedMaterialID: $selectedMaterialID,
+                selectedNoteID: $selectedNoteID,
+                selectedSessionID: $selectedSessionID,
+                isCompact: size.width < 960,
+                openRelations: {
+                    withAnimation(WeiBeiMotion.panel) { page = .relations }
+                },
+                importCourseFolder: store.prepareCourseFolderImportFromPanel,
+                importMaterials: store.importCourseMaterialsFromPanel,
+                importNotes: store.importCourseNotesFromPanel,
+                createNote: promptForNewNote
+            )
         case .relations:
             CourseRelationsView(
                 lens: $relationLens,
@@ -141,13 +164,16 @@ struct CourseWorkspaceView: View {
             return
         }
         selectedNoteID = noteID
-        relationLens = .notes
-        page = .relations
+        page = .hub
         showsNewNotePrompt = false
     }
 
     private func prepareInitialRoute() {
         switch store.courseWorkspaceDestination {
+        case .hub:
+            page = .hub
+            selectedMaterialID = store.courseWorkspaceTargetItemID
+                ?? store.activeCourseID.flatMap { store.courseMaterials(in: $0).first?.id }
         case .relations:
             page = .relations
         case .materials:
@@ -391,17 +417,16 @@ struct CourseWorkspaceHeader: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityLabel(Text(store.ui("关闭资料关系台并返回工作台", "Close course relations")))
+            .accessibilityLabel(Text(store.ui("关闭课程空间并返回工作台", "Close course space")))
 
-            VStack(alignment: .leading, spacing: 0) {
-                Text(store.ui("资料关系台", "Course Relations"))
-                    .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 20, weight: .semibold))
-                Text(store.interfaceLanguage == .chinese ? "MATERIALS × NOTES" : "WEIBEI")
-                    .font(WeiBeiTypography.englishBrandFont(size: 8.5, weight: .semibold))
-                    .tracking(0.9)
-                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.74))
+            Group {
+                if page == .hub {
+                    hubTitleBlock
+                } else {
+                    pageTitleBlock
+                }
             }
-            .frame(width: isCompact ? 122 : 148, alignment: .leading)
+            .frame(minWidth: isCompact ? 96 : 120, alignment: .leading)
 
             if isCompact {
                 Menu {
@@ -488,15 +513,78 @@ struct CourseWorkspaceHeader: View {
 
     private var searchPrompt: String {
         switch page {
+        case .hub:
+            store.ui("搜索本课文稿、对话与笔记", "Search this course")
         case .relations:
-            store.ui("搜索课程内容", "Search course content")
+            store.ui("搜索工作区资料与笔记", "Search workspace materials and notes")
         case .records:
             store.ui("搜索学习记录", "Search learning records")
+        }
+    }
+
+    private var hubTitleBlock: some View {
+        Menu {
+            if store.courses.isEmpty {
+                Text(store.ui("还没有课程", "No courses yet"))
+            } else {
+                ForEach(store.courses) { course in
+                    Button {
+                        store.activateCourse(course.id)
+                        page = .hub
+                    } label: {
+                        if course.id == store.activeCourseID {
+                            Label(course.title, systemImage: "checkmark")
+                        } else {
+                            Text(course.title)
+                        }
+                    }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(hubCourseTitle)
+                    .font(courseTitleDisplayFont(hubCourseTitle, size: 20))
+                    .foregroundStyle(WeiBeiTheme.ink)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+            }
+            .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .help(store.ui("选择课程", "Select course"))
+        .accessibilityLabel(Text(store.ui("选择课程", "Select course")))
+    }
+
+    private var pageTitleBlock: some View {
+        Text(pageTitle)
+            .font(courseTitleDisplayFont(pageTitle, size: 20))
+            .foregroundStyle(WeiBeiTheme.ink)
+            .lineLimit(1)
+    }
+
+    private var hubCourseTitle: String {
+        if let course = store.courses.first(where: { $0.id == store.activeCourseID }) {
+            return course.title
+        }
+        return store.ui("选择课程", "Select course")
+    }
+
+    private var pageTitle: String {
+        switch page {
+        case .hub:
+            return hubCourseTitle
+        case .relations:
+            return store.ui("资料关系台", "Course Relations")
+        case .records:
+            return store.ui("学习记录", "Learning Records")
         }
     }
 }
 
 struct CourseWorkspaceTab: View {
+    @EnvironmentObject private var store: WorkspaceStore
     let title: String
     let active: Bool
     let action: () -> Void
@@ -504,7 +592,7 @@ struct CourseWorkspaceTab: View {
     var body: some View {
         Button(action: action) {
             Text(title)
-                .font(.system(size: 12.5, weight: active ? .semibold : .medium))
+                .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 12.5, weight: active ? .semibold : .medium))
                 .foregroundStyle(active ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
                 .padding(.horizontal, 8)
                 .frame(height: 40)

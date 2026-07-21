@@ -959,18 +959,22 @@ public enum SelectionAnchorCoordinate {
 }
 
 public enum SelectionFloatingAgentPlacement {
-    public static let expandedHalfWidth = 200.0
+    public static let expandedHalfWidth = 230.0
     public static let compactHalfWidth = 82.0
+    /// Approximate half-height used to keep an expanded panel on-canvas.
+    public static let expandedHalfHeight = 210.0
+    public static let compactHalfHeight = 28.0
 
     public static func isVisible(
         surface: AgentSurface,
         hasSelection: Bool,
         hasAnchor: Bool,
-        pinned: Bool
+        pinned: Bool,
+        keepOpen: Bool = false
     ) -> Bool {
         guard surface == .selectionFloat else { return false }
-        // Pinned float stays even if selection clears / loses anchor.
-        if pinned { return true }
+        // Pinned or mid-answer floats stay even without a live selection anchor.
+        if pinned || keepOpen { return true }
         return hasSelection && hasAnchor
     }
 
@@ -982,10 +986,15 @@ public enum SelectionFloatingAgentPlacement {
         prefersAnchorCenter: Bool = false
     ) -> FloatingAgentCoordinate {
         let edgePadding = 18.0
-        let anchorGap = 10.0
-        let verticalGap = 8.0
+        let anchorGap = 12.0
+        let verticalGap = prefersAnchorCenter ? 10.0 : 14.0
         let contentCanvas = FloatingAgentCoordinate(x: canvas.x, y: max(1, canvas.y - topInset))
-        let fallback = FloatingAgentCoordinate(x: contentCanvas.x - 128, y: contentCanvas.y - 124)
+        let isExpanded = surfaceHalfWidth >= expandedHalfWidth - 0.5
+        let surfaceHalfHeight = isExpanded ? expandedHalfHeight : compactHalfHeight
+        let fallback = FloatingAgentCoordinate(
+            x: contentCanvas.x - surfaceHalfWidth - edgePadding,
+            y: min(contentCanvas.y - surfaceHalfHeight - edgePadding, contentCanvas.y * 0.42)
+        )
         let anchor = anchor.map { FloatingAgentCoordinate(x: $0.x, y: max(0, $0.y - topInset)) } ?? fallback
         let minimumX = surfaceHalfWidth + edgePadding
         let maximumX = contentCanvas.x - surfaceHalfWidth - edgePadding
@@ -999,11 +1008,24 @@ public enum SelectionFloatingAgentPlacement {
         } else if leftSideX >= minimumX {
             preferredX = leftSideX
         } else {
-            preferredX = anchor.x
+            preferredX = clamp(anchor.x, min: minimumX, max: maximumX)
+        }
+        let minimumY = surfaceHalfHeight + edgePadding
+        let maximumY = contentCanvas.y - surfaceHalfHeight - edgePadding
+        // Prefer just below the mark; if that clips, sit above it.
+        let belowY = anchor.y + verticalGap + (prefersAnchorCenter ? 0 : surfaceHalfHeight * 0.15)
+        let aboveY = anchor.y - verticalGap - (prefersAnchorCenter ? 0 : surfaceHalfHeight * 0.15)
+        let preferredY: Double
+        if belowY <= maximumY {
+            preferredY = belowY
+        } else if aboveY >= minimumY {
+            preferredY = aboveY
+        } else {
+            preferredY = clamp(anchor.y, min: minimumY, max: maximumY)
         }
         return FloatingAgentCoordinate(
             x: clamp(preferredX, min: minimumX, max: maximumX),
-            y: clamp(anchor.y + verticalGap, min: 64, max: contentCanvas.y - 92)
+            y: clamp(preferredY, min: minimumY, max: max(minimumY, maximumY))
         )
     }
 
@@ -1187,9 +1209,9 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
             && !text.hasPrefix("未配置密钥")
             && !text.hasPrefix("未配置 OPENAI_API_KEY")
             && !text.hasPrefix("No key is configured")
-            && !text.hasPrefix("请求失败：")
+            && !text.hasPrefix("请求失败")
             && !text.hasPrefix("Agent 请求失败：")
-            && !text.hasPrefix("Request failed:")
+            && !text.hasPrefix("Request failed")
     }
 }
 

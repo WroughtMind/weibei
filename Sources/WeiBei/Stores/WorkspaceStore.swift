@@ -166,6 +166,7 @@ enum PaneToggleContinuityVerifier {
 }
 
 enum CourseWorkspaceDestination: String, CaseIterable, Sendable {
+    case hub
     case relations
     case materials
     case notes
@@ -296,7 +297,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var adaptImportedDocumentColors = true
     @Published var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     @Published var courseWorkspacePresented = false
-    @Published private(set) var courseWorkspaceDestination: CourseWorkspaceDestination = .relations
+    @Published private(set) var courseWorkspaceDestination: CourseWorkspaceDestination = .hub
     @Published private(set) var courseWorkspaceTargetItemID: String?
     @Published var courseFolderImportDraft: CourseFolderImportDraft?
     @Published private var backNavigationStack: [NavigationSnapshot] = []
@@ -614,6 +615,55 @@ final class WorkspaceStore: ObservableObject {
 
     var recentCourseSessions: [StudySession] {
         orderedStudySessions.filter { !$0.messages.isEmpty }
+    }
+
+    /// Sessions that touch any material/note belonging to the course (no session.courseID yet).
+    func sessionsTouchingCourse(_ courseID: UUID) -> [StudySession] {
+        let itemIDs = Set(courseMembershipIndex.itemIDs(in: courseID))
+        guard !itemIDs.isEmpty else { return [] }
+        return orderedStudySessions.filter { session in
+            guard !session.messages.isEmpty else { return false }
+            if let materialID = session.materialItemID, itemIDs.contains(materialID) {
+                return true
+            }
+            if let groupingID = session.groupingMaterialItemID, itemIDs.contains(groupingID) {
+                return true
+            }
+            return session.focusItemIDs.contains(where: itemIDs.contains)
+        }
+    }
+
+    /// Sessions that reference a specific material (and optionally other focus items).
+    func sessionsTouchingMaterial(_ materialID: String, in courseID: UUID? = nil) -> [StudySession] {
+        let allowed: Set<String>? = courseID.map { Set(courseMembershipIndex.itemIDs(in: $0)) }
+        return orderedStudySessions.filter { session in
+            guard !session.messages.isEmpty else { return false }
+            let touches = session.materialItemID == materialID
+                || session.groupingMaterialItemID == materialID
+                || session.focusItemIDs.contains(materialID)
+            guard touches else { return false }
+            if let allowed {
+                let sessionItems = Set(session.focusItemIDs + [session.materialItemID, session.groupingMaterialItemID].compactMap { $0 })
+                return !sessionItems.isDisjoint(with: allowed)
+            }
+            return true
+        }
+    }
+
+    /// Best-effort course ownership for a session via materials/focus items (no session.courseID yet).
+    func primaryCourseID(for session: StudySession) -> UUID? {
+        let touched = Set(
+            session.focusItemIDs
+                + [session.materialItemID, session.groupingMaterialItemID].compactMap { $0 }
+        )
+        guard !touched.isEmpty else { return nil }
+        let matched = courses.filter { course in
+            !Set(courseMembershipIndex.itemIDs(in: course.id)).isDisjoint(with: touched)
+        }
+        if let activeCourseID, matched.contains(where: { $0.id == activeCourseID }) {
+            return activeCourseID
+        }
+        return matched.first?.id
     }
 
     var activeCourseMemories: [LearningMemoryEntry] {
@@ -1461,14 +1511,41 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func presentCourseWorkspace(
-        _ destination: CourseWorkspaceDestination = .relations,
-        selecting itemID: String? = nil
+        _ destination: CourseWorkspaceDestination = .hub,
+        selecting itemID: String? = nil,
+        courseID: UUID? = nil
     ) {
         persistCurrentNote()
+        if let courseID {
+            activateCourse(courseID)
+        }
         courseWorkspaceReturnFocus = focusedPane
         courseWorkspaceDestination = destination
         courseWorkspaceTargetItemID = itemID
         courseWorkspacePresented = true
+    }
+
+    /// Sidebar / create-course entry into the course hub for a specific course.
+    func openCourseSpace(_ courseID: UUID) {
+        guard courses.contains(where: { $0.id == courseID }) else { return }
+        showLibrary = false
+        presentCourseWorkspace(.hub, courseID: courseID)
+    }
+
+    /// Drop / programmatic import into the active course (materials by default; Markdown stays material unless notes panel).
+    @discardableResult
+    func importCourseFilesFromURLs(_ urls: [URL], asNotes: Bool = false) -> [StudyItem] {
+        let items = importFiles(
+            urls,
+            selectsFirstImportedItem: false,
+            markdownAsNotes: asNotes,
+            markdownOnly: asNotes,
+            reclassifiesExistingMarkdown: true
+        )
+        if let courseID = activeCourseID {
+            assignItemIDs(Set(items.map(\.id)), to: courseID)
+        }
+        return items
     }
 
     func dismissCourseWorkspace() {
@@ -2203,9 +2280,10 @@ final class WorkspaceStore: ObservableObject {
     var canUseSelectionAgentSurface: Bool {
         SelectionFloatingAgentPlacement.isVisible(
             surface: .selectionFloat,
-            hasSelection: selectionContext != nil,
+            hasSelection: selectionContext != nil || keepFloatingSelectionForAnswer,
             hasAnchor: selectionAnchor != nil,
-            pinned: pinnedFloatingAgent
+            pinned: pinnedFloatingAgent,
+            keepOpen: keepFloatingSelectionForAnswer
         )
     }
 
@@ -4541,16 +4619,19 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    /// Reopen the floating agent for a past selection-ask thread (hover / mark click).
-    func openSelectionAskThread(_ threadID: UUID, jumpToConversation: Bool = false) {
+    /// Reopen the floating agent for a past selection-ask thread (hover / mark click / top menu).
+    /// When `anchor` is provided (e.g. underline click), the expanded panel docks beside that point.
+    func openSelectionAskThread(_ threadID: UUID, jumpToConversation: Bool = false, anchor: CGPoint? = nil) {
         guard let thread = selectionAskThreads.first(where: { $0.id == threadID }) else { return }
         withAnimation(WeiBeiMotion.panel) {
             activeSelectionAskThreadID = thread.id
             floatingSelectionPrompt = thread.ownerTitle
             keepFloatingSelectionForAnswer = true
-            pinnedFloatingAgent = true
+            // Do not force-pin on reopen — pin is an explicit user choice.
             agentSurface = .selectionFloat
-            // Restore a synthetic selection context so the float shows the excerpt.
+            if let anchor {
+                selectionAnchor = anchor
+            }
             selectionContext = SelectionContext(
                 id: thread.id,
                 text: thread.selectionText,
@@ -6118,8 +6199,7 @@ final class WorkspaceStore: ObservableObject {
             appendAgentMessage(assistantMessage)
             appendMessageToActiveSelectionAskThread(assistantMessage.id)
         } catch PiAgentRuntimeError.cancelled, is CancellationError {
-            if !didAppendUserMessage,
-               agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 agentDraft = question
             }
             lastAgentFailureKind = .cancelled
@@ -6129,9 +6209,9 @@ final class WorkspaceStore: ObservableObject {
             if !didAppendUserMessage {
                 appendAgentMessage(AgentMessage(role: .user, text: question, source: sourceTitle))
             }
-            if agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                agentDraft = question
-            }
+            // Always restore the failed question so composer matches the failure copy.
+            agentDraft = question
+            focusedPane = .agent
             let kind = AgentFailureKind.classify(error)
             lastAgentFailureKind = kind
             lastFailedAgentQuestion = question
@@ -6139,7 +6219,11 @@ final class WorkspaceStore: ObservableObject {
             appendAgentMessage(
                 AgentMessage(
                     role: .assistant,
-                    text: kind.userMessage(language: interfaceLanguage, detail: detail),
+                    text: kind.userMessage(
+                        language: interfaceLanguage,
+                        detail: detail,
+                        draftPreserved: true
+                    ),
                     source: sourceTitle
                 )
             )
@@ -6180,10 +6264,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     static func isAgentFailureMessage(_ text: String) -> Bool {
-        text.hasPrefix("请求失败：")
+        text.hasPrefix("请求失败")
             || text.hasPrefix("Agent 请求失败：")
-            || text.hasPrefix("Request failed:")
-            || text.hasPrefix("Request failed: ")
+            || text.hasPrefix("Request failed")
     }
 
     private func executeStudyAgentRequest(_ request: StudyAgentRequest) async throws -> StudyAgentReply {

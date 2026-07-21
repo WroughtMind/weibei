@@ -581,7 +581,7 @@ public enum AgentFailureKind: String, Equatable, Sendable {
         case .cancelled:
             return language.text("本次请求已取消。", "This request was cancelled.")
         case .generic:
-            return language.text("问题已保留在输入框，可直接重试。", "The question remains in the composer; you can retry.")
+            return language.text("可直接重试。", "You can retry.")
         }
     }
 
@@ -668,16 +668,28 @@ public enum AgentFailureKind: String, Equatable, Sendable {
     }
 
     /// Build a bilingual failure bubble body. Includes a stable marker for UI detection.
-    public func userMessage(language: WeiBeiInterfaceLanguage, detail: String?) -> String {
-        let marker = language.text("请求失败：", "Request failed: ")
-        let title = title(language: language)
-        let guide = guidance(language: language)
-        var lines = ["\(marker)\(title)", guide]
+    public func userMessage(
+        language: WeiBeiInterfaceLanguage,
+        detail: String?,
+        draftPreserved: Bool = false
+    ) -> String {
+        let titleText = title(language: language)
+        // Avoid "请求失败：请求失败" when the kind title is already "请求失败".
+        let header: String
+        switch self {
+        case .generic:
+            header = titleText
+        default:
+            header = language.text("请求失败：\(titleText)", "Request failed: \(titleText)")
+        }
+        var lines = [header, guidance(language: language)]
         if let detail = detail?.trimmingCharacters(in: .whitespacesAndNewlines), !detail.isEmpty {
             let clipped = detail.count > 280 ? String(detail.prefix(280)) + "…" : detail
             lines.append(language.text("详情：\(clipped)", "Detail: \(clipped)"))
         }
-        lines.append(language.text("问题已保留在输入框。", "The question remains in the composer."))
+        if draftPreserved {
+            lines.append(language.text("问题已保留在输入框。", "The question remains in the composer."))
+        }
         return lines.joined(separator: "\n")
     }
 }

@@ -126,6 +126,11 @@ final class MarkdownWebView: WKWebView {
         removeScrollWheelMonitor()
     }
 
+    /// Compact agent previews must not steal keyboard focus from the composer.
+    override var acceptsFirstResponder: Bool {
+        passesVerticalScrollToSuperview ? false : super.acceptsFirstResponder
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         updateScrollWheelMonitor()
@@ -480,9 +485,17 @@ struct RichMarkdownEditorView: NSViewRepresentable {
           text-decoration-thickness: 1.5px;
           text-underline-offset: 3px;
           cursor: pointer;
+          border-radius: 2px;
+          transition: background-color 120ms ease;
+        }
+        .weibei-selection-ask-mark:hover {
+          background-color: rgba(145, 38, 27, 0.12);
         }
         [data-weibei-theme="inkstone"] .weibei-selection-ask-mark {
           text-decoration-color: rgba(200, 120, 100, 0.85);
+        }
+        [data-weibei-theme="inkstone"] .weibei-selection-ask-mark:hover {
+          background-color: rgba(200, 120, 100, 0.16);
         }
       `;
       document.documentElement.appendChild(style);

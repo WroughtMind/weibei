@@ -18,10 +18,10 @@ struct SidebarView: View {
                         Text(store.ui("课程目录", "Course Index"))
                             .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 22, weight: .semibold))
                         Button {
-                            store.presentCourseWorkspace()
+                            store.presentCourseWorkspace(.hub)
                         } label: {
                             HStack(spacing: 3) {
-                                Text(store.ui("资料关系台", "Course Relations"))
+                                Text(store.ui("课程空间", "Course Space"))
                                 Image(systemName: "chevron.right")
                                     .font(.system(size: 8, weight: .bold))
                             }
@@ -29,8 +29,8 @@ struct SidebarView: View {
                             .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.78))
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(Text(store.ui("打开资料关系台", "Open course relations")))
-                        .help(store.ui("打开资料关系台", "Open course relations"))
+                        .accessibilityLabel(Text(store.ui("打开课程空间", "Open course space")))
+                        .help(store.ui("打开课程空间", "Open course space"))
                     }
                     Spacer()
                     Button { showsNewCourseSheet = true } label: {
@@ -182,22 +182,41 @@ struct SidebarView: View {
             } else {
                 ForEach(filteredCourses) { course in
                     VStack(alignment: .leading, spacing: 0) {
-                        Button {
-                            // Local reveal only — layout spring was animating the whole app shell.
-                            withAnimation(WeiBeiMotion.reveal) {
-                                store.activateCourse(store.activeCourseID == course.id ? nil : course.id)
+                        HStack(spacing: 4) {
+                            Button {
+                                // Local reveal only — layout spring was animating the whole app shell.
+                                withAnimation(WeiBeiMotion.reveal) {
+                                    store.activateCourse(store.activeCourseID == course.id ? nil : course.id)
+                                }
+                            } label: {
+                                SidebarCourseRow(
+                                    course: course,
+                                    materialCount: store.courseMaterials(in: course.id).count,
+                                    noteCount: store.courseNotes(in: course.id).count,
+                                    expanded: store.activeCourseID == course.id
+                                )
                             }
-                        } label: {
-                            SidebarCourseRow(
-                                course: course,
-                                materialCount: store.courseMaterials(in: course.id).count,
-                                noteCount: store.courseNotes(in: course.id).count,
-                                expanded: store.activeCourseID == course.id
-                            )
+                            .buttonStyle(.plain)
+                            .accessibilityHint(Text(store.activeCourseID == course.id ? store.ui("收起课程内容", "Collapse course contents") : store.ui("展开课程内容", "Expand course contents")))
+
+                            Button {
+                                store.openCourseSpace(course.id)
+                            } label: {
+                                Text(store.ui("进入", "Enter"))
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.88))
+                                    .padding(.horizontal, 8)
+                                    .frame(height: 28)
+                                    .background(WeiBeiTheme.cinnabarSoft.opacity(0.42), in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                            .help(store.ui("进入课程空间", "Enter course space"))
+                            .accessibilityLabel(Text(store.ui("进入课程空间", "Enter course space")))
                         }
-                        .buttonStyle(.plain)
-                        .accessibilityHint(Text(store.activeCourseID == course.id ? store.ui("收起课程内容", "Collapse course contents") : store.ui("展开课程内容", "Expand course contents")))
                         .contextMenu {
+                            Button(store.ui("进入课程空间", "Enter course space")) {
+                                store.openCourseSpace(course.id)
+                            }
                             Button(store.ui("重命名课程", "Rename course")) {
                                 renameCourseTitle = course.title
                                 courseToRename = course
@@ -379,6 +398,7 @@ struct SidebarView: View {
         guard let courseID = store.createCourse(title: newCourseTitle) else { return }
         store.activateCourse(courseID)
         closeNewCourseSheet()
+        store.openCourseSpace(courseID)
     }
 
     private func renameCourse(_ course: Course) {
@@ -429,7 +449,6 @@ private struct SidebarCourseRow: View {
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(alignment: .leading) {
             if expanded {
-                // Course group: hairline only — selection focus lives on LibraryRow.
                 Capsule()
                     .fill(WeiBeiTheme.hairline.opacity(0.72))
                     .frame(width: 1, height: 20)

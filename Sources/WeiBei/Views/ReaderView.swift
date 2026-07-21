@@ -204,7 +204,10 @@ struct ReaderView: View {
                         appearanceMode: store.appearanceMode,
                         reorderRole: floatingTitleReorderRole
                     ) {
-                        importedDocumentAdaptationControl
+                        HStack(spacing: 8) {
+                            selectionAskThreadsMenu
+                            importedDocumentAdaptationControl
+                        }
                     }
                 }
             }
@@ -539,6 +542,47 @@ struct ReaderView: View {
         }
     }
 
+    /// Top-chrome entry for past selection-ask threads (replaces the mid-document legend overlay).
+    @ViewBuilder
+    private var selectionAskThreadsMenu: some View {
+        let threads = store.selectionAskThreads(forItemID: store.selectedMaterialItem?.id)
+        if !threads.isEmpty {
+            Menu {
+                ForEach(threads.prefix(12)) { thread in
+                    Button {
+                        store.openSelectionAskThread(thread.id, jumpToConversation: false)
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(Self.truncatedAskMenuLabel(thread.selectionText))
+                            if !thread.ownerTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                Text(thread.ownerTitle)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Text(store.ui("已问 · \(threads.count)", "Asked · \(threads.count)"))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.9))
+                    .padding(.horizontal, 8)
+                    .frame(height: 22)
+                    .background(WeiBeiTheme.cinnabarSoft.opacity(0.55), in: Capsule())
+            }
+            .menuStyle(.borderlessButton)
+            .help(store.ui("打开已问选区列表", "Open asked-selection list"))
+            .accessibilityLabel(Text(store.ui("已问选区", "Asked selections")))
+        }
+    }
+
+    private static func truncatedAskMenuLabel(_ text: String, limit: Int = 28) -> String {
+        let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\n", with: " ")
+        guard cleaned.count > limit else { return cleaned }
+        return String(cleaned.prefix(limit)) + "…"
+    }
+
     private var supportsImportedDocumentColorAdaptation: Bool {
         guard let item = store.selectedMaterialItem, item.url != nil else { return false }
         return item.kind == .pdf || item.kind == .html
@@ -758,36 +802,31 @@ struct ReaderView: View {
             switch item.kind {
             case .pdf:
                 if let url = item.url {
-                    ZStack {
-                        PDFReaderRepresentable(
-                            url: url,
-                            browseMode: pdfBrowseMode,
-                            searchQuery: store.readerSearch,
-                            appearanceMode: store.appearanceMode,
-                            adaptsDocumentColors: store.adaptImportedDocumentColors,
-                            pageIndex: $pdfPageIndex,
-                            pageCount: $pdfPageCount,
-                            railTargetPageIndex: $pdfRailTargetPageIndex,
-                            underlineSnippets: store.selectionAskThreads(forItemID: item.id).map(\.selectionText),
-                            onUserPageChange: schedulePDFLocationCommit,
-                            onSelectableTextChange: { available in pdfHasSelectableText = available }
-                        ) { text, anchor, selectionPageIndex in
-                            let title = store.displayTitle(for: item)
-                            let ownerTitle = store.ui("\(title)，第 \(selectionPageIndex + 1) 页", "\(title), page \(selectionPageIndex + 1)")
-                            store.updateReaderLocationTitle(ownerTitle)
-                            store.updateSelection(text, source: .document, anchor: anchor, ownerTitle: ownerTitle)
-                        }
-                        if !store.selectionAskThreads(forItemID: item.id).isEmpty {
-                            VStack {
-                                Spacer()
-                                SelectionAskMarksLegend(
-                                    threads: Array(store.selectionAskThreads(forItemID: item.id).prefix(6))
-                                ) { thread in
-                                    store.openSelectionAskThread(thread.id, jumpToConversation: false)
-                                }
-                                .padding(12)
+                    PDFReaderRepresentable(
+                        url: url,
+                        browseMode: pdfBrowseMode,
+                        searchQuery: store.readerSearch,
+                        appearanceMode: store.appearanceMode,
+                        adaptsDocumentColors: store.adaptImportedDocumentColors,
+                        pageIndex: $pdfPageIndex,
+                        pageCount: $pdfPageCount,
+                        railTargetPageIndex: $pdfRailTargetPageIndex,
+                        underlineSnippets: store.selectionAskThreads(forItemID: item.id).map(\.selectionText),
+                        askUnderlineMarks: store.selectionAskThreads(forItemID: item.id).map {
+                            (id: $0.id.uuidString, text: $0.selectionText)
+                        },
+                        onAskUnderlineActivate: { threadID, anchor in
+                            if let uuid = UUID(uuidString: threadID) {
+                                store.openSelectionAskThread(uuid, jumpToConversation: false, anchor: anchor)
                             }
-                        }
+                        },
+                        onUserPageChange: schedulePDFLocationCommit,
+                        onSelectableTextChange: { available in pdfHasSelectableText = available }
+                    ) { text, anchor, selectionPageIndex in
+                        let title = store.displayTitle(for: item)
+                        let ownerTitle = store.ui("\(title)，第 \(selectionPageIndex + 1) 页", "\(title), page \(selectionPageIndex + 1)")
+                        store.updateReaderLocationTitle(ownerTitle)
+                        store.updateSelection(text, source: .document, anchor: anchor, ownerTitle: ownerTitle)
                     }
                 } else {
                     SamplePDFView(appearanceMode: store.appearanceMode, language: store.interfaceLanguage) { text, anchor in
@@ -1046,6 +1085,9 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
     @Binding var pageCount: Int
     @Binding var railTargetPageIndex: Int?
     var underlineSnippets: [String] = []
+    /// Asked-selection marks with thread ids for hover/click reopen.
+    var askUnderlineMarks: [(id: String, text: String)] = []
+    var onAskUnderlineActivate: (String, CGPoint?) -> Void = { _, _ in }
     var onUserPageChange: (Int) -> Void
     var onSelectableTextChange: (Bool?) -> Void = { _ in }
     var onSelectionChange: (String, CGPoint?, Int) -> Void
@@ -1056,7 +1098,8 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             pageCount: $pageCount,
             onUserPageChange: onUserPageChange,
             onSelectableTextChange: onSelectableTextChange,
-            onSelectionChange: onSelectionChange
+            onSelectionChange: onSelectionChange,
+            onAskUnderlineActivate: onAskUnderlineActivate
         )
     }
 
@@ -1080,6 +1123,14 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             guard let view else { return }
             coordinator?.reportCurrentSelection(in: view)
         }
+        view.handleAskUnderlineHover = { [weak coordinator = context.coordinator, weak view] point in
+            guard let view else { return }
+            coordinator?.handleAskUnderlineHover(at: point, in: view)
+        }
+        view.handleAskUnderlineClick = { [weak coordinator = context.coordinator, weak view] point in
+            guard let view else { return false }
+            return coordinator?.handleAskUnderlineClick(at: point, in: view) ?? false
+        }
         return view
     }
 
@@ -1089,6 +1140,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         context.coordinator.appearanceMode = appearanceMode
         context.coordinator.onUserPageChange = onUserPageChange
         context.coordinator.onSelectableTextChange = onSelectableTextChange
+        context.coordinator.onAskUnderlineActivate = onAskUnderlineActivate
         view.backgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
         view.configureDocumentColorAdaptation(enabled: adaptsDocumentColors, appearanceMode: appearanceMode)
 
@@ -1122,7 +1174,9 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         }
 
         context.coordinator.applySearch(searchQuery, in: view)
-        context.coordinator.applyAskUnderlines(underlineSnippets, in: view)
+        context.coordinator.applyAskUnderlines(askUnderlineMarks.isEmpty
+            ? underlineSnippets.map { (id: "", text: $0) }
+            : askUnderlineMarks, in: view)
         DispatchQueue.main.async {
             WeiBeiQuietScrollers.configureRecursively(
                 in: view,
@@ -1147,6 +1201,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         var onUserPageChange: (Int) -> Void
         var onSelectableTextChange: (Bool?) -> Void
         var onSelectionChange: (String, CGPoint?, Int) -> Void
+        var onAskUnderlineActivate: (String, CGPoint?) -> Void
         var appearanceMode: WeiBeiAppearanceMode = .paper
         private weak var observedView: PDFView?
         private var observer: NSObjectProtocol?
@@ -1161,13 +1216,26 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         private var loadGeneration = 0
         private var userNavigationDeadline = Date.distantPast
         private(set) var loadedURL: URL?
+        private var lastAppliedAskUnderlineMarks: [(id: String, text: String)] = []
+        private var askUnderlineHits: [(threadID: String, pageIndex: Int, hitBounds: CGRect)] = []
+        private var hoveredAskThreadID: String?
+        private let askUnderlineMarker = "weibei-selection-ask"
+        private let askUnderlineHoverMarker = "weibei-selection-ask-hover"
 
-        init(pageIndex: Binding<Int>, pageCount: Binding<Int>, onUserPageChange: @escaping (Int) -> Void, onSelectableTextChange: @escaping (Bool?) -> Void, onSelectionChange: @escaping (String, CGPoint?, Int) -> Void) {
+        init(
+            pageIndex: Binding<Int>,
+            pageCount: Binding<Int>,
+            onUserPageChange: @escaping (Int) -> Void,
+            onSelectableTextChange: @escaping (Bool?) -> Void,
+            onSelectionChange: @escaping (String, CGPoint?, Int) -> Void,
+            onAskUnderlineActivate: @escaping (String, CGPoint?) -> Void
+        ) {
             self.pageIndex = pageIndex
             self.pageCount = pageCount
             self.onUserPageChange = onUserPageChange
             self.onSelectableTextChange = onSelectableTextChange
             self.onSelectionChange = onSelectionChange
+            self.onAskUnderlineActivate = onAskUnderlineActivate
         }
 
         func suspend() {
@@ -1183,7 +1251,9 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             nativeTextPageIndexes = []
             clearOCROverlays(in: view)
             lastSearchQuery = ""
-            lastAppliedAskUnderlineSnippets = []
+            lastAppliedAskUnderlineMarks = []
+            askUnderlineHits = []
+            hoveredAskThreadID = nil
             onSelectableTextChange(nil)
 
             DispatchQueue.global(qos: .userInitiated).async {
@@ -1462,33 +1532,119 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             }
         }
 
-        private var lastAppliedAskUnderlineSnippets: [String] = []
-
         /// Cinnabar underlines for selection-ask history (PDF text layer).
-        func applyAskUnderlines(_ snippets: [String], in view: PDFView) {
+        /// Uses per-line thin strips — never the multi-line union bounds (those look like red highlights).
+        func applyAskUnderlines(_ marks: [(id: String, text: String)], in view: PDFView) {
             guard let document = view.document else { return }
-            guard snippets != lastAppliedAskUnderlineSnippets else { return }
-            lastAppliedAskUnderlineSnippets = snippets
-            let marker = "weibei-selection-ask"
-            for pageIndex in 0..<document.pageCount {
-                guard let page = document.page(at: pageIndex) else { continue }
-                for annotation in page.annotations where annotation.userName == marker {
-                    page.removeAnnotation(annotation)
-                }
-            }
-            let cinnabar = NSColor(calibratedRed: 0.56, green: 0.16, blue: 0.12, alpha: 0.9)
-            for raw in snippets {
-                let needle = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            let signature = marks.map { "\($0.id)|\($0.text)" }
+            let previous = lastAppliedAskUnderlineMarks.map { "\($0.id)|\($0.text)" }
+            guard signature != previous else { return }
+            lastAppliedAskUnderlineMarks = marks
+            askUnderlineHits = []
+            hoveredAskThreadID = nil
+            clearAskUnderlineAnnotations(in: document, includingHover: true)
+            let cinnabar = NSColor(calibratedRed: 0.56, green: 0.16, blue: 0.12, alpha: 0.92)
+            for mark in marks {
+                let needle = mark.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard needle.count >= 4 else { continue }
                 let matches = document.findString(needle, withOptions: [.caseInsensitive])
-                for selection in matches.prefix(4) {
-                    for page in selection.pages {
-                        let bounds = selection.bounds(for: page)
-                        guard !bounds.isEmpty else { continue }
-                        let annotation = PDFAnnotation(bounds: bounds, forType: .underline, withProperties: nil)
-                        annotation.color = cinnabar
-                        annotation.userName = marker
-                        page.addAnnotation(annotation)
+                for selection in matches.prefix(2) {
+                    for line in selection.selectionsByLine() {
+                        for page in line.pages {
+                            let lineBounds = line.bounds(for: page)
+                            guard lineBounds.width > 2, lineBounds.height > 0.5 else { continue }
+                            var underlineBounds = lineBounds
+                            let thickness = min(2.0, max(1.15, lineBounds.height * 0.1))
+                            underlineBounds.origin.y = lineBounds.minY
+                            underlineBounds.size.height = thickness
+                            let annotation = PDFAnnotation(bounds: underlineBounds, forType: .underline, withProperties: nil)
+                            annotation.color = cinnabar
+                            annotation.userName = askUnderlineMarker
+                            page.addAnnotation(annotation)
+                            let pageIndex = document.index(for: page)
+                            if !mark.id.isEmpty, pageIndex != NSNotFound {
+                                askUnderlineHits.append((
+                                    threadID: mark.id,
+                                    pageIndex: pageIndex,
+                                    hitBounds: lineBounds.insetBy(dx: -2, dy: -2)
+                                ))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        func handleAskUnderlineHover(at viewPoint: CGPoint, in view: PDFView) {
+            let threadID = askThreadID(at: viewPoint, in: view)
+            guard threadID != hoveredAskThreadID else { return }
+            hoveredAskThreadID = threadID
+            applyAskUnderlineHoverHighlight(in: view)
+            if threadID != nil {
+                NSCursor.pointingHand.set()
+            } else {
+                NSCursor.iBeam.set()
+            }
+        }
+
+        @discardableResult
+        func handleAskUnderlineClick(at viewPoint: CGPoint, in view: PDFView) -> Bool {
+            guard let hit = askUnderlineHit(at: viewPoint, in: view) else { return false }
+            // Anchor at the mark's visual center-bottom so the expanded panel docks beside it.
+            guard let document = view.document,
+                  let page = document.page(at: hit.pageIndex) else {
+                onAskUnderlineActivate(hit.threadID, SelectionAnchorContentPoint.fromLocalPoint(viewPoint, in: view))
+                return true
+            }
+            let localRect = view.convert(hit.hitBounds, from: page)
+            let localPoint = CGPoint(x: localRect.midX, y: localRect.minY)
+            let anchor = SelectionAnchorContentPoint.fromLocalPoint(localPoint, in: view)
+            onAskUnderlineActivate(hit.threadID, anchor)
+            return true
+        }
+
+        private func askUnderlineHit(at viewPoint: CGPoint, in view: PDFView) -> (threadID: String, pageIndex: Int, hitBounds: CGRect)? {
+            guard let document = view.document,
+                  let page = view.page(for: viewPoint, nearest: true) else { return nil }
+            let pageIndex = document.index(for: page)
+            guard pageIndex != NSNotFound else { return nil }
+            let pagePoint = view.convert(viewPoint, to: page)
+            return askUnderlineHits.first(where: {
+                $0.pageIndex == pageIndex && $0.hitBounds.contains(pagePoint)
+            })
+        }
+
+        private func askThreadID(at viewPoint: CGPoint, in view: PDFView) -> String? {
+            askUnderlineHit(at: viewPoint, in: view)?.threadID
+        }
+
+        private func applyAskUnderlineHoverHighlight(in view: PDFView) {
+            guard let document = view.document else { return }
+            clearAskUnderlineAnnotations(in: document, includingHover: true, underlines: false)
+            guard let threadID = hoveredAskThreadID else { return }
+            let fill = NSColor(calibratedRed: 0.56, green: 0.16, blue: 0.12, alpha: 0.12)
+            for hit in askUnderlineHits where hit.threadID == threadID {
+                guard let page = document.page(at: hit.pageIndex) else { continue }
+                let annotation = PDFAnnotation(bounds: hit.hitBounds, forType: .highlight, withProperties: nil)
+                annotation.color = fill
+                annotation.userName = askUnderlineHoverMarker
+                page.addAnnotation(annotation)
+            }
+        }
+
+        private func clearAskUnderlineAnnotations(
+            in document: PDFDocument,
+            includingHover: Bool,
+            underlines: Bool = true
+        ) {
+            for pageIndex in 0..<document.pageCount {
+                guard let page = document.page(at: pageIndex) else { continue }
+                for annotation in page.annotations {
+                    let name = annotation.userName
+                    if underlines, name == askUnderlineMarker {
+                        page.removeAnnotation(annotation)
+                    } else if includingHover, name == askUnderlineHoverMarker {
+                        page.removeAnnotation(annotation)
                     }
                 }
             }
@@ -1533,14 +1689,32 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
 
 private final class ReaderPDFView: PDFView {
     var reportCurrentSelection: (() -> Void)?
+    var handleAskUnderlineHover: ((CGPoint) -> Void)?
+    var handleAskUnderlineClick: ((CGPoint) -> Bool)?
     private var adaptsDocumentColors = true
     private var documentAppearanceMode: WeiBeiAppearanceMode = .paper
+    private var trackingArea: NSTrackingArea?
 
     func configureDocumentColorAdaptation(enabled: Bool, appearanceMode: WeiBeiAppearanceMode) {
         guard adaptsDocumentColors != enabled || documentAppearanceMode != appearanceMode else { return }
         adaptsDocumentColors = enabled
         documentAppearanceMode = appearanceMode
         invalidatePageRendering()
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.activeInKeyWindow, .mouseMoved, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
     }
 
     override func draw(_ page: PDFPage, to context: CGContext) {
@@ -1561,8 +1735,18 @@ private final class ReaderPDFView: PDFView {
         true
     }
 
+    override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        let point = convert(event.locationInWindow, from: nil)
+        handleAskUnderlineHover?(point)
+    }
+
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+        let point = convert(event.locationInWindow, from: nil)
+        if handleAskUnderlineClick?(point) == true {
+            return
+        }
         super.mouseDown(with: event)
         reportCurrentSelection?()
     }
@@ -2675,37 +2859,22 @@ private struct MarkdownDocumentReaderView: View {
     @State private var command: NoteEditorCommand?
 
     var body: some View {
-        ZStack {
-            RichMarkdownEditorView(
-                markdown: .constant(markdown),
-                command: $command,
-                isEditable: false,
-                markdownBaseURL: markdownBaseURL,
-                searchQuery: searchQuery,
-                appearanceMode: appearanceMode,
-                interfaceLanguage: interfaceLanguage,
-                onSelectionChange: onSelectionChange,
-                onAskAgentWithSelection: onSelectionChange,
-                onWikiLink: onWikiLink,
-                onSourceReference: onSourceReference,
-                onAppShortcut: onAppShortcut,
-                selectionAskMarks: selectionAskMarks,
-                onSelectionAskMark: onSelectionAskMark
-            )
-            // Fallback strip when in-text marks cannot be painted yet.
-            if !store.selectionAskThreads(forItemID: store.selectedMaterialItem?.id).isEmpty {
-                VStack {
-                    Spacer()
-                    SelectionAskMarksLegend(
-                        threads: Array(store.selectionAskThreads(forItemID: store.selectedMaterialItem?.id).prefix(6))
-                    ) { thread in
-                        store.openSelectionAskThread(thread.id, jumpToConversation: false)
-                    }
-                    .padding(12)
-                }
-                .allowsHitTesting(true)
-            }
-        }
+        RichMarkdownEditorView(
+            markdown: .constant(markdown),
+            command: $command,
+            isEditable: false,
+            markdownBaseURL: markdownBaseURL,
+            searchQuery: searchQuery,
+            appearanceMode: appearanceMode,
+            interfaceLanguage: interfaceLanguage,
+            onSelectionChange: onSelectionChange,
+            onAskAgentWithSelection: onSelectionChange,
+            onWikiLink: onWikiLink,
+            onSourceReference: onSourceReference,
+            onAppShortcut: onAppShortcut,
+            selectionAskMarks: selectionAskMarks,
+            onSelectionAskMark: onSelectionAskMark
+        )
     }
 }
 
@@ -2787,41 +2956,6 @@ private struct PlainTextReaderView: View {
             onSelectionChange: onSelectionChange
         )
             .padding(32)
-    }
-}
-
-/// Bottom legend for asked selection marks when the surface cannot inject underlines.
-private struct SelectionAskMarksLegend: View {
-    let threads: [SelectionAskThread]
-    var onOpen: (SelectionAskThread) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("已问选区")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.85))
-            ForEach(threads) { thread in
-                Button {
-                    onOpen(thread)
-                } label: {
-                    Text(thread.selectionText)
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(WeiBeiTheme.ink)
-                        .lineLimit(1)
-                        .underline(true, color: WeiBeiTheme.cinnabar.opacity(0.75))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(10)
-        .frame(maxWidth: 360, alignment: .leading)
-        .background(WeiBeiTheme.paperRaised.opacity(0.96), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(WeiBeiTheme.cinnabar.opacity(0.28), lineWidth: 1)
-        }
-        .shadow(color: WeiBeiTheme.ink.opacity(0.08), radius: 10, y: 3)
     }
 }
 

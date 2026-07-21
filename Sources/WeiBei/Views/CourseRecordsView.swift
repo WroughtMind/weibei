@@ -2,16 +2,20 @@ import Foundation
 import SwiftUI
 import WeiBeiCore
 
-/// Lightweight learning-session list for the course workspace.
-/// Heavy dual-pane history browsing lives in the chat hover catalog instead —
-/// this page is a simple jump board into continuing conversations.
+/// Learning-session list grouped by course (color tag per course).
 struct CourseRecordsView: View {
     @EnvironmentObject private var store: WorkspaceStore
     let search: String
     @Binding var selectedSessionID: UUID?
     let isCompact: Bool
 
-    private var sessions: [StudySession] {
+    private struct SessionGroup: Identifiable {
+        let id: String
+        let course: Course?
+        let sessions: [StudySession]
+    }
+
+    private var filteredSessions: [StudySession] {
         let cleaned = search.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return store.recentCourseSessions }
         return store.recentCourseSessions.filter { session in
@@ -21,14 +25,40 @@ struct CourseRecordsView: View {
         }
     }
 
+    private var groups: [SessionGroup] {
+        var buckets: [String: (course: Course?, sessions: [StudySession])] = [:]
+        for session in filteredSessions {
+            if let courseID = store.primaryCourseID(for: session),
+               let course = store.courses.first(where: { $0.id == courseID }) {
+                let key = courseID.uuidString
+                var entry = buckets[key] ?? (course, [])
+                entry.sessions.append(session)
+                buckets[key] = entry
+            } else {
+                var entry = buckets["unassigned"] ?? (nil, [])
+                entry.sessions.append(session)
+                buckets["unassigned"] = entry
+            }
+        }
+
+        let orderedCourseGroups = store.courses.compactMap { course -> SessionGroup? in
+            guard let entry = buckets[course.id.uuidString], !entry.sessions.isEmpty else { return nil }
+            return SessionGroup(id: course.id.uuidString, course: course, sessions: entry.sessions)
+        }
+        let unassigned = buckets["unassigned"].map {
+            SessionGroup(id: "unassigned", course: nil, sessions: $0.sessions)
+        }
+        return orderedCourseGroups + (unassigned.map { [$0] } ?? [])
+    }
+
     var body: some View {
         Group {
-            if sessions.isEmpty {
+            if groups.isEmpty {
                 CourseEmptyState(
                     title: store.ui("还没有学习记录", "No learning records yet"),
                     detail: store.ui(
-                        "有真实对话的会话会出现在这里。日常切换请用对话顶栏 Hover「目录」。",
-                        "Sessions with real messages appear here. Day-to-day switching uses the chat hover Catalog."
+                        "有真实对话的会话会出现在这里，并按课程归类。",
+                        "Sessions with messages appear here, grouped by course."
                     ),
                     systemImage: "bubble.left.and.text.bubble.right"
                 )
@@ -36,22 +66,25 @@ struct CourseRecordsView: View {
                 .padding(30)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(sessions) { session in
-                            CourseWorkspaceRow(
-                                icon: "bubble.left.and.text.bubble.right",
-                                title: session.title,
-                                detail: store.ui(
-                                    "\(session.messages.count) 条消息 · \(coursePhaseLabel(session.flow.phase, store: store))",
-                                    "\(session.messages.count) messages · \(coursePhaseLabel(session.flow.phase, store: store))"
-                                ),
-                                status: courseRelativeDate(session.updatedAt, language: store.interfaceLanguage),
-                                selected: session.id == selectedSessionID
-                            ) {
-                                selectedSessionID = session.id
-                                store.continueCourseSession(session.id)
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(groups) { group in
+                            groupHeader(group)
+                            ForEach(group.sessions) { session in
+                                CourseWorkspaceRow(
+                                    icon: "bubble.left.and.text.bubble.right",
+                                    title: session.title,
+                                    detail: store.ui(
+                                        "\(session.messages.count) 条消息 · \(coursePhaseLabel(session.flow.phase, store: store))",
+                                        "\(session.messages.count) messages · \(coursePhaseLabel(session.flow.phase, store: store))"
+                                    ),
+                                    status: courseRelativeDate(session.updatedAt, language: store.interfaceLanguage),
+                                    selected: session.id == selectedSessionID
+                                ) {
+                                    selectedSessionID = session.id
+                                    store.continueCourseSession(session.id)
+                                }
+                                CourseHairline()
                             }
-                            CourseHairline()
                         }
                     }
                     .padding(.vertical, 6)
@@ -60,10 +93,10 @@ struct CourseRecordsView: View {
             }
         }
         .overlay(alignment: .bottom) {
-            if !sessions.isEmpty {
+            if !groups.isEmpty {
                 Text(store.ui(
-                    "点击一行即可继续对话 · 完整目录也在对话顶栏 Hover 菜单中",
-                    "Click a row to continue · full catalog also lives in the chat hover menu"
+                    "同色标签表示同一课程 · 点击一行继续对话",
+                    "Matching tags share a course · click a row to continue"
                 ))
                 .font(.system(size: 11))
                 .foregroundStyle(WeiBeiTheme.tertiaryInk)
@@ -75,8 +108,29 @@ struct CourseRecordsView: View {
         }
         .onAppear {
             if selectedSessionID == nil {
-                selectedSessionID = sessions.first?.id
+                selectedSessionID = groups.first?.sessions.first?.id
             }
         }
+    }
+
+    private func groupHeader(_ group: SessionGroup) -> some View {
+        let accent = group.course.map { courseWorkspaceAccent(colorIndex: $0.colorIndex) } ?? WeiBeiTheme.tertiaryInk
+        let title = group.course?.title ?? store.ui("未归属课程", "Unassigned")
+        return HStack(spacing: 8) {
+            Capsule()
+                .fill(accent)
+                .frame(width: 8, height: 8)
+            Text(title)
+                .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 13, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.ink)
+            Text(store.ui("\(group.sessions.count) 段", "\(group.sessions.count)"))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 8)
+        .background(accent.opacity(0.06))
     }
 }

@@ -51,10 +51,21 @@ struct ContentView: View {
                                 .transition(WeiBeiTransition.floating)
                                 .zIndex(30)
                                 .onChange(of: store.keepFloatingSelectionForAnswer) { _, keep in
+                                    // Expand only when an intentional keep-open is requested
+                                    // (点「问」/回访红线/顶部已问), not on bare selection.
                                     if keep { floatingAgentExpanded = true }
                                 }
                                 .onChange(of: store.activeSelectionAskThreadID) { _, id in
-                                    if id != nil { floatingAgentExpanded = true }
+                                    if id != nil, store.keepFloatingSelectionForAnswer {
+                                        floatingAgentExpanded = true
+                                    }
+                                }
+                                .onChange(of: store.selectionContext?.id) { _, _ in
+                                    // Live reselection collapses to capsule; reopen-with-keepOpen must stay expanded.
+                                    guard !store.pinnedFloatingAgent,
+                                          !store.isAskingAgent,
+                                          !store.keepFloatingSelectionForAnswer else { return }
+                                    floatingAgentExpanded = false
                                 }
                         }
 
@@ -108,7 +119,8 @@ struct ContentView: View {
             surface: store.agentSurface,
             hasSelection: store.selectionContext != nil || store.keepFloatingSelectionForAnswer,
             hasAnchor: store.selectionAnchor != nil,
-            pinned: store.pinnedFloatingAgent
+            pinned: store.pinnedFloatingAgent,
+            keepOpen: store.keepFloatingSelectionForAnswer
         )
     }
 
@@ -792,7 +804,10 @@ final class PersistentPaneHostRegistry: ObservableObject {
 
         let root = PersistentPaneRoot(role: role)
             .environmentObject(store)
-        let host = NSHostingView(rootView: AnyView(root))
+        // Same rule as StableDocumentDividerView / ContentRail: pane content must not
+        // initiate isMovableByWindowBackground. Reader/notes often hide this via nested
+        // AppKit (PDFView/NSTextView); agent chat is mostly SwiftUI so it needs the host flag.
+        let host = PaneContentHostingView(rootView: AnyView(root))
         host.identifier = NSUserInterfaceItemIdentifier("persistent-pane-\(role.rawValue)")
         host.autoresizingMask = [.width, .height]
         hosts[role] = host
@@ -800,8 +815,15 @@ final class PersistentPaneHostRegistry: ObservableObject {
     }
 }
 
+/// NSHostingView that keeps pane drags (header reorder, scroll, text) from moving the window.
+private final class PaneContentHostingView: NSHostingView<AnyView> {
+    override var mouseDownCanMoveWindow: Bool { false }
+}
+
 final class PersistentPaneContainerView: NSView {
     var onWindowChange: ((PersistentPaneContainerView) -> Void)?
+
+    override var mouseDownCanMoveWindow: Bool { false }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()

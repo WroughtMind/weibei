@@ -40,14 +40,18 @@ func runRichAnswerProtocolSelfCheck() throws {
 }
 
 private func checkRichAnswerInlineMathDisplayNormalization() throws {
-    let source = #"小角度近似：\(T=2\pi\sqrt{L/g}\)，摆长加倍时周期乘以 \(\sqrt2\)，且 \(a\le b\)。"#
+    let source = #"小角度近似：\(T=2\pi\sqrt{L/g}\)，摆长加倍时周期乘以 \(\sqrt2\)，且 \(a\le b\)。回归：\(y_i=\hat y_i+\hat u_i\)，\(\sum \hat u_i=0\)。"#
     let display = RichAnswerDisplayText.normalizedInlineMath(source)
     try richAnswerRequire(
         display.contains("T=2π√(L/g)")
             && display.contains("√2")
             && display.contains("a≤b")
+            && display.contains("∑")
+            && display.contains("\u{0302}")
             && !display.contains(#"\sqrt"#)
-            && !display.contains(#"\("#),
+            && !display.contains(#"\("#)
+            && !display.contains(#"\hat"#)
+            && !display.contains(#"\sum"#),
         "inline rich-answer math displays as readable text without leaking LaTeX delimiters: \(display)"
     )
 }
