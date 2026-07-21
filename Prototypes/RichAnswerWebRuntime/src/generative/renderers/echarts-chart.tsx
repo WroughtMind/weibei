@@ -6,6 +6,7 @@ import {
   createRendererIssue,
   type CompiledRenderPlan,
   type RenderPlan,
+  type RendererIssue,
   type RendererLifecycleContext,
   type RichAnswerRenderer,
 } from "../renderer-registry";
@@ -14,6 +15,7 @@ const CHART_RENDERER = "weibei.echarts.chart";
 const CHART_SPEC_VERSION = "weibei.chart.v1";
 const maxTrustedSeries = 8;
 const maxTrustedDataPoints = 4000;
+const chartSizeWaitMS = 1500;
 
 const finiteNumber = z.number().refine(Number.isFinite, "必须是有限数字");
 
@@ -51,6 +53,11 @@ type FocusState = {
 type ChartCompiledRenderPlan = CompiledRenderPlan & {
   spec: ChartSpec;
   pointCount: number;
+};
+
+type ChartSurfaceSize = {
+  width: number;
+  height: number;
 };
 
 function parseChartSpec(plan: RenderPlan) {
@@ -190,6 +197,26 @@ function formatNumber(value: number) {
     return value.toExponential(1);
   }
   return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/\.?0+$/, "");
+}
+
+function measureChartSurface(element: HTMLElement): ChartSurfaceSize | null {
+  const rect = element.getBoundingClientRect();
+  const style = window.getComputedStyle(element);
+  const styleWidth = Number.parseFloat(style.width);
+  const styleHeight = Number.parseFloat(style.height);
+  const width = Math.round(rect.width || element.clientWidth || styleWidth);
+  const height = Math.round(rect.height || element.clientHeight || styleHeight);
+
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width < 2 || height < 2) return null;
+  return { width, height };
+}
+
+function describeChartSurface(element: HTMLElement) {
+  const rect = element.getBoundingClientRect();
+  return [
+    `rect=${Math.round(rect.width)}×${Math.round(rect.height)}`,
+    `client=${element.clientWidth}×${element.clientHeight}`,
+  ];
 }
 
 function buildOption(compiled: ChartCompiledRenderPlan, width: number): EChartsOption {
@@ -372,30 +399,25 @@ function ChartMount({
   const elementRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<ECharts | null>(null);
   const [focus, setFocus] = useState<FocusState | null>(null);
+  const [renderIssue, setRenderIssue] = useState<RendererIssue | null>(null);
   const chartKey = useMemo(() => JSON.stringify(compiled.spec), [compiled.spec]);
   const surfaceHeight = Math.max(220, Math.min(520, compiled.plan.qualityBudget.maxHeight ?? 360));
 
   useEffect(() => {
     setFocus(null);
+    setRenderIssue(null);
   }, [compiled.programID, chartKey]);
 
   useEffect(() => {
     const element = elementRef.current;
     if (!element) return;
+    const surfaceElement: HTMLElement = element;
 
-    const chart = echarts.init(element, undefined, {
-      renderer: "canvas",
-      devicePixelRatio: Math.min(2, Math.max(1, window.devicePixelRatio || 1)),
-    });
-    chartRef.current = chart;
-
-    const applySize = () => {
-      const width = Math.max(1, Math.round(element.getBoundingClientRect().width));
-      chart.setOption(buildOption(compiled, width), { notMerge: true });
-      chart.resize();
-    };
-
-    applySize();
+    let disposed = false;
+    let chart: ECharts | null = null;
+    let animationFrame: number | null = null;
+    let retryTimer: number | null = null;
+    const waitStartedAt = performance.now();
 
     const focusFromParams = (params: unknown) => {
       if (!compiled.spec.focusEnabled) return;
@@ -418,6 +440,83 @@ function ChartMount({
         dataIndex: candidate.dataIndex ?? -1,
       });
     };
+
+    const clearScheduledRender = () => {
+      if (animationFrame !== null) {
+        cancelAnimationFrame(animationFrame);
+        animationFrame = null;
+      }
+      if (retryTimer !== null) {
+        clearTimeout(retryTimer);
+        retryTimer = null;
+      }
+    };
+
+    const scheduleRender = () => {
+      if (disposed || animationFrame !== null) return;
+      animationFrame = requestAnimationFrame(renderChart);
+    };
+
+    const ensureChart = (size: ChartSurfaceSize) => {
+      if (chart) return chart;
+      try {
+        chart = echarts.init(surfaceElement, undefined, {
+          renderer: "canvas",
+          devicePixelRatio: Math.min(2, Math.max(1, window.devicePixelRatio || 1)),
+          width: size.width,
+          height: size.height,
+        });
+        chartRef.current = chart;
+        chart.on("click", focusFromParams);
+        setRenderIssue(null);
+        return chart;
+      } catch (error) {
+        setRenderIssue(createRendererIssue(
+          "compile_error",
+          CHART_RENDERER,
+          "标准图表初始化失败，已停止静默空白呈现。",
+          [error instanceof Error ? error.message : "未知初始化错误"],
+        ));
+        return null;
+      }
+    };
+
+    function renderChart() {
+      animationFrame = null;
+      if (disposed) return;
+
+      const size = measureChartSurface(surfaceElement);
+      if (!size) {
+        if (performance.now() - waitStartedAt >= chartSizeWaitMS) {
+          setRenderIssue(createRendererIssue(
+            "compile_error",
+            CHART_RENDERER,
+            "标准图表容器还没有可用尺寸，暂时无法绘制。",
+            describeChartSurface(surfaceElement),
+          ));
+          return;
+        }
+        retryTimer = window.setTimeout(scheduleRender, 80);
+        return;
+      }
+
+      const activeChart = ensureChart(size);
+      if (!activeChart) return;
+
+      try {
+        activeChart.resize({ width: size.width, height: size.height });
+        activeChart.setOption(buildOption(compiled, size.width), { notMerge: true });
+        activeChart.resize({ width: size.width, height: size.height });
+        setRenderIssue(null);
+      } catch (error) {
+        setRenderIssue(createRendererIssue(
+          "compile_error",
+          CHART_RENDERER,
+          "标准图表绘制失败，已停止静默空白呈现。",
+          [error instanceof Error ? error.message : "未知绘制错误"],
+        ));
+      }
+    }
 
     const verifyInteraction = () => {
       if (!compiled.spec.focusEnabled) return;
@@ -449,17 +548,22 @@ function ChartMount({
       });
     };
 
-    chart.on("click", focusFromParams);
-    element.addEventListener("weibei:verify-interaction", verifyInteraction);
+    surfaceElement.addEventListener("weibei:verify-interaction", verifyInteraction);
 
-    const observer = new ResizeObserver(applySize);
-    observer.observe(element);
+    const observer = new ResizeObserver(scheduleRender);
+    observer.observe(surfaceElement);
+    if (surfaceElement.parentElement) observer.observe(surfaceElement.parentElement);
+    window.addEventListener("resize", scheduleRender);
+    scheduleRender();
 
     return () => {
+      disposed = true;
+      clearScheduledRender();
       observer.disconnect();
-      chart.off("click", focusFromParams);
-      element.removeEventListener("weibei:verify-interaction", verifyInteraction);
-      chart.dispose();
+      window.removeEventListener("resize", scheduleRender);
+      chart?.off("click", focusFromParams);
+      surfaceElement.removeEventListener("weibei:verify-interaction", verifyInteraction);
+      chart?.dispose();
       chartRef.current = null;
     };
   }, [compiled, chartKey]);
@@ -490,6 +594,7 @@ function ChartMount({
         aria-label={compiled.title}
         style={{ height: `min(${surfaceHeight}px, max(220px, 56vw))` }}
       />
+      {renderIssue ? <ChartFallback issue={renderIssue} /> : null}
       {compiled.spec.focusEnabled ? (
         <figcaption className={`weibei-chart__readout${focus ? " is-active" : ""}`}>
           {focus ? (
