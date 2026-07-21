@@ -1481,6 +1481,7 @@ struct AgentPaneView: View {
     @State private var agentInputTrayHeight: CGFloat = 108
 
     private let agentBottomAnchorID = "agentConversationBottom"
+    private let agentConversationCoordinateSpace = "agentConversationScroll"
 
     var body: some View {
         GeometryReader { paneGeometry in
@@ -1539,7 +1540,10 @@ struct AgentPaneView: View {
                                 .frame(minHeight: geometry.size.height, alignment: .topLeading)
                                 .animation(WeiBeiMotion.panel, value: store.messages.count)
                             }
-                            .scrollPosition(id: $visibleAgentMessageID, anchor: .center)
+                            .coordinateSpace(name: agentConversationCoordinateSpace)
+                            .onPreferenceChange(AgentMessageFramePreferenceKey.self) { frames in
+                                updateAgentViewport(frames: frames, viewportHeight: geometry.size.height)
+                            }
                         }
                         .clipped()
                         .zIndex(0)
@@ -1652,6 +1656,16 @@ struct AgentPaneView: View {
         .frame(maxWidth: readingWidth, alignment: isUser ? .trailing : .leading)
         .padding(.leading, readingLeadingInset)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            GeometryReader { rowGeometry in
+                Color.clear.preference(
+                    key: AgentMessageFramePreferenceKey.self,
+                    value: [
+                        message.id: rowGeometry.frame(in: .named(agentConversationCoordinateSpace)),
+                    ]
+                )
+            }
+        }
         .id(message.id)
         .transition(WeiBeiTransition.message)
     }
@@ -1720,10 +1734,34 @@ struct AgentPaneView: View {
     private func updateAgentRailPosition(for messageID: UUID?) {
         guard let messageID,
               let visibleIndex = store.messages.firstIndex(where: { $0.id == messageID }) else { return }
-        agentFollowsLatest = messageID == store.messages.last?.id
         if let turn = agentRailTurns.last(where: { $0.startIndex <= visibleIndex }) {
             activeAgentRailID = "chat-turn-\(turn.id.uuidString)"
         }
+    }
+
+    private func updateAgentViewport(frames: [UUID: CGRect], viewportHeight: CGFloat) {
+        guard viewportHeight > 0 else { return }
+        let viewport = CGRect(x: 0, y: 0, width: 1, height: viewportHeight)
+        let nextVisibleID = frames.compactMap { messageID, frame -> (UUID, CGFloat)? in
+            let visibleHeight = frame.intersection(viewport).height
+            return visibleHeight > 0 ? (messageID, visibleHeight) : nil
+        }
+        .max { left, right in left.1 < right.1 }?
+        .0
+        if visibleAgentMessageID != nextVisibleID {
+            visibleAgentMessageID = nextVisibleID
+        }
+
+        guard let lastMessageID = store.messages.last?.id else {
+            agentFollowsLatest = true
+            return
+        }
+        guard let lastFrame = frames[lastMessageID] else {
+            agentFollowsLatest = false
+            return
+        }
+        let bottomDistance = max(lastFrame.maxY - viewportHeight, 0)
+        agentFollowsLatest = bottomDistance <= max(agentScrollBottomInset, 72)
     }
 
     private func railText(_ value: String, fallback: String) -> String {
@@ -1995,6 +2033,14 @@ private struct AgentInputTrayHeightKey: PreferenceKey {
 
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = max(value, nextValue())
+    }
+}
+
+private struct AgentMessageFramePreferenceKey: PreferenceKey {
+    static var defaultValue: [UUID: CGRect] = [:]
+
+    static func reduce(value: inout [UUID: CGRect], nextValue: () -> [UUID: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, next in next })
     }
 }
 
