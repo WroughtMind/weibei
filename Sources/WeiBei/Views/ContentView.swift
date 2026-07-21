@@ -106,7 +106,7 @@ struct ContentView: View {
         return !store.courseWorkspacePresented
             && store.canShowSelectionPromptSurface && SelectionFloatingAgentPlacement.isVisible(
             surface: store.agentSurface,
-            hasSelection: store.selectionContext != nil,
+            hasSelection: store.selectionContext != nil || store.keepFloatingSelectionForAnswer,
             hasAnchor: store.selectionAnchor != nil,
             pinned: store.pinnedFloatingAgent
         )

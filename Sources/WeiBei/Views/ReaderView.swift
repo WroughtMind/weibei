@@ -758,22 +758,36 @@ struct ReaderView: View {
             switch item.kind {
             case .pdf:
                 if let url = item.url {
-                    PDFReaderRepresentable(
-                        url: url,
-                        browseMode: pdfBrowseMode,
-                        searchQuery: store.readerSearch,
-                        appearanceMode: store.appearanceMode,
-                        adaptsDocumentColors: store.adaptImportedDocumentColors,
-                        pageIndex: $pdfPageIndex,
-                        pageCount: $pdfPageCount,
-                        railTargetPageIndex: $pdfRailTargetPageIndex,
-                        onUserPageChange: schedulePDFLocationCommit,
-                        onSelectableTextChange: { available in pdfHasSelectableText = available }
-                    ) { text, anchor, selectionPageIndex in
-                        let title = store.displayTitle(for: item)
-                        let ownerTitle = store.ui("\(title)，第 \(selectionPageIndex + 1) 页", "\(title), page \(selectionPageIndex + 1)")
-                        store.updateReaderLocationTitle(ownerTitle)
-                        store.updateSelection(text, source: .document, anchor: anchor, ownerTitle: ownerTitle)
+                    ZStack {
+                        PDFReaderRepresentable(
+                            url: url,
+                            browseMode: pdfBrowseMode,
+                            searchQuery: store.readerSearch,
+                            appearanceMode: store.appearanceMode,
+                            adaptsDocumentColors: store.adaptImportedDocumentColors,
+                            pageIndex: $pdfPageIndex,
+                            pageCount: $pdfPageCount,
+                            railTargetPageIndex: $pdfRailTargetPageIndex,
+                            underlineSnippets: store.selectionAskThreads(forItemID: item.id).map(\.selectionText),
+                            onUserPageChange: schedulePDFLocationCommit,
+                            onSelectableTextChange: { available in pdfHasSelectableText = available }
+                        ) { text, anchor, selectionPageIndex in
+                            let title = store.displayTitle(for: item)
+                            let ownerTitle = store.ui("\(title)，第 \(selectionPageIndex + 1) 页", "\(title), page \(selectionPageIndex + 1)")
+                            store.updateReaderLocationTitle(ownerTitle)
+                            store.updateSelection(text, source: .document, anchor: anchor, ownerTitle: ownerTitle)
+                        }
+                        if !store.selectionAskThreads(forItemID: item.id).isEmpty {
+                            VStack {
+                                Spacer()
+                                SelectionAskMarksLegend(
+                                    threads: Array(store.selectionAskThreads(forItemID: item.id).prefix(6))
+                                ) { thread in
+                                    store.openSelectionAskThread(thread.id, jumpToConversation: false)
+                                }
+                                .padding(12)
+                            }
+                        }
                     }
                 } else {
                     SamplePDFView(appearanceMode: store.appearanceMode, language: store.interfaceLanguage) { text, anchor in
@@ -858,9 +872,15 @@ struct ReaderView: View {
             searchQuery: store.readerSearch,
             appearanceMode: store.appearanceMode,
             interfaceLanguage: store.interfaceLanguage,
+            selectionAskMarks: selectionAskMarksJSON(for: store.selectedMaterialItem?.id ?? ""),
             onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
             onSourceReference: { reference in store.openSourceReference(reference) },
-            onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
+            onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) },
+            onSelectionAskMark: { threadID in
+                if let uuid = UUID(uuidString: threadID) {
+                    store.openSelectionAskThread(uuid, jumpToConversation: false)
+                }
+            }
         ) { text, anchor in
             store.updateSelection(text, source: .document, anchor: anchor)
         }
@@ -1025,6 +1045,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
     @Binding var pageIndex: Int
     @Binding var pageCount: Int
     @Binding var railTargetPageIndex: Int?
+    var underlineSnippets: [String] = []
     var onUserPageChange: (Int) -> Void
     var onSelectableTextChange: (Bool?) -> Void = { _ in }
     var onSelectionChange: (String, CGPoint?, Int) -> Void
@@ -1101,6 +1122,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         }
 
         context.coordinator.applySearch(searchQuery, in: view)
+        context.coordinator.applyAskUnderlines(underlineSnippets, in: view)
         DispatchQueue.main.async {
             WeiBeiQuietScrollers.configureRecursively(
                 in: view,
@@ -1161,6 +1183,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             nativeTextPageIndexes = []
             clearOCROverlays(in: view)
             lastSearchQuery = ""
+            lastAppliedAskUnderlineSnippets = []
             onSelectableTextChange(nil)
 
             DispatchQueue.global(qos: .userInitiated).async {
@@ -1436,6 +1459,38 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                 view.go(to: first)
             } else {
                 applyOCRSearch(query, in: view)
+            }
+        }
+
+        private var lastAppliedAskUnderlineSnippets: [String] = []
+
+        /// Cinnabar underlines for selection-ask history (PDF text layer).
+        func applyAskUnderlines(_ snippets: [String], in view: PDFView) {
+            guard let document = view.document else { return }
+            guard snippets != lastAppliedAskUnderlineSnippets else { return }
+            lastAppliedAskUnderlineSnippets = snippets
+            let marker = "weibei-selection-ask"
+            for pageIndex in 0..<document.pageCount {
+                guard let page = document.page(at: pageIndex) else { continue }
+                for annotation in page.annotations where annotation.userName == marker {
+                    page.removeAnnotation(annotation)
+                }
+            }
+            let cinnabar = NSColor(calibratedRed: 0.56, green: 0.16, blue: 0.12, alpha: 0.9)
+            for raw in snippets {
+                let needle = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard needle.count >= 4 else { continue }
+                let matches = document.findString(needle, withOptions: [.caseInsensitive])
+                for selection in matches.prefix(4) {
+                    for page in selection.pages {
+                        let bounds = selection.bounds(for: page)
+                        guard !bounds.isEmpty else { continue }
+                        let annotation = PDFAnnotation(bounds: bounds, forType: .underline, withProperties: nil)
+                        annotation.color = cinnabar
+                        annotation.userName = marker
+                        page.addAnnotation(annotation)
+                    }
+                }
             }
         }
 
@@ -2605,32 +2660,52 @@ struct WebReaderRepresentable: NSViewRepresentable {
 }
 
 private struct MarkdownDocumentReaderView: View {
+    @EnvironmentObject private var store: WorkspaceStore
     var markdown: String
     var markdownBaseURL: URL?
     var searchQuery: String
     var appearanceMode: WeiBeiAppearanceMode = .paper
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
+    var selectionAskMarks: String = "[]"
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
+    var onSelectionAskMark: (String) -> Void = { _ in }
     var onSelectionChange: (String, CGPoint?) -> Void
     @State private var command: NoteEditorCommand?
 
     var body: some View {
-        RichMarkdownEditorView(
-            markdown: .constant(markdown),
-            command: $command,
-            isEditable: false,
-            markdownBaseURL: markdownBaseURL,
-            searchQuery: searchQuery,
-            appearanceMode: appearanceMode,
-            interfaceLanguage: interfaceLanguage,
-            onSelectionChange: onSelectionChange,
-            onAskAgentWithSelection: onSelectionChange,
-            onWikiLink: onWikiLink,
-            onSourceReference: onSourceReference,
-            onAppShortcut: onAppShortcut
-        )
+        ZStack {
+            RichMarkdownEditorView(
+                markdown: .constant(markdown),
+                command: $command,
+                isEditable: false,
+                markdownBaseURL: markdownBaseURL,
+                searchQuery: searchQuery,
+                appearanceMode: appearanceMode,
+                interfaceLanguage: interfaceLanguage,
+                onSelectionChange: onSelectionChange,
+                onAskAgentWithSelection: onSelectionChange,
+                onWikiLink: onWikiLink,
+                onSourceReference: onSourceReference,
+                onAppShortcut: onAppShortcut,
+                selectionAskMarks: selectionAskMarks,
+                onSelectionAskMark: onSelectionAskMark
+            )
+            // Fallback strip when in-text marks cannot be painted yet.
+            if !store.selectionAskThreads(forItemID: store.selectedMaterialItem?.id).isEmpty {
+                VStack {
+                    Spacer()
+                    SelectionAskMarksLegend(
+                        threads: Array(store.selectionAskThreads(forItemID: store.selectedMaterialItem?.id).prefix(6))
+                    ) { thread in
+                        store.openSelectionAskThread(thread.id, jumpToConversation: false)
+                    }
+                    .padding(12)
+                }
+                .allowsHitTesting(true)
+            }
+        }
     }
 }
 
@@ -2697,6 +2772,7 @@ private struct ReaderStateMessage: View {
 }
 
 private struct PlainTextReaderView: View {
+    @EnvironmentObject private var store: WorkspaceStore
     var text: String
     var searchQuery: String
     var appearanceMode: WeiBeiAppearanceMode
@@ -2707,9 +2783,45 @@ private struct PlainTextReaderView: View {
             text: text,
             searchQuery: searchQuery,
             appearanceMode: appearanceMode,
+            underlineSnippets: store.selectionAskThreads.map(\.selectionText),
             onSelectionChange: onSelectionChange
         )
             .padding(32)
+    }
+}
+
+/// Bottom legend for asked selection marks when the surface cannot inject underlines.
+private struct SelectionAskMarksLegend: View {
+    let threads: [SelectionAskThread]
+    var onOpen: (SelectionAskThread) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("已问选区")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.85))
+            ForEach(threads) { thread in
+                Button {
+                    onOpen(thread)
+                } label: {
+                    Text(thread.selectionText)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(WeiBeiTheme.ink)
+                        .lineLimit(1)
+                        .underline(true, color: WeiBeiTheme.cinnabar.opacity(0.75))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: 360, alignment: .leading)
+        .background(WeiBeiTheme.paperRaised.opacity(0.96), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(WeiBeiTheme.cinnabar.opacity(0.28), lineWidth: 1)
+        }
+        .shadow(color: WeiBeiTheme.ink.opacity(0.08), radius: 10, y: 3)
     }
 }
 
@@ -2717,6 +2829,7 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
     var text: String
     var searchQuery: String
     var appearanceMode: WeiBeiAppearanceMode
+    var underlineSnippets: [String]
     var onSelectionChange: (String, CGPoint?) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -2732,11 +2845,11 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
         let textView = ReaderSelectableTextView()
         textView.isEditable = false
         textView.isSelectable = true
-        textView.isRichText = false
+        textView.isRichText = true
         textView.font = .monospacedSystemFont(ofSize: 15, weight: .regular)
         textView.backgroundColor = .clear
         applyTheme(to: textView)
-        textView.string = text
+        applyAttributedText(to: textView)
         textView.delegate = context.coordinator
         textView.textContainerInset = NSSize(width: 18, height: 18)
         textView.autoresizingMask = [.width]
@@ -2749,10 +2862,46 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         applyTheme(to: textView)
-        if textView.string != text {
-            textView.string = text
-        }
+        applyAttributedText(to: textView)
         context.coordinator.applySearch(searchQuery, in: textView)
+    }
+
+    private func applyAttributedText(to textView: NSTextView) {
+        let ink = WeiBeiNativePalette.ink(for: appearanceMode)
+        let attributed = NSMutableAttributedString(
+            string: text,
+            attributes: [
+                .font: NSFont.monospacedSystemFont(ofSize: 15, weight: .regular),
+                .foregroundColor: ink,
+            ]
+        )
+        let full = NSRange(location: 0, length: attributed.length)
+        let cinnabar = NSColor(calibratedRed: 0.56, green: 0.16, blue: 0.12, alpha: 1)
+        for snippet in underlineSnippets {
+            let needle = snippet.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard needle.count >= 4 else { continue }
+            var search = full
+            while search.length > 0 {
+                let found = (attributed.string as NSString).range(of: needle, options: [], range: search)
+                guard found.location != NSNotFound else { break }
+                attributed.addAttributes(
+                    [
+                        .underlineStyle: NSUnderlineStyle.single.rawValue,
+                        .underlineColor: cinnabar,
+                    ],
+                    range: found
+                )
+                let next = found.location + found.length
+                search = NSRange(location: next, length: max(0, attributed.length - next))
+            }
+        }
+        if textView.attributedString().string != attributed.string
+            || textView.attributedString().length != attributed.length {
+            textView.textStorage?.setAttributedString(attributed)
+        } else {
+            // Refresh underline attributes without resetting caret when possible.
+            textView.textStorage?.setAttributedString(attributed)
+        }
     }
 
     private func applyTheme(to textView: NSTextView) {

@@ -2509,29 +2509,29 @@ struct FloatingSelectionAgentView: View {
         }
         .matchedGeometryEffect(id: "selection-agent-surface", in: floatingNamespace)
         .transition(WeiBeiTransition.floating)
-        .weibeiFloatingPanel(cornerRadius: 7)
+        .modifier(SelectionFloatChrome(expanded: showsExpandedBody, pinned: store.pinnedFloatingAgent))
         .scaleEffect(showsExpandedBody ? 1 : 0.985)
         .animation(WeiBeiMotion.panel, value: expanded)
         .animation(WeiBeiMotion.panel, value: store.keepFloatingSelectionForAnswer)
-        .offset(dragOffset)
+        .offset(x: dragOffset.width + settledOffset.width, y: dragOffset.height + settledOffset.height)
         .gesture(
             DragGesture()
                 .onChanged { value in
-                    dragOffset = CGSize(
-                        width: settledOffset.width + value.translation.width,
-                        height: settledOffset.height + value.translation.height
-                    )
+                    dragOffset = value.translation
                 }
-                .onEnded { _ in
+                .onEnded { value in
                     withAnimation(WeiBeiMotion.panel) {
-                        settledOffset = dragOffset
-                        store.pinnedFloatingAgent = true
+                        settledOffset = CGSize(
+                            width: settledOffset.width + value.translation.width,
+                            height: settledOffset.height + value.translation.height
+                        )
+                        dragOffset = .zero
+                        // Dragging repositions; pin is only set by the pin control.
                     }
                 }
         )
         .onChange(of: store.selectionContext) { previous, next in
             guard !store.pinnedFloatingAgent, !store.keepFloatingSelectionForAnswer else { return }
-            // Same content with a new id (or drag ticks) must not re-spring the capsule.
             let sameContent = previous?.text == next?.text
                 && previous?.source == next?.source
                 && previous?.ownerTitle == next?.ownerTitle
@@ -2567,7 +2567,6 @@ struct FloatingSelectionAgentView: View {
         }
     }
 
-    /// Expanded body shows the full selection Q&A surface (not collapsed by conversation visibility).
     private var showsExpandedBody: Bool {
         expanded || store.keepFloatingSelectionForAnswer || store.isAskingAgent
     }
@@ -2575,7 +2574,7 @@ struct FloatingSelectionAgentView: View {
     private var promptBody: some View {
         HStack(spacing: 0) {
             Button(store.ui("问", "Ask")) {
-                explainSelection()
+                openExpandedComposer()
             }
             .foregroundStyle(WeiBeiTheme.link)
             .accessibilityLabel(Text(store.ui("问当前选区", "Ask current selection")))
@@ -2583,7 +2582,6 @@ struct FloatingSelectionAgentView: View {
 
             if store.canOpenSelectedSourceReference {
                 promptSeparator
-
                 Button(store.ui("来源", "Source")) {
                     openSourceReference()
                 }
@@ -2591,17 +2589,16 @@ struct FloatingSelectionAgentView: View {
 
             if store.selectionContext != nil {
                 promptSeparator
-
                 Button(store.ui("摘录", "Excerpt")) {
                     store.appendSelectionToNote()
                     closeFloatingAgent()
                 }
             }
         }
-        .font(.caption.weight(.medium))
+        .font(.system(size: 12, weight: .semibold))
         .buttonStyle(.plain)
-        .padding(.horizontal, 10)
-        .frame(height: 32)
+        .padding(.horizontal, 12)
+        .frame(height: 34)
         .fixedSize()
     }
 
@@ -2613,110 +2610,164 @@ struct FloatingSelectionAgentView: View {
     }
 
     private var expandedBody: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                actionButton(store.ui("解释", "Explain")) { explainSelection() }
-                if store.canOpenSelectedSourceReference {
-                    actionButton(store.ui("来源", "Source")) { openSourceReference() }
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack(spacing: 8) {
+                Text(store.ui("选区对话", "Selection chat"))
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.ink)
+                if store.pinnedFloatingAgent {
+                    Text(store.ui("已固定", "Pinned"))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(WeiBeiTheme.cinnabar)
+                        .padding(.horizontal, 6)
+                        .frame(height: 18)
+                        .background(WeiBeiTheme.cinnabarSoft.opacity(0.7), in: Capsule())
                 }
-                if store.selectionContext != nil {
-                    actionButton(store.ui("摘录", "Excerpt")) {
-                        store.appendSelectionToNote()
-                    }
-                }
-                if canPolishNoteSelection {
-                    actionButton(store.ui("润色", "Polish")) { polishNote() }
-                }
-                if store.canReplaceNoteSelection {
-                    actionButton(store.ui("替换", "Replace")) {
-                        store.replaceSelectionWithLastAgentAnswer()
-                    }
-                }
+                Spacer(minLength: 4)
                 if store.isConversationSurfaceVisible, store.activeSelectionAskThreadID != nil {
-                    actionButton(store.ui("跳到对话", "Jump to chat")) {
+                    Button(store.ui("跳到对话", "Jump to chat")) {
                         if let id = store.activeSelectionAskThreadID {
                             store.openSelectionAskThread(id, jumpToConversation: true)
                         }
                     }
+                    .buttonStyle(WeiBeiTextActionButtonStyle())
                 }
-                Spacer(minLength: 0)
-                iconButton(
-                    store.pinnedFloatingAgent ? "pin.fill" : "pin",
-                    help: store.pinnedFloatingAgent ? store.ui("取消固定浮层", "Unpin floating layer") : store.ui("固定浮层", "Pin floating layer")
-                ) {
-                    withAnimation(WeiBeiMotion.micro) {
-                        togglePinnedFloatingAgent()
-                    }
+                Button {
+                    withAnimation(WeiBeiMotion.micro) { togglePinnedFloatingAgent() }
+                } label: {
+                    Image(systemName: store.pinnedFloatingAgent ? "pin.fill" : "pin")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(store.pinnedFloatingAgent ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+                        .frame(width: 28, height: 28)
+                        .background(
+                            (store.pinnedFloatingAgent ? WeiBeiTheme.cinnabarSoft.opacity(0.65) : WeiBeiTheme.paperInset.opacity(0.35)),
+                            in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        )
                 }
-                iconButton("xmark", help: store.ui("关闭", "Close")) {
+                .buttonStyle(.plain)
+                .help(store.pinnedFloatingAgent
+                      ? store.ui("取消固定：选区变化时浮层可收起", "Unpin: float may dismiss when selection changes")
+                      : store.ui("固定浮层：选区变化时保持打开", "Pin float: keep open when selection changes"))
+                .accessibilityLabel(Text(store.pinnedFloatingAgent ? store.ui("取消固定浮层", "Unpin floating layer") : store.ui("固定浮层", "Pin floating layer")))
+
+                Button {
                     closeFloatingAgent()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .frame(width: 28, height: 28)
+                        .background(WeiBeiTheme.paperInset.opacity(0.35), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                 }
+                .buttonStyle(.plain)
+                .help(store.ui("关闭", "Close"))
+                .accessibilityLabel(Text(store.ui("关闭", "Close")))
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+            .padding(.bottom, 10)
+
+            // Soft cinnabar accent under header
+            Rectangle()
+                .fill(
+                    LinearGradient(
+                        colors: [WeiBeiTheme.cinnabar.opacity(0.45), WeiBeiTheme.cinnabar.opacity(0.05)],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                )
+                .frame(height: 1.5)
+                .padding(.horizontal, 14)
+
+            // Excerpt card
+            if let selection = store.selectionContext?.text, !selection.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(store.ui("选区", "Selection"))
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                    Text(selection)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .lineLimit(3)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .fill(WeiBeiTheme.paperInset.opacity(0.42))
+                )
+                .overlay(alignment: .leading) {
+                    RoundedRectangle(cornerRadius: 1)
+                        .fill(WeiBeiTheme.cinnabar.opacity(0.55))
+                        .frame(width: 2.5)
+                        .padding(.vertical, 8)
+                }
+                .padding(.horizontal, 14)
+                .padding(.top, 12)
             }
 
+            // Message feed
             ScrollView(showsIndicators: false) {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    if let selection = store.selectionContext?.text {
-                        Text(selection)
-                            .font(.system(size: 11.5, weight: .medium))
-                            .lineLimit(4)
-                            .foregroundStyle(WeiBeiTheme.secondaryInk)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.bottom, 2)
-                        Rectangle()
-                            .fill(WeiBeiTheme.hairline.opacity(0.55))
-                            .frame(height: 1)
-                    }
-
+                LazyVStack(alignment: .leading, spacing: 12) {
                     if store.isAskingAgent {
                         if !store.agentStreamingText.isEmpty {
-                            Text(store.agentStreamingText)
-                                .font(.system(size: 12.5))
-                                .foregroundStyle(WeiBeiTheme.ink)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .allowsHitTesting(false)
+                            floatBubble(roleLabel: "WeiBei", text: store.agentStreamingText, isUser: false)
                         } else {
                             Text(store.ui("正在读选区...", "Reading selection..."))
-                                .font(.caption)
+                                .font(.system(size: 12))
                                 .foregroundStyle(WeiBeiTheme.secondaryInk)
+                                .padding(.horizontal, 4)
                         }
+                    }
+
+                    if visibleFloatingMessages.isEmpty && !store.isAskingAgent {
+                        Text(store.ui("写下问题后发送，回答会出现在这里。", "Write a question and send — the reply appears here."))
+                            .font(.system(size: 12))
+                            .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                            .padding(.vertical, 8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
 
                     ForEach(visibleFloatingMessages) { message in
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(message.role == .user
-                                 ? store.ui("你", "You")
-                                 : "WeiBei")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(message.role == .user ? WeiBeiTheme.link : WeiBeiTheme.cinnabar.opacity(0.78))
-                            Text(floatingText(for: message))
-                                .font(.system(size: 12.5))
-                                .foregroundStyle(floatingColor(for: message))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .allowsHitTesting(false)
-                        }
+                        floatBubble(
+                            roleLabel: message.role == .user ? store.ui("你", "You") : "WeiBei",
+                            text: floatingText(for: message),
+                            isUser: message.role == .user,
+                            isError: WorkspaceStore.isAgentFailureMessage(message.text)
+                        )
                     }
                 }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 12)
             }
-            .frame(minHeight: floatingFeedHeight, maxHeight: 380)
+            .frame(minHeight: floatingFeedHeight, maxHeight: 340)
 
-            AgentComposerField(
-                prompt: store.ui("问选区或继续追问", "Ask about selection…"),
-                focused: $draftFocused,
-                font: .system(size: 13),
-                promptFont: .system(size: 13),
-                lineLimit: 1...4,
-                height: 52,
-                sendButtonSize: 26,
-                trailingPadding: 36,
-                sendTrailing: 8,
-                sendBottom: 8,
-                horizontalPadding: 10,
-                verticalPadding: 8
-            ) {
-                sendDraft()
+            // Composer
+            VStack(spacing: 0) {
+                Rectangle()
+                    .fill(WeiBeiTheme.hairline.opacity(0.55))
+                    .frame(height: 1)
+                AgentComposerField(
+                    prompt: store.ui("问选区或继续追问", "Ask about selection…"),
+                    focused: $draftFocused,
+                    font: .system(size: 13.5),
+                    promptFont: .system(size: 13.5),
+                    lineLimit: 1...4,
+                    height: 52,
+                    sendButtonSize: 26,
+                    trailingPadding: 36,
+                    sendTrailing: 8,
+                    sendBottom: 8,
+                    horizontalPadding: 10,
+                    verticalPadding: 8
+                ) {
+                    sendDraft()
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
             }
         }
-        .padding(12)
         .frame(width: CGFloat(SelectionFloatingAgentPlacement.expandedHalfWidth * 2), alignment: .leading)
         .frame(minWidth: 360)
         .onAppear {
@@ -2724,8 +2775,34 @@ struct FloatingSelectionAgentView: View {
         }
     }
 
+    private func floatBubble(roleLabel: String, text: String, isUser: Bool, isError: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(roleLabel)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(isError ? WeiBeiTheme.cinnabar : (isUser ? WeiBeiTheme.link : WeiBeiTheme.secondaryInk))
+            Text(text)
+                .font(.system(size: 13))
+                .foregroundStyle(isError ? WeiBeiTheme.cinnabar : WeiBeiTheme.ink)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .allowsHitTesting(false)
+        }
+        .padding(.horizontal, 11)
+        .padding(.vertical, 9)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(isUser ? WeiBeiTheme.link.opacity(0.06) : WeiBeiTheme.paperInset.opacity(0.38))
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(
+                    isUser ? WeiBeiTheme.link.opacity(0.12) : WeiBeiTheme.hairline.opacity(0.4),
+                    lineWidth: 1
+                )
+        }
+    }
+
     private var visibleFloatingMessages: [AgentMessage] {
-        // Prefer the active selection-ask thread's messages so the float is a real transcript.
         if let threadID = store.activeSelectionAskThreadID,
            let thread = store.selectionAskThreads.first(where: { $0.id == threadID }),
            !thread.messageIDs.isEmpty {
@@ -2752,13 +2829,13 @@ struct FloatingSelectionAgentView: View {
     }
 
     private var floatingFeedHeight: CGFloat {
-        if store.isAskingAgent { return 160 }
-        if visibleFloatingMessages.isEmpty { return 64 }
+        if store.isAskingAgent { return 140 }
+        if visibleFloatingMessages.isEmpty { return 72 }
         switch visibleFloatingMessages.count {
-        case 1: return 120
-        case 2: return 180
-        case 3: return 240
-        default: return 300
+        case 1: return 110
+        case 2: return 170
+        case 3: return 230
+        default: return 280
         }
     }
 
@@ -2770,19 +2847,6 @@ struct FloatingSelectionAgentView: View {
             return store.ui("未配置密钥。设置后会结合\(store.agentPromptScope)和已选文本片段作答。", "No key is configured. After setup, answers will use \(store.agentPromptScope) and selected text fragments.")
         }
         return message.text
-    }
-
-    private func floatingColor(for message: AgentMessage) -> Color {
-        if WorkspaceStore.isAgentFailureMessage(message.text) {
-            return WeiBeiTheme.cinnabar
-        }
-        if message.role == .user {
-            return WeiBeiTheme.link
-        }
-        if isCredentialNotice(message) {
-            return WeiBeiTheme.secondaryInk
-        }
-        return WeiBeiTheme.ink
     }
 
     private func isCredentialNotice(_ message: AgentMessage) -> Bool {
@@ -2798,62 +2862,31 @@ struct FloatingSelectionAgentView: View {
     private func isGeneratedSelectionPrompt(_ message: AgentMessage) -> Bool {
         message.role == .user
             && (message.text.hasPrefix("请解释当前已选文本片段")
-                || message.text.hasPrefix("请解释下面选区"))
-    }
-
-    private func actionButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(title, action: action)
-            .buttonStyle(WeiBeiTextActionButtonStyle())
-            .accessibilityLabel(Text(title))
-            .help(title)
+                || message.text.hasPrefix("请解释下面选区")
+                || message.text.hasPrefix("请解释当前选区"))
     }
 
     private func togglePinnedFloatingAgent() {
-        if store.pinnedFloatingAgent {
-            dragOffset = .zero
-            settledOffset = .zero
+        let next = !store.pinnedFloatingAgent
+        store.pinnedFloatingAgent = next
+        if next {
+            store.agentSurface = .selectionFloat
+            store.keepFloatingSelectionForAnswer = true
         }
-        store.pinnedFloatingAgent.toggle()
     }
 
-    private func iconButton(_ systemName: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemName)
-        }
-        .buttonStyle(WeiBeiIconButtonStyle(size: 22))
-        .accessibilityLabel(Text(help))
-        .help(help)
-    }
-
-    private func explainSelection() {
+    private func openExpandedComposer() {
         withAnimation(WeiBeiMotion.panel) {
             expanded = true
             store.keepFloatingSelectionForAnswer = true
-            store.pinnedFloatingAgent = true
+            // Do not invent a prompt or auto-send — only open a normal composer.
             store.askSelection()
-            // Seed a default explain prompt when the draft is empty so one click asks.
-            if store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                store.agentDraft = store.ui(
-                    "请解释当前选区，结合上下文说明要点，并标明依据。",
-                    "Explain the current selection with context, key points, and evidence."
-                )
-            }
-            store.askAgent()
+            draftFocused = true
         }
     }
 
     private func openSourceReference() {
         store.openSelectedSourceReference()
-    }
-
-    private func polishNote() {
-        withAnimation(WeiBeiMotion.panel) {
-            expanded = true
-            store.keepFloatingSelectionForAnswer = true
-            store.pinnedFloatingAgent = true
-            store.agentDraft = store.ui("请整理和润色当前笔记，保留原意，并标出缺少来源的位置。", "Organize and polish the current note, preserve the meaning, and mark where sources are missing.")
-        }
-        store.askAgent()
     }
 
     private func sendDraft() {
@@ -2862,9 +2895,9 @@ struct FloatingSelectionAgentView: View {
         withAnimation(WeiBeiMotion.panel) {
             expanded = true
             store.keepFloatingSelectionForAnswer = true
-            store.pinnedFloatingAgent = true
             if let selection = store.selectionContext {
-                _ = store.beginOrReuseSelectionAskThread(for: selection)
+                let thread = store.beginOrReuseSelectionAskThread(for: selection)
+                store.activeSelectionAskThreadID = thread.id
             }
         }
         store.askAgent()
@@ -2877,6 +2910,35 @@ struct FloatingSelectionAgentView: View {
             settledOffset = .zero
             store.dismissFloatingSelectionAgent()
         }
+    }
+}
+
+/// Paper float chrome: softer radius, cinnabar edge when pinned.
+private struct SelectionFloatChrome: ViewModifier {
+    var expanded: Bool
+    var pinned: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .foregroundColor(WeiBeiTheme.ink)
+            .background {
+                ZStack {
+                    RoundedRectangle(cornerRadius: expanded ? 14 : 10, style: .continuous)
+                        .fill(WeiBeiTheme.paperRaised.opacity(0.99))
+                    RoundedRectangle(cornerRadius: expanded ? 14 : 10, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                        .opacity(0.04)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: expanded ? 14 : 10, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: expanded ? 14 : 10, style: .continuous)
+                    .strokeBorder(
+                        pinned ? WeiBeiTheme.cinnabar.opacity(0.38) : WeiBeiTheme.hairline.opacity(0.72),
+                        lineWidth: pinned ? 1.2 : 1
+                    )
+            }
+            .shadow(color: WeiBeiTheme.ink.opacity(pinned ? 0.12 : 0.08), radius: pinned ? 16 : 12, y: pinned ? 6 : 4)
     }
 }
 

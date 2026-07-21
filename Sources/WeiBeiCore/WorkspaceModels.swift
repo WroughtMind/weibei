@@ -968,7 +968,10 @@ public enum SelectionFloatingAgentPlacement {
         hasAnchor: Bool,
         pinned: Bool
     ) -> Bool {
-        surface == .selectionFloat && hasSelection && (hasAnchor || pinned)
+        guard surface == .selectionFloat else { return false }
+        // Pinned float stays even if selection clears / loses anchor.
+        if pinned { return true }
+        return hasSelection && hasAnchor
     }
 
     public static func position(

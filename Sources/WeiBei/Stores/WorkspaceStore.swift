@@ -3768,14 +3768,21 @@ final class WorkspaceStore: ObservableObject {
             let surfaceAlreadyCorrect = shouldRevealSelectionPrompt
                 ? agentSurface == .selectionFloat
                 : agentSurface != .selectionFloat
-            if anchorUnchanged, !pinnedFloatingAgent, surfaceAlreadyCorrect {
+            if anchorUnchanged, !pinnedFloatingAgent, !keepFloatingSelectionForAnswer, surfaceAlreadyCorrect {
                 return
             }
             if !anchorUnchanged {
                 selectionAnchor = anchor
             }
-            pinnedFloatingAgent = false
+            // Never clear pin while the user locked the float (or mid selection-answer).
             cancelPendingSelectionAttachment()
+            if pinnedFloatingAgent || keepFloatingSelectionForAnswer {
+                if agentSurface != .selectionFloat {
+                    agentSurface = .selectionFloat
+                }
+                showQuietInsight = false
+                return
+            }
             if shouldRevealSelectionPrompt {
                 if agentSurface != .selectionFloat {
                     withAnimation(WeiBeiMotion.panel) {
@@ -3806,8 +3813,13 @@ final class WorkspaceStore: ObservableObject {
         selectionContext = nextSelection
         selectionAnchor = anchor
         floatingSelectionPrompt = nextSelection.label(language: interfaceLanguage)
-        pinnedFloatingAgent = false
         cancelPendingSelectionAttachment()
+        // Respect pin / answer lock — do not force-unpin on every new selection.
+        if pinnedFloatingAgent || keepFloatingSelectionForAnswer {
+            agentSurface = .selectionFloat
+            showQuietInsight = false
+            return
+        }
         if shouldRevealSelectionPrompt {
             if agentSurface != .selectionFloat {
                 withAnimation(WeiBeiMotion.panel) {
@@ -4469,20 +4481,19 @@ final class WorkspaceStore: ObservableObject {
 
     func askSelection() {
         if let selectionContext {
-            // Always attach selection + keep/show the floating agent so the answer can
-            // stream there. Main conversation also receives the turn (dual surface).
+            // Expand the floating selection agent into a normal chat composer.
+            // Do NOT invent a prompt or auto-send — user writes and sends themselves.
             withAnimation(WeiBeiMotion.panel) {
                 cancelPendingSelectionAttachment()
                 addSelectionAttachment(selectionContext)
                 floatingSelectionPrompt = selectionContext.label(language: interfaceLanguage)
                 agentSurface = .selectionFloat
-                pinnedFloatingAgent = true
                 keepFloatingSelectionForAnswer = true
                 showQuietInsight = false
+                // Record underline mark when the user opens “问” on this selection.
                 let thread = beginOrReuseSelectionAskThread(for: selectionContext)
                 activeSelectionAskThreadID = thread.id
                 if isConversationSurfaceVisible {
-                    // Dual: also focus the formal chat pane without killing the float.
                     focusedPane = .agent
                     focusRequest += 1
                 } else {
