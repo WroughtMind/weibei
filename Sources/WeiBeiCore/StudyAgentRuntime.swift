@@ -381,6 +381,18 @@ public struct StudyAgentCourseContext: Codable, Equatable, Sendable {
     public static let empty = StudyAgentCourseContext(title: "Course")
 }
 
+public struct StudyAgentVisualAsset: Codable, Equatable, Sendable {
+    public var id: String
+    public var filePath: String
+    public var mediaType: String
+
+    public init(id: String, filePath: String, mediaType: String) {
+        self.id = id
+        self.filePath = filePath
+        self.mediaType = mediaType
+    }
+}
+
 public struct StudyAgentSessionSnapshot: Codable, Equatable, Sendable {
     public var id: String
     public var title: String
@@ -442,6 +454,7 @@ public struct StudyAgentRequest: Sendable {
     public var selectionText: String?
     public var recentMessages: [AgentMessage]
     public var courseContext: StudyAgentCourseContext
+    public var visualAssets: [StudyAgentVisualAsset]
     public var learningContext: StudyAgentLearningContext
     public var language: WeiBeiInterfaceLanguage
     public var contextRevision: String
@@ -461,6 +474,7 @@ public struct StudyAgentRequest: Sendable {
         selectionText: String? = nil,
         recentMessages: [AgentMessage] = [],
         courseContext: StudyAgentCourseContext = .empty,
+        visualAssets: [StudyAgentVisualAsset] = [],
         learningContext: StudyAgentLearningContext = .empty,
         language: WeiBeiInterfaceLanguage = .chinese,
         contextRevision: String
@@ -479,6 +493,7 @@ public struct StudyAgentRequest: Sendable {
         self.selectionText = selectionText
         self.recentMessages = recentMessages
         self.courseContext = courseContext
+        self.visualAssets = visualAssets
         self.learningContext = learningContext
         self.language = language
         self.contextRevision = contextRevision
@@ -716,6 +731,7 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
     public var selection: Source?
     public var recentMessages: [Message]
     public var course: StudyAgentCourseContext
+    public var visualAssets: [StudyAgentVisualAsset]
     public var learning: StudyAgentLearningContext
 
     public init(request: StudyAgentRequest) {
@@ -762,6 +778,23 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
         }
         let boundedCourse = Self.boundedCourseContext(request.courseContext)
         course = boundedCourse.context
+        let currentMaterialIDs = Set(course.catalog.lazy.filter(\.isCurrentMaterial).map(\.id))
+        visualAssets = request.visualAssets.prefix(4).compactMap { asset in
+            guard let boundedID = boundedCourse.itemIDMap[asset.id],
+                  currentMaterialIDs.contains(boundedID),
+                  asset.filePath.utf8.count <= 4_096,
+                  !asset.filePath.contains("\0"),
+                  !asset.filePath.contains("\n"),
+                  !asset.filePath.contains("\r"),
+                  ["image/jpeg", "image/png", "image/webp"].contains(asset.mediaType) else {
+                return nil
+            }
+            return StudyAgentVisualAsset(
+                id: boundedID,
+                filePath: asset.filePath,
+                mediaType: asset.mediaType
+            )
+        }
         learning = Self.boundedLearningContext(request.learningContext, itemIDMap: boundedCourse.itemIDMap)
     }
 

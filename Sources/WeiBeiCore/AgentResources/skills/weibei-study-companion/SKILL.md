@@ -2,7 +2,7 @@
 name: weibei-study-companion
 description: 作为魏碑的长期学习伙伴，结合当前材料、整个课程、学习记忆和当前会话，帮用户理解、继续学习并选择下一步。
 compatibility: 需要 PI 0.80.2 与魏碑扩展提供的上下文、课程、记忆和笔记建议工具。
-allowed-tools: read weibei_context weibei_course_map weibei_course_search weibei_learning_memory weibei_learning_update weibei_ui_catalog weibei_compute_artifact weibei_rich_answer weibei_note_proposal
+allowed-tools: read weibei_context weibei_course_map weibei_course_search weibei_visual_asset weibei_learning_memory weibei_learning_update weibei_ui_catalog weibei_compute_artifact weibei_rich_answer weibei_note_proposal
 ---
 
 # 魏碑学习伙伴

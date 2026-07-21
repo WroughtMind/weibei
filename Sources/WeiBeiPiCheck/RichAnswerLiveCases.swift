@@ -1348,10 +1348,10 @@ private struct RichAnswerLiveVerificationAsset {
     }
 }
 
-private enum RichAnswerLiveVerificationAssets {
-    static let colorContrastCaseID = "learning-art-color-contrast-overlay"
+enum RichAnswerLiveVerificationAssets {
+    private static let colorContrastCaseID = "learning-art-color-contrast-overlay"
 
-    static let assets: [String: RichAnswerLiveVerificationAsset] = [
+    private static let assets: [String: RichAnswerLiveVerificationAsset] = [
         "kepler-16b-nasa-jpl": RichAnswerLiveVerificationAsset(
             id: "kepler-16b-nasa-jpl",
             title: "Kepler-16b - JPL Travel Poster",
@@ -1404,7 +1404,7 @@ private enum RichAnswerLiveVerificationAssets {
         ),
     ]
 
-    static let caseAssetMap: [String: String] = [
+    private static let caseAssetMap: [String: String] = [
         "learning-art-design-composition-overlay": "kepler-16b-nasa-jpl",
         "learning-geography-contour-river-slope": "grand-canyon-loc-usgs-west",
         "learning-history-migration-map-sources": "butler-migrations-of-the-barbarians",
@@ -1422,6 +1422,37 @@ private enum RichAnswerLiveVerificationAssets {
 
         \(baseText)
         """
+    }
+
+    static func visualAsset(
+        for caseID: String,
+        currentMaterialID: String
+    ) -> StudyAgentVisualAsset? {
+        guard let assetID = caseAssetMap[caseID],
+              let asset = assets[assetID],
+              let rootURL = try? resourceRootURL() else {
+            return nil
+        }
+        let fileURL = rootURL
+            .appendingPathComponent("verification-only", isDirectory: true)
+            .appendingPathComponent(asset.fileName)
+        let mediaType: String
+        switch fileURL.pathExtension.lowercased() {
+        case "jpg", "jpeg":
+            mediaType = "image/jpeg"
+        case "png":
+            mediaType = "image/png"
+        case "webp":
+            mediaType = "image/webp"
+        default:
+            return nil
+        }
+        guard FileManager.default.isReadableFile(atPath: fileURL.path) else { return nil }
+        return StudyAgentVisualAsset(
+            id: currentMaterialID,
+            filePath: fileURL.path,
+            mediaType: mediaType
+        )
     }
 
     static func assertMappedAssets(for cases: [RichAnswerLiveSuccessCase]) throws {

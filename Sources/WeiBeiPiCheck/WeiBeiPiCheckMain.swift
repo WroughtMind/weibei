@@ -1130,6 +1130,10 @@ struct WeiBeiPiCheckMain {
                     StudyAgentCourseRelation(noteItemID: noteID, sourceItemID: materialID),
                 ]
             ),
+            visualAssets: RichAnswerLiveVerificationAssets.visualAsset(
+                for: checkCase.id,
+                currentMaterialID: materialID
+            ).map { [$0] } ?? [],
             learningContext: StudyAgentLearningContext(
                 memoryRevision: 3,
                 lastLocation: StudyLocation(

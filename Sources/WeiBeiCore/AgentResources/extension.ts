@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { open, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,6 +12,7 @@ const CONTEXT_FILE_ENV = "WEIBEI_AGENT_CONTEXT_FILE";
 const CONTEXT_TOOL = "weibei_context";
 const COURSE_MAP_TOOL = "weibei_course_map";
 const COURSE_SEARCH_TOOL = "weibei_course_search";
+const VISUAL_ASSET_TOOL = "weibei_visual_asset";
 const LEARNING_MEMORY_TOOL = "weibei_learning_memory";
 const LEARNING_UPDATE_TOOL = "weibei_learning_update";
 const NOTE_PROPOSAL_TOOL = "weibei_note_proposal";
@@ -35,6 +36,7 @@ const ALLOWED_TOOLS = new Set([
   CONTEXT_TOOL,
   COURSE_MAP_TOOL,
   COURSE_SEARCH_TOOL,
+  VISUAL_ASSET_TOOL,
   LEARNING_MEMORY_TOOL,
   LEARNING_UPDATE_TOOL,
   NOTE_PROPOSAL_TOOL,
@@ -378,6 +380,8 @@ const LIMITS = {
   richAnswerEvidence: 12,
   richAnswerExcerpt: 600,
   richAnswerText: 800,
+  visualAssetBytes: 6_000_000,
+  visualAssets: 4,
 } as const;
 
 interface SourceSnapshot {
@@ -484,6 +488,21 @@ interface ContextSnapshotV2 {
   recentMessages: RecentMessageSnapshot[];
   course: CourseSnapshot;
   learning: LearningSnapshot;
+}
+
+interface VisualAssetFileSnapshot {
+  id: string;
+  filePath: string;
+  mediaType: "image/jpeg" | "image/png" | "image/webp";
+}
+
+interface VisualAssetToolDetails {
+  kind: "visual_asset_read";
+  contextRevision: string;
+  assetID: string;
+  mediaType: VisualAssetFileSnapshot["mediaType"];
+  sha256: string;
+  byteCount: number;
 }
 
 interface ContextToolDetails {
@@ -1132,7 +1151,7 @@ function readLearning(value: unknown): LearningSnapshot {
   };
 }
 
-async function readCurrentSnapshot(): Promise<ContextSnapshotV2> {
+async function readContextEnvelope(): Promise<Record<string, unknown>> {
   const contextFile = process.env[CONTEXT_FILE_ENV]?.trim();
   if (!contextFile) {
     throw new Error(`缺少环境变量 ${CONTEXT_FILE_ENV}`);
@@ -1161,6 +1180,12 @@ async function readCurrentSnapshot(): Promise<ContextSnapshotV2> {
     throw new Error("魏碑上下文仅支持 schemaVersion=2");
   }
 
+  return envelope;
+}
+
+async function readCurrentSnapshot(): Promise<ContextSnapshotV2> {
+  const envelope = await readContextEnvelope();
+
   return {
     schemaVersion: 2,
     requestID: requireIdentifier(envelope.requestID, "requestID"),
@@ -1177,6 +1202,66 @@ async function readCurrentSnapshot(): Promise<ContextSnapshotV2> {
     course: readCourse(envelope.course),
     learning: readLearning(envelope.learning),
   };
+}
+
+async function readCurrentVisualAssets(
+  snapshot: ContextSnapshotV2,
+): Promise<Map<string, VisualAssetFileSnapshot>> {
+  const envelope = await readContextEnvelope();
+  if (requireIdentifier(envelope.contextRevision, "contextRevision") !== snapshot.contextRevision) {
+    throw new Error("魏碑上下文已变化；请重新读取当前材料");
+  }
+  if (envelope.visualAssets === undefined || envelope.visualAssets === null) {
+    return new Map();
+  }
+  if (!Array.isArray(envelope.visualAssets)) {
+    throw new Error("魏碑视觉材料描述必须是数组");
+  }
+  const currentMaterialIDs = new Set(
+    snapshot.course.catalog.filter((item) => item.isCurrentMaterial).map((item) => item.id),
+  );
+  const assets = new Map<string, VisualAssetFileSnapshot>();
+  envelope.visualAssets.slice(0, LIMITS.visualAssets).forEach((entry, index) => {
+    const field = `visualAssets[${index}]`;
+    const raw = requireRecord(entry, field);
+    const id = requireIdentifier(raw.id, `${field}.id`);
+    if (!currentMaterialIDs.has(id)) {
+      throw new Error(`${field}.id 不是本轮当前材料`);
+    }
+    const filePath = requireString(raw.filePath, `${field}.filePath`);
+    if (filePath.length > 4_096 || !filePath.startsWith("/")) {
+      throw new Error(`${field}.filePath 无效`);
+    }
+    const mediaType = requireString(raw.mediaType, `${field}.mediaType`);
+    if (mediaType !== "image/jpeg" && mediaType !== "image/png" && mediaType !== "image/webp") {
+      throw new Error(`${field}.mediaType 不受支持`);
+    }
+    let canonicalPath: string;
+    try {
+      canonicalPath = realpathSync(filePath);
+    } catch {
+      throw new Error(`${field} 指向的当前材料图像无法读取`);
+    }
+    assets.set(id, { id, filePath: canonicalPath, mediaType });
+  });
+  return assets;
+}
+
+function visualAssetMagicMatches(
+  data: Buffer,
+  mediaType: VisualAssetFileSnapshot["mediaType"],
+): boolean {
+  if (mediaType === "image/jpeg") {
+    return data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff;
+  }
+  if (mediaType === "image/png") {
+    return data.length >= 8 && data.subarray(0, 8).equals(
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    );
+  }
+  return data.length >= 12 &&
+    data.subarray(0, 4).toString("ascii") === "RIFF" &&
+    data.subarray(8, 12).toString("ascii") === "WEBP";
 }
 
 function contextRevisionFromDetails(details: unknown): string | undefined {
@@ -8320,6 +8405,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     executionMode: "sequential",
     async execute() {
       const snapshot = await readCurrentSnapshot();
+      const visualAssets = await readCurrentVisualAssets(snapshot);
       requiredContextRevision = snapshot.contextRevision;
       lastReadContextRevision = snapshot.contextRevision;
       richAnswerCatalogRevision = undefined;
@@ -8342,6 +8428,10 @@ export default function weibeiExtension(pi: ExtensionAPI) {
               {
                 contextRevision: snapshot.contextRevision,
                 richAnswerGrounding: richAnswerSourceBindings(snapshot),
+                visualInspection: {
+                  availableAssetIDs: [...visualAssets.keys()],
+                  tool: VISUAL_ASSET_TOOL,
+                },
                 material: snapshot.material,
                 note: snapshot.note,
                 selection: snapshot.selection,
@@ -8363,6 +8453,78 @@ export default function weibeiExtension(pi: ExtensionAPI) {
               null,
               2,
             ),
+          },
+        ],
+        details,
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: VISUAL_ASSET_TOOL,
+    label: "观察当前材料图像",
+    description:
+      "按当前材料 assetID 读取本轮受控图像像素。只有路线、区域、构图、比例、图中对象或空间位置确实依赖原图时调用；返回给模型的是当前材料图片，不暴露文件路径。",
+    promptSnippet: "观察当前材料的真实图像像素，并记录哈希与大小",
+    parameters: Type.Object(
+      {
+        assetID: Type.String({ minLength: 1, maxLength: LIMITS.identifier }),
+      },
+      { additionalProperties: false },
+    ),
+    executionMode: "sequential",
+    async execute(_toolCallID, params) {
+      const current = await readCurrentSnapshot();
+      if (lastReadContextRevision !== current.contextRevision) {
+        throw new Error(`必须先调用 ${CONTEXT_TOOL} 读取本轮当前上下文`);
+      }
+      const visualAssets = await readCurrentVisualAssets(current);
+      const asset = visualAssets.get(params.assetID);
+      if (!asset) {
+        throw new Error("该 assetID 不是本轮可观察的当前材料图像");
+      }
+      const file = await open(asset.filePath, "r");
+      let data: Buffer;
+      try {
+        const beforeRead = await file.stat();
+        if (!beforeRead.isFile() || beforeRead.size <= 0 || beforeRead.size > LIMITS.visualAssetBytes) {
+          throw new Error(`当前材料图像必须是 1 到 ${LIMITS.visualAssetBytes} 字节的普通文件`);
+        }
+        data = await file.readFile();
+        const afterRead = await file.stat();
+        if (
+          data.byteLength !== beforeRead.size ||
+          data.byteLength > LIMITS.visualAssetBytes ||
+          afterRead.size !== beforeRead.size ||
+          afterRead.mtimeMs !== beforeRead.mtimeMs
+        ) {
+          throw new Error("当前材料图像在读取期间发生变化；请重新读取当前材料");
+        }
+      } finally {
+        await file.close();
+      }
+      if (!visualAssetMagicMatches(data, asset.mediaType)) {
+        throw new Error("当前材料图像的真实格式与声明不一致");
+      }
+      const sha256 = createHash("sha256").update(data).digest("hex");
+      const details: VisualAssetToolDetails = {
+        kind: "visual_asset_read",
+        contextRevision: current.contextRevision,
+        assetID: asset.id,
+        mediaType: asset.mediaType,
+        sha256,
+        byteCount: data.byteLength,
+      };
+      return {
+        content: [
+          {
+            type: "text",
+            text: `已读取当前材料图像 ${asset.id}；请只依据可见像素和本轮来源判断，不能把近似观察说成精确测量。`,
+          },
+          {
+            type: "image",
+            mimeType: asset.mediaType,
+            data: data.toString("base64"),
           },
         ],
         details,
