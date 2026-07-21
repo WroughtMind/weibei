@@ -2291,17 +2291,19 @@ struct AgentPaneView: View {
         proxy: ScrollViewProxy
     ) {
         guard stage == .overview || stage == .before || stage == .after,
-              let targetID = latestRichAnswerSceneAnchorID else { return }
+              let target = latestRichAnswerVerificationTarget else { return }
         agentFollowsLatest = false
-        let anchor: UnitPoint = ProcessInfo.processInfo.environment["WEIBEI_VERIFY_RICH_ANSWER_CAPTURE_ANCHOR"] == "bottom"
-            ? .bottom
-            : .top
+        let capturesMessageBottom = ProcessInfo.processInfo.environment["WEIBEI_VERIFY_RICH_ANSWER_CAPTURE_ANCHOR"] == "bottom"
         DispatchQueue.main.async {
-            proxy.scrollTo(targetID, anchor: anchor)
+            if capturesMessageBottom {
+                proxy.scrollTo(target.messageID, anchor: .bottom)
+            } else {
+                proxy.scrollTo(target.sceneAnchorID, anchor: .top)
+            }
         }
     }
 
-    private var latestRichAnswerSceneAnchorID: String? {
+    private var latestRichAnswerVerificationTarget: (messageID: UUID, sceneAnchorID: String)? {
         for message in store.messages.reversed() {
             guard let richAnswer = message.richAnswer,
                   richAnswer.mode == .rich,
@@ -2309,7 +2311,10 @@ struct AgentPaneView: View {
             for (index, part) in richAnswer.resolvedParts.enumerated() {
                 guard case .scene = part.kind,
                       let sceneID = part.sceneID else { continue }
-                return "rich-answer-\(message.id.uuidString)-\(sceneID)-\(index)"
+                return (
+                    message.id,
+                    "rich-answer-\(message.id.uuidString)-\(sceneID)-\(index)"
+                )
             }
         }
         return nil
