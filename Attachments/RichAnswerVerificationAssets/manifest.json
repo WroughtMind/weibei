@@ -1,0 +1,206 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-07-18T06:22:42Z",
+  "repositoryPolicy": {
+    "allowedRoot": "Attachments/RichAnswerVerificationAssets/",
+    "notAppResources": true,
+    "largeOriginalRule": "If original exceeds about 15MB or longest edge exceeds 4000px, keep the original only in /private/tmp for hash verification and commit only a no-crop/no-stretch derivative with longest edge 2400-3200px.",
+    "tmpSourceRoot": "/private/tmp/weibei-rich-answer-source-assets/ and /private/tmp/weibei-rich-reply-replay-rerun-20260718-142954/"
+  },
+  "downloadNotes": [
+    {
+      "requested": "NOAA/NPS subduction-hires.jpg",
+      "status": "exact-filename-not-found",
+      "evidence": "Web search and direct official-path HEAD probes for subduction-hires.jpg returned no usable official asset. The repository therefore includes an official NPS Subduction Zones gallery image and an official NOAA public-domain Lau Basin tectonic map, both as real assets rather than placeholders."
+    }
+  ],
+  "assets": [
+    {
+      "id": "kepler-16b-nasa-jpl",
+      "title": "Kepler-16b - JPL Travel Poster",
+      "sourcePageUrl": "https://www.jpl.nasa.gov/images/kepler-16b-jpl-travel-poster/",
+      "sourceRecordUrl": "https://commons.wikimedia.org/wiki/File:Kepler-16b_39x27_CMYK-1.png",
+      "directOriginalUrl": "https://upload.wikimedia.org/wikipedia/commons/e/e4/Kepler-16b_39x27_CMYK-1.png",
+      "institution": "NASA/JPL-Caltech",
+      "creator": "NASA/JPL-Caltech",
+      "license": "Public domain in the United States; NASA/JPL credit required; NASA insignia/logo restrictions still apply.",
+      "licenseBasis": "Wikimedia Commons file record identifies the image as a NASA-created public-domain work; JPL source page gives Credit: NASA/JPL.",
+      "attributionText": "Credit: NASA/JPL-Caltech.",
+      "original": {
+        "keptInRepository": false,
+        "tmpPath": "/private/tmp/weibei-rich-answer-source-assets/kepler-16b-nasa-jpl-original.png",
+        "width": 8100,
+        "height": 11700,
+        "bytes": 19196171,
+        "sha256": "1ba0f3b8809ac320e8615a2280d2dd6996c233f5a40412023b69b392d0839bc1",
+        "reasonNotCommitted": "Original is over 15MB and longest edge is over 4000px."
+      },
+      "derivative": {
+        "repositoryPath": "Attachments/RichAnswerVerificationAssets/processed/kepler-16b-nasa-jpl-derivative-3200.jpg",
+        "width": 2215,
+        "height": 3200,
+        "bytes": 879566,
+        "sha256": "1b2fede241ce734508aa4b0a53a486a38d02670c029c55da4585654ffe91a50f",
+        "processing": "sips -s format jpeg -s formatOptions 92 -Z 3200 /private/tmp/weibei-rich-answer-source-assets/kepler-16b-nasa-jpl-original.png --out Attachments/RichAnswerVerificationAssets/processed/kepler-16b-nasa-jpl-derivative-3200.jpg",
+        "crop": "none",
+        "stretch": "none"
+      }
+    },
+    {
+      "id": "grand-canyon-loc-usgs-west",
+      "title": "Topographic map of the Grand Canyon National Park Arizona - West",
+      "sourcePageUrl": "https://www.loc.gov/resource/g4332g.np000101/",
+      "sourceRecordUrl": "https://www.loc.gov/item/98687189/",
+      "directOriginalUrl": "https://tile.loc.gov/storage-services/service/gmd/gmd433/g4332/g4332g/np000101.jp2",
+      "institution": "Library of Congress Geography and Map Division; Geological Survey (U.S.)",
+      "creator": "Geological Survey (U.S.)",
+      "license": "Library of Congress Geography and Map Division digitized collections are free to use and reuse unless a Rights Advisory says otherwise.",
+      "licenseBasis": "LOC item record states the Geography and Map Division digitized collection content is free to use and reuse unless a Rights Advisory indicates otherwise; this item is a 1948 U.S. Geological Survey map.",
+      "attributionText": "Credit: Library of Congress, Geography and Map Division; Geological Survey (U.S.).",
+      "original": {
+        "keptInRepository": false,
+        "tmpPath": "/private/tmp/weibei-rich-answer-source-assets/grand-canyon-loc-usgs-west-original.jp2",
+        "width": 12136,
+        "height": 13642,
+        "bytes": 24849524,
+        "sha256": "7514c27514c8c15c627c07b9307669dd57f0b53f640a472d0fd23b49142dee20",
+        "reasonNotCommitted": "Original is over 15MB and longest edge is over 4000px."
+      },
+      "derivative": {
+        "repositoryPath": "Attachments/RichAnswerVerificationAssets/processed/grand-canyon-loc-usgs-west-derivative-3200.jpg",
+        "width": 2846,
+        "height": 3200,
+        "bytes": 4154971,
+        "sha256": "01567f81b5ca1750de709cd40fe3424c0fc106894218c6e79ceb9b3a745d8d68",
+        "processing": "sips -s format jpeg -s formatOptions 92 -Z 3200 /private/tmp/weibei-rich-answer-source-assets/grand-canyon-loc-usgs-west-original.jp2 --out Attachments/RichAnswerVerificationAssets/processed/grand-canyon-loc-usgs-west-derivative-3200.jpg",
+        "crop": "none",
+        "stretch": "none"
+      }
+    },
+    {
+      "id": "butler-migrations-of-the-barbarians",
+      "title": "Migrations of the Barbarians",
+      "sourcePageUrl": "https://commons.wikimedia.org/wiki/File:Butler_Migrations_of_the_Barbarians.jpg",
+      "sourceRecordUrl": "https://www.gutenberg.org/ebooks/17124",
+      "directOriginalUrl": "https://upload.wikimedia.org/wikipedia/commons/c/c7/Butler_Migrations_of_the_Barbarians.jpg",
+      "institution": "Project Gutenberg / Wikimedia Commons",
+      "creator": "Samuel Butler",
+      "license": "Public domain in the United States.",
+      "licenseBasis": "Wikimedia Commons file record identifies the image as from Project Gutenberg archives for a book/document whose U.S. copyright has expired; Project Gutenberg record marks the work public domain in the USA.",
+      "attributionText": "Samuel Butler, The Atlas of Ancient and Classical Geography, via Project Gutenberg / Wikimedia Commons.",
+      "original": {
+        "keptInRepository": true,
+        "repositoryPath": "Attachments/RichAnswerVerificationAssets/originals/butler-migrations-of-the-barbarians-original.jpg",
+        "width": 2984,
+        "height": 1995,
+        "bytes": 1609685,
+        "sha256": "784115423727af538efffd80a246016f9726c6559cb3ee56bf7c7547672f826e"
+      },
+      "derivative": {
+        "repositoryPath": "Attachments/RichAnswerVerificationAssets/processed/butler-migrations-of-the-barbarians-verification.jpg",
+        "width": 2984,
+        "height": 1995,
+        "bytes": 1609685,
+        "sha256": "784115423727af538efffd80a246016f9726c6559cb3ee56bf7c7547672f826e",
+        "processing": "No recompression; hard-linked/copied from repository original because original is under size and dimension limits.",
+        "crop": "none",
+        "stretch": "none"
+      }
+    },
+    {
+      "id": "noaa-lau-basin-tectonic-features",
+      "title": "Lau Basin Tectonic Features",
+      "sourcePageUrl": "https://commons.wikimedia.org/wiki/File:Lau_Basin-NOAA-Tectonic_features_hires.jpg",
+      "sourceRecordUrl": "https://oceanexplorer.noaa.gov/",
+      "directOriginalUrl": "https://upload.wikimedia.org/wikipedia/commons/a/ae/Lau_Basin-NOAA-Tectonic_features_hires.jpg",
+      "institution": "NOAA Ocean Explorer / NOAA Vents Program",
+      "creator": "NOAA Vents Program",
+      "license": "Public domain in the United States as NOAA federal-government material; credit NOAA.",
+      "licenseBasis": "Wikimedia Commons file record identifies the image as public domain because it contains materials from NOAA, taken or made as part of official duties; embedded metadata asks users to cite NOAA as source.",
+      "attributionText": "Image courtesy of Submarine Ring of Fire 2012: NE Lau Basin, NOAA-OER.",
+      "original": {
+        "keptInRepository": true,
+        "repositoryPath": "Attachments/RichAnswerVerificationAssets/originals/lau-basin-noaa-tectonic-features-original.jpg",
+        "width": 2642,
+        "height": 2189,
+        "bytes": 4880415,
+        "sha256": "dbaa70529f062aa72ff47e96166b1fba73eab017a4761ddf02661205c4d158d0"
+      },
+      "derivative": {
+        "repositoryPath": "Attachments/RichAnswerVerificationAssets/processed/lau-basin-noaa-tectonic-features-verification.jpg",
+        "width": 2642,
+        "height": 2189,
+        "bytes": 4880415,
+        "sha256": "dbaa70529f062aa72ff47e96166b1fba73eab017a4761ddf02661205c4d158d0",
+        "processing": "No recompression; hard-linked/copied from repository original because original is under size and dimension limits.",
+        "crop": "none",
+        "stretch": "none"
+      }
+    },
+    {
+      "id": "nps-cascadia-subduction-zone-diagram",
+      "title": "Cascadia Subduction Zone Diagram",
+      "sourcePageUrl": "https://www.nps.gov/media/photo/gallery-item.htm?id=64d96e1c-cbcc-4061-9499-8bcf7b8e68ae&gid=9E8F2C63-53DA-4679-B15D-FCDCAC3075E6",
+      "sourceRecordUrl": "https://www.nps.gov/media/photo/gallery.htm?id=9E8F2C63-53DA-4679-B15D-FCDCAC3075E6",
+      "directOriginalUrl": "https://www.nps.gov/npgallery/GetAsset/64d96e1c-cbcc-4061-9499-8bcf7b8e68ae/original",
+      "institution": "National Park Service",
+      "creator": "National Park Service / Robert J. Lillie source adaptation",
+      "license": "NPS Gallery API rights status: Full. Use with the supplied credit text; not asserted here as NASA/NOAA-style public domain because the credit text says it was modified from a named publication.",
+      "licenseBasis": "NPS Subduction Zones gallery JSON reports ConstraintsInformation.GrantingRights = Full for this asset. Because the credit references a modified publication source, this manifest preserves that credit and flags the exact basis instead of overstating public-domain status.",
+      "attributionText": "Modified from Oregon's Island in the Sky: Geology Road Guide to Marys Peak, by Robert J. Lillie, Wells Creek Publishers, 2017; via National Park Service Subduction Zones gallery.",
+      "original": {
+        "keptInRepository": true,
+        "repositoryPath": "Attachments/RichAnswerVerificationAssets/originals/nps-cascadia-subduction-zone-diagram-original.jpg",
+        "width": 2790,
+        "height": 1149,
+        "bytes": 229575,
+        "sha256": "2a488738e8e2936d8f5eb10e1525465105398d3cb99cba6cfa98b5b4f9def2ff"
+      },
+      "derivative": {
+        "repositoryPath": "Attachments/RichAnswerVerificationAssets/processed/nps-cascadia-subduction-zone-diagram-verification.jpg",
+        "width": 2790,
+        "height": 1149,
+        "bytes": 229575,
+        "sha256": "2a488738e8e2936d8f5eb10e1525465105398d3cb99cba6cfa98b5b4f9def2ff",
+        "processing": "No recompression; hard-linked/copied from repository original because original is under size and dimension limits.",
+        "crop": "none",
+        "stretch": "none"
+      }
+    },
+    {
+      "id": "weibei-single-pendulum-color-contrast-screenshot",
+      "title": "WeiBei single-pendulum rich-answer color contrast screenshot",
+      "sourcePageUrl": "local://weibei/rich-answer-replay/learning-art-color-contrast-overlay",
+      "sourceRecordUrl": "/private/tmp/weibei-rich-reply-replay-rerun-20260718-142954/after.png",
+      "directOriginalUrl": "/private/tmp/weibei-rich-reply-replay-rerun-20260718-142954/after.png",
+      "institution": "WeiBei local verification run",
+      "creator": "WeiBei app rich-answer replay",
+      "license": "Internal verification screenshot; repository QA asset only.",
+      "licenseBasis": "Captured from a real local WeiBei rich-answer replay window on 2026-07-18; used only for deterministic color-contrast verification.",
+      "attributionText": "WeiBei local rich-answer replay screenshot, 2026-07-18.",
+      "original": {
+        "keptInRepository": true,
+        "repositoryPath": "Attachments/RichAnswerVerificationAssets/originals/weibei-single-pendulum-color-contrast-original.png",
+        "width": 2616,
+        "height": 1656,
+        "bytes": 749798,
+        "sha256": "c1c79970691385ff614f7c5a9eacedc21a094ba409bf242bb7c62d0716f06e1e",
+        "processing": "Exact byte copy from /private/tmp/weibei-rich-reply-replay-rerun-20260718-142954/after.png; no overlay, no crop, no recompression."
+      },
+      "appResource": {
+        "repositoryPath": "Sources/WeiBei/Resources/RichAnswerVerificationAssets/verification-only/weibei-single-pendulum-color-contrast-original.png",
+        "width": 2616,
+        "height": 1656,
+        "bytes": 749798,
+        "sha256": "c1c79970691385ff614f7c5a9eacedc21a094ba409bf242bb7c62d0716f06e1e",
+        "processing": "Exact byte copy of the original PNG for in-app verification only; no overlay, no crop, no recompression.",
+        "verificationOnly": true
+      },
+      "samplingReports": {
+        "json": "Attachments/RichAnswerVerificationAssets/color-contrast/weibei-single-pendulum-color-contrast-samples.json",
+        "csv": "Attachments/RichAnswerVerificationAssets/color-contrast/weibei-single-pendulum-color-contrast-samples.csv",
+        "markdown": "Attachments/RichAnswerVerificationAssets/color-contrast/weibei-single-pendulum-color-contrast-report.md"
+      }
+    }
+  ]
+}

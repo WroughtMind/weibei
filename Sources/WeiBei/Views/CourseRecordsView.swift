@@ -2,13 +2,20 @@ import Foundation
 import SwiftUI
 import WeiBeiCore
 
+/// Learning-session list grouped by course (color tag per course).
 struct CourseRecordsView: View {
     @EnvironmentObject private var store: WorkspaceStore
     let search: String
     @Binding var selectedSessionID: UUID?
     let isCompact: Bool
 
-    private var sessions: [StudySession] {
+    private struct SessionGroup: Identifiable {
+        let id: String
+        let course: Course?
+        let sessions: [StudySession]
+    }
+
+    private var filteredSessions: [StudySession] {
         let cleaned = search.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return store.recentCourseSessions }
         return store.recentCourseSessions.filter { session in
@@ -18,177 +25,112 @@ struct CourseRecordsView: View {
         }
     }
 
-    private var resolvedSession: StudySession? {
-        if let selectedSessionID,
-           let session = sessions.first(where: { $0.id == selectedSessionID }) {
-            return session
+    private var groups: [SessionGroup] {
+        var buckets: [String: (course: Course?, sessions: [StudySession])] = [:]
+        for session in filteredSessions {
+            if let courseID = store.primaryCourseID(for: session),
+               let course = store.courses.first(where: { $0.id == courseID }) {
+                let key = courseID.uuidString
+                var entry = buckets[key] ?? (course, [])
+                entry.sessions.append(session)
+                buckets[key] = entry
+            } else {
+                var entry = buckets["unassigned"] ?? (nil, [])
+                entry.sessions.append(session)
+                buckets["unassigned"] = entry
+            }
         }
-        return sessions.first
+
+        let orderedCourseGroups = store.courses.compactMap { course -> SessionGroup? in
+            guard let entry = buckets[course.id.uuidString], !entry.sessions.isEmpty else { return nil }
+            return SessionGroup(id: course.id.uuidString, course: course, sessions: entry.sessions)
+        }
+        let unassigned = buckets["unassigned"].map {
+            SessionGroup(id: "unassigned", course: nil, sessions: $0.sessions)
+        }
+        return orderedCourseGroups + (unassigned.map { [$0] } ?? [])
     }
 
     var body: some View {
         Group {
-            if sessions.isEmpty {
+            if groups.isEmpty {
                 CourseEmptyState(
                     title: store.ui("还没有学习记录", "No learning records yet"),
-                    detail: store.ui("发生过真实对话的学习会话会保存在这里；空白会话不计入。", "Learning sessions with real messages appear here. Empty sessions are not counted."),
+                    detail: store.ui(
+                        "有真实对话的会话会出现在这里，并按课程归类。",
+                        "Sessions with messages appear here, grouped by course."
+                    ),
                     systemImage: "bubble.left.and.text.bubble.right"
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(30)
-            } else if isCompact {
-                VStack(spacing: 0) {
-                    sessionList
-                    CourseHairline()
-                    CourseSessionDetail(session: resolvedSession)
-                        .frame(minHeight: 400)
-                }
             } else {
-                HStack(spacing: 0) {
-                    sessionList
-                        .frame(width: 390)
-                    Rectangle()
-                        .fill(WeiBeiTheme.hairline.opacity(0.72))
-                        .frame(width: 1)
-                    CourseSessionDetail(session: resolvedSession)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(groups) { group in
+                            groupHeader(group)
+                            ForEach(group.sessions) { session in
+                                CourseWorkspaceRow(
+                                    icon: "bubble.left.and.text.bubble.right",
+                                    title: session.title,
+                                    detail: store.ui(
+                                        "\(session.messages.count) 条消息 · \(coursePhaseLabel(session.flow.phase, store: store))",
+                                        "\(session.messages.count) messages · \(coursePhaseLabel(session.flow.phase, store: store))"
+                                    ),
+                                    status: courseRelativeDate(session.updatedAt, language: store.interfaceLanguage),
+                                    selected: session.id == selectedSessionID
+                                ) {
+                                    selectedSessionID = session.id
+                                    store.continueCourseSession(session.id)
+                                }
+                                CourseHairline()
+                            }
+                        }
+                    }
+                    .padding(.vertical, 6)
                 }
+                .background(WeiBeiTheme.paperRaised.opacity(0.18))
+            }
+        }
+        .overlay(alignment: .bottom) {
+            if !groups.isEmpty {
+                Text(store.ui(
+                    "同色标签表示同一课程 · 点击一行继续对话",
+                    "Matching tags share a course · click a row to continue"
+                ))
+                .font(.system(size: 11))
+                .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .frame(maxWidth: .infinity)
+                .background(WeiBeiTheme.paper.opacity(0.92))
             }
         }
         .onAppear {
             if selectedSessionID == nil {
-                selectedSessionID = sessions.first?.id
+                selectedSessionID = groups.first?.sessions.first?.id
             }
         }
     }
 
-    private var sessionList: some View {
-        ScrollView {
-            LazyVStack(spacing: 0) {
-                ForEach(sessions) { session in
-                    CourseWorkspaceRow(
-                        icon: "bubble.left.and.text.bubble.right",
-                        title: session.title,
-                        detail: store.ui(
-                            "\(session.messages.count) 条消息 · \(coursePhaseLabel(session.flow.phase, store: store))",
-                            "\(session.messages.count) messages · \(coursePhaseLabel(session.flow.phase, store: store))"
-                        ),
-                        status: courseRelativeDate(session.updatedAt, language: store.interfaceLanguage),
-                        selected: session.id == resolvedSession?.id
-                    ) {
-                        selectedSessionID = session.id
-                    }
-                    CourseHairline()
-                }
-            }
-            .padding(.vertical, 6)
+    private func groupHeader(_ group: SessionGroup) -> some View {
+        let accent = group.course.map { courseWorkspaceAccent(colorIndex: $0.colorIndex) } ?? WeiBeiTheme.tertiaryInk
+        let title = group.course?.title ?? store.ui("未归属课程", "Unassigned")
+        return HStack(spacing: 8) {
+            Capsule()
+                .fill(accent)
+                .frame(width: 8, height: 8)
+            Text(title)
+                .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 13, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.ink)
+            Text(store.ui("\(group.sessions.count) 段", "\(group.sessions.count)"))
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+            Spacer(minLength: 0)
         }
-        .background(WeiBeiTheme.paperRaised.opacity(0.22))
-    }
-}
-struct CourseSessionDetail: View {
-    @EnvironmentObject private var store: WorkspaceStore
-    let session: StudySession?
-
-    var body: some View {
-        if let session {
-            VStack(spacing: 0) {
-                CourseRelationDetailHeader(
-                    mark: "SESSION",
-                    title: session.title,
-                    detail: store.ui(
-                        "\(session.messages.count) 条消息 · 更新于 \(courseRelativeDate(session.updatedAt, language: store.interfaceLanguage))",
-                        "\(session.messages.count) messages · updated \(courseRelativeDate(session.updatedAt, language: store.interfaceLanguage))"
-                    ),
-                    openTitle: store.ui("继续对话", "Continue chat"),
-                    open: { store.continueCourseSession(session.id) }
-                )
-
-                CourseHairline()
-
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 26) {
-                        CourseDetailSection(title: store.ui("会话摘要", "Session summary")) {
-                            Text(session.summary.isEmpty
-                                ? store.ui("这次讨论还没有生成摘要。", "This discussion does not have a summary yet.")
-                                : session.summary
-                            )
-                                .font(.system(size: 13))
-                                .foregroundStyle(session.summary.isEmpty ? WeiBeiTheme.tertiaryInk : WeiBeiTheme.ink)
-                                .lineSpacing(4)
-                                .textSelection(.enabled)
-                        }
-
-                        if !session.focusItemIDs.isEmpty {
-                            CourseDetailSection(title: store.ui("会话中出现过", "Referenced in this session")) {
-                                VStack(spacing: 0) {
-                                    ForEach(session.focusItemIDs.compactMap(store.item(withID:)), id: \.id) { item in
-                                        CourseContextLine(
-                                            icon: item.kind.systemImage,
-                                            label: item.isNotebookNote ? store.ui("笔记", "Note") : store.ui("资料", "Material"),
-                                            value: store.displayTitle(for: item)
-                                        )
-                                        CourseHairline()
-                                    }
-                                }
-                            }
-                        }
-
-                        if !session.flow.suggestedNext.isEmpty {
-                            CourseDetailSection(title: store.ui("建议下一步", "Suggested next")) {
-                                VStack(alignment: .leading, spacing: 10) {
-                                    ForEach(Array(session.flow.suggestedNext.enumerated()), id: \.offset) { index, item in
-                                        HStack(alignment: .top, spacing: 10) {
-                                            Text("\(index + 1)")
-                                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                                                .foregroundStyle(WeiBeiTheme.cinnabar)
-                                                .frame(width: 18, alignment: .leading)
-                                            Text(item)
-                                                .font(.system(size: 13))
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        CourseDetailSection(title: store.ui("最近消息", "Recent messages")) {
-                            VStack(spacing: 0) {
-                                ForEach(Array(session.messages.suffix(8))) { message in
-                                    VStack(alignment: .leading, spacing: 5) {
-                                        HStack {
-                                            Text(message.role == .user ? store.ui("我", "Me") : store.ui("魏碑", "WeiBei"))
-                                                .font(.system(size: 11, weight: .semibold))
-                                                .foregroundStyle(message.role == .user ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
-                                            Spacer()
-                                            Text(courseRelativeDate(message.createdAt, language: store.interfaceLanguage))
-                                                .font(.system(size: 10))
-                                                .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                                        }
-                                        Text(message.text)
-                                            .font(.system(size: 12.5))
-                                            .foregroundStyle(WeiBeiTheme.ink)
-                                            .lineLimit(5)
-                                            .lineSpacing(3)
-                                            .textSelection(.enabled)
-                                    }
-                                    .padding(.vertical, 12)
-                                    CourseHairline()
-                                }
-                            }
-                        }
-                    }
-                    .padding(26)
-                    .frame(maxWidth: 840, alignment: .leading)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                }
-            }
-        } else {
-            CourseEmptyState(
-                title: store.ui("选择一条学习记录", "Select a learning record"),
-                detail: store.ui("这里会显示真实摘要、相关资料和下一步建议。", "See the real summary, referenced items, and next steps here."),
-                systemImage: "bubble.left.and.text.bubble.right"
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
+        .padding(.horizontal, 16)
+        .padding(.top, 14)
+        .padding(.bottom, 8)
+        .background(accent.opacity(0.06))
     }
 }

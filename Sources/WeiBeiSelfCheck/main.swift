@@ -3,6 +3,7 @@ import CoreText
 import Foundation
 import PDFKit
 import Security
+import WebKit
 import WeiBeiCore
 
 func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
@@ -10,6 +11,469 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
         fputs("self-check failed: \(message)\n", stderr)
         exit(1)
     }
+}
+
+final class RichAnswerWebRuntimeHarness: NSObject, WKScriptMessageHandler {
+    private let webView: WKWebView
+    private var messages: [[String: Any]] = []
+    private var failure: String?
+
+    override init() {
+        let controller = WKUserContentController()
+        controller.addUserScript(
+            WKUserScript(
+                source: "window.__WEIBEI_EMBEDDED__ = true;",
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true
+            )
+        )
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        configuration.userContentController = controller
+        webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 420, height: 760), configuration: configuration)
+        super.init()
+        controller.add(self, name: "weibeiRichAnswer")
+    }
+
+    func run(repositoryURL: URL) {
+        let entryURL = repositoryURL.appendingPathComponent("Sources/WeiBei/Resources/rich-answer.html")
+        webView.loadFileURL(entryURL, allowingReadAccessTo: entryURL.deletingLastPathComponent())
+        expect(wait(until: { self.hasMessage("weibei:ready") }, timeout: 15), "the built rich-answer runtime sends its ready handshake")
+
+        guard let payload = payloadJSON() else {
+            expect(false, "the rich-answer runtime probe payload can be encoded")
+            return
+        }
+        evaluate("window.postMessage(\(payload), '*')")
+        expect(wait(until: { self.hasMessage("weibei:height") }, timeout: 15), "the built rich-answer runtime reports its measured height")
+        expect(waitForJavaScript("document.querySelectorAll('.generation-answer__program').length === 2 && document.querySelectorAll('.ra-root').length === 2", timeout: 15), "multiple generated scenes render inside one WebKit runtime")
+        let plottedCurveCondition = """
+        (() => {
+          const canvas = document.querySelector('.ra-plot canvas');
+          if (!(canvas instanceof HTMLCanvasElement) || canvas.width === 0 || canvas.height === 0) return false;
+          const context = canvas.getContext('2d');
+          if (!context) return false;
+          const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+          let curvePixels = 0;
+          for (let index = 0; index < pixels.length; index += 4) {
+            const red = pixels[index];
+            const green = pixels[index + 1];
+            const blue = pixels[index + 2];
+            const alpha = pixels[index + 3];
+            if (alpha > 180 && red >= 125 && red <= 165 && green >= 45 && green <= 85 && blue >= 30 && blue <= 70) {
+              curvePixels += 1;
+              if (curvePixels > 80) return true;
+            }
+          }
+          return false;
+        })()
+        """
+        expect(waitForJavaScript(plottedCurveCondition, timeout: 15), "embedded WebKit draws the actual function curve instead of only an empty coordinate grid")
+
+        let metricsScript = """
+        JSON.stringify((() => {
+          const status = document.querySelector('.generation-answer__status');
+          return {
+            embedded: document.documentElement.classList.contains('weibei-embedded'),
+            proofbars: document.querySelectorAll('.generation-proofbar').length,
+            sourceInspectors: document.querySelectorAll('.generation-source').length,
+            rootHeaders: document.querySelectorAll('.ra-root__header').length,
+            programCount: document.querySelectorAll('.generation-answer__program').length,
+            statusDisplay: status ? getComputedStyle(status).display : 'missing',
+            bodyOverflow: getComputedStyle(document.body).overflow,
+            bodyBackground: getComputedStyle(document.body).backgroundColor,
+            horizontalOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth
+          };
+        })())
+        """
+        guard let metricsJSON = evaluate(metricsScript) as? String,
+              let metricsData = metricsJSON.data(using: .utf8),
+              let metrics = try? JSONSerialization.jsonObject(with: metricsData) as? [String: Any] else {
+            expect(false, "the runtime exposes inspectable embedded-mode metrics")
+            return
+        }
+        expect(metrics["embedded"] as? Bool == true
+            && metrics["proofbars"] as? Int == 0
+            && metrics["sourceInspectors"] as? Int == 0
+            && metrics["rootHeaders"] as? Int == 0
+            && metrics["programCount"] as? Int == 2
+            && metrics["statusDisplay"] as? String == "none"
+            && metrics["bodyOverflow"] as? String == "hidden"
+            && metrics["bodyBackground"] as? String == "rgba(0, 0, 0, 0)"
+            && (metrics["horizontalOverflow"] as? NSNumber)?.doubleValue ?? 1 <= 1,
+            "embedded WebKit rendering is transparent, narrow-safe, and omits the webpage toolbar, source inspector, status strip, and duplicate root headers")
+
+        guard let heightMessage = messages.last(where: { $0["type"] as? String == "weibei:height" }),
+              let measuredHeight = (heightMessage["height"] as? NSNumber)?.doubleValue else {
+            expect(false, "the runtime height report contains a measured value")
+            return
+        }
+        expect(measuredHeight > 160 && heightMessage["overflowed"] as? Bool == true, "the runtime reports real overflow instead of silently capping and clipping its content")
+
+        evaluate("""
+        (() => {
+          const slider = document.querySelector('input[type="range"]');
+          if (slider) {
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+            if (setter) setter.call(slider, '2');
+            else slider.value = '2';
+            slider.dispatchEvent(new Event('input', { bubbles: true }));
+            slider.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+          document.querySelector('.ra-followup')?.click();
+          document.querySelector('.ra-evidence')?.click();
+        })()
+        """)
+        let interactionsReturned = wait(until: {
+            self.hasMessage("weibei:state")
+                && self.hasMessage("weibei:action")
+                && self.hasMessage("weibei:evidence")
+        }, timeout: 8)
+        let observedTypes = Set(messages.compactMap { $0["type"] as? String }).sorted().joined(separator: ", ")
+        expect(interactionsReturned, "slider state, follow-up action, and evidence jump return through the real WebKit bridge; observed: \(observedTypes)")
+
+        if let failure {
+            expect(false, failure)
+        }
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "weibeiRichAnswer")
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard let body = message.body as? [String: Any] else {
+            failure = "the rich-answer runtime emitted a non-object bridge message"
+            return
+        }
+        messages.append(body)
+    }
+
+    private func hasMessage(_ type: String) -> Bool {
+        messages.contains { $0["type"] as? String == type }
+    }
+
+    private func wait(until condition: () -> Bool, timeout: TimeInterval) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition(), Date() < deadline {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        return condition()
+    }
+
+    private func waitForJavaScript(_ condition: String, timeout: TimeInterval) -> Bool {
+        wait(until: { self.evaluate(condition) as? Bool == true }, timeout: timeout)
+    }
+
+    @discardableResult
+    private func evaluate(_ script: String) -> Any? {
+        var result: Any?
+        var isDone = false
+        webView.evaluateJavaScript(script) { value, error in
+            if let error {
+                self.failure = "rich-answer runtime JavaScript failed: \(error.localizedDescription)"
+            }
+            result = value
+            isDone = true
+        }
+        _ = wait(until: { isDone }, timeout: 5)
+        return result
+    }
+
+    private func payloadJSON() -> String? {
+        func program(
+            id: String,
+            source: String,
+            graphics: String = "dom",
+            evidenceBindings: [[String: String]] = [],
+            evidenceContent: [[String: Any]] = []
+        ) -> [String: Any] {
+            [
+                "version": "weibei.openui.v1",
+                "id": id,
+                "title": "运行时探针 \(id)",
+                "question": "验证回答流内生成式体验",
+                "mode": "declarative",
+                "source": source,
+                "capabilities": ["runtime-probe"],
+                "evidenceBindings": evidenceBindings,
+                "evidenceContent": evidenceContent,
+                "budget": [
+                    "maxHeight": 500,
+                    "maxNodes": 48,
+                    "maxSeries": 8,
+                    "graphics": graphics,
+                ],
+            ]
+        }
+
+        let firstSource = """
+        $a = 1
+        root = RichAnswerRoot("探针", "不应显示的标题", "不应显示的摘要", "flow", [visual, sourceStage])
+        visual = LearningStage("visual", "局部操作", [slider, plot, note1, note2, followup])
+        sourceStage = LearningStage("evidence", "", [evidence])
+        slider = ParameterSlider("a", "参数 a", $a, -3, 3, 0.5, "拖动后通过桥接上报状态。")
+        plot = FunctionPlot("y = ax²", "quadratic", "a", $a, [], -3, 3, 240)
+        note1 = NarrativeBlock("观察一", "这是局部状态解释，不是第二篇回答。", "neutral")
+        note2 = NarrativeBlock("观察二", "多视觉与多控件仍可在同一个体验块中组合。", "mechanism")
+        followup = FollowUpAction("继续验证", "继续验证富回答")
+        evidence = EvidenceSnippet("probe-evidence", "探针段落", "不显示的证据原文", "只承担回原文。")
+        """
+        let secondSource = """
+        root = RichAnswerRoot("探针", "另一个不应显示的标题", "另一个不应显示的摘要", "flow", [stage])
+        stage = LearningStage("visual", "第二个局部场景", [note1, note2, note3])
+        note1 = NarrativeBlock("状态一", "同一 WebKit 运行时承载多个独立场景。", "neutral")
+        note2 = NarrativeBlock("状态二", "场景之间保留视觉区分但不形成网页。", "mechanism")
+        note3 = NarrativeBlock("状态三", "窄栏中由组件自己重排。", "diagnosis")
+        """
+        let payload: [String: Any] = [
+            "type": "weibei:setPrograms",
+            "heightLimit": 160,
+            "programs": [
+                program(
+                    id: "runtime-probe-a",
+                    source: firstSource,
+                    graphics: "canvas",
+                    evidenceBindings: [["id": "probe-evidence", "sourceID": "current-document", "locator": "探针段落"]],
+                    evidenceContent: [["id": "probe-evidence", "sourceLabel": "探针材料", "excerpt": "真实证据由宿主注入。", "isTruncated": false]]
+                ),
+                program(id: "runtime-probe-b", source: secondSource),
+            ],
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+}
+
+func runRichAnswerEmbeddingSelfChecks() {
+    let repositoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    func source(_ path: String) -> String {
+        (try? String(contentsOf: repositoryURL.appendingPathComponent(path), encoding: .utf8)) ?? ""
+    }
+
+    let notesAgentSource = source("Sources/WeiBei/Views/NotesAgentView.swift")
+    let richAnswerHostSource = source("Sources/WeiBei/Views/RichAnswerHost.swift")
+    let richAnswerWebRuntimeSource = source("Sources/WeiBei/Views/RichAnswerWebRuntimeView.swift")
+    let richAnswerWorkbenchSource = source("Prototypes/RichAnswerWebRuntime/src/generative/generative-workbench.tsx")
+    let richAnswerLibrarySource = source("Prototypes/RichAnswerWebRuntime/src/generative/library.tsx")
+    let richAnswerReferenceProgramsSource = source("Prototypes/RichAnswerWebRuntime/src/generative/programs.ts")
+    let richAnswerPressureCatalogSource = source("Prototypes/RichAnswerWebRuntime/src/catalog.tsx")
+    let richAnswerExtendedComponentsSource = source("Prototypes/RichAnswerWebRuntime/src/generative/extended-knowledge-components.tsx")
+    let richAnswerRuntimeCSS = source("Sources/WeiBei/Resources/rich-answer-runtime.css")
+    let richAnswerSystemPrompt = source("Sources/WeiBeiCore/AgentResources/system.md")
+    let richAnswerExtensionSource = source("Sources/WeiBeiCore/AgentResources/extension.ts")
+    let richAnswerEngineSource = source("Sources/WeiBeiCore/RichAnswerEngine.swift")
+    let richAnswerFixtureSource = source("Sources/WeiBei/Support/RichAnswerVerificationFixture.swift")
+    let richAnswerTurnSource: String = {
+        guard let start = notesAgentSource.range(of: "private var regularMessageContent: some View")?.lowerBound,
+              let end = notesAgentSource.range(of: "private var messageMetadata: some View", range: start..<notesAgentSource.endIndex)?.lowerBound else {
+            return ""
+        }
+        return String(notesAgentSource[start..<end])
+    }()
+    expect(richAnswerTurnSource.contains("richAnswerFlow(richAnswer)")
+        && richAnswerTurnSource.contains("ForEach(Array(presentation.resolvedParts.enumerated())")
+        && richAnswerTurnSource.contains("case .narrative:")
+        && richAnswerTurnSource.contains("RichAnswerNarrativeText(text: text)")
+        && richAnswerTurnSource.contains("case .scene:")
+        && richAnswerTurnSource.contains("scopedRichAnswer(presentation, sceneID: sceneID)")
+        && richAnswerTurnSource.contains("RichAnswerHost("), "rich answers render an inspectable narrative-scene sequence instead of always appending a mini-site after the text")
+    expect(richAnswerLibrarySource.contains("stages: z.array(LearningStage.ref).min(1).max(8)")
+        && richAnswerLibrarySource.contains("FunctionPlot")
+        && richAnswerLibrarySource.contains("LinkedDataChart")
+        && richAnswerLibrarySource.contains("ProcessStepper")
+        && richAnswerLibrarySource.contains("ArgumentReader")
+        && richAnswerLibrarySource.contains("CausalTrack")
+        && richAnswerLibrarySource.contains("TwoPointLineLab")
+        && richAnswerLibrarySource.contains("BalanceExperiment")
+        && richAnswerWorkbenchSource.contains("onStateUpdate={handleStateUpdate}")
+        && richAnswerWorkbenchSource.contains("onAction={handleAction}")
+        && richAnswerHostSource.contains("RichAnswerWebRuntimeView(\n                scenes: scenes")
+        && richAnswerHostSource.contains("private func rendersInlineFlow(_ scenes: [RichAnswerScene]) -> Bool"), "the in-flow generative experience can compose multiple stages, scenes, visuals, and interactions inside one shared runtime instead of collapsing to one textbook illustration")
+    expect(richAnswerHostSource.contains("rendererIsReady")
+        && richAnswerHostSource.contains("readySceneIDs.isSuperset(of: Set(sceneIDs))")
+        && richAnswerHostSource.contains("holdPrematureVerificationMarkerIfNeeded()")
+        && richAnswerHostSource.contains("restoreDeferredVerificationMarkerIfNeeded(in: baseURL)")
+        && richAnswerHostSource.contains("rich-answer-renderer-ready.txt"),
+        "real rich-answer replay markers are gated until the host window has size and every rich scene renderer reports ready")
+    expect(richAnswerWebRuntimeSource.contains("onRuntimeReady")
+        && richAnswerWebRuntimeSource.contains("hasRuntimeHeight = true")
+        && richAnswerWebRuntimeSource.contains("notifyRuntimeReadyIfNeeded()"),
+        "Web rich-answer runtime readiness is based on the real ready handshake plus measured height, not a fixed delay")
+    expect(notesAgentSource.contains("await store.runVerificationScenarioIfNeeded()")
+        && notesAgentSource.contains("hasVisibleRichAnswer")
+        && notesAgentSource.contains("agentScrollBottomInset")
+        && notesAgentSource.contains("// Fixed inset only"),
+        "agent host mounts verification scenarios from the real pane and reserves fixed bottom scroll inset for rich answers without tray preference thrash")
+    func capturedNames(in text: String, pattern: String) -> Set<String> {
+        guard let expression = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return Set(expression.matches(in: text, range: range).compactMap { match in
+            guard match.numberOfRanges > 1,
+                  let capture = Range(match.range(at: 1), in: text) else { return nil }
+            return String(text[capture])
+        })
+    }
+    func slice(_ text: String, from start: String, through end: String) -> String {
+        guard let lower = text.range(of: start)?.lowerBound,
+              let upper = text.range(of: end, range: lower..<text.endIndex)?.upperBound else { return "" }
+        return String(text[lower..<upper])
+    }
+    let extensionCatalog = slice(
+        richAnswerExtensionSource,
+        from: "const OPENUI_COMPONENT_SIGNATURES = {",
+        through: "} as const;"
+    )
+    let libraryCatalog = slice(
+        richAnswerLibrarySource,
+        from: "components: [",
+        through: "componentGroups: ["
+    )
+    let swiftCatalog = slice(
+        richAnswerEngineSource,
+        from: "let allowedComponents: Set<String> = [",
+        through: "]"
+    )
+    let extensionComponentNames = capturedNames(
+        in: extensionCatalog,
+        pattern: #"(?m)^\s{2}([A-Za-z][A-Za-z0-9]*):\s*"#
+    )
+    let libraryComponentNames = capturedNames(
+        in: libraryCatalog,
+        pattern: #"(?m)^\s{4}([A-Za-z][A-Za-z0-9]*),\s*$"#
+    )
+    let swiftComponentNames = capturedNames(
+        in: swiftCatalog,
+        pattern: #"\"([A-Za-z][A-Za-z0-9]*)\""#
+    )
+    expect(!extensionComponentNames.isEmpty
+        && extensionComponentNames == libraryComponentNames
+        && extensionComponentNames == swiftComponentNames, "the model catalog, Web renderer, and native safety validator expose the same open-ended T1 component vocabulary")
+    expect(richAnswerExtensionSource.contains("const RICH_ANSWER_CATALOG_TOOL = \"weibei_ui_catalog\"")
+        && richAnswerExtensionSource.contains("const OPENUI_COMPONENT_GROUPS = {")
+        && richAnswerExtensionSource.contains("selectedOpenUIComponentGroups(")
+        && richAnswerExtensionSource.contains("openUIComponentConstraintGuidance(")
+        && richAnswerExtensionSource.contains("参数约束：")
+        && richAnswerExtensionSource.contains("小标题过密")
+        && richAnswerExtensionSource.contains("const structuralErrors: string[] = []")
+        && richAnswerExtensionSource.contains("const semanticErrors: string[] = []")
+        && richAnswerExtensionSource.contains("const validationIssues: string[] = []")
+        && richAnswerExtensionSource.contains("程序为空或超出 10,000 字符 / 48 条声明预算")
+        && richAnswerExtensionSource.contains("并控制在 8 项以内")
+        && richAnswerExtensionSource.contains("richAnswerCatalogSelection")
+        && richAnswerExtensionSource.contains("组件 ${declaration.component} 不在本轮目录选择中")
+        && richAnswerSystemPrompt.contains("先形成表达计划，再调用 `weibei_ui_catalog`")
+        && richAnswerSystemPrompt.contains("不要依赖旧回合或完整组件库记忆"), "Pi retrieves a relevant component subset before generation instead of carrying the entire growing catalog in every rich-answer prompt")
+    expect(richAnswerExtendedComponentsSource.contains("name: \"LayeredSpatialView\"")
+        && richAnswerExtendedComponentsSource.contains("name: \"DistributionBrush\"")
+        && richAnswerExtendedComponentsSource.contains("name: \"DependencyFlow\"")
+        && richAnswerExtensionSource.contains("LayeredSpatialView(visibilityStateName")
+        && richAnswerExtensionSource.contains("DistributionBrush(centerStateName")
+        && richAnswerExtensionSource.contains("DependencyFlow(valuesStateName"), "cross-disciplinary spatial, distribution, and dependency experiences are generatable components rather than fixed demo pages")
+    let retainedReferenceProgramIDs = [
+        "quadratic-experiment",
+        "quadratic-compare",
+        "quadratic-reasoning",
+        "line-composition",
+        "equilibrium-composition",
+        "argument-composition",
+        "sampling-composition",
+        "cashflow-composition",
+        "policy-composition",
+        "code-composition",
+    ]
+    let retainedPressureSceneKeys = [
+        "math-line",
+        "physics-force",
+        "chem-equilibrium",
+        "biology-meiosis",
+        "text-argument",
+        "history-causality",
+        "geography-map",
+        "art-observation",
+        "statistics-sampling",
+        "finance-cashflow",
+        "economics-policy",
+        "code-sort",
+    ]
+    let retainedLikedReferenceProgramIDs = [
+        "二次函数图解": "quadratic-experiment",
+        "两点决定直线": "line-composition",
+        "动态平衡": "equilibrium-composition",
+        "论证剖面": "argument-composition",
+        "抽样分布": "sampling-composition",
+        "现金流传导": "cashflow-composition",
+        "政策证据链": "policy-composition",
+        "算法执行轨道": "code-composition",
+    ]
+    let retainedLikedPressureSceneKeys = [
+        "空间图层": "geography-map",
+        "图像观察镜": "art-observation",
+    ]
+    expect(retainedReferenceProgramIDs.allSatisfy { richAnswerReferenceProgramsSource.contains("id: \"\($0)\"") }
+        && retainedPressureSceneKeys.allSatisfy { richAnswerPressureCatalogSource.contains("key: \"\($0)\"") }
+        && retainedLikedReferenceProgramIDs.values.allSatisfy { richAnswerReferenceProgramsSource.contains("id: \"\($0)\"") }
+        && retainedLikedPressureSceneKeys.values.allSatisfy { richAnswerPressureCatalogSource.contains("key: \"\($0)\"") }, "the named high-quality interaction references and cross-disciplinary pressure scenes remain available as regression evidence without becoming a finite capability boundary")
+    expect(richAnswerWorkbenchSource.contains("document.documentElement.classList.toggle(\"weibei-embedded\", embedded)")
+        && richAnswerWorkbenchSource.contains("{!embedded ? (\n        <header className=\"generation-proofbar\">")
+        && richAnswerWorkbenchSource.contains("{!embedded && program ? (\n        <details className=\"generation-source\">")
+        && richAnswerRuntimeCSS.contains(".generation-page.is-embedded{width:100%;padding:0}")
+        && richAnswerRuntimeCSS.contains("html.weibei-embedded,html.weibei-embedded body,html.weibei-embedded #root{min-width:0;min-height:0;background:transparent!important}")
+        && richAnswerRuntimeCSS.contains(".generation-page.is-embedded .generation-answer{display:grid;gap:14px;overflow:visible;background:transparent;box-shadow:none}")
+        && richAnswerRuntimeCSS.contains(".generation-page.is-embedded .generation-answer__status{display:none}"), "embedded generative UI is transparent and omits the prototype toolbar, source inspector, status strip, and default webpage shell")
+    expect(richAnswerRuntimeCSS.contains(".weibei-embedded .ra-root__header{display:none}"), "embedded generative UI hides its root eyebrow, title, and summary so it does not start a second answer")
+    let richAnswerPresentationContentSource: String = {
+        guard let start = richAnswerHostSource.range(of: "private func presentationContent(maxWidth: CGFloat, expandsOverflow: Bool)")?.lowerBound,
+              let end = richAnswerHostSource.range(of: "private var focusLauncher: some View", range: start..<richAnswerHostSource.endIndex)?.lowerBound else {
+            return ""
+        }
+        return String(richAnswerHostSource[start..<end])
+    }()
+    expect(!richAnswerPresentationContentSource.contains("presentation.expressionPlan?.summary")
+        && !richAnswerPresentationContentSource.contains("Text(summary)"), "the native host does not repeat the expression-plan summary above an embedded generated experience")
+    expect(richAnswerSystemPrompt.contains("生成式 UI 是 Agent 回答流中的生成式视觉体验块")
+        && richAnswerSystemPrompt.contains("它可以按问题需要组合多个视觉、控件、读数、局部解释和实验步骤")
+        && richAnswerSystemPrompt.contains("不是第二篇回答、独立小网页或完整网页外壳")
+        && richAnswerSystemPrompt.contains("禁止在体验块中重复 Agent 正文的整套标题、摘要、结论"), "the rich-answer contract allows a composable visual experience without repeating the narrative title, summary, or conclusion")
+    expect(richAnswerExtensionSource.contains("const richAnswerT1SceneSchema")
+        && richAnswerExtensionSource.contains("program: richAnswerUIProgramSchema")
+        && richAnswerExtensionSource.contains("const richAnswerT2SceneSchema")
+        && richAnswerExtensionSource.contains("ui: richAnswerUICompositionSchema")
+        && richAnswerExtensionSource.contains("场景从输入层就二选一")
+        && richAnswerExtensionSource.contains("validateRichAnswerUI(scene, allowedEvidenceIDs, allowedAssetIDs)")
+        && richAnswerSystemPrompt.contains("没有时先用 T2")
+        && richAnswerSystemPrompt.contains("不能同时提交两者"), "the Agent can choose either a T1 deep component or a T2 primitive composition instead of falling back merely because no specialized component exists")
+    expect(richAnswerExtensionSource.contains("validateRichAnswerNarrativeFlow")
+        && richAnswerExtensionSource.contains("narrative 没有就近标注已使用的真实来源")
+        && richAnswerSystemPrompt.contains("`narrative` 就是本次富回答最终显示的完整正文"), "rich answers validate their final inline narrative and real source labels instead of trusting a separate model afterword")
+    expect(richAnswerFixtureSource.contains("case pendulum = \"rich-answer-pendulum\"")
+        && richAnswerFixtureSource.contains("id: \"pendulum-primitives\"")
+        && richAnswerFixtureSource.contains("role: .path")
+        && richAnswerFixtureSource.contains("role: .probe")
+        && richAnswerFixtureSource.contains("placement: .inline"), "the acceptance gallery includes an inline pendulum scene composed from generic primitives without a specialized pendulum component")
+    expect(richAnswerFixtureSource.contains("case sequence = \"rich-answer-sequence\"")
+        && richAnswerFixtureSource.contains("id: \"argument-sequence\"")
+        && richAnswerFixtureSource.contains("role: .sequence")
+        && richAnswerFixtureSource.contains("bindingID: \"sequence-step\"")
+        && richAnswerFixtureSource.contains("不是固定模板清单"), "the open acceptance gallery grows beyond a fixed scenario count and exercises the generic semantic sequence primitive")
+    expect(richAnswerFixtureSource.contains("extendedOpenUIProgramScenario = \"rich-answer-openui-extended\"")
+        && richAnswerFixtureSource.contains("inlineExtendedOpenUIProgramScenario = \"rich-answer-openui-extended-inline\"")
+        && richAnswerFixtureSource.contains("id: \"openui-spatial-layers\"")
+        && richAnswerFixtureSource.contains("id: \"openui-distribution-brush\"")
+        && richAnswerFixtureSource.contains("id: \"openui-dependency-flow\"")
+        && richAnswerFixtureSource.contains("<!-- weibei-scene:openui-spatial-layers -->")
+        && richAnswerFixtureSource.contains("<!-- weibei-scene:openui-distribution-brush -->")
+        && richAnswerFixtureSource.contains("<!-- weibei-scene:openui-dependency-flow -->"), "the real Agent fixture interleaves three different generative deep components inside one sourced answer")
+    let onePeriodCashFlowPresentValue = 100 * 1.08 * 0.18 / 1.11
+    expect(abs(onePeriodCashFlowPresentValue - 17.5135) < 0.001
+        && richAnswerFixtureSource.contains("一期自由现金流现值 = 基准收入 × 收入增长倍数 × 现金流率 ÷ 折现倍数")
+        && richAnswerFixtureSource.contains("DependencyNode(\"present-value\", \"一期现金流现值\", 3, \"ratio\""), "the finance dependency reference uses a professionally meaningful cash-flow present-value chain instead of decorative arithmetic")
+    if ProcessInfo.processInfo.environment["WEIBEI_RICH_ANSWER_WEB_CHECK"] == "1" {
+        RichAnswerWebRuntimeHarness().run(repositoryURL: repositoryURL)
+    }
+}
+
+if ProcessInfo.processInfo.environment["WEIBEI_RICH_ANSWER_SELF_CHECK_ONLY"] == "1" {
+    runRichAnswerEmbeddingSelfChecks()
+    print("WeiBei rich-answer embedding self-check passed")
+    exit(0)
 }
 
 if ProcessInfo.processInfo.environment["WEIBEI_PI_TERMINAL_SELF_CHECK_ONLY"] == "1" {
@@ -296,6 +760,11 @@ expect(runScript.contains("pi-course-memory-verified.txt")
     && workspaceStoreSource.contains("scenario == \"pi-course-memory-flow\"")
     && workspaceStoreSource.contains("latestAgentLearningUpdate?.entries.contains { $0.kind == .confusion }")
     && workspaceStoreSource.contains("pi-course-memory-verified.txt"), "verify mode proves the packaged PI can resume, navigate across course files, and persist a user-stated confusion")
+expect(workspaceStoreSource.contains("RichAnswerVerificationFixture.supports(scenario)")
+    && workspaceStoreSource.contains("configureRichAnswerPreviewVerification(scenario: scenario)")
+    && workspaceStoreSource.contains("scenario == RichAnswerVerificationFixture.inlineExtendedOpenUIProgramScenario")
+    && workspaceStoreSource.contains("layout = verifiesInlinePane ? .documentAgentNotes : .immersiveConversation")
+    && workspaceStoreSource.contains("RichAnswerVerificationFixture.presentation(for: scenario)"), "verification mode can open isolated native rich-answer references, the unified gallery, and a non-immersive split-pane case for real-window review")
 expect(runScript.contains("verify_empty_workspace_state()")
     && runScript.contains("empty-workspace-open-doc")
     && runScript.contains("empty-workspace-open-chat")
@@ -1276,13 +1745,22 @@ let paneContinuityRecorderSourceURL = URL(fileURLWithPath: FileManager.default.c
 let paneContinuityRecorderSource = (try? String(contentsOf: paneContinuityRecorderSourceURL, encoding: .utf8)) ?? ""
 let documentPaneTransitionSource: String = {
     guard let start = contentViewSource.range(of: "private func documentPaneLayoutView() -> some View")?.lowerBound,
-          let end = contentViewSource[start...].range(of: "private func threePaneReorderOverlay")?.lowerBound else {
+          let end = contentViewSource[start...].range(of: "private func estimatedDocumentPaneFrames")?.lowerBound else {
+        return ""
+    }
+    return String(contentViewSource[start..<end])
+}()
+let threePaneChromeSource: String = {
+    guard let start = contentViewSource.range(of: "private struct ThreePaneWorkspaceChrome: View")?.lowerBound,
+          let end = contentViewSource[start...].range(of: "private struct LayoutContentView: View")?.lowerBound else {
         return ""
     }
     return String(contentViewSource[start..<end])
 }()
 expect(!documentPaneTransitionSource.isEmpty
-    && documentPaneTransitionSource.contains("StableDocumentWorkspace(")
+    && documentPaneTransitionSource.contains("ThreePaneWorkspaceChrome(")
+    && threePaneChromeSource.contains("StableDocumentWorkspace(")
+    && threePaneChromeSource.contains("@EnvironmentObject private var paneReorder: ThreePaneReorderState")
     && !documentPaneTransitionSource.contains("switch order.count")
     && !documentPaneTransitionSource.contains("ResizableTwoPane(")
     && !documentPaneTransitionSource.contains("ResizableThreePane(")
@@ -1292,6 +1770,8 @@ expect(stableDocumentSource.contains("WorkspacePaneRole.allCases.map")
     && stableDocumentSource.contains("splitView.install(roleHosts: roleHosts, emptyHost: emptyHost)")
     && stableDocumentSource.contains("animator().frame = frame")
     && stableDocumentSource.contains("private let layoutAnimationDuration = 0.24")
+    && stableDocumentSource.contains("equalPaneWidths(count:")
+    && stableDocumentSource.contains("visibleOrder.count > displayedVisibleOrder.count")
     && stableDocumentSource.contains("func assertStableOwnership()")
     && stableDocumentSource.contains("roleHosts.values.allSatisfy { $0.superview === self }")
     && stableDocumentSource.contains("EmptyWorkspaceLauncherView().environmentObject(store)")
@@ -1400,10 +1880,10 @@ expect(emptyWorkspaceSource.contains("empty-workspace-entry-doc")
     && emptyWorkspaceSource.contains("empty-workspace-entry-chat")
     && emptyWorkspaceSource.contains("empty-workspace-entry-notes")
     && emptyWorkspaceSource.contains("accessibilityLabel"), "empty workspace entries remain individually named and reachable to accessibility automation")
-expect(contentViewSource.contains("case .immersiveReading:\n                ZStack(alignment: .topTrailing)")
-    && contentViewSource.contains("QuietInsightView(compact: true)")
-    && contentViewSource.contains(".padding(.top, 24)")
-    && !contentViewSource.contains("QuietInsightView(compact: true)\n                            .padding(.trailing, 28)\n                            .padding(.bottom, 28)"), "immersive reading keeps quiet insight on the upper side edge so it does not cover PDF page controls")
+expect(contentViewSource.contains("case .immersiveReading:\n                PersistentPaneHost(role: .reader")
+    && !contentViewSource.contains("QuietInsightView")
+    && !contentViewSource.contains("AgentDrawerView")
+    && !contentViewSource.contains("CornerAgentView"), "immersive reading hosts only the reader; deleted agent overlays are gone")
 let themeSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Support/Theme.swift")
 let themeSource = (try? String(contentsOf: themeSourceURL, encoding: .utf8)) ?? ""
@@ -1464,8 +1944,24 @@ expect(contentViewSource.contains("dividerFill.setFill()")
     && contentViewSource.contains("rect.minY + 14")
     && !contentViewSource.contains("NSColor.clear.setFill()"), "native split divider uses the current paper surface instead of a transparent hard gap")
 expect(contentViewSource.contains("override func layout()"), "native split applies saved positions after first real layout")
-expect(contentViewSource.contains("libraryResizeHandle"), "library pane keeps SwiftUI resize handle")
-expect(contentViewSource.contains("minimumContentWidthWithLibrary"), "library leaves readable width for the workspace")
+let courseDrawerHostSource = (try? String(
+    contentsOf: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        .appendingPathComponent("Sources/WeiBei/Views/CourseDrawerHost.swift"),
+    encoding: .utf8
+)) ?? ""
+expect(contentViewSource.contains("LayoutContentView()")
+    && contentViewSource.contains("CourseLibraryDrawerLayer")
+    && contentViewSource.contains("struct CourseLibraryDrawerLayer")
+    && contentViewSource.contains("CourseDrawerHost")
+    // Drawer chrome is AppKit-hosted; ContentView itself must not observe libraryDrawer.
+    && contentViewSource.contains("LibraryAwareEscapeBridge")
+    && courseDrawerHostSource.contains("NSAnimationContext")
+    && courseDrawerHostSource.contains("CourseImmersiveDrawerView")
+    && courseDrawerHostSource.contains("installHostingIfNeeded")
+    && !contentViewSource.contains("@EnvironmentObject private var libraryDrawer: LibraryDrawerState\n    @FocusState")
+    && !contentViewSource.contains(".animation(WeiBeiMotion.layout, value: store.showLibrary)")
+    && !contentViewSource.contains("libraryResizeHandle")
+    && !contentViewSource.contains("minimumContentWidthWithLibrary"), "course drawer slides over the living workspace without remount lag or layout-spring thrash")
 expect(contentViewSource.contains("private let railWidth = ContentRailMetrics.railOnlyWidth")
     && contentRailSource.contains("static let snapThreshold = ContentRailPolicy.snapThreshold")
     && contentRailSource.contains("static let readableWidth = ContentRailPolicy.readableWidth")
@@ -1473,20 +1969,19 @@ expect(contentViewSource.contains("private let railWidth = ContentRailMetrics.ra
     && stableDocumentSource.contains("ContentRailPolicy.expansionWidth(recentWidth:"), "normal multi-pane layouts snap to the latest compact rail and restore a bounded readable width")
 expect(!contentViewSource.contains("DragGesture()"), "content panes avoid SwiftUI drag resizing")
 expect(!contentViewSource.contains(".id(store.layout)"), "layout changes avoid whole-screen identity resets")
-expect(contentViewSource.contains("case .immersiveWriting:\n                ZStack(alignment: agentAlignment) {\n                    PersistentPaneHost(role: .notes")
+expect(contentViewSource.contains("case .immersiveWriting:\n                PersistentPaneHost(role: .notes")
     && !contentViewSource.contains("writingDocumentRailItems")
     && !contentViewSource.contains("writingAssistRailItems")
     && !contentViewSource.contains("writingFirstSplitStorage"), "immersive writing reuses the persistent note host without permanent document or writing-aid rails")
 expect(!contentViewSource.contains("PaneSeparator"), "content panes avoid hand-drawn split separators")
-expect(contentViewSource.components(separatedBy: ".transition(WeiBeiTransition.rightPanel)").count >= 2
-    && contentViewSource.components(separatedBy: ".transition(WeiBeiTransition.layout)").count >= 2
+expect(contentViewSource.components(separatedBy: ".transition(WeiBeiTransition.layout)").count >= 2
     && !documentPaneTransitionSource.contains(".transition(WeiBeiTransition"), "immersive layouts keep shared transitions while ordinary pane visibility is animated inside the stable container")
 expect(!contentViewSource.contains("topBarContentFade"), "top bar avoids a duplicate content fade wash")
 expect(contentViewSource.contains("store.toggleLibrary()")
     && contentViewSource.contains("sidebar.left")
     && contentViewSource.contains("private var libraryButton: some View")
-    && contentViewSource.contains("active: store.showLibrary")
-    && contentViewSource.contains("store.showLibrary ? store.ui(\"收起课程目录\"")
+    && contentViewSource.contains("active: libraryDrawer.isOpen")
+    && contentViewSource.contains("libraryDrawer.isOpen ? store.ui(\"收起课程抽屉\"")
     && !contentViewSource.contains("恢复课程目录")
     && !contentViewSource.contains(".opacity(isImmersiveLayout ? 0.45 : 1)"), "immersive top bar keeps a clear stateful library chooser instead of dimming a live control")
 if let leftControlsStart = contentViewSource.range(of: "private var leftPrimaryControls: some View")?.lowerBound,
@@ -1494,13 +1989,14 @@ if let leftControlsStart = contentViewSource.range(of: "private var leftPrimaryC
     let leftControlsSource = String(contentViewSource[leftControlsStart..<leftControlsEnd])
     if let libraryRange = leftControlsSource.range(of: "libraryButton"),
        let navigationRange = leftControlsSource.range(of: "navigationButtons"),
-       let settingsRange = leftControlsSource.range(of: "settingsMenu") {
+       let appearanceRange = leftControlsSource.range(of: "appearanceToggleButton") {
         expect(libraryRange.lowerBound < navigationRange.lowerBound
-            && navigationRange.lowerBound < settingsRange.lowerBound
+            && navigationRange.lowerBound < appearanceRange.lowerBound
             && !leftControlsSource.contains("books.vertical")
-            && !leftControlsSource.contains("presentCourseWorkspace"), "top-left controls keep one course-index entry before navigation and settings")
+            && !leftControlsSource.contains("presentCourseWorkspace")
+            && !leftControlsSource.contains("settingsMenu"), "top-left controls keep course index, navigation, and appearance; full Settings lives on the right")
     } else {
-        expect(false, "top-left controls expose library, navigation, and settings controls")
+        expect(false, "top-left controls expose library, navigation, and appearance controls")
     }
 } else {
     expect(false, "top-left controls block is inspectable")
@@ -1518,12 +2014,12 @@ expect(contentViewSource.contains("WindowFullScreenReader(isFullScreen: $windowI
     && contentViewSource.contains(".disabled(!store.canNavigateForward)"), "top bar exposes app back/forward and shifts left controls away from traffic lights outside fullscreen")
 expect(contentViewSource.contains("WeiBeiHeaderHandoffFade(height: 18, opacity: isImmersiveLayout ? 0.42 : 0.34)")
     && contentViewSource.contains("paperOpacity: backgroundPaperOpacity - (isImmersiveLayout ? 0.06 : 0)")
-    && contentViewSource.contains("materialOpacity: backgroundMaterialOpacity + (isImmersiveLayout ? 0.03 : 0)"), "immersive top bar keeps the same variants while using a lighter glass handoff")
+    && contentViewSource.contains("materialOpacity: backgroundMaterialOpacity + (isImmersiveLayout ? 0.03 : 0)"), "immersive top bar keeps the same chrome while using a lighter glass handoff")
 expect(!contentViewSource.contains("文代笔")
     && !contentViewSource.contains("Agent中")
     && !contentViewSource.contains("对话中栏")
     && !contentViewSource.contains("对话右栏")
-    && contentViewSource.contains("store.threePaneOrderLabel(compact: true)"), "top bar short layout label reflects the real draggable pane order without legacy fixed-position labels")
+    && !contentViewSource.contains("shortLayoutLabel"), "compact top bar drops the layout label; no legacy fixed-position labels")
 expect(!contentViewSource.contains("showLibrary = false")
     && !contentViewSource.contains("store.layout = ")
     && !contentViewSource.contains("store.showRightPane = true"), "content view routes durable layout changes through WorkspaceStore without closing a user-opened library")
@@ -1535,18 +2031,20 @@ expect(contentViewSource.contains(".weibeiInputSurface(active: searchFocused.wra
     && contentViewSource.contains(".foregroundColor(WeiBeiTheme.ink)")
     && contentViewSource.contains(".foregroundStyle(WeiBeiTheme.ink)")
     && !contentViewSource.contains(".foregroundColor(primaryText)\n                    .foregroundStyle(primaryText)\n                    .tint(WeiBeiTheme.link)"), "top search uses fixed ink on its paper input surface instead of inheriting top bar chrome text")
-expect(contentViewSource.contains("case .compact, .glyph:\n            return 28"), "compact top bar controls keep a readable 28-point height")
+expect(contentViewSource.contains("private var controlHeight: CGFloat {\n        28\n    }"), "compact top bar controls keep a readable 28-point height")
 expect(contentViewSource.contains("private var leftPrimaryControls: some View")
-    && contentViewSource.contains("libraryButton\n\n            navigationButtons\n\n            appearanceToggleButton\n\n            settingsMenu")
+    && contentViewSource.contains("libraryButton\n\n            navigationButtons\n\n            appearanceToggleButton")
     && contentViewSource.contains("private var appearanceToggleButton: some View")
     && contentViewSource.contains("topIconButton(store.appearanceMode.toggled.systemImage, help: store.appearanceMode.actionLabel(language: store.interfaceLanguage))")
     && contentViewSource.contains("store.toggleAppearanceMode()")
-    && contentViewSource.contains("private var settingsMenu: some View")
-    && contentViewSource.contains("Image(systemName: \"gearshape\")")
-    && contentViewSource.contains(".buttonStyle(WeiBeiIconButtonStyle(size: variant == .glyph || variant == .compact ? 24 : WeiBeiMetric.iconButton))")
+    && contentViewSource.contains("openSettings")
+    && contentViewSource.contains("openSettings()")
+    && contentViewSource.contains("slider.horizontal.3")
+    && contentViewSource.contains("打开设置")
+    && contentViewSource.contains("WeiBeiIconButtonStyle(active: active, size: 24)")
     && !contentViewSource.contains("WeiBeiIconButtonStyle(active: store.appearanceMode == .inkstone")
-    && contentViewSource.contains("withAnimation(WeiBeiMotion.appearance) {\n                            store.setAppearanceMode(mode)")
-    && contentViewSource.contains(".animation(WeiBeiMotion.appearance, value: store.appearanceMode)"), "top bar appearance toggle uses the same smooth theme animation as menu and settings")
+    && !contentViewSource.contains("private var settingsMenu: some View")
+    && !contentViewSource.contains("Image(systemName: \"gearshape\")"), "top bar opens full Settings from the trailing cluster instead of a mini gear menu")
 expect(themeSource.contains("enum WeiBeiIconButtonProminence")
     && themeSource.contains("@Environment(\\.colorScheme)")
     && themeSource.contains("prominence == .primary")
@@ -1567,43 +2065,41 @@ expect(contentViewSource.contains("private var paneToggleCluster: some View")
     && contentViewSource.contains("store.toggleNotes()"), "top bar exposes persistent reader, chat, and notes pane toggles")
 expect(!contentViewSource.contains("private var layoutMenu")
     && !contentViewSource.contains(".accessibilityLabel(Text(store.ui(\"切换布局\"")
-    && contentViewSource.contains("case .balanced, .wide:")
-    && contentViewSource.contains("Text(shortLayoutLabel)"), "top bar keeps layout status in the brand block and removes the legacy layout dropdown")
-expect(contentViewSource.contains(".accessibilityLabel(Text(store.ui(\"设置\""), "top bar settings menu has a readable semantic label")
-expect(contentViewSource.contains("Section(store.ui(\"文稿\", \"Document\"))")
-    && contentViewSource.contains("get: { store.adaptImportedDocumentColors }")
-    && contentViewSource.contains("set: { store.setImportedDocumentColorAdaptation($0) }")
-    && contentViewSource.contains("Label(store.ui(\"导入文稿适配\", \"Adapt Imported Documents\"), systemImage: \"eyeglasses\")"), "settings exposes one persistent imported-document adaptation toggle")
+    && !contentViewSource.contains("shortLayoutLabel")
+    && contentViewSource.contains("englishBrandFont(size: 15.5, weight: .semibold)"), "compact top bar keeps a single-line brand mark and removes the legacy layout dropdown")
+expect(contentViewSource.contains("打开设置")
+    && contentViewSource.contains("Open Settings"), "top bar settings control has a readable semantic label")
 expect(contentViewSource.contains("private var agentPaneToggleHelp: String")
     && contentViewSource.contains("用当前选区打开对话")
     && contentViewSource.contains("store.isPaneToggleActive(.agent)")
     && !contentViewSource.contains("topIconButton(\"bubble.left.and.text.bubble.right\", help: agentButtonHelp)")
-    && contentViewSource.contains("Section(store.ui(\"对话形态\", \"Chat Surface\")")
     && !contentViewSource.contains("Section(\"Agent 入口\")")
     && !contentViewSource.contains("打开 Agent 对话区"), "top bar names conversation entry by the actual action instead of a generic agent label")
 expect(contentViewSource.contains("private var showsGlobalFloatingAgent: Bool")
     && !contentViewSource.contains("if store.isConversationSurfaceVisible {\n            return false\n        }")
     && contentViewSource.contains("SelectionFloatingAgentPlacement.isVisible")
     && contentViewSource.contains("routesToConversation: store.isConversationSurfaceVisible"), "global selection prompt can appear beside the selected text while a formal conversation surface is already visible")
-expect(themeSource.contains("language.text(\"标准\"")
-    && themeSource.contains("language.text(\"紧凑\"")
-    && themeSource.contains("language.text(\"印记\"")
-    && themeSource.contains("\"Mark\"")
-    && !themeSource.contains("甲 纸脊")
-    && !themeSource.contains("乙 窄栏")
-    && !themeSource.contains("丁 图形"), "top bar variants use user-facing style names instead of internal prototypes")
+expect(!themeSource.contains("enum TopBarVariant")
+    && themeSource.contains("static let topBarHeight: CGFloat = 38")
+    && !contentViewSource.contains("TopBarVariant")
+    && !contentViewSource.contains("topBarVariant")
+    && !contentViewSource.contains("setTopBarVariant"), "top bar is locked to compact constants; TopBarVariant and its selectors are gone")
 let sidebarSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/SidebarView.swift")
 let sidebarSource = (try? String(contentsOf: sidebarSourceURL, encoding: .utf8)) ?? ""
 expect(sidebarSource.contains("Text(store.ui(\"课程目录\", \"Course Index\")")
-    && sidebarSource.contains("Text(store.ui(\"课程首页\", \"Course Home\")")
-    && sidebarSource.contains("store.presentCourseWorkspace()")
+    && sidebarSource.contains("Text(store.ui(\"课程空间\", \"Course Space\")")
+    && sidebarSource.contains("store.presentCourseWorkspace(.hub)")
+    && sidebarSource.contains("store.openCourseSpace(course.id)")
+    && sidebarSource.contains("Text(store.ui(\"进入\", \"Enter\")")
+    && sidebarSource.contains("store.openCourseSpace(courseID)")
     && sidebarSource.contains("prompt: Text(store.ui(\"搜索课程资料与笔记\"")
     && sidebarSource.contains(".foregroundStyle(WeiBeiTheme.placeholderInk)")
-    && sidebarSource.contains(".foregroundColor(WeiBeiTheme.ink)"), "course index exposes a textual course-home path and searches materials and notes with readable ink")
+    && sidebarSource.contains(".foregroundColor(WeiBeiTheme.ink)"), "course index exposes course-space entry, per-course Enter, and searches materials and notes with readable ink")
 let notesAgentSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/NotesAgentView.swift")
 let notesAgentSource = (try? String(contentsOf: notesAgentSourceURL, encoding: .utf8)) ?? ""
+runRichAnswerEmbeddingSelfChecks()
 expect(notesAgentSource.contains("private var noteRailItems: [ContentRailItem]")
     && notesAgentSource.contains("NoteEditorCommand(kind: .scrollToHeading")
     && notesAgentSource.contains("private var agentRailItems: [ContentRailItem]")
@@ -1675,9 +2171,18 @@ expect(notesAgentSource.contains("private func refreshSourcePresentation(in text
 expect(!sidebarSource.contains("commandPalettePresented.toggle()") && !sidebarSource.contains("Label(\"命令\", systemImage: \"command\")"), "sidebar does not duplicate the command palette entry")
 expect(sidebarSource.contains("ScrollView(showsIndicators: false)"), "sidebar hides the heavy system scroll indicator that reads as a divider")
 expect(sidebarSource.contains("sidebarSection(title: store.ui(\"内置示例\"")
-    && sidebarSource.contains("sidebarSection(title: store.ui(\"课程资料\"")
-    && sidebarSource.contains("sidebarSection(title: store.ui(\"课程笔记\""), "course index separates built-in examples, course materials, and course notes")
-expect(sidebarSource.contains("!$0.isSample && !$0.isNotebookNote") && sidebarSource.contains("store.filteredItems.filter(\\.isNotebookNote)"), "sidebar material list excludes notebook notes without hiding notes")
+    && sidebarSource.contains("courseSection")
+    && sidebarSource.contains("courseContents(for: course)")
+    && sidebarSource.contains("courseItemGroup(")
+    && sidebarSource.contains("title: store.ui(\"资料\", \"Materials\")")
+    && sidebarSource.contains("title: store.ui(\"笔记\", \"Notes\")")
+    && sidebarSource.contains("LinearGradient(")
+    && sidebarSource.contains("sidebarSection(title: store.ui(\"独立资料\"")
+    && sidebarSource.contains("sidebarSection(title: store.ui(\"独立笔记\""), "course drawer keeps the original styling while expanding each course into a visually nested material-note tree")
+expect(sidebarSource.contains("store.unassignedCourseMaterials")
+    && sidebarSource.contains("store.courseMaterials(in: courseID)")
+    && sidebarSource.contains("store.courseNotes(in: courseID)")
+    && sidebarSource.contains("store.filteredItems.filter(\\.isNotebookNote)"), "course drawer filters materials and notes by real membership without hiding notebook notes")
 expect(sidebarSource.contains("item.isNotebookNote ? store.activeNotebookItemID == item.id : store.selectedItemID == item.id"), "sidebar highlights the active notebook note separately from the selected reader material")
 expect(sidebarSource.contains(".contextMenu")
     && sidebarSource.contains("Button(store.ui(\"重命名笔记\"")
@@ -1688,7 +2193,8 @@ expect(sidebarSource.contains(".contextMenu")
 expect(sidebarSource.contains("private var tags: [String]")
     && sidebarSource.contains("store.displayTags(for: item)")
     && sidebarSource.contains("Text(tags.joined(separator: \" \"))")
-    && sidebarSource.contains(".frame(height: tags.isEmpty ? 48 : 58)"), "notebook rows surface Markdown tags without adding a separate tag management panel")
+    && sidebarSource.contains("if !compact, !tags.isEmpty")
+    && sidebarSource.contains("compact ? 38 : (tags.isEmpty ? 48 : 58)"), "full notebook rows surface Markdown tags while nested course rows stay compact")
 expect(contentViewSource.contains("topIconButton(\"command\", help: store.ui(\"命令面板\""), "top bar keeps the command palette entry")
 let commandPaletteSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/CommandPaletteView.swift")
@@ -1713,7 +2219,8 @@ expect(!commandPaletteSource.contains("Agent 整理资料与笔记") && !command
 expect(commandPaletteSource.contains("store.showLibrary ? store.ui(\"收起课程目录\"")
     && commandPaletteSource.contains("PaletteCommand(title: store.ui(\"聚焦课程目录\"")
     && !commandPaletteSource.contains("恢复资料"), "command palette names the unified library action explicitly")
-expect(!commandPaletteSource.contains("PaletteCommand(title: \"顶栏") && contentViewSource.contains("Section(store.ui(\"顶部栏\""), "top bar variants live in the settings menu instead of the command palette")
+expect(!commandPaletteSource.contains("PaletteCommand(title: \"顶栏")
+    && !contentViewSource.contains("Section(store.ui(\"顶部栏\""), "top bar style selector is removed from settings menu and command palette")
 expect(commandPaletteSource.contains("private var rightPaneCommand: PaletteCommand?") && commandPaletteSource.contains("store.layout.hasCollapsibleRightPane"), "command palette hides right pane command when the layout has no auxiliary pane")
 expect(commandPaletteSource.contains("收起辅助栏") && commandPaletteSource.contains("展开辅助栏"), "command palette names auxiliary pane action by current state")
 expect(commandPaletteSource.contains("title: store.showRightPane ? store.ui(\"收起辅助栏\"")
@@ -1954,13 +2461,22 @@ expect(readerViewSource.contains("private func reportSelectionAfterDragSettles")
     && readerViewSource.contains("selectionWork?.cancel()")
     && readerViewSource.contains("DispatchQueue.main.asyncAfter(deadline: .now() + 0.06")
     && !readerViewSource.contains("self.onSelectionChange(text, Self.anchor(for: selection, in: view), selectedPageIndex)"), "pdf reader delays the floating agent callback until dragging settles so selection is not interrupted")
-expect(readerViewSource.contains("if let url = item.url {\n                    PDFReaderRepresentable(")
+expect((readerViewSource.contains("if let url = item.url {\n                    PDFReaderRepresentable(")
+            || readerViewSource.contains("if let url = item.url {\n                    ZStack {\n                        PDFReaderRepresentable("))
     && readerViewSource.contains("SamplePDFView(appearanceMode: store.appearanceMode, language: store.interfaceLanguage)")
     && readerViewSource.contains("SamplePDFSelectablePageView")
     && readerViewSource.contains("textView.isSelectable = true")
     && readerViewSource.contains("textView.delegate = context.coordinator")
     && readerViewSource.contains("coordinator.appliedAppearanceMode != appearanceMode")
-    && readerViewSource.contains("SelectionAnchorContentPoint.fromScreenPoint(screenPoint, in: window)"), "pdf samples prefer the real PDFKit reader while keeping a selectable fallback page")
+    && readerViewSource.contains("SelectionAnchorContentPoint.fromScreenPoint(screenPoint, in: window)")
+    && readerViewSource.contains("applyAskUnderlines")
+    && readerViewSource.contains("selectionsByLine()")
+    && readerViewSource.contains("selectionAskThreadsMenu")
+    && readerViewSource.contains("已问 · \\(threads.count)")
+    && readerViewSource.contains("handleAskUnderlineHover")
+    && readerViewSource.contains("handleAskUnderlineClick")
+    && readerViewSource.contains("askUnderlineHoverMarker")
+    && !readerViewSource.contains("SelectionAskMarksLegend"), "pdf samples prefer the real PDFKit reader while keeping a selectable fallback page and selection-ask underlines")
 expect(readerViewSource.contains("textView.selectedTextAttributes")
     && readerViewSource.contains(".backgroundColor: WeiBeiNativePalette.selectionFill(for: appearanceMode)")
     && readerViewSource.contains(".foregroundColor: WeiBeiNativePalette.selectedText(for: appearanceMode)")
@@ -2228,25 +2744,37 @@ expect(!appSource.contains("Form {")
     && appSource.contains("case .appearance: return \"LOOK\"")
     && appSource.contains("case .agent: return \"CHAT\"")
     && appSource.contains("case .agent: return store.ui(\"对话\", \"Chat\")")
-    && appSource.contains("title: store.ui(\"对话上下文\", \"Chat Context\")")
-    && appSource.contains("已选文本片段会作为对话上下文")
+    && appSource.contains("settingsGroup(store.ui(\"连接状态\", \"Connection\")")
+    && appSource.contains("settingsGroup(store.ui(\"数据\", \"Data\")")
+    && appSource.contains("settingsGroup(store.ui(\"关于\", \"About\")")
     && appSource.contains("settingsGroup(store.ui(\"快速进入\", \"Jump To\")")
     && appSource.contains("title: store.ui(\"对话设置\", \"Chat Settings\")")
-    && appSource.contains("settingsGroup(store.ui(\"密钥与模型\", \"Key & Model\")")
-    && appSource.contains("settingsGroup(store.ui(\"对话形态\", \"Chat Surface\")")
-    && appSource.contains("title: store.ui(\"默认显示\", \"Default Surface\")")
-    && appSource.contains("把对话能力作为低干扰阅读线索")
+    && appSource.contains("settingsGroup(store.ui(\"提供商与模型\", \"Provider & Model\")")
+    && appSource.contains("settingsGroup(store.ui(\"对话入口\", \"Chat Entry\")")
+    && appSource.contains("title: store.ui(\"入口说明\", \"Entry Notes\")")
+    && appSource.contains("ForEach(AgentProviderID.subscriptionProviders)")
+    && appSource.contains("ForEach(AgentProviderID.apiKeyProviders)")
+    && appSource.contains("ForEach(AgentProviderID.localOrCustomProviders)")
+    && appSource.contains("store.setAgentProviderID(provider)")
+    && appSource.contains("store.updateAgentBaseURL")
+    && appSource.contains("openAgentProviderConsole")
+    && appSource.contains("AgentProviderID.subscriptionProviders")
+    && !appSource.contains("settingsGroup(store.ui(\"对话形态\", \"Chat Surface\")")
+    && !appSource.contains("页边洞察")
     && !appSource.contains("Agent 上下文")
     && !appSource.contains("Agent 与 API")
     && !appSource.contains("title: store.ui(\"对话与 API\"")
     && !appSource.contains("settingsGroup(store.ui(\"API\"")
     && !appSource.contains("把 Agent 作为")
-    && appSource.contains("prompt: Text(store.ui(\"对话密钥\"")
-    && appSource.contains("Button(store.ui(\"保存\"")
+    && appSource.contains("prompt: Text(store.ui(\"粘贴 API Key\"")
+    && appSource.contains("Button(store.ui(\"保存到当前配置\"")
+    && appSource.contains("AgentAuthMethod")
+    && appSource.contains("createAgentCredentialProfile")
+    && appSource.contains("openAgentProviderConsole")
     && !appSource.contains("prompt: Text(\"OpenAI 密钥\")")
-    && !appSource.contains("Button(\"保存到钥匙串\")")
-    && appSource.contains("store.ui(\"本机环境里的模型设置会覆盖这里。\"")
-    && !appSource.contains("WEIBEI_OPENAI_MODEL 会覆盖这里")
+    && appSource.contains("store.saveOpenAIAPIKey()")
+    && appSource.contains(".onSubmit { store.saveOpenAIAPIKey() }")
+    && appSource.contains("WEIBEI_OPENAI_MODEL / WEIBEI_PI_MODEL")
     && appSource.contains("SecureField(")
     && appSource.contains(".foregroundStyle(WeiBeiTheme.placeholderInk)")
     && appSource.contains(".foregroundColor(WeiBeiTheme.ink)")
@@ -2256,7 +2784,9 @@ expect(!appSource.contains("Form {")
     && appSource.contains("Image(systemName: store.appearanceMode.toggled.systemImage)")
     && appSource.contains(".buttonStyle(WeiBeiIconButtonStyle(size: 30))")
     && !appSource.contains("WeiBeiIconButtonStyle(active: store.appearanceMode == .inkstone")
-    && appSource.contains("store.setTopBarVariant(variant)"), "settings center uses categorized WeiBei chrome and real bound controls instead of the default form field")
+    && !appSource.contains("TopBarVariant")
+    && !appSource.contains("setTopBarVariant")
+    && !appSource.contains("顶部栏样式"), "settings center uses categorized WeiBei chrome and real bound controls instead of the default form field")
 expect(appSource.contains("settingsPill(\n                    title: store.interfaceLanguage.settingsLabel,\n                    icon: \"character.book.closed\",\n                    active: false")
     && appSource.contains("settingsPill(\n                    title: store.appearanceMode.label(language: store.interfaceLanguage),\n                    icon: store.appearanceMode.systemImage,\n                    active: false"), "settings sidebar summary pills stay neutral instead of looking permanently selected")
 expect(appSource.contains("title: store.ui(\"每日灵感\", \"Daily Inspiration\")")
@@ -2285,8 +2815,11 @@ let linkedSourcesSourceURL = URL(fileURLWithPath: FileManager.default.currentDir
 let linkedSourcesSource = (try? String(contentsOf: linkedSourcesSourceURL, encoding: .utf8)) ?? ""
 let courseWorkspaceSourceNames = [
     "CourseWorkspaceView.swift",
-    "CourseOverviewView.swift",
+    "CourseHubView.swift",
     "CourseRelationsView.swift",
+    "CourseRelationPaperView.swift",
+    "CourseRelationGraphModel.swift",
+    "CourseImmersiveDrawerView.swift",
     "CourseRecordsView.swift",
     "CourseWorkspaceComponents.swift",
 ]
@@ -2318,18 +2851,55 @@ expect(contentViewSource.contains("if store.courseWorkspacePresented")
     && contentViewSource.contains("LayoutContentView()")
     && contentViewSource.contains("container.isHidden = store.courseWorkspacePresented")
     && !contentViewSource.contains("if store.courseWorkspacePresented {\n                            CourseWorkspaceView()\n                        } else"), "course workspace covers and hides native pane hosts without replacing the persistent pane tree")
-expect(courseWorkspaceSource.contains("case overview")
+expect(courseWorkspaceSource.contains("case hub")
     && courseWorkspaceSource.contains("case relations")
     && courseWorkspaceSource.contains("case records")
-    && courseWorkspaceSource.contains("打开只是当前动作，关联才是长期关系。")
-    && courseWorkspaceSource.contains("尚未建立资料关联")
-    && courseWorkspaceSource.contains("尚无阅读位置")
-    && !courseWorkspaceSource.contains("已消化")
-    && !courseWorkspaceSource.contains("消化率"), "course workspace exposes overview, relationships, and learning records using only evidence-backed status language")
+    && !courseWorkspaceSource.contains("case overview")
+    && courseWorkspaceSource.contains("CourseHubView(")
+    && courseWorkspaceSource.contains("对话记录")
+    && courseWorkspaceSource.contains("管理关系")
+    && courseWorkspaceSource.contains("导入文稿")
+    && courseWorkspaceSource.contains("导入笔记")
+    && courseWorkspaceSource.contains("CourseHubRowProminence")
+    && courseWorkspaceSource.contains("选择一门课程")
+    && courseWorkspaceSource.contains("选择课程")
+    && courseWorkspaceSource.contains("关系台")
+    && courseWorkspaceSource.contains("资料与笔记")
+    && courseWorkspaceSource.contains("资料关系台")
+    && courseWorkspaceSource.contains("同色标签表示同一课程")
+    && courseWorkspaceSource.contains("primaryCourseID(for:")
+    && courseWorkspaceSource.contains("CourseHubColumnEmptyState")
+    && courseWorkspaceSource.contains("courseTitleDisplayFont")
+    && courseWorkspaceSource.contains("frame(height: 44, alignment: .center)"), "course workspace hub keeps aligned columns, in-hub course picking, and course-grouped learning records")
+expect(courseWorkspaceSource.contains("CourseRelationPaperView(")
+    && courseWorkspaceSource.contains("CourseImmersiveDrawerView")
+    && (courseWorkspaceSource.contains("static let width: CGFloat = 292")
+        || courseWorkspaceSource.contains(".frame(width: 292)")
+        || courseWorkspaceSource.contains("CourseDrawerContainerView.panelWidth"))
+    && courseWorkspaceSource.contains("未归属课程")
+    && courseWorkspaceSource.contains("未建立关系")
+    && courseWorkspaceSource.contains("showsOnlyUnlinked")
+    && courseWorkspaceSource.contains("edgeHazeColor")
+    && courseWorkspaceSource.contains("nodeProminence")
+    && courseWorkspaceSource.contains("private struct CourseRelationPaperNodeView: View"), "course drawer and relation paper share explicit course membership while keeping course assignment separate from note-material links")
+expect(courseWorkspaceSource.contains("@State private var pendingConnection")
+    && courseWorkspaceSource.contains("private func handleConnectionTap")
+    && courseWorkspaceSource.contains("private func connectionButton")
+    && courseWorkspaceSource.contains("MagnificationGesture()")
+    && courseWorkspaceSource.contains("private func zoomControls")
+    && courseWorkspaceSource.contains("private func fitZoomScale")
+    && courseWorkspaceSource.contains("scrollProxy.scrollTo(Self.paperOriginID, anchor: .topLeading)")
+    && courseWorkspaceSource.contains("private struct CourseRelationNodeDragModifier")
+    && courseWorkspaceSource.contains(".accessibilityLabel(\"\\(node.item.title)：\\(connectionLabel(state))\")")
+    && courseWorkspaceSource.contains("private static func fanOffsets")
+    && courseWorkspaceSource.contains("默认看整份工作区的资料↔笔记关联；右上角可筛到某门课。不表示当前打开状态。")
+    && courseWorkspaceSource.contains("let candidate = scope ?? .all"), "relationship paper explains workspace-wide scope, supports click-to-link and zoom, and fans dense bands at shared nodes")
 expect(courseWorkspaceSource.contains("更改自动保存")
-    && courseWorkspaceSource.contains("showRecords(session.id)")
-    && courseWorkspaceSource.contains("courseMaterialsWithoutReadingPosition.first?.id")
-    && !courseWorkspaceSource.contains("store.courseMaterials + store.sampleItems"), "course relationship edits save immediately, route to the selected fact, and keep built-in samples outside course counts")
+    && courseWorkspaceSource.contains("private func addLink(materialID: String, noteID: String)")
+    && courseWorkspaceSource.contains("private func removeLink(noteID: String, materialID: String)")
+    && courseWorkspaceSource.contains("store.setLinkedNoteIDs")
+    && courseWorkspaceSource.contains("store.setLinkedCourseSourceIDs")
+    && !courseWorkspaceSource.contains("store.courseMaterials + store.sampleItems"), "course relationship edits save immediately in both directions while built-in samples stay outside course counts")
 expect(workspaceStoreSource.contains("@Published private(set) var workspaceSaveError")
     && workspaceStoreSource.contains("func retryWorkspaceSave()")
     && workspaceStoreSource.contains("Course changes were not saved to disk")
@@ -2337,6 +2907,12 @@ expect(workspaceStoreSource.contains("@Published private(set) var workspaceSaveE
     && courseWorkspaceSource.contains("draft.automaticMaterialCount + draft.markdownFiles.count - notePaths.count")
     && courseWorkspaceSource.contains("url.deletingLastPathComponent().path"), "course autosave failures stay visible and mixed-folder classification reports complete counts with unambiguous paths")
 expect(workspaceStoreSource.contains("func presentCourseWorkspace(")
+    && workspaceStoreSource.contains("CourseWorkspaceDestination = .hub")
+    && workspaceStoreSource.contains("func openCourseSpace(_ courseID: UUID)")
+    && workspaceStoreSource.contains("func sessionsTouchingCourse(_ courseID: UUID)")
+    && workspaceStoreSource.contains("func sessionsTouchingMaterial(_ materialID: String")
+    && workspaceStoreSource.contains("func primaryCourseID(for session: StudySession)")
+    && workspaceStoreSource.contains("func importCourseFilesFromURLs(_ urls: [URL]")
     && workspaceStoreSource.contains("func dismissCourseWorkspace()")
     && workspaceStoreSource.contains("func openCourseMaterial(")
     && workspaceStoreSource.contains("func openCourseNote(")
@@ -2351,15 +2927,17 @@ expect(workspaceStoreSource.contains("func presentCourseWorkspace(")
     && courseWorkspaceSource.contains("确认 Markdown 的角色")
     && courseWorkspaceSource.contains("guard let noteID = store.createCourseNotebookNote")
     && courseWorkspaceSource.contains("newNoteError = store.noteFileError")
-    && appSource.contains("打开课程首页")
-    && commandPaletteSource.contains("打开课程首页")
-    && sidebarSource.contains("store.presentCourseWorkspace()")
-    && linkedSourcesSource.contains("store.presentCourseWorkspace(.notes"), "course workspace is reachable from top-level commands and note relationships, while explicit open actions own navigation")
+    && courseWorkspaceSource.contains("store.sessionsTouchingCourse(courseID)")
+    && courseWorkspaceSource.contains("importCourseFilesFromURLs")
+    && appSource.contains("打开课程空间")
+    && commandPaletteSource.contains("打开课程空间")
+    && sidebarSource.contains("store.presentCourseWorkspace(.hub)")
+    && linkedSourcesSource.contains("store.presentCourseWorkspace(.notes"), "course hub routing, session membership helpers, and top-level open actions stay wired without replacing note-relationship entry points")
 expect(workspaceStoreSource.contains("scenario == \"course-index-navigation-flow\"")
+    && workspaceStoreSource.contains("course-material-unassigned")
+    && workspaceStoreSource.contains("activeCourseID = nil")
     && workspaceStoreSource.contains("showLibrary = true")
-    && workspaceStoreSource.contains("showReader = false")
-    && workspaceStoreSource.contains("showAgent = false")
-    && workspaceStoreSource.contains("showNotes = false"), "course-index verification owns a quiet real-window state for the unified navigation path")
+    && workspaceStoreSource.contains("CourseItemMemberships()"), "course-drawer verification uses isolated real courses, shared items, and one genuinely unassigned material")
 expect(workspaceStoreSource.contains("noteSourceRelationIndex = NoteSourceRelationIndex(links: noteSourceLinks)")
     && workspaceStoreSource.contains("func linkedNoteCount(for sourceItemID: String)")
     && workspaceStoreSource.contains("verifyCourseOverlayContinuity(itemID:")
@@ -2369,7 +2947,8 @@ expect(readerViewSource.contains("var isEnabled = true")
     && readerViewSource.contains("NSApp.modalWindow == nil")
     && courseWorkspaceSource.contains("isEnabled: !showsNewNotePrompt && store.courseFolderImportDraft == nil"), "escape dismisses only the active course surface and leaves sheets or file panels in control")
 expect(workspaceStoreSource.contains("DocumentTextExtractor.cachedText(for: item)")
-    && workspaceStoreSource.contains("loadedMaterialText = await Task.detached(priority: .utility)")
+    && workspaceStoreSource.contains("Task.detached(priority: .userInitiated)")
+    && workspaceStoreSource.contains("DocumentTextExtractor.indexText(for: candidate.item, query: query)")
     && !workspaceStoreSource.contains("if let text = DocumentTextExtractor.text(for: item)"), "main-actor workspace reads only cached document text while bounded extraction runs off the UI thread")
 expect(workspaceStoreSource.contains("@Published var showDailyInspiration = true")
     && workspaceStoreSource.contains("func setDailyInspirationEnabled(_ enabled: Bool)")
@@ -2378,9 +2957,8 @@ expect(workspaceStoreSource.contains("@Published var showDailyInspiration = true
 expect(workspaceStoreSource.contains("var brandLatinName: String")
     && workspaceStoreSource.contains("\"WeiBei\"")
     && contentViewSource.contains("Text(store.brandLatinName)")
-    && contentViewSource.contains("case .glyph:\n            HStack(spacing: 5)")
-    && contentViewSource.contains(".frame(width: 78, height: controlHeight, alignment: .leading)")
-    && contentViewSource.contains("WeiBeiTypography.englishBrandFont(size: variant == .wide ? 17 : 16")
+    && contentViewSource.contains("WeiBeiTypography.englishBrandFont(size: 15.5, weight: .semibold)")
+    && contentViewSource.contains(".frame(width: 62, alignment: .leading)")
     && appSource.contains("Text(store.brandLatinName)")
     && appSource.contains("WeiBeiTypography.englishBrandFont(size: 18")
     && notesAgentSource.contains("latinMark: store.interfaceLanguage == .chinese ? \"NOTES\" : nil")
@@ -2455,7 +3033,9 @@ expect(workspaceStoreSource.contains("@Published var readerPageIndex = 0")
     && workspaceStoreSource.contains("recordsLocation: false"), "workspace navigation snapshots restore PDF page position without treating restoration as new study activity")
 expect(workspaceStoreSource.contains("case \"return\":\n                if isAskingAgent")
     && workspaceStoreSource.contains("guard !agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }"), "app shortcut stops a running answer but does not swallow command-return when idle with no draft")
-expect(workspaceStoreSource.contains("showQuietInsight = agentSurface == .quietInsight") && !workspaceStoreSource.contains("agentSurface = .quietInsight\n            showQuietInsight = true"), "immersive reading preserves the chosen agent surface")
+expect(workspaceStoreSource.contains("showQuietInsight = false")
+    && !workspaceStoreSource.contains("agentSurface == .quietInsight")
+    && !workspaceStoreSource.contains("setAgentSurface(.quietInsight)"), "quiet insight surface is disabled and no longer auto-enabled on immersive reading")
 expect(workspaceStoreSource.contains("@Published var activeNotebookItemID")
     && workspaceStoreSource.contains("var activeNoteItem: StudyItem?")
     && workspaceStoreSource.contains("guard itemID == activeNoteItemID else { return }"), "note writes are bound to the active note instead of the selected reader material")
@@ -2582,7 +3162,8 @@ expect(workspaceStoreSource.contains("var hasPrimaryConversationPaneVisible: Boo
     && workspaceStoreSource.contains("var isConversationSurfaceVisible: Bool")
     && workspaceStoreSource.contains("var canShowSelectionPromptSurface: Bool")
     && workspaceStoreSource.contains("var canShowSelectionPromptSurface: Bool {\n        true")
-    && workspaceStoreSource.contains("return agentSurface == .bottomDrawer || agentSurface == .cornerPanel"), "workspace has one shared rule for primary conversation panes, formal conversation surfaces, and prompt-only selection affordances")
+    && workspaceStoreSource.contains("case .immersiveReading, .immersiveWriting:")
+    && workspaceStoreSource.contains("// Overlay chat surfaces"), "workspace has one shared rule for primary conversation panes, formal conversation surfaces, and prompt-only selection affordances")
 if let updateSelectionStart = workspaceStoreSource.range(of: "func updateSelection(_ text: String")?.lowerBound,
    let removeSelectionStart = workspaceStoreSource.range(of: "func removeSelectionAttachment")?.lowerBound {
     let updateSelectionSource = String(workspaceStoreSource[updateSelectionStart..<removeSelectionStart])
@@ -2598,20 +3179,22 @@ if let updateSelectionStart = workspaceStoreSource.range(of: "func updateSelecti
     expect(false, "updateSelection source is readable")
 }
 expect(workspaceStoreSource.contains("func askSelection()")
-    && workspaceStoreSource.contains("if isConversationSurfaceVisible {\n                routeSelectionToConversation(selectionContext)\n            } else {")
     && workspaceStoreSource.contains("agentSurface = .selectionFloat")
+    && workspaceStoreSource.contains("keepFloatingSelectionForAnswer = true")
+    && workspaceStoreSource.contains("beginOrReuseSelectionAskThread")
     && workspaceStoreSource.contains("func routeSelectionToConversation")
-    && workspaceStoreSource.contains("if agentSurface == .selectionFloat {\n                agentSurface = .hidden\n            }")
-    && workspaceStoreSource.components(separatedBy: "withAnimation(WeiBeiMotion.panel) {").count >= 3, "asking a selection uses the open conversation surface before falling back to the floating prompt")
+    && workspaceStoreSource.components(separatedBy: "withAnimation(WeiBeiMotion.panel) {").count >= 3, "asking a selection keeps the floating agent open for dual-surface answers")
 if let askSelectionStart = workspaceStoreSource.range(of: "func askSelection()")?.lowerBound,
-   let appendSelectionStart = workspaceStoreSource.range(of: "func appendSelectionToNote()")?.lowerBound {
-    let askSelectionSource = String(workspaceStoreSource[askSelectionStart..<appendSelectionStart])
-    expect(askSelectionSource.contains("routeSelectionToConversation(selectionContext)")
-        && askSelectionSource.contains("addSelectionAttachment(context)")
+   let routeSelectionStart = workspaceStoreSource.range(of: "func routeSelectionToConversation")?.lowerBound {
+    let askSelectionSource = String(workspaceStoreSource[askSelectionStart..<routeSelectionStart])
+    expect(askSelectionSource.contains("addSelectionAttachment(selectionContext)")
+        && askSelectionSource.contains("keepFloatingSelectionForAnswer = true")
+        && askSelectionSource.contains("beginOrReuseSelectionAskThread")
+        && askSelectionSource.contains("activeSelectionAskThreadID")
+        && !askSelectionSource.contains("pinnedFloatingAgent = true")
         && !askSelectionSource.contains("请解释当前已选文本片段")
         && !askSelectionSource.contains("agentDraft = prompt")
-        && !askSelectionSource.contains("selectionContext.text")
-        && !askSelectionSource.contains("选区："), "selection question action only attaches the selection and focuses the composer; the user writes the prompt")
+        && !askSelectionSource.contains("选区："), "selection question expands the float, records an ask thread, and does not auto-pin or invent a prompt")
 } else {
     expect(false, "askSelection source is readable")
 }
@@ -2657,8 +3240,9 @@ expect(workspaceStoreSource.contains("var agentMessageSourceTitle: String?") && 
 expect(workspaceStoreSource.contains("let sentMaterialTitle = currentSourceReferenceTitle")
     && workspaceStoreSource.contains("materialTitle: sentMaterialTitle"), "agent prompt snapshots the canonical file location so PDF pages and HTML sections reach the model")
 expect(workspaceStoreSource.contains("private var quietInsightReferenceTitle: String")
-    && workspaceStoreSource.contains("selectionContext?.ownerTitle ?? (hasSelectedMaterial ? currentSourceReferenceTitle : activeNoteItem.map(displayTitle)) ?? ui(\"当前笔记\"")
-    && workspaceStoreSource.contains("没有证据就说\\(evidenceText)"), "quiet insight uses real selection, current reader location, or note source wording")
+    && workspaceStoreSource.contains("selectionContext?.ownerTitle")
+    && workspaceStoreSource.contains("currentSourceReferenceTitle")
+    && workspaceStoreSource.contains("Quiet insight generation disabled for 1.0"), "quiet insight reference title remains available while generation stays disabled for 1.0")
 expect(workspaceStoreSource.contains("private func clearUnpinnedFloatingSelection(keepContext: Bool = true, invalidatesAgentContext: Bool = true)")
     && workspaceStoreSource.contains("if invalidatesAgentContext, selectionContext != nil")
     && workspaceStoreSource.contains("selectionContext = nil")
@@ -2686,18 +3270,26 @@ if let updateSelectionStart = workspaceStoreSource.range(of: "func updateSelecti
    let removeSelectionStart = workspaceStoreSource.range(of: "func removeSelectionAttachment")?.lowerBound {
     let liveSelectionUpdateSource = String(workspaceStoreSource[updateSelectionStart..<removeSelectionStart])
     expect(liveSelectionUpdateSource.contains("floatingSelectionPrompt = nextSelection.label(language: interfaceLanguage)")
-        && liveSelectionUpdateSource.contains("pinnedFloatingAgent = false")
+        && liveSelectionUpdateSource.contains("if pinnedFloatingAgent || keepFloatingSelectionForAnswer")
+        && !liveSelectionUpdateSource.contains("pinnedFloatingAgent = false")
         && liveSelectionUpdateSource.contains("cancelPendingSelectionAttachment()")
         && liveSelectionUpdateSource.contains("if shouldRevealSelectionPrompt {")
         && liveSelectionUpdateSource.contains("anchorsApproximatelyEqual")
         && !liveSelectionUpdateSource.contains("withAnimation(WeiBeiMotion.panel) {\n            selectionContext = nextSelection")
-        && !liveSelectionUpdateSource.contains("withAnimation(WeiBeiMotion.panel) {\n            selectionContext = nextSelection\n            selectionAnchor = anchor"), "new selections reset pinned floating state; continuous selection fields update without a panel spring, and only surface show/hide may animate")
+        && !liveSelectionUpdateSource.contains("withAnimation(WeiBeiMotion.panel) {\n            selectionContext = nextSelection\n            selectionAnchor = anchor"), "pinned/answer-locked floats survive new selections; continuous selection fields update without a panel spring, and only surface show/hide may animate")
 } else {
     expect(false, "updateSelection animation policy source is readable")
 }
 expect(workspaceStoreSource.contains("let itemChanged = selectedItemID != itemID") && workspaceStoreSource.contains("clearUnpinnedFloatingSelection(keepContext: false)"), "selecting a different item clears the old selection context")
-expect(workspaceStoreSource.contains("func toggleLibrary() {\n        recordNavigationPoint()\n        showLibrary.toggle()\n        clearUnpinnedFloatingSelection()")
-    && workspaceStoreSource.contains("func toggleRightPane() {\n        guard layout.hasCollapsibleRightPane else { return }\n        recordNavigationPoint()\n        showRightPane.toggle()\n        clearUnpinnedFloatingSelection()"), "pane visibility changes record navigation and invalidate stale floating selection anchors")
+expect(workspaceStoreSource.contains("func toggleLibrary()")
+    && workspaceStoreSource.contains("let willShow = !showLibrary")
+    && workspaceStoreSource.contains("showLibrary = willShow")
+    && workspaceStoreSource.contains("final class LibraryDrawerState: ObservableObject")
+    && workspaceStoreSource.contains("let libraryDrawer = LibraryDrawerState()")
+    && workspaceStoreSource.contains("DispatchQueue.main.async")
+    && workspaceStoreSource.contains("clearUnpinnedFloatingSelection()")
+    && !workspaceStoreSource.contains("func toggleLibrary() {\n        recordNavigationPoint()")
+    && workspaceStoreSource.contains("func toggleRightPane() {\n        guard layout.hasCollapsibleRightPane else { return }\n        recordNavigationPoint()\n        showRightPane.toggle()\n        clearUnpinnedFloatingSelection()"), "the transient course drawer stays out of navigation history while durable pane visibility still records navigation")
 expect(workspaceStoreSource.contains("collapseSelectionFloatIntoConversationIfVisible()\n        focusedPane = pane")
     && workspaceStoreSource.contains("private func collapseSelectionFloatIntoConversationIfVisible()")
     && workspaceStoreSource.contains("guard isConversationSurfaceVisible, agentSurface == .selectionFloat else { return }")
@@ -2708,9 +3300,13 @@ expect(workspaceStoreSource.contains("focus(showRightPane ? rightPaneRevealFocus
     && workspaceStoreSource.contains("return normalizedThreePaneOrder.last?.focus ?? .notes")
     && workspaceStoreSource.contains("case .documentNotesAgent, .immersiveConversation:\n            return .agent"), "right-pane reveal focuses the visible pane by current role order instead of legacy fixed layout names")
 expect(workspaceStoreSource.contains("func revealLibrary()")
-    && workspaceStoreSource.contains("if !showLibrary {\n            recordNavigationPoint()\n            clearUnpinnedFloatingSelection()\n        }")
-    && workspaceStoreSource.contains("focus(.library)\n        save()"), "library reveal uses the shared durable state path")
-expect(workspaceStoreSource.contains("layout == .immersiveReading || layout == .immersiveWriting") && workspaceStoreSource.contains("agentSurface = .cornerPanel") && !workspaceStoreSource.contains("layout = .immersiveConversation\n                showLibrary = false\n                showRightPane = true"), "agent focus in immersive layouts opens an overlay instead of switching layout")
+    && workspaceStoreSource.contains("if !showLibrary {\n            clearUnpinnedFloatingSelection()\n        }")
+    && workspaceStoreSource.contains("showLibrary = true\n        focus(.library)")
+    && !workspaceStoreSource.contains("focus(.library)\n        save()"), "library reveal uses transient in-memory state without writing the workspace")
+expect(workspaceStoreSource.contains("layout == .immersiveReading || layout == .immersiveWriting")
+    && workspaceStoreSource.contains("layout = .immersiveConversation")
+    && !workspaceStoreSource.contains("agentSurface = .cornerPanel")
+    && !workspaceStoreSource.contains("agentSurface = .bottomDrawer"), "agent focus in immersive layouts opens immersive conversation instead of deleted overlays")
 if let setLayoutStart = workspaceStoreSource.range(of: "func setLayout(_ layout: WorkspaceLayout)")?.lowerBound,
    let setAgentSurfaceStart = workspaceStoreSource.range(of: "func setAgentSurface")?.lowerBound {
     let setLayoutSource = String(workspaceStoreSource[setLayoutStart..<setAgentSurfaceStart])
@@ -2758,19 +3354,23 @@ expect(!workspaceStoreSource.contains("selectedItem?.title ?? \"当前材料\"")
     && !workspaceStoreSource.contains("保存后 Agent 会用")
     && !workspaceStoreSource.contains("Agent 可在打包应用里直接读取")
     && !workspaceStoreSource.contains("Agent 不会编造回答")
-    && !workspaceStoreSource.contains("Agent 请求失败：")
-    && workspaceStoreSource.contains("请求失败：\\(error.localizedDescription)")
+    && workspaceStoreSource.contains("AgentFailureKind.classify(error)")
+    && workspaceStoreSource.contains("draftPreserved: true")
+    && workspaceStoreSource.contains("func retryLastFailedAgentRequest()")
     && !workspaceStoreSource.contains("Agent 设置")
     && workspaceStoreSource.contains("PI 与在线密钥均不可用，当前使用离线草稿。")
     && workspaceStoreSource.contains("OfflineStudyAgentRuntime().respond")
     && workspaceStoreSource.contains("PiAgentRuntime")
     && workspaceStoreSource.contains("appendAgentMessage(AgentMessage(role: .user, text: question, source: sourceTitle))")
     && !workspaceStoreSource.contains("未配置 OPENAI_API_KEY 或钥匙串密钥")
-    && workspaceStoreSource.contains("正在使用本机环境密钥。")
-    && workspaceStoreSource.contains("密钥已保存，可直接用于对话。")
+    // Provider-aware key help + in-field key used for requests before Keychain save.
+    && workspaceStoreSource.contains("正在使用本机环境变量")
+    && workspaceStoreSource.contains("设置中的密钥")
+    && workspaceStoreSource.contains("密钥已在钥匙串")
+    && workspaceStoreSource.contains("let fieldKey = OpenAIAPIKeyStore.cleaned(openAIAPIKey)")
     && workspaceStoreSource.contains("已清除密钥。")
-    && workspaceStoreSource.contains("密钥已保存。")
-    && !workspaceStoreSource.contains("正在使用本机环境变量 OPENAI_API_KEY")
+    && workspaceStoreSource.contains("密钥已保存到当前配置。")
+    && workspaceStoreSource.contains("AgentCredentialProfileStore")
     && !workspaceStoreSource.contains("打包应用可直接读取")
     && !workspaceStoreSource.contains("已清除钥匙串密钥。")
     && !workspaceStoreSource.contains("已保存到 macOS 钥匙串。")
@@ -2892,7 +3492,8 @@ expect(workspaceStoreSource.contains("func cancelNotebookNoteCreation()")
     && workspaceStoreSource.contains("func confirmNotebookNoteCreation()")
     && workspaceStoreSource.contains("notebookCreationDraft = NotebookCreationDraft(")
     && workspaceStoreSource.contains("let title = draft.title.trimmingCharacters")
-    && workspaceStoreSource.contains("func select(itemID: String?) {\n        invalidateAgentContext()\n        persistCurrentNote()\n        notebookCreationDraft = nil")
+    && workspaceStoreSource.contains("func select(itemID: String?)")
+    && workspaceStoreSource.contains("private func selectMeasured(itemID: String?) {\n        invalidateAgentContext()\n        persistCurrentNote()\n        notebookCreationDraft = nil")
     && !workspaceStoreSource.contains("private func promptCreateNotebookNote(seed: NotebookNoteSeed)")
     && !workspaceStoreSource.contains("alert.messageText = seed.isBlank"), "new-note creation opens the inline naming strip and confirms through the shared local markdown creator")
 expect(workspaceStoreSource.contains("importedItems.append(item)")
@@ -2900,8 +3501,10 @@ expect(workspaceStoreSource.contains("importedItems.append(item)")
     && workspaceStoreSource.contains("addNoteSourceLink(noteItemID: item.id, sourceItemID: sourceItem.id)")
     && workspaceStoreSource.contains("activeNotebookItemID = item.id\n            noteText = markdown\n            revealRichWritingSurface()\n            focus(.notes)\n            save()"), "new notebook notes persist their material link, join the course index, and open in the note pane without replacing the reader material")
 expect(workspaceStoreSource.contains("private func showTransientNoteStatus(_ message: String)")
+    && workspaceStoreSource.contains("transientNoteStatus = message")
+    && workspaceStoreSource.contains("@Published var transientNoteStatus")
     && workspaceStoreSource.contains("Task { @MainActor [weak self] in")
-    && workspaceStoreSource.contains("if self?.noteFileError == message")
+    && workspaceStoreSource.contains("if self.transientNoteStatus == token")
     && workspaceStoreSource.contains("已新建空白笔记")
     && workspaceStoreSource.contains("已为当前资料新建笔记"), "successful note creation feedback clears itself and names the creation path")
 expect(workspaceStoreSource.contains("func promptRenameNotebookNote(itemID: String)")
@@ -2970,7 +3573,9 @@ expect(appSource.contains("Button(store.ui(\"三栏工作台\", \"Three-Pane Wor
     && appSource.contains("store.swapThreePaneSecondaryPanes()")
     && appSource.contains(".keyboardShortcut(\"s\", modifiers: [.command, .option])")
     && appSource.contains(".keyboardShortcut(\"2\", modifiers: [.command, .option])"), "app menu exposes one draggable three-pane workspace entry and gives split view the second layout shortcut")
-expect(appSource.contains("Button(AgentSurface.bottomDrawer.actionLabel(language: store.interfaceLanguage))")
+expect(!appSource.contains("AgentSurface.bottomDrawer")
+    && !appSource.contains("AgentSurface.cornerPanel")
+    && !appSource.contains("AgentSurface.quietInsight")
     && appSource.contains("Button(AgentSurface.selectionFloat.actionLabel(language: store.interfaceLanguage))")
     && appSource.contains("if store.canUseSelectionAgentSurface")
     && AgentSurface.hidden.label(language: .chinese) == "隐藏对话"
@@ -3002,21 +3607,10 @@ expect(appSource.contains("Button(store.ui(\"写入回答到笔记\"")
 let directPromptConsumers = [appSource, contentViewSource, sidebarSource, commandPaletteSource, notesAgentSource].joined(separator: "\n")
 expect(!directPromptConsumers.contains("WeiBeiInputPrompt("), "views use the shared input prompt overlay instead of direct prompt layering")
 expect(!workspaceStoreSource.contains("请解释我刚才选中的内容") && !notesAgentSource.contains("请解释我刚才选中的内容"), "agent entry does not invent a missing selection")
-expect(notesAgentSource.contains("compactHovering")
-    && !notesAgentSource.contains(".weibeiAnnotationPanel(cornerRadius: 5)")
-    && notesAgentSource.contains(".background(WeiBeiTheme.paperRaised.opacity(compactHovering ? 0.42 : 0.0))")
-    && notesAgentSource.contains("WeiBeiTheme.hairline.opacity(compactHovering ? 0.40 : 0.0)"), "compact quiet insight stays a light margin note instead of a permanent card")
-expect(!notesAgentSource.contains(".opacity(compactHovering ? 1 : 0.68)")
-    && notesAgentSource.contains("if compactHovering {\n                HStack(spacing: 4)"), "compact quiet insight actions stay hidden until hover without dimming the text")
-expect(notesAgentSource.contains("if compactHovering {\n                HStack(spacing: 4)") && notesAgentSource.contains(".transition(WeiBeiTransition.floating)"), "compact quiet insight keeps actions hidden until hover")
-expect(notesAgentSource.contains("@State private var panelHovering = false")
-    && notesAgentSource.contains("if panelHovering {\n                        HStack(spacing: 4)")
-    && notesAgentSource.contains("iconButton(\"text.badge.plus\", help: store.ui(\"收进摘录\"")
-    && notesAgentSource.contains("iconButton(\"bubble.left\", help: store.ui(\"追问\"")
-    && notesAgentSource.contains("iconButton(\"xmark\", help: store.ui(\"忽略阅读线索\"")
-    && !notesAgentSource.contains("Button(\"收进摘录\")")
-    && !notesAgentSource.contains("Button(\"追问\")")
-    && !notesAgentSource.contains("Button(\"忽略\")"), "regular quiet insight behaves like a margin note: actions are icon-only and hidden until hover")
+expect(!notesAgentSource.contains("compactHovering")
+    && !notesAgentSource.contains("struct QuietInsightView")
+    && !notesAgentSource.contains("忽略阅读线索")
+    && !notesAgentSource.contains("收进摘录"), "quiet insight margin-note UI is removed with the quiet insight surface")
 expect(notesAgentSource.contains("let itemID = store.activeNoteItemID") && notesAgentSource.contains("store.updateNote(value, for: itemID)"), "rich note editor writes through active note guard")
 expect(notesAgentSource.components(separatedBy: "MarkdownPreviewView(").dropFirst().allSatisfy { $0.contains("appearanceMode: store.appearanceMode") }, "all markdown preview paths inherit the current appearance mode, including split compare")
 expect(notesAgentSource.contains("case .split:")
@@ -3145,6 +3739,9 @@ expect(contentViewSource.contains("@StateObject private var paneHostRegistry = P
     && contentViewSource.contains("final class PersistentPaneHostRegistry: ObservableObject")
     && contentViewSource.contains("struct PersistentPaneHost: NSViewRepresentable")
     && contentViewSource.contains("final class PersistentPaneContainerView: NSView")
+    && contentViewSource.contains("private final class PaneContentHostingView: NSHostingView<AnyView>")
+    && contentViewSource.contains("PaneContentHostingView(rootView: AnyView(root))")
+    && contentViewSource.contains("override var mouseDownCanMoveWindow: Bool { false }")
     && contentViewSource.contains("override func viewDidMoveToWindow()")
     && contentViewSource.contains("guard container.window != nil else")
     && contentViewSource.contains("PersistentPaneHost(role: .reader, registry: paneHostRegistry)")
@@ -3161,6 +3758,7 @@ expect(contentViewSource.contains("case .documentAgentNotes, .documentNotesAgent
     || contentViewSource.contains("case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:"), "ordinary document layouts share one routing branch")
 expect(contentViewSource.contains("documentPaneLayoutView()")
     && contentViewSource.contains("StableDocumentWorkspace(")
+    && contentViewSource.contains("ThreePaneWorkspaceChrome(")
     && contentViewSource.contains("PaneReorderPreviewView(role: drag.role)")
     && contentViewSource.contains(".opacity(0.11)")
     && stableDocumentSource.contains("PersistentPaneHost(role: role, registry: registry)")
@@ -3168,8 +3766,8 @@ expect(contentViewSource.contains("documentPaneLayoutView()")
     && contentViewSource.contains("AgentPaneView(showsPaneHeader: false, reorderRole: reorderRole)")
     && contentViewSource.contains("NotePaneView(showsPaneHeader: false, reorderRole: reorderRole)")
     && !contentViewSource.contains("PaneReorderGhostView")
-    && contentViewSource.contains("PaneDropTargetView(role: order[targetIndex])")
-    && contentViewSource.contains("threePaneReorderOverlay(order: order")
+    && contentViewSource.contains("PaneDropTargetView(role: visibleOrder[targetIndex])")
+    && contentViewSource.contains("threePaneReorderOverlay")
     && contentViewSource.contains("private func documentPaneLayoutView() -> some View")
     && contentViewSource.contains("let order = store.visibleDocumentPaneOrder")
     && stableDocumentSource.contains("EmptyWorkspaceLauncherView()")
@@ -3218,7 +3816,9 @@ expect(!readerViewSource.contains("struct ReaderPaneView")
     && !contentViewSource.contains("case .immersiveConversation:\n                if store.showRightPane")
     && contentViewSource.contains("PersistentPaneHost(role: .reader, registry: paneHostRegistry)")
     && contentViewSource.contains("PersistentPaneHost(role: .notes, registry: paneHostRegistry)")
-    && notesAgentSource.contains("ImmersiveHoverTitleView(mark: \"CHAT\", title: store.agentConversationSubtitle")
+    && notesAgentSource.contains("mark: \"CHAT\"")
+    && notesAgentSource.contains("title: store.agentConversationSubtitle")
+    && notesAgentSource.contains("agentSessionCatalogMenu")
     && notesAgentSource.contains("reorderRole: reorderRole")
     && notesAgentSource.contains("mark: \"NOTES\"")
     && notesAgentSource.contains("title: noteHeaderSubtitle")
@@ -3228,7 +3828,9 @@ expect(!readerViewSource.contains("struct ReaderPaneView")
     && notesAgentSource.contains("isPinned: store.notebookCreationDraft != nil")
     && notesAgentSource.contains("notebookCreationPanel(draft: draft)"), "immersive and single-pane views hide heavy pane headers while the Notes hover slip keeps mode and new-note actions")
 expect(workspaceStoreSource.contains("@Published var threePaneOrder")
-    && workspaceStoreSource.contains("@Published var threePaneReorderDrag")
+    && workspaceStoreSource.contains("final class ThreePaneReorderState: ObservableObject")
+    && workspaceStoreSource.contains("let threePaneReorder = ThreePaneReorderState()")
+    && workspaceStoreSource.contains("var threePaneReorderDrag: ThreePaneReorderDrag?")
     && workspaceStoreSource.contains("func threePaneReorderFrameList(order: [WorkspacePaneRole], fallback: [CGRect]) -> [CGRect]")
     && workspaceStoreSource.contains("private func sameReorderFrames")
     && workspaceStoreSource.contains("func swapThreePaneRoles")
@@ -3249,7 +3851,8 @@ expect(workspaceStoreSource.contains("@Published var threePaneOrder")
     && workspaceStoreSource.contains("layoutMatchingThreePaneOrder")
     && workspaceStoreSource.contains("threePaneOrder: normalizedThreePaneOrder"), "workspace store owns, drags, swaps, and persists custom three-pane order")
 expect(!contentViewSource.contains("ContextRailItem")
-    && contentViewSource.contains("topIconButton(\"sidebar.left\"")
+    && (contentViewSource.contains("topIconButton(\"sidebar.left\"")
+        || contentViewSource.contains("\"sidebar.left\""))
     && contentViewSource.contains("store.toggleLibrary()")
     && workspaceStoreSource.contains("func revealLibrary()"), "immersive surfaces do not duplicate the library because the top bar owns its entry")
 expect(!appSource.contains("沉浸模式也保留课程目录入口")
@@ -3263,7 +3866,9 @@ expect(notesAgentSource.contains("store.ui(\"大纲建议\"")
 expect(notesAgentSource.contains("store.agentPromptScope")
     && notesAgentSource.contains("store.hasSelectedMaterial")
     && notesAgentSource.contains("请检查当前笔记缺少来源的位置，并标出需要补证据的段落。"), "on-demand writing tools reuse real context wording")
-expect(contentViewSource.contains(".overlay(alignment: agentAlignment)") && contentViewSource.contains("if store.agentSurface != .quietInsight {\n                        agentOverlay"), "immersive layouts can show the lightweight agent overlay")
+expect(!contentViewSource.contains("agentOverlay")
+    && !contentViewSource.contains("agentAlignment")
+    && !contentViewSource.contains("QuietInsightView"), "immersive layouts no longer mount deleted lightweight agent overlays")
 expect(!contentViewSource.contains("来源预览"), "immersive writing avoids duplicate reader entries")
 expect(!contentViewSource.contains("title: store.selectedItem?.title ?? \"当前材料\""), "immersive writing avoids fake current material entries")
 expect(!notesAgentSource.contains("Agent 抽屉"), "agent drawer avoids engineering labels")
@@ -3283,7 +3888,7 @@ expect(notesAgentSource.contains("private struct AgentSelectionAttachmentPill")
     && notesAgentSource.contains("Image(systemName: \"xmark\")")
     && notesAgentSource.contains(".buttonStyle(WeiBeiIconButtonStyle(size: 20))")
     && notesAgentSource.contains("selectionAttachmentRow(index: index, selection: selection)")
-    && notesAgentSource.components(separatedBy: "AgentSelectionAttachmentPill()").count >= 4
+    && notesAgentSource.components(separatedBy: "AgentSelectionAttachmentPill()").count >= 2
     && !notesAgentSource.contains("Text(\"1 个已选文本片段\")")
     && !notesAgentSource.contains("Text(\"已含选区\")"), "agent selection context renders as a hoverable attachment pill near composers instead of text inside the empty state")
 if let attachmentRowStart = notesAgentSource.range(of: "private func selectionAttachmentRow")?.lowerBound,
@@ -3316,21 +3921,37 @@ expect(notesAgentSource.contains("if store.hasSelectedMaterial")
     && notesAgentSource.contains("help: store.ui(\"生成复习题\", \"Generate review questions\"")
     && !notesAgentSource.contains("starterChip(\"梳理材料\"")
     && !notesAgentSource.contains("starterChip(\"出复习题\""), "agent starter chips hide material actions without a selected material and avoid clipped long labels")
-expect(notesAgentSource.contains("GeometryReader { geometry in")
-    && notesAgentSource.contains("let availableWidth = max(geometry.size.width, 1)")
-    && notesAgentSource.contains("let contentWidth = min(max(availableWidth - 36, 320), agentContentMaxWidth ?? 760)")
-    && notesAgentSource.contains("agentMessageRow(message: message, geometryWidth: geometry.size.width, contentWidth: contentWidth, proxy: proxy)")
-    && notesAgentSource.contains("private func agentMessageRow(message: AgentMessage, geometryWidth: CGFloat, contentWidth: CGFloat, proxy: ScrollViewProxy) -> some View")
+expect(notesAgentSource.contains("let availableWidth = max(agentPaneWidth, 1)")
+    && notesAgentSource.contains("private enum AgentChatLayoutMetrics")
+    && notesAgentSource.contains("static let wideMaxWidth: CGFloat = 1600")
+    && notesAgentSource.contains("static let compactMaxWidth: CGFloat = 560")
+    && notesAgentSource.contains("AgentChatLayoutMetrics.contentWidth(")
+    && notesAgentSource.contains("isImmersiveConversation")
+    && notesAgentSource.contains("agentMessageRow(")
+    && notesAgentSource.contains("geometryWidth: geometryWidth")
+    && notesAgentSource.contains("private func agentMessageRow(")
     && notesAgentSource.contains(".padding(.top, store.messages.isEmpty ? 22 : 0)")
-    && notesAgentSource.contains(".frame(width: geometry.size.width, alignment: .topLeading)")
-    && notesAgentSource.contains(".frame(minHeight: geometry.size.height, alignment: .topLeading)")
-    && !notesAgentSource.contains("alignment: store.messages.isEmpty ? .bottomLeading : .topLeading"), "agent empty state starts in the content area instead of being pinned to the composer")
+    && notesAgentSource.contains(".frame(maxWidth: .infinity, alignment: .topLeading)")
+    && notesAgentSource.contains(".frame(maxWidth: .infinity, maxHeight: .infinity)")
+    && notesAgentSource.contains("AgentPaneWidthKey")
+    && !notesAgentSource.contains("GeometryReader { paneGeometry in")
+    && !notesAgentSource.contains(".frame(minHeight: geometry.size.height, alignment: .topLeading)")
+    && !notesAgentSource.contains(".frame(width: geometry.size.width, alignment: .topLeading)")
+    && !notesAgentSource.contains("alignment: store.messages.isEmpty ? .bottomLeading : .topLeading"), "agent empty state starts in the content area; scroll content avoids GeometryReader parent thrash")
+expect(notesAgentSource.contains(".clipped()\n                    .zIndex(0)")
+    && notesAgentSource.contains("agentInputTray(wide: wide, contentWidth: contentWidth)\n                        .zIndex(1)")
+    && notesAgentSource.contains("AgentPaneWidthKey")
+    && notesAgentSource.contains("NEVER put GeometryReader as an ancestor of ScrollView+LazyVStack"), "agent conversation clips long rich answers above the composer; pane width is background-probed without GeometryReader thrash")
 expect(notesAgentSource.contains("canPolishNoteSelection") && notesAgentSource.contains("store.selectionContext?.isNoteSelection == true"), "selection agent only shows polish for note selections")
-expect(notesAgentSource.contains("Text(store.ui(\"正在读选区...\", \"Reading selection...\"))")
-    && notesAgentSource.contains(".foregroundStyle(WeiBeiTheme.secondaryInk)")
-    && notesAgentSource.contains("message.text.hasPrefix(\"请求失败：\") || message.text.hasPrefix(\"Agent 请求失败：\") || message.text.hasPrefix(\"Request failed:\")")
-    && notesAgentSource.contains("if message.role == .user {\n            return WeiBeiTheme.link")
-    && !notesAgentSource.contains("if message.role == .user || message.text.hasPrefix(\"Agent 请求失败：\")"), "selection floating agent reserves cinnabar for real failures instead of ordinary progress or user text")
+expect(notesAgentSource.contains("AgentThinkingIndicator()")
+    && notesAgentSource.contains("selection-float-thinking")
+    && notesAgentSource.contains("Same order as immersive chat")
+    && notesAgentSource.contains("WorkspaceStore.isAgentFailureMessage(message.text)")
+    && notesAgentSource.contains("floatResizeHandle")
+    && notesAgentSource.contains("SelectionFloatingAgentPlacement.expandedHalfWidth * 2")
+    && notesAgentSource.contains("isError ? WeiBeiTheme.cinnabar : WeiBeiTheme.cinnabar.opacity(0.76)")
+    && notesAgentSource.contains(".foregroundStyle(WeiBeiTheme.cinnabar)")
+    && !notesAgentSource.contains("if message.role == .user || message.text.hasPrefix(\"Agent 请求失败：\")"), "selection floating agent mirrors immersive order/thinking, stays resizable, and reserves cinnabar for real failures")
 expect(notesAgentSource.contains("private var isCredentialNotice: Bool")
     && notesAgentSource.contains("message.text.hasPrefix(\"未配置密钥\")")
     && notesAgentSource.contains("message.text.hasPrefix(\"未配置 OPENAI_API_KEY\")")
@@ -3344,19 +3965,27 @@ expect(notesAgentSource.contains("private var isCredentialNotice: Bool")
     && notesAgentSource.contains("AgentMessageMarkdownText(")
     && notesAgentSource.contains("rendersRichMarkdown: false")
     && notesAgentSource.contains("rendersRichMarkdown: true")
-    && notesAgentSource.contains("onContentHeightChange: onMarkdownHeightChange")
-    && notesAgentSource.contains("MarkdownPreviewView(\n                markdown: text")
-    && notesAgentSource.contains("compact: true")
-    && notesAgentSource.contains(".background(compact ? Color.clear : WeiBeiTheme.paper)")
-    && notesAgentSource.contains(".background(showsPaneHeader ? WeiBeiTheme.paper : Color.clear)")
+    && notesAgentSource.contains(".background(WeiBeiTheme.paper)")
+    && notesAgentSource.contains("// Same opaque paper as notes/reader")
     && notesAgentSource.contains("paperOpacity: showsPaneHeader ? 0.34 : 0.14")
-    && !notesAgentSource.contains(".frame(maxWidth: .infinity, alignment: .leading)\n            .allowsHitTesting(false)")
-    && notesAgentSource.contains("AttributedString(markdown: text)")
+    // Hang-proof agent chat: finalized KaTeX with frozen height; streaming stays native.
+    && notesAgentSource.contains("usesFinalizedKaTeX")
+    && notesAgentSource.contains("freezeHeightAfterMeasure")
+    && notesAgentSource.contains("AgentFinalizedMarkdownHeightCache")
+    && notesAgentSource.contains("agentChatLayoutWidth")
+    && notesAgentSource.contains("AttributedString(markdown: display")
+    && notesAgentSource.contains("RichAnswerDisplayText.normalizedInlineMath")
+    && notesAgentSource.contains("AgentStreamingMarkdownText")
+    && notesAgentSource.contains(".allowsHitTesting(false)")
+    && !notesAgentSource.contains("onContentHeightChange: onMarkdownHeightChange")
+    && !notesAgentSource.contains("scrollTargetLayout()")
+    && !notesAgentSource.contains("scrollPosition(id: $visibleAgentMessageID")
     && notesAgentSource.contains(".contentShape(Rectangle())")
     && notesAgentSource.contains("private var messageMetadata: some View")
     && notesAgentSource.contains("Text(\"WeiBei\")")
     && notesAgentSource.contains("rendersRichMarkdown: true")
-    && notesAgentSource.contains("(isCredentialNotice || isOfflineContextPreview) ? WeiBeiTheme.link.opacity(0.42) : WeiBeiTheme.cinnabar.opacity(0.50)")
+    && notesAgentSource.contains("WeiBeiTheme.link.opacity(hovering ? 0.50 : 0.34)")
+    && !notesAgentSource.contains("assistantMarkColor")
     && !notesAgentSource.contains("return isCredentialNotice ? store.ui(\"需要设置密钥\", \"Key Required\") : store.appDisplayName")
     && !notesAgentSource.contains("WeiBeiTheme.paperRaised.opacity(hovering ? 0.14 : 0.0)")
     && !notesAgentSource.contains(".frame(maxWidth: bubbleMaxWidth, alignment: .leading)")
@@ -3366,7 +3995,7 @@ expect(notesAgentSource.contains("private var isCredentialNotice: Bool")
     && notesAgentSource.contains("private var userBubbleFill: Color")
     && notesAgentSource.contains("private var userBubbleStroke: Color")
     && notesAgentSource.contains("RoundedRectangle(cornerRadius: 9, style: .continuous)")
-    && notesAgentSource.contains("strokeBorder(userBubbleStroke, lineWidth: 1)"), "main agent conversation keeps assistant text open while user turns use a quiet paper bubble on the right edge")
+    && notesAgentSource.contains("strokeBorder(userBubbleStroke, lineWidth: 1)"), "main agent conversation keeps assistant text open without a cinnabar mark while user turns use a quiet paper bubble")
 if let userTurnStart = notesAgentSource.range(of: "private var userTurn: some View")?.lowerBound,
    let assistantTurnStart = notesAgentSource[userTurnStart...].range(of: "private var assistantTurn: some View")?.lowerBound {
     let userTurnSource = String(notesAgentSource[userTurnStart..<assistantTurnStart])
@@ -3392,107 +4021,51 @@ if let credentialStart = notesAgentSource.range(of: "private var credentialNotic
 if let messageTextStart = notesAgentSource.range(of: "private struct AgentMessageMarkdownText")?.lowerBound,
    let thinkingStart = notesAgentSource[messageTextStart...].range(of: "private struct AgentThinkingIndicator")?.lowerBound {
     let messageTextSource = String(notesAgentSource[messageTextStart..<thinkingStart])
-    expect(messageTextSource.contains("Text(renderedText)")
+    expect(messageTextSource.contains("usesFinalizedKaTeX")
+        && messageTextSource.contains("MarkdownPreviewView(")
+        && messageTextSource.contains("freezeHeightAfterMeasure: true")
+        && messageTextSource.contains("layoutWidthBucket")
+        && messageTextSource.contains("AgentChatKaTeXMarkdown")
+        && messageTextSource.contains("NEVER wire onContentHeightChange to scrollAgentToBottom")
+        && messageTextSource.contains("AttributedString(markdown:")
+        && messageTextSource.contains("RichAnswerDisplayText.normalizedInlineMath")
         && messageTextSource.contains(".allowsHitTesting(false)")
-        && !messageTextSource.contains(".textSelection(.enabled)"), "plain agent message text does not trap scrolling over user turns")
+        && !messageTextSource.contains("onContentHeightChange: onMarkdownHeightChange")
+        && !messageTextSource.contains(".textSelection(.enabled)"), "agent chat uses finalized KaTeX with width-aware height and native streaming text without height-scroll thrash")
 } else {
     expect(false, "agent message text source is inspectable")
 }
-if let compactRowStart = notesAgentSource.range(of: "private struct CompactAgentMessagePreviewRow")?.lowerBound,
-   let speakerTitleStart = notesAgentSource[compactRowStart...].range(of: "private var speakerTitle")?.lowerBound {
-    let compactRowSource = String(notesAgentSource[compactRowStart..<speakerTitleStart])
-    expect(compactRowSource.contains("Text(renderedText)")
-        && compactRowSource.contains(".allowsHitTesting(false)")
-        && !compactRowSource.contains(".textSelection(.enabled)"), "compact agent preview rows keep hover and scroll responsive over text")
+// WP9: 行文进行中 V3 loading motion — no three-dot pulse card; hang-proof AppKit orbit.
+if let thinkingStart = notesAgentSource.range(of: "private struct AgentThinkingIndicator")?.lowerBound,
+   let streamingStart = notesAgentSource[thinkingStart...].range(of: "private struct AgentStreamingResponse")?.lowerBound {
+    let thinkingSource = String(notesAgentSource[thinkingStart..<streamingStart])
+    expect(!thinkingSource.contains("ForEach(0..<3")
+        && !thinkingSource.contains("repeatForever")
+        && !thinkingSource.contains("AgentThinkingInkDots")
+        && !thinkingSource.contains("pulse = true"), "AgentThinkingIndicator no longer uses a three-dot pulse implementation")
+    expect(!thinkingSource.contains("RoundedRectangle(cornerRadius: 7)")
+        && !thinkingSource.contains("paperRaised.opacity(0.34)")
+        && !thinkingSource.contains(".clipShape(RoundedRectangle"), "AgentThinkingIndicator has no loading-card chrome (fill/stroke/rounded rect)")
+    // Hang-proof contract: AppKit CADisplayLink host only setNeedsDisplay; never TimelineView inside ScrollView.
+    expect(thinkingSource.contains("accessibilityReduceMotion")
+        && thinkingSource.contains("TextOrbitSegment")
+        && thinkingSource.contains("TextOrbitPath")
+        && thinkingSource.contains("NSViewRepresentable")
+        && thinkingSource.contains("CADisplayLink")
+        && thinkingSource.contains("intrinsicContentSize")
+        && thinkingSource.contains("store.agentActivityText")
+        && !thinkingSource.contains("TimelineView(.animation"), "AgentThinkingIndicator uses reduce-motion, TextOrbitSegment/Path, hang-proof CADisplayLink NSView host, and agentActivityText")
 } else {
-    expect(false, "compact agent preview row source is inspectable")
+    expect(false, "AgentThinkingIndicator and AgentStreamingResponse source bounds are inspectable")
 }
-expect(notesAgentSource.contains("store.canOpenSelectedSourceReference") && notesAgentSource.contains("Button(store.ui(\"来源\", \"Source\"))") && notesAgentSource.contains("openSourceReference()"), "selection agent exposes a lightweight source jump when the note selection is a reference")
-expect(notesAgentSource.contains("onSourceReference: { reference in store.openSourceReference(reference) }"), "note editor source references can jump back to material")
-expect(notesAgentSource.contains("emptyNoteHintText") && notesAgentSource.contains("store.hasSelectedMaterial ? store.ui(\"开始记录当前材料\"") && notesAgentSource.contains("store.ui(\"开始记录当前笔记\"") && notesAgentSource.contains(".allowsHitTesting(false)"), "blank note editor cue matches whether a material is selected")
-expect(notesAgentSource.contains("noteFileStatusColor(for message: String)")
-    && notesAgentSource.contains("message.hasPrefix(\"无法\") || message.hasPrefix(\"Could not\") ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk"), "note file success statuses do not render as errors")
-expect(notesAgentSource.contains("store.ui(\"新建空白笔记或当前资料笔记\"")
-    && notesAgentSource.contains("结合\\(store.agentPromptScope)和已选文本片段作答")
-    && !notesAgentSource.contains("结合已选择材料、选区和笔记"), "note and floating agent hints avoid fake current material context")
-expect(!notesAgentSource.contains("Label(store.ui(\"把当前 Markdown 作为笔记\"")
-    && commandPaletteSource.contains("PaletteCommand(title: store.ui(\"作为笔记编辑当前 Markdown\"")
-    && !notesAgentSource.contains("Button(\"写回原 Markdown\")")
-    && !commandPaletteSource.contains("写回当前 Markdown 文件"), "imported markdown conversion is named as editing, not an immediate overwrite")
-expect(workspaceStoreSource.contains("var agentInputPrompt: String")
-    && workspaceStoreSource.contains("if hasSelectionAttachments {\n            return ui(\"输入问题\"")
-    && workspaceStoreSource.contains("? ui(\"问当前课程或材料\"")
-    && workspaceStoreSource.contains(": ui(\"问当前课程或笔记\"")
-    && !notesAgentSource.contains("问当前选区或当前材料")
-    && !workspaceStoreSource.contains("追问已选文本片段"), "agent placeholders stay clean once selected fragments are represented by the attachment pill")
-expect(notesAgentSource.contains("func weibeiFloatingHeaderChrome(appearanceMode: WeiBeiAppearanceMode) -> some View")
-    && notesAgentSource.contains("WeiBeiHeaderHandoffFade(height: 10, opacity: 0.22)")
-    && notesAgentSource.components(separatedBy: ".weibeiFloatingHeaderChrome(appearanceMode: store.appearanceMode)").count == 3, "drawer and corner agent headers share the same light glass chrome")
-expect(notesAgentSource.contains("private struct AgentComposerField")
-    && notesAgentSource.contains("var focused: FocusState<Bool>.Binding")
-    && notesAgentSource.contains("!store.isAskingAgent && !store.agentDraft.trimmingCharacters")
-    && notesAgentSource.components(separatedBy: "AgentComposerField(").count >= 5, "all agent send affordances use the shared composer field and hide while a request is running")
-expect(notesAgentSource.contains("store.agentInputPrompt") && notesAgentSource.contains("prompt: Text(prompt)") && notesAgentSource.contains(".foregroundStyle(WeiBeiTheme.placeholderInk)") && notesAgentSource.contains(".foregroundColor(WeiBeiTheme.ink)"), "agent input placeholder matches context and uses native prompt alignment with readable ink")
-if let panePromptStart = notesAgentSource.range(of: "private var agentPrompt: String")?.lowerBound,
-   let panePromptEnd = notesAgentSource[panePromptStart...].range(of: "\n    }\n\n    private var agentInputTray")?.lowerBound {
-    let panePromptSource = String(notesAgentSource[panePromptStart..<panePromptEnd])
-    expect(panePromptSource.contains("store.agentInputPrompt")
-        && !panePromptSource.contains("selectionContext != nil"), "main agent pane prompt uses the shared attachment-aware placeholder")
-} else {
-    expect(false, "main agent pane prompt is inspectable")
-}
-expect(notesAgentSource.contains("store.hasSelectedMaterial ? store.ui(\"来源\", \"Source\") : store.ui(\"笔记\", \"Note\")")
-    && notesAgentSource.contains("store.selectedMaterialItem.map(store.displayTitle) ?? store.ui(\"当前笔记\", \"Current note\")"), "agent drawer source row avoids fake current material")
-if let drawerStart = notesAgentSource.range(of: "struct AgentDrawerView")?.lowerBound,
-   let cornerStart = notesAgentSource.range(of: "struct CornerAgentView")?.lowerBound {
-    let drawerAgentSource = String(notesAgentSource[drawerStart..<cornerStart])
-    expect(drawerAgentSource.contains("AgentComposerField(")
-        && drawerAgentSource.contains("CompactAgentMessagePreviewList(maxMessages: 2, maxHeight: 168)")
-        && drawerAgentSource.contains("private var drawerPrompt: String")
-        && drawerAgentSource.contains("store.agentInputPrompt")
-        && !drawerAgentSource.contains("return \"问当前选区\"")
-        && drawerAgentSource.contains("prompt: drawerPrompt")
-        && drawerAgentSource.contains("lineLimit: 1...4")
-        && drawerAgentSource.contains("height: 46")
-        && drawerAgentSource.contains("trailingPadding: 44")
-        && drawerAgentSource.contains("sendButtonSize: 34")
-        && drawerAgentSource.contains("sendBottom: 6"), "bottom agent drawer input grows as a compact composer instead of a search strip")
-} else {
-    expect(false, "agent drawer source is readable")
-}
-expect(notesAgentSource.contains(".frame(width: compactHovering ? 244 : 216, alignment: .leading)")
-    && notesAgentSource.contains(".background(WeiBeiTheme.paperRaised.opacity(compactHovering ? 0.42 : 0.0))")
-    && notesAgentSource.contains(".offset(x: compactHovering ? 2 : 0)")
-    && !notesAgentSource.contains("Text(store.quietInsightTitle)\n                    .font(.caption2.weight(.medium))\n                    .foregroundStyle(WeiBeiTheme.secondaryInk)\n                Text(store.quietInsight.body)"), "compact reading insight behaves like a low-distraction margin note instead of a permanent card")
-if let cornerStart = notesAgentSource.range(of: "struct CornerAgentView")?.lowerBound,
-   let selectionStart = notesAgentSource.range(of: "struct FloatingSelectionAgentView")?.lowerBound {
-    let cornerAgentSource = String(notesAgentSource[cornerStart..<selectionStart])
-    expect(!cornerAgentSource.contains("cornerToolButton(")
-        && !cornerAgentSource.contains("整理笔记")
-        && cornerAgentSource.contains("Text(store.ui(\"对话\", \"Chat\"))")
-        && !cornerAgentSource.contains("Text(\"Agent\")")
-        && cornerAgentSource.contains("CompactAgentMessagePreviewList(maxMessages: 2, maxHeight: 138)")
-        && cornerAgentSource.contains("private var agentPrompt: String")
-        && cornerAgentSource.contains("store.agentInputPrompt")
-        && !cornerAgentSource.contains("return \"问当前选区\"")
-        && cornerAgentSource.contains("AgentComposerField(")
-        && cornerAgentSource.contains("prompt: agentPrompt")
-        && cornerAgentSource.contains("lineLimit: 1...4")
-        && cornerAgentSource.contains("height: 44")
-        && cornerAgentSource.contains("trailingPadding: 38")
-        && cornerAgentSource.contains("sendBottom: 5")
-        && cornerAgentSource.contains(".help(store.ui(\"收起对话浮窗\", \"Hide chat popover\"))"), "corner agent stays a lightweight localized prompt surface")
-} else {
-    expect(false, "corner agent source is readable")
-}
-expect(notesAgentSource.contains("private struct CompactAgentMessagePreviewList")
-    && notesAgentSource.contains("Array(store.messages.suffix(maxMessages))")
-    && notesAgentSource.contains("private struct CompactAgentMessagePreviewRow")
-    && notesAgentSource.contains("private var renderedText: AttributedString")
-    && notesAgentSource.contains("(try? AttributedString(markdown: displayText)) ?? AttributedString(displayText)")
-    && notesAgentSource.contains("Text(renderedText)")
-    && notesAgentSource.contains("## Offline Draft")
-    && !notesAgentSource.contains("question was still sent into the chat"), "drawer and corner chat surfaces show recent local/offline replies with the current offline-preview detection")
+expect(notesAgentSource.contains("if store.isAskingAgent && store.agentStreamingText.isEmpty")
+    && notesAgentSource.contains("AgentThinkingIndicator()"), "loading motion appears only while asking and streaming text is still empty")
+// Deleted overlay views (drawer / corner / quiet insight / compact previews) are gone.
+expect(!notesAgentSource.contains("struct AgentDrawerView")
+    && !notesAgentSource.contains("struct CornerAgentView")
+    && !notesAgentSource.contains("struct QuietInsightView")
+    && !notesAgentSource.contains("CompactAgentMessagePreviewList")
+    && !notesAgentSource.contains("CompactAgentMessagePreviewRow"), "deleted agent overlay view types are removed from NotesAgentView")
 if let selectionStart = notesAgentSource.range(of: "struct FloatingSelectionAgentView")?.lowerBound,
    let agentBubbleStart = notesAgentSource.range(of: "private struct AgentBubble")?.lowerBound {
     let floatingSelectionSource = String(notesAgentSource[selectionStart..<agentBubbleStart])
@@ -3500,82 +4073,104 @@ if let selectionStart = notesAgentSource.range(of: "struct FloatingSelectionAgen
         && floatingSelectionSource.contains("WeiBeiTheme.hairline.opacity(0.78)")
         && !floatingSelectionSource.contains("Divider()"), "selection floating agent uses WeiBei hairline separators instead of system dividers")
     expect(floatingSelectionSource.contains("AgentComposerField(")
-        && floatingSelectionSource.contains("prompt: store.ui(\"继续追问\", \"Ask a follow-up\")")
-        && floatingSelectionSource.contains("lineLimit: 1...2")
-        && floatingSelectionSource.contains("height: 34")
-        && floatingSelectionSource.contains("sendButtonSize: 22"), "expanded selection agent keeps a small but usable follow-up composer")
+        && floatingSelectionSource.contains("prompt: store.ui(\"问选区或继续追问\", \"Ask about selection…\")")
+        && floatingSelectionSource.contains("lineLimit: 1...5")
+        && floatingSelectionSource.contains("height: 56")
+        && floatingSelectionSource.contains("sendButtonSize: 26"), "expanded selection agent keeps a usable follow-up composer for full answers")
     expect(floatingSelectionSource.contains("Button(store.ui(\"问\", \"Ask\"))")
         && floatingSelectionSource.contains(".help(store.ui(\"问当前选区\", \"Ask current selection\"))")
         && !floatingSelectionSource.contains("Button(\"问 Agent\")"), "compact selection prompt uses short task language instead of a visible internal agent label")
-    if let explainStart = floatingSelectionSource.range(of: "private func explainSelection()")?.lowerBound,
+    if let openStart = floatingSelectionSource.range(of: "private func openExpandedComposer()")?.lowerBound,
        let openSourceStart = floatingSelectionSource.range(of: "private func openSourceReference()")?.lowerBound {
-        let explainSelectionSource = String(floatingSelectionSource[explainStart..<openSourceStart])
-        expect(explainSelectionSource.contains("store.askSelection()")
-            && !explainSelectionSource.contains("askAgent()"), "selection prompt attaches the current selection and focuses the composer without auto-sending a generated question")
+        let openComposerSource = String(floatingSelectionSource[openStart..<openSourceStart])
+        expect(openComposerSource.contains("store.askSelection()")
+            && !openComposerSource.contains("store.askAgent()")
+            && openComposerSource.contains("keepFloatingSelectionForAnswer = true"), "selection prompt expands the float without auto-sending a generated question")
     } else {
-        expect(false, "floating selection explain action is inspectable")
+        expect(false, "floating selection open-composer action is inspectable")
     }
     expect(floatingSelectionSource.contains("var routesToConversation = false")
         && floatingSelectionSource.contains("private var showsExpandedBody: Bool")
-        && floatingSelectionSource.contains("expanded && !routesToConversation")
+        && floatingSelectionSource.contains("store.keepFloatingSelectionForAnswer")
+        && floatingSelectionSource.contains("isThreadReopen")
         && floatingSelectionSource.contains("if showsExpandedBody")
-        && floatingSelectionSource.contains(".onChange(of: routesToConversation)")
-        && floatingSelectionSource.contains("expanded = !routesToConversation"), "selection prompt stays prompt-only and routes into the open conversation surface when one is already visible")
+        && floatingSelectionSource.contains("store.isAskingAgent")
+        && floatingSelectionSource.contains("selectionTagLabel")
+        && floatingSelectionSource.contains("Never fall back to the global conversation feed")
+        && floatingSelectionSource.contains("AgentMessageMarkdownText(")
+        && floatingSelectionSource.contains("compact: true"), "selection float expands on ask/reopen, isolates threads, and renders compact markdown")
     expect(floatingSelectionSource.contains("message.text.hasPrefix(\"请解释当前已选文本片段\")")
         && floatingSelectionSource.contains("message.text.hasPrefix(\"请解释下面选区\")"), "selection floating feed hides generated selection prompts from both current and legacy drafts")
-    expect(!floatingSelectionSource.contains("accessibilityLabel(Text(\"关闭选区对话\"))")
-        && !floatingSelectionSource.contains(".help(\"关闭选区对话\")")
-        && !floatingSelectionSource.contains("iconButton(\"xmark\", help: \"关闭选区对话\")")
-        && !floatingSelectionSource.contains("收起选区 Agent"), "selection floating agent has no redundant close button; clearing selection or Escape dismisses it")
+    expect(floatingSelectionSource.contains("closeFloatingAgent()")
+        && floatingSelectionSource.contains("togglePinnedFloatingAgent")
+        && floatingSelectionSource.contains("pin.fill")
+        && floatingSelectionSource.contains("Unpin must not dismiss"), "selection floating agent supports pin and explicit close")
 } else {
     expect(false, "selection floating agent source is readable")
 }
-expect(notesAgentSource.contains("private var agentInputTray: some View"), "agent pane uses a dedicated input tray")
+expect(notesAgentSource.contains("private func agentInputTray(wide: Bool, contentWidth: CGFloat)"), "agent pane uses a dedicated input tray")
 expect(notesAgentSource.contains("private var agentContentMaxWidth: CGFloat?")
-    && notesAgentSource.contains("private var agentContentMaxWidth: CGFloat? {\n        760\n    }")
+    && notesAgentSource.contains("private enum AgentChatLayoutMetrics")
+    && notesAgentSource.contains("static let wideComposerHeight: CGFloat = 148")
+    && notesAgentSource.contains("static let compactComposerHeight: CGFloat = 52")
+    && notesAgentSource.contains("layout == .immersiveConversation")
     && notesAgentSource.contains("let isUser = message.role == .user")
-    && notesAgentSource.contains("let readingWidth = max(contentWidth - 28, 240)")
-    && notesAgentSource.contains("let readingLeadingInset = max((geometryWidth - contentWidth) / 2, 0)")
-    && notesAgentSource.contains(".frame(maxWidth: readingWidth, alignment: isUser ? .trailing : .leading)")
+    // Shared reading column helper — messages, streaming, and loading status share the same inset.
+    && notesAgentSource.contains("private func agentReadingColumn")
+    && notesAgentSource.contains("let limit: CGFloat = canvasWide ? 540 : 500")
+    && notesAgentSource.contains("let readingLeadingInset = max((geometryWidth - readingWidth) / 2, 0)")
     && notesAgentSource.contains(".padding(.leading, readingLeadingInset)")
     && notesAgentSource.contains(".frame(maxWidth: .infinity, alignment: .leading)")
+    && notesAgentSource.contains("AgentThinkingIndicator()")
     && !notesAgentSource.contains("maxWidth: isUser ? .infinity : readingWidth")
     && notesAgentSource.contains("private var userBubbleFill: Color")
     && notesAgentSource.contains("private var userBubbleStroke: Color")
     && notesAgentSource.contains(".frame(maxWidth: 520, alignment: .trailing)")
-    && notesAgentSource.contains(".frame(width: geometry.size.width, alignment: .topLeading)")
-    && notesAgentSource.contains(".frame(minHeight: geometry.size.height, alignment: .topLeading)"), "agent user and assistant turns share one centered reading column; user bubbles trail inside the column")
+    && notesAgentSource.contains("showsContentRail")
+    && notesAgentSource.contains("!wide && store.layout.allowsRailOnlyPanes")
+    && notesAgentSource.contains("AgentCitationParser")
+    && notesAgentSource.contains("AgentCitationTagRow")
+    && workspaceStoreSource.contains("func openAgentCitation")
+    && workspaceStoreSource.contains("resolveStudyItem(matchingCitationTitle:")
+    && workspaceStoreSource.contains("keepFloatingSelectionForAnswer")
+    && workspaceStoreSource.contains("SelectionAskThread"), "agent uses one standard centered reading column; immersive chat is 1600×148, three-pane is 560×52, selection-ask float keeps answers")
 expect(notesAgentSource.contains("private let agentBottomAnchorID = \"agentConversationBottom\"")
     && notesAgentSource.contains(".id(agentBottomAnchorID)")
     && notesAgentSource.contains("proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)")
     && !notesAgentSource.contains("AgentScrollBottomPreferenceKey")
     && !notesAgentSource.contains("onPreferenceChange(AgentScrollBottomPreferenceKey"), "agent conversation uses a stable bottom anchor without a geometry preference loop")
 expect(notesAgentSource.contains("private var agentInputMaxWidth: CGFloat?")
-    && notesAgentSource.contains("private var agentInputMaxWidth: CGFloat? {\n        680\n    }")
-    && notesAgentSource.contains(".frame(maxWidth: agentInputMaxWidth)"), "agent composer shares the narrowed reading axis across layouts")
+    && notesAgentSource.contains("AgentChatLayoutMetrics.contentWidth(")
+    && notesAgentSource.contains("composerFieldHeight")
+    && notesAgentSource.contains("static let wideComposerHeight: CGFloat = 148")
+    && notesAgentSource.contains(".frame(width: contentWidth, height: fieldHeight, alignment: .bottom)")
+    && notesAgentSource.contains("agent-input-tray-wide"), "agent composer matches reading column width with a fixed immersive height")
 expect(notesAgentSource.contains(".contentShape(Rectangle())")
     && notesAgentSource.contains("focused.wrappedValue = true")
-    && notesAgentSource.components(separatedBy: "AgentComposerField(").count >= 5
+    && notesAgentSource.components(separatedBy: "AgentComposerField(").count >= 3
     && notesAgentSource.components(separatedBy: "draftFocused = true").count >= 2, "agent composer surfaces focus when tapping the visible input tray, not only the exact text glyph")
 expect(notesAgentSource.contains("ScrollView(showsIndicators: true)")
     && notesAgentSource.components(separatedBy: "ScrollView(showsIndicators: false)").count >= 3
-    && notesAgentSource.contains("onMarkdownHeightChange: message.id == store.messages.last?.id")
-    && notesAgentSource.contains("onContentHeightChange: onMarkdownHeightChange"), "agent conversation keeps a light scroll affordance and follows the last Markdown answer after it finishes measuring")
+    // Hang-proof: follow latest on message count when agentFollowsLatest,
+    // not via per-message WKWebView height measurement or GeometryReader parent thrash.
+    && notesAgentSource.contains("scrollAgentToBottom(proxy)")
+    && notesAgentSource.contains("guard agentFollowsLatest else { return }")
+    && notesAgentSource.contains("onChange(of: store.messages.count)")
+    && notesAgentSource.contains("AgentPaneWidthKey")
+    && !notesAgentSource.contains("GeometryReader { paneGeometry in")
+    && !notesAgentSource.contains("onMarkdownHeightChange: message.id == store.messages.last?.id"), "agent conversation keeps a light scroll affordance and follows the latest turn without WebView height thrash")
 expect(notesAgentSource.contains("WeiBeiGlassHeaderBackground(") && notesAgentSource.contains("WeiBeiTheme.glassTint.opacity(0.34)"), "agent input tray uses paper glass fade instead of a hard white strip")
 expect(notesAgentSource.contains("WeiBeiTheme.ink.opacity(0.42), WeiBeiTheme.ink.opacity(0.78)")
     && !notesAgentSource.contains(".black.opacity(0.72), .black"), "agent input tray fade mask uses semantic ink instead of a fixed black ramp")
-expect(notesAgentSource.contains("lineLimit: 1...6")
-    && notesAgentSource.contains(".fixedSize(horizontal: false, vertical: true)")
+expect(notesAgentSource.contains("lineLimit: wide ? 1...12 : 1...6")
     && notesAgentSource.contains(".padding(.trailing, showsControl ? trailingPadding : 0)")
-    && notesAgentSource.contains(".frame(minHeight: 56, alignment: .bottom)")
-    && notesAgentSource.contains(".weibeiInputSurface(active: focused.wrappedValue, height: height, horizontalPadding: horizontalPadding)")
-    && notesAgentSource.contains("height: 56")
-    && notesAgentSource.contains("horizontalPadding: 14")
+    && notesAgentSource.contains(".frame(width: contentWidth, height: fieldHeight, alignment: .bottom)")
+    && notesAgentSource.contains("height: fieldHeight")
     && notesAgentSource.contains("prompt: agentPrompt")
     && notesAgentSource.contains("WeiBeiIconButtonStyle(size: sendButtonSize, prominence: store.isAskingAgent ? .neutral : .primary)")
-    && notesAgentSource.contains("sendButtonSize: 30")
-    && notesAgentSource.contains("sendTrailing: 10")
-    && notesAgentSource.contains("sendBottom: 10"), "main agent input grows upward like a real chat composer and keeps send visually inside the field edge")
+    && notesAgentSource.contains("sendButtonSize: wide ? 38 : 28")
+    && notesAgentSource.contains("sendBottom: wide ? 24 : 8")
+    && notesAgentSource.contains("let locksHeight = height >= 72"), "main agent input uses a fixed-height composer in wide chat and keeps send inside the field edge")
 expect(notesAgentSource.contains("Image(systemName: store.isAskingAgent ? \"stop.fill\" : \"paperplane.fill\")")
     && notesAgentSource.contains("store.isAskingAgent ? store.cancelAgentRequest() : submit()")
     && !notesAgentSource.contains("Image(systemName: \"arrow.up\")")
@@ -3588,11 +4183,14 @@ expect(!notesAgentSource.contains("agentToolButton(") && !notesAgentSource.conta
 expect(notesAgentSource.contains("LazyVGrid(columns: starterChipColumns")
     && notesAgentSource.contains("GridItem(.adaptive(minimum: 56)")
     && !notesAgentSource.contains("HStack(spacing: 8) {\n                if store.hasSelectedMaterial {\n                    starterChip(\"梳理材料\""), "agent empty-state starter actions adapt in narrow panes instead of squeezing into one row")
-expect(notesAgentSource.contains("private func iconButton(_ systemName: String, help: String") && notesAgentSource.contains(".accessibilityLabel(Text(help))"), "floating icon buttons carry semantic labels")
 expect(notesAgentSource.contains("private func togglePinnedFloatingAgent()")
-    && notesAgentSource.contains("if store.pinnedFloatingAgent {\n            dragOffset = .zero\n            settledOffset = .zero\n        }")
-    && !notesAgentSource.contains("iconButton(\"xmark\", help: \"关闭选区对话\")"), "unpinning the selection agent returns it to the current selection anchor without showing a redundant close button")
-expect(notesAgentSource.contains(".help(store.ui(\"收起对话浮窗\", \"Hide chat popover\"))") && !notesAgentSource.contains(".help(\"收起右下角 Agent\")"), "corner agent close button explains its action without engineering labels")
+    && notesAgentSource.contains("store.pinnedFloatingAgent = next")
+    && notesAgentSource.contains("store.keepFloatingSelectionForAnswer = true")
+    && notesAgentSource.contains("pin.fill")
+    && notesAgentSource.contains("accessibilityLabel(Text(store.pinnedFloatingAgent")
+    && !notesAgentSource.contains("iconButton(\"xmark\", help: \"关闭选区对话\")"), "selection float pin control keeps the panel open without a redundant close-button helper")
+expect(!notesAgentSource.contains(".help(\"收起右下角 Agent\")")
+    && !notesAgentSource.contains("收起对话浮窗"), "deleted corner agent close affordance is gone and no engineering labels remain")
 expect(commandPaletteSource.contains("插入行内公式") && commandPaletteSource.contains("${{WEIBEI_SELECT_START}}x_i = \\\\frac{a}{b}{{WEIBEI_SELECT_END}}$") && commandPaletteSource.contains("插入矩阵公式"), "markdown command templates keep an editable landing point")
 expect(commandPaletteSource.contains("插入 Callout") && commandPaletteSource.contains("> [!note] 标题\\n>\\n> {{WEIBEI_SELECT_START}}内容{{WEIBEI_SELECT_END}}"), "callout insertion separates title from body")
 expect(commandPaletteSource.contains("private func markdownInsertCommand") && commandPaletteSource.contains("animation: WeiBeiMotion.layout"), "markdown insert commands use layout motion when revealing writing")
@@ -3629,12 +4227,25 @@ expect(SelectionAnchorCoordinate.y(20, contentHeight: 100, contentViewIsFlipped:
 expect(SelectionAnchorCoordinate.y(20, contentHeight: 100, contentViewIsFlipped: false) == 80, "non-flipped content view converts selection y")
 expect(!SelectionFloatingAgentPlacement.isVisible(surface: .selectionFloat, hasSelection: true, hasAnchor: false, pinned: false), "selection agent waits for anchor before floating")
 expect(SelectionFloatingAgentPlacement.isVisible(surface: .selectionFloat, hasSelection: true, hasAnchor: true, pinned: false), "selection agent appears when anchored")
-expect(SelectionFloatingAgentPlacement.expandedHalfWidth == 156 && SelectionFloatingAgentPlacement.compactHalfWidth == 82, "selection agent placement constants match the compact and expanded surfaces")
+expect(SelectionFloatingAgentPlacement.isVisible(surface: .selectionFloat, hasSelection: true, hasAnchor: false, pinned: false, keepOpen: true), "keepOpen floats stay visible without a live drag anchor")
+expect(SelectionFloatingAgentPlacement.isVisible(surface: .selectionFloat, hasSelection: false, hasAnchor: false, pinned: true), "pinned floats stay visible without selection")
+if let reopenStart = workspaceStoreSource.range(of: "func openSelectionAskThread")?.lowerBound,
+   let reuseStart = workspaceStoreSource.range(of: "func beginOrReuseSelectionAskThread")?.lowerBound,
+   reopenStart < reuseStart {
+    let reopenSource = String(workspaceStoreSource[reopenStart..<reuseStart])
+    expect(reopenSource.contains("keepFloatingSelectionForAnswer = true")
+        && reopenSource.contains("anchor: CGPoint?")
+        && !reopenSource.contains("pinnedFloatingAgent = true"), "reopening an asked thread expands without force-pinning and can dock to an underline anchor")
+} else {
+    expect(false, "openSelectionAskThread source is readable")
+}
+expect(SelectionFloatingAgentPlacement.expandedHalfWidth == 230 && SelectionFloatingAgentPlacement.compactHalfWidth == 82, "selection agent placement constants match the compact and expanded surfaces")
 expect(contentViewSource.contains("SelectionFloatingAgentPlacement.expandedHalfWidth")
     && contentViewSource.contains("SelectionFloatingAgentPlacement.compactHalfWidth")
     && !contentViewSource.contains("surfaceHalfWidth: floatingAgentExpanded ? 170 : 82"), "selection agent placement uses shared width constants instead of duplicate magic numbers")
-expect(notesAgentSource.contains(".frame(width: CGFloat(SelectionFloatingAgentPlacement.expandedHalfWidth * 2), alignment: .leading)")
-    && !notesAgentSource.contains(".frame(width: 312, alignment: .leading)"), "expanded selection agent visual width matches placement half-width")
+expect(notesAgentSource.contains(".frame(width: panelWidth, alignment: .leading)")
+    && notesAgentSource.contains("SelectionFloatingAgentPlacement.expandedHalfWidth * 2")
+    && !notesAgentSource.contains(".frame(width: 312, alignment: .leading)"), "expanded selection agent visual width matches placement half-width and stays resizable")
 let floatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 320, y: 200),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800)
@@ -3644,8 +4255,8 @@ let topInsetFloatingPoint = SelectionFloatingAgentPlacement.position(
     canvas: FloatingAgentCoordinate(x: 1200, y: 800),
     topInset: 42
 )
-expect(floatingPoint.x == 486 && floatingPoint.y == 208, "selection agent opens close beside the text anchor")
-expect(topInsetFloatingPoint.x == 486 && topInsetFloatingPoint.y == 166, "selection agent compensates top bar coordinate space")
+expect(floatingPoint.x == 562 && floatingPoint.y == 245.5, "selection agent opens close beside the text anchor")
+expect(topInsetFloatingPoint.x == 562 && topInsetFloatingPoint.y == 228, "selection agent compensates top bar coordinate space")
 let compactEdgeFloatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 12, y: 200),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800),
@@ -3658,13 +4269,13 @@ let compactCenterFloatingPoint = SelectionFloatingAgentPlacement.position(
     surfaceHalfWidth: SelectionFloatingAgentPlacement.compactHalfWidth,
     prefersAnchorCenter: true
 )
-expect(compactCenterFloatingPoint.x == 320 && compactCenterFloatingPoint.y == 208, "selection prompt centers on the text anchor when compact")
-expect(compactEdgeFloatingPoint.x == 100 && compactEdgeFloatingPoint.y == 208, "selection prompt clamps only at the edge when compact")
+expect(compactCenterFloatingPoint.x == 320 && compactCenterFloatingPoint.y == 210, "selection prompt centers on the text anchor when compact")
+expect(compactEdgeFloatingPoint.x == 100 && compactEdgeFloatingPoint.y == 210, "selection prompt clamps only at the edge when compact")
 let edgeFloatingPoint = SelectionFloatingAgentPlacement.position(
     anchor: FloatingAgentCoordinate(x: 1160, y: 760),
     canvas: FloatingAgentCoordinate(x: 1200, y: 800)
 )
-expect(edgeFloatingPoint.x == 994 && edgeFloatingPoint.y == 708, "selection agent flips to the left of text near the window edge")
+expect(edgeFloatingPoint.x == 918 && edgeFloatingPoint.y == 572, "selection agent flips to the left of text near the window edge")
 expect(AgentMessage(role: .assistant, text: "整理完成", source: nil).isUsableAgentAnswer, "usable agent answer")
 expect(!AgentMessage(role: .assistant, text: "未配置密钥。", source: nil).isUsableAgentAnswer, "credential setup message is not writable")
 expect(!AgentMessage(role: .assistant, text: "未配置 OPENAI_API_KEY。", source: nil).isUsableAgentAnswer, "api key setup message is not writable")
@@ -3672,6 +4283,7 @@ expect(!AgentMessage(role: .assistant, text: "未配置 OPENAI_API_KEY 或钥匙
 expect(AgentMessage(role: .assistant, text: offlineChinesePreview, source: nil).isUsableAgentAnswer, "offline draft is visible in chat and writable to notes")
 expect(AgentMessage(role: .assistant, text: offlineEnglishPreview, source: nil).isUsableAgentAnswer, "English offline draft is visible in chat and writable to notes")
 expect(!AgentMessage(role: .assistant, text: "请求失败：网络错误", source: nil).isUsableAgentAnswer, "agent error is not writable")
+expect(!AgentMessage(role: .assistant, text: "请求失败\n可直接重试。", source: nil).isUsableAgentAnswer, "generic failure header without colon is not writable")
 expect(!AgentMessage(role: .assistant, text: "Agent 请求失败：网络错误", source: nil).isUsableAgentAnswer, "legacy agent error is not writable")
 
 let importedMarkdown = StudyItem(id: "file:/tmp/note.md", title: "note", subtitle: "note.md", kind: .markdown, urlPath: "/tmp/note.md", isSample: false)
@@ -3801,15 +4413,58 @@ expect(courseSummary.materialCount == 3
     && courseSummary.studySessionCount == 1
     && courseSummary.unresolvedConfusionCount == 2, "course workspace summary reports only durable facts from the imported course")
 
-let persisted = PersistedWorkspace(noteSourceLinks: [oldestLink], noteSourceLinksMigrationVersion: 1, threePaneOrder: [.agent, .reader, .notes], noteRenderMode: .preview, showLibrary: false, showReader: false, showAgent: true, showNotes: false, showRightPane: true, showDailyInspiration: false, adaptImportedDocumentColors: false)
+let courseA = Course(
+    id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
+    title: "货币金融学",
+    colorIndex: 0,
+    sourceRootPath: "/Courses/Money"
+)
+let courseB = Course(
+    id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
+    title: "经济思想史",
+    colorIndex: 1,
+    sourceRootPath: "/Courses/History"
+)
+var courseMemberships = CourseItemMemberships()
+courseMemberships.assign(itemIDs: Set(["material-a", "note-a"]), to: courseA.id)
+courseMemberships.assign(itemIDs: Set(["material-a", "material-b"]), to: courseB.id)
+expect(Set(courseMemberships.courseIDs(for: "material-a")) == Set([courseA.id, courseB.id])
+    && Set(courseMemberships.itemIDs(in: courseA.id)) == Set(["material-a", "note-a"])
+    && Set(courseMemberships.itemIDs(in: courseB.id)) == Set(["material-a", "material-b"]), "one item can belong to multiple real courses without duplicating the item")
+courseMemberships.replaceCourses(for: "note-a", courseIDs: Set([courseB.id]))
+expect(courseMemberships.courseIDs(for: "note-a") == [courseB.id]
+    && !courseMemberships.itemIDs(in: courseA.id).contains("note-a"), "changing course membership removes only the replaced item-course pair")
+
+let persisted = PersistedWorkspace(
+    courses: [courseA, courseB],
+    courseItemMemberships: courseMemberships.values,
+    activeCourseID: courseB.id,
+    noteSourceLinks: [oldestLink],
+    noteSourceLinksMigrationVersion: 1,
+    threePaneOrder: [.agent, .reader, .notes],
+    noteRenderMode: .preview,
+    showLibrary: false,
+    showReader: false,
+    showAgent: true,
+    showNotes: false,
+    showRightPane: true,
+    showDailyInspiration: false,
+    adaptImportedDocumentColors: false
+)
 let restored = try JSONDecoder().decode(PersistedWorkspace.self, from: try JSONEncoder().encode(persisted))
 expect(restored.showLibrary == false && restored.showReader == false && restored.showAgent == true && restored.showNotes == false && restored.showRightPane == true, "pane visibility state persists")
+expect(restored.courses == [courseA, courseB]
+    && restored.courseItemMemberships == courseMemberships.values
+    && restored.activeCourseID == courseB.id, "courses, many-to-many membership, and the active course persist together")
 expect(restored.showDailyInspiration == false, "daily inspiration can be disabled and restored from workspace persistence")
 let reenabledInspiration = try JSONDecoder().decode(PersistedWorkspace.self, from: try JSONEncoder().encode(PersistedWorkspace(showDailyInspiration: true)))
 expect(reenabledInspiration.showDailyInspiration == true, "daily inspiration can be re-enabled and restored from workspace persistence")
 let legacyWorkspace = try JSONDecoder().decode(PersistedWorkspace.self, from: Data(#"{"importedItems":[],"notesByItemID":{}}"#.utf8))
 expect(legacyWorkspace.showDailyInspiration == nil
-    && workspaceStoreSource.contains("showDailyInspiration = snapshot.showDailyInspiration ?? true"), "workspace snapshots created before daily inspiration remain decodable and default to enabled")
+    && legacyWorkspace.courses == nil
+    && legacyWorkspace.courseItemMemberships == nil
+    && legacyWorkspace.activeCourseID == nil
+    && workspaceStoreSource.contains("showDailyInspiration = snapshot.showDailyInspiration ?? true"), "older workspace snapshots remain decodable without inventing a fake course")
 expect(restored.adaptImportedDocumentColors == false
     && workspaceStoreSource.contains("adaptImportedDocumentColors = snapshot.adaptImportedDocumentColors ?? true")
     && workspaceStoreSource.contains("adaptImportedDocumentColors: adaptImportedDocumentColors"), "imported-document color adaptation persists while old workspaces default to adapted reading")

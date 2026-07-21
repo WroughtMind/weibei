@@ -3,12 +3,12 @@ import SwiftUI
 import WeiBeiCore
 
 struct ContentView: View {
+    /// Intentionally does NOT observe `libraryDrawer` — drawer open must not rebuild this body
+    /// (reader / agent / notes live here).
     @EnvironmentObject private var store: WorkspaceStore
     @FocusState private var focusedPane: PaneFocus?
     @FocusState private var topSearchFocused: Bool
-    @SceneStorage("libraryPaneWidth") private var libraryPaneWidthStorage: Double = 292
     @State private var floatingAgentExpanded = false
-    @State private var libraryDragStartWidth: CGFloat?
     @State private var windowIsFullScreen = false
 
     var body: some View {
@@ -22,25 +22,19 @@ struct ContentView: View {
                     )
 
                     ZStack(alignment: .top) {
-                        HStack(spacing: 0) {
-                            if store.showLibrary {
-                                SidebarView()
-                                    .frame(width: libraryWidth(in: geometry.size.width))
-                                    .focused($focusedPane, equals: .library)
-                                    .transition(WeiBeiTransition.sidePanel)
-                                    .zIndex(2)
+                        LayoutContentView()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background(WeiBeiTheme.paper)
+                            // Only cross-fade immersive ↔ document families. Pane show/hide inside
+                            // the document family is owned by AppKit StableDocumentWorkspace animation
+                            // — a second SwiftUI layout animation here made toggles feel split/janky.
+                            .animation(WeiBeiMotion.layout, value: store.layout.isImmersiveFamily)
 
-                                libraryResizeHandle(totalWidth: geometry.size.width)
-                                    .transition(.opacity)
-                            }
-
-                            LayoutContentView()
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        // AppKit drawer: slide starts immediately; sidebar not store-synced while closed.
+                        CourseLibraryDrawerLayer {
+                            store.toggleLibrary()
                         }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(WeiBeiTheme.paper)
-                        .animation(WeiBeiMotion.layout, value: store.showLibrary)
-                        .animation(WeiBeiMotion.layout, value: store.layout)
+                        .zIndex(35)
 
                         if store.commandPalettePresented {
                             CommandPaletteView()
@@ -56,6 +50,23 @@ struct ContentView: View {
                                 .position(floatingAgentPosition(in: geometry.size))
                                 .transition(WeiBeiTransition.floating)
                                 .zIndex(30)
+                                .onChange(of: store.keepFloatingSelectionForAnswer) { _, keep in
+                                    // Expand only when an intentional keep-open is requested
+                                    // (点「问」/回访红线/顶部已问), not on bare selection.
+                                    if keep { floatingAgentExpanded = true }
+                                }
+                                .onChange(of: store.activeSelectionAskThreadID) { _, id in
+                                    if id != nil, store.keepFloatingSelectionForAnswer {
+                                        floatingAgentExpanded = true
+                                    }
+                                }
+                                .onChange(of: store.selectionContext?.id) { _, _ in
+                                    // Live reselection collapses to capsule; reopen-with-keepOpen must stay expanded.
+                                    guard !store.pinnedFloatingAgent,
+                                          !store.isAskingAgent,
+                                          !store.keepFloatingSelectionForAnswer else { return }
+                                    floatingAgentExpanded = false
+                                }
                         }
 
                     }
@@ -74,18 +85,17 @@ struct ContentView: View {
                 }
             }
             .background {
-                if !store.courseWorkspacePresented && showsGlobalFloatingAgent {
-                    EscapeKeyBridge {
-                        store.dismissFloatingSelectionAgent()
-                    }
-                }
-
-                if !store.courseWorkspacePresented && store.showReaderSearch {
-                    EscapeKeyBridge {
+                LibraryAwareEscapeBridge(
+                    courseWorkspacePresented: store.courseWorkspacePresented,
+                    showReaderSearch: store.showReaderSearch,
+                    showsGlobalFloatingAgent: showsGlobalFloatingAgent,
+                    onToggleLibrary: { store.toggleLibrary() },
+                    onDismissFloatingAgent: { store.dismissFloatingSelectionAgent() },
+                    onHideReaderSearch: {
                         store.hideReaderSearch()
                         topSearchFocused = false
                     }
-                }
+                )
             }
         }
         .background(WindowFullScreenReader(isFullScreen: $windowIsFullScreen))
@@ -99,6 +109,7 @@ struct ContentView: View {
             focusedPane = store.focusedPane
         }
         .animation(WeiBeiMotion.appearance, value: store.appearanceMode)
+        // showLibrary animation is scoped to the drawer ZStack only (above).
         .animation(WeiBeiMotion.panel, value: store.courseWorkspacePresented)
     }
 
@@ -106,9 +117,10 @@ struct ContentView: View {
         return !store.courseWorkspacePresented
             && store.canShowSelectionPromptSurface && SelectionFloatingAgentPlacement.isVisible(
             surface: store.agentSurface,
-            hasSelection: store.selectionContext != nil,
+            hasSelection: store.selectionContext != nil || store.keepFloatingSelectionForAnswer,
             hasAnchor: store.selectionAnchor != nil,
-            pinned: store.pinnedFloatingAgent
+            pinned: store.pinnedFloatingAgent,
+            keepOpen: store.keepFloatingSelectionForAnswer
         )
     }
 
@@ -130,59 +142,7 @@ struct ContentView: View {
     }
 
     private var topBarHeight: CGFloat {
-        store.topBarVariant.height
-    }
-
-    private func libraryWidth(in totalWidth: CGFloat) -> CGFloat {
-        min(libraryMaximumWidth(in: totalWidth), max(libraryMinimumWidth, CGFloat(libraryPaneWidthStorage)))
-    }
-
-    private func libraryMaximumWidth(in totalWidth: CGFloat) -> CGFloat {
-        max(libraryMinimumWidth, min(430, totalWidth - WeiBeiSplitView.thickness - minimumContentWidthWithLibrary))
-    }
-
-    private var libraryMinimumWidth: CGFloat {
-        220
-    }
-
-    private var minimumContentWidthWithLibrary: CGFloat {
-        switch store.layout {
-        case .documentAgentNotes, .documentNotesAgent:
-            store.showRightPane ? 780 : 560
-        case .documentNotesSplit:
-            store.showRightPane ? 680 : 560
-        case .immersiveConversation, .immersiveWriting:
-            720
-        case .immersiveReading:
-            560
-        }
-    }
-
-    private func libraryResizeHandle(totalWidth: CGFloat) -> some View {
-        Rectangle()
-            .fill(Color.clear)
-            .frame(width: WeiBeiSplitView.thickness)
-            .overlay {
-                Rectangle()
-                    .fill(WeiBeiTheme.hairline.opacity(0.34))
-                    .frame(width: 1)
-            }
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        if libraryDragStartWidth == nil {
-                            libraryDragStartWidth = libraryWidth(in: totalWidth)
-                        }
-                        let startWidth = libraryDragStartWidth ?? libraryWidth(in: totalWidth)
-                        let nextWidth = startWidth + value.translation.width
-                        libraryPaneWidthStorage = Double(min(libraryMaximumWidth(in: totalWidth), max(220, nextWidth)))
-                    }
-                    .onEnded { _ in
-                        libraryDragStartWidth = nil
-                    }
-            )
-            .help(store.ui("拖动调整课程目录宽度", "Drag to resize the course index"))
+        WeiBeiMetric.topBarHeight
     }
 
 }
@@ -251,8 +211,46 @@ private struct WindowFullScreenReader: NSViewRepresentable {
     }
 }
 
+/// AppKit course drawer layer. Observes only `LibraryDrawerState` (+ store for content).
+private struct CourseLibraryDrawerLayer: View {
+    @EnvironmentObject private var libraryDrawer: LibraryDrawerState
+    let dismiss: () -> Void
+
+    var body: some View {
+        CourseDrawerHost(drawer: libraryDrawer, onDismiss: dismiss)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .allowsHitTesting(libraryDrawer.isOpen)
+            .accessibilityHidden(!libraryDrawer.isOpen)
+    }
+}
+
+/// Escape routing that can observe drawer open without forcing ContentView to do so.
+private struct LibraryAwareEscapeBridge: View {
+    @EnvironmentObject private var libraryDrawer: LibraryDrawerState
+    let courseWorkspacePresented: Bool
+    let showReaderSearch: Bool
+    let showsGlobalFloatingAgent: Bool
+    let onToggleLibrary: () -> Void
+    let onDismissFloatingAgent: () -> Void
+    let onHideReaderSearch: () -> Void
+
+    var body: some View {
+        Group {
+            if !courseWorkspacePresented && libraryDrawer.isOpen {
+                EscapeKeyBridge(onEscape: onToggleLibrary)
+            } else if !courseWorkspacePresented && !libraryDrawer.isOpen && showsGlobalFloatingAgent {
+                EscapeKeyBridge(onEscape: onDismissFloatingAgent)
+            } else if !courseWorkspacePresented && !libraryDrawer.isOpen && showReaderSearch {
+                EscapeKeyBridge(onEscape: onHideReaderSearch)
+            }
+        }
+    }
+}
+
 private struct UnifiedTopBarView: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @EnvironmentObject private var libraryDrawer: LibraryDrawerState
+    @Environment(\.openSettings) private var openSettings
     let isImmersiveLayout: Bool
     let isFullScreen: Bool
     var searchFocused: FocusState<Bool>.Binding
@@ -310,6 +308,11 @@ private struct UnifiedTopBarView: View {
                 }
             }
 
+            // Full Settings window (agent keys, appearance, data) — not the old mini menu.
+            topIconButton("slider.horizontal.3", help: store.ui("打开设置", "Open Settings")) {
+                openSettings()
+            }
+
             Spacer()
                 .frame(width: 8)
         }
@@ -339,15 +342,10 @@ private struct UnifiedTopBarView: View {
         }
         .animation(WeiBeiMotion.panel, value: store.showReaderSearch)
         .animation(WeiBeiMotion.layout, value: isImmersiveLayout)
-        .animation(WeiBeiMotion.layout, value: store.topBarVariant)
-    }
-
-    private var variant: TopBarVariant {
-        store.topBarVariant
     }
 
     private var barHeight: CGFloat {
-        variant.height
+        WeiBeiMetric.topBarHeight
     }
 
     private var leftInset: CGFloat {
@@ -355,27 +353,11 @@ private struct UnifiedTopBarView: View {
     }
 
     private var topBarSpacing: CGFloat {
-        switch variant {
-        case .compact, .glyph:
-            return 7
-        case .reader:
-            return 8
-        case .balanced:
-            return 9
-        case .wide:
-            return 11
-        }
+        7
     }
 
     private var controlHeight: CGFloat {
-        switch variant {
-        case .compact, .glyph:
-            return 28
-        case .wide:
-            return 28
-        default:
-            return 26
-        }
+        28
     }
 
     private var shouldShowSearchAction: Bool {
@@ -388,21 +370,6 @@ private struct UnifiedTopBarView: View {
 
     private var hasReaderScopedTopActions: Bool {
         store.isPaneToggleActive(.reader)
-    }
-
-    private var shortLayoutLabel: String {
-        switch store.layout {
-        case .documentAgentNotes, .documentNotesAgent:
-            return store.threePaneOrderLabel(compact: true)
-        case .documentNotesSplit:
-            return store.ui("文笔对半", "Half Split")
-        case .immersiveReading:
-            return store.ui("阅读", "Reading")
-        case .immersiveConversation:
-            return store.ui("对话", "Chat")
-        case .immersiveWriting:
-            return store.ui("写作", "Writing")
-        }
     }
 
     private var primaryText: Color {
@@ -418,7 +385,7 @@ private struct UnifiedTopBarView: View {
     }
 
     private var controlFill: Color {
-        WeiBeiTheme.paperInset.opacity(variant == .glyph ? 0.30 : 0.38)
+        WeiBeiTheme.paperInset.opacity(0.38)
     }
 
     private var topHighlight: Color {
@@ -433,33 +400,11 @@ private struct UnifiedTopBarView: View {
     }
 
     private var backgroundPaperOpacity: Double {
-        switch variant {
-        case .glyph:
-            return 0.78
-        case .compact:
-            return 0.80
-        case .reader:
-            return 0.84
-        case .balanced:
-            return 0.82
-        case .wide:
-            return 0.86
-        }
+        0.80
     }
 
     private var backgroundMaterialOpacity: Double {
-        switch variant {
-        case .glyph:
-            return 0.10
-        case .compact:
-            return 0.09
-        case .reader:
-            return 0.08
-        case .balanced:
-            return 0.09
-        case .wide:
-            return 0.08
-        }
+        0.09
     }
 
     @ViewBuilder
@@ -470,54 +415,16 @@ private struct UnifiedTopBarView: View {
             navigationButtons
 
             appearanceToggleButton
-
-            settingsMenu
         }
     }
 
     @ViewBuilder
     private var brandBlock: some View {
-        switch variant {
-        case .glyph:
-            HStack(spacing: 5) {
-                Image(systemName: "seal")
-                    .font(.system(size: 13.5, weight: .semibold))
-                    .foregroundStyle(primaryText.opacity(0.82))
-                Text(store.brandLatinName)
-                    .font(WeiBeiTypography.englishBrandFont(size: 14.2, weight: .semibold))
-                    .tracking(0.15)
-                    .foregroundStyle(primaryText)
-            }
-            .frame(width: 78, height: controlHeight, alignment: .leading)
-        case .compact:
-            Text(store.brandLatinName)
-                .font(WeiBeiTypography.englishBrandFont(size: 15.5, weight: .semibold))
-                .tracking(0.15)
-                .foregroundStyle(primaryText)
-                .frame(width: 62, alignment: .leading)
-        case .reader:
-            VStack(alignment: .leading, spacing: 0) {
-                Text(store.brandLatinName)
-                    .font(WeiBeiTypography.englishBrandFont(size: 14, weight: .semibold))
-                    .tracking(0.15)
-                    .foregroundStyle(secondaryText)
-                Text(shortLayoutLabel)
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(tertiaryText)
-            }
-            .frame(width: 56, alignment: .leading)
-        case .balanced, .wide:
-            VStack(alignment: .leading, spacing: 0) {
-                Text(store.brandLatinName)
-                    .font(WeiBeiTypography.englishBrandFont(size: variant == .wide ? 17 : 16, weight: .semibold))
-                    .tracking(0.15)
-                    .foregroundStyle(primaryText)
-                Text(shortLayoutLabel)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(tertiaryText)
-            }
-            .frame(width: variant == .wide ? 96 : 86, alignment: .leading)
-        }
+        Text(store.brandLatinName)
+            .font(WeiBeiTypography.englishBrandFont(size: 15.5, weight: .semibold))
+            .tracking(0.15)
+            .foregroundStyle(primaryText)
+            .frame(width: 62, alignment: .leading)
     }
 
     @ViewBuilder
@@ -588,10 +495,12 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var libraryButton: some View {
-        topIconButton("sidebar.left", help: store.showLibrary ? store.ui("收起课程目录", "Hide course index") : store.ui("打开课程目录", "Show course index"), active: store.showLibrary) {
-            withAnimation(WeiBeiMotion.layout) {
-                store.toggleLibrary()
-            }
+        topIconButton(
+            "sidebar.left",
+            help: libraryDrawer.isOpen ? store.ui("收起课程抽屉", "Hide course drawer") : store.ui("打开课程抽屉", "Show course drawer"),
+            active: libraryDrawer.isOpen
+        ) {
+            store.toggleLibrary()
         }
     }
 
@@ -608,77 +517,6 @@ private struct UnifiedTopBarView: View {
             withAnimation(WeiBeiMotion.appearance) {
                 store.toggleAppearanceMode()
             }
-        }
-    }
-
-    @ViewBuilder
-    private var settingsMenu: some View {
-        Menu {
-            Section(store.ui("界面", "Interface")) {
-                ForEach(WeiBeiAppearanceMode.allCases) { mode in
-                    Button {
-                        withAnimation(WeiBeiMotion.appearance) {
-                            store.setAppearanceMode(mode)
-                        }
-                    } label: {
-                        Label(mode.label(language: store.interfaceLanguage), systemImage: mode == store.appearanceMode ? "checkmark" : mode.systemImage)
-                    }
-                }
-            }
-
-            Section(store.ui("文稿", "Document")) {
-                Toggle(
-                    isOn: Binding(
-                        get: { store.adaptImportedDocumentColors },
-                        set: { store.setImportedDocumentColorAdaptation($0) }
-                    )
-                ) {
-                    Label(store.ui("导入文稿适配", "Adapt Imported Documents"), systemImage: "eyeglasses")
-                }
-            }
-
-            Section(store.ui("语言", "Language")) {
-                ForEach(WeiBeiInterfaceLanguage.allCases) { language in
-                    Button {
-                        withAnimation(WeiBeiMotion.appearance) {
-                            store.setInterfaceLanguage(language)
-                        }
-                    } label: {
-                        Label(language.settingsLabel, systemImage: language == store.interfaceLanguage ? "checkmark" : "character.book.closed")
-                    }
-                }
-            }
-
-            Section(store.ui("顶部栏", "Top Bar")) {
-                ForEach(TopBarVariant.allCases) { candidate in
-                    Button {
-                        setTopBarVariant(candidate)
-                    } label: {
-                        Label(candidate.label(language: store.interfaceLanguage), systemImage: candidate == variant ? "checkmark" : candidate.iconName)
-                    }
-                }
-            }
-
-            Section(store.ui("对话形态", "Chat Surface")) {
-                ForEach(store.visibleAgentSurfaces) { surface in
-                    Button(surface.label(language: store.interfaceLanguage)) {
-                        withAnimation(WeiBeiMotion.panel) {
-                            store.setAgentSurface(surface)
-                        }
-                    }
-                }
-            }
-        } label: {
-            Image(systemName: "gearshape")
-        }
-        .buttonStyle(WeiBeiIconButtonStyle(size: variant == .glyph || variant == .compact ? 24 : WeiBeiMetric.iconButton))
-        .accessibilityLabel(Text(store.ui("设置", "Settings")))
-        .help(store.ui("设置", "Settings"))
-    }
-
-    private func setTopBarVariant(_ next: TopBarVariant) {
-        withAnimation(WeiBeiMotion.layout) {
-            store.setTopBarVariant(next)
         }
     }
 
@@ -699,9 +537,79 @@ private struct UnifiedTopBarView: View {
             Image(systemName: systemName)
                 .contentShape(Rectangle())
         }
-        .buttonStyle(WeiBeiIconButtonStyle(active: active, size: variant == .glyph || variant == .compact ? 24 : WeiBeiMetric.iconButton))
+        .buttonStyle(WeiBeiIconButtonStyle(active: active, size: 24))
         .accessibilityLabel(Text(help))
         .help(help)
+    }
+}
+
+/// Observes only `ThreePaneReorderState` for live drag chrome + dimming.
+private struct ThreePaneWorkspaceChrome: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @EnvironmentObject private var paneReorder: ThreePaneReorderState
+    @Binding var firstSplit: CGFloat
+    @Binding var secondSplit: CGFloat
+    @Binding var halfSplit: CGFloat
+    let registry: PersistentPaneHostRegistry
+    let normalizedOrder: [WorkspacePaneRole]
+    let visibleOrder: [WorkspacePaneRole]
+    let expansionRequest: PaneExpansionRequest?
+    let frames: [CGRect]
+    let canvasSize: CGSize
+    let onFramesChange: ([WorkspacePaneRole], [CGRect]) -> Void
+    let onExpansionRequestHandled: (UUID) -> Void
+
+    var body: some View {
+        ZStack {
+            StableDocumentWorkspace(
+                firstSplit: $firstSplit,
+                secondSplit: $secondSplit,
+                halfSplit: $halfSplit,
+                registry: registry,
+                normalizedOrder: normalizedOrder,
+                visibleOrder: visibleOrder,
+                draggedRole: paneReorder.drag?.role,
+                expansionRequest: expansionRequest,
+                onFramesChange: onFramesChange,
+                onExpansionRequestHandled: onExpansionRequestHandled
+            )
+
+            threePaneReorderOverlay
+        }
+    }
+
+    @ViewBuilder
+    private var threePaneReorderOverlay: some View {
+        if let drag = paneReorder.drag,
+           let sourceIndex = visibleOrder.firstIndex(of: drag.role),
+           frames.indices.contains(sourceIndex) {
+            let sourceFrame = frames[sourceIndex]
+            if let targetIndex = drag.targetIndex, frames.indices.contains(targetIndex) {
+                PaneDropTargetView(role: visibleOrder[targetIndex])
+                    .frame(width: frames[targetIndex].width, height: frames[targetIndex].height)
+                    .position(x: frames[targetIndex].midX, y: frames[targetIndex].midY)
+            }
+
+            PaneReorderPreviewView(role: drag.role)
+                .frame(width: sourceFrame.width, height: sourceFrame.height)
+                .clipped()
+                .allowsHitTesting(false)
+                .opacity(0.11)
+                .overlay {
+                    Rectangle()
+                        .stroke(WeiBeiTheme.cinnabar.opacity(0.22), lineWidth: 1)
+                }
+                .position(
+                    x: sourceFrame.midX + min(max(drag.translation, -canvasSize.width), canvasSize.width),
+                    y: sourceFrame.midY
+                )
+                .shadow(
+                    color: WeiBeiTheme.ink.opacity(store.appearanceMode == .inkstone ? 0.38 : 0.14),
+                    radius: 22,
+                    y: 12
+                )
+                .zIndex(8)
+        }
     }
 }
 
@@ -718,39 +626,20 @@ private struct LayoutContentView: View {
             case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
                 documentPaneLayoutView()
             case .immersiveReading:
-                ZStack(alignment: .topTrailing) {
-                    PersistentPaneHost(role: .reader, registry: paneHostRegistry)
-                    if store.showQuietInsight && store.agentSurface != .hidden {
-                        QuietInsightView(compact: true)
-                            .padding(.trailing, 28)
-                            .padding(.top, 24)
-                            .transition(WeiBeiTransition.rightPanel)
-                    }
-                }
-                .overlay(alignment: agentAlignment) {
-                    if store.agentSurface != .quietInsight {
-                        agentOverlay
-                    }
-                }
+                PersistentPaneHost(role: .reader, registry: paneHostRegistry)
             case .immersiveConversation:
                 PersistentPaneHost(role: .agent, registry: paneHostRegistry)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .transition(WeiBeiTransition.layout)
             case .immersiveWriting:
-                ZStack(alignment: agentAlignment) {
-                    PersistentPaneHost(role: .notes, registry: paneHostRegistry)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                    if store.agentSurface != .quietInsight {
-                        agentOverlay
-                    }
-                }
+                PersistentPaneHost(role: .notes, registry: paneHostRegistry)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .transition(WeiBeiTransition.layout)
-        .animation(WeiBeiMotion.layout, value: store.layout)
+        // Document-internal pane toggles must not re-trigger SwiftUI layout animation.
+        .animation(WeiBeiMotion.layout, value: store.layout.isImmersiveFamily)
         .animation(WeiBeiMotion.panel, value: store.agentSurface)
-        .animation(WeiBeiMotion.panel, value: store.showQuietInsight)
     }
 
     private var firstSplit: Binding<CGFloat> {
@@ -783,15 +672,18 @@ private struct LayoutContentView: View {
             let fallbackFrames = estimatedDocumentPaneFrames(order: order, size: geometry.size)
             let frames = store.threePaneReorderFrameList(order: order, fallback: fallbackFrames)
             ZStack {
-                StableDocumentWorkspace(
+                // Drag chrome observes ThreePaneReorderState separately so live drag
+                // does not rebuild this workspace through WorkspaceStore.
+                ThreePaneWorkspaceChrome(
                     firstSplit: firstSplit,
                     secondSplit: secondSplit,
                     halfSplit: halfSplit,
                     registry: paneHostRegistry,
                     normalizedOrder: store.normalizedThreePaneOrder,
                     visibleOrder: order,
-                    draggedRole: store.threePaneReorderDrag?.role,
                     expansionRequest: store.paneExpansionRequest,
+                    frames: frames,
+                    canvasSize: geometry.size,
                     onFramesChange: { reportedOrder, frames in
                         store.updateThreePaneReorderFrames(order: reportedOrder, frames: frames)
                     },
@@ -799,41 +691,6 @@ private struct LayoutContentView: View {
                         store.completePaneExpansionRequest(requestID)
                     }
                 )
-
-                threePaneReorderOverlay(order: order, size: geometry.size, frames: frames)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func threePaneReorderOverlay(order: [WorkspacePaneRole], size: CGSize, frames: [CGRect]) -> some View {
-        if let drag = store.threePaneReorderDrag,
-           let sourceIndex = order.firstIndex(of: drag.role) {
-            if frames.indices.contains(sourceIndex) {
-                let sourceFrame = frames[sourceIndex]
-                if let targetIndex = drag.targetIndex, frames.indices.contains(targetIndex) {
-                    PaneDropTargetView(role: order[targetIndex])
-                        .frame(width: frames[targetIndex].width, height: frames[targetIndex].height)
-                        .position(x: frames[targetIndex].midX, y: frames[targetIndex].midY)
-                        .transition(WeiBeiTransition.floating)
-                }
-
-                PaneReorderPreviewView(role: drag.role)
-                    .frame(width: sourceFrame.width, height: sourceFrame.height)
-                    .clipped()
-                    .allowsHitTesting(false)
-                    .opacity(0.11)
-                    .overlay {
-                        Rectangle()
-                            .stroke(WeiBeiTheme.cinnabar.opacity(0.22), lineWidth: 1)
-                    }
-                    .position(
-                        x: sourceFrame.midX + clamped(drag.translation, min: -size.width, max: size.width),
-                        y: sourceFrame.midY
-                    )
-                    .transition(WeiBeiTransition.floating)
-                    .shadow(color: WeiBeiTheme.ink.opacity(store.appearanceMode == .inkstone ? 0.38 : 0.14), radius: 22, y: 12)
-                    .zIndex(8)
             }
         }
     }
@@ -897,45 +754,6 @@ private struct LayoutContentView: View {
         )
     }
 
-    private var agentAlignment: Alignment {
-        switch store.agentSurface {
-        case .bottomDrawer:
-            .bottom
-        case .cornerPanel:
-            .bottomTrailing
-        case .selectionFloat:
-            .center
-        case .quietInsight:
-            .trailing
-        case .hidden:
-            .bottom
-        }
-    }
-
-    @ViewBuilder
-    private var agentOverlay: some View {
-        switch store.agentSurface {
-        case .bottomDrawer:
-            AgentDrawerView()
-                .padding(18)
-                .transition(WeiBeiTransition.drawer)
-                .zIndex(4)
-        case .cornerPanel:
-            CornerAgentView()
-                .padding(18)
-                .transition(WeiBeiTransition.floating)
-                .zIndex(4)
-        case .selectionFloat:
-            EmptyView()
-        case .quietInsight:
-            QuietInsightView()
-                .padding(.trailing, 28)
-                .transition(WeiBeiTransition.rightPanel)
-                .zIndex(4)
-        case .hidden:
-            EmptyView()
-        }
-    }
 }
 
 struct OwnerToken: Equatable {
@@ -986,7 +804,10 @@ final class PersistentPaneHostRegistry: ObservableObject {
 
         let root = PersistentPaneRoot(role: role)
             .environmentObject(store)
-        let host = NSHostingView(rootView: AnyView(root))
+        // Same rule as StableDocumentDividerView / ContentRail: pane content must not
+        // initiate isMovableByWindowBackground. Reader/notes often hide this via nested
+        // AppKit (PDFView/NSTextView); agent chat is mostly SwiftUI so it needs the host flag.
+        let host = PaneContentHostingView(rootView: AnyView(root))
         host.identifier = NSUserInterfaceItemIdentifier("persistent-pane-\(role.rawValue)")
         host.autoresizingMask = [.width, .height]
         hosts[role] = host
@@ -994,8 +815,15 @@ final class PersistentPaneHostRegistry: ObservableObject {
     }
 }
 
+/// NSHostingView that keeps pane drags (header reorder, scroll, text) from moving the window.
+private final class PaneContentHostingView: NSHostingView<AnyView> {
+    override var mouseDownCanMoveWindow: Bool { false }
+}
+
 final class PersistentPaneContainerView: NSView {
     var onWindowChange: ((PersistentPaneContainerView) -> Void)?
+
+    override var mouseDownCanMoveWindow: Bool { false }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -1366,7 +1194,22 @@ private final class WeiBeiSplitView: NSSplitView {
 
     override func layout() {
         super.layout()
+        // Divider geometry changed — refresh bidirectional resize cursors.
+        window?.invalidateCursorRects(for: self)
         onLayout?(self)
+    }
+
+    override func resetCursorRects() {
+        // Custom thickness + drawDivider can drop NSSplitView's default cursor rects.
+        let count = arrangedSubviews.count
+        guard count >= 2 else { return }
+        var x: CGFloat = 0
+        for index in 0..<(count - 1) {
+            x += arrangedSubviews[index].frame.width
+            let rect = NSRect(x: x, y: 0, width: dividerThickness, height: bounds.height)
+            addCursorRect(rect, cursor: .resizeLeftRight)
+            x += dividerThickness
+        }
     }
 
     override func drawDivider(in rect: NSRect) {

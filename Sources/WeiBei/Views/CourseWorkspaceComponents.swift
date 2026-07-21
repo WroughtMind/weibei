@@ -94,12 +94,19 @@ struct CourseLinkedItemRow: View {
     }
 }
 
+enum CourseHubRowProminence {
+    case normal
+    case linked
+    case dimmed
+}
+
 struct CourseWorkspaceRow: View {
     let icon: String
     let title: String
     let detail: String
     let status: String
     let selected: Bool
+    var prominence: CourseHubRowProminence = .normal
     let action: () -> Void
     @State private var hovering = false
 
@@ -108,45 +115,63 @@ struct CourseWorkspaceRow: View {
             HStack(spacing: 11) {
                 Image(systemName: icon)
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(selected ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+                    .foregroundStyle(iconColor)
                     .frame(width: 20)
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(title)
-                        .font(.system(size: 13, weight: selected ? .semibold : .medium))
-                        .foregroundStyle(WeiBeiTheme.ink)
+                        .font(.system(size: 13, weight: selected || prominence == .linked ? .semibold : .medium))
+                        .foregroundStyle(WeiBeiTheme.ink.opacity(prominence == .dimmed ? 0.55 : 1))
                         .lineLimit(1)
                     Text(detail)
                         .font(.system(size: 10.5))
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(prominence == .dimmed ? 0.7 : 1))
                         .lineLimit(1)
                 }
 
                 Spacer(minLength: 10)
 
-                Text(status)
-                    .font(.system(size: 10.5, weight: .medium))
-                    .foregroundStyle(selected ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
-                    .multilineTextAlignment(.trailing)
-                    .lineLimit(2)
+                if !status.isEmpty {
+                    Text(status)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(selected || prominence == .linked ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+                        .multilineTextAlignment(.trailing)
+                        .lineLimit(2)
+                }
             }
             .padding(.horizontal, 14)
             .frame(minHeight: 58)
             .contentShape(Rectangle())
-            .background(selected ? WeiBeiTheme.paperInset.opacity(0.38) : hovering ? WeiBeiTheme.paperInset.opacity(0.18) : Color.clear)
+            .background(rowBackground)
             .overlay(alignment: .leading) {
-                if selected {
+                if selected || prominence == .linked {
                     Capsule()
-                        .fill(WeiBeiTheme.cinnabar)
+                        .fill(prominence == .linked && !selected
+                              ? WeiBeiTheme.cinnabar.opacity(0.55)
+                              : WeiBeiTheme.secondaryInk.opacity(0.42))
                         .frame(width: 2, height: 24)
                         .padding(.leading, 3)
                 }
             }
+            .opacity(prominence == .dimmed ? 0.72 : 1)
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .animation(WeiBeiMotion.hover, value: hovering)
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    private var iconColor: Color {
+        if selected || prominence == .linked { return WeiBeiTheme.cinnabar }
+        if prominence == .dimmed { return WeiBeiTheme.tertiaryInk }
+        return WeiBeiTheme.secondaryInk
+    }
+
+    private var rowBackground: Color {
+        if selected { return WeiBeiTheme.paperInset.opacity(0.38) }
+        if prominence == .linked { return WeiBeiTheme.cinnabarSoft.opacity(0.28) }
+        if hovering { return WeiBeiTheme.paperInset.opacity(0.18) }
+        return .clear
     }
 }
 
@@ -315,30 +340,98 @@ struct CourseEmptyState: View {
     let title: String
     let detail: String
     let systemImage: String
+    var alignment: HorizontalAlignment = .leading
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: alignment, spacing: 8) {
             Image(systemName: systemImage)
                 .font(.system(size: 19, weight: .regular))
                 .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.58))
+                .frame(width: 28, height: 28, alignment: .center)
             Text(title)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(WeiBeiTheme.ink)
+                .lineLimit(1)
             Text(detail)
                 .font(.system(size: 11.5))
                 .foregroundStyle(WeiBeiTheme.secondaryInk)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(2)
+                .frame(minHeight: 32, alignment: alignment == .leading ? .topLeading : .top)
+                .multilineTextAlignment(alignment == .leading ? .leading : .center)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: Alignment(horizontal: alignment, vertical: .center))
         .padding(.vertical, 8)
     }
 }
 
+/// Hub column empty slot: top-aligned icon/title/detail so three columns share one baseline.
+struct CourseHubColumnEmptyState: View {
+    let title: String
+    let detail: String
+    let systemImage: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Image(systemName: systemImage)
+                .font(.system(size: 20, weight: .regular))
+                .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.72))
+                .frame(width: 28, height: 28, alignment: .center)
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.ink)
+                .lineLimit(1)
+            Text(detail)
+                .font(.system(size: 11.5))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .lineLimit(2)
+                .frame(height: 34, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+func courseTitleDisplayFont(_ title: String, size: CGFloat, weight: Font.Weight = .semibold) -> Font {
+    if courseTitlePrefersEnglishBrandFont(title) {
+        return WeiBeiTypography.englishBrandFont(size: size, weight: weight)
+    }
+    return WeiBeiTypography.brandFont(language: .chinese, size: size, weight: weight)
+}
+
+func courseTitlePrefersEnglishBrandFont(_ title: String) -> Bool {
+    let scalars = title.unicodeScalars.filter { CharacterSet.letters.contains($0) }
+    guard !scalars.isEmpty else { return false }
+    let cjkCount = scalars.filter(isCJKLetter).count
+    if cjkCount > 0 { return false }
+    return scalars.contains { $0.isASCII }
+}
+
+private func isCJKLetter(_ scalar: UnicodeScalar) -> Bool {
+    let value = scalar.value
+    return (0x3400...0x4DBF).contains(value)
+        || (0x4E00...0x9FFF).contains(value)
+        || (0xF900...0xFAFF).contains(value)
+        || (0x3040...0x30FF).contains(value)
+        || (0xAC00...0xD7AF).contains(value)
+}
+
 struct CourseHairline: View {
+    var axis: Axis = .horizontal
+
     var body: some View {
         Rectangle()
             .fill(WeiBeiTheme.hairline.opacity(0.62))
-            .frame(height: 1)
+            .frame(
+                width: axis == .vertical ? 1 : nil,
+                height: axis == .horizontal ? 1 : nil
+            )
+            .frame(
+                maxWidth: axis == .vertical ? 1 : .infinity,
+                maxHeight: axis == .horizontal ? 1 : .infinity
+            )
     }
 }
 
@@ -400,6 +493,19 @@ func courseLocationLabel(_ location: StudyLocation, store: WorkspaceStore) -> St
         return store.ui("第 \(page + 1) 页", "Page \(page + 1)")
     }
     return store.ui("已有阅读位置", "Reading position saved")
+}
+
+func courseWorkspaceAccent(colorIndex: Int) -> Color {
+    switch ((colorIndex % 4) + 4) % 4 {
+    case 0:
+        return WeiBeiTheme.cinnabar
+    case 1:
+        return WeiBeiTheme.moss
+    case 2:
+        return WeiBeiTheme.link
+    default:
+        return WeiBeiTheme.secondaryInk
+    }
 }
 
 func courseRelativeDate(_ date: Date, language: WeiBeiInterfaceLanguage) -> String {

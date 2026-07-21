@@ -2,7 +2,7 @@
 name: weibei-close-reading
 description: 对当前材料、当前笔记或当前选区做细读、解释、论证拆解、概念辨析和证据核对。用户要求解释一段内容、比较观点、总结论证或追问“这段是什么意思”时使用。
 compatibility: 需要 PI 0.80.2 与魏碑扩展提供的上下文和课程搜索工具。
-allowed-tools: weibei_context weibei_course_map weibei_course_search
+allowed-tools: weibei_context weibei_course_map weibei_course_search weibei_ui_catalog weibei_rich_answer
 ---
 
 # 魏碑细读
@@ -22,12 +22,15 @@ allowed-tools: weibei_context weibei_course_map weibei_course_search
 4. 将原文信息与推断分开。推断必须写明推断依据，不能伪装成原文事实。
 5. 证据不足时停止补全，明确写“当前上下文未确认”以及缺少的证据。
 6. 结论先行，随后给出处和必要拆解。
+7. 论证关系、原文对齐、时间线、空间位置或数量关系仅靠文字不够清楚时，先调用 `weibei_ui_catalog` 取得本轮 T1/T2 能力子集，再调用 `weibei_rich_answer`；用户明确要求富回答、图示或可调/互动呈现且当前证据足够时，必须走这条目录先行链路；不要把普通段落装进装饰卡片。
 
 ## 工具用法
 
 - 必须调用 `weibei_context`；只有用户要求跨文件比较或查关联时，才调用课程地图或搜索。
+- 任何富回答提交前必须先调用 `weibei_ui_catalog`；目录不贴合时重新调用目录或诚实退回文本，不得凭旧记忆写组件。
 - 不调用 `weibei_note_proposal`；细读回答本身不是笔记写回。
 - 如果工具结果的修订号失效，重新调用 `weibei_context`，不得继续使用旧结果。
+- 富回答成功后，正文仍按下述结构给出简洁结论与依据；不得输出场景 JSON。
 
 ## 证据规则
 

@@ -2,7 +2,7 @@
 name: weibei-recall-practice
 description: 根据当前材料、当前笔记或当前选区生成主动回忆、自测题、答案核对和薄弱点反馈。用户要求出题、考我、复习、自测或检查掌握程度时使用。
 compatibility: 需要 PI 0.80.2 与魏碑扩展提供的上下文、学习记忆和学习状态建议工具。
-allowed-tools: weibei_context weibei_learning_memory weibei_learning_update
+allowed-tools: weibei_context weibei_learning_memory weibei_learning_update weibei_ui_catalog weibei_rich_answer
 ---
 
 # 魏碑回忆练习
@@ -24,10 +24,12 @@ allowed-tools: weibei_context weibei_learning_memory weibei_learning_update
 6. 为每个标准答案准备来源标签。证据无法给出唯一答案的题目直接删除，不得凭常识补答案。
 7. 用户提交答案后，重新读取当前上下文，再给出“正确 / 部分正确 / 当前证据无法确认”的判断与依据。只有表现足以支持长期判断时，才调用 `weibei_learning_update`记录理解或困惑。
 8. 如果用户对某条活跃困惑完成了可核对的回忆或解释，可用 `resolutions` 和 `[会话：当前]` 依据提出结案建议。标签后必须逐字引用户本轮答案；仅仅看过标准答案、Agent 解释过，或单题蒙对，都不得提出结案。建议必须由用户在魏碑界面确认。
+9. 当前证据适合用显隐、步骤或可调参数做单轮练习时，先调用 `weibei_ui_catalog` 取得本轮 T1/T2 能力子集，再调用 `weibei_rich_answer`；用户明确要求互动练习且当前证据足够时必须走这条目录先行链路；不要假装能跨回合理解控件操作或据此自动更新学习状态。
 
 ## 工具用法
 
 - 先调用 `weibei_context`，再调用 `weibei_learning_memory`。
+- 任何富回答提交前必须先调用 `weibei_ui_catalog`；目录不贴合时重新调用目录或诚实退回文本，不得凭旧记忆写组件。
 - 只在用户实际作答并产生可复用判断时调用 `weibei_learning_update`。
 - 不调用 `weibei_note_proposal`；练习与反馈不得被描述为笔记写回。
 - 修订号变化后重新生成或重新核对，不得沿用旧答案依据。

@@ -1,0 +1,301 @@
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100dvh;
+  color: #28231d;
+  background:
+    linear-gradient(90deg, rgb(72 60 44 / 2.5%) 1px, transparent 1px),
+    #e8e1d6;
+  background-size: 48px 48px, auto;
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+.generation-page {
+  width: min(780px, calc(100vw - 28px));
+  margin: 0 auto;
+  padding: 22px 0 42px;
+  font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+}
+
+.generation-proofbar {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 20px;
+  align-items: end;
+  margin-bottom: 13px;
+  padding: 0 2px 11px;
+  border-bottom: 1px solid rgb(70 58 43 / 16%);
+}
+
+.generation-proofbar > div {
+  display: grid;
+  gap: 3px;
+}
+
+.generation-proofbar > div span {
+  color: #8f3f2f;
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+}
+
+.generation-proofbar > div strong {
+  font-family: "Songti SC", "STSong", serif;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.generation-proofbar nav {
+  display: flex;
+  gap: 2px;
+  max-width: min(62vw, 560px);
+  overflow-x: auto;
+}
+
+.generation-proofbar button {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 7px 9px;
+  color: #786e61;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: transparent;
+  font-size: 10.5px;
+  cursor: pointer;
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.generation-proofbar button span {
+  color: #a09587;
+  font-family: "SFMono-Regular", Menlo, monospace;
+  font-size: 8.5px;
+}
+
+.generation-proofbar button.is-active {
+  color: #332d26;
+  border-color: #8f3f2f;
+}
+
+.generation-answer {
+  overflow: hidden;
+  background: #f7f2e8;
+  box-shadow: 0 18px 50px rgb(50 40 28 / 10%);
+}
+
+.generation-answer__program {
+  min-width: 0;
+}
+
+.generation-answer__status {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 10px;
+  color: #817668;
+  border-bottom: 1px solid rgb(68 57 43 / 10%);
+  background: #eee6da;
+  font-size: 8.5px;
+}
+
+.generation-answer__status span::before {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: #6a8374;
+  content: "";
+  vertical-align: 1px;
+}
+
+.generation-answer__status i {
+  font-style: normal;
+}
+
+.generation-error {
+  margin: 0;
+  padding: 18px;
+  color: #7d2f27;
+  background: #f7e8e1;
+  font-size: 11px;
+  line-height: 1.6;
+}
+
+.generation-source {
+  margin-top: 10px;
+  border-top: 1px solid rgb(70 58 43 / 14%);
+  border-bottom: 1px solid rgb(70 58 43 / 14%);
+}
+
+.generation-source summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 2px;
+  color: #4e473d;
+  font-size: 10.5px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.generation-source summary::-webkit-details-marker {
+  display: none;
+}
+
+.generation-source summary::before {
+  content: "+";
+  color: #8f3f2f;
+  font-family: "SFMono-Regular", Menlo, monospace;
+}
+
+.generation-source[open] summary::before {
+  content: "−";
+}
+
+.generation-source summary span {
+  margin-right: auto;
+}
+
+.generation-source summary small {
+  color: #8a8073;
+  font-size: 9px;
+}
+
+.generation-source > div {
+  display: grid;
+  grid-template-columns: 145px 1fr;
+  max-height: 390px;
+  overflow: hidden;
+  border-top: 1px solid rgb(70 58 43 / 10%);
+  background: #312c26;
+}
+
+.generation-source aside {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 14px;
+  color: #d8cbbc;
+  border-right: 1px solid rgb(255 255 255 / 8%);
+  font-size: 9px;
+}
+
+.generation-source aside strong {
+  margin-top: 4px;
+  color: #f3eadf;
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+
+.generation-source aside code {
+  color: #cf9f8f;
+}
+
+.generation-source ul {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.generation-source li::before {
+  margin-right: 5px;
+  color: #8e8274;
+  content: "·";
+}
+
+.generation-source pre {
+  overflow: auto;
+  margin: 0;
+  padding: 14px 16px;
+  color: #eee3d6;
+  font-family: "SFMono-Regular", Menlo, monospace;
+  font-size: 9px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+
+.generation-notice {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 50;
+  padding: 9px 12px;
+  color: #fff8ed;
+  background: #3c342c;
+  box-shadow: 0 12px 30px rgb(37 30 23 / 18%);
+  font-size: 10.5px;
+}
+
+.generation-page.is-embedded {
+  width: 100%;
+  padding: 0;
+}
+
+html.weibei-embedded,
+html.weibei-embedded body,
+html.weibei-embedded #root {
+  min-width: 0;
+  min-height: 0;
+  background: transparent !important;
+}
+
+html.weibei-embedded body {
+  overflow: hidden;
+}
+
+.generation-page.is-embedded .generation-answer {
+  display: grid;
+  gap: 14px;
+  overflow: visible;
+  background: transparent;
+  box-shadow: none;
+}
+
+.generation-page.is-embedded .generation-answer__program + .generation-answer__program {
+  padding-top: 14px;
+  border-top: 1px solid rgb(68 57 43 / 12%);
+}
+
+.generation-page.is-embedded .generation-answer__status {
+  display: none;
+}
+
+@media (max-width: 700px) {
+  .generation-page {
+    width: min(100vw - 16px, 780px);
+    padding-top: 10px;
+  }
+
+  .generation-proofbar {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .generation-proofbar nav {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .generation-proofbar button {
+    flex: 1 0 auto;
+  }
+
+  .generation-source > div {
+    grid-template-columns: 1fr;
+  }
+
+  .generation-source aside {
+    display: none;
+  }
+
+  .generation-source summary small {
+    display: none;
+  }
+}

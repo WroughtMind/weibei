@@ -431,6 +431,17 @@ public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// Document family (multi-pane) vs immersive single-pane — used so SwiftUI only animates family switches,
+    /// not every document-internal pane toggle (those are animated by AppKit).
+    public var isImmersiveFamily: Bool {
+        switch self {
+        case .immersiveReading, .immersiveConversation, .immersiveWriting:
+            return true
+        case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
+            return false
+        }
+    }
+
     public var allowsRailOnlyPanes: Bool {
         switch self {
         case .documentAgentNotes, .documentNotesAgent, .documentNotesSplit:
@@ -478,25 +489,265 @@ public enum WorkspaceLayout: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// Conversation presentation overlays retained for 1.0.
+/// Primary chat lives in the immersive conversation layout / agent pane;
+/// only selection-float and hidden remain as `AgentSurface` cases.
+/// How a provider is typically configured in Pi (subscription OAuth vs API key vs local/custom).
+public enum AgentProviderKind: String, Codable, CaseIterable, Sendable {
+    case subscription
+    case apiKey
+    case localOrCustom
+
+    public func label(language: WeiBeiInterfaceLanguage) -> String {
+        switch self {
+        case .subscription:
+            return language.text("订阅 OAuth", "Subscription OAuth")
+        case .apiKey:
+            return language.text("API 密钥", "API Key")
+        case .localOrCustom:
+            return language.text("本地 / 自定义", "Local / Custom")
+        }
+    }
+}
+
+/// Full set of Pi `KnownProvider` ids + local/custom (aligned with Pi `docs/providers.md` + `env-api-keys`).
+/// Raw values match Pi provider ids so auth.json / --provider stay compatible.
+public enum AgentProviderID: String, Codable, CaseIterable, Identifiable, Sendable {
+    // MARK: Subscription / OAuth (Pi `/login`)
+    case openaiCodex = "openai-codex"
+    case anthropic
+    case githubCopilot = "github-copilot"
+
+    // MARK: API-key providers (Pi KnownProvider)
+    case openai
+    case antLing = "ant-ling"
+    case azureOpenAI = "azure-openai-responses"
+    case deepseek
+    case nvidia
+    case google
+    case googleVertex = "google-vertex"
+    case amazonBedrock = "amazon-bedrock"
+    case xai
+    case mistral
+    case groq
+    case cerebras
+    case cloudflareAIGateway = "cloudflare-ai-gateway"
+    case cloudflareWorkersAI = "cloudflare-workers-ai"
+    case openrouter
+    case vercelAIGateway = "vercel-ai-gateway"
+    case zai
+    case zaiCodingCN = "zai-coding-cn"
+    case opencode
+    case opencodeGo = "opencode-go"
+    case huggingface
+    case fireworks
+    case together
+    case kimiCoding = "kimi-coding"
+    case moonshotai
+    case moonshotaiCN = "moonshotai-cn"
+    case minimax
+    case minimaxCN = "minimax-cn"
+    case xiaomi
+    case xiaomiTokenPlanCN = "xiaomi-token-plan-cn"
+    case xiaomiTokenPlanAMS = "xiaomi-token-plan-ams"
+    case xiaomiTokenPlanSGP = "xiaomi-token-plan-sgp"
+
+    // MARK: Local / custom (models.json / OpenAI-compatible)
+    case llamaCpp = "llama.cpp"
+    case custom
+
+    public var id: String { rawValue }
+
+    /// Pi `--provider` / auth.json key.
+    public var piProviderName: String { rawValue == "custom" ? "weibei-custom" : rawValue }
+
+    public var kind: AgentProviderKind {
+        switch self {
+        case .openaiCodex, .anthropic, .githubCopilot:
+            return .subscription
+        case .llamaCpp, .custom:
+            return .localOrCustom
+        default:
+            return .apiKey
+        }
+    }
+
+    /// Providers for which WeiBei can run browser OAuth (Pi-compatible).
+    public var supportsInAppOAuth: Bool {
+        switch self {
+        case .openaiCodex, .anthropic:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Show Base URL field (Azure resource endpoint, local llama.cpp, custom OpenAI-compatible).
+    public var showsBaseURLField: Bool {
+        switch self {
+        case .custom, .llamaCpp, .azureOpenAI:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Primary env var Pi reads for this provider (when using API keys).
+    public var environmentAPIKeyName: String {
+        switch self {
+        case .openaiCodex: return "OPENAI_API_KEY"
+        case .anthropic: return "ANTHROPIC_API_KEY"
+        case .githubCopilot: return "COPILOT_GITHUB_TOKEN"
+        case .openai: return "OPENAI_API_KEY"
+        case .antLing: return "ANT_LING_API_KEY"
+        case .azureOpenAI: return "AZURE_OPENAI_API_KEY"
+        case .deepseek: return "DEEPSEEK_API_KEY"
+        case .nvidia: return "NVIDIA_API_KEY"
+        case .google: return "GEMINI_API_KEY"
+        case .googleVertex: return "GOOGLE_CLOUD_API_KEY"
+        case .amazonBedrock: return "AWS_BEARER_TOKEN_BEDROCK"
+        case .xai: return "XAI_API_KEY"
+        case .mistral: return "MISTRAL_API_KEY"
+        case .groq: return "GROQ_API_KEY"
+        case .cerebras: return "CEREBRAS_API_KEY"
+        case .cloudflareAIGateway, .cloudflareWorkersAI: return "CLOUDFLARE_API_KEY"
+        case .openrouter: return "OPENROUTER_API_KEY"
+        case .vercelAIGateway: return "AI_GATEWAY_API_KEY"
+        case .zai: return "ZAI_API_KEY"
+        case .zaiCodingCN: return "ZAI_CODING_CN_API_KEY"
+        case .opencode, .opencodeGo: return "OPENCODE_API_KEY"
+        case .huggingface: return "HF_TOKEN"
+        case .fireworks: return "FIREWORKS_API_KEY"
+        case .together: return "TOGETHER_API_KEY"
+        case .kimiCoding: return "KIMI_API_KEY"
+        case .moonshotai, .moonshotaiCN: return "MOONSHOT_API_KEY"
+        case .minimax: return "MINIMAX_API_KEY"
+        case .minimaxCN: return "MINIMAX_CN_API_KEY"
+        case .xiaomi: return "XIAOMI_API_KEY"
+        case .xiaomiTokenPlanCN: return "XIAOMI_TOKEN_PLAN_CN_API_KEY"
+        case .xiaomiTokenPlanAMS: return "XIAOMI_TOKEN_PLAN_AMS_API_KEY"
+        case .xiaomiTokenPlanSGP: return "XIAOMI_TOKEN_PLAN_SGP_API_KEY"
+        case .llamaCpp: return "OPENAI_API_KEY"
+        case .custom: return "OPENAI_API_KEY"
+        }
+    }
+
+    public var supportsOpenAIHTTPFallback: Bool {
+        self == .openai
+    }
+
+    public func label(language: WeiBeiInterfaceLanguage) -> String {
+        switch self {
+        case .openaiCodex: return language.text("OpenAI Codex（ChatGPT 订阅）", "OpenAI Codex (ChatGPT sub)")
+        case .anthropic: return language.text("Anthropic / Claude", "Anthropic / Claude")
+        case .githubCopilot: return "GitHub Copilot"
+        case .openai: return "OpenAI API"
+        case .antLing: return "Ant Ling"
+        case .azureOpenAI: return "Azure OpenAI"
+        case .deepseek: return "DeepSeek"
+        case .nvidia: return "NVIDIA NIM"
+        case .google: return "Google Gemini"
+        case .googleVertex: return "Google Vertex AI"
+        case .amazonBedrock: return "Amazon Bedrock"
+        case .xai: return "xAI (Grok)"
+        case .mistral: return "Mistral"
+        case .groq: return "Groq"
+        case .cerebras: return "Cerebras"
+        case .cloudflareAIGateway: return "Cloudflare AI Gateway"
+        case .cloudflareWorkersAI: return "Cloudflare Workers AI"
+        case .openrouter: return "OpenRouter"
+        case .vercelAIGateway: return "Vercel AI Gateway"
+        case .zai: return language.text("ZAI Coding Plan（全球）", "ZAI Coding Plan (Global)")
+        case .zaiCodingCN: return language.text("ZAI Coding Plan（中国）", "ZAI Coding Plan (China)")
+        case .opencode: return "OpenCode Zen"
+        case .opencodeGo: return "OpenCode Go"
+        case .huggingface: return "Hugging Face"
+        case .fireworks: return "Fireworks"
+        case .together: return "Together AI"
+        case .kimiCoding: return "Kimi For Coding"
+        case .moonshotai: return "Moonshot AI"
+        case .moonshotaiCN: return language.text("Moonshot AI（中国）", "Moonshot AI (China)")
+        case .minimax: return "MiniMax"
+        case .minimaxCN: return language.text("MiniMax（中国）", "MiniMax (China)")
+        case .xiaomi: return "Xiaomi MiMo"
+        case .xiaomiTokenPlanCN: return language.text("Xiaomi Token Plan（中国）", "Xiaomi Token Plan (China)")
+        case .xiaomiTokenPlanAMS: return language.text("Xiaomi Token Plan（阿姆斯特丹）", "Xiaomi Token Plan (Amsterdam)")
+        case .xiaomiTokenPlanSGP: return language.text("Xiaomi Token Plan（新加坡）", "Xiaomi Token Plan (Singapore)")
+        case .llamaCpp: return "llama.cpp"
+        case .custom: return language.text("自定义 OpenAI 兼容", "Custom OpenAI-compatible")
+        }
+    }
+
+    public var defaultModelHint: String {
+        switch self {
+        case .openaiCodex: return "gpt-5.1"
+        case .anthropic: return "claude-sonnet-4-20250514"
+        case .githubCopilot: return "gpt-4.1"
+        case .openai: return "gpt-5.1"
+        case .antLing: return "default"
+        case .azureOpenAI: return "gpt-4o"
+        case .deepseek: return "deepseek-chat"
+        case .nvidia: return "meta/llama-3.1-70b-instruct"
+        case .google: return "gemini-2.5-pro"
+        case .googleVertex: return "gemini-2.5-pro"
+        case .amazonBedrock: return "us.anthropic.claude-sonnet-4-20250514-v1:0"
+        case .xai: return "grok-3"
+        case .mistral: return "mistral-large-latest"
+        case .groq: return "llama-3.3-70b-versatile"
+        case .cerebras: return "llama-3.3-70b"
+        case .cloudflareAIGateway: return "claude-sonnet-4-5"
+        case .cloudflareWorkersAI: return "@cf/meta/llama-3.1-70b-instruct"
+        case .openrouter: return "openai/gpt-4.1"
+        case .vercelAIGateway: return "openai/gpt-4.1"
+        case .zai, .zaiCodingCN: return "default"
+        case .opencode, .opencodeGo: return "default"
+        case .huggingface: return "meta-llama/Llama-3.1-70B-Instruct"
+        case .fireworks: return "accounts/fireworks/models/llama-v3p1-70b-instruct"
+        case .together: return "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"
+        case .kimiCoding: return "moonshot-v1-auto"
+        case .moonshotai, .moonshotaiCN: return "kimi-k2.5"
+        case .minimax, .minimaxCN: return "MiniMax-Text-01"
+        case .xiaomi, .xiaomiTokenPlanCN, .xiaomiTokenPlanAMS, .xiaomiTokenPlanSGP: return "default"
+        case .llamaCpp: return "local-model"
+        case .custom: return "model-id"
+        }
+    }
+
+    public static var subscriptionProviders: [AgentProviderID] {
+        allCases.filter { $0.kind == .subscription }
+    }
+
+    public static var apiKeyProviders: [AgentProviderID] {
+        allCases.filter { $0.kind == .apiKey }
+    }
+
+    public static var localOrCustomProviders: [AgentProviderID] {
+        allCases.filter { $0.kind == .localOrCustom }
+    }
+}
+
 public enum AgentSurface: String, Codable, CaseIterable, Identifiable {
-    case bottomDrawer
-    case cornerPanel
     case selectionFloat
-    case quietInsight
     case hidden
 
     public var id: String { rawValue }
 
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let raw = try container.decode(String.self)
+        // Legacy surfaces (bottomDrawer / cornerPanel / quietInsight) fall back to hidden.
+        self = AgentSurface(rawValue: raw) ?? .hidden
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
+    }
+
     public func label(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
-        case .bottomDrawer:
-            return language.text("底部对话栏", "Bottom Chat")
-        case .cornerPanel:
-            return language.text("右下轻问", "Corner Ask")
         case .selectionFloat:
             return language.text("选区轻提示", "Selection Prompt")
-        case .quietInsight:
-            return language.text("页边洞察", "Margin Insight")
         case .hidden:
             return language.text("隐藏对话", "Hide Chat")
         }
@@ -506,7 +757,7 @@ public enum AgentSurface: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .hidden:
             return label(language: language)
-        default:
+        case .selectionFloat:
             return language.text("使用\(label(language: language))", "Use \(label(language: language))")
         }
     }
@@ -596,6 +847,45 @@ public struct SelectionContext: Identifiable, Codable, Hashable {
     }
 }
 
+/// A durable link between a selected text span the user asked about and the chat turns that followed.
+/// Used for underline marks in the reader/note and for reopening the floating selection agent.
+public struct SelectionAskThread: Identifiable, Codable, Hashable, Sendable {
+    public var id: UUID
+    public var selectionText: String
+    public var source: SelectionSource
+    public var ownerTitle: String
+    /// Material or notebook item id when known.
+    public var itemID: String?
+    /// Conversation message ids (user + assistant) belonging to this selection thread.
+    public var messageIDs: [UUID]
+    public var createdAt: Date
+    public var updatedAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        selectionText: String,
+        source: SelectionSource,
+        ownerTitle: String,
+        itemID: String? = nil,
+        messageIDs: [UUID] = [],
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.selectionText = selectionText
+        self.source = source
+        self.ownerTitle = ownerTitle
+        self.itemID = itemID
+        self.messageIDs = messageIDs
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    public var normalizedText: String {
+        SelectionAttachmentMerge.normalized(selectionText)
+    }
+}
+
 public enum SelectionAttachmentMerge {
     public static func mergedText(existing: String, incoming: String, withinSelectionGesture: Bool) -> String? {
         let existingText = existing.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -669,16 +959,23 @@ public enum SelectionAnchorCoordinate {
 }
 
 public enum SelectionFloatingAgentPlacement {
-    public static let expandedHalfWidth = 156.0
+    public static let expandedHalfWidth = 230.0
     public static let compactHalfWidth = 82.0
+    /// Approximate half-height used to keep an expanded panel on-canvas.
+    public static let expandedHalfHeight = 210.0
+    public static let compactHalfHeight = 28.0
 
     public static func isVisible(
         surface: AgentSurface,
         hasSelection: Bool,
         hasAnchor: Bool,
-        pinned: Bool
+        pinned: Bool,
+        keepOpen: Bool = false
     ) -> Bool {
-        surface == .selectionFloat && hasSelection && (hasAnchor || pinned)
+        guard surface == .selectionFloat else { return false }
+        // Pinned or mid-answer floats stay even without a live selection anchor.
+        if pinned || keepOpen { return true }
+        return hasSelection && hasAnchor
     }
 
     public static func position(
@@ -689,10 +986,15 @@ public enum SelectionFloatingAgentPlacement {
         prefersAnchorCenter: Bool = false
     ) -> FloatingAgentCoordinate {
         let edgePadding = 18.0
-        let anchorGap = 10.0
-        let verticalGap = 8.0
+        let anchorGap = 12.0
+        let verticalGap = prefersAnchorCenter ? 10.0 : 14.0
         let contentCanvas = FloatingAgentCoordinate(x: canvas.x, y: max(1, canvas.y - topInset))
-        let fallback = FloatingAgentCoordinate(x: contentCanvas.x - 128, y: contentCanvas.y - 124)
+        let isExpanded = surfaceHalfWidth >= expandedHalfWidth - 0.5
+        let surfaceHalfHeight = isExpanded ? expandedHalfHeight : compactHalfHeight
+        let fallback = FloatingAgentCoordinate(
+            x: contentCanvas.x - surfaceHalfWidth - edgePadding,
+            y: min(contentCanvas.y - surfaceHalfHeight - edgePadding, contentCanvas.y * 0.42)
+        )
         let anchor = anchor.map { FloatingAgentCoordinate(x: $0.x, y: max(0, $0.y - topInset)) } ?? fallback
         let minimumX = surfaceHalfWidth + edgePadding
         let maximumX = contentCanvas.x - surfaceHalfWidth - edgePadding
@@ -706,11 +1008,24 @@ public enum SelectionFloatingAgentPlacement {
         } else if leftSideX >= minimumX {
             preferredX = leftSideX
         } else {
-            preferredX = anchor.x
+            preferredX = clamp(anchor.x, min: minimumX, max: maximumX)
+        }
+        let minimumY = surfaceHalfHeight + edgePadding
+        let maximumY = contentCanvas.y - surfaceHalfHeight - edgePadding
+        // Prefer just below the mark; if that clips, sit above it.
+        let belowY = anchor.y + verticalGap + (prefersAnchorCenter ? 0 : surfaceHalfHeight * 0.15)
+        let aboveY = anchor.y - verticalGap - (prefersAnchorCenter ? 0 : surfaceHalfHeight * 0.15)
+        let preferredY: Double
+        if belowY <= maximumY {
+            preferredY = belowY
+        } else if aboveY >= minimumY {
+            preferredY = aboveY
+        } else {
+            preferredY = clamp(anchor.y, min: minimumY, max: maximumY)
         }
         return FloatingAgentCoordinate(
             x: clamp(preferredX, min: minimumX, max: maximumX),
-            y: clamp(anchor.y + verticalGap, min: 64, max: contentCanvas.y - 92)
+            y: clamp(preferredY, min: minimumY, max: max(minimumY, maximumY))
         )
     }
 
@@ -836,6 +1151,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public var text: String
     public var source: String?
     public var backend: StudyAgentBackend?
+    public var richAnswer: RichAnswerPresentation?
     public var createdAt: Date
 
     public init(
@@ -844,6 +1160,7 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         text: String,
         source: String?,
         backend: StudyAgentBackend? = nil,
+        richAnswer: RichAnswerPresentation? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
@@ -851,7 +1168,40 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         self.text = text
         self.source = source
         self.backend = backend
+        self.richAnswer = richAnswer
         self.createdAt = createdAt
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case role
+        case text
+        case source
+        case backend
+        case richAnswer
+        case createdAt
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        role = try container.decode(AgentRole.self, forKey: .role)
+        text = try container.decode(String.self, forKey: .text)
+        source = try container.decodeIfPresent(String.self, forKey: .source)
+        backend = try container.decodeIfPresent(StudyAgentBackend.self, forKey: .backend)
+        richAnswer = try? container.decodeIfPresent(RichAnswerPresentation.self, forKey: .richAnswer)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(role, forKey: .role)
+        try container.encode(text, forKey: .text)
+        try container.encodeIfPresent(source, forKey: .source)
+        try container.encodeIfPresent(backend, forKey: .backend)
+        try container.encodeIfPresent(richAnswer, forKey: .richAnswer)
+        try container.encode(createdAt, forKey: .createdAt)
     }
 
     public var isUsableAgentAnswer: Bool {
@@ -859,9 +1209,9 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
             && !text.hasPrefix("未配置密钥")
             && !text.hasPrefix("未配置 OPENAI_API_KEY")
             && !text.hasPrefix("No key is configured")
-            && !text.hasPrefix("请求失败：")
+            && !text.hasPrefix("请求失败")
             && !text.hasPrefix("Agent 请求失败：")
-            && !text.hasPrefix("Request failed:")
+            && !text.hasPrefix("Request failed")
     }
 }
 
@@ -880,6 +1230,9 @@ public struct PersistedWorkspace: Codable {
     public var noteBackingContentDigestsByItemID: [String: String]?
     public var selectedItemID: String?
     public var activeNotebookItemID: String?
+    public var courses: [Course]?
+    public var courseItemMemberships: [CourseItemMembership]?
+    public var activeCourseID: UUID?
     public var noteSourceLinks: [NoteSourceLink]?
     public var noteSourceLinksMigrationVersion: Int?
     public var studyLocationsByItemID: [String: StudyLocation]?
@@ -888,6 +1241,8 @@ public struct PersistedWorkspace: Codable {
     public var studySessions: [StudySession]?
     public var activeStudySessionID: UUID?
     public var modelName: String?
+    public var agentProviderID: String?
+    public var agentBaseURL: String?
     public var workspaceLayout: WorkspaceLayout?
     public var threePaneOrder: [WorkspacePaneRole]?
     public var agentSurface: AgentSurface?
@@ -902,13 +1257,49 @@ public struct PersistedWorkspace: Codable {
     public var adaptImportedDocumentColors: Bool?
     public var interfaceLanguageRaw: String?
 
-    public init(importedItems: [StudyItem] = [], notesByItemID: [String: String] = [:], pendingNoteWritesByItemID: [String: PendingNoteWriteState]? = nil, noteBackingContentDigestsByItemID: [String: String]? = nil, selectedItemID: String? = nil, activeNotebookItemID: String? = nil, noteSourceLinks: [NoteSourceLink]? = nil, noteSourceLinksMigrationVersion: Int? = nil, studyLocationsByItemID: [String: StudyLocation]? = nil, learningMemoryEntries: [LearningMemoryEntry]? = nil, learningMemoryRevision: UInt64? = nil, studySessions: [StudySession]? = nil, activeStudySessionID: UUID? = nil, modelName: String? = nil, workspaceLayout: WorkspaceLayout? = nil, threePaneOrder: [WorkspacePaneRole]? = nil, agentSurface: AgentSurface? = nil, noteRenderMode: NoteRenderMode? = nil, showLibrary: Bool? = nil, showReader: Bool? = nil, showAgent: Bool? = nil, showNotes: Bool? = nil, showRightPane: Bool? = nil, showDailyInspiration: Bool? = nil, appearanceModeRaw: String? = nil, adaptImportedDocumentColors: Bool? = nil, interfaceLanguageRaw: String? = nil) {
+    public init(
+        importedItems: [StudyItem] = [],
+        notesByItemID: [String: String] = [:],
+        pendingNoteWritesByItemID: [String: PendingNoteWriteState]? = nil,
+        noteBackingContentDigestsByItemID: [String: String]? = nil,
+        selectedItemID: String? = nil,
+        activeNotebookItemID: String? = nil,
+        courses: [Course]? = nil,
+        courseItemMemberships: [CourseItemMembership]? = nil,
+        activeCourseID: UUID? = nil,
+        noteSourceLinks: [NoteSourceLink]? = nil,
+        noteSourceLinksMigrationVersion: Int? = nil,
+        studyLocationsByItemID: [String: StudyLocation]? = nil,
+        learningMemoryEntries: [LearningMemoryEntry]? = nil,
+        learningMemoryRevision: UInt64? = nil,
+        studySessions: [StudySession]? = nil,
+        activeStudySessionID: UUID? = nil,
+        modelName: String? = nil,
+        agentProviderID: String? = nil,
+        agentBaseURL: String? = nil,
+        workspaceLayout: WorkspaceLayout? = nil,
+        threePaneOrder: [WorkspacePaneRole]? = nil,
+        agentSurface: AgentSurface? = nil,
+        noteRenderMode: NoteRenderMode? = nil,
+        showLibrary: Bool? = nil,
+        showReader: Bool? = nil,
+        showAgent: Bool? = nil,
+        showNotes: Bool? = nil,
+        showRightPane: Bool? = nil,
+        showDailyInspiration: Bool? = nil,
+        appearanceModeRaw: String? = nil,
+        adaptImportedDocumentColors: Bool? = nil,
+        interfaceLanguageRaw: String? = nil
+    ) {
         self.importedItems = importedItems
         self.notesByItemID = notesByItemID
         self.pendingNoteWritesByItemID = pendingNoteWritesByItemID
         self.noteBackingContentDigestsByItemID = noteBackingContentDigestsByItemID
         self.selectedItemID = selectedItemID
         self.activeNotebookItemID = activeNotebookItemID
+        self.courses = courses
+        self.courseItemMemberships = courseItemMemberships
+        self.activeCourseID = activeCourseID
         self.noteSourceLinks = noteSourceLinks
         self.noteSourceLinksMigrationVersion = noteSourceLinksMigrationVersion
         self.studyLocationsByItemID = studyLocationsByItemID
@@ -917,6 +1308,8 @@ public struct PersistedWorkspace: Codable {
         self.studySessions = studySessions
         self.activeStudySessionID = activeStudySessionID
         self.modelName = modelName
+        self.agentProviderID = agentProviderID
+        self.agentBaseURL = agentBaseURL
         self.workspaceLayout = workspaceLayout
         self.threePaneOrder = threePaneOrder
         self.agentSurface = agentSurface

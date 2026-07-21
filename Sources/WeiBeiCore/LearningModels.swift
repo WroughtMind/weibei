@@ -138,6 +138,8 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
     public var messages: [AgentMessage]
     public var summary: String
     public var focusItemIDs: [String]
+    /// Preferred material for grouping (scheme A). Optional for older workspaces.
+    public var materialItemID: String?
     public var flow: StudyFlowState
     public var createdAt: Date
     public var updatedAt: Date
@@ -148,6 +150,7 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
         messages: [AgentMessage] = [],
         summary: String = "",
         focusItemIDs: [String] = [],
+        materialItemID: String? = nil,
         flow: StudyFlowState = StudyFlowState(),
         createdAt: Date = Date(),
         updatedAt: Date = Date()
@@ -157,8 +160,13 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
         self.messages = messages
         self.summary = summary
         self.focusItemIDs = focusItemIDs
+        self.materialItemID = materialItemID
         self.flow = flow
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    public var groupingMaterialItemID: String? {
+        materialItemID ?? focusItemIDs.first
     }
 }

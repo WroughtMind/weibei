@@ -1,0 +1,127 @@
+Building for production...
+[0/97] Copying manifest.json
+[0/97] Copying lau-basin-noaa-tectonic-features-verification-2200.jpg
+[0/97] Copying rich-answer.html
+[0/97] Copying rich-answer-runtime.js
+[1/97] Copying lanting-universe.png
+[2/97] Copying weibei-single-pendulum-color-contrast-original.png
+[2/97] Copying grand-canyon-loc-usgs-west-verification-2200.jpg
+[5/97] Copying editor.js
+[6/97] Copying lanting-clear-breeze.png
+[6/97] Copying editor.css
+[8/97] Copying rich-answer-runtime.css
+[8/97] Copying lanting-observe-kinds.png
+[8/97] Copying kepler-16b-nasa-jpl-verification-2200.jpg
+[13/97] Copying butler-migrations-of-the-barbarians-verification-2200.jpg
+[13/97] Copying index.html
+[13/97] Copying WeiBeiSteleMono.ttf
+[13/97] Copying KaTeX_Typewriter-Regular.woff2
+[13/97] Copying SOURCES.md
+[18/97] Copying WeiBeiStele.ttf
+[18/97] Copying KaTeX_Typewriter-Regular.woff
+[20/97] Copying KaTeX_Typewriter-Regular.ttf
+[21/97] Copying KaTeX_Size3-Regular.ttf
+[21/97] Copying KaTeX_Size3-Regular.woff
+[21/97] Copying KaTeX_Size4-Regular.woff2
+[24/97] Copying KaTeX_Size4-Regular.woff
+[25/97] Copying KaTeX_Size2-Regular.woff2
+[25/97] Copying KaTeX_Size2-Regular.ttf
+[25/97] Copying KaTeX_Size1-Regular.woff2
+[25/97] Copying KaTeX_Size3-Regular.woff2
+[26/97] Copying KaTeX_Size4-Regular.ttf
+[27/97] Copying KaTeX_Size2-Regular.woff
+[31/97] Copying KaTeX_Size1-Regular.ttf
+[31/97] Copying KaTeX_Size1-Regular.woff
+[31/97] Copying KaTeX_Script-Regular.woff2
+[33/97] Copying KaTeX_Script-Regular.ttf
+[34/97] Copying KaTeX_Script-Regular.woff
+[34/97] Copying KaTeX_SansSerif-Italic.woff
+[36/97] Copying KaTeX_SansSerif-Regular.woff
+[36/97] Copying KaTeX_SansSerif-Regular.ttf
+[36/97] Copying KaTeX_SansSerif-Italic.woff2
+[40/97] Copying KaTeX_SansSerif-Regular.woff2
+[40/97] Copying KaTeX_SansSerif-Bold.ttf
+[40/97] Copying KaTeX_SansSerif-Bold.woff2
+[40/97] Copying KaTeX_SansSerif-Italic.ttf
+[44/97] Copying KaTeX_SansSerif-Bold.woff
+[44/97] Copying KaTeX_Math-BoldItalic.ttf
+[44/97] Copying KaTeX_Math-Italic.woff
+[44/97] Copying AgentResources
+[44/97] Copying KaTeX_Main-Regular.woff2
+[44/97] Copying KaTeX_Math-BoldItalic.woff
+[48/97] Copying KaTeX_Math-Italic.ttf
+[51/97] Copying KaTeX_Math-Italic.woff2
+[51/97] Copying KaTeX_Main-Regular.woff
+[51/97] Copying KaTeX_Main-Italic.ttf
+[51/97] Copying KaTeX_Main-Italic.woff
+[51/97] Copying KaTeX_Main-Italic.woff2
+[52/97] Copying KaTeX_Main-BoldItalic.ttf
+[54/97] Copying KaTeX_Main-Bold.woff2
+[57/97] Copying KaTeX_Main-BoldItalic.woff2
+[59/97] Copying KaTeX_Main-BoldItalic.woff
+[60/97] Copying KaTeX_Main-Bold.woff
+[60/97] Copying KaTeX_Math-BoldItalic.woff2
+[60/97] Copying KaTeX_Main-Regular.ttf
+[63/97] Copying KaTeX_Fraktur-Bold.ttf
+[63/97] Copying KaTeX_Fraktur-Regular.woff
+[64/97] Copying KaTeX_Fraktur-Bold.woff2
+[64/97] Copying KaTeX_Caligraphic-Regular.woff
+[64/97] Copying KaTeX_Caligraphic-Regular.woff2
+[65/97] Copying KaTeX_Fraktur-Regular.woff2
+[68/97] Copying KaTeX_Fraktur-Bold.woff
+[68/97] Copying KaTeX_Fraktur-Regular.ttf
+[68/97] Copying KaTeX_AMS-Regular.woff
+[68/97] Copying KaTeX_Caligraphic-Bold.woff
+[68/97] Copying KaTeX_Caligraphic-Regular.ttf
+[68/97] Copying KaTeX_Main-Bold.ttf
+[68/97] Copying KaTeX_AMS-Regular.ttf
+[74/97] Write sources
+[74/97] Copying KaTeX_Caligraphic-Bold.ttf
+[74/97] Write sources
+[79/97] Copying KaTeX_AMS-Regular.woff2
+[79/97] Copying ATTRIBUTION.md
+[79/97] Write sources
+[84/97] Copying KaTeX_Caligraphic-Bold.woff2
+[85/97] Write sources
+[86/97] Write swift-version--1AB21518FC5DEDBE.txt
+[88/100] Compiling WeiBeiPDFTextWorker main.swift
+[88/100] Write Objects.LinkFileList
+[89/100] Linking WeiBeiPDFTextWorker
+[91/100] Compiling WeiBeiWebEditorCheck main.swift
+[91/100] Write Objects.LinkFileList
+[92/100] Linking WeiBeiWebEditorCheck
+[94/100] Compiling WeiBeiCore AgentOfflinePreview.swift
+[95/103] Compiling WeiBeiSelfCheck PiAgentSelfChecks.swift
+/Users/changfenhuang/Documents/魏碑-release-1.0/Sources/WeiBeiSelfCheck/main.swift:1503:13: warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+1501 |     let createStatus = temporaryKeychainURL.path.withCString { path in
+1502 |         temporaryKeychainPassword.withUnsafeBytes { password in
+1503 |             SecKeychainCreate(path, UInt32(password.count), password.baseAddress, false, nil, &temporaryKeychain)
+     |             `- warning: 'SecKeychainCreate' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+1504 |         }
+1505 |     }
+
+/Users/changfenhuang/Documents/魏碑-release-1.0/Sources/WeiBeiSelfCheck/main.swift:1509:9: warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+1507 |     guard let temporaryKeychain else { exit(1) }
+1508 |     defer {
+1509 |         SecKeychainDelete(temporaryKeychain)
+     |         `- warning: 'SecKeychainDelete' was deprecated in macOS 10.10: SecKeychain is deprecated [#DeprecatedDeclaration]
+1510 |     }
+1511 | 
+
+[#DeprecatedDeclaration]: <https://docs.swift.org/compiler/documentation/diagnostics/deprecated-declaration>
+[95/103] Write Objects.LinkFileList
+[96/103] Linking WeiBeiSelfCheck
+[98/103] Compiling WeiBeiPiCheck RichAnswerEvidenceMerge.swift
+[98/103] Write Objects.LinkFileList
+[99/103] Linking WeiBeiPiCheck
+[101/103] Compiling WeiBei WeiBeiApp.swift
+[101/103] Write Objects.LinkFileList
+[102/103] Linking WeiBei
+Build complete! (361.05s)
+/var/folders/yp/wx87z0l97wj89_yj8nw7_ptm0000gn/T//weibei-package-501/魏碑.app/Contents/Helpers/WeiBeiPDFTextWorker: replacing existing signature
+/var/folders/yp/wx87z0l97wj89_yj8nw7_ptm0000gn/T//weibei-package-501/魏碑.app: replacing existing signature
+pi-check ready: PI 0.80.2 at /var/folders/yp/wx87z0l97wj89_yj8nw7_ptm0000gn/T//weibei-package-501/魏碑.app/Contents/Resources/PiRuntime/bin/pi
+release_metadata_version=0.1.0
+release_metadata_build=481
+release_metadata_commit=f3b48af3bda00f8d4492bd3af5da6bd6feefcbcc
+release_metadata_source_dirty=true

@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import SwiftUI
 import WebKit
 import WeiBeiCore
@@ -44,10 +45,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         sharedWorkspaceStore.flushPendingNotePersistence()
+        sharedWorkspaceStore.flushPendingWorkspaceSave()
         sharedWorkspaceStore.shutdownAgentRuntime()
         if let shortcutMonitor {
             NSEvent.removeMonitor(shortcutMonitor)
         }
+    }
+
+    func applicationDidResignActive(_ notification: Notification) {
+        // Durability + less work at quit: flush pending note/workspace saves on focus loss.
+        sharedWorkspaceStore.flushPendingNotePersistence()
+        sharedWorkspaceStore.flushPendingWorkspaceSave()
     }
 
     private var shouldActivateOnLaunch: Bool {
@@ -79,6 +87,8 @@ struct WeiBeiApp: App {
         WindowGroup("魏碑", id: "main") {
             ContentView()
                 .environmentObject(store)
+                .environmentObject(store.libraryDrawer)
+                .environmentObject(store.threePaneReorder)
                 .preferredColorScheme(store.appearanceMode.colorScheme)
                 .modifier(WeiBeiAppearanceTransition(mode: store.appearanceMode))
                 .background(WindowChromeConfigurator(appearanceMode: store.appearanceMode))
@@ -97,7 +107,7 @@ struct WeiBeiApp: App {
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandMenu(store.appDisplayName) {
-                Button(store.ui("打开课程首页", "Open Course Home")) { store.presentCourseWorkspace() }
+                Button(store.ui("打开课程空间", "Open Course Space")) { store.presentCourseWorkspace(.hub) }
                     .keyboardShortcut("0")
 
                 Divider()
@@ -134,9 +144,7 @@ struct WeiBeiApp: App {
                 Divider()
 
                 Button(store.showLibrary ? store.ui("收起课程目录", "Hide Course Index") : store.ui("打开课程目录", "Show Course Index")) {
-                    animateLayout {
-                        store.toggleLibrary()
-                    }
+                    store.toggleLibrary()
                 }
                     .keyboardShortcut("b")
                 if store.layout.hasCollapsibleRightPane {
@@ -180,16 +188,10 @@ struct WeiBeiApp: App {
 
                 Divider()
 
-                Button(AgentSurface.bottomDrawer.actionLabel(language: store.interfaceLanguage)) { setAgentSurface(.bottomDrawer) }
-                    .keyboardShortcut("1", modifiers: [.control, .option])
-                Button(AgentSurface.cornerPanel.actionLabel(language: store.interfaceLanguage)) { setAgentSurface(.cornerPanel) }
-                    .keyboardShortcut("2", modifiers: [.control, .option])
                 if store.canUseSelectionAgentSurface {
                     Button(AgentSurface.selectionFloat.actionLabel(language: store.interfaceLanguage)) { setAgentSurface(.selectionFloat) }
                         .keyboardShortcut("3", modifiers: [.control, .option])
                 }
-                Button(AgentSurface.quietInsight.actionLabel(language: store.interfaceLanguage)) { setAgentSurface(.quietInsight) }
-                    .keyboardShortcut("4", modifiers: [.control, .option])
                 Button(AgentSurface.hidden.actionLabel(language: store.interfaceLanguage)) { setAgentSurface(.hidden) }
                     .keyboardShortcut("0", modifiers: [.control, .option])
 
@@ -337,6 +339,9 @@ private struct WeiBeiAppearanceTransition: ViewModifier {
 @MainActor
 private struct WindowChromeConfigurator: NSViewRepresentable {
     private static var scheduledVerificationCaptures: Set<String> = []
+    private static var scheduledVerificationCaptureChannels: Set<String> = []
+    private static var processedVerificationCaptureRequests: Set<String> = []
+    private static let webViewSnapshotTimeoutSeconds: TimeInterval = 4
 
     var appearanceMode: WeiBeiAppearanceMode
 
@@ -366,6 +371,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         window.isMovableByWindowBackground = true
         applyVerificationWindowSize(to: window)
         captureVerificationWindowIfRequested(window)
+        listenForVerificationCaptureRequestsIfRequested(window)
     }
 
     private func applyVerificationWindowSize(to window: NSWindow) {
@@ -419,6 +425,269 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         }
     }
 
+    private struct VerificationCaptureRequest: Decodable {
+        var id: String
+        var capturePath: String
+        var stage: String?
+    }
+
+    private struct VerificationCaptureResult {
+        var pngPath: String
+        var bytes: Int
+        var sha256: String
+        var capturedAt: String
+        var webViewSnapshotCount: Int
+    }
+
+    private func listenForVerificationCaptureRequestsIfRequested(_ window: NSWindow) {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1",
+              let rawChannelPath = environment["WEIBEI_VERIFY_CAPTURE_REQUEST_DIR"],
+              !rawChannelPath.isEmpty,
+              let rawOutputPath = environment["WEIBEI_VERIFY_CAPTURE_OUTPUT_DIR"],
+              !rawOutputPath.isEmpty else { return }
+
+        let channelURL = URL(fileURLWithPath: rawChannelPath, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let outputURL = URL(fileURLWithPath: rawOutputPath, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let channelID = "\(channelURL.path)#\(ObjectIdentifier(window).hashValue)"
+        guard Self.scheduledVerificationCaptureChannels.insert(channelID).inserted else { return }
+        guard Self.isSafeVerificationOutputRoot(outputURL) else {
+            fputs("WeiBei verification capture output root is unsafe: \(outputURL.path)\n", stderr)
+            return
+        }
+        guard Self.isCaptureURL(channelURL, inside: outputURL) else {
+            fputs("WeiBei verification capture channel must stay inside output root: \(channelURL.path)\n", stderr)
+            return
+        }
+
+        try? FileManager.default.createDirectory(at: channelURL, withIntermediateDirectories: true)
+        Self.scheduleVerificationCapturePoll(
+            in: window,
+            channelURL: channelURL,
+            outputURL: outputURL
+        )
+    }
+
+    private static func scheduleVerificationCapturePoll(
+        in window: NSWindow,
+        channelURL: URL,
+        outputURL: URL
+    ) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak window] in
+            guard let window else { return }
+            pollVerificationCaptureRequests(
+                in: window,
+                channelURL: channelURL,
+                outputURL: outputURL
+            )
+        }
+    }
+
+    private static func pollVerificationCaptureRequests(
+        in window: NSWindow,
+        channelURL: URL,
+        outputURL: URL
+    ) {
+        let requestURL = channelURL.appendingPathComponent("request.json")
+        guard let data = try? Data(contentsOf: requestURL),
+              let request = try? JSONDecoder().decode(VerificationCaptureRequest.self, from: data),
+              !request.id.isEmpty else {
+            scheduleVerificationCapturePoll(in: window, channelURL: channelURL, outputURL: outputURL)
+            return
+        }
+
+        let requestKey = "\(channelURL.path)::\(request.id)"
+        guard processedVerificationCaptureRequests.insert(requestKey).inserted else {
+            scheduleVerificationCapturePoll(in: window, channelURL: channelURL, outputURL: outputURL)
+            return
+        }
+
+        let captureURL = URL(fileURLWithPath: request.capturePath)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        guard isCaptureURL(captureURL, inside: outputURL),
+              captureURL.pathExtension.lowercased() == "png" else {
+            writeVerificationCaptureAcknowledgement(
+                request: request,
+                status: "failed",
+                failureReason: "capture path must be a PNG inside the configured output directory",
+                channelURL: channelURL
+            )
+            scheduleVerificationCapturePoll(in: window, channelURL: channelURL, outputURL: outputURL)
+            return
+        }
+
+        let verificationStage = request.stage?.lowercased()
+        let stageDelay: TimeInterval
+        if let verificationStage, ["overview", "before", "after"].contains(verificationStage) {
+            NotificationCenter.default.post(
+                name: .weiBeiRichAnswerVerificationStage,
+                object: nil,
+                userInfo: ["stage": verificationStage]
+            )
+            stageDelay = verificationStage == "after" ? 1.1 : 0.8
+        } else {
+            stageDelay = 0
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + stageDelay) {
+            capture(window, to: captureURL.path) { captureResult, failureReason in
+                writeVerificationCaptureAcknowledgement(
+                    request: request,
+                    status: failureReason == nil ? "succeeded" : "failed",
+                    failureReason: failureReason,
+                    captureResult: captureResult,
+                    channelURL: channelURL
+                )
+                scheduleVerificationCapturePoll(in: window, channelURL: channelURL, outputURL: outputURL)
+            }
+        }
+    }
+
+    private static func isSafeVerificationOutputRoot(_ outputURL: URL) -> Bool {
+        let resolvedURL = outputURL.standardizedFileURL.resolvingSymlinksInPath()
+        var isDirectory = ObjCBool(false)
+        guard FileManager.default.fileExists(atPath: resolvedURL.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            return false
+        }
+        let allowedRoots = [
+            URL(fileURLWithPath: "/private/tmp", isDirectory: true),
+            FileManager.default.temporaryDirectory,
+        ].map { $0.standardizedFileURL.resolvingSymlinksInPath().path }
+        return allowedRoots.contains { rootPath in
+            let normalizedRoot = rootPath.hasSuffix("/") ? String(rootPath.dropLast()) : rootPath
+            let prefix = normalizedRoot + "/"
+            guard resolvedURL.path.hasPrefix(prefix) else { return false }
+            let relativePath = resolvedURL.path.dropFirst(prefix.count)
+            guard let evidenceRoot = relativePath.split(separator: "/").first else { return false }
+            return evidenceRoot.hasPrefix("weibei-rich-answer-")
+        }
+    }
+
+    private static func isCaptureURL(_ captureURL: URL, inside outputURL: URL) -> Bool {
+        let rootPath = outputURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let captureParentPath = captureURL.deletingLastPathComponent()
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+        return isPath(captureParentPath, insideDirectory: rootPath)
+    }
+
+    private static func isPath(_ path: String, insideDirectory rootPath: String) -> Bool {
+        let normalizedRoot = rootPath.hasSuffix("/") ? String(rootPath.dropLast()) : rootPath
+        let prefix = normalizedRoot + "/"
+        return path == normalizedRoot || path.hasPrefix(prefix)
+    }
+
+    private static func writeVerificationCaptureAcknowledgement(
+        request: VerificationCaptureRequest,
+        status: String,
+        failureReason: String?,
+        captureResult: VerificationCaptureResult? = nil,
+        channelURL: URL
+    ) {
+        let acknowledgementURL = channelURL.appendingPathComponent("ack.json")
+        var payload: [String: Any] = [
+            "id": request.id,
+            "requestID": request.id,
+            "requestCapturePath": request.capturePath,
+            "stage": request.stage ?? NSNull(),
+            "capturePath": captureResult?.pngPath ?? request.capturePath,
+            "status": status,
+            "failureReason": failureReason ?? NSNull(),
+            "acknowledgedAt": iso8601String(Date()),
+            "renderReady": renderReadyEvidencePayload(),
+            "webViewSnapshotTimeoutSeconds": webViewSnapshotTimeoutSeconds,
+        ]
+        if let captureResult {
+            payload["actualPNG"] = [
+                "path": captureResult.pngPath,
+                "bytes": captureResult.bytes,
+                "sha256": captureResult.sha256,
+                "hash": "sha256:\(captureResult.sha256)",
+                "capturedAt": captureResult.capturedAt,
+            ]
+            payload["actualPNGPath"] = captureResult.pngPath
+            payload["pngBytes"] = captureResult.bytes
+            payload["pngSHA256"] = captureResult.sha256
+            payload["pngHash"] = "sha256:\(captureResult.sha256)"
+            payload["webViewSnapshotCount"] = captureResult.webViewSnapshotCount
+        } else {
+            payload["actualPNG"] = NSNull()
+            payload["actualPNGPath"] = NSNull()
+            payload["pngBytes"] = NSNull()
+            payload["pngSHA256"] = NSNull()
+            payload["pngHash"] = NSNull()
+            payload["webViewSnapshotCount"] = NSNull()
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else { return }
+        do {
+            try data.write(to: acknowledgementURL, options: .atomic)
+        } catch {
+            fputs("WeiBei verification capture acknowledgement failed: \(error.localizedDescription)\n", stderr)
+        }
+    }
+
+    private static func renderReadyEvidencePayload() -> [String: Any] {
+        let observedAt = iso8601String(Date())
+        guard let workspaceDirectory = ProcessInfo.processInfo.environment["WEIBEI_WORKSPACE_DIR"],
+              !workspaceDirectory.isEmpty else {
+            return [
+                "seen": false,
+                "observedAt": observedAt,
+                "failureReason": "WEIBEI_WORKSPACE_DIR is unavailable",
+            ]
+        }
+        let markerURL = URL(fileURLWithPath: workspaceDirectory, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .appendingPathComponent("rich-answer-renderer-ready.txt")
+        guard FileManager.default.fileExists(atPath: markerURL.path) else {
+            return [
+                "seen": false,
+                "path": markerURL.path,
+                "observedAt": observedAt,
+                "failureReason": "renderer-ready marker is absent",
+            ]
+        }
+        guard let markerData = try? Data(contentsOf: markerURL),
+              !markerData.isEmpty else {
+            return [
+                "seen": false,
+                "path": markerURL.path,
+                "observedAt": observedAt,
+                "failureReason": "renderer-ready marker is empty or unreadable",
+            ]
+        }
+        let attributes = try? FileManager.default.attributesOfItem(atPath: markerURL.path)
+        let modifiedAt = (attributes?[.modificationDate] as? Date).map(iso8601String)
+        let sha256 = sha256Hex(for: markerData)
+        return [
+            "seen": true,
+            "path": markerURL.path,
+            "bytes": markerData.count,
+            "sha256": sha256,
+            "signature": "sha256:\(sha256)",
+            "readyAt": modifiedAt ?? observedAt,
+            "observedAt": observedAt,
+            "modifiedAt": modifiedAt ?? NSNull(),
+        ]
+    }
+
+    private static func iso8601String(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: date)
+    }
+
+    private static func sha256Hex(for data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
+
     private static func waitForVerificationCompletion(
         in window: NSWindow,
         capturePath: String,
@@ -443,20 +712,40 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         }
     }
 
-    private static func capture(_ window: NSWindow, to capturePath: String) {
-        guard !FileManager.default.fileExists(atPath: capturePath),
-              let contentView = window.contentView else { return }
+    private static func capture(
+        _ window: NSWindow,
+        to capturePath: String,
+        completion: @escaping (VerificationCaptureResult?, String?) -> Void = { _, _ in }
+    ) {
+        guard !FileManager.default.fileExists(atPath: capturePath) else {
+            completion(nil, "capture target already exists")
+            return
+        }
+        guard let contentView = window.contentView else {
+            completion(nil, "window content view is unavailable")
+            return
+        }
         contentView.layoutSubtreeIfNeeded()
         window.displayIfNeeded()
         let bounds = contentView.bounds
         guard bounds.width >= 600,
-              bounds.height >= 400,
-              let bitmap = contentView.bitmapImageRepForCachingDisplay(in: bounds) else { return }
+              bounds.height >= 400 else {
+            completion(nil, "window content bounds are smaller than the verification minimum")
+            return
+        }
+        guard let bitmap = contentView.bitmapImageRepForCachingDisplay(in: bounds) else {
+            completion(nil, "window content bitmap could not be allocated")
+            return
+        }
         contentView.cacheDisplay(in: bounds, to: bitmap)
         let baseImage = NSImage(size: bounds.size)
         baseImage.addRepresentation(bitmap)
         let webViews = visibleWebViews(in: contentView)
-        captureWebViews(webViews, at: 0, relativeTo: contentView, overlays: []) { overlays in
+        captureWebViews(webViews, at: 0, relativeTo: contentView, overlays: []) { overlays, webViewFailure in
+            if let webViewFailure {
+                completion(nil, webViewFailure)
+                return
+            }
             let composite = NSImage(size: bounds.size)
             composite.lockFocus()
             baseImage.draw(in: bounds)
@@ -466,8 +755,94 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
             composite.unlockFocus()
             guard let tiff = composite.tiffRepresentation,
                   let representation = NSBitmapImageRep(data: tiff),
-                  let png = representation.representation(using: .png, properties: [:]) else { return }
-            try? png.write(to: URL(fileURLWithPath: capturePath), options: .atomic)
+                  let png = representation.representation(using: .png, properties: [:]) else {
+                completion(nil, "captured window could not be encoded as PNG")
+                return
+            }
+            let captureURL = URL(fileURLWithPath: capturePath)
+                .standardizedFileURL
+                .resolvingSymlinksInPath()
+            do {
+                try png.write(to: captureURL, options: .atomic)
+            } catch {
+                completion(nil, "captured PNG could not be written: \(error.localizedDescription)")
+                return
+            }
+            guard let writtenData = try? Data(contentsOf: captureURL),
+                  !writtenData.isEmpty else {
+                completion(nil, "captured PNG could not be verified after write")
+                return
+            }
+            let attributes = try? FileManager.default.attributesOfItem(atPath: captureURL.path)
+            let bytes = (attributes?[.size] as? NSNumber)?.intValue ?? writtenData.count
+            completion(
+                VerificationCaptureResult(
+                    pngPath: captureURL.path,
+                    bytes: bytes,
+                    sha256: sha256Hex(for: writtenData),
+                    capturedAt: iso8601String(Date()),
+                    webViewSnapshotCount: overlays.count
+                ),
+                nil
+            )
+        }
+    }
+
+    private final class WebViewSnapshotState {
+        var isCompleted = false
+    }
+
+    private static func completeWebViewSnapshotOnce(
+        state: WebViewSnapshotState,
+        completion: @escaping (NSImage?, String?) -> Void,
+        image: NSImage?,
+        failureReason: String?
+    ) {
+        guard !state.isCompleted else { return }
+        state.isCompleted = true
+        completion(image, failureReason)
+    }
+
+    private static func captureWebViewSnapshot(
+        _ webView: WKWebView,
+        completion: @escaping (NSImage?, String?) -> Void
+    ) {
+        let state = WebViewSnapshotState()
+        DispatchQueue.main.asyncAfter(deadline: .now() + webViewSnapshotTimeoutSeconds) {
+            completeWebViewSnapshotOnce(
+                state: state,
+                completion: completion,
+                image: nil,
+                failureReason: "web content snapshot timed out after \(String(format: "%.1f", webViewSnapshotTimeoutSeconds)) seconds"
+            )
+        }
+        webView.takeSnapshot(with: nil) { image, error in
+            DispatchQueue.main.async {
+                if let error {
+                    completeWebViewSnapshotOnce(
+                        state: state,
+                        completion: completion,
+                        image: nil,
+                        failureReason: "web content snapshot failed: \(error.localizedDescription)"
+                    )
+                    return
+                }
+                guard let image else {
+                    completeWebViewSnapshotOnce(
+                        state: state,
+                        completion: completion,
+                        image: nil,
+                        failureReason: "web content snapshot returned no image"
+                    )
+                    return
+                }
+                completeWebViewSnapshotOnce(
+                    state: state,
+                    completion: completion,
+                    image: image,
+                    failureReason: nil
+                )
+            }
         }
     }
 
@@ -491,10 +866,10 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         at index: Int,
         relativeTo contentView: NSView,
         overlays: [WebViewSnapshot],
-        completion: @escaping ([WebViewSnapshot]) -> Void
+        completion: @escaping ([WebViewSnapshot], String?) -> Void
     ) {
         guard webViews.indices.contains(index) else {
-            completion(overlays)
+            completion(overlays, nil)
             return
         }
         let webView = webViews[index]
@@ -502,26 +877,41 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         let rect = contentView.isFlipped
             ? NSRect(x: converted.minX, y: contentView.bounds.height - converted.maxY, width: converted.width, height: converted.height)
             : converted
-        webView.takeSnapshot(with: nil) { image, _ in
-            DispatchQueue.main.async {
-                var nextOverlays = overlays
-                if let image, rect.width > 1, rect.height > 1 {
-                    nextOverlays.append(WebViewSnapshot(rect: rect, image: image))
-                }
-                captureWebViews(
-                    webViews,
-                    at: index + 1,
-                    relativeTo: contentView,
-                    overlays: nextOverlays,
-                    completion: completion
-                )
+        guard rect.width > 1, rect.height > 1 else {
+            captureWebViews(
+                webViews,
+                at: index + 1,
+                relativeTo: contentView,
+                overlays: overlays,
+                completion: completion
+            )
+            return
+        }
+        captureWebViewSnapshot(webView) { image, failureReason in
+            if let failureReason {
+                completion(overlays, failureReason)
+                return
             }
+            guard let image else {
+                completion(overlays, "web content snapshot returned no image")
+                return
+            }
+            var nextOverlays = overlays
+            nextOverlays.append(WebViewSnapshot(rect: rect, image: image))
+            captureWebViews(
+                webViews,
+                at: index + 1,
+                relativeTo: contentView,
+                overlays: nextOverlays,
+                completion: completion
+            )
         }
     }
 }
 
 struct SettingsView: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @StateObject private var oauthService = PiOAuthService.shared
     @State private var selectedSection: SettingsSection = .overview
     @FocusState private var focusedField: Field?
 
@@ -539,6 +929,23 @@ struct SettingsView: View {
         .modifier(WeiBeiAppearanceTransition(mode: store.appearanceMode))
         .onAppear {
             selectedSection = .overview
+            oauthService.refreshLinkedStatus()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .weiBeiPiOAuthDidSucceed)) { note in
+            guard let raw = note.userInfo?["provider"] as? String,
+                  let subscription = PiSubscriptionProvider(rawValue: raw) else { return }
+            // After OAuth, point chat at the subscription provider + default model.
+            store.setAgentAuthMethod(.subscription)
+            store.setAgentProviderID(subscription.agentProviderID)
+            store.updateModelName(subscription.defaultModel)
+            if raw == "openai-codex" {
+                // Pi expects provider id openai-codex for ChatGPT subscription tokens.
+                store.updateModelName(subscription.defaultModel)
+            }
+            store.openAIKeyStatus = store.ui(
+                "订阅已连接：\(subscription.label(language: store.interfaceLanguage))",
+                "Subscription linked: \(subscription.label(language: store.interfaceLanguage))"
+            )
         }
     }
 
@@ -663,6 +1070,7 @@ struct SettingsView: View {
     private var settingsDetail: some View {
         VStack(spacing: 0) {
             settingsHeader
+            // No whole-scroll animation on section change — that was thrashing settings UI.
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 18) {
                     switch selectedSection {
@@ -685,8 +1093,8 @@ struct SettingsView: View {
                 .padding(.horizontal, 28)
                 .padding(.top, 24)
                 .padding(.bottom, 34)
-                .animation(WeiBeiMotion.panel, value: selectedSection)
             }
+            .id(selectedSection)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(WeiBeiTheme.paper)
@@ -734,7 +1142,7 @@ struct SettingsView: View {
         case .overview:
             return store.ui("先看当前状态，再进入具体设置。", "Start with the current state, then drill into details.")
         case .appearance:
-            return store.ui("统一控制语言、主题、顶部栏和工作区布局。", "Control language, theme, top bar, and workspace layout.")
+            return store.ui("统一控制语言与主题。", "Control language and theme.")
         case .reading:
             return store.ui("阅读设置只放当前已经接入真实行为的开关。", "Reading settings only expose behavior that is already wired.")
         case .writing:
@@ -750,7 +1158,36 @@ struct SettingsView: View {
 
     private var overviewSettings: some View {
         VStack(alignment: .leading, spacing: 16) {
-            settingsGroup(store.ui("当前工作台", "Current Workspace")) {
+            settingsGroup(store.ui("连接状态", "Connection")) {
+                settingsRow(
+                    title: store.ui("提供商", "Provider"),
+                    detail: store.ui("当前对话路由。", "Current chat routing.")
+                ) {
+                    settingsPill(
+                        title: store.agentProviderID.label(language: store.interfaceLanguage),
+                        icon: "network",
+                        active: true
+                    )
+                }
+                settingsRow(
+                    title: store.ui("密钥", "API Key"),
+                    detail: store.openAIKeyHelpText
+                ) {
+                    settingsPill(
+                        title: store.openAIAPIKey.isEmpty ? store.ui("未配置", "Not set") : store.ui("已配置", "Configured"),
+                        icon: store.openAIAPIKey.isEmpty ? "key" : "checkmark.seal",
+                        active: !store.openAIAPIKey.isEmpty
+                    )
+                }
+                settingsRow(
+                    title: store.ui("模型", "Model"),
+                    detail: store.modelName
+                ) {
+                    settingsPill(title: store.modelName, icon: "cpu", active: true)
+                }
+            }
+
+            settingsGroup(store.ui("数据", "Data")) {
                 settingsRow(
                     title: store.ui("资料", "Material"),
                     detail: store.selectedMaterialItem.map(store.displayTitle) ?? store.ui("还没有打开资料。", "No material is open.")
@@ -761,27 +1198,12 @@ struct SettingsView: View {
                         active: store.selectedMaterialItem != nil
                     )
                 }
-
                 settingsRow(
                     title: store.ui("笔记", "Note"),
                     detail: store.selectedItem.map(store.displayTitle) ?? store.ui("当前是新笔记。", "The current note is new.")
                 ) {
                     settingsPill(title: store.noteRenderMode.label(language: store.interfaceLanguage), icon: "square.and.pencil", active: true)
                 }
-
-                settingsRow(
-                    title: store.ui("对话上下文", "Chat Context"),
-                    detail: store.hasSelectionAttachments ? store.ui("已选文本片段会作为对话上下文。", "Selected fragments will be used as chat context.") : store.ui("未附加选区，将读取当前资料和笔记。", "No selection is attached; the current material and note will be used.")
-                ) {
-                    settingsPill(
-                        title: store.hasSelectionAttachments ? store.ui("\(store.selectionAttachments.count) 个片段", "\(store.selectionAttachments.count) fragments") : store.ui("默认上下文", "Default"),
-                        icon: "text.bubble",
-                        active: store.hasSelectionAttachments
-                    )
-                }
-            }
-
-            settingsGroup(store.ui("空白页", "Empty Workspace")) {
                 settingsRow(
                     title: store.ui("每日灵感", "Daily Inspiration"),
                     detail: store.ui("关闭后只隐藏语录；文稿、对话和笔记入口始终保留。", "Hides sourced quotations only; document, chat, and notes entries always remain.")
@@ -803,12 +1225,12 @@ struct SettingsView: View {
             settingsGroup(store.ui("快速进入", "Jump To")) {
                 settingsRouteRow(
                     title: store.ui("外观与语言", "Appearance & Language"),
-                    detail: store.ui("字体、明暗模式、顶部栏、布局。", "Fonts, theme mode, top bar, and layout."),
+                    detail: store.ui("字体、明暗模式。", "Fonts and theme mode."),
                     target: .appearance
                 )
                 settingsRouteRow(
                     title: store.ui("对话设置", "Chat Settings"),
-                    detail: store.ui("密钥、模型、显示形态和选区上下文。", "Key, model, surface, and selection context."),
+                    detail: store.ui("提供商、密钥、模型与 Base URL。", "Provider, key, model, and Base URL."),
                     target: .agent
                 )
                 settingsRouteRow(
@@ -816,6 +1238,25 @@ struct SettingsView: View {
                     detail: store.ui("导入资料、当前资料、当前笔记。", "Import, current material, and current note."),
                     target: .data
                 )
+            }
+
+            settingsGroup(store.ui("关于", "About")) {
+                settingsRow(
+                    title: store.ui("版本", "Version"),
+                    detail: store.ui("正式法律文案与许可证在发布 closeout 前定稿，此处只保留信息架构。", "Final legal copy and license land at release closeout; this is the info architecture only.")
+                ) {
+                    settingsPill(
+                        title: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—",
+                        icon: "info.circle",
+                        active: false
+                    )
+                }
+                settingsRow(
+                    title: store.ui("隐私占位", "Privacy placeholder"),
+                    detail: store.ui("密钥存本机钥匙串；材料仅在用户发问时发送给所选提供商。最终隐私文案待发布定稿。", "Keys stay in the local keychain; materials are sent only when the user asks. Final privacy copy is deferred.")
+                ) {
+                    settingsPill(title: store.ui("待定稿", "TBD"), icon: "hand.raised", active: false)
+                }
             }
         }
     }
@@ -850,37 +1291,18 @@ struct SettingsView: View {
                         }
                     }
                 }
-
-                settingsRow(
-                    title: store.ui("顶部栏样式", "Top Bar Style"),
-                    detail: store.ui("这些方案会直接影响主窗口顶部栏，不做未接入的假预览。", "These variants directly change the main window top bar; no fake previews.")
-                ) {
-                    compactMenu(store.topBarVariant.label(language: store.interfaceLanguage)) {
-                        ForEach(TopBarVariant.allCases) { variant in
-                            Button(variant.label(language: store.interfaceLanguage)) {
-                                withAnimation(WeiBeiMotion.appearance) {
-                                    store.setTopBarVariant(variant)
-                                }
-                            }
-                        }
-                    }
-                }
             }
 
             settingsGroup(store.ui("工作区", "Workspace")) {
                 settingsRow(
-                    title: store.ui("当前布局", "Current Layout"),
-                    detail: store.ui("设置会立即作用到主窗口，方便检查真实效果。", "Changes apply to the main window immediately for real inspection.")
+                    title: store.ui("布局说明", "Layout Notes"),
+                    detail: store.ui("栏位用顶栏显隐与拖拽重排；沉浸阅读/对话/写作用 ⌥⌘R / ⌥⌘A / ⌥⌘N。设置页不再切换布局预设。", "Use top-bar pane toggles and drag-reorder for columns; immersive reading/chat/writing use ⌥⌘R / ⌥⌘A / ⌥⌘N. Settings no longer switches layout presets.")
                 ) {
-                    compactMenu(store.layout.label(language: store.interfaceLanguage)) {
-                        ForEach(WorkspaceLayout.allCases) { layout in
-                            Button(layout.label(language: store.interfaceLanguage)) {
-                                withAnimation(WeiBeiMotion.layout) {
-                                    store.setLayout(layout)
-                                }
-                            }
-                        }
-                    }
+                    settingsPill(
+                        title: store.layout.label(language: store.interfaceLanguage),
+                        icon: "rectangle.split.3x1",
+                        active: false
+                    )
                 }
 
                 settingsRow(
@@ -905,6 +1327,24 @@ struct SettingsView: View {
 
     private var readingSettings: some View {
         VStack(alignment: .leading, spacing: 16) {
+            settingsGroup(store.ui("导入文稿", "Imported Documents")) {
+                settingsRow(
+                    title: store.ui("导入文稿适配", "Adapt Imported Documents"),
+                    detail: store.ui("让 PDF/HTML 跟随魏碑纸面与墨石阅读环境。", "Let PDF/HTML follow WeiBei paper and inkstone reading.")
+                ) {
+                    Toggle(
+                        "",
+                        isOn: Binding(
+                            get: { store.adaptImportedDocumentColors },
+                            set: { store.setImportedDocumentColorAdaptation($0) }
+                        )
+                    )
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                    .accessibilityLabel(Text(store.ui("导入文稿适配", "Adapt Imported Documents")))
+                }
+            }
+
             settingsGroup(store.ui("阅读入口", "Reader Entry")) {
                 settingsRow(
                     title: store.ui("资料内搜索", "Search in Material"),
@@ -946,17 +1386,6 @@ struct SettingsView: View {
                     )
                 }
 
-                settingsRow(
-                    title: store.ui("页边洞察", "Margin Insight"),
-                    detail: store.ui("把对话能力作为低干扰阅读线索，而不是大弹窗。", "Uses low-distraction reading clues instead of large popovers.")
-                ) {
-                    Button(AgentSurface.quietInsight.label(language: store.interfaceLanguage)) {
-                        withAnimation(WeiBeiMotion.panel) {
-                            store.setAgentSurface(.quietInsight)
-                        }
-                    }
-                    .buttonStyle(WeiBeiTextActionButtonStyle(active: store.agentSurface == .quietInsight))
-                }
             }
         }
     }
@@ -1026,16 +1455,169 @@ struct SettingsView: View {
 
     private var agentSettings: some View {
         VStack(alignment: .leading, spacing: 16) {
-            settingsGroup(store.ui("密钥与模型", "Key & Model")) {
+            settingsGroup(store.ui("连接配置", "Connection Profiles")) {
+                settingsRow(
+                    title: store.ui("当前配置", "Active Profile"),
+                    detail: store.ui("可保存多套提供商与密钥，随时切换。", "Save multiple provider + key sets and switch anytime.")
+                ) {
+                    HStack(spacing: 8) {
+                        compactMenu(
+                            store.agentCredentialProfiles.first(where: { $0.id == store.activeAgentProfileID })?.name
+                                ?? store.ui("默认", "Default")
+                        ) {
+                            ForEach(store.agentCredentialProfiles) { profile in
+                                Button(profile.name) {
+                                    store.selectAgentCredentialProfile(profile.id)
+                                }
+                            }
+                        }
+                        Button(store.ui("新建", "New")) {
+                            store.createAgentCredentialProfile()
+                        }
+                        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                        if store.agentCredentialProfiles.count > 1 {
+                            Button(store.ui("删除", "Delete")) {
+                                store.deleteActiveAgentCredentialProfile()
+                            }
+                            .buttonStyle(WeiBeiTextActionButtonStyle())
+                        }
+                    }
+                }
+            }
+
+            settingsGroup(store.ui("接入方式", "How to Connect")) {
+                settingsRow(
+                    title: store.ui("方式", "Method"),
+                    detail: store.agentAuthMethod.detail(language: store.interfaceLanguage)
+                ) {
+                    HStack(spacing: 6) {
+                        ForEach(AgentAuthMethod.allCases) { method in
+                            Button(method.label(language: store.interfaceLanguage)) {
+                                store.setAgentAuthMethod(method)
+                            }
+                            .buttonStyle(WeiBeiTextActionButtonStyle(active: store.agentAuthMethod == method))
+                        }
+                    }
+                }
+
+                if store.agentAuthMethod == .subscription {
+                    settingsRow(
+                        title: store.ui("OAuth 订阅登录", "OAuth Subscription Login"),
+                        detail: store.ui(
+                            "与 Pi 的 /login 相同：浏览器完成 OAuth 后，凭证写入 ~/.pi/agent/auth.json，Agent 自动使用。",
+                            "Same as Pi’s /login: complete browser OAuth; credentials go to ~/.pi/agent/auth.json and the agent uses them automatically."
+                        )
+                    ) {
+                        VStack(alignment: .trailing, spacing: 8) {
+                            ForEach(PiSubscriptionProvider.allCases) { provider in
+                                HStack(spacing: 8) {
+                                    if oauthService.isLinked(provider) {
+                                        settingsPill(
+                                            title: store.ui("已连接", "Linked"),
+                                            icon: "checkmark.seal.fill",
+                                            active: true
+                                        )
+                                    }
+                                    if provider.supportsInAppOAuth {
+                                        Button {
+                                            guard !oauthService.isLoggingIn else { return }
+                                            oauthService.startLogin(provider)
+                                        } label: {
+                                            Text(
+                                                oauthService.isLoggingIn
+                                                    ? store.ui("登录中…", "Signing in…")
+                                                    : store.ui(
+                                                        "OAuth 登录 \(provider.label(language: store.interfaceLanguage))",
+                                                        "OAuth \(provider.label(language: store.interfaceLanguage))"
+                                                    )
+                                            )
+                                        }
+                                        .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isLoggingIn))
+                                    } else {
+                                        Button {
+                                            store.setAgentProviderID(provider.agentProviderID)
+                                            store.openAIKeyStatus = provider.detail(language: store.interfaceLanguage)
+                                        } label: {
+                                            Text(store.ui("选择并查看说明", "Select & show help"))
+                                        }
+                                        .buttonStyle(WeiBeiTextActionButtonStyle())
+                                    }
+                                }
+                            }
+                            if oauthService.isLoggingIn {
+                                Button(store.ui("取消登录", "Cancel login")) {
+                                    oauthService.cancelLogin()
+                                }
+                                .buttonStyle(WeiBeiTextActionButtonStyle())
+                            }
+                        }
+                    }
+
+                    if let progress = oauthService.statusMessage {
+                        settingsNote(progress, icon: "arrow.triangle.2.circlepath")
+                    }
+                    if let error = oauthService.lastError {
+                        settingsNote(error, icon: "exclamationmark.triangle")
+                    }
+                    if !oauthService.linkedProviders.isEmpty {
+                        settingsNote(
+                            store.ui(
+                                "已链接：\(oauthService.linkedProviders.joined(separator: ", "))",
+                                "Linked: \(oauthService.linkedProviders.joined(separator: ", "))"
+                            ),
+                            icon: "link"
+                        )
+                    }
+                }
+            }
+
+            settingsGroup(store.ui("提供商与模型", "Provider & Model")) {
+                settingsRow(
+                    title: store.ui("提供商", "Provider"),
+                    detail: store.ui(
+                        "Pi 支持的全部供应商（订阅 OAuth + API Key + 本地/自定义）。",
+                        "All Pi-supported providers (subscription OAuth + API keys + local/custom)."
+                    )
+                ) {
+                    compactMenu(store.agentProviderID.label(language: store.interfaceLanguage)) {
+                        Section(AgentProviderKind.subscription.label(language: store.interfaceLanguage)) {
+                            ForEach(AgentProviderID.subscriptionProviders) { provider in
+                                Button(provider.label(language: store.interfaceLanguage)) {
+                                    store.setAgentProviderID(provider)
+                                    if provider.kind == .subscription {
+                                        store.setAgentAuthMethod(.subscription)
+                                    }
+                                }
+                            }
+                        }
+                        Section(AgentProviderKind.apiKey.label(language: store.interfaceLanguage)) {
+                            ForEach(AgentProviderID.apiKeyProviders) { provider in
+                                Button(provider.label(language: store.interfaceLanguage)) {
+                                    store.setAgentProviderID(provider)
+                                    store.setAgentAuthMethod(.apiKey)
+                                }
+                            }
+                        }
+                        Section(AgentProviderKind.localOrCustom.label(language: store.interfaceLanguage)) {
+                            ForEach(AgentProviderID.localOrCustomProviders) { provider in
+                                Button(provider.label(language: store.interfaceLanguage)) {
+                                    store.setAgentProviderID(provider)
+                                    store.setAgentAuthMethod(.apiKey)
+                                }
+                            }
+                        }
+                    }
+                }
+
                 settingsRow(
                     title: store.ui("对话密钥", "Chat API Key"),
-                    detail: store.openAIKeyHelpText
+                    detail: AgentProviderConsoleLinks.keyHelp(language: store.interfaceLanguage, provider: store.agentProviderID)
                 ) {
                     VStack(alignment: .trailing, spacing: 8) {
                         SecureField(
                             "",
                             text: $store.openAIAPIKey,
-                            prompt: Text(store.ui("对话密钥", "Chat API key"))
+                            prompt: Text(store.ui("粘贴 API Key", "Paste API key"))
                                 .font(.system(size: 13))
                                 .foregroundStyle(WeiBeiTheme.placeholderInk)
                         )
@@ -1045,12 +1627,25 @@ struct SettingsView: View {
                         .font(.system(size: 13))
                         .weibeiInputSurface(active: focusedField == .apiKey, height: 38)
                         .frame(width: 250)
+                        .onSubmit { store.saveOpenAIAPIKey() }
+                        .onChange(of: focusedField) { _, field in
+                            if field != .apiKey {
+                                store.saveOpenAIAPIKey()
+                            }
+                        }
 
                         HStack(spacing: 8) {
-                            Button(store.ui("保存", "Save")) { store.saveOpenAIAPIKey() }
+                            Button(store.ui("保存到当前配置", "Save to Profile")) { store.saveOpenAIAPIKey() }
                                 .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                             Button(store.ui("清除", "Clear")) { store.clearOpenAIAPIKey() }
                                 .buttonStyle(WeiBeiTextActionButtonStyle())
+                            if AgentProviderConsoleLinks.loginURL(for: store.agentProviderID) != nil
+                                || AgentProviderConsoleLinks.accountURL(for: store.agentProviderID) != nil {
+                                Button(store.ui("打开控制台", "Open Console")) {
+                                    store.openAgentProviderConsole(login: false)
+                                }
+                                .buttonStyle(WeiBeiTextActionButtonStyle())
+                            }
                         }
                     }
                 }
@@ -1061,7 +1656,7 @@ struct SettingsView: View {
 
                 settingsRow(
                     title: store.ui("模型", "Model"),
-                    detail: store.ui("本机环境里的模型设置会覆盖这里。", "The model configured in your local environment overrides this field.")
+                    detail: store.ui("环境变量 WEIBEI_OPENAI_MODEL / WEIBEI_PI_MODEL 会覆盖这里。", "Env WEIBEI_OPENAI_MODEL / WEIBEI_PI_MODEL override this field.")
                 ) {
                     TextField(
                         "",
@@ -1069,7 +1664,7 @@ struct SettingsView: View {
                             get: { store.modelName },
                             set: { store.updateModelName($0) }
                         ),
-                        prompt: Text(store.ui("模型", "Model"))
+                        prompt: Text(store.agentProviderID.defaultModelHint)
                             .font(.system(size: 13))
                             .foregroundStyle(WeiBeiTheme.placeholderInk)
                     )
@@ -1080,24 +1675,48 @@ struct SettingsView: View {
                     .weibeiInputSurface(active: focusedField == .model, height: 38)
                     .frame(width: 250)
                 }
+
+                if store.agentProviderID.showsBaseURLField || !store.agentBaseURL.isEmpty {
+                    settingsRow(
+                        title: store.ui("Base URL", "Base URL"),
+                        detail: store.ui(
+                            "自定义 / llama.cpp 写入 Pi models.json；Azure 填资源 endpoint。",
+                            "Custom / llama.cpp write Pi models.json; Azure uses the resource endpoint."
+                        )
+                    ) {
+                        TextField(
+                            "",
+                            text: Binding(
+                                get: { store.agentBaseURL },
+                                set: { store.updateAgentBaseURL($0) }
+                            ),
+                            prompt: Text(
+                                store.agentProviderID == .azureOpenAI
+                                    ? "https://YOUR.openai.azure.com"
+                                    : "https://api.example.com/v1"
+                            )
+                                .font(.system(size: 13))
+                                .foregroundStyle(WeiBeiTheme.placeholderInk)
+                        )
+                        .textFieldStyle(.plain)
+                        .foregroundColor(WeiBeiTheme.ink)
+                        .font(.system(size: 13))
+                        .weibeiInputSurface(active: false, height: 38)
+                        .frame(width: 280)
+                    }
+                }
             }
 
-            settingsGroup(store.ui("对话形态", "Chat Surface")) {
+            settingsGroup(store.ui("对话入口", "Chat Entry")) {
                 settingsRow(
-                    title: store.ui("默认显示", "Default Surface"),
-                    detail: store.ui("完整对话区保留，小选区浮层只作为临时入口。", "The full chat area stays; the selection layer is only a temporary entry.")
+                    title: store.ui("入口说明", "Entry Notes"),
+                    detail: store.ui("完整对话在主栏与沉浸对话；选区轻提示可 ⌃⌥0 隐藏。", "Full chat lives in the agent pane and immersive conversation; hide selection prompt with ⌃⌥0.")
                 ) {
-                    compactMenu(store.agentSurface.label(language: store.interfaceLanguage)) {
-                        ForEach(AgentSurface.allCases) { surface in
-                            if surface != .selectionFloat || store.canUseSelectionAgentSurface {
-                                Button(surface.label(language: store.interfaceLanguage)) {
-                                    withAnimation(WeiBeiMotion.panel) {
-                                        store.setAgentSurface(surface)
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    settingsPill(
+                        title: store.agentSurface.label(language: store.interfaceLanguage),
+                        icon: "bubble.left.and.bubble.right",
+                        active: store.agentSurface == .selectionFloat
+                    )
                 }
             }
         }
@@ -1128,10 +1747,18 @@ struct SettingsView: View {
             (store.ui("命令面板", "Command Palette"), "⌘K", store.ui("搜索并执行魏碑动作。", "Search and run WeiBei actions.")),
             (store.ui("课程目录", "Course Index"), "⌘B", store.ui("打开或收起课程目录。", "Show or hide the course index.")),
             (store.ui("资料内搜索", "Search in Material"), "⌘F", store.ui("搜索当前打开的资料。", "Search the current material.")),
+            (store.ui("聚焦课程目录", "Focus Course Index"), "⌘1", store.ui("把键盘焦点交给课程目录。", "Move keyboard focus to the course index.")),
             (store.ui("聚焦阅读", "Focus Reader"), "⌘2", store.ui("把键盘焦点交给阅读区。", "Move keyboard focus to the reader.")),
             (store.ui("聚焦笔记", "Focus Notes"), "⌘3", store.ui("把键盘焦点交给笔记区。", "Move keyboard focus to notes.")),
             (store.ui("聚焦对话", "Focus Chat"), "⌘4", store.ui("把键盘焦点交给对话区。", "Move keyboard focus to chat.")),
-            (store.ui("明暗切换", "Toggle Theme"), "⌥⌘T", store.ui("在纸面和墨石之间切换。", "Switch between paper and inkstone."))
+            (store.ui("沉浸阅读", "Immersive Reading"), "⌥⌘R", store.ui("进入沉浸阅读布局。", "Enter immersive reading layout.")),
+            (store.ui("沉浸对话", "Immersive Chat"), "⌥⌘A", store.ui("进入沉浸对话布局。", "Enter immersive conversation layout.")),
+            (store.ui("沉浸写作", "Immersive Writing"), "⌥⌘N", store.ui("进入沉浸写作布局。", "Enter immersive writing layout.")),
+            (store.ui("选区轻提示", "Selection Prompt"), "⌃⌥3", store.ui("在有选区时打开选区浮层。", "Open the selection float when a selection exists.")),
+            (store.ui("隐藏对话浮层", "Hide Chat Overlay"), "⌃⌥0", store.ui("隐藏选区轻提示。", "Hide the selection prompt.")),
+            (store.ui("明暗切换", "Toggle Theme"), "⌥⌘T", store.ui("在纸面和墨石之间切换。", "Switch between paper and inkstone.")),
+            (store.ui("后退", "Back"), "⌘[", store.ui("回到上一个工作区位置。", "Go back in workspace history.")),
+            (store.ui("前进", "Forward"), "⌘]", store.ui("前进到下一个工作区位置。", "Go forward in workspace history.")),
         ]
     }
 

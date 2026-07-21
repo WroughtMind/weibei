@@ -7,12 +7,20 @@ public struct PiAgentProviderConfiguration: Equatable, Sendable {
     public var provider: String?
     public var model: String?
     public var apiKey: String?
+    public var baseURL: String?
     public var thinkingLevel: String
 
-    public init(provider: String? = nil, model: String? = nil, apiKey: String? = nil, thinkingLevel: String = "medium") {
+    public init(
+        provider: String? = nil,
+        model: String? = nil,
+        apiKey: String? = nil,
+        baseURL: String? = nil,
+        thinkingLevel: String = "medium"
+    ) {
         self.provider = provider?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.model = model?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.apiKey = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.baseURL = baseURL?.trimmingCharacters(in: .whitespacesAndNewlines)
         self.thinkingLevel = thinkingLevel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "medium"
             : thinkingLevel.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -236,6 +244,18 @@ public enum PiAgentRuntimeError: LocalizedError, Equatable, Sendable {
     }
 }
 
+public struct PiAgentRejectedReplyError: LocalizedError, Sendable {
+    public let reason: String
+    public let reply: StudyAgentReply
+
+    public init(reason: String, reply: StudyAgentReply) {
+        self.reason = reason
+        self.reply = reply
+    }
+
+    public var errorDescription: String? { reason }
+}
+
 public enum PiAgentDiagnosticSanitizer {
     public static func sanitize(_ value: String, secret: String? = nil) -> String {
         var result = value
@@ -263,6 +283,16 @@ public enum PiAgentDiagnosticSanitizer {
 
 public actor PiAgentRuntime: StudyAgentRuntime {
     private static let processReadinessTimeoutSeconds: UInt64 = 12
+    private static let allowedToolNames = [
+        "weibei_context",
+        "weibei_course_map",
+        "weibei_course_search",
+        "weibei_learning_memory",
+        "weibei_learning_update",
+        "weibei_note_proposal",
+        "weibei_ui_catalog",
+        "weibei_rich_answer",
+    ]
 
     private struct ProgressDelivery: Sendable {
         let continuation: AsyncStream<StudyAgentProgress>.Continuation
@@ -304,6 +334,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var allowsLearningOnlyAnswer: Bool
         var resolvableMemoryIDs: Set<String>
         var allowedSourceLabels: Set<String>
+        var allowedAssetIDs: Set<String>
+        var persistentAssetIDsByContextID: [String: String]
         var allowedJumpReferences: Set<String>
         var jumpEvidenceLabels: [String: Set<String>]
         var allowedLearningLabels: Set<String> = []
@@ -313,7 +345,9 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var answeredBeforeContext = false
         var streamedText = ""
         var proposal: StudyAgentNoteProposal?
+        var richAnswer: RichAnswerPresentation?
         var learningUpdate: StudyAgentLearningUpdate?
+        var toolTrace: [String] = []
         var lastError: String?
         var progressDelivery: ProgressDelivery?
         var continuation: CheckedContinuation<StudyAgentReply, Error>?
@@ -341,7 +375,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     public init(
         executableURL: URL? = nil,
         runtimeDirectory: URL? = nil,
-        runInactivityTimeoutNanoseconds: UInt64 = 300_000_000_000
+        // Idle hang detection: 90s without events (was 5 minutes).
+        runInactivityTimeoutNanoseconds: UInt64 = 90_000_000_000
     ) {
         executableOverride = executableURL
         self.runtimeDirectory = runtimeDirectory
@@ -398,6 +433,11 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 return memory.id.uuidString.lowercased()
             }),
             allowedSourceLabels: currentSourceLabels(in: context),
+            allowedAssetIDs: currentAssetIDs(in: context),
+            persistentAssetIDsByContextID: persistentAssetIDsByContextID(
+                request: request,
+                context: context
+            ),
             allowedJumpReferences: Set(currentJumpEvidence.keys),
             jumpEvidenceLabels: currentJumpEvidence,
             lastLocationSourceLabel: context.learning.lastLocation.map { "[材料：\($0.itemTitle)]" },
@@ -534,7 +574,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             "--offline",
             "--no-session",
             "--no-builtin-tools",
-            "--tools", "weibei_context,weibei_course_map,weibei_course_search,weibei_learning_memory,weibei_learning_update,weibei_note_proposal",
+            "--tools", Self.allowedToolNames.joined(separator: ","),
             "--no-extensions",
             "--extension", resources.extensionURL.path,
             "--no-skills",
@@ -587,6 +627,20 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             labels.append("[选区：\(selection.title)]")
         }
         return Set(labels)
+    }
+
+    private func currentAssetIDs(in context: StudyAgentContextEnvelope) -> Set<String> {
+        Set(context.course.catalog.lazy.filter(\.isCurrentMaterial).map(\.id))
+    }
+
+    private func persistentAssetIDsByContextID(
+        request: StudyAgentRequest,
+        context: StudyAgentContextEnvelope
+    ) -> [String: String] {
+        let persistentCatalog = request.courseContext.catalog.prefix(context.course.catalog.count)
+        return Dictionary(uniqueKeysWithValues: zip(context.course.catalog, persistentCatalog).map { contextItem, persistentItem in
+            (contextItem.id, persistentItem.id)
+        })
     }
 
     private func currentJumpEvidence(in context: StudyAgentContextEnvelope) -> [String: Set<String>] {
@@ -689,7 +743,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         let learningLabels = citedLearningLabels(in: text)
         guard !contentLabels.isEmpty
                 || (run.allowsLearningOnlyAnswer && !learningLabels.isEmpty) else {
-            return "PI returned a content answer without a source read in the current turn"
+            return "PI returned a content answer without a current-turn source citation"
         }
         guard contentLabels.isSubset(of: run.allowedSourceLabels) else {
             return "PI cited a source that was not read in the current turn"
@@ -781,15 +835,109 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             "TERM": "dumb",
         ]
         let hostEnvironment = ProcessInfo.processInfo.environment
-        for key in ["LANG", "LC_ALL"] {
-            if let value = hostEnvironment[key], value.count <= 128, !value.contains("\n") {
+        for key in [
+            "LANG", "LC_ALL",
+            // Cloud / multi-part provider credentials from the host shell.
+            "AWS_PROFILE", "AWS_REGION", "AWS_DEFAULT_REGION",
+            "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+            "AWS_BEARER_TOKEN_BEDROCK", "AWS_ENDPOINT_URL_BEDROCK_RUNTIME",
+            "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT", "GOOGLE_CLOUD_LOCATION",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_GATEWAY_ID", "CLOUDFLARE_API_KEY",
+            "AZURE_OPENAI_BASE_URL", "AZURE_OPENAI_RESOURCE_NAME",
+            "AZURE_OPENAI_API_VERSION", "AZURE_OPENAI_DEPLOYMENT_NAME_MAP",
+        ] {
+            if let value = hostEnvironment[key], !value.isEmpty, value.count <= 2048, !value.contains("\n") {
                 environment[key] = value
             }
         }
         if let apiKey = providerConfiguration.apiKey, !apiKey.isEmpty {
-            environment["OPENAI_API_KEY"] = apiKey
+            // Inject into the provider's canonical env var (Pi resolution order).
+            if let providerID = providerConfiguration.provider.flatMap(AgentProviderID.init(rawValue:)) {
+                environment[providerID.environmentAPIKeyName] = apiKey
+            } else if let provider = providerConfiguration.provider?.lowercased() {
+                // Fallback map for ids that may not be in the enum yet.
+                let envName = Self.legacyEnvName(forPiProvider: provider) ?? "OPENAI_API_KEY"
+                environment[envName] = apiKey
+            } else {
+                environment["OPENAI_API_KEY"] = apiKey
+            }
+            // Many OpenAI-compatible stacks still read OPENAI_API_KEY.
+            if environment["OPENAI_API_KEY"] == nil {
+                environment["OPENAI_API_KEY"] = apiKey
+            }
+        }
+        // Base URL: Azure uses dedicated env; OpenAI-compatible stacks still get models.json.
+        if let base = providerConfiguration.baseURL, !base.isEmpty {
+            let provider = providerConfiguration.provider?.lowercased() ?? ""
+            if provider == "azure-openai-responses" {
+                environment["AZURE_OPENAI_BASE_URL"] = base
+            }
         }
         return environment
+    }
+
+    private static func legacyEnvName(forPiProvider provider: String) -> String? {
+        switch provider {
+        case "openai", "openai-codex": return "OPENAI_API_KEY"
+        case "anthropic": return "ANTHROPIC_API_KEY"
+        case "google": return "GEMINI_API_KEY"
+        case "openrouter": return "OPENROUTER_API_KEY"
+        case "github-copilot": return "COPILOT_GITHUB_TOKEN"
+        case "xai": return "XAI_API_KEY"
+        case "deepseek": return "DEEPSEEK_API_KEY"
+        case "groq": return "GROQ_API_KEY"
+        case "mistral": return "MISTRAL_API_KEY"
+        case "together": return "TOGETHER_API_KEY"
+        case "fireworks": return "FIREWORKS_API_KEY"
+        case "huggingface": return "HF_TOKEN"
+        case "moonshotai", "moonshotai-cn": return "MOONSHOT_API_KEY"
+        case "kimi-coding": return "KIMI_API_KEY"
+        case "minimax": return "MINIMAX_API_KEY"
+        case "minimax-cn": return "MINIMAX_CN_API_KEY"
+        default: return nil
+        }
+    }
+
+    /// Inject a custom / local OpenAI-compatible provider into PI_CODING_AGENT_DIR/models.json.
+    /// Built-in Pi providers (including Azure) use auth + env vars instead.
+    public func writeCustomModelsJSONIfNeeded(
+        providerID: AgentProviderID,
+        baseURL: String,
+        model: String
+    ) async {
+        let trimmedBase = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard providerID == .custom || providerID == .llamaCpp else {
+            return
+        }
+        guard !trimmedBase.isEmpty else { return }
+        do {
+            let destination = try preparePiConfigurationDirectory()
+            let modelsURL = destination.appendingPathComponent("models.json")
+            let providerKey = providerID.piProviderName
+            let modelID = model.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? providerID.defaultModelHint
+                : model.trimmingCharacters(in: .whitespacesAndNewlines)
+            let payload: [String: Any] = [
+                "providers": [
+                    providerKey: [
+                        "baseUrl": trimmedBase,
+                        "api": "openai-completions",
+                        "models": [
+                            [
+                                "id": modelID,
+                                "name": modelID,
+                            ],
+                        ],
+                    ],
+                ],
+            ]
+            let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+            try data.write(to: modelsURL, options: .atomic)
+            trace("wrote custom models.json provider=\(providerKey) baseUrl=\(trimmedBase)")
+        } catch {
+            trace("failed to write models.json: \(error.localizedDescription)")
+        }
     }
 
     private func promptSubmissionFailure(from error: Error) -> PiAgentRuntimeError {
@@ -825,14 +973,40 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     private func seedLocalPiAuth(from sourceDirectory: URL, to destinationDirectory: URL) {
         let fileManager = FileManager.default
         let destination = destinationDirectory.appendingPathComponent("auth.json")
-        guard !fileManager.fileExists(atPath: destination.path) else { return }
         let source = sourceDirectory.appendingPathComponent("auth.json")
         guard let attributes = try? fileManager.attributesOfItem(atPath: source.path),
               let size = attributes[.size] as? NSNumber,
               size.intValue <= 1_048_576,
-              let data = try? Data(contentsOf: source),
-              (try? JSONSerialization.jsonObject(with: data)) is [String: Any] else { return }
+              let sourceData = try? Data(contentsOf: source),
+              let sourceObject = try? JSONSerialization.jsonObject(with: sourceData) as? [String: Any]
+        else { return }
+
+        // Merge home auth.json into the isolated PiConfig so OAuth logins from WeiBei Settings
+        // (and Pi `/login`) keep working on every launch — not only the first seed.
+        var merged = sourceObject
+        if let existingData = try? Data(contentsOf: destination),
+           let existing = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any] {
+            for (key, value) in existing {
+                // Prefer newer OAuth tokens from home; keep local-only keys.
+                if let sourceEntry = sourceObject[key] as? [String: Any],
+                   sourceEntry["type"] as? String == "oauth" {
+                    merged[key] = sourceEntry
+                } else if merged[key] == nil {
+                    merged[key] = value
+                }
+            }
+            // Always take home OAuth entries (subscription login).
+            for (key, value) in sourceObject {
+                if let entry = value as? [String: Any], entry["type"] as? String == "oauth" {
+                    merged[key] = value
+                } else if merged[key] == nil {
+                    merged[key] = value
+                }
+            }
+        }
+
         do {
+            let data = try JSONSerialization.data(withJSONObject: merged, options: [.prettyPrinted, .sortedKeys])
             try data.write(to: destination, options: [.atomic])
             try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
         } catch {
@@ -953,7 +1127,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                     if data.isEmpty { break }
                     let lines = try framer.append(data)
                     for line in lines {
-                        await self?.trace("stdout line bytes=\(line.count)")
                         await self?.receiveStdoutLine(line)
                     }
                 }
@@ -1025,16 +1198,11 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             refreshRunWatchdog()
 
         case let .toolStarted(_, name):
-            guard let run = activeRun else { return }
-            let allowedTools = Set([
-                "weibei_context",
-                "weibei_course_map",
-                "weibei_course_search",
-                "weibei_learning_memory",
-                "weibei_learning_update",
-                "weibei_note_proposal",
-            ])
-            guard allowedTools.contains(name) else {
+            guard var run = activeRun else { return }
+            trace("tool started name=\(name)")
+            run.toolTrace.append(name)
+            activeRun = run
+            guard Set(Self.allowedToolNames).contains(name) else {
                 finishRun(
                     id: run.id,
                     with: .failure(PiAgentRuntimeError.agentFailed("PI attempted an unavailable tool: \(name)"))
@@ -1055,12 +1223,14 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
             run.didReadContext = true
             activeRun = run
+            trace("context read revision matched")
             refreshRunWatchdog()
 
-        case let .courseSourcesRead(_, contextRevision, labels, jumpEvidence):
+        case let .courseSourcesRead(_, contextRevision, labels, assetIDs, jumpEvidence):
             guard var run = activeRun, contextRevision == run.contextRevision else { return }
             run.allowedSourceLabels.formUnion(labels)
             run.allowedNoteSourceLabels.formUnion(labels)
+            run.allowedAssetIDs.formUnion(assetIDs)
             registerJumpEvidence(jumpEvidence, in: &run)
             activeRun = run
             refreshRunWatchdog()
@@ -1074,6 +1244,41 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             if labels.contains("[学习记录：上次位置]"),
                let lastLocationSourceLabel = run.lastLocationSourceLabel {
                 run.allowedSourceLabels.insert(lastLocationSourceLabel)
+            }
+            activeRun = run
+            refreshRunWatchdog()
+
+        case let .richAnswer(_, data):
+            guard var run = activeRun else { return }
+            trace("rich answer received bytes=\(data.count)")
+            guard run.workflow != .noteMaking else {
+                finishRun(
+                    id: run.id,
+                    with: .failure(PiAgentRuntimeError.agentFailed("PI proposed a rich answer inside the note-making workflow"))
+                )
+                return
+            }
+            let presentation = RichAnswerEngine.prepare(
+                data: data,
+                fallbackText: run.streamedText,
+                environment: RichAnswerEnvironment(
+                    contextRevision: run.contextRevision,
+                    allowedSourceLabels: run.allowedSourceLabels,
+                    allowedAssetIDs: run.allowedAssetIDs
+                )
+            ).resolvingAssetIDs(using: run.persistentAssetIDsByContextID)
+            if presentation.mode == .rich {
+                run.richAnswer = presentation
+            } else {
+                let rejectionDetails = presentation.diagnostics.map {
+                    "\($0.code.rawValue):\($0.message)"
+                }.joined(separator: " | ")
+                trace("rich answer rejected diagnostics=\(rejectionDetails)")
+                run.toolTrace.append(
+                    "weibei_rich_answer:host_rejected=\(sanitizedDiagnostic(rejectionDetails).prefix(600))"
+                )
+                run.lastError = "PI 返回的可视化结果未通过本地安全与来源校验"
+                run.richAnswer = nil
             }
             activeRun = run
             refreshRunWatchdog()
@@ -1131,17 +1336,52 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
         case let .toolFailed(_, name, message):
             guard var run = activeRun else { return }
-            run.lastError = "\(name): \(sanitizedDiagnostic(message))"
+            trace("tool failed name=\(name) message=\(sanitizedDiagnostic(message))")
+            if name == "weibei_rich_answer",
+               let faultTrace = richAnswerFaultTrace(message) {
+                run.toolTrace.append(faultTrace)
+            }
+            run.lastError = name == "weibei_rich_answer"
+                ? "PI 模型未完成本轮回答"
+                : "\(name): \(boundedDiagnostic(message))"
             activeRun = run
             refreshRunWatchdog()
 
-        case let .agentEnded(text, stopReason, modelError):
+        case let .agentEnded(text, stopReason, modelError, provider, model):
             guard let run = activeRun else { return }
-            let cleanText = (text.isEmpty ? run.streamedText : text).trimmingCharacters(in: .whitespacesAndNewlines)
+            var replyTrace = run.toolTrace
+            if let provider = provider?.trimmingCharacters(in: .whitespacesAndNewlines), !provider.isEmpty {
+                replyTrace.append("provider=\(provider)")
+            }
+            if let model = model?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty {
+                replyTrace.append("model=\(model)")
+            }
+            let modelClosureText = (text.isEmpty ? run.streamedText : text)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let richNarrative = run.richAnswer?.narrative
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let finalText: String
+            if let richNarrative, !richNarrative.isEmpty {
+                finalText = richNarrative
+            } else {
+                finalText = modelClosureText
+            }
+            trace(
+                "agent ended stop=\(stopReason ?? "unknown") closureChars=\(modelClosureText.count) "
+                    + "finalChars=\(finalText.count) rich=\(run.richAnswer?.mode == .rich)"
+            )
+            let replyCandidate = StudyAgentReply(
+                text: finalText,
+                backend: .pi,
+                richAnswer: run.richAnswer,
+                noteProposal: run.proposal,
+                learningUpdate: run.learningUpdate,
+                toolTrace: replyTrace
+            )
             if stopReason == "aborted" {
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.cancelled))
             } else if stopReason == "error" {
-                let detail = modelError.map(sanitizedDiagnostic)
+                let detail = modelError.map(userFacingFailureDetail)
                     ?? run.lastError
                     ?? "PI 模型请求失败，但运行时没有返回错误详情"
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed(detail)))
@@ -1152,38 +1392,38 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             } else if run.workflow == .noteMaking, run.proposal == nil {
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed("PI returned no revision-matched note proposal")))
             } else if run.workflow != .noteMaking,
-                      let validationError = answerValidationError(text: cleanText, run: run) {
-                finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed(validationError)))
-            } else if cleanText.isEmpty, let proposal = run.proposal {
+                      let validationError = answerValidationError(text: finalText, run: run) {
+                finishRun(
+                    id: run.id,
+                    with: .failure(PiAgentRejectedReplyError(reason: validationError, reply: replyCandidate))
+                )
+            } else if finalText.isEmpty, let proposal = run.proposal {
                 finishRun(
                     id: run.id,
                     with: .success(
                         StudyAgentReply(
                             text: proposal.markdown,
                             backend: .pi,
+                            richAnswer: run.richAnswer,
                             noteProposal: proposal,
-                            learningUpdate: run.learningUpdate
+                            learningUpdate: run.learningUpdate,
+                            toolTrace: replyTrace
                         )
                     )
                 )
-            } else if cleanText.isEmpty {
+            } else if finalText.isEmpty {
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed(run.lastError ?? "PI returned no readable text")))
             } else {
                 finishRun(
                     id: run.id,
                     with: .success(
-                        StudyAgentReply(
-                            text: cleanText,
-                            backend: .pi,
-                            noteProposal: run.proposal,
-                            learningUpdate: run.learningUpdate
-                        )
+                        replyCandidate
                     )
                 )
             }
 
         case let .extensionError(message):
-            let message = sanitizedDiagnostic(message)
+            let message = userFacingFailureDetail(message)
             if let runID = activeRun?.id {
                 finishRun(id: runID, with: .failure(PiAgentRuntimeError.agentFailed(message)))
             } else {
@@ -1209,6 +1449,29 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             run.completed = result
             activeRun = run
         }
+    }
+
+    private func richAnswerFaultTrace(_ message: String) -> String? {
+        guard message.contains("weibei.rich_answer.repair_fault"),
+              let start = message.firstIndex(of: "{") else {
+            return nil
+        }
+        let json = String(message[start...])
+        guard let data = json.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              object["type"] as? String == "weibei.rich_answer.repair_fault",
+              let code = object["code"] as? String else {
+            return "weibei_rich_answer:repair_fault=unparsed"
+        }
+        let path = (object["jsonPath"] as? String) ?? "$"
+        let remainingAttempts = (object["remainingAttempts"] as? NSNumber)?.intValue ?? -1
+        let reason = sanitizedDiagnostic((object["message"] as? String) ?? "unknown")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\t", with: " ")
+        let hint = sanitizedDiagnostic((object["humanFixHint"] as? String) ?? "")
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\t", with: " ")
+        return "weibei_rich_answer:repair_fault=\(code):path=\(path):remaining=\(remainingAttempts):reason=\(reason.prefix(240)):hint=\(hint.prefix(240))"
     }
 
     private func discardRun(id: UUID) {
@@ -1258,7 +1521,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private func runTimedOut(id: UUID) async {
         guard activeRun?.id == id else { return }
-        finishRun(id: id, with: .failure(PiAgentRuntimeError.agentFailed("PI produced no events for five minutes")))
+        finishRun(id: id, with: .failure(PiAgentRuntimeError.commandTimedOut("prompt")))
         do {
             _ = try await sendCommand(type: "abort", timeoutSeconds: 2)
         } catch {
@@ -1305,6 +1568,21 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private func sanitizedDiagnostic(_ value: String) -> String {
         PiAgentDiagnosticSanitizer.sanitize(value, secret: providerConfiguration.apiKey)
+    }
+
+    private func boundedDiagnostic(_ value: String, limit: Int = 1_024) -> String {
+        String(sanitizedDiagnostic(value).prefix(limit))
+    }
+
+    private func userFacingFailureDetail(_ value: String) -> String {
+        let sanitized = sanitizedDiagnostic(value)
+        if sanitized.contains("weibei.rich_answer.repair_fault")
+            || sanitized.contains("repair_fault")
+            || sanitized.contains("RichAnswerUI")
+            || sanitized.contains("payload") {
+            return "PI 模型未完成本轮回答"
+        }
+        return String(sanitized.prefix(1_024))
     }
 
     private func shutdownProcess(reason: Error) {

@@ -126,6 +126,11 @@ final class MarkdownWebView: WKWebView {
         removeScrollWheelMonitor()
     }
 
+    /// Compact agent previews must not steal keyboard focus from the composer.
+    override var acceptsFirstResponder: Bool {
+        passesVerticalScrollToSuperview ? false : super.acceptsFirstResponder
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         updateScrollWheelMonitor()
@@ -250,6 +255,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
+    /// JSON array of `{id,text}` for selection-ask underline marks (read-only surfaces).
+    var selectionAskMarks: String = "[]"
+    var onSelectionAskMark: (String) -> Void = { _ in }
     private static let localImageScheme = "weibeiimage"
 
     func makeCoordinator() -> Coordinator {
@@ -265,13 +273,15 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             searchQuery: searchQuery,
             appearanceMode: appearanceMode,
             interfaceLanguage: interfaceLanguage,
+            selectionAskMarks: selectionAskMarks,
             onContentHeightChange: onContentHeightChange,
             onActiveHeadingChange: onActiveHeadingChange,
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onAskAgentWithSelection,
             onWikiLink: onWikiLink,
             onSourceReference: onSourceReference,
-            onAppShortcut: onAppShortcut
+            onAppShortcut: onAppShortcut,
+            onSelectionAskMark: onSelectionAskMark
         )
     }
 
@@ -353,7 +363,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 }, { capture: true, passive: false });
               }
             })();
-            """,
+            """ + Self.selectionAskMarksBootstrapScript,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: true
         ))
@@ -426,6 +436,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.onAskAgentWithSelection = onAskAgentWithSelection
         context.coordinator.onContentHeightChange = onContentHeightChange
         context.coordinator.onActiveHeadingChange = onActiveHeadingChange
+        context.coordinator.onSelectionAskMark = onSelectionAskMark
+        context.coordinator.selectionAskMarks = selectionAskMarks
 
         if context.coordinator.isReady, context.coordinator.webMarkdown != markdown {
             context.coordinator.setMarkdown(markdown)
@@ -434,6 +446,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         if context.coordinator.isReady {
             context.coordinator.applySearch()
             context.coordinator.applyFocus()
+            context.coordinator.applySelectionAskMarks()
         }
 
         context.coordinator.runPendingCommandIfReady()
@@ -456,8 +469,99 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         "contentHeightChanged",
         "activeHeadingChanged",
         "compactPreviewWheel",
-        "appShortcut"
+        "appShortcut",
+        "selectionAskMark"
     ]
+
+    /// CSS + apply helper for cinnabar underlines on asked selections (read-only markdown).
+    private static let selectionAskMarksBootstrapScript = """
+    (() => {
+      if (window.WeiBeiSelectionAskMarks) return;
+      const style = document.createElement("style");
+      style.textContent = `
+        .weibei-selection-ask-mark {
+          text-decoration-line: underline;
+          text-decoration-color: rgba(145, 38, 27, 0.72);
+          text-decoration-thickness: 1.5px;
+          text-underline-offset: 3px;
+          cursor: pointer;
+          border-radius: 2px;
+          transition: background-color 120ms ease;
+        }
+        .weibei-selection-ask-mark:hover {
+          background-color: rgba(145, 38, 27, 0.12);
+        }
+        [data-weibei-theme="inkstone"] .weibei-selection-ask-mark {
+          text-decoration-color: rgba(200, 120, 100, 0.85);
+        }
+        [data-weibei-theme="inkstone"] .weibei-selection-ask-mark:hover {
+          background-color: rgba(200, 120, 100, 0.16);
+        }
+      `;
+      document.documentElement.appendChild(style);
+      window.WeiBeiSelectionAskMarks = {
+        apply: function(marks) {
+          try {
+            const root = document.querySelector(".ProseMirror") || document.body;
+            root.querySelectorAll(".weibei-selection-ask-mark").forEach((el) => {
+              const parent = el.parentNode;
+              if (!parent) return;
+              while (el.firstChild) parent.insertBefore(el.firstChild, el);
+              parent.removeChild(el);
+              parent.normalize();
+            });
+            if (window.weiBeiMarkdownEditable) return;
+            const list = Array.isArray(marks) ? marks : [];
+            list.forEach((mark) => {
+              const needle = String(mark.text || "").trim();
+              const id = String(mark.id || "");
+              if (!needle || !id || needle.length < 4) return;
+              const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+                acceptNode: function(node) {
+                  if (!node.parentElement) return NodeFilter.FILTER_REJECT;
+                  if (node.parentElement.closest(".weibei-selection-ask-mark, script, style")) {
+                    return NodeFilter.FILTER_REJECT;
+                  }
+                  return node.nodeValue && node.nodeValue.indexOf(needle) >= 0
+                    ? NodeFilter.FILTER_ACCEPT
+                    : NodeFilter.FILTER_SKIP;
+                }
+              });
+              const hits = [];
+              while (walker.nextNode()) hits.push(walker.currentNode);
+              hits.slice(0, 3).forEach((textNode) => {
+                const value = textNode.nodeValue || "";
+                const idx = value.indexOf(needle);
+                if (idx < 0) return;
+                const range = document.createRange();
+                range.setStart(textNode, idx);
+                range.setEnd(textNode, idx + needle.length);
+                const span = document.createElement("span");
+                span.className = "weibei-selection-ask-mark";
+                span.dataset.threadId = id;
+                span.title = "打开当时的选区问答";
+                try { range.surroundContents(span); } catch (e) {}
+              });
+            });
+            root.querySelectorAll(".weibei-selection-ask-mark").forEach((el) => {
+              el.onclick = function(ev) {
+                ev.preventDefault();
+                ev.stopPropagation();
+                const threadId = el.dataset.threadId || "";
+                if (window.webkit?.messageHandlers?.selectionAskMark) {
+                  window.webkit.messageHandlers.selectionAskMark.postMessage({
+                    threadId,
+                    text: el.textContent || "",
+                    documentID: window.weiBeiDocumentID || ""
+                  });
+                }
+              };
+            });
+          } catch (e) {}
+        }
+      };
+    })();
+    """
 
     private static func applyWebAppearance(to view: WKWebView, appearanceMode: WeiBeiAppearanceMode) {
         view.underPageBackgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
@@ -480,6 +584,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var onWikiLink: (String) -> Void
         var onSourceReference: (String) -> Void
         var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool
+        var onSelectionAskMark: (String) -> Void
+        var selectionAskMarks: String
         weak var webView: WKWebView?
         var isReady = false
         var isEditable: Bool
@@ -496,6 +602,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         fileprivate let imageSchemeHandler = MarkdownImageSchemeHandler()
         private var lastAppliedSearchQuery = ""
         private var lastAppliedFocusRequest = -1
+        private var lastAppliedSelectionAskMarks = ""
 
         init(
             documentID: String,
@@ -509,13 +616,15 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             searchQuery: String,
             appearanceMode: WeiBeiAppearanceMode,
             interfaceLanguage: WeiBeiInterfaceLanguage,
+            selectionAskMarks: String,
             onContentHeightChange: @escaping (CGFloat) -> Void,
             onActiveHeadingChange: @escaping (Int?) -> Void,
             onSelectionChange: @escaping (String, CGPoint?) -> Void,
             onAskAgentWithSelection: @escaping (String, CGPoint?) -> Void,
             onWikiLink: @escaping (String) -> Void,
             onSourceReference: @escaping (String) -> Void,
-            onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool
+            onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool,
+            onSelectionAskMark: @escaping (String) -> Void
         ) {
             self.documentID = documentID
             self.markdown = markdown
@@ -528,6 +637,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.searchQuery = searchQuery
             self.appearanceMode = appearanceMode
             self.interfaceLanguage = interfaceLanguage
+            self.selectionAskMarks = selectionAskMarks
             self.onContentHeightChange = onContentHeightChange
             self.onActiveHeadingChange = onActiveHeadingChange
             self.onSelectionChange = onSelectionChange
@@ -535,6 +645,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.onWikiLink = onWikiLink
             self.onSourceReference = onSourceReference
             self.onAppShortcut = onAppShortcut
+            self.onSelectionAskMark = onSelectionAskMark
         }
 
         func handleAppShortcut(key: String, modifiers: NSEvent.ModifierFlags) -> Bool {
@@ -569,6 +680,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 applySearch()
                 setTheme(appearanceMode)
                 applyFocus()
+                applySelectionAskMarks(force: true)
                 runPendingCommandIfReady()
             case "markdownChanged":
                 guard let text = (message.body as? [String: Any])?["markdown"] as? String else { return }
@@ -582,6 +694,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 }
                 webMarkdown = text
                 markdown.wrappedValue = text
+                applySelectionAskMarks(force: true)
             case "selectionChanged":
                 guard let body = message.body as? [String: Any],
                       let text = body["text"] as? String else { return }
@@ -590,6 +703,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 guard let body = message.body as? [String: Any] else { return }
                 let text = body["text"] as? String ?? ""
                 onAskAgentWithSelection(text, anchor(from: body["rect"] as? [String: Any]))
+            case "selectionAskMark":
+                guard let body = message.body as? [String: Any],
+                      let threadID = body["threadId"] as? String,
+                      !threadID.isEmpty else { return }
+                onSelectionAskMark(threadID)
             case "wikiLinkActivated":
                 guard let body = message.body as? [String: Any],
                       let title = body["title"] as? String else { return }
@@ -740,6 +858,18 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             lastAppliedFocusRequest = focusRequest
             webView?.window?.makeFirstResponder(webView)
             evaluate("document.querySelector('.ProseMirror')?.focus()")
+        }
+
+        func applySelectionAskMarks(force: Bool = false) {
+            guard isReady, !isEditable else { return }
+            guard force || selectionAskMarks != lastAppliedSelectionAskMarks else { return }
+            lastAppliedSelectionAskMarks = selectionAskMarks
+            // Delay so Milkdown finishes painting before we wrap text nodes.
+            let marks = selectionAskMarks
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+                guard let self, self.isReady, !self.isEditable else { return }
+                self.evaluate("window.WeiBeiSelectionAskMarks && window.WeiBeiSelectionAskMarks.apply(\(marks));")
+            }
         }
 
         func pasteImageFromClipboard() -> Bool {

@@ -10,7 +10,7 @@ struct CommandPaletteView: View {
 
     private var commands: [PaletteCommand] {
         var items = [
-            PaletteCommand(title: store.ui("打开课程首页", "Open Course Home"), shortcut: "⌘0", animation: WeiBeiMotion.panel) { store.presentCourseWorkspace() },
+            PaletteCommand(title: store.ui("打开课程空间", "Open Course Space"), shortcut: "⌘0", animation: WeiBeiMotion.panel) { store.presentCourseWorkspace(.hub) },
             PaletteCommand(title: store.ui("打开资料", "Open Material"), shortcut: "⌘O") { store.importFilesFromPanel() },
             PaletteCommand(title: store.ui("新建空白笔记", "New Blank Note"), shortcut: "⌘N") { store.promptCreateBlankNotebookNote() },
             PaletteCommand(title: store.ui("聚焦课程目录", "Focus Course Index"), shortcut: "⌘1", animation: WeiBeiMotion.layout) { store.focus(.library) },
@@ -19,15 +19,13 @@ struct CommandPaletteView: View {
             PaletteCommand(title: store.ui("聚焦对话", "Focus Chat"), shortcut: "⌘4", animation: WeiBeiMotion.layout) { store.focus(.agent) },
             PaletteCommand(title: store.ui("上一份资料", "Previous Material"), shortcut: "⌥⌘↑", animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: -1) },
             PaletteCommand(title: store.ui("下一份资料", "Next Material"), shortcut: "⌥⌘↓", animation: WeiBeiMotion.layout) { store.selectAdjacentItem(step: 1) },
-            PaletteCommand(title: store.showLibrary ? store.ui("收起课程目录", "Hide Course Index") : store.ui("打开课程目录", "Show Course Index"), shortcut: "⌘B", animation: WeiBeiMotion.layout) { store.toggleLibrary() },
+            PaletteCommand(title: store.showLibrary ? store.ui("收起课程目录", "Hide Course Index") : store.ui("打开课程目录", "Show Course Index"), shortcut: "⌘B") { store.toggleLibrary() },
             PaletteCommand(title: store.ui("三栏工作台", "Three-Pane Workspace"), shortcut: "⌥⌘1", animation: WeiBeiMotion.layout) { store.setLayout(.documentAgentNotes) },
             PaletteCommand(title: WorkspaceLayout.documentNotesSplit.label(language: store.interfaceLanguage), shortcut: "⌥⌘2", animation: WeiBeiMotion.layout) { store.setLayout(.documentNotesSplit) },
             PaletteCommand(title: WorkspaceLayout.immersiveReading.label(language: store.interfaceLanguage), shortcut: "⌥⌘R", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveReading) },
             PaletteCommand(title: WorkspaceLayout.immersiveConversation.label(language: store.interfaceLanguage), shortcut: "⌥⌘A", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveConversation) },
             PaletteCommand(title: WorkspaceLayout.immersiveWriting.label(language: store.interfaceLanguage), shortcut: "⌥⌘N", animation: WeiBeiMotion.layout) { store.setLayout(.immersiveWriting) },
-            agentSurfaceCommand(.bottomDrawer, shortcut: "⌃⌥1"),
-            agentSurfaceCommand(.cornerPanel, shortcut: "⌃⌥2"),
-            agentSurfaceCommand(.quietInsight, shortcut: "⌃⌥4"),
+            agentSurfaceCommand(.hidden, shortcut: "⌃⌥0"),
             PaletteCommand(title: store.ui("笔记原地写作", "Live Markdown Writing"), shortcut: "⌃⌘1") { store.setNoteRenderMode(.rich) },
             PaletteCommand(title: store.ui("笔记源码对照", "Source Compare"), shortcut: "⌃⌘2") { store.setNoteRenderMode(.split) },
             PaletteCommand(title: store.ui("笔记源码", "Note Source"), shortcut: "⌃⌘3") { store.setNoteRenderMode(.source) },

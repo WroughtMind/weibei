@@ -264,6 +264,7 @@ enum WeiBeiMetric {
     static let iconButton: CGFloat = 26
     static let inputHeight: CGFloat = 30
     static let controlRadius: CGFloat = 7
+    static let topBarHeight: CGFloat = 38
 }
 
 enum WeiBeiMotion {
@@ -271,15 +272,20 @@ enum WeiBeiMotion {
     static let micro = Animation.easeOut(duration: 0.14)
     static let hover = Animation.interactiveSpring(response: 0.20, dampingFraction: 0.86, blendDuration: 0.02)
     static let reveal = Animation.interactiveSpring(response: 0.24, dampingFraction: 0.88, blendDuration: 0.04)
-    static let panel = Animation.interactiveSpring(response: 0.30, dampingFraction: 0.88, blendDuration: 0.06)
-    static let layout = Animation.interactiveSpring(response: 0.38, dampingFraction: 0.90, blendDuration: 0.08)
+    static let panel = Animation.interactiveSpring(response: 0.26, dampingFraction: 0.90, blendDuration: 0.04)
+    /// Pane / layout swaps: short ease-out — long springs + blur felt laggy over WebView panes.
+    static let layout = Animation.easeOut(duration: 0.18)
     static let appearance = Animation.easeInOut(duration: 0.42)
+    /// Course drawer: snappy ease-out slide (visual only; never wrap focus changes).
+    static let sideDrawer = Animation.easeOut(duration: 0.12)
 }
 
 enum WeiBeiTransition {
+    // No blur: blur during large panel open forces offscreen raster of the whole workspace.
+    // Kept for call sites that still use transition insertion; ContentView uses offset slide.
     static let sidePanel = AnyTransition.asymmetric(
-        insertion: reveal(x: -18, y: 0, scale: 0.992, blur: 1.5, anchor: .leading),
-        removal: reveal(x: -12, y: 0, scale: 0.996, blur: 0.8, anchor: .leading)
+        insertion: .move(edge: .leading).combined(with: .opacity),
+        removal: .move(edge: .leading).combined(with: .opacity)
     )
 
     static let commandPalette = AnyTransition.asymmetric(
@@ -302,19 +308,21 @@ enum WeiBeiTransition {
         removal: reveal(x: 10, y: 0, scale: 0.996, blur: 0.8, anchor: .trailing)
     )
 
+    // No blur on layout/rail — blur rasterizes whole pane hosts (reader/agent/notes) every frame.
     static let layout = AnyTransition.asymmetric(
-        insertion: reveal(x: 0, y: 8, scale: 0.996, blur: 1.0, anchor: .center),
-        removal: reveal(x: 0, y: -3, scale: 1.0, blur: 0.4, anchor: .center)
+        insertion: reveal(x: 0, y: 6, scale: 1.0, blur: 0, anchor: .center),
+        removal: reveal(x: 0, y: -2, scale: 1.0, blur: 0, anchor: .center)
     )
 
     static let rail = AnyTransition.asymmetric(
-        insertion: reveal(x: 0, y: 10, scale: 0.992, blur: 1.0, anchor: .top),
-        removal: reveal(x: 0, y: -4, scale: 0.996, blur: 0.6, anchor: .top)
+        insertion: reveal(x: 0, y: 6, scale: 1.0, blur: 0, anchor: .top),
+        removal: reveal(x: 0, y: -2, scale: 1.0, blur: 0, anchor: .top)
     )
 
+    // No blur: agent LazyVStack rows must not pay blur cost on insert/remove.
     static let message = AnyTransition.asymmetric(
-        insertion: reveal(x: 0, y: 8, scale: 0.988, blur: 0.8, anchor: .bottom),
-        removal: reveal(x: 0, y: -4, scale: 0.996, blur: 0.4, anchor: .top)
+        insertion: reveal(x: 0, y: 6, scale: 1.0, blur: 0, anchor: .bottom),
+        removal: reveal(x: 0, y: -3, scale: 1.0, blur: 0, anchor: .top)
     )
 
     private static func reveal(
@@ -328,61 +336,6 @@ enum WeiBeiTransition {
             active: WeiBeiRevealModifier(opacity: 0, x: x, y: y, scale: scale, blur: blur, anchor: anchor),
             identity: WeiBeiRevealModifier(opacity: 1, x: 0, y: 0, scale: 1, blur: 0, anchor: anchor)
         )
-    }
-}
-
-enum TopBarVariant: String, CaseIterable, Identifiable {
-    case balanced
-    case compact
-    case reader
-    case glyph
-    case wide
-
-    var id: String { rawValue }
-
-    func label(language: WeiBeiInterfaceLanguage) -> String {
-        switch self {
-        case .balanced:
-            return language.text("标准", "Balanced")
-        case .compact:
-            return language.text("紧凑", "Compact")
-        case .reader:
-            return language.text("阅读", "Reading")
-        case .glyph:
-            return language.text("印记", "Mark")
-        case .wide:
-            return language.text("宽松", "Wide")
-        }
-    }
-
-    var iconName: String {
-        switch self {
-        case .balanced:
-            return "rectangle.topthird.inset.filled"
-        case .compact:
-            return "rectangle.compress.vertical"
-        case .reader:
-            return "doc.text.magnifyingglass"
-        case .glyph:
-            return "circle.grid.cross"
-        case .wide:
-            return "rectangle.expand.vertical"
-        }
-    }
-
-    var height: CGFloat {
-        switch self {
-        case .glyph:
-            return 36
-        case .compact:
-            return 38
-        case .reader:
-            return 40
-        case .balanced:
-            return 42
-        case .wide:
-            return 46
-        }
     }
 }
 
