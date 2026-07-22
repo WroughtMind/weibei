@@ -4819,10 +4819,15 @@ final class WorkspaceStore: ObservableObject {
             || scenario == "course-workspace-overview-flow"
             || scenario == "course-workspace-workflow-flow"
             || scenario == "course-index-navigation-flow"
+            || scenario == "website-promo-flow"
             || scenario == "loading-indicator-samples"
             || emptyWorkspaceScenarios.contains(scenario) else { return }
         didRunVerificationScenario = true
         recordVerificationStage("recognized:\(scenario)")
+        if scenario == "website-promo-flow" {
+            await runWebsitePromoVerification()
+            return
+        }
         if emptyWorkspaceScenarios.contains(scenario) {
             configureEmptyWorkspaceVerificationScenario(scenario)
             return
@@ -4985,6 +4990,54 @@ final class WorkspaceStore: ObservableObject {
                     .write(to: markerURL, atomically: true, encoding: .utf8)
             }
         }
+        recordVerificationStage("completed")
+    }
+
+    private func runWebsitePromoVerification() async {
+        appearanceMode = .paper
+        interfaceLanguage = .chinese
+        layout = .documentAgentNotes
+        showLibrary = true
+        showReader = true
+        showAgent = true
+        showNotes = true
+        agentSurface = .hidden
+        messages = []
+        latestAgentNoteProposal = nil
+        latestAgentLearningUpdate = nil
+        select(itemID: "sample-html")
+        updateNote("# 利率复习\n\n把概念、依据和结论放在一起。\n")
+        recordVerificationStage("promo:workspace")
+        try? await Task.sleep(nanoseconds: 2_000_000_000)
+
+        updateSelection(
+            "名义利率以货币单位表示，实际利率扣除了通货膨胀后的购买力变化。",
+            source: .document,
+            ownerTitle: currentSourceReferenceTitle
+        )
+        if let selectionContext {
+            addSelectionAttachment(selectionContext)
+        }
+        focus(.agent)
+        recordVerificationStage("promo:selection")
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
+
+        agentDraft = "名义利率和实际利率有什么区别？请依据原文整理成笔记。"
+        recordVerificationStage("promo:question")
+        await askAgentAndWait()
+        recordVerificationStage("promo:answer")
+        try? await Task.sleep(nanoseconds: 2_200_000_000)
+
+        applyLastAgentAnswerToNote()
+        recordVerificationStage("promo:note")
+        try? await Task.sleep(nanoseconds: 2_400_000_000)
+
+        _ = openAgentCitation(
+            kind: "material",
+            value: "货币金融学课程 HTML，章节 2「名义利率与实际利率」"
+        )
+        recordVerificationStage("promo:source-return")
+        try? await Task.sleep(nanoseconds: 2_500_000_000)
         recordVerificationStage("completed")
     }
 
@@ -6270,6 +6323,31 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func executeStudyAgentRequest(_ request: StudyAgentRequest) async throws -> StudyAgentReply {
+        let verificationScenario = Self.environmentValue("WEIBEI_VERIFY_SCENARIO")
+        if verificationScenario == "website-promo-flow",
+           Self.environmentValue("WEIBEI_SUPPRESS_ACTIVATION") == "1",
+           Self.environmentValue("WEIBEI_FORCE_OFFLINE_AGENT") == "1" {
+            try await Task.sleep(nanoseconds: 1_400_000_000)
+            let markdown = """
+            ## 名义利率与实际利率
+
+            名义利率是合约中直接写出的利率；实际利率进一步扣除通货膨胀带来的购买力变化。
+
+            **关系**：实际利率 ≈ 名义利率 − 通货膨胀率。
+
+            [材料：货币金融学课程 HTML，章节 2「名义利率与实际利率」]
+            """
+            return StudyAgentReply(
+                text: markdown,
+                backend: .offline,
+                noteProposal: StudyAgentNoteProposal(
+                    markdown: markdown,
+                    evidence: ["货币金融学课程 HTML，章节 2「名义利率与实际利率」"],
+                    contextRevision: request.contextRevision
+                )
+            )
+        }
+
         let isExplicitOfflineVerification = Self.environmentValue("WEIBEI_FORCE_OFFLINE_AGENT") == "1"
             && Self.environmentValue("WEIBEI_SUPPRESS_ACTIVATION") == "1"
             && Self.environmentValue("WEIBEI_VERIFY_SCENARIO") == "offline-learning-flow"
