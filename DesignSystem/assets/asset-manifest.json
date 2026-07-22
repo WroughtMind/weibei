@@ -1,0 +1,378 @@
+{
+  "schemaVersion": 1,
+  "brand": "WeiBei / 魏碑",
+  "version": "0.1.1",
+  "generatedFrom": "approved-textured-mark-1254.png + normalized SVG geometry",
+  "files": [
+    {
+      "path": "assets/app-icon/AppIcon.appiconset/Contents.json",
+      "bytes": 967,
+      "sha256": "3dd1c65e496c2ccd8c1d89a1935e9f1cbda30024c5ca0aac9c23d53ff3176f65"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.appiconset/icon_128x128.png",
+      "bytes": 21588,
+      "sha256": "f573455061f4466d7bc7da93ccfb572ed03ca570733b6fedec29cb6f1452bf4a"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.appiconset/icon_128x128@2x.png",
+      "bytes": 86418,
+      "sha256": "027d808ae204e023eebec1ebeec50c1cf2feca3db6862b7bc17f20691f51867a"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.appiconset/icon_16x16.png",
+      "bytes": 941,
+      "sha256": "ba55d9ccbc2f26bb914f022702e7438e6492e0607cb7498abcdb891ddac603fa"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.appiconset/icon_16x16@2x.png",
+      "bytes": 1435,
+      "sha256": "7128ea3a4c31444db0176c6c7a2fafe4b6e69655d748e9c157b050504d5d3b59"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.appiconset/icon_256x256.png",
+      "bytes": 86418,
+      "sha256": "027d808ae204e023eebec1ebeec50c1cf2feca3db6862b7bc17f20691f51867a"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.appiconset/icon_256x256@2x.png",
+      "bytes": 381928,
+      "sha256": "3ba7c391b1ce0837abf99f285c9c9d2fe25c08aa8e7d69f81151ff3e9c405f23"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.appiconset/icon_32x32.png",
+      "bytes": 1435,
+      "sha256": "7128ea3a4c31444db0176c6c7a2fafe4b6e69655d748e9c157b050504d5d3b59"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.appiconset/icon_32x32@2x.png",
+      "bytes": 2626,
+      "sha256": "164c0bdab6967e1bbb14f5fd347a0778e00df4a0989c755248f155eef0833bda"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.appiconset/icon_512x512.png",
+      "bytes": 381928,
+      "sha256": "3ba7c391b1ce0837abf99f285c9c9d2fe25c08aa8e7d69f81151ff3e9c405f23"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.appiconset/icon_512x512@2x.png",
+      "bytes": 1564530,
+      "sha256": "da4c55487f88305e4924283f0bddf390fdd284b490b600faabc4a7efe356a65f"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.icns",
+      "bytes": 2529335,
+      "sha256": "ff7ca603e3ef24b77b570d2823757e14a8dd25a72f1f02e4e49456743beb638f"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.iconset/icon_128x128.png",
+      "bytes": 21588,
+      "sha256": "f573455061f4466d7bc7da93ccfb572ed03ca570733b6fedec29cb6f1452bf4a"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.iconset/icon_128x128@2x.png",
+      "bytes": 86418,
+      "sha256": "027d808ae204e023eebec1ebeec50c1cf2feca3db6862b7bc17f20691f51867a"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.iconset/icon_16x16.png",
+      "bytes": 941,
+      "sha256": "ba55d9ccbc2f26bb914f022702e7438e6492e0607cb7498abcdb891ddac603fa"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.iconset/icon_16x16@2x.png",
+      "bytes": 1435,
+      "sha256": "7128ea3a4c31444db0176c6c7a2fafe4b6e69655d748e9c157b050504d5d3b59"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.iconset/icon_256x256.png",
+      "bytes": 86418,
+      "sha256": "027d808ae204e023eebec1ebeec50c1cf2feca3db6862b7bc17f20691f51867a"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.iconset/icon_256x256@2x.png",
+      "bytes": 381928,
+      "sha256": "3ba7c391b1ce0837abf99f285c9c9d2fe25c08aa8e7d69f81151ff3e9c405f23"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.iconset/icon_32x32.png",
+      "bytes": 1435,
+      "sha256": "7128ea3a4c31444db0176c6c7a2fafe4b6e69655d748e9c157b050504d5d3b59"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.iconset/icon_32x32@2x.png",
+      "bytes": 2626,
+      "sha256": "164c0bdab6967e1bbb14f5fd347a0778e00df4a0989c755248f155eef0833bda"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.iconset/icon_512x512.png",
+      "bytes": 381928,
+      "sha256": "3ba7c391b1ce0837abf99f285c9c9d2fe25c08aa8e7d69f81151ff3e9c405f23"
+    },
+    {
+      "path": "assets/app-icon/AppIcon.iconset/icon_512x512@2x.png",
+      "bytes": 1564530,
+      "sha256": "da4c55487f88305e4924283f0bddf390fdd284b490b600faabc4a7efe356a65f"
+    },
+    {
+      "path": "assets/app-icon/previews/app-icon-light-dark.png",
+      "bytes": 282820,
+      "sha256": "e843432f555a951b34f07295ea604674cc17154ddf66a09988eacd648317db0b"
+    },
+    {
+      "path": "assets/app-icon/previews/app-icon-small-size-test.png",
+      "bytes": 40106,
+      "sha256": "a27995c246e3f2ce81f0773ae4651c951b6a5aa9c6e8cbb2c8abef7cf9cbbb84"
+    },
+    {
+      "path": "assets/app-icon/source/weibei-app-icon-flat.svg",
+      "bytes": 770,
+      "sha256": "e57f63297081fc81e4ed5d7a1a8bc3a042af45e93eb4c30ced01b9ca0bec490d"
+    },
+    {
+      "path": "assets/app-icon/weibei-app-icon-1024.png",
+      "bytes": 1560750,
+      "sha256": "6c9e15c9e254d35017f1902eeca44930320bc937589eb1cb419baa00e9ea7374"
+    },
+    {
+      "path": "assets/app-icon/weibei-app-icon-small-optical-1024.png",
+      "bytes": 32504,
+      "sha256": "5092ea4418506b77c9c601b3f96d26b384f5b179ffdce6e87b4b71db38f0c7d0"
+    },
+    {
+      "path": "assets/dmg/dmg-background.png",
+      "bytes": 188739,
+      "sha256": "687e454e26c7df37052144c52fce7be3f78166434e0ed1bfa187e381f902a502"
+    },
+    {
+      "path": "assets/dmg/dmg-background@2x.png",
+      "bytes": 872249,
+      "sha256": "2b8a292ae96914401b61dd8aa7f1e601c9ead01331a9faacbb8b96f3a42986ee"
+    },
+    {
+      "path": "assets/examples/design-system-overview.png",
+      "bytes": 1085819,
+      "sha256": "dbc0c850d88d769db06f1ef94a0a59795b45a2ee5f1461c491fee9c48324db18"
+    },
+    {
+      "path": "assets/examples/logo-variants.png",
+      "bytes": 356376,
+      "sha256": "42d0c9c2b49284a963ddb3bdf40fd751c2ce4e92114ac6b3001fdbec4f8fffc9"
+    },
+    {
+      "path": "assets/fonts/WeiBeiStele.ttf",
+      "bytes": 16720,
+      "sha256": "51977deb083107d0659685cef038922928d7ff1571a3524c7dc1030e7fcddeb8"
+    },
+    {
+      "path": "assets/fonts/WeiBeiSteleMono.ttf",
+      "bytes": 16380,
+      "sha256": "8547691d939e8cf631a5540e834b0c7686d3acaa0775bf7b57c7f6919a06d3b3"
+    },
+    {
+      "path": "assets/fonts/previews/weibei-font-specimen.png",
+      "bytes": 135518,
+      "sha256": "fcc9d5669a97c30ccc79865b6693544b37da5c9cbbb1c8bd95d67861075a5021"
+    },
+    {
+      "path": "assets/github/github-avatar-512.png",
+      "bytes": 381928,
+      "sha256": "3ba7c391b1ce0837abf99f285c9c9d2fe25c08aa8e7d69f81151ff3e9c405f23"
+    },
+    {
+      "path": "assets/github/github-social-preview-1280x640.png",
+      "bytes": 998686,
+      "sha256": "bed96fb4abd2d0bc43d4e7749d426d8905c932f1f1ed2eb7d60007222c2391af"
+    },
+    {
+      "path": "assets/github/readme-hero-1983x793.png",
+      "bytes": 1912882,
+      "sha256": "0f100867b1617ef2f1027924eb95511736eca9e93995797877012b6182a69952"
+    },
+    {
+      "path": "assets/github/readme-hero-original-1983x793.png",
+      "bytes": 2001751,
+      "sha256": "47a1b5659bbbb60af4c0cb5175f7a929fea6141531cd15cd892611b174eecadf"
+    },
+    {
+      "path": "assets/github/readme-logo-256.png",
+      "bytes": 78364,
+      "sha256": "c2406f38cc8195bbb873a6fc16c8e6d3529ab7c9e5dc9eeaa88dba8ded4f6489"
+    },
+    {
+      "path": "assets/github/readme-logo-512.png",
+      "bytes": 318740,
+      "sha256": "e61cb098c7f0dd32be0f8cf3e20d4c47b44355c2d708403fd6639b13787e5dd0"
+    },
+    {
+      "path": "assets/logo/exports/monochrome/weibei-mark-black-1024.png",
+      "bytes": 22331,
+      "sha256": "02eef48c51b5dfd3a10a844b14b7fb8585e624d9111f814eef446550f5f29dce"
+    },
+    {
+      "path": "assets/logo/exports/monochrome/weibei-mark-white-1024.png",
+      "bytes": 16504,
+      "sha256": "0e56399719ebb545685e075de3b2bd988472f620fe5eb9a7e32f2b4a0fa426f6"
+    },
+    {
+      "path": "assets/logo/exports/paper/weibei-mark-paper-1024.png",
+      "bytes": 1752387,
+      "sha256": "85ec13d00ea9f6519786715654b8a549a25a41b11d228459dee8892d10700105"
+    },
+    {
+      "path": "assets/logo/exports/paper/weibei-mark-paper-1254.png",
+      "bytes": 2582139,
+      "sha256": "0e57ca4d551b11b98af568139e89d2b1b4a70fcd2c567feb6e510c8bd447ef51"
+    },
+    {
+      "path": "assets/logo/exports/reversed/weibei-mark-reversed-1024.png",
+      "bytes": 22083,
+      "sha256": "09108e21a00b33731c488e1ccd110970feac2cb7a7a4c09281a8e963e60a65e0"
+    },
+    {
+      "path": "assets/logo/exports/transparent/weibei-mark-flat-1024.png",
+      "bytes": 22320,
+      "sha256": "96cbe0e5728dcc2da93d9f556de21b1e8396d34a4bafffde07a4292329077460"
+    },
+    {
+      "path": "assets/logo/exports/transparent/weibei-mark-flat-128.png",
+      "bytes": 2345,
+      "sha256": "b3e47d605ef22d68470193dcfcf8190fa2b0dd71025351137ae105c3702e2eff"
+    },
+    {
+      "path": "assets/logo/exports/transparent/weibei-mark-flat-256.png",
+      "bytes": 3602,
+      "sha256": "86e0d6d17ace1150086621b0b34ed467647c2646662131ea3e1d5631ec2405bd"
+    },
+    {
+      "path": "assets/logo/exports/transparent/weibei-mark-flat-512.png",
+      "bytes": 9895,
+      "sha256": "d7cbf5ef48e5b179c3e26f4408a2eceab134729e4383505d274cf703f15fe8e5"
+    },
+    {
+      "path": "assets/logo/exports/transparent/weibei-mark-textured-transparent.png",
+      "bytes": 2847429,
+      "sha256": "0d415380270eb391a2f77c4d5445c2a922cd0b7ad33b613b2b1e27cff51f174c"
+    },
+    {
+      "path": "assets/logo/exports/wordmark/weibei-lockup-en.png",
+      "bytes": 49032,
+      "sha256": "4ecbb47f3ba749cb0cc3f2fda7ac375ba69a0d4663cb969178106803fcda637f"
+    },
+    {
+      "path": "assets/logo/exports/wordmark/weibei-tagline-mono.png",
+      "bytes": 9208,
+      "sha256": "c0a743e56e85c9dbc4685d8e219646aeb6239f686ecdfe228c8f2645b2a1cdcc"
+    },
+    {
+      "path": "assets/logo/exports/wordmark/weibei-wordmark-stamped.png",
+      "bytes": 14653,
+      "sha256": "43808b755156cca53562ec8733060697854c32aa4fb8dbd87d0750ad78610963"
+    },
+    {
+      "path": "assets/logo/reference/approved-textured-mark-1254.png",
+      "bytes": 2738351,
+      "sha256": "26b433af6aac7dc325c9626136c94d79c48e20aa0384d1f36e9b4fa290dc6305"
+    },
+    {
+      "path": "assets/logo/source/paper-texture-2048.png",
+      "bytes": 995246,
+      "sha256": "3730a6a214c22e5f33e7e4314f0eb0ef33ea83ef215ead31ee4c8b522a9c102b"
+    },
+    {
+      "path": "assets/logo/source/weibei-lockup-en.svg",
+      "bytes": 1298,
+      "sha256": "31696d93342e11a0164161bb2271eb3e7afc8c76f7e82a9f690b1b4a47d7a5d4"
+    },
+    {
+      "path": "assets/logo/source/weibei-lockup-zh.svg",
+      "bytes": 1049,
+      "sha256": "e9148226480ebe6c91710e836e9bf6551304e87642268c391f0398515d5abe2c"
+    },
+    {
+      "path": "assets/logo/source/weibei-mark-master.svg",
+      "bytes": 649,
+      "sha256": "e4048c119b39dc2330ce00f8cb383147782503f4ed5601f1808e5a288202ad5d"
+    },
+    {
+      "path": "assets/logo/source/weibei-mark-monochrome.svg",
+      "bytes": 544,
+      "sha256": "cf369bfcbff9cbe0ec8930f30abd8f0fe6d86c0039ef6e978f59961aa36cd964"
+    },
+    {
+      "path": "assets/logo/source/weibei-mark-reversed.svg",
+      "bytes": 555,
+      "sha256": "aa5cc0e3ef6c0259a271f6de00b0200279c11b9a3514d705d849bad1d5041dd3"
+    },
+    {
+      "path": "assets/social/weibei-og-1200x630.png",
+      "bytes": 923680,
+      "sha256": "4e2c3ba131ab2cab04ed686246981fa49766269b0583610c284b8c56ac729ee1"
+    },
+    {
+      "path": "assets/social/weibei-square-1080.png",
+      "bytes": 1939277,
+      "sha256": "44586f255aa06ee31b4aa610ce2767f26ae8b4a012b95279b6fffe40cf71f6d0"
+    },
+    {
+      "path": "assets/swatches/core-palette.png",
+      "bytes": 1442,
+      "sha256": "3563e846c657afee24ce1de921312ced1acadc5fcd55d805a01b7cd2f4cd0966"
+    },
+    {
+      "path": "assets/web/apple-touch-icon-180.png",
+      "bytes": 42709,
+      "sha256": "10f4bdd38e62a331134833ccc0257df56471d4185a4641b8a04b9445a27c9408"
+    },
+    {
+      "path": "assets/web/favicon.ico",
+      "bytes": 15086,
+      "sha256": "79908e8425d1a16cf406f9019b661a8557763fc6284bc32435620b06fe19aaa7"
+    },
+    {
+      "path": "assets/web/favicon.svg",
+      "bytes": 619,
+      "sha256": "5b91c0d3a8bfd00012e3d5543fc01124e44a0b4b3c8b7c74e14ce01bf687473e"
+    },
+    {
+      "path": "assets/web/icon-16.png",
+      "bytes": 941,
+      "sha256": "ba55d9ccbc2f26bb914f022702e7438e6492e0607cb7498abcdb891ddac603fa"
+    },
+    {
+      "path": "assets/web/icon-180.png",
+      "bytes": 42709,
+      "sha256": "10f4bdd38e62a331134833ccc0257df56471d4185a4641b8a04b9445a27c9408"
+    },
+    {
+      "path": "assets/web/icon-192.png",
+      "bytes": 47529,
+      "sha256": "41646b0ab3ac0fbaac06a8ac634f7a3542476e681b3a677aa039580a97f952f8"
+    },
+    {
+      "path": "assets/web/icon-32.png",
+      "bytes": 1435,
+      "sha256": "7128ea3a4c31444db0176c6c7a2fafe4b6e69655d748e9c157b050504d5d3b59"
+    },
+    {
+      "path": "assets/web/icon-48.png",
+      "bytes": 1982,
+      "sha256": "5bcaa28613e3a6823e852f5e55ddbb81969b36451c65a235c31161b47eabbc75"
+    },
+    {
+      "path": "assets/web/icon-512.png",
+      "bytes": 381928,
+      "sha256": "3ba7c391b1ce0837abf99f285c9c9d2fe25c08aa8e7d69f81151ff3e9c405f23"
+    },
+    {
+      "path": "assets/web/web-app-icon-192.png",
+      "bytes": 47529,
+      "sha256": "41646b0ab3ac0fbaac06a8ac634f7a3542476e681b3a677aa039580a97f952f8"
+    },
+    {
+      "path": "assets/web/web-app-icon-512.png",
+      "bytes": 381928,
+      "sha256": "3ba7c391b1ce0837abf99f285c9c9d2fe25c08aa8e7d69f81151ff3e9c405f23"
+    }
+  ]
+}
