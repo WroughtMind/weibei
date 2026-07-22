@@ -1,9 +1,12 @@
 {
+  "name": "weibei-build-tools",
+  "version": "1.0.0",
+  "private": true,
   "scripts": {
     "build:editor": "esbuild Sources/WeiBei/WebEditor/src/editor.js --bundle --format=iife --outfile=Sources/WeiBei/Resources/Editor/editor.js --minify --loader:.woff=file --loader:.woff2=file --loader:.ttf=file --asset-names=fonts/[name]"
   },
   "dependencies": {
-    "@milkdown/kit": "latest",
+    "@milkdown/kit": "7.21.2",
     "@milkdown/plugin-math": "^7.5.9",
     "katex": "^0.17.0",
     "mdast-util-math": "^3.0.0",
@@ -11,6 +14,10 @@
     "prismjs": "^1.30.0"
   },
   "devDependencies": {
-    "esbuild": "latest"
+    "appdmg": "0.6.6",
+    "esbuild": "0.28.1"
+  },
+  "overrides": {
+    "dompurify": "3.4.12"
   }
 }

@@ -50,6 +50,13 @@ APP_CONTENTS="$APP_BUNDLE/Contents"
 APP_MACOS="$APP_CONTENTS/MacOS"
 APP_HELPERS="$APP_CONTENTS/Helpers"
 APP_RESOURCES="$APP_CONTENTS/Resources"
+APP_ICON_SOURCE="$ROOT_DIR/DesignSystem/assets/app-icon/AppIcon.icns"
+LEGAL_SOURCE_FILES=(
+  "$ROOT_DIR/PRIVACY.md"
+  "$ROOT_DIR/THIRD_PARTY_NOTICES.md"
+  "$ROOT_DIR/ASSET_ATTRIBUTIONS.md"
+  "$ROOT_DIR/Docs/releases/v1.0.0.md"
+)
 APP_BINARY="$APP_MACOS/$PRODUCT_NAME"
 FINAL_AUDIT_DIR="$DIST_DIR/final-audit"
 FINAL_AUDIT_APP_BUNDLE="$FINAL_AUDIT_DIR/$APP_DISPLAY_NAME.app"
@@ -144,6 +151,10 @@ if [[ "$CHECK_ONLY" != true ]]; then
 
   rm -rf "$APP_BUNDLE"
   mkdir -p "$APP_MACOS" "$APP_HELPERS" "$APP_RESOURCES"
+  if [[ ! -f "$APP_ICON_SOURCE" ]]; then
+    echo "package failed: missing App Icon at $APP_ICON_SOURCE" >&2
+    exit 22
+  fi
   cp "$BUILD_BINARY" "$APP_BINARY"
   if ! /usr/bin/cmp -s "$BUILD_BINARY" "$APP_BINARY"; then
     echo "package failed: copied app binary does not match the current Swift build" >&2
@@ -168,7 +179,31 @@ if [[ "$CHECK_ONLY" != true ]]; then
     fi
     cp -R "$resource_bundle" "$APP_RESOURCES/"
   done
-  cp -R "$PI_RUNTIME_DIR" "$APP_RESOURCES/PiRuntime"
+  PACKAGED_PI_ROOT="$APP_RESOURCES/PiRuntime"
+  mkdir -p "$PACKAGED_PI_ROOT/bin"
+  cp "$PI_RUNTIME_DIR/bin/pi" "$PACKAGED_PI_ROOT/bin/pi"
+  cp "$PI_RUNTIME_DIR/bin/package.json" "$PACKAGED_PI_ROOT/bin/package.json"
+  cp -R "$PI_RUNTIME_DIR/bin/theme" "$PACKAGED_PI_ROOT/bin/theme"
+  for pi_metadata in manifest.json LICENSE THIRD_PARTY_NOTICES.md artifact.sha256 binary.sha256; do
+    if [[ ! -f "$PI_RUNTIME_DIR/$pi_metadata" ]]; then
+      echo "package failed: embedded PI runtime is missing $pi_metadata" >&2
+      exit 23
+    fi
+    cp "$PI_RUNTIME_DIR/$pi_metadata" "$PACKAGED_PI_ROOT/$pi_metadata"
+  done
+  cp "$APP_ICON_SOURCE" "$APP_RESOURCES/AppIcon.icns"
+  mkdir -p "$APP_RESOURCES/Legal"
+  for legal_source in "${LEGAL_SOURCE_FILES[@]}"; do
+    if [[ ! -f "$legal_source" ]]; then
+      echo "package failed: missing legal/release notice $legal_source" >&2
+      exit 24
+    fi
+    cp "$legal_source" "$APP_RESOURCES/Legal/$(basename "$legal_source")"
+  done
+  # Clear inherited provenance/quarantine metadata before executing the copied
+  # Bun-based Pi binary. Downloaded DMGs receive a fresh quarantine marker on
+  # the user's Mac; README documents the separate first-launch approval flow.
+  /usr/bin/xattr -cr "$APP_BUNDLE"
 
   PACKAGED_PI="$APP_RESOURCES/PiRuntime/bin/pi"
   if [[ ! -x "$PACKAGED_PI" ]] \
@@ -196,6 +231,8 @@ if [[ "$CHECK_ONLY" != true ]]; then
   <string>$APP_DISPLAY_NAME</string>
   <key>CFBundleDisplayName</key>
   <string>$APP_DISPLAY_NAME</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon.icns</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
@@ -213,7 +250,6 @@ if [[ "$CHECK_ONLY" != true ]]; then
 </dict>
 </plist>
 PLIST
-  /usr/bin/xattr -cr "$APP_BUNDLE"
   /usr/bin/codesign --force --sign - --timestamp=none "$PDF_TEXT_WORKER" >/dev/null
   /usr/bin/codesign --force --sign - --timestamp=none "$APP_BUNDLE" >/dev/null
   /usr/bin/codesign --verify --deep --strict "$APP_BUNDLE"

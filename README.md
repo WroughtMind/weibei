@@ -1,5 +1,7 @@
 # WeiBei / 魏碑
 
+![魏碑：读、记、问，回到出处](DesignSystem/assets/github/readme-hero-1983x793.png)
+
 WeiBei is a source-grounded macOS study workspace for reading course materials, asking questions, and writing notes without breaking context.
 
 It is submitted to the **Education** track of OpenAI Build Week 2026.
@@ -62,10 +64,67 @@ For long or scanned PDFs, WeiBei extracts text in a resource-bounded helper proc
 ## Requirements
 
 - macOS 14 or later
+- The prebuilt v1.0.0 DMG currently supports Apple silicon (arm64)
 - Xcode Command Line Tools with Swift 5.9 support
 - Internet access on the first build to download and verify the pinned Pi runtime
 - A configured supported model provider for live Agent responses
 - Node.js only when rebuilding the Milkdown web editor source
+
+## Install
+
+The repository is still private while v1.0.0 is being reviewed. The commands below become the normal public installation paths after the `v1.0.0` Release and `taekchef/homebrew-tap` are published; until then, use the source build below.
+
+### Homebrew (recommended after release)
+
+```bash
+brew install --cask taekchef/tap/weibei
+```
+
+Upgrade or uninstall the app with:
+
+```bash
+brew upgrade --cask weibei
+brew uninstall --cask weibei
+```
+
+Uninstalling the app does not silently remove local materials, notes, indexes, or settings.
+
+### DMG
+
+Download these two files from the official GitHub Release:
+
+- `WeiBei-1.0.0-macOS-arm64.dmg`
+- `WeiBei-1.0.0-macOS-arm64.dmg.sha256`
+
+Verify the download before opening it:
+
+```bash
+cd ~/Downloads
+shasum -a 256 -c WeiBei-1.0.0-macOS-arm64.dmg.sha256
+```
+
+Open the DMG and drag **魏碑** to **应用程序 / Applications**. The installed app keeps the official WeiBei icon in Finder, the Dock, Launchpad, and the app switcher.
+
+### First launch on macOS
+
+The community v1.0.0 package is ad-hoc signed and has not been notarized by Apple. Homebrew verifies the same fixed DMG checksum, but it cannot replace Gatekeeper or Apple notarization.
+
+If macOS blocks the first launch:
+
+1. Try to open WeiBei once.
+2. Open **System Settings → Privacy & Security → Security**.
+3. Click **Open Anyway**, then confirm **Open**.
+
+Apple documents this as a per-app exception in [Safely open apps on your Mac](https://support.apple.com/en-us/102445). It does not disable macOS security for other apps.
+
+Only when the DMG came from this repository's official Release **and** its SHA-256 check passed, the terminal fallback is:
+
+```bash
+/usr/bin/xattr -dr com.apple.quarantine "/Applications/魏碑.app"
+open "/Applications/魏碑.app"
+```
+
+This command only clears the download quarantine attribute from WeiBei. Do not run commands that disable Gatekeeper globally.
 
 ## Build and run
 
@@ -75,7 +134,7 @@ cd weibei
 ./script/build_and_run.sh
 ```
 
-The script builds and opens `dist/魏碑.app`.
+The script builds and opens `dist/魏碑.app`. The canonical Logo, app icon, promotional graphics, color, typography, motion, accessibility, and release rules live in [`DesignSystem/`](DesignSystem/).
 
 ## Suggested judge test
 
@@ -115,10 +174,9 @@ Live-provider checks require valid local credentials and are not silently replac
 - Course files and indexes are local-first, but live model responses may require a network connection.
 - The Agent proposes note and learning-state changes. The learner must approve the final write.
 - Large or difficult source files may be reported as partially indexed or incomplete.
-- The repository version is `0.1.0` and remains a pre-release candidate, not a signed and notarized 1.0 release.
+- The repository version is `1.0.0`, but the current community package is still an unnotarized release candidate until the integration and public Release steps are complete.
 - A project-level redistribution license has not been selected. Do not assume permission to redistribute the app or its custom brand fonts.
 
 ## Technology
 
 Swift, SwiftUI, AppKit, PDFKit, WebKit, Vision OCR, SQLite FTS5, Milkdown, KaTeX, Mermaid, Pi, OpenAI Codex OAuth
-
