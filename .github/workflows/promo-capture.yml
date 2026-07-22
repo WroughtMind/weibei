@@ -52,6 +52,7 @@ jobs:
         env:
           VIDEO: ${{ runner.temp }}/weibei-promo/weibei-learning-flow.mp4
           POSTER: ${{ runner.temp }}/weibei-promo/weibei-learning-flow-poster.png
+          STATE: ${{ runner.temp }}/weibei-promo/verification-state.txt
         run: |
           /usr/bin/swift - <<'SWIFT'
           import AVFoundation
@@ -77,6 +78,12 @@ jobs:
           echo "promo_poster_size=${poster_width}x${poster_height}"
           test "$poster_width" -ge 1200
           test "$poster_height" -ge 700
+
+          for stage in "promo:workspace" "promo:selection" "promo:question" "promo:answer" "promo:note" "promo:source-return" "completed"; do
+            /usr/bin/grep -Fxq "$stage" "$STATE"
+          done
+          ! /usr/bin/grep -Fq "failed" "$STATE"
+          echo "promo_flow_stages=verified"
 
       - name: 上传官网录制成品
         uses: actions/upload-artifact@v4
