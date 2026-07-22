@@ -35,6 +35,8 @@ let package = Package(
                 .process("Resources")
             ],
             linkerSettings: [
+                .linkedFramework("AVFoundation"),
+                .linkedFramework("CoreVideo"),
                 .linkedFramework("PDFKit"),
                 .linkedFramework("Security"),
                 .linkedFramework("WebKit")
