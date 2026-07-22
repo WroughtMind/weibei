@@ -5017,17 +5017,16 @@ final class WorkspaceStore: ObservableObject {
         updateSelection(
             "名义利率以货币单位表示，实际利率扣除了通货膨胀后的购买力变化。",
             source: .document,
+            anchor: CGPoint(x: 520, y: 420),
             ownerTitle: currentSourceReferenceTitle
         )
-        if let selectionContext {
-            addSelectionAttachment(selectionContext)
-        }
-        focus(.agent)
+        askSelection()
         recordVerificationStage("promo:selection")
         try? await Task.sleep(nanoseconds: 1_000_000_000)
 
         agentDraft = "名义利率和实际利率有什么区别？请依据原文整理成笔记。"
         recordVerificationStage("promo:question")
+        try? await Task.sleep(nanoseconds: 1_000_000_000)
         await askAgentAndWait()
         recordVerificationStage("promo:answer")
         try? await Task.sleep(nanoseconds: 2_200_000_000)
@@ -5036,10 +5035,13 @@ final class WorkspaceStore: ObservableObject {
         recordVerificationStage("promo:note")
         try? await Task.sleep(nanoseconds: 2_400_000_000)
 
-        _ = openAgentCitation(
+        guard openAgentCitation(
             kind: "material",
             value: "货币金融学课程 HTML，章节序号：2，章节：名义利率与实际利率"
-        )
+        ) else {
+            recordVerificationStage("promo:source-return-failed")
+            return
+        }
         recordVerificationStage("promo:source-return")
         try? await Task.sleep(nanoseconds: 2_500_000_000)
         recordVerificationStage("completed")
