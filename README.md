@@ -1,3 +1,7 @@
+<!-- WEIBEI_VISUAL:hero:START -->
+![WeiBei / 魏碑](./Docs/brand/readme-hero-1983x793.png)
+<!-- WEIBEI_VISUAL:hero:END -->
+
 # WeiBei / 魏碑
 
 WeiBei is a source-grounded macOS study workspace for reading course materials, asking questions, and writing notes without breaking context.
@@ -9,6 +13,12 @@ It is submitted to the **Education** track of OpenAI Build Week 2026.
 During final-exam revision, I was reading PDFs and HTML pages in a browser, asking questions in a separate AI chat, and writing Markdown notes in another app. Each tool worked on its own, but the learning flow broke whenever I switched windows and reconstructed the context.
 
 I built WeiBei so the material, the question, its evidence, and the resulting note can stay connected in one workspace.
+
+<!-- WEIBEI_VISUAL:workspace:START -->
+<p align="center">
+  <img src="./Docs/release-evidence/app-offline-learning-flow.png" alt="WeiBei reading, Agent conversation, and note workspace" width="1200">
+</p>
+<!-- WEIBEI_VISUAL:workspace:END -->
 
 ## What it does
 
@@ -32,6 +42,12 @@ The Build Week work is the range from `366892c1` to the merged `main` submission
 - Explicit citation labels and verified jumps back to files, PDF pages, and HTML sections.
 - Agent provider profiles, OpenAI Codex OAuth support, clearer failure states, cancellation, and retry.
 - Persistent study-session grouping, performance work, final chat math rendering, and pane interaction fixes.
+
+<!-- WEIBEI_VISUAL:course-relations:START -->
+<p align="center">
+  <img src="./Docs/release-evidence/app-course-workspace-overview-flow.png" alt="WeiBei course material and note relationship view" width="1200">
+</p>
+<!-- WEIBEI_VISUAL:course-relations:END -->
 
 This separation is intentional. The submission should be evaluated on the work added during Build Week, not on the earlier prototype as a whole.
 
@@ -122,3 +138,7 @@ Live-provider checks require valid local credentials and are not silently replac
 
 Swift, SwiftUI, AppKit, PDFKit, WebKit, Vision OCR, SQLite FTS5, Milkdown, KaTeX, Mermaid, Pi, OpenAI Codex OAuth
 
+
+<!-- WEIBEI_VISUAL:prose-integrity:START -->
+<!-- Visual assets only; the Build Week submission prose above is byte-for-byte unchanged. -->
+<!-- WEIBEI_VISUAL:prose-integrity:END -->
