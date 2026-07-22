@@ -1,0 +1,91 @@
+name: 魏碑官网真实应用录制
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - agent/website-promo-recording
+    paths:
+      - .github/workflows/promo-capture.yml
+      - Package.swift
+      - Sources/WeiBei/App/WeiBeiApp.swift
+      - Sources/WeiBei/Stores/WorkspaceStore.swift
+      - script/record_website_promo.sh
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/promo-capture.yml
+      - Package.swift
+      - Sources/WeiBei/App/WeiBeiApp.swift
+      - Sources/WeiBei/Stores/WorkspaceStore.swift
+      - script/record_website_promo.sh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promo-capture-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    name: 启动真实应用并录制学习流程
+    runs-on: macos-26
+    timeout-minutes: 45
+
+    steps:
+      - name: 取出完整源码历史
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: 记录构建工具链
+        run: |
+          swift --version
+          xcodebuild -version
+
+      - name: 构建、启动并录制真实应用
+        run: bash ./script/record_website_promo.sh "$RUNNER_TEMP/weibei-promo"
+
+      - name: 校验视频与封面
+        env:
+          VIDEO: ${{ runner.temp }}/weibei-promo/weibei-learning-flow.mp4
+          POSTER: ${{ runner.temp }}/weibei-promo/weibei-learning-flow-poster.png
+        run: |
+          /usr/bin/swift - <<'SWIFT'
+          import AVFoundation
+          import Foundation
+
+          guard let path = ProcessInfo.processInfo.environment["VIDEO"] else {
+              fputs("VIDEO is missing\n", stderr)
+              exit(2)
+          }
+          let asset = AVURLAsset(url: URL(fileURLWithPath: path))
+          let seconds = CMTimeGetSeconds(asset.duration)
+          let tracks = asset.tracks(withMediaType: .video)
+          print("promo_duration_seconds=\(seconds)")
+          print("promo_video_tracks=\(tracks.count)")
+          guard seconds >= 10, seconds <= 20, !tracks.isEmpty else {
+              fputs("promo video duration or track validation failed\n", stderr)
+              exit(3)
+          }
+          SWIFT
+
+          poster_width="$(/usr/bin/sips -g pixelWidth "$POSTER" | /usr/bin/awk '/pixelWidth/ {print $2}')"
+          poster_height="$(/usr/bin/sips -g pixelHeight "$POSTER" | /usr/bin/awk '/pixelHeight/ {print $2}')"
+          echo "promo_poster_size=${poster_width}x${poster_height}"
+          test "$poster_width" -ge 1200
+          test "$poster_height" -ge 700
+
+      - name: 上传官网录制成品
+        uses: actions/upload-artifact@v4
+        with:
+          name: weibei-website-promo-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/weibei-promo/weibei-learning-flow.mp4
+            ${{ runner.temp }}/weibei-promo/weibei-learning-flow-poster.png
+            ${{ runner.temp }}/weibei-promo/verification-state.txt
+            ${{ runner.temp }}/weibei-promo/app-stderr.log
+          if-no-files-found: error
+          retention-days: 7
