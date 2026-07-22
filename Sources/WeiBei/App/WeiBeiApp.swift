@@ -394,25 +394,34 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
 
         let workspaceURL = URL(fileURLWithPath: rawWorkspacePath, isDirectory: true)
             .standardizedFileURL
-            .resolvingSymlinksInPath()
-        let videoURL = URL(fileURLWithPath: rawVideoPath)
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
-        let posterURL = URL(fileURLWithPath: rawPosterPath)
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
-        let statusURL = URL(fileURLWithPath: rawStatusPath)
-            .standardizedFileURL
-            .resolvingSymlinksInPath()
+        let videoURL = URL(fileURLWithPath: rawVideoPath).standardizedFileURL
+        let posterURL = URL(fileURLWithPath: rawPosterPath).standardizedFileURL
+        let statusURL = URL(fileURLWithPath: rawStatusPath).standardizedFileURL
 
-        guard workspaceURL.path.hasPrefix("/private/tmp/weibei-promo-"),
-              videoURL.pathExtension.lowercased() == "mp4",
-              posterURL.pathExtension.lowercased() == "png",
-              statusURL.pathExtension.lowercased() == "txt",
-              Self.isPath(videoURL.deletingLastPathComponent().path, insideDirectory: workspaceURL.path),
-              Self.isPath(posterURL.deletingLastPathComponent().path, insideDirectory: workspaceURL.path),
-              Self.isPath(statusURL.deletingLastPathComponent().path, insideDirectory: workspaceURL.path) else {
-            fputs("WeiBei verification recording paths are unsafe or invalid.\n", stderr)
+        let workspacePath = workspaceURL.path.hasSuffix("/")
+            ? String(workspaceURL.path.dropLast())
+            : workspaceURL.path
+        let workspacePrefix = workspacePath + "/"
+        let rootIsAllowed = workspacePath.hasPrefix("/private/tmp/weibei-promo-")
+            || workspacePath.hasPrefix("/tmp/weibei-promo-")
+        let targetPaths = [videoURL.path, posterURL.path, statusURL.path]
+        let targetsAreInsideWorkspace = targetPaths.allSatisfy { $0.hasPrefix(workspacePrefix) }
+        let extensionsAreValid = videoURL.pathExtension.lowercased() == "mp4"
+            && posterURL.pathExtension.lowercased() == "png"
+            && statusURL.pathExtension.lowercased() == "txt"
+        guard rootIsAllowed, targetsAreInsideWorkspace, extensionsAreValid else {
+            fputs(
+                """
+                WeiBei verification recording paths are unsafe or invalid.
+                workspace=\(workspacePath)
+                video=\(videoURL.path)
+                poster=\(posterURL.path)
+                status=\(statusURL.path)
+                rootAllowed=\(rootIsAllowed) targetsInside=\(targetsAreInsideWorkspace) extensionsValid=\(extensionsAreValid)
+
+                """,
+                stderr
+            )
             return
         }
         guard Self.scheduledVerificationRecordings.insert(videoURL.path).inserted else { return }
