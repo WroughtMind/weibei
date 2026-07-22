@@ -408,10 +408,10 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
             return path
         }
 
-        let rawWorkspacePath = workspaceURL.path.hasSuffix("/")
+        let workspacePathBeforeAlias = workspaceURL.path.hasSuffix("/")
             ? String(workspaceURL.path.dropLast())
             : workspaceURL.path
-        let workspacePath = normalizedTemporaryAlias(rawWorkspacePath)
+        let workspacePath = normalizedTemporaryAlias(workspacePathBeforeAlias)
         let workspacePrefix = workspacePath + "/"
         let rootIsAllowed = workspacePath.hasPrefix("/private/tmp/weibei-promo-")
         let targetPaths = [videoURL.path, posterURL.path, statusURL.path]
