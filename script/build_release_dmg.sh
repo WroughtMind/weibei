@@ -168,9 +168,21 @@ fi
 MOUNT_DIR="$(mktemp -d "${TMPDIR:-/tmp}/weibei-dmg-verify.XXXXXX")"
 VERIFY_DATA_DIR="$(mktemp -d "${TMPDIR:-/tmp}/weibei-dmg-data.XXXXXX")"
 MOUNTED=false
+detach_release_mount() {
+  local attempt
+  for attempt in {1..12}; do
+    if /usr/bin/hdiutil detach "$MOUNT_DIR" >/dev/null 2>&1; then
+      MOUNTED=false
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "release failed: mounted DMG remained busy after 12 detach attempts" >&2
+  return 1
+}
 cleanup_mount() {
   if [[ "$MOUNTED" == true ]]; then
-    /usr/bin/hdiutil detach "$MOUNT_DIR" >/dev/null 2>&1 || true
+    detach_release_mount || /usr/bin/hdiutil detach "$MOUNT_DIR" -force >/dev/null 2>&1 || true
   fi
   rm -rf "$MOUNT_DIR" "$VERIFY_DATA_DIR"
 }
@@ -200,8 +212,7 @@ fi
 WEIBEI_SUPPRESS_ACTIVATION=1 \
 WEIBEI_WORKSPACE_DIR="$VERIFY_DATA_DIR" \
   "$MOUNTED_APP_BINARY" --self-check-imported-identity
-/usr/bin/hdiutil detach "$MOUNT_DIR" >/dev/null
-MOUNTED=false
+detach_release_mount
 
 DMG_SHA256="$(/usr/bin/shasum -a 256 "$DMG_PATH" | /usr/bin/awk '{print $1}')"
 /usr/bin/printf '%s  %s\n' "$DMG_SHA256" "$DMG_NAME" | /usr/bin/tee "$DMG_SHA_PATH" >/dev/null
