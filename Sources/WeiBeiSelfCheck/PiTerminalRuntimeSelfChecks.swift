@@ -119,7 +119,8 @@ private func checkGenericEventsDoNotDefeatWatchdog(_ fixture: PiTerminalRuntimeF
     let completionSeconds = Date().timeIntervalSince(startedAt)
     await runtime.shutdown()
 
-    guard outcome == "error:PI 命令超时：prompt", completionSeconds < 1.5 else {
+    let expectedTimeout = "error:\(PiAgentRuntimeError.commandTimedOut("prompt").localizedDescription)"
+    guard outcome == expectedTimeout, completionSeconds < 1.5 else {
         throw PiTerminalRuntimeSelfCheckError.failed(
             "PI generic event spam defeated the inactivity watchdog (outcome=\(outcome), seconds=\(completionSeconds))"
         )
