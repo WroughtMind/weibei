@@ -411,11 +411,12 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
               statusURL.pathExtension.lowercased() == "txt",
               Self.isPath(videoURL.deletingLastPathComponent().path, insideDirectory: workspaceURL.path),
               Self.isPath(posterURL.deletingLastPathComponent().path, insideDirectory: workspaceURL.path),
-              Self.isPath(statusURL.deletingLastPathComponent().path, insideDirectory: workspaceURL.path),
-              Self.scheduledVerificationRecordings.insert(videoURL.path).inserted else {
+              Self.isPath(statusURL.deletingLastPathComponent().path, insideDirectory: workspaceURL.path) else {
             fputs("WeiBei verification recording paths are unsafe or invalid.\n", stderr)
             return
         }
+        guard Self.scheduledVerificationRecordings.insert(videoURL.path).inserted else { return }
+        try? Data("scheduled\n".utf8).write(to: statusURL, options: .atomic)
 
         let fps = max(
             1,
@@ -430,8 +431,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
             min(5, Double(environment["WEIBEI_VERIFY_RECORDING_START_DELAY"] ?? "") ?? 1)
         )
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + startDelay) { [weak window] in
-            guard let window else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + startDelay) {
             let recorder = VerificationVideoRecorder(
                 videoURL: videoURL,
                 posterURL: posterURL,
