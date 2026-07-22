@@ -5006,6 +5006,10 @@ final class WorkspaceStore: ObservableObject {
         latestAgentNoteProposal = nil
         latestAgentLearningUpdate = nil
         select(itemID: "sample-html")
+        requestReaderHTMLLocation(
+            id: "html-heading-1",
+            title: "名义利率与实际利率"
+        )
         updateNote("# 利率复习\n\n把概念、依据和结论放在一起。\n")
         recordVerificationStage("promo:workspace")
         try? await Task.sleep(nanoseconds: 2_000_000_000)
@@ -5034,7 +5038,7 @@ final class WorkspaceStore: ObservableObject {
 
         _ = openAgentCitation(
             kind: "material",
-            value: "货币金融学课程 HTML，章节 2「名义利率与实际利率」"
+            value: "货币金融学课程 HTML，章节序号：2，章节：名义利率与实际利率"
         )
         recordVerificationStage("promo:source-return")
         try? await Task.sleep(nanoseconds: 2_500_000_000)
@@ -6335,14 +6339,14 @@ final class WorkspaceStore: ObservableObject {
 
             **关系**：实际利率 ≈ 名义利率 − 通货膨胀率。
 
-            [材料：货币金融学课程 HTML，章节 2「名义利率与实际利率」]
+            [材料：货币金融学课程 HTML，章节序号：2，章节：名义利率与实际利率]
             """
             return StudyAgentReply(
                 text: markdown,
                 backend: .offline,
                 noteProposal: StudyAgentNoteProposal(
                     markdown: markdown,
-                    evidence: ["货币金融学课程 HTML，章节 2「名义利率与实际利率」"],
+                    evidence: ["货币金融学课程 HTML，章节序号：2，章节：名义利率与实际利率"],
                     contextRevision: request.contextRevision
                 )
             )
