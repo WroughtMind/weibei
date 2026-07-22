@@ -398,13 +398,24 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         let posterURL = URL(fileURLWithPath: rawPosterPath).standardizedFileURL
         let statusURL = URL(fileURLWithPath: rawStatusPath).standardizedFileURL
 
-        let workspacePath = workspaceURL.path.hasSuffix("/")
+        func normalizedTemporaryAlias(_ path: String) -> String {
+            if path == "/tmp" {
+                return "/private/tmp"
+            }
+            if path.hasPrefix("/tmp/") {
+                return "/private" + path
+            }
+            return path
+        }
+
+        let rawWorkspacePath = workspaceURL.path.hasSuffix("/")
             ? String(workspaceURL.path.dropLast())
             : workspaceURL.path
+        let workspacePath = normalizedTemporaryAlias(rawWorkspacePath)
         let workspacePrefix = workspacePath + "/"
         let rootIsAllowed = workspacePath.hasPrefix("/private/tmp/weibei-promo-")
-            || workspacePath.hasPrefix("/tmp/weibei-promo-")
         let targetPaths = [videoURL.path, posterURL.path, statusURL.path]
+            .map(normalizedTemporaryAlias)
         let targetsAreInsideWorkspace = targetPaths.allSatisfy { $0.hasPrefix(workspacePrefix) }
         let extensionsAreValid = videoURL.pathExtension.lowercased() == "mp4"
             && posterURL.pathExtension.lowercased() == "png"
