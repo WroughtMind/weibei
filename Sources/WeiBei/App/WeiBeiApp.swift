@@ -1,4 +1,6 @@
+import AVFoundation
 import AppKit
+import CoreVideo
 import CryptoKit
 import SwiftUI
 import WebKit
@@ -340,6 +342,8 @@ private struct WeiBeiAppearanceTransition: ViewModifier {
 private struct WindowChromeConfigurator: NSViewRepresentable {
     private static var scheduledVerificationCaptures: Set<String> = []
     private static var scheduledVerificationCaptureChannels: Set<String> = []
+    private static var scheduledVerificationRecordings: Set<String> = []
+    private static var activeVerificationRecorders: [String: VerificationVideoRecorder] = [:]
     private static var processedVerificationCaptureRequests: Set<String> = []
     private static let webViewSnapshotTimeoutSeconds: TimeInterval = 4
 
@@ -372,6 +376,79 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         applyVerificationWindowSize(to: window)
         captureVerificationWindowIfRequested(window)
         listenForVerificationCaptureRequestsIfRequested(window)
+        recordVerificationWindowIfRequested(window)
+    }
+
+    private func recordVerificationWindowIfRequested(_ window: NSWindow) {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1",
+              environment["WEIBEI_VERIFY_SCENARIO"] == "website-promo-flow",
+              let rawWorkspacePath = environment["WEIBEI_WORKSPACE_DIR"],
+              let rawVideoPath = environment["WEIBEI_VERIFY_RECORDING_PATH"],
+              let rawPosterPath = environment["WEIBEI_VERIFY_RECORDING_POSTER_PATH"],
+              let rawStatusPath = environment["WEIBEI_VERIFY_RECORDING_STATUS_PATH"],
+              !rawWorkspacePath.isEmpty,
+              !rawVideoPath.isEmpty,
+              !rawPosterPath.isEmpty,
+              !rawStatusPath.isEmpty else { return }
+
+        let workspaceURL = URL(fileURLWithPath: rawWorkspacePath, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let videoURL = URL(fileURLWithPath: rawVideoPath)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let posterURL = URL(fileURLWithPath: rawPosterPath)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+        let statusURL = URL(fileURLWithPath: rawStatusPath)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+
+        guard workspaceURL.path.hasPrefix("/private/tmp/weibei-promo-"),
+              videoURL.pathExtension.lowercased() == "mp4",
+              posterURL.pathExtension.lowercased() == "png",
+              statusURL.pathExtension.lowercased() == "txt",
+              Self.isPath(videoURL.deletingLastPathComponent().path, insideDirectory: workspaceURL.path),
+              Self.isPath(posterURL.deletingLastPathComponent().path, insideDirectory: workspaceURL.path),
+              Self.isPath(statusURL.deletingLastPathComponent().path, insideDirectory: workspaceURL.path),
+              Self.scheduledVerificationRecordings.insert(videoURL.path).inserted else {
+            fputs("WeiBei verification recording paths are unsafe or invalid.\n", stderr)
+            return
+        }
+
+        let fps = max(
+            1,
+            min(12, Double(environment["WEIBEI_VERIFY_RECORDING_FPS"] ?? "") ?? 8)
+        )
+        let duration = max(
+            4,
+            min(30, Double(environment["WEIBEI_VERIFY_RECORDING_DURATION"] ?? "") ?? 15)
+        )
+        let startDelay = max(
+            0,
+            min(5, Double(environment["WEIBEI_VERIFY_RECORDING_START_DELAY"] ?? "") ?? 1)
+        )
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + startDelay) { [weak window] in
+            guard let window else { return }
+            let recorder = VerificationVideoRecorder(
+                videoURL: videoURL,
+                posterURL: posterURL,
+                fps: fps,
+                duration: duration
+            )
+            Self.activeVerificationRecorders[videoURL.path] = recorder
+            try? Data("recording\n".utf8).write(to: statusURL, options: .atomic)
+            recorder.start(in: window) { failureReason in
+                let status = failureReason.map { "failed\n\($0)\n" } ?? "completed\n"
+                try? Data(status.utf8).write(to: statusURL, options: .atomic)
+                if let failureReason {
+                    fputs("WeiBei verification recording failed: \(failureReason)\n", stderr)
+                }
+                Self.activeVerificationRecorders.removeValue(forKey: videoURL.path)
+            }
+        }
     }
 
     private func applyVerificationWindowSize(to window: NSWindow) {
@@ -721,41 +798,13 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
             completion(nil, "capture target already exists")
             return
         }
-        guard let contentView = window.contentView else {
-            completion(nil, "window content view is unavailable")
-            return
-        }
-        contentView.layoutSubtreeIfNeeded()
-        window.displayIfNeeded()
-        let bounds = contentView.bounds
-        guard bounds.width >= 600,
-              bounds.height >= 400 else {
-            completion(nil, "window content bounds are smaller than the verification minimum")
-            return
-        }
-        guard let bitmap = contentView.bitmapImageRepForCachingDisplay(in: bounds) else {
-            completion(nil, "window content bitmap could not be allocated")
-            return
-        }
-        contentView.cacheDisplay(in: bounds, to: bitmap)
-        let baseImage = NSImage(size: bounds.size)
-        baseImage.addRepresentation(bitmap)
-        let webViews = visibleWebViews(in: contentView)
-        captureWebViews(webViews, at: 0, relativeTo: contentView, overlays: []) { overlays, webViewFailure in
-            if let webViewFailure {
-                completion(nil, webViewFailure)
+        renderCompositeFrame(window) { composite, webViewSnapshotCount, failureReason in
+            if let failureReason {
+                completion(nil, failureReason)
                 return
             }
-            let composite = NSImage(size: bounds.size)
-            composite.lockFocus()
-            baseImage.draw(in: bounds)
-            for overlay in overlays {
-                overlay.image.draw(in: overlay.rect, from: .zero, operation: .sourceOver, fraction: 1)
-            }
-            composite.unlockFocus()
-            guard let tiff = composite.tiffRepresentation,
-                  let representation = NSBitmapImageRep(data: tiff),
-                  let png = representation.representation(using: .png, properties: [:]) else {
+            guard let composite,
+                  let png = pngData(for: composite) else {
                 completion(nil, "captured window could not be encoded as PNG")
                 return
             }
@@ -781,11 +830,62 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
                     bytes: bytes,
                     sha256: sha256Hex(for: writtenData),
                     capturedAt: iso8601String(Date()),
-                    webViewSnapshotCount: overlays.count
+                    webViewSnapshotCount: webViewSnapshotCount
                 ),
                 nil
             )
         }
+    }
+
+    private static func renderCompositeFrame(
+        _ window: NSWindow,
+        completion: @escaping (NSImage?, Int, String?) -> Void
+    ) {
+        guard let contentView = window.contentView else {
+            completion(nil, 0, "window content view is unavailable")
+            return
+        }
+        contentView.layoutSubtreeIfNeeded()
+        window.displayIfNeeded()
+        let bounds = contentView.bounds
+        guard bounds.width >= 600,
+              bounds.height >= 400 else {
+            completion(nil, 0, "window content bounds are smaller than the verification minimum")
+            return
+        }
+        guard let bitmap = contentView.bitmapImageRepForCachingDisplay(in: bounds) else {
+            completion(nil, 0, "window content bitmap could not be allocated")
+            return
+        }
+        contentView.cacheDisplay(in: bounds, to: bitmap)
+        let baseImage = NSImage(size: bounds.size)
+        baseImage.addRepresentation(bitmap)
+        let webViews = visibleWebViews(in: contentView)
+        captureWebViews(webViews, at: 0, relativeTo: contentView, overlays: []) { overlays, webViewFailure in
+            if let webViewFailure {
+                completion(nil, overlays.count, webViewFailure)
+                return
+            }
+            let composite = NSImage(size: bounds.size)
+            composite.lockFocus()
+            baseImage.draw(in: bounds)
+            for overlay in overlays {
+                overlay.image.draw(
+                    in: overlay.rect,
+                    from: .zero,
+                    operation: .sourceOver,
+                    fraction: 1
+                )
+            }
+            composite.unlockFocus()
+            completion(composite, overlays.count, nil)
+        }
+    }
+
+    private static func pngData(for image: NSImage) -> Data? {
+        guard let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff) else { return nil }
+        return bitmap.representation(using: .png, properties: [:])
     }
 
     private final class WebViewSnapshotState {
@@ -907,6 +1007,290 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
             )
         }
     }
+    @MainActor
+    private final class VerificationVideoRecorder {
+        private let videoURL: URL
+        private let posterURL: URL
+        private let fps: Double
+        private let duration: TimeInterval
+
+        private var writer: AVAssetWriter?
+        private var input: AVAssetWriterInput?
+        private var adaptor: AVAssetWriterInputPixelBufferAdaptor?
+        private var width = 0
+        private var height = 0
+        private var startedUptime: TimeInterval?
+        private var nextDeadline: TimeInterval = 0
+        private var lastPresentationTime = CMTime.zero
+        private var lastImage: NSImage?
+        private var posterWritten = false
+        private var finishing = false
+        private var completion: ((String?) -> Void)?
+
+        init(videoURL: URL, posterURL: URL, fps: Double, duration: TimeInterval) {
+            self.videoURL = videoURL
+            self.posterURL = posterURL
+            self.fps = fps
+            self.duration = duration
+        }
+
+        func start(in window: NSWindow, completion: @escaping (String?) -> Void) {
+            self.completion = completion
+            guard !FileManager.default.fileExists(atPath: videoURL.path) else {
+                complete("video target already exists")
+                return
+            }
+
+            WindowChromeConfigurator.renderCompositeFrame(window) { [weak self, weak window] image, _, failureReason in
+                guard let self, let window else { return }
+                if let failureReason {
+                    self.complete(failureReason)
+                    return
+                }
+                guard let image else {
+                    self.complete("first video frame is unavailable")
+                    return
+                }
+                do {
+                    try self.configureWriter(from: image)
+                    try self.append(image, at: .zero)
+                    self.lastImage = image
+                    self.startedUptime = ProcessInfo.processInfo.systemUptime
+                    self.nextDeadline = 1 / self.fps
+                    self.scheduleNextFrame(in: window)
+                } catch {
+                    self.fail(error.localizedDescription)
+                }
+            }
+        }
+
+        private func configureWriter(from image: NSImage) throws {
+            guard let cgImage = cgImage(from: image) else {
+                throw error("first frame has no CGImage")
+            }
+            let scale = min(1, 1920 / CGFloat(cgImage.width))
+            width = max(2, (Int(CGFloat(cgImage.width) * scale) / 2) * 2)
+            height = max(2, (Int(CGFloat(cgImage.height) * scale) / 2) * 2)
+
+            let writer = try AVAssetWriter(outputURL: videoURL, fileType: .mp4)
+            let settings: [String: Any] = [
+                AVVideoCodecKey: AVVideoCodecType.h264,
+                AVVideoWidthKey: width,
+                AVVideoHeightKey: height,
+                AVVideoCompressionPropertiesKey: [
+                    AVVideoAverageBitRateKey: 6_000_000,
+                    AVVideoExpectedSourceFrameRateKey: Int(fps.rounded()),
+                    AVVideoMaxKeyFrameIntervalKey: Int(max(1, fps * 2)),
+                    AVVideoAllowFrameReorderingKey: false,
+                    AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+                ],
+            ]
+            let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
+            input.expectsMediaDataInRealTime = true
+            guard writer.canAdd(input) else {
+                throw error("AVAssetWriter rejected the H.264 input")
+            }
+            writer.add(input)
+
+            let attributes: [String: Any] = [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey as String: width,
+                kCVPixelBufferHeightKey as String: height,
+                kCVPixelBufferCGImageCompatibilityKey as String: true,
+                kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+            ]
+            let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+                assetWriterInput: input,
+                sourcePixelBufferAttributes: attributes
+            )
+            guard writer.startWriting() else {
+                throw writer.error ?? error("AVAssetWriter could not start")
+            }
+            writer.startSession(atSourceTime: .zero)
+
+            self.writer = writer
+            self.input = input
+            self.adaptor = adaptor
+        }
+
+        private func scheduleNextFrame(in window: NSWindow) {
+            guard let startedUptime else { return }
+            let elapsed = ProcessInfo.processInfo.systemUptime - startedUptime
+            guard elapsed < duration else {
+                finish()
+                return
+            }
+            let delay = max(0, nextDeadline - elapsed)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak window] in
+                guard let self, let window else { return }
+                self.captureNextFrame(in: window)
+            }
+        }
+
+        private func captureNextFrame(in window: NSWindow) {
+            guard let input else {
+                fail("video input is unavailable")
+                return
+            }
+            guard input.isReadyForMoreMediaData else {
+                nextDeadline += 1 / fps
+                scheduleNextFrame(in: window)
+                return
+            }
+
+            WindowChromeConfigurator.renderCompositeFrame(window) { [weak self, weak window] image, _, failureReason in
+                guard let self, let window else { return }
+                if let failureReason {
+                    self.fail(failureReason)
+                    return
+                }
+                guard let image, let startedUptime = self.startedUptime else {
+                    self.fail("video frame is unavailable")
+                    return
+                }
+                let elapsed = ProcessInfo.processInfo.systemUptime - startedUptime
+                self.lastImage = image
+                if elapsed >= 7.5 {
+                    self.writePosterIfNeeded(image)
+                }
+                guard elapsed < self.duration else {
+                    self.finish()
+                    return
+                }
+
+                var time = CMTime(seconds: elapsed, preferredTimescale: 600)
+                if CMTimeCompare(time, self.lastPresentationTime) <= 0 {
+                    time = CMTimeAdd(
+                        self.lastPresentationTime,
+                        CMTime(value: 1, timescale: 600)
+                    )
+                }
+                do {
+                    try self.append(image, at: time)
+                    let interval = 1 / self.fps
+                    repeat {
+                        self.nextDeadline += interval
+                    } while self.nextDeadline <= elapsed
+                    self.scheduleNextFrame(in: window)
+                } catch {
+                    self.fail(error.localizedDescription)
+                }
+            }
+        }
+
+        private func append(_ image: NSImage, at time: CMTime) throws {
+            guard let input,
+                  input.isReadyForMoreMediaData,
+                  let adaptor,
+                  let pixelBufferPool = adaptor.pixelBufferPool,
+                  let cgImage = cgImage(from: image) else {
+                throw error("video input or frame is unavailable")
+            }
+
+            var pixelBuffer: CVPixelBuffer?
+            let status = CVPixelBufferPoolCreatePixelBuffer(
+                kCFAllocatorDefault,
+                pixelBufferPool,
+                &pixelBuffer
+            )
+            guard status == kCVReturnSuccess, let pixelBuffer else {
+                throw error("CVPixelBuffer allocation failed: \(status)")
+            }
+
+            CVPixelBufferLockBaseAddress(pixelBuffer, [])
+            defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, []) }
+            guard let baseAddress = CVPixelBufferGetBaseAddress(pixelBuffer),
+                  let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+                  let context = CGContext(
+                    data: baseAddress,
+                    width: width,
+                    height: height,
+                    bitsPerComponent: 8,
+                    bytesPerRow: CVPixelBufferGetBytesPerRow(pixelBuffer),
+                    space: colorSpace,
+                    bitmapInfo: CGBitmapInfo.byteOrder32Little.rawValue
+                        | CGImageAlphaInfo.premultipliedFirst.rawValue
+                  ) else {
+                throw error("pixel-buffer CGContext could not be created")
+            }
+
+            context.setFillColor(CGColor(gray: 0, alpha: 1))
+            context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+            context.translateBy(x: 0, y: CGFloat(height))
+            context.scaleBy(x: 1, y: -1)
+            context.interpolationQuality = .high
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+            guard adaptor.append(pixelBuffer, withPresentationTime: time) else {
+                throw writer?.error ?? error("AVAssetWriter rejected a video frame")
+            }
+            lastPresentationTime = time
+        }
+
+        private func writePosterIfNeeded(_ image: NSImage) {
+            guard !posterWritten,
+                  let png = WindowChromeConfigurator.pngData(for: image) else { return }
+            do {
+                try png.write(to: posterURL, options: .atomic)
+                posterWritten = true
+            } catch {
+                fputs("WeiBei verification poster failed: \(error.localizedDescription)\n", stderr)
+            }
+        }
+
+        private func finish() {
+            guard !finishing, let writer, let input else { return }
+            finishing = true
+            if !posterWritten, let lastImage {
+                writePosterIfNeeded(lastImage)
+            }
+            writer.endSession(
+                atSourceTime: CMTime(seconds: duration, preferredTimescale: 600)
+            )
+            input.markAsFinished()
+            writer.finishWriting { [weak self] in
+                Task { @MainActor [weak self] in
+                    self?.completeFromWriter()
+                }
+            }
+        }
+
+        private func completeFromWriter() {
+            let failureReason: String?
+            if writer?.status == .completed {
+                failureReason = nil
+            } else {
+                failureReason = writer?.error?.localizedDescription
+                    ?? "AVAssetWriter did not complete"
+            }
+            complete(failureReason)
+        }
+
+        private func fail(_ message: String) {
+            writer?.cancelWriting()
+            complete(message)
+        }
+
+        private func complete(_ failureReason: String?) {
+            let callback = completion
+            completion = nil
+            callback?(failureReason)
+        }
+
+        private func cgImage(from image: NSImage) -> CGImage? {
+            var rect = NSRect(origin: .zero, size: image.size)
+            return image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
+        }
+
+        private func error(_ message: String) -> NSError {
+            NSError(
+                domain: "WeiBeiVerificationVideo",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: message]
+            )
+        }
+    }
+
 }
 
 struct SettingsView: View {
