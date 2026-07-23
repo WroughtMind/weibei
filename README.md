@@ -4,6 +4,10 @@ WeiBei is a source-grounded macOS study workspace for reading course materials, 
 
 It is submitted to the **Education** track of OpenAI Build Week 2026.
 
+WeiBei's source code is open source under `AGPL-3.0-only`. Brand assets, custom
+fonts, project media, and third-party reference material have separate terms;
+see [Licensing](#licensing).
+
 ## Why I built it
 
 During final-exam revision, I was reading PDFs and HTML pages in a browser, asking questions in a separate AI chat, and writing Markdown notes in another app. Each tool worked on its own, but the learning flow broke whenever I switched windows and reconstructed the context.
@@ -116,9 +120,24 @@ Live-provider checks require valid local credentials and are not silently replac
 - The Agent proposes note and learning-state changes. The learner must approve the final write.
 - Large or difficult source files may be reported as partially indexed or incomplete.
 - The repository version is `0.1.0` and remains a pre-release candidate, not a signed and notarized 1.0 release.
-- A project-level redistribution license has not been selected. Do not assume permission to redistribute the app or its custom brand fonts.
+
+## Licensing
+
+WeiBei-authored source code and developer documentation are licensed under the
+[GNU Affero General Public License version 3 only](LICENSE).
+
+The WeiBei / 魏碑 names, visual identity, custom fonts, project screenshots, and
+release media are not licensed under the AGPL. Third-party software and
+reference assets retain their original terms. Read
+[`LICENSING.md`](LICENSING.md) before redistributing a fork or packaged app.
+
+Separate commercial licensing may be available for organizations that cannot
+use AGPL-covered code under the AGPL. Open a GitHub issue to discuss the use
+case.
+
+Contributions are welcome under [`CONTRIBUTING.md`](CONTRIBUTING.md) and the
+[`CLA.md`](CLA.md). Security issues should follow [`SECURITY.md`](SECURITY.md).
 
 ## Technology
 
 Swift, SwiftUI, AppKit, PDFKit, WebKit, Vision OCR, SQLite FTS5, Milkdown, KaTeX, Mermaid, Pi, OpenAI Codex OAuth
-
