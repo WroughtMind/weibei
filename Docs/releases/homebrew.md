@@ -15,6 +15,6 @@ taekchef/homebrew-tap           Casks/weibei.rb
 brew install --cask taekchef/tap/weibei
 ```
 
-当前源码仓库已经公开，但本流程不会自动创建 Tap 仓库或发布 Release。只有当 `v1.0.0` Release 的 DMG 地址和最终 SHA-256 已存在，Cask 才能由普通用户真实安装；在此之前仓库内只保留可由发布流程填充并验证的配方模板。
+当前源码仓库已经公开，但本流程不会自动创建 Tap 仓库或发布 Release。只有当对应版本（例如未来的 `v1.0.0`）已经发布 DMG 和最终 SHA-256，Cask 才能由普通用户真实安装；在此之前仓库内只保留可由发布流程填充并验证的配方模板。
 
 Homebrew 不会让未公证应用自动获得 Apple 信任。首次启动仍按 README 中的单应用放行步骤处理，不使用全局关闭 Gatekeeper 或已废弃的免隔离参数。

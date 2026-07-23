@@ -51,7 +51,7 @@ if [[ ! "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   exit 4
 fi
 if [[ "$(uname -m)" != "arm64" ]]; then
-  echo "release failed: the current v1 package is intentionally Apple Silicon only" >&2
+  echo "release failed: the current package is intentionally Apple Silicon only" >&2
   exit 5
 fi
 PACKAGE_VERSION="$(node -p 'require(process.argv[1]).version' "$ROOT_DIR/package.json")"
