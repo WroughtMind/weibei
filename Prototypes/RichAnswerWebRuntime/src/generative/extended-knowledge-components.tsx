@@ -289,7 +289,7 @@ export const LayeredSpatialView = defineComponent({
 
 export const DistributionBrush = defineComponent({
   name: "DistributionBrush",
-  description: "显示总体分布并提供可拖动、可调宽度的样本窗口；实时对照总体与窗口内样本的均值和中位数。模型只给数值和初始状态。",
+  description: "显示总体分布并提供可拖动、可调完整宽度的样本窗口；实际范围为中心减/加宽度的一半，实时对照总体与窗口内样本的均值和中位数。模型只给数值和初始状态。",
   props: z.object({
     centerStateName: z.string(),
     windowCenter: reactive(z.number()),
@@ -319,6 +319,9 @@ export const DistributionBrush = defineComponent({
     const lower = center - span / 2;
     const upper = center + span / 2;
     const sample = props.values.filter((value) => value >= lower && value <= upper);
+    const unit = ["", "无单位", "unitless", "dimensionless", "none"].includes(props.unit.trim().toLowerCase())
+      ? ""
+      : props.unit.trim();
     const statistics = useMemo(() => ({
       overallMean: mean(props.values),
       overallMedian: median(props.values),
@@ -410,6 +413,38 @@ export const DistributionBrush = defineComponent({
       return () => observer.disconnect();
     }, [props.binCount, props.values, lower, upper]);
 
+    useEffect(() => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const verifyInteraction = () => {
+        const sortedValues = [...props.values].sort((left, right) => left - right);
+        let largestGapIndex = 0;
+        let largestGap = Number.NEGATIVE_INFINITY;
+        for (let index = 0; index < sortedValues.length - 1; index += 1) {
+          const gap = sortedValues[index + 1] - sortedValues[index];
+          if (gap > largestGap) {
+            largestGap = gap;
+            largestGapIndex = index;
+          }
+        }
+        const leftCluster = sortedValues.slice(0, largestGapIndex + 1);
+        const rightCluster = sortedValues.slice(largestGapIndex + 1);
+        const targetCluster = leftCluster.length >= rightCluster.length ? leftCluster : rightCluster;
+        const targetMinimum = Math.min(...targetCluster);
+        const targetMaximum = Math.max(...targetCluster);
+        const nextSpan = clamp(Math.max(minimumSpan, targetMaximum - targetMinimum), minimumSpan, range);
+        const nextCenter = clamp(
+          (targetMinimum + targetMaximum) / 2,
+          minimum + nextSpan / 2,
+          maximum - nextSpan / 2,
+        );
+        spanField.setValue(nextSpan);
+        centerField.setValue(nextCenter);
+      };
+      canvas.addEventListener("weibei:verify-interaction", verifyInteraction);
+      return () => canvas.removeEventListener("weibei:verify-interaction", verifyInteraction);
+    }, [centerField, maximum, minimum, minimumSpan, props.values, range, spanField]);
+
     const valueAtPointer = (event: ReactPointerEvent<HTMLCanvasElement>) => {
       const bounds = event.currentTarget.getBoundingClientRect();
       const fraction = clamp((event.clientX - bounds.left - 28) / Math.max(1, bounds.width - 42), 0, 1);
@@ -441,7 +476,7 @@ export const DistributionBrush = defineComponent({
       <section className="ra-distribution-brush">
         <header>
           <span>{props.title}</span>
-          <strong>窗口内 {sample.length} / 总体 {props.values.length}</strong>
+          <strong>{sample.length > 0 ? `窗口内 ${sample.length} / 总体 ${props.values.length}` : "当前窗口未覆盖观测值"}</strong>
         </header>
         <canvas
           ref={canvasRef}
@@ -455,9 +490,9 @@ export const DistributionBrush = defineComponent({
           onPointerCancel={endDrag}
         />
         <label className="ra-distribution-brush__span">
-          <span>样本窗口宽度</span>
+          <span>样本窗口完整宽度</span>
           <input
-            aria-label={`${props.title} 样本窗口宽度`}
+            aria-label={`${props.title} 样本窗口完整宽度`}
             data-weibei-control="distribution-span-slider"
             data-weibei-control-id={props.spanStateName}
             type="range"
@@ -467,13 +502,13 @@ export const DistributionBrush = defineComponent({
             value={span}
             onChange={(event) => spanField.setValue(Number(event.currentTarget.value))}
           />
-          <output>{formatNumber(span)} {props.unit}</output>
+          <output>{formatNumber(span)}{unit ? ` ${unit}` : ""}</output>
         </label>
         <div className="ra-distribution-brush__stats">
-          <div><span>总体均值</span><strong>{formatNumber(statistics.overallMean)}</strong><i>{props.unit}</i></div>
-          <div><span>样本均值</span><strong>{formatNumber(statistics.sampleMean)}</strong><i>{props.unit}</i></div>
-          <div><span>总体中位数</span><strong>{formatNumber(statistics.overallMedian)}</strong><i>{props.unit}</i></div>
-          <div><span>样本中位数</span><strong>{formatNumber(statistics.sampleMedian)}</strong><i>{props.unit}</i></div>
+          <div><span>总体均值</span><strong>{formatNumber(statistics.overallMean)}</strong>{unit ? <i>{unit}</i> : null}</div>
+          <div><span>样本均值</span><strong>{formatNumber(statistics.sampleMean)}</strong>{unit ? <i>{unit}</i> : null}</div>
+          <div><span>总体中位数</span><strong>{formatNumber(statistics.overallMedian)}</strong>{unit ? <i>{unit}</i> : null}</div>
+          <div><span>样本中位数</span><strong>{formatNumber(statistics.sampleMedian)}</strong>{unit ? <i>{unit}</i> : null}</div>
         </div>
         <p>{props.caption}</p>
       </section>

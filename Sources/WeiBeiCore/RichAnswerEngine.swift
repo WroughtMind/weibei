@@ -258,6 +258,7 @@ public struct RichAnswerScene: Codable, Hashable, Sendable {
     public var placement: RichAnswerSurface
     public var ui: RichAnswerUIComposition?
     public var program: RichAnswerUIProgram?
+    public var renderPlan: RichAnswerRenderPlan?
 
     public init(
         id: String,
@@ -270,7 +271,8 @@ public struct RichAnswerScene: Codable, Hashable, Sendable {
         evidenceIDs: [String] = [],
         placement: RichAnswerSurface = .inline,
         ui: RichAnswerUIComposition? = nil,
-        program: RichAnswerUIProgram? = nil
+        program: RichAnswerUIProgram? = nil,
+        renderPlan: RichAnswerRenderPlan? = nil
     ) {
         self.id = id
         self.title = title
@@ -283,6 +285,7 @@ public struct RichAnswerScene: Codable, Hashable, Sendable {
         self.placement = placement
         self.ui = ui
         self.program = program
+        self.renderPlan = renderPlan
     }
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
@@ -297,6 +300,7 @@ public struct RichAnswerScene: Codable, Hashable, Sendable {
         case placement
         case ui
         case program
+        case renderPlan
     }
 
     public init(from decoder: Decoder) throws {
@@ -313,6 +317,7 @@ public struct RichAnswerScene: Codable, Hashable, Sendable {
         placement = try container.decodeIfPresent(RichAnswerSurface.self, forKey: .placement) ?? .inline
         ui = try container.decodeIfPresent(RichAnswerUIComposition.self, forKey: .ui)
         program = try container.decodeIfPresent(RichAnswerUIProgram.self, forKey: .program)
+        renderPlan = try container.decodeIfPresent(RichAnswerRenderPlan.self, forKey: .renderPlan)
     }
 }
 
@@ -825,6 +830,29 @@ public struct RichAnswerDiagnostic: Codable, Hashable, Sendable {
 }
 
 public enum RichAnswerDisplayText {
+    public static func normalizedMarkdownInlineMath(_ markdown: String) -> String {
+        var activeFence: (character: Character, count: Int)?
+        return markdown
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { substring in
+                let line = String(substring)
+                if let fence = activeFence {
+                    if let delimiter = fencedCodeDelimiter(in: line),
+                       delimiter.character == fence.character,
+                       delimiter.count >= fence.count {
+                        activeFence = nil
+                    }
+                    return line
+                }
+                if let delimiter = fencedCodeDelimiter(in: line) {
+                    activeFence = delimiter
+                    return line
+                }
+                return normalizedInlineMathOutsideCodeSpans(line)
+            }
+            .joined(separator: "\n")
+    }
+
     /// Hang-proof math readability for agent chat + rich-answer narrative.
     /// Strips common LaTeX delimiters/commands into Unicode so native
     /// `AttributedString` stays legible without per-message KaTeX WKWebView.
@@ -865,6 +893,11 @@ public enum RichAnswerDisplayText {
             #"\\sqrt\s*([A-Za-z0-9.]+)"#,
             in: result,
             with: "√$1"
+        )
+        result = replacing(
+            #"\\bar\s*\{\s*\\hat\s*\{?([A-Za-z])\}?\s*\}"#,
+            in: result,
+            with: "$1\u{0302}\u{0304}"
         )
         // Accents: \hat{y} / \hat y → ŷ
         result = replacing(#"\\hat\s*\{([^{}]+)\}"#, in: result, with: "$1\u{0302}")
@@ -912,6 +945,17 @@ public enum RichAnswerDisplayText {
             (#"\delta"#, "δ"),
             (#"\theta"#, "θ"),
             (#"\lambda"#, "λ"),
+            (#"\alpha"#, "α"),
+            (#"\beta"#, "β"),
+            (#"\gamma"#, "γ"),
+            (#"\mu"#, "μ"),
+            (#"\rho"#, "ρ"),
+            (#"\sigma"#, "σ"),
+            (#"\omega"#, "ω"),
+            (#"\sum"#, "Σ"),
+            (#"\infty"#, "∞"),
+            (#"\qquad"#, "  "),
+            (#"\quad"#, " "),
             (#"\leq"#, "≤"),
             (#"\le"#, "≤"),
             (#"\geq"#, "≥"),
@@ -935,15 +979,63 @@ public enum RichAnswerDisplayText {
         result = replacing(#"√\(([A-Za-z0-9.]+)\)"#, in: result, with: "√$1")
         result = replacing(#"\^\{([^{}]+)\}"#, in: result, with: "^$1")
         result = replacing(#"_\{([^{}]+)\}"#, in: result, with: "_$1")
-        // Common single-char subscripts after normalize (y_i → yᵢ).
-        let subscripts: [(String, String)] = [
-            ("_0", "₀"), ("_1", "₁"), ("_2", "₂"), ("_3", "₃"), ("_4", "₄"),
-            ("_5", "₅"), ("_6", "₆"), ("_7", "₇"), ("_8", "₈"), ("_9", "₉"),
-            ("_i", "ᵢ"), ("_j", "ⱼ"), ("_n", "ₙ"), ("_t", "ₜ"), ("_x", "ₓ"),
+        let simpleScripts = [
+            (#"_0(?![A-Za-z0-9])"#, "₀"),
+            (#"_1(?![A-Za-z0-9])"#, "₁"),
+            (#"_2(?![A-Za-z0-9])"#, "₂"),
+            (#"_3(?![A-Za-z0-9])"#, "₃"),
+            (#"_4(?![A-Za-z0-9])"#, "₄"),
+            (#"_5(?![A-Za-z0-9])"#, "₅"),
+            (#"_6(?![A-Za-z0-9])"#, "₆"),
+            (#"_7(?![A-Za-z0-9])"#, "₇"),
+            (#"_8(?![A-Za-z0-9])"#, "₈"),
+            (#"_9(?![A-Za-z0-9])"#, "₉"),
+            (#"_i(?![A-Za-z0-9])"#, "ᵢ"),
+            (#"_j(?![A-Za-z0-9])"#, "ⱼ"),
+            (#"_n(?![A-Za-z0-9])"#, "ₙ"),
+            (#"_t(?![A-Za-z0-9])"#, "ₜ"),
+            (#"_x(?![A-Za-z0-9])"#, "ₓ"),
+            (#"\^0(?![A-Za-z0-9])"#, "⁰"),
+            (#"\^1(?![A-Za-z0-9])"#, "¹"),
+            (#"\^2(?![A-Za-z0-9])"#, "²"),
+            (#"\^3(?![A-Za-z0-9])"#, "³"),
+            (#"\^4(?![A-Za-z0-9])"#, "⁴"),
+            (#"\^5(?![A-Za-z0-9])"#, "⁵"),
+            (#"\^6(?![A-Za-z0-9])"#, "⁶"),
+            (#"\^7(?![A-Za-z0-9])"#, "⁷"),
+            (#"\^8(?![A-Za-z0-9])"#, "⁸"),
+            (#"\^9(?![A-Za-z0-9])"#, "⁹"),
         ]
-        for (from, to) in subscripts {
-            result = result.replacingOccurrences(of: from, with: to)
+        for (script, replacement) in simpleScripts {
+            result = replacing(script, in: result, with: replacement)
         }
+        return result
+    }
+
+    private static func fencedCodeDelimiter(in line: String) -> (character: Character, count: Int)? {
+        let trimmed = line.drop(while: { $0 == " " || $0 == "\t" })
+        guard let character = trimmed.first, character == "`" || character == "~" else { return nil }
+        let count = trimmed.prefix(while: { $0 == character }).count
+        return count >= 3 ? (character, count) : nil
+    }
+
+    private static func normalizedInlineMathOutsideCodeSpans(_ line: String) -> String {
+        var result = ""
+        var cursor = line.startIndex
+        while cursor < line.endIndex,
+              let opening = line[cursor...].firstIndex(of: "`") {
+            result += normalizedInlineMath(String(line[cursor..<opening]))
+            let markerEnd = line[opening...].firstIndex(where: { $0 != "`" }) ?? line.endIndex
+            let marker = String(line[opening..<markerEnd])
+            guard markerEnd < line.endIndex,
+                  let closing = line.range(of: marker, range: markerEnd..<line.endIndex) else {
+                result += String(line[opening...])
+                return result
+            }
+            result += String(line[opening..<closing.upperBound])
+            cursor = closing.upperBound
+        }
+        result += normalizedInlineMath(String(line[cursor...]))
         return result
     }
 
@@ -1062,6 +1154,12 @@ public struct RichAnswerPresentation: Codable, Hashable, Sendable {
                 }
                 resolvedScene.ui = ui
             }
+            if var renderPlan = scene.renderPlan {
+                renderPlan.spec.fields = renderPlan.spec.fields.mapValues {
+                    $0.resolvingAssetReferences(using: aliases)
+                }
+                resolvedScene.renderPlan = renderPlan
+            }
             return resolvedScene
         }
         resolved.evidenceLedger = evidenceLedger.map { evidence in
@@ -1070,6 +1168,27 @@ public struct RichAnswerPresentation: Codable, Hashable, Sendable {
             return resolvedEvidence
         }
         return resolved
+    }
+}
+
+private extension RichAnswerRenderSpecValue {
+    func resolvingAssetReferences(using aliases: [String: String]) -> RichAnswerRenderSpecValue {
+        switch self {
+        case .null, .bool, .number, .string:
+            return self
+        case let .array(values):
+            return .array(values.map { $0.resolvingAssetReferences(using: aliases) })
+        case let .object(fields):
+            var resolvedFields = fields.mapValues {
+                $0.resolvingAssetReferences(using: aliases)
+            }
+            if case let .string(kind)? = fields["kind"],
+               kind == "assetRef",
+               case let .string(source)? = fields["source"] {
+                resolvedFields["source"] = .string(aliases[source] ?? source)
+            }
+            return .object(resolvedFields)
+        }
     }
 }
 
@@ -1158,6 +1277,7 @@ public enum RichAnswerEngine {
             !scene.operations.isEmpty
                 || scene.program?.directManipulation == true
                 || scene.ui?.nodes.contains(where: { directUIRoles.contains($0.role) }) == true
+                || scene.renderPlan?.interactionBindings.isEmpty == false
         }
         guard envelope.expressionPlan.directManipulation == hasDirectOperations else {
             diagnostics.append(
@@ -1489,18 +1609,21 @@ public enum RichAnswerEngine {
                 message: "scene family is not declared by the expression plan"
             )
         }
-        guard scene.ui != nil || scene.program != nil || !scene.objects.isEmpty else {
+        let rendererEntryCount = [scene.program != nil, scene.ui != nil, scene.renderPlan != nil]
+            .filter { $0 }
+            .count
+        guard rendererEntryCount > 0 || !scene.objects.isEmpty else {
             return RichAnswerDiagnostic(
                 code: .emptyScene,
                 sceneID: scene.id,
-                message: "scene does not contain knowledge objects or a generated UI program"
+                message: "scene must submit one generated renderer entry or a legacy knowledge-object scene"
             )
         }
-        guard scene.ui == nil || scene.program == nil else {
+        guard rendererEntryCount <= 1 else {
             return RichAnswerDiagnostic(
                 code: .unsupportedField,
                 sceneID: scene.id,
-                message: "scene cannot submit both the legacy UI tree and an OpenUI program"
+                message: "scene cannot submit more than one of program, ui, or renderPlan"
             )
         }
         guard scene.program == nil || scene.operations.isEmpty else {
@@ -1508,6 +1631,13 @@ public enum RichAnswerEngine {
                 code: .unsupportedField,
                 sceneID: scene.id,
                 message: "OpenUI program scenes cannot also submit legacy operations"
+            )
+        }
+        guard scene.renderPlan == nil || scene.operations.isEmpty else {
+            return RichAnswerDiagnostic(
+                code: .unsupportedField,
+                sceneID: scene.id,
+                message: "renderPlan scenes cannot also submit legacy operations"
             )
         }
         guard !scene.evidenceIDs.isEmpty else {
@@ -1606,7 +1736,7 @@ public enum RichAnswerEngine {
             if let issue = validateUIProgram(program, scene: scene) {
                 return issue
             }
-            return validateGeneratedFamilyContract(scene)
+            return nil
         }
 
         if let ui = scene.ui {
@@ -1625,14 +1755,54 @@ public enum RichAnswerEngine {
                     "generated UI does not bind every scene evidence item to a reachable node or data row"
                 )
             }
-            if let issue = validateGeneratedIntentContract(scene, expressionPlan: expressionPlan) {
-                return issue
-            }
-            return validateGeneratedFamilyContract(scene)
+            return nil
+        }
+
+        if let renderPlan = scene.renderPlan {
+            return validateRenderPlan(
+                renderPlan,
+                scene: scene,
+                evidenceByID: evidenceByID
+            )
         }
 
         if let issue = validateFamilyContract(scene) {
             return issue
+        }
+
+        return nil
+    }
+
+    private static func validateRenderPlan(
+        _ plan: RichAnswerRenderPlan,
+        scene: RichAnswerScene,
+        evidenceByID: [String: RichAnswerEvidence]
+    ) -> RichAnswerDiagnostic? {
+        let negotiation = RichAnswerRendererRegistry.defaultRegistry().negotiate(plan: plan)
+        guard negotiation.status == .accepted else {
+            let message = negotiation.mismatch?.issues.first?.message ?? "renderPlan capability negotiation failed"
+            return RichAnswerDiagnostic(
+                code: .invalidParameter,
+                sceneID: scene.id,
+                message: "renderPlan capability negotiation failed: \(message)"
+            )
+        }
+
+        let sceneEvidenceIDs = Set(scene.evidenceIDs)
+        let boundEvidenceIDs = Set(plan.sourceBindings.map(\.evidenceID))
+        guard plan.sourceBindings.allSatisfy({
+            sceneEvidenceIDs.contains($0.evidenceID) && evidenceByID[$0.evidenceID] != nil
+        }) else {
+            return missingEvidence(
+                sceneID: scene.id,
+                "renderPlan sourceBindings must reference evidence IDs declared by this scene and evidence ledger"
+            )
+        }
+        guard sceneEvidenceIDs.isSubset(of: boundEvidenceIDs) else {
+            return missingEvidence(
+                sceneID: scene.id,
+                "renderPlan sourceBindings must cover every scene evidence item"
+            )
         }
 
         return nil
@@ -1680,16 +1850,6 @@ public enum RichAnswerEngine {
                 code: .unauthorizedAsset,
                 sceneID: sceneID,
                 message: "generated UI program attempted to use markup, network access, or executable tools"
-            )
-        }
-
-        if source.range(
-            of: #"NarrativeBlock\([^\n]*,\s*\"conclusion\"\s*\)"#,
-            options: .regularExpression
-        ) != nil {
-            return invalidValue(
-                sceneID: sceneID,
-                "generated UI lives inside the answer flow and cannot repeat the answer conclusion"
             )
         }
 
@@ -1845,17 +2005,6 @@ public enum RichAnswerEngine {
             return invalidValue(sceneID: sceneID, "generated UI contains a cycle, unreachable node, or excessive nesting")
         }
         let reachableNodes = ui.nodes.filter { visited.contains($0.id) }
-
-        let primaryControlCount = ui.nodes.filter {
-            [.slider, .toggle, .scrubber, .select, .probe].contains($0.role)
-        }.count
-        guard primaryControlCount <= 2 else {
-            return RichAnswerDiagnostic(
-                code: .budgetExceeded,
-                sceneID: sceneID,
-                message: "generated UI exposes more than two primary controls"
-            )
-        }
 
         for dataset in ui.datasets {
             guard !dataset.rows.isEmpty else {
@@ -3115,11 +3264,13 @@ private extension RichAnswerRegion {
 
 private extension RichAnswerScene {
     var allEvidenceIDs: [String] {
-        evidenceIDs
-            + objects.flatMap(\.evidenceIDs)
-            + relations.flatMap(\.evidenceIDs)
-            + frames.flatMap(\.evidenceIDs)
-            + (ui?.allEvidenceIDs ?? [])
+        var identifiers = evidenceIDs
+        identifiers.append(contentsOf: objects.flatMap(\.evidenceIDs))
+        identifiers.append(contentsOf: relations.flatMap(\.evidenceIDs))
+        identifiers.append(contentsOf: frames.flatMap(\.evidenceIDs))
+        identifiers.append(contentsOf: ui?.allEvidenceIDs ?? [])
+        identifiers.append(contentsOf: renderPlan?.sourceBindings.map(\.evidenceID) ?? [])
+        return identifiers
     }
 }
 

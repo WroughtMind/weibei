@@ -35,9 +35,19 @@ public struct PiAgentResources: Sendable {
         "weibei-note-making",
         "weibei-recall-practice",
     ]
+    public static let requiredRichAnswerSkillNames = [
+        "rich-answer-director",
+        "professional-visualization",
+        "deep-interaction-components",
+        "generative-composition",
+    ]
+    public static var allRequiredSkillNames: [String] {
+        requiredSkillNames + requiredRichAnswerSkillNames
+    }
 
     public var rootURL: URL
     public var extensionURL: URL
+    public var pythonArtifactWorkerURL: URL
     public var skillsURL: URL
     public var systemPrompt: String
 
@@ -52,6 +62,9 @@ public struct PiAgentResources: Sendable {
             throw PiAgentRuntimeError.resourcesMissing("AgentResources")
         }
         let extensionURL = rootURL.appendingPathComponent("extension.ts")
+        let pythonArtifactWorkerURL = rootURL
+            .appendingPathComponent("python", isDirectory: true)
+            .appendingPathComponent("rich_answer_worker.py")
         let skillsURL = rootURL.appendingPathComponent("skills", isDirectory: true)
         let systemURL = rootURL.appendingPathComponent("system.md")
         let hasRequiredSkills = requiredSkillNames.allSatisfy { skillName in
@@ -59,8 +72,19 @@ public struct PiAgentResources: Sendable {
                 atPath: skillsURL.appendingPathComponent(skillName).appendingPathComponent("SKILL.md").path
             )
         }
+        let hasRequiredRichAnswerSkills = requiredRichAnswerSkillNames.allSatisfy { skillName in
+            FileManager.default.fileExists(
+                atPath: skillsURL
+                    .appendingPathComponent("rich-answer", isDirectory: true)
+                    .appendingPathComponent(skillName, isDirectory: true)
+                    .appendingPathComponent("SKILL.md")
+                    .path
+            )
+        }
         guard FileManager.default.fileExists(atPath: extensionURL.path),
+              FileManager.default.fileExists(atPath: pythonArtifactWorkerURL.path),
               hasRequiredSkills,
+              hasRequiredRichAnswerSkills,
               let systemPrompt = try? String(contentsOf: systemURL, encoding: .utf8),
               !systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             throw PiAgentRuntimeError.resourcesMissing(rootURL.path)
@@ -68,6 +92,7 @@ public struct PiAgentResources: Sendable {
         return PiAgentResources(
             rootURL: rootURL,
             extensionURL: extensionURL,
+            pythonArtifactWorkerURL: pythonArtifactWorkerURL,
             skillsURL: skillsURL,
             systemPrompt: systemPrompt
         )
@@ -281,16 +306,35 @@ public enum PiAgentDiagnosticSanitizer {
     }
 }
 
+public enum PiAnswerEvidenceRequirement {
+    public static func validationError(
+        contentLabels: Set<String>,
+        learningLabels: Set<String>,
+        allowsLearningOnlyAnswer: Bool,
+        allowsSourceFreeAnswer: Bool
+    ) -> String? {
+        guard allowsSourceFreeAnswer
+                || !contentLabels.isEmpty
+                || (allowsLearningOnlyAnswer && !learningLabels.isEmpty) else {
+            return "PI returned a content answer without a current-turn source citation"
+        }
+        return nil
+    }
+}
+
 public actor PiAgentRuntime: StudyAgentRuntime {
     private static let processReadinessTimeoutSeconds: UInt64 = 12
     private static let allowedToolNames = [
         "weibei_context",
         "weibei_course_map",
         "weibei_course_search",
+        "weibei_visual_asset",
         "weibei_learning_memory",
         "weibei_learning_update",
+        "read",
         "weibei_note_proposal",
         "weibei_ui_catalog",
+        "weibei_compute_artifact",
         "weibei_rich_answer",
     ]
 
@@ -331,7 +375,10 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var memoryRevision: UInt64
         var userQuestion: String
         var workflow: StudyAgentWorkflow
+        var answerFormPolicy: StudyAgentAnswerFormPolicy
         var allowsLearningOnlyAnswer: Bool
+        var allowsSourceFreeAnswer: Bool
+        var allowsSourcelessLimitation: Bool
         var resolvableMemoryIDs: Set<String>
         var allowedSourceLabels: Set<String>
         var allowedAssetIDs: Set<String>
@@ -347,6 +394,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var proposal: StudyAgentNoteProposal?
         var richAnswer: RichAnswerPresentation?
         var learningUpdate: StudyAgentLearningUpdate?
+        var loadedSkills: [StudyAgentLoadedSkill] = []
         var toolTrace: [String] = []
         var lastError: String?
         var progressDelivery: ProgressDelivery?
@@ -418,13 +466,17 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         let progressDelivery = progress.map(ProgressDelivery.init(handler:))
 
         let currentJumpEvidence = currentJumpEvidence(in: context)
+        let currentSourceLabels = currentSourceLabels(in: context)
         activeRun = ActiveRun(
             id: request.id,
             contextRevision: request.contextRevision,
             memoryRevision: request.learningContext.memoryRevision,
             userQuestion: request.question,
             workflow: request.resolvedWorkflow,
+            answerFormPolicy: request.answerFormPolicy,
             allowsLearningOnlyAnswer: StudyAgentQuestionScope.allowsLearningOnlyAnswer(request.question),
+            allowsSourceFreeAnswer: StudyAgentQuestionScope.allowsSourceFreeAnswer(request.question),
+            allowsSourcelessLimitation: currentSourceLabels.isEmpty,
             resolvableMemoryIDs: Set(request.learningContext.memories.compactMap { memory in
                 guard memory.status == .active,
                       memory.kind == .goal || memory.kind == .confusion || memory.kind == .nextStep else {
@@ -432,7 +484,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 }
                 return memory.id.uuidString.lowercased()
             }),
-            allowedSourceLabels: currentSourceLabels(in: context),
+            allowedSourceLabels: currentSourceLabels,
             allowedAssetIDs: currentAssetIDs(in: context),
             persistentAssetIDsByContextID: persistentAssetIDsByContextID(
                 request: request,
@@ -441,7 +493,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             allowedJumpReferences: Set(currentJumpEvidence.keys),
             jumpEvidenceLabels: currentJumpEvidence,
             lastLocationSourceLabel: context.learning.lastLocation.map { "[材料：\($0.itemTitle)]" },
-            allowedNoteSourceLabels: currentSourceLabels(in: context),
+            allowedNoteSourceLabels: currentSourceLabels,
             progressDelivery: progressDelivery
         )
         progressDelivery?.yield(.readingContext)
@@ -584,7 +636,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             "--no-context-files",
             "--no-approve",
             "--system-prompt", resources.systemPrompt,
-            "--thinking", providerConfiguration.thinkingLevel,
             "--name", "WeiBei",
         ]
         if let provider = providerConfiguration.provider, !provider.isEmpty {
@@ -592,6 +643,9 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         }
         if let model = providerConfiguration.model, !model.isEmpty {
             arguments.append(contentsOf: ["--model", model])
+        }
+        if !providerConfiguration.thinkingLevel.isEmpty {
+            arguments.append(contentsOf: ["--thinking", providerConfiguration.thinkingLevel])
         }
         return arguments
     }
@@ -741,9 +795,28 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     private func answerValidationError(text: String, run: ActiveRun) -> String? {
         let contentLabels = citedContentLabels(in: text)
         let learningLabels = citedLearningLabels(in: text)
-        guard !contentLabels.isEmpty
-                || (run.allowsLearningOnlyAnswer && !learningLabels.isEmpty) else {
-            return "PI returned a content answer without a current-turn source citation"
+        if contentLabels.isEmpty,
+           run.allowsSourcelessLimitation,
+           !run.allowsSourceFreeAnswer,
+           !run.allowsLearningOnlyAnswer {
+            guard run.richAnswer == nil else {
+                return "PI returned a rich answer without any readable current-turn source"
+            }
+            guard learningLabels.isEmpty else {
+                return "PI cited learning memory instead of explaining the missing current-turn source"
+            }
+            guard StudyAgentSourceLimitation.isHonest(text) else {
+                return "PI returned an uncited answer without clearly explaining the missing source evidence"
+            }
+            return nil
+        }
+        if let validationError = PiAnswerEvidenceRequirement.validationError(
+            contentLabels: contentLabels,
+            learningLabels: learningLabels,
+            allowsLearningOnlyAnswer: run.allowsLearningOnlyAnswer,
+            allowsSourceFreeAnswer: run.allowsSourceFreeAnswer
+        ) {
+            return validationError
         }
         guard contentLabels.isSubset(of: run.allowedSourceLabels) else {
             return "PI cited a source that was not read in the current turn"
@@ -964,13 +1037,13 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         let source = fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".pi/agent", isDirectory: true)
 
         if source.standardizedFileURL != destination.standardizedFileURL {
-            seedLocalPiAuth(from: source, to: destination)
+            syncLocalPiAuth(from: source, to: destination)
             seedLocalPiSettings(from: source, to: destination)
         }
         return destination
     }
 
-    private func seedLocalPiAuth(from sourceDirectory: URL, to destinationDirectory: URL) {
+    private func syncLocalPiAuth(from sourceDirectory: URL, to destinationDirectory: URL) {
         let fileManager = FileManager.default
         let destination = destinationDirectory.appendingPathComponent("auth.json")
         let source = sourceDirectory.appendingPathComponent("auth.json")
@@ -1004,13 +1077,27 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 }
             }
         }
-
         do {
             let data = try JSONSerialization.data(withJSONObject: merged, options: [.prettyPrinted, .sortedKeys])
             try data.write(to: destination, options: [.atomic])
             try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
         } catch {
             trace("could not seed isolated PI auth: \(error.localizedDescription)")
+        }
+    }
+
+    private func piAuthDataContainsCredential(_ data: Data) -> Bool {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              !root.isEmpty else {
+            return false
+        }
+        let credentialKeys = ["access", "refresh", "key", "apiKey", "token"]
+        return root.values.contains { value in
+            guard let credential = value as? [String: Any] else { return false }
+            return credentialKeys.contains { key in
+                guard let candidate = credential[key] as? String else { return false }
+                return !candidate.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
         }
     }
 
@@ -1231,7 +1318,18 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             run.allowedSourceLabels.formUnion(labels)
             run.allowedNoteSourceLabels.formUnion(labels)
             run.allowedAssetIDs.formUnion(assetIDs)
+            run.allowsSourcelessLimitation = run.allowedSourceLabels.isEmpty
             registerJumpEvidence(jumpEvidence, in: &run)
+            activeRun = run
+            refreshRunWatchdog()
+
+        case let .visualAssetRead(_, contextRevision, assetID, sha256, byteCount):
+            guard var run = activeRun,
+                  contextRevision == run.contextRevision,
+                  run.allowedAssetIDs.contains(assetID) else { return }
+            run.toolTrace.append(
+                "weibei_visual_asset:asset=\(assetID) sha256=\(sha256.prefix(12)) bytes=\(byteCount)"
+            )
             activeRun = run
             refreshRunWatchdog()
 
@@ -1244,7 +1342,46 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             if labels.contains("[学习记录：上次位置]"),
                let lastLocationSourceLabel = run.lastLocationSourceLabel {
                 run.allowedSourceLabels.insert(lastLocationSourceLabel)
+                run.allowsSourcelessLimitation = false
             }
+            activeRun = run
+            refreshRunWatchdog()
+
+        case let .skillsLoaded(_, contextRevision, skills):
+            guard var run = activeRun,
+                  contextRevision == run.contextRevision,
+                  skills.allSatisfy({ $0.loadedAtContextRevision == run.contextRevision }) else { return }
+            for skill in skills {
+                if let index = run.loadedSkills.firstIndex(where: { $0.id == skill.id }) {
+                    run.loadedSkills[index] = skill
+                } else {
+                    run.loadedSkills.append(skill)
+                }
+                run.toolTrace.append(
+                    "skill-read:\(skill.id)@\(skill.version)#\(skill.sha256.prefix(12))"
+                )
+            }
+            activeRun = run
+            refreshRunWatchdog()
+
+        case let .artifactComputed(
+            _,
+            contextRevision,
+            requestID,
+            operation,
+            workerVersion,
+            requestSHA256,
+            outputSHA256,
+            artifactSHA256s,
+            durationMS
+        ):
+            guard var run = activeRun, contextRevision == run.contextRevision else { return }
+            let artifacts = artifactSHA256s
+                .map { String($0.prefix(12)) }
+                .joined(separator: "+")
+            run.toolTrace.append(
+                "weibei_compute_artifact:request=\(requestID) operation=\(operation) worker=\(workerVersion) requestSHA=\(requestSHA256.prefix(12)) outputSHA=\(outputSHA256.prefix(12)) artifacts=\(artifacts) durationMS=\(durationMS)"
+            )
             activeRun = run
             refreshRunWatchdog()
 
@@ -1256,6 +1393,15 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                     id: run.id,
                     with: .failure(PiAgentRuntimeError.agentFailed("PI proposed a rich answer inside the note-making workflow"))
                 )
+                return
+            }
+            if run.answerFormPolicy == .textOnly {
+                trace("rich answer rejected by text-only answer-form policy")
+                run.toolTrace.append("weibei_rich_answer:host_rejected=text_only_policy")
+                run.lastError = "PI 尝试在纯文本回合生成富回答"
+                run.richAnswer = nil
+                activeRun = run
+                refreshRunWatchdog()
                 return
             }
             let presentation = RichAnswerEngine.prepare(
@@ -1376,6 +1522,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 richAnswer: run.richAnswer,
                 noteProposal: run.proposal,
                 learningUpdate: run.learningUpdate,
+                loadedSkills: run.loadedSkills,
                 toolTrace: replyTrace
             )
             if stopReason == "aborted" {
@@ -1407,6 +1554,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                             richAnswer: run.richAnswer,
                             noteProposal: proposal,
                             learningUpdate: run.learningUpdate,
+                            loadedSkills: run.loadedSkills,
                             toolTrace: replyTrace
                         )
                     )
@@ -1440,7 +1588,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         run.watchdogTask?.cancel()
         run.watchdogTask = nil
         run.progressDelivery?.finish()
-        clearContextSnapshot()
         if let continuation = run.continuation {
             activeRun = nil
             continuation.resume(with: result)
@@ -1479,7 +1626,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         run.watchdogTask?.cancel()
         run.progressDelivery?.finish()
         activeRun = nil
-        clearContextSnapshot()
         scheduleIdleShutdown()
     }
 
@@ -1495,7 +1641,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             throw PiAgentRuntimeError.protocolFailure("get_commands returned no command list")
         }
         let commandNames = Set(commands.compactMap { $0["name"] as? String })
-        let missing = PiAgentResources.requiredSkillNames.filter {
+        let missing = PiAgentResources.allRequiredSkillNames.filter {
             !commandNames.contains("skill:\($0)")
         }
         guard missing.isEmpty else {

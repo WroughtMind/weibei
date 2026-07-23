@@ -2,11 +2,90 @@ import Foundation
 import WeiBeiCore
 
 func runPiAgentSelfChecks() throws {
+    try checkPiProviderConfiguration()
     try checkJSONLFraming()
+    try checkAnswerGrounding()
     try checkRPCDecoding()
     try checkStudyAgentContext()
     try checkBundledAgentResources()
     try checkPiExecutableLocation()
+}
+
+private func checkAnswerGrounding() throws {
+    for question in [
+        "给我讲一个笑话",
+        "你叫什么",
+        "你好",
+        "连通测试：只回复“Pi订阅登录已连通”，不要生成富回答。",
+        "2026-07-21 候选包连通测试：只回复“Pi订阅登录已连通”，不要生成富回答。",
+    ] {
+        try piRequire(
+            StudyAgentQuestionScope.allowsSourceFreeAnswer(question),
+            "source-free PI answer scope accepts \(question)"
+        )
+        try piRequire(
+            PiAnswerEvidenceRequirement.validationError(
+                contentLabels: [],
+                learningLabels: [],
+                allowsLearningOnlyAnswer: false,
+                allowsSourceFreeAnswer: true
+            ) == nil,
+            "source-free PI answers are not rejected as missing course evidence"
+        )
+    }
+
+    try piRequire(
+        !StudyAgentQuestionScope.allowsSourceFreeAnswer("费雪方程是什么意思？"),
+        "course-content questions do not bypass current-turn evidence"
+    )
+    for question in [
+        "你叫什么，顺便解释费雪方程",
+        "讲一个关于费雪方程的笑话",
+        "你是谁写的这本教材？",
+        "连通测试，顺便解释费雪方程",
+        "2026-07-21 候选包连通测试，顺便解释费雪方程",
+    ] {
+        try piRequire(
+            !StudyAgentQuestionScope.allowsSourceFreeAnswer(question),
+            "mixed or course-dependent questions do not bypass evidence: \(question)"
+        )
+    }
+    try piRequire(
+        PiAnswerEvidenceRequirement.validationError(
+            contentLabels: [],
+            learningLabels: [],
+            allowsLearningOnlyAnswer: false,
+            allowsSourceFreeAnswer: false
+        ) == "PI returned a content answer without a current-turn source citation",
+        "course-content answers still require current-turn evidence"
+    )
+    try piRequire(
+        PiAnswerEvidenceRequirement.validationError(
+            contentLabels: [],
+            learningLabels: ["[学习记录：上次位置]"],
+            allowsLearningOnlyAnswer: true,
+            allowsSourceFreeAnswer: false
+        ) == nil,
+        "learning-only answers continue to accept current-turn learning evidence"
+    )
+}
+
+private func checkPiProviderConfiguration() throws {
+    let inherited = PiAgentProviderConfiguration()
+    try piRequire(
+        inherited.provider == nil && inherited.model == nil && inherited.apiKey == nil && inherited.thinkingLevel == "medium",
+        "PI provider defaults keep the current medium thinking level without injecting API-key overrides"
+    )
+
+    let explicit = PiAgentProviderConfiguration(
+        provider: " openai-codex ",
+        model: " gpt-5.5 ",
+        thinkingLevel: " xhigh "
+    )
+    try piRequire(
+        explicit.provider == "openai-codex" && explicit.model == "gpt-5.5" && explicit.thinkingLevel == "xhigh",
+        "PI provider keeps explicit subscription model and thinking overrides"
+    )
 }
 
 private func piRequire(_ condition: @autoclosure () throws -> Bool, _ message: String) throws {
@@ -60,6 +139,54 @@ private func checkRPCDecoding() throws {
 
     let contextRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-context","toolName":"weibei_context","isError":false,"result":{"details":{"kind":"weibei_context","contextRevision":"revision-7"}}}"#.utf8))
     try piRequire(contextRead == .contextRead(id: "tool-context", contextRevision: "revision-7"), "PI context reads preserve the validated revision")
+
+    let visualAssetRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-visual","toolName":"weibei_visual_asset","isError":false,"result":{"details":{"kind":"visual_asset_read","contextRevision":"revision-7","assetID":"course-item-1","sha256":"abc123","byteCount":2048}}}"#.utf8))
+    try piRequire(
+        visualAssetRead == .visualAssetRead(
+            id: "tool-visual",
+            contextRevision: "revision-7",
+            assetID: "course-item-1",
+            sha256: "abc123",
+            byteCount: 2_048
+        ),
+        "PI visual asset reads preserve source ID, hash, and byte count"
+    )
+
+    let skillRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-skill","toolName":"read","isError":false,"result":{"details":{"kind":"weibei_skill_read","contextRevision":"revision-7","loaded":{"id":"rich-answer-director","name":"富回答导演","version":"1.0.0","sha256":"abc123","byteCount":1524,"relativePath":"skills/rich-answer/rich-answer-director/SKILL.md","loadedAtContextRevision":"revision-7"}}}}"#.utf8))
+    try piRequire(
+        skillRead == .skillsLoaded(
+            id: "tool-skill",
+            contextRevision: "revision-7",
+            skills: [
+                StudyAgentLoadedSkill(
+                    id: "rich-answer-director",
+                    name: "富回答导演",
+                    version: "1.0.0",
+                    sha256: "abc123",
+                    byteCount: 1524,
+                    relativePath: "skills/rich-answer/rich-answer-director/SKILL.md",
+                    loadedAtContextRevision: "revision-7"
+                ),
+            ]
+        ),
+        "PI native skill reads preserve versioned evidence metadata"
+    )
+
+    let artifactComputed = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-python","toolName":"weibei_compute_artifact","isError":false,"result":{"details":{"kind":"compute_artifact","schemaVersion":1,"contextRevision":"revision-7","requestID":"stats-1","operation":"compute_statistics","workerVersion":"1.0.0","requestSHA256":"request-hash","outputSHA256":"output-hash","durationMS":23,"artifacts":[{"sha256":"artifact-hash"}]}}}"#.utf8))
+    try piRequire(
+        artifactComputed == .artifactComputed(
+            id: "tool-python",
+            contextRevision: "revision-7",
+            requestID: "stats-1",
+            operation: "compute_statistics",
+            workerVersion: "1.0.0",
+            requestSHA256: "request-hash",
+            outputSHA256: "output-hash",
+            artifactSHA256s: ["artifact-hash"],
+            durationMS: 23
+        ),
+        "PI controlled Python results preserve operation, hashes, source run, and duration evidence"
+    )
 
     let courseRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-course","toolName":"weibei_course_search","isError":false,"result":{"details":{"kind":"course_search","contextRevision":"revision-7","results":[{"id":"material-rates","title":"利率","role":"material","searchText":"利率正文"},{"id":"note-rates","title":"课堂笔记","role":"note","searchText":"笔记正文"},{"id":"title-only","title":"只有标题","role":"material","searchText":""}],"evidenceLabels":["[材料：利率，条目：2]","[笔记：课堂笔记]"],"jumpEvidence":{"来源：利率，条目：2，第 3 页":"[材料：利率，条目：2]"}}}}"#.utf8))
     try piRequire(
@@ -298,6 +425,7 @@ private func checkStudyAgentContext() throws {
     }
     let request = StudyAgentRequest(
         purpose: .conversation,
+        answerFormPolicy: .textOnly,
         question: "请根据当前材料出题",
         materialTitle: String(repeating: "材", count: 320),
         materialText: String(repeating: "材", count: 18_100),
@@ -336,6 +464,14 @@ private func checkStudyAgentContext() throws {
         contextRevision: "revision-9"
     )
     try piRequire(request.resolvedWorkflow == .recallPractice, "study-agent automatic routing selects recall practice")
+    try piRequire(
+        StudyAgentSourceLimitation.isHonest("当前没有可读材料或数据，因此无法给出剂量结论。")
+            && StudyAgentSourceLimitation.isHonest("No readable source data was provided, so I cannot calculate a dose.")
+            && !StudyAgentSourceLimitation.isHonest("我不能回答这个问题。")
+            && !StudyAgentSourceLimitation.isHonest("材料显示安全剂量为 10 mg。")
+            && !StudyAgentSourceLimitation.isHonest("当前缺少材料，所以我估计安全剂量约为 10 mg。"),
+        "source-free answers are limited to explicit evidence-gap explanations"
+    )
     let noteRequest = StudyAgentRequest(
         purpose: .conversation,
         question: "整理成笔记",
@@ -435,6 +571,7 @@ private func checkStudyAgentContext() throws {
     let envelope = StudyAgentContextEnvelope(request: request)
     try piRequire(envelope.schemaVersion == 2 && envelope.contextRevision == "revision-9", "study-agent context carries schema and revision")
     try piRequire(envelope.workflow == StudyAgentWorkflow.recallPractice.rawValue, "study-agent context carries resolved workflow")
+    try piRequire(envelope.answerFormPolicy == StudyAgentAnswerFormPolicy.textOnly.rawValue, "study-agent context carries structured answer-form policy")
     try piRequire(envelope.material?.text.count == 18_000 && envelope.note.text.count == 6_000 && envelope.selection?.text.count == 2_000, "study-agent context applies source limits")
     try piRequire(envelope.material?.title.count == 300 && envelope.note.title.count == 300 && envelope.selection?.title.count == 300, "study-agent context bounds source labels consistently")
     try piRequire(envelope.material?.isTruncated == true && envelope.note.isTruncated && envelope.selection?.isTruncated == true, "study-agent context marks every truncated source")
@@ -460,6 +597,49 @@ private func checkStudyAgentContext() throws {
             && envelope.learning.session?.summary.count == 2_000
             && envelope.learning.session?.focusItemIDs.count == 24,
         "study-agent context bounds location and session state, uses opaque ids, and exposes one-based page numbers"
+    )
+
+    let visualEnvelope = StudyAgentContextEnvelope(
+        request: StudyAgentRequest(
+            purpose: .conversation,
+            question: "观察当前地图",
+            materialTitle: "当前地图",
+            materialText: "地图材料",
+            noteTitle: "笔记",
+            noteText: "",
+            courseContext: StudyAgentCourseContext(
+                title: "地图课程",
+                items: [
+                    StudyAgentCourseItem(
+                        id: "current-map",
+                        title: "当前地图",
+                        subtitle: "PNG",
+                        kind: "image",
+                        role: "material",
+                        isCurrentMaterial: true
+                    ),
+                    StudyAgentCourseItem(
+                        id: "other-map",
+                        title: "其他地图",
+                        subtitle: "PNG",
+                        kind: "image",
+                        role: "material"
+                    ),
+                ]
+            ),
+            visualAssets: [
+                StudyAgentVisualAsset(id: "current-map", filePath: "/private/tmp/current-map.png", mediaType: "image/png"),
+                StudyAgentVisualAsset(id: "other-map", filePath: "/private/tmp/other-map.png", mediaType: "image/png"),
+                StudyAgentVisualAsset(id: "current-map", filePath: "/private/tmp/current-map.svg", mediaType: "image/svg+xml"),
+            ],
+            contextRevision: "visual-assets-test"
+        )
+    )
+    try piRequire(
+        visualEnvelope.visualAssets == [
+            StudyAgentVisualAsset(id: "course-item-1", filePath: "/private/tmp/current-map.png", mediaType: "image/png"),
+        ],
+        "study-agent context only carries bounded raster assets for the current material and remaps their ids"
     )
 
     let privatePath = "/Users/student/Private Course/secret.pdf"
@@ -725,9 +905,28 @@ private func checkBundledAgentResources() throws {
             "weibei_learning_update",
             "weibei_note_proposal",
             "weibei_ui_catalog",
+            "weibei_compute_artifact",
+            "weibei_visual_asset",
             "weibei_rich_answer",
         ].allSatisfy(extensionSource.contains),
         "PI extension bundles the WeiBei-owned course, memory, rich-answer, and note tools"
+    )
+    let pythonArtifactWorkerSource = try String(
+        contentsOf: resources.pythonArtifactWorkerURL,
+        encoding: .utf8
+    )
+    try piRequire(
+        extensionSource.contains("PYTHON_ARTIFACT_OPERATIONS")
+            && extensionSource.contains("[\"-I\", \"-B\", \"-S\", PYTHON_ARTIFACT_WORKER_PATH]")
+            && extensionSource.contains("shell: false")
+            && extensionSource.contains("kind: \"compute_artifact\"")
+            && pythonArtifactWorkerSource.contains("compute_statistics")
+            && pythonArtifactWorkerSource.contains("fit_regression")
+            && pythonArtifactWorkerSource.contains("bin_distribution")
+            && pythonArtifactWorkerSource.contains("sample_function")
+            && !pythonArtifactWorkerSource.contains("eval(")
+            && !pythonArtifactWorkerSource.contains("exec("),
+        "PI bundles a fixed isolated Python artifact worker instead of model-authored code"
     )
     try piRequire(
         extensionSource.contains("contextFileBytes: 4 * 1024 * 1024")
@@ -769,7 +968,6 @@ private func checkBundledAgentResources() throws {
             && extensionSource.contains("OPENUI_COMPONENT_GROUPS")
             && extensionSource.contains("openUIComponentConstraintGuidance")
             && extensionSource.contains("参数约束：")
-            && extensionSource.contains("小标题过密")
             && extensionSource.contains("const structuralErrors: string[] = []")
             && extensionSource.contains("const semanticErrors: string[] = []")
             && extensionSource.contains("const validationIssues: string[] = []")
@@ -804,27 +1002,48 @@ private func checkBundledAgentResources() throws {
             && extensionSource.contains("\"probe\"")
             && extensionSource.contains("richAnswerT1SceneSchema")
             && extensionSource.contains("richAnswerT2SceneSchema")
+            && extensionSource.contains("xValues: Type.Optional(")
+            && extensionSource.contains("scatter series[${seriesIndex}] 必须提供与 values 等长的 xValues")
+            && extensionSource.contains("richAnswerRendererNestedFieldContracts")
+            && extensionSource.contains("bindings 中每一项都必须是对象")
+            && extensionSource.contains("allowed: [\"program\", \"renderPlan\", \"ui\"]")
+            && !extensionSource.contains("allowed: [\"program\", \"renderPlan\", \"ui\", \"plain_text\"]")
+            && extensionSource.contains("exactExcerptCandidates")
             && extensionSource.contains("richAnswerUIBoundControlNodeSchema")
-            && extensionSource.contains("场景从输入层就二选一")
+            && extensionSource.contains("场景从输入层三选一")
             && !extensionSource.contains("这个兼容字段必须为空数组")
             && extensionSource.contains("label 是画布标注，必须引用带 label 的 dataset.rows")
+            && extensionSource.contains("label 必须共享同一 bindingID，不能图形隐藏后留下孤立标签")
+            && extensionSource.contains("避免图形隐藏后留下孤立标签")
             && extensionSource.contains("单个问题默认只提交一个最有帮助的 scene")
             && extensionSource.contains("本轮用户明确指定富回答或互动形态")
             && extensionSource.contains("图示|函数图")
             && extensionSource.contains("simulation|experiment")
+            && extensionSource.contains("answerFormPolicy")
+            && extensionSource.contains("activeAnswerFormPolicy === \"textOnly\"")
+            && extensionSource.contains("richAnswerGrounding")
+            && extensionSource.contains("sourceBindings: richAnswerSourceBindings")
+            && extensionSource.contains("readableSourceLabels")
+            && extensionSource.contains("allowedAssetIDs")
+            && extensionSource.contains("解释边界同时写进 narrative 与可见 ui 标签")
+            && extensionSource.contains("不要用不相干的通用控件替代")
             && resources.systemPrompt.contains("文本是默认形态")
             && resources.systemPrompt.contains("富回答先过内容与专业性，再过视觉")
             && resources.systemPrompt.contains("不能用漂亮图形掩盖知识错误")
-            && resources.systemPrompt.contains("这个形态要求优先于你的默认选择")
-            && resources.systemPrompt.contains("T1 深组件程序")
-            && resources.systemPrompt.contains("T2 受控渲染计划")
-            && resources.systemPrompt.contains("先形成表达计划，再调用 `weibei_ui_catalog`")
+            && resources.systemPrompt.contains("材料给出的采样窗口、测量方法")
+            && resources.systemPrompt.contains("必须由对应控件和 binding 真实兑现")
+            && resources.systemPrompt.contains("richAnswerGrounding.answerFormPolicy")
+            && resources.systemPrompt.contains("partialRichAllowed")
+            && resources.systemPrompt.contains("先由 Agent 判断是否需要富回答")
+            && resources.systemPrompt.contains("`remainingAttempts` 仍大于 0 时")
+            && resources.systemPrompt.contains("每个 scene 必须且只能选择一条出口")
+            && resources.systemPrompt.contains("`routeRecommendation` 只是")
             && resources.systemPrompt.contains("不要依赖旧回合或完整组件库记忆")
             && resources.systemPrompt.contains("不得只把同一段文字改成卡片、时间线或网格")
             && resources.systemPrompt.contains("默认只提交一个最有帮助的 scene")
             && resources.systemPrompt.contains("`placement` 与 `preferredSurface` 默认选择 `inline`")
-            && resources.systemPrompt.contains("由魏碑内核计算")
-            && resources.systemPrompt.contains("禁止提交 HTML、CSS、JavaScript、任意 SVG 几何字符串")
+            && resources.systemPrompt.contains("由魏碑已注册的专业能力负责")
+            && resources.systemPrompt.contains("禁止提交目录未允许的 HTML、CSS、JavaScript、任意 SVG 几何字符串")
             && resources.systemPrompt.contains("任意颜色、任意字体、像素布局或外部资源")
             && resources.systemPrompt.contains("`narrative` 就是本次富回答最终显示的完整正文")
             && resources.systemPrompt.contains("weibei-scene:场景ID"),
@@ -837,11 +1056,37 @@ private func checkBundledAgentResources() throws {
         try piRequire(source.contains("name: \(skillName)") && source.contains("description:"), "PI skill \(skillName) has valid frontmatter")
         if source.contains("weibei_rich_answer") {
             try piRequire(
-                source.contains("allowed-tools:") && source.contains("weibei_ui_catalog"),
-                "PI skill \(skillName) authorizes the catalog required before rich answers"
+                source.contains("allowed-tools:")
+                    && source.contains("weibei_ui_catalog")
+                    && source.contains("weibei_compute_artifact")
+                    && source.contains("weibei_visual_asset"),
+                "PI skill \(skillName) authorizes the catalog, current-material visual inspection, and optional controlled computation before rich answers"
             )
         }
     }
+
+    for skillName in PiAgentResources.requiredRichAnswerSkillNames {
+        let skillURL = resources.skillsURL
+            .appendingPathComponent("rich-answer", isDirectory: true)
+            .appendingPathComponent(skillName, isDirectory: true)
+            .appendingPathComponent("SKILL.md")
+        let source = try String(contentsOf: skillURL, encoding: .utf8)
+        try piRequire(
+            source.contains("name: \(skillName)") && source.contains("description:") && source.contains("version:"),
+            "PI rich-answer subskill \(skillName) has progressive-disclosure metadata"
+        )
+    }
+
+    try piRequire(
+        extensionSource.contains("const READ_TOOL = \"read\"")
+            && extensionSource.contains("RICH_ANSWER_SKILL_BY_PATH")
+            && extensionSource.contains("canonicalReadPath")
+            && extensionSource.contains("realpathSync")
+            && extensionSource.contains("kind: \"weibei_skill_read\"")
+            && extensionSource.contains("只允许 Pi 原生 read 读取随 App 打包的富回答 Skill")
+            && !extensionSource.contains("weibei_skill_load"),
+        "PI uses native progressive skill reads while denying every non-bundled path"
+    )
 
     let runtimeSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         .appendingPathComponent("Sources/WeiBeiCore/PiAgentRuntime.swift")
@@ -866,8 +1111,16 @@ private func checkBundledAgentResources() throws {
             && runtimeSource.contains("StudyAgentResolutionEvidence.matches")
             && runtimeSource.contains("StudyAgentCurrentTurnEvidence.matches")
             && runtimeSource.contains("allowsLearningOnlyAnswer")
+            && runtimeSource.contains("allowsSourcelessLimitation")
+            && runtimeSource.contains("StudyAgentSourceLimitation.isHonest")
+            && runtimeSource.contains("text_only_policy")
             && runtimeSource.contains("private static let allowedToolNames")
+            && runtimeSource.contains("\"read\"")
+            && runtimeSource.contains("allRequiredSkillNames")
+            && runtimeSource.contains("skill-read:")
             && runtimeSource.contains("\"weibei_ui_catalog\"")
+            && runtimeSource.contains("\"weibei_compute_artifact\"")
+            && runtimeSource.contains("\"weibei_visual_asset\"")
             && runtimeSource.contains("Self.allowedToolNames.joined(separator: \",\")")
             && runtimeSource.contains("Set(Self.allowedToolNames).contains(name)")
             && runtimeSource.contains("let richNarrative = run.richAnswer?.narrative")
@@ -875,6 +1128,11 @@ private func checkBundledAgentResources() throws {
             && runtimeSource.contains("run.toolTrace.append(name)")
             && runtimeSource.contains("replyTrace.append(\"model=\\(model)\")")
             && runtimeSource.contains("toolTrace: replyTrace")
+            && runtimeSource.contains("if !providerConfiguration.thinkingLevel.isEmpty")
+            && runtimeSource.contains("syncLocalPiAuth(from: source, to: destination)")
+            && runtimeSource.contains("let sourceObject = try? JSONSerialization.jsonObject")
+            && runtimeSource.contains("Always take home OAuth entries")
+            && runtimeSource.contains("sourceEntry[\"type\"] as? String == \"oauth\"")
             && runtimeSource.contains("PI returned a content answer without a current-turn source citation")
             && runtimeSource.contains("binary.sha256")
             && runtimeSource.contains("SecStaticCodeCheckValidity"),

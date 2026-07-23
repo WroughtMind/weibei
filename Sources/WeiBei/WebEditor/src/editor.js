@@ -286,34 +286,68 @@ document.documentElement.dataset.weibeiCompactPreview = isCompactPreview ? 'true
 
 let contentHeightFrame = 0;
 let lastReportedContentHeight = 0;
+const contentHeightDelayHandles = new Set();
+
+const compactPreviewMeasureNodes = () => [
+  document.querySelector('#editor'),
+  document.querySelector('.milkdown'),
+  document.querySelector('.ProseMirror'),
+].filter(Boolean);
+
+const measuredNodeHeight = (node) => {
+  const rect = node.getBoundingClientRect?.();
+  return Math.max(
+    0,
+    node.scrollHeight || 0,
+    node.offsetHeight || 0,
+    node.clientHeight || 0,
+    rect?.height || 0
+  );
+};
 
 const reportContentHeight = () => {
   if (!isCompactPreview) return;
   window.cancelAnimationFrame(contentHeightFrame);
   contentHeightFrame = window.requestAnimationFrame(() => {
-    const editorRoot = document.querySelector('#editor');
-    const milkdownRoot = document.querySelector('.milkdown');
-    const proseMirror = document.querySelector('.ProseMirror');
-    const height = Math.ceil(Math.max(
-      1,
-      editorRoot?.scrollHeight || 0,
-      milkdownRoot?.scrollHeight || 0,
-      proseMirror?.scrollHeight || 0
-    ));
+    const nodes = compactPreviewMeasureNodes();
+    const height = Math.ceil(Math.max(1, ...nodes.map(measuredNodeHeight)));
+    window.WeiBeiCompactPreviewHeight = height;
+    window.WeiBeiCompactPreviewMeasuredAt = Date.now();
     if (Math.abs(height - lastReportedContentHeight) < 1) return;
     lastReportedContentHeight = height;
     post('contentHeightChanged', { height });
   });
 };
 
-const installContentHeightObserver = () => {
-  if (!isCompactPreview || !window.ResizeObserver) return;
-  const observer = new ResizeObserver(reportContentHeight);
-  const editorRoot = document.querySelector('#editor');
-  const proseMirror = document.querySelector('.ProseMirror');
-  if (editorRoot) observer.observe(editorRoot);
-  if (proseMirror) observer.observe(proseMirror);
+const scheduleContentHeightReports = () => {
+  if (!isCompactPreview) return;
+  for (const handle of contentHeightDelayHandles) window.clearTimeout(handle);
+  contentHeightDelayHandles.clear();
+  lastReportedContentHeight = 0;
   reportContentHeight();
+  window.requestAnimationFrame(() => {
+    reportContentHeight();
+    window.requestAnimationFrame(reportContentHeight);
+  });
+  for (const delay of [40, 120, 240, 480]) {
+    const handle = window.setTimeout(() => {
+      contentHeightDelayHandles.delete(handle);
+      reportContentHeight();
+    }, delay);
+    contentHeightDelayHandles.add(handle);
+  }
+  document.fonts?.ready?.then(() => {
+    if (isCompactPreview) reportContentHeight();
+  }).catch(() => {});
+};
+
+const installContentHeightObserver = () => {
+  if (!isCompactPreview) return;
+  if (window.ResizeObserver) {
+    const observer = new ResizeObserver(reportContentHeight);
+    compactPreviewMeasureNodes().forEach((node) => observer.observe(node));
+  }
+  scheduleContentHeightReports();
 };
 
 const rectFromSelection = () => {
@@ -1365,7 +1399,7 @@ const setMarkdownInternal = (markdown) => {
   syncFrontmatterPanel();
   editor.action(replaceAll(body));
   lastMarkdown = withFrontmatter(body);
-  reportContentHeight();
+  scheduleContentHeightReports();
 };
 
 const getMarkdownInternal = () => {
@@ -1639,6 +1673,7 @@ Editor
       if (normalizedMarkdown === lastMarkdown) return;
       lastMarkdown = normalizedMarkdown;
       post('markdownChanged', { markdown: normalizedMarkdown });
+      scheduleContentHeightReports();
       reportActiveHeading();
     });
     ctx.get(listenerCtx).selectionUpdated(() => {
@@ -1679,7 +1714,7 @@ Editor
     installContentHeightObserver();
     document.addEventListener('scroll', reportActiveHeading, true);
     post('editorReady', { markdown: lastMarkdown });
-    reportContentHeight();
+    scheduleContentHeightReports();
     reportActiveHeading();
   })
   .catch(showFailure);
