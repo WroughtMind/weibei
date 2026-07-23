@@ -139,6 +139,18 @@ if [[ ! -x "$PI_RUNTIME_BINARY" ]]; then
   exit 8
 fi
 
+pi_reports_expected_version() {
+  local executable="$1" attempt reported_version
+  for attempt in {1..10}; do
+    reported_version="$("$executable" --version 2>/dev/null || true)"
+    if [[ "$reported_version" == "$PI_RUNTIME_VERSION" ]]; then
+      return 0
+    fi
+    sleep 0.1
+  done
+  return 1
+}
+
 swift build -c "$BUILD_CONFIGURATION"
 
 if [[ "$CHECK_ONLY" != true ]]; then
@@ -213,7 +225,7 @@ if [[ "$CHECK_ONLY" != true ]]; then
     || [[ ! -f "$APP_RESOURCES/PiRuntime/binary.sha256" ]] \
     || ! /usr/bin/codesign --verify --strict "$PACKAGED_PI" >/dev/null 2>&1 \
     || [[ "$(/usr/bin/shasum -a 256 "$PACKAGED_PI" | /usr/bin/awk '{print $1}')" != "$(<"$APP_RESOURCES/PiRuntime/binary.sha256")" ]] \
-    || [[ "$("$PACKAGED_PI" --version 2>/dev/null)" != "$PI_RUNTIME_VERSION" ]]; then
+    || ! pi_reports_expected_version "$PACKAGED_PI"; then
     echo "package failed: embedded PI runtime is incomplete" >&2
     exit 9
   fi
