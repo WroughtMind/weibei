@@ -1108,6 +1108,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
 
     private static func captureWebViewSnapshot(
         _ webView: WKWebView,
+        rect: NSRect,
         completion: @escaping (NSImage?, String?) -> Void
     ) {
         let state = WebViewSnapshotState()
@@ -1119,7 +1120,9 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
                 failureReason: "web content snapshot timed out after \(String(format: "%.1f", webViewSnapshotTimeoutSeconds)) seconds"
             )
         }
-        webView.takeSnapshot(with: nil) { image, error in
+        let configuration = WKSnapshotConfiguration()
+        configuration.rect = rect
+        webView.takeSnapshot(with: configuration) { image, error in
             DispatchQueue.main.async {
                 if let error {
                     completeWebViewSnapshotOnce(
@@ -1149,6 +1152,20 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         }
     }
 
+    private static func visibleRect(
+        of webView: WKWebView,
+        relativeTo contentView: NSView
+    ) -> NSRect {
+        var visibleRect = webView.convert(webView.bounds, to: contentView)
+            .intersection(contentView.bounds)
+        var ancestor = webView.superview
+        while let view = ancestor, view !== contentView, !visibleRect.isNull {
+            visibleRect = visibleRect.intersection(view.convert(view.bounds, to: contentView))
+            ancestor = view.superview
+        }
+        return visibleRect
+    }
+
     private struct WebViewSnapshot {
         var rect: NSRect
         var image: NSImage
@@ -1176,11 +1193,11 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
             return
         }
         let webView = webViews[index]
-        let converted = webView.convert(webView.bounds, to: contentView)
+        let converted = visibleRect(of: webView, relativeTo: contentView)
         let rect = contentView.isFlipped
             ? NSRect(x: converted.minX, y: contentView.bounds.height - converted.maxY, width: converted.width, height: converted.height)
             : converted
-        guard rect.width > 1, rect.height > 1 else {
+        guard !converted.isNull, rect.width > 1, rect.height > 1 else {
             captureWebViews(
                 webViews,
                 at: index + 1,
@@ -1190,7 +1207,19 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
             )
             return
         }
-        captureWebViewSnapshot(webView) { image, failureReason in
+        let snapshotRect = webView.convert(converted, from: contentView)
+            .intersection(webView.bounds)
+        guard !snapshotRect.isNull, snapshotRect.width > 1, snapshotRect.height > 1 else {
+            captureWebViews(
+                webViews,
+                at: index + 1,
+                relativeTo: contentView,
+                overlays: overlays,
+                completion: completion
+            )
+            return
+        }
+        captureWebViewSnapshot(webView, rect: snapshotRect) { image, failureReason in
             if let failureReason {
                 completion(overlays, failureReason)
                 return
