@@ -67,6 +67,14 @@ if [[ ! -x "$ROOT_DIR/node_modules/.bin/appdmg" ]]; then
   echo "release failed: run npm ci before building the DMG" >&2
   exit 7
 fi
+for native_module in \
+  "$ROOT_DIR/node_modules/macos-alias/build/Release/volume.node" \
+  "$ROOT_DIR/node_modules/fs-xattr/build/Release/xattr.node"; do
+  if [[ ! -f "$native_module" ]]; then
+    echo "release failed: appdmg native modules are missing; run npm rebuild macos-alias fs-xattr" >&2
+    exit 18
+  fi
+done
 
 if [[ "$MODE" == "notarized" ]]; then
   SIGN_IDENTITY="${WEIBEI_CODESIGN_IDENTITY:-}"
