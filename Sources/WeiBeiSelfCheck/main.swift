@@ -297,6 +297,8 @@ func runRichAnswerEmbeddingSelfChecks() {
         && richAnswerHostSource.contains("onSceneReady: {")
         && richAnswerHostSource.contains("readySceneIDs.insert(scene.id)")
         && richAnswerHostSource.contains("readySceneIDs.isSuperset(of: Set(sceneIDs))")
+        && richAnswerHostSource.contains("rendererIsReady(updatedSceneIDs)")
+        && richAnswerHostSource.contains("presentation.scenes.allSatisfy(\\.usesWebRuntime)")
         && richAnswerHostSource.contains("holdPrematureVerificationMarkerIfNeeded()")
         && richAnswerHostSource.contains("restoreDeferredVerificationMarkerIfNeeded(in: baseURL)")
         && richAnswerHostSource.contains("rich-answer-renderer-ready.txt"),

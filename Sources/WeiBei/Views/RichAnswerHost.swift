@@ -16,11 +16,16 @@ struct RichAnswerHost: View {
 
     /// Verification markers stay deferred until the host has a real layout size
     /// and every rich scene renderer has reported ready.
-    private var rendererIsReady: Bool {
-        hostContentSize.width > 1
-            && hostContentSize.height > 1
-            && (presentation.scenes.isEmpty
-                || readySceneIDs.isSuperset(of: Set(presentation.scenes.map(\.id))))
+    private func rendererIsReady(_ updatedSceneIDs: Set<String>) -> Bool {
+        let sceneIDs = Set(presentation.scenes.map(\.id))
+        let everySceneReady = presentation.scenes.isEmpty
+            || updatedSceneIDs.isSuperset(of: sceneIDs)
+        let hostHasMeasuredSize = hostContentSize.width > 1 && hostContentSize.height > 1
+        // Web runtime readiness already requires a real viewport and measured content
+        // height, so it remains trustworthy when a lazy ScrollView reports a zero host height.
+        let everySceneHasMeasuredWebRuntime = !presentation.scenes.isEmpty
+            && presentation.scenes.allSatisfy(\.usesWebRuntime)
+        return everySceneReady && (hostHasMeasuredSize || everySceneHasMeasuredWebRuntime)
     }
 
     init(
@@ -322,7 +327,7 @@ struct RichAnswerHost: View {
 
     private func updateVerificationMarker(_ updatedSceneIDs: Set<String>) {
         // Defer ready markers until rendererIsReady (host size + every scene ready).
-        let effectiveReadyIDs = rendererIsReady ? updatedSceneIDs : Set<String>()
+        let effectiveReadyIDs = rendererIsReady(updatedSceneIDs) ? updatedSceneIDs : Set<String>()
         RichAnswerVerificationMarker.update(
             mode: presentation.mode,
             sceneIDs: presentation.scenes.map(\.id),
