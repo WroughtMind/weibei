@@ -1,1 +1,3 @@
-Sources/WeiBei/Resources/Editor/editor.js whitespace=-blank-at-eol
+# esbuild preserves whitespace inside Mermaid template literals. Treat the
+# generated editor bundle as opaque output instead of rewriting those strings.
+Sources/WeiBei/Resources/Editor/editor.js whitespace=-trailing-space
