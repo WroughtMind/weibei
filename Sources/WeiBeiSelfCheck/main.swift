@@ -275,6 +275,11 @@ func runRichAnswerEmbeddingSelfChecks() {
         && richAnswerTurnSource.contains("case .scene:")
         && richAnswerTurnSource.contains("scopedRichAnswer(presentation, sceneID: sceneID)")
         && richAnswerTurnSource.contains("RichAnswerHost("), "rich answers render an inspectable narrative-scene sequence instead of always appending a mini-site after the text")
+    expect(!richAnswerHostSource.contains("部分内容因证据或宿主能力不足已自动收敛")
+        && richAnswerEngineSource.contains(#"\\hat\s*\{([^{}]+)\}"#)
+        && richAnswerEngineSource.contains(#"\\bar\s*\{([^{}]+)\}"#)
+        && notesAgentSource.contains("AgentChatKaTeXMarkdown.prepare(text)")
+        && notesAgentSource.contains("RichAnswerDisplayText.normalizedInlineMath(value)"), "rich answers keep renderer diagnostics in evidence while presenting common formulas as readable user-facing text")
     expect(richAnswerLibrarySource.contains("stages: z.array(LearningStage.ref).min(1).max(8)")
         && richAnswerLibrarySource.contains("FunctionPlot")
         && richAnswerLibrarySource.contains("LinkedDataChart")
@@ -287,8 +292,13 @@ func runRichAnswerEmbeddingSelfChecks() {
         && richAnswerWorkbenchSource.contains("onAction={handleAction}")
         && richAnswerHostSource.contains("RichAnswerWebRuntimeView(\n                scenes: scenes")
         && richAnswerHostSource.contains("private func rendersInlineFlow(_ scenes: [RichAnswerScene]) -> Bool"), "the in-flow generative experience can compose multiple stages, scenes, visuals, and interactions inside one shared runtime instead of collapsing to one textbook illustration")
-    expect(richAnswerHostSource.contains("rendererIsReady")
+    expect(richAnswerHostSource.contains("onRuntimeReady: {")
+        && richAnswerHostSource.contains("readySceneIDs.formUnion(scenes.map(\\.id))")
+        && richAnswerHostSource.contains("onSceneReady: {")
+        && richAnswerHostSource.contains("readySceneIDs.insert(scene.id)")
         && richAnswerHostSource.contains("readySceneIDs.isSuperset(of: Set(sceneIDs))")
+        && richAnswerHostSource.contains("rendererIsReady(updatedSceneIDs)")
+        && richAnswerHostSource.contains("presentation.scenes.allSatisfy(\\.usesWebRuntime)")
         && richAnswerHostSource.contains("holdPrematureVerificationMarkerIfNeeded()")
         && richAnswerHostSource.contains("restoreDeferredVerificationMarkerIfNeeded(in: baseURL)")
         && richAnswerHostSource.contains("rich-answer-renderer-ready.txt"),
@@ -347,11 +357,13 @@ func runRichAnswerEmbeddingSelfChecks() {
         && extensionComponentNames == libraryComponentNames
         && extensionComponentNames == swiftComponentNames, "the model catalog, Web renderer, and native safety validator expose the same open-ended T1 component vocabulary")
     expect(richAnswerExtensionSource.contains("const RICH_ANSWER_CATALOG_TOOL = \"weibei_ui_catalog\"")
+        && richAnswerExtensionSource.contains("const VISUAL_ASSET_TOOL = \"weibei_visual_asset\"")
+        && richAnswerExtensionSource.contains("visualInspection:")
+        && richAnswerExtensionSource.contains("visualAssetMagicMatches(")
         && richAnswerExtensionSource.contains("const OPENUI_COMPONENT_GROUPS = {")
         && richAnswerExtensionSource.contains("selectedOpenUIComponentGroups(")
         && richAnswerExtensionSource.contains("openUIComponentConstraintGuidance(")
         && richAnswerExtensionSource.contains("参数约束：")
-        && richAnswerExtensionSource.contains("小标题过密")
         && richAnswerExtensionSource.contains("const structuralErrors: string[] = []")
         && richAnswerExtensionSource.contains("const semanticErrors: string[] = []")
         && richAnswerExtensionSource.contains("const validationIssues: string[] = []")
@@ -359,7 +371,8 @@ func runRichAnswerEmbeddingSelfChecks() {
         && richAnswerExtensionSource.contains("并控制在 8 项以内")
         && richAnswerExtensionSource.contains("richAnswerCatalogSelection")
         && richAnswerExtensionSource.contains("组件 ${declaration.component} 不在本轮目录选择中")
-        && richAnswerSystemPrompt.contains("先形成表达计划，再调用 `weibei_ui_catalog`")
+        && richAnswerSystemPrompt.contains("先由 Agent 判断是否需要富回答")
+        && richAnswerSystemPrompt.contains("`routeRecommendation` 只是")
         && richAnswerSystemPrompt.contains("不要依赖旧回合或完整组件库记忆"), "Pi retrieves a relevant component subset before generation instead of carrying the entire growing catalog in every rich-answer prompt")
     expect(richAnswerExtendedComponentsSource.contains("name: \"LayeredSpatialView\"")
         && richAnswerExtendedComponentsSource.contains("name: \"DistributionBrush\"")
@@ -412,7 +425,7 @@ func runRichAnswerEmbeddingSelfChecks() {
         && retainedLikedReferenceProgramIDs.values.allSatisfy { richAnswerReferenceProgramsSource.contains("id: \"\($0)\"") }
         && retainedLikedPressureSceneKeys.values.allSatisfy { richAnswerPressureCatalogSource.contains("key: \"\($0)\"") }, "the named high-quality interaction references and cross-disciplinary pressure scenes remain available as regression evidence without becoming a finite capability boundary")
     expect(richAnswerWorkbenchSource.contains("document.documentElement.classList.toggle(\"weibei-embedded\", embedded)")
-        && richAnswerWorkbenchSource.contains("{!embedded ? (\n        <header className=\"generation-proofbar\">")
+        && richAnswerWorkbenchSource.contains("{!embedded && program ? (\n        <header className=\"generation-proofbar\">")
         && richAnswerWorkbenchSource.contains("{!embedded && program ? (\n        <details className=\"generation-source\">")
         && richAnswerRuntimeCSS.contains(".generation-page.is-embedded{width:100%;padding:0}")
         && richAnswerRuntimeCSS.contains("html.weibei-embedded,html.weibei-embedded body,html.weibei-embedded #root{min-width:0;min-height:0;background:transparent!important}")
@@ -436,10 +449,10 @@ func runRichAnswerEmbeddingSelfChecks() {
         && richAnswerExtensionSource.contains("program: richAnswerUIProgramSchema")
         && richAnswerExtensionSource.contains("const richAnswerT2SceneSchema")
         && richAnswerExtensionSource.contains("ui: richAnswerUICompositionSchema")
-        && richAnswerExtensionSource.contains("场景从输入层就二选一")
+        && richAnswerExtensionSource.contains("场景从输入层三选一")
         && richAnswerExtensionSource.contains("validateRichAnswerUI(scene, allowedEvidenceIDs, allowedAssetIDs)")
-        && richAnswerSystemPrompt.contains("没有时先用 T2")
-        && richAnswerSystemPrompt.contains("不能同时提交两者"), "the Agent can choose either a T1 deep component or a T2 primitive composition instead of falling back merely because no specialized component exists")
+        && richAnswerSystemPrompt.contains("`renderPlan` 用注册专业渲染器的高层规格")
+        && richAnswerSystemPrompt.contains("三者不能同时提交"), "the Agent chooses exactly one open rich-answer route instead of falling back merely because no specialized component exists")
     expect(richAnswerExtensionSource.contains("validateRichAnswerNarrativeFlow")
         && richAnswerExtensionSource.contains("narrative 没有就近标注已使用的真实来源")
         && richAnswerSystemPrompt.contains("`narrative` 就是本次富回答最终显示的完整正文"), "rich answers validate their final inline narrative and real source labels instead of trusting a separate model afterword")
@@ -1260,7 +1273,7 @@ var mixedIndexResult: CourseDocumentIndexResult?
 var markdownIndexResult: CourseDocumentIndexResult?
 var blankPDFIndexResult: CourseDocumentIndexResult?
 var stableHTMLIndexResult: CourseDocumentIndexResult?
-for _ in 0..<200 {
+for _ in 0..<600 {
     mixedIndexResult = courseIndex.lookup(items: [mixedPDFItem], query: "LATEPAGE OCR TARGET")[mixedPDFItem.id]
     markdownIndexResult = courseIndex.lookup(items: [markdownIndexItem], query: lateMarkdownToken)[markdownIndexItem.id]
     blankPDFIndexResult = courseIndex.lookup(items: [blankPDFIndexItem], query: "blank page")[blankPDFIndexItem.id]
@@ -1314,6 +1327,9 @@ expect(
     indexedPDFCourseContext.items.first?.headings.contains("第 13 页（OCR）") == true,
     "course search preserves confirmed OCR page locations for exact PDF jumps"
 )
+if blankPDFIndexResult?.isTruncated != false || blankPDFIndexResult?.text != nil {
+    fputs("blank PDF index diagnostic: \(String(describing: blankPDFIndexResult))\n", stderr)
+}
 expect(
     blankPDFIndexResult?.isTruncated == false && blankPDFIndexResult?.text == nil,
     "persistent course index records a successfully scanned blank PDF page without retrying it forever"
@@ -2685,7 +2701,11 @@ expect(appSource.contains("environment[\"WEIBEI_VERIFY_CAPTURE_PATH\"]")
     && appSource.contains("bitmapImageRepForCachingDisplay")
     && appSource.contains("cacheDisplay(in: bounds, to: bitmap)")
     && appSource.contains("visibleWebViews(in: contentView)")
-    && appSource.contains("webView.takeSnapshot(with: nil)")
+    && appSource.contains("private static func visibleRect(")
+    && appSource.contains(".intersection(contentView.bounds)")
+    && appSource.contains("view.convert(view.bounds, to: contentView)")
+    && appSource.contains("configuration.rect = rect")
+    && appSource.contains("webView.takeSnapshot(with: configuration)")
     && appSource.contains("overlay.image.draw(in: overlay.rect, from: .zero, operation: .sourceOver, fraction: 1)")
     && !appSource.contains("operation: .copy"), "isolated verification capture preserves the opaque window underneath transparent WebView snapshots")
 expect(appSource.contains("let scenario = environment[\"WEIBEI_VERIFY_SCENARIO\"] ?? \"\"")
@@ -3382,6 +3402,15 @@ expect(!workspaceStoreSource.contains("selectedItem?.title ?? \"当前材料\"")
     && !workspaceStoreSource.contains("已清除钥匙串密钥。")
     && !workspaceStoreSource.contains("已保存到 macOS 钥匙串。")
     && !workspaceStoreSource.contains("已选择材料、当前选区和右侧笔记"), "agent context and setup notices avoid fake material fallback copy and visible internal agent labels")
+expect(
+    workspaceStoreSource.contains("let selectedProvider = agentProviderID")
+        && workspaceStoreSource.contains("let linkedOAuth = PiOAuthService.readLinkedOAuthProviders")
+        && workspaceStoreSource.contains("if !explicitProvider.isEmpty { return explicitProvider }")
+        && workspaceStoreSource.contains("if selectedProvider == .openaiCodex { return \"openai-codex\" }")
+        && workspaceStoreSource.contains("apiKey: usesOAuth ? nil : credential?.key")
+        && workspaceStoreSource.contains("thinkingLevel: thinking.isEmpty ? \"medium\" : thinking"),
+    "PI honors the selected provider, reuses subscription OAuth without injecting an API key, and keeps the current thinking default"
+)
 if let requestStart = workspaceStoreSource.range(of: "private func performAgentRequest() async")?.lowerBound,
    let executionStart = workspaceStoreSource.range(of: "private func executeStudyAgentRequest")?.lowerBound {
     let requestSource = String(workspaceStoreSource[requestStart..<executionStart])
@@ -3625,7 +3654,7 @@ expect(notesAgentSource.contains("case .split:")
     && notesAgentSource.contains("compact: true,\n                        fitsContentHeight: false")
     && notesAgentSource.contains("var fitsContentHeight = true")
     && notesAgentSource.contains("guard compact && fitsContentHeight else { return }")
-    && notesAgentSource.contains(".frame(height: compact && fitsContentHeight ? max(contentHeight, 44) : nil)"), "split note compare uses compact preview typography without collapsing the preview pane height")
+    && notesAgentSource.contains(".frame(height: compact && fitsContentHeight ? max(contentHeight, Self.compactPreviewLoadingHeight) : nil)"), "split note compare uses compact preview typography without collapsing the preview pane height")
 expect(notesAgentSource.contains("func weibeiPaneHeaderChrome(appearanceMode: WeiBeiAppearanceMode) -> some View")
     && notesAgentSource.contains("struct WeiBeiPaneHeader<Actions: View>: View")
     && notesAgentSource.contains("var title: String")
@@ -4146,6 +4175,11 @@ expect(notesAgentSource.contains("private let agentBottomAnchorID = \"agentConve
     && notesAgentSource.contains("proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)")
     && !notesAgentSource.contains("AgentScrollBottomPreferenceKey")
     && !notesAgentSource.contains("onPreferenceChange(AgentScrollBottomPreferenceKey"), "agent conversation uses a stable bottom anchor without a geometry preference loop")
+expect(notesAgentSource.contains("// No scrollTargetLayout / scrollPosition / minHeight:viewport /")
+    && notesAgentSource.contains("guard agentFollowsLatest else { return }")
+    && !notesAgentSource.contains("AgentMessageFramePreferenceKey")
+    && !notesAgentSource.contains(".coordinateSpace(name: agentConversationCoordinateSpace)")
+    && !notesAgentSource.contains(".scrollPosition(id:"), "agent conversation avoids geometry preference and scroll-position loops that re-center a long rich answer after an internal interaction")
 expect(notesAgentSource.contains("private var agentInputMaxWidth: CGFloat?")
     && notesAgentSource.contains("AgentChatLayoutMetrics.contentWidth(")
     && notesAgentSource.contains("composerFieldHeight")

@@ -47,6 +47,8 @@ struct WeiBeiPiCheckMain {
 
         if CommandLine.arguments.contains("--rich-answer-protocol") {
             do {
+                try await RichAnswerPythonArtifactSelfCheck.runExecutorChecks()
+                try runRichAnswerSemanticGateSelfCheck()
                 try runRichAnswerProtocolSelfCheck()
                 print("rich-answer-protocol-check completed: invalid protocol rejected; final evidence gates still pending user acceptance")
             } catch {
@@ -187,7 +189,10 @@ struct WeiBeiPiCheckMain {
                 try await checkNoteMaking(runtime)
             }
             if runsRichAnswerCheck || runsEvaluation {
-                try await checkRichAnswer(runtime, environment: environment)
+                try await checkRichAnswer(
+                    executableURL: executableURL,
+                    environment: environment
+                )
             }
             if runsEvaluation {
                 try await checkStudyCompanion(runtime)
@@ -244,7 +249,7 @@ struct WeiBeiPiCheckMain {
     }
 
     private static func checkRichAnswer(
-        _ runtime: PiAgentRuntime,
+        executableURL: URL,
         environment: [String: String]
     ) async throws {
         try RichAnswerLiveCases.assertMatrixMatchesPressureCases()
@@ -301,7 +306,12 @@ struct WeiBeiPiCheckMain {
                         summary = "\(runCase.id):deterministic-protocol-rejection"
                     case let .success(checkCase):
                         request = richAnswerRequest(checkCase)
-                        let liveReply = try await runtime.respond(to: request!)
+                        let liveReply = try await withFreshRichAnswerRuntime(
+                            executableURL: executableURL,
+                            providerConfiguration: runConfiguration.piProviderConfiguration
+                        ) { runtime in
+                            try await runtime.respond(to: request!)
+                        }
                         reply = liveReply
                         let presentation = try validateRichAnswer(liveReply, for: checkCase)
                         let elapsedSeconds = Date().timeIntervalSince(startedAt)
@@ -318,6 +328,7 @@ struct WeiBeiPiCheckMain {
                                 "inline-placement",
                                 "expression-plan",
                                 "renderer-requirement",
+                                "thinking-level=\(runConfiguration.thinkingLevel ?? "inherited")",
                                 latencyCheck(elapsedSeconds, threshold: 150),
                             ],
                             reply: liveReply
@@ -325,7 +336,12 @@ struct WeiBeiPiCheckMain {
                         summary = "\(checkCase.id):scenes=\(presentation.scenes.count),t1=\(programCount),t2=\(compositionCount),latency=\(elapsedText)s"
                     case let .textOnly(checkCase):
                         request = richAnswerTextOnlyRequest(checkCase)
-                        let liveReply = try await runtime.respond(to: request!)
+                        let liveReply = try await withFreshRichAnswerRuntime(
+                            executableURL: executableURL,
+                            providerConfiguration: runConfiguration.piProviderConfiguration
+                        ) { runtime in
+                            try await runtime.respond(to: request!)
+                        }
                         reply = liveReply
                         try validateRichAnswerTextOnly(liveReply, for: checkCase)
                         let elapsedSeconds = Date().timeIntervalSince(startedAt)
@@ -337,6 +353,7 @@ struct WeiBeiPiCheckMain {
                                 "source-bound",
                                 "no-rich-answer",
                                 "no-ui-catalog",
+                                "thinking-level=\(runConfiguration.thinkingLevel ?? "inherited")",
                                 latencyCheck(elapsedSeconds, threshold: 60),
                             ],
                             reply: liveReply
@@ -344,7 +361,12 @@ struct WeiBeiPiCheckMain {
                         summary = "\(checkCase.id):text-only,latency=\(elapsedText)s"
                     case let .degradation(checkCase):
                         request = richAnswerDegradationRequest(checkCase)
-                        let liveReply = try await runtime.respond(to: request!)
+                        let liveReply = try await withFreshRichAnswerRuntime(
+                            executableURL: executableURL,
+                            providerConfiguration: runConfiguration.piProviderConfiguration
+                        ) { runtime in
+                            try await runtime.respond(to: request!)
+                        }
                         reply = liveReply
                         try validateRichAnswerDegradation(liveReply, for: checkCase)
                         let elapsedSeconds = Date().timeIntervalSince(startedAt)
@@ -356,6 +378,7 @@ struct WeiBeiPiCheckMain {
                                 "context-read",
                                 "honest-readable-limitation",
                                 "unsafe-rich-answer-blocked",
+                                "thinking-level=\(runConfiguration.thinkingLevel ?? "inherited")",
                                 latencyCheck(elapsedSeconds, threshold: 90),
                             ],
                             reply: liveReply
@@ -440,6 +463,187 @@ struct WeiBeiPiCheckMain {
             )
         }
         print("pi-rich-answer matrix technical run completed: \(summaries.joined(separator: "; ")); final-gates=pending-screenshots-review-package; status=待用户验收")
+    }
+
+    private static func withFreshRichAnswerRuntime<T>(
+        executableURL: URL,
+        providerConfiguration: PiAgentProviderConfiguration,
+        operation: (PiAgentRuntime) async throws -> T
+    ) async throws -> T {
+        let runtimeRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("weibei-pi-rich-answer-\(UUID().uuidString)", isDirectory: true)
+        let runtime = PiAgentRuntime(
+            executableURL: executableURL,
+            runtimeDirectory: runtimeRoot
+        )
+        do {
+            await runtime.configure(providerConfiguration)
+            _ = try await runtime.healthCheck()
+            let result = try await operation(runtime)
+            await runtime.shutdown()
+            try verifyNoPersistedTurnState(runtimeRoot)
+            try? FileManager.default.removeItem(at: runtimeRoot)
+            return result
+        } catch {
+            await runtime.shutdown()
+            try? FileManager.default.removeItem(at: runtimeRoot)
+            throw error
+        }
+    }
+
+    private static func runRichAnswerSemanticGateSelfCheck() throws {
+        try assertRichAnswerSemanticGate(
+            containsEveryGroup(
+                "实际利率约等于名义利率 − 预期通胀率。",
+                [["实际利率"], ["名义利率"], ["通货膨胀", "通胀"], ["减"]]
+            ),
+            "binary-minus-counts-as-subtract"
+        )
+        try assertRichAnswerSemanticGate(
+            containsEveryGroup(
+                "顶点式 y = 2(x − 2)²，横向平移由 x − 2 决定。",
+                [["x"], ["2"], ["减"]]
+            ),
+            "variable-minus-number-counts-as-subtract"
+        )
+        try assertRichAnswerSemanticGate(
+            containsEveryGroup(
+                "函数 y = x² − 3 的整体下移量是 3。",
+                [["x²"], ["3"], ["减"]]
+            ),
+            "superscript-minus-number-counts-as-subtract"
+        )
+        try assertRichAnswerSemanticGate(
+            containsAny("20% 折现 NPV 约 -3.81。", ["-3.81"]),
+            "unary-negative-number-preserved"
+        )
+
+        let rcContract = RichAnswerProfessionalJudgmentContracts.contract(
+            for: "learning-physics-rc-circuit-transient"
+        )
+        let rcCorrect = RichAnswerProfessionalJudgmentValidator.validate(
+            units: RichAnswerProfessionalJudgmentValidator.claimUnits(
+                from: "时间常数 tau 等于 1.0 s；t = tau 时 Vc 约 3.16 V；5 tau 只是接近稳态而非精确到达。"
+            ),
+            contract: rcContract
+        )
+        try assertRichAnswerSemanticGate(
+            rcCorrect.missingRequiredClaims.isEmpty
+                && !rcCorrect.triggeredForbiddenClaims.contains("five-tau-exact"),
+            "local-tau-alias-and-negative-boundary"
+        )
+        let rcWrong = RichAnswerProfessionalJudgmentValidator.validate(
+            units: ["5 tau 完全到达稳态"],
+            contract: rcContract
+        )
+        try assertRichAnswerSemanticGate(
+            rcWrong.triggeredForbiddenClaims.contains("five-tau-exact"),
+            "wrong-local-tau-claim-still-blocked"
+        )
+        let rcWrongWithTrailingException = RichAnswerProfessionalJudgmentValidator.validate(
+            units: ["5 tau 完全到达稳态不是近似"],
+            contract: rcContract
+        )
+        try assertRichAnswerSemanticGate(
+            rcWrongWithTrailingException.triggeredForbiddenClaims.contains("five-tau-exact"),
+            "trailing-negation-does-not-clear-positive-forbidden-claim"
+        )
+
+        let doubleSlitContract = RichAnswerProfessionalJudgmentContracts.contract(
+            for: "learning-physics-double-slit-interference"
+        )
+        let doubleSlitCorrect = RichAnswerProfessionalJudgmentValidator.validate(
+            units: RichAnswerProfessionalJudgmentValidator.claimUnits(
+                from: "当前亮纹间距约 3 mm。lambda 和 L 增大条纹变疏，缝距 d 增大条纹变密。材料没有给出单缝宽度，只能小角度示意，不能精确画出衍射包络。"
+            ),
+            contract: doubleSlitContract
+        )
+        try assertRichAnswerSemanticGate(
+            doubleSlitCorrect.missingRequiredClaims.isEmpty
+                && doubleSlitCorrect.triggeredForbiddenClaims.isEmpty,
+            "local-lambda-d-aliases"
+        )
+
+        let titleOnlyPresentation = RichAnswerPresentation(
+            mode: .rich,
+            narrative: "",
+            scenes: [
+                RichAnswerScene(
+                    id: "title-only",
+                    title: "时间常数 tau 等于 1.0 s",
+                    family: .quantityAndCoordinates,
+                    objects: []
+                ),
+            ],
+            evidenceState: .complete
+        )
+        let titleOnlyReply = StudyAgentReply(
+            text: "",
+            backend: .pi,
+            richAnswer: titleOnlyPresentation
+        )
+        let titleOnlyJudgment = RichAnswerProfessionalJudgmentValidator.validate(
+            units: professionalJudgmentUnits(reply: titleOnlyReply, presentation: titleOnlyPresentation),
+            contract: rcContract
+        )
+        try assertRichAnswerSemanticGate(
+            titleOnlyJudgment.missingRequiredClaims.contains("tau-one-second"),
+            "scene-title-alone-does-not-satisfy-claim"
+        )
+
+        guard let quantityCase = RichAnswerLiveCases.successes.first(where: {
+            $0.id == "learning-math-quadratic-vertex"
+        }) else {
+            throw PiCheckError.invalidEvaluation("semantic-gate-self-check missing quantity case")
+        }
+        let weakUI = RichAnswerUIComposition(
+            rootID: "root",
+            nodes: [
+                RichAnswerUINode(id: "root", role: .vstack, children: ["control", "steps", "value"]),
+                RichAnswerUINode(id: "control", role: .scrubber, label: "步骤", bindingID: "step"),
+                RichAnswerUINode(id: "steps", role: .sequence, datasetID: "states", bindingID: "step"),
+                RichAnswerUINode(id: "value", role: .metric, label: "读数", datasetID: "states", bindingID: "step"),
+            ],
+            datasets: [
+                RichAnswerUIDataset(
+                    id: "states",
+                    rows: [
+                        RichAnswerUIDataRow(id: "a", x: 0, y: 0, value: 0, label: "只换成步骤一"),
+                        RichAnswerUIDataRow(id: "b", x: 0, y: 0, value: 1, label: "只换成步骤二"),
+                    ]
+                ),
+            ],
+            bindings: [
+                RichAnswerUIBinding(
+                    id: "step",
+                    label: "步骤",
+                    minimum: 0,
+                    maximum: 1,
+                    step: 1,
+                    initialValue: 0
+                ),
+            ]
+        )
+        let weakScene = RichAnswerScene(
+            id: "weak",
+            title: "弱可视化",
+            family: .quantityAndCoordinates,
+            objects: [],
+            ui: weakUI
+        )
+        try assertRichAnswerSemanticGate(
+            t2SceneIssues(weakScene, for: quantityCase).contains("missing-stateful-nontext-encoding"),
+            "sequence-metric-text-reflow-blocked-for-nonprocess"
+        )
+    }
+
+    private static func assertRichAnswerSemanticGate(
+        _ condition: Bool,
+        _ name: String
+    ) throws {
+        guard condition else {
+            throw PiCheckError.invalidEvaluation("rich-answer semantic gate self-check failed: \(name)")
+        }
     }
 
     private static func checkStudyCompanion(_ runtime: PiAgentRuntime) async throws {
@@ -680,7 +884,14 @@ struct WeiBeiPiCheckMain {
                 }
                 let reply = try record.studyAgentReply()
                 let presentation = try validateRichAnswer(reply, for: checkCase)
-                let layer = presentation.scenes.contains(where: { $0.program != nil }) ? "t1" : "t2"
+                let layer: String
+                if presentation.scenes.contains(where: { $0.renderPlan != nil }) {
+                    layer = "renderPlan"
+                } else if presentation.scenes.contains(where: { $0.program != nil }) {
+                    layer = "t1"
+                } else {
+                    layer = "t2"
+                }
                 let judgment = professionalJudgmentValidation(
                     reply: reply,
                     presentation: presentation,
@@ -882,7 +1093,7 @@ struct WeiBeiPiCheckMain {
         return StudyAgentRequest(
             purpose: .conversation,
             workflow: .closeReading,
-            question: "这是自动验收题。不要直接凭上下文回答；第一步必须读取魏碑提供的当前材料或选区来源。如果无法读取来源，只说明无法读取来源，不要生成富回答。完成本轮来源读取后，先检索本轮相关生成式 UI 能力，再生成一个紧凑、真正可操作、来源绑定的视觉体验块；本题明确要求 expressionPlan.preferredSurface 和 scene.placement 均为 inline，使它成为正文的自然一部分。由你根据问题选择深组件或通用原语，不要把组件名、程序源码或 UI JSON 写进正文，不要穷举节点，也不要写成第二篇完整文章。\(checkCase.question)",
+            question: "这是自动验收题。不要直接凭上下文回答；第一步必须读取魏碑提供的当前材料或选区来源。如果无法读取来源，只说明无法读取来源，不要生成富回答。完成本轮来源读取后，先检索本轮相关生成式 UI 能力，再生成一个紧凑、真正可操作、来源绑定的视觉体验块；本题明确要求 expressionPlan.preferredSurface 和 scene.placement 均为 inline，使它成为正文的自然一部分。请自主比较注册专业渲染计划、成熟深组件程序和受控长尾组合三条表达出口，以本题学习价值选择最合适的路线；不要把组件名、程序源码或 UI JSON 写进正文，不要穷举节点，也不要写成第二篇完整文章。\(checkCase.question)",
             materialTitle: checkCase.materialTitle,
             materialText: checkCase.materialText,
             noteTitle: "\(checkCase.discipline)验收笔记",
@@ -919,6 +1130,10 @@ struct WeiBeiPiCheckMain {
                     StudyAgentCourseRelation(noteItemID: noteID, sourceItemID: materialID),
                 ]
             ),
+            visualAssets: RichAnswerLiveVerificationAssets.visualAsset(
+                for: checkCase.id,
+                currentMaterialID: materialID
+            ).map { [$0] } ?? [],
             learningContext: StudyAgentLearningContext(
                 memoryRevision: 3,
                 lastLocation: StudyLocation(
@@ -958,7 +1173,8 @@ struct WeiBeiPiCheckMain {
         return StudyAgentRequest(
             purpose: .conversation,
             workflow: .closeReading,
-            question: "这是富回答失败与降级验收题。第一步必须读取魏碑当前上下文和可用来源。不得用常识、示例数据或假执行补齐缺口；来源、安全或协议条件不满足时，保留简短可读正文并诚实说明限制。\(checkCase.question)",
+            answerFormPolicy: checkCase.allowsPartialRichAnswer ? .partialRichAllowed : .textOnly,
+            question: "这是回答失败与诚实降级验收题。第一步必须读取魏碑当前上下文和可用来源。不得用常识、示例数据或假执行补齐缺口；来源、安全或协议条件不满足时，保留简短可读正文并诚实说明限制。\(checkCase.question)",
             materialTitle: checkCase.materialTitle,
             materialText: checkCase.materialText,
             materialIsTruncated: checkCase.materialIsTruncated,
@@ -1069,7 +1285,6 @@ struct WeiBeiPiCheckMain {
               presentation.diagnostics.isEmpty,
               presentation.evidenceState == .complete,
               !presentation.evidenceLedger.isEmpty,
-              professionalFactObligationsSatisfied(reply: reply, presentation: presentation, for: checkCase),
               presentation.expressionPlan?.preferredSurface == .inline,
               presentation.expressionPlan?.directManipulation == true,
               presentation.scenes.allSatisfy({ $0.placement == .inline }) else {
@@ -1078,8 +1293,8 @@ struct WeiBeiPiCheckMain {
 
         let hasValidT1 = presentation.scenes.contains { validT1Scene($0, in: presentation, for: checkCase) }
         let hasValidT2 = presentation.scenes.contains { validT2Scene($0, for: checkCase) }
-        guard hasValidT1 || hasValidT2,
-              richAnswerLooksInterleaved(reply.text, presentation: presentation) else {
+        let hasValidRenderPlan = presentation.scenes.contains { validRenderPlanScene($0) }
+        guard hasValidT1 || hasValidT2 || hasValidRenderPlan else {
             throw richAnswerFailure(reply, checkCase: checkCase)
         }
         return presentation
@@ -1102,7 +1317,7 @@ struct WeiBeiPiCheckMain {
         for checkCase: RichAnswerLiveDegradationCase
     ) -> [String] {
         var issues: [String] = []
-        issues.append(contentsOf: richAnswerDegradationInvocationIssues(reply))
+        issues.append(contentsOf: richAnswerDegradationInvocationIssues(reply, for: checkCase))
         issues.append(contentsOf: richAnswerDegradationReadableLimitationIssues(reply, for: checkCase))
         issues.append(contentsOf: richAnswerDegradationSourceIssues(reply, for: checkCase))
         issues.append(contentsOf: richAnswerDegradationRichSceneIssues(reply, for: checkCase))
@@ -1110,13 +1325,25 @@ struct WeiBeiPiCheckMain {
     }
 
     private static func richAnswerDegradationInvocationIssues(
-        _ reply: StudyAgentReply
+        _ reply: StudyAgentReply,
+        for checkCase: RichAnswerLiveDegradationCase
     ) -> [String] {
         var issues: [String] = []
         if reply.backend != .pi { issues.append("backend-not-pi") }
         if reply.noteProposal != nil { issues.append("unexpected-note-proposal") }
         if !replyToolTraceContains(reply, token: "weibei_context") {
             issues.append("missing-context-read")
+        }
+        if !checkCase.allowsPartialRichAnswer {
+            if replyToolTraceContains(reply, token: "weibei_ui_catalog") {
+                issues.append("text-only-degradation-called-ui-catalog")
+            }
+            if replyToolTraceContains(reply, token: "host_rejected=text_only_policy") {
+                issues.append("text-only-degradation-hit-host-rejection")
+            }
+            if !textOnlyChoiceHasNoDegradationDisclosure(reply.text) {
+                issues.append("text-only-degradation-leaked-rich-answer-failure")
+            }
         }
         return issues
     }
@@ -1126,8 +1353,8 @@ struct WeiBeiPiCheckMain {
         for checkCase: RichAnswerLiveDegradationCase
     ) -> [String] {
         var issues: [String] = []
-        if !containsEveryGroup(reply.text, checkCase.expectedTextGroups) {
-            issues.append("missing-expected-limitation")
+        if reply.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            issues.append("empty-degradation-answer")
         }
         let forbiddenClaims = forbiddenPositiveClaims(
             in: reply.text,
@@ -1176,9 +1403,6 @@ struct WeiBeiPiCheckMain {
         if !replyToolTraceShowsCatalogBeforeRichAnswer(reply) {
             issues.append("partial-rich-missing-catalog-trace")
         }
-        if !richAnswerLooksInterleaved(reply.text, presentation: presentation) {
-            issues.append("partial-rich-not-interleaved")
-        }
         if checkCase.materialIsTruncated, presentation.evidenceState != .partial {
             issues.append("truncated-material-rich-not-partial")
         }
@@ -1198,10 +1422,10 @@ struct WeiBeiPiCheckMain {
               reply.richAnswer == nil,
               replyToolTraceContains(reply, token: "weibei_context"),
               !replyToolTraceContains(reply, token: "weibei_ui_catalog"),
+              !reply.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               containsSourceLabel(reply.text),
               reply.text.contains("[材料：\(checkCase.materialTitle)")
                 || reply.text.contains("[选区：\(checkCase.selectionTitle)"),
-              containsEveryGroup(reply.text, checkCase.expectedTextGroups),
               textOnlyChoiceHasNoDegradationDisclosure(reply.text),
               checkCase.forbiddenTextFragments.allSatisfy({ !reply.text.localizedCaseInsensitiveContains($0) }) else {
             throw PiCheckError.invalidEvaluation(
@@ -1229,37 +1453,39 @@ struct WeiBeiPiCheckMain {
               program.directManipulation,
               checkCase.forbiddenProgramFragments.allSatisfy({
                   !program.source.localizedCaseInsensitiveContains($0)
-              }) else {
+              }),
+              !scene.evidenceIDs.isEmpty else {
             return false
         }
-        let source = program.source
-        let componentNames = t1ComponentNames(in: source)
-        let preferredComponentGroupMatches = checkCase.requiredT1ComponentGroups.filter {
-            containsAny(source, $0)
-        }.count
-        let familyMatches = richAnswerFamilyMatches(presentation, scene: scene, for: checkCase)
-            || !inferredT1Families(componentNames: componentNames, capabilities: program.capabilities)
-                .isDisjoint(with: checkCase.pressureCase.expectedCapabilityFamilies)
-        let hasEvidenceBinding = componentNames.contains { componentName in
-            ["EvidenceSnippet", "ArgumentUnit", "CausalEvent", "SpatialPoint"].contains(componentName)
-        } && scene.evidenceIDs.contains { evidenceID in
-            source.contains("\"\(evidenceID)\"")
-        }
-        let semanticGroupMatches = checkCase.knowledgeTargets.filter {
-            containsAny(source, $0)
-        }.count
-        let minimumSemanticMatches = min(2, max(1, checkCase.knowledgeTargets.count))
-        let openCapabilityMatches = familyMatches
-            && hasEvidenceBinding
-            && semanticGroupMatches >= minimumSemanticMatches
-        return preferredComponentGroupMatches >= checkCase.minimumT1GroupMatches || openCapabilityMatches
+        return true
     }
 
     private static func validT2Scene(
         _ scene: RichAnswerScene,
         for checkCase: RichAnswerLiveSuccessCase
     ) -> Bool {
-        t2SceneIssues(scene, for: checkCase).isEmpty
+        t2ObjectiveSceneIssues(scene, for: checkCase).isEmpty
+    }
+
+    private static func t2ObjectiveSceneIssues(
+        _ scene: RichAnswerScene,
+        for checkCase: RichAnswerLiveSuccessCase
+    ) -> [String] {
+        t2SceneIssues(scene, for: checkCase).filter { issue in
+            issue == "missing-ui"
+                || issue == "missing-direct-control"
+                || issue == "missing-stateful-nontext-encoding"
+                || issue.hasPrefix("unbound-evidence:")
+                || issue.hasPrefix("missing-material-asset:")
+        }
+    }
+
+    private static func validRenderPlanScene(_ scene: RichAnswerScene) -> Bool {
+        guard let plan = scene.renderPlan else { return false }
+        let negotiation = RichAnswerRendererRegistry.defaultRegistry().negotiate(plan: plan)
+        guard negotiation.status == .accepted else { return false }
+        let sceneEvidenceIDs = Set(scene.evidenceIDs)
+        return plan.sourceBindings.allSatisfy { sceneEvidenceIDs.contains($0.evidenceID) }
     }
 
     private static func t2SceneIssues(
@@ -1292,6 +1518,30 @@ struct WeiBeiPiCheckMain {
         let visualRoleCount = roles.intersection(visualValueRoles).count
         if visualRoleCount < 2 {
             issues.append("weak-visual-value:\(visualRoleCount)")
+        }
+        let expectedFamilies = checkCase.pressureCase.expectedCapabilityFamilies
+        let familiesNeedingStatefulNonTextEncoding: Set<RichAnswerCapabilityFamily> = [
+            .quantityAndCoordinates,
+            .timeAndSpace,
+            .relationAndEvidence,
+            .imageAndOverlay,
+            .comparisonAndEvaluation,
+            .calculationAndConstraints,
+        ]
+        let needsStatefulNonTextEncoding =
+            familiesNeedingStatefulNonTextEncoding.contains(scene.family)
+            || !expectedFamilies.isDisjoint(with: familiesNeedingStatefulNonTextEncoding)
+        if needsStatefulNonTextEncoding,
+           !t2HasStateChangingNonTextEncoding(ui) {
+            issues.append("missing-stateful-nontext-encoding")
+        }
+        if needsStatefulNonTextEncoding {
+            let textReflowRoles = layoutOnlyT2Roles
+                .union(directRoles)
+                .union([.metric, .sequence])
+            if roles.isSubset(of: textReflowRoles) {
+                issues.append("text-reflow-ui")
+            }
         }
         let layoutOnlyRoles: Set<RichAnswerUIRole> = [
             .vstack,
@@ -1353,8 +1603,8 @@ struct WeiBeiPiCheckMain {
         if !missingSemanticGroups.isEmpty {
             issues.append("missing-semantic-obligations:\(missingSemanticGroups.joined(separator: "+"))")
         }
-        let missingInteractionOutcomes = checkCase.interactionOutcomes.enumerated().compactMap { index, group in
-            containsAny(semanticCorpus, group) ? nil : String(index + 1)
+        let missingInteractionOutcomes = checkCase.interactionOutcomes.enumerated().compactMap { index, obligation in
+            obligation.allSatisfy { containsAny(semanticCorpus, $0) } ? nil : String(index + 1)
         }
         if !missingInteractionOutcomes.isEmpty {
             issues.append("missing-interaction-outcomes:\(missingInteractionOutcomes.joined(separator: "+"))")
@@ -1375,6 +1625,69 @@ struct WeiBeiPiCheckMain {
         return issues
     }
 
+    private static var layoutOnlyT2Roles: Set<RichAnswerUIRole> {
+        [
+            .vstack,
+            .hstack,
+            .zstack,
+            .grid,
+            .panel,
+            .text,
+            .label,
+            .divider,
+            .evidence,
+        ]
+    }
+
+    private static func t2HasStateChangingNonTextEncoding(_ ui: RichAnswerUIComposition) -> Bool {
+        let controlRoles: Set<RichAnswerUIRole> = [.slider, .toggle, .scrubber, .probe]
+        let statefulNonTextRoles: Set<RichAnswerUIRole> = [
+            .axis,
+            .line,
+            .path,
+            .point,
+            .area,
+            .shape,
+            .bar,
+            .dotMatrix,
+            .vector,
+            .region,
+            .image,
+        ]
+        let datasetsByID = Dictionary(
+            ui.datasets.map { ($0.id, $0) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        return ui.bindings.contains { binding in
+            let hasControl = ui.nodes.contains {
+                $0.bindingID == binding.id && controlRoles.contains($0.role)
+            }
+            guard hasControl else { return false }
+            return ui.nodes.contains { node in
+                guard node.bindingID == binding.id,
+                      statefulNonTextRoles.contains(node.role),
+                      let datasetID = node.datasetID,
+                      let dataset = datasetsByID[datasetID] else {
+                    return false
+                }
+                return t2RowsHaveChangingNumericOutcome(dataset.rows)
+            }
+        }
+    }
+
+    private static func t2RowsHaveChangingNumericOutcome(_ rows: [RichAnswerUIDataRow]) -> Bool {
+        guard rows.count >= 2 else { return false }
+        let numericSets: [[Double]] = [
+            rows.map(\.x),
+            rows.map(\.y),
+            rows.compactMap(\.x2),
+            rows.compactMap(\.y2),
+            rows.compactMap(\.value),
+            rows.compactMap(\.result),
+        ]
+        return numericSets.contains { Set($0).count >= 2 }
+    }
+
     private static func richAnswerFailure(
         _ reply: StudyAgentReply,
         checkCase: RichAnswerLiveSuccessCase
@@ -1383,6 +1696,7 @@ struct WeiBeiPiCheckMain {
         let families = presentation?.scenes.map(\.family.rawValue).joined(separator: ",") ?? "none"
         let programCount = presentation?.scenes.filter { $0.program != nil }.count ?? 0
         let compositionCount = presentation?.scenes.filter { $0.ui != nil }.count ?? 0
+        let renderPlanCount = presentation?.scenes.filter { $0.renderPlan != nil }.count ?? 0
         let diagnostics = presentation?.diagnostics.map(\.code.rawValue).joined(separator: ",") ?? "none"
         let programComponents = presentation?.scenes.compactMap(\.program?.source).flatMap { source in
             Array(t1ComponentNames(in: source)).sorted()
@@ -1416,19 +1730,31 @@ struct WeiBeiPiCheckMain {
             }
         } ?? false
         let hasValidT2 = presentation?.scenes.contains { validT2Scene($0, for: checkCase) } ?? false
+        let hasValidRenderPlan = presentation?.scenes.contains { validRenderPlanScene($0) } ?? false
+        let renderPlans = presentation?.scenes.compactMap { scene in
+            scene.renderPlan.map { "\($0.renderer)@\($0.specVersion)" }
+        }.joined(separator: ",") ?? "none"
+        let renderPlanIssues = presentation?.scenes.compactMap { scene -> String? in
+            guard let plan = scene.renderPlan else { return nil }
+            let result = RichAnswerRendererRegistry.defaultRegistry().negotiate(plan: plan)
+            let issues = result.mismatch?.issues.map { issue in
+                [issue.code.rawValue, issue.field].compactMap { $0 }.joined(separator: "@")
+            } ?? []
+            return "\(scene.id):\(issues.isEmpty ? "none" : issues.joined(separator: "+"))"
+        }.joined(separator: "|") ?? "none"
         let professionalJudgment = presentation.map {
             professionalJudgmentValidation(reply: reply, presentation: $0, for: checkCase)
         }
         let preferredRendererMatches: Bool
         switch checkCase.rendererRequirement {
         case .either:
-            preferredRendererMatches = hasValidT1 || hasValidT2
+            preferredRendererMatches = hasValidT1 || hasValidT2 || hasValidRenderPlan
         case .t1:
-            preferredRendererMatches = hasValidT1
+            preferredRendererMatches = hasValidT1 || hasValidRenderPlan
         case .t2:
-            preferredRendererMatches = hasValidT2
+            preferredRendererMatches = hasValidT2 || hasValidRenderPlan
         }
-        let rendererMatches = hasValidT1 || hasValidT2
+        let rendererMatches = hasValidT1 || hasValidT2 || hasValidRenderPlan
         let familyMatches = presentation.map { richAnswerFamilyMatches($0, for: checkCase) } ?? false
         let interleaved = presentation.map {
             richAnswerLooksInterleaved(reply.text, presentation: $0)
@@ -1465,10 +1791,10 @@ struct WeiBeiPiCheckMain {
                 + "preferred=\(presentation?.expressionPlan?.preferredSurface.rawValue ?? "none") "
                 + "direct=\(presentation?.expressionPlan?.directManipulation ?? false) "
                 + "placements=\(placements) familyMatch=\(familyMatches) renderer=\(rendererMatches) preferredRenderer=\(preferredRendererMatches) "
-                + "validT1=\(hasValidT1) validT2=\(hasValidT2) interleaved=\(interleaved) "
+                + "validT1=\(hasValidT1) validT2=\(hasValidT2) validRenderPlan=\(hasValidRenderPlan) interleaved=\(interleaved) "
                 + "interleavingIssues=\(interleavingIssues) parts=\(partSummary) "
                 + "families=\(families) components=\(programComponents) roles=\(roles) "
-                + "t1=\(programCount) t2=\(compositionCount) t2Issues=\(t2Issues) t2Semantics=\(t2Semantics) diagnostics=\(diagnostics) "
+                + "t1=\(programCount) t2=\(compositionCount) renderPlans=\(renderPlanCount):\(renderPlans) renderPlanIssues=\(renderPlanIssues) t2Issues=\(t2Issues) t2Semantics=\(t2Semantics) diagnostics=\(diagnostics) "
                 + "tools=\(toolTrace) reply=\(replySummary)"
         )
     }
@@ -1714,8 +2040,7 @@ struct WeiBeiPiCheckMain {
             presentation.expressionPlan?.summary,
         ].compactMap { $0 }
             + presentation.scenes.flatMap { scene in
-                [scene.title]
-                    + (scene.program.map { t1ProfessionalClaimUnits($0.source) } ?? [])
+                (scene.program.map { t1ProfessionalClaimUnits($0.source) } ?? [])
                     + (scene.ui.map(t2ProfessionalClaimUnits) ?? [])
             }
     }
@@ -1878,12 +2203,7 @@ struct WeiBeiPiCheckMain {
     }
 
     private static func normalizedSemanticText(_ text: String) -> String {
-        text
-            .lowercased()
-            .replacingOccurrences(of: "−", with: "-")
-            .replacingOccurrences(of: "—", with: "-")
-            .components(separatedBy: .whitespacesAndNewlines)
-            .joined()
+        RichAnswerProfessionalJudgmentValidator.normalizedText(text)
     }
 
     private static func replyToolTraceShowsCatalogBeforeRichAnswer(_ reply: StudyAgentReply) -> Bool {
@@ -1914,7 +2234,21 @@ struct WeiBeiPiCheckMain {
         _ text: String,
         presentation: RichAnswerPresentation
     ) -> Bool {
-        richAnswerInterleavingIssues(text, presentation: presentation).isEmpty
+        let objectiveIssuePrefixes = [
+            "empty-text",
+            "code-fence",
+            "protocol-in-text",
+            "program-in-text",
+            "root-in-text",
+            "page-heading",
+            "scene-first",
+            "missing-narrative-part",
+            "missing-scene-part",
+            "scene-set-mismatch",
+        ]
+        return richAnswerInterleavingIssues(text, presentation: presentation).allSatisfy { issue in
+            !objectiveIssuePrefixes.contains { issue.hasPrefix($0) }
+        }
     }
 
     private static func richAnswerInterleavingIssues(

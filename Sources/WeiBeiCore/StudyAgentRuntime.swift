@@ -14,12 +14,75 @@ public enum StudyAgentWorkflow: String, Codable, Sendable {
     case recallPractice
 }
 
+public enum StudyAgentAnswerFormPolicy: String, Codable, Equatable, Sendable {
+    case automatic
+    case textOnly
+    case partialRichAllowed
+}
+
+public enum StudyAgentSourceLimitation {
+    public static func isHonest(_ text: String) -> Bool {
+        let normalized = text.lowercased()
+        let limitationTerms = [
+            "没有", "缺少", "不足", "无法", "不能", "未提供", "无可读", "缺失", "尚未",
+            "no readable", "no source", "missing", "insufficient", "cannot", "can't", "unable",
+        ]
+        let evidenceTerms = [
+            "材料", "来源", "证据", "数据", "原文", "文档", "内容", "上下文",
+            "material", "source", "evidence", "data", "document", "context",
+        ]
+        let unsupportedClaimTerms = [
+            "安全剂量为", "安全剂量是", "建议剂量为", "建议剂量是", "推荐剂量",
+            "可以服用", "应服用", "病因是", "诊断为", "我估计", "推测为", "大约为", "约为",
+            "safe dose is", "recommended dose", "should take", "diagnosis is", "i estimate",
+        ]
+        let containsQuantifiedClaim = normalized.range(
+            of: #"\d+(?:\.\d+)?\s*(?:mg|g|ml|mcg|μg|%|毫克|克|毫升|微克)"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil
+        return limitationTerms.contains(where: normalized.contains)
+            && evidenceTerms.contains(where: normalized.contains)
+            && !unsupportedClaimTerms.contains(where: normalized.contains)
+            && !containsQuantifiedClaim
+    }
+}
+
 public enum StudyAgentQuestionScope {
+    public static func allowsSourceFreeAnswer(_ question: String) -> Bool {
+        var remainder = normalized(question)
+        let sourceFreePhrases = [
+            "请给我讲一个笑话", "给我讲一个笑话", "请给我讲个笑话", "给我讲个笑话",
+            "讲一个笑话", "讲个笑话", "说一个笑话", "说个笑话",
+            "你叫什么名字", "你的名字是什么", "你叫什么", "你是谁",
+            "介绍一下你自己", "自我介绍一下", "你能做什么", "你可以做什么",
+            "你会做什么", "你是干什么的",
+            "早上好", "下午好", "晚上好", "你好", "您好", "哈喽", "嗨", "在吗",
+            "连通测试", "连接测试", "连通复核", "连接复核", "只回复", "仅回复", "pi订阅登录已连通",
+            "不要生成富回答", "不生成富回答", "不要用富回答",
+            "谢谢你", "谢谢", "多谢", "明白了", "知道了", "收到", "好的", "再见",
+            "tellmeajoke", "tellajoke", "whatisyourname", "whatsyourname", "whoareyou",
+            "introduceyourself", "whatcanyoudo", "hello", "hi", "hey", "thankyou", "thanks", "goodbye", "bye",
+        ].sorted { $0.count > $1.count }
+        var matchedSourceFreePhrase = false
+        for phrase in sourceFreePhrases where remainder.contains(phrase) {
+            remainder = remainder.replacingOccurrences(of: phrase, with: "")
+            matchedSourceFreePhrase = true
+        }
+        guard matchedSourceFreePhrase else { return false }
+        let benignWords = [
+            "请", "一下", "可以吗", "行吗", "呀", "啊", "呢", "吧", "嘛", "哈",
+            "候选包", "当前包", "本次", "本轮", "版本",
+            "please", "me", "a", "the", "and",
+        ]
+        for word in benignWords {
+            remainder = remainder.replacingOccurrences(of: word, with: "")
+        }
+        remainder.removeAll { $0.isNumber }
+        return remainder.isEmpty
+    }
+
     public static func allowsLearningOnlyAnswer(_ question: String) -> Bool {
-        var remainder = question.lowercased().unicodeScalars.filter {
-            CharacterSet.alphanumerics.contains($0)
-                || (0x4E00...0x9FFF).contains(Int($0.value))
-        }.map(String.init).joined()
+        var remainder = normalized(question)
         let statePhrases = [
             "你记得我的学习情况吗", "你记得我学到哪吗", "我上次学习到哪了", "我上次学习到哪",
             "我上次学到哪了", "我上次学到哪", "上次学习到哪了", "上次学习到哪",
@@ -45,6 +108,13 @@ public enum StudyAgentQuestionScope {
             remainder = remainder.replacingOccurrences(of: word, with: "")
         }
         return remainder.isEmpty
+    }
+
+    private static func normalized(_ question: String) -> String {
+        question.lowercased().unicodeScalars.filter {
+            CharacterSet.alphanumerics.contains($0)
+                || (0x4E00...0x9FFF).contains(Int($0.value))
+        }.map(String.init).joined()
     }
 }
 
@@ -311,6 +381,18 @@ public struct StudyAgentCourseContext: Codable, Equatable, Sendable {
     public static let empty = StudyAgentCourseContext(title: "Course")
 }
 
+public struct StudyAgentVisualAsset: Codable, Equatable, Sendable {
+    public var id: String
+    public var filePath: String
+    public var mediaType: String
+
+    public init(id: String, filePath: String, mediaType: String) {
+        self.id = id
+        self.filePath = filePath
+        self.mediaType = mediaType
+    }
+}
+
 public struct StudyAgentSessionSnapshot: Codable, Equatable, Sendable {
     public var id: String
     public var title: String
@@ -361,6 +443,7 @@ public struct StudyAgentRequest: Sendable {
     public var id: UUID
     public var purpose: StudyAgentPurpose
     public var workflow: StudyAgentWorkflow
+    public var answerFormPolicy: StudyAgentAnswerFormPolicy
     public var question: String
     public var materialTitle: String
     public var materialText: String
@@ -371,6 +454,7 @@ public struct StudyAgentRequest: Sendable {
     public var selectionText: String?
     public var recentMessages: [AgentMessage]
     public var courseContext: StudyAgentCourseContext
+    public var visualAssets: [StudyAgentVisualAsset]
     public var learningContext: StudyAgentLearningContext
     public var language: WeiBeiInterfaceLanguage
     public var contextRevision: String
@@ -379,6 +463,7 @@ public struct StudyAgentRequest: Sendable {
         id: UUID = UUID(),
         purpose: StudyAgentPurpose,
         workflow: StudyAgentWorkflow = .automatic,
+        answerFormPolicy: StudyAgentAnswerFormPolicy = .automatic,
         question: String,
         materialTitle: String,
         materialText: String,
@@ -389,6 +474,7 @@ public struct StudyAgentRequest: Sendable {
         selectionText: String? = nil,
         recentMessages: [AgentMessage] = [],
         courseContext: StudyAgentCourseContext = .empty,
+        visualAssets: [StudyAgentVisualAsset] = [],
         learningContext: StudyAgentLearningContext = .empty,
         language: WeiBeiInterfaceLanguage = .chinese,
         contextRevision: String
@@ -396,6 +482,7 @@ public struct StudyAgentRequest: Sendable {
         self.id = id
         self.purpose = purpose
         self.workflow = workflow
+        self.answerFormPolicy = answerFormPolicy
         self.question = question
         self.materialTitle = materialTitle
         self.materialText = materialText
@@ -406,6 +493,7 @@ public struct StudyAgentRequest: Sendable {
         self.selectionText = selectionText
         self.recentMessages = recentMessages
         self.courseContext = courseContext
+        self.visualAssets = visualAssets
         self.learningContext = learningContext
         self.language = language
         self.contextRevision = contextRevision
@@ -504,12 +592,41 @@ public struct StudyAgentLearningUpdate: Codable, Equatable, Sendable {
     }
 }
 
+public struct StudyAgentLoadedSkill: Codable, Equatable, Sendable {
+    public var id: String
+    public var name: String
+    public var version: String
+    public var sha256: String
+    public var byteCount: Int
+    public var relativePath: String
+    public var loadedAtContextRevision: String
+
+    public init(
+        id: String,
+        name: String,
+        version: String,
+        sha256: String,
+        byteCount: Int,
+        relativePath: String,
+        loadedAtContextRevision: String
+    ) {
+        self.id = id
+        self.name = name
+        self.version = version
+        self.sha256 = sha256
+        self.byteCount = byteCount
+        self.relativePath = relativePath
+        self.loadedAtContextRevision = loadedAtContextRevision
+    }
+}
+
 public struct StudyAgentReply: Equatable, Sendable {
     public var text: String
     public var backend: StudyAgentBackend
     public var richAnswer: RichAnswerPresentation?
     public var noteProposal: StudyAgentNoteProposal?
     public var learningUpdate: StudyAgentLearningUpdate?
+    public var loadedSkills: [StudyAgentLoadedSkill]
     public var toolTrace: [String]
 
     public init(
@@ -518,6 +635,7 @@ public struct StudyAgentReply: Equatable, Sendable {
         richAnswer: RichAnswerPresentation? = nil,
         noteProposal: StudyAgentNoteProposal? = nil,
         learningUpdate: StudyAgentLearningUpdate? = nil,
+        loadedSkills: [StudyAgentLoadedSkill] = [],
         toolTrace: [String] = []
     ) {
         self.text = text
@@ -525,6 +643,7 @@ public struct StudyAgentReply: Equatable, Sendable {
         self.richAnswer = richAnswer
         self.noteProposal = noteProposal
         self.learningUpdate = learningUpdate
+        self.loadedSkills = loadedSkills
         self.toolTrace = toolTrace
     }
 }
@@ -761,6 +880,7 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
     public var contextRevision: String
     public var purpose: String
     public var workflow: String
+    public var answerFormPolicy: String
     public var language: String
     public var question: String
     public var material: Source?
@@ -768,6 +888,7 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
     public var selection: Source?
     public var recentMessages: [Message]
     public var course: StudyAgentCourseContext
+    public var visualAssets: [StudyAgentVisualAsset]
     public var learning: StudyAgentLearningContext
 
     public init(request: StudyAgentRequest) {
@@ -776,6 +897,7 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
         contextRevision = request.contextRevision
         purpose = request.purpose.rawValue
         workflow = request.resolvedWorkflow.rawValue
+        answerFormPolicy = request.answerFormPolicy.rawValue
         language = request.language.rawValue
         question = String(request.question.prefix(4_000))
 
@@ -813,6 +935,23 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
         }
         let boundedCourse = Self.boundedCourseContext(request.courseContext)
         course = boundedCourse.context
+        let currentMaterialIDs = Set(course.catalog.lazy.filter(\.isCurrentMaterial).map(\.id))
+        visualAssets = request.visualAssets.prefix(4).compactMap { asset in
+            guard let boundedID = boundedCourse.itemIDMap[asset.id],
+                  currentMaterialIDs.contains(boundedID),
+                  asset.filePath.utf8.count <= 4_096,
+                  !asset.filePath.contains("\0"),
+                  !asset.filePath.contains("\n"),
+                  !asset.filePath.contains("\r"),
+                  ["image/jpeg", "image/png", "image/webp"].contains(asset.mediaType) else {
+                return nil
+            }
+            return StudyAgentVisualAsset(
+                id: boundedID,
+                filePath: asset.filePath,
+                mediaType: asset.mediaType
+            )
+        }
         learning = Self.boundedLearningContext(request.learningContext, itemIDMap: boundedCourse.itemIDMap)
     }
 

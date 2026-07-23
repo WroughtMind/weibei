@@ -5,7 +5,45 @@ import WeiBeiCore
 
 private struct RichAnswerWebRuntimeEntry {
     let scene: RichAnswerScene
-    let program: RichAnswerUIProgram
+    let kind: Kind
+
+    enum Kind {
+        case program(RichAnswerUIProgram)
+        case renderPlan(RichAnswerRenderPlan)
+    }
+
+    init(scene: RichAnswerScene, program: RichAnswerUIProgram) {
+        self.scene = scene
+        kind = .program(program)
+    }
+
+    init(scene: RichAnswerScene, renderPlan: RichAnswerRenderPlan) {
+        self.scene = scene
+        kind = .renderPlan(renderPlan)
+    }
+
+    var heightBudget: Int {
+        switch kind {
+        case let .program(program):
+            return program.maxHeight
+        case let .renderPlan(renderPlan):
+            return renderPlan.qualityBudget.maxHeight ?? 420
+        }
+    }
+
+    var isProgram: Bool {
+        if case .program = kind {
+            return true
+        }
+        return false
+    }
+
+    var isRenderPlan: Bool {
+        if case .renderPlan = kind {
+            return true
+        }
+        return false
+    }
 }
 
 struct RichAnswerWebRuntimeView: View {
@@ -15,6 +53,7 @@ struct RichAnswerWebRuntimeView: View {
     private let onRequestExpansion: (() -> Void)?
     private let onOpenEvidence: (RichAnswerEvidence) -> Void
     private let onAction: (String) -> Void
+    private let assetPreview: (String) -> NSImage?
     private let onRuntimeReady: () -> Void
 
     @State private var contentHeight: CGFloat = 240
@@ -30,6 +69,7 @@ struct RichAnswerWebRuntimeView: View {
         onRequestExpansion: (() -> Void)? = nil,
         onOpenEvidence: @escaping (RichAnswerEvidence) -> Void,
         onAction: @escaping (String) -> Void,
+        assetPreview: @escaping (String) -> NSImage? = { _ in nil },
         onRuntimeReady: @escaping () -> Void = {}
     ) {
         entries = [RichAnswerWebRuntimeEntry(scene: scene, program: program)]
@@ -38,6 +78,28 @@ struct RichAnswerWebRuntimeView: View {
         self.onRequestExpansion = onRequestExpansion
         self.onOpenEvidence = onOpenEvidence
         self.onAction = onAction
+        self.assetPreview = assetPreview
+        self.onRuntimeReady = onRuntimeReady
+    }
+
+    init(
+        scene: RichAnswerScene,
+        renderPlan: RichAnswerRenderPlan,
+        evidenceByID: [String: RichAnswerEvidence],
+        expandsOverflow: Bool = false,
+        onRequestExpansion: (() -> Void)? = nil,
+        onOpenEvidence: @escaping (RichAnswerEvidence) -> Void,
+        onAction: @escaping (String) -> Void,
+        assetPreview: @escaping (String) -> NSImage? = { _ in nil },
+        onRuntimeReady: @escaping () -> Void = {}
+    ) {
+        entries = [RichAnswerWebRuntimeEntry(scene: scene, renderPlan: renderPlan)]
+        self.evidenceByID = evidenceByID
+        self.expandsOverflow = expandsOverflow
+        self.onRequestExpansion = onRequestExpansion
+        self.onOpenEvidence = onOpenEvidence
+        self.onAction = onAction
+        self.assetPreview = assetPreview
         self.onRuntimeReady = onRuntimeReady
     }
 
@@ -48,16 +110,24 @@ struct RichAnswerWebRuntimeView: View {
         onRequestExpansion: (() -> Void)? = nil,
         onOpenEvidence: @escaping (RichAnswerEvidence) -> Void,
         onAction: @escaping (String) -> Void,
+        assetPreview: @escaping (String) -> NSImage? = { _ in nil },
         onRuntimeReady: @escaping () -> Void = {}
     ) {
         entries = scenes.compactMap { scene in
-            scene.program.map { RichAnswerWebRuntimeEntry(scene: scene, program: $0) }
+            if let program = scene.program {
+                return RichAnswerWebRuntimeEntry(scene: scene, program: program)
+            }
+            if let renderPlan = scene.renderPlan {
+                return RichAnswerWebRuntimeEntry(scene: scene, renderPlan: renderPlan)
+            }
+            return nil
         }
         self.evidenceByID = evidenceByID
         self.expandsOverflow = expandsOverflow
         self.onRequestExpansion = onRequestExpansion
         self.onOpenEvidence = onOpenEvidence
         self.onAction = onAction
+        self.assetPreview = assetPreview
         self.onRuntimeReady = onRuntimeReady
     }
 
@@ -74,6 +144,7 @@ struct RichAnswerWebRuntimeView: View {
                     verificationAfterRequestID: verificationAfterRequestID,
                     onOpenEvidence: onOpenEvidence,
                     onAction: onAction,
+                    assetPreview: assetPreview,
                     onRuntimeReady: onRuntimeReady
                 )
 
@@ -88,13 +159,21 @@ struct RichAnswerWebRuntimeView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .frame(height: renderedHeight)
-            .clipped()
 
             if contentOverflowed, !expandsOverflow, let onRequestExpansion {
-                Button("展开完整视觉体验") {
+                Button {
                     onRequestExpansion()
+                } label: {
+                    Label("放大操作", systemImage: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 11, weight: .medium))
+                        .symbolRenderingMode(.hierarchical)
                 }
-                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                .buttonStyle(.plain)
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .contentShape(Rectangle())
+                .help("在更大空间中操作这段富回答")
+                .accessibilityIdentifier("rich-answer-expand-visual-experience")
             }
         }
         .accessibilityLabel(entries.map(\.scene.title).joined(separator: "；"))
@@ -104,13 +183,8 @@ struct RichAnswerWebRuntimeView: View {
         }
     }
 
-    private var collapsedHeightLimit: CGFloat {
-        let requested = entries.reduce(0) { $0 + $1.program.maxHeight }
-        return CGFloat(max(160, min(720, requested)))
-    }
-
     private var heightLimit: CGFloat {
-        expandsOverflow ? 2_400 : collapsedHeightLimit
+        5_000
     }
 
     private var renderedHeight: CGFloat {
@@ -120,6 +194,7 @@ struct RichAnswerWebRuntimeView: View {
 
 private final class RichAnswerWebClippingView: NSView {
     let webView: WKWebView
+    var onViewportLayout: ((CGSize) -> Void)?
 
     init(webView: WKWebView) {
         self.webView = webView
@@ -139,6 +214,16 @@ private final class RichAnswerWebClippingView: NSView {
 
     override func viewDidMoveToSuperview() {
         super.viewDidMoveToSuperview()
+        webView.isHidden = false
+        enforceScrollClipping()
+        DispatchQueue.main.async { [weak self] in
+            self?.enforceScrollClipping()
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        webView.isHidden = false
         enforceScrollClipping()
         DispatchQueue.main.async { [weak self] in
             self?.enforceScrollClipping()
@@ -148,6 +233,7 @@ private final class RichAnswerWebClippingView: NSView {
     override func layout() {
         super.layout()
         webView.frame = bounds
+        onViewportLayout?(bounds.size)
         enforceScrollClipping()
         // No per-scroll CALayer mask: bounds observers + mask rebuilds thrash during fling.
         webView.layer?.mask = nil
@@ -219,6 +305,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
     let verificationAfterRequestID: Int
     var onOpenEvidence: (RichAnswerEvidence) -> Void
     var onAction: (String) -> Void
+    var assetPreview: (String) -> NSImage?
     var onRuntimeReady: () -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -231,6 +318,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             runtimeError: $runtimeError,
             onOpenEvidence: onOpenEvidence,
             onAction: onAction,
+            assetPreview: assetPreview,
             onRuntimeReady: onRuntimeReady
         )
     }
@@ -264,6 +352,9 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         context.coordinator.webView = webView
         let clippingView = RichAnswerWebClippingView(webView: webView)
         context.coordinator.clippingView = clippingView
+        clippingView.onViewportLayout = { [weak coordinator = context.coordinator] size in
+            coordinator?.viewportDidLayout(size)
+        }
 
         guard let entryURL = WeiBeiResources.bundle.url(
             forResource: "rich-answer",
@@ -294,14 +385,16 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             runtimeError: $runtimeError,
             onOpenEvidence: onOpenEvidence,
             onAction: onAction,
+            assetPreview: assetPreview,
             onRuntimeReady: onRuntimeReady
         )
-        context.coordinator.sendProgramsIfReady()
+        context.coordinator.sendEntriesIfReady()
         context.coordinator.handleVerificationAfterRequest(verificationAfterRequestID)
     }
 
     static func dismantleNSView(_ container: RichAnswerWebClippingView, coordinator: Coordinator) {
         let webView = container.webView
+        container.onViewportLayout = nil
         coordinator.stop()
         webView.stopLoading()
         webView.configuration.userContentController.removeScriptMessageHandler(
@@ -340,6 +433,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         private var runtimeError: Binding<String?>
         private var onOpenEvidence: (RichAnswerEvidence) -> Void
         private var onAction: (String) -> Void
+        private var assetPreview: (String) -> NSImage?
         private var onRuntimeReady: () -> Void
         private var isReady = false
         private var notifiedRuntimeReady = false
@@ -350,6 +444,9 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         private var verificationWorkItem: DispatchWorkItem?
         private var handledVerificationAfterRequestID = 0
         private var hasRuntimeHeight = false
+        private var payloadPreparationError: String?
+        private var viewportSize: CGSize = .zero
+        private var pendingViewportResizeNotification = false
 
         init(
             entries: [RichAnswerWebRuntimeEntry],
@@ -360,6 +457,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             runtimeError: Binding<String?>,
             onOpenEvidence: @escaping (RichAnswerEvidence) -> Void,
             onAction: @escaping (String) -> Void,
+            assetPreview: @escaping (String) -> NSImage?,
             onRuntimeReady: @escaping () -> Void
         ) {
             self.entries = entries
@@ -370,6 +468,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             self.runtimeError = runtimeError
             self.onOpenEvidence = onOpenEvidence
             self.onAction = onAction
+            self.assetPreview = assetPreview
             self.onRuntimeReady = onRuntimeReady
         }
 
@@ -382,6 +481,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             runtimeError: Binding<String?>,
             onOpenEvidence: @escaping (RichAnswerEvidence) -> Void,
             onAction: @escaping (String) -> Void,
+            assetPreview: @escaping (String) -> NSImage?,
             onRuntimeReady: @escaping () -> Void
         ) {
             self.entries = entries
@@ -392,30 +492,39 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             self.runtimeError = runtimeError
             self.onOpenEvidence = onOpenEvidence
             self.onAction = onAction
+            self.assetPreview = assetPreview
             self.onRuntimeReady = onRuntimeReady
         }
 
-        func sendProgramsIfReady() {
+        func sendEntriesIfReady() {
+            payloadPreparationError = nil
             guard isReady,
+                  hasUsableViewport,
                   let webView,
-                  let payload = programsPayload(),
-                  let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]),
-                  let json = String(data: data, encoding: .utf8),
+                  let payloads = runtimePayloads() else { return }
+            let jsonPayloads = payloads.compactMap(Self.jsonString)
+            guard jsonPayloads.count == payloads.count,
+                  let fingerprintData = try? JSONSerialization.data(withJSONObject: ["payloads": payloads], options: [.sortedKeys]),
+                  let json = String(data: fingerprintData, encoding: .utf8),
                   sentPayloadFingerprint != json else { return }
             sentPayloadFingerprint = json
-            runtimeError.wrappedValue = nil
+            runtimeError.wrappedValue = payloadPreparationError
             hasRuntimeHeight = false
             notifiedRuntimeReady = false
             heightUpdateWorkItem?.cancel()
             heightUpdateWorkItem = nil
-            webView.evaluateJavaScript("window.postMessage(\(json), '*')") { [weak self] _, error in
-                if let error {
-                    self?.sentPayloadFingerprint = nil
-                    self?.runtimeError.wrappedValue = "富回答程序传递失败：\(error.localizedDescription)"
-                } else {
-                    self?.scheduleHeightRecovery()
-                }
+            sendRuntimePayloads(jsonPayloads, using: webView)
+        }
+
+        func viewportDidLayout(_ size: CGSize) {
+            let previousSize = viewportSize
+            viewportSize = size
+            if hasUsableViewport {
+                sendEntriesIfReady()
             }
+            guard sentPayloadFingerprint != nil,
+                  abs(previousSize.width - size.width) >= 1 || abs(previousSize.height - size.height) >= 1 else { return }
+            notifyRuntimeViewportChanged()
         }
 
         func userContentController(
@@ -431,7 +540,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
                 isReady = true
                 readinessWorkItem?.cancel()
                 readinessWorkItem = nil
-                sendProgramsIfReady()
+                sendEntriesIfReady()
             case "weibei:height":
                 guard let height = (body["height"] as? NSNumber)?.doubleValue else { return }
                 let measuredHeight = min(max(CGFloat(height), 160), 5_000)
@@ -539,7 +648,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
 
         private func scheduleHeightRecovery(attempt: Int = 0) {
             heightRecoveryWorkItem?.cancel()
-            guard isReady, attempt < 5, !hasRuntimeHeight else { return }
+            guard isReady, hasUsableViewport, attempt < 5, !hasRuntimeHeight else { return }
             let delay: TimeInterval = attempt == 0 ? 0.12 : min(0.24 * Double(attempt + 1), 1.2)
             let workItem = DispatchWorkItem { [weak self] in
                 self?.recoverHeight(attempt: attempt)
@@ -591,8 +700,30 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             }
             webView.evaluateJavaScript(Self.verificationInteractionScript) { [weak self] value, error in
                 guard let self else { return }
-                if error != nil || !Self.verificationInteractionSucceeded(value) {
+                guard error == nil, Self.verificationInteractionStarted(value) else {
                     scheduleVerificationInteraction(requestID: requestID, attempt: attempt + 1)
+                    return
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) { [weak self, weak webView] in
+                    guard let self, let webView else { return }
+                    webView.evaluateJavaScript(Self.verificationInteractionResultScript) { value, error in
+                        guard error == nil,
+                              let receipt = Self.verificationInteractionReceipt(from: value, entries: self.entries),
+                              receipt.changed else {
+                            self.scheduleVerificationInteraction(requestID: requestID, attempt: attempt + 1)
+                            return
+                        }
+                        RichAnswerVerificationBridge.writeInteractionReceipt(
+                            sceneID: receipt.sceneID,
+                            sceneTitle: receipt.sceneTitle,
+                            target: receipt.target,
+                            kind: receipt.kind,
+                            before: receipt.before,
+                            after: receipt.after,
+                            changed: receipt.changed,
+                            source: "web-runtime"
+                        )
+                    }
                 }
             }
         }
@@ -633,14 +764,43 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         }
 
         private func fallbackContentHeight() -> CGFloat {
-            let requested = entries.reduce(0) { $0 + $1.program.maxHeight }
+            let requested = entries.reduce(0) { $0 + $1.heightBudget }
             guard requested > 0 else { return 220 }
             return min(max(CGFloat(requested) * 0.58, 220), heightLimit)
         }
 
-        private func programsPayload() -> [String: Any]? {
+        private func runtimePayloads() -> [[String: Any]]? {
+            guard !entries.isEmpty else { return nil }
+            if entries.allSatisfy(\.isProgram) {
+                guard let payload = programsPayload(for: entries) else { return nil }
+                return [payload]
+            }
+            if entries.allSatisfy(\.isRenderPlan) {
+                guard let payload = renderPlansPayload(for: entries) else { return nil }
+                return [payload]
+            }
+            let payloads = entries.compactMap { entry -> [String: Any]? in
+                switch entry.kind {
+                case .program:
+                    return programsPayload(for: [entry])
+                case .renderPlan:
+                    return renderPlansPayload(for: [entry])
+                }
+            }
+            guard payloads.count == entries.count else { return nil }
+            return payloads
+        }
+
+        private func programsPayload(for entries: [RichAnswerWebRuntimeEntry]) -> [String: Any]? {
             let programs = entries.compactMap(programPayload)
             guard !programs.isEmpty, programs.count == entries.count else { return nil }
+            if programs.count == 1 {
+                return [
+                    "type": "weibei:setProgram",
+                    "program": programs[0],
+                    "heightLimit": Int(heightLimit.rounded()),
+                ]
+            }
             return [
                 "type": "weibei:setPrograms",
                 "programs": programs,
@@ -649,25 +809,10 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         }
 
         private func programPayload(for entry: RichAnswerWebRuntimeEntry) -> [String: Any]? {
+            guard case let .program(program) = entry.kind else { return nil }
             let scene = entry.scene
-            let program = entry.program
-            let evidenceBindings = scene.evidenceIDs.compactMap { evidenceID -> [String: String]? in
-                guard let evidence = evidenceByID[evidenceID] else { return nil }
-                return [
-                    "id": evidence.id,
-                    "sourceID": evidence.sourceLabel,
-                    "locator": evidence.sourceLabel,
-                ]
-            }
-            let evidenceContent = scene.evidenceIDs.compactMap { evidenceID -> [String: Any]? in
-                guard let evidence = evidenceByID[evidenceID] else { return nil }
-                return [
-                    "id": evidence.id,
-                    "sourceLabel": evidence.sourceLabel,
-                    "excerpt": evidence.excerpt,
-                    "isTruncated": evidence.isTruncated,
-                ]
-            }
+            let evidenceBindings = evidenceBindings(for: scene)
+            let evidenceContent = evidenceContent(for: scene)
             return [
                 "version": program.version,
                 "id": scene.id,
@@ -685,6 +830,298 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
                     "graphics": program.graphics.rawValue,
                 ],
             ]
+        }
+
+        private func renderPlansPayload(for entries: [RichAnswerWebRuntimeEntry]) -> [String: Any]? {
+            let renderPlans = entries.compactMap(renderPlanPayload)
+            guard !renderPlans.isEmpty, renderPlans.count == entries.count else { return nil }
+            let evidenceItems = entries.flatMap { entry in
+                evidenceContent(for: entry.scene)
+            }
+            if renderPlans.count == 1 {
+                return [
+                    "type": "weibei:setRenderPlan",
+                    "renderPlan": renderPlans[0],
+                    "evidenceContent": evidenceItems,
+                    "heightLimit": Int(heightLimit.rounded()),
+                ]
+            }
+            return [
+                "type": "weibei:setRenderPlans",
+                "renderPlans": renderPlans,
+                "evidenceContent": evidenceItems,
+                "heightLimit": Int(heightLimit.rounded()),
+            ]
+        }
+
+        private func renderPlanPayload(for entry: RichAnswerWebRuntimeEntry) -> [String: Any]? {
+            guard case let .renderPlan(renderPlan) = entry.kind,
+                  var plan = Self.foundationJSONObject(from: renderPlan) as? [String: Any] else {
+                return nil
+            }
+            let errors = bridgeLocalImageAssets(in: &plan, for: entry.scene)
+            if !errors.isEmpty {
+                payloadPreparationError = errors.joined(separator: "\n")
+            }
+            return plan
+        }
+
+        private func bridgeLocalImageAssets(in plan: inout [String: Any], for scene: RichAnswerScene) -> [String] {
+            guard let renderer = plan["renderer"] as? String,
+                  renderer == "weibei.image.overlay" || renderer == "weibei.spatial.map",
+                  var spec = plan["spec"] as? [String: Any] else { return [] }
+
+            let allowedAssetIDs = allowedAssetIDs(for: scene)
+            var errors: [String] = []
+
+            if renderer == "weibei.image.overlay" {
+                bridgeImageSource(
+                    at: ["image"],
+                    in: &spec,
+                    allowedAssetIDs: allowedAssetIDs,
+                    errors: &errors
+                )
+                bridgeImageSource(
+                    at: ["comparison", "image"],
+                    in: &spec,
+                    allowedAssetIDs: allowedAssetIDs,
+                    errors: &errors
+                )
+            } else {
+                bridgeImageSource(
+                    at: ["mapAsset"],
+                    in: &spec,
+                    allowedAssetIDs: allowedAssetIDs,
+                    errors: &errors
+                )
+            }
+
+            plan["spec"] = spec
+            return errors
+        }
+
+        private func allowedAssetIDs(for scene: RichAnswerScene) -> Set<String> {
+            var ids = Set(scene.objects.compactMap(\.assetID))
+            ids.formUnion(scene.frames.compactMap(\.assetID))
+            for evidenceID in scene.evidenceIDs {
+                guard let evidence = evidenceByID[evidenceID] else { continue }
+                ids.formUnion(evidence.assetIDs)
+            }
+            return ids
+        }
+
+        private func bridgeImageSource(
+            at path: [String],
+            in spec: inout [String: Any],
+            allowedAssetIDs: Set<String>,
+            errors: inout [String]
+        ) {
+            guard path.count == 1 || path.count == 2 else { return }
+            if path.count == 1 {
+                guard var source = spec[path[0]] as? [String: Any] else { return }
+                bridgeImageSourceObject(&source, path: "spec.\(path[0])", allowedAssetIDs: allowedAssetIDs, errors: &errors)
+                spec[path[0]] = source
+                return
+            }
+
+            guard var parent = spec[path[0]] as? [String: Any],
+                  var source = parent[path[1]] as? [String: Any] else { return }
+            bridgeImageSourceObject(
+                &source,
+                path: "spec.\(path[0]).\(path[1])",
+                allowedAssetIDs: allowedAssetIDs,
+                errors: &errors
+            )
+            parent[path[1]] = source
+            spec[path[0]] = parent
+        }
+
+        private func bridgeImageSourceObject(
+            _ source: inout [String: Any],
+            path: String,
+            allowedAssetIDs: Set<String>,
+            errors: inout [String]
+        ) {
+            guard source["kind"] as? String == "assetRef",
+                  let assetID = (source["source"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !assetID.isEmpty,
+                  allowedAssetIDs.contains(assetID) else { return }
+
+            guard let image = assetPreview(assetID) else {
+                errors.append("\(path) 引用的本地图片资产不可预览：\(assetID)")
+                return
+            }
+            guard let embeddedRaster = Self.embeddedRaster(from: image) else {
+                errors.append("\(path) 引用的本地图片资产无法压缩到安全内嵌预算：\(assetID)")
+                return
+            }
+
+            source["kind"] = "dataUrl"
+            source["source"] = "data:image/\(embeddedRaster.mimeSubtype);base64,\(embeddedRaster.data.base64EncodedString())"
+            source["width"] = embeddedRaster.width
+            source["height"] = embeddedRaster.height
+        }
+
+        private func evidenceBindings(for scene: RichAnswerScene) -> [[String: String]] {
+            scene.evidenceIDs.compactMap { evidenceID -> [String: String]? in
+                guard let evidence = evidenceByID[evidenceID] else { return nil }
+                return [
+                    "id": evidence.id,
+                    "sourceID": evidence.sourceLabel,
+                    "locator": evidence.sourceLabel,
+                ]
+            }
+        }
+
+        private func evidenceContent(for scene: RichAnswerScene) -> [[String: Any]] {
+            scene.evidenceIDs.compactMap { evidenceID -> [String: Any]? in
+                guard let evidence = evidenceByID[evidenceID] else { return nil }
+                return [
+                    "id": evidence.id,
+                    "sourceLabel": evidence.sourceLabel,
+                    "excerpt": evidence.excerpt,
+                    "isTruncated": evidence.isTruncated,
+                ]
+            }
+        }
+
+        private func sendRuntimePayloads(_ jsonPayloads: [String], using webView: WKWebView, index: Int = 0) {
+            guard index < jsonPayloads.count else {
+                notifyRuntimeViewportChanged()
+                scheduleHeightRecovery()
+                return
+            }
+            webView.evaluateJavaScript("window.postMessage(\(jsonPayloads[index]), '*')") { [weak self, weak webView] _, error in
+                guard let self else { return }
+                if let error {
+                    sentPayloadFingerprint = nil
+                    runtimeError.wrappedValue = "富回答内容传递失败：\(error.localizedDescription)"
+                    return
+                }
+                guard let webView else { return }
+                sendRuntimePayloads(jsonPayloads, using: webView, index: index + 1)
+            }
+        }
+
+        private var hasUsableViewport: Bool {
+            viewportSize.width >= 24 && viewportSize.height >= 24
+        }
+
+        private func notifyRuntimeViewportChanged() {
+            guard let webView, !pendingViewportResizeNotification else { return }
+            pendingViewportResizeNotification = true
+            DispatchQueue.main.async { [weak self, weak webView] in
+                guard let self else { return }
+                pendingViewportResizeNotification = false
+                webView?.evaluateJavaScript(Self.viewportResizeScript) { _, _ in }
+            }
+        }
+
+        private static func foundationJSONObject(from renderPlan: RichAnswerRenderPlan) -> Any? {
+            guard let data = try? JSONEncoder().encode(renderPlan) else { return nil }
+            return try? JSONSerialization.jsonObject(with: data)
+        }
+
+        private struct EmbeddedRaster {
+            let data: Data
+            let mimeSubtype: String
+            let width: Int
+            let height: Int
+        }
+
+        private static let embeddedRasterMaxBytes = 850_000
+
+        private static func embeddedRaster(from image: NSImage) -> EmbeddedRaster? {
+            var proposedRect = NSRect(origin: .zero, size: image.size)
+            guard let sourceImage = image.cgImage(
+                forProposedRect: &proposedRect,
+                context: nil,
+                hints: nil
+            ) else { return nil }
+
+            let sourceWidth = sourceImage.width
+            let sourceHeight = sourceImage.height
+            let candidateDimensions = [1_800, 1_440, 1_200, 960].reduce(into: [(Int, Int)]()) { result, maxDimension in
+                let scale = min(1, Double(maxDimension) / Double(max(sourceWidth, sourceHeight)))
+                let dimensions = (
+                    max(1, Int((Double(sourceWidth) * scale).rounded())),
+                    max(1, Int((Double(sourceHeight) * scale).rounded()))
+                )
+                if !result.contains(where: { $0 == dimensions }) {
+                    result.append(dimensions)
+                }
+            }
+
+            for (width, height) in candidateDimensions {
+                if let transparentBitmap = rasterizedBitmap(
+                    sourceImage,
+                    width: width,
+                    height: height,
+                    background: nil
+                ), let pngData = transparentBitmap.representation(using: .png, properties: [:]),
+                   pngData.count <= embeddedRasterMaxBytes {
+                    return EmbeddedRaster(data: pngData, mimeSubtype: "png", width: width, height: height)
+                }
+
+                guard let opaqueBitmap = rasterizedBitmap(
+                    sourceImage,
+                    width: width,
+                    height: height,
+                    background: .white
+                ) else { continue }
+                for compressionFactor in [0.86, 0.76, 0.66] {
+                    guard let jpegData = opaqueBitmap.representation(
+                        using: .jpeg,
+                        properties: [.compressionFactor: compressionFactor]
+                    ) else { continue }
+                    if jpegData.count <= embeddedRasterMaxBytes {
+                        return EmbeddedRaster(data: jpegData, mimeSubtype: "jpeg", width: width, height: height)
+                    }
+                }
+            }
+
+            return nil
+        }
+
+        private static func rasterizedBitmap(
+            _ sourceImage: CGImage,
+            width: Int,
+            height: Int,
+            background: NSColor?
+        ) -> NSBitmapImageRep? {
+            guard let bitmap = NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: width,
+                pixelsHigh: height,
+                bitsPerSample: 8,
+                samplesPerPixel: 4,
+                hasAlpha: true,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 0
+            ), let context = NSGraphicsContext(bitmapImageRep: bitmap) else { return nil }
+
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = context
+            let bounds = CGRect(x: 0, y: 0, width: width, height: height)
+            context.cgContext.interpolationQuality = .high
+            context.cgContext.clear(bounds)
+            if let background {
+                context.cgContext.setFillColor(background.cgColor)
+                context.cgContext.fill(bounds)
+            }
+            context.cgContext.draw(sourceImage, in: bounds)
+            context.flushGraphics()
+            NSGraphicsContext.restoreGraphicsState()
+            return bitmap
+        }
+
+        private static func jsonString(from payload: [String: Any]) -> String? {
+            guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]) else {
+                return nil
+            }
+            return String(data: data, encoding: .utf8)
         }
 
         private static let heightRecoveryScript = """
@@ -705,6 +1142,13 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         })();
         """
 
+        private static let viewportResizeScript = """
+        (() => {
+          window.dispatchEvent(new Event("resize"));
+          window.requestAnimationFrame(() => window.dispatchEvent(new Event("resize")));
+        })();
+        """
+
         private static let verificationInteractionScript = """
         (() => {
           const visible = (element) => {
@@ -714,7 +1158,42 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             const rect = element.getBoundingClientRect();
             return rect.width > 1 && rect.height > 1 && rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth;
           };
-          const labelOf = (element) => String(element?.textContent || element?.getAttribute("aria-label") || "").trim().toLowerCase();
+          const labelOf = (element) => String(element?.getAttribute("aria-label") || element?.textContent || "").trim();
+          const normalizedLabelOf = (element) => labelOf(element).toLowerCase();
+          const controlName = (element) => String(element?.getAttribute("data-weibei-control") || "");
+          const controlID = (element) => String(element?.getAttribute("data-weibei-control-id") || element?.id || labelOf(element) || "");
+          const sceneContainerFor = (element) => element?.closest("[data-weibei-scene-id], [data-scene-id], .generation-answer__program, .generation-answer")
+            || document.querySelector("[data-weibei-scene-id], [data-scene-id], .generation-answer__program, .generation-answer");
+          const sceneIDFor = (element) => sceneContainerFor(element)?.getAttribute("data-weibei-scene-id")
+            || sceneContainerFor(element)?.getAttribute("data-scene-id")
+            || element?.getAttribute("data-weibei-scene-id")
+            || "";
+          const sceneTitleFor = (element) => sceneContainerFor(element)?.getAttribute("aria-label")
+            || element?.closest(".generation-answer")?.getAttribute("aria-label")
+            || document.querySelector(".generation-answer__program")?.getAttribute("aria-label")
+            || document.querySelector(".generation-answer")?.getAttribute("aria-label")
+            || document.title
+            || "";
+          const controlState = (element) => {
+            if (!element) return {};
+            return {
+              control: controlName(element),
+              controlID: controlID(element),
+              tag: String(element.tagName || "").toLowerCase(),
+              role: element.getAttribute("role") || "",
+              label: labelOf(element),
+              value: "value" in element ? String(element.value) : "",
+              checked: "checked" in element ? Boolean(element.checked) : null,
+              selected: element.getAttribute("aria-selected") || "",
+              state: element.getAttribute("data-weibei-state") || "",
+              disabled: Boolean(element.disabled || element.getAttribute("aria-disabled") === "true"),
+              className: String(element.className || "")
+            };
+          };
+          const stateSnapshot = () => Array.from(document.querySelectorAll("[data-weibei-control]"))
+            .filter((element) => visible(element) || element.getAttribute("aria-selected") === "true")
+            .map(controlState);
+          const fingerprint = (value) => JSON.stringify(value);
           const dispatchPointer = (element, type) => {
             const eventInit = { bubbles: true, pointerId: 1, pointerType: "mouse", isPrimary: true };
             const event = typeof PointerEvent === "function" ? new PointerEvent(type, eventInit) : new MouseEvent(type === "pointerdown" ? "mousedown" : "mouseup", { bubbles: true });
@@ -728,9 +1207,9 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             element.click();
             return true;
           };
-          const first = (selectors) => {
+          const first = (selectors, predicate = () => true) => {
             for (const selector of selectors) {
-              const found = Array.from(document.querySelectorAll(selector)).find(visible);
+              const found = Array.from(document.querySelectorAll(selector)).find((element) => visible(element) && predicate(element));
               if (found) return found;
             }
             return null;
@@ -739,13 +1218,12 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             const candidates = selectors.flatMap((selector) => Array.from(document.querySelectorAll(selector)));
             return candidates.find((element) => {
               if (!visible(element)) return false;
-              const label = labelOf(element);
+              const label = normalizedLabelOf(element);
               return patterns.some((pattern) => pattern.test(label)) && !rejectPatterns.some((pattern) => pattern.test(label));
             }) || null;
           };
-          const advanceRange = () => {
-            const range = Array.from(document.querySelectorAll('input[type="range"]')).find(visible);
-            if (!range) return false;
+          const advanceRange = (range) => {
+            if (!range || !visible(range)) return false;
             const minimum = Number(range.min || 0);
             const maximum = Number(range.max || 100);
             const step = Number(range.step || ((maximum - minimum) / 8));
@@ -758,7 +1236,22 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             range.dispatchEvent(new Event("change", { bubbles: true }));
             return true;
           };
-          const executionNext = first([
+          const inactive = (element) => {
+            if (element.disabled || element.getAttribute("aria-disabled") === "true") return false;
+            if (element.getAttribute("aria-selected") === "true") return false;
+            return !String(element.className || "").split(/\\s+/).some((name) => name === "is-active" || name === "is-selected");
+          };
+          const dataControl = (names, predicate = inactive) => first(
+            names.map((name) => `[data-weibei-control="${name}"]`),
+            predicate
+          );
+          const rangeControl = dataControl([
+            "parameter-slider",
+            "distribution-span-slider",
+            "dependency-input-slider"
+          ], (element) => element.matches('input[type="range"]'));
+          const distributionInteraction = dataControl(["distribution-canvas"], () => true);
+          const executionNext = dataControl(["execution-next"]) || first([
             '[data-action="execution-next"]',
             '[data-testid="execution-next"]',
             '[aria-label*="execution-next" i]',
@@ -766,43 +1259,93 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             '.execution-controls button:not(:disabled):last-of-type',
             '.ra-execution-controls button:not(:disabled):last-of-type'
           ]) || byText(["button"], [/下一步|next|step/], [/上一步|previous|prev|back/]);
-          if (press(executionNext)) return true;
-          const processStep = first([
+          const processStep = dataControl(["process-step"]) || first([
             '[data-action="process-next"]',
             '[data-testid="process-next"]',
             '.ra-process button:not(.is-active):not(.is-selected)',
             '.process-step button:not(.is-active):not(.is-selected)',
             '[role="listitem"] button:not(.is-active):not(.is-selected)'
           ]) || byText(["button"], [/过程|阶段|step|process/], [/reset|重置|证据|来源/]);
-          if (press(processStep)) return true;
-          const argumentUnit = first([
+          const argumentUnit = dataControl(["argument-unit"]) || first([
             '.ra-argument-reader__copy button:not(.is-active)',
             '[data-component="ArgumentUnit"]:not(.is-active) button',
             '[data-role="ArgumentUnit"]:not(.is-active) button'
           ]);
-          if (press(argumentUnit)) return true;
-          const causalEvent = first([
+          const causalEvent = dataControl(["causal-event"]) || first([
             '.ra-causal-track__rail button:not(.is-active):not(.is-selected)',
             '.policy-river button:not(.is-selected)',
             '[data-component="CausalEvent"]:not(.is-active) button',
             '[data-role="CausalEvent"]:not(.is-active) button'
           ]);
-          if (press(causalEvent)) return true;
-          const valueOption = first([
+          const valueOption = dataControl(["value-picker-option"]) || first([
             '[role="option"]:not([aria-selected="true"])',
             '.value-picker button:not(.is-active):not(.is-selected)',
             '[data-component="ValuePicker"] button:not(.is-active):not(.is-selected)',
             '[data-role="value-option"]:not(.is-active):not(.is-selected)'
           ]);
-          if (press(valueOption)) return true;
-          const spatialToggle = first([
+          const spatialToggle = dataControl(["spatial-layer-toggle"], () => true) || first([
             '.ra-spatial-view__layers input[type="checkbox"]',
             '[data-component="SpatialToggle"] input[type="checkbox"]',
             '[data-role="spatial-toggle"] input[type="checkbox"]'
           ]);
-          if (press(spatialToggle)) return true;
-          return advanceRange();
+          const imageOverlayLayer = dataControl(["image-overlay-layer"], (element) => {
+            const checkbox = element.querySelector('input[type="checkbox"]');
+            return Boolean(checkbox && !checkbox.disabled && !checkbox.checked);
+          }) || dataControl(["image-overlay-layer"], () => true);
+          const chartProbe = dataControl(["chart-probe"], () => true);
+          const functionProbe = dataControl(["function-probe"], () => true);
+          const declaredVerificationTarget = first(["[data-weibei-verify-event]"], () => true);
+          const scene3DState = dataControl(["scene-3d-state"], (element) => {
+            if (element.matches('input[type="range"]')) return true;
+            return element.getAttribute("aria-pressed") !== "true";
+          });
+          const target = declaredVerificationTarget || distributionInteraction || rangeControl || executionNext || processStep || argumentUnit || causalEvent || valueOption || spatialToggle || imageOverlayLayer || scene3DState || functionProbe || chartProbe || first(['input[type="range"]']);
+          const beforeState = stateSnapshot();
+          const targetBefore = controlState(target);
+          window.WeiBeiVerificationInteractionResult = null;
+          let acted = false;
+          if (target?.matches?.('input[type="range"]')) {
+            acted = advanceRange(target);
+          } else if (target?.getAttribute?.("data-weibei-verify-event")) {
+            acted = target.dispatchEvent(new CustomEvent(target.getAttribute("data-weibei-verify-event"), { bubbles: true }));
+          } else if (["chart-probe", "distribution-canvas", "function-probe"].includes(controlName(target))) {
+            acted = target.dispatchEvent(new CustomEvent("weibei:verify-interaction", { bubbles: true }));
+          } else {
+            acted = press(target);
+          }
+          const finish = () => {
+            const afterState = stateSnapshot();
+            const targetAfter = controlState(target);
+            window.WeiBeiVerificationInteractionResult = {
+              ok: acted,
+              changed: acted && fingerprint({ target: targetBefore, controls: beforeState }) !== fingerprint({ target: targetAfter, controls: afterState }),
+              kind: controlName(target) || (target?.matches?.('input[type="range"]') ? "range" : "press"),
+              sceneID: sceneIDFor(target),
+              sceneTitle: sceneTitleFor(target),
+              target: target ? {
+                control: controlName(target),
+                id: controlID(target),
+                label: labelOf(target),
+                tag: String(target.tagName || "").toLowerCase(),
+                role: target.getAttribute("role") || ""
+              } : {},
+              before: {
+                target: targetBefore,
+                controls: beforeState
+              },
+              after: {
+                target: targetAfter,
+                controls: afterState
+              }
+            };
+          };
+          window.setTimeout(finish, 180);
+          return { started: acted };
         })();
+        """
+
+        private static let verificationInteractionResultScript = """
+        (() => window.WeiBeiVerificationInteractionResult || null)();
         """
 
         private static func heightValue(from value: Any?) -> CGFloat? {
@@ -818,14 +1361,42 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             return nil
         }
 
-        private static func verificationInteractionSucceeded(_ value: Any?) -> Bool {
-            if let number = value as? NSNumber {
-                return number.boolValue
-            }
-            if let value = value as? Bool {
-                return value
-            }
-            return false
+        private static func verificationInteractionReceipt(
+            from value: Any?,
+            entries: [RichAnswerWebRuntimeEntry]
+        ) -> (
+            sceneID: String,
+            sceneTitle: String,
+            target: [String: Any],
+            kind: String,
+            before: Any?,
+            after: Any?,
+            changed: Bool
+        )? {
+            guard let dictionary = value as? [String: Any] else { return nil }
+            let sceneID = dictionary["sceneID"] as? String ?? ""
+            let sceneTitle = dictionary["sceneTitle"] as? String ?? ""
+            let titleMatches = entries.filter { $0.scene.title == sceneTitle }
+            let entry = entries.first(where: { $0.scene.id == sceneID })
+                ?? (titleMatches.count == 1 ? titleMatches[0] : nil)
+                ?? (entries.count == 1 ? entries[0] : nil)
+            guard let scene = entry?.scene else { return nil }
+            let before = dictionary["before"]
+            let after = dictionary["after"]
+            return (
+                sceneID: scene.id,
+                sceneTitle: scene.title,
+                target: dictionary["target"] as? [String: Any] ?? [:],
+                kind: dictionary["kind"] as? String ?? "web-runtime",
+                before: before,
+                after: after,
+                changed: RichAnswerVerificationBridge.changed(before, after)
+            )
+        }
+
+        private static func verificationInteractionStarted(_ value: Any?) -> Bool {
+            guard let dictionary = value as? [String: Any] else { return false }
+            return dictionary["started"] as? Bool ?? false
         }
     }
 }

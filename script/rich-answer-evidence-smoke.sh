@@ -40,8 +40,9 @@ PARTIAL_DIR="$OUTPUT_DIR/_partial-unregistered"
 QUALITY_GATE_JSON="$OUTPUT_DIR/quality-gate.json"
 VISUAL_GATE_SOURCE="$ROOT_DIR/script/rich-answer-visual-gate.swift"
 VISUAL_GATE_BINARY="$OUTPUT_DIR/rich-answer-visual-gate"
-AX_HELPER_CACHE_DIR="${RICH_ANSWER_EVIDENCE_AX_HELPER_CACHE_DIR:-${RICH_ANSWER_EVIDENCE_BUILD_CACHE_DIR:-}}"
+AX_HELPER_CACHE_DIR="${RICH_ANSWER_EVIDENCE_AX_HELPER_CACHE_DIR:-}"
 MIN_FREE_KB="${RICH_ANSWER_MIN_FREE_KB:-20971520}"
+MANUAL_REVIEW_HOLD_SECONDS="${RICH_ANSWER_EVIDENCE_MANUAL_REVIEW_HOLD_SECONDS:-0}"
 SWIFT_SDKROOT="${RICH_ANSWER_SWIFT_SDKROOT:-/Library/Developer/CommandLineTools/SDKs/MacOSX15.4.sdk}"
 SWIFT_CLANG_MODULE_CACHE_DIR="${RICH_ANSWER_SWIFT_CLANG_MODULE_CACHE_DIR:-/private/tmp/weibei-clang-module-cache}"
 SWIFTPM_MODULE_CACHE_DIR="${RICH_ANSWER_SWIFTPM_MODULE_CACHE_DIR:-/private/tmp/weibei-swiftpm-module-cache}"
@@ -158,6 +159,8 @@ LAUNCH_ERROR_FILE="$OUTPUT_DIR/launch-error.log"
 CAPTURE_CHANNEL_DIR="$WORKSPACE_DIR/capture-channel"
 CAPTURE_REQUEST_FILE="$CAPTURE_CHANNEL_DIR/request.json"
 CAPTURE_ACK_FILE="$CAPTURE_CHANNEL_DIR/ack.json"
+ACTION_RECEIPT_WORKSPACE="$WORKSPACE_DIR/rich-answer-action-receipt.json"
+ACTION_RECEIPT_ARCHIVE="$OUTPUT_DIR/action-receipt.json"
 RENDERER_READY_FILE="$WORKSPACE_DIR/rich-answer-renderer-ready.txt"
 OVERVIEW_CAPTURE_REQUEST="$OUTPUT_DIR/overview.request.json"
 OVERVIEW_CAPTURE_ACK="$OUTPUT_DIR/overview.ack.json"
@@ -170,8 +173,20 @@ SINGLE_CAPTURE_ACK="$OUTPUT_DIR/single.ack.json"
 CAPTURE_COUNTER=0
 
 if [[ -n "${RICH_ANSWER_EVIDENCE_BUILD_CACHE_DIR:-}" ]]; then
-  SWIFT_CLANG_MODULE_CACHE_DIR="$RICH_ANSWER_EVIDENCE_BUILD_CACHE_DIR/clang-module-cache"
-  SWIFTPM_MODULE_CACHE_DIR="$RICH_ANSWER_EVIDENCE_BUILD_CACHE_DIR/swiftpm-module-cache"
+  sdk_settings_path="$SWIFT_SDKROOT/SDKSettings.json"
+  sdk_settings_signature="missing"
+  if [[ -f "$sdk_settings_path" ]]; then
+    sdk_settings_signature="$(stat -f '%m:%z' "$sdk_settings_path")"
+  fi
+  swift_cache_fingerprint="$({
+    /usr/bin/swiftc --version
+    printf '%s\n' "$SWIFT_SDKROOT" "$sdk_settings_signature"
+  } | shasum -a 256 | awk '{print substr($1, 1, 16)}')"
+  SWIFT_CLANG_MODULE_CACHE_DIR="$RICH_ANSWER_EVIDENCE_BUILD_CACHE_DIR/clang-module-cache-$swift_cache_fingerprint"
+  SWIFTPM_MODULE_CACHE_DIR="$RICH_ANSWER_EVIDENCE_BUILD_CACHE_DIR/swiftpm-module-cache-$swift_cache_fingerprint"
+  if [[ -z "$AX_HELPER_CACHE_DIR" ]]; then
+    AX_HELPER_CACHE_DIR="$RICH_ANSWER_EVIDENCE_BUILD_CACHE_DIR/helper-cache-$swift_cache_fingerprint"
+  fi
 fi
 mkdir -p "$SWIFT_CLANG_MODULE_CACHE_DIR" "$SWIFTPM_MODULE_CACHE_DIR"
 
@@ -303,6 +318,7 @@ json_manifest() {
   local after_ack_evidence="null"
   local single_request_evidence="null"
   local single_ack_evidence="null"
+  local action_receipt_evidence="null"
   if [[ -s "$replay_marker" ]]; then
     marker_path="$replay_marker"
   elif [[ -s "$scenario_marker" ]]; then
@@ -334,6 +350,7 @@ json_manifest() {
   after_ack_evidence="$(json_file_evidence "$AFTER_CAPTURE_ACK")"
   single_request_evidence="$(json_file_evidence "$SINGLE_CAPTURE_REQUEST")"
   single_ack_evidence="$(json_file_evidence "$SINGLE_CAPTURE_ACK")"
+  action_receipt_evidence="$(json_file_evidence "$ACTION_RECEIPT_ARCHIVE")"
 
   jq -n \
     --arg generatedAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
@@ -381,6 +398,7 @@ json_manifest() {
     --argjson afterAckEvidence "$after_ack_evidence" \
     --argjson singleRequestEvidence "$single_request_evidence" \
     --argjson singleAckEvidence "$single_ack_evidence" \
+    --argjson actionReceiptEvidence "$action_receipt_evidence" \
     --argjson qualityGate "$quality_gate" \
     '{
       generatedAt: $generatedAt,
@@ -430,7 +448,8 @@ json_manifest() {
         before: (if $captureKind == "rich-interaction" then $axBefore else null end),
         after: (if $captureKind == "rich-interaction" then $axAfter else null end),
         action: (if $captureKind == "rich-interaction" then $action else null end),
-        actionError: $actionError
+        actionError: $actionError,
+        appReceipt: (if $captureKind == "rich-interaction" then $actionReceiptEvidence else null end)
       },
       verificationMarker: (if $marker == "" then null else $marker end),
       logs: {
@@ -467,7 +486,8 @@ quarantine_partial_artifacts() {
     "$OUTPUT_DIR/app-owned-initial.png" \
     "$AX_BEFORE" \
     "$AX_AFTER" \
-    "$ACTION_RESULT"; do
+    "$ACTION_RESULT" \
+    "$ACTION_RECEIPT_ARCHIVE"; do
     if [[ -e "$path" ]]; then
       mkdir -p "$PARTIAL_DIR"
       mv "$path" "$PARTIAL_DIR/$(basename "$path")"
@@ -559,10 +579,26 @@ func doubleAttribute(_ element: AXUIElement, _ name: String) -> Double? {
 }
 
 func children(of element: AXUIElement) -> [AXUIElement] {
-    if let children = copyAttribute(element, kAXChildrenAttribute as String) as? [AXUIElement] {
-        return children
+    elementArrayAttribute(element, kAXChildrenAttribute as String)
+}
+
+func elementArrayAttribute(_ element: AXUIElement, _ name: String) -> [AXUIElement] {
+    var valueCount: CFIndex = 0
+    guard AXUIElementGetAttributeValueCount(element, name as CFString, &valueCount) == .success,
+          valueCount > 0 else {
+        return []
     }
-    return []
+    var values: CFArray?
+    guard AXUIElementCopyAttributeValues(element, name as CFString, 0, valueCount, &values) == .success,
+          let array = values else {
+        return []
+    }
+    return (0..<CFArrayGetCount(array)).compactMap { index in
+        guard let pointer = CFArrayGetValueAtIndex(array, index) else { return nil }
+        let candidate = Unmanaged<AXUIElement>.fromOpaque(pointer).takeUnretainedValue()
+        guard CFGetTypeID(candidate) == AXUIElementGetTypeID() else { return nil }
+        return candidate
+    }
 }
 
 func frame(of element: AXUIElement) -> CGRect? {
@@ -607,15 +643,64 @@ func matches(_ element: AXUIElement, query: String) -> Bool {
     return fields.contains { $0.localizedCaseInsensitiveContains(query) }
 }
 
-func walk(_ root: AXUIElement, limit: Int = 6000) -> [AXUIElement] {
+func isInteractive(_ element: AXUIElement) -> Bool {
+    let role = stringAttribute(element, kAXRoleAttribute as String)
+    return [
+        kAXButtonRole,
+        kAXCheckBoxRole,
+        kAXRadioButtonRole,
+        kAXSliderRole,
+        kAXTextFieldRole,
+        kAXPopUpButtonRole,
+        kAXMenuButtonRole,
+        kAXScrollBarRole,
+    ].contains(role)
+}
+
+func isUsefulDumpElement(_ element: AXUIElement) -> Bool {
+    if isInteractive(element) { return true }
+    let role = stringAttribute(element, kAXRoleAttribute as String)
+    if role == kAXWindowRole { return true }
+    let identifier = stringAttribute(element, "AXIdentifier")
+    if [
+        "stable-document-slot-reader",
+        "stable-document-slot-agent",
+        "persistent-pane-reader",
+        "persistent-pane-agent",
+    ].contains(identifier) { return true }
+    let summary = elementSummary(element)
+    return summary.localizedCaseInsensitiveContains("rich-answer")
+        || summary.localizedCaseInsensitiveContains("富回答")
+        || summary.localizedCaseInsensitiveContains("展开完整视觉体验")
+        || summary.localizedCaseInsensitiveContains("下一步")
+        || summary.localizedCaseInsensitiveContains("上一步")
+        || summary.localizedCaseInsensitiveContains("滑块")
+        || summary.localizedCaseInsensitiveContains("slider")
+}
+
+func walk(_ root: AXUIElement, limit: Int = 1600) -> [AXUIElement] {
     var result: [AXUIElement] = []
     var queue = [root]
-    while !queue.isEmpty && result.count < limit {
-        let element = queue.removeFirst()
+    var cursor = 0
+    while cursor < queue.count && result.count < limit {
+        let element = queue[cursor]
+        cursor += 1
         result.append(element)
         queue.append(contentsOf: children(of: element))
     }
     return result
+}
+
+func targetCandidates(in root: AXUIElement, query: String) -> [AXUIElement] {
+    let allowsExpansionButton = query.localizedCaseInsensitiveContains("展开")
+        || query.localizedCaseInsensitiveContains("expand")
+        || query.localizedCaseInsensitiveContains("visual")
+    let candidates = walk(root).filter {
+        matches($0, query: query)
+            && (allowsExpansionButton || !elementSummary($0).localizedCaseInsensitiveContains("展开完整视觉体验"))
+    }
+    let interactive = candidates.filter(isInteractive)
+    return interactive.isEmpty ? candidates : interactive
 }
 
 func focusedWindow(in app: AXUIElement) -> AXUIElement {
@@ -642,7 +727,8 @@ func focusedWindow(in app: AXUIElement) -> AXUIElement {
     if let window = copyAttribute(app, kAXMainWindowAttribute as String) as! AXUIElement?, isPlausibleWindowRoot(window) {
         return window
     }
-    if let windows = copyAttribute(app, kAXWindowsAttribute as String) as? [AXUIElement] {
+    let windows = elementArrayAttribute(app, kAXWindowsAttribute as String)
+    if !windows.isEmpty {
         if let window = windows.first(where: { isWindow($0) }) {
             return window
         }
@@ -663,15 +749,17 @@ func focusedWindow(in app: AXUIElement) -> AXUIElement {
     var attributeNames: CFArray?
     let namesResult = AXUIElementCopyAttributeNames(app, &attributeNames)
     let namesCount = (attributeNames as? [String])?.count ?? 0
-    let windowCount = (copyAttribute(app, kAXWindowsAttribute as String) as? [AXUIElement])?.count ?? 0
-    let childCount = (copyAttribute(app, kAXChildrenAttribute as String) as? [AXUIElement])?.count ?? 0
+    let windowElements = elementArrayAttribute(app, kAXWindowsAttribute as String)
+    let childElements = elementArrayAttribute(app, kAXChildrenAttribute as String)
+    let windowCount = windowElements.count
+    let childCount = childElements.count
     let role = stringAttribute(app, kAXRoleAttribute as String)
     let hidden = copyAttribute(app, kAXHiddenAttribute as String).map { String(describing: $0) } ?? "nil"
     let frontmost = copyAttribute(app, kAXFrontmostAttribute as String).map { String(describing: $0) } ?? "nil"
-    let windowSummaries = (copyAttribute(app, kAXWindowsAttribute as String) as? [AXUIElement] ?? [])
+    let windowSummaries = windowElements
         .map(elementSummary)
         .joined(separator: " || ")
-    let childSummaries = (copyAttribute(app, kAXChildrenAttribute as String) as? [AXUIElement] ?? [])
+    let childSummaries = childElements
         .map(elementSummary)
         .joined(separator: " || ")
     FileHandle.standardError.write(Data((
@@ -839,7 +927,8 @@ case "capture":
     print(id)
 case "dump":
     let root = focusedWindow(in: app)
-    for element in walk(root) {
+    let elements = walk(root).filter(isUsefulDumpElement)
+    for element in elements.prefix(900) {
         print(elementSummary(element))
     }
 case "refresh":
@@ -855,7 +944,7 @@ case "reveal":
     guard args.count >= 4 else { fail("reveal needs a query", code: 2) }
     let query = args[3]
     let root = focusedWindow(in: app)
-    guard let target = walk(root).first(where: { matches($0, query: query) }) else {
+    guard let target = targetCandidates(in: root, query: query).first else {
         fail("AX reveal target not found: \(query)", code: 6)
     }
     let result = AXUIElementPerformAction(target, "AXScrollToVisible" as CFString)
@@ -867,7 +956,7 @@ case "center":
     let query = args[3]
     let root = focusedWindow(in: app)
     let elements = walk(root)
-    guard let target = elements.first(where: { matches($0, query: query) }),
+    guard let target = targetCandidates(in: root, query: query).first,
           let initialTargetFrame = frame(of: target) else {
         fail("AX center target not found: \(query)", code: 6)
     }
@@ -912,7 +1001,7 @@ case "press":
     guard args.count >= 4 else { fail("press needs a query", code: 2) }
     let query = args[3]
     let root = focusedWindow(in: app)
-    guard let target = walk(root).first(where: { matches($0, query: query) }) else {
+    guard let target = targetCandidates(in: root, query: query).first else {
         fail("AX press target not found: \(query)", code: 6)
     }
     let result = AXUIElementPerformAction(target, kAXPressAction as CFString)
@@ -922,7 +1011,7 @@ case "increment":
     guard args.count >= 4 else { fail("increment needs a query", code: 2) }
     let query = args[3]
     let root = focusedWindow(in: app)
-    guard let target = walk(root).first(where: { matches($0, query: query) }) else {
+    guard let target = targetCandidates(in: root, query: query).first else {
         fail("AX increment target not found: \(query)", code: 6)
     }
     let before = doubleAttribute(target, kAXValueAttribute as String)
@@ -937,7 +1026,7 @@ case "set":
     guard args.count >= 5, let value = Double(args[4]) else { fail("set needs a query and numeric value", code: 2) }
     let query = args[3]
     let root = focusedWindow(in: app)
-    guard let target = walk(root).first(where: { matches($0, query: query) }) else {
+    guard let target = targetCandidates(in: root, query: query).first else {
         fail("AX set target not found: \(query)", code: 6)
     }
     let before = doubleAttribute(target, kAXValueAttribute as String)
@@ -1202,7 +1291,19 @@ env_args=(
   "WEIBEI_WORKSPACE_DIR=$WORKSPACE_DIR"
   "WEIBEI_VERIFY_CAPTURE_REQUEST_DIR=$CAPTURE_CHANNEL_DIR"
   "WEIBEI_VERIFY_CAPTURE_OUTPUT_DIR=$OUTPUT_DIR"
+  "WEIBEI_VERIFY_CASE_ID=$CASE_ID"
+  "WEIBEI_VERIFY_CASE_KIND=$CASE_KIND"
+  "WEIBEI_VERIFY_RECORD_PATH=$RECORD_PATH"
 )
+if [[ -n "${WEIBEI_VERIFY_WINDOW_SIZE:-}" ]]; then
+  env_args+=("WEIBEI_VERIFY_WINDOW_SIZE=$WEIBEI_VERIFY_WINDOW_SIZE")
+fi
+if [[ -n "${WEIBEI_VERIFY_AGENT_PANE_RATIO:-}" ]]; then
+  env_args+=("WEIBEI_VERIFY_AGENT_PANE_RATIO=$WEIBEI_VERIFY_AGENT_PANE_RATIO")
+fi
+if [[ -n "${WEIBEI_VERIFY_RICH_ANSWER_CAPTURE_ANCHOR:-}" ]]; then
+  env_args+=("WEIBEI_VERIFY_RICH_ANSWER_CAPTURE_ANCHOR=$WEIBEI_VERIFY_RICH_ANSWER_CAPTURE_ANCHOR")
+fi
 if [[ "${RICH_ANSWER_CAPTURE_LEGACY_INITIAL:-0}" == "1" ]]; then
   env_args+=("WEIBEI_VERIFY_CAPTURE_PATH=$OUTPUT_DIR/app-owned-initial.png")
 fi
@@ -1303,6 +1404,11 @@ capture_window() {
   local capture_label
   local request_archive
   local ack_archive
+  local require_panes=0
+
+  if [[ -n "$REPLAY_ARTIFACT" && "$CASE_KIND" == "rich" ]]; then
+    require_panes=1
+  fi
 
   CAPTURE_COUNTER=$((CAPTURE_COUNTER + 1))
   capture_label="$(basename "$target" .png)"
@@ -1328,6 +1434,7 @@ capture_window() {
         --arg target "$target" \
         --arg stage "$capture_label" \
         --argjson requireReady "$require_renderer_ready" \
+        --argjson requirePanes "$require_panes" \
         '.status == "succeeded"
           and .stage == $stage
           and .requestCapturePath == $target
@@ -1335,7 +1442,22 @@ capture_window() {
           and .actualPNG.path == $target
           and (.actualPNG.bytes | type == "number" and . > 0)
           and (.actualPNG.sha256 | type == "string" and test("^[0-9a-f]{64}$"))
-          and (($requireReady == 0) or (.renderReady.seen == true and (.renderReady.sha256 | test("^[0-9a-f]{64}$"))))' \
+          and (($requireReady == 0) or (.renderReady.seen == true and (.renderReady.sha256 | test("^[0-9a-f]{64}$"))))
+          and (($requirePanes == 0) or (
+            .workspaceState.showReader == true
+            and .workspaceState.showAgent == true
+            and (.workspaceState.visiblePanes | index("reader") != null)
+            and (.workspaceState.visiblePanes | index("agent") != null)
+            and .captureWorkspaceState.stable == true
+            and .captureWorkspaceState.start.showReader == true
+            and .captureWorkspaceState.start.showAgent == true
+            and .captureWorkspaceState.end.showReader == true
+            and .captureWorkspaceState.end.showAgent == true
+            and (.captureWorkspaceState.start.visiblePanes | index("reader") != null)
+            and (.captureWorkspaceState.start.visiblePanes | index("agent") != null)
+            and (.captureWorkspaceState.end.visiblePanes | index("reader") != null)
+            and (.captureWorkspaceState.end.visiblePanes | index("agent") != null)
+          ))' \
         "$CAPTURE_ACK_FILE" >/dev/null 2>&1 \
         && [[ -s "$target" ]]; then
         actual_sha256="$(file_sha256 "$target")"
@@ -1351,7 +1473,13 @@ capture_window() {
         cat "$SCREENSHOT_ERROR" >&2 || true
         return 1
       fi
-      jq -r '.failureReason // "application-owned capture failed without a reason"' "$CAPTURE_ACK_FILE" >"$SCREENSHOT_ERROR"
+      jq -r '
+        if .status != "succeeded" then
+          .failureReason // "application-owned capture failed without a reason"
+        else
+          "application-owned capture acknowledgement did not prove stable required pane state"
+        end
+      ' "$CAPTURE_ACK_FILE" >"$SCREENSHOT_ERROR"
       cat "$SCREENSHOT_ERROR" >&2 || true
       return 1
     fi
@@ -1363,6 +1491,55 @@ capture_window() {
   return 1
 }
 
+wait_for_action_receipt() {
+  rm -f "$ACTION_RECEIPT_ARCHIVE"
+  for _ in {1..80}; do
+    if [[ -s "$ACTION_RECEIPT_WORKSPACE" ]] \
+      && jq -e --arg caseID "$CASE_ID" --arg caseKind "$CASE_KIND" '
+        .schemaVersion == 1
+        and .stage == "after"
+        and .changed == true
+        and (.timestamp | type == "string" and length > 0)
+        and (($caseID == "") or (.case.id == $caseID))
+        and (($caseKind == "") or (.case.kind == $caseKind))
+        and (.scene.id | type == "string" and length > 0)
+        and (.scene.title | type == "string" and length > 0)
+        and (.target | type == "object")
+        and ([.target.id?, .target.control?, .target.label?] | map(select(type == "string" and length > 0)) | length > 0)
+        and (.kind | type == "string" and length > 0)
+        and has("before")
+        and has("after")
+        and (.before != .after)
+      ' "$ACTION_RECEIPT_WORKSPACE" >/dev/null 2>&1; then
+      cp "$ACTION_RECEIPT_WORKSPACE" "$ACTION_RECEIPT_ARCHIVE"
+      return 0
+    fi
+    refresh_app_pid || true
+    sleep 0.25
+  done
+  {
+    echo "application-owned interaction receipt missing or unchanged"
+    if [[ -s "$ACTION_RECEIPT_WORKSPACE" ]]; then
+      echo "--- last receipt ---"
+      cat "$ACTION_RECEIPT_WORKSPACE"
+    fi
+  } >"$ACTION_ERROR"
+  cat "$ACTION_ERROR" >&2 || true
+  return 1
+}
+
+capture_ax_snapshot() {
+  local target="$1"
+  local error_target="$2"
+  rm -f "$target" "$error_target"
+  if "$AX_BINARY" "$APP_PID" dump >"$target.tmp" 2>"$error_target"; then
+    mv "$target.tmp" "$target"
+  else
+    rm -f "$target.tmp"
+    : >"$target"
+  fi
+}
+
 run_visual_gate() {
   local mode="$1"
   local gate_log="$OUTPUT_DIR/quality-gate.log"
@@ -1370,6 +1547,7 @@ run_visual_gate() {
   if [[ "$mode" == "single" ]]; then
     "$VISUAL_GATE_BINARY" \
       --single "$SINGLE_SCREENSHOT" \
+      --single-ack "$SINGLE_CAPTURE_ACK" \
       --ax-before "$AX_BEFORE" \
       --output "$QUALITY_GATE_JSON" >"$gate_log"
   else
@@ -1377,8 +1555,14 @@ run_visual_gate() {
       --overview "$OVERVIEW_SCREENSHOT" \
       --before "$BEFORE_SCREENSHOT" \
       --after "$AFTER_SCREENSHOT" \
+      --overview-ack "$OVERVIEW_CAPTURE_ACK" \
+      --before-ack "$BEFORE_CAPTURE_ACK" \
+      --after-ack "$AFTER_CAPTURE_ACK" \
       --ax-before "$AX_BEFORE" \
       --ax-after "$AX_AFTER" \
+      --action-receipt "$ACTION_RECEIPT_ARCHIVE" \
+      --case-id "$CASE_ID" \
+      --case-kind "$CASE_KIND" \
       --output "$QUALITY_GATE_JSON" >"$gate_log"
   fi
 }
@@ -1439,22 +1623,67 @@ fi
 
 capture_window "$OVERVIEW_SCREENSHOT" 1 || fail_with_manifest 14 "rich-answer evidence smoke failed: could not capture overview window screenshot" "rich-interaction"
 capture_window "$BEFORE_SCREENSHOT" 1 || fail_with_manifest 14 "rich-answer evidence smoke failed: could not capture before window screenshot" "rich-interaction"
-if ! "$AX_BINARY" "$APP_PID" dump >"$AX_BEFORE" 2>"$OUTPUT_DIR/ax-before.err"; then
-  : >"$AX_BEFORE"
+capture_ax_snapshot "$AX_BEFORE" "$OUTPUT_DIR/ax-before.err"
+
+if [[ "$MANUAL_REVIEW_HOLD_SECONDS" =~ ^[0-9]+$ ]] && (( MANUAL_REVIEW_HOLD_SECONDS > 0 )); then
+  printf '%s\n' "$APP_PID" >"$OUTPUT_DIR/manual-review-hold-ready.txt"
+  sleep "$MANUAL_REVIEW_HOLD_SECONDS"
 fi
 
+rm -f "$ACTION_RECEIPT_WORKSPACE" "$ACTION_RECEIPT_ARCHIVE"
 capture_window "$AFTER_SCREENSHOT" 1 || fail_with_manifest 14 "rich-answer evidence smoke failed: could not capture after window screenshot" "rich-interaction"
-if ! "$AX_BINARY" "$APP_PID" dump >"$AX_AFTER" 2>"$OUTPUT_DIR/ax-after.err"; then
-  : >"$AX_AFTER"
-fi
+capture_ax_snapshot "$AX_AFTER" "$OUTPUT_DIR/ax-after.err"
 : >"$ACTION_ERROR"
+wait_for_action_receipt || fail_with_manifest 30 "rich-answer evidence smoke failed: application interaction receipt missing or unchanged" "rich-interaction"
+action_receipt_sha256="$(file_sha256 "$ACTION_RECEIPT_ARCHIVE")"
+action_receipt_bytes="$(file_size_bytes "$ACTION_RECEIPT_ARCHIVE")"
+after_sha256="$(file_sha256 "$AFTER_SCREENSHOT")"
+after_bytes="$(file_size_bytes "$AFTER_SCREENSHOT")"
 jq -n \
-  --arg method "application-owned-verification-stage" \
+  --arg method "application-owned-interaction-receipt" \
+  --arg caseID "$CASE_ID" \
+  --arg caseKind "$CASE_KIND" \
+  --arg afterPath "$AFTER_SCREENSHOT" \
+  --arg afterSha256 "$after_sha256" \
+  --arg afterBytes "$after_bytes" \
+  --arg receiptPath "$ACTION_RECEIPT_ARCHIVE" \
+  --arg receiptSha256 "$action_receipt_sha256" \
+  --arg receiptBytes "$action_receipt_bytes" \
   --slurpfile request "$AFTER_CAPTURE_REQUEST" \
   --slurpfile acknowledgement "$AFTER_CAPTURE_ACK" \
+  --slurpfile receipt "$ACTION_RECEIPT_ARCHIVE" \
   '{
     method: $method,
     stage: "after",
+    succeeded: true,
+    case: {
+      id: (if $caseID == "" then null else $caseID end),
+      kind: (if $caseKind == "" then null else $caseKind end)
+    },
+    afterScreenshot: {
+      path: $afterPath,
+      sha256: $afterSha256,
+      bytes: ($afterBytes | tonumber)
+    },
+    receiptFile: {
+      path: $receiptPath,
+      sha256: $receiptSha256,
+      bytes: ($receiptBytes | tonumber)
+    },
+    proof: {
+      caseID: (if $caseID == "" then null else $caseID end),
+      sceneID: $receipt[0].scene.id,
+      changed: $receipt[0].changed,
+      afterPNG: {
+        sha256: $afterSha256,
+        bytes: ($afterBytes | tonumber)
+      },
+      receipt: {
+        sha256: $receiptSha256,
+        bytes: ($receiptBytes | tonumber)
+      }
+    },
+    receipt: $receipt[0],
     request: $request[0],
     acknowledgement: $acknowledgement[0]
   }' >"$ACTION_RESULT"
@@ -1478,6 +1707,7 @@ after=$AFTER_SCREENSHOT
 ax_before=$AX_BEFORE
 ax_after=$AX_AFTER
 action=$ACTION_RESULT
+action_receipt=$ACTION_RECEIPT_ARCHIVE
 marker=$MARKER_FILE
 stdout=$APP_STDOUT
 stderr=$APP_STDERR

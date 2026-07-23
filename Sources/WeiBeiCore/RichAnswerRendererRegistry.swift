@@ -167,6 +167,12 @@ public struct RichAnswerRendererRegistration: Sendable {
 public struct RichAnswerRendererRegistry: Sendable {
     public static let openUIProgramRenderer = "weibei.openui.program"
     public static let openUICompositionRenderer = "weibei.openui.composition"
+    public static let standardChartRenderer = "weibei.echarts.chart"
+    public static let mathFunctionRenderer = "weibei.math.function"
+    public static let geometry2DRenderer = "weibei.geometry.2d"
+    public static let scene3DRenderer = "weibei.scene-3d"
+    public static let spatialMapRenderer = "weibei.spatial.map"
+    public static let imageOverlayRenderer = "weibei.image.overlay"
 
     private var registrationsByRenderer: [String: RichAnswerRendererRegistration]
 
@@ -334,8 +340,24 @@ public struct RichAnswerRendererRegistry: Sendable {
         let registrations = [
             RichAnswerRendererRegistration(declaration: openUIProgramDeclaration()),
             RichAnswerRendererRegistration(declaration: openUICompositionDeclaration()),
+            RichAnswerRendererRegistration(
+                declaration: standardChartDeclaration(),
+                validateSpec: { plan in validateStandardChartSpec(plan) }
+            ),
+            RichAnswerRendererRegistration(
+                declaration: mathFunctionDeclaration(),
+                validateSpec: { plan in validateMathFunctionSpec(plan) }
+            ),
+            RichAnswerRendererRegistration(declaration: geometry2DDeclaration()),
+            RichAnswerRendererRegistration(declaration: scene3DDeclaration()),
+            RichAnswerRendererRegistration(declaration: spatialMapDeclaration()),
+            RichAnswerRendererRegistration(declaration: imageOverlayDeclaration()),
         ]
         return (try? RichAnswerRendererRegistry(registrations: registrations)) ?? (try! RichAnswerRendererRegistry())
+    }
+
+    public static func defaultRegistry() -> RichAnswerRendererRegistry {
+        compatibilityAdapters()
     }
 
     public static func openUIProgramDeclaration() -> RichAnswerRendererCapabilityDeclaration {
@@ -424,6 +446,415 @@ public struct RichAnswerRendererRegistry: Sendable {
             ),
             compatibilityAdapter: "legacy_t2_composition"
         )
+    }
+
+    public static func standardChartDeclaration() -> RichAnswerRendererCapabilityDeclaration {
+        RichAnswerRendererCapabilityDeclaration(
+            renderer: standardChartRenderer,
+            displayName: "魏碑标准数据图适配器",
+            purpose: "渲染标准 line/bar/area/scatter/mixed/histogram 数据图，只接受高层图表规格，不接收裸 ECharts option。",
+            specVersions: ["weibei.chart.v1"],
+            preferredSpecVersion: "weibei.chart.v1",
+            capabilities: RichAnswerRendererCapabilitySet(
+                dataKinds: [.tabularData, .timeSeries],
+                interactions: [.probe, .select],
+                resources: [.canvas2D, .dom, .webKitBridge]
+            ),
+            limits: RichAnswerRenderQualityBudget(
+                maxNodes: 24,
+                maxDataPoints: 1_024,
+                maxArtifacts: 0,
+                maxBytes: 256_000,
+                maxHeight: 640,
+                maxAnimationFPS: 30,
+                maxInteractionLatencyMS: 120,
+                allowAnimation: true,
+                allowWebGL: false,
+                allowNetwork: false
+            ),
+            fallbackModes: [.narrativeOnly, .simplifiedRenderer, .staticSnapshot],
+            lifecycle: RichAnswerRendererLifecycle(
+                createsRuntime: true,
+                supportsStreamingPatch: false,
+                supportsDynamicHeight: true,
+                needsExplicitTeardown: false
+            ),
+            specContract: RichAnswerRenderSpecContract(
+                requiredRootFields: ["chartKind", "title"],
+                optionalRootFields: [
+                    "binCount",
+                    "caption",
+                    "focusEnabled",
+                    "samples",
+                    "series",
+                    "xAxisLabel",
+                    "xLabels",
+                    "yAxisLabel",
+                ],
+                allowAdditionalRootFields: false,
+                maxDepth: 6,
+                maxObjectFields: 64,
+                maxArrayItems: 512,
+                maxStringLength: 1_200
+            ),
+            compatibilityAdapter: "standard_echarts_chart"
+        )
+    }
+
+    public static func mathFunctionDeclaration() -> RichAnswerRendererCapabilityDeclaration {
+        RichAnswerRendererCapabilityDeclaration(
+            renderer: mathFunctionRenderer,
+            displayName: "魏碑受限数学函数适配器",
+            purpose: "根据受限表达式图、定义域和参数绘制函数；采样、间断切段和响应式由本地运行时负责。",
+            specVersions: ["weibei.math-function.v1"],
+            preferredSpecVersion: "weibei.math-function.v1",
+            capabilities: RichAnswerRendererCapabilitySet(
+                dataKinds: [.functionExpression],
+                interactions: [.probe, .slider],
+                resources: [.canvas2D, .dom, .webKitBridge]
+            ),
+            limits: RichAnswerRenderQualityBudget(
+                maxNodes: 64,
+                maxDataPoints: 1_600,
+                maxArtifacts: 0,
+                maxBytes: 256_000,
+                maxHeight: 640,
+                maxAnimationFPS: 30,
+                maxInteractionLatencyMS: 120,
+                allowAnimation: true,
+                allowWebGL: false,
+                allowNetwork: false
+            ),
+            fallbackModes: [.narrativeOnly, .simplifiedRenderer, .staticSnapshot],
+            lifecycle: RichAnswerRendererLifecycle(
+                createsRuntime: true,
+                supportsStreamingPatch: false,
+                supportsDynamicHeight: true,
+                needsExplicitTeardown: false
+            ),
+            specContract: RichAnswerRenderSpecContract(
+                requiredRootFields: ["domain", "expression", "title", "variable"],
+                optionalRootFields: [
+                    "caption",
+                    "parameters",
+                    "probeEnabled",
+                    "xAxisLabel",
+                    "yAxisLabel",
+                ],
+                allowAdditionalRootFields: false,
+                maxDepth: 7,
+                maxObjectFields: 96,
+                maxArrayItems: 128,
+                maxStringLength: 1_200
+            ),
+            compatibilityAdapter: "restricted_math_function"
+        )
+    }
+
+    public static func geometry2DDeclaration() -> RichAnswerRendererCapabilityDeclaration {
+        RichAnswerRendererCapabilityDeclaration(
+            renderer: geometry2DRenderer,
+            displayName: "魏碑受限二维几何适配器",
+            purpose: "用高层点、线、圆、角、约束、轨迹、控件与读数组合二维几何和确定性实验。",
+            specVersions: ["weibei.geometry-2d.v1"],
+            preferredSpecVersion: "weibei.geometry-2d.v1",
+            capabilities: RichAnswerRendererCapabilitySet(
+                dataKinds: [.geometry, .simulationState],
+                interactions: [.probe, .select, .slider, .toggle, .zoomPan],
+                resources: [.canvas2D, .dom, .webKitBridge]
+            ),
+            limits: RichAnswerRenderQualityBudget(
+                maxNodes: 260,
+                maxDataPoints: 1_200,
+                maxArtifacts: 0,
+                maxBytes: 256_000,
+                maxHeight: 720,
+                maxAnimationFPS: 30,
+                maxInteractionLatencyMS: 120,
+                allowAnimation: true,
+                allowWebGL: false,
+                allowNetwork: false
+            ),
+            fallbackModes: [.narrativeOnly, .simplifiedRenderer, .staticSnapshot],
+            lifecycle: RichAnswerRendererLifecycle(createsRuntime: true),
+            specContract: RichAnswerRenderSpecContract(
+                requiredRootFields: ["coordinateSpace", "points"],
+                optionalRootFields: ["caption", "controls", "readouts", "shapes", "showAxes", "showGrid", "title"],
+                allowAdditionalRootFields: false,
+                maxDepth: 9,
+                maxObjectFields: 260,
+                maxArrayItems: 1_200,
+                maxStringLength: 1_200
+            ),
+            compatibilityAdapter: "restricted_geometry_2d"
+        )
+    }
+
+    public static func scene3DDeclaration() -> RichAnswerRendererCapabilityDeclaration {
+        RichAnswerRendererCapabilityDeclaration(
+            renderer: scene3DRenderer,
+            displayName: "魏碑受控三维场景适配器",
+            purpose: "用本地确定性投影承载相机、坐标、几何体、切片和图层交互，不依赖外链模型或任意脚本。",
+            specVersions: ["weibei.scene-3d.v1"],
+            preferredSpecVersion: "weibei.scene-3d.v1",
+            capabilities: RichAnswerRendererCapabilitySet(
+                dataKinds: [.geometry, .mesh3D, .simulationState],
+                interactions: [.probe, .select, .slider, .toggle, .zoomPan],
+                resources: [.canvas2D, .dom, .webKitBridge]
+            ),
+            limits: RichAnswerRenderQualityBudget(
+                maxNodes: 24,
+                maxDataPoints: 3_200,
+                maxArtifacts: 0,
+                maxBytes: 256_000,
+                maxHeight: 720,
+                maxAnimationFPS: 30,
+                maxInteractionLatencyMS: 160,
+                allowAnimation: true,
+                allowWebGL: false,
+                allowNetwork: false
+            ),
+            fallbackModes: [.narrativeOnly, .simplifiedRenderer, .staticSnapshot],
+            lifecycle: RichAnswerRendererLifecycle(createsRuntime: true),
+            specContract: RichAnswerRenderSpecContract(
+                requiredRootFields: ["camera", "title"],
+                optionalRootFields: ["bounds", "caption", "controls", "coordinateUnits", "focusEnabled", "layers", "objects", "slices", "stateBinding", "states"],
+                allowAdditionalRootFields: false,
+                maxDepth: 10,
+                maxObjectFields: 240,
+                maxArrayItems: 3_200,
+                maxStringLength: 1_200
+            ),
+            compatibilityAdapter: "controlled_scene_3d"
+        )
+    }
+
+    public static func spatialMapDeclaration() -> RichAnswerRendererCapabilityDeclaration {
+        RichAnswerRendererCapabilityDeclaration(
+            renderer: spatialMapRenderer,
+            displayName: "魏碑地图与空间图层适配器",
+            purpose: "承载本地底图、点线面、比例尺、图层开关和标签共享显隐绑定。",
+            specVersions: ["weibei.spatial.map.v1"],
+            preferredSpecVersion: "weibei.spatial.map.v1",
+            capabilities: RichAnswerRendererCapabilitySet(
+                dataKinds: [.geometry, .imageRaster, .semanticGraph],
+                interactions: [.probe, .select, .toggle, .zoomPan],
+                artifactKinds: ["source-image"],
+                resources: [.canvas2D, .dom, .localArtifact, .webKitBridge]
+            ),
+            limits: RichAnswerRenderQualityBudget(
+                maxNodes: 280,
+                maxDataPoints: 8_000,
+                maxArtifacts: 2,
+                maxBytes: 1_500_000,
+                maxHeight: 720,
+                maxAnimationFPS: 30,
+                maxInteractionLatencyMS: 140,
+                allowAnimation: true,
+                allowWebGL: false,
+                allowNetwork: false
+            ),
+            fallbackModes: [.artifactPreview, .narrativeOnly, .simplifiedRenderer, .staticSnapshot],
+            lifecycle: RichAnswerRendererLifecycle(createsRuntime: true),
+            specContract: RichAnswerRenderSpecContract(
+                requiredRootFields: ["coordinateMode", "features"],
+                optionalRootFields: ["bounds", "caption", "controls", "coordinateHint", "crs", "focusEnabled", "layers", "mapAsset", "scaleBar", "title"],
+                allowAdditionalRootFields: false,
+                maxDepth: 9,
+                maxObjectFields: 400,
+                maxArrayItems: 8_000,
+                maxStringLength: 120_000
+            ),
+            compatibilityAdapter: "controlled_spatial_map"
+        )
+    }
+
+    public static func imageOverlayDeclaration() -> RichAnswerRendererCapabilityDeclaration {
+        RichAnswerRendererCapabilityDeclaration(
+            renderer: imageOverlayRenderer,
+            displayName: "魏碑图像覆盖观察适配器",
+            purpose: "在当前材料图像上承载透明叠层、测量、批注和对照，并保持图形、标签和读数状态一致。",
+            specVersions: ["weibei.image-overlay.v1"],
+            preferredSpecVersion: "weibei.image-overlay.v1",
+            capabilities: RichAnswerRendererCapabilitySet(
+                dataKinds: [.geometry, .imageRaster],
+                interactions: [.annotation, .probe, .select, .slider, .toggle, .zoomPan],
+                artifactKinds: ["source-image"],
+                resources: [.dom, .localArtifact, .webKitBridge]
+            ),
+            limits: RichAnswerRenderQualityBudget(
+                maxNodes: 180,
+                maxDataPoints: 1_200,
+                maxArtifacts: 2,
+                maxBytes: 1_500_000,
+                maxHeight: 720,
+                maxAnimationFPS: 30,
+                maxInteractionLatencyMS: 140,
+                allowAnimation: true,
+                allowWebGL: false,
+                allowNetwork: false
+            ),
+            fallbackModes: [.artifactPreview, .narrativeOnly, .simplifiedRenderer, .staticSnapshot],
+            lifecycle: RichAnswerRendererLifecycle(createsRuntime: true),
+            specContract: RichAnswerRenderSpecContract(
+                requiredRootFields: ["image", "layers"],
+                optionalRootFields: ["annotations", "caption", "comparison", "measurement", "objectFit", "showReadout", "title"],
+                allowAdditionalRootFields: false,
+                maxDepth: 10,
+                maxObjectFields: 260,
+                maxArrayItems: 1_200,
+                maxStringLength: 1_500_000
+            ),
+            compatibilityAdapter: "controlled_image_overlay"
+        )
+    }
+
+    private static func validateMathFunctionSpec(
+        _ plan: RichAnswerRenderPlan
+    ) -> [RichAnswerCapabilityMismatchIssue] {
+        guard case let .object(domain)? = plan.spec["domain"],
+              case let .number(minimum)? = domain["minimum"],
+              case let .number(maximum)? = domain["maximum"],
+              minimum.isFinite,
+              maximum.isFinite,
+              minimum < maximum else {
+            return [
+                RichAnswerCapabilityMismatchIssue(
+                    code: .specContractViolation,
+                    renderer: mathFunctionRenderer,
+                    field: "spec.domain",
+                    message: "函数定义域必须是有限区间，且 minimum < maximum",
+                    repairHint: "提交明确的 domain.minimum 和 domain.maximum，不要提交采样点。"
+                ),
+            ]
+        }
+        guard case let .object(expression)? = plan.spec["expression"],
+              case let .string(rootNodeID)? = expression["rootNodeID"],
+              case let .array(rawNodes)? = expression["nodes"],
+              !rootNodeID.isEmpty,
+              !rawNodes.isEmpty,
+              rawNodes.count <= 64 else {
+            return [
+                RichAnswerCapabilityMismatchIssue(
+                    code: .specContractViolation,
+                    renderer: mathFunctionRenderer,
+                    field: "spec.expression",
+                    message: "函数 expression 必须包含 rootNodeID 和 1–64 个受限节点",
+                    repairHint: "只提交常数、变量、参数和白名单运算节点，不要提交公式代码。"
+                ),
+            ]
+        }
+        let nodeIDs = Set(rawNodes.compactMap { value -> String? in
+            guard case let .object(node) = value,
+                  case let .string(id)? = node["id"],
+                  !id.isEmpty else { return nil }
+            return id
+        })
+        guard nodeIDs.count == rawNodes.count, nodeIDs.contains(rootNodeID) else {
+            return [
+                RichAnswerCapabilityMismatchIssue(
+                    code: .specContractViolation,
+                    renderer: mathFunctionRenderer,
+                    field: "spec.expression.nodes",
+                    message: "函数表达式节点 id 必须唯一，rootNodeID 必须可解析",
+                    repairHint: "为每个节点使用唯一 id，并让 rootNodeID 引用最终运算节点。"
+                ),
+            ]
+        }
+        return []
+    }
+
+    private static func validateStandardChartSpec(
+        _ plan: RichAnswerRenderPlan
+    ) -> [RichAnswerCapabilityMismatchIssue] {
+        let supportedChartKinds = ["area", "bar", "histogram", "line", "mixed", "scatter"]
+        guard case let .string(chartKind)? = plan.spec["chartKind"],
+              supportedChartKinds.contains(chartKind) else {
+            return [
+                RichAnswerCapabilityMismatchIssue(
+                    code: .specContractViolation,
+                    renderer: standardChartRenderer,
+                    field: "spec.chartKind",
+                    requested: plan.spec["chartKind"].map { ["\($0)"] } ?? [],
+                    supported: supportedChartKinds,
+                    message: "标准数据图只支持 line、bar、area、scatter、mixed、histogram",
+                    repairHint: "把 chartKind 改为标准图表类型，不要提交底层 ECharts option。"
+                ),
+            ]
+        }
+        if chartKind == "scatter" {
+            if plan.spec["xLabels"] != nil {
+                return [
+                    RichAnswerCapabilityMismatchIssue(
+                        code: .specContractViolation,
+                        renderer: standardChartRenderer,
+                        field: "spec.xLabels",
+                        message: "scatter 使用 series[].xValues，不接受分类 xLabels",
+                        repairHint: "删除 xLabels，并为每个 series 提供与 values 等长的 xValues。"
+                    ),
+                ]
+            }
+            guard case let .array(rawSeries)? = plan.spec["series"], !rawSeries.isEmpty else {
+                return [
+                    RichAnswerCapabilityMismatchIssue(
+                        code: .specContractViolation,
+                        renderer: standardChartRenderer,
+                        field: "spec.series",
+                        message: "scatter 必须提供至少一个数值系列",
+                        repairHint: "为每个系列提交 name、values 和等长的 xValues。"
+                    ),
+                ]
+            }
+            for (index, value) in rawSeries.enumerated() {
+                guard case let .object(series) = value,
+                      case let .array(values)? = series["values"],
+                      case let .array(xValues)? = series["xValues"],
+                      !values.isEmpty,
+                      values.count == xValues.count else {
+                    return [
+                        RichAnswerCapabilityMismatchIssue(
+                            code: .specContractViolation,
+                            renderer: standardChartRenderer,
+                            field: "spec.series[\(index)].xValues",
+                            message: "scatter 的 xValues 必须存在并与 values 等长",
+                            repairHint: "提交成对的 xValues/values 数值，不要改用分类 xLabels。"
+                        ),
+                    ]
+                }
+            }
+            return []
+        }
+        guard chartKind == "mixed" else { return [] }
+        guard case let .array(rawSeries)? = plan.spec["series"] else {
+            return [
+                RichAnswerCapabilityMismatchIssue(
+                    code: .specContractViolation,
+                    renderer: standardChartRenderer,
+                    field: "spec.series",
+                    message: "mixed 图必须提供带相同 unit 的系列",
+                    repairHint: "为每个 series 声明同一个 unit；跨单位比较改用已注册双轴或归一化渲染器。"
+                ),
+            ]
+        }
+        let units = rawSeries.compactMap { value -> String? in
+            guard case let .object(series) = value,
+                  case let .string(unit)? = series["unit"] else { return nil }
+            let trimmed = unit.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }
+        guard units.count == rawSeries.count, Set(units).count == 1 else {
+            return [
+                RichAnswerCapabilityMismatchIssue(
+                    code: .specContractViolation,
+                    renderer: standardChartRenderer,
+                    field: "spec.series[].unit",
+                    requested: units,
+                    message: "mixed 图不能把不同单位放在同一纵轴",
+                    repairHint: "为每个 series 声明同一个 unit；跨单位比较改用已注册双轴或归一化渲染器。"
+                ),
+            ]
+        }
+        return []
     }
 
     private func requestIssues(
@@ -765,6 +1196,93 @@ public enum RichAnswerRendererRegistrySelfCheck {
         )
         let accepted = registry.negotiate(plan: acceptedPlan)
 
+        let chartPlan = RichAnswerRenderPlan(
+            renderer: RichAnswerRendererRegistry.standardChartRenderer,
+            specVersion: "weibei.chart.v1",
+            spec: RichAnswerRenderSpec(
+                fields: [
+                    "chartKind": .string("line"),
+                    "series": .array([
+                        .object([
+                            "name": .string("趋势"),
+                            "values": .array([.number(1), .number(3), .number(2)]),
+                        ]),
+                    ]),
+                    "title": .string("样例趋势"),
+                    "xLabels": .array([.string("一"), .string("二"), .string("三")]),
+                ]
+            ),
+            interactionBindings: [
+                RichAnswerRenderInteractionBinding(
+                    id: "probe_point",
+                    kind: .probe,
+                    target: "series",
+                    stateKey: "point",
+                    knowledgeStateEffect: "查看数据点对应来源"
+                ),
+            ],
+            sourceBindings: [
+                RichAnswerRenderSourceBinding(
+                    id: "source_chart",
+                    evidenceID: "ev_chart",
+                    target: "series",
+                    role: "data_basis"
+                ),
+            ],
+            fallback: RichAnswerRenderFallback(
+                mode: .narrativeOnly,
+                reason: "标准图表不可用时保留带来源的数据解释",
+                text: "暂时无法渲染图表，保留来源绑定的数据解释。"
+            ),
+            qualityBudget: RichAnswerRenderQualityBudget(maxNodes: 8, maxDataPoints: 3, maxHeight: 360)
+        )
+        let chartAccepted = registry.negotiate(plan: chartPlan)
+
+        let scatterPlan = RichAnswerRenderPlan(
+            renderer: RichAnswerRendererRegistry.standardChartRenderer,
+            specVersion: "weibei.chart.v1",
+            spec: RichAnswerRenderSpec(
+                fields: [
+                    "chartKind": .string("scatter"),
+                    "series": .array([
+                        .object([
+                            "name": .string("观测"),
+                            "xValues": .array([.number(1), .number(2), .number(3)]),
+                            "values": .array([.number(2.1), .number(2.9), .number(4.2)]),
+                        ]),
+                    ]),
+                    "title": .string("成对观测"),
+                ]
+            ),
+            interactionBindings: [
+                RichAnswerRenderInteractionBinding(
+                    id: "probe_observation",
+                    kind: .probe,
+                    target: "series",
+                    stateKey: "observation",
+                    knowledgeStateEffect: "查看成对观测"
+                ),
+            ],
+            sourceBindings: [
+                RichAnswerRenderSourceBinding(
+                    id: "source_scatter",
+                    evidenceID: "ev_scatter",
+                    target: "series",
+                    role: "data_basis"
+                ),
+            ],
+            fallback: RichAnswerRenderFallback(
+                mode: .narrativeOnly,
+                reason: "散点图不可用时保留带来源的数据解释",
+                text: "暂时无法渲染散点图，保留来源绑定的数据解释。"
+            ),
+            qualityBudget: RichAnswerRenderQualityBudget(maxNodes: 8, maxDataPoints: 3, maxHeight: 360)
+        )
+        let scatterAccepted = registry.negotiate(plan: scatterPlan)
+        var invalidScatterPlan = scatterPlan
+        invalidScatterPlan.spec["xLabels"] = .array([.string("一"), .string("二"), .string("三")])
+        let invalidScatter = registry.negotiate(plan: invalidScatterPlan)
+
         let mismatchPlan = RichAnswerRenderPlan(
             renderer: "weibei.unregistered.renderer",
             specVersion: "v1",
@@ -788,12 +1306,24 @@ public enum RichAnswerRendererRegistrySelfCheck {
         if accepted.status != .accepted {
             diagnostics.append("compatibility plan was not accepted")
         }
+        if chartAccepted.status != .accepted {
+            diagnostics.append("standard chart plan was not accepted")
+        }
+        if scatterAccepted.status != .accepted {
+            diagnostics.append("paired scatter plan was not accepted")
+        }
+        if invalidScatter.status != .capabilityMismatch
+            || invalidScatter.mismatch?.issues.first?.field != "spec.xLabels" {
+            diagnostics.append("scatter chart did not reject categorical xLabels")
+        }
         if mismatch.status != .capabilityMismatch
             || mismatch.mismatch?.issues.first?.code != .unknownRenderer {
             diagnostics.append("unknown renderer did not report capability_mismatch")
         }
         return RichAnswerRendererRegistrySelfCheckReport(
-            acceptedCompatibilityPlan: accepted.status == .accepted,
+            acceptedCompatibilityPlan: accepted.status == .accepted
+                && chartAccepted.status == .accepted
+                && scatterAccepted.status == .accepted,
             reportsCapabilityMismatch: mismatch.status == .capabilityMismatch,
             diagnostics: diagnostics
         )
