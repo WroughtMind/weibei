@@ -73,8 +73,8 @@ private func checkAnswerGrounding() throws {
 private func checkPiProviderConfiguration() throws {
     let inherited = PiAgentProviderConfiguration()
     try piRequire(
-        inherited.provider == nil && inherited.model == nil && inherited.apiKey == nil && inherited.thinkingLevel == nil,
-        "PI provider defaults inherit subscription settings without injecting API-key overrides"
+        inherited.provider == nil && inherited.model == nil && inherited.apiKey == nil && inherited.thinkingLevel == "medium",
+        "PI provider defaults keep the current medium thinking level without injecting API-key overrides"
     )
 
     let explicit = PiAgentProviderConfiguration(

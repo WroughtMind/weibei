@@ -199,11 +199,11 @@ struct RichAnswerEvidenceRunConfiguration {
     }
 
     var runDescription: String {
-        "\(runID) repetitions=\(repetitions.map(String.init).joined(separator: ",")) thinking=\(thinkingLevel ?? "inherited") root=\(rootURL.path)"
+        "\(runID) repetitions=\(repetitions.map(String.init).joined(separator: ",")) thinking=\(thinkingLevel ?? "medium") root=\(rootURL.path)"
     }
 
     var piProviderConfiguration: PiAgentProviderConfiguration {
-        PiAgentProviderConfiguration(thinkingLevel: thinkingLevel)
+        PiAgentProviderConfiguration(thinkingLevel: thinkingLevel ?? "medium")
     }
 
     private static func parseList(_ rawValue: String?) -> [String] {
