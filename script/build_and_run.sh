@@ -218,6 +218,9 @@ if [[ "$CHECK_ONLY" != true ]]; then
   /usr/bin/xattr -cr "$APP_BUNDLE"
 
   PACKAGED_PI="$APP_RESOURCES/PiRuntime/bin/pi"
+  # Re-seal the copied executable at its final path. On macOS, a freshly copied
+  # ad-hoc binary can otherwise be killed by policy evaluation on its first launch.
+  /usr/bin/codesign --force --sign - --timestamp=none "$PACKAGED_PI" >/dev/null
   if [[ ! -x "$PACKAGED_PI" ]] \
     || [[ ! -f "$APP_RESOURCES/PiRuntime/manifest.json" ]] \
     || [[ ! -f "$APP_RESOURCES/PiRuntime/LICENSE" ]] \
