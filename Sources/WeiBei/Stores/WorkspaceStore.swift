@@ -1074,7 +1074,7 @@ final class WorkspaceStore: ObservableObject {
 
     var selectedContextText: String {
         guard let item = selectedMaterialItem else { return "" }
-        if let text = DocumentTextExtractor.cachedText(for: item) {
+        if let text = DocumentTextExtractor.cachedText(for: item), !text.isEmpty {
             return text
         }
         return sampleText(for: item)
@@ -1144,27 +1144,46 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var agentSelectionTitle: String? {
-        guard !selectionAttachments.isEmpty else { return nil }
-        if selectionAttachments.count == 1 {
-            return selectionAttachments[0].ownerTitle
+        if !selectionAttachments.isEmpty {
+            if selectionAttachments.count == 1 {
+                return selectionAttachments[0].ownerTitle
+            }
+            return ui("\(selectionAttachments.count) 个已选文本片段", "\(selectionAttachments.count) selected text fragments")
         }
-        return ui("\(selectionAttachments.count) 个已选文本片段", "\(selectionAttachments.count) selected text fragments")
+        // Live selection (before/without 「问」 attachment) still counts as ask context.
+        let live = selectionContext?.text.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !live.isEmpty else { return nil }
+        return selectionContext?.ownerTitle
     }
 
     var agentSelectionText: String? {
-        guard !selectionAttachments.isEmpty else { return nil }
-        return selectionAttachments.enumerated().map { index, selection in
-            ui(
-                """
-                片段 \(index + 1)（来源：\(selection.ownerTitle)）：
-                \(selection.text)
-                """,
-                """
-                Fragment \(index + 1) (source: \(selection.ownerTitle)):
-                \(selection.text)
-                """
-            )
-        }.joined(separator: "\n\n")
+        if !selectionAttachments.isEmpty {
+            return selectionAttachments.enumerated().map { index, selection in
+                ui(
+                    """
+                    片段 \(index + 1)（来源：\(selection.ownerTitle)）：
+                    \(selection.text)
+                    """,
+                    """
+                    Fragment \(index + 1) (source: \(selection.ownerTitle)):
+                    \(selection.text)
+                    """
+                )
+            }.joined(separator: "\n\n")
+        }
+        guard let selectionContext else { return nil }
+        let live = selectionContext.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !live.isEmpty else { return nil }
+        return ui(
+            """
+            选区（来源：\(selectionContext.ownerTitle)）：
+            \(live)
+            """,
+            """
+            Selection (source: \(selectionContext.ownerTitle)):
+            \(live)
+            """
+        )
     }
 
     var canCopyReference: Bool {
@@ -3832,7 +3851,8 @@ final class WorkspaceStore: ObservableObject {
         let cleanedOwnerTitle = ownerTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedOwnerTitle = (cleanedOwnerTitle?.isEmpty == false ? cleanedOwnerTitle : nil) ?? selectionOwnerTitle(for: source)
         let boundedText = Self.boundedSelectionText(cleaned)
-        let shouldRevealSelectionPrompt = anchor != nil || pinnedFloatingAgent
+        let shouldRevealSelectionPrompt = (anchor != nil || pinnedFloatingAgent)
+            && !isConversationSurfaceVisible
         let contentMatches = selectionContext.map {
             $0.text == boundedText
                 && $0.source == source
@@ -3855,7 +3875,7 @@ final class WorkspaceStore: ObservableObject {
             // Never clear pin while the user locked the float (or mid selection-answer).
             cancelPendingSelectionAttachment()
             if pinnedFloatingAgent || keepFloatingSelectionForAnswer {
-                if agentSurface != .selectionFloat {
+                if !isConversationSurfaceVisible, agentSurface != .selectionFloat {
                     agentSurface = .selectionFloat
                 }
                 showQuietInsight = false
@@ -3894,7 +3914,9 @@ final class WorkspaceStore: ObservableObject {
         cancelPendingSelectionAttachment()
         // Respect pin / answer lock — do not force-unpin on every new selection.
         if pinnedFloatingAgent || keepFloatingSelectionForAnswer {
-            agentSurface = .selectionFloat
+            if !isConversationSurfaceVisible {
+                agentSurface = .selectionFloat
+            }
             showQuietInsight = false
             return
         }
@@ -3966,7 +3988,7 @@ final class WorkspaceStore: ObservableObject {
         pendingSelectionAttachmentTask = nil
     }
 
-    private func addSelectionAttachment(_ selection: SelectionContext, withinSelectionGesture: Bool = false) {
+    func addSelectionAttachment(_ selection: SelectionContext, withinSelectionGesture: Bool = false) {
         let cleanedText = selection.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard Self.hasMeaningfulSelectionCharacter(cleanedText) else { return }
         let cleanedSelection = SelectionContext(
@@ -4263,6 +4285,7 @@ final class WorkspaceStore: ObservableObject {
         let title = ui("当前课程", "Current Course")
         let links = noteSourceLinks
         let currentMaterialID = selectedMaterialItem?.id
+        let currentMaterialItem = selectedMaterialItem
         let currentNoteID = activeNoteItem?.isNotebookNote == true ? activeNoteItem?.id : nil
         let searchIndex = courseDocumentSearchIndex
         let indexingTask = Task.detached(priority: .userInitiated) {
@@ -4279,11 +4302,18 @@ final class WorkspaceStore: ObservableObject {
                     ? DocumentTextExtractor.indexText(for: candidate.item, query: query)
                     : nil
                 let selectedIndexedText = candidate.item.id == currentMaterialID ? indexed?.text : nil
-                let text = selectedIndexedText
+                var text = selectedIndexedText
                     ?? candidate.embeddedText
                     ?? indexed?.text
                     ?? sampleIndexedText
                     ?? candidate.fallbackText
+                // Freshly switched / unindexed materials often miss FTS + cache.
+                // Extract off the main actor so the agent still sees the current file.
+                if candidate.item.id == currentMaterialID,
+                   text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   let item = currentMaterialItem {
+                    text = DocumentTextExtractor.text(for: item) ?? candidate.fallbackText
+                }
                 let isTruncated = indexed?.isTruncated
                     ?? (candidate.item.url != nil && !candidate.item.isSample)
                 sources.append(
@@ -4299,6 +4329,18 @@ final class WorkspaceStore: ObservableObject {
                 )
             }
             let selectedIndex = currentMaterialID.flatMap { indexedByItemID[$0] }
+            let selectedSourceText = currentMaterialID.flatMap { id in
+                sources.first(where: { $0.id == id })?.text
+            }
+            let resolvedSelectedText: String? = {
+                if let text = selectedIndex?.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return text
+                }
+                if let text = selectedSourceText, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return text
+                }
+                return nil
+            }()
             return CourseContextBuildResult(
                 context: CourseKnowledgeIndex.build(
                     title: title,
@@ -4308,8 +4350,9 @@ final class WorkspaceStore: ObservableObject {
                     currentMaterialID: currentMaterialID,
                     currentNoteID: currentNoteID
                 ),
-                selectedMaterialText: selectedIndex?.text,
-                selectedMaterialIsTruncated: selectedIndex?.isTruncated ?? false
+                selectedMaterialText: resolvedSelectedText,
+                selectedMaterialIsTruncated: selectedIndex?.isTruncated
+                    ?? ((selectedSourceText?.count ?? 0) > 24_000)
             )
         }
         return try await withTaskCancellationHandler {
@@ -4565,16 +4608,21 @@ final class WorkspaceStore: ObservableObject {
                 cancelPendingSelectionAttachment()
                 addSelectionAttachment(selectionContext)
                 floatingSelectionPrompt = selectionContext.label(language: interfaceLanguage)
-                agentSurface = .selectionFloat
-                keepFloatingSelectionForAnswer = true
                 showQuietInsight = false
                 // Record underline mark when the user opens “问” on this selection.
                 let thread = beginOrReuseSelectionAskThread(for: selectionContext)
                 activeSelectionAskThreadID = thread.id
                 if isConversationSurfaceVisible {
+                    // Conversation pane already owns Q&A — keep selection as chat context only.
+                    agentSurface = .hidden
+                    pinnedFloatingAgent = false
+                    keepFloatingSelectionForAnswer = false
+                    selectionAnchor = nil
                     focusedPane = .agent
                     focusRequest += 1
                 } else {
+                    agentSurface = .selectionFloat
+                    keepFloatingSelectionForAnswer = true
                     focus(.agent)
                 }
             }
@@ -6087,6 +6135,12 @@ final class WorkspaceStore: ObservableObject {
         }
 
         persistCurrentNote()
+        // Ensure live document selection is attached before we snapshot context for the request.
+        if selectionAttachments.isEmpty,
+           let selectionContext,
+           !selectionContext.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            addSelectionAttachment(selectionContext)
+        }
         let sentSelectionTitle = agentSelectionTitle
         let sentSelectionText = agentSelectionText
         let shouldClearSentDocumentSelection = sentSelectionText != nil && selectionContext?.source == .document
@@ -6116,7 +6170,14 @@ final class WorkspaceStore: ObservableObject {
         }
         // Keep the floating selection agent open while answering — do not dismiss it mid-stream.
         // (Previously clearUnpinnedFloatingSelection killed the float as soon as ask started.)
-        if shouldClearSentDocumentSelection, !keepFloatingSelectionForAnswer, !pinnedFloatingAgent {
+        // Conversation pane already open → answer there; never re-raise the float.
+        if isConversationSurfaceVisible {
+            agentSurface = .hidden
+            keepFloatingSelectionForAnswer = false
+            if shouldClearSentDocumentSelection, !pinnedFloatingAgent {
+                clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)
+            }
+        } else if shouldClearSentDocumentSelection, !keepFloatingSelectionForAnswer, !pinnedFloatingAgent {
             clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)
         } else if keepFloatingSelectionForAnswer || pinnedFloatingAgent {
             agentSurface = .selectionFloat
@@ -6134,7 +6195,7 @@ final class WorkspaceStore: ObservableObject {
                 agentActivityText = nil
                 agentRequestTask = nil
                 // Answer finished: keep float pinned so the user can scroll the reply.
-                if keepFloatingSelectionForAnswer {
+                if keepFloatingSelectionForAnswer, !isConversationSurfaceVisible {
                     pinnedFloatingAgent = true
                     agentSurface = .selectionFloat
                 }

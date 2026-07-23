@@ -3005,6 +3005,7 @@ struct FloatingSelectionAgentView: View {
             expanded = true
             store.keepFloatingSelectionForAnswer = true
             if let selection = store.selectionContext {
+                store.addSelectionAttachment(selection)
                 let thread = store.beginOrReuseSelectionAskThread(for: selection)
                 store.activeSelectionAskThreadID = thread.id
             }
