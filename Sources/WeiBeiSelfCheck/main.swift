@@ -3397,11 +3397,13 @@ expect(!workspaceStoreSource.contains("selectedItem?.title ?? \"当前材料\"")
     && !workspaceStoreSource.contains("已保存到 macOS 钥匙串。")
     && !workspaceStoreSource.contains("已选择材料、当前选区和右侧笔记"), "agent context and setup notices avoid fake material fallback copy and visible internal agent labels")
 expect(
-    workspaceStoreSource.contains("let usesOpenAIKey = explicitProvider == \"openai\"")
-        && workspaceStoreSource.contains("provider: explicitProvider.isEmpty ? nil : explicitProvider")
-        && workspaceStoreSource.contains("thinkingLevel: thinking.isEmpty ? nil : thinking")
-        && !workspaceStoreSource.contains("explicitProvider.isEmpty && credential != nil"),
-    "PI defaults to its subscription-backed provider and thinking level, and only injects an API key when openai is explicit"
+    workspaceStoreSource.contains("let selectedProvider = agentProviderID")
+        && workspaceStoreSource.contains("let linkedOAuth = PiOAuthService.readLinkedOAuthProviders")
+        && workspaceStoreSource.contains("if !explicitProvider.isEmpty { return explicitProvider }")
+        && workspaceStoreSource.contains("if selectedProvider == .openaiCodex { return \"openai-codex\" }")
+        && workspaceStoreSource.contains("apiKey: usesOAuth ? nil : credential?.key")
+        && workspaceStoreSource.contains("thinkingLevel: thinking.isEmpty ? \"medium\" : thinking"),
+    "PI honors the selected provider, reuses subscription OAuth without injecting an API key, and keeps the current thinking default"
 )
 if let requestStart = workspaceStoreSource.range(of: "private func performAgentRequest() async")?.lowerBound,
    let executionStart = workspaceStoreSource.range(of: "private func executeStudyAgentRequest")?.lowerBound {
