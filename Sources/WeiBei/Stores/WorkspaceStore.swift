@@ -1074,7 +1074,7 @@ final class WorkspaceStore: ObservableObject {
 
     var selectedContextText: String {
         guard let item = selectedMaterialItem else { return "" }
-        if let text = DocumentTextExtractor.cachedText(for: item) {
+        if let text = DocumentTextExtractor.cachedText(for: item), !text.isEmpty {
             return text
         }
         return sampleText(for: item)
@@ -1144,27 +1144,46 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var agentSelectionTitle: String? {
-        guard !selectionAttachments.isEmpty else { return nil }
-        if selectionAttachments.count == 1 {
-            return selectionAttachments[0].ownerTitle
+        if !selectionAttachments.isEmpty {
+            if selectionAttachments.count == 1 {
+                return selectionAttachments[0].ownerTitle
+            }
+            return ui("\(selectionAttachments.count) 个已选文本片段", "\(selectionAttachments.count) selected text fragments")
         }
-        return ui("\(selectionAttachments.count) 个已选文本片段", "\(selectionAttachments.count) selected text fragments")
+        // Live selection (before/without 「问」 attachment) still counts as ask context.
+        let live = selectionContext?.text.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !live.isEmpty else { return nil }
+        return selectionContext?.ownerTitle
     }
 
     var agentSelectionText: String? {
-        guard !selectionAttachments.isEmpty else { return nil }
-        return selectionAttachments.enumerated().map { index, selection in
-            ui(
-                """
-                片段 \(index + 1)（来源：\(selection.ownerTitle)）：
-                \(selection.text)
-                """,
-                """
-                Fragment \(index + 1) (source: \(selection.ownerTitle)):
-                \(selection.text)
-                """
-            )
-        }.joined(separator: "\n\n")
+        if !selectionAttachments.isEmpty {
+            return selectionAttachments.enumerated().map { index, selection in
+                ui(
+                    """
+                    片段 \(index + 1)（来源：\(selection.ownerTitle)）：
+                    \(selection.text)
+                    """,
+                    """
+                    Fragment \(index + 1) (source: \(selection.ownerTitle)):
+                    \(selection.text)
+                    """
+                )
+            }.joined(separator: "\n\n")
+        }
+        guard let selectionContext else { return nil }
+        let live = selectionContext.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !live.isEmpty else { return nil }
+        return ui(
+            """
+            选区（来源：\(selectionContext.ownerTitle)）：
+            \(live)
+            """,
+            """
+            Selection (source: \(selectionContext.ownerTitle)):
+            \(live)
+            """
+        )
     }
 
     var canCopyReference: Bool {
@@ -1303,6 +1322,50 @@ final class WorkspaceStore: ObservableObject {
             "未配置 \(agentProviderID.label(language: interfaceLanguage)) 密钥。填入后即可提问（建议再保存到钥匙串）。",
             "No \(agentProviderID.label(language: interfaceLanguage)) key yet. Enter one to chat (and Save to Keychain when ready)."
         )
+    }
+
+    var piChatGPTSubscriptionConnected: Bool {
+        Self.localPiSubscriptionAuthIsAvailable()
+    }
+
+    var piChatGPTSubscriptionModelLabel: String {
+        let settings = Self.localPiSubscriptionSettings()
+        let model = settings["defaultModel"] ?? "gpt-5.5"
+        let thinking = settings["defaultThinkingLevel"]
+        return thinking.map { "\(model) · \($0)" } ?? model
+    }
+
+    private static func localPiSubscriptionAuthIsAvailable() -> Bool {
+        let authURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".pi/agent/auth.json")
+        guard let data = try? Data(contentsOf: authURL),
+              data.count <= 1_048_576,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let credential = root["openai-codex"] as? [String: Any],
+              credential["type"] as? String == "oauth",
+              let access = credential["access"] as? String,
+              !access.isEmpty,
+              let refresh = credential["refresh"] as? String,
+              !refresh.isEmpty else {
+            return false
+        }
+        return true
+    }
+
+    private static func localPiSubscriptionSettings() -> [String: String] {
+        let settingsURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".pi/agent/settings.json")
+        guard let data = try? Data(contentsOf: settingsURL),
+              data.count <= 1_048_576,
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              root["defaultProvider"] as? String == "openai-codex" else {
+            return [:]
+        }
+        return ["defaultModel", "defaultThinkingLevel"].reduce(into: [:]) { result, key in
+            if let value = root[key] as? String, !value.isEmpty {
+                result[key] = value
+            }
+        }
     }
 
     var appDisplayName: String {
@@ -3832,7 +3895,8 @@ final class WorkspaceStore: ObservableObject {
         let cleanedOwnerTitle = ownerTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedOwnerTitle = (cleanedOwnerTitle?.isEmpty == false ? cleanedOwnerTitle : nil) ?? selectionOwnerTitle(for: source)
         let boundedText = Self.boundedSelectionText(cleaned)
-        let shouldRevealSelectionPrompt = anchor != nil || pinnedFloatingAgent
+        let shouldRevealSelectionPrompt = (anchor != nil || pinnedFloatingAgent)
+            && !isConversationSurfaceVisible
         let contentMatches = selectionContext.map {
             $0.text == boundedText
                 && $0.source == source
@@ -3855,7 +3919,7 @@ final class WorkspaceStore: ObservableObject {
             // Never clear pin while the user locked the float (or mid selection-answer).
             cancelPendingSelectionAttachment()
             if pinnedFloatingAgent || keepFloatingSelectionForAnswer {
-                if agentSurface != .selectionFloat {
+                if !isConversationSurfaceVisible, agentSurface != .selectionFloat {
                     agentSurface = .selectionFloat
                 }
                 showQuietInsight = false
@@ -3894,7 +3958,9 @@ final class WorkspaceStore: ObservableObject {
         cancelPendingSelectionAttachment()
         // Respect pin / answer lock — do not force-unpin on every new selection.
         if pinnedFloatingAgent || keepFloatingSelectionForAnswer {
-            agentSurface = .selectionFloat
+            if !isConversationSurfaceVisible {
+                agentSurface = .selectionFloat
+            }
             showQuietInsight = false
             return
         }
@@ -3966,7 +4032,7 @@ final class WorkspaceStore: ObservableObject {
         pendingSelectionAttachmentTask = nil
     }
 
-    private func addSelectionAttachment(_ selection: SelectionContext, withinSelectionGesture: Bool = false) {
+    func addSelectionAttachment(_ selection: SelectionContext, withinSelectionGesture: Bool = false) {
         let cleanedText = selection.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard Self.hasMeaningfulSelectionCharacter(cleanedText) else { return }
         let cleanedSelection = SelectionContext(
@@ -4263,6 +4329,7 @@ final class WorkspaceStore: ObservableObject {
         let title = ui("当前课程", "Current Course")
         let links = noteSourceLinks
         let currentMaterialID = selectedMaterialItem?.id
+        let currentMaterialItem = selectedMaterialItem
         let currentNoteID = activeNoteItem?.isNotebookNote == true ? activeNoteItem?.id : nil
         let searchIndex = courseDocumentSearchIndex
         let indexingTask = Task.detached(priority: .userInitiated) {
@@ -4279,11 +4346,18 @@ final class WorkspaceStore: ObservableObject {
                     ? DocumentTextExtractor.indexText(for: candidate.item, query: query)
                     : nil
                 let selectedIndexedText = candidate.item.id == currentMaterialID ? indexed?.text : nil
-                let text = selectedIndexedText
+                var text = selectedIndexedText
                     ?? candidate.embeddedText
                     ?? indexed?.text
                     ?? sampleIndexedText
                     ?? candidate.fallbackText
+                // Freshly switched / unindexed materials often miss FTS + cache.
+                // Extract off the main actor so the agent still sees the current file.
+                if candidate.item.id == currentMaterialID,
+                   text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   let item = currentMaterialItem {
+                    text = DocumentTextExtractor.text(for: item) ?? candidate.fallbackText
+                }
                 let isTruncated = indexed?.isTruncated
                     ?? (candidate.item.url != nil && !candidate.item.isSample)
                 sources.append(
@@ -4299,6 +4373,18 @@ final class WorkspaceStore: ObservableObject {
                 )
             }
             let selectedIndex = currentMaterialID.flatMap { indexedByItemID[$0] }
+            let selectedSourceText = currentMaterialID.flatMap { id in
+                sources.first(where: { $0.id == id })?.text
+            }
+            let resolvedSelectedText: String? = {
+                if let text = selectedIndex?.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return text
+                }
+                if let text = selectedSourceText, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return text
+                }
+                return nil
+            }()
             return CourseContextBuildResult(
                 context: CourseKnowledgeIndex.build(
                     title: title,
@@ -4308,8 +4394,9 @@ final class WorkspaceStore: ObservableObject {
                     currentMaterialID: currentMaterialID,
                     currentNoteID: currentNoteID
                 ),
-                selectedMaterialText: selectedIndex?.text,
-                selectedMaterialIsTruncated: selectedIndex?.isTruncated ?? false
+                selectedMaterialText: resolvedSelectedText,
+                selectedMaterialIsTruncated: selectedIndex?.isTruncated
+                    ?? ((selectedSourceText?.count ?? 0) > 24_000)
             )
         }
         return try await withTaskCancellationHandler {
@@ -4565,16 +4652,21 @@ final class WorkspaceStore: ObservableObject {
                 cancelPendingSelectionAttachment()
                 addSelectionAttachment(selectionContext)
                 floatingSelectionPrompt = selectionContext.label(language: interfaceLanguage)
-                agentSurface = .selectionFloat
-                keepFloatingSelectionForAnswer = true
                 showQuietInsight = false
                 // Record underline mark when the user opens “问” on this selection.
                 let thread = beginOrReuseSelectionAskThread(for: selectionContext)
                 activeSelectionAskThreadID = thread.id
                 if isConversationSurfaceVisible {
+                    // Conversation pane already owns Q&A — keep selection as chat context only.
+                    agentSurface = .hidden
+                    pinnedFloatingAgent = false
+                    keepFloatingSelectionForAnswer = false
+                    selectionAnchor = nil
                     focusedPane = .agent
                     focusRequest += 1
                 } else {
+                    agentSurface = .selectionFloat
+                    keepFloatingSelectionForAnswer = true
                     focus(.agent)
                 }
             }
@@ -5070,6 +5162,11 @@ final class WorkspaceStore: ObservableObject {
                 "case=\(artifact.caseID)",
                 "status=\(artifact.status)",
                 "backend=\(artifact.backend?.rawValue ?? "none")",
+                "materialItemID=\(artifact.materialItemID)",
+                "materialKind=\(artifact.materialKind)",
+                "verificationAssetID=\(artifact.verificationAssetID ?? "none")",
+                "sourceFingerprint=\(artifact.sourceFingerprint ?? "none")",
+                "verificationAssetFingerprint=\(artifact.verificationAssetFingerprint ?? "none")",
                 "richAnswer=\(artifact.richAnswer?.mode.rawValue ?? "none")",
                 "scenes=\(artifact.richAnswer?.scenes.count ?? 0)",
                 "tools=\(artifact.toolTrace.joined(separator: ","))",
@@ -5092,28 +5189,117 @@ final class WorkspaceStore: ObservableObject {
     ) throws -> StudyItem {
         let directory = baseURL.appendingPathComponent("RichAnswerReplay", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let materialURL = directory.appendingPathComponent("material.txt")
-        let body = """
-        \(artifact.materialTitle)
-
-        \(artifact.materialBody)
-        """
-        try body.write(to: materialURL, atomically: true, encoding: .utf8)
+        let materialURL = try richAnswerReplayMaterialURL(for: artifact, directory: directory)
         let item = StudyItem(
-            id: "rich-answer-replay-material",
+            id: artifact.materialItemID,
             title: artifact.materialTitle,
-            subtitle: "真实富回答回放材料",
-            kind: .text,
+            subtitle: "真实富回答回放材料 · \(artifact.materialKind)",
+            kind: richAnswerReplayStudyItemKind(for: artifact.materialKind),
             urlPath: materialURL.path,
             isSample: false
         )
         importedItems.removeAll {
-            $0.id == item.id || $0.urlPath == materialURL.path
+            $0.id == item.id
+                || $0.id == "rich-answer-replay-material"
+                || $0.urlPath == materialURL.path
         }
         importedItems.append(item)
         courseDocumentSearchIndex.synchronize(allItems)
         save()
         return item
+    }
+
+    private func richAnswerReplayMaterialURL(
+        for artifact: RichAnswerReplayArtifact,
+        directory: URL
+    ) throws -> URL {
+        let normalizedKind = artifact.materialKind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let isImageMaterial = normalizedKind == "image"
+        let verificationAssetID = artifact.verificationAssetID?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let assetID = verificationAssetID, !assetID.isEmpty {
+            guard isImageMaterial else {
+                throw RichAnswerReplayMaterialInstallError.unexpectedVerificationAssetID(
+                    assetID,
+                    artifact.materialKind
+                )
+            }
+            try RichAnswerVerificationAssets.validateBundledResources()
+            guard let url = RichAnswerVerificationAssets.url(for: assetID) else {
+                throw RichAnswerReplayMaterialInstallError.missingBundledVerificationAsset(assetID)
+            }
+            return url
+        }
+        if isImageMaterial {
+            throw RichAnswerReplayMaterialInstallError.missingVerificationAssetID(artifact.materialItemID)
+        }
+        if artifact.referencesCurrentMaterialAsset {
+            throw RichAnswerReplayMaterialInstallError.missingReferencedAsset(artifact.materialItemID)
+        }
+
+        if normalizedKind == "html" {
+            let escapedTitle = artifact.materialTitle
+                .replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
+            let paragraphs = artifact.materialBody
+                .split(whereSeparator: \.isNewline)
+                .map(String.init)
+                .map {
+                    $0.replacingOccurrences(of: "&", with: "&amp;")
+                        .replacingOccurrences(of: "<", with: "&lt;")
+                        .replacingOccurrences(of: ">", with: "&gt;")
+                }
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .map { "<p>\($0)</p>" }
+                .joined(separator: "\n")
+            let escapedBody = paragraphs.isEmpty
+                ? "<p>当前材料没有可显示的正文。</p>"
+                : paragraphs
+            let materialURL = directory.appendingPathComponent("material.html")
+            let document = """
+            <!doctype html>
+            <html lang="zh-CN">
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <style>
+                html, body { margin: 0; background: transparent; }
+                main { box-sizing: border-box; max-width: 760px; margin: 0 auto; padding: 34px 38px 64px; }
+                h1 { margin: 0 0 24px; font-family: "Songti SC", "STSong", serif; font-size: 28px; line-height: 1.35; font-weight: 600; }
+                p { margin: 0 0 14px; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; font-size: 16px; line-height: 1.82; }
+              </style>
+            </head>
+            <body><main data-weibei-paper-surface><h1>\(escapedTitle)</h1>\(escapedBody)</main></body>
+            </html>
+            """
+            try document.write(to: materialURL, atomically: true, encoding: .utf8)
+            return materialURL
+        }
+
+        let body = """
+        \(artifact.materialTitle)
+
+        \(artifact.materialBody)
+        """
+        let materialURL = directory.appendingPathComponent("material.txt")
+        try body.write(to: materialURL, atomically: true, encoding: .utf8)
+        return materialURL
+    }
+
+    private func richAnswerReplayStudyItemKind(for materialKind: String) -> StudyItemKind {
+        switch materialKind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "image":
+            .html
+        case "html":
+            .html
+        case "pdf":
+            .pdf
+        case "markdown", "md":
+            .markdown
+        default:
+            .text
+        }
     }
 
     private func configureRichAnswerReplayFailure(path: String, error: Error, baseURL: URL) {
@@ -5143,6 +5329,26 @@ final class WorkspaceStore: ObservableObject {
             encoding: .utf8
         )
         recordVerificationStage("rich-answer-replay-failure:\(error.localizedDescription)")
+    }
+
+    private enum RichAnswerReplayMaterialInstallError: LocalizedError {
+        case missingVerificationAssetID(String)
+        case missingBundledVerificationAsset(String)
+        case missingReferencedAsset(String)
+        case unexpectedVerificationAssetID(String, String)
+
+        var errorDescription: String? {
+            switch self {
+            case let .missingVerificationAssetID(materialItemID):
+                return "富回答图片回放缺少 verificationAssetID，材料 \(materialItemID) 不显示空 Canvas。"
+            case let .missingBundledVerificationAsset(assetID):
+                return "富回答图片回放找不到已校验的打包图片资源：\(assetID)。"
+            case let .missingReferencedAsset(assetID):
+                return "富回答回放引用了材料资产 \(assetID)，但没有可解析的真实图片资源。"
+            case let .unexpectedVerificationAssetID(assetID, materialKind):
+                return "富回答回放记录了图片资源 \(assetID)，但材料类型是 \(materialKind)，已停止安装。"
+            }
+        }
     }
 
     private func runCourseWorkspaceVerification(_ scenario: String) async {
@@ -6078,6 +6284,27 @@ final class WorkspaceStore: ObservableObject {
         await agentRequestTask?.value
     }
 
+    private func currentVisualAssetsForAgent() -> [StudyAgentVisualAsset] {
+        guard let item = selectedMaterialItem,
+              !item.isNotebookNote,
+              let path = item.urlPath ?? item.importedFileLastKnownPath else {
+            return []
+        }
+        let mediaType: String
+        switch URL(fileURLWithPath: path).pathExtension.lowercased() {
+        case "jpg", "jpeg":
+            mediaType = "image/jpeg"
+        case "png":
+            mediaType = "image/png"
+        case "webp":
+            mediaType = "image/webp"
+        default:
+            return []
+        }
+        guard FileManager.default.isReadableFile(atPath: path) else { return [] }
+        return [StudyAgentVisualAsset(id: item.id, filePath: path, mediaType: mediaType)]
+    }
+
     private func performAgentRequest() async {
         flushStagedNoteDraftForAgentContext()
         let question = agentDraft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -6087,6 +6314,12 @@ final class WorkspaceStore: ObservableObject {
         }
 
         persistCurrentNote()
+        // Ensure live document selection is attached before we snapshot context for the request.
+        if selectionAttachments.isEmpty,
+           let selectionContext,
+           !selectionContext.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            addSelectionAttachment(selectionContext)
+        }
         let sentSelectionTitle = agentSelectionTitle
         let sentSelectionText = agentSelectionText
         let shouldClearSentDocumentSelection = sentSelectionText != nil && selectionContext?.source == .document
@@ -6100,6 +6333,7 @@ final class WorkspaceStore: ObservableObject {
         let sentNoteTitle = agentNoteTitle
         let sentNoteText = noteText
         let sentLearningContext = makeLearningContext()
+        let sentVisualAssets = currentVisualAssetsForAgent()
         let sentLanguage = interfaceLanguage
         let courseQuery = [question, sentSelectionText ?? "", String(sentNoteText.prefix(2_000))]
             .joined(separator: "\n\n")
@@ -6116,7 +6350,14 @@ final class WorkspaceStore: ObservableObject {
         }
         // Keep the floating selection agent open while answering — do not dismiss it mid-stream.
         // (Previously clearUnpinnedFloatingSelection killed the float as soon as ask started.)
-        if shouldClearSentDocumentSelection, !keepFloatingSelectionForAnswer, !pinnedFloatingAgent {
+        // Conversation pane already open → answer there; never re-raise the float.
+        if isConversationSurfaceVisible {
+            agentSurface = .hidden
+            keepFloatingSelectionForAnswer = false
+            if shouldClearSentDocumentSelection, !pinnedFloatingAgent {
+                clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)
+            }
+        } else if shouldClearSentDocumentSelection, !keepFloatingSelectionForAnswer, !pinnedFloatingAgent {
             clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)
         } else if keepFloatingSelectionForAnswer || pinnedFloatingAgent {
             agentSurface = .selectionFloat
@@ -6134,7 +6375,7 @@ final class WorkspaceStore: ObservableObject {
                 agentActivityText = nil
                 agentRequestTask = nil
                 // Answer finished: keep float pinned so the user can scroll the reply.
-                if keepFloatingSelectionForAnswer {
+                if keepFloatingSelectionForAnswer, !isConversationSurfaceVisible {
                     pinnedFloatingAgent = true
                     agentSurface = .selectionFloat
                 }
@@ -6165,6 +6406,7 @@ final class WorkspaceStore: ObservableObject {
                 selectionText: sentSelectionText,
                 recentMessages: recentMessages,
                 courseContext: courseBuild.context,
+                visualAssets: sentVisualAssets,
                 learningContext: sentLearningContext,
                 language: sentLanguage,
                 contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())"
@@ -6194,7 +6436,8 @@ final class WorkspaceStore: ObservableObject {
                 text: reply.noteProposal?.markdown ?? reply.richAnswer?.narrative ?? reply.text,
                 source: sourceTitle,
                 backend: reply.backend,
-                richAnswer: reply.noteProposal == nil ? reply.richAnswer : nil
+                richAnswer: reply.noteProposal == nil ? reply.richAnswer : nil,
+                toolTrace: reply.toolTrace
             )
             appendAgentMessage(assistantMessage)
             appendMessageToActiveSelectionAskThread(assistantMessage.id)

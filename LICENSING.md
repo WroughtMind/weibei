@@ -25,7 +25,12 @@ The following are not licensed under the AGPL:
 
 - the WeiBei / 魏碑 names, logos, product identity, and trade dress;
 - `Sources/WeiBei/Resources/Fonts/`;
+- `Docs/brand/`;
 - `DesignReferences/`;
+- WeiBei-authored brand media under `website/assets/brand/`;
+- WeiBei-authored screenshots under `website/assets/screens/`;
+- `website/assets/fonts/WeiBeiStele.ttf` and
+  `website/assets/fonts/WeiBeiSteleMono.ttf`;
 - WeiBei-authored screenshots, videos, and release evidence under
   `Docs/release-evidence/`;
 - `Attachments/pasted-image.png` and `Attachments/pasted-image-2.png`.
@@ -46,6 +51,8 @@ Third-party components keep their original licenses:
   directory.
 - JavaScript dependencies are recorded in the root and prototype
   `package-lock.json` files. Generated bundles retain embedded upstream notices.
+- Noto Sans CJK and Noto Serif CJK web fonts under `website/assets/fonts/` are
+  licensed under the SIL Open Font License 1.1 included in that directory.
 - Apple system frameworks are used under the terms supplied by Apple and are
   not part of this repository's AGPL grant.
 

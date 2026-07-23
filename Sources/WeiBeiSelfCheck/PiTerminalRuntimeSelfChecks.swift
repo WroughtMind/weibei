@@ -49,6 +49,7 @@ func runPiTerminalRuntimeSelfChecks() async throws {
     try await checkTerminalErrorBypassesSlowProgress(fixture)
     try await checkGenericEventsDoNotDefeatWatchdog(fixture)
     try await checkMeaningfulThinkingKeepsRunAlive(fixture)
+    try await checkContextSnapshotLivesUntilProcessShutdown(fixture)
 }
 
 private func checkUserStopReturnsImmediately(_ fixture: PiTerminalRuntimeFixture) async throws {
@@ -119,7 +120,8 @@ private func checkGenericEventsDoNotDefeatWatchdog(_ fixture: PiTerminalRuntimeF
     let completionSeconds = Date().timeIntervalSince(startedAt)
     await runtime.shutdown()
 
-    guard outcome == "error:PI 命令超时：prompt", completionSeconds < 1.5 else {
+    let expectedTimeout = "error:\(PiAgentRuntimeError.commandTimedOut("prompt").localizedDescription)"
+    guard outcome == expectedTimeout, completionSeconds < 1.5 else {
         throw PiTerminalRuntimeSelfCheckError.failed(
             "PI generic event spam defeated the inactivity watchdog (outcome=\(outcome), seconds=\(completionSeconds))"
         )
@@ -157,6 +159,34 @@ private func checkMeaningfulThinkingKeepsRunAlive(_ fixture: PiTerminalRuntimeFi
     guard outcome == "reply:[材料：测试材料] 思考完成" else {
         throw PiTerminalRuntimeSelfCheckError.failed(
             "PI meaningful thinking did not keep the run alive (\(outcome))"
+        )
+    }
+}
+
+private func checkContextSnapshotLivesUntilProcessShutdown(_ fixture: PiTerminalRuntimeFixture) async throws {
+    let runtimeDirectory = try fixture.workingDirectory(named: "ThinkingModeContext")
+    let contextURL = runtimeDirectory.appendingPathComponent("context.json")
+    let runtime = PiAgentRuntime(
+        executableURL: fixture.executableURL,
+        runtimeDirectory: runtimeDirectory,
+        runInactivityTimeoutNanoseconds: 2_000_000_000
+    )
+    let outcome = await terminalOutcome(runtime: runtime, revision: "thinking-test", progress: nil)
+
+    guard outcome == "reply:[材料：测试材料] 思考完成",
+          let contextData = try? Data(contentsOf: contextURL),
+          let context = try? JSONSerialization.jsonObject(with: contextData) as? [String: Any],
+          context["contextRevision"] as? String == "thinking-test" else {
+        await runtime.shutdown()
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "PI context snapshot disappeared before the persistent process finished its post-turn hooks"
+        )
+    }
+
+    await runtime.shutdown()
+    guard !FileManager.default.fileExists(atPath: contextURL.path) else {
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "PI context snapshot was not removed when the persistent process shut down"
         )
     }
 }
@@ -348,7 +378,7 @@ int main(void) {
         if (strcmp(type, "get_state") == 0) {
             respond(id, type, "{\"isStreaming\":false}");
         } else if (strcmp(type, "get_commands") == 0) {
-            respond(id, type, "{\"commands\":[{\"name\":\"skill:weibei-study-companion\"},{\"name\":\"skill:weibei-course-wayfinding\"},{\"name\":\"skill:weibei-close-reading\"},{\"name\":\"skill:weibei-note-making\"},{\"name\":\"skill:weibei-recall-practice\"},{\"name\":\"skill:weibei-interactive-study\"}]}");
+            respond(id, type, "{\"commands\":[{\"name\":\"skill:weibei-study-companion\"},{\"name\":\"skill:weibei-course-wayfinding\"},{\"name\":\"skill:weibei-close-reading\"},{\"name\":\"skill:weibei-note-making\"},{\"name\":\"skill:weibei-recall-practice\"},{\"name\":\"skill:rich-answer-director\"},{\"name\":\"skill:professional-visualization\"},{\"name\":\"skill:deep-interaction-components\"},{\"name\":\"skill:generative-composition\"},{\"name\":\"skill:weibei-interactive-study\"}]}");
         } else if (strcmp(type, "prompt") == 0) {
             respond(id, type, "{}");
             start_emitter();

@@ -24,6 +24,13 @@ Exact package versions and declared licenses are recorded in:
 Generated JavaScript bundles retain embedded copyright and license notices.
 Rebuilds must preserve those notices.
 
+## Website fonts
+
+The marketing website includes Noto Sans CJK and Noto Serif CJK web fonts.
+They remain licensed under the SIL Open Font License 1.1. The copyright notice
+and complete license text are preserved in
+[`website/assets/fonts/OFL-Noto-CJK.txt`](website/assets/fonts/OFL-Noto-CJK.txt).
+
 ## Reference assets
 
 Image and text reference sources, rights bases, and required credits are

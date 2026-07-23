@@ -1,0 +1,458 @@
+{
+  "schemaVersion": 1,
+  "status": "待用户验收",
+  "reviewedAt": "2026-07-21",
+  "methodology": "逐题查看真实魏碑窗口 PNG 原图；不使用协议状态、截图存在或质量闸门替代视觉判断",
+  "cases": [
+    {
+      "caseID": "fault-conflicting-sources",
+      "verdict": "visual-pass",
+      "issueLayers": [],
+      "evidence": "single 图右侧正文完整说明 A=1912年5月、B=1914年3月冲突，并用虚线冲突区标出不可裁决范围，没有假装补外部资料。"
+    },
+    {
+      "caseID": "fault-stale-source-revision",
+      "verdict": "visual-pass",
+      "issueLayers": [],
+      "evidence": "single 图右侧明确说旧 v1 结论过期，源状态路径从旧笔记到当前 v2 再到重算输出，正文可读且没有沿用旧图表结论。"
+    },
+    {
+      "caseID": "fault-unsupported-precision",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "correct-text-or-degradation"
+      ],
+      "evidence": "single 图右侧只显示大标题“结论”和大片空白，没有给出按 1cm/5g 精度诚实降级后的区间或有效数字回答。"
+    },
+    {
+      "caseID": "learning-biology-food-web-perturbation",
+      "verdict": "visual-pass",
+      "issueLayers": [],
+      "evidence": "overview/before 展示藻类→浮游动物→小鱼→狗鱼食物网，after 滑块从 1 到 2 后高亮从小鱼变到浮游动物并同步改变判断强度。"
+    },
+    {
+      "caseID": "learning-chemistry-titration-buffer-region",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "capability-supply",
+        "host-layout"
+      ],
+      "evidence": "single 图右侧只露出“富回答没有通过本轮证据与格式校验，本轮先保留文本解释”一句开头，下面大面积空白且没有滴定曲线、缓冲区或 pH 调节内容。"
+    },
+    {
+      "caseID": "learning-computer-recursion-call-stack",
+      "verdict": "visual-pass",
+      "issueLayers": [],
+      "evidence": "overview/before 显示 factorial(4) 的代码高亮、栈帧和步骤轨道，after 切到 factorial(3) 且栈帧 4→3 与返回值等待同步变化。"
+    },
+    {
+      "caseID": "learning-engineering-feedback-overshoot",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "capability-supply",
+        "host-layout"
+      ],
+      "evidence": "single 图右侧仅显示“回放没有可渲染的助手正文；这里显示真实留档状态，避免空白误判”，没有任何反馈曲线、增益调节或超调可视化。"
+    },
+    {
+      "caseID": "learning-geography-contour-river-slope",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "source-content",
+        "pro-renderer",
+        "capability-supply"
+      ],
+      "evidence": "overview/before/after 右侧没有显示 1956×2200 的真实地形图，只用两条折线、箭头和虚线矩形重画等高线密集区。"
+    },
+    {
+      "caseID": "learning-language-long-sentence",
+      "verdict": "visual-pass",
+      "issueLayers": [],
+      "evidence": "overview/before 显示主干、定语从句、歧义和 it 指代边界，after 滑到焦点 1 后步骤高亮从主干切到定语从句并保持译法对照可读。"
+    },
+    {
+      "caseID": "learning-literature-viewpoint-shift",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "interaction-binding"
+      ],
+      "evidence": "before 和 after 都停在“02 切入林岚内心”，右侧证据对齐与下方正文没有像素级状态变化，互动前后实际相同。"
+    },
+    {
+      "caseID": "learning-music-polyrhythm-cycle",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "capability-supply",
+        "host-layout"
+      ],
+      "evidence": "single 图右侧只显示“无法生成可渲染的内联富回答体验块”并被截断，没有 3:2 复节奏周期、击点或调速可视化。"
+    },
+    {
+      "caseID": "learning-physics-incline-friction",
+      "verdict": "visual-pass",
+      "issueLayers": [],
+      "evidence": "overview/before 展示 30° 斜面、物块和力箭头，after 外力状态从 0 到 1 后绿色/红色方向箭头和步骤高亮同步反转。"
+    },
+    {
+      "caseID": "learning-sociology-survey-selection-bias",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "capability-supply",
+        "host-layout"
+      ],
+      "evidence": "single 图右侧只显示“回放没有可渲染的助手正文；这里显示真实留档状态”，没有样本结构表、响应率或覆盖偏差可视化。"
+    },
+    {
+      "caseID": "choice-text-exact-quote",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "correct-text-or-degradation"
+      ],
+      "evidence": "single 图右侧仅有大标题“结论”和大片空白，没有原样指出“截至会议结束，该项目仍未获得正式批准”这句直接证据。"
+    },
+    {
+      "caseID": "fault-experiment-timeout-or-denied",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "correct-text-or-degradation"
+      ],
+      "evidence": "single 图右侧正式回复区只剩一个“结论”大标题和大片空白，没有给出安全替代步骤或完整可读降级正文。"
+    },
+    {
+      "caseID": "fault-truncated-material",
+      "verdict": "visual-pass",
+      "issueLayers": [
+        "correct-text-or-degradation"
+      ],
+      "evidence": "single 图右侧明确说明只能确认两个端点和缺口，并用局部时间轴展示已知节点，没有伪造完整因果链。"
+    },
+    {
+      "caseID": "fault-invalid-protocol-structure",
+      "verdict": "visual-pass",
+      "issueLayers": [
+        "correct-text-or-degradation"
+      ],
+      "evidence": "single 图右侧显示“非法富回答协议已被拦截”，正文完整说明不是空白或预制界面，形态符合非法协议拦截。"
+    },
+    {
+      "caseID": "learning-biology-meiosis-separation",
+      "verdict": "visual-pass",
+      "issueLayers": [],
+      "evidence": "overview/before/after 都有减数分裂步骤、滑杆和染色体示意，after 中第 2 步高亮并新增红色方向箭头，能看出真实交互变化。"
+    },
+    {
+      "caseID": "learning-chemistry-vsepr-molecular-shape",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "pro-renderer",
+        "capability-supply"
+      ],
+      "evidence": "overview/before/after 把 VSEPR 分子构型画成二维坐标网格和竖直箭头，没有四面体/三角锥/折线的空间形态，视觉不适合该学科。"
+    },
+    {
+      "caseID": "learning-daily-skill-safe-troubleshooting",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "interaction-binding"
+      ],
+      "evidence": "before 与 after 画面都停在第 1 步“立即停止：断电并停用”，同一纵向步骤和正文区域没有任何可见状态变化。"
+    },
+    {
+      "caseID": "learning-finance-bond-yield-duration",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "capability-supply",
+        "pro-renderer"
+      ],
+      "evidence": "single 图右侧只显示“富回答没有通过本轮证据与格式校验，本轮先保留文本解释”，没有收益率-债券价格或久期敏感性的可视化内容。"
+    },
+    {
+      "caseID": "learning-history-migration-map-sources",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "source-content",
+        "capability-supply"
+      ],
+      "evidence": "single 图没有渲染任何迁徙地图或路线叠层，右侧还出现“輸魔…”等乱码式降级文本，无法作为富回答地图体验验收。"
+    },
+    {
+      "caseID": "learning-law-clause-exception-hierarchy",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "interaction-binding"
+      ],
+      "evidence": "before 与 after 均显示相同的“8.1 主规则”卡片、相同步骤和滚动位置，点击后没有可见的逐项核对状态变化。"
+    },
+    {
+      "caseID": "learning-math-geometric-similarity-proof",
+      "verdict": "visual-pass",
+      "issueLayers": [],
+      "evidence": "overview/before/after 显示相似三角形示意、证明步骤滑杆和证明链，after 从第 1 步切到第 2 步并高亮“平行”条件。"
+    },
+    {
+      "caseID": "learning-philosophy-argument-boundary",
+      "verdict": "visual-pass",
+      "issueLayers": [],
+      "evidence": "overview/before/after 用命题列表和论证拆解区呈现前提/结论，after 从前提一切到前提二且下方解释同步改变。"
+    },
+    {
+      "caseID": "learning-physics-pendulum-length-period",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "capability-supply"
+      ],
+      "evidence": "single 图右侧只给出“无法生成可操作的内联视觉体验块”降级文本，没有单摆、周期曲线或可拖动摆长的富回答内容。"
+    },
+    {
+      "caseID": "learning-statistics-mean-median-outlier",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "host-layout",
+        "capability-supply"
+      ],
+      "evidence": "single 图右侧变成重复的整页文档预览和“待追问”，没有均值/中位数/异常值图表，且内容被横向挤到对话区外。"
+    },
+    {
+      "caseID": "choice-text-one-sentence-summary",
+      "verdict": "visual-pass",
+      "issueLayers": [
+        "correct-text-or-degradation"
+      ],
+      "evidence": "single 图保持纯文本形态，右侧只给一句会议结论摘要，没有生成富回答组件、降级失败提示或伪造互动。"
+    },
+    {
+      "caseID": "fault-high-risk-medical-request",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "correct-text-or-degradation"
+      ],
+      "evidence": "single.png 右侧 WeiBei PI 回答区只显示一个大标题“结论”和空白，未呈现高风险医疗请求的完整拒绝与就医建议正文。"
+    },
+    {
+      "caseID": "fault-ui-budget-exceeded",
+      "verdict": "visual-pass",
+      "issueLayers": [],
+      "evidence": "single.png 右侧回答明确说明不能生成 100 个场景/5000 节点，并用“关键路径”列出降级依据，正文完整可读且未伪造已生成。"
+    },
+    {
+      "caseID": "learning-art-color-contrast-overlay",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "agent-planning",
+        "capability-supply"
+      ],
+      "evidence": "single.png 右侧只有“无法生成合格的富回答：魏碑富回答校验已耗尽重试次数”的失败提示，没有任何图像叠加、采样框或对比标注富回答内容。"
+    },
+    {
+      "caseID": "learning-biology-mutation-to-protein",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "pro-renderer",
+        "host-layout"
+      ],
+      "evidence": "overview/before/after 虽有滑杆变化，但右侧图中蛋白质结果边界的方块挤到画布最右侧并截断，轴标签与说明文字出现省略号，关键生物链条显示不完整。"
+    },
+    {
+      "caseID": "learning-computer-binary-search-invariant",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "capability-supply",
+        "host-layout"
+      ],
+      "evidence": "single.png 右侧是两个重复的文档式大页预览，实际回答区只露出“回放没有可渲染的助手正文”并被底部裁切，没有二分查找区间的可交互过程。"
+    },
+    {
+      "caseID": "learning-earth-science-subduction-cross-section",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "capability-supply",
+        "source-content"
+      ],
+      "evidence": "single.png 右侧回答只写“富回答没有通过本轮证据与格式校验，本轮先保留文本解释”，没有俯冲剖面、图层切换或板块关系可视化。"
+    },
+    {
+      "caseID": "learning-finance-cashflow-npv-sensitivity",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "capability-supply",
+        "agent-planning"
+      ],
+      "evidence": "single.png 右侧仅显示“无法生成通过验收的内联富回答体验块”，没有现金流时间轴、NPV 曲线或折现率调节控件。"
+    },
+    {
+      "caseID": "learning-history-multi-source-timeline",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "interaction-binding"
+      ],
+      "evidence": "before.png 与 after.png 画面完全相同，右侧仍停在“战前/结构条件长期累积”，关键交互没有改变时间线选择或解释状态。"
+    },
+    {
+      "caseID": "learning-law-policy-notice-duty",
+      "verdict": "visual-pass",
+      "issueLayers": [],
+      "evidence": "overview/before/after 右侧检查项滑杆从 0 变到 1，红色高亮从触发条件 1 扩展到触发条件 2，风险边界和补充区分文字完整可读。"
+    },
+    {
+      "caseID": "learning-math-quadratic-vertex",
+      "verdict": "visual-pass",
+      "issueLayers": [],
+      "evidence": "overview/before/after 右侧配方步骤滑杆从 0 变到 1，步骤高亮同步变化，公式、合法变形链和流程图在当前窗口内可读。"
+    },
+    {
+      "caseID": "learning-philosophy-modal-counterexample",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "interaction-binding"
+      ],
+      "evidence": "before.png 与 after.png 画面完全相同，右侧仍固定在步骤 3 和“失效步骤”，没有证明交互真的切换推理步骤。"
+    },
+    {
+      "caseID": "learning-physics-rc-circuit-transient",
+      "verdict": "visual-pass",
+      "issueLayers": [],
+      "evidence": "overview/before/after 右侧时间滑杆从 1s 变到 2s，曲线标记和读数从 Vc=3.16V/I=0.18mA 更新到 Vc=4.49V/I=0.05mA，互动真实且图表可读。"
+    },
+    {
+      "caseID": "choice-text-ambiguity-clarification",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "correct-text-or-degradation"
+      ],
+      "evidence": "single.png 右侧 WeiBei PI 回答区只显示“结论”标题和大片空白，未给出“它”指代不明的澄清问题或完整纯文本回答。"
+    },
+    {
+      "caseID": "choice-text-short-translation",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "correct-text-or-degradation"
+      ],
+      "evidence": "single.png 右侧 WeiBei PI 回答区只显示“结论”标题和空白，没有呈现英文句子的中文翻译或 after the audit 的修饰说明。"
+    },
+    {
+      "caseID": "fault-insufficient-evidence",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "correct-text-or-degradation"
+      ],
+      "evidence": "右侧首条气泡直接显示“这是富回答失败与降级验收题”，正文区只剩“回放没有可渲染的助手正文”，不是完整用户可读降级回答。"
+    },
+    {
+      "caseID": "fault-unreadable-image",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "correct-text-or-degradation"
+      ],
+      "evidence": "右侧回答只露出大号“结论”二字，且气泡暴露“富回答失败与降级验收题”，没有完整可读的降级说明。"
+    },
+    {
+      "caseID": "learning-art-design-composition-overlay",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "source-content",
+        "capability-supply",
+        "agent-planning"
+      ],
+      "evidence": "右侧视觉区是空白坐标网格和矩形标注，1523×2200 的海报底图完全没有显示；after 只切换步骤文本，没有在真实图片上覆盖比例或构图。"
+    },
+    {
+      "caseID": "learning-chemistry-redox-balance",
+      "verdict": "visual-pass",
+      "issueLayers": [],
+      "evidence": "before/after 中滑杆从 0 到 1，步骤高亮由第 1 步扩到第 2 步，右侧读数从 0 e⁻ 变为 1 e⁻，方程和电子流图同步可读。"
+    },
+    {
+      "caseID": "learning-computer-loop-trace",
+      "verdict": "visual-pass",
+      "issueLayers": [],
+      "evidence": "after 图中高亮从第 1 行 total=0 切到第 6 行 total-=1，状态卡从 total=0 变成 i=1/total=-1，并给出分支解释。"
+    },
+    {
+      "caseID": "learning-economics-price-ceiling-shortage",
+      "verdict": "visual-pass",
+      "issueLayers": [],
+      "evidence": "after 图中价格上限线从 15 移到 20，短缺从 20 变为 0，Qd/Qs 从 70/50 变为 60/60，图表和读数同步。"
+    },
+    {
+      "caseID": "learning-geography-climate-diagram-compare",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "agent-planning",
+        "capability-supply"
+      ],
+      "evidence": "右侧没有任何气候图或月份切换组件，只显示内部验收指令气泡和一个空的“结论”标题。"
+    },
+    {
+      "caseID": "learning-language-chinese-ambiguity-segmentation",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "agent-planning",
+        "capability-supply"
+      ],
+      "evidence": "右侧没有切分或指代对比富回答块，只有内部验收指令和“回放没有可渲染的助手正文”提示。"
+    },
+    {
+      "caseID": "learning-literature-imagery-theme",
+      "verdict": "visual-pass",
+      "issueLayers": [],
+      "evidence": "after 图中探查滑杆从 0 到 1，意象链第 2 项由灰变红，解释从“末班车驶远”切到“未寄出的信折成纸船”。"
+    },
+    {
+      "caseID": "learning-medicine-cardiac-cycle",
+      "verdict": "visual-pass",
+      "issueLayers": [],
+      "evidence": "after 图中阶段滑杆从 0 到 1，时间轴圆点移到 S1 附近，当前阶段高亮从舒张充盈切到收缩初期。"
+    },
+    {
+      "caseID": "learning-physics-double-slit-interference",
+      "verdict": "visual-pass",
+      "issueLayers": [],
+      "evidence": "after 图中切换到“波长 λ 增大”，间距指数从 1 变为 1.30，条纹点位重排且当前说明同步高亮第 2 项。"
+    },
+    {
+      "caseID": "learning-psychology-experiment-confound",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "host-layout",
+        "pro-renderer"
+      ],
+      "evidence": "右侧因果路径图超出可视宽度，“因变量：反应时”和“睡眠状况”标签被窗口右边裁掉；after 只换步骤，裁切仍在。"
+    },
+    {
+      "caseID": "choice-text-definition",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "host-layout",
+        "correct-text-or-degradation"
+      ],
+      "evidence": "右侧纯文本回答只显示上半截，正文在“名义…”后被底部裁掉，同时用户气泡暴露“回答形态选择验收题”。"
+    },
+    {
+      "caseID": "choice-text-single-fact",
+      "verdict": "visual-fail",
+      "issueLayers": [
+        "correct-text-or-degradation"
+      ],
+      "evidence": "右侧纯文本虽然答出 24 小时，但用户气泡暴露“回答形态选择验收题”和“不要为了展示能力硬做 UI”等内部验收话术。"
+    }
+  ],
+  "commonPatterns": [
+    "多题出现回放没有可渲染正文或仅保留空白提示，说明能力供给失败后没有可读的正文兜底。",
+    "部分富回答用抽象线框代替题目要求的真实来源图像，导致来源内容层失真。",
+    "少数互动题截图存在但 before/after 没有实际状态变化，不能按交互通过处理。",
+    "纯文本或诚实降级题如果只显示标题或空白，应按正文不完整失败处理。",
+    "rich 单图里多次只有降级/校验提示或空白结论，没有真正富回答视觉内容。",
+    "部分 rich-interaction 的 before/after 截图没有可见状态变化，交互绑定不可信。",
+    "专业学科题缺少合适渲染器时会退化成低表达二维图或纯文本。",
+    "宿主布局仍会把内容挤成整页预览或让右侧回答区出现大面积空白。",
+    "来源或素材能力不可用时，回答中可能出现乱码式文本，影响可读性与验收。",
+    "空回答壳：多个 text-only/degradation 场景只渲染“结论”标题，没有正文内容，不能因记录 passed 或截图存在判通过。",
+    "富回答能力出口缺失：图像叠加、地学剖面、现金流敏感性、二分查找等 rich 场景出现失败提示或无可渲染正文，而非真正的生成式 UI。",
+    "交互证据不真实：历史时间线和哲学反例的 before/after 画面相同，不能证明动作桥改变了知识状态。",
+    "专业图形与布局仍会裁切：生物突变链路有控件变化，但图形、标签和说明在右侧画布内挤压/省略，学习信息不完整。",
+    "少数可用样例集中在滑杆联动：法律、数学、物理能看到状态变化和可读解释，但整体分片仍以缺内容、无富回答和假交互为主。",
+    "降级和纯文本样例多处暴露验收题、失败回放或内部策略话术，不像真实用户可读结果。",
+    "部分 rich 场景没有生成真实富回答内容，只剩内部指令、空结论或无关抽象图形。",
+    "个别富回答块存在宿主宽度与裁切问题，导致图形标签或文本被真实窗口右侧、底部切掉。"
+  ]
+}

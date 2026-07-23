@@ -54,3 +54,14 @@ jobs:
 
       - name: 校验安装包签名
         run: /usr/bin/codesign --verify --deep --strict "dist/魏碑.app"
+
+      - name: 压缩短期真实窗口验收包
+        run: ditto -c -k --sequesterRsrc --keepParent "dist/魏碑.app" "dist/魏碑-CI验收包.zip"
+
+      - name: 保留短期真实窗口验收包
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: 魏碑-${{ github.sha }}-真实窗口验收包
+          path: dist/魏碑-CI验收包.zip
+          retention-days: 1
+          if-no-files-found: error

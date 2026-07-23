@@ -44,10 +44,22 @@ export type WeiBeiHostMessage = {
   type: "weibei:setPrograms";
   programs: RichAnswerProgram[];
   heightLimit: number;
+} | {
+  type: "weibei:setRenderPlan";
+  renderPlan?: unknown;
+  plan?: unknown;
+  evidenceContent?: z.infer<typeof evidenceContentSchema>[];
+  heightLimit?: number;
+} | {
+  type: "weibei:setRenderPlans";
+  renderPlans?: unknown[];
+  plans?: unknown[];
+  evidenceContent?: z.infer<typeof evidenceContentSchema>[];
+  heightLimit?: number;
 };
 
 export type WeiBeiRuntimeMessage =
-  | { type: "weibei:ready"; protocol: RichAnswerProgram["version"] }
+  | { type: "weibei:ready"; protocol: string }
   | { type: "weibei:height"; height: number; overflowed: boolean }
   | { type: "weibei:state"; programID: string; state: Record<string, unknown> }
   | { type: "weibei:evidence"; programID: string; evidenceID: string }

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1740 620" role="img" aria-labelledby="title desc">
+  <title id="title">魏碑中文组合标</title>
+  <desc id="desc">图形标与中文名称的临时组合；名称决策完成前，图形与文字不得焊死。</desc>
+  <g transform="translate(24 -8) scale(.5)">
+    <g fill="#231F1C">
+      <path d="M220 170H432V708H158V260Z"/><path d="M511 170H749V708H511Z"/><path d="M825 170H1010L1098 258V708H825Z"/>
+      <path d="M158 708H432L474 816L511 708H749L789 816L825 708H1098V940L1014 1025L982 1083H915L814 967L720 1083H585L482 967L391 1083H270L158 960Z"/>
+    </g>
+    <path fill="#AA2A23" d="M1042 1020H1108V1086H1042Z"/>
+  </g>
+  <text x="700" y="365" fill="#231F1C" font-family="Songti SC, STSong, serif" font-size="220" font-weight="700" letter-spacing="30">魏碑</text>
+  <text x="712" y="460" fill="#686157" font-family="SF Pro Text, PingFang SC, sans-serif" font-size="48" letter-spacing="10">读、记、问，在同一张纸上</text>
+</svg>
