@@ -1271,7 +1271,7 @@ var mixedIndexResult: CourseDocumentIndexResult?
 var markdownIndexResult: CourseDocumentIndexResult?
 var blankPDFIndexResult: CourseDocumentIndexResult?
 var stableHTMLIndexResult: CourseDocumentIndexResult?
-for _ in 0..<200 {
+for _ in 0..<600 {
     mixedIndexResult = courseIndex.lookup(items: [mixedPDFItem], query: "LATEPAGE OCR TARGET")[mixedPDFItem.id]
     markdownIndexResult = courseIndex.lookup(items: [markdownIndexItem], query: lateMarkdownToken)[markdownIndexItem.id]
     blankPDFIndexResult = courseIndex.lookup(items: [blankPDFIndexItem], query: "blank page")[blankPDFIndexItem.id]
@@ -1325,6 +1325,9 @@ expect(
     indexedPDFCourseContext.items.first?.headings.contains("第 13 页（OCR）") == true,
     "course search preserves confirmed OCR page locations for exact PDF jumps"
 )
+if blankPDFIndexResult?.isTruncated != false || blankPDFIndexResult?.text != nil {
+    fputs("blank PDF index diagnostic: \(String(describing: blankPDFIndexResult))\n", stderr)
+}
 expect(
     blankPDFIndexResult?.isTruncated == false && blankPDFIndexResult?.text == nil,
     "persistent course index records a successfully scanned blank PDF page without retrying it forever"
