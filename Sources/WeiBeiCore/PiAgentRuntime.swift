@@ -644,8 +644,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         if let model = providerConfiguration.model, !model.isEmpty {
             arguments.append(contentsOf: ["--model", model])
         }
-        if let thinkingLevel = providerConfiguration.thinkingLevel, !thinkingLevel.isEmpty {
-            arguments.append(contentsOf: ["--thinking", thinkingLevel])
+        if !providerConfiguration.thinkingLevel.isEmpty {
+            arguments.append(contentsOf: ["--thinking", providerConfiguration.thinkingLevel])
         }
         return arguments
     }
