@@ -229,13 +229,6 @@ extension SettingsView {
         switch store.agentProviderID.kind {
         case .subscription:
             agentSubscriptionAuth
-            // Subscription providers that also accept an API key (Codex / Anthropic —
-            // exactly the set for which supportsInAppOAuth is true) get the key field
-            // too, so users aren't forced into OAuth just to use a console-issued key.
-            // Copilot (supportsInAppOAuth == false) stays OAuth/token-only. See S4.
-            if store.agentProviderID.supportsInAppOAuth {
-                agentAPIKeyAuth
-            }
         case .apiKey, .localOrCustom:
             agentAPIKeyAuth
         }
