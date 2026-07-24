@@ -510,6 +510,31 @@ public enum AgentProviderKind: String, Codable, CaseIterable, Sendable {
     }
 }
 
+/// Which listing protocol a provider speaks, independent of runtime base URL / region.
+/// The store combines this with `agentBaseURL` / `bedrockRegion` to build a concrete
+/// `ModelListStrategy` for `AgentModelListService`.
+public enum ModelListProtocol: String, Codable, CaseIterable, Sendable {
+    /// OpenAI-compatible `GET {base}/v1/models` with `Authorization: Bearer`.
+    case openAICompatible
+    /// Anthropic `GET /v1/models` with `x-api-key` + `anthropic-version`.
+    case anthropic
+    /// Google Gemini `GET /v1beta/models?key=`.
+    case gemini
+    /// OpenRouter public catalog (no auth).
+    case openRouterPublic
+    /// Azure OpenAI data plane `GET {base}/openai/models?api-version=` with `api-key`.
+    case azureOpenAI
+    /// Amazon Bedrock `GET bedrock.{region}.amazonaws.com/foundation-models` with `Authorization: Bearer`.
+    case bedrock
+    /// GitHub Models catalog `GET api.github.com/models`.
+    case gitHubModels
+    /// ChatGPT/Codex subscription: query `chatgpt.com/backend-api/codex/models` with the
+    /// OAuth token; fall back to the built-in catalog on failure.
+    case codexSubscription
+    /// Endpoint not publicly documented / stable; use the built-in catalog + manual entry.
+    case unsupported
+}
+
 /// Full set of Pi `KnownProvider` ids + local/custom (aligned with Pi `docs/providers.md` + `env-api-keys`).
 /// Raw values match Pi provider ids so auth.json / --provider stay compatible.
 public enum AgentProviderID: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -680,10 +705,10 @@ public enum AgentProviderID: String, Codable, CaseIterable, Identifiable, Sendab
 
     public var defaultModelHint: String {
         switch self {
-        case .openaiCodex: return "gpt-5.1"
+        case .openaiCodex: return AgentModelListService.codexDefaultModel
         case .anthropic: return "claude-sonnet-4-20250514"
         case .githubCopilot: return "gpt-4.1"
-        case .openai: return "gpt-5.1"
+        case .openai: return "gpt-5.5"
         case .antLing: return "default"
         case .azureOpenAI: return "gpt-4o"
         case .deepseek: return "deepseek-chat"
@@ -710,6 +735,78 @@ public enum AgentProviderID: String, Codable, CaseIterable, Identifiable, Sendab
         case .xiaomi, .xiaomiTokenPlanCN, .xiaomiTokenPlanAMS, .xiaomiTokenPlanSGP: return "default"
         case .llamaCpp: return "local-model"
         case .custom: return "model-id"
+        }
+    }
+
+    /// Which listing protocol this provider speaks. The runtime base URL / region is
+    /// supplied by the store when it assembles a concrete `ModelListStrategy`.
+    public var modelListProtocol: ModelListProtocol {
+        switch self {
+        case .openai, .mistral, .xai, .groq, .deepseek, .nvidia, .cerebras,
+             .together, .fireworks, .huggingface, .llamaCpp, .custom:
+            return .openAICompatible
+        case .anthropic:
+            return .anthropic
+        case .google:
+            return .gemini
+        case .openrouter:
+            return .openRouterPublic
+        case .azureOpenAI:
+            return .azureOpenAI
+        case .amazonBedrock:
+            return .bedrock
+        case .githubCopilot:
+            return .gitHubModels
+        case .openaiCodex:
+            return .codexSubscription
+        // Providers whose listing endpoints are not publicly documented / stable enough
+        // to call blindly (ant-ling, vertex, cloudflare, vercel, zai, opencode, kimi,
+        // moonshot, minimax, xiaomi). Surface the built-in catalog + manual entry instead.
+        case .antLing, .googleVertex, .cloudflareAIGateway, .cloudflareWorkersAI,
+             .vercelAIGateway, .zai, .zaiCodingCN, .opencode, .opencodeGo,
+             .kimiCoding, .moonshotai, .moonshotaiCN, .minimax, .minimaxCN,
+             .xiaomi, .xiaomiTokenPlanCN, .xiaomiTokenPlanAMS, .xiaomiTokenPlanSGP:
+            return .unsupported
+        }
+    }
+
+    /// Official default host for OpenAI-compatible listing, when the user has not typed
+    /// a custom Base URL. `nil` for providers that take a user-supplied base or use a
+    /// non-OpenAI protocol.
+    public var defaultListBaseURL: String? {
+        switch self {
+        case .openai: return "https://api.openai.com"
+        case .mistral: return "https://api.mistral.ai"
+        case .xai: return "https://api.x.ai"
+        case .groq: return "https://api.groq.com/openai"
+        case .deepseek: return "https://api.deepseek.com"
+        case .nvidia: return "https://integrate.api.nvidia.com"
+        case .cerebras: return "https://api.cerebras.ai"
+        case .together: return "https://api.together.xyz"
+        case .fireworks: return "https://api.fireworks.ai/inference"
+        case .huggingface: return "https://api.endpoints.huggingface.com"
+        default: return nil
+        }
+    }
+
+    /// Built-in catalog shown before the first successful fetch, or as the fallback when
+    /// a provider's listing endpoint is not supported. Extend cautiously: stale ids mislead.
+    public var recommendedModels: [String] {
+        switch self {
+        case .openaiCodex: return AgentModelListService.codexSubscriptionModels
+        case .anthropic: return ["claude-sonnet-4-5", "claude-opus-4-5", "claude-haiku-4-5", "claude-sonnet-4-20250514"]
+        case .githubCopilot: return ["gpt-5.1", "gpt-4.1", "claude-sonnet-4-5"]
+        case .openai: return ["gpt-5.5", "gpt-5.4", "gpt-5.1", "gpt-4o", "gpt-4o-mini"]
+        case .azureOpenAI: return ["gpt-4o", "gpt-4o-mini", "gpt-4.1"]
+        case .deepseek: return ["deepseek-chat", "deepseek-reasoner"]
+        case .google, .googleVertex: return ["gemini-2.5-pro", "gemini-2.5-flash"]
+        case .xai: return ["grok-4", "grok-3"]
+        case .mistral: return ["mistral-large-latest", "mistral-medium-latest", "mistral-small-latest"]
+        case .groq: return ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]
+        case .openrouter: return ["openai/gpt-5.1", "anthropic/claude-sonnet-4-5", "google/gemini-2.5-pro"]
+        default:
+            let hint = defaultModelHint
+            return hint.isEmpty ? [] : [hint]
         }
     }
 
