@@ -1308,26 +1308,42 @@ final class WorkspaceStore: ObservableObject {
             ?? ui("当前笔记", "Current note")
     }
 
-    var openAIKeyHelpText: String {
+    /// Single source of truth for "which env-var override is active for the key field".
+    /// Empty when none. Consolidates the three previously independent checks (see M4):
+    /// the former `openAIKeyHelpText` detection and the `envKeyOverride` /
+    /// `envModelOverride` copies in the Settings view extensions.
+    var activeKeyEnvOverride: String {
         let envName = agentProviderID.environmentAPIKeyName
-        if !Self.environmentValue(envName).isEmpty {
-            return ui(
-                "正在使用本机环境变量 \(envName)。设置里的密钥在没有环境变量时才会使用。",
-                "Using local environment variable \(envName). The Settings key is used only when that env is empty."
-            )
+        if !Self.environmentValue(envName).isEmpty { return envName }
+        if agentProviderID != .openai,
+           !Self.environmentValue("OPENAI_API_KEY").isEmpty {
+            return "OPENAI_API_KEY"
         }
-        if agentProviderID != .openai, !Self.environmentValue("OPENAI_API_KEY").isEmpty {
+        return ""
+    }
+
+    /// Single source of truth for "which env-var override is active for the model field".
+    /// Empty when none. Replaces the `envModelOverride` copy in AgentModelPicker.swift.
+    var activeModelEnvOverride: String {
+        let pi = ProcessInfo.processInfo.environment["WEIBEI_PI_MODEL"] ?? ""
+        let openai = ProcessInfo.processInfo.environment["WEIBEI_OPENAI_MODEL"] ?? ""
+        return !pi.isEmpty ? "WEIBEI_PI_MODEL" : (!openai.isEmpty ? "WEIBEI_OPENAI_MODEL" : "")
+    }
+
+    var openAIKeyHelpText: String {
+        // Env-var override takes precedence — the Settings key is inert while set.
+        if !activeKeyEnvOverride.isEmpty {
             return ui(
-                "正在回退使用 OPENAI_API_KEY 环境变量。",
-                "Falling back to the OPENAI_API_KEY environment variable."
+                "正在使用本机环境变量 \(activeKeyEnvOverride)。设置里的密钥在没有环境变量时才会使用。",
+                "Using local environment variable \(activeKeyEnvOverride). The Settings key is used only when that env is empty."
             )
         }
         let fieldKey = OpenAIAPIKeyStore.cleaned(openAIAPIKey)
         let savedKey = OpenAIAPIKeyStore.load(provider: agentProviderID.piProviderName)
         if !fieldKey.isEmpty {
             return ui(
-                "当前提供商：\(agentProviderID.label(language: interfaceLanguage))。输入框中的密钥会直接用于请求；点「保存到钥匙串」可跨次启动保留。",
-                "Provider: \(agentProviderID.label(language: interfaceLanguage)). The key in this field is used for requests; Save to Keychain keeps it across launches."
+                "当前提供商：\(agentProviderID.label(language: interfaceLanguage))。点「保存」可写入当前配置的钥匙串，跨次启动保留。",
+                "Provider: \(agentProviderID.label(language: interfaceLanguage)). Click Save to persist the key to this profile's Keychain across launches."
             )
         }
         if !savedKey.isEmpty {
@@ -1337,8 +1353,8 @@ final class WorkspaceStore: ObservableObject {
             )
         }
         return ui(
-            "未配置 \(agentProviderID.label(language: interfaceLanguage)) 密钥。填入后即可提问（建议再保存到钥匙串）。",
-            "No \(agentProviderID.label(language: interfaceLanguage)) key yet. Enter one to chat (and Save to Keychain when ready)."
+            "未配置 \(agentProviderID.label(language: interfaceLanguage)) 密钥。填入后点「保存」即可提问。",
+            "No \(agentProviderID.label(language: interfaceLanguage)) key yet. Enter one and click Save to chat."
         )
     }
 
