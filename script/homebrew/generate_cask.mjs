@@ -19,10 +19,10 @@ const cask = `cask "weibei" do
   version "${version}"
   sha256 "${sha256}"
 
-  url "https://github.com/taekchef/weibei/releases/download/v#{version}/WeiBei-#{version}-macOS-arm64.dmg"
+  url "https://github.com/weibei-app/weibei/releases/download/v#{version}/WeiBei-#{version}-macOS-arm64.dmg"
   name "魏碑"
   desc "Source-grounded reading, learning, and note workspace"
-  homepage "https://github.com/taekchef/weibei"
+  homepage "https://github.com/weibei-app/weibei"
 
   depends_on arch: :arm64
   depends_on macos: :sonoma

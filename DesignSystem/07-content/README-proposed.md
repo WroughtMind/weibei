@@ -40,7 +40,7 @@
 - 首次构建时可用的网络连接
 
 ```bash
-git clone https://github.com/taekchef/weibei.git
+git clone https://github.com/weibei-app/weibei.git
 cd weibei
 ./script/build_and_run.sh
 ```

@@ -1,4 +1,4 @@
-const REPOSITORY = "taekchef/weibei";
+const REPOSITORY = "weibei-app/weibei";
 const RELEASES_URL = `https://github.com/${REPOSITORY}/releases`;
 const RELEASE_MANIFEST = "./release.json";
 const LOCAL_DMG = "./downloads/WeiBei-latest.dmg";

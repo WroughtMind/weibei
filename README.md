@@ -36,9 +36,9 @@ I built WeiBei so the material, the question, its evidence, and the resulting no
 
 ## OpenAI Build Week scope
 
-WeiBei existed as an early prototype before the submission period. The last repository checkpoint before the July 13, 2026 9:00 AM Pacific start is [`366892c1`](https://github.com/taekchef/weibei/commit/366892c1). It already supported the basic native read, ask, and write workflow, course-aware retrieval, local notes, study memory, and a three-pane workspace.
+WeiBei existed as an early prototype before the submission period. The last repository checkpoint before the July 13, 2026 9:00 AM Pacific start is [`366892c1`](https://github.com/weibei-app/weibei/commit/366892c1). It already supported the basic native read, ask, and write workflow, course-aware retrieval, local notes, study memory, and a three-pane workspace.
 
-The Build Week work is the range from `366892c1` to the merged `main` submission commit [`c05ca69b`](https://github.com/taekchef/weibei/commit/c05ca69b). This range contains 59 commits. The main additions were:
+The Build Week work is the range from `366892c1` to the merged `main` submission commit [`c05ca69b`](https://github.com/weibei-app/weibei/commit/c05ca69b). This range contains 59 commits. The main additions were:
 
 - A course hub and a material-to-note relationship workbench.
 - A host-validated, evidence-linked rich-answer protocol with readable text fallback.
@@ -90,7 +90,7 @@ For long or scanned PDFs, WeiBei extracts text in a resource-bounded helper proc
 ## Build and run
 
 ```bash
-git clone https://github.com/taekchef/weibei.git
+git clone https://github.com/weibei-app/weibei.git
 cd weibei
 ./script/build_and_run.sh
 ```
