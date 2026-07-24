@@ -19,7 +19,6 @@ extension SettingsView {
         VStack(alignment: .leading, spacing: 16) {
             agentServiceCard
             agentAdvancedSection
-            agentEntryCard
         }
         .onAppear {
             requestModelListRefresh()
@@ -39,8 +38,8 @@ extension SettingsView {
             // ① 服务 (provider). Choosing one derives the auth method from its kind,
             // eliminating the old redundant "接入方式" toggle.
             settingsRow(
-                title: store.ui("① 服务", "① Service"),
-                detail: store.ui("选择对话所用的提供商。", "Pick the provider for chat.")
+                title: store.ui("服务", "Service"),
+                detail: ""
             ) {
                 compactMenu(store.agentProviderID.label(language: store.interfaceLanguage)) {
                     Section(AgentProviderKind.subscription.label(language: store.interfaceLanguage)) {
@@ -73,7 +72,7 @@ extension SettingsView {
             // ③ 模型 — dropdown backed by the live catalog. No detail line: the picker
             // itself communicates listing state, so a second line of help text is noise.
             settingsRow(
-                title: store.ui("③ 模型", "③ Model"),
+                title: store.ui("模型", "Model"),
                 detail: ""
             ) {
                 agentModelPicker()
@@ -105,7 +104,7 @@ extension SettingsView {
 
     private var agentAPIKeyAuth: some View {
         settingsRow(
-            title: store.ui("② 密钥", "② API Key"),
+            title: store.ui("密钥", "API Key"),
             detail: AgentProviderConsoleLinks.keyHelp(language: store.interfaceLanguage, provider: store.agentProviderID)
         ) {
             VStack(alignment: .trailing, spacing: 8) {
@@ -149,8 +148,8 @@ extension SettingsView {
     // instead of three side-by-side providers.
     private var agentSubscriptionAuth: some View {
         settingsRow(
-            title: store.ui("② 订阅登录", "② Subscription Login"),
-            detail: store.ui("浏览器登录后自动使用。", "Auto-used after browser sign-in.")
+            title: store.ui("订阅登录", "Subscription Login"),
+            detail: ""
         ) {
             VStack(alignment: .trailing, spacing: 8) {
                 let provider = currentSubscriptionProvider
@@ -238,126 +237,106 @@ extension SettingsView {
         store.agentProviderID.kind == .subscription && !oauthService.linkedProviders.isEmpty
     }
 
-    // MARK: Advanced (collapsed)
+    // MARK: Advanced (collapsed) — only shown when there is genuinely something to configure
 
+    /// Hidden entirely for the common case (single profile, no custom base URL). Avoids an
+    /// "Advanced" group whose title promises options that aren't there.
+    @ViewBuilder
     private var agentAdvancedSection: some View {
-        DisclosureGroup(isExpanded: $advancedExpanded) {
-            VStack(spacing: 0) {
-                // Base URL — shown for custom / llama.cpp / azure, or if the user set one.
-                if store.agentProviderID.showsBaseURLField || !store.agentBaseURL.isEmpty {
-                    settingsRow(
-                        title: store.ui("Base URL", "Base URL"),
-                        detail: store.ui(
-                            "自定义 / llama.cpp 写入 Pi models.json；Azure 填资源 endpoint。",
-                            "Custom / llama.cpp write Pi models.json; Azure uses the resource endpoint."
-                        )
-                    ) {
-                        TextField(
-                            "",
-                            text: Binding(
-                                get: { store.agentBaseURL },
-                                set: { store.updateAgentBaseURL($0) }
-                            ),
-                            prompt: Text(baseURLPlaceholder)
-                                .font(.system(size: 13))
-                                .foregroundStyle(WeiBeiTheme.placeholderInk)
-                        )
-                        .textFieldStyle(.plain)
-                        .foregroundColor(WeiBeiTheme.ink)
-                        .font(.system(size: 13))
-                        .weibeiInputSurface(active: false, height: 38)
-                        .frame(width: 280)
+        if advancedSectionHasContent {
+            DisclosureGroup(isExpanded: $advancedExpanded) {
+                VStack(spacing: 0) {
+                    if store.agentProviderID.showsBaseURLField || !store.agentBaseURL.isEmpty {
+                        settingsRow(title: store.ui("Base URL", "Base URL"), detail: "") {
+                            TextField(
+                                "",
+                                text: Binding(
+                                    get: { store.agentBaseURL },
+                                    set: { store.updateAgentBaseURL($0) }
+                                ),
+                                prompt: Text(baseURLPlaceholder)
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(WeiBeiTheme.placeholderInk)
+                            )
+                            .textFieldStyle(.plain)
+                            .foregroundColor(WeiBeiTheme.ink)
+                            .font(.system(size: 13))
+                            .weibeiInputSurface(active: false, height: 38)
+                            .frame(width: 280)
+                        }
                     }
-                }
-
-                // Bedrock region — only for Amazon Bedrock.
-                if store.agentProviderID == .amazonBedrock {
-                    settingsRow(
-                        title: store.ui("区域", "Region"),
-                        detail: store.ui("Bedrock 列出模型所需的 AWS 区域。", "AWS region for Bedrock model listing.")
-                    ) {
-                        TextField(
-                            "",
-                            text: Binding(
-                                get: { store.bedrockRegion },
-                                set: {
-                                    store.bedrockRegion = $0.trimmingCharacters(in: .whitespacesAndNewlines)
-                                    requestModelListRefresh()
-                                }
-                            ),
-                            prompt: Text("us-east-1").font(.system(size: 13)).foregroundStyle(WeiBeiTheme.placeholderInk)
-                        )
-                        .textFieldStyle(.plain)
-                        .foregroundColor(WeiBeiTheme.ink)
-                        .font(.system(size: 13))
-                        .weibeiInputSurface(active: false, height: 38)
-                        .frame(width: 180)
+                    if store.agentProviderID == .amazonBedrock {
+                        settingsRow(title: store.ui("区域", "Region"), detail: "") {
+                            TextField(
+                                "",
+                                text: Binding(
+                                    get: { store.bedrockRegion },
+                                    set: {
+                                        store.bedrockRegion = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                                        requestModelListRefresh()
+                                    }
+                                ),
+                                prompt: Text("us-east-1").font(.system(size: 13)).foregroundStyle(WeiBeiTheme.placeholderInk)
+                            )
+                            .textFieldStyle(.plain)
+                            .foregroundColor(WeiBeiTheme.ink)
+                            .font(.system(size: 13))
+                            .weibeiInputSurface(active: false, height: 38)
+                            .frame(width: 180)
+                        }
                     }
-                }
-
-                // Multiple profiles — only surfaces controls when there is >1.
-                settingsRow(
-                    title: store.ui("配置", "Profile"),
-                    detail: store.ui("可保存多套提供商与密钥，随时切换。", "Save multiple provider + key sets and switch anytime.")
-                ) {
-                    HStack(spacing: 8) {
-                        compactMenu(
-                            store.agentCredentialProfiles.first(where: { $0.id == store.activeAgentProfileID })?.name
-                                ?? store.ui("默认", "Default")
-                        ) {
-                            ForEach(store.agentCredentialProfiles) { profile in
-                                Button(profile.name) {
-                                    store.selectAgentCredentialProfile(profile.id)
+                    if store.agentCredentialProfiles.count > 1 {
+                        settingsRow(title: store.ui("配置", "Profile"), detail: "") {
+                            HStack(spacing: 8) {
+                                compactMenu(
+                                    store.agentCredentialProfiles.first(where: { $0.id == store.activeAgentProfileID })?.name
+                                        ?? store.ui("默认", "Default")
+                                ) {
+                                    ForEach(store.agentCredentialProfiles) { profile in
+                                        Button(profile.name) {
+                                            store.selectAgentCredentialProfile(profile.id)
+                                        }
+                                    }
                                 }
+                                Button(store.ui("新建", "New")) {
+                                    store.createAgentCredentialProfile()
+                                }
+                                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                                Button(store.ui("删除", "Delete")) {
+                                    store.deleteActiveAgentCredentialProfile()
+                                }
+                                .buttonStyle(WeiBeiTextActionButtonStyle())
                             }
                         }
-                        Button(store.ui("新建", "New")) {
-                            store.createAgentCredentialProfile()
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                        if store.agentCredentialProfiles.count > 1 {
-                            Button(store.ui("删除", "Delete")) {
-                                store.deleteActiveAgentCredentialProfile()
-                            }
-                            .buttonStyle(WeiBeiTextActionButtonStyle())
-                        }
                     }
                 }
+            } label: {
+                sectionTitle(store.ui("高级", "Advanced"))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
             }
-        } label: {
-            sectionTitle(store.ui("高级（Base URL / 区域 / 多配置）", "Advanced (Base URL / Region / Profiles)"))
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
+            .background(WeiBeiTheme.paperRaised.opacity(store.appearanceMode == .inkstone ? 0.16 : 0.28))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(WeiBeiTheme.hairline.opacity(0.34), lineWidth: 1)
+            }
         }
-        .background(WeiBeiTheme.paperRaised.opacity(store.appearanceMode == .inkstone ? 0.16 : 0.28))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(WeiBeiTheme.hairline.opacity(0.34), lineWidth: 1)
-        }
+    }
+
+    /// Whether the Advanced group has anything to show. Keeps it hidden for the common
+    /// single-profile / built-in-provider case instead of presenting an empty disclosure.
+    private var advancedSectionHasContent: Bool {
+        store.agentProviderID.showsBaseURLField
+            || !store.agentBaseURL.isEmpty
+            || store.agentProviderID == .amazonBedrock
+            || store.agentCredentialProfiles.count > 1
     }
 
     private var baseURLPlaceholder: String {
         store.agentProviderID == .azureOpenAI
             ? "https://YOUR.openai.azure.com"
             : "https://api.example.com/v1"
-    }
-
-    // MARK: Entry card (kept as-is, read-only surface pill)
-
-    private var agentEntryCard: some View {
-        settingsGroup(store.ui("对话入口", "Chat Entry")) {
-            settingsRow(
-                title: store.ui("入口说明", "Entry Notes"),
-                detail: store.ui("完整对话在主栏与沉浸对话；选区轻提示可 ⌃⌥0 隐藏。", "Full chat lives in the agent pane and immersive conversation; hide selection prompt with ⌃⌥0.")
-            ) {
-                settingsPill(
-                    title: store.agentSurface.label(language: store.interfaceLanguage),
-                    icon: "bubble.left.and.bubble.right",
-                    active: store.agentSurface == .selectionFloat
-                )
-            }
-        }
     }
 
     // MARK: Manual model entry sheet
