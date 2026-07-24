@@ -40,12 +40,14 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
     }
 
     var body: some View {
-        // Hit-test only the top strip + the visible chip. A full-pane contentShape
-        // was swallowing PDF/HTML selection and killing the selection float capsule.
+        // CRITICAL: do NOT use maxHeight: .infinity. That expands the overlay's hit-test
+        // region over the whole reader/chat pane and kills PDF/text selection + the
+        // selection float capsule. Stay top-aligned and only as tall as the strip/chip;
+        // parent uses .overlay(alignment: .top).
         ZStack(alignment: .top) {
             Color.clear
                 .frame(maxWidth: .infinity)
-                .frame(height: 34)
+                .frame(height: 36)
                 .contentShape(Rectangle())
                 .onHover(perform: updateVisibility)
 
@@ -91,9 +93,8 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
                 .transition(WeiBeiTransition.floating)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .allowsHitTesting(true)
-        // Children define the hit regions; do NOT expand contentShape to the whole pane.
+        .frame(maxWidth: .infinity, alignment: .top)
+        .fixedSize(horizontal: false, vertical: true)
         .onDisappear {
             hideTask?.cancel()
         }

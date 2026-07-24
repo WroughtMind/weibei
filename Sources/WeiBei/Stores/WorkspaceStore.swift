@@ -4095,8 +4095,10 @@ final class WorkspaceStore: ObservableObject {
         let cleanedOwnerTitle = ownerTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedOwnerTitle = (cleanedOwnerTitle?.isEmpty == false ? cleanedOwnerTitle : nil) ?? selectionOwnerTitle(for: source)
         let boundedText = Self.boundedSelectionText(cleaned)
-        let shouldRevealSelectionPrompt = (anchor != nil || pinnedFloatingAgent)
-            && !isConversationSurfaceVisible
+        // Multi-pane and immersive both get the selection capsule when there is an anchor.
+        // (Previously suppressed whenever the chat column was open — that made multi-pane
+        // look "broken" vs immersive reading.)
+        let shouldRevealSelectionPrompt = anchor != nil || pinnedFloatingAgent
         let contentMatches = selectionContext.map {
             $0.text == boundedText
                 && $0.source == source
@@ -4119,7 +4121,7 @@ final class WorkspaceStore: ObservableObject {
             // Never clear pin while the user locked the float (or mid selection-answer).
             cancelPendingSelectionAttachment()
             if pinnedFloatingAgent || keepFloatingSelectionForAnswer {
-                if !isConversationSurfaceVisible, agentSurface != .selectionFloat {
+                if agentSurface != .selectionFloat {
                     agentSurface = .selectionFloat
                 }
                 showQuietInsight = false
@@ -4158,9 +4160,7 @@ final class WorkspaceStore: ObservableObject {
         cancelPendingSelectionAttachment()
         // Respect pin / answer lock — do not force-unpin on every new selection.
         if pinnedFloatingAgent || keepFloatingSelectionForAnswer {
-            if !isConversationSurfaceVisible {
-                agentSurface = .selectionFloat
-            }
+            agentSurface = .selectionFloat
             showQuietInsight = false
             return
         }
