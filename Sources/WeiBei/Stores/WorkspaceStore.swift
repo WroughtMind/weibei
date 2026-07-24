@@ -2930,8 +2930,11 @@ final class WorkspaceStore: ObservableObject {
             WeiBeiThemeRuntime.mode = mode
             return
         }
-        appearanceMode = mode
+        // Runtime first so any body that re-reads WeiBeiTheme during the publish
+        // already sees the target palette (critical for paper↔xuan / inkstone↔stele).
         WeiBeiThemeRuntime.mode = mode
+        appearanceMode = mode
+        NotificationCenter.default.post(name: WeiBeiThemeRuntime.didChangeNotification, object: mode)
         save()
     }
 

@@ -18,9 +18,25 @@ public struct KeychainPasswordStore {
 
     public func load() -> String {
         var result: CFTypeRef?
-        let status = SecItemCopyMatching(readQuery as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else { return "" }
-        return Self.cleaned(String(data: data, encoding: .utf8) ?? "")
+        // Never show a keychain prompt UI — if the item needs auth we migrate/re-save
+        // with an open ACL on next successful save, or return empty.
+        var query = readQuery
+        query[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIFail
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecSuccess, let data = result as? Data {
+            return Self.cleaned(String(data: data, encoding: .utf8) ?? "")
+        }
+        // Fallback without the auth UI flag (older macOS / temporary keychain tests).
+        result = nil
+        let fallback = SecItemCopyMatching(readQuery as CFDictionary, &result)
+        guard fallback == errSecSuccess, let data = result as? Data else { return "" }
+        let value = Self.cleaned(String(data: data, encoding: .utf8) ?? "")
+        // Rewrite with open ACL so the next launch of a re-signed ad-hoc binary
+        // does not re-prompt for the login keychain password.
+        if !value.isEmpty {
+            try? save(value)
+        }
+        return value
     }
 
     public func save(_ value: String) throws {
@@ -31,19 +47,18 @@ public struct KeychainPasswordStore {
         }
 
         let data = Data(key.utf8)
-        let status = SecItemUpdate(matchQuery as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-        if status == errSecSuccess { return }
+        // Always delete + re-add so ACL/access is fresh. Update alone keeps the old
+        // creator-code ACL, which re-prompts every time an ad-hoc signature changes.
+        _ = SecItemDelete(matchQuery as CFDictionary)
 
-        if status == errSecItemNotFound {
-            var attributes = addAttributes
-            attributes[kSecValueData as String] = data
-            attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            let addStatus = SecItemAdd(attributes as CFDictionary, nil)
-            guard addStatus == errSecSuccess else { throw Self.keychainError(addStatus) }
-            return
+        var attributes = addAttributes
+        attributes[kSecValueData as String] = data
+        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        if let access = Self.openAccess() {
+            attributes[kSecAttrAccess as String] = access
         }
-
-        throw Self.keychainError(status)
+        let addStatus = SecItemAdd(attributes as CFDictionary, nil)
+        guard addStatus == errSecSuccess else { throw Self.keychainError(addStatus) }
     }
 
     public func delete() throws {
@@ -82,6 +97,22 @@ public struct KeychainPasswordStore {
             attributes[kSecUseKeychain as String] = keychain
         }
         return attributes
+    }
+
+    /// Access list that does not bind the secret to one ad-hoc code signature.
+    /// Local-dev rebuilds re-sign every time; a tight ACL causes login-keychain
+    /// password prompts on every launch. Trade-off: any process that knows the
+    /// service/account can read the item (acceptable for personal API keys).
+    private static func openAccess() -> SecAccess? {
+        var trusted: SecTrustedApplication?
+        // NULL path = "any application" trusted entry.
+        let status = SecTrustedApplicationCreateFromPath(nil, &trusted)
+        guard status == errSecSuccess, let trusted else { return nil }
+        var access: SecAccess?
+        let list = [trusted] as CFArray
+        let create = SecAccessCreate("WeiBei local credential" as CFString, list, &access)
+        guard create == errSecSuccess else { return nil }
+        return access
     }
 
     private static func keychainError(_ status: OSStatus) -> NSError {

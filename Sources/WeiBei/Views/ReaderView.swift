@@ -198,6 +198,7 @@ struct ReaderView: View {
             }
             .overlay(alignment: .top) {
                 if !railOnly, showsFloatingTitle {
+                    // Mask switch lives only on this hover DOC tab — not pinned, not main top bar.
                     ImmersiveHoverTitleView(
                         mark: "DOC",
                         title: floatingTitle,
@@ -1762,16 +1763,8 @@ private final class ReaderPDFView: PDFView {
     }
 
     private var adaptedPaperColor: NSColor {
-        switch documentAppearanceMode {
-        case .paper:
-            return WeiBeiNativePalette.paper(for: .paper)
-        case .xuan:
-            return WeiBeiNativePalette.paper(for: .xuan)
-        case .inkstone:
-            return NSColor(calibratedRed: 0.66, green: 0.61, blue: 0.50, alpha: 1.0)
-        case .stele:
-            return NSColor(calibratedRed: 0.58, green: 0.60, blue: 0.64, alpha: 1.0)
-        }
+        // Per-theme PDF color mask (multiply wash under page pixels).
+        WeiBeiNativePalette.documentMaskFill(for: documentAppearanceMode)
     }
 
     private func invalidatePageRendering() {
@@ -2495,76 +2488,50 @@ struct WebReaderRepresentable: NSViewRepresentable {
     """
 
     static func readerStyleScript(for mode: WeiBeiAppearanceMode, adaptsDocumentColors: Bool = true) -> String {
-        let selectionCSS: String
-        switch mode {
-        case .paper, .xuan:
-            let text = mode == .xuan ? "#25231f" : "#1d1814"
-            selectionCSS = """
-            ::selection { background: rgba(145, 38, 27, 0.20); color: \(text); }
+        let tokens = WeiBeiNativePalette.cssHex(for: mode)
+        let scheme = mode.isDark ? "dark" : "light"
+        let selectionCSS = """
+            ::selection { background: \(tokens.selection); color: \(tokens.ink); }
             .weibei-selection-ask-mark {
               text-decoration-line: underline;
-              text-decoration-color: rgba(145, 38, 27, 0.72);
+              text-decoration-color: \(tokens.cinnabar);
               text-decoration-thickness: 1.5px;
               text-underline-offset: 3px;
               cursor: pointer;
-              background: rgba(145, 38, 27, 0.06);
+              background: color-mix(in srgb, \(tokens.cinnabar) 12%, transparent);
               border-radius: 2px;
             }
             .weibei-selection-ask-mark:hover {
-              background: rgba(145, 38, 27, 0.12);
+              background: color-mix(in srgb, \(tokens.cinnabar) 20%, transparent);
             }
             """
-        case .inkstone, .stele:
-            let text = mode == .stele ? "#E8ECF0" : "#F5E7C8"
-            selectionCSS = """
-            ::selection { background: rgba(166, 54, 43, 0.35); color: \(text); }
-            .weibei-selection-ask-mark {
-              text-decoration-line: underline;
-              text-decoration-color: rgba(200, 120, 100, 0.85);
-              text-decoration-thickness: 1.5px;
-              text-underline-offset: 3px;
-              cursor: pointer;
-              background: rgba(166, 54, 43, 0.12);
-              border-radius: 2px;
-            }
-            .weibei-selection-ask-mark:hover {
-              background: rgba(166, 54, 43, 0.22);
-            }
-            """
-        }
 
         let adaptiveCSS: String
         if !adaptsDocumentColors {
             adaptiveCSS = ""
-        } else {
-            switch mode {
-            case .paper, .xuan:
-                let body = mode == .xuan ? "#25231f" : "#1d1814"
-                adaptiveCSS = """
-            html, body { max-width: 100%; overflow-x: hidden; color-scheme: light; background: transparent !important; }
-            body, main, article, section, div, p, li, blockquote, td, th, span { color: \(body) !important; }
-            [data-weibei-paper-surface] { background-color: transparent !important; }
-            a { color: #31566b !important; }
-            code { background: rgba(29, 24, 20, .06) !important; color: #5d4b33 !important; }
-            pre { background: rgba(29, 24, 20, .052) !important; border-color: rgba(92, 70, 46, .28) !important; }
-            table, th, td { border-color: rgba(92, 70, 46, .28) !important; }
-            """
-            case .inkstone, .stele:
-                let body = mode == .stele ? "#D2D6DC" : "#D7CBB0"
-                let link = mode == .stele ? "#B8C4D0" : "#C8B98A"
-                adaptiveCSS = """
-            html, body { max-width: 100%; overflow-x: hidden; color-scheme: dark; background: transparent !important; }
-            body, main, article, section, div, p, li, blockquote, td, th, span { color: \(body) !important; background-color: transparent !important; }
-            a { color: \(link) !important; text-decoration-color: rgba(200, 185, 138, .55) !important; }
-            h1, h2, h3 { color: \(link) !important; }
-            blockquote { border-left: 3px solid rgba(166, 54, 43, .62) !important; background: rgba(166, 54, 43, .08) !important; color: \(body) !important; }
-            code { background: rgba(255, 255, 255, .05) !important; color: #D8B47A !important; }
-            pre { background: #171717 !important; border: 1px solid #2D2D2D !important; color: \(body) !important; }
+        } else if mode.isDark {
+            adaptiveCSS = """
+            html, body { max-width: 100%; overflow-x: hidden; color-scheme: \(scheme); background: transparent !important; }
+            body, main, article, section, div, p, li, blockquote, td, th, span { color: \(tokens.ink) !important; background-color: transparent !important; }
+            a { color: \(tokens.link) !important; text-decoration-color: color-mix(in srgb, \(tokens.link) 55%, transparent) !important; }
+            h1, h2, h3 { color: \(tokens.link) !important; }
+            blockquote { border-left: 3px solid color-mix(in srgb, \(tokens.cinnabar) 62%, transparent) !important; background: color-mix(in srgb, \(tokens.cinnabar) 10%, transparent) !important; color: \(tokens.ink) !important; }
+            code { background: rgba(255, 255, 255, .05) !important; color: \(tokens.link) !important; }
+            pre { background: \(tokens.paperRaised) !important; border: 1px solid color-mix(in srgb, \(tokens.ink) 18%, transparent) !important; color: \(tokens.ink) !important; }
             table { background: rgba(255, 255, 255, .02) !important; }
-            th { color: \(link) !important; background: rgba(200, 185, 138, .08) !important; }
-            table, th, td { border-color: #2D2D2D !important; }
+            th { color: \(tokens.link) !important; background: color-mix(in srgb, \(tokens.link) 10%, transparent) !important; }
+            table, th, td { border-color: color-mix(in srgb, \(tokens.ink) 18%, transparent) !important; }
             """
-            }
+        } else {
+            adaptiveCSS = """
+            html, body { max-width: 100%; overflow-x: hidden; color-scheme: \(scheme); background: transparent !important; }
+            body, main, article, section, div, p, li, blockquote, td, th, span { color: \(tokens.ink) !important; }
+            [data-weibei-paper-surface] { background-color: transparent !important; }
+            a { color: \(tokens.link) !important; }
+            code { background: color-mix(in srgb, \(tokens.ink) 6%, transparent) !important; color: \(tokens.muted) !important; }
+            pre { background: color-mix(in srgb, \(tokens.ink) 5%, transparent) !important; border-color: color-mix(in srgb, \(tokens.ink) 18%, transparent) !important; }
+            table, th, td { border-color: color-mix(in srgb, \(tokens.ink) 18%, transparent) !important; }
+            """
         }
 
         let css = selectionCSS + "\n" + adaptiveCSS
