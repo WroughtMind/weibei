@@ -38,7 +38,9 @@ struct SettingsView: View {
                 .overlay(WeiBeiTheme.hairline.opacity(0.55))
             settingsDetail
         }
-        .frame(width: 860, height: 610)
+        // L4: fixed size was too tight once the chat card grew; keep a stable
+        // default floor but allow vertical stretch (and modest horizontal).
+        .frame(minWidth: 860, minHeight: 610)
         .background(WeiBeiTheme.paper)
         .foregroundStyle(WeiBeiTheme.ink)
         .preferredColorScheme(store.appearanceMode.colorScheme)
@@ -90,17 +92,6 @@ struct SettingsView: View {
             case .agent: return "text.bubble"
             case .data: return "folder"
             case .shortcuts: return "command"
-            }
-        }
-
-        var code: String {
-            switch self {
-            case .appearance: return "LOOK"
-            case .reading: return "READ"
-            case .writing: return "NOTE"
-            case .agent: return "CHAT"
-            case .data: return "DATA"
-            case .shortcuts: return "KEYS"
             }
         }
 
@@ -558,25 +549,6 @@ struct SettingsView: View {
         }
     }
 
-    private func settingsRouteRow(title: String, detail: String, target: SettingsSection) -> some View {
-        settingsRow(title: title, detail: detail) {
-            Button {
-                withAnimation(WeiBeiMotion.panel) {
-                    selectedSection = target
-                }
-            } label: {
-                HStack(spacing: 7) {
-                    Text(target.code)
-                        .font(WeiBeiTypography.englishBrandFont(size: 9, weight: .semibold))
-                        .tracking(0.9)
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 10, weight: .semibold))
-                }
-            }
-            .buttonStyle(WeiBeiTextActionButtonStyle())
-        }
-    }
-
     private func settingsSidebarButton(_ section: SettingsSection) -> some View {
         let active = selectedSection == section
         return Button {
@@ -584,17 +556,14 @@ struct SettingsView: View {
                 selectedSection = section
             }
         } label: {
+            // L2: icon + title only — decorative LOOK/CHAT/… code tags removed.
             HStack(spacing: 10) {
                 Image(systemName: section.icon)
                     .font(.system(size: 13, weight: .semibold))
                     .frame(width: 18)
                 Text(section.title(store))
                     .font(.system(size: 13, weight: active ? .semibold : .medium))
-                Spacer()
-                Text(section.code)
-                    .font(WeiBeiTypography.englishBrandFont(size: 8.5, weight: .semibold))
-                    .tracking(0.8)
-                    .foregroundStyle(active ? WeiBeiTheme.cinnabar.opacity(0.82) : WeiBeiTheme.tertiaryInk.opacity(0.72))
+                Spacer(minLength: 0)
             }
             .foregroundStyle(active ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
             .padding(.horizontal, 10)
@@ -614,24 +583,43 @@ struct SettingsView: View {
 
     /// Shared Settings card primitive (also used by `AgentSettingsView` extension).
     func settingsGroup<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        let cardFill = WeiBeiTheme.paperRaised.opacity(store.appearanceMode == .inkstone ? 0.20 : 0.36)
+        return VStack(alignment: .leading, spacing: 0) {
             sectionTitle(title)
                 .padding(.horizontal, 14)
                 .padding(.bottom, 8)
             VStack(spacing: 0) {
                 content()
             }
-            .background(WeiBeiTheme.paperRaised.opacity(store.appearanceMode == .inkstone ? 0.20 : 0.36))
+            .background(cardFill)
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay {
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(WeiBeiTheme.hairline.opacity(0.42), lineWidth: 1)
             }
+            // L3: each settingsRow draws a bottom hairline. Paint the card fill over
+            // the final pixel so the last row does not leave a floating divider on
+            // the card edge (without requiring every call site to pass isLast).
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(cardFill)
+                    .frame(height: 1)
+                    .padding(.horizontal, 1)
+            }
         }
     }
 
     /// Shared Settings row primitive (title + detail + trailing control).
-    func settingsRow<Control: View>(title: String, detail: String, @ViewBuilder control: () -> Control) -> some View {
+    ///
+    /// `showsBottomDivider` defaults to true. Prefer leaving it alone — the group
+    /// covers the last hairline (L3). Pass `false` only when a row sits outside a
+    /// group or is itself a standalone surface.
+    func settingsRow<Control: View>(
+        title: String,
+        detail: String,
+        showsBottomDivider: Bool = true,
+        @ViewBuilder control: () -> Control
+    ) -> some View {
         HStack(alignment: .center, spacing: 18) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
@@ -651,10 +639,12 @@ struct SettingsView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
         .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(WeiBeiTheme.hairline.opacity(0.28))
-                .frame(height: 1)
-                .padding(.leading, 14)
+            if showsBottomDivider {
+                Rectangle()
+                    .fill(WeiBeiTheme.hairline.opacity(0.28))
+                    .frame(height: 1)
+                    .padding(.leading, 14)
+            }
         }
     }
 
