@@ -26,8 +26,14 @@ extension SettingsView {
                     Image(systemName: "arrow.triangle.2.circlepath")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                        .rotationEffect(.degrees(refreshRotation))
-                        .animation(.linear(duration: 0.9).repeatForever(autoreverses: false), value: store.modelListStatus.isLoading)
+                        // Continuous spin while loading: drive via a monotonically increasing
+                        // angle that animates itself each cycle.
+                        .rotationEffect(.degrees(spinAngle))
+                        .onAppear {
+                            withAnimation(.linear(duration: 0.9).repeatForever(autoreverses: false)) {
+                                spinAngle += 360
+                            }
+                        }
                 }
                 compactMenu(displayedModelName) {
                     modelMenuContent
@@ -54,32 +60,16 @@ extension SettingsView {
 
     @ViewBuilder
     private var modelMenuContent: some View {
-        // Built-in / unsupported note header.
-        if case .builtin = store.modelListStatus {
-            Section(store.ui("推荐（此服务无法自动列出）", "Recommended (auto-list unavailable)")) {
-                EmptyView()
-            }
-        } else if case let .failed(message) = store.modelListStatus {
-            Section(store.ui("拉取失败，显示推荐", "Fetch failed; showing recommended")) {
-                Text(message).font(.system(size: 10))
-            }
-        } else if store.modelListStatus == .idle {
-            Section(store.ui("推荐", "Recommended")) { EmptyView() }
-        }
-
-        // The actual model entries (live list or built-in fallback).
+        // The actual model entries (live list or built-in fallback). Menu items must be
+        // title-literal Buttons; the current selection is marked with a ✓ prefix since
+        // Menu does not render custom HStack/Button-label children reliably.
         let entries = effectiveModelEntries
         if !entries.isEmpty {
-            Section {
+            Section(headerText) {
                 ForEach(entries, id: \.self) { model in
-                    Button(action: { store.updateModelName(model) }) {
-                        HStack {
-                            Text(model)
-                            Spacer()
-                            if model == store.modelName.trimmingCharacters(in: .whitespacesAndNewlines) {
-                                Image(systemName: "checkmark")
-                            }
-                        }
+                    let isSelected = model == store.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
+                    Button((isSelected ? "✓ " : "   ") + model) {
+                        store.updateModelName(model)
                     }
                 }
             }
@@ -90,6 +80,18 @@ extension SettingsView {
             Button(store.ui("手动输入…", "Enter manually…")) {
                 showManualModelEntry = true
             }
+        }
+    }
+
+    /// Section header reflects the listing state so the user knows whether the entries
+    /// above are live or a built-in fallback.
+    private var headerText: String {
+        switch store.modelListStatus {
+        case .loaded: return store.ui("可用模型", "Available models")
+        case .builtin: return store.ui("推荐（此服务无法自动列出）", "Recommended (auto-list unavailable)")
+        case .idle: return store.ui("推荐", "Recommended")
+        case .failed: return store.ui("拉取失败，显示推荐", "Fetch failed; showing recommended")
+        case .loading: return store.ui("推荐", "Recommended")
         }
     }
 

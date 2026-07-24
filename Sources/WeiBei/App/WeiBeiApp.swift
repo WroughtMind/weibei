@@ -1249,7 +1249,7 @@ struct SettingsView: View {
     @State private var selectedSection: SettingsSection = .overview
     @FocusState var focusedField: Field?
     // Model picker state (AgentModelPicker extension).
-    @State var refreshRotation: Double = 0
+    @State var spinAngle: Double = 0
     @State var showManualModelEntry = false
     // Advanced disclosure state (AgentSettingsView extension).
     @State var advancedExpanded = false
