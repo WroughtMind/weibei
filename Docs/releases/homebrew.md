@@ -5,7 +5,7 @@
 计划中的公开结构：
 
 ```text
-taekchef/weibei                 GitHub Release 与源码
+weibei-app/weibei               GitHub Release 与源码
 taekchef/homebrew-tap           Casks/weibei.rb
 ```
 
