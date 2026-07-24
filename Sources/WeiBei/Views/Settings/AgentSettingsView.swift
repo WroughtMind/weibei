@@ -20,14 +20,10 @@ extension SettingsView {
             agentServiceCard
         }
         .onAppear {
-            requestModelListRefresh()
-        }
-        .onChange(of: store.agentProviderID) { _, _ in
-            requestModelListRefresh()
-        }
-        .onChange(of: store.activeAgentProfileID) { _, _ in
-            // Re-fetch on profile switch too — two profiles may share a provider, so
-            // onChange(agentProviderID) alone wouldn't fire and the list would stay empty.
+            // First paint only. Provider / profile switches now drive their own fetch
+            // from inside the Store (setAgentProviderID / selectAgentCredentialProfile
+            // call scheduleModelListRefresh), so the view no longer needs to fan out
+            // three onChange hooks — that triple-trigger was the root of the race (S2).
             requestModelListRefresh()
         }
         .sheet(isPresented: $showManualModelEntry) {
@@ -215,6 +211,13 @@ extension SettingsView {
         switch store.agentProviderID.kind {
         case .subscription:
             agentSubscriptionAuth
+            // Subscription providers that also accept an API key (Codex / Anthropic —
+            // exactly the set for which supportsInAppOAuth is true) get the key field
+            // too, so users aren't forced into OAuth just to use a console-issued key.
+            // Copilot (supportsInAppOAuth == false) stays OAuth/token-only. See S4.
+            if store.agentProviderID.supportsInAppOAuth {
+                agentAPIKeyAuth
+            }
         case .apiKey, .localOrCustom:
             agentAPIKeyAuth
         }

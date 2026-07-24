@@ -10,11 +10,11 @@ import WeiBeiCore
 // "manual entry" escape hatch so users can type any id.
 
 extension SettingsView {
-    /// Triggered on appear and whenever the provider / key changes.
+    /// UI-side entry point (onAppear). Delegates to the Store's race-guarded
+    /// scheduler so every fetch — whether from here or from a provider/profile
+    /// switch inside the Store — flows through one generation-protected path (S2).
     func requestModelListRefresh() {
-        Task { @MainActor in
-            await store.refreshModelList()
-        }
+        store.scheduleModelListRefresh()
     }
 
     /// The dropdown + status + manual-entry control for the model id.
