@@ -7,6 +7,20 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WeiBeiCore
 
+/// State of the model-list discovery shown in Settings → 对话服务 → 模型.
+enum ModelListStatus: Equatable {
+    case idle
+    case loading
+    case loaded
+    case failed(String)
+    case builtin
+
+    var isLoading: Bool {
+        if case .loading = self { return true }
+        return false
+    }
+}
+
 enum NotebookCreationKind: String {
     case blank
     case currentMaterial
@@ -283,7 +297,7 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var workspaceSaveError: String?
     @Published var notebookCreationDraft: NotebookCreationDraft?
     @Published var notebookRenameDraft: NotebookRenameDraft?
-    @Published var modelName: String = ProcessInfo.processInfo.environment["WEIBEI_OPENAI_MODEL"] ?? "gpt-5.1"
+    @Published var modelName: String = ProcessInfo.processInfo.environment["WEIBEI_OPENAI_MODEL"] ?? "gpt-5.5"
     @Published var agentProviderID: AgentProviderID = .openai
     @Published var agentBaseURL: String = ""
     @Published var openAIAPIKey: String = OpenAIAPIKeyStore.load(provider: "openai")
@@ -293,6 +307,10 @@ final class WorkspaceStore: ObservableObject {
     @Published var activeAgentProfileID: UUID = AgentCredentialProfileStore.activeProfileID()
         ?? AgentCredentialProfileStore.loadProfiles().first?.id
         ?? AgentCredentialProfileStore.defaultProfile().id
+    // Model-list discovery (settings UI). Backed by `AgentModelListService`.
+    @Published var availableModels: [String] = []
+    @Published var modelListStatus: ModelListStatus = .idle
+    @Published var bedrockRegion: String = ProcessInfo.processInfo.environment["WEIBEI_BEDROCK_REGION"] ?? "us-east-1"
     @Published var appearanceMode: WeiBeiAppearanceMode = .paper
     @Published var adaptImportedDocumentColors = true
     @Published var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
@@ -2734,6 +2752,102 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
+    /// Assemble the concrete listing strategy for the active provider, combining the
+    /// provider's protocol with the runtime base URL / Bedrock region.
+    func resolvedModelListStrategy() -> ModelListStrategy? {
+        switch agentProviderID.modelListProtocol {
+        case .openAICompatible:
+            let base = agentBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolved = base.isEmpty ? (agentProviderID.defaultListBaseURL ?? "") : base
+            guard !resolved.isEmpty else { return nil }
+            return .openAICompatible(base: resolved)
+        case .anthropic:
+            return .anthropic
+        case .gemini:
+            return .gemini
+        case .openRouterPublic:
+            return .openRouterPublic
+        case .azureOpenAI:
+            let base = agentBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !base.isEmpty else { return nil }
+            return .azureOpenAI(base: base)
+        case .bedrock:
+            return .bedrock(region: bedrockRegion)
+        case .gitHubModels:
+            return .gitHubModels
+        case .codexSubscription:
+            // Need the OAuth token + account id from ~/.pi/agent/auth.json. If absent
+            // (not signed in), return nil — the caller falls back to the built-in catalog.
+            guard let credential = codexSubscriptionCredential() else { return nil }
+            return .codexSubscription(token: credential.token, accountID: credential.accountID)
+        case .unsupported:
+            return nil
+        }
+    }
+
+    /// Read the openai-codex OAuth token + accountId stored by pi-oauth-login.mjs.
+    private func codexSubscriptionCredential() -> (token: String, accountID: String)? {
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".pi/agent/auth.json")
+        guard let data = try? Data(contentsOf: url),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let entry = root["openai-codex"] as? [String: Any] else { return nil }
+        let token = (entry["access"] as? String) ?? ""
+        let accountID = (entry["accountId"] as? String) ?? ""
+        guard !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return (token, accountID)
+    }
+
+    /// Whether the active provider can enumerate models at all (vs. built-in only).
+    var supportsRemoteModelList: Bool {
+        agentProviderID.modelListProtocol != .unsupported
+    }
+
+    /// Fetch the model catalog for the active provider. Updates `availableModels` /
+    /// `modelListStatus` on the main actor. Safe to call repeatedly; debounced by the UI.
+    ///
+    /// Codex subscription tries the live `codex/models` endpoint first, then falls back
+    /// to the built-in catalog on any failure (best-effort listing, per upstream behavior).
+    func refreshModelList() async {
+        // No strategy (unsupported provider, or Codex subscription not signed in):
+        // surface the built-in catalog immediately.
+        guard let strategy = resolvedModelListStrategy() else {
+            availableModels = fallbackModelCatalog
+            modelListStatus = .builtin
+            return
+        }
+        // Codex subscription doesn't use an API key — it carries its own OAuth token in
+        // the strategy. OpenRouter public catalog needs no credential either.
+        let needsAPIKey: Bool
+        if case .codexSubscription = strategy { needsAPIKey = false }
+        else if strategy == .openRouterPublic { needsAPIKey = false }
+        else { needsAPIKey = true }
+
+        if needsAPIKey, resolvedAPIKey() == nil {
+            availableModels = fallbackModelCatalog
+            modelListStatus = .failed(ui("未配置密钥，无法列出模型。", "No API key configured; cannot list models."))
+            return
+        }
+        let apiKey = resolvedAPIKey()?.key ?? ""
+        modelListStatus = .loading
+        do {
+            let models = try await AgentModelListService.shared.fetchModels(strategy: strategy, apiKey: apiKey)
+            availableModels = models.isEmpty ? fallbackModelCatalog : models
+            modelListStatus = .loaded
+        } catch {
+            availableModels = fallbackModelCatalog
+            modelListStatus = (agentProviderID == .openaiCodex) ? .builtin : .failed(error.localizedDescription)
+        }
+    }
+
+    /// Built-in fallback shown before the first successful fetch, or when listing fails.
+    private var fallbackModelCatalog: [String] {
+        agentProviderID == .openaiCodex
+            ? AgentModelListService.codexSubscriptionModels
+            : agentProviderID.recommendedModels
+    }
+
+
     func toggleAppearanceMode() {
         appearanceMode = appearanceMode.toggled
         save()
@@ -2809,6 +2923,12 @@ final class WorkspaceStore: ObservableObject {
             openAIAPIKey = OpenAIAPIKeyStore.load(provider: profile.provider.piProviderName)
         }
         openAIKeyStatus = nil
+        // Clear the stale model list from the previous profile; the UI re-fetches for the
+        // new provider. Without this the dropdown shows the old profile's models until the
+        // refresh finishes (visible when two profiles share the same provider, so the
+        // onChange(agentProviderID) hook alone doesn't fire).
+        availableModels = []
+        modelListStatus = .idle
         save()
     }
 
