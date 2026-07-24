@@ -2928,7 +2928,8 @@ expect(AgentProviderConsoleLinks.keyHelp(language: .chinese, provider: .openaiCo
     && AgentProviderConsoleLinks.metadata(for: .openaiCodex).help == .openaiCodex
     && AgentProviderConsoleLinks.metadata(for: .cloudflareAIGateway).help == .cloudflareAIGateway
     && AgentProviderConsoleLinks.metadata(for: .cloudflareWorkersAI).help == .cloudflareWorkersAI,
-    "provider key-help copy matches the pre-L5 golden set for special and generic cases")expect(agentSettingsSource.contains("settingsPill(\n                    title: store.interfaceLanguage.settingsLabel,\n                    icon: \"character.book.closed\",\n                    active: false")
+    "provider key-help copy matches the pre-L5 golden set for special and generic cases")
+expect(agentSettingsSource.contains("settingsPill(\n                    title: store.interfaceLanguage.settingsLabel,\n                    icon: \"character.book.closed\",\n                    active: false")
     && agentSettingsSource.contains("settingsPill(\n                    title: store.appearanceMode.label(language: store.interfaceLanguage),\n                    icon: store.appearanceMode.systemImage,\n                    active: false"), "settings sidebar summary pills stay neutral instead of looking permanently selected")
 expect(agentSettingsSource.contains("title: store.ui(\"每日灵感\", \"Daily Inspiration\")")
     && agentSettingsSource.contains("get: { store.showDailyInspiration }")
