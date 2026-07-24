@@ -114,16 +114,18 @@ struct ContentView: View {
     }
 
     private var showsGlobalFloatingAgent: Bool {
-        // Formal conversation pane already open → ask/answer there; don't stack a float.
-        guard !store.isConversationSurfaceVisible else { return false }
-        return !store.courseWorkspacePresented
-            && store.canShowSelectionPromptSurface && SelectionFloatingAgentPlacement.isVisible(
-            surface: store.agentSurface,
-            hasSelection: store.selectionContext != nil || store.keepFloatingSelectionForAnswer,
-            hasAnchor: store.selectionAnchor != nil,
-            pinned: store.pinnedFloatingAgent,
-            keepOpen: store.keepFloatingSelectionForAnswer
-        )
+        // Show the selection capsule in multi-pane as well as immersive reading.
+        // When the chat pane is open, the float still appears; "问" routes into the
+        // conversation via `routesToConversation` (do not hide the capsule).
+        !store.courseWorkspacePresented
+            && store.canShowSelectionPromptSurface
+            && SelectionFloatingAgentPlacement.isVisible(
+                surface: store.agentSurface,
+                hasSelection: store.selectionContext != nil || store.keepFloatingSelectionForAnswer,
+                hasAnchor: store.selectionAnchor != nil,
+                pinned: store.pinnedFloatingAgent,
+                keepOpen: store.keepFloatingSelectionForAnswer
+            )
     }
 
     private var isImmersiveLayout: Bool {
