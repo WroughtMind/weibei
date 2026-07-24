@@ -598,37 +598,51 @@ struct WeiBeiGlassHeaderBackground: View {
     var paperOpacity: Double = 0.72
     var materialOpacity: Double = 0.14
 
-    /// Use product theme, not system colorScheme (纸面/宣纸 are both light).
+    /// Product theme (not system colorScheme — 纸面/宣纸 are both light).
     private var isDark: Bool { WeiBeiThemeRuntime.mode.isDark }
 
     var body: some View {
         ZStack {
-            Rectangle()
-                .fill(.regularMaterial)
-                .opacity(materialOpacity)
-
-            Rectangle()
-                .fill(WeiBeiTheme.paperRaised.opacity(paperWashOpacity))
-
-            LinearGradient(
-                colors: [
-                    WeiBeiTheme.glassHighlight.opacity(isDark ? 0.12 : 0.20),
-                    WeiBeiTheme.glassTint.opacity(isDark ? 0.16 : 0.24),
-                    WeiBeiTheme.paperRaised.opacity(isDark ? 0.12 : 0.13),
-                    WeiBeiTheme.paper.opacity(isDark ? 0.10 : 0.04)
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-
-            Rectangle()
-                .fill(WeiBeiTheme.paperInset.opacity(0.018))
+            if isDark {
+                // Dark themes: solid product surface. `.regularMaterial` reads as a
+                // washed gray bar on 墨石/石碑 and must not sit above the page.
+                Rectangle()
+                    .fill(WeiBeiTheme.paper)
+                Rectangle()
+                    .fill(WeiBeiTheme.paperRaised.opacity(0.55))
+                LinearGradient(
+                    colors: [
+                        WeiBeiTheme.glassHighlight.opacity(0.08),
+                        WeiBeiTheme.paper.opacity(0.0)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            } else {
+                Rectangle()
+                    .fill(.regularMaterial)
+                    .opacity(materialOpacity)
+                Rectangle()
+                    .fill(WeiBeiTheme.paperRaised.opacity(paperWashOpacity))
+                LinearGradient(
+                    colors: [
+                        WeiBeiTheme.glassHighlight.opacity(0.20),
+                        WeiBeiTheme.glassTint.opacity(0.24),
+                        WeiBeiTheme.paperRaised.opacity(0.13),
+                        WeiBeiTheme.paper.opacity(0.04)
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                Rectangle()
+                    .fill(WeiBeiTheme.paperInset.opacity(0.018))
+            }
         }
     }
 
     private var paperWashOpacity: Double {
-        let factor = isDark ? 0.30 : 0.42
-        return min(isDark ? 0.34 : 0.48, max(0.20, paperOpacity * factor))
+        // Light themes only — dark path is solid product paper above.
+        min(0.48, max(0.20, paperOpacity * 0.42))
     }
 }
 

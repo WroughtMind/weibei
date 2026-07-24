@@ -4031,8 +4031,8 @@ private struct AgentMessageMarkdownText: View {
             .foregroundStyle(WeiBeiTheme.ink)
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
-            // Let wheel events reach the conversation ScrollView (no textSelection).
-            .allowsHitTesting(false)
+            // Selectable chat text — wheel still reaches ScrollView via Text's default handling.
+            .textSelection(.enabled)
     }
 
     private var renderedText: AttributedString {
