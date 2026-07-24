@@ -148,8 +148,11 @@ extension SettingsView {
                             store.createAgentCredentialProfile()
                         }
                         if store.agentCredentialProfiles.count > 1 {
-                            Button(store.ui("删除当前配置", "Delete Current Profile")) {
-                                store.deleteActiveAgentCredentialProfile()
+                            // Destructive: also wipes the profile's Keychain key, so it
+                            // only arms the confirmation dialog rather than deleting
+                            // outright (see S3).
+                            Button(store.ui("删除当前配置", "Delete Current Profile"), role: .destructive) {
+                                showDeleteProfileConfirmation = true
                             }
                         }
                     }
@@ -160,6 +163,21 @@ extension SettingsView {
                     .buttonStyle(WeiBeiTextActionButtonStyle())
                 }
             }
+        }
+        .confirmationDialog(
+            store.ui("删除配置「\(activeProfileName)」？", "Delete profile \"\(activeProfileName)\"?"),
+            isPresented: $showDeleteProfileConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(store.ui("删除配置及其密钥", "Delete profile and its key"), role: .destructive) {
+                store.deleteActiveAgentCredentialProfile()
+            }
+            Button(store.ui("取消", "Cancel"), role: .cancel) {}
+        } message: {
+            Text(store.ui(
+                "将删除该配置及其钥匙串中的密钥，此操作不可恢复。",
+                "This deletes the profile and its Keychain key. This cannot be undone."
+            ))
         }
     }
 
@@ -248,6 +266,12 @@ extension SettingsView {
                     if !store.openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         settingsPill(title: store.ui("已配置", "Configured"), icon: "checkmark.seal.fill", active: true)
                     }
+                    // Explicit save — the primary interaction. onSubmit / focus-loss
+                    // below remain as fallbacks, but users no longer have to know to
+                    // press Return or click away to persist the key (see S1).
+                    Button(store.ui("保存", "Save")) { store.saveOpenAIAPIKey() }
+                        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                        .disabled(store.openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     Button(store.ui("清除", "Clear")) { store.clearOpenAIAPIKey() }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
                     if AgentProviderConsoleLinks.loginURL(for: store.agentProviderID) != nil
@@ -342,13 +366,8 @@ extension SettingsView {
     }
 
     private var envKeyOverride: String {
-        let envName = store.agentProviderID.environmentAPIKeyName
-        if !(ProcessInfo.processInfo.environment[envName] ?? "").isEmpty { return envName }
-        if store.agentProviderID != .openai,
-           !(ProcessInfo.processInfo.environment["OPENAI_API_KEY"] ?? "").isEmpty {
-            return "OPENAI_API_KEY"
-        }
-        return ""
+        // Delegates to the Store's single source of truth (see M4).
+        store.activeKeyEnvOverride
     }
 
     private var oauthLinked: Bool {

@@ -1254,6 +1254,10 @@ struct SettingsView: View {
     // Profile inline-rename state (AgentSettingsView extension).
     @State var isRenamingActiveProfile = false
     @State var profileRenameDraft = ""
+    // Profile delete confirmation (AgentSettingsView extension). The action is
+    // destructive — it also wipes the profile's Keychain key — so it needs a
+    // confirmation gate (see S3).
+    @State var showDeleteProfileConfirmation = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -1583,7 +1587,7 @@ struct SettingsView: View {
             settingsGroup(store.ui("关于", "About")) {
                 settingsRow(
                     title: store.ui("版本", "Version"),
-                    detail: store.ui("正式法律文案与许可证在发布 closeout 前定稿，此处只保留信息架构。", "Final legal copy and license land at release closeout; this is the info architecture only.")
+                    detail: store.ui("当前安装的魏碑版本号。", "The installed WeiBei version.")
                 ) {
                     settingsPill(
                         title: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "—",
@@ -1592,10 +1596,10 @@ struct SettingsView: View {
                     )
                 }
                 settingsRow(
-                    title: store.ui("隐私占位", "Privacy placeholder"),
-                    detail: store.ui("密钥存本机钥匙串；材料仅在用户发问时发送给所选提供商。最终隐私文案待发布定稿。", "Keys stay in the local keychain; materials are sent only when the user asks. Final privacy copy is deferred.")
+                    title: store.ui("隐私", "Privacy"),
+                    detail: store.ui("密钥仅存本机钥匙串；资料仅在提问时发送给你所选的提供商。", "Keys stay only in the local Keychain; materials are sent to your chosen provider only when you ask.")
                 ) {
-                    settingsPill(title: store.ui("待定稿", "TBD"), icon: "hand.raised", active: false)
+                    settingsPill(title: store.ui("本机存储", "Local only"), icon: "lock.shield", active: false)
                 }
             }
         }

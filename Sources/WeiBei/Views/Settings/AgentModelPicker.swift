@@ -142,8 +142,7 @@ extension SettingsView {
     }
 
     private var envModelOverride: String {
-        let pi = ProcessInfo.processInfo.environment["WEIBEI_PI_MODEL"] ?? ""
-        let openai = ProcessInfo.processInfo.environment["WEIBEI_OPENAI_MODEL"] ?? ""
-        return !pi.isEmpty ? "WEIBEI_PI_MODEL" : (!openai.isEmpty ? "WEIBEI_OPENAI_MODEL" : "")
+        // Delegates to the Store's single source of truth (see M4).
+        store.activeModelEnvOverride
     }
 }
