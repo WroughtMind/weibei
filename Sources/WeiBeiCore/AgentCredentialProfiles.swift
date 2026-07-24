@@ -65,85 +65,61 @@ public struct AgentCredentialProfile: Identifiable, Codable, Equatable, Sendable
     }
 }
 
+/// Console URLs + key-help copy for every `AgentProviderID`.
+///
+/// L5: one metadata row per provider instead of three parallel `switch` blocks.
+/// Public API (`loginURL` / `accountURL` / `keyHelp`) is unchanged — callers keep
+/// working; only the storage shape moves to a single exhaustive table.
 public enum AgentProviderConsoleLinks {
-    /// Dashboard / key-creation pages for API-key providers.
-    public static func loginURL(for provider: AgentProviderID) -> URL? {
-        switch provider {
-        case .openai, .openaiCodex:
-            return URL(string: "https://platform.openai.com/api-keys")
-        case .anthropic:
-            return URL(string: "https://console.anthropic.com/settings/keys")
-        case .githubCopilot:
-            return URL(string: "https://github.com/settings/copilot")
-        case .xai:
-            return URL(string: "https://console.x.ai/")
-        case .antLing:
-            return nil
-        case .azureOpenAI:
-            return URL(string: "https://portal.azure.com/")
-        case .deepseek:
-            return URL(string: "https://platform.deepseek.com/api_keys")
-        case .nvidia:
-            return URL(string: "https://build.nvidia.com/")
-        case .google:
-            return URL(string: "https://aistudio.google.com/apikey")
-        case .googleVertex:
-            return URL(string: "https://console.cloud.google.com/vertex-ai")
-        case .amazonBedrock:
-            return URL(string: "https://console.aws.amazon.com/bedrock")
-        case .mistral:
-            return URL(string: "https://console.mistral.ai/")
-        case .groq:
-            return URL(string: "https://console.groq.com/keys")
-        case .cerebras:
-            return URL(string: "https://cloud.cerebras.ai/")
-        case .cloudflareAIGateway, .cloudflareWorkersAI:
-            return URL(string: "https://dash.cloudflare.com/")
-        case .openrouter:
-            return URL(string: "https://openrouter.ai/keys")
-        case .vercelAIGateway:
-            return URL(string: "https://vercel.com/docs/ai-gateway")
-        case .zai, .zaiCodingCN:
-            return URL(string: "https://z.ai/")
-        case .opencode, .opencodeGo:
-            return URL(string: "https://opencode.ai/")
-        case .huggingface:
-            return URL(string: "https://huggingface.co/settings/tokens")
-        case .fireworks:
-            return URL(string: "https://fireworks.ai/account/api-keys")
-        case .together:
-            return URL(string: "https://api.together.xyz/settings/api-keys")
-        case .kimiCoding, .moonshotai, .moonshotaiCN:
-            return URL(string: "https://platform.moonshot.cn/")
-        case .minimax, .minimaxCN:
-            return URL(string: "https://www.minimaxi.com/")
-        case .xiaomi, .xiaomiTokenPlanCN, .xiaomiTokenPlanAMS, .xiaomiTokenPlanSGP:
-            return nil
-        case .llamaCpp, .custom:
-            return nil
+    /// Per-provider console metadata. Exhaustive via `metadata(for:)` switch so a
+    /// new `AgentProviderID` case forces a compile error here.
+    public struct Metadata: Sendable, Equatable {
+        /// Key-creation / dashboard page (may be nil for local/custom providers).
+        public var loginURLString: String?
+        /// Account home when it differs from the login URL. `nil` means “use login”.
+        public var accountURLString: String?
+        /// Localized key-help template; rendered with the provider’s env var name.
+        public var help: KeyHelp
+
+        public init(loginURLString: String?, accountURLString: String? = nil, help: KeyHelp) {
+            self.loginURLString = loginURLString
+            self.accountURLString = accountURLString
+            self.help = help
         }
     }
 
+    /// Help templates. Special cases keep their historical wording; everything else
+    /// shares the generic env-var line so we don’t maintain 30 near-identical strings.
+    public enum KeyHelp: Sendable, Equatable {
+        case openaiCodex
+        case anthropic
+        case githubCopilot
+        case azureOpenAI
+        case googleVertex
+        case amazonBedrock
+        case cloudflareAIGateway
+        case cloudflareWorkersAI
+        case custom
+        case llamaCpp
+        case genericEnv
+    }
+
+    /// Dashboard / key-creation pages for API-key providers.
+    public static func loginURL(for provider: AgentProviderID) -> URL? {
+        metadata(for: provider).loginURLString.flatMap(URL.init(string:))
+    }
+
     public static func accountURL(for provider: AgentProviderID) -> URL? {
-        switch provider {
-        case .openaiCodex:
-            return URL(string: "https://chatgpt.com/")
-        case .anthropic:
-            return URL(string: "https://claude.ai/")
-        case .githubCopilot:
-            return URL(string: "https://github.com/login")
-        case .xai:
-            return URL(string: "https://x.ai/")
-        case .openai:
-            return URL(string: "https://platform.openai.com/")
-        default:
-            return loginURL(for: provider)
+        let row = metadata(for: provider)
+        if let account = row.accountURLString {
+            return URL(string: account)
         }
+        return row.loginURLString.flatMap(URL.init(string:))
     }
 
     public static func keyHelp(language: WeiBeiInterfaceLanguage, provider: AgentProviderID) -> String {
         let env = provider.environmentAPIKeyName
-        switch provider {
+        switch metadata(for: provider).help {
         case .openaiCodex:
             return language.text(
                 "ChatGPT Plus/Pro：用「订阅 OAuth」登录（Pi /login openai-codex）。无需粘贴 sk-。",
@@ -194,11 +170,96 @@ public enum AgentProviderConsoleLinks {
                 "llama.cpp：填写本地 OpenAI 兼容 Base URL；密钥通常可留空。",
                 "llama.cpp: set local OpenAI-compatible Base URL; key is often empty."
             )
-        default:
+        case .genericEnv:
             return language.text(
                 "环境变量：\(env)。粘贴密钥后保存到当前配置。",
                 "Env: \(env). Paste the key and save to the current profile."
             )
+        }
+    }
+
+    /// Single source of truth for console links + help template.
+    /// Keep strings byte-identical to the pre-L5 switches so settings UI does not drift.
+    public static func metadata(for provider: AgentProviderID) -> Metadata {
+        switch provider {
+        case .openai:
+            return Metadata(
+                loginURLString: "https://platform.openai.com/api-keys",
+                accountURLString: "https://platform.openai.com/",
+                help: .genericEnv
+            )
+        case .openaiCodex:
+            return Metadata(
+                loginURLString: "https://platform.openai.com/api-keys",
+                accountURLString: "https://chatgpt.com/",
+                help: .openaiCodex
+            )
+        case .anthropic:
+            return Metadata(
+                loginURLString: "https://console.anthropic.com/settings/keys",
+                accountURLString: "https://claude.ai/",
+                help: .anthropic
+            )
+        case .githubCopilot:
+            return Metadata(
+                loginURLString: "https://github.com/settings/copilot",
+                accountURLString: "https://github.com/login",
+                help: .githubCopilot
+            )
+        case .xai:
+            return Metadata(
+                loginURLString: "https://console.x.ai/",
+                accountURLString: "https://x.ai/",
+                help: .genericEnv
+            )
+        case .antLing:
+            return Metadata(loginURLString: nil, help: .genericEnv)
+        case .azureOpenAI:
+            return Metadata(loginURLString: "https://portal.azure.com/", help: .azureOpenAI)
+        case .deepseek:
+            return Metadata(loginURLString: "https://platform.deepseek.com/api_keys", help: .genericEnv)
+        case .nvidia:
+            return Metadata(loginURLString: "https://build.nvidia.com/", help: .genericEnv)
+        case .google:
+            return Metadata(loginURLString: "https://aistudio.google.com/apikey", help: .genericEnv)
+        case .googleVertex:
+            return Metadata(loginURLString: "https://console.cloud.google.com/vertex-ai", help: .googleVertex)
+        case .amazonBedrock:
+            return Metadata(loginURLString: "https://console.aws.amazon.com/bedrock", help: .amazonBedrock)
+        case .mistral:
+            return Metadata(loginURLString: "https://console.mistral.ai/", help: .genericEnv)
+        case .groq:
+            return Metadata(loginURLString: "https://console.groq.com/keys", help: .genericEnv)
+        case .cerebras:
+            return Metadata(loginURLString: "https://cloud.cerebras.ai/", help: .genericEnv)
+        case .cloudflareAIGateway:
+            return Metadata(loginURLString: "https://dash.cloudflare.com/", help: .cloudflareAIGateway)
+        case .cloudflareWorkersAI:
+            return Metadata(loginURLString: "https://dash.cloudflare.com/", help: .cloudflareWorkersAI)
+        case .openrouter:
+            return Metadata(loginURLString: "https://openrouter.ai/keys", help: .genericEnv)
+        case .vercelAIGateway:
+            return Metadata(loginURLString: "https://vercel.com/docs/ai-gateway", help: .genericEnv)
+        case .zai, .zaiCodingCN:
+            return Metadata(loginURLString: "https://z.ai/", help: .genericEnv)
+        case .opencode, .opencodeGo:
+            return Metadata(loginURLString: "https://opencode.ai/", help: .genericEnv)
+        case .huggingface:
+            return Metadata(loginURLString: "https://huggingface.co/settings/tokens", help: .genericEnv)
+        case .fireworks:
+            return Metadata(loginURLString: "https://fireworks.ai/account/api-keys", help: .genericEnv)
+        case .together:
+            return Metadata(loginURLString: "https://api.together.xyz/settings/api-keys", help: .genericEnv)
+        case .kimiCoding, .moonshotai, .moonshotaiCN:
+            return Metadata(loginURLString: "https://platform.moonshot.cn/", help: .genericEnv)
+        case .minimax, .minimaxCN:
+            return Metadata(loginURLString: "https://www.minimaxi.com/", help: .genericEnv)
+        case .xiaomi, .xiaomiTokenPlanCN, .xiaomiTokenPlanAMS, .xiaomiTokenPlanSGP:
+            return Metadata(loginURLString: nil, help: .genericEnv)
+        case .llamaCpp:
+            return Metadata(loginURLString: nil, help: .llamaCpp)
+        case .custom:
+            return Metadata(loginURLString: nil, help: .custom)
         }
     }
 }

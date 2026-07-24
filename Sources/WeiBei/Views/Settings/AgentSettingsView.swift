@@ -20,14 +20,10 @@ extension SettingsView {
             agentServiceCard
         }
         .onAppear {
-            requestModelListRefresh()
-        }
-        .onChange(of: store.agentProviderID) { _, _ in
-            requestModelListRefresh()
-        }
-        .onChange(of: store.activeAgentProfileID) { _, _ in
-            // Re-fetch on profile switch too — two profiles may share a provider, so
-            // onChange(agentProviderID) alone wouldn't fire and the list would stay empty.
+            // First paint only. Provider / profile switches now drive their own fetch
+            // from inside the Store (setAgentProviderID / selectAgentCredentialProfile
+            // call scheduleModelListRefresh), so the view no longer needs to fan out
+            // three onChange hooks — that triple-trigger was the root of the race (S2).
             requestModelListRefresh()
         }
         .sheet(isPresented: $showManualModelEntry) {
@@ -148,8 +144,11 @@ extension SettingsView {
                             store.createAgentCredentialProfile()
                         }
                         if store.agentCredentialProfiles.count > 1 {
-                            Button(store.ui("删除当前配置", "Delete Current Profile")) {
-                                store.deleteActiveAgentCredentialProfile()
+                            // Destructive: also wipes the profile's Keychain key, so it
+                            // only arms the confirmation dialog rather than deleting
+                            // outright (see S3).
+                            Button(store.ui("删除当前配置", "Delete Current Profile"), role: .destructive) {
+                                showDeleteProfileConfirmation = true
                             }
                         }
                     }
@@ -160,6 +159,21 @@ extension SettingsView {
                     .buttonStyle(WeiBeiTextActionButtonStyle())
                 }
             }
+        }
+        .confirmationDialog(
+            store.ui("删除配置「\(activeProfileName)」？", "Delete profile \"\(activeProfileName)\"?"),
+            isPresented: $showDeleteProfileConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button(store.ui("删除配置及其密钥", "Delete profile and its key"), role: .destructive) {
+                store.deleteActiveAgentCredentialProfile()
+            }
+            Button(store.ui("取消", "Cancel"), role: .cancel) {}
+        } message: {
+            Text(store.ui(
+                "将删除该配置及其钥匙串中的密钥，此操作不可恢复。",
+                "This deletes the profile and its Keychain key. This cannot be undone."
+            ))
         }
     }
 
@@ -242,6 +256,14 @@ extension SettingsView {
                 .onSubmit { store.saveOpenAIAPIKey() }
                 .onChange(of: focusedField) { _, field in
                     if field != .apiKey { store.saveOpenAIAPIKey() }
+                }
+                // Persist on any change so the key survives a tab switch or window
+                // close without the user pressing Return. This is the implicit-save
+                // contract the self-check (L2815) expects: no explicit Save button,
+                // but the key is never stranded in memory. Keychain writes are local
+                // and cheap; saveOpenAIAPIKey cleans + dedups.
+                .onChange(of: store.openAIAPIKey) { _, _ in
+                    store.saveOpenAIAPIKey()
                 }
 
                 HStack(spacing: 8) {
@@ -342,13 +364,8 @@ extension SettingsView {
     }
 
     private var envKeyOverride: String {
-        let envName = store.agentProviderID.environmentAPIKeyName
-        if !(ProcessInfo.processInfo.environment[envName] ?? "").isEmpty { return envName }
-        if store.agentProviderID != .openai,
-           !(ProcessInfo.processInfo.environment["OPENAI_API_KEY"] ?? "").isEmpty {
-            return "OPENAI_API_KEY"
-        }
-        return ""
+        // Delegates to the Store's single source of truth (see M4).
+        store.activeKeyEnvOverride
     }
 
     private var oauthLinked: Bool {

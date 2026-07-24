@@ -311,6 +311,13 @@ final class WorkspaceStore: ObservableObject {
     @Published var availableModels: [String] = []
     @Published var modelListStatus: ModelListStatus = .idle
     @Published var bedrockRegion: String = ProcessInfo.processInfo.environment["WEIBEI_BEDROCK_REGION"] ?? "us-east-1"
+    // Race guard for `refreshModelList` (see S2). Without this, rapidly switching
+    // profiles / providers launches overlapping async fetches; whichever resolves
+    // last wins and can paint the wrong provider's catalog. `modelFetchGeneration`
+    // tags each in-flight request so a stale resolution is discarded; the held
+    // `modelFetchTask` is cancelled when a newer request supersedes it.
+    private var modelFetchGeneration: UInt64 = 0
+    private var modelFetchTask: Task<Void, Never>?
     @Published var appearanceMode: WeiBeiAppearanceMode = .paper
     @Published var adaptImportedDocumentColors = true
     @Published var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
@@ -1308,26 +1315,42 @@ final class WorkspaceStore: ObservableObject {
             ?? ui("当前笔记", "Current note")
     }
 
-    var openAIKeyHelpText: String {
+    /// Single source of truth for "which env-var override is active for the key field".
+    /// Empty when none. Consolidates the three previously independent checks (see M4):
+    /// the former `openAIKeyHelpText` detection and the `envKeyOverride` /
+    /// `envModelOverride` copies in the Settings view extensions.
+    var activeKeyEnvOverride: String {
         let envName = agentProviderID.environmentAPIKeyName
-        if !Self.environmentValue(envName).isEmpty {
-            return ui(
-                "正在使用本机环境变量 \(envName)。设置里的密钥在没有环境变量时才会使用。",
-                "Using local environment variable \(envName). The Settings key is used only when that env is empty."
-            )
+        if !Self.environmentValue(envName).isEmpty { return envName }
+        if agentProviderID != .openai,
+           !Self.environmentValue("OPENAI_API_KEY").isEmpty {
+            return "OPENAI_API_KEY"
         }
-        if agentProviderID != .openai, !Self.environmentValue("OPENAI_API_KEY").isEmpty {
+        return ""
+    }
+
+    /// Single source of truth for "which env-var override is active for the model field".
+    /// Empty when none. Replaces the `envModelOverride` copy in AgentModelPicker.swift.
+    var activeModelEnvOverride: String {
+        let pi = ProcessInfo.processInfo.environment["WEIBEI_PI_MODEL"] ?? ""
+        let openai = ProcessInfo.processInfo.environment["WEIBEI_OPENAI_MODEL"] ?? ""
+        return !pi.isEmpty ? "WEIBEI_PI_MODEL" : (!openai.isEmpty ? "WEIBEI_OPENAI_MODEL" : "")
+    }
+
+    var openAIKeyHelpText: String {
+        // Env-var override takes precedence — the Settings key is inert while set.
+        if !activeKeyEnvOverride.isEmpty {
             return ui(
-                "正在回退使用 OPENAI_API_KEY 环境变量。",
-                "Falling back to the OPENAI_API_KEY environment variable."
+                "正在使用本机环境变量 \(activeKeyEnvOverride)。设置里的密钥在没有环境变量时才会使用。",
+                "Using local environment variable \(activeKeyEnvOverride). The Settings key is used only when that env is empty."
             )
         }
         let fieldKey = OpenAIAPIKeyStore.cleaned(openAIAPIKey)
         let savedKey = OpenAIAPIKeyStore.load(provider: agentProviderID.piProviderName)
         if !fieldKey.isEmpty {
             return ui(
-                "当前提供商：\(agentProviderID.label(language: interfaceLanguage))。输入框中的密钥会直接用于请求；点「保存到钥匙串」可跨次启动保留。",
-                "Provider: \(agentProviderID.label(language: interfaceLanguage)). The key in this field is used for requests; Save to Keychain keeps it across launches."
+                "当前提供商：\(agentProviderID.label(language: interfaceLanguage))。密钥输入后自动写入当前配置的钥匙串，跨次启动保留。",
+                "Provider: \(agentProviderID.label(language: interfaceLanguage)). The key is persisted to this profile's Keychain automatically as you type, and kept across launches."
             )
         }
         if !savedKey.isEmpty {
@@ -1337,8 +1360,8 @@ final class WorkspaceStore: ObservableObject {
             )
         }
         return ui(
-            "未配置 \(agentProviderID.label(language: interfaceLanguage)) 密钥。填入后即可提问（建议再保存到钥匙串）。",
-            "No \(agentProviderID.label(language: interfaceLanguage)) key yet. Enter one to chat (and Save to Keychain when ready)."
+            "未配置 \(agentProviderID.label(language: interfaceLanguage)) 密钥。填入后自动保存即可提问。",
+            "No \(agentProviderID.label(language: interfaceLanguage)) key yet. Enter one and it saves automatically."
         )
     }
 
@@ -2736,8 +2759,13 @@ final class WorkspaceStore: ObservableObject {
             modelName = provider.defaultModelHint
         }
         openAIKeyStatus = nil
+        // Drop the old provider's catalog so the dropdown never briefly shows the
+        // previous provider's models; the Store re-fetches right after (see S2).
+        availableModels = []
+        modelListStatus = .idle
         touchActiveAgentProfileMetadata()
         save()
+        scheduleModelListRefresh()
     }
 
     func updateAgentBaseURL(_ value: String) {
@@ -2808,10 +2836,29 @@ final class WorkspaceStore: ObservableObject {
     ///
     /// Codex subscription tries the live `codex/models` endpoint first, then falls back
     /// to the built-in catalog on any failure (best-effort listing, per upstream behavior).
+    /// Fetch the model catalog for the active provider. Updates `availableModels` /
+    /// `modelListStatus` on the main actor.
+    ///
+    /// Race-safe via `modelFetchGeneration`: each call stamps a generation, and a
+    /// late-resolving fetch whose generation no longer matches is discarded so rapid
+    /// provider/profile switches can't paint the wrong catalog (see S2).
+    ///
+    /// Cancellation of an in-flight **scheduled** fetch is owned by
+    /// `scheduleModelListRefresh()` only. This method must NOT cancel `modelFetchTask`:
+    /// the scheduler stores the Task that awaits `refreshModelList()`, so cancelling
+    /// here would cancel ourselves mid-flight, trip `Task.isCancelled` after the
+    /// network returns, discard a successful catalog, and leave `modelListStatus`
+    /// stuck on `.loading` (OpenAI Codex subscription looked permanently broken).
     func refreshModelList() async {
         // No strategy (unsupported provider, or Codex subscription not signed in):
-        // surface the built-in catalog immediately.
+        // surface the built-in catalog immediately. These are synchronous resolutions
+        // — stamp them with the current generation so an in-flight async fetch that
+        // resolves later is still discarded.
+        modelFetchGeneration &+= 1
+        let myGen = modelFetchGeneration
+
         guard let strategy = resolvedModelListStrategy() else {
+            guard myGen == modelFetchGeneration else { return }
             availableModels = fallbackModelCatalog
             modelListStatus = .builtin
             return
@@ -2824,19 +2871,44 @@ final class WorkspaceStore: ObservableObject {
         else { needsAPIKey = true }
 
         if needsAPIKey, resolvedAPIKey() == nil {
+            guard myGen == modelFetchGeneration else { return }
             availableModels = fallbackModelCatalog
             modelListStatus = .failed(ui("未配置密钥，无法列出模型。", "No API key configured; cannot list models."))
             return
         }
         let apiKey = resolvedAPIKey()?.key ?? ""
+        guard myGen == modelFetchGeneration else { return }
         modelListStatus = .loading
         do {
             let models = try await AgentModelListService.shared.fetchModels(strategy: strategy, apiKey: apiKey)
+            // Discard if a newer request superseded this one, or this scheduled task
+            // was cancelled by a later scheduleModelListRefresh().
+            guard myGen == modelFetchGeneration, !Task.isCancelled else { return }
             availableModels = models.isEmpty ? fallbackModelCatalog : models
             modelListStatus = .loaded
         } catch {
+            guard myGen == modelFetchGeneration, !Task.isCancelled else { return }
             availableModels = fallbackModelCatalog
             modelListStatus = (agentProviderID == .openaiCodex) ? .builtin : .failed(error.localizedDescription)
+        }
+    }
+
+    /// Fire-and-forget entry point for the Store's own state transitions
+    /// (`setAgentProviderID`, `selectAgentCredentialProfile`). Makes the Store the
+    /// single originator of model-list fetches instead of relying on UI onChange
+    /// hooks that fired from three separate places (see S2).
+    ///
+    /// Cancels any previous scheduled fetch before starting a new one. Do not move
+    /// that cancel into `refreshModelList` — see the self-cancel note there.
+    func scheduleModelListRefresh() {
+        modelFetchTask?.cancel()
+        modelFetchTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            // Yield once so the calling mutation (provider/profile/modelName swap)
+            // has fully settled before we read state inside refreshModelList.
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            await self.refreshModelList()
         }
     }
 
@@ -2923,13 +2995,14 @@ final class WorkspaceStore: ObservableObject {
             openAIAPIKey = OpenAIAPIKeyStore.load(provider: profile.provider.piProviderName)
         }
         openAIKeyStatus = nil
-        // Clear the stale model list from the previous profile; the UI re-fetches for the
-        // new provider. Without this the dropdown shows the old profile's models until the
-        // refresh finishes (visible when two profiles share the same provider, so the
-        // onChange(agentProviderID) hook alone doesn't fire).
+        // Clear the stale model list from the previous profile, then kick off a fresh
+        // fetch from the Store itself (single originator — see S2). Previously this
+        // only cleared and relied on the UI's onChange hooks to refetch, which raced
+        // when several hooks fired at once.
         availableModels = []
         modelListStatus = .idle
         save()
+        scheduleModelListRefresh()
     }
 
     @discardableResult

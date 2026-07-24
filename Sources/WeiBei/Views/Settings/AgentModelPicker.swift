@@ -10,11 +10,11 @@ import WeiBeiCore
 // "manual entry" escape hatch so users can type any id.
 
 extension SettingsView {
-    /// Triggered on appear and whenever the provider / key changes.
+    /// UI-side entry point (onAppear). Delegates to the Store's race-guarded
+    /// scheduler so every fetch — whether from here or from a provider/profile
+    /// switch inside the Store — flows through one generation-protected path (S2).
     func requestModelListRefresh() {
-        Task { @MainActor in
-            await store.refreshModelList()
-        }
+        store.scheduleModelListRefresh()
     }
 
     /// The dropdown + status + manual-entry control for the model id.
@@ -142,8 +142,7 @@ extension SettingsView {
     }
 
     private var envModelOverride: String {
-        let pi = ProcessInfo.processInfo.environment["WEIBEI_PI_MODEL"] ?? ""
-        let openai = ProcessInfo.processInfo.environment["WEIBEI_OPENAI_MODEL"] ?? ""
-        return !pi.isEmpty ? "WEIBEI_PI_MODEL" : (!openai.isEmpty ? "WEIBEI_OPENAI_MODEL" : "")
+        // Delegates to the Store's single source of truth (see M4).
+        store.activeModelEnvOverride
     }
 }
