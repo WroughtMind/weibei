@@ -93,11 +93,15 @@ extension SettingsView {
         }
     }
 
-    /// Single source of truth = `store.availableModels`. The store already fills it
-    /// correctly for every state (loaded / builtin / failed all populate it; idle falls
-    /// back to recommended). Don't re-derive here — that divergence was why Codex
-    /// subscription showed no models.
+    /// Single source of truth = `store.availableModels`. Only fall back to the built-in
+    /// recommended catalog when listing is confirmed unavailable (.builtin / .failed) —
+    /// NOT on .idle/.loading, otherwise switching profiles briefly shows the previous
+    /// provider's recommended list (looks like stale data).
     private var effectiveModelEntries: [String] {
+        // While idle/loading, show nothing — the header reads "loading" and the menu
+        // offers only manual entry. Avoids flashing another provider's catalog.
+        if case .idle = store.modelListStatus { return [] }
+        if case .loading = store.modelListStatus { return [] }
         let current = store.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
         var entries = store.availableModels.isEmpty
             ? store.agentProviderID.recommendedModels

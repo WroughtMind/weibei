@@ -25,6 +25,11 @@ extension SettingsView {
         .onChange(of: store.agentProviderID) { _, _ in
             requestModelListRefresh()
         }
+        .onChange(of: store.activeAgentProfileID) { _, _ in
+            // Re-fetch on profile switch too — two profiles may share a provider, so
+            // onChange(agentProviderID) alone wouldn't fire and the list would stay empty.
+            requestModelListRefresh()
+        }
         .sheet(isPresented: $showManualModelEntry) {
             agentManualModelSheet
         }

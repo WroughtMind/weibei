@@ -2923,6 +2923,12 @@ final class WorkspaceStore: ObservableObject {
             openAIAPIKey = OpenAIAPIKeyStore.load(provider: profile.provider.piProviderName)
         }
         openAIKeyStatus = nil
+        // Clear the stale model list from the previous profile; the UI re-fetches for the
+        // new provider. Without this the dropdown shows the old profile's models until the
+        // refresh finishes (visible when two profiles share the same provider, so the
+        // onChange(agentProviderID) hook alone doesn't fire).
+        availableModels = []
+        modelListStatus = .idle
         save()
     }
 
