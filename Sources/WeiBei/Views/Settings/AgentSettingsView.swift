@@ -235,10 +235,9 @@ extension SettingsView {
     }
 
     private var agentAPIKeyAuth: some View {
-        settingsRow(
-            title: store.ui("密钥", "API Key"),
-            detail: AgentProviderConsoleLinks.keyHelp(language: store.interfaceLanguage, provider: store.agentProviderID)
-        ) {
+        // No long key-help blurb under the field — console button + status notes
+        // cover the rare cases that need guidance.
+        settingsRow(title: store.ui("密钥", "API Key")) {
             VStack(alignment: .trailing, spacing: 8) {
                 SecureField(
                     "",
