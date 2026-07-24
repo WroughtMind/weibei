@@ -83,23 +83,25 @@ extension SettingsView {
         }
     }
 
-    /// Section header reflects the listing state so the user knows whether the entries
-    /// above are live or a built-in fallback.
+    /// Short, plain section header. Avoids jargon like "auto-list unavailable".
     private var headerText: String {
         switch store.modelListStatus {
         case .loaded: return store.ui("可用模型", "Available models")
-        case .builtin: return store.ui("推荐（此服务无法自动列出）", "Recommended (auto-list unavailable)")
-        case .idle: return store.ui("推荐", "Recommended")
-        case .failed: return store.ui("拉取失败，显示推荐", "Fetch failed; showing recommended")
-        case .loading: return store.ui("推荐", "Recommended")
+        case .builtin: return store.ui("常用模型", "Common models")
+        case .failed: return store.ui("常用模型（获取失败）", "Common models (fetch failed)")
+        case .idle, .loading: return store.ui("常用模型", "Common models")
         }
     }
 
-    /// Live list when loaded, otherwise the built-in recommended catalog.
+    /// Single source of truth = `store.availableModels`. The store already fills it
+    /// correctly for every state (loaded / builtin / failed all populate it; idle falls
+    /// back to recommended). Don't re-derive here — that divergence was why Codex
+    /// subscription showed no models.
     private var effectiveModelEntries: [String] {
         let current = store.modelName.trimmingCharacters(in: .whitespacesAndNewlines)
-        var entries = store.modelListStatus == .loaded ? store.availableModels : store.agentProviderID.recommendedModels
-        // Guarantee the current value is visible even if the catalog omits it.
+        var entries = store.availableModels.isEmpty
+            ? store.agentProviderID.recommendedModels
+            : store.availableModels
         if !current.isEmpty, !entries.contains(current) {
             entries.insert(current, at: 0)
         }

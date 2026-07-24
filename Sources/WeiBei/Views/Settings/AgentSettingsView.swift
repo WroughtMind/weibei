@@ -130,10 +130,21 @@ extension SettingsView {
                 if isRenamingActiveProfile {
                     profileRenameField
                 } else {
+                    // New / delete live inside the menu (low-frequency actions); only
+                    // "重命名" stays as a visible button so the row stays calm.
                     compactMenu(activeProfileName) {
                         ForEach(store.agentCredentialProfiles) { profile in
                             Button(profile.name) {
                                 store.selectAgentCredentialProfile(profile.id)
+                            }
+                        }
+                        Divider()
+                        Button(store.ui("新建配置", "New Profile")) {
+                            store.createAgentCredentialProfile()
+                        }
+                        if store.agentCredentialProfiles.count > 1 {
+                            Button(store.ui("删除当前配置", "Delete Current Profile")) {
+                                store.deleteActiveAgentCredentialProfile()
                             }
                         }
                     }
@@ -142,16 +153,6 @@ extension SettingsView {
                         isRenamingActiveProfile = true
                     }
                     .buttonStyle(WeiBeiTextActionButtonStyle())
-                    Button(store.ui("新建", "New")) {
-                        store.createAgentCredentialProfile()
-                    }
-                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                    if store.agentCredentialProfiles.count > 1 {
-                        Button(store.ui("删除", "Delete")) {
-                            store.deleteActiveAgentCredentialProfile()
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle())
-                    }
                 }
             }
         }

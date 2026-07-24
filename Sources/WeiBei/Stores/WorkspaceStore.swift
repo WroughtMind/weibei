@@ -297,7 +297,7 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var workspaceSaveError: String?
     @Published var notebookCreationDraft: NotebookCreationDraft?
     @Published var notebookRenameDraft: NotebookRenameDraft?
-    @Published var modelName: String = ProcessInfo.processInfo.environment["WEIBEI_OPENAI_MODEL"] ?? "gpt-5.1"
+    @Published var modelName: String = ProcessInfo.processInfo.environment["WEIBEI_OPENAI_MODEL"] ?? "gpt-5.5"
     @Published var agentProviderID: AgentProviderID = .openai
     @Published var agentBaseURL: String = ""
     @Published var openAIAPIKey: String = OpenAIAPIKeyStore.load(provider: "openai")
@@ -2775,11 +2775,27 @@ final class WorkspaceStore: ObservableObject {
             return .bedrock(region: bedrockRegion)
         case .gitHubModels:
             return .gitHubModels
-        case .codexSubscriptionBuiltin:
-            return .codexSubscriptionBuiltin
+        case .codexSubscription:
+            // Need the OAuth token + account id from ~/.pi/agent/auth.json. If absent
+            // (not signed in), return nil — the caller falls back to the built-in catalog.
+            guard let credential = codexSubscriptionCredential() else { return nil }
+            return .codexSubscription(token: credential.token, accountID: credential.accountID)
         case .unsupported:
             return nil
         }
+    }
+
+    /// Read the openai-codex OAuth token + accountId stored by pi-oauth-login.mjs.
+    private func codexSubscriptionCredential() -> (token: String, accountID: String)? {
+        let url = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".pi/agent/auth.json")
+        guard let data = try? Data(contentsOf: url),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let entry = root["openai-codex"] as? [String: Any] else { return nil }
+        let token = (entry["access"] as? String) ?? ""
+        let accountID = (entry["accountId"] as? String) ?? ""
+        guard !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+        return (token, accountID)
     }
 
     /// Whether the active provider can enumerate models at all (vs. built-in only).
@@ -2789,21 +2805,26 @@ final class WorkspaceStore: ObservableObject {
 
     /// Fetch the model catalog for the active provider. Updates `availableModels` /
     /// `modelListStatus` on the main actor. Safe to call repeatedly; debounced by the UI.
+    ///
+    /// Codex subscription tries the live `codex/models` endpoint first, then falls back
+    /// to the built-in catalog on any failure (best-effort listing, per upstream behavior).
     func refreshModelList() async {
+        // No strategy (unsupported provider, or Codex subscription not signed in):
+        // surface the built-in catalog immediately.
         guard let strategy = resolvedModelListStrategy() else {
-            availableModels = agentProviderID.recommendedModels
+            availableModels = fallbackModelCatalog
             modelListStatus = .builtin
             return
         }
-        // Codex subscription: listing is untrustworthy; show built-in catalog directly.
-        if strategy == .codexSubscriptionBuiltin {
-            availableModels = AgentModelListService.codexSubscriptionModels
-            modelListStatus = .builtin
-            return
-        }
-        // OpenRouter public catalog needs no credential.
-        if strategy != .openRouterPublic, resolvedAPIKey() == nil {
-            availableModels = agentProviderID.recommendedModels
+        // Codex subscription doesn't use an API key — it carries its own OAuth token in
+        // the strategy. OpenRouter public catalog needs no credential either.
+        let needsAPIKey: Bool
+        if case .codexSubscription = strategy { needsAPIKey = false }
+        else if strategy == .openRouterPublic { needsAPIKey = false }
+        else { needsAPIKey = true }
+
+        if needsAPIKey, resolvedAPIKey() == nil {
+            availableModels = fallbackModelCatalog
             modelListStatus = .failed(ui("未配置密钥，无法列出模型。", "No API key configured; cannot list models."))
             return
         }
@@ -2811,12 +2832,19 @@ final class WorkspaceStore: ObservableObject {
         modelListStatus = .loading
         do {
             let models = try await AgentModelListService.shared.fetchModels(strategy: strategy, apiKey: apiKey)
-            availableModels = models.isEmpty ? agentProviderID.recommendedModels : models
+            availableModels = models.isEmpty ? fallbackModelCatalog : models
             modelListStatus = .loaded
         } catch {
-            availableModels = agentProviderID.recommendedModels
-            modelListStatus = .failed(error.localizedDescription)
+            availableModels = fallbackModelCatalog
+            modelListStatus = (agentProviderID == .openaiCodex) ? .builtin : .failed(error.localizedDescription)
         }
+    }
+
+    /// Built-in fallback shown before the first successful fetch, or when listing fails.
+    private var fallbackModelCatalog: [String] {
+        agentProviderID == .openaiCodex
+            ? AgentModelListService.codexSubscriptionModels
+            : agentProviderID.recommendedModels
     }
 
 

@@ -528,8 +528,9 @@ public enum ModelListProtocol: String, Codable, CaseIterable, Sendable {
     case bedrock
     /// GitHub Models catalog `GET api.github.com/models`.
     case gitHubModels
-    /// Codex subscription: listing is untrustworthy, use the built-in catalog.
-    case codexSubscriptionBuiltin
+    /// ChatGPT/Codex subscription: query `chatgpt.com/backend-api/codex/models` with the
+    /// OAuth token; fall back to the built-in catalog on failure.
+    case codexSubscription
     /// Endpoint not publicly documented / stable; use the built-in catalog + manual entry.
     case unsupported
 }
@@ -704,10 +705,10 @@ public enum AgentProviderID: String, Codable, CaseIterable, Identifiable, Sendab
 
     public var defaultModelHint: String {
         switch self {
-        case .openaiCodex: return "gpt-5.1"
+        case .openaiCodex: return AgentModelListService.codexDefaultModel
         case .anthropic: return "claude-sonnet-4-20250514"
         case .githubCopilot: return "gpt-4.1"
-        case .openai: return "gpt-5.1"
+        case .openai: return "gpt-5.5"
         case .antLing: return "default"
         case .azureOpenAI: return "gpt-4o"
         case .deepseek: return "deepseek-chat"
@@ -757,7 +758,7 @@ public enum AgentProviderID: String, Codable, CaseIterable, Identifiable, Sendab
         case .githubCopilot:
             return .gitHubModels
         case .openaiCodex:
-            return .codexSubscriptionBuiltin
+            return .codexSubscription
         // Providers whose listing endpoints are not publicly documented / stable enough
         // to call blindly (ant-ling, vertex, cloudflare, vercel, zai, opencode, kimi,
         // moonshot, minimax, xiaomi). Surface the built-in catalog + manual entry instead.
@@ -795,7 +796,7 @@ public enum AgentProviderID: String, Codable, CaseIterable, Identifiable, Sendab
         case .openaiCodex: return AgentModelListService.codexSubscriptionModels
         case .anthropic: return ["claude-sonnet-4-5", "claude-opus-4-5", "claude-haiku-4-5", "claude-sonnet-4-20250514"]
         case .githubCopilot: return ["gpt-5.1", "gpt-4.1", "claude-sonnet-4-5"]
-        case .openai: return ["gpt-5.1", "gpt-5.1-mini", "gpt-4o", "gpt-4o-mini"]
+        case .openai: return ["gpt-5.5", "gpt-5.4", "gpt-5.1", "gpt-4o", "gpt-4o-mini"]
         case .azureOpenAI: return ["gpt-4o", "gpt-4o-mini", "gpt-4.1"]
         case .deepseek: return ["deepseek-chat", "deepseek-reasoner"]
         case .google, .googleVertex: return ["gemini-2.5-pro", "gemini-2.5-flash"]

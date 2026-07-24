@@ -3,9 +3,9 @@ import Foundation
 /// How WeiBei should enumerate available models for a given provider.
 ///
 /// Most providers speak the OpenAI-compatible `GET {base}/v1/models` surface; a handful
-/// (Anthropic, Gemini, Azure, Bedrock, GitHub Models) need their own adapter. Codex
-/// subscription tokens cannot list models reliably (plan-gated + upstream listing bug),
-/// so that one falls back to a built-in catalog.
+/// (Anthropic, Gemini, Azure, Bedrock, GitHub Models) need their own adapter. The Codex
+/// (ChatGPT subscription) case queries the Codex backend's own `/models` endpoint with
+/// the OAuth token + account id; on failure it falls back to a built-in catalog.
 public enum ModelListStrategy: Equatable, Sendable {
     /// Standard OpenAI-compatible surface: `GET {base}/v1/models` with `Authorization: Bearer`.
     case openAICompatible(base: String)
@@ -21,8 +21,11 @@ public enum ModelListStrategy: Equatable, Sendable {
     case bedrock(region: String)
     /// GitHub Models catalog: `GET api.github.com/models` with `Authorization: Bearer`.
     case gitHubModels
-    /// Codex subscription: listing is untrustworthy; surface the built-in catalog instead.
-    case codexSubscriptionBuiltin
+    /// ChatGPT/Codex subscription: `GET chatgpt.com/backend-api/codex/models` with the
+    /// OAuth bearer token + `ChatGPT-Account-ID`. The listing is best-effort (upstream
+    /// can omit models the subscription can still run), so callers fall back to the
+    /// built-in catalog on failure.
+    case codexSubscription(token: String, accountID: String)
 }
 
 public enum ModelListError: Error, Equatable, Sendable {
@@ -50,10 +53,8 @@ public struct AgentModelListService: Sendable {
 
     public init() {}
 
-    /// Resolve a strategy into a concrete list of model ids.
-    ///
-    /// `codexSubscriptionBuiltin` returns the static catalog without any network call;
-    /// every other strategy performs one authenticated GET and parses the response.
+    /// Resolve a strategy into a concrete list of model ids. Each strategy performs one
+    /// authenticated GET and parses the response. Callers handle fallback on error.
     public func fetchModels(strategy: ModelListStrategy, apiKey: String) async throws -> [String] {
         switch strategy {
         case let .openAICompatible(base):
@@ -70,8 +71,8 @@ public struct AgentModelListService: Sendable {
             return try await fetchBedrock(region: region, apiKey: apiKey)
         case .gitHubModels:
             return try await fetchGitHubModels(apiKey: apiKey)
-        case .codexSubscriptionBuiltin:
-            return AgentModelListService.codexSubscriptionModels
+        case let .codexSubscription(token, accountID):
+            return try await fetchCodexSubscription(token: token, accountID: accountID)
         }
     }
 
@@ -146,6 +147,46 @@ public struct AgentModelListService: Sendable {
         // GitHub Models returns top-level array of {id, ...}.
         return try await extractArrayIDs(request: request, key: "id")
     }
+
+    /// ChatGPT/Codex subscription catalog. Mirrors the Codex backend's own model
+    /// listing (`chatgpt.com/backend-api/codex/models`), authenticated with the OAuth
+    /// token + ChatGPT-Account-ID. Verified against the openai-api-server-via-codex
+    /// reference implementation. Listing is best-effort: callers fall back to the
+    /// built-in catalog on any failure.
+    private func fetchCodexSubscription(token: String, accountID: String) async throws -> [String] {
+        let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAccount = accountID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedToken.isEmpty else { throw ModelListError.missingCredential }
+        guard let url = URL(string: "https://chatgpt.com/backend-api/codex/models?client_version=1.0.0") else {
+            throw ModelListError.transport("invalid codex models url")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 10
+        request.setValue("Bearer \(trimmedToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("weibei", forHTTPHeaderField: "originator")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if !trimmedAccount.isEmpty {
+            request.setValue(trimmedAccount, forHTTPHeaderField: "ChatGPT-Account-ID")
+        }
+        let data = try await perform(request: request)
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let models = object["models"] as? [Any] else {
+            throw ModelListError.decoding("missing models array")
+        }
+        // Match the reference filter: only models the backend reports as API-supported
+        // and visible. `slug` is the id callers pass to model=.
+        let ids = models.compactMap { entry -> String? in
+            guard let dict = entry as? [String: Any],
+                  let slug = dict["slug"] as? String,
+                  (dict["supported_in_api"] as? Bool) == true,
+                  (dict["visibility"] as? String) == "list" else { return nil }
+            return slug
+        }
+        guard !ids.isEmpty else { throw ModelListError.decoding("no supported models") }
+        return ids
+    }
+
 
     // MARK: - Parsing helpers
 
@@ -228,13 +269,27 @@ public struct AgentModelListService: Sendable {
         return ids
     }
 
-    // MARK: - Built-in catalog (Codex subscription)
+    // MARK: - Built-in fallback catalog (Codex subscription)
 
-    /// Codex subscription tokens cannot reliably enumerate models (plan gating + upstream
-    /// listing bug openai/codex#31873). These are the currently stable subscription-era ids.
+    /// Fallback only — used when the Codex `/models` endpoint is unreachable or returns
+    /// nothing. The live endpoint (`codexSubscription` strategy) is the primary source.
+    ///
+    /// Aligned with the openai-api-server-via-codex reference DEFAULT_MODELS (a known-good
+    /// cross-version baseline). This WILL go stale as OpenAI ships families; the live
+    /// listing is what keeps the picker accurate.
     public static let codexSubscriptionModels: [String] = [
-        "gpt-5.1-codex",
+        "gpt-5.1",
         "gpt-5.1-codex-max",
         "gpt-5.1-codex-mini",
+        "gpt-5.2",
+        "gpt-5.2-codex",
+        "gpt-5.3-codex",
+        "gpt-5.3-codex-spark",
+        "gpt-5.4",
+        "gpt-5.4-mini",
+        "gpt-5.5",
     ]
+
+    /// Recommended default for a fresh Codex subscription. Matches the reference default.
+    public static let codexDefaultModel = "gpt-5.4"
 }
