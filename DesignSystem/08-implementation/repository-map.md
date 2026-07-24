@@ -1,6 +1,6 @@
 # 仓库映射
 
-本设计体系依据 GitHub `taekchef/weibei` 的 `main` 审查整理。
+本设计体系依据 GitHub `weibei-app/weibei` 的 `main` 审查整理。
 
 | 设计领域 | 当前事实源 |
 |---|---|
