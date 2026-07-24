@@ -256,6 +256,8 @@ private struct AgentComposerField: View {
     var sendBottom: CGFloat
     var horizontalPadding: CGFloat = 10
     var verticalPadding: CGFloat = 0
+    /// Codex-style footer: model chip on the left, send on the right inside the card.
+    var showsModelFooter: Bool = false
     var submit: () -> Void
 
     private var canSend: Bool {
@@ -269,55 +271,72 @@ private struct AgentComposerField: View {
     var body: some View {
         // Tall Codex-like composer uses a fixed outer height; short fields still hug content.
         let locksHeight = height >= 72
-        ZStack(alignment: .bottomTrailing) {
-            TextField(
-                "",
-                text: $store.agentDraft,
-                prompt: Text(prompt)
-                    .font(promptFont)
-                    .foregroundStyle(WeiBeiTheme.placeholderInk),
-                axis: .vertical
-            )
-            .textFieldStyle(.plain)
-            .lineLimit(lineLimit)
-            .fixedSize(horizontal: false, vertical: !locksHeight)
-            .font(font)
-            .foregroundColor(WeiBeiTheme.ink)
-            .focused(focused)
-            .onSubmit(submit)
-            .padding(.vertical, verticalPadding)
-            .padding(.trailing, showsControl ? trailingPadding : 0)
-            .frame(maxWidth: .infinity, maxHeight: locksHeight ? .infinity : nil, alignment: .topLeading)
-            .padding(.horizontal, horizontalPadding)
-            .frame(maxWidth: .infinity, minHeight: height, maxHeight: locksHeight ? height : nil, alignment: .topLeading)
-            .background {
-                RoundedRectangle(cornerRadius: locksHeight ? 14 : WeiBeiMetric.controlRadius)
-                    .fill(WeiBeiTheme.paperRaised.opacity(focused.wrappedValue ? 0.72 : 0.62))
-            }
-            .clipShape(RoundedRectangle(cornerRadius: locksHeight ? 14 : WeiBeiMetric.controlRadius))
-            .overlay {
-                RoundedRectangle(cornerRadius: locksHeight ? 14 : WeiBeiMetric.controlRadius)
-                    .stroke(
-                        focused.wrappedValue ? WeiBeiTheme.link.opacity(0.36) : WeiBeiTheme.hairline.opacity(0.54),
-                        lineWidth: 1
-                    )
-            }
+        let corner: CGFloat = locksHeight ? 16 : WeiBeiMetric.controlRadius
+        VStack(alignment: .leading, spacing: 0) {
+            ZStack(alignment: .topLeading) {
+                TextField(
+                    "",
+                    text: $store.agentDraft,
+                    prompt: Text(prompt)
+                        .font(promptFont)
+                        .foregroundStyle(WeiBeiTheme.placeholderInk),
+                    axis: .vertical
+                )
+                .textFieldStyle(.plain)
+                .lineLimit(lineLimit)
+                .fixedSize(horizontal: false, vertical: !locksHeight)
+                .font(font)
+                .foregroundColor(WeiBeiTheme.ink)
+                .focused(focused)
+                .onSubmit(submit)
+                .padding(.top, verticalPadding)
+                .padding(.bottom, showsModelFooter ? 8 : verticalPadding)
+                .padding(.trailing, showsModelFooter ? 0 : (showsControl ? trailingPadding : 0))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(.horizontal, horizontalPadding)
 
-            if showsControl {
-                Button {
-                    store.isAskingAgent ? store.cancelAgentRequest() : submit()
-                } label: {
-                    Image(systemName: store.isAskingAgent ? "stop.fill" : "paperplane.fill")
+                if showsControl && !showsModelFooter {
+                    VStack {
+                        Spacer(minLength: 0)
+                        HStack {
+                            Spacer(minLength: 0)
+                            sendButton
+                                .padding(.trailing, sendTrailing)
+                                .padding(.bottom, sendBottom)
+                        }
+                    }
                 }
-                .buttonStyle(WeiBeiIconButtonStyle(size: sendButtonSize, prominence: store.isAskingAgent ? .neutral : .primary))
-                .accessibilityLabel(Text(store.isAskingAgent ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send")))
-                .help(store.isAskingAgent ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send"))
-                .keyboardShortcut(.return, modifiers: [.command])
-                .padding(.trailing, sendTrailing)
-                .padding(.bottom, sendBottom)
-                .transition(WeiBeiTransition.floating)
-                .animation(WeiBeiMotion.micro, value: showsControl)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            if showsModelFooter {
+                HStack(spacing: 10) {
+                    Text(store.modelName.isEmpty ? store.ui("模型", "Model") : store.modelName)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    if showsControl {
+                        sendButton
+                    }
+                }
+                .padding(.horizontal, horizontalPadding)
+                .padding(.bottom, 12)
+                .padding(.top, 2)
+            }
+        }
+        .frame(maxWidth: .infinity, minHeight: height, maxHeight: locksHeight ? height : nil, alignment: .topLeading)
+        .background {
+            RoundedRectangle(cornerRadius: corner)
+                .fill(WeiBeiTheme.paperRaised.opacity(focused.wrappedValue ? 0.78 : 0.64))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: corner))
+        .overlay {
+            RoundedRectangle(cornerRadius: corner)
+                .stroke(
+                    focused.wrappedValue ? WeiBeiTheme.link.opacity(0.36) : WeiBeiTheme.hairline.opacity(0.54),
+                    lineWidth: 1
+                )
         }
         .frame(height: locksHeight ? height : nil, alignment: .bottom)
         .contentShape(Rectangle())
@@ -326,6 +345,20 @@ private struct AgentComposerField: View {
         }
         .animation(WeiBeiMotion.micro, value: showsControl)
         .accessibilityIdentifier(locksHeight ? "agent-composer-codex" : "agent-composer-compact")
+    }
+
+    private var sendButton: some View {
+        Button {
+            store.isAskingAgent ? store.cancelAgentRequest() : submit()
+        } label: {
+            Image(systemName: store.isAskingAgent ? "stop.fill" : "paperplane.fill")
+        }
+        .buttonStyle(WeiBeiIconButtonStyle(size: sendButtonSize, prominence: store.isAskingAgent ? .neutral : .primary))
+        .accessibilityLabel(Text(store.isAskingAgent ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send")))
+        .help(store.isAskingAgent ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send"))
+        .keyboardShortcut(.return, modifiers: [.command])
+        .transition(WeiBeiTransition.floating)
+        .animation(WeiBeiMotion.micro, value: showsControl)
     }
 }
 
@@ -702,20 +735,20 @@ struct NotePaneView: View {
 
     private func noteModeButtonFill(selected: Bool, hovering: Bool) -> Color {
         if selected {
-            return WeiBeiTheme.cinnabarSoft.opacity(store.appearanceMode == .inkstone ? 0.44 : 0.62)
+            return WeiBeiTheme.cinnabarSoft.opacity(store.appearanceMode.isDark ? 0.44 : 0.62)
         }
         if hovering {
-            return WeiBeiTheme.paperRaised.opacity(store.appearanceMode == .inkstone ? 0.16 : 0.20)
+            return WeiBeiTheme.paperRaised.opacity(store.appearanceMode.isDark ? 0.16 : 0.20)
         }
         return Color.clear
     }
 
     private func noteModeButtonStroke(selected: Bool, hovering: Bool) -> Color {
         if selected {
-            return WeiBeiTheme.cinnabar.opacity(store.appearanceMode == .inkstone ? 0.34 : 0.24)
+            return WeiBeiTheme.cinnabar.opacity(store.appearanceMode.isDark ? 0.34 : 0.24)
         }
         if hovering {
-            return WeiBeiTheme.hairline.opacity(store.appearanceMode == .inkstone ? 0.30 : 0.18)
+            return WeiBeiTheme.hairline.opacity(store.appearanceMode.isDark ? 0.30 : 0.18)
         }
         return Color.clear
     }
@@ -1229,7 +1262,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         guard let textStorage = textView.textStorage, textStorage.length > 0 else { return }
         let fullRange = NSRange(location: 0, length: textStorage.length)
         let ink = WeiBeiNativePalette.ink(for: appearanceMode)
-        let quotePrefixColor = ink.withAlphaComponent(appearanceMode == .inkstone ? 0.30 : 0.36)
+        let quotePrefixColor = ink.withAlphaComponent(appearanceMode.isDark ? 0.30 : 0.36)
         let markerColor = NSColor.clear
         let markerFont = NSFont.monospacedSystemFont(ofSize: 0.1, weight: .regular)
         let quotePrefixRegex = try? NSRegularExpression(pattern: #"(?m)^\s*(?:>\s*)+"#)
@@ -1576,16 +1609,17 @@ private struct AgentRailTurn {
 /// than `availableWidth`, or multi-pane text centers as if the strip were full-window wide.
 private enum AgentChatLayoutMetrics {
     static let compactMaxWidth: CGFloat = 560
-    /// Immersive conversation: nearly full pane (not a skinny centered strip).
-    static let wideMaxWidth: CGFloat = 1600
+    /// Immersive conversation: Codex-like centered column that still scales with the window.
+    /// Cap keeps line length readable on ultra-wide; floor is handled by usable width.
+    static let wideMaxWidth: CGFloat = 920
     static let compactSideGutter: CGFloat = 12
-    /// Tight gutters so the reading column owns the immersive canvas.
-    static let wideSideGutter: CGFloat = 48
+    /// Codex-style: modest side margin; column grows/shrinks with the window.
+    static let wideSideGutter: CGFloat = 28
     static let compactComposerHeight: CGFloat = 52
-    /// Tall real composer — empty state must still read as a writing surface, not a search field.
-    static let wideComposerHeight: CGFloat = 148
+    /// Tall Codex-style writing surface (multi-line + bottom control band).
+    static let wideComposerHeight: CGFloat = 188
     static let compactFontSize: CGFloat = 14.5
-    static let wideFontSize: CGFloat = 17
+    static let wideFontSize: CGFloat = 16
 
     static func isWide(layout: WorkspaceLayout) -> Bool {
         // Immersive conversation only — document multi-pane keeps compact strip metrics.
@@ -1595,7 +1629,7 @@ private enum AgentChatLayoutMetrics {
     static func contentWidth(availableWidth: CGFloat, wide: Bool) -> CGFloat {
         let gutter = (wide ? wideSideGutter : compactSideGutter) * 2
         let usable = max(availableWidth - gutter, 1)
-        // Wide: use nearly the whole measured pane (gutter only). Cap only for ultra-wide displays.
+        // Wide: track the window, capped for readability (Codex ~720–920pt column).
         if wide {
             return min(usable, wideMaxWidth)
         }
@@ -1680,7 +1714,7 @@ struct AgentPaneView: View {
                     ScrollView(showsIndicators: true) {
                         // No scrollTargetLayout / scrollPosition / minHeight:viewport /
                         // GeometryReader parent — all thrash sizeThatFits on LazyVStack.
-                        LazyVStack(alignment: .leading, spacing: wide ? 16 : 12) {
+                        LazyVStack(alignment: .leading, spacing: wide ? 22 : 12) {
                             ForEach(store.messages) { message in
                                 agentMessageRow(
                                     message: message,
@@ -1722,8 +1756,8 @@ struct AgentPaneView: View {
                                 .frame(height: agentScrollBottomInset)
                                 .id(agentBottomAnchorID)
                         }
-                        .padding(.horizontal, wide ? 16 : 10)
-                        .padding(.vertical, wide ? 10 : 10)
+                        .padding(.horizontal, wide ? 8 : 10)
+                        .padding(.vertical, wide ? 14 : 10)
                         .environment(\.agentChatLayoutWidth, contentWidth)
                         .padding(.top, store.messages.isEmpty ? 22 : 0)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -1997,20 +2031,22 @@ struct AgentPaneView: View {
     private func agentInputTray(wide: Bool, contentWidth: CGFloat) -> some View {
         let fieldHeight = AgentChatLayoutMetrics.composerHeight(wide: wide)
         let fontSize = AgentChatLayoutMetrics.composerFontSize(wide: wide)
+        // Codex: composer owns a fixed tall card; message scroll gets the rest of the pane.
+        // Width tracks `contentWidth` so resize keeps messages + input on one axis.
         return VStack(spacing: 0) {
             LinearGradient(
                 colors: [
                     .clear,
-                    WeiBeiTheme.paper.opacity(0.18),
-                    WeiBeiTheme.glassTint.opacity(0.34)
+                    WeiBeiTheme.paper.opacity(0.22),
+                    WeiBeiTheme.glassTint.opacity(0.40)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
-            .frame(height: wide ? 16 : 22)
+            .frame(height: wide ? 20 : 22)
             .allowsHitTesting(false)
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: wide ? 10 : 8) {
                 if store.hasSelectionAttachments {
                     AgentSelectionAttachmentPill()
                         .transition(WeiBeiTransition.floating)
@@ -2021,23 +2057,24 @@ struct AgentPaneView: View {
                     focused: $draftFocused,
                     font: .system(size: fontSize),
                     promptFont: .system(size: fontSize),
-                    lineLimit: wide ? 1...12 : 1...6,
+                    lineLimit: wide ? 1...16 : 1...6,
                     height: fieldHeight,
-                    sendButtonSize: wide ? 38 : 28,
-                    trailingPadding: wide ? 56 : 40,
-                    sendTrailing: wide ? 18 : 10,
-                    sendBottom: wide ? 24 : 8,
-                    horizontalPadding: wide ? 22 : 12,
-                    verticalPadding: wide ? 20 : 8
+                    sendButtonSize: wide ? 36 : 28,
+                    trailingPadding: wide ? 52 : 40,
+                    sendTrailing: wide ? 14 : 10,
+                    sendBottom: wide ? 14 : 8,
+                    horizontalPadding: wide ? 18 : 12,
+                    verticalPadding: wide ? 16 : 8,
+                    showsModelFooter: wide
                 ) {
                     store.askAgent()
                 }
             }
             .font(.system(size: fontSize))
-            // Fixed width = reading column. Fixed height = real composer block.
-            .frame(width: contentWidth, height: fieldHeight, alignment: .bottom)
-            .padding(.top, wide ? 12 : 4)
-            .padding(.bottom, wide ? 28 : 12)
+            .frame(width: contentWidth, alignment: .bottom)
+            .frame(minHeight: fieldHeight, alignment: .bottom)
+            .padding(.top, wide ? 8 : 4)
+            .padding(.bottom, wide ? 22 : 12)
             .frame(maxWidth: .infinity)
             .background(WeiBeiTheme.paper)
             .animation(WeiBeiMotion.reveal, value: store.agentDraft)
@@ -3109,7 +3146,7 @@ private struct AgentBubble: View {
                             .strokeBorder(userBubbleStroke, lineWidth: 1)
                     }
                     .shadow(
-                        color: WeiBeiTheme.ink.opacity(store.appearanceMode == .inkstone ? 0.0 : (hovering ? 0.06 : 0.04)),
+                        color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.0 : (hovering ? 0.06 : 0.04)),
                         radius: hovering ? 6 : 4,
                         y: hovering ? 2 : 1.2
                     )
@@ -3122,13 +3159,13 @@ private struct AgentBubble: View {
 
     private var userBubbleFill: Color {
         // Same paper family as chips/panels: a slightly raised slip of paper, not a tinted chat blob.
-        store.appearanceMode == .inkstone
+        store.appearanceMode.isDark
             ? WeiBeiTheme.paperRaised.opacity(hovering ? 0.58 : 0.46)
             : WeiBeiTheme.paperRaised.opacity(hovering ? 1.0 : 0.96)
     }
 
     private var userBubbleStroke: Color {
-        store.appearanceMode == .inkstone
+        store.appearanceMode.isDark
             ? WeiBeiTheme.hairline.opacity(hovering ? 0.58 : 0.42)
             : WeiBeiTheme.hairline.opacity(hovering ? 0.52 : 0.38)
     }
@@ -4275,6 +4312,14 @@ final class AgentThinkingOrbitNSView: NSView {
             ink = NSColor(calibratedRed: 0.843, green: 0.796, blue: 0.690, alpha: 0.93)
             dim = NSColor(calibratedRed: 0.435, green: 0.400, blue: 0.333, alpha: 0.70)
             cinnabar = NSColor(calibratedRed: 0.651, green: 0.212, blue: 0.169, alpha: 0.82)
+        case .stele:
+            ink = NSColor(calibratedRed: 0.824, green: 0.839, blue: 0.863, alpha: 0.93)
+            dim = NSColor(calibratedRed: 0.430, green: 0.460, blue: 0.510, alpha: 0.70)
+            cinnabar = NSColor(calibratedRed: 0.690, green: 0.250, blue: 0.200, alpha: 0.82)
+        case .xuan:
+            ink = NSColor(calibratedRed: 0.145, green: 0.140, blue: 0.128, alpha: 0.93)
+            dim = NSColor(calibratedRed: 0.500, green: 0.480, blue: 0.450, alpha: 0.70)
+            cinnabar = NSColor(calibratedRed: 0.540, green: 0.145, blue: 0.110, alpha: 0.82)
         case .paper:
             ink = NSColor(calibratedRed: 0.115, green: 0.095, blue: 0.080, alpha: 0.93)
             dim = NSColor(calibratedRed: 0.490, green: 0.430, blue: 0.365, alpha: 0.70)

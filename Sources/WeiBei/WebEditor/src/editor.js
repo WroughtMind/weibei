@@ -219,7 +219,12 @@ const decorateLeakedCalloutControls = (decorations, text, pos) => {
   }
 };
 
-const normalizeTheme = (theme) => (theme === 'inkstone' ? 'inkstone' : 'paper');
+// Web CSS currently defines paper / inkstone. Map the four product themes onto those:
+// 宣纸 → paper (cool light still uses light stylesheet), 石碑 → inkstone (dark stylesheet).
+const normalizeTheme = (theme) => {
+  if (theme === 'inkstone' || theme === 'stele') return 'inkstone';
+  return 'paper';
+};
 let currentTheme = normalizeTheme(window.weiBeiTheme);
 
 const mermaidThemeVariables = () => {
