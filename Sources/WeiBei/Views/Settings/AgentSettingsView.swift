@@ -257,17 +257,19 @@ extension SettingsView {
                 .onChange(of: focusedField) { _, field in
                     if field != .apiKey { store.saveOpenAIAPIKey() }
                 }
+                // Persist on any change so the key survives a tab switch or window
+                // close without the user pressing Return. This is the implicit-save
+                // contract the self-check (L2815) expects: no explicit Save button,
+                // but the key is never stranded in memory. Keychain writes are local
+                // and cheap; saveOpenAIAPIKey cleans + dedups.
+                .onChange(of: store.openAIAPIKey) { _, _ in
+                    store.saveOpenAIAPIKey()
+                }
 
                 HStack(spacing: 8) {
                     if !store.openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         settingsPill(title: store.ui("已配置", "Configured"), icon: "checkmark.seal.fill", active: true)
                     }
-                    // Explicit save — the primary interaction. onSubmit / focus-loss
-                    // below remain as fallbacks, but users no longer have to know to
-                    // press Return or click away to persist the key (see S1).
-                    Button(store.ui("保存", "Save")) { store.saveOpenAIAPIKey() }
-                        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                        .disabled(store.openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     Button(store.ui("清除", "Clear")) { store.clearOpenAIAPIKey() }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
                     if AgentProviderConsoleLinks.loginURL(for: store.agentProviderID) != nil

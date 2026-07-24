@@ -1349,8 +1349,8 @@ final class WorkspaceStore: ObservableObject {
         let savedKey = OpenAIAPIKeyStore.load(provider: agentProviderID.piProviderName)
         if !fieldKey.isEmpty {
             return ui(
-                "当前提供商：\(agentProviderID.label(language: interfaceLanguage))。点「保存」可写入当前配置的钥匙串，跨次启动保留。",
-                "Provider: \(agentProviderID.label(language: interfaceLanguage)). Click Save to persist the key to this profile's Keychain across launches."
+                "当前提供商：\(agentProviderID.label(language: interfaceLanguage))。密钥输入后自动写入当前配置的钥匙串，跨次启动保留。",
+                "Provider: \(agentProviderID.label(language: interfaceLanguage)). The key is persisted to this profile's Keychain automatically as you type, and kept across launches."
             )
         }
         if !savedKey.isEmpty {
@@ -1360,8 +1360,8 @@ final class WorkspaceStore: ObservableObject {
             )
         }
         return ui(
-            "未配置 \(agentProviderID.label(language: interfaceLanguage)) 密钥。填入后点「保存」即可提问。",
-            "No \(agentProviderID.label(language: interfaceLanguage)) key yet. Enter one and click Save to chat."
+            "未配置 \(agentProviderID.label(language: interfaceLanguage)) 密钥。填入后自动保存即可提问。",
+            "No \(agentProviderID.label(language: interfaceLanguage)) key yet. Enter one and it saves automatically."
         )
     }
 
