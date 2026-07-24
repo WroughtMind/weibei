@@ -18,7 +18,6 @@ extension SettingsView {
     func agentSettingsContent() -> some View {
         VStack(alignment: .leading, spacing: 16) {
             agentServiceCard
-            agentAdvancedSection
         }
         .onAppear {
             requestModelListRefresh()
@@ -35,12 +34,12 @@ extension SettingsView {
 
     private var agentServiceCard: some View {
         settingsGroup(store.ui("对话服务", "Chat Service")) {
-            // ① 服务 (provider). Choosing one derives the auth method from its kind,
-            // eliminating the old redundant "接入方式" toggle.
-            settingsRow(
-                title: store.ui("服务", "Service"),
-                detail: ""
-            ) {
+            // Profile — top-level container. Selecting one swaps the service/key/model
+            // below. Always shown (per feedback: hiding it behind "Advanced" was worse).
+            agentProfileRow
+
+            // 服务 (provider). Choosing one derives the auth method from its kind.
+            settingsRow(title: store.ui("服务", "Service"), detail: "") {
                 compactMenu(store.agentProviderID.label(language: store.interfaceLanguage)) {
                     Section(AgentProviderKind.subscription.label(language: store.interfaceLanguage)) {
                         ForEach(AgentProviderID.subscriptionProviders) { provider in
@@ -66,22 +65,135 @@ extension SettingsView {
                 }
             }
 
-            // ② 认证 — branch on provider kind.
+            // 认证 — branch on provider kind.
             agentAuthRow
 
-            // ③ 模型 — dropdown backed by the live catalog. No detail line: the picker
-            // itself communicates listing state, so a second line of help text is noise.
-            settingsRow(
-                title: store.ui("模型", "Model"),
-                detail: ""
-            ) {
+            // 模型 — dropdown backed by the live catalog.
+            settingsRow(title: store.ui("模型", "Model"), detail: "") {
                 agentModelPicker()
             }
 
-            // Status reminder — only shown when something needs attention (no key,
-            // or an env-var override is silently taking effect). Stays quiet otherwise.
+            // Base URL — flat (no longer hidden behind Advanced); only for providers
+            // that need it, or once the user has set one.
+            if store.agentProviderID.showsBaseURLField || !store.agentBaseURL.isEmpty {
+                settingsRow(title: store.ui("Base URL", "Base URL"), detail: "") {
+                    TextField(
+                        "",
+                        text: Binding(
+                            get: { store.agentBaseURL },
+                            set: { store.updateAgentBaseURL($0) }
+                        ),
+                        prompt: Text(baseURLPlaceholder)
+                            .font(.system(size: 13))
+                            .foregroundStyle(WeiBeiTheme.placeholderInk)
+                    )
+                    .textFieldStyle(.plain)
+                    .foregroundColor(WeiBeiTheme.ink)
+                    .font(.system(size: 13))
+                    .weibeiInputSurface(active: false, height: 38)
+                    .frame(width: 280)
+                }
+            }
+
+            // Region — only for Bedrock.
+            if store.agentProviderID == .amazonBedrock {
+                settingsRow(title: store.ui("区域", "Region"), detail: "") {
+                    TextField(
+                        "",
+                        text: Binding(
+                            get: { store.bedrockRegion },
+                            set: {
+                                store.bedrockRegion = $0.trimmingCharacters(in: .whitespacesAndNewlines)
+                                requestModelListRefresh()
+                            }
+                        ),
+                        prompt: Text("us-east-1").font(.system(size: 13)).foregroundStyle(WeiBeiTheme.placeholderInk)
+                    )
+                    .textFieldStyle(.plain)
+                    .foregroundColor(WeiBeiTheme.ink)
+                    .font(.system(size: 13))
+                    .weibeiInputSurface(active: false, height: 38)
+                    .frame(width: 180)
+                }
+            }
+
+            // Quiet reminder — only when attention is needed.
             agentStatusReminder
         }
+    }
+
+    // MARK: Profile row (top-level, with inline rename)
+
+    private var agentProfileRow: some View {
+        settingsRow(title: store.ui("配置", "Profile"), detail: "") {
+            HStack(spacing: 8) {
+                if isRenamingActiveProfile {
+                    profileRenameField
+                } else {
+                    compactMenu(activeProfileName) {
+                        ForEach(store.agentCredentialProfiles) { profile in
+                            Button(profile.name) {
+                                store.selectAgentCredentialProfile(profile.id)
+                            }
+                        }
+                    }
+                    Button(store.ui("重命名", "Rename")) {
+                        profileRenameDraft = activeProfileName
+                        isRenamingActiveProfile = true
+                    }
+                    .buttonStyle(WeiBeiTextActionButtonStyle())
+                    Button(store.ui("新建", "New")) {
+                        store.createAgentCredentialProfile()
+                    }
+                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                    if store.agentCredentialProfiles.count > 1 {
+                        Button(store.ui("删除", "Delete")) {
+                            store.deleteActiveAgentCredentialProfile()
+                        }
+                        .buttonStyle(WeiBeiTextActionButtonStyle())
+                    }
+                }
+            }
+        }
+    }
+
+    private var profileRenameField: some View {
+        HStack(spacing: 8) {
+            TextField(
+                "",
+                text: $profileRenameDraft,
+                prompt: Text(store.ui("配置名称", "Profile name"))
+                    .font(.system(size: 13))
+                    .foregroundStyle(WeiBeiTheme.placeholderInk)
+            )
+            .textFieldStyle(.plain)
+            .foregroundColor(WeiBeiTheme.ink)
+            .font(.system(size: 13))
+            .weibeiInputSurface(active: true, height: 30)
+            .frame(width: 140)
+            .onSubmit { commitProfileRename() }
+            Button(store.ui("确定", "OK")) { commitProfileRename() }
+                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+            Button(store.ui("取消", "Cancel")) {
+                isRenamingActiveProfile = false
+                profileRenameDraft = ""
+            }
+            .buttonStyle(WeiBeiTextActionButtonStyle())
+        }
+    }
+
+    private func commitProfileRename() {
+        let trimmed = profileRenameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            store.renameActiveAgentCredentialProfile(trimmed)
+        }
+        isRenamingActiveProfile = false
+        profileRenameDraft = ""
+    }
+
+    private var activeProfileName: String {
+        store.agentCredentialProfiles.first(where: { $0.id == store.activeAgentProfileID })?.name
+            ?? store.ui("默认", "Default")
     }
 
     private func applyProvider(_ provider: AgentProviderID) {
@@ -237,101 +349,8 @@ extension SettingsView {
         store.agentProviderID.kind == .subscription && !oauthService.linkedProviders.isEmpty
     }
 
-    // MARK: Advanced (collapsed) — only shown when there is genuinely something to configure
-
-    /// Hidden entirely for the common case (single profile, no custom base URL). Avoids an
-    /// "Advanced" group whose title promises options that aren't there.
-    @ViewBuilder
-    private var agentAdvancedSection: some View {
-        if advancedSectionHasContent {
-            DisclosureGroup(isExpanded: $advancedExpanded) {
-                VStack(spacing: 0) {
-                    if store.agentProviderID.showsBaseURLField || !store.agentBaseURL.isEmpty {
-                        settingsRow(title: store.ui("Base URL", "Base URL"), detail: "") {
-                            TextField(
-                                "",
-                                text: Binding(
-                                    get: { store.agentBaseURL },
-                                    set: { store.updateAgentBaseURL($0) }
-                                ),
-                                prompt: Text(baseURLPlaceholder)
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(WeiBeiTheme.placeholderInk)
-                            )
-                            .textFieldStyle(.plain)
-                            .foregroundColor(WeiBeiTheme.ink)
-                            .font(.system(size: 13))
-                            .weibeiInputSurface(active: false, height: 38)
-                            .frame(width: 280)
-                        }
-                    }
-                    if store.agentProviderID == .amazonBedrock {
-                        settingsRow(title: store.ui("区域", "Region"), detail: "") {
-                            TextField(
-                                "",
-                                text: Binding(
-                                    get: { store.bedrockRegion },
-                                    set: {
-                                        store.bedrockRegion = $0.trimmingCharacters(in: .whitespacesAndNewlines)
-                                        requestModelListRefresh()
-                                    }
-                                ),
-                                prompt: Text("us-east-1").font(.system(size: 13)).foregroundStyle(WeiBeiTheme.placeholderInk)
-                            )
-                            .textFieldStyle(.plain)
-                            .foregroundColor(WeiBeiTheme.ink)
-                            .font(.system(size: 13))
-                            .weibeiInputSurface(active: false, height: 38)
-                            .frame(width: 180)
-                        }
-                    }
-                    if store.agentCredentialProfiles.count > 1 {
-                        settingsRow(title: store.ui("配置", "Profile"), detail: "") {
-                            HStack(spacing: 8) {
-                                compactMenu(
-                                    store.agentCredentialProfiles.first(where: { $0.id == store.activeAgentProfileID })?.name
-                                        ?? store.ui("默认", "Default")
-                                ) {
-                                    ForEach(store.agentCredentialProfiles) { profile in
-                                        Button(profile.name) {
-                                            store.selectAgentCredentialProfile(profile.id)
-                                        }
-                                    }
-                                }
-                                Button(store.ui("新建", "New")) {
-                                    store.createAgentCredentialProfile()
-                                }
-                                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                                Button(store.ui("删除", "Delete")) {
-                                    store.deleteActiveAgentCredentialProfile()
-                                }
-                                .buttonStyle(WeiBeiTextActionButtonStyle())
-                            }
-                        }
-                    }
-                }
-            } label: {
-                sectionTitle(store.ui("高级", "Advanced"))
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-            }
-            .background(WeiBeiTheme.paperRaised.opacity(store.appearanceMode == .inkstone ? 0.16 : 0.28))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(WeiBeiTheme.hairline.opacity(0.34), lineWidth: 1)
-            }
-        }
-    }
-
-    /// Whether the Advanced group has anything to show. Keeps it hidden for the common
-    /// single-profile / built-in-provider case instead of presenting an empty disclosure.
-    private var advancedSectionHasContent: Bool {
-        store.agentProviderID.showsBaseURLField
-            || !store.agentBaseURL.isEmpty
-            || store.agentProviderID == .amazonBedrock
-            || store.agentCredentialProfiles.count > 1
-    }
+    // MARK: Advanced (collapsed) — removed; Base URL / Region now sit flat in the card
+    // and Profile lives at the top. Nothing to disclose.
 
     private var baseURLPlaceholder: String {
         store.agentProviderID == .azureOpenAI

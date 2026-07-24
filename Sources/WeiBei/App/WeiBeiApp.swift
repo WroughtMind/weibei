@@ -1251,8 +1251,9 @@ struct SettingsView: View {
     // Model picker state (AgentModelPicker extension).
     @State var spinAngle: Double = 0
     @State var showManualModelEntry = false
-    // Advanced disclosure state (AgentSettingsView extension).
-    @State var advancedExpanded = false
+    // Profile inline-rename state (AgentSettingsView extension).
+    @State var isRenamingActiveProfile = false
+    @State var profileRenameDraft = ""
 
     var body: some View {
         HStack(spacing: 0) {
