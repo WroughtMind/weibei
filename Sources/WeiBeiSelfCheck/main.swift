@@ -2868,6 +2868,15 @@ expect(modelListServiceSource.contains("enum ModelListStrategy")
     && workspaceStoreSource.contains("AgentModelListService.shared.fetchModels")
     && agentSettingsSource.contains("agentModelPicker()")
     && agentSettingsSource.contains("requestModelListRefresh()"), "chat service enumerates models live per provider with a built-in fallback and surfaces them in a dropdown")
+// Regression: refreshModelList must not cancel modelFetchTask at entry. The scheduler
+// stores the Task that awaits refreshModelList; cancelling there self-cancels the
+// in-flight fetch, discards a successful Codex catalog, and leaves status .loading.
+// Exactly one cancel site remains, inside scheduleModelListRefresh.
+expect(workspaceStoreSource.contains("func scheduleModelListRefresh()")
+    && workspaceStoreSource.components(separatedBy: "modelFetchTask?.cancel()").count == 2
+    && workspaceStoreSource.contains("must NOT cancel `modelFetchTask`")
+    && !workspaceStoreSource.contains("func refreshModelList() async {\n        modelFetchTask?.cancel()"),
+    "model-list race guard cancels only from scheduleModelListRefresh, never self-cancels refreshModelList")
 expect(agentSettingsSource.contains("settingsPill(\n                    title: store.interfaceLanguage.settingsLabel,\n                    icon: \"character.book.closed\",\n                    active: false")
     && agentSettingsSource.contains("settingsPill(\n                    title: store.appearanceMode.label(language: store.interfaceLanguage),\n                    icon: store.appearanceMode.systemImage,\n                    active: false"), "settings sidebar summary pills stay neutral instead of looking permanently selected")
 expect(agentSettingsSource.contains("title: store.ui(\"每日灵感\", \"Daily Inspiration\")")

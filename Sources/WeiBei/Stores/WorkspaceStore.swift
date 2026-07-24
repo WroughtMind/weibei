@@ -2839,17 +2839,21 @@ final class WorkspaceStore: ObservableObject {
     /// Fetch the model catalog for the active provider. Updates `availableModels` /
     /// `modelListStatus` on the main actor.
     ///
-    /// Race-safe: each call bumps `modelFetchGeneration` and cancels any in-flight
-    /// predecessor; a late-resolving fetch whose generation no longer matches is
-    /// discarded, so rapid profile/provider switches can't paint the wrong catalog
-    /// (see S2). Callers should prefer `scheduleModelListRefresh()` over awaiting
-    /// this directly from UI hooks.
+    /// Race-safe via `modelFetchGeneration`: each call stamps a generation, and a
+    /// late-resolving fetch whose generation no longer matches is discarded so rapid
+    /// provider/profile switches can't paint the wrong catalog (see S2).
+    ///
+    /// Cancellation of an in-flight **scheduled** fetch is owned by
+    /// `scheduleModelListRefresh()` only. This method must NOT cancel `modelFetchTask`:
+    /// the scheduler stores the Task that awaits `refreshModelList()`, so cancelling
+    /// here would cancel ourselves mid-flight, trip `Task.isCancelled` after the
+    /// network returns, discard a successful catalog, and leave `modelListStatus`
+    /// stuck on `.loading` (OpenAI Codex subscription looked permanently broken).
     func refreshModelList() async {
         // No strategy (unsupported provider, or Codex subscription not signed in):
         // surface the built-in catalog immediately. These are synchronous resolutions
         // — stamp them with the current generation so an in-flight async fetch that
         // resolves later is still discarded.
-        modelFetchTask?.cancel()
         modelFetchGeneration &+= 1
         let myGen = modelFetchGeneration
 
@@ -2877,7 +2881,8 @@ final class WorkspaceStore: ObservableObject {
         modelListStatus = .loading
         do {
             let models = try await AgentModelListService.shared.fetchModels(strategy: strategy, apiKey: apiKey)
-            // Discard if a newer request superseded this one, or this task was cancelled.
+            // Discard if a newer request superseded this one, or this scheduled task
+            // was cancelled by a later scheduleModelListRefresh().
             guard myGen == modelFetchGeneration, !Task.isCancelled else { return }
             availableModels = models.isEmpty ? fallbackModelCatalog : models
             modelListStatus = .loaded
@@ -2892,6 +2897,9 @@ final class WorkspaceStore: ObservableObject {
     /// (`setAgentProviderID`, `selectAgentCredentialProfile`). Makes the Store the
     /// single originator of model-list fetches instead of relying on UI onChange
     /// hooks that fired from three separate places (see S2).
+    ///
+    /// Cancels any previous scheduled fetch before starting a new one. Do not move
+    /// that cancel into `refreshModelList` — see the self-cancel note there.
     func scheduleModelListRefresh() {
         modelFetchTask?.cancel()
         modelFetchTask = Task { @MainActor [weak self] in
