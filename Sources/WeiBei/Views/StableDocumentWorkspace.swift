@@ -288,21 +288,12 @@ private final class StableDocumentDividerView: NSView {
     }
 
     private var dividerFill: NSColor {
-        if isDarkAppearance {
-            return NSColor(calibratedRed: 0.059, green: 0.059, blue: 0.059, alpha: 0.96)
-        }
-        return NSColor(calibratedRed: 0.955, green: 0.918, blue: 0.835, alpha: 0.96)
+        // Follow the product theme (纸面/宣纸/墨石/石碑), not system aqua/darkAqua alone.
+        WeiBeiNativePalette.dividerFill()
     }
 
     private var dividerLine: NSColor {
-        if isDarkAppearance {
-            return NSColor(calibratedRed: 0.230, green: 0.200, blue: 0.155, alpha: 0.24)
-        }
-        return NSColor(calibratedRed: 0.500, green: 0.380, blue: 0.260, alpha: 0.13)
-    }
-
-    private var isDarkAppearance: Bool {
-        effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        WeiBeiNativePalette.dividerLine()
     }
 }
 

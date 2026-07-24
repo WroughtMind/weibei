@@ -325,11 +325,18 @@ struct WeiBeiAppearanceTransition: ViewModifier {
                     .allowsHitTesting(false)
             }
             .onChange(of: mode) { oldMode, _ in
+                // Brief wash only when light↔dark family flips; same-family (纸面↔宣纸)
+                // must feel instant without a laggy overlay.
+                let crossFamily = oldMode.isDark != mode.isDark
+                guard crossFamily else {
+                    washOpacity = 0
+                    return
+                }
                 var transaction = Transaction()
                 transaction.disablesAnimations = true
                 withTransaction(transaction) {
                     washColor = Color(nsColor: oldMode.windowBackground)
-                    washOpacity = 0.36
+                    washOpacity = 0.22
                 }
                 DispatchQueue.main.async {
                     withAnimation(WeiBeiMotion.appearance) {

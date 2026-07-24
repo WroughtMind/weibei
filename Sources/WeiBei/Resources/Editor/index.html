@@ -6,7 +6,8 @@
   <title>魏碑笔记</title>
   <link rel="stylesheet" href="./editor.css">
   <style>
-    :root {
+    :root,
+    :root[data-weibei-theme="paper"] {
       color-scheme: light;
       --paper: #f1e4cf;
       --paper-raised: #f7ecd9;
@@ -46,6 +47,61 @@
       --selection: rgba(166, 54, 43, .35);
     }
 
+    :root[data-weibei-theme="xuan"] {
+      color-scheme: light;
+      --paper: #f7f4ef;
+      --paper-raised: #fcfbf8;
+      --ink: #25231f;
+      --muted: rgba(90, 86, 78, .74);
+      --faint: rgba(90, 86, 78, .52);
+      --line: rgba(110, 104, 92, .22);
+      --cinnabar: #8a2f24;
+      --cinnabar-soft: rgba(138, 47, 36, .09);
+      --cinnabar-line: rgba(138, 47, 36, .24);
+      --ochre: #6e634f;
+      --moss: #3f614c;
+      --blue-ink: #335266;
+      --violet-ink: #5a4d64;
+      --code: rgba(37, 35, 31, .05);
+      --code-paper: rgba(37, 35, 31, .045);
+      --selection: rgba(138, 47, 36, .16);
+    }
+
+    :root[data-weibei-theme="stele"] {
+      color-scheme: dark;
+      --paper: #16181c;
+      --paper-raised: #1e2228;
+      --ink: #d2d6dc;
+      --muted: rgba(154, 161, 171, .88);
+      --faint: rgba(110, 118, 130, .86);
+      --line: #3a414c;
+      --cinnabar: #b04034;
+      --cinnabar-soft: rgba(90, 42, 40, .58);
+      --cinnabar-line: rgba(176, 64, 52, .45);
+      --ochre: #8a7a5c;
+      --moss: #8fa06a;
+      --blue-ink: #b8c4d0;
+      --violet-ink: #a8b0c0;
+      --code: rgba(255, 255, 255, .05);
+      --code-paper: #1a1e24;
+      --selection: rgba(176, 64, 52, .32);
+    }
+
+    :root[data-weibei-theme="xuan"] #editor {
+      background: color-mix(in srgb, var(--paper) 90%, transparent);
+    }
+
+    :root[data-weibei-theme="stele"] body {
+      background:
+        radial-gradient(circle at 20% 10%, rgba(255, 255, 255, .03), transparent 28%),
+        linear-gradient(180deg, #1a1d22 0%, #12151a 100%);
+    }
+
+    :root[data-weibei-compact-preview="true"][data-weibei-theme="stele"] body {
+      background: transparent;
+    }
+
+
     html, body {
       margin: 0;
       height: 100%;
@@ -58,13 +114,15 @@
       overflow: hidden;
     }
 
-    :root[data-weibei-theme="inkstone"] body {
+    :root[data-weibei-theme="inkstone"] body,
+    :root[data-weibei-theme="stele"] body {
       background:
         radial-gradient(circle at 20% 10%, rgba(255, 255, 255, .025), transparent 28%),
         linear-gradient(180deg, #101010 0%, #0b0b0b 100%);
     }
 
-    :root[data-weibei-compact-preview="true"][data-weibei-theme="inkstone"] body {
+    :root[data-weibei-compact-preview="true"][data-weibei-theme="inkstone"] body,
+:root[data-weibei-compact-preview="true"][data-weibei-theme="stele"] body {
       background: transparent;
     }
 
@@ -75,7 +133,7 @@
       scrollbar-width: thin;
       scrollbar-color: transparent transparent;
       padding: 28px 34px 64px;
-      background: rgba(239, 225, 199, .72);
+      background: color-mix(in srgb, var(--paper) 88%, transparent);
     }
 
     :root[data-weibei-compact-preview="true"] #editor {
@@ -86,11 +144,13 @@
       background: transparent;
     }
 
-    :root[data-weibei-theme="inkstone"] #editor {
+    :root[data-weibei-theme="inkstone"] #editor,
+    :root[data-weibei-theme="stele"] #editor {
       background: rgba(15, 15, 15, .88);
     }
 
-    :root[data-weibei-compact-preview="true"][data-weibei-theme="inkstone"] #editor {
+    :root[data-weibei-compact-preview="true"][data-weibei-theme="inkstone"] #editor,
+:root[data-weibei-compact-preview="true"][data-weibei-theme="stele"] #editor {
       background: transparent;
     }
 
@@ -104,13 +164,14 @@
     }
 
     #editor::-webkit-scrollbar-thumb {
-      border: 2px solid rgba(239, 225, 199, .72);
+      border: 2px solid color-mix(in srgb, var(--paper) 88%, transparent);
       border-radius: 999px;
       background: transparent;
       transition: background-color .18s ease-out;
     }
 
-    :root[data-weibei-theme="inkstone"] #editor::-webkit-scrollbar-thumb {
+    :root[data-weibei-theme="inkstone"] #editor::-webkit-scrollbar-thumb,
+    :root[data-weibei-theme="stele"] #editor::-webkit-scrollbar-thumb {
       border-color: rgba(15, 15, 15, .88);
     }
 
@@ -127,18 +188,29 @@
     }
 
     :root[data-weibei-theme="inkstone"] #editor.weibei-scroll-active,
+    :root[data-weibei-theme="stele"] #editor.weibei-scroll-active,
+
     :root[data-weibei-theme="inkstone"] #editor:hover,
-    :root[data-weibei-theme="inkstone"] #editor:focus-within {
+    :root[data-weibei-theme="stele"] #editor:hover,
+
+    :root[data-weibei-theme="inkstone"] #editor:focus-within,
+    :root[data-weibei-theme="stele"] #editor:focus-within {
       scrollbar-color: #3a3328 transparent;
     }
 
     :root[data-weibei-theme="inkstone"] #editor.weibei-scroll-active::-webkit-scrollbar-thumb,
+    :root[data-weibei-theme="stele"] #editor.weibei-scroll-active::-webkit-scrollbar-thumb,
+
     :root[data-weibei-theme="inkstone"] #editor:hover::-webkit-scrollbar-thumb,
-    :root[data-weibei-theme="inkstone"] #editor:focus-within::-webkit-scrollbar-thumb {
+    :root[data-weibei-theme="stele"] #editor:hover::-webkit-scrollbar-thumb,
+
+    :root[data-weibei-theme="inkstone"] #editor:focus-within::-webkit-scrollbar-thumb,
+    :root[data-weibei-theme="stele"] #editor:focus-within::-webkit-scrollbar-thumb {
       background: #3a3328;
     }
 
-    :root[data-weibei-theme="inkstone"] #editor::-webkit-scrollbar-thumb:hover {
+    :root[data-weibei-theme="inkstone"] #editor::-webkit-scrollbar-thumb:hover,
+    :root[data-weibei-theme="stele"] #editor::-webkit-scrollbar-thumb:hover {
       background: #5c4331;
     }
 
@@ -162,15 +234,20 @@
     .ProseMirror pre::-webkit-scrollbar-thumb,
     .ProseMirror div[data-type="math_block"]::-webkit-scrollbar-thumb,
     .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-thumb {
-      border: 2px solid rgba(239, 225, 199, .72);
+      border: 2px solid color-mix(in srgb, var(--paper) 88%, transparent);
       border-radius: 999px;
       background: transparent;
       transition: background-color .18s ease-out;
     }
 
     :root[data-weibei-theme="inkstone"] .ProseMirror pre::-webkit-scrollbar-thumb,
+    :root[data-weibei-theme="stele"] .ProseMirror pre::-webkit-scrollbar-thumb,
+
     :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math_block"]::-webkit-scrollbar-thumb,
-    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-thumb {
+    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math_block"]::-webkit-scrollbar-thumb,
+
+    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-thumb,
+    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math-block"]::-webkit-scrollbar-thumb {
       border-color: #171717;
     }
 
@@ -239,7 +316,8 @@
       font-size: 11px;
     }
 
-    :root[data-weibei-theme="inkstone"] #frontmatter-panel {
+    :root[data-weibei-theme="inkstone"] #frontmatter-panel,
+    :root[data-weibei-theme="stele"] #frontmatter-panel {
       background: var(--paper-raised);
       border-color: var(--line);
       border-left-color: var(--cinnabar-line);
@@ -286,7 +364,10 @@
     .ProseMirror p { margin: .55em 0; }
 
     :root[data-weibei-theme="inkstone"] .ProseMirror h1,
-    :root[data-weibei-theme="inkstone"] .ProseMirror h2 {
+    :root[data-weibei-theme="stele"] .ProseMirror h1,
+
+    :root[data-weibei-theme="inkstone"] .ProseMirror h2,
+    :root[data-weibei-theme="stele"] .ProseMirror h2 {
       color: var(--blue-ink);
     }
 
@@ -359,7 +440,8 @@
       background: rgba(251, 245, 234, .52);
     }
 
-    :root[data-weibei-theme="inkstone"] .ProseMirror table {
+    :root[data-weibei-theme="inkstone"] .ProseMirror table,
+    :root[data-weibei-theme="stele"] .ProseMirror table {
       background: rgba(255, 255, 255, .02);
     }
 
@@ -376,7 +458,8 @@
       font-weight: 650;
     }
 
-    :root[data-weibei-theme="inkstone"] .ProseMirror th {
+    :root[data-weibei-theme="inkstone"] .ProseMirror th,
+    :root[data-weibei-theme="stele"] .ProseMirror th {
       color: var(--blue-ink);
       background: rgba(200, 185, 138, .08);
     }
@@ -401,7 +484,8 @@
       color: var(--muted);
     }
 
-    :root[data-weibei-theme="inkstone"] .ProseMirror blockquote {
+    :root[data-weibei-theme="inkstone"] .ProseMirror blockquote,
+    :root[data-weibei-theme="stele"] .ProseMirror blockquote {
       border-left-color: rgba(166, 54, 43, .55);
       background: rgba(166, 54, 43, .08);
       color: #c9bfa5;
@@ -415,7 +499,8 @@
       box-shadow: inset 0 0 0 1px rgba(92, 70, 46, .12);
     }
 
-    :root[data-weibei-theme="inkstone"] .ProseMirror blockquote.weibei-callout {
+    :root[data-weibei-theme="inkstone"] .ProseMirror blockquote.weibei-callout,
+    :root[data-weibei-theme="stele"] .ProseMirror blockquote.weibei-callout {
       background: rgba(255, 255, 255, .035);
       box-shadow: inset 0 0 0 1px rgba(45, 45, 45, .92);
     }
@@ -445,8 +530,13 @@
     }
 
     :root[data-weibei-theme="inkstone"] .ProseMirror blockquote.weibei-callout-important,
+    :root[data-weibei-theme="stele"] .ProseMirror blockquote.weibei-callout-important,
+
     :root[data-weibei-theme="inkstone"] .ProseMirror blockquote.weibei-callout-question,
-    :root[data-weibei-theme="inkstone"] .ProseMirror blockquote.weibei-callout-example {
+    :root[data-weibei-theme="stele"] .ProseMirror blockquote.weibei-callout-question,
+
+    :root[data-weibei-theme="inkstone"] .ProseMirror blockquote.weibei-callout-example,
+    :root[data-weibei-theme="stele"] .ProseMirror blockquote.weibei-callout-example {
       background: rgba(200, 185, 138, .07);
     }
     .ProseMirror blockquote.weibei-callout-important::before { color: var(--blue-ink); }
@@ -526,7 +616,8 @@
       border-left-color: rgba(145, 38, 28, .28);
     }
 
-    :root[data-weibei-theme="inkstone"] .ProseMirror blockquote.weibei-callout[data-callout-title="阅读线索"] {
+    :root[data-weibei-theme="inkstone"] .ProseMirror blockquote.weibei-callout[data-callout-title="阅读线索"],
+    :root[data-weibei-theme="stele"] .ProseMirror blockquote.weibei-callout[data-callout-title="阅读线索"] {
       background: rgba(166, 54, 43, .055);
       border-left-color: rgba(166, 54, 43, .38);
     }
@@ -574,7 +665,8 @@
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, .30);
     }
 
-    :root[data-weibei-theme="inkstone"] .ProseMirror pre {
+    :root[data-weibei-theme="inkstone"] .ProseMirror pre,
+    :root[data-weibei-theme="stele"] .ProseMirror pre {
       box-shadow: none;
     }
 
@@ -662,7 +754,8 @@
       padding: 0 .05em;
     }
 
-    :root[data-weibei-theme="inkstone"] .weibei-highlight {
+    :root[data-weibei-theme="inkstone"] .weibei-highlight,
+    :root[data-weibei-theme="stele"] .weibei-highlight {
       background: rgba(166, 54, 43, .28);
       box-shadow: 0 .08em 0 rgba(166, 54, 43, .24);
       color: #f0d6b0;
@@ -676,7 +769,8 @@
       cursor: pointer;
     }
 
-    :root[data-weibei-theme="inkstone"] .weibei-wikilink {
+    :root[data-weibei-theme="inkstone"] .weibei-wikilink,
+    :root[data-weibei-theme="stele"] .weibei-wikilink {
       background: rgba(200, 185, 138, .08);
       border-bottom-color: rgba(200, 185, 138, .55);
     }
@@ -688,7 +782,10 @@
     }
 
     :root[data-weibei-theme="inkstone"] .weibei-source-reference,
-    :root[data-weibei-theme="inkstone"] .weibei-inline-footnote {
+    :root[data-weibei-theme="stele"] .weibei-source-reference,
+
+    :root[data-weibei-theme="inkstone"] .weibei-inline-footnote,
+    :root[data-weibei-theme="stele"] .weibei-inline-footnote {
       background: rgba(200, 185, 138, .06);
       border-bottom-color: rgba(200, 185, 138, .45);
     }
@@ -710,7 +807,8 @@
       font-style: italic;
     }
 
-    :root[data-weibei-theme="inkstone"] .weibei-comment {
+    :root[data-weibei-theme="inkstone"] .weibei-comment,
+    :root[data-weibei-theme="stele"] .weibei-comment {
       background: rgba(155, 145, 120, .045);
       border-bottom-color: rgba(155, 145, 120, .20);
     }
@@ -726,7 +824,8 @@
       border-bottom: 1px solid rgba(57, 95, 72, .20);
     }
 
-    :root[data-weibei-theme="inkstone"] .weibei-tag {
+    :root[data-weibei-theme="inkstone"] .weibei-tag,
+    :root[data-weibei-theme="stele"] .weibei-tag {
       color: #d6b17c;
       background: rgba(166, 54, 43, .16);
       border: 1px solid rgba(166, 54, 43, .45);
@@ -770,7 +869,8 @@
       cursor: pointer;
     }
 
-    :root[data-weibei-theme="inkstone"] .weibei-embed-note {
+    :root[data-weibei-theme="inkstone"] .weibei-embed-note,
+    :root[data-weibei-theme="stele"] .weibei-embed-note {
       color: var(--blue-ink);
       border-left-color: rgba(200, 185, 138, .42);
       background: rgba(200, 185, 138, .07);
@@ -804,7 +904,10 @@
     }
 
     :root[data-weibei-theme="inkstone"] .weibei-md-marker,
-    :root[data-weibei-theme="inkstone"] .weibei-callout-marker {
+    :root[data-weibei-theme="stele"] .weibei-md-marker,
+
+    :root[data-weibei-theme="inkstone"] .weibei-callout-marker,
+    :root[data-weibei-theme="stele"] .weibei-callout-marker {
       color: rgba(155, 145, 120, .58);
     }
 
@@ -866,8 +969,13 @@
     }
 
     :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math_block"],
+    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math_block"],
+
     :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math-block"],
-    :root[data-weibei-theme="inkstone"] .ProseMirror .math-block {
+    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math-block"],
+
+    :root[data-weibei-theme="inkstone"] .ProseMirror .math-block,
+    :root[data-weibei-theme="stele"] .ProseMirror .math-block {
       background: rgba(184, 138, 66, .08);
       border-color: rgba(184, 138, 66, .18);
     }
@@ -885,11 +993,22 @@
     }
 
     :root[data-weibei-theme="inkstone"] .ProseMirror span[data-type="math_inline"] > .katex,
+    :root[data-weibei-theme="stele"] .ProseMirror span[data-type="math_inline"] > .katex,
+
     :root[data-weibei-theme="inkstone"] .ProseMirror span[data-type="math-inline"] > .katex,
+    :root[data-weibei-theme="stele"] .ProseMirror span[data-type="math-inline"] > .katex,
+
     :root[data-weibei-theme="inkstone"] .ProseMirror .math-inline > .katex,
+    :root[data-weibei-theme="stele"] .ProseMirror .math-inline > .katex,
+
     :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math_block"] > .katex,
+    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math_block"] > .katex,
+
     :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math-block"] > .katex,
-    :root[data-weibei-theme="inkstone"] .ProseMirror .math-block > .katex {
+    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math-block"] > .katex,
+
+    :root[data-weibei-theme="inkstone"] .ProseMirror .math-block > .katex,
+    :root[data-weibei-theme="stele"] .ProseMirror .math-block > .katex {
       color: #d7cbb0;
     }
 
@@ -969,7 +1088,8 @@
       overflow-x: auto;
     }
 
-    :root[data-weibei-theme="inkstone"] .weibei-mermaid-render {
+    :root[data-weibei-theme="inkstone"] .weibei-mermaid-render,
+    :root[data-weibei-theme="stele"] .weibei-mermaid-render {
       background: var(--paper-raised);
       border-color: var(--line);
     }
@@ -992,7 +1112,8 @@
       padding: 4px;
     }
 
-    :root[data-weibei-theme="inkstone"] .weibei-image {
+    :root[data-weibei-theme="inkstone"] .weibei-image,
+    :root[data-weibei-theme="stele"] .weibei-image {
       background: rgba(255, 255, 255, .035);
     }
 
@@ -1005,7 +1126,8 @@
       font-size: .88em;
     }
 
-    :root[data-weibei-theme="inkstone"] .weibei-uploading {
+    :root[data-weibei-theme="inkstone"] .weibei-uploading,
+    :root[data-weibei-theme="stele"] .weibei-uploading {
       background: rgba(255, 255, 255, .035);
     }
 

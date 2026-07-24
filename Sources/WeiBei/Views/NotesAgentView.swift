@@ -250,6 +250,8 @@ private struct AgentComposerField: View {
     var promptFont: Font
     var lineLimit: ClosedRange<Int>
     var height: CGFloat
+    /// Cap for immersive grow; nil means fixed compact height.
+    var maxHeight: CGFloat? = nil
     var sendButtonSize: CGFloat
     var trailingPadding: CGFloat
     var sendTrailing: CGFloat
@@ -268,10 +270,11 @@ private struct AgentComposerField: View {
         store.isAskingAgent || canSend
     }
 
+    private var isWideComposer: Bool { maxHeight != nil || showsModelFooter }
+
     var body: some View {
-        // Tall Codex-like composer uses a fixed outer height; short fields still hug content.
-        let locksHeight = height >= 72
-        let corner: CGFloat = locksHeight ? 16 : WeiBeiMetric.controlRadius
+        // Compact: fixed short field. Wide: min height, grow with lines up to maxHeight.
+        let corner: CGFloat = isWideComposer ? 14 : WeiBeiMetric.controlRadius
         VStack(alignment: .leading, spacing: 0) {
             ZStack(alignment: .topLeading) {
                 TextField(
@@ -284,15 +287,15 @@ private struct AgentComposerField: View {
                 )
                 .textFieldStyle(.plain)
                 .lineLimit(lineLimit)
-                .fixedSize(horizontal: false, vertical: !locksHeight)
+                .fixedSize(horizontal: false, vertical: true)
                 .font(font)
                 .foregroundColor(WeiBeiTheme.ink)
                 .focused(focused)
                 .onSubmit(submit)
                 .padding(.top, verticalPadding)
-                .padding(.bottom, showsModelFooter ? 8 : verticalPadding)
+                .padding(.bottom, showsModelFooter ? 6 : verticalPadding)
                 .padding(.trailing, showsModelFooter ? 0 : (showsControl ? trailingPadding : 0))
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
                 .padding(.horizontal, horizontalPadding)
 
                 if showsControl && !showsModelFooter {
@@ -307,7 +310,7 @@ private struct AgentComposerField: View {
                     }
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
 
             if showsModelFooter {
                 HStack(spacing: 10) {
@@ -321,11 +324,11 @@ private struct AgentComposerField: View {
                     }
                 }
                 .padding(.horizontal, horizontalPadding)
-                .padding(.bottom, 12)
+                .padding(.bottom, 10)
                 .padding(.top, 2)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: height, maxHeight: locksHeight ? height : nil, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: height, maxHeight: maxHeight, alignment: .topLeading)
         .background {
             RoundedRectangle(cornerRadius: corner)
                 .fill(WeiBeiTheme.paperRaised.opacity(focused.wrappedValue ? 0.78 : 0.64))
@@ -338,13 +341,12 @@ private struct AgentComposerField: View {
                     lineWidth: 1
                 )
         }
-        .frame(height: locksHeight ? height : nil, alignment: .bottom)
         .contentShape(Rectangle())
         .onTapGesture {
             focused.wrappedValue = true
         }
         .animation(WeiBeiMotion.micro, value: showsControl)
-        .accessibilityIdentifier(locksHeight ? "agent-composer-codex" : "agent-composer-compact")
+        .accessibilityIdentifier(isWideComposer ? "agent-composer-codex" : "agent-composer-compact")
     }
 
     private var sendButton: some View {
@@ -1616,8 +1618,9 @@ private enum AgentChatLayoutMetrics {
     /// Codex-style: modest side margin; column grows/shrinks with the window.
     static let wideSideGutter: CGFloat = 28
     static let compactComposerHeight: CGFloat = 52
-    /// Tall Codex-style writing surface (multi-line + bottom control band).
-    static let wideComposerHeight: CGFloat = 188
+    /// Immersive min height — grows with typed lines; never a giant empty white void.
+    static let wideComposerMinHeight: CGFloat = 108
+    static let wideComposerMaxHeight: CGFloat = 220
     static let compactFontSize: CGFloat = 14.5
     static let wideFontSize: CGFloat = 16
 
@@ -1637,7 +1640,12 @@ private enum AgentChatLayoutMetrics {
     }
 
     static func composerHeight(wide: Bool) -> CGFloat {
-        wide ? wideComposerHeight : compactComposerHeight
+        // Fixed min for immersive; field grows via TextField lineLimit, capped by max frame.
+        wide ? wideComposerMinHeight : compactComposerHeight
+    }
+
+    static func composerMaxHeight(wide: Bool) -> CGFloat {
+        wide ? wideComposerMaxHeight : compactComposerHeight
     }
 
     static func composerFontSize(wide: Bool) -> CGFloat {
@@ -2029,10 +2037,10 @@ struct AgentPaneView: View {
     }
 
     private func agentInputTray(wide: Bool, contentWidth: CGFloat) -> some View {
-        let fieldHeight = AgentChatLayoutMetrics.composerHeight(wide: wide)
+        let minHeight = AgentChatLayoutMetrics.composerHeight(wide: wide)
+        let maxHeight = AgentChatLayoutMetrics.composerMaxHeight(wide: wide)
         let fontSize = AgentChatLayoutMetrics.composerFontSize(wide: wide)
-        // Codex: composer owns a fixed tall card; message scroll gets the rest of the pane.
-        // Width tracks `contentWidth` so resize keeps messages + input on one axis.
+        // Codex-like: modest min height, grow with content, leave message area the majority of the pane.
         return VStack(spacing: 0) {
             LinearGradient(
                 colors: [
@@ -2043,10 +2051,10 @@ struct AgentPaneView: View {
                 startPoint: .top,
                 endPoint: .bottom
             )
-            .frame(height: wide ? 20 : 22)
+            .frame(height: wide ? 16 : 18)
             .allowsHitTesting(false)
 
-            VStack(alignment: .leading, spacing: wide ? 10 : 8) {
+            VStack(alignment: .leading, spacing: wide ? 8 : 8) {
                 if store.hasSelectionAttachments {
                     AgentSelectionAttachmentPill()
                         .transition(WeiBeiTransition.floating)
@@ -2057,14 +2065,15 @@ struct AgentPaneView: View {
                     focused: $draftFocused,
                     font: .system(size: fontSize),
                     promptFont: .system(size: fontSize),
-                    lineLimit: wide ? 1...16 : 1...6,
-                    height: fieldHeight,
-                    sendButtonSize: wide ? 36 : 28,
-                    trailingPadding: wide ? 52 : 40,
-                    sendTrailing: wide ? 14 : 10,
-                    sendBottom: wide ? 14 : 8,
-                    horizontalPadding: wide ? 18 : 12,
-                    verticalPadding: wide ? 16 : 8,
+                    lineLimit: wide ? 1...10 : 1...6,
+                    height: minHeight,
+                    maxHeight: maxHeight,
+                    sendButtonSize: wide ? 32 : 28,
+                    trailingPadding: wide ? 48 : 40,
+                    sendTrailing: wide ? 12 : 10,
+                    sendBottom: wide ? 10 : 8,
+                    horizontalPadding: wide ? 16 : 12,
+                    verticalPadding: wide ? 12 : 8,
                     showsModelFooter: wide
                 ) {
                     store.askAgent()
@@ -2072,13 +2081,11 @@ struct AgentPaneView: View {
             }
             .font(.system(size: fontSize))
             .frame(width: contentWidth, alignment: .bottom)
-            .frame(minHeight: fieldHeight, alignment: .bottom)
-            .padding(.top, wide ? 8 : 4)
-            .padding(.bottom, wide ? 22 : 12)
+            .padding(.top, wide ? 6 : 4)
+            .padding(.bottom, wide ? 16 : 12)
             .frame(maxWidth: .infinity)
             .background(WeiBeiTheme.paper)
             .animation(WeiBeiMotion.reveal, value: store.agentDraft)
-            .animation(WeiBeiMotion.panel, value: fieldHeight)
             .accessibilityIdentifier(wide ? "agent-input-tray-wide" : "agent-input-tray-compact")
         }
         .background(alignment: .bottom) {
@@ -4304,27 +4311,9 @@ final class AgentThinkingOrbitNSView: NSView {
             : 1
         let orbitProgress = TextOrbitSegment.orbitProgress(at: elapsed)
 
-        let ink: NSColor
-        let dim: NSColor
-        let cinnabar: NSColor
-        switch appearanceMode {
-        case .inkstone:
-            ink = NSColor(calibratedRed: 0.843, green: 0.796, blue: 0.690, alpha: 0.93)
-            dim = NSColor(calibratedRed: 0.435, green: 0.400, blue: 0.333, alpha: 0.70)
-            cinnabar = NSColor(calibratedRed: 0.651, green: 0.212, blue: 0.169, alpha: 0.82)
-        case .stele:
-            ink = NSColor(calibratedRed: 0.824, green: 0.839, blue: 0.863, alpha: 0.93)
-            dim = NSColor(calibratedRed: 0.430, green: 0.460, blue: 0.510, alpha: 0.70)
-            cinnabar = NSColor(calibratedRed: 0.690, green: 0.250, blue: 0.200, alpha: 0.82)
-        case .xuan:
-            ink = NSColor(calibratedRed: 0.145, green: 0.140, blue: 0.128, alpha: 0.93)
-            dim = NSColor(calibratedRed: 0.500, green: 0.480, blue: 0.450, alpha: 0.70)
-            cinnabar = NSColor(calibratedRed: 0.540, green: 0.145, blue: 0.110, alpha: 0.82)
-        case .paper:
-            ink = NSColor(calibratedRed: 0.115, green: 0.095, blue: 0.080, alpha: 0.93)
-            dim = NSColor(calibratedRed: 0.490, green: 0.430, blue: 0.365, alpha: 0.70)
-            cinnabar = NSColor(calibratedRed: 0.570, green: 0.150, blue: 0.105, alpha: 0.82)
-        }
+        let ink = WeiBeiNativePalette.ink(for: appearanceMode).withAlphaComponent(0.93)
+        let dim = WeiBeiNativePalette.tertiaryInk(for: appearanceMode).withAlphaComponent(0.70)
+        let cinnabar = WeiBeiNativePalette.cinnabar(for: appearanceMode).withAlphaComponent(0.82)
 
         let font = NSFont.systemFont(ofSize: Self.statusFontSize, weight: .medium)
         // Line box inset so every side has the same gap to the stroke centerline.
