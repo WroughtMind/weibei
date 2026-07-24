@@ -1971,11 +1971,13 @@ struct SettingsView: View {
                 Text(title)
                     .font(.system(size: 13.5, weight: .semibold))
                     .foregroundStyle(WeiBeiTheme.ink)
-                Text(detail)
-                    .font(.system(size: 11.5))
-                    .lineSpacing(2)
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    .fixedSize(horizontal: false, vertical: true)
+                if !detail.isEmpty {
+                    Text(detail)
+                        .font(.system(size: 11.5))
+                        .lineSpacing(2)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
             Spacer(minLength: 18)
             control()

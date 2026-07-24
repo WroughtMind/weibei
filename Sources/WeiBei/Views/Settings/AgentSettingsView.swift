@@ -39,11 +39,8 @@ extension SettingsView {
             // ① 服务 (provider). Choosing one derives the auth method from its kind,
             // eliminating the old redundant "接入方式" toggle.
             settingsRow(
-                title: store.ui("服务", "Service"),
-                detail: store.ui(
-                    "选择对话所用的提供商。认证方式由服务类型自动决定。",
-                    "Pick the provider for chat. Auth method follows the service type."
-                )
+                title: store.ui("① 服务", "① Service"),
+                detail: store.ui("选择对话所用的提供商。", "Pick the provider for chat.")
             ) {
                 compactMenu(store.agentProviderID.label(language: store.interfaceLanguage)) {
                     Section(AgentProviderKind.subscription.label(language: store.interfaceLanguage)) {
@@ -73,16 +70,18 @@ extension SettingsView {
             // ② 认证 — branch on provider kind.
             agentAuthRow
 
-            // ③ 模型 — dropdown backed by the live catalog.
+            // ③ 模型 — dropdown backed by the live catalog. No detail line: the picker
+            // itself communicates listing state, so a second line of help text is noise.
             settingsRow(
-                title: store.ui("模型", "Model"),
-                detail: store.ui("连接后自动列出可用模型；可随时手动输入。", "Available models are listed once connected; manual entry always allowed.")
+                title: store.ui("③ 模型", "③ Model"),
+                detail: ""
             ) {
                 agentModelPicker()
             }
 
-            // ④ 状态条 — provider · model · key source · OAuth · env badge.
-            agentStatusBar
+            // Status reminder — only shown when something needs attention (no key,
+            // or an env-var override is silently taking effect). Stays quiet otherwise.
+            agentStatusReminder
         }
     }
 
@@ -106,7 +105,7 @@ extension SettingsView {
 
     private var agentAPIKeyAuth: some View {
         settingsRow(
-            title: store.ui("密钥", "API Key"),
+            title: store.ui("② 密钥", "② API Key"),
             detail: AgentProviderConsoleLinks.keyHelp(language: store.interfaceLanguage, provider: store.agentProviderID)
         ) {
             VStack(alignment: .trailing, spacing: 8) {
@@ -150,11 +149,8 @@ extension SettingsView {
     // instead of three side-by-side providers.
     private var agentSubscriptionAuth: some View {
         settingsRow(
-            title: store.ui("订阅登录", "Subscription Login"),
-            detail: store.ui(
-                "与 Pi 的 /login 相同：浏览器完成 OAuth，凭证写入 ~/.pi/agent/auth.json。",
-                "Same as Pi /login: browser OAuth writes to ~/.pi/agent/auth.json."
-            )
+            title: store.ui("② 订阅登录", "② Subscription Login"),
+            detail: store.ui("浏览器登录后自动使用。", "Auto-used after browser sign-in.")
         ) {
             VStack(alignment: .trailing, spacing: 8) {
                 let provider = currentSubscriptionProvider
@@ -205,50 +201,27 @@ extension SettingsView {
             ?? store.ui("请在终端运行 pi 后执行对应 /login。", "Run pi in a terminal, then the matching /login.")
     }
 
-    // MARK: ④ Status bar
+    // MARK: Status reminder — only when attention is needed
 
-    private var agentStatusBar: some View {
-        HStack(spacing: 8) {
-            settingsPill(
-                title: store.agentProviderID.label(language: store.interfaceLanguage),
-                icon: "server.rack",
-                active: true
+    /// Quiet by default. Surfaces one short line only when something needs the user's
+    /// attention: the key is missing, or an env-var override is silently in effect (so
+    /// the field they're editing wouldn't actually take). Replaces the old 5-pill bar
+    /// that piled every status into a noisy row.
+    @ViewBuilder
+    private var agentStatusReminder: some View {
+        if !envKeyOverride.isEmpty {
+            settingsNote(
+                store.ui("由环境变量 \(envKeyOverride) 生效，此处填写不会覆盖。", "Env \(envKeyOverride) is active; this field won't override it."),
+                icon: "lock.fill"
             )
-            settingsPill(
-                title: store.modelName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                    ? store.ui("模型未选", "No model")
-                    : store.modelName,
-                icon: "cpu",
-                active: true
+        } else if !oauthLinked,
+                  store.agentProviderID.kind != .subscription,
+                  store.openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            settingsNote(
+                store.ui("尚未配置密钥，对话将无法连接。", "No key configured — chat won't connect."),
+                icon: "exclamationmark.triangle"
             )
-            settingsPill(title: keySourceLabel, icon: keySourceIcon, active: keyConfigured)
-            if oauthLinked {
-                settingsPill(title: store.ui("OAuth 已连接", "OAuth linked"), icon: "link", active: true)
-            }
-            if !envKeyOverride.isEmpty {
-                settingsPill(title: store.ui("环境变量 \(envKeyOverride)", "Env \(envKeyOverride)"), icon: "lock.fill", active: false)
-            }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-    }
-
-    private var keySourceLabel: String {
-        if !envKeyOverride.isEmpty { return store.ui("环境变量", "Env var") }
-        if !store.openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return store.ui("已配置密钥", "Key set")
-        }
-        return store.ui("未配置密钥", "No key")
-    }
-
-    private var keySourceIcon: String {
-        if !envKeyOverride.isEmpty { return "lock.fill" }
-        return keyConfigured ? "key.fill" : "key.slash"
-    }
-
-    private var keyConfigured: Bool {
-        !envKeyOverride.isEmpty
-            || !store.openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var envKeyOverride: String {
