@@ -3,74 +3,99 @@ import CoreText
 import SwiftUI
 import WeiBeiCore
 
+/// Four surface themes. Light pair: 纸面 (warm product paper) + 宣纸 (cooler fibrous xuan).
+/// Dark pair: 墨石 (near-black warm ink) + 石碑 (cool carved stele grey).
 enum WeiBeiAppearanceMode: String, CaseIterable, Identifiable {
     case paper
+    case xuan
     case inkstone
+    case stele
 
     var id: String { rawValue }
+
+    /// True for both dark surfaces (墨石 / 石碑). Prefer this over `== .inkstone`.
+    var isDark: Bool {
+        switch self {
+        case .paper, .xuan: return false
+        case .inkstone, .stele: return true
+        }
+    }
 
     func label(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
         case .paper:
             return language.text("纸面", "Paper")
+        case .xuan:
+            return language.text("宣纸", "Xuan")
         case .inkstone:
             return language.text("墨石", "Inkstone")
+        case .stele:
+            return language.text("石碑", "Stele")
+        }
+    }
+
+    func detail(language: WeiBeiInterfaceLanguage) -> String {
+        switch self {
+        case .paper:
+            return language.text("暖色产品纸面", "Warm product paper")
+        case .xuan:
+            return language.text("素净宣纸白", "Cool fibrous xuan white")
+        case .inkstone:
+            return language.text("暖黑墨石", "Warm near-black ink")
+        case .stele:
+            return language.text("冷灰碑面", "Cool carved stone")
         }
     }
 
     func actionLabel(language: WeiBeiInterfaceLanguage) -> String {
-        switch self {
-        case .paper:
-            return language.text("切到墨石暗色", "Switch to Inkstone")
-        case .inkstone:
-            return language.text("切到纸面亮色", "Switch to Paper")
-        }
+        language.text("切换外观主题", "Switch appearance theme")
     }
 
     var systemImage: String {
         switch self {
         case .paper:
             return "sun.max"
+        case .xuan:
+            return "doc.plaintext"
         case .inkstone:
             return "moon.stars"
+        case .stele:
+            return "rectangle.split.3x1"
         }
     }
 
     var colorScheme: ColorScheme {
-        switch self {
-        case .paper:
-            return .light
-        case .inkstone:
-            return .dark
-        }
+        isDark ? .dark : .light
     }
 
     var webThemeName: String {
-        switch self {
-        case .paper:
-            return "paper"
-        case .inkstone:
-            return "inkstone"
-        }
+        rawValue
     }
 
     var windowBackground: NSColor {
+        WeiBeiNativePalette.paper(for: self)
+    }
+
+    /// Cycles all four themes (used by legacy toggle API / shortcuts).
+    var toggled: WeiBeiAppearanceMode {
         switch self {
-        case .paper:
-            return NSColor(calibratedRed: 0.985, green: 0.960, blue: 0.905, alpha: 1.0)
-        case .inkstone:
-            return NSColor(calibratedRed: 0.059, green: 0.059, blue: 0.059, alpha: 1.0)
+        case .paper: return .xuan
+        case .xuan: return .inkstone
+        case .inkstone: return .stele
+        case .stele: return .paper
         }
     }
 
-    var toggled: WeiBeiAppearanceMode {
-        switch self {
-        case .paper:
-            return .inkstone
-        case .inkstone:
-            return .paper
-        }
+    /// Next theme in the light↔dark pair, or full cycle when no pair preference.
+    var oppositeFamily: WeiBeiAppearanceMode {
+        isDark ? .paper : .inkstone
     }
+}
+
+/// Live appearance used by dynamic `WeiBeiTheme` colors. Updated when the store
+/// changes mode so SwiftUI redraws pick the correct palette.
+enum WeiBeiThemeRuntime {
+    static var mode: WeiBeiAppearanceMode = .paper
 }
 
 enum WeiBeiTypography {
@@ -142,82 +167,132 @@ private struct WeiBeiTone {
 }
 
 private extension Color {
-    static func weiBei(light: WeiBeiTone, dark: WeiBeiTone) -> Color {
-        Color(nsColor: NSColor(name: nil) { appearance in
-            let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            return (isDark ? dark : light).nsColor
+    /// Resolve a four-mode palette from `WeiBeiThemeRuntime.mode` (not system appearance alone).
+    static func weiBei(
+        paper: WeiBeiTone,
+        xuan: WeiBeiTone,
+        inkstone: WeiBeiTone,
+        stele: WeiBeiTone
+    ) -> Color {
+        Color(nsColor: NSColor(name: nil) { _ in
+            switch WeiBeiThemeRuntime.mode {
+            case .paper: return paper.nsColor
+            case .xuan: return xuan.nsColor
+            case .inkstone: return inkstone.nsColor
+            case .stele: return stele.nsColor
+            }
         })
+    }
+
+    /// Convenience when light-pair / dark-pair share tones.
+    static func weiBei(light: WeiBeiTone, dark: WeiBeiTone) -> Color {
+        weiBei(paper: light, xuan: light, inkstone: dark, stele: dark)
     }
 }
 
 enum WeiBeiTheme {
+    // 纸面 = warm product paper; 宣纸 = cooler fibrous white; 墨石 = warm black; 石碑 = cool stele grey.
     static let paper = Color.weiBei(
-        light: WeiBeiTone(red: 0.955, green: 0.918, blue: 0.835),
-        dark: WeiBeiTone(hex: 0x0F0F0F)
+        paper: WeiBeiTone(red: 0.955, green: 0.918, blue: 0.835),
+        xuan: WeiBeiTone(red: 0.972, green: 0.962, blue: 0.942),
+        inkstone: WeiBeiTone(hex: 0x0F0F0F),
+        stele: WeiBeiTone(hex: 0x16181C)
     )
     static let paperRaised = Color.weiBei(
-        light: WeiBeiTone(red: 0.976, green: 0.944, blue: 0.872),
-        dark: WeiBeiTone(hex: 0x151515)
+        paper: WeiBeiTone(red: 0.976, green: 0.944, blue: 0.872),
+        xuan: WeiBeiTone(red: 0.992, green: 0.988, blue: 0.978),
+        inkstone: WeiBeiTone(hex: 0x151515),
+        stele: WeiBeiTone(hex: 0x1E2228)
     )
     static let paperInset = Color.weiBei(
-        light: WeiBeiTone(red: 0.908, green: 0.858, blue: 0.748),
-        dark: WeiBeiTone(hex: 0x1C1C1C)
+        paper: WeiBeiTone(red: 0.908, green: 0.858, blue: 0.748),
+        xuan: WeiBeiTone(red: 0.930, green: 0.918, blue: 0.892),
+        inkstone: WeiBeiTone(hex: 0x1C1C1C),
+        stele: WeiBeiTone(hex: 0x252A32)
     )
     static let chrome = Color.weiBei(
-        light: WeiBeiTone(red: 0.155, green: 0.145, blue: 0.130),
-        dark: WeiBeiTone(hex: 0x0B0B0B)
+        paper: WeiBeiTone(red: 0.155, green: 0.145, blue: 0.130),
+        xuan: WeiBeiTone(red: 0.140, green: 0.138, blue: 0.132),
+        inkstone: WeiBeiTone(hex: 0x0B0B0B),
+        stele: WeiBeiTone(hex: 0x101217)
     )
     static let ink = Color.weiBei(
-        light: WeiBeiTone(red: 0.115, green: 0.095, blue: 0.080),
-        dark: WeiBeiTone(hex: 0xD7CBB0)
+        paper: WeiBeiTone(red: 0.115, green: 0.095, blue: 0.080),
+        xuan: WeiBeiTone(red: 0.145, green: 0.140, blue: 0.128),
+        inkstone: WeiBeiTone(hex: 0xD7CBB0),
+        stele: WeiBeiTone(hex: 0xD2D6DC)
     )
     static let secondaryInk = Color.weiBei(
-        light: WeiBeiTone(red: 0.335, green: 0.285, blue: 0.245),
-        dark: WeiBeiTone(hex: 0x9B9178)
+        paper: WeiBeiTone(red: 0.335, green: 0.285, blue: 0.245),
+        xuan: WeiBeiTone(red: 0.360, green: 0.345, blue: 0.320),
+        inkstone: WeiBeiTone(hex: 0x9B9178),
+        stele: WeiBeiTone(hex: 0x9AA1AB)
     )
     static let tertiaryInk = Color.weiBei(
-        light: WeiBeiTone(red: 0.490, green: 0.430, blue: 0.365),
-        dark: WeiBeiTone(hex: 0x6F6655)
+        paper: WeiBeiTone(red: 0.490, green: 0.430, blue: 0.365),
+        xuan: WeiBeiTone(red: 0.500, green: 0.480, blue: 0.450),
+        inkstone: WeiBeiTone(hex: 0x6F6655),
+        stele: WeiBeiTone(hex: 0x6E7682)
     )
     static let placeholderInk = Color.weiBei(
-        light: WeiBeiTone(red: 0.405, green: 0.345, blue: 0.290),
-        dark: WeiBeiTone(hex: 0xAFA48C)
+        paper: WeiBeiTone(red: 0.405, green: 0.345, blue: 0.290),
+        xuan: WeiBeiTone(red: 0.430, green: 0.410, blue: 0.380),
+        inkstone: WeiBeiTone(hex: 0xAFA48C),
+        stele: WeiBeiTone(hex: 0xA8AFB8)
     )
     static let hairline = Color.weiBei(
-        light: WeiBeiTone(red: 0.500, green: 0.380, blue: 0.260, alpha: 0.24),
-        dark: WeiBeiTone(hex: 0x3A3328, alpha: 0.72)
+        paper: WeiBeiTone(red: 0.500, green: 0.380, blue: 0.260, alpha: 0.24),
+        xuan: WeiBeiTone(red: 0.420, green: 0.400, blue: 0.360, alpha: 0.22),
+        inkstone: WeiBeiTone(hex: 0x3A3328, alpha: 0.72),
+        stele: WeiBeiTone(hex: 0x3A414C, alpha: 0.78)
     )
     static let cinnabar = Color.weiBei(
-        light: WeiBeiTone(red: 0.570, green: 0.150, blue: 0.105),
-        dark: WeiBeiTone(hex: 0xA6362B)
+        paper: WeiBeiTone(red: 0.570, green: 0.150, blue: 0.105),
+        xuan: WeiBeiTone(red: 0.540, green: 0.145, blue: 0.110),
+        inkstone: WeiBeiTone(hex: 0xA6362B),
+        stele: WeiBeiTone(hex: 0xB04034)
     )
     static let cinnabarSoft = Color.weiBei(
-        light: WeiBeiTone(red: 0.570, green: 0.150, blue: 0.105, alpha: 0.10),
-        dark: WeiBeiTone(hex: 0x5C2621, alpha: 0.62)
+        paper: WeiBeiTone(red: 0.570, green: 0.150, blue: 0.105, alpha: 0.10),
+        xuan: WeiBeiTone(red: 0.540, green: 0.145, blue: 0.110, alpha: 0.09),
+        inkstone: WeiBeiTone(hex: 0x5C2621, alpha: 0.62),
+        stele: WeiBeiTone(hex: 0x5A2A28, alpha: 0.58)
     )
     static let onCinnabar = Color.weiBei(
-        light: WeiBeiTone(hex: 0xF8EAD4),
-        dark: WeiBeiTone(hex: 0xF3DEC2)
+        paper: WeiBeiTone(hex: 0xF8EAD4),
+        xuan: WeiBeiTone(hex: 0xF7F2EA),
+        inkstone: WeiBeiTone(hex: 0xF3DEC2),
+        stele: WeiBeiTone(hex: 0xE8ECF0)
     )
     static let link = Color.weiBei(
-        light: WeiBeiTone(red: 0.190, green: 0.330, blue: 0.410),
-        dark: WeiBeiTone(hex: 0xC8B98A)
+        paper: WeiBeiTone(red: 0.190, green: 0.330, blue: 0.410),
+        xuan: WeiBeiTone(red: 0.200, green: 0.320, blue: 0.390),
+        inkstone: WeiBeiTone(hex: 0xC8B98A),
+        stele: WeiBeiTone(hex: 0xB8C4D0)
     )
     static let moss = Color.weiBei(
-        light: WeiBeiTone(red: 0.230, green: 0.385, blue: 0.300),
-        dark: WeiBeiTone(hex: 0xB88A42)
+        paper: WeiBeiTone(red: 0.230, green: 0.385, blue: 0.300),
+        xuan: WeiBeiTone(red: 0.250, green: 0.380, blue: 0.310),
+        inkstone: WeiBeiTone(hex: 0xB88A42),
+        stele: WeiBeiTone(hex: 0x8FA06A)
     )
     static let codePaper = Color.weiBei(
-        light: WeiBeiTone(red: 0.180, green: 0.145, blue: 0.115, alpha: 0.055),
-        dark: WeiBeiTone(hex: 0x171717, alpha: 0.92)
+        paper: WeiBeiTone(red: 0.180, green: 0.145, blue: 0.115, alpha: 0.055),
+        xuan: WeiBeiTone(red: 0.160, green: 0.150, blue: 0.130, alpha: 0.050),
+        inkstone: WeiBeiTone(hex: 0x171717, alpha: 0.92),
+        stele: WeiBeiTone(hex: 0x1A1E24, alpha: 0.94)
     )
     static let glassTint = Color.weiBei(
-        light: WeiBeiTone(red: 0.982, green: 0.948, blue: 0.875),
-        dark: WeiBeiTone(hex: 0x1A1814)
+        paper: WeiBeiTone(red: 0.982, green: 0.948, blue: 0.875),
+        xuan: WeiBeiTone(red: 0.988, green: 0.984, blue: 0.974),
+        inkstone: WeiBeiTone(hex: 0x1A1814),
+        stele: WeiBeiTone(hex: 0x1C2026)
     )
     static let glassHighlight = Color.weiBei(
-        light: WeiBeiTone(red: 0.992, green: 0.970, blue: 0.918),
-        dark: WeiBeiTone(hex: 0x3A3328)
+        paper: WeiBeiTone(red: 0.992, green: 0.970, blue: 0.918),
+        xuan: WeiBeiTone(red: 0.995, green: 0.992, blue: 0.986),
+        inkstone: WeiBeiTone(hex: 0x3A3328),
+        stele: WeiBeiTone(hex: 0x3E4652)
     )
     static let stone = secondaryInk
 }
@@ -227,8 +302,12 @@ enum WeiBeiNativePalette {
         switch mode {
         case .paper:
             return NSColor(calibratedRed: 0.955, green: 0.918, blue: 0.835, alpha: 1.0)
+        case .xuan:
+            return NSColor(calibratedRed: 0.972, green: 0.962, blue: 0.942, alpha: 1.0)
         case .inkstone:
             return NSColor(calibratedRed: 0.059, green: 0.059, blue: 0.059, alpha: 1.0)
+        case .stele:
+            return NSColor(calibratedRed: 0.086, green: 0.094, blue: 0.110, alpha: 1.0)
         }
     }
 
@@ -236,26 +315,34 @@ enum WeiBeiNativePalette {
         switch mode {
         case .paper:
             return NSColor(calibratedRed: 0.115, green: 0.095, blue: 0.080, alpha: 1.0)
+        case .xuan:
+            return NSColor(calibratedRed: 0.145, green: 0.140, blue: 0.128, alpha: 1.0)
         case .inkstone:
             return NSColor(calibratedRed: 0.843, green: 0.796, blue: 0.690, alpha: 1.0)
+        case .stele:
+            return NSColor(calibratedRed: 0.824, green: 0.839, blue: 0.863, alpha: 1.0)
         }
     }
 
     static func selectedText(for mode: WeiBeiAppearanceMode) -> NSColor {
         switch mode {
-        case .paper:
+        case .paper, .xuan:
             return ink(for: mode)
         case .inkstone:
             return NSColor(calibratedRed: 0.961, green: 0.906, blue: 0.784, alpha: 1.0)
+        case .stele:
+            return NSColor(calibratedRed: 0.930, green: 0.940, blue: 0.955, alpha: 1.0)
         }
     }
 
     static func selectionFill(for mode: WeiBeiAppearanceMode) -> NSColor {
         switch mode {
-        case .paper:
+        case .paper, .xuan:
             return NSColor(calibratedRed: 0.570, green: 0.150, blue: 0.105, alpha: 0.20)
         case .inkstone:
             return NSColor(calibratedRed: 0.651, green: 0.212, blue: 0.169, alpha: 0.35)
+        case .stele:
+            return NSColor(calibratedRed: 0.690, green: 0.250, blue: 0.200, alpha: 0.32)
         }
     }
 }
@@ -265,6 +352,21 @@ enum WeiBeiMetric {
     static let inputHeight: CGFloat = 30
     static let controlRadius: CGFloat = 7
     static let topBarHeight: CGFloat = 38
+}
+
+/// Top-bar brand mark (DesignSystem logo exports bundled under Resources/Brand).
+enum WeiBeiBrandMark {
+    static func image(for mode: WeiBeiAppearanceMode) -> NSImage {
+        let name = mode.isDark ? "weibei-mark-reversed" : "weibei-mark"
+        if let url = WeiBeiResources.bundle.url(forResource: name, withExtension: "png", subdirectory: "Brand")
+            ?? WeiBeiResources.bundle.url(forResource: name, withExtension: "png"),
+           let image = NSImage(contentsOf: url) {
+            image.isTemplate = false
+            return image
+        }
+        // Fallback: empty 1×1 so layout never crashes if resources are missing.
+        return NSImage(size: NSSize(width: 1, height: 1))
+    }
 }
 
 enum WeiBeiMotion {

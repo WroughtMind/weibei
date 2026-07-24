@@ -477,6 +477,7 @@ final class WorkspaceStore: ObservableObject {
         )
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         load()
+        WeiBeiThemeRuntime.mode = appearanceMode
         loadSelectionAskThreadsIfNeeded()
         let recoveredPendingNotebookRename = recoverPendingNotebookRenameIfNeeded()
         let resolvedImportedFileBookmarks = resolvePersistedImportedFileBookmarks()
@@ -2921,13 +2922,16 @@ final class WorkspaceStore: ObservableObject {
 
 
     func toggleAppearanceMode() {
-        appearanceMode = appearanceMode.toggled
-        save()
+        setAppearanceMode(appearanceMode.toggled)
     }
 
     func setAppearanceMode(_ mode: WeiBeiAppearanceMode) {
-        guard appearanceMode != mode else { return }
+        guard appearanceMode != mode else {
+            WeiBeiThemeRuntime.mode = mode
+            return
+        }
         appearanceMode = mode
+        WeiBeiThemeRuntime.mode = mode
         save()
     }
 
@@ -7792,6 +7796,7 @@ final class WorkspaceStore: ObservableObject {
         if let appearanceModeRaw = snapshot.appearanceModeRaw,
            let appearanceMode = WeiBeiAppearanceMode(rawValue: appearanceModeRaw) {
             self.appearanceMode = appearanceMode
+            WeiBeiThemeRuntime.mode = appearanceMode
         }
         adaptImportedDocumentColors = snapshot.adaptImportedDocumentColors ?? true
         if let interfaceLanguageRaw = snapshot.interfaceLanguageRaw,

@@ -157,10 +157,10 @@ struct SettingsView: View {
         .frame(width: 218)
         .background {
             ZStack(alignment: .top) {
-                WeiBeiTheme.paperInset.opacity(store.appearanceMode == .inkstone ? 0.62 : 0.80)
+                WeiBeiTheme.paperInset.opacity(store.appearanceMode.isDark ? 0.62 : 0.80)
                 LinearGradient(
                     colors: [
-                        WeiBeiTheme.glassHighlight.opacity(store.appearanceMode == .inkstone ? 0.09 : 0.20),
+                        WeiBeiTheme.glassHighlight.opacity(store.appearanceMode.isDark ? 0.09 : 0.20),
                         .clear
                     ],
                     startPoint: .top,
@@ -222,13 +222,26 @@ struct SettingsView: View {
     }
 
     private var settingsAppearanceToggleButton: some View {
-        Button {
-            withAnimation(WeiBeiMotion.appearance) {
-                store.toggleAppearanceMode()
+        // Same four-theme menu as the main top bar (cycles via ⌥⌘T elsewhere).
+        Menu {
+            ForEach(WeiBeiAppearanceMode.allCases) { mode in
+                Button {
+                    withAnimation(WeiBeiMotion.appearance) {
+                        store.setAppearanceMode(mode)
+                    }
+                } label: {
+                    if mode == store.appearanceMode {
+                        Label(mode.label(language: store.interfaceLanguage), systemImage: "checkmark")
+                    } else {
+                        Text(mode.label(language: store.interfaceLanguage))
+                    }
+                }
             }
         } label: {
-            Image(systemName: store.appearanceMode.toggled.systemImage)
+            Image(systemName: store.appearanceMode.systemImage)
         }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
         .buttonStyle(WeiBeiIconButtonStyle(size: 30))
         .accessibilityLabel(Text(store.appearanceMode.actionLabel(language: store.interfaceLanguage)))
         .help(store.appearanceMode.actionLabel(language: store.interfaceLanguage))
@@ -249,14 +262,47 @@ struct SettingsView: View {
             }
 
             settingsGroup(store.ui("外观", "Appearance")) {
-                settingsRow(title: store.ui("明暗模式", "Theme Mode")) {
-                    segmented(WeiBeiAppearanceMode.allCases, active: store.appearanceMode) { mode in
-                        mode.label(language: store.interfaceLanguage)
-                    } action: { mode in
-                        withAnimation(WeiBeiMotion.appearance) {
-                            store.setAppearanceMode(mode)
+                settingsRow(title: store.ui("主题", "Theme")) {
+                    // Four themes — 2×2 chips. Top bar menu is the fast path; this is the full chooser.
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 6)], alignment: .trailing, spacing: 6) {
+                        ForEach(WeiBeiAppearanceMode.allCases) { mode in
+                            Button {
+                                withAnimation(WeiBeiMotion.appearance) {
+                                    store.setAppearanceMode(mode)
+                                }
+                            } label: {
+                                HStack(spacing: 6) {
+                                    Image(systemName: mode.systemImage)
+                                        .font(.system(size: 11, weight: .semibold))
+                                    Text(mode.label(language: store.interfaceLanguage))
+                                        .font(.system(size: 12, weight: .semibold))
+                                        .lineLimit(1)
+                                }
+                                .padding(.horizontal, 10)
+                                .frame(height: 30)
+                                .frame(maxWidth: .infinity)
+                                .foregroundStyle(mode == store.appearanceMode ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 7)
+                                        .fill(mode == store.appearanceMode
+                                              ? WeiBeiTheme.paperRaised.opacity(0.72)
+                                              : WeiBeiTheme.paperInset.opacity(0.40))
+                                )
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 7)
+                                        .stroke(
+                                            mode == store.appearanceMode
+                                                ? WeiBeiTheme.cinnabar.opacity(0.55)
+                                                : WeiBeiTheme.hairline.opacity(0.36),
+                                            lineWidth: 1
+                                        )
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .help(mode.detail(language: store.interfaceLanguage))
                         }
                     }
+                    .frame(width: 280)
                 }
             }
 
@@ -472,7 +518,7 @@ struct SettingsView: View {
 
     /// Shared Settings card primitive (also used by `AgentSettingsView` extension).
     func settingsGroup<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        let cardFill = WeiBeiTheme.paperRaised.opacity(store.appearanceMode == .inkstone ? 0.20 : 0.36)
+        let cardFill = WeiBeiTheme.paperRaised.opacity(store.appearanceMode.isDark ? 0.20 : 0.36)
         return VStack(alignment: .leading, spacing: 0) {
             sectionTitle(title)
                 .padding(.horizontal, 14)

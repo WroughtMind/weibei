@@ -354,7 +354,7 @@ struct ContentRailView: View {
         if item.id == highlightedID {
             return WeiBeiTheme.cinnabar
         }
-        return WeiBeiTheme.secondaryInk.opacity(appearanceMode == .inkstone ? 0.78 : 0.58)
+        return WeiBeiTheme.secondaryInk.opacity(appearanceMode.isDark ? 0.78 : 0.58)
     }
 
     private func railSpacing(count: Int, height: CGFloat) -> CGFloat {
@@ -511,7 +511,7 @@ private struct ContentRailPreviewCard: View {
                 .stroke(WeiBeiTheme.hairline.opacity(0.82), lineWidth: 1)
         }
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-        .shadow(color: WeiBeiTheme.ink.opacity(appearanceMode == .inkstone ? 0.22 : 0.08), radius: 8, y: 4)
+        .shadow(color: WeiBeiTheme.ink.opacity(appearanceMode.isDark ? 0.22 : 0.08), radius: 8, y: 4)
         .accessibilityHidden(true)
     }
 }

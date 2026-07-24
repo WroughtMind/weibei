@@ -134,8 +134,12 @@ final class CourseDrawerContainerView: NSView {
         switch mode {
         case .paper:
             return NSColor(calibratedRed: 0.976, green: 0.944, blue: 0.872, alpha: 1)
+        case .xuan:
+            return NSColor(calibratedRed: 0.992, green: 0.988, blue: 0.978, alpha: 1)
         case .inkstone:
             return NSColor(calibratedRed: 0.082, green: 0.082, blue: 0.082, alpha: 1)
+        case .stele:
+            return NSColor(calibratedRed: 0.118, green: 0.133, blue: 0.157, alpha: 1)
         }
     }
 
@@ -143,8 +147,12 @@ final class CourseDrawerContainerView: NSView {
         switch mode {
         case .paper:
             return NSColor(calibratedRed: 0.115, green: 0.095, blue: 0.080, alpha: 0.035)
+        case .xuan:
+            return NSColor(calibratedRed: 0.140, green: 0.135, blue: 0.120, alpha: 0.030)
         case .inkstone:
             return NSColor(calibratedRed: 0, green: 0, blue: 0, alpha: 0.18)
+        case .stele:
+            return NSColor(calibratedRed: 0, green: 0, blue: 0, alpha: 0.22)
         }
     }
 

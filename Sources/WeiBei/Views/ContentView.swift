@@ -422,11 +422,23 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var brandBlock: some View {
-        Text(store.brandLatinName)
-            .font(WeiBeiTypography.englishBrandFont(size: 15.5, weight: .semibold))
-            .tracking(0.15)
-            .foregroundStyle(primaryText)
-            .frame(width: 62, alignment: .leading)
+        // Logo mark + Latin wordmark — DesignSystem brand lockup for the top bar.
+        HStack(spacing: 7) {
+            Image(nsImage: WeiBeiBrandMark.image(for: store.appearanceMode))
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 18, height: 18)
+                .accessibilityHidden(true)
+            Text(store.brandLatinName)
+                .font(WeiBeiTypography.englishBrandFont(size: 15.5, weight: .semibold))
+                .tracking(0.15)
+                .foregroundStyle(primaryText)
+                .lineLimit(1)
+        }
+        .frame(minWidth: 86, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(store.brandLatinName))
     }
 
     @ViewBuilder
@@ -515,11 +527,31 @@ private struct UnifiedTopBarView: View {
 
     @ViewBuilder
     private var appearanceToggleButton: some View {
-        topIconButton(store.appearanceMode.toggled.systemImage, help: store.appearanceMode.actionLabel(language: store.interfaceLanguage)) {
-            withAnimation(WeiBeiMotion.appearance) {
-                store.toggleAppearanceMode()
+        // Four themes: menu in the top bar (fast), full grid also in Settings → Appearance.
+        Menu {
+            ForEach(WeiBeiAppearanceMode.allCases) { mode in
+                Button {
+                    withAnimation(WeiBeiMotion.appearance) {
+                        store.setAppearanceMode(mode)
+                    }
+                } label: {
+                    if mode == store.appearanceMode {
+                        Label(mode.label(language: store.interfaceLanguage), systemImage: "checkmark")
+                    } else {
+                        Label(mode.label(language: store.interfaceLanguage), systemImage: mode.systemImage)
+                    }
+                }
             }
+        } label: {
+            Image(systemName: store.appearanceMode.systemImage)
+                .contentShape(Rectangle())
         }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .buttonStyle(WeiBeiIconButtonStyle(size: 24))
+        .accessibilityLabel(Text(store.appearanceMode.actionLabel(language: store.interfaceLanguage)))
+        .help(store.appearanceMode.actionLabel(language: store.interfaceLanguage))
+        .keyboardShortcut("t", modifiers: [.option, .command])
     }
 
     private func toggleReaderSearch() {
@@ -606,7 +638,7 @@ private struct ThreePaneWorkspaceChrome: View {
                     y: sourceFrame.midY
                 )
                 .shadow(
-                    color: WeiBeiTheme.ink.opacity(store.appearanceMode == .inkstone ? 0.38 : 0.14),
+                    color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.38 : 0.14),
                     radius: 22,
                     y: 12
                 )
@@ -988,7 +1020,7 @@ struct EmptyWorkspaceView: View {
             VStack(spacing: 14) {
                 Image(systemName: "seal")
                     .font(.system(size: 34, weight: .regular))
-                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(store.appearanceMode == .inkstone ? 0.12 : 0.08))
+                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(store.appearanceMode.isDark ? 0.12 : 0.08))
                 Text(store.ui("在顶栏点亮一个板块开始", "Light up a pane above to begin"))
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
@@ -1004,7 +1036,7 @@ private struct PaneDropTargetView: View {
 
     var body: some View {
         RoundedRectangle(cornerRadius: 10)
-            .fill(WeiBeiTheme.cinnabarSoft.opacity(store.appearanceMode == .inkstone ? 0.16 : 0.12))
+            .fill(WeiBeiTheme.cinnabarSoft.opacity(store.appearanceMode.isDark ? 0.16 : 0.12))
             .overlay {
                 RoundedRectangle(cornerRadius: 10)
                     .stroke(WeiBeiTheme.cinnabar.opacity(0.30), lineWidth: 1)
