@@ -7,6 +7,20 @@ import SwiftUI
 import UniformTypeIdentifiers
 import WeiBeiCore
 
+/// State of the model-list discovery shown in Settings → 对话服务 → 模型.
+enum ModelListStatus: Equatable {
+    case idle
+    case loading
+    case loaded
+    case failed(String)
+    case builtin
+
+    var isLoading: Bool {
+        if case .loading = self { return true }
+        return false
+    }
+}
+
 enum NotebookCreationKind: String {
     case blank
     case currentMaterial
@@ -293,6 +307,10 @@ final class WorkspaceStore: ObservableObject {
     @Published var activeAgentProfileID: UUID = AgentCredentialProfileStore.activeProfileID()
         ?? AgentCredentialProfileStore.loadProfiles().first?.id
         ?? AgentCredentialProfileStore.defaultProfile().id
+    // Model-list discovery (settings UI). Backed by `AgentModelListService`.
+    @Published var availableModels: [String] = []
+    @Published var modelListStatus: ModelListStatus = .idle
+    @Published var bedrockRegion: String = ProcessInfo.processInfo.environment["WEIBEI_BEDROCK_REGION"] ?? "us-east-1"
     @Published var appearanceMode: WeiBeiAppearanceMode = .paper
     @Published var adaptImportedDocumentColors = true
     @Published var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
@@ -2733,6 +2751,74 @@ final class WorkspaceStore: ObservableObject {
         touchActiveAgentProfileMetadata()
         save()
     }
+
+    /// Assemble the concrete listing strategy for the active provider, combining the
+    /// provider's protocol with the runtime base URL / Bedrock region.
+    func resolvedModelListStrategy() -> ModelListStrategy? {
+        switch agentProviderID.modelListProtocol {
+        case .openAICompatible:
+            let base = agentBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolved = base.isEmpty ? (agentProviderID.defaultListBaseURL ?? "") : base
+            guard !resolved.isEmpty else { return nil }
+            return .openAICompatible(base: resolved)
+        case .anthropic:
+            return .anthropic
+        case .gemini:
+            return .gemini
+        case .openRouterPublic:
+            return .openRouterPublic
+        case .azureOpenAI:
+            let base = agentBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !base.isEmpty else { return nil }
+            return .azureOpenAI(base: base)
+        case .bedrock:
+            return .bedrock(region: bedrockRegion)
+        case .gitHubModels:
+            return .gitHubModels
+        case .codexSubscriptionBuiltin:
+            return .codexSubscriptionBuiltin
+        case .unsupported:
+            return nil
+        }
+    }
+
+    /// Whether the active provider can enumerate models at all (vs. built-in only).
+    var supportsRemoteModelList: Bool {
+        agentProviderID.modelListProtocol != .unsupported
+    }
+
+    /// Fetch the model catalog for the active provider. Updates `availableModels` /
+    /// `modelListStatus` on the main actor. Safe to call repeatedly; debounced by the UI.
+    func refreshModelList() async {
+        guard let strategy = resolvedModelListStrategy() else {
+            availableModels = agentProviderID.recommendedModels
+            modelListStatus = .builtin
+            return
+        }
+        // Codex subscription: listing is untrustworthy; show built-in catalog directly.
+        if strategy == .codexSubscriptionBuiltin {
+            availableModels = AgentModelListService.codexSubscriptionModels
+            modelListStatus = .builtin
+            return
+        }
+        // OpenRouter public catalog needs no credential.
+        if strategy != .openRouterPublic, resolvedAPIKey() == nil {
+            availableModels = agentProviderID.recommendedModels
+            modelListStatus = .failed(ui("未配置密钥，无法列出模型。", "No API key configured; cannot list models."))
+            return
+        }
+        let apiKey = resolvedAPIKey()?.key ?? ""
+        modelListStatus = .loading
+        do {
+            let models = try await AgentModelListService.shared.fetchModels(strategy: strategy, apiKey: apiKey)
+            availableModels = models.isEmpty ? agentProviderID.recommendedModels : models
+            modelListStatus = .loaded
+        } catch {
+            availableModels = agentProviderID.recommendedModels
+            modelListStatus = .failed(error.localizedDescription)
+        }
+    }
+
 
     func toggleAppearanceMode() {
         appearanceMode = appearanceMode.toggled

@@ -1242,10 +1242,17 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
 }
 
 struct SettingsView: View {
-    @EnvironmentObject private var store: WorkspaceStore
-    @StateObject private var oauthService = PiOAuthService.shared
+    // Visible to `internal` so the Settings sub-views in Views/Settings/*.swift
+    // (same-target extensions) can bind to them.
+    @EnvironmentObject var store: WorkspaceStore
+    @StateObject var oauthService = PiOAuthService.shared
     @State private var selectedSection: SettingsSection = .overview
-    @FocusState private var focusedField: Field?
+    @FocusState var focusedField: Field?
+    // Model picker state (AgentModelPicker extension).
+    @State var refreshRotation: Double = 0
+    @State var showManualModelEntry = false
+    // Advanced disclosure state (AgentSettingsView extension).
+    @State var advancedExpanded = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -1281,7 +1288,7 @@ struct SettingsView: View {
         }
     }
 
-    private enum Field: Hashable {
+    enum Field: Hashable {
         case apiKey
         case model
     }
@@ -1785,273 +1792,12 @@ struct SettingsView: View {
         }
     }
 
+    /// 对话服务设置 — 实现在 Views/Settings/AgentSettingsView.swift 的 extension 中。
+    /// 历史上这里是四个并列卡片（连接配置 / 接入方式 / 提供商与模型 / 对话入口），
+    /// 现已重构为单条线性决策链（服务 → 认证 → 模型 → 状态），并把模型字段升级为
+    /// 登录后实时拉取的下拉（见 AgentModelPicker.swift）。
     private var agentSettings: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            settingsGroup(store.ui("连接配置", "Connection Profiles")) {
-                settingsRow(
-                    title: store.ui("当前配置", "Active Profile"),
-                    detail: store.ui("可保存多套提供商与密钥，随时切换。", "Save multiple provider + key sets and switch anytime.")
-                ) {
-                    HStack(spacing: 8) {
-                        compactMenu(
-                            store.agentCredentialProfiles.first(where: { $0.id == store.activeAgentProfileID })?.name
-                                ?? store.ui("默认", "Default")
-                        ) {
-                            ForEach(store.agentCredentialProfiles) { profile in
-                                Button(profile.name) {
-                                    store.selectAgentCredentialProfile(profile.id)
-                                }
-                            }
-                        }
-                        Button(store.ui("新建", "New")) {
-                            store.createAgentCredentialProfile()
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                        if store.agentCredentialProfiles.count > 1 {
-                            Button(store.ui("删除", "Delete")) {
-                                store.deleteActiveAgentCredentialProfile()
-                            }
-                            .buttonStyle(WeiBeiTextActionButtonStyle())
-                        }
-                    }
-                }
-            }
-
-            settingsGroup(store.ui("接入方式", "How to Connect")) {
-                settingsRow(
-                    title: store.ui("方式", "Method"),
-                    detail: store.agentAuthMethod.detail(language: store.interfaceLanguage)
-                ) {
-                    HStack(spacing: 6) {
-                        ForEach(AgentAuthMethod.allCases) { method in
-                            Button(method.label(language: store.interfaceLanguage)) {
-                                store.setAgentAuthMethod(method)
-                            }
-                            .buttonStyle(WeiBeiTextActionButtonStyle(active: store.agentAuthMethod == method))
-                        }
-                    }
-                }
-
-                if store.agentAuthMethod == .subscription {
-                    settingsRow(
-                        title: store.ui("OAuth 订阅登录", "OAuth Subscription Login"),
-                        detail: store.ui(
-                            "与 Pi 的 /login 相同：浏览器完成 OAuth 后，凭证写入 ~/.pi/agent/auth.json，Agent 自动使用。",
-                            "Same as Pi’s /login: complete browser OAuth; credentials go to ~/.pi/agent/auth.json and the agent uses them automatically."
-                        )
-                    ) {
-                        VStack(alignment: .trailing, spacing: 8) {
-                            ForEach(PiSubscriptionProvider.allCases) { provider in
-                                HStack(spacing: 8) {
-                                    if oauthService.isLinked(provider) {
-                                        settingsPill(
-                                            title: store.ui("已连接", "Linked"),
-                                            icon: "checkmark.seal.fill",
-                                            active: true
-                                        )
-                                    }
-                                    if provider.supportsInAppOAuth {
-                                        Button {
-                                            guard !oauthService.isLoggingIn else { return }
-                                            oauthService.startLogin(provider)
-                                        } label: {
-                                            Text(
-                                                oauthService.isLoggingIn
-                                                    ? store.ui("登录中…", "Signing in…")
-                                                    : store.ui(
-                                                        "OAuth 登录 \(provider.label(language: store.interfaceLanguage))",
-                                                        "OAuth \(provider.label(language: store.interfaceLanguage))"
-                                                    )
-                                            )
-                                        }
-                                        .buttonStyle(WeiBeiTextActionButtonStyle(active: !oauthService.isLoggingIn))
-                                    } else {
-                                        Button {
-                                            store.setAgentProviderID(provider.agentProviderID)
-                                            store.openAIKeyStatus = provider.detail(language: store.interfaceLanguage)
-                                        } label: {
-                                            Text(store.ui("选择并查看说明", "Select & show help"))
-                                        }
-                                        .buttonStyle(WeiBeiTextActionButtonStyle())
-                                    }
-                                }
-                            }
-                            if oauthService.isLoggingIn {
-                                Button(store.ui("取消登录", "Cancel login")) {
-                                    oauthService.cancelLogin()
-                                }
-                                .buttonStyle(WeiBeiTextActionButtonStyle())
-                            }
-                        }
-                    }
-
-                    if let progress = oauthService.statusMessage {
-                        settingsNote(progress, icon: "arrow.triangle.2.circlepath")
-                    }
-                    if let error = oauthService.lastError {
-                        settingsNote(error, icon: "exclamationmark.triangle")
-                    }
-                    if !oauthService.linkedProviders.isEmpty {
-                        settingsNote(
-                            store.ui(
-                                "已链接：\(oauthService.linkedProviders.joined(separator: ", "))",
-                                "Linked: \(oauthService.linkedProviders.joined(separator: ", "))"
-                            ),
-                            icon: "link"
-                        )
-                    }
-                }
-            }
-
-            settingsGroup(store.ui("提供商与模型", "Provider & Model")) {
-                settingsRow(
-                    title: store.ui("提供商", "Provider"),
-                    detail: store.ui(
-                        "Pi 支持的全部供应商（订阅 OAuth + API Key + 本地/自定义）。",
-                        "All Pi-supported providers (subscription OAuth + API keys + local/custom)."
-                    )
-                ) {
-                    compactMenu(store.agentProviderID.label(language: store.interfaceLanguage)) {
-                        Section(AgentProviderKind.subscription.label(language: store.interfaceLanguage)) {
-                            ForEach(AgentProviderID.subscriptionProviders) { provider in
-                                Button(provider.label(language: store.interfaceLanguage)) {
-                                    store.setAgentProviderID(provider)
-                                    if provider.kind == .subscription {
-                                        store.setAgentAuthMethod(.subscription)
-                                    }
-                                }
-                            }
-                        }
-                        Section(AgentProviderKind.apiKey.label(language: store.interfaceLanguage)) {
-                            ForEach(AgentProviderID.apiKeyProviders) { provider in
-                                Button(provider.label(language: store.interfaceLanguage)) {
-                                    store.setAgentProviderID(provider)
-                                    store.setAgentAuthMethod(.apiKey)
-                                }
-                            }
-                        }
-                        Section(AgentProviderKind.localOrCustom.label(language: store.interfaceLanguage)) {
-                            ForEach(AgentProviderID.localOrCustomProviders) { provider in
-                                Button(provider.label(language: store.interfaceLanguage)) {
-                                    store.setAgentProviderID(provider)
-                                    store.setAgentAuthMethod(.apiKey)
-                                }
-                            }
-                        }
-                    }
-                }
-
-                settingsRow(
-                    title: store.ui("对话密钥", "Chat API Key"),
-                    detail: AgentProviderConsoleLinks.keyHelp(language: store.interfaceLanguage, provider: store.agentProviderID)
-                ) {
-                    VStack(alignment: .trailing, spacing: 8) {
-                        SecureField(
-                            "",
-                            text: $store.openAIAPIKey,
-                            prompt: Text(store.ui("粘贴 API Key", "Paste API key"))
-                                .font(.system(size: 13))
-                                .foregroundStyle(WeiBeiTheme.placeholderInk)
-                        )
-                        .textFieldStyle(.plain)
-                        .foregroundColor(WeiBeiTheme.ink)
-                        .focused($focusedField, equals: .apiKey)
-                        .font(.system(size: 13))
-                        .weibeiInputSurface(active: focusedField == .apiKey, height: 38)
-                        .frame(width: 250)
-                        .onSubmit { store.saveOpenAIAPIKey() }
-                        .onChange(of: focusedField) { _, field in
-                            if field != .apiKey {
-                                store.saveOpenAIAPIKey()
-                            }
-                        }
-
-                        HStack(spacing: 8) {
-                            Button(store.ui("保存到当前配置", "Save to Profile")) { store.saveOpenAIAPIKey() }
-                                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                            Button(store.ui("清除", "Clear")) { store.clearOpenAIAPIKey() }
-                                .buttonStyle(WeiBeiTextActionButtonStyle())
-                            if AgentProviderConsoleLinks.loginURL(for: store.agentProviderID) != nil
-                                || AgentProviderConsoleLinks.accountURL(for: store.agentProviderID) != nil {
-                                Button(store.ui("打开控制台", "Open Console")) {
-                                    store.openAgentProviderConsole(login: false)
-                                }
-                                .buttonStyle(WeiBeiTextActionButtonStyle())
-                            }
-                        }
-                    }
-                }
-
-                if let status = store.openAIKeyStatus {
-                    settingsNote(status, icon: "checkmark.seal")
-                }
-
-                settingsRow(
-                    title: store.ui("模型", "Model"),
-                    detail: store.ui("环境变量 WEIBEI_OPENAI_MODEL / WEIBEI_PI_MODEL 会覆盖这里。", "Env WEIBEI_OPENAI_MODEL / WEIBEI_PI_MODEL override this field.")
-                ) {
-                    TextField(
-                        "",
-                        text: Binding(
-                            get: { store.modelName },
-                            set: { store.updateModelName($0) }
-                        ),
-                        prompt: Text(store.agentProviderID.defaultModelHint)
-                            .font(.system(size: 13))
-                            .foregroundStyle(WeiBeiTheme.placeholderInk)
-                    )
-                    .textFieldStyle(.plain)
-                    .foregroundColor(WeiBeiTheme.ink)
-                    .focused($focusedField, equals: .model)
-                    .font(.system(size: 13))
-                    .weibeiInputSurface(active: focusedField == .model, height: 38)
-                    .frame(width: 250)
-                }
-
-                if store.agentProviderID.showsBaseURLField || !store.agentBaseURL.isEmpty {
-                    settingsRow(
-                        title: store.ui("Base URL", "Base URL"),
-                        detail: store.ui(
-                            "自定义 / llama.cpp 写入 Pi models.json；Azure 填资源 endpoint。",
-                            "Custom / llama.cpp write Pi models.json; Azure uses the resource endpoint."
-                        )
-                    ) {
-                        TextField(
-                            "",
-                            text: Binding(
-                                get: { store.agentBaseURL },
-                                set: { store.updateAgentBaseURL($0) }
-                            ),
-                            prompt: Text(
-                                store.agentProviderID == .azureOpenAI
-                                    ? "https://YOUR.openai.azure.com"
-                                    : "https://api.example.com/v1"
-                            )
-                                .font(.system(size: 13))
-                                .foregroundStyle(WeiBeiTheme.placeholderInk)
-                        )
-                        .textFieldStyle(.plain)
-                        .foregroundColor(WeiBeiTheme.ink)
-                        .font(.system(size: 13))
-                        .weibeiInputSurface(active: false, height: 38)
-                        .frame(width: 280)
-                    }
-                }
-            }
-
-            settingsGroup(store.ui("对话入口", "Chat Entry")) {
-                settingsRow(
-                    title: store.ui("入口说明", "Entry Notes"),
-                    detail: store.ui("完整对话在主栏与沉浸对话；选区轻提示可 ⌃⌥0 隐藏。", "Full chat lives in the agent pane and immersive conversation; hide selection prompt with ⌃⌥0.")
-                ) {
-                    settingsPill(
-                        title: store.agentSurface.label(language: store.interfaceLanguage),
-                        icon: "bubble.left.and.bubble.right",
-                        active: store.agentSurface == .selectionFloat
-                    )
-                }
-            }
-        }
+        agentSettingsContent()
     }
 
     private var shortcutSettings: some View {
@@ -2200,7 +1946,8 @@ struct SettingsView: View {
         .accessibilityLabel(Text(section.title(store)))
     }
 
-    private func settingsGroup<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+    /// Shared Settings card primitive (also used by `AgentSettingsView` extension).
+    func settingsGroup<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             sectionTitle(title)
                 .padding(.horizontal, 14)
@@ -2217,7 +1964,8 @@ struct SettingsView: View {
         }
     }
 
-    private func settingsRow<Control: View>(title: String, detail: String, @ViewBuilder control: () -> Control) -> some View {
+    /// Shared Settings row primitive (title + detail + trailing control).
+    func settingsRow<Control: View>(title: String, detail: String, @ViewBuilder control: () -> Control) -> some View {
         HStack(alignment: .center, spacing: 18) {
             VStack(alignment: .leading, spacing: 4) {
                 Text(title)
@@ -2242,7 +1990,8 @@ struct SettingsView: View {
         }
     }
 
-    private func settingsNote(_ text: String, icon: String) -> some View {
+    /// Shared Settings inline note (icon + secondary text).
+    func settingsNote(_ text: String, icon: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Image(systemName: icon)
                 .font(.system(size: 12, weight: .semibold))
@@ -2256,7 +2005,8 @@ struct SettingsView: View {
         .padding(.vertical, 10)
     }
 
-    private func settingsPill(title: String, icon: String, active: Bool) -> some View {
+    /// Shared Settings pill (icon + label chip).
+    func settingsPill(title: String, icon: String, active: Bool) -> some View {
         HStack(spacing: 7) {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .semibold))
@@ -2291,7 +2041,8 @@ struct SettingsView: View {
         }
     }
 
-    private func compactMenu<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+    /// Shared compact dropdown menu used across Settings.
+    func compactMenu<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         Menu {
             content()
         } label: {
@@ -2314,7 +2065,8 @@ struct SettingsView: View {
         .buttonStyle(.plain)
     }
 
-    private func sectionTitle(_ title: String) -> some View {
+    /// Shared Settings group title label.
+    func sectionTitle(_ title: String) -> some View {
         Text(title)
             .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 12, weight: .semibold))
             .foregroundStyle(WeiBeiTheme.tertiaryInk)
