@@ -40,10 +40,14 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
     }
 
     var body: some View {
+        // Hit-test only the top strip + the visible chip. A full-pane contentShape
+        // was swallowing PDF/HTML selection and killing the selection float capsule.
         ZStack(alignment: .top) {
             Color.clear
                 .frame(maxWidth: .infinity)
-                .frame(height: 30)
+                .frame(height: 34)
+                .contentShape(Rectangle())
+                .onHover(perform: updateVisibility)
 
             if visible || isPinned {
                 HStack(alignment: .center, spacing: actionsAlignedTrailing ? 10 : 8) {
@@ -72,22 +76,24 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
                 .frame(minHeight: 30)
                 .background {
                     RoundedRectangle(cornerRadius: 7)
-                        .fill(WeiBeiTheme.paperRaised.opacity(appearanceMode.isDark ? 0.34 : 0.72))
+                        .fill(WeiBeiTheme.paperRaised.opacity(appearanceMode.isDark ? 0.88 : 0.92))
                         .overlay {
                             RoundedRectangle(cornerRadius: 7)
-                                .stroke(WeiBeiTheme.hairline.opacity(appearanceMode.isDark ? 0.30 : 0.42), lineWidth: 1)
+                                .stroke(WeiBeiTheme.hairline.opacity(appearanceMode.isDark ? 0.42 : 0.48), lineWidth: 1)
                         }
                 }
-                .shadow(color: WeiBeiTheme.ink.opacity(appearanceMode.isDark ? 0.24 : 0.07), radius: 9, y: 4)
+                .shadow(color: WeiBeiTheme.ink.opacity(appearanceMode.isDark ? 0.28 : 0.08), radius: 9, y: 4)
                 .padding(.horizontal, actionsAlignedTrailing ? 14 : 0)
                 .padding(.top, 7)
+                .contentShape(Rectangle())
+                .onHover(perform: updateVisibility)
                 .modifier(PaneHeaderReorderModifier(role: reorderRole))
                 .transition(WeiBeiTransition.floating)
             }
         }
-        .contentShape(Rectangle())
-        .onHover(perform: updateVisibility)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .allowsHitTesting(true)
+        // Children define the hit regions; do NOT expand contentShape to the whole pane.
         .onDisappear {
             hideTask?.cancel()
         }
