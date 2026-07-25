@@ -18,6 +18,10 @@ struct EmptyWorkspaceLauncherView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var selectedInspirationID: String?
+    /// Bumped on theme change so a long-lived NSHostingView cannot keep a stale paper snapshot.
+    @State private var appearanceEpoch = 0
+
+    private var liveAppearanceMode: WeiBeiAppearanceMode { store.appearanceMode }
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 60)) { timeline in
@@ -30,9 +34,10 @@ struct EmptyWorkspaceLauncherView: View {
                     ? EmptyWorkspaceLayoutMetrics.compactInspirationSlotHeight
                     : EmptyWorkspaceLayoutMetrics.inspirationSlotHeight
                 let currentInspiration = inspiration(at: timeline.date)
+                let mode = liveAppearanceMode
 
                 ZStack {
-                    EmptyWorkspacePaperField(compact: compact)
+                    EmptyWorkspacePaperField(mode: mode, compact: compact)
 
                     workspaceContent(
                         at: timeline.date,
@@ -44,7 +49,17 @@ struct EmptyWorkspaceLauncherView: View {
                         inspirationSlotHeight: inspirationSlotHeight
                     )
                 }
+                // Rebuild the board when theme changes — long-lived NSHostingView
+                // does not always re-resolve ambient WeiBeiTheme Color snapshots.
+                .id("\(mode.rawValue)-\(appearanceEpoch)")
             }
+        }
+        .background(EmptyWorkspaceResolvedColor.paper(liveAppearanceMode))
+        .onChange(of: store.appearanceMode) { _, _ in
+            appearanceEpoch &+= 1
+        }
+        .onReceive(NotificationCenter.default.publisher(for: WeiBeiThemeRuntime.didChangeNotification)) { _ in
+            appearanceEpoch &+= 1
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("empty-workspace-launcher")
@@ -140,7 +155,7 @@ struct EmptyWorkspaceLauncherView: View {
         Text(EmptyWorkspaceDayPeriod.current(at: date).greeting(language: store.interfaceLanguage))
             .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: compact ? 14.5 : 16, weight: .regular))
             .tracking(store.interfaceLanguage == .chinese ? 0.8 : 0.35)
-            .foregroundStyle(WeiBeiTheme.secondaryInk.opacity(0.92))
+            .foregroundStyle(EmptyWorkspaceResolvedColor.secondaryInk(liveAppearanceMode).opacity(0.92))
             .multilineTextAlignment(.center)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityIdentifier("empty-workspace-greeting")
@@ -186,17 +201,57 @@ struct EmptyWorkspaceLauncherView: View {
     }
 }
 
+/// sRGB SwiftUI colors resolved from an explicit mode (not ambient WeiBeiTheme).
+/// `Color(nsColor:)` can stick to the wrong snapshot inside a long-lived NSHostingView.
+private enum EmptyWorkspaceResolvedColor {
+    static func paper(_ mode: WeiBeiAppearanceMode) -> Color {
+        color(WeiBeiNativePalette.paper(for: mode))
+    }
+
+    static func paperRaised(_ mode: WeiBeiAppearanceMode) -> Color {
+        color(WeiBeiNativePalette.paperRaised(for: mode))
+    }
+
+    static func ink(_ mode: WeiBeiAppearanceMode) -> Color {
+        color(WeiBeiNativePalette.ink(for: mode))
+    }
+
+    static func secondaryInk(_ mode: WeiBeiAppearanceMode) -> Color {
+        color(WeiBeiNativePalette.secondaryInk(for: mode))
+    }
+
+    static func hairline(_ mode: WeiBeiAppearanceMode) -> Color {
+        color(WeiBeiNativePalette.hairline(for: mode))
+    }
+
+    private static func color(_ nsColor: NSColor) -> Color {
+        let converted = nsColor.usingColorSpace(.sRGB) ?? nsColor
+        var red: CGFloat = 0
+        var green: CGFloat = 0
+        var blue: CGFloat = 0
+        var alpha: CGFloat = 0
+        converted.getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+        return Color(.sRGB, red: red, green: green, blue: blue, opacity: alpha)
+    }
+}
+
 private struct EmptyWorkspacePaperField: View {
+    let mode: WeiBeiAppearanceMode
     let compact: Bool
 
     var body: some View {
-        ZStack {
-            WeiBeiTheme.paper
+        let paper = EmptyWorkspaceResolvedColor.paper(mode)
+        let raised = EmptyWorkspaceResolvedColor.paperRaised(mode)
+        let ink = EmptyWorkspaceResolvedColor.ink(mode)
+        let hairline = EmptyWorkspaceResolvedColor.hairline(mode)
+
+        return ZStack {
+            paper
 
             RadialGradient(
                 colors: [
-                    WeiBeiTheme.paperRaised.opacity(0.72),
-                    WeiBeiTheme.paper.opacity(0),
+                    raised.opacity(mode.isDark ? 0.45 : 0.72),
+                    paper.opacity(0),
                 ],
                 center: UnitPoint(x: 0.5, y: 0.42),
                 startRadius: 8,
@@ -205,16 +260,16 @@ private struct EmptyWorkspacePaperField: View {
 
             LinearGradient(
                 colors: [
-                    WeiBeiTheme.ink.opacity(0.025),
+                    ink.opacity(mode.isDark ? 0.04 : 0.025),
                     Color.clear,
-                    WeiBeiTheme.ink.opacity(0.018),
+                    ink.opacity(mode.isDark ? 0.03 : 0.018),
                 ],
                 startPoint: .topLeading,
                 endPoint: .bottomTrailing
             )
 
             Rectangle()
-                .fill(WeiBeiTheme.hairline.opacity(0.30))
+                .fill(hairline.opacity(mode.isDark ? 0.40 : 0.30))
                 .frame(width: 1, height: compact ? 24 : 48)
                 .frame(maxHeight: .infinity, alignment: .top)
                 .padding(.top, compact ? 14 : 24)

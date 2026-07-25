@@ -13,6 +13,9 @@ struct StableDocumentWorkspace: NSViewRepresentable {
     let visibleOrder: [WorkspacePaneRole]
     let draggedRole: WorkspacePaneRole?
     let expansionRequest: PaneExpansionRequest?
+    /// Explicit input so theme changes always re-enter `updateNSView` and repaint the empty board layer.
+    /// Do not rely only on `@EnvironmentObject` for long-lived NSHostingView paper sync.
+    let appearanceMode: WeiBeiAppearanceMode
     let onFramesChange: ([WorkspacePaneRole], [CGRect]) -> Void
     let onExpansionRequestHandled: (UUID) -> Void
 
@@ -39,12 +42,26 @@ struct StableDocumentWorkspace: NSViewRepresentable {
         )
         splitView.install(roleHosts: roleHosts, emptyHost: emptyHost)
         context.coordinator.install(in: splitView)
+        applyEmptyBoardPaper(to: splitView, mode: appearanceMode)
         update(splitView, coordinator: context.coordinator)
         return splitView
     }
 
     func updateNSView(_ splitView: StableDocumentSplitView, context: Context) {
         update(splitView, coordinator: context.coordinator)
+        // Empty board is a long-lived NSHostingView. Never reassign `rootView` here
+        // (pane continuity / SelfCheck). Sync AppKit paper under the SwiftUI board instead;
+        // EmptyWorkspaceLauncherView rebuilds its own colors from store + theme notification.
+        applyEmptyBoardPaper(to: splitView, mode: appearanceMode)
+    }
+
+    private func applyEmptyBoardPaper(to splitView: StableDocumentSplitView, mode: WeiBeiAppearanceMode) {
+        let paper = WeiBeiNativePalette.paper(for: mode)
+        let cgPaper = paper.cgColor
+        splitView.wantsLayer = true
+        splitView.layer?.backgroundColor = cgPaper
+        splitView.emptyHost?.wantsLayer = true
+        splitView.emptyHost?.layer?.backgroundColor = cgPaper
     }
 
     static func dismantleNSView(_ splitView: StableDocumentSplitView, coordinator: StableDocumentSplitCoordinator) {

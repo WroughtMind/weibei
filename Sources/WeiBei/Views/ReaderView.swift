@@ -220,11 +220,13 @@ struct ReaderView: View {
                 }
             }
         }
-        .background(WeiBeiTheme.paper)
-        .foregroundStyle(WeiBeiTheme.ink)
+        // Bind paper fill to the live mode so empty reader / page chrome tracks theme switches.
+        .background(Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode)))
+        .foregroundStyle(Color(nsColor: WeiBeiNativePalette.ink(for: store.appearanceMode)))
         .animation(WeiBeiMotion.panel, value: pdfBrowseMode)
         .animation(WeiBeiMotion.panel, value: store.showReaderSearch)
         .animation(WeiBeiMotion.panel, value: pdfHasSelectableText)
+        .animation(WeiBeiMotion.appearance, value: store.appearanceMode)
         .onAppear {
             syncReaderLocationTitle()
             capturePendingPDFPageRequest()
