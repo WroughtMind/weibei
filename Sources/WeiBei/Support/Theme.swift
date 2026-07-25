@@ -597,27 +597,18 @@ enum WeiBeiTransition {
 struct WeiBeiGlassHeaderBackground: View {
     var paperOpacity: Double = 0.72
     var materialOpacity: Double = 0.14
+    /// Pass the live mode so SwiftUI re-renders on paper↔xuan / inkstone↔stele.
+    var appearanceMode: WeiBeiAppearanceMode = WeiBeiThemeRuntime.mode
 
-    /// Product theme (not system colorScheme — 纸面/宣纸 are both light).
-    private var isDark: Bool { WeiBeiThemeRuntime.mode.isDark }
+    private var isDark: Bool { appearanceMode.isDark }
 
     var body: some View {
         ZStack {
             if isDark {
-                // Dark themes: solid product surface. `.regularMaterial` reads as a
-                // washed gray bar on 墨石/石碑 and must not sit above the page.
+                // Match the page/window paper exactly — no paperRaised wash, no warm
+                // glassHighlight (those made 墨石/石碑 top bars look gray-brown).
                 Rectangle()
                     .fill(WeiBeiTheme.paper)
-                Rectangle()
-                    .fill(WeiBeiTheme.paperRaised.opacity(0.55))
-                LinearGradient(
-                    colors: [
-                        WeiBeiTheme.glassHighlight.opacity(0.08),
-                        WeiBeiTheme.paper.opacity(0.0)
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
             } else {
                 Rectangle()
                     .fill(.regularMaterial)
@@ -641,7 +632,6 @@ struct WeiBeiGlassHeaderBackground: View {
     }
 
     private var paperWashOpacity: Double {
-        // Light themes only — dark path is solid product paper above.
         min(0.48, max(0.20, paperOpacity * 0.42))
     }
 }
@@ -649,20 +639,26 @@ struct WeiBeiGlassHeaderBackground: View {
 struct WeiBeiHeaderHandoffFade: View {
     var height: CGFloat = 18
     var opacity: Double = 1
+    var appearanceMode: WeiBeiAppearanceMode = WeiBeiThemeRuntime.mode
 
     var body: some View {
-        LinearGradient(
-            colors: [
+        // Dark: pure paper fade into content (no warm glassTint band under the bar).
+        // Light: keep the soft glass handoff.
+        let colors: [Color] = appearanceMode.isDark
+            ? [
+                WeiBeiTheme.paper.opacity(0.55 * opacity),
+                WeiBeiTheme.paper.opacity(0.22 * opacity),
+                .clear
+            ]
+            : [
                 WeiBeiTheme.glassTint.opacity(0.16 * opacity),
                 WeiBeiTheme.paperRaised.opacity(0.13 * opacity),
                 WeiBeiTheme.paper.opacity(0.08 * opacity),
                 .clear
-            ],
-            startPoint: .top,
-            endPoint: .bottom
-        )
-        .frame(height: height)
-        .allowsHitTesting(false)
+            ]
+        LinearGradient(colors: colors, startPoint: .top, endPoint: .bottom)
+            .frame(height: height)
+            .allowsHitTesting(false)
     }
 }
 
