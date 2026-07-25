@@ -24,7 +24,7 @@ struct ContentView: View {
                     ZStack(alignment: .top) {
                         LayoutContentView()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .background(WeiBeiTheme.paper)
+                            .background(Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode)))
                             // Only cross-fade immersive ↔ document families. Pane show/hide inside
                             // the document family is owned by AppKit StableDocumentWorkspace animation
                             // — a second SwiftUI layout animation here made toggles feel split/janky.
@@ -614,6 +614,7 @@ private struct ThreePaneWorkspaceChrome: View {
                 visibleOrder: visibleOrder,
                 draggedRole: paneReorder.drag?.role,
                 expansionRequest: expansionRequest,
+                appearanceMode: store.appearanceMode,
                 onFramesChange: onFramesChange,
                 onExpansionRequestHandled: onExpansionRequestHandled
             )
