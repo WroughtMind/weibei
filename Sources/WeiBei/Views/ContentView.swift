@@ -334,8 +334,12 @@ private struct UnifiedTopBarView: View {
                 .frame(height: 1)
         }
         .overlay(alignment: .bottom) {
-            WeiBeiHeaderHandoffFade(height: 18, opacity: isImmersiveLayout ? 0.42 : 0.34)
-                .offset(y: 18)
+            WeiBeiHeaderHandoffFade(
+                height: 18,
+                opacity: isImmersiveLayout ? 0.42 : 0.34,
+                appearanceMode: store.appearanceMode
+            )
+            .offset(y: 18)
             .allowsHitTesting(false)
         }
         .shadow(color: WeiBeiTheme.ink.opacity(0.018), radius: 8, y: 2)
@@ -393,13 +397,17 @@ private struct UnifiedTopBarView: View {
     }
 
     private var topHighlight: Color {
-        WeiBeiTheme.glassHighlight.opacity(0.24)
+        // Dark: hairline only — glassHighlight reads as a warm brown streak on 墨石.
+        store.appearanceMode.isDark
+            ? WeiBeiTheme.ink.opacity(0.05)
+            : WeiBeiTheme.glassHighlight.opacity(0.24)
     }
 
     private var topBarBackground: some View {
         WeiBeiGlassHeaderBackground(
             paperOpacity: backgroundPaperOpacity - (isImmersiveLayout ? 0.06 : 0),
-            materialOpacity: backgroundMaterialOpacity + (isImmersiveLayout ? 0.03 : 0)
+            materialOpacity: backgroundMaterialOpacity + (isImmersiveLayout ? 0.03 : 0),
+            appearanceMode: store.appearanceMode
         )
     }
 
