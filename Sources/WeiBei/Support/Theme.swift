@@ -529,10 +529,89 @@ enum WeiBeiMotion {
     static let panel = Animation.interactiveSpring(response: 0.26, dampingFraction: 0.90, blendDuration: 0.04)
     /// Pane / layout swaps: short ease-out — long springs + blur felt laggy over WebView panes.
     static let layout = Animation.easeOut(duration: 0.18)
-    /// Theme swaps should feel immediate — long fades made 纸面↔宣纸 look unresponsive.
-    static let appearance = Animation.easeOut(duration: 0.18)
+    /// Theme swaps: one short global ease — longer / nested animations made panes desync.
+    static let appearance = Animation.easeOut(duration: 0.12)
     /// Course drawer: snappy ease-out slide (visual only; never wrap focus changes).
     static let sideDrawer = Animation.easeOut(duration: 0.12)
+}
+
+/// Top-bar / settings theme control: four paper swatches instead of a SF-Symbol Menu.
+struct AppearanceThemePaletteButton: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @State private var isPresented = false
+
+    var body: some View {
+        Button {
+            isPresented.toggle()
+        } label: {
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode)))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .stroke(WeiBeiTheme.hairline.opacity(0.85), lineWidth: 1)
+                }
+                .frame(width: 18, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(WeiBeiIconButtonStyle(size: 24))
+        .accessibilityLabel(Text(store.appearanceMode.actionLabel(language: store.interfaceLanguage)))
+        .help(store.appearanceMode.actionLabel(language: store.interfaceLanguage))
+        .popover(isPresented: $isPresented, arrowEdge: .bottom) {
+            AppearanceThemePalettePopover(isPresented: $isPresented)
+                .environmentObject(store)
+        }
+    }
+}
+
+private struct AppearanceThemePalettePopover: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        HStack(spacing: 10) {
+            ForEach(WeiBeiAppearanceMode.allCases) { mode in
+                Button {
+                    // Store owns a single appearance transaction — do not wrap again.
+                    store.setAppearanceMode(mode)
+                    isPresented = false
+                } label: {
+                    VStack(spacing: 6) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color(nsColor: WeiBeiNativePalette.paper(for: mode)))
+                                .frame(width: 52, height: 36)
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .stroke(
+                                    mode == store.appearanceMode
+                                        ? WeiBeiTheme.cinnabar.opacity(0.90)
+                                        : WeiBeiTheme.hairline.opacity(0.70),
+                                    lineWidth: mode == store.appearanceMode ? 1.5 : 1
+                                )
+                                .frame(width: 52, height: 36)
+                            // Ink sample line so the swatch reads as paper + text, not a flat chip.
+                            Capsule()
+                                .fill(Color(nsColor: WeiBeiNativePalette.ink(for: mode)).opacity(0.55))
+                                .frame(width: 22, height: 2)
+                        }
+                        Text(mode.label(language: store.interfaceLanguage))
+                            .font(.system(size: 11, weight: mode == store.appearanceMode ? .semibold : .medium))
+                            .foregroundStyle(
+                                mode == store.appearanceMode ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk
+                            )
+                            .lineLimit(1)
+                    }
+                    .frame(width: 56)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text(mode.label(language: store.interfaceLanguage)))
+                .accessibilityAddTraits(mode == store.appearanceMode ? .isSelected : [])
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(WeiBeiTheme.paperRaised)
+    }
 }
 
 enum WeiBeiTransition {

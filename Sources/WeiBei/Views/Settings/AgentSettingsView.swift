@@ -144,7 +144,7 @@ extension SettingsView {
                             store.createAgentCredentialProfile()
                         }
                         if store.agentCredentialProfiles.count > 1 {
-                            // Destructive: also wipes the profile's Keychain key, so it
+                            // Destructive: also wipes the profile's stored API key, so it
                             // only arms the confirmation dialog rather than deleting
                             // outright (see S3).
                             Button(store.ui("删除当前配置", "Delete Current Profile"), role: .destructive) {
@@ -171,8 +171,8 @@ extension SettingsView {
             Button(store.ui("取消", "Cancel"), role: .cancel) {}
         } message: {
             Text(store.ui(
-                "将删除该配置及其钥匙串中的密钥，此操作不可恢复。",
-                "This deletes the profile and its Keychain key. This cannot be undone."
+                "将删除该配置及保存在魏碑中的密钥，此操作不可恢复。",
+                "This deletes the profile and its key stored in WeiBei. This cannot be undone."
             ))
         }
     }
@@ -259,8 +259,8 @@ extension SettingsView {
                 // Persist on any change so the key survives a tab switch or window
                 // close without the user pressing Return. This is the implicit-save
                 // contract the self-check (L2815) expects: no explicit Save button,
-                // but the key is never stranded in memory. Keychain writes are local
-                // and cheap; saveOpenAIAPIKey cleans + dedups.
+                // but the key is never stranded in memory. Writes go to WeiBei app data
+                // (no macOS keychain UI); saveOpenAIAPIKey cleans + dedups.
                 .onChange(of: store.openAIAPIKey) { _, _ in
                     store.saveOpenAIAPIKey()
                 }

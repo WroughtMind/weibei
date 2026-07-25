@@ -300,7 +300,9 @@ final class WorkspaceStore: ObservableObject {
     @Published var modelName: String = ProcessInfo.processInfo.environment["WEIBEI_OPENAI_MODEL"] ?? "gpt-5.5"
     @Published var agentProviderID: AgentProviderID = .openai
     @Published var agentBaseURL: String = ""
-    @Published var openAIAPIKey: String = OpenAIAPIKeyStore.load(provider: "openai")
+    /// Loaded once in `load()` after provider/profile IDs are restored — never in the
+    /// property default (that double-hit Keychain with a second load and caused dual password prompts).
+    @Published var openAIAPIKey: String = ""
     @Published var openAIKeyStatus: String?
     @Published var agentAuthMethod: AgentAuthMethod = .apiKey
     @Published var agentCredentialProfiles: [AgentCredentialProfile] = AgentCredentialProfileStore.loadProfiles()
@@ -1347,17 +1349,10 @@ final class WorkspaceStore: ObservableObject {
             )
         }
         let fieldKey = OpenAIAPIKeyStore.cleaned(openAIAPIKey)
-        let savedKey = OpenAIAPIKeyStore.load(provider: agentProviderID.piProviderName)
         if !fieldKey.isEmpty {
             return ui(
-                "当前提供商：\(agentProviderID.label(language: interfaceLanguage))。密钥输入后自动写入当前配置的钥匙串，跨次启动保留。",
-                "Provider: \(agentProviderID.label(language: interfaceLanguage)). The key is persisted to this profile's Keychain automatically as you type, and kept across launches."
-            )
-        }
-        if !savedKey.isEmpty {
-            return ui(
-                "密钥已在钥匙串，可直接用于 \(agentProviderID.label(language: interfaceLanguage)) 对话。",
-                "Key is in Keychain and ready for \(agentProviderID.label(language: interfaceLanguage)) chat."
+                "当前提供商：\(agentProviderID.label(language: interfaceLanguage))。密钥保存在魏碑应用数据中，跨次启动自动带上，不会弹 macOS 钥匙串密码。",
+                "Provider: \(agentProviderID.label(language: interfaceLanguage)). The key is stored in WeiBei app data, restored on launch, and never prompts for the Mac login keychain."
             )
         }
         return ui(
@@ -1378,8 +1373,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private static func localPiSubscriptionAuthIsAvailable() -> Bool {
-        let authURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".pi/agent/auth.json")
+        WeiBeiAgentDataPaths.migrateHomePiAuthIfNeeded()
+        let authURL = WeiBeiAgentDataPaths.piAuthJSON
         guard let data = try? Data(contentsOf: authURL),
               data.count <= 1_048_576,
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -1395,8 +1390,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private static func localPiSubscriptionSettings() -> [String: String] {
-        let settingsURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".pi/agent/settings.json")
+        // Prefer WeiBei-owned settings; fall back to defaults without reading terminal ~/.pi.
+        let settingsURL = WeiBeiAgentDataPaths.piSettingsJSON
         guard let data = try? Data(contentsOf: settingsURL),
               data.count <= 1_048_576,
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -2749,11 +2744,8 @@ final class WorkspaceStore: ObservableObject {
         guard agentProviderID != provider else { return }
         let previousDefault = agentProviderID.defaultModelHint
         agentProviderID = provider
-        // Prefer profile-scoped key; fall back to legacy per-provider keychain.
-        let profileKey = AgentCredentialProfileStore.loadAPIKey(profileID: activeAgentProfileID)
-        openAIAPIKey = profileKey.isEmpty
-            ? OpenAIAPIKeyStore.load(provider: provider.piProviderName)
-            : profileKey
+        // Prefer profile-scoped key; fall back to legacy per-provider store.
+        openAIAPIKey = resolveStoredAPIKey()
         // Switch model when empty or still on the previous provider's default hint.
         let trimmedModel = modelName.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedModel.isEmpty || trimmedModel == previousDefault {
@@ -2805,7 +2797,7 @@ final class WorkspaceStore: ObservableObject {
         case .gitHubModels:
             return .gitHubModels
         case .codexSubscription:
-            // Need the OAuth token + account id from ~/.pi/agent/auth.json. If absent
+            // OAuth token + account id from WeiBei-owned auth.json. If absent
             // (not signed in), return nil — the caller falls back to the built-in catalog.
             guard let credential = codexSubscriptionCredential() else { return nil }
             return .codexSubscription(token: credential.token, accountID: credential.accountID)
@@ -2814,10 +2806,10 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    /// Read the openai-codex OAuth token + accountId stored by pi-oauth-login.mjs.
+    /// Read the openai-codex OAuth token + accountId stored by WeiBei OAuth login.
     private func codexSubscriptionCredential() -> (token: String, accountID: String)? {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".pi/agent/auth.json")
+        WeiBeiAgentDataPaths.migrateHomePiAuthIfNeeded()
+        let url = WeiBeiAgentDataPaths.piAuthJSON
         guard let data = try? Data(contentsOf: url),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let entry = root["openai-codex"] as? [String: Any] else { return nil }
@@ -2932,8 +2924,13 @@ final class WorkspaceStore: ObservableObject {
         }
         // Runtime first so any body that re-reads WeiBeiTheme during the publish
         // already sees the target palette (critical for paper↔xuan / inkstone↔stele).
+        // One unified transaction — call sites must not wrap this in a second
+        // withAnimation, or chrome / paper / WebKit update out of phase.
         WeiBeiThemeRuntime.mode = mode
-        appearanceMode = mode
+        let transaction = Transaction(animation: WeiBeiMotion.appearance)
+        withTransaction(transaction) {
+            appearanceMode = mode
+        }
         NotificationCenter.default.post(name: WeiBeiThemeRuntime.didChangeNotification, object: mode)
         save()
     }
@@ -2997,10 +2994,7 @@ final class WorkspaceStore: ObservableObject {
         agentAuthMethod = profile.authMethod
         modelName = profile.modelName
         agentBaseURL = profile.baseURL
-        openAIAPIKey = AgentCredentialProfileStore.loadAPIKey(profileID: id)
-        if openAIAPIKey.isEmpty {
-            openAIAPIKey = OpenAIAPIKeyStore.load(provider: profile.provider.piProviderName)
-        }
+        openAIAPIKey = resolveStoredAPIKey()
         openAIKeyStatus = nil
         // Clear the stale model list from the previous profile, then kick off a fresh
         // fetch from the Store itself (single originator — see S2). Previously this
@@ -6727,9 +6721,9 @@ final class WorkspaceStore: ObservableObject {
             let explicitModel = Self.environmentValue("WEIBEI_PI_MODEL")
             let thinking = Self.environmentValue("WEIBEI_PI_THINKING")
             let selectedProvider = agentProviderID
+            WeiBeiAgentDataPaths.migrateHomePiAuthIfNeeded()
             let linkedOAuth = PiOAuthService.readLinkedOAuthProviders(
-                from: FileManager.default.homeDirectoryForCurrentUser
-                    .appendingPathComponent(".pi/agent/auth.json")
+                from: WeiBeiAgentDataPaths.piAuthJSON
             )
             // Prefer explicit Pi provider id; map legacy OpenAI API selection to openai-codex when OAuth-linked.
             let providerName: String = {
@@ -7773,7 +7767,9 @@ final class WorkspaceStore: ObservableObject {
         if let agentBaseURL = snapshot.agentBaseURL {
             self.agentBaseURL = agentBaseURL
         }
-        openAIAPIKey = OpenAIAPIKeyStore.load(provider: agentProviderID.piProviderName)
+        // Single credential resolve: profile first, then legacy per-provider store.
+        // Avoids two Keychain reads (and two password dialogs) on every launch.
+        openAIAPIKey = resolveStoredAPIKey()
         // Legacy field: still read so older workspaces restore immersion/multi-pane;
         // free drag order lives in threePaneOrder and is the source of truth for columns.
         if let workspaceLayout = snapshot.workspaceLayout {
@@ -7943,19 +7939,21 @@ final class WorkspaceStore: ObservableObject {
             }
         }
 
-        // Prefer the in-settings field even before the user clicks Save — otherwise
-        // typed keys look "configured" in the UI but never reach the request.
+        // Prefer the in-settings field (already hydrated once at load). Do not re-hit
+        // Keychain on every agent request — that re-triggered ACL prompts mid-session.
         let fieldKey = OpenAIAPIKeyStore.cleaned(openAIAPIKey)
         if !fieldKey.isEmpty {
             return (fieldKey, ui("设置中的密钥", "key from Settings"))
         }
 
-        let savedKey = OpenAIAPIKeyStore.load(provider: agentProviderID.piProviderName)
-        if !savedKey.isEmpty {
-            return (savedKey, ui("macOS 钥匙串", "macOS Keychain"))
-        }
-
         return nil
+    }
+
+    /// One-shot credential resolve used at workspace load / profile switch.
+    private func resolveStoredAPIKey() -> String {
+        let profileKey = AgentCredentialProfileStore.loadAPIKey(profileID: activeAgentProfileID)
+        if !profileKey.isEmpty { return profileKey }
+        return OpenAIAPIKeyStore.load(provider: agentProviderID.piProviderName)
     }
 
     /// Backward-compatible alias used by remaining call sites / SelfCheck slices.
