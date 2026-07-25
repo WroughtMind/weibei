@@ -44,7 +44,7 @@ private extension View {
             }
             .shadow(color: WeiBeiTheme.ink.opacity(0.012), radius: 7, y: 2)
             .zIndex(1)
-            .animation(WeiBeiMotion.appearance, value: appearanceMode)
+
     }
 
     func weibeiFloatingHeaderChrome(appearanceMode: WeiBeiAppearanceMode) -> some View {
@@ -57,7 +57,7 @@ private extension View {
                 WeiBeiHeaderHandoffFade(height: 10, opacity: 0.22)
                     .offset(y: 10)
             }
-            .animation(WeiBeiMotion.appearance, value: appearanceMode)
+
     }
 
     func weibeiHeaderAccessoryGroup() -> some View {
@@ -679,7 +679,6 @@ struct NotePaneView: View {
         .fixedSize(horizontal: true, vertical: false)
         .frame(height: 28)
         .weibeiHeaderAccessoryGroup()
-        .animation(WeiBeiMotion.appearance, value: store.appearanceMode)
     }
 
     private func noteModeButton(for mode: NoteRenderMode) -> some View {

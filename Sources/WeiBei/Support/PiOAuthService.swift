@@ -2,7 +2,8 @@ import AppKit
 import Foundation
 import WeiBeiCore
 
-/// Subscription providers that Pi authenticates via OAuth (`/login`), stored in `~/.pi/agent/auth.json`.
+/// Subscription providers that Pi authenticates via OAuth (`/login`).
+/// Tokens are stored in **WeiBei’s** PiAgent directory (not terminal `~/.pi`).
 /// In-app browser OAuth is implemented for openai-codex + anthropic; Copilot surfaces terminal guidance.
 enum PiSubscriptionProvider: String, CaseIterable, Identifiable, Sendable {
     case openaiCodex = "openai-codex"
@@ -28,18 +29,18 @@ enum PiSubscriptionProvider: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .openaiCodex:
             return language.text(
-                "浏览器 OAuth（Pi `/login openai-codex`）→ ~/.pi/agent/auth.json",
-                "Browser OAuth (Pi `/login openai-codex`) → ~/.pi/agent/auth.json"
+                "浏览器 OAuth 连接 ChatGPT 订阅；凭证保存在魏碑应用数据中。",
+                "Browser OAuth for ChatGPT subscription; credentials stay in WeiBei app data."
             )
         case .anthropic:
             return language.text(
-                "浏览器 OAuth（Pi `/login anthropic`）→ auth.json",
-                "Browser OAuth (Pi `/login anthropic`) → auth.json"
+                "浏览器 OAuth 连接 Claude 订阅；凭证保存在魏碑应用数据中。",
+                "Browser OAuth for Claude subscription; credentials stay in WeiBei app data."
             )
         case .githubCopilot:
             return language.text(
-                "请在终端运行 pi 后执行 /login github-copilot（或 gh auth login）。",
-                "In a terminal run pi, then /login github-copilot (or gh auth login)."
+                "暂需在终端完成 Copilot 登录后，将 token 配到魏碑（不与终端 Pi 自动共用）。",
+                "Complete Copilot login in a terminal if needed, then configure WeiBei separately (not shared with CLI Pi)."
             )
         }
     }
@@ -63,13 +64,14 @@ final class PiOAuthService: ObservableObject {
     private var process: Process?
     private var stdoutPipe: Pipe?
 
-    var homeAuthURL: URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".pi/agent/auth.json")
+    /// WeiBei-owned auth.json — never terminal `~/.pi/agent/auth.json`.
+    var weibeiAuthURL: URL {
+        WeiBeiAgentDataPaths.piAuthJSON
     }
 
     func refreshLinkedStatus() {
-        linkedProviders = Self.readLinkedOAuthProviders(from: homeAuthURL)
+        WeiBeiAgentDataPaths.migrateHomePiAuthIfNeeded()
+        linkedProviders = Self.readLinkedOAuthProviders(from: weibeiAuthURL)
     }
 
     static func readLinkedOAuthProviders(from url: URL) -> [String] {
@@ -106,12 +108,15 @@ final class PiOAuthService: ObservableObject {
             return
         }
 
+        try? WeiBeiAgentDataPaths.ensurePiAgentDirectory()
+        WeiBeiAgentDataPaths.migrateHomePiAuthIfNeeded()
+
         let process = Process()
         process.executableURL = node
         process.arguments = [
             script.path,
             "--provider", provider.piProviderFlag,
-            "--auth-path", homeAuthURL.path,
+            "--auth-path", weibeiAuthURL.path,
         ]
         process.environment = ProcessInfo.processInfo.environment
         let pipe = Pipe()

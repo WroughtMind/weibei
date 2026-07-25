@@ -270,9 +270,8 @@ struct WeiBeiApp: App {
     }
 
     private func animateAppearance(_ action: () -> Void) {
-        withAnimation(WeiBeiMotion.appearance) {
-            action()
-        }
+        // Theme animation is owned by WorkspaceStore.setAppearanceMode.
+        action()
     }
 
     private func setLayout(_ layout: WorkspaceLayout) {
@@ -317,8 +316,9 @@ struct WeiBeiAppearanceTransition: ViewModifier {
     @State private var washColor = Color.clear
 
     func body(content: Content) -> some View {
+        // No nested `.animation(value: mode)` here — ContentView / Settings already
+        // animate once at the root. A second animation made chrome lag the paper.
         content
-            .animation(WeiBeiMotion.appearance, value: mode)
             .overlay {
                 washColor
                     .opacity(washOpacity)
@@ -336,12 +336,10 @@ struct WeiBeiAppearanceTransition: ViewModifier {
                 transaction.disablesAnimations = true
                 withTransaction(transaction) {
                     washColor = Color(nsColor: oldMode.windowBackground)
-                    washOpacity = 0.22
+                    washOpacity = 0.16
                 }
-                DispatchQueue.main.async {
-                    withAnimation(WeiBeiMotion.appearance) {
-                        washOpacity = 0
-                    }
+                withAnimation(WeiBeiMotion.appearance) {
+                    washOpacity = 0
                 }
             }
     }
@@ -358,15 +356,25 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
-        DispatchQueue.main.async {
-            configure(view.window)
+        // Apply immediately when the window is already attached; otherwise one async hop.
+        if let window = view.window {
+            configure(window)
+        } else {
+            DispatchQueue.main.async {
+                configure(view.window)
+            }
         }
         return view
     }
 
     func updateNSView(_ view: NSView, context: Context) {
-        DispatchQueue.main.async {
-            configure(view.window)
+        // Sync chrome with the theme publish — async defer made the titlebar lag panes.
+        if let window = view.window {
+            configure(window)
+        } else {
+            DispatchQueue.main.async {
+                configure(view.window)
+            }
         }
     }
 
@@ -379,6 +387,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         window.toolbar = nil
         window.isOpaque = true
         window.backgroundColor = appearanceMode.windowBackground
+        window.appearance = NSAppearance(named: appearanceMode.isDark ? .darkAqua : .aqua)
         window.isMovableByWindowBackground = true
         window.ignoresMouseEvents = ProcessInfo.processInfo.environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1"
         applyVerificationWindowSize(to: window)

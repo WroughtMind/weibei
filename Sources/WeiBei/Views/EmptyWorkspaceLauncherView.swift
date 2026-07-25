@@ -55,10 +55,9 @@ struct EmptyWorkspaceLauncherView: View {
             }
         }
         .background(EmptyWorkspaceResolvedColor.paper(liveAppearanceMode))
+        // One rebuild trigger only — onChange + didChangeNotification used to fire
+        // twice per switch and made the empty board lag the rest of the chrome.
         .onChange(of: store.appearanceMode) { _, _ in
-            appearanceEpoch &+= 1
-        }
-        .onReceive(NotificationCenter.default.publisher(for: WeiBeiThemeRuntime.didChangeNotification)) { _ in
             appearanceEpoch &+= 1
         }
         .accessibilityElement(children: .contain)

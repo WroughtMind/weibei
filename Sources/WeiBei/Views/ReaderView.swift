@@ -226,7 +226,6 @@ struct ReaderView: View {
         .animation(WeiBeiMotion.panel, value: pdfBrowseMode)
         .animation(WeiBeiMotion.panel, value: store.showReaderSearch)
         .animation(WeiBeiMotion.panel, value: pdfHasSelectableText)
-        .animation(WeiBeiMotion.appearance, value: store.appearanceMode)
         .onAppear {
             syncReaderLocationTitle()
             capturePendingPDFPageRequest()

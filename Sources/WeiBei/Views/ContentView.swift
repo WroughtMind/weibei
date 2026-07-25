@@ -108,7 +108,8 @@ struct ContentView: View {
         .onAppear {
             focusedPane = store.focusedPane
         }
-        .animation(WeiBeiMotion.appearance, value: store.appearanceMode)
+        // Theme animation is owned by `setAppearanceMode` (single transaction).
+        // A second root `.animation(value: appearanceMode)` desynced chrome vs paper.
         // showLibrary animation is scoped to the drawer ZStack only (above).
         .animation(WeiBeiMotion.panel, value: store.courseWorkspacePresented)
     }
@@ -267,8 +268,6 @@ private struct UnifiedTopBarView: View {
 
             leftPrimaryControls
 
-            brandBlock
-
             Spacer(minLength: 0)
 
             if store.showReaderSearch && shouldShowSearchAction {
@@ -312,6 +311,7 @@ private struct UnifiedTopBarView: View {
                 }
             }
 
+            // Theme lives only in Settings → Appearance (and ⌥⌘T). Top bar stays task chrome.
             // Full Settings window (agent keys, appearance, data) — not the old mini menu.
             topIconButton("slider.horizontal.3", help: store.ui("打开设置", "Open Settings")) {
                 openSettings()
@@ -425,30 +425,7 @@ private struct UnifiedTopBarView: View {
             libraryButton
 
             navigationButtons
-
-            appearanceToggleButton
         }
-    }
-
-    @ViewBuilder
-    private var brandBlock: some View {
-        // Logo mark + Latin wordmark — DesignSystem brand lockup for the top bar.
-        HStack(spacing: 7) {
-            Image(nsImage: WeiBeiBrandMark.image(for: store.appearanceMode))
-                .resizable()
-                .interpolation(.high)
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 18, height: 18)
-                .accessibilityHidden(true)
-            Text(store.brandLatinName)
-                .font(WeiBeiTypography.englishBrandFont(size: 15.5, weight: .semibold))
-                .tracking(0.15)
-                .foregroundStyle(primaryText)
-                .lineLimit(1)
-        }
-        .frame(minWidth: 86, alignment: .leading)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(store.brandLatinName))
     }
 
     @ViewBuilder
@@ -533,35 +510,6 @@ private struct UnifiedTopBarView: View {
         topIconButton("magnifyingglass", help: store.ui("打开资料内搜索", "Search in material")) {
             toggleReaderSearch()
         }
-    }
-
-    @ViewBuilder
-    private var appearanceToggleButton: some View {
-        // Four themes: menu in the top bar (fast), full grid also in Settings → Appearance.
-        Menu {
-            ForEach(WeiBeiAppearanceMode.allCases) { mode in
-                Button {
-                    withAnimation(WeiBeiMotion.appearance) {
-                        store.setAppearanceMode(mode)
-                    }
-                } label: {
-                    if mode == store.appearanceMode {
-                        Label(mode.label(language: store.interfaceLanguage), systemImage: "checkmark")
-                    } else {
-                        Label(mode.label(language: store.interfaceLanguage), systemImage: mode.systemImage)
-                    }
-                }
-            }
-        } label: {
-            Image(systemName: store.appearanceMode.systemImage)
-                .contentShape(Rectangle())
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .buttonStyle(WeiBeiIconButtonStyle(size: 24))
-        .accessibilityLabel(Text(store.appearanceMode.actionLabel(language: store.interfaceLanguage)))
-        .help(store.appearanceMode.actionLabel(language: store.interfaceLanguage))
-        .keyboardShortcut("t", modifiers: [.option, .command])
     }
 
     private func toggleReaderSearch() {

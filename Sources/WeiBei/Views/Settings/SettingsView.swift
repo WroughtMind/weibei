@@ -27,7 +27,7 @@ struct SettingsView: View {
     @State var isRenamingActiveProfile = false
     @State var profileRenameDraft = ""
     // Profile delete confirmation (AgentSettingsView extension). The action is
-    // destructive — it also wipes the profile's Keychain key — so it needs a
+    // destructive — it also wipes the profile's stored API key — so it needs a
     // confirmation gate (see S3).
     @State var showDeleteProfileConfirmation = false
 
@@ -222,29 +222,8 @@ struct SettingsView: View {
     }
 
     private var settingsAppearanceToggleButton: some View {
-        // Same four-theme menu as the main top bar (cycles via ⌥⌘T elsewhere).
-        Menu {
-            ForEach(WeiBeiAppearanceMode.allCases) { mode in
-                Button {
-                    withAnimation(WeiBeiMotion.appearance) {
-                        store.setAppearanceMode(mode)
-                    }
-                } label: {
-                    if mode == store.appearanceMode {
-                        Label(mode.label(language: store.interfaceLanguage), systemImage: "checkmark")
-                    } else {
-                        Text(mode.label(language: store.interfaceLanguage))
-                    }
-                }
-            }
-        } label: {
-            Image(systemName: store.appearanceMode.systemImage)
-        }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .buttonStyle(WeiBeiIconButtonStyle(size: 30))
-        .accessibilityLabel(Text(store.appearanceMode.actionLabel(language: store.interfaceLanguage)))
-        .help(store.appearanceMode.actionLabel(language: store.interfaceLanguage))
+        // Same paper-swatch palette as the main top bar.
+        AppearanceThemePaletteButton()
     }
 
     private var appearanceSettings: some View {
@@ -267,9 +246,7 @@ struct SettingsView: View {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 6)], alignment: .trailing, spacing: 6) {
                         ForEach(WeiBeiAppearanceMode.allCases) { mode in
                             Button {
-                                withAnimation(WeiBeiMotion.appearance) {
-                                    store.setAppearanceMode(mode)
-                                }
+                                store.setAppearanceMode(mode)
                             } label: {
                                 HStack(spacing: 6) {
                                     Image(systemName: mode.systemImage)
@@ -440,7 +417,7 @@ struct SettingsView: View {
             (store.ui("沉浸写作", "Immersive Writing"), "⌥⌘N"),
             (store.ui("选区轻提示", "Selection Prompt"), "⌃⌥3"),
             (store.ui("隐藏对话浮层", "Hide Chat Overlay"), "⌃⌥0"),
-            (store.ui("明暗切换", "Toggle Theme"), "⌥⌘T"),
+            (store.ui("切换外观主题", "Switch Appearance Theme"), "⌥⌘T"),
             (store.ui("后退", "Back"), "⌘["),
             (store.ui("前进", "Forward"), "⌘]"),
         ]

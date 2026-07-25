@@ -1532,17 +1532,41 @@ do {
         SecKeychainDelete(temporaryKeychain)
     }
 
-    let temporaryKeychainStore = KeychainPasswordStore(
+    let temporaryCredentialStore = WeiBeiCredentialStore(
         service: "com.changfenhuang.weibei.selfcheck.\(UUID().uuidString)",
         account: "OPENAI_API_KEY",
         keychain: temporaryKeychain
     )
-    try? temporaryKeychainStore.delete()
-    try temporaryKeychainStore.save("  sk-selfcheck\n")
-    expect(temporaryKeychainStore.load() == "sk-selfcheck", "keychain save and load")
-    try temporaryKeychainStore.delete()
-    expect(temporaryKeychainStore.load().isEmpty, "keychain delete")
+    try? temporaryCredentialStore.delete()
+    try temporaryCredentialStore.save("  sk-selfcheck\n")
+    expect(temporaryCredentialStore.load() == "sk-selfcheck", "isolated credential store save and load")
+    try temporaryCredentialStore.delete()
+    expect(temporaryCredentialStore.load().isEmpty, "isolated credential store delete")
+
+    // Production path: file under Application Support, no login-keychain UI.
+    let fileService = "com.changfenhuang.weibei.selfcheck.file.\(UUID().uuidString)"
+    let fileStore = WeiBeiCredentialStore(service: fileService, account: "TEST_KEY")
+    try? fileStore.delete()
+    try fileStore.save(" sk-file-store \n")
+    expect(fileStore.load() == "sk-file-store", "WeiBei app-data credential file save and load")
+    try fileStore.delete()
+    expect(fileStore.load().isEmpty, "WeiBei app-data credential file delete")
 }
+
+expect(
+    {
+        let paths = readSource("Sources/WeiBeiCore/WeiBeiAgentDataPaths.swift")
+        let oauth = readSource("Sources/WeiBei/Support/PiOAuthService.swift")
+        let runtime = readSource("Sources/WeiBeiCore/PiAgentRuntime.swift")
+        return paths.contains("enum WeiBeiAgentDataPaths")
+            && paths.contains("piAuthJSON")
+            && oauth.contains("WeiBeiAgentDataPaths.piAuthJSON")
+            && !oauth.contains("homeAuthURL")
+            && runtime.contains("WeiBeiAgentDataPaths.piAgentDirectory")
+            && !runtime.contains("homeDirectoryForCurrentUser.appendingPathComponent(\".pi/agent\"")
+    }(),
+    "OAuth and Pi config use WeiBei Application Support paths, not terminal ~/.pi"
+)
 
 let missingSelectionInsight = QuietInsight.make(
     materialTitle: "利率资料",
@@ -1861,8 +1885,9 @@ expect(emptyWorkspaceSource.contains("TimelineView(.periodic(from: .now, by: 60)
     && emptyWorkspaceSource.contains("minimumScaleFactor(0.78)")
     && emptyWorkspaceSource.contains("EmptyWorkspacePaperField(mode: mode, compact: compact)")
     && emptyWorkspaceSource.contains("EmptyWorkspaceResolvedColor.paper")
-    && emptyWorkspaceSource.contains("WeiBeiThemeRuntime.didChangeNotification")
-    && emptyWorkspaceSource.contains("appearanceEpoch"), "empty workspace greeting updates with time; paper field resolves explicit theme colors and rebuilds on appearance changes")
+    && emptyWorkspaceSource.contains("onChange(of: store.appearanceMode)")
+    && emptyWorkspaceSource.contains("appearanceEpoch")
+    && !emptyWorkspaceSource.contains("WeiBeiThemeRuntime.didChangeNotification"), "empty workspace greeting updates with time; paper field rebuilds once on appearanceMode change")
 expect(emptyWorkspaceSource.contains("selectedInspirationID")
     && emptyWorkspaceSource.contains("randomItem(excludingID: currentID")
     && emptyWorkspaceSource.contains("static let entryCenterRatio: CGFloat = 0.402")
@@ -1960,7 +1985,7 @@ expect(themeSource.contains("enum WeiBeiAppearanceMode")
     && themeSource.contains("didChangeNotification"), "theme exposes four appearance modes with live palette resolution and document mask fills")
 expect(!themeSource.contains("var label: String")
     && !themeSource.contains("var actionLabel: String"), "theme-facing labels require an interface language instead of Chinese-only fallback properties")
-expect(themeSource.contains("static let appearance = Animation.easeOut(duration: 0.18)"), "appearance changes use a snappy theme transition")
+expect(themeSource.contains("static let appearance = Animation.easeOut(duration: 0.12)"), "appearance changes use a snappy theme transition")
 expect(themeSource.contains("tertiaryInk.opacity(0.58)") && themeSource.contains("tertiaryInk.opacity(0.60)"), "disabled button text remains legible on light paper surfaces")
 expect(themeSource.contains("englishDisplayFontName = \"WeiBeiStele-Regular\"")
     && themeSource.contains("englishMonoFontName = \"WeiBeiSteleMono-Regular\"")
@@ -2022,18 +2047,17 @@ expect(contentViewSource.contains("store.toggleLibrary()")
     && !contentViewSource.contains("恢复课程目录")
     && !contentViewSource.contains(".opacity(isImmersiveLayout ? 0.45 : 1)"), "immersive top bar keeps a clear stateful library chooser instead of dimming a live control")
 if let leftControlsStart = contentViewSource.range(of: "private var leftPrimaryControls: some View")?.lowerBound,
-   let leftControlsEnd = contentViewSource[leftControlsStart...].range(of: "\n    }\n\n    @ViewBuilder\n    private var brandBlock")?.lowerBound {
+   let leftControlsEnd = contentViewSource[leftControlsStart...].range(of: "\n    }\n\n    @ViewBuilder\n    private var navigationButtons")?.lowerBound {
     let leftControlsSource = String(contentViewSource[leftControlsStart..<leftControlsEnd])
     if let libraryRange = leftControlsSource.range(of: "libraryButton"),
-       let navigationRange = leftControlsSource.range(of: "navigationButtons"),
-       let appearanceRange = leftControlsSource.range(of: "appearanceToggleButton") {
+       let navigationRange = leftControlsSource.range(of: "navigationButtons") {
         expect(libraryRange.lowerBound < navigationRange.lowerBound
-            && navigationRange.lowerBound < appearanceRange.lowerBound
+            && !leftControlsSource.contains("appearanceToggleButton")
             && !leftControlsSource.contains("books.vertical")
             && !leftControlsSource.contains("presentCourseWorkspace")
-            && !leftControlsSource.contains("settingsMenu"), "top-left controls keep course index, navigation, and appearance; full Settings lives on the right")
+            && !leftControlsSource.contains("settingsMenu"), "top-left controls keep library and navigation only; theme + Settings live on the right")
     } else {
-        expect(false, "top-left controls expose library, navigation, and appearance controls")
+        expect(false, "top-left controls expose library and navigation")
     }
 } else {
     expect(false, "top-left controls block is inspectable")
@@ -2072,11 +2096,15 @@ expect(contentViewSource.contains(".weibeiInputSurface(active: searchFocused.wra
     && !contentViewSource.contains(".foregroundColor(primaryText)\n                    .foregroundStyle(primaryText)\n                    .tint(WeiBeiTheme.link)"), "top search uses fixed ink on its paper input surface instead of inheriting top bar chrome text")
 expect(contentViewSource.contains("private var controlHeight: CGFloat {\n        28\n    }"), "compact top bar controls keep a readable 28-point height")
 expect(contentViewSource.contains("private var leftPrimaryControls: some View")
-    && contentViewSource.contains("libraryButton\n\n            navigationButtons\n\n            appearanceToggleButton")
-    && contentViewSource.contains("private var appearanceToggleButton: some View")
-    && contentViewSource.contains("ForEach(WeiBeiAppearanceMode.allCases)")
-    && contentViewSource.contains("store.setAppearanceMode(mode)")
-    && contentViewSource.contains("WeiBeiBrandMark.image(for: store.appearanceMode)")
+    && contentViewSource.contains("libraryButton\n\n            navigationButtons")
+    && !contentViewSource.contains("private var appearanceToggleButton: some View")
+    && !contentViewSource.contains("AppearanceThemePaletteButton()")
+    && themeSource.contains("struct AppearanceThemePaletteButton")
+    && themeSource.contains("ForEach(WeiBeiAppearanceMode.allCases)")
+    && themeSource.contains("store.setAppearanceMode(mode)")
+    && agentSettingsSource.contains("AppearanceThemePaletteButton()")
+    && !contentViewSource.contains("WeiBeiBrandMark.image(for: store.appearanceMode)")
+    && !contentViewSource.contains("private var brandBlock: some View")
     && contentViewSource.contains("openSettings")
     && contentViewSource.contains("openSettings()")
     && contentViewSource.contains("slider.horizontal.3")
@@ -2084,7 +2112,7 @@ expect(contentViewSource.contains("private var leftPrimaryControls: some View")
     && contentViewSource.contains("WeiBeiIconButtonStyle(active: active, size: 24)")
     && !contentViewSource.contains("WeiBeiIconButtonStyle(active: store.appearanceMode == .inkstone")
     && !contentViewSource.contains("private var settingsMenu: some View")
-    && !contentViewSource.contains("Image(systemName: \"gearshape\")"), "top bar has brand logo, four-theme menu, and full Settings entry")
+    && !contentViewSource.contains("Image(systemName: \"gearshape\")"), "top bar is brandless and theme-free; theme palette lives in Settings only")
 expect(themeSource.contains("enum WeiBeiIconButtonProminence")
     && themeSource.contains("@Environment(\\.colorScheme)")
     && themeSource.contains("prominence == .primary")
@@ -2106,7 +2134,9 @@ expect(contentViewSource.contains("private var paneToggleCluster: some View")
 expect(!contentViewSource.contains("private var layoutMenu")
     && !contentViewSource.contains(".accessibilityLabel(Text(store.ui(\"切换布局\"")
     && !contentViewSource.contains("shortLayoutLabel")
-    && contentViewSource.contains("englishBrandFont(size: 15.5, weight: .semibold)"), "compact top bar keeps a single-line brand mark and removes the legacy layout dropdown")
+    && !contentViewSource.contains("englishBrandFont(size: 15.5, weight: .semibold)")
+    && !contentViewSource.contains("AppearanceThemePaletteButton()")
+    && agentSettingsSource.contains("AppearanceThemePaletteButton()"), "compact top bar is brandless and theme-free; theme palette is Settings-only; legacy layout dropdown stays removed")
 expect(contentViewSource.contains("打开设置")
     && contentViewSource.contains("Open Settings"), "top bar settings control has a readable semantic label")
 expect(contentViewSource.contains("private var agentPaneToggleHelp: String")
@@ -2763,7 +2793,7 @@ expect(appSource.contains("sharedWorkspaceStore"), "main window and settings sha
 expect(!appSource.contains("launchProbe"), "app launch path has no temporary probe logging")
 expect(appSource.contains("WeiBeiAppearanceTransition")
     && appSource.contains(".modifier(WeiBeiAppearanceTransition(mode: store.appearanceMode))")
-    && appSource.contains(".animation(WeiBeiMotion.appearance, value: mode)")
+    && !appSource.contains(".animation(WeiBeiMotion.appearance, value: mode)")
     // SettingsView migrated to its own file (Sources/WeiBei/Views/Settings/
     // SettingsView.swift), so the modifier now appears once in WeiBeiApp.swift
     // (the main window) and once in the settings views union. Count across the
@@ -2771,16 +2801,16 @@ expect(appSource.contains("WeiBeiAppearanceTransition")
     && agentSettingsSource.components(separatedBy: ".modifier(WeiBeiAppearanceTransition(mode: store.appearanceMode))").count >= 3
     && appSource.contains("private func animateAppearance(_ action: () -> Void)")
     && appSource.contains("animateAppearance {\n                        store.toggleAppearanceMode()")
-    && appSource.contains("withAnimation(WeiBeiMotion.appearance)")
+    && workspaceStoreSource.contains("Transaction(animation: WeiBeiMotion.appearance)")
     // setAppearanceMode call now lives in SettingsView.swift (migrated out with
     // the settings UI). Scan the union — see L1.
     && agentSettingsSource.contains("store.setAppearanceMode(mode)")
     && appSource.contains("@State private var washColor = Color.clear")
     && appSource.contains("washColor = Color(nsColor: oldMode.windowBackground)")
-    && appSource.contains("washOpacity = 0.22")
+    && appSource.contains("washOpacity = 0.16")
     && appSource.contains("crossFamily")
     && appSource.contains("transaction.disablesAnimations = true")
-    && appSource.contains("DispatchQueue.main.async"), "appearance mode changes stage a wash only across light/dark families, not same-family swaps")
+    && appSource.contains("withAnimation(WeiBeiMotion.appearance) {\n                    washOpacity = 0\n                }"), "appearance mode changes stage a wash only across light/dark families, not same-family swaps")
 expect(appSource.contains("addLocalMonitorForEvents(matching: .keyDown)") && appSource.contains("removeMonitor(shortcutMonitor)"), "app-level shortcuts survive focused web editor")
 expect(appSource.contains("var reopenMainWindow: (() -> Void)?")
     && appSource.contains("applicationShouldHandleReopen")
@@ -2858,9 +2888,9 @@ expect(!agentSettingsSource.contains("Form {")
     && agentSettingsSource.contains(".weibeiInputSurface(active: focusedField == .apiKey, height: 38)")
     && agentSettingsSource.contains("private var settingsAppearanceToggleButton: some View")
     && agentSettingsSource.contains("Spacer()\n            settingsAppearanceToggleButton")
-    && agentSettingsSource.contains("Image(systemName: store.appearanceMode.systemImage)")
+    && agentSettingsSource.contains("AppearanceThemePaletteButton()")
     && agentSettingsSource.contains("ForEach(WeiBeiAppearanceMode.allCases)")
-    && agentSettingsSource.contains(".buttonStyle(WeiBeiIconButtonStyle(size: 30))")
+    && !agentSettingsSource.contains("Image(systemName: store.appearanceMode.systemImage)")
     && !agentSettingsSource.contains("WeiBeiIconButtonStyle(active: store.appearanceMode == .inkstone")
     && !agentSettingsSource.contains("TopBarVariant")
     && !agentSettingsSource.contains("setTopBarVariant")
@@ -3135,13 +3165,13 @@ expect(workspaceStoreSource.contains("@Published var showDailyInspiration = true
     && workspaceStoreSource.contains("showDailyInspiration: showDailyInspiration"), "daily inspiration preference persists in the isolated workspace file and older workspaces default to enabled")
 expect(workspaceStoreSource.contains("var brandLatinName: String")
     && workspaceStoreSource.contains("\"WeiBei\"")
-    && contentViewSource.contains("Text(store.brandLatinName)")
-    && contentViewSource.contains("WeiBeiTypography.englishBrandFont(size: 15.5, weight: .semibold)")
-    && contentViewSource.contains("WeiBeiBrandMark.image(for: store.appearanceMode)")
+    && !contentViewSource.contains("Text(store.brandLatinName)")
+    && !contentViewSource.contains("WeiBeiTypography.englishBrandFont(size: 15.5, weight: .semibold)")
+    && !contentViewSource.contains("WeiBeiBrandMark.image(for: store.appearanceMode)")
     // Settings sidebar keeps a single localized title only — no second "WeiBei SETTINGS" line.
     && !agentSettingsSource.contains("Text(\"SETTINGS\")")
     && notesAgentSource.contains("latinMark: store.interfaceLanguage == .chinese ? \"NOTES\" : nil")
-    && notesAgentSource.contains("latinMark: store.interfaceLanguage == .chinese ? \"CHAT\" : nil"), "top bar shows logo + Latin brand; pane headers keep CHAT/NOTES marks; settings title is not duplicated")
+    && notesAgentSource.contains("latinMark: store.interfaceLanguage == .chinese ? \"CHAT\" : nil"), "top bar stays brandless; pane headers keep CHAT/NOTES marks; settings title is not duplicated")
 expect(notesAgentSource.contains("ForEach(NoteRenderMode.visibleCases)")
     && notesAgentSource.contains("switch store.noteRenderMode.visibleMode")
     && !notesAgentSource.contains("ForEach(NoteRenderMode.allCases)")
@@ -3547,11 +3577,12 @@ expect(!workspaceStoreSource.contains("selectedItem?.title ?? \"当前材料\"")
     && workspaceStoreSource.contains("PiAgentRuntime")
     && workspaceStoreSource.contains("appendAgentMessage(AgentMessage(role: .user, text: question, source: sourceTitle))")
     && !workspaceStoreSource.contains("未配置 OPENAI_API_KEY 或钥匙串密钥")
-    // Provider-aware key help + in-field key used for requests before Keychain save.
+    // Provider-aware key help + in-field key used for requests (local secret file + keychain mirror).
     && workspaceStoreSource.contains("正在使用本机环境变量")
     && workspaceStoreSource.contains("设置中的密钥")
-    && workspaceStoreSource.contains("密钥已在钥匙串")
+    && workspaceStoreSource.contains("密钥保存在魏碑应用数据中")
     && workspaceStoreSource.contains("let fieldKey = OpenAIAPIKeyStore.cleaned(openAIAPIKey)")
+    && workspaceStoreSource.contains("resolveStoredAPIKey()")
     && workspaceStoreSource.contains("已清除密钥。")
     && workspaceStoreSource.contains("密钥已保存到当前配置。")
     && workspaceStoreSource.contains("AgentCredentialProfileStore")
@@ -3828,7 +3859,7 @@ expect(notesAgentSource.contains("func weibeiPaneHeaderChrome(appearanceMode: We
     && !agentPaneHeaderSource.contains(".weibeiHeaderAccessoryGroup()")
     && !notesAgentSource.contains("private var hasAgentHeaderActions: Bool")
     && notesAgentSource.contains(".background(WeiBeiGlassHeaderBackground(paperOpacity: 0.72, materialOpacity: 0.12))")
-    && notesAgentSource.contains(".animation(WeiBeiMotion.appearance, value: appearanceMode)")
+    && !notesAgentSource.contains(".animation(WeiBeiMotion.appearance, value: appearanceMode)")
     && notesAgentSource.components(separatedBy: ".weibeiPaneHeaderChrome(appearanceMode: appearanceMode)").count >= 2
     && notePaneHeaderSource.contains("title: store.ui(\"笔记\"")
     && agentPaneHeaderSource.contains("title: store.ui(\"对话\"")
