@@ -4301,9 +4301,10 @@ if let messageTextStart = notesAgentSource.range(of: "struct AgentMessageMarkdow
         && messageTextSource.contains("NEVER wire onContentHeightChange to scrollAgentToBottom")
         && messageTextSource.contains("AttributedString(markdown:")
         && messageTextSource.contains("RichAnswerDisplayText.normalizedInlineMath")
+        && messageTextSource.contains("design: rendersRichMarkdown ? .serif : .default")
         && messageTextSource.contains(".textSelection(.enabled)")
         && !messageTextSource.contains("onContentHeightChange: onMarkdownHeightChange")
-        , "agent chat uses finalized KaTeX with width-aware height and selectable native text")
+        , "agent chat uses finalized KaTeX with width-aware height and selectable native text; native assistant answers keep the serif reading face")
 } else {
     expect(false, "agent message text source is inspectable")
 }

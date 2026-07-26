@@ -651,7 +651,11 @@ struct AgentMessageMarkdownText: View {
 
     private var nativeBody: some View {
         Text(renderedText)
-            .font(.system(size: compact ? 13.2 : (rendersRichMarkdown ? 15 : 14.5)))
+            // Assistant answers are reading content and must match the serif Markdown path.
+            .font(.system(
+                size: compact ? 13.2 : (rendersRichMarkdown ? 15 : 14.5),
+                design: rendersRichMarkdown ? .serif : .default
+            ))
             .lineSpacing(compact ? 4.2 : (rendersRichMarkdown ? 5.5 : 4.5))
             .foregroundStyle(WeiBeiTheme.ink)
             .multilineTextAlignment(.leading)
