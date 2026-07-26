@@ -1,4 +1,5 @@
 import Foundation
+import LocalAuthentication
 import Security
 
 public struct KeychainPasswordStore {
@@ -63,8 +64,12 @@ public struct KeychainPasswordStore {
 
     private var readQuery: [String: Any] {
         var query = matchQuery
+        let authenticationContext = LAContext()
+        authenticationContext.interactionNotAllowed = true
         query[kSecReturnData as String] = true
         query[kSecMatchLimit as String] = kSecMatchLimitOne
+        // Background startup reads must never trigger a password prompt loop for stale binary ACLs.
+        query[kSecUseAuthenticationContext as String] = authenticationContext
         return query
     }
 
