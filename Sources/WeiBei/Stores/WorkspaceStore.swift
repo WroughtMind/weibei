@@ -2552,25 +2552,47 @@ final class WorkspaceStore: ObservableObject {
         save()
     }
 
+    /// User rebinds from Settings → Shortcuts. Empty means all defaults.
+    @Published private(set) var customShortcutOverrides: [AppShortcutID: AppShortcutChord] = AppShortcutCatalog.loadOverrides()
+
+    func chord(for shortcut: AppShortcutID) -> AppShortcutChord {
+        AppShortcutCatalog.chord(for: shortcut, overrides: customShortcutOverrides)
+    }
+
+    func setShortcut(_ id: AppShortcutID, chord: AppShortcutChord) {
+        if chord == id.defaultChord {
+            customShortcutOverrides.removeValue(forKey: id)
+        } else {
+            customShortcutOverrides[id] = chord
+        }
+        AppShortcutCatalog.saveOverrides(customShortcutOverrides)
+        objectWillChange.send()
+    }
+
+    func resetShortcut(_ id: AppShortcutID) {
+        customShortcutOverrides.removeValue(forKey: id)
+        AppShortcutCatalog.saveOverrides(customShortcutOverrides)
+        objectWillChange.send()
+    }
+
+    func resetAllShortcuts() {
+        customShortcutOverrides = [:]
+        AppShortcutCatalog.saveOverrides([:])
+        objectWillChange.send()
+    }
+
     func handleAppShortcut(_ event: NSEvent) -> Bool {
         guard let key = Self.shortcutKey(from: event) else { return false }
         return handleAppShortcut(key: key, modifiers: event.modifierFlags.intersection(Self.shortcutModifierMask))
     }
 
     func handleAppShortcut(key: String, modifiers: NSEvent.ModifierFlags) -> Bool {
-        if modifiers == [.control, .option] {
-            switch key {
-            case "3":
-                guard canUseSelectionAgentSurface else { return false }
-                animatePanelChange { setAgentSurface(.selectionFloat) }
-            case "0":
-                animatePanelChange { setAgentSurface(.hidden) }
-            default:
-                return false
-            }
-            return true
+        let pressed = AppShortcutChord(key: key, modifiers: modifiers)
+        if let action = AppShortcutCatalog.action(matching: pressed, overrides: customShortcutOverrides) {
+            return performCustomizableShortcut(action)
         }
 
+        // Non-user-facing chords stay hard-coded (layout / note mode / agent write).
         if modifiers == [.command, .option] {
             switch key {
             case "1":
@@ -2580,14 +2602,6 @@ final class WorkspaceStore: ObservableObject {
             case "s":
                 guard layout.isDocumentThreePane else { return false }
                 animateLayoutChange { swapThreePaneSecondaryPanes() }
-            case "r":
-                animateLayoutChange { setLayout(.immersiveReading) }
-            case "a":
-                animateLayoutChange { setLayout(.immersiveConversation) }
-            case "n":
-                animateLayoutChange { setLayout(.immersiveWriting) }
-            case "t":
-                animatePanelChange { toggleAppearanceMode() }
             case "up":
                 animateLayoutChange { selectAdjacentItem(step: -1) }
             case "down":
@@ -2634,30 +2648,9 @@ final class WorkspaceStore: ObservableObject {
 
         if modifiers == [.command] {
             switch key {
-            case "[":
-                guard canNavigateBack else { return false }
-                animateLayoutChange { navigateBackInWorkspace() }
-            case "]":
-                guard canNavigateForward else { return false }
-                animateLayoutChange { navigateForwardInWorkspace() }
-            case "1":
-                animateLayoutChange { focus(.library) }
-            case "2":
-                animateLayoutChange { focus(.reader) }
-            case "3":
-                animateLayoutChange { focus(.notes) }
-            case "4":
-                animateLayoutChange { focus(.agent) }
-            case "b":
-                animateLayoutChange { toggleLibrary() }
             case "j":
                 guard layout.hasCollapsibleRightPane else { return false }
                 animateLayoutChange { toggleRightPane() }
-            case "k":
-                animatePanelChange { commandPalettePresented.toggle() }
-            case "f":
-                guard hasSelectedMaterial else { return false }
-                animatePanelChange { revealReaderSearch() }
             case "return":
                 if isAskingAgent {
                     cancelAgentRequest()
@@ -2672,6 +2665,47 @@ final class WorkspaceStore: ObservableObject {
         }
 
         return false
+    }
+
+    @discardableResult
+    private func performCustomizableShortcut(_ id: AppShortcutID) -> Bool {
+        switch id {
+        case .commandPalette:
+            animatePanelChange { commandPalettePresented.toggle() }
+        case .toggleAppearance:
+            animatePanelChange { toggleAppearanceMode() }
+        case .navigateBack:
+            guard canNavigateBack else { return false }
+            animateLayoutChange { navigateBackInWorkspace() }
+        case .navigateForward:
+            guard canNavigateForward else { return false }
+            animateLayoutChange { navigateForwardInWorkspace() }
+        case .courseIndex:
+            animateLayoutChange { toggleLibrary() }
+        case .searchInMaterial:
+            guard hasSelectedMaterial else { return false }
+            animatePanelChange { revealReaderSearch() }
+        case .focusLibrary:
+            animateLayoutChange { focus(.library) }
+        case .focusReader:
+            animateLayoutChange { focus(.reader) }
+        case .focusNotes:
+            animateLayoutChange { focus(.notes) }
+        case .focusChat:
+            animateLayoutChange { focus(.agent) }
+        case .immersiveReading:
+            animateLayoutChange { setLayout(.immersiveReading) }
+        case .immersiveChat:
+            animateLayoutChange { setLayout(.immersiveConversation) }
+        case .immersiveWriting:
+            animateLayoutChange { setLayout(.immersiveWriting) }
+        case .selectionPrompt:
+            guard canUseSelectionAgentSurface else { return false }
+            animatePanelChange { setAgentSurface(.selectionFloat) }
+        case .hideChatOverlay:
+            animatePanelChange { setAgentSurface(.hidden) }
+        }
+        return true
     }
 
     private func animateLayoutChange(_ action: () -> Void) {

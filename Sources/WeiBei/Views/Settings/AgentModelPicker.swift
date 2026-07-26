@@ -114,7 +114,8 @@ extension SettingsView {
 
     @ViewBuilder
     private var modelStatusLine: some View {
-        // Env-var override badge takes precedence — the field is inert when set.
+        // Keep a durable status after fetch completes — users need to see that listing
+        // worked (not a flash of "Fetching…" that vanishes into silence).
         if !envModelOverride.isEmpty {
             settingsPill(
                 title: store.ui("环境变量 \(envModelOverride)", "Env \(envModelOverride)"),
@@ -126,16 +127,25 @@ extension SettingsView {
             case .idle:
                 EmptyView()
             case .loading:
-                settingsPill(title: store.ui("正在获取模型…", "Fetching models…"), icon: "arrow.triangle.2.circlepath", active: false)
+                Text(store.ui("正在获取模型…", "Fetching models…"))
+                    .font(.system(size: 11))
+                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
             case .loaded:
-                settingsPill(title: store.ui("已列出 \(store.availableModels.count) 个模型", "\(store.availableModels.count) models listed"), icon: "checkmark.seal", active: true)
+                Text(store.ui(
+                    "已获取 \(store.availableModels.count) 个模型",
+                    "Fetched \(store.availableModels.count) models"
+                ))
+                .font(.system(size: 11))
+                .foregroundStyle(WeiBeiTheme.tertiaryInk)
             case .builtin:
-                settingsPill(title: store.ui("内置推荐", "Built-in catalog"), icon: "square.grid.2x2", active: false)
+                Text(store.ui("使用内置推荐列表", "Using built-in recommendations"))
+                    .font(.system(size: 11))
+                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
             case let .failed(message):
                 Text(message)
-                    .font(.system(size: 10.5))
+                    .font(.system(size: 11))
                     .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                    .frame(width: 250, alignment: .trailing)
+                    .frame(maxWidth: 260, alignment: .trailing)
                     .lineLimit(2)
             }
         }

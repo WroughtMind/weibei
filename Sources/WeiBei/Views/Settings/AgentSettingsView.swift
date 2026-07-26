@@ -92,7 +92,7 @@ extension SettingsView {
                     .foregroundColor(WeiBeiTheme.ink)
                     .font(.system(size: 13))
                     .weibeiInputSurface(active: false, height: 38)
-                    .frame(width: 280)
+                    .frame(width: SettingsView.controlWidth)
                 }
             }
 
@@ -114,7 +114,7 @@ extension SettingsView {
                     .foregroundColor(WeiBeiTheme.ink)
                     .font(.system(size: 13))
                     .weibeiInputSurface(active: false, height: 38)
-                    .frame(width: 180)
+                    .frame(width: SettingsView.controlWidth)
                 }
             }
 
@@ -127,36 +127,32 @@ extension SettingsView {
 
     private var agentProfileRow: some View {
         settingsRow(title: store.ui("配置", "Profile"), detail: "") {
-            HStack(spacing: 8) {
-                if isRenamingActiveProfile {
-                    profileRenameField
-                } else {
-                    // New / delete live inside the menu (low-frequency actions); only
-                    // "重命名" stays as a visible button so the row stays calm.
-                    compactMenu(activeProfileName) {
-                        ForEach(store.agentCredentialProfiles) { profile in
-                            Button(profile.name) {
-                                store.selectAgentCredentialProfile(profile.id)
-                            }
+            if isRenamingActiveProfile {
+                profileRenameField
+            } else {
+                // New / rename / delete all live in the menu — low-frequency, keeps the row calm.
+                compactMenu(activeProfileName) {
+                    ForEach(store.agentCredentialProfiles) { profile in
+                        Button(profile.name) {
+                            store.selectAgentCredentialProfile(profile.id)
                         }
-                        Divider()
-                        Button(store.ui("新建配置", "New Profile")) {
-                            store.createAgentCredentialProfile()
-                        }
-                        if store.agentCredentialProfiles.count > 1 {
-                            // Destructive: also wipes the profile's stored API key, so it
-                            // only arms the confirmation dialog rather than deleting
-                            // outright (see S3).
-                            Button(store.ui("删除当前配置", "Delete Current Profile"), role: .destructive) {
-                                showDeleteProfileConfirmation = true
-                            }
-                        }
+                    }
+                    Divider()
+                    Button(store.ui("新建配置", "New Profile")) {
+                        store.createAgentCredentialProfile()
                     }
                     Button(store.ui("重命名", "Rename")) {
                         profileRenameDraft = activeProfileName
                         isRenamingActiveProfile = true
                     }
-                    .buttonStyle(WeiBeiTextActionButtonStyle())
+                    if store.agentCredentialProfiles.count > 1 {
+                        // Destructive: also wipes the profile's stored API key, so it
+                        // only arms the confirmation dialog rather than deleting
+                        // outright (see S3).
+                        Button(store.ui("删除当前配置", "Delete Current Profile"), role: .destructive) {
+                            showDeleteProfileConfirmation = true
+                        }
+                    }
                 }
             }
         }
@@ -236,7 +232,8 @@ extension SettingsView {
 
     private var agentAPIKeyAuth: some View {
         // No long key-help blurb under the field — console button + status notes
-        // cover the rare cases that need guidance.
+        // cover the rare cases that need guidance. Quiet by default: no "Configured"
+        // pill when a key is present (the non-empty field is enough).
         settingsRow(title: store.ui("密钥", "API Key")) {
             VStack(alignment: .trailing, spacing: 8) {
                 SecureField(
@@ -251,15 +248,15 @@ extension SettingsView {
                 .focused($focusedField, equals: .apiKey)
                 .font(.system(size: 13))
                 .weibeiInputSurface(active: focusedField == .apiKey, height: 38)
-                .frame(width: 250)
+                .frame(width: SettingsView.controlWidth)
                 .onSubmit { store.saveOpenAIAPIKey() }
                 .onChange(of: focusedField) { _, field in
                     if field != .apiKey { store.saveOpenAIAPIKey() }
                 }
                 // Persist on any change so the key survives a tab switch or window
                 // close without the user pressing Return. This is the implicit-save
-                // contract the self-check (L2815) expects: no explicit Save button,
-                // but the key is never stranded in memory. Writes go to WeiBei app data
+                // contract the self-check expects: no explicit Save button, but the
+                // key is never stranded in memory. Writes go to WeiBei app data
                 // (no macOS keychain UI); saveOpenAIAPIKey cleans + dedups.
                 .onChange(of: store.openAIAPIKey) { _, _ in
                     store.saveOpenAIAPIKey()
@@ -267,10 +264,9 @@ extension SettingsView {
 
                 HStack(spacing: 8) {
                     if !store.openAIAPIKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        settingsPill(title: store.ui("已配置", "Configured"), icon: "checkmark.seal.fill", active: true)
+                        Button(store.ui("清除", "Clear")) { store.clearOpenAIAPIKey() }
+                            .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
-                    Button(store.ui("清除", "Clear")) { store.clearOpenAIAPIKey() }
-                        .buttonStyle(WeiBeiTextActionButtonStyle())
                     if AgentProviderConsoleLinks.loginURL(for: store.agentProviderID) != nil
                         || AgentProviderConsoleLinks.accountURL(for: store.agentProviderID) != nil {
                         Button(store.ui("打开控制台", "Open Console")) {
