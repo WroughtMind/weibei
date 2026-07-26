@@ -13,6 +13,9 @@ struct StableDocumentWorkspace: NSViewRepresentable {
     let visibleOrder: [WorkspacePaneRole]
     let draggedRole: WorkspacePaneRole?
     let expansionRequest: PaneExpansionRequest?
+    /// Explicit input so theme changes always re-enter `updateNSView` and repaint the empty board layer.
+    /// Do not rely only on `@EnvironmentObject` for long-lived NSHostingView paper sync.
+    let appearanceMode: WeiBeiAppearanceMode
     let onFramesChange: ([WorkspacePaneRole], [CGRect]) -> Void
     let onExpansionRequestHandled: (UUID) -> Void
 
@@ -39,12 +42,26 @@ struct StableDocumentWorkspace: NSViewRepresentable {
         )
         splitView.install(roleHosts: roleHosts, emptyHost: emptyHost)
         context.coordinator.install(in: splitView)
+        applyEmptyBoardPaper(to: splitView, mode: appearanceMode)
         update(splitView, coordinator: context.coordinator)
         return splitView
     }
 
     func updateNSView(_ splitView: StableDocumentSplitView, context: Context) {
         update(splitView, coordinator: context.coordinator)
+        // Empty board is a long-lived NSHostingView. Never reassign `rootView` here
+        // (pane continuity / SelfCheck). Sync AppKit paper under the SwiftUI board instead;
+        // EmptyWorkspaceLauncherView rebuilds its own colors from store + theme notification.
+        applyEmptyBoardPaper(to: splitView, mode: appearanceMode)
+    }
+
+    private func applyEmptyBoardPaper(to splitView: StableDocumentSplitView, mode: WeiBeiAppearanceMode) {
+        let paper = WeiBeiNativePalette.paper(for: mode)
+        let cgPaper = paper.cgColor
+        splitView.wantsLayer = true
+        splitView.layer?.backgroundColor = cgPaper
+        splitView.emptyHost?.wantsLayer = true
+        splitView.emptyHost?.layer?.backgroundColor = cgPaper
     }
 
     static func dismantleNSView(_ splitView: StableDocumentSplitView, coordinator: StableDocumentSplitCoordinator) {
@@ -288,21 +305,12 @@ private final class StableDocumentDividerView: NSView {
     }
 
     private var dividerFill: NSColor {
-        if isDarkAppearance {
-            return NSColor(calibratedRed: 0.059, green: 0.059, blue: 0.059, alpha: 0.96)
-        }
-        return NSColor(calibratedRed: 0.955, green: 0.918, blue: 0.835, alpha: 0.96)
+        // Follow the product theme (纸面/宣纸/墨石/石碑), not system aqua/darkAqua alone.
+        WeiBeiNativePalette.dividerFill()
     }
 
     private var dividerLine: NSColor {
-        if isDarkAppearance {
-            return NSColor(calibratedRed: 0.230, green: 0.200, blue: 0.155, alpha: 0.24)
-        }
-        return NSColor(calibratedRed: 0.500, green: 0.380, blue: 0.260, alpha: 0.13)
-    }
-
-    private var isDarkAppearance: Bool {
-        effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        WeiBeiNativePalette.dividerLine()
     }
 }
 

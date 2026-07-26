@@ -1,16 +1,29 @@
 import Foundation
-import LocalAuthentication
-import Security
 
-public struct KeychainPasswordStore {
+/// Local credential store for WeiBei Agent API keys.
+///
+/// Credentials live inside WeiBei Application Support as owner-readable files.
+/// The app does not read from or write to the macOS login keychain.
+public struct WeiBeiCredentialStore {
     public let service: String
     public let account: String
-    private let keychain: SecKeychain?
+    private let directory: URL
 
-    public init(service: String, account: String, keychain: SecKeychain? = nil) {
+    /**
+     * 创建仅使用本地文件的凭据存储。
+     *
+     * @param service - 用于隔离不同凭据命名空间的服务标识
+     * @param account - 当前服务中的凭据账户标识
+     * @param directory - 凭据目录；生产环境默认使用魏碑 Application Support
+     */
+    public init(
+        service: String,
+        account: String,
+        directory: URL = WeiBeiAgentDataPaths.secretsDirectory
+    ) {
         self.service = service
         self.account = account
-        self.keychain = keychain
+        self.directory = directory
     }
 
     public static func cleaned(_ value: String) -> String {
@@ -18,10 +31,7 @@ public struct KeychainPasswordStore {
     }
 
     public func load() -> String {
-        var result: CFTypeRef?
-        let status = SecItemCopyMatching(readQuery as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else { return "" }
-        return Self.cleaned(String(data: data, encoding: .utf8) ?? "")
+        readLocalFile() ?? ""
     }
 
     public func save(_ value: String) throws {
@@ -31,72 +41,45 @@ public struct KeychainPasswordStore {
             return
         }
 
-        let data = Data(key.utf8)
-        let status = SecItemUpdate(matchQuery as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-        if status == errSecSuccess { return }
-
-        if status == errSecItemNotFound {
-            var attributes = addAttributes
-            attributes[kSecValueData as String] = data
-            attributes[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            let addStatus = SecItemAdd(attributes as CFDictionary, nil)
-            guard addStatus == errSecSuccess else { throw Self.keychainError(addStatus) }
-            return
-        }
-
-        throw Self.keychainError(status)
+        try writeLocalFile(key)
     }
 
     public func delete() throws {
-        let status = SecItemDelete(matchQuery as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw Self.keychainError(status)
-        }
+        try? FileManager.default.removeItem(at: localFileURL)
     }
 
-    private var baseQuery: [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
+    private var localFileURL: URL {
+        directory.appendingPathComponent(Self.fileName(service: service, account: account))
     }
 
-    private var readQuery: [String: Any] {
-        var query = matchQuery
-        let authenticationContext = LAContext()
-        authenticationContext.interactionNotAllowed = true
-        query[kSecReturnData as String] = true
-        query[kSecMatchLimit as String] = kSecMatchLimitOne
-        // Background startup reads must never trigger a password prompt loop for stale binary ACLs.
-        query[kSecUseAuthenticationContext as String] = authenticationContext
-        return query
+    private func readLocalFile() -> String? {
+        guard let data = try? Data(contentsOf: localFileURL) else { return nil }
+        let value = Self.cleaned(String(data: data, encoding: .utf8) ?? "")
+        return value.isEmpty ? nil : value
     }
 
-    private var matchQuery: [String: Any] {
-        var query = baseQuery
-        if let keychain {
-            query[kSecMatchSearchList as String] = [keychain]
-        }
-        return query
-    }
-
-    private var addAttributes: [String: Any] {
-        var attributes = baseQuery
-        if let keychain {
-            attributes[kSecUseKeychain as String] = keychain
-        }
-        return attributes
-    }
-
-    private static func keychainError(_ status: OSStatus) -> NSError {
-        let message = SecCopyErrorMessageString(status, nil) as String? ?? "Keychain error \(status)"
-        return NSError(
-            domain: "WeiBei.Keychain",
-            code: Int(status),
-            userInfo: [NSLocalizedDescriptionKey: message]
+    private func writeLocalFile(_ value: String) throws {
+        let url = localFileURL
+        let directory = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: directory.path
+        )
+        try Data(value.utf8).write(to: url, options: [.atomic])
+        try? FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: url.path
         )
     }
+
+    private static func fileName(service: String, account: String) -> String {
+        let raw = "\(service)__\(account)"
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
+        let scaled = raw.unicodeScalars.map { allowed.contains($0) ? Character($0) : "_" }
+        return String(scaled) + ".secret"
+    }
+
 }
 
 public enum OpenAIAPIKeyStore {
@@ -104,8 +87,8 @@ public enum OpenAIAPIKeyStore {
     /// Legacy single-account name kept for backward compatibility with openai keys.
     public static let account = "OPENAI_API_KEY"
 
-    private static func store(forAccount account: String) -> KeychainPasswordStore {
-        KeychainPasswordStore(service: service, account: account)
+    private static func store(forAccount account: String) -> WeiBeiCredentialStore {
+        WeiBeiCredentialStore(service: service, account: account)
     }
 
     public static func accountName(forProvider provider: String) -> String {
@@ -117,13 +100,12 @@ public enum OpenAIAPIKeyStore {
     }
 
     public static func cleaned(_ value: String) -> String {
-        KeychainPasswordStore.cleaned(value)
+        WeiBeiCredentialStore.cleaned(value)
     }
 
     public static func load(provider: String = "openai") -> String {
         let named = store(forAccount: accountName(forProvider: provider)).load()
         if !named.isEmpty { return named }
-        // Fallback to legacy openai account for the default provider.
         if provider == "openai" || provider.isEmpty {
             return store(forAccount: account).load()
         }

@@ -217,7 +217,7 @@ self-check failed: note pane creation and agent header stay custom, light, and c
 
 - imported identity 自检在沙箱内曾于 `NSFileCoordinator` rename 报 Cocoa 512；一次沙箱外执行曾长时间无输出并被终止。需要重新运行并判断是环境等待还是回归。
 - `script/build_and_run.sh check` 现在在两套 Node 依赖都存在时会先执行 `npm run check`；若只装了一套依赖会明确失败。
-- 完整 build 只有原有 Security keychain deprecated warnings，没有本轮新增编译错误。
+- Agent API Key 已移出 macOS 钥匙串，统一保存在魏碑的 Application Support 私有目录。
 
 ## 7. 提交、推送与 PR 更新
 

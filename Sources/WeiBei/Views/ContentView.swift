@@ -31,7 +31,7 @@ struct ContentView: View {
 
                             LayoutContentView()
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .background(WeiBeiTheme.paper)
+                                .background(Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode)))
                                 // Only cross-fade immersive ↔ document families. Pane show/hide inside
                                 // the document family is owned by AppKit StableDocumentWorkspace animation
                                 // — a second SwiftUI layout animation here made toggles feel split/janky.
@@ -111,14 +111,10 @@ struct ContentView: View {
         .onAppear {
             focusedPane = store.focusedPane
         }
-        .animation(WeiBeiMotion.appearance, value: store.appearanceMode)
-        // showLibrary animation is scoped to the drawer ZStack only (above).
         .animation(WeiBeiMotion.panel, value: store.courseWorkspacePresented)
     }
 
     private var showsGlobalFloatingAgent: Bool {
-        // Formal conversation pane already open → ask/answer there; don't stack a float.
-        guard !store.isConversationSurfaceVisible else { return false }
         return !store.courseWorkspacePresented
             && store.canShowSelectionPromptSurface && SelectionFloatingAgentPlacement.isVisible(
             surface: store.agentSurface,
@@ -271,8 +267,6 @@ private struct UnifiedTopBarView: View {
 
             leftPrimaryControls
 
-            brandBlock
-
             Spacer(minLength: 0)
 
             if store.showReaderSearch && shouldShowSearchAction {
@@ -338,7 +332,11 @@ private struct UnifiedTopBarView: View {
                 .frame(height: 1)
         }
         .overlay(alignment: .bottom) {
-            WeiBeiHeaderHandoffFade(height: 18, opacity: isImmersiveLayout ? 0.42 : 0.34)
+            WeiBeiHeaderHandoffFade(
+                height: 18,
+                opacity: isImmersiveLayout ? 0.42 : 0.34,
+                appearanceMode: store.appearanceMode
+            )
                 .offset(y: 18)
             .allowsHitTesting(false)
         }
@@ -397,13 +395,16 @@ private struct UnifiedTopBarView: View {
     }
 
     private var topHighlight: Color {
-        WeiBeiTheme.glassHighlight.opacity(0.24)
+        store.appearanceMode.isDark
+            ? WeiBeiTheme.ink.opacity(0.05)
+            : WeiBeiTheme.glassHighlight.opacity(0.24)
     }
 
     private var topBarBackground: some View {
         WeiBeiGlassHeaderBackground(
             paperOpacity: backgroundPaperOpacity - (isImmersiveLayout ? 0.06 : 0),
-            materialOpacity: backgroundMaterialOpacity + (isImmersiveLayout ? 0.03 : 0)
+            materialOpacity: backgroundMaterialOpacity + (isImmersiveLayout ? 0.03 : 0),
+            appearanceMode: store.appearanceMode
         )
     }
 
@@ -421,18 +422,7 @@ private struct UnifiedTopBarView: View {
             libraryButton
 
             navigationButtons
-
-            appearanceToggleButton
         }
-    }
-
-    @ViewBuilder
-    private var brandBlock: some View {
-        Text(store.brandLatinName)
-            .font(WeiBeiTypography.englishBrandFont(size: 15.5, weight: .semibold))
-            .tracking(0.15)
-            .foregroundStyle(primaryText)
-            .frame(width: 62, alignment: .leading)
     }
 
     @ViewBuilder
@@ -519,15 +509,6 @@ private struct UnifiedTopBarView: View {
         }
     }
 
-    @ViewBuilder
-    private var appearanceToggleButton: some View {
-        topIconButton(store.appearanceMode.toggled.systemImage, help: store.appearanceMode.actionLabel(language: store.interfaceLanguage)) {
-            withAnimation(WeiBeiMotion.appearance) {
-                store.toggleAppearanceMode()
-            }
-        }
-    }
-
     private func toggleReaderSearch() {
         withAnimation(WeiBeiMotion.panel) {
             if store.showReaderSearch {
@@ -578,6 +559,7 @@ private struct ThreePaneWorkspaceChrome: View {
                 visibleOrder: visibleOrder,
                 draggedRole: paneReorder.drag?.role,
                 expansionRequest: expansionRequest,
+                appearanceMode: store.appearanceMode,
                 onFramesChange: onFramesChange,
                 onExpansionRequestHandled: onExpansionRequestHandled
             )
@@ -612,7 +594,7 @@ private struct ThreePaneWorkspaceChrome: View {
                     y: sourceFrame.midY
                 )
                 .shadow(
-                    color: WeiBeiTheme.ink.opacity(store.appearanceMode == .inkstone ? 0.38 : 0.14),
+                    color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.38 : 0.14),
                     radius: 22,
                     y: 12
                 )
@@ -966,7 +948,7 @@ struct EmptyWorkspaceView: View {
             VStack(spacing: 14) {
                 Image(systemName: "seal")
                     .font(.system(size: 34, weight: .regular))
-                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(store.appearanceMode == .inkstone ? 0.12 : 0.08))
+                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(store.appearanceMode.isDark ? 0.12 : 0.08))
                 Text(store.ui("在顶栏点亮一个板块开始", "Light up a pane above to begin"))
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
@@ -982,7 +964,7 @@ private struct PaneDropTargetView: View {
 
     var body: some View {
         RoundedRectangle(cornerRadius: 10)
-            .fill(WeiBeiTheme.cinnabarSoft.opacity(store.appearanceMode == .inkstone ? 0.16 : 0.12))
+            .fill(WeiBeiTheme.cinnabarSoft.opacity(store.appearanceMode.isDark ? 0.16 : 0.12))
             .overlay {
                 RoundedRectangle(cornerRadius: 10)
                     .stroke(WeiBeiTheme.cinnabar.opacity(0.30), lineWidth: 1)

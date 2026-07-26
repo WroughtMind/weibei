@@ -13,7 +13,7 @@ extension WorkspaceStore {
         guard agentProviderID != provider else { return }
         let previousDefault = agentProviderID.defaultModelHint
         agentProviderID = provider
-        // Prefer profile-scoped key; fall back to legacy per-provider keychain.
+        // Prefer profile-scoped key; fall back to the provider-scoped app data file.
         let profileKey = AgentCredentialProfileStore.loadAPIKey(profileID: activeAgentProfileID)
         openAIAPIKey = profileKey.isEmpty
             ? OpenAIAPIKeyStore.load(provider: provider.piProviderName)
@@ -69,7 +69,7 @@ extension WorkspaceStore {
         case .gitHubModels:
             return .gitHubModels
         case .codexSubscription:
-            // Need the OAuth token + account id from ~/.pi/agent/auth.json. If absent
+            // Need the OAuth token + account id from WeiBei's Pi auth file. If absent
             // (not signed in), return nil — the caller falls back to the built-in catalog.
             guard let credential = codexSubscriptionCredential() else { return nil }
             return .codexSubscription(token: credential.token, accountID: credential.accountID)
@@ -80,8 +80,8 @@ extension WorkspaceStore {
 
     /// Read the openai-codex OAuth token + accountId stored by pi-oauth-login.mjs.
     func codexSubscriptionCredential() -> (token: String, accountID: String)? {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".pi/agent/auth.json")
+        WeiBeiAgentDataPaths.migrateHomePiAuthIfNeeded()
+        let url = WeiBeiAgentDataPaths.piAuthJSON
         guard let data = try? Data(contentsOf: url),
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let entry = root["openai-codex"] as? [String: Any] else { return nil }
@@ -186,13 +186,23 @@ extension WorkspaceStore {
 
 
     func toggleAppearanceMode() {
-        appearanceMode = appearanceMode.toggled
-        save()
+        setAppearanceMode(appearanceMode.toggled)
     }
 
+    /**
+     * 切换应用主题，并在发布 SwiftUI 状态前同步原生控件使用的主题运行时。
+     */
     func setAppearanceMode(_ mode: WeiBeiAppearanceMode) {
-        guard appearanceMode != mode else { return }
-        appearanceMode = mode
+        guard appearanceMode != mode else {
+            WeiBeiThemeRuntime.mode = mode
+            return
+        }
+        WeiBeiThemeRuntime.mode = mode
+        let transaction = Transaction(animation: WeiBeiMotion.appearance)
+        withTransaction(transaction) {
+            appearanceMode = mode
+        }
+        NotificationCenter.default.post(name: WeiBeiThemeRuntime.didChangeNotification, object: mode)
         save()
     }
 
@@ -284,7 +294,7 @@ extension WorkspaceStore {
         )
         agentCredentialProfiles.append(profile)
         AgentCredentialProfileStore.saveProfiles(agentCredentialProfiles)
-        // Seed keychain from current key if any.
+        // Seed the new profile's app-owned credential file from the current key.
         if !openAIAPIKey.isEmpty {
             try? AgentCredentialProfileStore.saveAPIKey(openAIAPIKey, profileID: profile.id)
         }

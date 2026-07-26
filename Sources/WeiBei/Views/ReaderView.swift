@@ -42,7 +42,9 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
         ZStack(alignment: .top) {
             Color.clear
                 .frame(maxWidth: .infinity)
-                .frame(height: 30)
+                .frame(height: 36)
+                .contentShape(Rectangle())
+                .onHover(perform: updateVisibility)
 
             if visible || isPinned {
                 HStack(alignment: .center, spacing: actionsAlignedTrailing ? 10 : 8) {
@@ -71,22 +73,23 @@ struct ImmersiveHoverTitleView<Actions: View>: View {
                 .frame(minHeight: 30)
                 .background {
                     RoundedRectangle(cornerRadius: 7)
-                        .fill(WeiBeiTheme.paperRaised.opacity(appearanceMode == .inkstone ? 0.34 : 0.72))
+                        .fill(WeiBeiTheme.paperRaised.opacity(appearanceMode.isDark ? 0.88 : 0.92))
                         .overlay {
                             RoundedRectangle(cornerRadius: 7)
-                                .stroke(WeiBeiTheme.hairline.opacity(appearanceMode == .inkstone ? 0.30 : 0.42), lineWidth: 1)
+                                .stroke(WeiBeiTheme.hairline.opacity(appearanceMode.isDark ? 0.42 : 0.48), lineWidth: 1)
                         }
                 }
-                .shadow(color: WeiBeiTheme.ink.opacity(appearanceMode == .inkstone ? 0.24 : 0.07), radius: 9, y: 4)
+                .shadow(color: WeiBeiTheme.ink.opacity(appearanceMode.isDark ? 0.28 : 0.08), radius: 9, y: 4)
                 .padding(.horizontal, actionsAlignedTrailing ? 14 : 0)
                 .padding(.top, 7)
+                .contentShape(Rectangle())
+                .onHover(perform: updateVisibility)
                 .modifier(PaneHeaderReorderModifier(role: reorderRole))
                 .transition(WeiBeiTransition.floating)
             }
         }
-        .contentShape(Rectangle())
-        .onHover(perform: updateVisibility)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .frame(maxWidth: .infinity, alignment: .top)
+        .fixedSize(horizontal: false, vertical: true)
         .onDisappear {
             hideTask?.cancel()
         }
@@ -211,8 +214,8 @@ struct ReaderView: View {
                 }
             }
         }
-        .background(WeiBeiTheme.paper)
-        .foregroundStyle(WeiBeiTheme.ink)
+        .background(Color(nsColor: WeiBeiNativePalette.paper(for: store.appearanceMode)))
+        .foregroundStyle(Color(nsColor: WeiBeiNativePalette.ink(for: store.appearanceMode)))
         .animation(WeiBeiMotion.panel, value: pdfBrowseMode)
         .animation(WeiBeiMotion.panel, value: store.showReaderSearch)
         .animation(WeiBeiMotion.panel, value: pdfHasSelectableText)

@@ -336,7 +336,7 @@ final class WorkspaceStore: ObservableObject {
     let notebookMarkdownReader: (URL) throws -> String
     let notebookMarkdownWriter: (String, URL) throws -> Void
     let notebookFileMover: (URL, URL) throws -> Void
-    /// Credential reads are injected so filesystem-only self-checks never touch the user's login keychain.
+    /// Credential reads are injected so filesystem-only self-checks remain isolated from user app data.
     let apiKeyLoader: @MainActor (String) -> String
     let workspaceRepository: WorkspaceRepository
     let notebookRepository: NotebookRepository
@@ -490,6 +490,7 @@ final class WorkspaceStore: ObservableObject {
         )
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         load()
+        WeiBeiThemeRuntime.mode = appearanceMode
         loadSelectionAskThreadsIfNeeded()
         let recoveredPendingNotebookRename = recoverPendingNotebookRenameIfNeeded()
         let resolvedImportedFileBookmarks = resolvePersistedImportedFileBookmarks()
@@ -534,7 +535,7 @@ final class WorkspaceStore: ObservableObject {
     /**
      * 读取工作区当前提供商的 API Key。
      *
-     * 文件身份自检会创建大量隔离工作区；该专用进程不得访问用户登录钥匙串。
+     * 文件身份自检会创建大量隔离工作区；该专用进程不得访问用户凭据文件。
      *
      * @param provider - Pi 提供商标识
      * @returns 已清理的 API Key；文件身份自检中固定为空
@@ -560,8 +561,7 @@ final class WorkspaceStore: ObservableObject {
         let cleanedOwnerTitle = ownerTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolvedOwnerTitle = (cleanedOwnerTitle?.isEmpty == false ? cleanedOwnerTitle : nil) ?? selectionOwnerTitle(for: source)
         let boundedText = Self.boundedSelectionText(cleaned)
-        let shouldRevealSelectionPrompt = (anchor != nil || pinnedFloatingAgent)
-            && !isConversationSurfaceVisible
+        let shouldRevealSelectionPrompt = anchor != nil || pinnedFloatingAgent
         let contentMatches = selectionContext.map {
             $0.text == boundedText
                 && $0.source == source
@@ -584,7 +584,7 @@ final class WorkspaceStore: ObservableObject {
             // Never clear pin while the user locked the float (or mid selection-answer).
             cancelPendingSelectionAttachment()
             if pinnedFloatingAgent || keepFloatingSelectionForAnswer {
-                if !isConversationSurfaceVisible, agentSurface != .selectionFloat {
+                if agentSurface != .selectionFloat {
                     agentSurface = .selectionFloat
                 }
                 showQuietInsight = false
@@ -623,9 +623,7 @@ final class WorkspaceStore: ObservableObject {
         cancelPendingSelectionAttachment()
         // Respect pin / answer lock — do not force-unpin on every new selection.
         if pinnedFloatingAgent || keepFloatingSelectionForAnswer {
-            if !isConversationSurfaceVisible {
-                agentSurface = .selectionFloat
-            }
+            agentSurface = .selectionFloat
             showQuietInsight = false
             return
         }
@@ -1819,10 +1817,8 @@ final class WorkspaceStore: ObservableObject {
             let explicitModel = Self.environmentValue("WEIBEI_PI_MODEL")
             let thinking = Self.environmentValue("WEIBEI_PI_THINKING")
             let selectedProvider = agentProviderID
-            let linkedOAuth = PiOAuthService.readLinkedOAuthProviders(
-                from: FileManager.default.homeDirectoryForCurrentUser
-                    .appendingPathComponent(".pi/agent/auth.json")
-            )
+            WeiBeiAgentDataPaths.migrateHomePiAuthIfNeeded()
+            let linkedOAuth = PiOAuthService.readLinkedOAuthProviders(from: WeiBeiAgentDataPaths.piAuthJSON)
             // Prefer explicit Pi provider id; map legacy OpenAI API selection to openai-codex when OAuth-linked.
             let providerName: String = {
                 if !explicitProvider.isEmpty { return explicitProvider }
@@ -3144,7 +3140,7 @@ final class WorkspaceStore: ObservableObject {
 
         let savedKey = apiKeyLoader(agentProviderID.piProviderName)
         if !savedKey.isEmpty {
-            return (savedKey, ui("macOS 钥匙串", "macOS Keychain"))
+            return (savedKey, ui("魏碑应用数据", "WeiBei app data"))
         }
 
         return nil

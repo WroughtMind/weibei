@@ -236,19 +236,9 @@ final class AgentThinkingOrbitNSView: NSView {
             : 1
         let orbitProgress = TextOrbitSegment.orbitProgress(at: elapsed)
 
-        let ink: NSColor
-        let dim: NSColor
-        let cinnabar: NSColor
-        switch appearanceMode {
-        case .inkstone:
-            ink = NSColor(calibratedRed: 0.843, green: 0.796, blue: 0.690, alpha: 0.93)
-            dim = NSColor(calibratedRed: 0.435, green: 0.400, blue: 0.333, alpha: 0.70)
-            cinnabar = NSColor(calibratedRed: 0.651, green: 0.212, blue: 0.169, alpha: 0.82)
-        case .paper:
-            ink = NSColor(calibratedRed: 0.115, green: 0.095, blue: 0.080, alpha: 0.93)
-            dim = NSColor(calibratedRed: 0.490, green: 0.430, blue: 0.365, alpha: 0.70)
-            cinnabar = NSColor(calibratedRed: 0.570, green: 0.150, blue: 0.105, alpha: 0.82)
-        }
+        let ink = WeiBeiNativePalette.ink(for: appearanceMode).withAlphaComponent(0.93)
+        let dim = WeiBeiNativePalette.tertiaryInk(for: appearanceMode).withAlphaComponent(0.70)
+        let cinnabar = WeiBeiNativePalette.cinnabar(for: appearanceMode).withAlphaComponent(0.82)
 
         let font = NSFont.systemFont(ofSize: Self.statusFontSize, weight: .medium)
         // Line box inset so every side has the same gap to the stroke centerline.

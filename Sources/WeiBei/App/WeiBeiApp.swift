@@ -171,23 +171,25 @@ struct WeiBeiAppearanceTransition: ViewModifier {
      */
     func body(content: Content) -> some View {
         content
-            .animation(WeiBeiMotion.appearance, value: mode)
             .overlay {
                 washColor
                     .opacity(washOpacity)
                     .allowsHitTesting(false)
             }
             .onChange(of: mode) { oldMode, _ in
+                let crossesColorScheme = oldMode.isDark != mode.isDark
+                guard crossesColorScheme else {
+                    washOpacity = 0
+                    return
+                }
                 var transaction = Transaction()
                 transaction.disablesAnimations = true
                 withTransaction(transaction) {
                     washColor = Color(nsColor: oldMode.windowBackground)
-                    washOpacity = 0.36
+                    washOpacity = 0.16
                 }
-                DispatchQueue.main.async {
-                    withAnimation(WeiBeiMotion.appearance) {
-                        washOpacity = 0
-                    }
+                withAnimation(WeiBeiMotion.appearance) {
+                    washOpacity = 0
                 }
             }
     }
@@ -205,8 +207,12 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
      */
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
-        DispatchQueue.main.async {
-            configure(view.window)
+        if let window = view.window {
+            configure(window)
+        } else {
+            DispatchQueue.main.async {
+                configure(view.window)
+            }
         }
         return view
     }
@@ -215,8 +221,12 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
      * SwiftUI 状态变化时刷新窗口样式和验证配置。
      */
     func updateNSView(_ view: NSView, context: Context) {
-        DispatchQueue.main.async {
-            configure(view.window)
+        if let window = view.window {
+            configure(window)
+        } else {
+            DispatchQueue.main.async {
+                configure(view.window)
+            }
         }
     }
 
@@ -232,6 +242,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         window.toolbar = nil
         window.isOpaque = true
         window.backgroundColor = appearanceMode.windowBackground
+        window.appearance = NSAppearance(named: appearanceMode.isDark ? .darkAqua : .aqua)
         window.isMovableByWindowBackground = true
         window.ignoresMouseEvents = ProcessInfo.processInfo.environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1"
         VerificationCaptureCoordinator.shared.configure(window)

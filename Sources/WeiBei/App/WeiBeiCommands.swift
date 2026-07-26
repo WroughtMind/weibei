@@ -176,9 +176,7 @@ struct WeiBeiCommands: Commands {
      * 使用外观切换动效执行菜单动作。
      */
     private func animateAppearance(_ action: () -> Void) {
-        withAnimation(WeiBeiMotion.appearance) {
-            action()
-        }
+        action()
     }
 
     /**

@@ -1139,8 +1139,10 @@ private func checkBundledAgentResources() throws {
             && runtimeSource.contains("if !providerConfiguration.thinkingLevel.isEmpty")
             && runtimeSource.contains("syncLocalPiAuth(from: source, to: destination)")
             && runtimeSource.contains("let sourceObject = try? JSONSerialization.jsonObject")
-            && runtimeSource.contains("Always take home OAuth entries")
-            && runtimeSource.contains("sourceEntry[\"type\"] as? String == \"oauth\"")
+            && runtimeSource.contains("WeiBeiAgentDataPaths.piAgentDirectory")
+            && runtimeSource.contains("WeiBeiAgentDataPaths.migrateHomePiAuthIfNeeded()")
+            && runtimeSource.contains("WeiBei store wins for OAuth providers")
+            && !runtimeSource.contains("Always take home OAuth entries")
             && runtimeSource.contains("PI returned a content answer without a current-turn source citation")
             && runtimeSource.contains("binary.sha256")
             && runtimeSource.contains("SecStaticCodeCheckValidity"),

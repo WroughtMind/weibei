@@ -44,7 +44,7 @@ struct AgentBubble: View {
                             .strokeBorder(userBubbleStroke, lineWidth: 1)
                     }
                     .shadow(
-                        color: WeiBeiTheme.ink.opacity(store.appearanceMode == .inkstone ? 0.0 : (hovering ? 0.06 : 0.04)),
+                        color: WeiBeiTheme.ink.opacity(store.appearanceMode.isDark ? 0.0 : (hovering ? 0.06 : 0.04)),
                         radius: hovering ? 6 : 4,
                         y: hovering ? 2 : 1.2
                     )
@@ -57,13 +57,13 @@ struct AgentBubble: View {
 
     private var userBubbleFill: Color {
         // Same paper family as chips/panels: a slightly raised slip of paper, not a tinted chat blob.
-        store.appearanceMode == .inkstone
+        store.appearanceMode.isDark
             ? WeiBeiTheme.paperRaised.opacity(hovering ? 0.58 : 0.46)
             : WeiBeiTheme.paperRaised.opacity(hovering ? 1.0 : 0.96)
     }
 
     private var userBubbleStroke: Color {
-        store.appearanceMode == .inkstone
+        store.appearanceMode.isDark
             ? WeiBeiTheme.hairline.opacity(hovering ? 0.58 : 0.42)
             : WeiBeiTheme.hairline.opacity(hovering ? 0.52 : 0.38)
     }
@@ -656,8 +656,7 @@ struct AgentMessageMarkdownText: View {
             .foregroundStyle(WeiBeiTheme.ink)
             .multilineTextAlignment(.leading)
             .fixedSize(horizontal: false, vertical: true)
-            // Let wheel events reach the conversation ScrollView (no textSelection).
-            .allowsHitTesting(false)
+            .textSelection(.enabled)
     }
 
     private var renderedText: AttributedString {

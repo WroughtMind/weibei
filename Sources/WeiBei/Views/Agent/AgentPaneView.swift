@@ -23,16 +23,15 @@ struct AgentRailTurn {
 /// than `availableWidth`, or multi-pane text centers as if the strip were full-window wide.
 enum AgentChatLayoutMetrics {
     static let compactMaxWidth: CGFloat = 560
-    /// Immersive conversation: nearly full pane (not a skinny centered strip).
-    static let wideMaxWidth: CGFloat = 1600
+    /// Immersive conversation keeps a readable centered column on wide displays.
+    static let wideMaxWidth: CGFloat = 920
     static let compactSideGutter: CGFloat = 12
-    /// Tight gutters so the reading column owns the immersive canvas.
-    static let wideSideGutter: CGFloat = 48
+    static let wideSideGutter: CGFloat = 28
     static let compactComposerHeight: CGFloat = 52
-    /// Tall real composer — empty state must still read as a writing surface, not a search field.
-    static let wideComposerHeight: CGFloat = 148
+    static let wideComposerMinHeight: CGFloat = 108
+    static let wideComposerMaxHeight: CGFloat = 220
     static let compactFontSize: CGFloat = 14.5
-    static let wideFontSize: CGFloat = 17
+    static let wideFontSize: CGFloat = 16
 
     static func isWide(layout: WorkspaceLayout) -> Bool {
         // Immersive conversation only — document multi-pane keeps compact strip metrics.
@@ -42,7 +41,6 @@ enum AgentChatLayoutMetrics {
     static func contentWidth(availableWidth: CGFloat, wide: Bool) -> CGFloat {
         let gutter = (wide ? wideSideGutter : compactSideGutter) * 2
         let usable = max(availableWidth - gutter, 1)
-        // Wide: use nearly the whole measured pane (gutter only). Cap only for ultra-wide displays.
         if wide {
             return min(usable, wideMaxWidth)
         }
@@ -50,7 +48,11 @@ enum AgentChatLayoutMetrics {
     }
 
     static func composerHeight(wide: Bool) -> CGFloat {
-        wide ? wideComposerHeight : compactComposerHeight
+        wide ? wideComposerMinHeight : compactComposerHeight
+    }
+
+    static func composerMaxHeight(wide: Bool) -> CGFloat {
+        wide ? wideComposerMaxHeight : compactComposerHeight
     }
 
     static func composerFontSize(wide: Bool) -> CGFloat {
@@ -127,7 +129,7 @@ struct AgentPaneView: View {
                     ScrollView(showsIndicators: true) {
                         // No scrollTargetLayout / scrollPosition / minHeight:viewport /
                         // GeometryReader parent — all thrash sizeThatFits on LazyVStack.
-                        LazyVStack(alignment: .leading, spacing: wide ? 16 : 12) {
+                        LazyVStack(alignment: .leading, spacing: wide ? 22 : 12) {
                             ForEach(store.messages) { message in
                                 agentMessageRow(
                                     message: message,
@@ -169,8 +171,8 @@ struct AgentPaneView: View {
                                 .frame(height: agentScrollBottomInset)
                                 .id(agentBottomAnchorID)
                         }
-                        .padding(.horizontal, wide ? 16 : 10)
-                        .padding(.vertical, wide ? 10 : 10)
+                        .padding(.horizontal, wide ? 8 : 10)
+                        .padding(.vertical, wide ? 14 : 10)
                         .environment(\.agentChatLayoutWidth, contentWidth)
                         .padding(.top, store.messages.isEmpty ? 22 : 0)
                         .frame(maxWidth: .infinity, alignment: .topLeading)

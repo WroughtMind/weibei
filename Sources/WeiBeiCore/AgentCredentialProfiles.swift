@@ -1,5 +1,4 @@
 import Foundation
-import Security
 
 /// How the user wants to attach a model provider for Pi.
 public enum AgentAuthMethod: String, Codable, CaseIterable, Identifiable, Sendable {
@@ -23,20 +22,20 @@ public enum AgentAuthMethod: String, Codable, CaseIterable, Identifiable, Sendab
         switch self {
         case .apiKey:
             return language.text(
-                "选择任意 Pi 支持的提供商，粘贴 API Key 并保存。密钥按配置写入钥匙串，并注入 Pi 对应环境变量。",
-                "Pick any Pi-supported provider, paste an API key, and save. Keys are stored per profile in Keychain and passed as Pi env vars."
+                "选择任意 Pi 支持的提供商，粘贴 API Key 并保存。密钥保存在魏碑应用数据中，启动 Agent 时注入 Pi 环境变量。",
+                "Pick any Pi-supported provider, paste an API key, and save. Keys stay in WeiBei app data and are injected as Pi env vars."
             )
         case .subscription:
             return language.text(
-                "与 Pi `/login` 相同：浏览器 OAuth 连接 ChatGPT Plus/Pro、Claude Pro/Max 等订阅；凭证写入 ~/.pi/agent/auth.json。",
-                "Same as Pi `/login`: browser OAuth for ChatGPT Plus/Pro, Claude Pro/Max, etc. Credentials go to ~/.pi/agent/auth.json."
+                "浏览器 OAuth 连接 ChatGPT Plus/Pro、Claude Pro/Max 等订阅；凭证保存在魏碑自己的 Pi 配置里（不写入终端 ~/.pi）。",
+                "Browser OAuth for ChatGPT Plus/Pro, Claude Pro/Max, etc. Tokens stay in WeiBei’s own Pi config (not terminal ~/.pi)."
             )
         }
     }
 }
 
 /// A named, switchable agent connection profile (provider + model + optional base URL).
-/// Secrets live in the Keychain under the profile id — never in this struct's Codable payload.
+/// Secrets live in WeiBei's local credential store under the profile id — never in this Codable payload.
 public struct AgentCredentialProfile: Identifiable, Codable, Equatable, Sendable {
     public var id: UUID
     public var name: String
@@ -264,11 +263,11 @@ public enum AgentProviderConsoleLinks {
     }
 }
 
-/// Persist named profiles (metadata in UserDefaults; secrets in Keychain).
+/// Persist named profiles (metadata in UserDefaults; secrets in WeiBei local store).
 public enum AgentCredentialProfileStore {
     private static let profilesKey = "weibei.agentCredentialProfiles.v1"
     private static let activeProfileKey = "weibei.agentCredentialActiveProfileID.v1"
-    private static let keychainService = "com.changfenhuang.weibei.agent-profile"
+    private static let credentialService = "com.changfenhuang.weibei.agent-profile"
 
     public static func loadProfiles() -> [AgentCredentialProfile] {
         guard let data = UserDefaults.standard.data(forKey: profilesKey),
@@ -305,22 +304,22 @@ public enum AgentCredentialProfileStore {
     }
 
     public static func loadAPIKey(profileID: UUID) -> String {
-        KeychainPasswordStore(
-            service: keychainService,
+        WeiBeiCredentialStore(
+            service: credentialService,
             account: "PROFILE_\(profileID.uuidString)"
         ).load()
     }
 
     public static func saveAPIKey(_ value: String, profileID: UUID) throws {
-        try KeychainPasswordStore(
-            service: keychainService,
+        try WeiBeiCredentialStore(
+            service: credentialService,
             account: "PROFILE_\(profileID.uuidString)"
         ).save(value)
     }
 
     public static func deleteAPIKey(profileID: UUID) throws {
-        try KeychainPasswordStore(
-            service: keychainService,
+        try WeiBeiCredentialStore(
+            service: credentialService,
             account: "PROFILE_\(profileID.uuidString)"
         ).delete()
     }

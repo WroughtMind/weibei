@@ -101,8 +101,12 @@ fileprivate final class MarkdownImageSchemeHandler: NSObject, WKURLSchemeHandler
         switch appearanceMode {
         case .paper:
             return ("#efe6d8", "#9f3b2f", "#6b5148")
+        case .xuan:
+            return ("#f2eee6", "#9a3a2e", "#5f5a52")
         case .inkstone:
             return ("#151515", "#a6362b", "#d7cbb0")
+        case .stele:
+            return ("#1e2228", "#b04034", "#d2d6dc")
         }
     }
 
@@ -565,7 +569,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
     private static func applyWebAppearance(to view: WKWebView, appearanceMode: WeiBeiAppearanceMode) {
         view.underPageBackgroundColor = WeiBeiNativePalette.paper(for: appearanceMode)
-        view.appearance = NSAppearance(named: appearanceMode == .inkstone ? .darkAqua : .aqua)
+        view.appearance = NSAppearance(named: appearanceMode.isDark ? .darkAqua : .aqua)
     }
 
     private static func json(_ value: String) -> String {

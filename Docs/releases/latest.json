@@ -1,0 +1,7 @@
+{
+  "version": "0.1.0",
+  "build": 594,
+  "commit": "e93ecf2a6981d7826e7baa705d818e061ba4e2d5",
+  "url": "https://github.com/weibei-app/weibei/releases",
+  "notes": "Theme in Settings only; Agent credentials stored in WeiBei app data (no login-keychain prompts)."
+}

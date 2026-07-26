@@ -9,19 +9,20 @@ extension AgentPaneView {
     }
 
     func agentInputTray(wide: Bool, contentWidth: CGFloat) -> some View {
-        let fieldHeight = AgentChatLayoutMetrics.composerHeight(wide: wide)
+        let minHeight = AgentChatLayoutMetrics.composerHeight(wide: wide)
+        let maxHeight = AgentChatLayoutMetrics.composerMaxHeight(wide: wide)
         let fontSize = AgentChatLayoutMetrics.composerFontSize(wide: wide)
         return VStack(spacing: 0) {
             LinearGradient(
                 colors: [
                     .clear,
-                    WeiBeiTheme.paper.opacity(0.18),
-                    WeiBeiTheme.glassTint.opacity(0.34)
+                    WeiBeiTheme.paper.opacity(0.22),
+                    WeiBeiTheme.glassTint.opacity(0.40)
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
-            .frame(height: wide ? 16 : 22)
+            .frame(height: wide ? 16 : 18)
             .allowsHitTesting(false)
 
             VStack(alignment: .leading, spacing: 8) {
@@ -35,27 +36,27 @@ extension AgentPaneView {
                     focused: $draftFocused,
                     font: .system(size: fontSize),
                     promptFont: .system(size: fontSize),
-                    lineLimit: wide ? 1...12 : 1...6,
-                    height: fieldHeight,
-                    sendButtonSize: wide ? 38 : 28,
-                    trailingPadding: wide ? 56 : 40,
-                    sendTrailing: wide ? 18 : 10,
-                    sendBottom: wide ? 24 : 8,
-                    horizontalPadding: wide ? 22 : 12,
-                    verticalPadding: wide ? 20 : 8
+                    lineLimit: wide ? 1...10 : 1...6,
+                    height: minHeight,
+                    maxHeight: maxHeight,
+                    sendButtonSize: wide ? 32 : 28,
+                    trailingPadding: wide ? 48 : 40,
+                    sendTrailing: wide ? 12 : 10,
+                    sendBottom: wide ? 10 : 8,
+                    horizontalPadding: wide ? 16 : 12,
+                    verticalPadding: wide ? 12 : 8,
+                    showsModelFooter: wide
                 ) {
                     store.askAgent()
                 }
             }
             .font(.system(size: fontSize))
-            // Fixed width = reading column. Fixed height = real composer block.
-            .frame(width: contentWidth, height: fieldHeight, alignment: .bottom)
-            .padding(.top, wide ? 12 : 4)
-            .padding(.bottom, wide ? 28 : 12)
+            .frame(width: contentWidth, alignment: .bottom)
+            .padding(.top, wide ? 6 : 4)
+            .padding(.bottom, wide ? 16 : 12)
             .frame(maxWidth: .infinity)
             .background(WeiBeiTheme.paper)
             .animation(WeiBeiMotion.reveal, value: store.agentDraft)
-            .animation(WeiBeiMotion.panel, value: fieldHeight)
             .accessibilityIdentifier(wide ? "agent-input-tray-wide" : "agent-input-tray-compact")
         }
         .background(alignment: .bottom) {

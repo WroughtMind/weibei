@@ -358,20 +358,20 @@ struct NotePaneView: View {
 
     private func noteModeButtonFill(selected: Bool, hovering: Bool) -> Color {
         if selected {
-            return WeiBeiTheme.cinnabarSoft.opacity(store.appearanceMode == .inkstone ? 0.44 : 0.62)
+            return WeiBeiTheme.cinnabarSoft.opacity(store.appearanceMode.isDark ? 0.44 : 0.62)
         }
         if hovering {
-            return WeiBeiTheme.paperRaised.opacity(store.appearanceMode == .inkstone ? 0.16 : 0.20)
+            return WeiBeiTheme.paperRaised.opacity(store.appearanceMode.isDark ? 0.16 : 0.20)
         }
         return Color.clear
     }
 
     private func noteModeButtonStroke(selected: Bool, hovering: Bool) -> Color {
         if selected {
-            return WeiBeiTheme.cinnabar.opacity(store.appearanceMode == .inkstone ? 0.34 : 0.24)
+            return WeiBeiTheme.cinnabar.opacity(store.appearanceMode.isDark ? 0.34 : 0.24)
         }
         if hovering {
-            return WeiBeiTheme.hairline.opacity(store.appearanceMode == .inkstone ? 0.30 : 0.18)
+            return WeiBeiTheme.hairline.opacity(store.appearanceMode.isDark ? 0.30 : 0.18)
         }
         return Color.clear
     }

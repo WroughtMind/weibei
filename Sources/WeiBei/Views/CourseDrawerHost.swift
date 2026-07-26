@@ -115,13 +115,7 @@ final class CourseDrawerContainerView: NSView {
     }
 
     private static func panelPaperColor(for mode: WeiBeiAppearanceMode) -> NSColor {
-        // Match Sidebar / paperRaised family so empty frames never read as system dark gray.
-        switch mode {
-        case .paper:
-            return NSColor(calibratedRed: 0.976, green: 0.944, blue: 0.872, alpha: 1)
-        case .inkstone:
-            return NSColor(calibratedRed: 0.082, green: 0.082, blue: 0.082, alpha: 1)
-        }
+        WeiBeiNativePalette.paperRaised(for: mode)
     }
 
     private func installHostingIfNeeded(store: WorkspaceStore) {

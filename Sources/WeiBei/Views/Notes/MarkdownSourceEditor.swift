@@ -107,7 +107,7 @@ struct MarkdownSourceEditor: NSViewRepresentable {
         guard let textStorage = textView.textStorage, textStorage.length > 0 else { return }
         let fullRange = NSRange(location: 0, length: textStorage.length)
         let ink = WeiBeiNativePalette.ink(for: appearanceMode)
-        let quotePrefixColor = ink.withAlphaComponent(appearanceMode == .inkstone ? 0.30 : 0.36)
+        let quotePrefixColor = ink.withAlphaComponent(appearanceMode.isDark ? 0.30 : 0.36)
         let markerColor = NSColor.clear
         let markerFont = NSFont.monospacedSystemFont(ofSize: 0.1, weight: .regular)
         let quotePrefixRegex = try? NSRegularExpression(pattern: #"(?m)^\s*(?:>\s*)+"#)
@@ -438,4 +438,3 @@ struct MarkdownPreviewView: View {
         }
     }
 }
-

@@ -250,12 +250,14 @@ struct AgentComposerField: View {
     var promptFont: Font
     var lineLimit: ClosedRange<Int>
     var height: CGFloat
+    var maxHeight: CGFloat? = nil
     var sendButtonSize: CGFloat
     var trailingPadding: CGFloat
     var sendTrailing: CGFloat
     var sendBottom: CGFloat
     var horizontalPadding: CGFloat = 10
     var verticalPadding: CGFloat = 0
+    var showsModelFooter: Bool = false
     var submit: () -> Void
 
     private var canSend: Bool {
@@ -266,66 +268,97 @@ struct AgentComposerField: View {
         store.isAskingAgent || canSend
     }
 
+    private var isWideComposer: Bool {
+        maxHeight != nil || showsModelFooter
+    }
+
     var body: some View {
-        // Tall Codex-like composer uses a fixed outer height; short fields still hug content.
-        let locksHeight = height >= 72
-        ZStack(alignment: .bottomTrailing) {
-            TextField(
-                "",
-                text: $store.agentDraft,
-                prompt: Text(prompt)
-                    .font(promptFont)
-                    .foregroundStyle(WeiBeiTheme.placeholderInk),
-                axis: .vertical
-            )
-            .textFieldStyle(.plain)
-            .lineLimit(lineLimit)
-            .fixedSize(horizontal: false, vertical: !locksHeight)
-            .font(font)
-            .foregroundColor(WeiBeiTheme.ink)
-            .focused(focused)
-            .onSubmit(submit)
-            .padding(.vertical, verticalPadding)
-            .padding(.trailing, showsControl ? trailingPadding : 0)
-            .frame(maxWidth: .infinity, maxHeight: locksHeight ? .infinity : nil, alignment: .topLeading)
-            .padding(.horizontal, horizontalPadding)
-            .frame(maxWidth: .infinity, minHeight: height, maxHeight: locksHeight ? height : nil, alignment: .topLeading)
-            .background {
-                RoundedRectangle(cornerRadius: locksHeight ? 14 : WeiBeiMetric.controlRadius)
-                    .fill(WeiBeiTheme.paperRaised.opacity(focused.wrappedValue ? 0.72 : 0.62))
-            }
-            .clipShape(RoundedRectangle(cornerRadius: locksHeight ? 14 : WeiBeiMetric.controlRadius))
-            .overlay {
-                RoundedRectangle(cornerRadius: locksHeight ? 14 : WeiBeiMetric.controlRadius)
-                    .stroke(
-                        focused.wrappedValue ? WeiBeiTheme.link.opacity(0.36) : WeiBeiTheme.hairline.opacity(0.54),
-                        lineWidth: 1
-                    )
+        let corner: CGFloat = isWideComposer ? 14 : WeiBeiMetric.controlRadius
+        VStack(alignment: .leading, spacing: 0) {
+            ZStack(alignment: .topLeading) {
+                TextField(
+                    "",
+                    text: $store.agentDraft,
+                    prompt: Text(prompt)
+                        .font(promptFont)
+                        .foregroundStyle(WeiBeiTheme.placeholderInk),
+                    axis: .vertical
+                )
+                .textFieldStyle(.plain)
+                .lineLimit(lineLimit)
+                .fixedSize(horizontal: false, vertical: true)
+                .font(font)
+                .foregroundColor(WeiBeiTheme.ink)
+                .focused(focused)
+                .onSubmit(submit)
+                .padding(.top, verticalPadding)
+                .padding(.bottom, showsModelFooter ? 6 : verticalPadding)
+                .padding(.trailing, showsModelFooter ? 0 : (showsControl ? trailingPadding : 0))
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+                .padding(.horizontal, horizontalPadding)
+
+                if showsControl && !showsModelFooter {
+                    VStack {
+                        Spacer(minLength: 0)
+                        HStack {
+                            Spacer(minLength: 0)
+                            sendButton
+                                .padding(.trailing, sendTrailing)
+                                .padding(.bottom, sendBottom)
+                        }
+                    }
+                }
             }
 
-            if showsControl {
-                Button {
-                    store.isAskingAgent ? store.cancelAgentRequest() : submit()
-                } label: {
-                    Image(systemName: store.isAskingAgent ? "stop.fill" : "paperplane.fill")
+            if showsModelFooter {
+                HStack(spacing: 10) {
+                    Text(store.modelName.isEmpty ? store.ui("模型", "Model") : store.modelName)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    if showsControl {
+                        sendButton
+                    }
                 }
-                .buttonStyle(WeiBeiIconButtonStyle(size: sendButtonSize, prominence: store.isAskingAgent ? .neutral : .primary))
-                .accessibilityLabel(Text(store.isAskingAgent ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send")))
-                .help(store.isAskingAgent ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send"))
-                .keyboardShortcut(.return, modifiers: [.command])
-                .padding(.trailing, sendTrailing)
-                .padding(.bottom, sendBottom)
-                .transition(WeiBeiTransition.floating)
-                .animation(WeiBeiMotion.micro, value: showsControl)
+                .padding(.horizontal, horizontalPadding)
+                .padding(.bottom, 10)
+                .padding(.top, 2)
             }
         }
-        .frame(height: locksHeight ? height : nil, alignment: .bottom)
+        .frame(maxWidth: .infinity, minHeight: height, maxHeight: maxHeight, alignment: .topLeading)
+        .background {
+            RoundedRectangle(cornerRadius: corner)
+                .fill(WeiBeiTheme.paperRaised.opacity(focused.wrappedValue ? 0.78 : 0.64))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: corner))
+        .overlay {
+            RoundedRectangle(cornerRadius: corner)
+                .stroke(
+                    focused.wrappedValue ? WeiBeiTheme.link.opacity(0.36) : WeiBeiTheme.hairline.opacity(0.54),
+                    lineWidth: 1
+                )
+        }
         .contentShape(Rectangle())
         .onTapGesture {
             focused.wrappedValue = true
         }
         .animation(WeiBeiMotion.micro, value: showsControl)
-        .accessibilityIdentifier(locksHeight ? "agent-composer-codex" : "agent-composer-compact")
+        .accessibilityIdentifier(isWideComposer ? "agent-composer-codex" : "agent-composer-compact")
+    }
+
+    private var sendButton: some View {
+        Button {
+            store.isAskingAgent ? store.cancelAgentRequest() : submit()
+        } label: {
+            Image(systemName: store.isAskingAgent ? "stop.fill" : "paperplane.fill")
+        }
+        .buttonStyle(WeiBeiIconButtonStyle(size: sendButtonSize, prominence: store.isAskingAgent ? .neutral : .primary))
+        .accessibilityLabel(Text(store.isAskingAgent ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send")))
+        .help(store.isAskingAgent ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send"))
+        .keyboardShortcut(.return, modifiers: [.command])
+        .transition(WeiBeiTransition.floating)
+        .animation(WeiBeiMotion.micro, value: showsControl)
     }
 }
 

@@ -691,12 +691,7 @@ final class ReaderPDFView: PDFView {
     }
 
     private var adaptedPaperColor: NSColor {
-        switch documentAppearanceMode {
-        case .paper:
-            return WeiBeiNativePalette.paper(for: .paper)
-        case .inkstone:
-            return NSColor(calibratedRed: 0.66, green: 0.61, blue: 0.50, alpha: 1.0)
-        }
+        WeiBeiNativePalette.documentMaskFill(for: documentAppearanceMode)
     }
 
     private func invalidatePageRendering() {
@@ -847,4 +842,3 @@ final class PDFOCRLineTextView: ReaderSelectableTextView, NSTextViewDelegate {
         return SelectionAnchorContentPoint.fromScreenPoint(screenPoint, in: window)
     }
 }
-

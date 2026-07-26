@@ -358,17 +358,10 @@ extension WorkspaceStore {
             )
         }
         let fieldKey = OpenAIAPIKeyStore.cleaned(openAIAPIKey)
-        let savedKey = OpenAIAPIKeyStore.load(provider: agentProviderID.piProviderName)
         if !fieldKey.isEmpty {
             return ui(
-                "当前提供商：\(agentProviderID.label(language: interfaceLanguage))。密钥输入后自动写入当前配置的钥匙串，跨次启动保留。",
-                "Provider: \(agentProviderID.label(language: interfaceLanguage)). The key is persisted to this profile's Keychain automatically as you type, and kept across launches."
-            )
-        }
-        if !savedKey.isEmpty {
-            return ui(
-                "密钥已在钥匙串，可直接用于 \(agentProviderID.label(language: interfaceLanguage)) 对话。",
-                "Key is in Keychain and ready for \(agentProviderID.label(language: interfaceLanguage)) chat."
+                "当前提供商：\(agentProviderID.label(language: interfaceLanguage))。密钥保存在魏碑应用数据中，跨次启动自动带上。",
+                "Provider: \(agentProviderID.label(language: interfaceLanguage)). The key is stored in WeiBei app data and restored on launch."
             )
         }
         return ui(
@@ -389,8 +382,8 @@ extension WorkspaceStore {
     }
 
     static func localPiSubscriptionAuthIsAvailable() -> Bool {
-        let authURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".pi/agent/auth.json")
+        WeiBeiAgentDataPaths.migrateHomePiAuthIfNeeded()
+        let authURL = WeiBeiAgentDataPaths.piAuthJSON
         guard let data = try? Data(contentsOf: authURL),
               data.count <= 1_048_576,
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -406,8 +399,7 @@ extension WorkspaceStore {
     }
 
     static func localPiSubscriptionSettings() -> [String: String] {
-        let settingsURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".pi/agent/settings.json")
+        let settingsURL = WeiBeiAgentDataPaths.piSettingsJSON
         guard let data = try? Data(contentsOf: settingsURL),
               data.count <= 1_048_576,
               let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],

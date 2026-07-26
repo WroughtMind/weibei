@@ -219,32 +219,60 @@ const decorateLeakedCalloutControls = (decorations, text, pos) => {
   }
 };
 
-const normalizeTheme = (theme) => (theme === 'inkstone' ? 'inkstone' : 'paper');
+// Keep all four product themes — CSS variables live under data-weibei-theme={paper|xuan|inkstone|stele}.
+const normalizeTheme = (theme) => {
+  if (theme === 'xuan' || theme === 'inkstone' || theme === 'stele' || theme === 'paper') return theme;
+  return 'paper';
+};
 let currentTheme = normalizeTheme(window.weiBeiTheme);
 
 const mermaidThemeVariables = () => {
-  if (currentTheme === 'inkstone') {
-    return {
-      background: '#151515',
-      primaryColor: '#1c1c1c',
-      primaryTextColor: '#d7cbb0',
-      primaryBorderColor: '#3a3328',
-      lineColor: '#8b5e3c',
-      secondaryColor: '#222222',
-      tertiaryColor: '#171717',
-      fontFamily: '-apple-system, BlinkMacSystemFont, "Songti SC", serif',
-    };
+  switch (currentTheme) {
+    case 'inkstone':
+      return {
+        background: '#151515',
+        primaryColor: '#1c1c1c',
+        primaryTextColor: '#d7cbb0',
+        primaryBorderColor: '#3a3328',
+        lineColor: '#8b5e3c',
+        secondaryColor: '#222222',
+        tertiaryColor: '#171717',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Songti SC", serif',
+      };
+    case 'stele':
+      return {
+        background: '#1e2228',
+        primaryColor: '#252a32',
+        primaryTextColor: '#d2d6dc',
+        primaryBorderColor: '#3a414c',
+        lineColor: '#8a7a5c',
+        secondaryColor: '#2a3038',
+        tertiaryColor: '#1a1e24',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Songti SC", serif',
+      };
+    case 'xuan':
+      return {
+        background: '#f7f4ef',
+        primaryColor: '#fcfbf8',
+        primaryTextColor: '#25231f',
+        primaryBorderColor: '#d8d2c6',
+        lineColor: '#6e634f',
+        secondaryColor: '#ebe6dc',
+        tertiaryColor: '#f7f4ef',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Songti SC", serif',
+      };
+    default:
+      return {
+        background: '#fbf5e8',
+        primaryColor: '#f6eddc',
+        primaryTextColor: '#2e261f',
+        primaryBorderColor: '#cbb79b',
+        lineColor: '#7a6250',
+        secondaryColor: '#efe4d2',
+        tertiaryColor: '#f8f0e1',
+        fontFamily: '-apple-system, BlinkMacSystemFont, "Songti SC", serif',
+      };
   }
-  return {
-    background: '#fbf5e8',
-    primaryColor: '#f6eddc',
-    primaryTextColor: '#2e261f',
-    primaryBorderColor: '#cbb79b',
-    lineColor: '#7a6250',
-    secondaryColor: '#efe4d2',
-    tertiaryColor: '#f8f0e1',
-    fontFamily: '-apple-system, BlinkMacSystemFont, "Songti SC", serif',
-  };
 };
 
 const initializeMermaid = () => {

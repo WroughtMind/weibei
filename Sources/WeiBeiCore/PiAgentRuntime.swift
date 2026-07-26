@@ -713,7 +713,10 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
         try? fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: destination.path)
 
-        let source = fileManager.homeDirectoryForCurrentUser.appendingPathComponent(".pi/agent", isDirectory: true)
+        // WeiBei-owned Pi agent dir only — do not read/write terminal `~/.pi/agent` each launch.
+        try WeiBeiAgentDataPaths.ensurePiAgentDirectory()
+        WeiBeiAgentDataPaths.migrateHomePiAuthIfNeeded()
+        let source = WeiBeiAgentDataPaths.piAgentDirectory
 
         if source.standardizedFileURL != destination.standardizedFileURL {
             syncLocalPiAuth(from: source, to: destination)
@@ -733,25 +736,16 @@ public actor PiAgentRuntime: StudyAgentRuntime {
               let sourceObject = try? JSONSerialization.jsonObject(with: sourceData) as? [String: Any]
         else { return }
 
-        // Merge home auth.json into the isolated PiConfig so OAuth logins from WeiBei Settings
-        // (and Pi `/login`) keep working on every launch — not only the first seed.
+        // Prefer WeiBei-owned auth; keep any destination-only keys for this workspace runtime.
         var merged = sourceObject
         if let existingData = try? Data(contentsOf: destination),
            let existing = try? JSONSerialization.jsonObject(with: existingData) as? [String: Any] {
-            for (key, value) in existing {
-                // Prefer newer OAuth tokens from home; keep local-only keys.
-                if let sourceEntry = sourceObject[key] as? [String: Any],
-                   sourceEntry["type"] as? String == "oauth" {
-                    merged[key] = sourceEntry
-                } else if merged[key] == nil {
-                    merged[key] = value
-                }
+            for (key, value) in existing where merged[key] == nil {
+                merged[key] = value
             }
-            // Always take home OAuth entries (subscription login).
+            // WeiBei store wins for OAuth providers (subscription login from Settings).
             for (key, value) in sourceObject {
                 if let entry = value as? [String: Any], entry["type"] as? String == "oauth" {
-                    merged[key] = value
-                } else if merged[key] == nil {
                     merged[key] = value
                 }
             }

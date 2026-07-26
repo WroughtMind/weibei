@@ -38,12 +38,16 @@ VERSION_FILE="$ROOT_DIR/VERSION"
 FINAL_DIST_DIR="$ROOT_DIR/dist"
 FINAL_APP_BUNDLE="$FINAL_DIST_DIR/$APP_DISPLAY_NAME.app"
 FINAL_APP_BINARY="$FINAL_APP_BUNDLE/Contents/MacOS/$PRODUCT_NAME"
+# Always assemble + codesign outside the repo tree. Projects under ~/Documents
+# (iCloud / File Provider) get com.apple.FinderInfo and related xattrs stamped
+# onto the bundle; codesign then fails with "resource fork, Finder information,
+# or similar detritus not allowed".
 if [[ "$VERIFY_MODE" == true ]]; then
   DIST_DIR="${TMPDIR:-/tmp}/weibei-verify-$UID-$$"
 elif [[ "$PACKAGE_ONLY" == true ]]; then
   DIST_DIR="${TMPDIR:-/tmp}/weibei-package-$UID"
 else
-  DIST_DIR="$FINAL_DIST_DIR"
+  DIST_DIR="${TMPDIR:-/tmp}/weibei-run-$UID"
 fi
 APP_BUNDLE="$DIST_DIR/$APP_DISPLAY_NAME.app"
 APP_CONTENTS="$APP_BUNDLE/Contents"
@@ -281,7 +285,11 @@ if [[ "$CHECK_ONLY" != true ]]; then
 PLIST
   /usr/bin/codesign --force --sign - --timestamp=none "$PDF_TEXT_WORKER" >/dev/null
   /usr/bin/codesign --force --sign - --timestamp=none "$APP_BUNDLE" >/dev/null
-  /usr/bin/codesign --verify --deep --strict "$APP_BUNDLE"
+  if ! /usr/bin/codesign --verify --deep --strict "$APP_BUNDLE" >/dev/null; then
+    echo "package failed: staged app signature is invalid at $APP_BUNDLE" >&2
+    /usr/bin/codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE" 2>&1 | tail -20 >&2 || true
+    exit 19
+  fi
   if [[ "$(/usr/bin/env WEIBEI_PDF_WORKER_VERIFY=1 "$PDF_TEXT_WORKER" --verification-probe normal)" != "verification-ok" ]]; then
     echo "package failed: signed PDF text worker did not complete its runtime probe" >&2
     exit 14
@@ -294,14 +302,27 @@ PLIST
   fi
   WEIBEI_PI_EXECUTABLE="$PACKAGED_PI" WEIBEI_PI_APP_BUNDLE="$APP_BUNDLE" WEIBEI_PI_LIVE_CHECK=0 \
     "$BUILD_DIR/WeiBeiPiCheck"
-  if [[ "$PACKAGE_ONLY" == true ]]; then
+  # Mirror a clean copy into repo dist/ for inspection. Launch always uses the
+  # staged /tmp bundle (valid signature); Documents copies can re-acquire
+  # File Provider xattrs that invalidate codesign verification.
+  if [[ "$VERIFY_MODE" != true ]]; then
     rm -rf "$FINAL_APP_BUNDLE"
     mkdir -p "$FINAL_DIST_DIR"
     /usr/bin/ditto --norsrc --noextattr "$APP_BUNDLE" "$FINAL_APP_BUNDLE"
-    /usr/bin/xattr -cr "$FINAL_APP_BUNDLE"
+    /usr/bin/xattr -cr "$FINAL_APP_BUNDLE" 2>/dev/null || true
     if ! /usr/bin/cmp -s "$APP_BINARY" "$FINAL_APP_BINARY"; then
       echo "package failed: final app binary changed while copying from signed staging" >&2
       exit 15
+    fi
+  fi
+  if [[ "$PACKAGE_ONLY" == true ]]; then
+    if ! /usr/bin/codesign --verify --deep "$FINAL_APP_BUNDLE" >/dev/null 2>&1; then
+      # Documents may stamp FinderInfo onto the published copy; re-seal in place
+      # after stripping attrs so release consumers still get a verifiable dist/.
+      /usr/bin/xattr -cr "$FINAL_APP_BUNDLE" 2>/dev/null || true
+      /usr/bin/codesign --force --sign - --timestamp=none "$FINAL_APP_BUNDLE/Contents/Resources/PiRuntime/bin/pi" >/dev/null 2>&1 || true
+      /usr/bin/codesign --force --sign - --timestamp=none "$FINAL_APP_BUNDLE/Contents/Helpers/$PDF_TEXT_WORKER_NAME" >/dev/null 2>&1 || true
+      /usr/bin/codesign --force --sign - --timestamp=none "$FINAL_APP_BUNDLE" >/dev/null
     fi
     /usr/bin/codesign --verify --deep "$FINAL_APP_BUNDLE"
     FINAL_UUID="$(/usr/bin/dwarfdump --uuid "$FINAL_APP_BINARY" | /usr/bin/awk 'NR == 1 {print $2}')"
@@ -328,6 +349,11 @@ PLIST
 fi
 
 open_app() {
+  # Launch the staged, validly signed bundle — not dist/ under Documents.
+  if ! /usr/bin/codesign --verify --deep --strict "$APP_BUNDLE" >/dev/null 2>&1; then
+    echo "open blocked: staged app signature invalid at $APP_BUNDLE" >&2
+    exit 20
+  fi
   /usr/bin/open "$APP_BUNDLE"
 }
 
