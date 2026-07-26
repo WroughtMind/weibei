@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import WeiBeiCore
 
@@ -30,6 +31,12 @@ struct SettingsView: View {
     // destructive — it also wipes the profile's stored API key — so it needs a
     // confirmation gate (see S3).
     @State var showDeleteProfileConfirmation = false
+    // About / update check (tier-0: prompt only, never silent install).
+    @State private var updateCheckStatus: String?
+    @State private var updateCheckBusy = false
+    @State private var availableUpdate: WeiBeiUpdateManifest?
+
+    private var buildInfo: WeiBeiAppBuildInfo { .current() }
 
     var body: some View {
         HStack(spacing: 0) {
@@ -81,6 +88,7 @@ struct SettingsView: View {
         case agent
         case data
         case shortcuts
+        case about
 
         var id: String { rawValue }
 
@@ -92,6 +100,7 @@ struct SettingsView: View {
             case .agent: return "text.bubble"
             case .data: return "folder"
             case .shortcuts: return "command"
+            case .about: return "info.circle"
             }
         }
 
@@ -104,6 +113,7 @@ struct SettingsView: View {
             case .agent: return store.ui("对话", "Chat")
             case .data: return store.ui("资料与数据", "Library & Data")
             case .shortcuts: return store.ui("快捷键", "Shortcuts")
+            case .about: return store.ui("关于", "About")
             }
         }
     }
@@ -190,6 +200,8 @@ struct SettingsView: View {
                         dataSettings
                     case .shortcuts:
                         shortcutSettings
+                    case .about:
+                        aboutSettings
                     }
                 }
                 .padding(.horizontal, 28)
@@ -449,6 +461,137 @@ struct SettingsView: View {
                 }
             }
         }
+    }
+
+    private var aboutSettings: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            settingsGroup(store.ui("本机版本", "This Install")) {
+                settingsRow(title: store.ui("版本", "Version")) {
+                    Text(buildInfo.version)
+                        .font(SettingsType.control)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .textSelection(.enabled)
+                }
+                settingsRow(title: store.ui("构建号", "Build")) {
+                    Text("\(buildInfo.build)")
+                        .font(SettingsType.control)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .textSelection(.enabled)
+                }
+                settingsRow(title: store.ui("提交", "Commit")) {
+                    Text(buildInfo.shortCommit + (buildInfo.isDirty ? " · dirty" : ""))
+                        .font(SettingsType.control)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .textSelection(.enabled)
+                }
+                settingsRow(
+                    title: store.ui("标识", "Identity"),
+                    detail: store.ui(
+                        "发给他人时请用本页构建号核对，避免旧包当最新。",
+                        "Share this build number so others can confirm they are not on an old package."
+                    ),
+                    showsBottomDivider: false
+                ) {
+                    Text(buildInfo.displayLine)
+                        .font(SettingsType.control)
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.trailing)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: 280, alignment: .trailing)
+                }
+            }
+
+            settingsGroup(store.ui("更新", "Updates")) {
+                settingsRow(
+                    title: store.ui("检查更新", "Check for Updates"),
+                    detail: store.ui(
+                        "只提示下载，不会在后台静默替换本机应用。",
+                        "Prompts only — never silently replaces this app."
+                    )
+                ) {
+                    Button {
+                        Task { await runUpdateCheck() }
+                    } label: {
+                        if updateCheckBusy {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Text(store.ui("检查", "Check"))
+                        }
+                    }
+                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                    .disabled(updateCheckBusy)
+                }
+
+                if let updateCheckStatus, !updateCheckStatus.isEmpty {
+                    settingsNote(updateCheckStatus, icon: availableUpdate == nil ? "checkmark.circle" : "arrow.down.circle")
+                }
+
+                if let availableUpdate {
+                    settingsRow(
+                        title: store.ui("可用版本", "Available"),
+                        detail: availableUpdateDetail(availableUpdate),
+                        showsBottomDivider: false
+                    ) {
+                        Button(store.ui("打开下载页", "Open Download")) {
+                            openUpdateDownload(availableUpdate)
+                        }
+                        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                    }
+                }
+            }
+
+            settingsNote(
+                store.ui(
+                    "正式外发请使用 GitHub Release / Homebrew，不要长期 AirDrop 旧 dist。",
+                    "For sharing, prefer GitHub Releases or Homebrew — not a long-lived old dist.zip."
+                ),
+                icon: "shippingbox"
+            )
+        }
+    }
+
+    @MainActor
+    private func runUpdateCheck() async {
+        updateCheckBusy = true
+        updateCheckStatus = nil
+        availableUpdate = nil
+        let result = await WeiBeiUpdateChecker.check(local: buildInfo)
+        updateCheckBusy = false
+        switch result {
+        case let .upToDate(_, remote):
+            availableUpdate = nil
+            updateCheckStatus = store.ui(
+                "已是最新（频道 \(remote.version) · 构建 \(remote.build)）。",
+                "You are up to date (channel \(remote.version) · build \(remote.build))."
+            )
+        case let .updateAvailable(_, remote):
+            availableUpdate = remote
+            updateCheckStatus = store.ui(
+                "发现新版本 \(remote.version)（构建 \(remote.build)）。",
+                "Update available: \(remote.version) (build \(remote.build))."
+            )
+        case let .failed(message):
+            availableUpdate = nil
+            updateCheckStatus = store.ui(
+                "检查失败：\(message)。可稍后重试，或打开 GitHub Releases。",
+                "Check failed: \(message). Retry later, or open GitHub Releases."
+            )
+        }
+    }
+
+    private func openUpdateDownload(_ manifest: WeiBeiUpdateManifest) {
+        let url = manifest.downloadURL ?? WeiBeiUpdateChecker.defaultReleasesPageURL
+        NSWorkspace.shared.open(url)
+    }
+
+    private func availableUpdateDetail(_ remote: WeiBeiUpdateManifest) -> String {
+        var parts = ["\(remote.version) (\(remote.build))", remote.shortCommit]
+        if let notes = remote.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !notes.isEmpty {
+            parts.append(notes)
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func settingsSidebarButton(_ section: SettingsSection) -> some View {

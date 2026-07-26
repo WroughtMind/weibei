@@ -2825,8 +2825,8 @@ expect(appSource.contains("var reopenMainWindow: (() -> Void)?")
     && !appSource.contains("return flag"), "reopen restores a hidden/minimized window or opens the main SwiftUI window instead of leaving a zero-window process")
 expect(!agentSettingsSource.contains("Form {")
     // SettingsView migrated to Sources/WeiBei/Views/Settings/SettingsView.swift (L1).
-    // The Overview tab was removed (M1): the sidebar now has 6 sections and the
-    // default landing section is .agent. Scan the settings union, not appSource.
+    // The Overview tab was removed (M1); About + update check added for tier-0.
+    // Default landing section is still .agent. Scan the settings union, not appSource.
     && agentSettingsSource.contains("@State private var selectedSection: SettingsSection = .agent")
     && agentSettingsSource.contains("private enum SettingsSection: String, CaseIterable, Identifiable")
     && !agentSettingsSource.contains("case overview")
@@ -2836,6 +2836,10 @@ expect(!agentSettingsSource.contains("Form {")
     && agentSettingsSource.contains("case agent")
     && agentSettingsSource.contains("case data")
     && agentSettingsSource.contains("case shortcuts")
+    && agentSettingsSource.contains("case about")
+    && agentSettingsSource.contains("aboutSettings")
+    && agentSettingsSource.contains("WeiBeiUpdateChecker.check")
+    && agentSettingsSource.contains("runUpdateCheck")
     && agentSettingsSource.contains("settingsSidebar")
     && agentSettingsSource.contains("settingsDetail")
     && !agentSettingsSource.contains("overviewSettings")
