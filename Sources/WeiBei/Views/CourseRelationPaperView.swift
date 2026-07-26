@@ -22,12 +22,20 @@ struct CourseRelationPaperView: View {
     private var maximumZoomScale: CGFloat { 1.6 }
     private static let paperOriginID = "course-relation-paper-origin"
 
+    /// Prefer the course already open in course space; fall back to whole workspace.
+    private var defaultScope: CourseRelationPaperScope {
+        if let courseID = store.activeCourseID,
+           store.courses.contains(where: { $0.id == courseID }) {
+            return .course(courseID)
+        }
+        return .all
+    }
+
     private var effectiveScope: CourseRelationPaperScope {
-        // Relations desk defaults to the whole workspace; course filters are opt-in.
-        let candidate = scope ?? .all
+        let candidate = scope ?? defaultScope
         if case .course(let courseID) = candidate,
            !store.courses.contains(where: { $0.id == courseID }) {
-            return .all
+            return defaultScope == .all ? .all : defaultScope
         }
         return candidate
     }
@@ -76,10 +84,26 @@ struct CourseRelationPaperView: View {
             header(model: graphModel)
             CourseHairline()
             GeometryReader { proxy in
-                if isCompact || proxy.size.width < 660 {
-                    compactPaper(model: graphModel)
-                } else {
-                    graphPaper(model: graphModel, availableSize: proxy.size)
+                let showCourseRail = !isCompact && proxy.size.width >= 760
+                HStack(spacing: 0) {
+                    if showCourseRail {
+                        courseScopeRail
+                        CourseHairline(axis: .vertical)
+                    }
+                    Group {
+                        if isCompact || proxy.size.width < 660 {
+                            compactPaper(model: graphModel)
+                        } else {
+                            graphPaper(
+                                model: graphModel,
+                                availableSize: CGSize(
+                                    width: showCourseRail ? max(320, proxy.size.width - 212) : proxy.size.width,
+                                    height: proxy.size.height
+                                )
+                            )
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
         }
@@ -88,6 +112,23 @@ struct CourseRelationPaperView: View {
         .animation(WeiBeiMotion.hover, value: pendingConnection)
         .animation(WeiBeiMotion.panel, value: effectiveScope.id)
         .animation(WeiBeiMotion.panel, value: mode)
+        .onAppear {
+            // Seed once from the course already open in course space.
+            if scope == nil {
+                scope = defaultScope
+            }
+        }
+        .onChange(of: store.activeCourseID) { _, newID in
+            // Follow course switches from the title menu unless user picked a non-course filter.
+            switch effectiveScope {
+            case .all, .unassigned, .unlinked:
+                break
+            case .course:
+                if let newID, store.courses.contains(where: { $0.id == newID }) {
+                    scope = .course(newID)
+                }
+            }
+        }
         .onChange(of: mode) { _, nextMode in
             if nextMode != .managing { pendingConnection = nil }
         }
@@ -99,37 +140,141 @@ struct CourseRelationPaperView: View {
         }
     }
 
+    /// Thin toolbar only — page title already lives in the course-space top bar.
     private func header(model: CourseRelationGraphModel) -> some View {
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(store.ui("工作区资料与笔记关系", "Workspace material–note links"))
-                    .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 17, weight: .semibold))
-                    .foregroundStyle(WeiBeiTheme.ink)
-                Text(store.ui(
-                    "默认看整份工作区的资料↔笔记关联；右上角可筛到某门课。不表示当前打开状态。",
-                    "Defaults to the whole workspace’s material↔note links; filter by course above. Not current open state."
-                ))
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    .lineLimit(isCompact ? 3 : 2)
-                    .minimumScaleFactor(0.84)
-                Text(headerDetail(model: model))
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                    .lineLimit(1)
+            Text(headerDetail(model: model))
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .lineLimit(1)
+                .layoutPriority(1)
+
+            Spacer(minLength: 8)
+
+            // Narrow widths hide the rail — keep a compact course picker.
+            if isCompact {
+                scopeMenu
             }
-            .layoutPriority(1)
-
-            Spacer(minLength: 12)
-
-            scopeMenu
 
             paperModeButton(.viewing)
             paperModeButton(.managing)
         }
-        .padding(.horizontal, 20)
-        .frame(height: 72)
-        .background(WeiBeiTheme.paperRaised.opacity(0.32))
+        .padding(.horizontal, 16)
+        .frame(height: 40)
+        .background(WeiBeiTheme.paperRaised.opacity(0.22))
+    }
+
+    /// Left rail: courses as primary units (plus all / unassigned / unlinked).
+    private var courseScopeRail: some View {
+        ScrollView(showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(store.ui("按课程", "By course"))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 14)
+                    .padding(.bottom, 6)
+
+                ForEach(store.courses) { course in
+                    let materialCount = store.courseMaterials(in: course.id).count
+                    let noteCount = store.courseNotes(in: course.id).count
+                    courseScopeRow(
+                        title: course.title,
+                        detail: store.ui(
+                            "文稿 \(materialCount) · 笔记 \(noteCount)",
+                            "\(materialCount) materials · \(noteCount) notes"
+                        ),
+                        accent: courseWorkspaceAccent(colorIndex: course.colorIndex),
+                        selected: {
+                            if case .course(let id) = effectiveScope { return id == course.id }
+                            return false
+                        }()
+                    ) {
+                        setScope(.course(course.id))
+                    }
+                }
+
+                if !store.courses.isEmpty {
+                    CourseHairline()
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 12)
+                }
+
+                courseScopeRow(
+                    title: store.ui("全部关系", "All relations"),
+                    detail: store.ui("整份工作区", "Whole workspace"),
+                    accent: WeiBeiTheme.secondaryInk,
+                    selected: effectiveScope == .all
+                ) {
+                    setScope(.all)
+                }
+
+                courseScopeRow(
+                    title: store.ui("未归属课程", "No course"),
+                    detail: store.ui(
+                        "文稿 \(store.unassignedCourseMaterials.count) · 笔记 \(store.unassignedCourseNotes.count)",
+                        "\(store.unassignedCourseMaterials.count) materials · \(store.unassignedCourseNotes.count) notes"
+                    ),
+                    accent: WeiBeiTheme.tertiaryInk,
+                    selected: effectiveScope == .unassigned
+                ) {
+                    setScope(.unassigned)
+                }
+
+                courseScopeRow(
+                    title: store.ui("未建立关系", "Unlinked"),
+                    detail: store.ui("尚未互相关联的项", "Items without links"),
+                    accent: WeiBeiTheme.cinnabar.opacity(0.72),
+                    selected: effectiveScope == .unlinked
+                ) {
+                    setScope(.unlinked)
+                }
+            }
+            .padding(.bottom, 16)
+        }
+        .frame(width: 212)
+        .frame(maxHeight: .infinity)
+        .background(WeiBeiTheme.paperRaised.opacity(0.22))
+    }
+
+    private func courseScopeRow(
+        title: String,
+        detail: String,
+        accent: Color,
+        selected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Capsule()
+                    .fill(accent)
+                    .frame(width: 3, height: selected ? 28 : 18)
+                    .opacity(selected ? 1 : 0.55)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 12.5, weight: selected ? .semibold : .medium))
+                        .foregroundStyle(WeiBeiTheme.ink)
+                        .lineLimit(1)
+                    Text(detail)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                selected
+                    ? WeiBeiTheme.cinnabarSoft.opacity(0.36)
+                    : Color.clear
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     private var scopeMenu: some View {
@@ -163,6 +308,7 @@ struct CourseRelationPaperView: View {
             .background(WeiBeiTheme.paperInset.opacity(0.34), in: Capsule())
         }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
         .fixedSize()
     }
 
@@ -695,11 +841,10 @@ struct CourseRelationPaperView: View {
 
     private func setScope(_ nextScope: CourseRelationPaperScope) {
         scope = nextScope
-        switch nextScope {
-        case .course(let courseID):
+        // Only pin the workspace course when the user picks a concrete course unit.
+        // "All / unassigned / unlinked" are paper filters, not "leave this course".
+        if case .course(let courseID) = nextScope {
             store.activateCourse(courseID)
-        case .all, .unassigned, .unlinked:
-            store.activateCourse(nil)
         }
     }
 
