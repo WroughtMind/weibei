@@ -18,6 +18,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  generated-resources:
+    name: Web 类型与生成物漂移
+    runs-on: macos-26
+    timeout-minutes: 20
+
+    steps:
+      - name: 取出源码
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: 安装编辑器依赖
+        run: npm ci
+
+      - name: 安装 Rich Answer 运行时依赖
+        run: npm ci --prefix Prototypes/RichAnswerWebRuntime
+
+      - name: 运行 Web 类型、测试与生成物检查
+        run: npm run check
+
+      - name: 复核临时目录生成物
+        run: ./script/check-generated-resources.sh
+
+      - name: 检查品牌资产
+        run: ./DesignSystem/scripts/verify-assets.sh
+
   build-check-package:
     name: 编译、自检与安装包追溯
     runs-on: macos-26
@@ -34,17 +58,14 @@ jobs:
           swift --version
           xcodebuild -version
 
-      - name: 编译
-        run: swift build
+      - name: 运行 Swift 行为测试
+        run: swift test
 
-      - name: 运行应用自检
-        run: swift run WeiBeiSelfCheck
+      - name: 运行完整检查入口
+        run: ./script/build_and_run.sh check
 
       - name: 运行 Pi 终止语义自检
         run: WEIBEI_PI_TERMINAL_SELF_CHECK_ONLY=1 swift run WeiBeiSelfCheck
-
-      - name: 运行编辑器自检
-        run: swift run WeiBeiWebEditorCheck
 
       - name: 生成可追溯安装包
         run: ./script/build_and_run.sh package

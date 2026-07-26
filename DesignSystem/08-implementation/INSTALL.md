@@ -2,14 +2,16 @@
 
 ## 当前 SwiftPM 手工打包方式
 
-仓库没有 Xcode project，也没有已接入的 Asset Catalog。`script/build_and_run.sh` 自己创建 `魏碑.app`、Info.plist 和签名，因此最稳妥的第一步是使用 `AppIcon.icns`。
+仓库没有 Xcode project，也没有已接入的 Asset Catalog。`script/build_and_run.sh` 自己创建 `魏碑.app`、Info.plist 和签名，并已使用 `AppIcon.icns`：
 
-1. 把整个 `DesignSystem/` 放在仓库根目录。
-2. 应用 `build_and_run.icon.patch`，或手工完成同样三件事：检查 ICNS、复制到 `Contents/Resources`、写入 `CFBundleIconFile`。
-3. 在 `script/verify_release_metadata.sh` 增加图标文件与 plist 引用校验。
-4. 运行：
+1. 资产真源位于仓库根目录的 `DesignSystem/`。
+2. 打包脚本检查 ICNS、复制到 `Contents/Resources`，并写入 `CFBundleIconFile`。
+3. `script/verify_release_metadata.sh` 校验图标文件、plist 引用和发布元数据。
+4. 修改资产后运行：
 
 ```bash
+DesignSystem/scripts/build-assets.sh
+DesignSystem/scripts/verify-assets.sh
 ./script/build_and_run.sh package
 /usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' 'dist/魏碑.app/Contents/Info.plist'
 ls -lh 'dist/魏碑.app/Contents/Resources/AppIcon.icns'
@@ -21,6 +23,6 @@ ls -lh 'dist/魏碑.app/Contents/Resources/AppIcon.icns'
 
 使用 `assets/app-icon/AppIcon.appiconset/`。确保构建系统实际编译 asset catalog，并设置 App Icon 名称；不要同时保留一套无人维护的 ICNS 和一套不同图的 appiconset。
 
-## 尚未自动完成的事
+## 发布前仍需人工完成的事
 
-这里没有直接改 GitHub `main`，也没有在 macOS 14 实机运行 `iconutil`、签名和 Dock / Finder 验收。资产结构与 ICNS 头已校验；正式发布前仍需完成 `09-qa/release-checklist.md`。
+自动检查覆盖资产结构、ICNS 头、manifest 漂移、应用包引用和签名。正式发布前仍需按 `09-qa/release-checklist.md` 在支持的 macOS 实机完成 Dock / Finder 外观验收，避免把系统图标缓存误判成资产失效。

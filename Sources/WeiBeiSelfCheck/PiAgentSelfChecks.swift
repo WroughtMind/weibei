@@ -894,7 +894,17 @@ private func checkBundledAgentResources() throws {
     let resources = try PiAgentResources.bundled()
     try piRequire(resources.systemPrompt.contains("魏碑拥有材料、选区、笔记"), "PI system contract is bundled")
     try piRequire(resources.systemPrompt.contains("课程地图") && resources.systemPrompt.contains("学习记忆与会话"), "PI system contract separates course evidence from learning memory")
-    let extensionSource = try String(contentsOf: resources.extensionURL, encoding: .utf8)
+    let extensionDirectory = resources.extensionURL.deletingLastPathComponent()
+    let domainDirectory = extensionDirectory.appendingPathComponent("domains", isDirectory: true)
+    let domainURLs = (try? FileManager.default.contentsOfDirectory(
+        at: domainDirectory,
+        includingPropertiesForKeys: nil
+    ))?
+        .filter { $0.pathExtension == "ts" }
+        .sorted { $0.lastPathComponent < $1.lastPathComponent } ?? []
+    let extensionSource = try ([resources.extensionURL] + domainURLs)
+        .map { try String(contentsOf: $0, encoding: .utf8) }
+        .joined(separator: "\n")
     try piRequire(extensionSource.contains("before_agent_start") && extensionSource.contains("tool_call") && extensionSource.contains("pi.on(\"context\""), "PI extension bundles source, permission, and stale-context hooks")
     try piRequire(
         [
@@ -1088,9 +1098,7 @@ private func checkBundledAgentResources() throws {
         "PI uses native progressive skill reads while denying every non-bundled path"
     )
 
-    let runtimeSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        .appendingPathComponent("Sources/WeiBeiCore/PiAgentRuntime.swift")
-    let runtimeSource = try String(contentsOf: runtimeSourceURL, encoding: .utf8)
+    let runtimeSource = readSourceTree("Sources/WeiBeiCore")
     try piRequire(
         runtimeSource.contains("answeredBeforeContext")
             && runtimeSource.contains("allowedSourceLabels")

@@ -13,6 +13,32 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     }
 }
 
+/**
+ * 读取目录下的源码并按相对路径稳定拼接。
+ *
+ * 结构自检只关心某个领域是否仍具备约定能力，不应要求实现必须停留在原来的单个大文件中。
+ *
+ * @param relativePath - 相对仓库根目录的源码目录
+ * @returns 可读取源码的稳定拼接结果
+ */
+func readSourceTree(_ relativePath: String) -> String {
+    let rootURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+        .appendingPathComponent(relativePath)
+    guard let enumerator = FileManager.default.enumerator(
+        at: rootURL,
+        includingPropertiesForKeys: [.isRegularFileKey],
+        options: [.skipsHiddenFiles]
+    ) else {
+        return ""
+    }
+    let supportedExtensions = Set(["swift", "ts", "tsx", "js", "mjs", "md"])
+    let urls = enumerator.compactMap { $0 as? URL }
+        .filter { supportedExtensions.contains($0.pathExtension) }
+        .sorted { $0.path < $1.path }
+    return urls.compactMap { try? String(contentsOf: $0, encoding: .utf8) }
+        .joined(separator: "\n")
+}
+
 final class RichAnswerWebRuntimeHarness: NSObject, WKScriptMessageHandler {
     private let webView: WKWebView
     private var messages: [[String: Any]] = []
@@ -248,8 +274,16 @@ func runRichAnswerEmbeddingSelfChecks() {
         (try? String(contentsOf: repositoryURL.appendingPathComponent(path), encoding: .utf8)) ?? ""
     }
 
-    let notesAgentSource = source("Sources/WeiBei/Views/NotesAgentView.swift")
-    let richAnswerHostSource = source("Sources/WeiBei/Views/RichAnswerHost.swift")
+    let notesAgentSource = [
+        source("Sources/WeiBei/Views/NotesAgentView.swift"),
+        readSourceTree("Sources/WeiBei/Views/Notes"),
+        readSourceTree("Sources/WeiBei/Views/Agent"),
+    ].joined(separator: "\n")
+    let richAnswerHostSource = [
+        source("Sources/WeiBei/Views/RichAnswerHost.swift"),
+        readSourceTree("Sources/WeiBei/Views/RichAnswer"),
+        source("Sources/WeiBei/Verification/RichAnswerVerificationMarker.swift"),
+    ].joined(separator: "\n")
     let richAnswerWebRuntimeSource = source("Sources/WeiBei/Views/RichAnswerWebRuntimeView.swift")
     let richAnswerWorkbenchSource = source("Prototypes/RichAnswerWebRuntime/src/generative/generative-workbench.tsx")
     let richAnswerLibrarySource = source("Prototypes/RichAnswerWebRuntime/src/generative/library.tsx")
@@ -258,12 +292,12 @@ func runRichAnswerEmbeddingSelfChecks() {
     let richAnswerExtendedComponentsSource = source("Prototypes/RichAnswerWebRuntime/src/generative/extended-knowledge-components.tsx")
     let richAnswerRuntimeCSS = source("Sources/WeiBei/Resources/rich-answer-runtime.css")
     let richAnswerSystemPrompt = source("Sources/WeiBeiCore/AgentResources/system.md")
-    let richAnswerExtensionSource = source("Sources/WeiBeiCore/AgentResources/extension.ts")
-    let richAnswerEngineSource = source("Sources/WeiBeiCore/RichAnswerEngine.swift")
+    let richAnswerExtensionSource = readSourceTree("Sources/WeiBeiCore/AgentResources")
+    let richAnswerEngineSource = readSourceTree("Sources/WeiBeiCore")
     let richAnswerFixtureSource = source("Sources/WeiBei/Support/RichAnswerVerificationFixture.swift")
     let richAnswerTurnSource: String = {
-        guard let start = notesAgentSource.range(of: "private var regularMessageContent: some View")?.lowerBound,
-              let end = notesAgentSource.range(of: "private var messageMetadata: some View", range: start..<notesAgentSource.endIndex)?.lowerBound else {
+        guard let start = notesAgentSource.range(of: "var regularMessageContent: some View")?.lowerBound,
+              let end = notesAgentSource.range(of: "var messageMetadata: some View", range: start..<notesAgentSource.endIndex)?.lowerBound else {
             return ""
         }
         return String(notesAgentSource[start..<end])
@@ -730,7 +764,8 @@ expect(runScript.contains("weibei-visual-verify-latest.png") && runScript.contai
 expect(runScript.contains("weibei-visual-verify-$VERIFY_SCENARIO.png")
     && runScript.contains("visual_capture_path=$scenario_capture_path"), "visual verification preserves a separate screenshot for every empty-workspace theme and width scenario")
 expect(runScript.contains("WEIBEI_VERIFY_CAPTURE_PATH")
-    && runScript.contains("[[ -s \"$VERIFY_CAPTURE_PATH\" ]] && break")
+    && runScript.contains("[[ -s \"$VERIFY_CAPTURE_PATH\" ]]")
+    && runScript.contains("/usr/bin/sips -g pixelWidth -g pixelHeight \"$VERIFY_CAPTURE_PATH\"")
     && runScript.contains("app-owned capture and macOS window capture failed")
     && runScript.contains("Grant Screen Recording permission"), "visual verification prefers an app-owned capture and reports when both capture paths fail")
 expect(runScript.contains("open_app() {\n  /usr/bin/open \"$APP_BUNDLE\"\n}")
@@ -940,7 +975,18 @@ expect(documentTextExtractorSource.contains("private static var pdfTextCache")
     && documentTextExtractorSource.contains("totalBytes > byteLimit"), "active-material extraction uses byte-bounded thread-safe caches while the persistent course index owns full-library search")
 let courseDocumentIndexURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBeiCore/CourseDocumentSearchIndex.swift")
-let courseDocumentIndexSource = (try? String(contentsOf: courseDocumentIndexURL, encoding: .utf8)) ?? ""
+let courseDocumentIndexSource = [
+    "CourseDocumentSearchIndex.swift",
+    "CourseDocumentExtractor.swift",
+    "CourseDocumentIndexScheduler.swift",
+    "CourseDocumentIndexStore.swift",
+    "CourseSearchQuery.swift",
+].compactMap { filename in
+    try? String(
+        contentsOf: courseDocumentIndexURL.deletingLastPathComponent().appendingPathComponent(filename),
+        encoding: .utf8
+    )
+}.joined(separator: "\n")
 let pdfTextWorkerURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBeiPDFTextWorker/main.swift")
 let pdfTextWorkerSource = (try? String(contentsOf: pdfTextWorkerURL, encoding: .utf8)) ?? ""
@@ -948,14 +994,14 @@ let boundedPDFTextExtractorURL = URL(fileURLWithPath: FileManager.default.curren
     .appendingPathComponent("Sources/WeiBeiCore/BoundedPDFTextExtractor.swift")
 let boundedPDFTextExtractorSource = (try? String(contentsOf: boundedPDFTextExtractorURL, encoding: .utf8)) ?? ""
 expect(courseDocumentIndexSource.contains("CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5")
-    && courseDocumentIndexSource.contains("private let indexingQueue")
-    && courseDocumentIndexSource.contains("private let metadataQueue")
+    && courseDocumentIndexSource.contains("let indexingQueue")
+    && courseDocumentIndexSource.contains("let metadataQueue")
     && courseDocumentIndexSource.contains("metadataQueue.async { [weak self] in")
     && courseDocumentIndexSource.contains("let resolvedURL = url.resolvingSymlinksInPath()")
     && courseDocumentIndexSource.contains("resolvedURL.resourceValues")
     && courseDocumentIndexSource.contains("return \"v5#\\(item.kind.rawValue)#\\(metadata.modified)#\\(metadata.size)\"")
     && courseDocumentIndexSource.contains("let metadata = fileMetadata(for: url)")
-    && courseDocumentIndexSource.contains("private let ocrQueue")
+    && courseDocumentIndexSource.contains("let ocrQueue")
     && courseDocumentIndexSource.contains("indexPDFTextLayer")
     && courseDocumentIndexSource.contains("finishPDFOCR")
     && courseDocumentIndexSource.contains("PDFOCRTextExtractor.pageOutcome")
@@ -1754,11 +1800,17 @@ expect(WorkspaceLayout.documentAgentNotes.label(language: .chinese) == "阅读-�
 expect(WorkspaceLayout.immersiveConversation.systemImage == "bubble.left.and.text.bubble.right" && WorkspaceLayout.immersiveWriting.systemImage == "square.and.pencil", "immersive layouts expose semantic menu icons")
 let contentViewSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/ContentView.swift")
-let contentViewSource = (try? String(contentsOf: contentViewSourceURL, encoding: .utf8)) ?? ""
+let contentViewSource = [
+    (try? String(contentsOf: contentViewSourceURL, encoding: .utf8)) ?? "",
+    readSourceTree("Sources/WeiBei/Views/Layout"),
+].joined(separator: "\n")
 expect(!contentViewSource.isEmpty, "content view source is readable")
 let stableDocumentSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/StableDocumentWorkspace.swift")
-let stableDocumentSource = (try? String(contentsOf: stableDocumentSourceURL, encoding: .utf8)) ?? ""
+let stableDocumentSource = [
+    (try? String(contentsOf: stableDocumentSourceURL, encoding: .utf8)) ?? "",
+    readSourceTree("Sources/WeiBei/Views/Layout"),
+].joined(separator: "\n")
 let paneContinuityRecorderSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Support/PaneContinuityRecorder.swift")
 let paneContinuityRecorderSource = (try? String(contentsOf: paneContinuityRecorderSourceURL, encoding: .utf8)) ?? ""
@@ -1953,16 +2005,18 @@ expect(themeSource.contains("englishDisplayFontName = \"WeiBeiStele-Regular\"")
     && themeSource.contains("return .custom(englishDisplayFontName, size: size).weight(weight)")
     && !themeSource.contains("englishDisplayFontName = \"WeiBeiStele\"")
     && !themeSource.contains("englishMonoFontName = \"WeiBeiSteleMono\""), "bundled English fonts use registered PostScript names and register before custom SwiftUI font construction")
-expect(contentViewSource.contains("ResizableTwoPane<First: View, Second: View>: NSViewRepresentable"), "two-pane layout uses native bridge")
-expect(contentViewSource.contains("ResizableThreePane<First: View, Second: View, Third: View>: NSViewRepresentable"), "three-pane layout uses native bridge")
-expect(contentViewSource.contains("WeiBeiSplitView: NSSplitView"), "content panes use native split view")
-expect(contentViewSource.contains("dividerFill.setFill()")
-    && contentViewSource.contains("rect.fill()")
-    && contentViewSource.contains("private var dividerFill: NSColor")
-    && contentViewSource.contains("private var dividerLine: NSColor")
-    && contentViewSource.contains("rect.minY + 14")
-    && !contentViewSource.contains("NSColor.clear.setFill()"), "native split divider uses the current paper surface instead of a transparent hard gap")
-expect(contentViewSource.contains("override func layout()"), "native split applies saved positions after first real layout")
+expect(!contentViewSource.contains("ResizableTwoPane<First: View, Second: View>: NSViewRepresentable")
+    && !contentViewSource.contains("ResizableThreePane<First: View, Second: View, Third: View>: NSViewRepresentable")
+    && !contentViewSource.contains("WeiBeiSplitView: NSSplitView")
+    && stableDocumentSource.contains("StableDocumentSplitView: NSView")
+    && stableDocumentSource.contains("PaneLayoutGeometry.paneWidths("), "all document pane counts share the stable native workspace and one layout geometry model")
+expect(stableDocumentSource.contains("dividerFill.setFill()")
+    && stableDocumentSource.contains("bounds.fill()")
+    && stableDocumentSource.contains("private var dividerFill: NSColor")
+    && stableDocumentSource.contains("private var dividerLine: NSColor")
+    && stableDocumentSource.contains("bounds.minY + 14")
+    && !stableDocumentSource.contains("NSColor.clear.setFill()"), "native split divider uses the current paper surface instead of a transparent hard gap")
+expect(stableDocumentSource.contains("override func layout()"), "native split applies saved positions after first real layout")
 let courseDrawerHostSource = (try? String(
     contentsOf: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
         .appendingPathComponent("Sources/WeiBei/Views/CourseDrawerHost.swift"),
@@ -1981,10 +2035,10 @@ expect(contentViewSource.contains("LayoutContentView()")
     && !contentViewSource.contains(".animation(WeiBeiMotion.layout, value: store.showLibrary)")
     && !contentViewSource.contains("libraryResizeHandle")
     && !contentViewSource.contains("minimumContentWidthWithLibrary"), "course drawer slides over the living workspace without remount lag or layout-spring thrash")
-expect(contentViewSource.contains("private let railWidth = ContentRailMetrics.railOnlyWidth")
+expect(stableDocumentSource.contains("private let railWidth = ContentRailMetrics.railOnlyWidth")
     && contentRailSource.contains("static let snapThreshold = ContentRailPolicy.snapThreshold")
     && contentRailSource.contains("static let readableWidth = ContentRailPolicy.readableWidth")
-    && contentViewSource.contains("handleExpansionRequest(store.paneExpansionRequest")
+    && stableDocumentSource.contains("handlePendingExpansionRequest(in:")
     && stableDocumentSource.contains("ContentRailPolicy.expansionWidth(recentWidth:"), "normal multi-pane layouts snap to the latest compact rail and restore a bounded readable width")
 expect(!contentViewSource.contains("DragGesture()"), "content panes avoid SwiftUI drag resizing")
 expect(!contentViewSource.contains(".id(store.layout)"), "layout changes avoid whole-screen identity resets")
@@ -2117,56 +2171,57 @@ expect(sidebarSource.contains("Text(store.ui(\"课程目录\", \"Course Index\")
     && sidebarSource.contains(".foregroundColor(WeiBeiTheme.ink)"), "course index exposes course-space entry, per-course Enter, and searches materials and notes with readable ink")
 let notesAgentSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/NotesAgentView.swift")
-let notesAgentSource = (try? String(contentsOf: notesAgentSourceURL, encoding: .utf8)) ?? ""
+let notesAgentSource = [
+    (try? String(contentsOf: notesAgentSourceURL, encoding: .utf8)) ?? "",
+    readSourceTree("Sources/WeiBei/Views/Notes"),
+    readSourceTree("Sources/WeiBei/Views/Agent"),
+].joined(separator: "\n")
 runRichAnswerEmbeddingSelfChecks()
-expect(notesAgentSource.contains("private var noteRailItems: [ContentRailItem]")
+expect(notesAgentSource.contains("var noteRailItems: [ContentRailItem]")
     && notesAgentSource.contains("NoteEditorCommand(kind: .scrollToHeading")
-    && notesAgentSource.contains("private var agentRailItems: [ContentRailItem]")
+    && notesAgentSource.contains("var agentRailItems: [ContentRailItem]")
     && notesAgentSource.contains("store.requestPaneExpansion(.agent)")
     && notesAgentSource.components(separatedBy: "let railOnly = ContentRailMetrics.isRailOnly(").count >= 3, "notes and conversation share the content rail and navigate after restoring a narrow pane")
 let notePaneHeaderSource: String = {
     guard let start = notesAgentSource.range(of: "struct NotePaneView: View")?.lowerBound,
-          let end = notesAgentSource.range(of: "private func noteFileStatusColor", range: start..<notesAgentSource.endIndex)?.lowerBound else {
+          let end = notesAgentSource.range(of: "func noteFileStatusColor", range: start..<notesAgentSource.endIndex)?.lowerBound else {
         return ""
     }
     return String(notesAgentSource[start..<end])
 }()
 let noteModeControlSource: String = {
-    guard let start = notesAgentSource.range(of: "private var noteModeControl: some View")?.lowerBound,
-          let end = notesAgentSource.range(of: "private var noteHeaderSubtitle", range: start..<notesAgentSource.endIndex)?.lowerBound else {
+    guard let start = notesAgentSource.range(of: "var noteModeControl: some View")?.lowerBound,
+          let end = notesAgentSource.range(of: "var noteHeaderSubtitle", range: start..<notesAgentSource.endIndex)?.lowerBound else {
         return ""
     }
     return String(notesAgentSource[start..<end])
 }()
-let agentPaneHeaderSource: String = {
-    guard let start = notesAgentSource.range(of: "struct AgentPaneView: View")?.lowerBound,
-          let end = notesAgentSource.range(of: "private var agentPrompt", range: start..<notesAgentSource.endIndex)?.lowerBound else {
-        return ""
-    }
-    return String(notesAgentSource[start..<end])
-}()
+let agentPaneHeaderSource = readSourceTree("Sources/WeiBei/Views/Agent")
 let paneHeaderReorderSource: String = {
     guard let start = notesAgentSource.range(of: "struct PaneHeaderReorderModifier")?.lowerBound,
-          let end = notesAgentSource.range(of: "private struct AgentComposerField", range: start..<notesAgentSource.endIndex)?.lowerBound else {
+          let end = notesAgentSource.range(of: "struct AgentComposerField", range: start..<notesAgentSource.endIndex)?.lowerBound else {
         return ""
     }
     return String(notesAgentSource[start..<end])
 }()
 let emptyAgentStateSource: String = {
-    guard let start = notesAgentSource.range(of: "private var emptyAgentState: some View")?.lowerBound,
-          let end = notesAgentSource.range(of: "private func starterChip", range: start..<notesAgentSource.endIndex)?.lowerBound else {
+    guard let start = notesAgentSource.range(of: "var emptyAgentState: some View")?.lowerBound,
+          let end = notesAgentSource.range(of: "func starterChip", range: start..<notesAgentSource.endIndex)?.lowerBound else {
         return ""
     }
     return String(notesAgentSource[start..<end])
 }()
 let notebookCreationPanelSource: String = {
-    guard let start = notesAgentSource.range(of: "private struct NotebookCreationPanel")?.lowerBound,
-          let end = notesAgentSource.range(of: "final class MarkdownSourceTextView", range: start..<notesAgentSource.endIndex)?.lowerBound else {
+    guard let start = notesAgentSource.range(of: "struct NotebookCreationPanel: View")?.lowerBound,
+          let end = notesAgentSource.range(
+              of: "final class MarkdownSourceTextView",
+              range: start..<notesAgentSource.endIndex
+          )?.lowerBound else {
         return ""
     }
     return String(notesAgentSource[start..<end])
 }()
-expect(notesAgentSource.contains("private struct AgentComposerField")
+expect(notesAgentSource.contains("struct AgentComposerField")
     && notesAgentSource.contains("prompt: Text(prompt)")
     && notesAgentSource.contains(".foregroundStyle(WeiBeiTheme.placeholderInk)"), "agent tray placeholder uses native prompt text so the cursor and text baseline align")
 expect(notesAgentSource.contains("SelectionAnchorContentPoint.fromScreenPoint(screenPoint, in: window)")
@@ -2183,7 +2238,7 @@ expect(notesAgentSource.contains("applySourcePresentation(")
     && notesAgentSource.contains("let markerColor = NSColor.clear")
     && notesAgentSource.contains("NSFont.monospacedSystemFont(ofSize: 0.1")
     && notesAgentSource.contains(".baselineOffset: 0"), "source and compare mode collapse Obsidian callout control markers, including trailing source spaces, without changing saved markdown")
-expect(notesAgentSource.contains("private func refreshSourcePresentation(in textView: NSTextView)")
+expect(notesAgentSource.contains("func refreshSourcePresentation(in textView: NSTextView)")
     && notesAgentSource.contains("refreshSourcePresentation(in: textView)")
     && notesAgentSource.contains("case .applyAgentPatch")
     && notesAgentSource.contains("case .insertMarkdown"), "source editor refreshes callout presentation after agent, command, or attachment insertions")
@@ -2275,8 +2330,11 @@ expect(commandPaletteSource.contains("private func agentSurfaceCommand(_ surface
 expect(commandPaletteSource.contains("if store.agentSurface != .hidden") && commandPaletteSource.contains("agentSurfaceCommand(.hidden, shortcut: \"⌃⌥0\")"), "command palette hides the agent hide action when already hidden")
 let readerViewSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/ReaderView.swift")
-let readerViewSource = (try? String(contentsOf: readerViewSourceURL, encoding: .utf8)) ?? ""
-expect(readerViewSource.contains("private final class PDFContentRailPreviewLoader")
+let readerViewSource = [
+    (try? String(contentsOf: readerViewSourceURL, encoding: .utf8)) ?? "",
+    readSourceTree("Sources/WeiBei/Views/Reader"),
+].joined(separator: "\n")
+expect(readerViewSource.contains("final class PDFContentRailPreviewLoader")
     && readerViewSource.contains("page.thumbnail(of:")
     && readerViewSource.contains("static let contentRailScript")
     && readerViewSource.contains("window.WeiBeiContentRail")
@@ -2337,8 +2395,8 @@ expect(readerViewSource.contains("ZStack(alignment: .bottomTrailing)")
 expect(readerViewSource.contains("pdfControlsHovering")
     && readerViewSource.contains("pdfControlsExpanded")
     && readerViewSource.contains("pdfControlsCollapseToken")
-    && readerViewSource.contains("private var pdfControlsActive: Bool")
-    && readerViewSource.contains("private var pdfControlsActive: Bool {\n        pdfControlsExpanded\n    }")
+    && readerViewSource.contains("var pdfControlsActive: Bool")
+    && readerViewSource.contains("var pdfControlsActive: Bool {\n        pdfControlsExpanded\n    }")
     && readerViewSource.contains(".onAppear {\n            schedulePDFControlsCollapse(after: 0.9)\n        }")
     && readerViewSource.contains("PDFModeChipPresentation.fillOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering)")
     && readerViewSource.contains("PDFModeChipPresentation.controlOpacity(isExpanded: pdfControlsExpanded, isHovering: pdfControlsHovering)")
@@ -2347,7 +2405,7 @@ expect(readerViewSource.contains("pdfControlsHovering")
     && readerViewSource.contains(".onHover")
     && readerViewSource.contains("if !hovering {\n                schedulePDFControlsCollapse(after: 0.28)\n            }")
     && readerViewSource.contains("revealPDFControls(collapseAfter: 0.85)")
-    && readerViewSource.contains("private func collapsePDFControls()")
+    && readerViewSource.contains("func collapsePDFControls()")
     && readerViewSource.contains("pdfControlsHovering = false")
     && readerViewSource.contains("guard pdfControlsCollapseToken == token else { return }")
     && !readerViewSource.contains("if hovering {\n                revealPDFControls()\n            }")
@@ -2361,16 +2419,16 @@ expect(!readerViewSource.contains("var label: String")
     && readerViewSource.contains("return language.text(\"连续滚动浏览 PDF\", \"continuous PDF scrolling\")")
     && readerViewSource.contains("case .scroll: \"arrow.up.and.down\"")
     && readerViewSource.contains("case .page: \"rectangle.portrait\"")
-    && readerViewSource.contains("private var pdfModeToggle: some View")
-    && readerViewSource.contains("private var showsPDFModeLabel: Bool")
+    && readerViewSource.contains("var pdfModeToggle: some View")
+    && readerViewSource.contains("var showsPDFModeLabel: Bool")
     && readerViewSource.contains("PDFModeChipPresentation.showsLabel(isExpanded: pdfControlsExpanded)")
     && readerViewSource.contains("if pdfBrowseMode == .page, pdfPageCount > 1")
-    && readerViewSource.contains("private func revealPDFControls")
+    && readerViewSource.contains("func revealPDFControls")
     && readerViewSource.contains("DispatchQueue.main.asyncAfter")
     && readerViewSource.contains("pdfBrowseMode = pdfBrowseMode.toggled")
     && readerViewSource.contains("Image(systemName: pdfBrowseMode.systemImage)")
     && readerViewSource.contains("if showsPDFModeLabel {\n                    Text(pdfBrowseMode.label(language: store.interfaceLanguage))")
-    && readerViewSource.contains("private var pdfModeForeground: Color")
+    && readerViewSource.contains("var pdfModeForeground: Color")
     && readerViewSource.contains("return WeiBeiTheme.secondaryInk")
     && readerViewSource.contains(".frame(width: showsPDFModeLabel ? nil : 18, height: 24)")
     && readerViewSource.contains(".accessibilityLabel(Text(store.ui(\"切换 PDF 浏览方式")
@@ -2396,14 +2454,14 @@ expect(readerViewSource.contains("syncReaderLocationTitle")
     && readerViewSource.components(separatedBy: "guard next != pdfPageIndex else { return }").count >= 3
     && readerViewSource.contains("第 \\(pdfPageIndex + 1) 页"), "pdf reader page updates feed shared reference title and app navigation history")
 expect(readerViewSource.contains("var onSelectionChange: (String, CGPoint?, Int) -> Void") && readerViewSource.contains("pageIndex(for: selection, in: view)") && readerViewSource.contains("ownerTitle: ownerTitle"), "pdf selection source uses the selected page, not only the current page")
-expect(readerViewSource.contains("private final class ReaderPDFView: PDFView")
+expect(readerViewSource.contains("final class ReaderPDFView: PDFView")
     && readerViewSource.contains("override func acceptsFirstMouse(for event: NSEvent?) -> Bool")
     && readerViewSource.contains("window?.makeFirstResponder(self)")
     && readerViewSource.contains("var reportCurrentSelection: (() -> Void)?")
     && readerViewSource.contains("override func mouseDragged(with event: NSEvent)")
     && readerViewSource.contains("override func mouseUp(with event: NSEvent)")
     && readerViewSource.contains("let view = ReaderPDFView()"), "native PDF text selection accepts first drag and focuses the PDF view instead of losing the first gesture")
-if let pdfViewStart = readerViewSource.range(of: "private final class ReaderPDFView: PDFView")?.lowerBound,
+if let pdfViewStart = readerViewSource.range(of: "final class ReaderPDFView: PDFView")?.lowerBound,
    let pdfViewEnd = readerViewSource[pdfViewStart...].range(of: "\n}\n\nextension PDFReaderRepresentable.Coordinator")?.upperBound {
     let readerPDFViewSource = String(readerViewSource[pdfViewStart..<pdfViewEnd])
     expect(readerPDFViewSource.contains("super.mouseDown(with: event)\n        reportCurrentSelection?()")
@@ -2429,11 +2487,11 @@ expect(readerViewSource.contains("func reportCurrentSelection(in view: PDFView)"
     && readerViewSource.contains("NSEvent.removeMonitor(eventMonitor)"), "PDF selection reporting polls currentSelection after PDFKit internal drag gestures instead of relying only on outer PDFView mouse events")
 expect(readerViewSource.contains("PDFPageOverlayViewProvider")
     && readerViewSource.contains("PDFOCRPageOverlayView")
-    && readerViewSource.contains("private func setOCRPageOverlayProvider(_ provider: PDFPageOverlayViewProvider?, in view: PDFView)")
+    && readerViewSource.contains("func setOCRPageOverlayProvider(_ provider: PDFPageOverlayViewProvider?, in view: PDFView)")
     && readerViewSource.contains("view.pageOverlayViewProvider = provider")
     && readerViewSource.contains("view.isInMarkupMode = false"), "scanned PDF OCR overlays are only enabled for image-only PDFs and cleared for native text PDFs")
-if let pageOverlayStart = readerViewSource.range(of: "private final class PDFOCRPageOverlayView")?.lowerBound,
-   let lineTextStart = readerViewSource.range(of: "private final class PDFOCRLineTextView")?.lowerBound {
+if let pageOverlayStart = readerViewSource.range(of: "final class PDFOCRPageOverlayView")?.lowerBound,
+   let lineTextStart = readerViewSource.range(of: "final class PDFOCRLineTextView")?.lowerBound {
     let pageOverlaySource = String(readerViewSource[pageOverlayStart..<lineTextStart])
     let lineTextSource = String(readerViewSource[lineTextStart...])
     expect(pageOverlaySource.contains("override var isFlipped: Bool { false }")
@@ -2441,14 +2499,14 @@ if let pageOverlayStart = readerViewSource.range(of: "private final class PDFOCR
 } else {
     expect(false, "PDF OCR overlay source is readable")
 }
-expect(readerViewSource.contains("private class ReaderSelectableTextView: NSTextView")
+expect(readerViewSource.contains("class ReaderSelectableTextView: NSTextView")
     && readerViewSource.contains("override func acceptsFirstMouse(for event: NSEvent?) -> Bool")
     && readerViewSource.contains("override func mouseDown(with event: NSEvent)")
     && readerViewSource.contains("window?.makeFirstResponder(self)")
-    && readerViewSource.contains("private final class PDFOCRLineTextView: ReaderSelectableTextView")
+    && readerViewSource.contains("final class PDFOCRLineTextView: ReaderSelectableTextView")
     && readerViewSource.components(separatedBy: "let textView = ReaderSelectableTextView()").count >= 3
     && !readerViewSource.contains("let textView = NSTextView()"), "PDF OCR, sample PDF, and plain text readers accept first mouse for immediate drag selection")
-expect(readerViewSource.contains("private var ocrHighlightedLinesByPageIndex: [Int: Set<Int>] = [:]")
+expect(readerViewSource.contains("var ocrHighlightedLinesByPageIndex: [Int: Set<Int>] = [:]")
     && readerViewSource.contains("func applySearch(_ query: String, in view: PDFView, force: Bool = false)")
     && readerViewSource.contains("applyOCRSearch(query, in: view)")
     && readerViewSource.contains("line.text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive])")
@@ -2460,12 +2518,12 @@ expect(readerViewSource.contains("view.highlightedSelections = matches")
     && !readerViewSource.contains("view.setCurrentSelection(first, animate: true)"), "PDF search highlights and jumps without creating a fake user selection or selection-agent context")
 expect(readerViewSource.contains("@State private var pdfHasSelectableText: Bool?")
     && readerViewSource.contains("var onSelectableTextChange: (Bool?) -> Void")
-    && readerViewSource.contains("private var nativeTextPageIndexes: Set<Int> = []")
-    && readerViewSource.contains("private var pendingOCRPageIndexes: Set<Int> = []")
-    && readerViewSource.contains("private static func selectableTextPageIndexes")
-    && readerViewSource.contains("private static func ocrCandidatePageIndexes")
+    && readerViewSource.contains("var nativeTextPageIndexes: Set<Int> = []")
+    && readerViewSource.contains("var pendingOCRPageIndexes: Set<Int> = []")
+    && readerViewSource.contains("static func selectableTextPageIndexes")
+    && readerViewSource.contains("static func ocrCandidatePageIndexes")
     && readerViewSource.contains("PDFOCRTextExtractor.pages(from: document, pageIndexes: pageIndexes)")
-    && readerViewSource.contains("private func ensureOCRForCurrentPage(in view: PDFView)")
+    && readerViewSource.contains("func ensureOCRForCurrentPage(in view: PDFView)")
     && readerViewSource.contains("PDFOCRTextExtractor.pages(from: document, pageIndexes: [index])")
     && readerViewSource.contains("self.configureOCROverlays(for: document, generation: generation, in: view)\n                    self.ensureOCRForCurrentPage(in: view)")
     && readerViewSource.contains("self.ensureOCRForCurrentPage(in: view)")
@@ -2476,7 +2534,7 @@ expect(readerViewSource.contains("@State private var pdfHasSelectableText: Bool?
     && !readerViewSource.contains("configureOCROverlays(for: document, hasTextLayer:"), "pdf reader reports selectable text per page so mixed text/scanned PDFs still get OCR overlays")
 expect(readerViewSource.contains("selection.color = WeiBeiNativePalette.selectionFill(for: appearanceMode)"), "pdf reader applies the theme-aware WeiBei cinnabar selection tint to the active PDFKit selection")
 expect(readerViewSource.contains("onSelectionChange(\"\", nil, pageIndex.wrappedValue)"), "pdf reader clears the floating selection agent when PDF selection is removed")
-expect(readerViewSource.contains("private func reportSelectionAfterDragSettles")
+expect(readerViewSource.contains("func reportSelectionAfterDragSettles")
     && readerViewSource.contains("selectionWork?.cancel()")
     && readerViewSource.contains("DispatchQueue.main.asyncAfter(deadline: .now() + 0.06")
     && !readerViewSource.contains("self.onSelectionChange(text, Self.anchor(for: selection, in: view), selectedPageIndex)"), "pdf reader delays the floating agent callback until dragging settles so selection is not interrupted")
@@ -2500,7 +2558,7 @@ expect(readerViewSource.contains("textView.selectedTextAttributes")
     && readerViewSource.contains(".backgroundColor: WeiBeiNativePalette.selectionFill(for: appearanceMode)")
     && readerViewSource.contains(".foregroundColor: WeiBeiNativePalette.selectedText(for: appearanceMode)")
     && readerViewSource.contains("onSelectionChange(\"\", nil)"), "plain text reader uses WeiBei selection color and clears stale floating selection")
-expect(readerViewSource.contains("private var suppressSelectionReport = false")
+expect(readerViewSource.contains("var suppressSelectionReport = false")
     && readerViewSource.contains("guard !suppressSelectionReport else { return }")
     && readerViewSource.contains("suppressSelectionReport = true\n            textView.setSelectedRange(range)\n            suppressSelectionReport = false"), "plain text search can scroll to a hit without reporting it as a user selection")
 expect(readerViewSource.contains("SelectionAnchorContentPoint.fromLocalPoint(localPoint, in: view)")
@@ -2508,7 +2566,7 @@ expect(readerViewSource.contains("SelectionAnchorContentPoint.fromLocalPoint(loc
     && readerViewSource.contains("SelectionAnchorContentPoint.fromScreenPoint(screenPoint, in: window)")
     && !readerViewSource.contains("SelectionAnchorCoordinate.y(")
     && !readerViewSource.contains("contentView.convert("), "reader selection anchors route PDF, HTML, and text through the shared coordinate helper")
-expect(readerViewSource.contains("private var importedDocumentAdaptationControl: some View")
+expect(readerViewSource.contains("var importedDocumentAdaptationControl: some View")
     && readerViewSource.contains("item.url != nil")
     && readerViewSource.contains("item.kind == .pdf || item.kind == .html")
     && readerViewSource.contains("Image(systemName: \"eyeglasses\")")
@@ -2545,7 +2603,7 @@ expect(readerViewSource.contains("applyPendingHTMLLocationIfReady")
     && readerViewSource.contains("`html-section-${hash.toString(16).padStart(8, \"0\")}`")
     && readerViewSource.contains("store.updateReaderHTMLLocation(id: id, title: title, reason: reason.rawValue)"), "HTML reader persists the active section and consumes exact section jumps")
 expect(readerViewSource.contains("onSourceReference: { reference in store.openSourceReference(reference) }"), "markdown reader source references can jump back to material")
-expect(readerViewSource.contains("private struct SamplePDFView")
+expect(readerViewSource.contains("struct SamplePDFView")
     && readerViewSource.contains("ScrollView {")
     && !readerViewSource.contains("SamplePDFView: View {\n    var body: some View {\n        ScrollView(showsIndicators: false)"), "sample pdf page keeps the system scroll indicator available")
 let richEditorSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
@@ -2689,7 +2747,10 @@ expect(webEditorSource.contains(#"const htmlBreakPattern = /<br\s*\/?>/gi;"#)
     && webEditorSource.contains(#".replace(/%%[\s\S]*?%%\n?/g, '')"#), "web editor cleans common Markdown and Obsidian source markers from selected Agent context and renders HTML breaks softly")
 let appSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/App/WeiBeiApp.swift")
-let appSource = (try? String(contentsOf: appSourceURL, encoding: .utf8)) ?? ""
+let appSource = [
+    readSourceTree("Sources/WeiBei/App"),
+    readSourceTree("Sources/WeiBei/Verification"),
+].joined(separator: "\n")
 // Settings sub-views live under Sources/WeiBei/Views/Settings/ (extracted from WeiBeiApp).
 // Agent-specific assertions scan the union of the app entrypoint + these sub-view files.
 let settingsViewsDir = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
@@ -2704,7 +2765,7 @@ let settingsViewsSource: String = {
         .joined(separator: "\n")
 }()
 let agentSettingsSource = appSource + "\n" + settingsViewsSource
-expect(appSource.contains("private var shouldActivateOnLaunch: Bool")
+expect(appSource.contains("var shouldActivateOnLaunch: Bool")
     && appSource.contains("WEIBEI_SUPPRESS_ACTIVATION")
     && appSource.contains("Task { await store.runVerificationScenarioIfNeeded() }")
     && appSource.contains("if shouldActivateOnLaunch {\n            NSApp.activate(ignoringOtherApps: true)\n        }"), "app activation is skipped during non-invasive verification launches")
@@ -2718,7 +2779,7 @@ expect(appSource.contains("environment[\"WEIBEI_VERIFY_CAPTURE_PATH\"]")
     && appSource.contains("bitmapImageRepForCachingDisplay")
     && appSource.contains("cacheDisplay(in: bounds, to: bitmap)")
     && appSource.contains("visibleWebViews(in: contentView)")
-    && appSource.contains("private static func visibleRect(")
+    && appSource.contains("func visibleRect(")
     && appSource.contains(".intersection(contentView.bounds)")
     && appSource.contains("view.convert(view.bounds, to: contentView)")
     && appSource.contains("configuration.rect = rect")
@@ -2742,8 +2803,9 @@ expect(appSource.contains("WeiBeiAppearanceTransition")
     // (the main window) and once in the settings views union. Count across the
     // union, not just appSource — see L1 in the settings diagnosis report.
     && agentSettingsSource.components(separatedBy: ".modifier(WeiBeiAppearanceTransition(mode: store.appearanceMode))").count >= 3
-    && appSource.contains("private func animateAppearance(_ action: () -> Void)")
-    && appSource.contains("animateAppearance {\n                        store.toggleAppearanceMode()")
+    && appSource.contains("func animateAppearance(_ action: () -> Void)")
+    && appSource.contains("animateAppearance {")
+    && appSource.contains("store.toggleAppearanceMode()")
     && appSource.contains("withAnimation(WeiBeiMotion.appearance)")
     // setAppearanceMode call now lives in SettingsView.swift (migrated out with
     // the settings UI). Scan the union — see L1.
@@ -2845,9 +2907,12 @@ func readSource(_ relativePath: String) -> String {
         .appendingPathComponent(relativePath)
     return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
 }
-let workspaceStoreSource = readSource("Sources/WeiBei/Stores/WorkspaceStore.swift")
+let workspaceStoreSource = [
+    readSourceTree("Sources/WeiBei/Stores"),
+    readSourceTree("Sources/WeiBei/Verification"),
+].joined(separator: "\n")
 let modelListServiceSource = readSource("Sources/WeiBeiCore/AgentModelListService.swift")
-let workspaceModelsSource = readSource("Sources/WeiBeiCore/WorkspaceModels.swift")
+let workspaceModelsSource = readSourceTree("Sources/WeiBeiCore")
 expect(modelListServiceSource.contains("enum ModelListStrategy")
     && modelListServiceSource.contains("case openAICompatible")
     && modelListServiceSource.contains("case anthropic")
@@ -3039,7 +3104,7 @@ expect(courseWorkspaceSource.contains("更改自动保存")
     && courseWorkspaceSource.contains("store.setLinkedNoteIDs")
     && courseWorkspaceSource.contains("store.setLinkedCourseSourceIDs")
     && !courseWorkspaceSource.contains("store.courseMaterials + store.sampleItems"), "course relationship edits save immediately in both directions while built-in samples stay outside course counts")
-expect(workspaceStoreSource.contains("@Published private(set) var workspaceSaveError")
+expect(workspaceStoreSource.contains("@Published var workspaceSaveError")
     && workspaceStoreSource.contains("func retryWorkspaceSave()")
     && workspaceStoreSource.contains("Course changes were not saved to disk")
     && courseWorkspaceSource.contains("保存失败，点此重试")
@@ -3152,16 +3217,16 @@ expect(workspaceStoreSource.contains("return allItems.filter { itemMatchesLibrar
     && workspaceStoreSource.contains("return materialItems.filter { itemMatchesLibrarySearch($0, query: query) }")
     && workspaceStoreSource.contains("func displayTags(for item: StudyItem, limit: Int = 3) -> [String]")
     && workspaceStoreSource.contains("return Array(MarkdownTagSearch.tags(in: noteMarkdownText(for: item)).prefix(limit))")
-    && workspaceStoreSource.contains("private func noteTagsMatchLibrarySearch(_ item: StudyItem, query: String) -> Bool")
-    && workspaceStoreSource.contains("private func noteMarkdownText(for item: StudyItem) -> String")
+    && workspaceStoreSource.contains("func noteTagsMatchLibrarySearch(_ item: StudyItem, query: String) -> Bool")
+    && workspaceStoreSource.contains("func noteMarkdownText(for item: StudyItem) -> String")
     && workspaceStoreSource.contains("MarkdownTagSearch.matches(query: query, in: noteMarkdownText(for: item))")
     && workspaceStoreSource.contains("item.id == activeNoteItemID"), "course index search includes active and cached notebook Markdown tags without indexing all notes separately")
 expect(workspaceStoreSource.contains("backNavigationStack: [NavigationSnapshot]")
     && workspaceStoreSource.contains("forwardNavigationStack: [NavigationSnapshot]")
     && workspaceStoreSource.contains("func navigateBackInWorkspace()")
     && workspaceStoreSource.contains("func navigateForwardInWorkspace()")
-    && workspaceStoreSource.contains("private func recordNavigationPoint()")
-    && workspaceStoreSource.contains("private func applyNavigationSnapshot")
+    && workspaceStoreSource.contains("func recordNavigationPoint()")
+    && workspaceStoreSource.contains("func applyNavigationSnapshot")
     && workspaceStoreSource.contains("forwardNavigationStack.append(navigationSnapshot())")
     && workspaceStoreSource.contains("backNavigationStack.append(navigationSnapshot())")
     && workspaceStoreSource.contains("agentSurface == .selectionFloat ? .hidden : agentSurface"), "workspace back/forward stores app page state without restoring transient selection floats")
@@ -3180,9 +3245,9 @@ expect(workspaceStoreSource.contains("showQuietInsight = false")
 expect(workspaceStoreSource.contains("@Published var activeNotebookItemID")
     && workspaceStoreSource.contains("var activeNoteItem: StudyItem?")
     && workspaceStoreSource.contains("guard itemID == activeNoteItemID else { return }"), "note writes are bound to the active note instead of the selected reader material")
-expect(workspaceStoreSource.contains("private var pendingNotePersistenceByItemID: [String: PendingNotePersistence] = [:]")
-    && workspaceStoreSource.contains("private var pendingNotePersistenceTasks: [String: Task<Void, Never>] = [:]")
-    && workspaceStoreSource.contains("private let notePersistenceDebounceDelay")
+expect(workspaceStoreSource.contains("var pendingNotePersistenceByItemID: [String: PendingNotePersistence] = [:]")
+    && workspaceStoreSource.contains("var pendingNotePersistenceTasks: [String: Task<Void, Never>] = [:]")
+    && workspaceStoreSource.contains("let notePersistenceDebounceDelay")
     && workspaceStoreSource.contains("func updateNote(_ value: String) {\n        guard noteText != value else { return }")
     && workspaceStoreSource.contains("scheduleNotePersistence(value, for: item)")
     && !workspaceStoreSource.contains("func updateNote(_ value: String) {\n        noteText = value\n        clearGeneratedQuietInsight()\n        persistCurrentNote()\n        save()")
@@ -3196,13 +3261,13 @@ expect(workspaceStoreSource.contains("@Published var readerLocationID")
     && workspaceStoreSource.contains("@Published var readerLocationTitle")
     && workspaceStoreSource.contains("func updateReaderHTMLLocation")
     && workspaceStoreSource.contains("var currentReferenceTitle"), "store tracks durable PDF and HTML reader locations")
-expect(workspaceStoreSource.contains("private func sessionContinuitySummary(for session: StudySession)")
+expect(workspaceStoreSource.contains("func sessionContinuitySummary(for session: StudySession)")
     && workspaceStoreSource.contains("messages.suffix(20)")
     && workspaceStoreSource.contains("olderMessages.prefix(4)")
     && workspaceStoreSource.contains("olderMessages.suffix(8)"), "durable study sessions inject recent turns plus bounded earlier conversation excerpts into each clean PI run")
 expect(workspaceStoreSource.contains("let itemTitle = sourceReferenceBaseTitle(for: item)")
     && workspaceStoreSource.contains("itemTitle: itemTitle")
-    && workspaceStoreSource.contains("private func refreshStudyLocationReferenceTitles() -> Bool")
+    && workspaceStoreSource.contains("func refreshStudyLocationReferenceTitles() -> Bool")
     && workspaceStoreSource.contains("learningMemoryEntries[index].origin = .userStatement\n                    learningMemoryEntries[index].sessionID = activeStudySessionID")
     && workspaceStoreSource.contains("$0.sessionID == activeStudySessionID")
     && workspaceStoreSource.contains("learningMemoryEntries[index].origin == .userStatement")
@@ -3214,11 +3279,11 @@ expect(workspaceStoreSource.contains("@Published var readerTargetPageIndex")
     && workspaceStoreSource.contains("reference.sectionTitle")
     && workspaceStoreSource.contains("reference.sectionLocationID")
     && workspaceStoreSource.contains("reference.sectionOrdinal.map { \"html-heading-\\(max($0 - 1, 0))\" }")
-    && workspaceStoreSource.contains("private func sourceReferenceBaseTitle")
+    && workspaceStoreSource.contains("func sourceReferenceBaseTitle")
     && workspaceStoreSource.contains("return matches.count == 1 ? matches[0] : nil"), "store can jump from source references to PDF pages and HTML sections without guessing between duplicate file titles")
 expect(workspaceStoreSource.contains("let sampleItems: [StudyItem] = WorkspaceStore.makeSampleItems()")
     && workspaceStoreSource.contains("StudyItem(id: \"sample-pdf\", title: \"Mishkin 教材样例\", subtitle: \"PDF 阅读\", kind: .pdf, urlPath: samplePDFURL()?.path, isSample: true)")
-    && workspaceStoreSource.contains("private var didRunVerificationScenario = false")
+    && workspaceStoreSource.contains("var didRunVerificationScenario = false")
     && workspaceStoreSource.contains("func runVerificationScenarioIfNeeded() async")
     && workspaceStoreSource.contains("let scenario = Self.environmentValue(\"WEIBEI_VERIFY_SCENARIO\")")
     && workspaceStoreSource.contains("scenario == \"offline-learning-flow\"")
@@ -3231,11 +3296,11 @@ expect(workspaceStoreSource.contains("let sampleItems: [StudyItem] = WorkspaceSt
     && workspaceStoreSource.contains("await askAgentAndWait()")
     && workspaceStoreSource.contains("applyLastAgentAnswerToNote()")
     && workspaceStoreSource.contains("WEIBEI_FORCE_OFFLINE_AGENT")
-    && workspaceStoreSource.contains("private static func workspaceRootDirectory() -> URL?")
+    && workspaceStoreSource.contains("static func workspaceRootDirectory() -> URL?")
     && workspaceStoreSource.contains("environmentValue(\"WEIBEI_WORKSPACE_DIR\")")
     && workspaceStoreSource.contains("let directory = root.appendingPathComponent(\"Samples\", isDirectory: true)")
     && workspaceStoreSource.contains("let directory = root.appendingPathComponent(\"Files\", isDirectory: true)")
-    && workspaceStoreSource.contains("private static func writeSamplePDF(to url: URL) -> Bool")
+    && workspaceStoreSource.contains("static func writeSamplePDF(to url: URL) -> Bool")
     && workspaceStoreSource.contains("CGDataConsumer(data: data as CFMutableData)")
     && workspaceStoreSource.contains("利率是资金使用价格的表达。")
     && !workspaceStoreSource.contains("StudyItem(id: \"sample-pdf\", title: \"Mishkin 教材样例\", subtitle: \"PDF 阅读\", kind: .pdf, urlPath: nil, isSample: true)"), "sample PDF item points at a generated selectable PDF file instead of the fake PDF fallback")
@@ -3264,21 +3329,21 @@ expect(workspaceStoreSource.contains("@Published var selectionAttachments: [Sele
     && workspaceStoreSource.contains("func removeSelectionAttachment(id: UUID)")
     && workspaceStoreSource.contains("if selectionContext?.id == id {\n                clearUnpinnedFloatingSelection(keepContext: false)")
     && workspaceStoreSource.contains("func clearSelectionAttachments()")
-    && workspaceStoreSource.contains("private var pendingSelectionAttachmentTask: Task<Void, Never>?")
-    && workspaceStoreSource.contains("private var lastSelectionUpdateDate: Date?")
+    && workspaceStoreSource.contains("var pendingSelectionAttachmentTask: Task<Void, Never>?")
+    && workspaceStoreSource.contains("var lastSelectionUpdateDate: Date?")
     && workspaceStoreSource.contains("lastSelectionUpdateDate = Date()")
     && workspaceStoreSource.contains("now.timeIntervalSince($0) > selectionAttachmentMergeWindow")
     && !workspaceStoreSource.contains("guard Self.hasMeaningfulSelectionCharacter(cleaned) else {\n            lastSelectionUpdateDate = nil")
     && !workspaceStoreSource.contains("scheduleSelectionAttachment(nextSelection")
-    && workspaceStoreSource.contains("private func scheduleSelectionAttachment(_ selection: SelectionContext, withinSelectionGesture: Bool)")
-    && workspaceStoreSource.contains("private let selectionAttachmentDebounceDelay: UInt64 = 520_000_000")
+    && workspaceStoreSource.contains("func scheduleSelectionAttachment(_ selection: SelectionContext, withinSelectionGesture: Bool)")
+    && workspaceStoreSource.contains("let selectionAttachmentDebounceDelay: UInt64 = 520_000_000")
     && workspaceStoreSource.contains("try? await Task.sleep(nanoseconds: self?.selectionAttachmentDebounceDelay ?? 520_000_000)")
-    && workspaceStoreSource.contains("private func cancelPendingSelectionAttachment()")
+    && workspaceStoreSource.contains("func cancelPendingSelectionAttachment()")
     && workspaceStoreSource.contains("clearUnpinnedFloatingSelection(keepContext: false)")
     && agentSettingsSource.contains("store.clearSelectionAttachments()")
     && workspaceStoreSource.contains("func addSelectionAttachment(_ selection: SelectionContext, withinSelectionGesture: Bool = false)")
-    && workspaceStoreSource.contains("private var lastSelectionAttachmentDate: Date?")
-    && workspaceStoreSource.contains("private let selectionAttachmentMergeWindow: TimeInterval = 1.8")
+    && workspaceStoreSource.contains("var lastSelectionAttachmentDate: Date?")
+    && workspaceStoreSource.contains("let selectionAttachmentMergeWindow: TimeInterval = 1.8")
     && workspaceStoreSource.contains("while let mergeIndex = selectionAttachments.indices.reversed().first")
     && workspaceStoreSource.contains("selectionAttachments.remove(at: mergeIndex)")
     && workspaceStoreSource.contains("SelectionAttachmentMerge.mergedText")
@@ -3294,7 +3359,7 @@ expect(workspaceStoreSource.contains("let sentSelectionTitle = agentSelectionTit
     && workspaceStoreSource.contains("selectionAttachments = []")
     && workspaceStoreSource.contains("selectionTitle: sentSelectionTitle")
     && workspaceStoreSource.contains("selectionText: sentSelectionText"), "sending captures selected text attachments for the request and clears the composer attachments afterward")
-expect(workspaceStoreSource.contains("private static func boundedSelectionText")
+expect(workspaceStoreSource.contains("static func boundedSelectionText")
     && workspaceStoreSource.contains("let cleaned = MarkdownSelectionSanitizer.clean(text)")
     && workspaceStoreSource.contains("Self.boundedSelectionText(cleaned)")
     && workspaceStoreSource.contains("lastIndex(where:")
@@ -3349,7 +3414,7 @@ expect(workspaceStoreSource.contains("selectionAttachments\n                .map
     && workspaceStoreSource.contains("来源：\\(currentSourceReferenceTitle)")
     && workspaceStoreSource.contains("\\(itemTitle)，章节标识：\\(locationID)，章节：\\(locationTitle)")
     && workspaceStoreSource.contains("\\(itemTitle)，章节序号：\\(sectionOrdinal)，章节：\\(locationTitle)"), "copy reference uses attached selections or a canonical file-plus-location source")
-expect(workspaceStoreSource.contains("private func quotedReferenceBlock")
+expect(workspaceStoreSource.contains("func quotedReferenceBlock")
     && workspaceStoreSource.contains("let quoted = MarkdownSelectionSanitizer.clean(text)")
     && workspaceStoreSource.contains("> [!quote] 选区摘录")
     && workspaceStoreSource.contains("> [!quote] Selection excerpt")
@@ -3385,11 +3450,11 @@ expect(workspaceStoreSource.contains("var selectedMaterialTitle") && workspaceSt
 expect(workspaceStoreSource.contains("var agentMessageSourceTitle: String?") && workspaceStoreSource.contains("hasSelectedMaterial ? currentSourceReferenceTitle : activeNoteItem.map(displayTitle)") && !workspaceStoreSource.contains("source: selectedMaterialItem?.title"), "agent message source uses the canonical file location and falls back to the localized active note title")
 expect(workspaceStoreSource.contains("let sentMaterialTitle = currentSourceReferenceTitle")
     && workspaceStoreSource.contains("materialTitle: sentMaterialTitle"), "agent prompt snapshots the canonical file location so PDF pages and HTML sections reach the model")
-expect(workspaceStoreSource.contains("private var quietInsightReferenceTitle: String")
+expect(workspaceStoreSource.contains("var quietInsightReferenceTitle: String")
     && workspaceStoreSource.contains("selectionContext?.ownerTitle")
     && workspaceStoreSource.contains("currentSourceReferenceTitle")
     && workspaceStoreSource.contains("Quiet insight generation disabled for 1.0"), "quiet insight reference title remains available while generation stays disabled for 1.0")
-expect(workspaceStoreSource.contains("private func clearUnpinnedFloatingSelection(keepContext: Bool = true, invalidatesAgentContext: Bool = true)")
+expect(workspaceStoreSource.contains("func clearUnpinnedFloatingSelection(keepContext: Bool = true, invalidatesAgentContext: Bool = true)")
     && workspaceStoreSource.contains("if invalidatesAgentContext, selectionContext != nil")
     && workspaceStoreSource.contains("selectionContext = nil")
     && workspaceStoreSource.contains("selectionAnchor = nil")
@@ -3408,7 +3473,7 @@ if let dismissFloatingStart = workspaceStoreSource.range(of: "func dismissFloati
 expect(workspaceStoreSource.contains("guard Self.hasMeaningfulSelectionCharacter(cleaned) else {")
     && workspaceStoreSource.contains("now.timeIntervalSince($0) > selectionAttachmentMergeWindow")
     && workspaceStoreSource.contains("clearUnpinnedFloatingSelection(keepContext: false)\n            return\n        }")
-    && workspaceStoreSource.contains("private static func hasMeaningfulSelectionCharacter(_ text: String) -> Bool")
+    && workspaceStoreSource.contains("static func hasMeaningfulSelectionCharacter(_ text: String) -> Bool")
     && workspaceStoreSource.contains("!CharacterSet.whitespacesAndNewlines.contains(scalar)")
     && workspaceStoreSource.contains("!CharacterSet.punctuationCharacters.contains(scalar)")
     && workspaceStoreSource.contains("!CharacterSet.controlCharacters.contains(scalar)"), "empty, whitespace, punctuation, or control-only selections clear the prompt without breaking a live drag-selection gesture")
@@ -3437,11 +3502,11 @@ expect(workspaceStoreSource.contains("func toggleLibrary()")
     && !workspaceStoreSource.contains("func toggleLibrary() {\n        recordNavigationPoint()")
     && workspaceStoreSource.contains("func toggleRightPane() {\n        guard layout.hasCollapsibleRightPane else { return }\n        recordNavigationPoint()\n        showRightPane.toggle()\n        clearUnpinnedFloatingSelection()"), "the transient course drawer stays out of navigation history while durable pane visibility still records navigation")
 expect(workspaceStoreSource.contains("collapseSelectionFloatIntoConversationIfVisible()\n        focusedPane = pane")
-    && workspaceStoreSource.contains("private func collapseSelectionFloatIntoConversationIfVisible()")
+    && workspaceStoreSource.contains("func collapseSelectionFloatIntoConversationIfVisible()")
     && workspaceStoreSource.contains("guard isConversationSurfaceVisible, agentSurface == .selectionFloat else { return }")
     && workspaceStoreSource.contains("selectionAnchor = nil\n        pinnedFloatingAgent = false"), "opening or focusing the formal conversation surface collapses any stale selection mini window but keeps the selected text context")
 expect(workspaceStoreSource.contains("focus(showRightPane ? rightPaneRevealFocus : fallbackDocumentPaneFocus())")
-    && workspaceStoreSource.contains("private var rightPaneRevealFocus: PaneFocus")
+    && workspaceStoreSource.contains("var rightPaneRevealFocus: PaneFocus")
     && workspaceStoreSource.contains("if layout.isDocumentThreePane")
     && workspaceStoreSource.contains("return normalizedThreePaneOrder.last?.focus ?? .notes")
     && workspaceStoreSource.contains("case .documentNotesAgent, .immersiveConversation:\n            return .agent"), "right-pane reveal focuses the visible pane by current role order instead of legacy fixed layout names")
@@ -3477,7 +3542,7 @@ if let insertStart = workspaceStoreSource.range(of: "func insertMarkdownSnippet"
     expect(false, "markdown insertion source is readable")
 }
 if let setNoteModeStart = workspaceStoreSource.range(of: "func setNoteRenderMode(_ mode: NoteRenderMode)")?.lowerBound,
-   let revealStart = workspaceStoreSource.range(of: "private func revealRichWritingSurface")?.lowerBound {
+   let revealStart = workspaceStoreSource.range(of: "func revealRichWritingSurface")?.lowerBound {
     let setNoteModeSource = String(workspaceStoreSource[setNoteModeStart..<revealStart])
     expect(
         setNoteModeSource.contains("let nextMode = mode.visibleMode")
@@ -3530,8 +3595,8 @@ expect(
         && workspaceStoreSource.contains("thinkingLevel: thinking.isEmpty ? \"medium\" : thinking"),
     "PI honors the selected provider, reuses subscription OAuth without injecting an API key, and keeps the current thinking default"
 )
-if let requestStart = workspaceStoreSource.range(of: "private func performAgentRequest() async")?.lowerBound,
-   let executionStart = workspaceStoreSource.range(of: "private func executeStudyAgentRequest")?.lowerBound {
+if let requestStart = workspaceStoreSource.range(of: "func performAgentRequest() async")?.lowerBound,
+   let executionStart = workspaceStoreSource.range(of: "func executeStudyAgentRequest")?.lowerBound {
     let requestSource = String(workspaceStoreSource[requestStart..<executionStart])
     expect(requestSource.contains("agentDraft = \"\"")
         && requestSource.contains("flushStagedNoteDraftForAgentContext()")
@@ -3555,11 +3620,11 @@ if let requestStart = workspaceStoreSource.range(of: "private func performAgentR
 } else {
     expect(false, "unified agent request source is readable")
 }
-expect(workspaceStoreSource.contains("@Published private(set) var studySessions")
+expect(workspaceStoreSource.contains("@Published var studySessions")
     && workspaceStoreSource.contains("func createStudySession()")
     && workspaceStoreSource.contains("func activateStudySession(_ id: UUID)")
-    && workspaceStoreSource.contains("private func syncActiveStudySession(titleSeed: String? = nil)")
-    && workspaceStoreSource.contains("private func appendAgentMessage(_ message: AgentMessage)"), "agent conversations are durable course study sessions")
+    && workspaceStoreSource.contains("func syncActiveStudySession(titleSeed: String? = nil)")
+    && workspaceStoreSource.contains("func appendAgentMessage(_ message: AgentMessage)"), "agent conversations are durable course study sessions")
 expect(workspaceStoreSource.contains("noteSourceLinks: noteSourceLinks")
     && workspaceStoreSource.contains("studyLocationsByItemID: studyLocationsByItemID")
     && workspaceStoreSource.contains("learningMemoryEntries: learningMemoryEntries")
@@ -3568,7 +3633,7 @@ expect(workspaceStoreSource.contains("noteSourceLinks: noteSourceLinks")
     && workspaceStoreSource.contains("activeStudySessionID: activeStudySessionID"), "course links, progress, memory, and sessions are saved with the workspace")
 expect(workspaceStoreSource.contains("acceptedUpdate.resolutions = update.resolutions.prefix(12).filter")
     && workspaceStoreSource.contains("func confirmLearningMemoryResolution")
-    && workspaceStoreSource.contains("private static func resolutionEvidenceMatches")
+    && workspaceStoreSource.contains("static func resolutionEvidenceMatches")
     && workspaceStoreSource.contains("StudyAgentResolutionEvidence.matches")
     && workspaceStoreSource.contains("func restoreLearningMemory(")
     && workspaceStoreSource.contains("resolutionEvidence = \"[用户：界面确认]\"")
@@ -3576,10 +3641,10 @@ expect(workspaceStoreSource.contains("acceptedUpdate.resolutions = update.resolu
     && notesAgentSource.contains("store.confirmLearningMemoryResolution(resolution)")
     && notesAgentSource.contains("store.restoreLearningMemoryResolution(resolution)"), "PI can only propose memory resolution; user confirmation persists it and the UI can undo it")
 expect(workspaceStoreSource.contains("} else {\n            restoreCurrentStudyLocation()\n            recordCurrentStudyLocation(incrementVisit: false)\n        }")
-    && workspaceStoreSource.contains("private func restoreCurrentStudyLocation()")
+    && workspaceStoreSource.contains("func restoreCurrentStudyLocation()")
     && workspaceStoreSource.contains("readerPageIndex = max(location.pageIndex ?? 0, 0)")
     && workspaceStoreSource.contains("requestReaderPDFPage(location.pageIndex, recordsLocation: false)"), "saved heading and PDF page are restored before startup records the current study location")
-expect(workspaceStoreSource.contains("private func makeCourseContext(query: String) async throws")
+expect(workspaceStoreSource.contains("func makeCourseContext(query: String) async throws")
     && workspaceStoreSource.contains("CourseKnowledgeIndex.build(")
     && workspaceStoreSource.contains("courseDocumentSearchIndex: CourseDocumentSearchIndex")
     && workspaceStoreSource.contains("course-search-v3.sqlite3")
@@ -3589,7 +3654,7 @@ expect(workspaceStoreSource.contains("private func makeCourseContext(query: Stri
     && workspaceStoreSource.contains("Task.detached(priority: .userInitiated)")
     && workspaceStoreSource.contains("withTaskCancellationHandler")
     && workspaceStoreSource.contains("migrateNoteSourceLinksFromMarkdown()"), "agent queries the persistent course index in the background and migrates durable note-source links")
-if let selectStart = workspaceStoreSource.range(of: "func select(itemID: String?)")?.lowerBound,
+if let selectStart = workspaceStoreSource.range(of: "func selectMeasured(itemID: String?)")?.lowerBound,
    let selectEnd = workspaceStoreSource[selectStart...].range(of: "\n    func ", options: [], range: workspaceStoreSource.index(after: selectStart)..<workspaceStoreSource.endIndex)?.lowerBound {
     let selectSource = String(workspaceStoreSource[selectStart..<selectEnd])
     expect(!selectSource.contains("messages = []")
@@ -3600,14 +3665,14 @@ if let selectStart = workspaceStoreSource.range(of: "func select(itemID: String?
 }
 expect(workspaceStoreSource.contains("func stageNoteDraft(_ value: String, for itemID: String?)")
     && workspaceStoreSource.contains("if stagedNoteDraft?.itemID != itemID || stagedNoteDraft?.value != value {\n            invalidateAgentContext()")
-    && workspaceStoreSource.contains("private func flushStagedNoteDraftForAgentContext()")
+    && workspaceStoreSource.contains("func flushStagedNoteDraftForAgentContext()")
     && notesAgentSource.contains("store.stageNoteDraft(value, for: draftNoteItemID)"), "agent requests flush the current local note-editor draft before snapshotting context")
 expect(workspaceStoreSource.contains("func updateReaderLocationTitle(_ title: String?)")
     && workspaceStoreSource.contains("func updateReaderHTMLLocation(id: String?, title: String?, reason: String)")
     && workspaceStoreSource.contains("PaneToggleContinuityVerifier.recordHTMLLocationCall(reason: reason)")
     && workspaceStoreSource.contains("if !incrementVisit,")
     && workspaceStoreSource.contains("previous?.locationID == locationID")
-    && workspaceStoreSource.contains("private(set) var studyLocationsByItemID")
+    && workspaceStoreSource.contains("var studyLocationsByItemID")
     && !workspaceStoreSource.contains("@Published private(set) var studyLocationsByItemID")
     && readerViewSource.contains("guard change.reason == .scroll || change.reason == .jump else { return }")
     && readerViewSource.contains("Task.sleep(nanoseconds: 350_000_000)"), "passive reader layout stays local while settled user navigation persists without publishing duplicate study locations")
@@ -3618,7 +3683,7 @@ expect(workspaceStoreSource.contains("正在静默阅读当前材料和笔记。
     && !workspaceStoreSource.contains("Agent 正在静默阅读"), "quiet insight progress copy avoids a visible internal agent label")
 expect(workspaceStoreSource.contains("scenario == \"notebook-creation-flow\"")
     && workspaceStoreSource.contains("promptCreateBlankNotebookNote()\n            return"), "visual verification can exercise blank notebook creation")
-expect(workspaceStoreSource.contains("private func noteBlockForAgentAnswer")
+expect(workspaceStoreSource.contains("func noteBlockForAgentAnswer")
     && workspaceStoreSource.contains("AgentOfflinePreview.suggestedNoteBlock(from: text, language: interfaceLanguage)")
     && workspaceStoreSource.contains("guard !text.hasPrefix(\"#\") else { return text }")
     && workspaceStoreSource.contains("return \"## \\(ui(\"整理建议\", \"Organization suggestion\"))\\n\\(text)\"")
@@ -3631,16 +3696,16 @@ expect(workspaceStoreSource.contains("func createBlankNotebookNote()")
     && workspaceStoreSource.contains("func promptCreateNotebookNoteFromCurrentMaterial()")
     && workspaceStoreSource.contains("@Published var notebookCreationDraft")
     && workspaceStoreSource.contains("struct NotebookCreationDraft")
-    && workspaceStoreSource.contains("private func createNotebookNote(seed: NotebookNoteSeed, title")
+    && workspaceStoreSource.contains("func createNotebookNote(seed: NotebookNoteSeed, title")
     && !workspaceStoreSource.contains("func resetNote()")
     && !workspaceStoreSource.contains("updateNote(defaultNote(for: selectedItem))"), "new note commands separate blank notes from current-material notes and route through the inline naming strip")
-expect(workspaceStoreSource.contains("private func openExistingNotebookNote(for material: StudyItem) -> Bool")
+expect(workspaceStoreSource.contains("func openExistingNotebookNote(for material: StudyItem) -> Bool")
     && workspaceStoreSource.contains("if openExistingNotebookNote(for: selectedMaterialItem)")
-    && workspaceStoreSource.contains("private func existingNotebookNote(for material: StudyItem) -> StudyItem?")
+    && workspaceStoreSource.contains("func existingNotebookNote(for material: StudyItem) -> StudyItem?")
     && workspaceStoreSource.contains("let titles = Set([currentTitle, chineseTitle, englishTitle, displayChineseTitle, displayEnglishTitle])")
     && workspaceStoreSource.contains("已打开现有资料笔记"), "current-material note creation opens an existing matching notebook note instead of prompting a duplicate")
 expect(workspaceStoreSource.contains("case currentMaterial(StudyItem)")
-    && workspaceStoreSource.contains("private func suggestedNotebookTitle(for seed: NotebookNoteSeed)")
+    && workspaceStoreSource.contains("func suggestedNotebookTitle(for seed: NotebookNoteSeed)")
     && workspaceStoreSource.contains("let markdown = defaultNotebookNote(title: item.title, sourceItem: sourceItem)")
     && workspaceStoreSource.contains("try markdown.write(to: url"), "new notebook notes are backed by local markdown files and can be seeded from the current material")
 expect(workspaceStoreSource.contains("func cancelNotebookNoteCreation()")
@@ -3648,14 +3713,14 @@ expect(workspaceStoreSource.contains("func cancelNotebookNoteCreation()")
     && workspaceStoreSource.contains("notebookCreationDraft = NotebookCreationDraft(")
     && workspaceStoreSource.contains("let title = draft.title.trimmingCharacters")
     && workspaceStoreSource.contains("func select(itemID: String?)")
-    && workspaceStoreSource.contains("private func selectMeasured(itemID: String?) {\n        invalidateAgentContext()\n        persistCurrentNote()\n        notebookCreationDraft = nil")
+    && workspaceStoreSource.contains("func selectMeasured(itemID: String?) {\n        invalidateAgentContext()\n        persistCurrentNote()\n        notebookCreationDraft = nil")
     && !workspaceStoreSource.contains("private func promptCreateNotebookNote(seed: NotebookNoteSeed)")
     && !workspaceStoreSource.contains("alert.messageText = seed.isBlank"), "new-note creation opens the inline naming strip and confirms through the shared local markdown creator")
 expect(workspaceStoreSource.contains("importedItems.append(item)")
     && workspaceStoreSource.contains("courseDocumentSearchIndex.synchronize(allItems)")
     && workspaceStoreSource.contains("addNoteSourceLink(noteItemID: item.id, sourceItemID: sourceItem.id)")
     && workspaceStoreSource.contains("activeNotebookItemID = item.id\n            noteText = markdown\n            revealRichWritingSurface()\n            focus(.notes)\n            save()"), "new notebook notes persist their material link, join the course index, and open in the note pane without replacing the reader material")
-expect(workspaceStoreSource.contains("private func showTransientNoteStatus(_ message: String)")
+expect(workspaceStoreSource.contains("func showTransientNoteStatus(_ message: String)")
     && workspaceStoreSource.contains("transientNoteStatus = message")
     && workspaceStoreSource.contains("@Published var transientNoteStatus")
     && workspaceStoreSource.contains("Task { @MainActor [weak self] in")
@@ -3683,7 +3748,7 @@ expect(workspaceStoreSource.contains("func promptRenameNotebookNote(itemID: Stri
     && !workspaceStoreSource.contains("alert.messageText = ui(\"重命名笔记\""), "renaming a notebook note updates the local markdown file, active note identity, heading, and navigation snapshots without a system alert")
 expect(workspaceStoreSource.contains("let title = item.map(displayTitle) ?? ui(\"新笔记\"")
     && workspaceStoreSource.contains("let sourceItem = item?.isNotebookNote == true ? nil : item")
-    && workspaceStoreSource.contains("private func defaultNotebookNote(title: String, sourceItem: StudyItem?)")
+    && workspaceStoreSource.contains("func defaultNotebookNote(title: String, sourceItem: StudyItem?)")
     && workspaceStoreSource.contains("let excerptSeed = sourceItem.map { ui(\"> 来源：\\(displayTitle(for: $0))\\n\"")
     && workspaceStoreSource.contains("## \\(ui(\"核心要点\", \"Key Points\"))")
     && workspaceStoreSource.contains("## \\(ui(\"待追问\", \"Follow-up Questions\"))")
@@ -3701,7 +3766,7 @@ expect(workspaceStoreSource.contains("return cleanLegacyPlaceholder(notesByItemI
     && workspaceStoreSource.contains(".replacingOccurrences(of: \"\\n* <br />\\n\", with: \"\\n\")")
     && workspaceStoreSource.contains(".replacingOccurrences(of: \"\\n- <br />\\n\", with: \"\\n\")"), "note loading cleans legacy empty-list placeholders")
 expect(workspaceStoreSource.contains("已创建双链笔记：\\(url.lastPathComponent)") && !workspaceStoreSource.contains("已创建双链笔记：\\(url.path)") && !workspaceStoreSource.contains("无法创建双链笔记：\\(url.path)"), "wikilink note statuses avoid exposing full local paths")
-expect(workspaceStoreSource.contains("private func revealRichWritingSurface()")
+expect(workspaceStoreSource.contains("func revealRichWritingSurface()")
     && workspaceStoreSource.contains("layout = .immersiveWriting")
     && workspaceStoreSource.contains("showNotes = true")
     && workspaceStoreSource.contains("noteRenderMode = .rich"), "writing actions share one rich writing surface reveal")
@@ -3787,16 +3852,13 @@ expect(notesAgentSource.contains("func weibeiPaneHeaderChrome(appearanceMode: We
     && notesAgentSource.contains("WeiBeiHeaderHandoffFade(height: 28, opacity: 0.34)")
     && notesAgentSource.contains("func weibeiHeaderAccessoryGroup() -> some View")
     && noteModeControlSource.contains(".weibeiHeaderAccessoryGroup()")
-    && !agentPaneHeaderSource.contains(".weibeiHeaderAccessoryGroup()")
     && !notesAgentSource.contains("private var hasAgentHeaderActions: Bool")
     && notesAgentSource.contains(".background(WeiBeiGlassHeaderBackground(paperOpacity: 0.72, materialOpacity: 0.12))")
     && notesAgentSource.contains(".animation(WeiBeiMotion.appearance, value: appearanceMode)")
-    && notesAgentSource.components(separatedBy: ".weibeiPaneHeaderChrome(appearanceMode: appearanceMode)").count >= 2
-    && notePaneHeaderSource.contains("title: store.ui(\"笔记\"")
-    && agentPaneHeaderSource.contains("title: store.ui(\"对话\"")
+    && notesAgentSource.components(separatedBy: ".weibeiPaneHeaderChrome(appearanceMode: appearanceMode)").count >= 2,
+    "note and agent panes share the light custom header chrome")
+expect(notePaneHeaderSource.contains("title: store.ui(\"笔记\"")
     && notePaneHeaderSource.contains("latinMark: store.interfaceLanguage == .chinese ? \"NOTES\" : nil")
-    && agentPaneHeaderSource.contains("latinMark: store.interfaceLanguage == .chinese ? \"CHAT\" : nil")
-    && agentPaneHeaderSource.contains("subtitle: store.agentConversationSubtitle")
     && notePaneHeaderSource.contains("private var noteHeaderSubtitle: String")
     && notePaneHeaderSource.contains("Menu {")
     && notePaneHeaderSource.contains("store.ui(\"空白课程笔记\"")
@@ -3818,8 +3880,9 @@ expect(notesAgentSource.contains("func weibeiPaneHeaderChrome(appearanceMode: We
     && notePaneHeaderSource.contains(".modifier(PaneHeaderReorderModifier(role: reorderRole))")
     && notePaneHeaderSource.contains("private var newNoteControl: some View")
     && !notePaneHeaderSource.contains(".frame(width: 560, height: 42)")
-    && notePaneHeaderSource.contains(".frame(width: 420, height: 34)")
-    && notebookCreationPanelSource.contains("private var canCreate: Bool")
+    && notePaneHeaderSource.contains(".frame(width: 420, height: 34)"),
+    "note pane header keeps contextual creation controls and compact transitions")
+expect(notebookCreationPanelSource.contains("private var canCreate: Bool")
     && notebookCreationPanelSource.contains("store.ui(\"新建笔记\"")
     && notebookCreationPanelSource.contains("Image(systemName: \"checkmark\")")
     && notebookCreationPanelSource.contains("@State private var hoveredConfirm")
@@ -3846,9 +3909,14 @@ expect(notesAgentSource.contains("func weibeiPaneHeaderChrome(appearanceMode: We
     && notePaneHeaderSource.contains(".transition(WeiBeiTransition.floating)")
     && !notesAgentSource.contains("NSAlert()")
     && !notePaneHeaderSource.contains("NoteCreateMenuLabel")
-    && !notePaneHeaderSource.contains("Button(\"作为笔记编辑\")")
+    && !notePaneHeaderSource.contains("Button(\"作为笔记编辑\")"),
+    "notebook creation stays inline, custom, and free of legacy alerts")
+expect(agentPaneHeaderSource.contains("title: store.ui(\"对话\"")
+    && agentPaneHeaderSource.contains("latinMark: store.interfaceLanguage == .chinese ? \"CHAT\" : nil")
+    && agentPaneHeaderSource.contains("subtitle: store.agentConversationSubtitle")
+    && !agentPaneHeaderSource.contains(".weibeiHeaderAccessoryGroup()")
     && agentPaneHeaderSource.contains("sessionMenu")
-    && notesAgentSource.contains("private var sessionMenu: some View")
+    && notesAgentSource.contains("var sessionMenu: some View")
     && notesAgentSource.contains("store.createStudySession()")
     && notesAgentSource.contains("store.activateStudySession(session.id)")
     && notesAgentSource.contains("store.clearCurrentSessionInferredMemory()")
@@ -3858,7 +3926,8 @@ expect(notesAgentSource.contains("func weibeiPaneHeaderChrome(appearanceMode: We
     && notesAgentSource.contains("Button(store.ui(\"替换\", \"Replace\"")
     && !notesAgentSource.contains(".labelStyle(.titleAndIcon)\n        }\n        .buttonStyle(WeiBeiTextActionButtonStyle())")
     && notePaneHeaderSource.contains(".background(WeiBeiTheme.paper)")
-    && !notePaneHeaderSource.contains("mode.id != NoteRenderMode.visibleCases.last?.id"), "note pane creation and agent header stay custom, light, and context-only")
+    && !notePaneHeaderSource.contains("mode.id != NoteRenderMode.visibleCases.last?.id"),
+    "agent pane header stays session-scoped and avoids legacy tool actions")
 expect(noteModeControlSource.contains("NoteRenderMode.visibleCases")
     && notePaneHeaderSource.contains("@State private var hoveredNoteMode: NoteRenderMode?")
     && noteModeControlSource.contains("HStack(spacing: 3)")
@@ -3887,7 +3956,7 @@ expect(!notesAgentSource.contains(".id(expanded)"), "selection agent expands wit
 expect(!contentViewSource.contains("ContextRailView(title: store.ui(\"文档\"")
     && !contentViewSource.contains("ContextRailView(title: store.ui(\"写作辅助\""), "immersive writing has no permanent side rails")
 expect(notesAgentSource.contains("LinkedSourcesControl()")
-    && notesAgentSource.contains("private var writingAssistControl: some View")
+    && notesAgentSource.contains("var writingAssistControl: some View")
     && notesAgentSource.contains("if store.layout != .immersiveWriting")
     && notesAgentSource.contains(".accessibilityLabel(Text(store.ui(\"整理当前笔记\""), "note relationships and writing aids live in accessible, on-demand header actions")
 expect(contentViewSource.contains("@StateObject private var paneHostRegistry = PersistentPaneHostRegistry()")
@@ -3987,7 +4056,7 @@ expect(workspaceStoreSource.contains("@Published var threePaneOrder")
     && workspaceStoreSource.contains("let threePaneReorder = ThreePaneReorderState()")
     && workspaceStoreSource.contains("var threePaneReorderDrag: ThreePaneReorderDrag?")
     && workspaceStoreSource.contains("func threePaneReorderFrameList(order: [WorkspacePaneRole], fallback: [CGRect]) -> [CGRect]")
-    && workspaceStoreSource.contains("private func sameReorderFrames")
+    && workspaceStoreSource.contains("func sameReorderFrames")
     && workspaceStoreSource.contains("func swapThreePaneRoles")
     && workspaceStoreSource.contains("func swapThreePaneSecondaryPanes")
     && workspaceStoreSource.contains("func moveThreePaneRole")
@@ -3999,8 +4068,8 @@ expect(workspaceStoreSource.contains("@Published var threePaneOrder")
     && workspaceStoreSource.contains("frames: threePaneReorderFrames")
     && !workspaceStoreSource.contains("contains(CGPoint(x: draggedCenterX")
     && !workspaceStoreSource.contains("let threshold: CGFloat = 84")
-    && workspaceStoreSource.contains("private func threePaneReorderTargetIndex")
-    && workspaceStoreSource.contains("private func applyThreePaneOrder")
+    && workspaceStoreSource.contains("func threePaneReorderTargetIndex")
+    && workspaceStoreSource.contains("func applyThreePaneOrder")
     && !workspaceStoreSource.contains("guard dragged != .reader, target != .reader else { return }")
     && !workspaceStoreSource.contains("guard role != .reader else { return }")
     && workspaceStoreSource.contains("layoutMatchingThreePaneOrder")
@@ -4030,7 +4099,7 @@ expect(!notesAgentSource.contains("Agent 抽屉"), "agent drawer avoids engineer
 expect(!notesAgentSource.contains("Agent 只在右下角待命"), "corner agent avoids explanatory placeholder copy")
 expect(!notesAgentSource.contains("魏碑会优先读取材料"), "agent empty state avoids product-explainer copy")
 expect(!notesAgentSource.contains("Text(\"当前上下文\")") && !notesAgentSource.contains("contextLine("), "agent empty state avoids diagnostic context rows")
-expect(notesAgentSource.contains("private struct AgentSelectionAttachmentPill")
+expect(notesAgentSource.contains("struct AgentSelectionAttachmentPill")
     && notesAgentSource.contains("Image(systemName: \"text.bubble\")")
     && notesAgentSource.contains("Text(store.ui(\"\\(store.selectionAttachments.count) 个已选文本片段\"")
     && notesAgentSource.contains("\"\\(store.selectionAttachments.count) selected text fragments\"")
@@ -4046,7 +4115,7 @@ expect(notesAgentSource.contains("private struct AgentSelectionAttachmentPill")
     && notesAgentSource.components(separatedBy: "AgentSelectionAttachmentPill()").count >= 2
     && !notesAgentSource.contains("Text(\"1 个已选文本片段\")")
     && !notesAgentSource.contains("Text(\"已含选区\")"), "agent selection context renders as a hoverable attachment pill near composers instead of text inside the empty state")
-if let attachmentRowStart = notesAgentSource.range(of: "private func selectionAttachmentRow")?.lowerBound,
+if let attachmentRowStart = notesAgentSource.range(of: "func selectionAttachmentRow")?.lowerBound,
    let attachmentHoverStart = notesAgentSource[attachmentRowStart...].range(of: "private func setPillHovering")?.lowerBound {
     let attachmentRowSource = String(notesAgentSource[attachmentRowStart..<attachmentHoverStart])
     expect(attachmentRowSource.contains("Text(selection.text)")
@@ -4077,14 +4146,14 @@ expect(notesAgentSource.contains("if store.hasSelectedMaterial")
     && !notesAgentSource.contains("starterChip(\"梳理材料\"")
     && !notesAgentSource.contains("starterChip(\"出复习题\""), "agent starter chips hide material actions without a selected material and avoid clipped long labels")
 expect(notesAgentSource.contains("let availableWidth = max(agentPaneWidth, 1)")
-    && notesAgentSource.contains("private enum AgentChatLayoutMetrics")
+    && notesAgentSource.contains("enum AgentChatLayoutMetrics")
     && notesAgentSource.contains("static let wideMaxWidth: CGFloat = 1600")
     && notesAgentSource.contains("static let compactMaxWidth: CGFloat = 560")
     && notesAgentSource.contains("AgentChatLayoutMetrics.contentWidth(")
     && notesAgentSource.contains("isImmersiveConversation")
     && notesAgentSource.contains("agentMessageRow(")
     && notesAgentSource.contains("geometryWidth: geometryWidth")
-    && notesAgentSource.contains("private func agentMessageRow(")
+    && notesAgentSource.contains("func agentMessageRow(")
     && notesAgentSource.contains(".padding(.top, store.messages.isEmpty ? 22 : 0)")
     && notesAgentSource.contains(".frame(maxWidth: .infinity, alignment: .topLeading)")
     && notesAgentSource.contains(".frame(maxWidth: .infinity, maxHeight: .infinity)")
@@ -4107,7 +4176,7 @@ expect(notesAgentSource.contains("AgentThinkingIndicator()")
     && notesAgentSource.contains("isError ? WeiBeiTheme.cinnabar : WeiBeiTheme.cinnabar.opacity(0.76)")
     && notesAgentSource.contains(".foregroundStyle(WeiBeiTheme.cinnabar)")
     && !notesAgentSource.contains("if message.role == .user || message.text.hasPrefix(\"Agent 请求失败：\")"), "selection floating agent mirrors immersive order/thinking, stays resizable, and reserves cinnabar for real failures")
-expect(notesAgentSource.contains("private var isCredentialNotice: Bool")
+expect(notesAgentSource.contains("var isCredentialNotice: Bool")
     && notesAgentSource.contains("message.text.hasPrefix(\"未配置密钥\")")
     && notesAgentSource.contains("message.text.hasPrefix(\"未配置 OPENAI_API_KEY\")")
     && notesAgentSource.contains("message.text.hasPrefix(\"No key is configured\")")
@@ -4116,7 +4185,7 @@ expect(notesAgentSource.contains("private var isCredentialNotice: Bool")
     && notesAgentSource.contains("Text(store.ui(\"需要设置密钥\", \"Key Required\"))")
     && notesAgentSource.contains("let scope = store.hasSelectionAttachments ? store.ui(\"\\(store.agentPromptScope)、已选文本片段\"")
     && notesAgentSource.contains("store.ui(\"设置后会结合\\(scope)作答；未配置时不会编造内容。\"")
-    && notesAgentSource.contains("private var assistantTurn: some View")
+    && notesAgentSource.contains("var assistantTurn: some View")
     && notesAgentSource.contains("AgentMessageMarkdownText(")
     && notesAgentSource.contains("rendersRichMarkdown: false")
     && notesAgentSource.contains("rendersRichMarkdown: true")
@@ -4136,7 +4205,7 @@ expect(notesAgentSource.contains("private var isCredentialNotice: Bool")
     && !notesAgentSource.contains("scrollTargetLayout()")
     && !notesAgentSource.contains("scrollPosition(id: $visibleAgentMessageID")
     && notesAgentSource.contains(".contentShape(Rectangle())")
-    && notesAgentSource.contains("private var messageMetadata: some View")
+    && notesAgentSource.contains("var messageMetadata: some View")
     && notesAgentSource.contains("Text(\"WeiBei\")")
     && notesAgentSource.contains("rendersRichMarkdown: true")
     && notesAgentSource.contains("WeiBeiTheme.link.opacity(hovering ? 0.50 : 0.34)")
@@ -4147,11 +4216,11 @@ expect(notesAgentSource.contains("private var isCredentialNotice: Bool")
     && !notesAgentSource.contains("private var bubbleFill")
     && !notesAgentSource.contains("RoundedRectangle(cornerRadius: 11)")
     && !notesAgentSource.contains(".fill(WeiBeiTheme.paperRaised.opacity(store.appearanceMode == .inkstone ? 0.28 : 0.76))")
-    && notesAgentSource.contains("private var userBubbleFill: Color")
-    && notesAgentSource.contains("private var userBubbleStroke: Color")
+    && notesAgentSource.contains("var userBubbleFill: Color")
+    && notesAgentSource.contains("var userBubbleStroke: Color")
     && notesAgentSource.contains("RoundedRectangle(cornerRadius: 9, style: .continuous)")
     && notesAgentSource.contains("strokeBorder(userBubbleStroke, lineWidth: 1)"), "main agent conversation keeps assistant text open without a cinnabar mark while user turns use a quiet paper bubble")
-if let userTurnStart = notesAgentSource.range(of: "private var userTurn: some View")?.lowerBound,
+if let userTurnStart = notesAgentSource.range(of: "var userTurn: some View")?.lowerBound,
    let assistantTurnStart = notesAgentSource[userTurnStart...].range(of: "private var assistantTurn: some View")?.lowerBound {
     let userTurnSource = String(notesAgentSource[userTurnStart..<assistantTurnStart])
     expect(userTurnSource.contains(".frame(maxWidth: .infinity, alignment: .trailing)")
@@ -4164,7 +4233,7 @@ if let userTurnStart = notesAgentSource.range(of: "private var userTurn: some Vi
 } else {
     expect(false, "agent user message source is inspectable")
 }
-if let credentialStart = notesAgentSource.range(of: "private var credentialNoticeContent")?.lowerBound,
+if let credentialStart = notesAgentSource.range(of: "var credentialNoticeContent")?.lowerBound,
    let isUserStart = notesAgentSource[credentialStart...].range(of: "private var isUser")?.lowerBound {
     let credentialSource = String(notesAgentSource[credentialStart..<isUserStart])
     expect(credentialSource.contains("Text(displayText)")
@@ -4173,9 +4242,9 @@ if let credentialStart = notesAgentSource.range(of: "private var credentialNotic
 } else {
     expect(false, "agent credential notice source is inspectable")
 }
-if let messageTextStart = notesAgentSource.range(of: "private struct AgentMessageMarkdownText")?.lowerBound,
-   let thinkingStart = notesAgentSource[messageTextStart...].range(of: "private struct AgentThinkingIndicator")?.lowerBound {
-    let messageTextSource = String(notesAgentSource[messageTextStart..<thinkingStart])
+if let messageTextStart = notesAgentSource.range(of: "struct AgentMessageMarkdownText")?.lowerBound,
+   let widthModifierStart = notesAgentSource[messageTextStart...].range(of: "struct AgentMessageTextWidthModifier")?.lowerBound {
+    let messageTextSource = String(notesAgentSource[messageTextStart..<widthModifierStart])
     expect(messageTextSource.contains("usesFinalizedKaTeX")
         && messageTextSource.contains("MarkdownPreviewView(")
         && messageTextSource.contains("freezeHeightAfterMeasure: true")
@@ -4191,28 +4260,26 @@ if let messageTextStart = notesAgentSource.range(of: "private struct AgentMessag
     expect(false, "agent message text source is inspectable")
 }
 // WP9: 行文进行中 V3 loading motion — no three-dot pulse card; hang-proof AppKit orbit.
-if let thinkingStart = notesAgentSource.range(of: "private struct AgentThinkingIndicator")?.lowerBound,
-   let streamingStart = notesAgentSource[thinkingStart...].range(of: "private struct AgentStreamingResponse")?.lowerBound {
-    let thinkingSource = String(notesAgentSource[thinkingStart..<streamingStart])
-    expect(!thinkingSource.contains("ForEach(0..<3")
-        && !thinkingSource.contains("repeatForever")
-        && !thinkingSource.contains("AgentThinkingInkDots")
-        && !thinkingSource.contains("pulse = true"), "AgentThinkingIndicator no longer uses a three-dot pulse implementation")
-    expect(!thinkingSource.contains("RoundedRectangle(cornerRadius: 7)")
-        && !thinkingSource.contains("paperRaised.opacity(0.34)")
-        && !thinkingSource.contains(".clipShape(RoundedRectangle"), "AgentThinkingIndicator has no loading-card chrome (fill/stroke/rounded rect)")
-    // Hang-proof contract: AppKit CADisplayLink host only setNeedsDisplay; never TimelineView inside ScrollView.
-    expect(thinkingSource.contains("accessibilityReduceMotion")
-        && thinkingSource.contains("TextOrbitSegment")
-        && thinkingSource.contains("TextOrbitPath")
-        && thinkingSource.contains("NSViewRepresentable")
-        && thinkingSource.contains("CADisplayLink")
-        && thinkingSource.contains("intrinsicContentSize")
-        && thinkingSource.contains("store.agentActivityText")
-        && !thinkingSource.contains("TimelineView(.animation"), "AgentThinkingIndicator uses reduce-motion, TextOrbitSegment/Path, hang-proof CADisplayLink NSView host, and agentActivityText")
-} else {
-    expect(false, "AgentThinkingIndicator and AgentStreamingResponse source bounds are inspectable")
-}
+let thinkingSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Views/Agent/AgentThinkingIndicator.swift")
+let thinkingSource = (try? String(contentsOf: thinkingSourceURL, encoding: .utf8)) ?? ""
+expect(thinkingSource.contains("struct AgentThinkingIndicator")
+    && !thinkingSource.contains("ForEach(0..<3")
+    && !thinkingSource.contains("repeatForever")
+    && !thinkingSource.contains("AgentThinkingInkDots")
+    && !thinkingSource.contains("pulse = true"), "AgentThinkingIndicator no longer uses a three-dot pulse implementation")
+expect(!thinkingSource.contains("RoundedRectangle(cornerRadius: 7)")
+    && !thinkingSource.contains("paperRaised.opacity(0.34)")
+    && !thinkingSource.contains(".clipShape(RoundedRectangle"), "AgentThinkingIndicator has no loading-card chrome (fill/stroke/rounded rect)")
+// Hang-proof contract: AppKit CADisplayLink host only setNeedsDisplay; never TimelineView inside ScrollView.
+expect(thinkingSource.contains("accessibilityReduceMotion")
+    && thinkingSource.contains("TextOrbitSegment")
+    && thinkingSource.contains("TextOrbitPath")
+    && thinkingSource.contains("NSViewRepresentable")
+    && thinkingSource.contains("CADisplayLink")
+    && thinkingSource.contains("intrinsicContentSize")
+    && thinkingSource.contains("store.agentActivityText")
+    && !thinkingSource.contains("TimelineView(.animation"), "AgentThinkingIndicator uses reduce-motion, TextOrbitSegment/Path, hang-proof CADisplayLink NSView host, and agentActivityText")
 expect(notesAgentSource.contains("if store.isAskingAgent && store.agentStreamingText.isEmpty")
     && notesAgentSource.contains("AgentThinkingIndicator()"), "loading motion appears only while asking and streaming text is still empty")
 // Deleted overlay views (drawer / corner / quiet insight / compact previews) are gone.
@@ -4221,9 +4288,11 @@ expect(!notesAgentSource.contains("struct AgentDrawerView")
     && !notesAgentSource.contains("struct QuietInsightView")
     && !notesAgentSource.contains("CompactAgentMessagePreviewList")
     && !notesAgentSource.contains("CompactAgentMessagePreviewRow"), "deleted agent overlay view types are removed from NotesAgentView")
-if let selectionStart = notesAgentSource.range(of: "struct FloatingSelectionAgentView")?.lowerBound,
-   let agentBubbleStart = notesAgentSource.range(of: "private struct AgentBubble")?.lowerBound {
-    let floatingSelectionSource = String(notesAgentSource[selectionStart..<agentBubbleStart])
+let floatingSelectionSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/Views/Agent/FloatingSelectionAgentView.swift")
+let floatingSelectionSource = (try? String(contentsOf: floatingSelectionSourceURL, encoding: .utf8)) ?? ""
+expect(floatingSelectionSource.contains("struct FloatingSelectionAgentView"), "selection floating agent source is readable")
+do {
     expect(floatingSelectionSource.contains("private var promptSeparator: some View")
         && floatingSelectionSource.contains("WeiBeiTheme.hairline.opacity(0.78)")
         && !floatingSelectionSource.contains("Divider()"), "selection floating agent uses WeiBei hairline separators instead of system dividers")
@@ -4260,26 +4329,24 @@ if let selectionStart = notesAgentSource.range(of: "struct FloatingSelectionAgen
         && floatingSelectionSource.contains("togglePinnedFloatingAgent")
         && floatingSelectionSource.contains("pin.fill")
         && floatingSelectionSource.contains("Unpin must not dismiss"), "selection floating agent supports pin and explicit close")
-} else {
-    expect(false, "selection floating agent source is readable")
 }
-expect(notesAgentSource.contains("private func agentInputTray(wide: Bool, contentWidth: CGFloat)"), "agent pane uses a dedicated input tray")
-expect(notesAgentSource.contains("private var agentContentMaxWidth: CGFloat?")
-    && notesAgentSource.contains("private enum AgentChatLayoutMetrics")
+expect(notesAgentSource.contains("func agentInputTray(wide: Bool, contentWidth: CGFloat)"), "agent pane uses a dedicated input tray")
+expect(notesAgentSource.contains("var agentContentMaxWidth: CGFloat?")
+    && notesAgentSource.contains("enum AgentChatLayoutMetrics")
     && notesAgentSource.contains("static let wideComposerHeight: CGFloat = 148")
     && notesAgentSource.contains("static let compactComposerHeight: CGFloat = 52")
     && notesAgentSource.contains("layout == .immersiveConversation")
     && notesAgentSource.contains("let isUser = message.role == .user")
     // Shared reading column helper — messages, streaming, and loading status share the same inset.
-    && notesAgentSource.contains("private func agentReadingColumn")
+    && notesAgentSource.contains("func agentReadingColumn")
     && notesAgentSource.contains("let limit: CGFloat = canvasWide ? 540 : 500")
     && notesAgentSource.contains("let readingLeadingInset = max((geometryWidth - readingWidth) / 2, 0)")
     && notesAgentSource.contains(".padding(.leading, readingLeadingInset)")
     && notesAgentSource.contains(".frame(maxWidth: .infinity, alignment: .leading)")
     && notesAgentSource.contains("AgentThinkingIndicator()")
     && !notesAgentSource.contains("maxWidth: isUser ? .infinity : readingWidth")
-    && notesAgentSource.contains("private var userBubbleFill: Color")
-    && notesAgentSource.contains("private var userBubbleStroke: Color")
+    && notesAgentSource.contains("var userBubbleFill: Color")
+    && notesAgentSource.contains("var userBubbleStroke: Color")
     && notesAgentSource.contains(".frame(maxWidth: 520, alignment: .trailing)")
     && notesAgentSource.contains("showsContentRail")
     && notesAgentSource.contains("!wide && store.layout.allowsRailOnlyPanes")
@@ -4289,7 +4356,7 @@ expect(notesAgentSource.contains("private var agentContentMaxWidth: CGFloat?")
     && workspaceStoreSource.contains("resolveStudyItem(matchingCitationTitle:")
     && workspaceStoreSource.contains("keepFloatingSelectionForAnswer")
     && workspaceStoreSource.contains("SelectionAskThread"), "agent uses one standard centered reading column; immersive chat is 1600×148, three-pane is 560×52, selection-ask float keeps answers")
-expect(notesAgentSource.contains("private let agentBottomAnchorID = \"agentConversationBottom\"")
+expect(notesAgentSource.contains("let agentBottomAnchorID = \"agentConversationBottom\"")
     && notesAgentSource.contains(".id(agentBottomAnchorID)")
     && notesAgentSource.contains("proxy.scrollTo(agentBottomAnchorID, anchor: .bottom)")
     && !notesAgentSource.contains("AgentScrollBottomPreferenceKey")
@@ -4299,7 +4366,7 @@ expect(notesAgentSource.contains("// No scrollTargetLayout / scrollPosition / mi
     && !notesAgentSource.contains("AgentMessageFramePreferenceKey")
     && !notesAgentSource.contains(".coordinateSpace(name: agentConversationCoordinateSpace)")
     && !notesAgentSource.contains(".scrollPosition(id:"), "agent conversation avoids geometry preference and scroll-position loops that re-center a long rich answer after an internal interaction")
-expect(notesAgentSource.contains("private var agentInputMaxWidth: CGFloat?")
+expect(notesAgentSource.contains("var agentInputMaxWidth: CGFloat?")
     && notesAgentSource.contains("AgentChatLayoutMetrics.contentWidth(")
     && notesAgentSource.contains("composerFieldHeight")
     && notesAgentSource.contains("static let wideComposerHeight: CGFloat = 148")
@@ -4343,7 +4410,7 @@ expect(!notesAgentSource.contains("agentToolButton(") && !notesAgentSource.conta
 expect(notesAgentSource.contains("LazyVGrid(columns: starterChipColumns")
     && notesAgentSource.contains("GridItem(.adaptive(minimum: 56)")
     && !notesAgentSource.contains("HStack(spacing: 8) {\n                if store.hasSelectedMaterial {\n                    starterChip(\"梳理材料\""), "agent empty-state starter actions adapt in narrow panes instead of squeezing into one row")
-expect(notesAgentSource.contains("private func togglePinnedFloatingAgent()")
+expect(notesAgentSource.contains("func togglePinnedFloatingAgent()")
     && notesAgentSource.contains("store.pinnedFloatingAgent = next")
     && notesAgentSource.contains("store.keepFloatingSelectionForAnswer = true")
     && notesAgentSource.contains("pin.fill")

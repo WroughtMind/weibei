@@ -6,7 +6,7 @@
 
 ## 先说结论
 
-原来的 `1254 × 1254` 图片可以作为高分辨率视觉参考，不能单独当作完整 App 图标交付。它没有透明通道、不是标准 1024 母版，也没有 16–512 pt 的尺寸适配；仓库当前的手工 `.app` 打包脚本还没有引用图标。
+原来的 `1254 × 1254` 图片可以作为高分辨率视觉参考，不能单独当作完整 App 图标交付。它没有透明通道、不是标准 1024 母版，也没有 16–512 pt 的尺寸适配；仓库当前的手工 `.app` 打包脚本已经使用这套资产生成应用图标。
 
 这套文件已经补齐：
 
@@ -70,4 +70,4 @@ DesignSystem/scripts/verify-assets.sh
 
 ## 当前接入状态
 
-本文件夹是独立交付，没有直接修改 GitHub `main`。仓库的 `script/build_and_run.sh` 仍需按 `08-implementation/build_and_run.icon.patch` 接入 `AppIcon.icns`。这是有意保留的最后一步，便于你先确认图标，再把资产正式并入发布流程。
+`script/build_and_run.sh` 已在打包时复制 `assets/app-icon/AppIcon.icns`，写入 `CFBundleIconFile`，并由发布元数据检查确认应用包中的图标与 plist 引用。资产变更应先运行构建脚本，再用只读校验确认 manifest、尺寸、透明通道和发布资源没有漂移。

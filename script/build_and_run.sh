@@ -105,8 +105,22 @@ else
   done
 fi
 
-if [[ -d "$ROOT_DIR/node_modules" ]]; then
-  npm run build:editor >/dev/null
+if [[ "$CHECK_ONLY" == true ]]; then
+  if [[ -d "$ROOT_DIR/node_modules" && -d "$ROOT_DIR/Prototypes/RichAnswerWebRuntime/node_modules" ]]; then
+    npm run check
+  elif [[ -d "$ROOT_DIR/node_modules" || -d "$ROOT_DIR/Prototypes/RichAnswerWebRuntime/node_modules" ]]; then
+    echo "check failed: Node dependencies are only partially installed; run npm ci at the repository root and in Prototypes/RichAnswerWebRuntime" >&2
+    exit 25
+  else
+    echo "Node checks skipped: dependencies are not installed; CI runs them in the generated-resources job."
+  fi
+else
+  if [[ -d "$ROOT_DIR/node_modules" ]]; then
+    npm run build:editor >/dev/null
+  fi
+  if [[ -d "$ROOT_DIR/Prototypes/RichAnswerWebRuntime/node_modules" ]]; then
+    npm run build:rich-answer >/dev/null
+  fi
 fi
 
 if [[ "$CHECK_ONLY" != true ]]; then
@@ -374,7 +388,10 @@ verify_window() {
 visual_verify_window() {
   if [[ -n "$VERIFY_SCENARIO" ]]; then
     for _ in {1..50}; do
-      [[ -s "$VERIFY_CAPTURE_PATH" ]] && break
+      if [[ -s "$VERIFY_CAPTURE_PATH" ]] \
+        && /usr/bin/sips -g pixelWidth -g pixelHeight "$VERIFY_CAPTURE_PATH" >/dev/null 2>&1; then
+        break
+      fi
       sleep 0.2
     done
   fi
@@ -455,12 +472,16 @@ verify_learning_flow_persistence() {
   esac
 
   local workspace_file="$VERIFY_DATA_DIR/workspace.json"
+  local workspace_notes=""
   for _ in {1..30}; do
-    if [[ -f "$workspace_file" ]] \
-      && /usr/bin/grep -q "## 整理建议" "$workspace_file" \
-      && /usr/bin/grep -q "把可确认依据写入笔记" "$workspace_file" \
-      && ! /usr/bin/grep -q "## 离线草稿" "$workspace_file" \
-      && ! /usr/bin/grep -q "## 可确认" "$workspace_file"; then
+    if [[ -f "$workspace_file" ]]; then
+      workspace_notes="$(/usr/bin/plutil -extract notesByItemID json -o - "$workspace_file" 2>/dev/null || true)"
+    fi
+    if [[ -n "$workspace_notes" ]] \
+      && /usr/bin/grep -q "## 整理建议" <<<"$workspace_notes" \
+      && /usr/bin/grep -q "把可确认依据写入笔记" <<<"$workspace_notes" \
+      && ! /usr/bin/grep -q "## 离线草稿" <<<"$workspace_notes" \
+      && ! /usr/bin/grep -q "## 可确认" <<<"$workspace_notes"; then
       return 0
     fi
     sleep 0.2
@@ -851,7 +872,9 @@ case "$MODE" in
     run_verifiers
     open_app_for_verify
     for _ in {1..30}; do
-      if verify_window >/dev/null 2>&1; then
+      # Suppressed-activation runs may not register as onscreen even after the app-owned
+      # capture proves the real window rendered. Accept either signal for visual checks.
+      if verify_window >/dev/null 2>&1 || [[ -s "$VERIFY_CAPTURE_PATH" ]]; then
         finish_verify_window
         exit $?
       fi
