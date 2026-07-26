@@ -328,7 +328,7 @@ final class StableDocumentSplitCoordinator {
     private var animationSequence = 0
     private var activeAnimationToken: Int?
 
-    private let dividerWidth: CGFloat = 10
+    private let dividerWidth = PaneLayoutGeometry.dividerWidth
     private let railWidth = ContentRailMetrics.railOnlyWidth
     private let railSnapThreshold = ContentRailMetrics.snapThreshold
     private let readableWidthThreshold = ContentRailMetrics.readableWidth
@@ -516,6 +516,9 @@ final class StableDocumentSplitCoordinator {
         splitView.recordContinuityTransition(duration: layoutAnimationDuration)
     }
 
+    /**
+     * 根据当前布局状态和连续性策略计算可见 pane 宽度。
+     */
     private func paneWidths(
         for visibleOrder: [WorkspacePaneRole],
         state: StableDocumentLayoutState,
@@ -553,19 +556,16 @@ final class StableDocumentSplitCoordinator {
             return equalPaneWidths(count: count, total: usable)
         }
 
-        if count == 2 {
-            let first = clamped(
-                state.halfSplit * usable,
-                min: minimumPaneWidth(total: usable, count: count),
-                max: usable - minimumPaneWidth(total: usable, count: count)
-            )
-            return [first, usable - first]
-        }
-
         let minimum = minimumPaneWidth(total: usable, count: count)
-        let first = clamped(state.firstSplit * usable, min: minimum, max: usable - 2 * minimum)
-        let second = clamped((state.secondSplit - state.firstSplit) * usable, min: minimum, max: usable - first - minimum)
-        return [first, second, max(minimum, usable - first - second)]
+        let cumulativeSplits = count == 2
+            ? [state.halfSplit]
+            : [state.firstSplit, state.secondSplit]
+        return PaneLayoutGeometry.paneWidths(
+            containerWidth: splitView.bounds.width,
+            dividerWidth: dividerWidth,
+            cumulativeSplits: cumulativeSplits,
+            minimumWidths: Array(repeating: minimum, count: count)
+        )
     }
 
     /// Even left→right split for the current visible set (empty-board open progression).
@@ -602,18 +602,16 @@ final class StableDocumentSplitCoordinator {
         min(railWidth, total / CGFloat(max(count, 1)))
     }
 
+    /**
+     * 将可见 pane 顺序与宽度映射为角色 frame。
+     */
     private func visibleFrames(order: [WorkspacePaneRole], widths: [CGFloat], size: CGSize) -> [WorkspacePaneRole: CGRect] {
-        var frames: [WorkspacePaneRole: CGRect] = [:]
-        var x: CGFloat = 0
-        for (index, role) in order.enumerated() {
-            let width = widths[safe: index] ?? 0
-            frames[role] = CGRect(x: x, y: 0, width: width, height: size.height)
-            x += width
-            if index < order.count - 1 {
-                x += dividerWidth
-            }
-        }
-        return frames
+        let paneFrames = PaneLayoutGeometry.paneFrames(
+            size: size,
+            dividerWidth: dividerWidth,
+            paneWidths: widths
+        )
+        return Dictionary(uniqueKeysWithValues: zip(order, paneFrames))
     }
 
     private func allRoleFrames(
@@ -1029,15 +1027,19 @@ final class StableDocumentSplitCoordinator {
         }
     }
 
+    /**
+     * 根据可见角色 frame 生成对应的 divider frame。
+     */
     private func dividerFramesForOrder(
         _ order: [WorkspacePaneRole],
         visibleFrames: [WorkspacePaneRole: CGRect],
         size: CGSize
     ) -> [CGRect] {
-        order.dropLast().compactMap { role in
-            guard let frame = visibleFrames[role] else { return nil }
-            return CGRect(x: frame.maxX, y: 0, width: dividerWidth, height: size.height)
-        }
+        PaneLayoutGeometry.dividerFrames(
+            paneFrames: order.compactMap { visibleFrames[$0] },
+            dividerWidth: dividerWidth,
+            height: size.height
+        )
     }
 
     private func clamped(_ value: CGFloat, min: CGFloat, max: CGFloat) -> CGFloat {
