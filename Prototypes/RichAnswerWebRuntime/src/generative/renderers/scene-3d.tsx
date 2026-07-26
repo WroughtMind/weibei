@@ -11,7 +11,7 @@ import {
   type Scene3DSpec,
   type Scene3DState,
   type Scene3DVector,
-} from "./scene-3d.self-check";
+} from "./scene-3d.domain";
 import {
   type CompiledRenderPlan,
   type RendererIssue,

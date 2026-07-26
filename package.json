@@ -3,9 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "license": "AGPL-3.0-only",
+  "engines": {
+    "node": ">=20.11"
+  },
   "repository": "https://github.com/weibei-app/weibei",
   "scripts": {
-    "build:editor": "esbuild Sources/WeiBei/WebEditor/src/editor.js --bundle --format=iife --outfile=Sources/WeiBei/Resources/Editor/editor.js --minify --loader:.woff=file --loader:.woff2=file --loader:.ttf=file --asset-names=fonts/[name]"
+    "build:editor": "node Sources/WeiBei/WebEditor/build-editor.mjs",
+    "check:editor": "node Sources/WeiBei/WebEditor/build-editor.mjs --check",
+    "typecheck:rich-answer": "npm --prefix Prototypes/RichAnswerWebRuntime run typecheck",
+    "test:rich-answer": "npm --prefix Prototypes/RichAnswerWebRuntime run test",
+    "build:rich-answer": "npm --prefix Prototypes/RichAnswerWebRuntime run build:embed",
+    "check:rich-answer": "npm --prefix Prototypes/RichAnswerWebRuntime run check:embedded",
+    "check:agent-extension": "node Prototypes/RichAnswerWebRuntime/scripts/check-agent-extension.mjs",
+    "check:generated": "npm run check:editor && npm run check:rich-answer",
+    "check": "npm run check:editor && npm run check:agent-extension && npm --prefix Prototypes/RichAnswerWebRuntime run check"
   },
   "dependencies": {
     "@milkdown/kit": "7.21.3",

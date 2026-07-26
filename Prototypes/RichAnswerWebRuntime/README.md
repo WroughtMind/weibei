@@ -1,6 +1,9 @@
-# 魏碑富回答网页运行时原型
+# 魏碑富回答网页运行时
 
-这是一个本地验收台，用真实 `@openuidev/react-lang` 验证“OpenUI 受控生成协议 + 魏碑深学习组件 + 通用组合原语”的路线。它不导入 OpenUI 默认组件库，也不把能力封死在少数固定案例里。
+这里是魏碑 App 内嵌富回答网页运行时的生产真源。它用
+`@openuidev/react-lang` 承载“OpenUI 受控生成协议 + 魏碑深学习组件 +
+通用组合原语”，构建产物同步到 `Sources/WeiBei/Resources/rich-answer*`。
+App 资源目录中的三个文件是生成物，不是可手工修改的真源。
 
 ## 跨学科压力样例
 
@@ -18,7 +21,7 @@
 
 ```bash
 cd Prototypes/RichAnswerWebRuntime
-npm install
+npm ci
 npm run dev
 ```
 
@@ -29,6 +32,12 @@ npm run build
 npm run serve
 ```
 
+运行类型检查、Vitest 和内嵌产物漂移检查：
+
+```bash
+npm run check
+```
+
 把当前源码构建并同步到魏碑 App 的内置资源：
 
 ```bash
@@ -37,27 +46,47 @@ npm run build:embed
 
 App 验收前必须使用这个命令，避免本地原型源码与 App 内实际运行的资源版本不一致。
 
-## URL 参数
+`npm run check:embedded` 只比较生成物，不会改写工作树。
+
+Pi 默认入口仍是 `Sources/WeiBeiCore/AgentResources/extension.ts`，它只保留
+工具编排和生命周期。上下文快照、Python 受控计算、能力目录、Envelope schema、
+专业 renderer 校验和 OpenUI parser/semantics 位于相邻 `domains/` 模块。
+`npm run check:agent-extension` 会聚合这些文件做结构类型检查、v2-only 检查、
+入口行数门禁和完整 bundle 检查。
+
+## 协议版本
+
+Rich Answer 外层 Envelope 只接受 `schemaVersion: 2`；缺失版本、v1 和未知
+版本都必须由宿主拒绝，不提供兼容回退。`weibei.openui.v1`、各 renderer 的
+`specVersion` 以及受控 Python 计算工人 v1 是彼此独立的内部协议，不属于这次
+外层 Envelope 版本删除。
+
+## 旧场景开发画廊
 
 ```text
-/?case=math-line
-/?case=physics-force
-/?case=chem-equilibrium
-/?case=biology-meiosis
-/?case=text-argument
-/?case=history-causality
-/?case=geography-map
-/?case=art-observation
-/?case=statistics-sampling
-/?case=finance-cashflow
-/?case=economics-policy
-/?case=code-sort
+/legacy.html?case=math-line
+/legacy.html?case=physics-force
+/legacy.html?case=chem-equilibrium
+/legacy.html?case=biology-meiosis
+/legacy.html?case=text-argument
+/legacy.html?case=history-causality
+/legacy.html?case=geography-map
+/legacy.html?case=art-observation
+/legacy.html?case=statistics-sampling
+/legacy.html?case=finance-cashflow
+/legacy.html?case=economics-policy
+/legacy.html?case=code-sort
 ```
 
-## 非生产边界
+## 生产与开发边界
 
-- 本目录是 throwaway 原型，不是魏碑正式富回答运行时。
-- package 依赖写死版本，方便复现这次判断。
-- 当前入口验证 `@openuidev/react-lang` 自定义组件库能否承载多学科深组件和新组合程序；十二个旧 URL 只是回归入口。
+- `index.html`、`src/main.tsx` 和 `src/app.tsx` 是唯一生产入口。
+- `src/dev/legacy-main.tsx` 与 `legacy.html` 只供本地回归，不在生产
+  Rollup 入口的依赖图中；使用 `npm run dev:legacy` 打开。
+- `*.test.ts` 只由 Vitest 加载，不进入生产 bundle。
+- renderer 的 schema、解析、状态计算放在 `*.domain.ts`，React renderer
+  只依赖这些生产领域模块，不再反向依赖 `*.self-check.ts`。
+- package 依赖写死或受 lockfile 约束，确保 CI 与本机可复现。
+- 十二个旧 URL 只属于开发画廊，不是产品协议或能力上限。
 - 任意 HTML/JavaScript 的沙盒路线留在架构决策文档，不作为产品默认入口。
-- 没有持久化、没有远端接口、没有安全策略完备性。
+- 运行时没有持久化和远端接口；网络访问由宿主协议与渲染预算禁止。

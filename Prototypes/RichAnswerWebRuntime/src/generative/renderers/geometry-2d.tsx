@@ -27,7 +27,7 @@ import {
   type GeometryPoint,
   type GeometryReadout,
   type GeometryShape,
-} from "./geometry-2d.self-check";
+} from "./geometry-2d.domain";
 
 type GeometryCompiled = CompiledRenderPlan & {
   spec: Geometry2DSpec;

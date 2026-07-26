@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Renderer } from "@openuidev/react-lang";
 import type { OpenUIError } from "@openuidev/react-lang";
-import { sceneDescriptors, sceneForKey, sceneResponse, weiBeiLearningLibrary } from "./catalog";
-import type { SceneDescriptor, SubjectGroup } from "./types";
+import { sceneDescriptors, sceneForKey, sceneResponse, weiBeiLearningLibrary } from "../catalog";
+import type { SceneDescriptor, SubjectGroup } from "../types";
 
 const groupLabels: Record<SubjectGroup, string> = {
   stem: "自然科学",

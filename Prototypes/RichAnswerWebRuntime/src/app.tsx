@@ -1,7 +1,8 @@
 import { GenerativeWorkbench } from "./generative/generative-workbench";
-import { LegacyGallery } from "./legacy-gallery";
 
+/**
+ * 魏碑 App 内嵌的正式富回答入口。
+ */
 export function App() {
-  const legacy = new URLSearchParams(window.location.search).get("legacy") === "1";
-  return legacy ? <LegacyGallery /> : <GenerativeWorkbench />;
+  return <GenerativeWorkbench />;
 }

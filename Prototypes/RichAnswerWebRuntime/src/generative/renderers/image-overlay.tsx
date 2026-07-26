@@ -32,7 +32,7 @@ import {
   IMAGE_OVERLAY_SPEC_VERSION,
   type ImageOverlayFeature,
   type ImageOverlaySpec,
-} from "./image-overlay.self-check";
+} from "./image-overlay.domain";
 
 type ImageSource = ImageOverlaySpec["image"];
 

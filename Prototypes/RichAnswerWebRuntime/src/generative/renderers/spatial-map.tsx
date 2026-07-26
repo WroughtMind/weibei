@@ -18,7 +18,7 @@ import {
   runSpatialMapViewportSelfCheck,
   spatialMapBaseToScreen,
   spatialMapScreenToBase,
-} from "./spatial-map.self-check";
+} from "./spatial-map.domain";
 
 type SpatialCompiled = CompiledRenderPlan & {
   spec: SpatialMapSpec;
