@@ -553,6 +553,7 @@ struct CourseWorkspaceHeader: View {
             .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden) // system pull-down chevron + our own would double up
         .help(store.ui("选择课程", "Select course"))
         .accessibilityLabel(Text(store.ui("选择课程", "Select course")))
     }
