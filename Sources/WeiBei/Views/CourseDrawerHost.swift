@@ -1,13 +1,11 @@
 import AppKit
 import SwiftUI
 
-/// AppKit-hosted course drawer.
+/// AppKit-hosted course index column.
 ///
 /// Why AppKit:
-/// 1. `NSAnimationContext` starts the slide on the next CA transaction — no wait for
-///    SwiftUI to re-layout reader/agent/notes.
-/// 2. Sidebar content is only installed while open (or kept warm but not store-synced
-///    while closed), so pane toggles no longer re-render a hidden course tree.
+/// Sidebar content is installed only while open and remains warm while closed, so
+/// resizing the peer workspace columns doesn't remount the course tree.
 struct CourseDrawerHost: NSViewRepresentable {
     @ObservedObject var drawer: LibraryDrawerState
     @EnvironmentObject private var store: WorkspaceStore
@@ -23,7 +21,7 @@ struct CourseDrawerHost: NSViewRepresentable {
             coordinator?.onDismiss()
         }
         context.coordinator.container = view
-        view.apply(isOpen: drawer.isOpen, store: store, animated: false)
+        view.apply(isOpen: drawer.isOpen, store: store)
         return view
     }
 
@@ -32,7 +30,7 @@ struct CourseDrawerHost: NSViewRepresentable {
         nsView.onDismiss = { [weak coordinator = context.coordinator] in
             coordinator?.onDismiss()
         }
-        nsView.apply(isOpen: drawer.isOpen, store: store, animated: true)
+        nsView.apply(isOpen: drawer.isOpen, store: store)
     }
 
     final class Coordinator {
@@ -50,7 +48,6 @@ final class CourseDrawerContainerView: NSView {
 
     var onDismiss: (() -> Void)?
 
-    private let scrim = NSView()
     private let panel = NSView()
     private var hostingView: NSHostingView<AnyView>?
     private var isOpen = false
@@ -61,17 +58,9 @@ final class CourseDrawerContainerView: NSView {
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
-        scrim.wantsLayer = true
-        // Soft paper wash — never pure black (that caused the first-open flash).
-        scrim.layer?.backgroundColor = Self.scrimColor(for: .paper).cgColor
-        scrim.alphaValue = 0
-        scrim.isHidden = true
-
         panel.wantsLayer = true
         panel.layer?.backgroundColor = Self.panelPaperColor(for: .paper).cgColor
-        panel.frame = CGRect(x: -Self.panelWidth, y: 0, width: Self.panelWidth, height: 100)
-
-        addSubview(scrim)
+        panel.frame = CGRect(x: 0, y: 0, width: Self.panelWidth, height: 100)
         addSubview(panel)
     }
 
@@ -82,10 +71,8 @@ final class CourseDrawerContainerView: NSView {
 
     override func layout() {
         super.layout()
-        scrim.frame = bounds
         let height = max(bounds.height, 1)
-        let x = isOpen ? 0 : -Self.panelWidth
-        panel.frame = CGRect(x: x, y: 0, width: Self.panelWidth, height: height)
+        panel.frame = CGRect(x: 0, y: 0, width: Self.panelWidth, height: height)
         hostingView?.frame = panel.bounds
     }
 
@@ -102,30 +89,28 @@ final class CourseDrawerContainerView: NSView {
         return nil
     }
 
-    func apply(isOpen open: Bool, store: WorkspaceStore, animated: Bool) {
+    /**
+     * 同步目录可见性，并只在展开路径刷新课程内容。
+     */
+    func apply(isOpen open: Bool, store: WorkspaceStore) {
         self.store = store
         applyPaperChrome(for: store.appearanceMode)
 
         if open {
-            // Paint sidebar onto the paper panel *before* sliding — avoids the first-open
-            // black/empty flash from mounting content mid-animation.
+            // Paint before the peer column expands so its first visible frame is complete.
             installHostingIfNeeded(store: store)
             syncHosting(store: store)
-            // One layout pass so the first frame of the slide already has content.
             layoutSubtreeIfNeeded()
             hostingView?.layoutSubtreeIfNeeded()
-            startSlide(open: true, animated: animated)
-        } else {
-            startSlide(open: false, animated: animated)
-            // Keep warm content for next open, but do not sync store-driven rebuilds while closed.
         }
+        isOpen = open
+        // Keep warm content for the next open, but do not sync store-driven rebuilds while closed.
     }
 
     private func applyPaperChrome(for mode: WeiBeiAppearanceMode) {
         appearanceMode = mode
         let paper = Self.panelPaperColor(for: mode)
         panel.layer?.backgroundColor = paper.cgColor
-        scrim.layer?.backgroundColor = Self.scrimColor(for: mode).cgColor
         hostingView?.layer?.backgroundColor = paper.cgColor
     }
 
@@ -136,47 +121,6 @@ final class CourseDrawerContainerView: NSView {
             return NSColor(calibratedRed: 0.976, green: 0.944, blue: 0.872, alpha: 1)
         case .inkstone:
             return NSColor(calibratedRed: 0.082, green: 0.082, blue: 0.082, alpha: 1)
-        }
-    }
-
-    private static func scrimColor(for mode: WeiBeiAppearanceMode) -> NSColor {
-        switch mode {
-        case .paper:
-            return NSColor(calibratedRed: 0.115, green: 0.095, blue: 0.080, alpha: 0.035)
-        case .inkstone:
-            return NSColor(calibratedRed: 0, green: 0, blue: 0, alpha: 0.18)
-        }
-    }
-
-    private func startSlide(open: Bool, animated: Bool) {
-        guard isOpen != open || panel.frame.minX != (open ? 0 : -Self.panelWidth) else {
-            isOpen = open
-            return
-        }
-        isOpen = open
-        let targetX: CGFloat = open ? 0 : -Self.panelWidth
-        let height = max(bounds.height, 1)
-        let targetPanel = CGRect(x: targetX, y: 0, width: Self.panelWidth, height: height)
-        let targetScrimAlpha: CGFloat = open ? 1 : 0
-
-        scrim.isHidden = false
-        if animated {
-            NSAnimationContext.runAnimationGroup({ context in
-                context.duration = 0.12
-                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-                context.allowsImplicitAnimation = true
-                panel.animator().frame = targetPanel
-                scrim.animator().alphaValue = targetScrimAlpha
-            }, completionHandler: { [weak self] in
-                guard let self else { return }
-                if !self.isOpen {
-                    self.scrim.isHidden = true
-                }
-            })
-        } else {
-            panel.frame = targetPanel
-            scrim.alphaValue = targetScrimAlpha
-            scrim.isHidden = !open
         }
     }
 

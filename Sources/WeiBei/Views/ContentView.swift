@@ -22,19 +22,22 @@ struct ContentView: View {
                     )
 
                     ZStack(alignment: .top) {
-                        LayoutContentView()
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .background(WeiBeiTheme.paper)
-                            // Only cross-fade immersive ↔ document families. Pane show/hide inside
-                            // the document family is owned by AppKit StableDocumentWorkspace animation
-                            // — a second SwiftUI layout animation here made toggles feel split/janky.
-                            .animation(WeiBeiMotion.layout, value: store.layout.isImmersiveFamily)
+                        HStack(spacing: 0) {
+                            // The course index is a peer workspace column. Its width animation
+                            // reflows the persistent panes instead of covering their render layers.
+                            CourseLibraryDrawerLayer {
+                                store.toggleLibrary()
+                            }
 
-                        // AppKit drawer: slide starts immediately; sidebar not store-synced while closed.
-                        CourseLibraryDrawerLayer {
-                            store.toggleLibrary()
+                            LayoutContentView()
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .background(WeiBeiTheme.paper)
+                                // Only cross-fade immersive ↔ document families. Pane show/hide inside
+                                // the document family is owned by AppKit StableDocumentWorkspace animation
+                                // — a second SwiftUI layout animation here made toggles feel split/janky.
+                                .animation(WeiBeiMotion.layout, value: store.layout.isImmersiveFamily)
                         }
-                        .zIndex(35)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                         if store.commandPalettePresented {
                             CommandPaletteView()
@@ -220,9 +223,12 @@ private struct CourseLibraryDrawerLayer: View {
 
     var body: some View {
         CourseDrawerHost(drawer: libraryDrawer, onDismiss: dismiss)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(width: libraryDrawer.isOpen ? CourseDrawerContainerView.panelWidth : 0)
+            .frame(maxHeight: .infinity)
+            .clipped()
             .allowsHitTesting(libraryDrawer.isOpen)
             .accessibilityHidden(!libraryDrawer.isOpen)
+            .animation(WeiBeiMotion.panel, value: libraryDrawer.isOpen)
     }
 }
 

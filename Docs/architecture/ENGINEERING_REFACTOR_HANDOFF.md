@@ -73,6 +73,7 @@ Rich Answer 外层 Envelope 已决定删除 v1，只保留 v2：
   - `WindowSnapshotService.swift`
 - 删除旧的 `ResizableTwoPane`、`ResizableThreePane`、`WeiBeiSplitView`、`NativeSplitCoordinator` 旁路实现。
 - 新增纯值 `PaneLayoutGeometry`，`ContentView` 与 `StableDocumentWorkspace` 共用 pane/divider 几何计算。
+- 课程目录与稳定工作区改为同级水平列；目录通过 `0 ↔ 292pt` 宽度动画平滑压缩工作区，不再覆盖 AppKit 面板渲染层。
 
 ### 3.4 WorkspaceStore 拆分和 I/O 边界：已实现
 

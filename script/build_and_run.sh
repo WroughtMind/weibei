@@ -4,7 +4,7 @@ set -euo pipefail
 MODE="${1:-run}"
 RUN_VISUAL_VERIFY=false
 if [[ "$MODE" == "--visual-verify" || "$MODE" == "visual-verify" ]]; then
-  MODE="--verify"
+  MODE="--visual-verify"
   RUN_VISUAL_VERIFY=true
 fi
 if [[ "${2:-}" == "--visual-verify" || "${2:-}" == "visual-verify" ]]; then
@@ -859,7 +859,10 @@ case "$MODE" in
     run_verifiers
     open_app_for_verify
     for _ in {1..30}; do
-      if verify_window >/dev/null 2>&1; then
+      # Suppressed-activation runs may not register as onscreen even after the app-owned
+      # capture proves the real window rendered. Accept either signal for visual checks.
+      if verify_window >/dev/null 2>&1 \
+        || { [[ "$RUN_VISUAL_VERIFY" == true ]] && [[ -s "$VERIFY_CAPTURE_PATH" ]]; }; then
         finish_verify_window
         exit 0
       fi
