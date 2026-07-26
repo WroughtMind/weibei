@@ -464,8 +464,10 @@ struct SettingsView: View {
     }
 
     private var aboutSettings: some View {
+        // User-facing only: version + build + update check.
+        // Commit / dirty / shipping notes stay out of the UI (copy diagnostics if needed).
         VStack(alignment: .leading, spacing: 16) {
-            settingsGroup(store.ui("本机版本", "This Install")) {
+            settingsGroup(store.ui("版本", "Version")) {
                 settingsRow(title: store.ui("版本", "Version")) {
                     Text(buildInfo.version)
                         .font(SettingsType.control)
@@ -478,37 +480,21 @@ struct SettingsView: View {
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
                         .textSelection(.enabled)
                 }
-                settingsRow(title: store.ui("提交", "Commit")) {
-                    Text(buildInfo.shortCommit + (buildInfo.isDirty ? " · dirty" : ""))
-                        .font(SettingsType.control)
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .textSelection(.enabled)
-                }
                 settingsRow(
-                    title: store.ui("标识", "Identity"),
-                    detail: store.ui(
-                        "发给他人时请用本页构建号核对，避免旧包当最新。",
-                        "Share this build number so others can confirm they are not on an old package."
-                    ),
+                    title: store.ui("复制版本信息", "Copy Version Info"),
                     showsBottomDivider: false
                 ) {
-                    Text(buildInfo.displayLine)
-                        .font(SettingsType.control)
-                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.trailing)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: 280, alignment: .trailing)
+                    Button(store.ui("复制", "Copy")) {
+                        copyUserFacingVersionInfo()
+                    }
+                    .buttonStyle(WeiBeiTextActionButtonStyle())
                 }
             }
 
             settingsGroup(store.ui("更新", "Updates")) {
                 settingsRow(
                     title: store.ui("检查更新", "Check for Updates"),
-                    detail: store.ui(
-                        "只提示下载，不会在后台静默替换本机应用。",
-                        "Prompts only — never silently replaces this app."
-                    )
+                    showsBottomDivider: availableUpdate != nil || (updateCheckStatus?.isEmpty == false)
                 ) {
                     Button {
                         Task { await runUpdateCheck() }
@@ -525,30 +511,25 @@ struct SettingsView: View {
                 }
 
                 if let updateCheckStatus, !updateCheckStatus.isEmpty {
-                    settingsNote(updateCheckStatus, icon: availableUpdate == nil ? "checkmark.circle" : "arrow.down.circle")
+                    settingsNote(
+                        updateCheckStatus,
+                        icon: availableUpdate == nil ? "checkmark.circle" : "arrow.down.circle"
+                    )
                 }
 
                 if let availableUpdate {
                     settingsRow(
-                        title: store.ui("可用版本", "Available"),
-                        detail: availableUpdateDetail(availableUpdate),
+                        title: store.ui("新版本", "New Version"),
+                        detail: userFacingUpdateDetail(availableUpdate),
                         showsBottomDivider: false
                     ) {
-                        Button(store.ui("打开下载页", "Open Download")) {
+                        Button(store.ui("前往下载", "Download")) {
                             openUpdateDownload(availableUpdate)
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                     }
                 }
             }
-
-            settingsNote(
-                store.ui(
-                    "正式外发请使用 GitHub Release / Homebrew，不要长期 AirDrop 旧 dist。",
-                    "For sharing, prefer GitHub Releases or Homebrew — not a long-lived old dist.zip."
-                ),
-                icon: "shippingbox"
-            )
         }
     }
 
@@ -560,23 +541,20 @@ struct SettingsView: View {
         let result = await WeiBeiUpdateChecker.check(local: buildInfo)
         updateCheckBusy = false
         switch result {
-        case let .upToDate(_, remote):
+        case .upToDate:
             availableUpdate = nil
-            updateCheckStatus = store.ui(
-                "已是最新（频道 \(remote.version) · 构建 \(remote.build)）。",
-                "You are up to date (channel \(remote.version) · build \(remote.build))."
-            )
+            updateCheckStatus = store.ui("已是最新版本。", "You are up to date.")
         case let .updateAvailable(_, remote):
             availableUpdate = remote
             updateCheckStatus = store.ui(
-                "发现新版本 \(remote.version)（构建 \(remote.build)）。",
-                "Update available: \(remote.version) (build \(remote.build))."
+                "有新版本可用：\(remote.version)。",
+                "A newer version is available: \(remote.version)."
             )
-        case let .failed(message):
+        case .failed:
             availableUpdate = nil
             updateCheckStatus = store.ui(
-                "检查失败：\(message)。可稍后重试，或打开 GitHub Releases。",
-                "Check failed: \(message). Retry later, or open GitHub Releases."
+                "暂时无法检查更新，请稍后重试。",
+                "Could not check for updates. Please try again later."
             )
         }
     }
@@ -586,12 +564,24 @@ struct SettingsView: View {
         NSWorkspace.shared.open(url)
     }
 
-    private func availableUpdateDetail(_ remote: WeiBeiUpdateManifest) -> String {
-        var parts = ["\(remote.version) (\(remote.build))", remote.shortCommit]
+    private func userFacingUpdateDetail(_ remote: WeiBeiUpdateManifest) -> String {
         if let notes = remote.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !notes.isEmpty {
-            parts.append(notes)
+            // Keep notes short in UI; strip engineering jargon if present.
+            let cleaned = notes
+                .replacingOccurrences(of: " (no login-keychain prompts)", with: "")
+                .replacingOccurrences(of: "（无钥匙串弹窗）", with: "")
+            return "\(remote.version) · \(cleaned)"
         }
-        return parts.joined(separator: " · ")
+        return remote.version
+    }
+
+    private func copyUserFacingVersionInfo() {
+        // Include commit for support triage, but never surface "dirty" in the pasteboard label.
+        let line = "魏碑 \(buildInfo.version) (\(buildInfo.build))"
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(line, forType: .string)
+        updateCheckStatus = store.ui("已复制版本信息。", "Version info copied.")
+        availableUpdate = nil
     }
 
     private func settingsSidebarButton(_ section: SettingsSection) -> some View {
