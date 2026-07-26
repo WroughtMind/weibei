@@ -614,6 +614,189 @@ private struct AppearanceThemePalettePopover: View {
     }
 }
 
+// MARK: - Theme layout preview (real WeiBei chrome, not a chat-shell mock)
+//
+// Matches the live default workspace: full-width UnifiedTopBar + document
+// three-pane (阅读 | 对话 | 笔记). Library is a drawer, not a permanent column.
+
+struct WeiBeiThemeLayoutPreview: View {
+    let mode: WeiBeiAppearanceMode
+
+    private var paper: Color { Color(nsColor: WeiBeiNativePalette.paper(for: mode)) }
+    private var raised: Color { Color(nsColor: WeiBeiNativePalette.paperRaised(for: mode)) }
+    private var inset: Color { Color(nsColor: WeiBeiNativePalette.paperInset(for: mode)) }
+    private var ink: Color { Color(nsColor: WeiBeiNativePalette.ink(for: mode)) }
+    private var hairline: Color { Color(nsColor: WeiBeiNativePalette.hairline(for: mode)) }
+    private var cinnabar: Color { Color(nsColor: WeiBeiNativePalette.cinnabar(for: mode)) }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            topBar
+            hairlineDivider
+            HStack(spacing: 0) {
+                readerPane
+                hairlineDividerVertical
+                agentPane
+                hairlineDividerVertical
+                notesPane
+            }
+            .frame(maxHeight: .infinity)
+        }
+        .background(paper)
+        .allowsHitTesting(false)
+    }
+
+    /// Slim UnifiedTopBar: left chrome · center pane-toggle cluster · right tools.
+    private var topBar: some View {
+        HStack(spacing: 0) {
+            HStack(spacing: 3) {
+                iconDot(active: false)
+                iconDot(active: false)
+                iconDot(active: false)
+            }
+            .frame(width: 28, alignment: .leading)
+
+            Spacer(minLength: 2)
+
+            // Reader / Chat / Notes toggles — centered like the real top bar.
+            HStack(spacing: 3) {
+                iconDot(active: true)
+                iconDot(active: true)
+                iconDot(active: true)
+            }
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(
+                RoundedRectangle(cornerRadius: 4, style: .continuous)
+                    .fill(inset.opacity(0.85))
+            )
+
+            Spacer(minLength: 2)
+
+            HStack(spacing: 3) {
+                iconDot(active: false)
+                iconDot(active: false)
+            }
+            .frame(width: 22, alignment: .trailing)
+        }
+        .padding(.horizontal, 6)
+        .frame(height: 13)
+        .background(paper.opacity(0.96))
+    }
+
+    /// Wide reading column — primary surface in WeiBei.
+    private var readerPane: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            // Title + cinnabar underline (reading hierarchy)
+            Capsule()
+                .fill(ink.opacity(0.42))
+                .frame(width: 28, height: 3)
+            Capsule()
+                .fill(cinnabar.opacity(0.75))
+                .frame(width: 12, height: 1.5)
+                .padding(.bottom, 1)
+
+            bodyLine(fraction: 0.95)
+            bodyLine(fraction: 0.88)
+            bodyLine(fraction: 0.92)
+            // Rubbing / figure block (distinct from chat bubbles)
+            RoundedRectangle(cornerRadius: 2, style: .continuous)
+                .fill(ink.opacity(mode.isDark ? 0.22 : 0.10))
+                .frame(height: 16)
+                .padding(.vertical, 1)
+            bodyLine(fraction: 0.78)
+            bodyLine(fraction: 0.65)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 5)
+        .padding(.vertical, 5)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(paper)
+    }
+
+    /// Chat column — bubbles + quiet composer, not the dominant pane.
+    private var agentPane: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Capsule()
+                .fill(ink.opacity(0.22))
+                .frame(width: 14, height: 2)
+            chatBubble(alignment: .trailing, fill: cinnabar.opacity(mode.isDark ? 0.35 : 0.22), width: 0.72)
+            chatBubble(alignment: .leading, fill: inset.opacity(0.95), width: 0.88)
+            chatBubble(alignment: .leading, fill: inset.opacity(0.80), width: 0.64)
+            Spacer(minLength: 0)
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .stroke(hairline.opacity(0.55), lineWidth: 1)
+                .background(
+                    RoundedRectangle(cornerRadius: 3, style: .continuous)
+                        .fill(raised.opacity(0.55))
+                )
+                .frame(height: 8)
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 5)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .frame(width: 36)
+        .background(raised.opacity(0.55))
+    }
+
+    /// Notes column — markdown lines, quieter than chat.
+    private var notesPane: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Capsule()
+                .fill(ink.opacity(0.28))
+                .frame(width: 16, height: 2)
+            bodyLine(fraction: 0.90)
+            bodyLine(fraction: 0.75)
+            bodyLine(fraction: 0.82)
+            bodyLine(fraction: 0.55)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 5)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .frame(width: 32)
+        .background(raised.opacity(0.40))
+    }
+
+    private var hairlineDivider: some View {
+        Rectangle()
+            .fill(hairline.opacity(0.55))
+            .frame(height: 1)
+    }
+
+    private var hairlineDividerVertical: some View {
+        Rectangle()
+            .fill(hairline.opacity(0.50))
+            .frame(width: 1)
+    }
+
+    private func iconDot(active: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 1.5, style: .continuous)
+            .fill(active ? cinnabar.opacity(0.85) : ink.opacity(0.22))
+            .frame(width: 5, height: 5)
+    }
+
+    private func bodyLine(fraction: CGFloat) -> some View {
+        Capsule()
+            .fill(ink.opacity(0.16))
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(height: 2)
+            .padding(.trailing, max(0, (1 - fraction) * 48))
+    }
+
+    private func chatBubble(alignment: HorizontalAlignment, fill: Color, width fraction: CGFloat) -> some View {
+        HStack {
+            if alignment == .trailing { Spacer(minLength: 0) }
+            RoundedRectangle(cornerRadius: 3, style: .continuous)
+                .fill(fill)
+                .frame(height: 7)
+                .frame(maxWidth: .infinity)
+                .padding(alignment == .trailing ? .leading : .trailing, max(0, (1 - fraction) * 28))
+            if alignment == .leading { Spacer(minLength: 0) }
+        }
+    }
+}
+
 enum WeiBeiTransition {
     // No blur: blur during large panel open forces offscreen raster of the whole workspace.
     // Kept for call sites that still use transition insertion; ContentView uses offset slide.

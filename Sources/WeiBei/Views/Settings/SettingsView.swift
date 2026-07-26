@@ -4,15 +4,12 @@ import WeiBeiCore
 
 // MARK: - SettingsView
 //
-// Migrated out of WeiBeiApp.swift (see L1 in the settings diagnosis report):
-// SettingsView is a large, self-contained surface with its own sidebar,
-// detail switch, and shared primitives (settingsGroup / settingsRow /
-// settingsPill / settingsNote / compactMenu / segmented / sectionTitle).
-// Keeping it in the shared-core WeiBeiApp.swift meant every small settings
-// change had to go through the shared-file occupancy process, which was the
-// structural reason the prior 7 settings commits serialized instead of
-// parallelizing. It now lives here; AgentSettingsView.swift /
-// AgentModelPicker.swift remain `extension SettingsView` and are unaffected.
+// Information architecture (2026-07-26):
+//   对话 | 界面 | 快捷键 | 关于
+// Settings hold durable preferences only. One-shot actions (import, new note,
+// open search, clear fragments) stay in the command palette / workspace.
+// Theme lives only on the Interface page (no top-bar or settings-header palette).
+// Default landing section is always Chat.
 
 struct SettingsView: View {
     // Visible to `internal` so the Settings sub-views in Views/Settings/*.swift
@@ -27,16 +24,28 @@ struct SettingsView: View {
     // Profile inline-rename state (AgentSettingsView extension).
     @State var isRenamingActiveProfile = false
     @State var profileRenameDraft = ""
-    // Profile delete confirmation (AgentSettingsView extension). The action is
-    // destructive — it also wipes the profile's stored API key — so it needs a
-    // confirmation gate (see S3).
+    // Profile delete confirmation (AgentSettingsView extension).
     @State var showDeleteProfileConfirmation = false
     // About / update check (tier-0: prompt only, never silent install).
     @State private var updateCheckStatus: String?
     @State private var updateCheckBusy = false
     @State private var availableUpdate: WeiBeiUpdateManifest?
+    @State private var isVersionUpToDate = false
+    // Shortcut rebinding: click a key chip, then press the new chord.
+    @State private var recordingShortcutID: AppShortcutID?
+    @State private var shortcutRecordMonitor: Any?
+    @State private var shortcutStatusMessage: String?
+    // In-app feedback sheet.
+    @State private var showFeedbackSheet = false
+    @State private var feedbackTitle = ""
+    @State private var feedbackBody = ""
+    @State private var feedbackBusy = false
+    @State private var feedbackStatus: String?
 
     private var buildInfo: WeiBeiAppBuildInfo { .current() }
+
+    /// Max width for long text fields (Base URL, API key) — not for every control.
+    static let controlWidth: CGFloat = 260
 
     var body: some View {
         HStack(spacing: 0) {
@@ -45,28 +54,23 @@ struct SettingsView: View {
                 .overlay(WeiBeiTheme.hairline.opacity(0.55))
             settingsDetail
         }
-        // L4: fixed size was too tight once the chat card grew; keep a stable
-        // default floor but allow vertical stretch (and modest horizontal).
         .frame(minWidth: 860, minHeight: 610)
         .background(WeiBeiTheme.paper)
         .foregroundStyle(WeiBeiTheme.ink)
         .preferredColorScheme(store.appearanceMode.colorScheme)
         .modifier(WeiBeiAppearanceTransition(mode: store.appearanceMode))
         .onAppear {
-            // Overview tab removed (M1) — default to the Chat section, where the
-            // highest-frequency settings (provider/key/model) live.
+            // Always land on Chat: highest-frequency durable settings (provider / key / model).
             selectedSection = .agent
             oauthService.refreshLinkedStatus()
         }
         .onReceive(NotificationCenter.default.publisher(for: .weiBeiPiOAuthDidSucceed)) { note in
             guard let raw = note.userInfo?["provider"] as? String,
                   let subscription = PiSubscriptionProvider(rawValue: raw) else { return }
-            // After OAuth, point chat at the subscription provider + default model.
             store.setAgentAuthMethod(.subscription)
             store.setAgentProviderID(subscription.agentProviderID)
             store.updateModelName(subscription.defaultModel)
             if raw == "openai-codex" {
-                // Pi expects provider id openai-codex for ChatGPT subscription tokens.
                 store.updateModelName(subscription.defaultModel)
             }
             store.openAIKeyStatus = store.ui(
@@ -82,11 +86,9 @@ struct SettingsView: View {
     }
 
     private enum SettingsSection: String, CaseIterable, Identifiable {
-        case appearance
-        case reading
-        case writing
+        // Sidebar order: Interface first; default landing remains Chat (.agent).
+        case interface
         case agent
-        case data
         case shortcuts
         case about
 
@@ -94,11 +96,8 @@ struct SettingsView: View {
 
         var icon: String {
             switch self {
-            case .appearance: return "slider.horizontal.3"
-            case .reading: return "book.pages"
-            case .writing: return "square.and.pencil"
+            case .interface: return "slider.horizontal.3"
             case .agent: return "text.bubble"
-            case .data: return "folder"
             case .shortcuts: return "command"
             case .about: return "info.circle"
             }
@@ -107,11 +106,8 @@ struct SettingsView: View {
         @MainActor
         func title(_ store: WorkspaceStore) -> String {
             switch self {
-            case .appearance: return store.ui("外观", "Appearance")
-            case .reading: return store.ui("阅读", "Reading")
-            case .writing: return store.ui("写作", "Writing")
+            case .interface: return store.ui("界面", "Interface")
             case .agent: return store.ui("对话", "Chat")
-            case .data: return store.ui("资料与数据", "Library & Data")
             case .shortcuts: return store.ui("快捷键", "Shortcuts")
             case .about: return store.ui("关于", "About")
             }
@@ -119,12 +115,12 @@ struct SettingsView: View {
     }
 
     private var settingsSidebar: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 16) {
             Text(store.ui("设置", "Settings"))
-                .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 28, weight: .semibold))
+                .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 20, weight: .semibold))
                 .foregroundStyle(WeiBeiTheme.ink)
                 .padding(.horizontal, 22)
-                .padding(.top, 24)
+                .padding(.top, 22)
 
             VStack(spacing: 3) {
                 ForEach(SettingsSection.allCases) { section in
@@ -134,37 +130,8 @@ struct SettingsView: View {
             .padding(.horizontal, 12)
 
             Spacer()
-
-            // Glanceable current language / theme — tappable so they jump to Appearance.
-            VStack(alignment: .leading, spacing: 9) {
-                Button {
-                    withAnimation(WeiBeiMotion.panel) { selectedSection = .appearance }
-                } label: {
-                    settingsPill(
-                        title: store.interfaceLanguage.settingsLabel,
-                        icon: "character.book.closed",
-                        active: false
-                    )
-                }
-                .buttonStyle(.plain)
-                .help(store.ui("前往外观设置", "Go to Appearance"))
-
-                Button {
-                    withAnimation(WeiBeiMotion.panel) { selectedSection = .appearance }
-                } label: {
-                    settingsPill(
-                        title: store.appearanceMode.label(language: store.interfaceLanguage),
-                        icon: store.appearanceMode.systemImage,
-                        active: false
-                    )
-                }
-                .buttonStyle(.plain)
-                .help(store.ui("前往外观设置", "Go to Appearance"))
-            }
-            .padding(.horizontal, 14)
-            .padding(.bottom, 18)
         }
-        .frame(width: 218)
+        .frame(width: 200)
         .background {
             ZStack(alignment: .top) {
                 WeiBeiTheme.paperInset.opacity(store.appearanceMode.isDark ? 0.62 : 0.80)
@@ -184,20 +151,13 @@ struct SettingsView: View {
     private var settingsDetail: some View {
         VStack(spacing: 0) {
             settingsHeader
-            // No whole-scroll animation on section change — that was thrashing settings UI.
             ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 14) {
                     switch selectedSection {
-                    case .appearance:
-                        appearanceSettings
-                    case .reading:
-                        readingSettings
-                    case .writing:
-                        writingSettings
                     case .agent:
                         agentSettings
-                    case .data:
-                        dataSettings
+                    case .interface:
+                        interfaceSettings
                     case .shortcuts:
                         shortcutSettings
                     case .about:
@@ -205,8 +165,8 @@ struct SettingsView: View {
                     }
                 }
                 .padding(.horizontal, 28)
-                .padding(.top, 24)
-                .padding(.bottom, 34)
+                .padding(.top, 20)
+                .padding(.bottom, 32)
             }
             .id(selectedSection)
         }
@@ -217,14 +177,13 @@ struct SettingsView: View {
     private var settingsHeader: some View {
         HStack(alignment: .center) {
             Text(selectedSection.title(store))
-                .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 24, weight: .semibold))
+                .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 17, weight: .semibold))
                 .foregroundStyle(WeiBeiTheme.ink)
             Spacer()
-            settingsAppearanceToggleButton
         }
         .padding(.horizontal, 28)
-        .padding(.top, 20)
-        .padding(.bottom, 16)
+        .padding(.top, 18)
+        .padding(.bottom, 14)
         .background {
             ZStack(alignment: .bottom) {
                 WeiBeiGlassHeaderBackground(paperOpacity: 0.66, materialOpacity: 0.10)
@@ -233,70 +192,52 @@ struct SettingsView: View {
         }
     }
 
-    private var settingsAppearanceToggleButton: some View {
-        // Same paper-swatch palette as the main top bar.
-        AppearanceThemePaletteButton()
-    }
+    // MARK: - Interface (language / theme / reading tint / workspace)
 
-    private var appearanceSettings: some View {
-        VStack(alignment: .leading, spacing: 16) {
+    private var interfaceSettings: some View {
+        VStack(alignment: .leading, spacing: 14) {
             settingsGroup(store.ui("语言", "Language")) {
-                settingsRow(title: store.ui("界面语言", "Interface Language")) {
-                    segmented(WeiBeiInterfaceLanguage.allCases, active: store.interfaceLanguage) { language in
-                        language.settingsLabel
-                    } action: { language in
-                        withAnimation(WeiBeiMotion.appearance) {
-                            store.setInterfaceLanguage(language)
-                        }
-                    }
-                }
-            }
-
-            settingsGroup(store.ui("外观", "Appearance")) {
-                settingsRow(title: store.ui("主题", "Theme")) {
-                    // Four themes — 2×2 chips. Top bar menu is the fast path; this is the full chooser.
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 6)], alignment: .trailing, spacing: 6) {
-                        ForEach(WeiBeiAppearanceMode.allCases) { mode in
-                            Button {
-                                store.setAppearanceMode(mode)
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: mode.systemImage)
-                                        .font(.system(size: 11, weight: .semibold))
-                                    Text(mode.label(language: store.interfaceLanguage))
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .lineLimit(1)
-                                }
-                                .padding(.horizontal, 10)
-                                .frame(height: 30)
-                                .frame(maxWidth: .infinity)
-                                .foregroundStyle(mode == store.appearanceMode ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 7)
-                                        .fill(mode == store.appearanceMode
-                                              ? WeiBeiTheme.paperRaised.opacity(0.72)
-                                              : WeiBeiTheme.paperInset.opacity(0.40))
-                                )
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 7)
-                                        .stroke(
-                                            mode == store.appearanceMode
-                                                ? WeiBeiTheme.cinnabar.opacity(0.55)
-                                                : WeiBeiTheme.hairline.opacity(0.36),
-                                            lineWidth: 1
-                                        )
+                settingsRow(title: store.ui("语言", "Language"), showsBottomDivider: false) {
+                    compactMenu(store.interfaceLanguage.nativeName) {
+                        ForEach(WeiBeiInterfaceLanguage.allCases) { language in
+                            Button(language.nativeName) {
+                                withAnimation(WeiBeiMotion.appearance) {
+                                    store.setInterfaceLanguage(language)
                                 }
                             }
-                            .buttonStyle(.plain)
-                            .help(mode.detail(language: store.interfaceLanguage))
                         }
                     }
-                    .frame(width: 280)
                 }
             }
 
-            settingsGroup(store.ui("工作区", "Workspace")) {
-                settingsRow(title: store.ui("每日灵感", "Daily Inspiration")) {
+            // AionUI-style gallery: each card is a miniature workspace, not a flat chip.
+            settingsGroup(store.ui("主题", "Theme")) {
+                themePicker
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 12)
+            }
+
+            settingsGroup(store.ui("偏好", "Preferences")) {
+                settingsRow(
+                    title: store.ui("文稿随主题调色", "Match documents to theme"),
+                    detail: store.ui(
+                        "PDF / HTML 按当前主题显示；关闭则保留原稿颜色。",
+                        "PDF and HTML follow the theme; off keeps original colors."
+                    )
+                ) {
+                    settingsSwitch(
+                        isOn: Binding(
+                            get: { store.adaptImportedDocumentColors },
+                            set: { store.setImportedDocumentColorAdaptation($0) }
+                        ),
+                        accessibilityLabel: store.ui("文稿随主题调色", "Match documents to theme")
+                    )
+                }
+
+                settingsRow(
+                    title: store.ui("每日灵感", "Daily Inspiration"),
+                    showsBottomDivider: false
+                ) {
                     settingsSwitch(
                         isOn: Binding(
                             get: { store.showDailyInspiration },
@@ -309,212 +250,218 @@ struct SettingsView: View {
         }
     }
 
-    private var readingSettings: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            settingsGroup(store.ui("导入文稿", "Imported Documents")) {
-                settingsRow(title: store.ui("导入文稿适配", "Adapt Imported Documents")) {
-                    settingsSwitch(
-                        isOn: Binding(
-                            get: { store.adaptImportedDocumentColors },
-                            set: { store.setImportedDocumentColorAdaptation($0) }
-                        ),
-                        accessibilityLabel: store.ui("导入文稿适配", "Adapt Imported Documents")
-                    )
-                }
-            }
-
-            settingsGroup(store.ui("阅读入口", "Reader Entry")) {
-                settingsRow(title: store.ui("资料内搜索", "Search in Material")) {
-                    if store.hasSelectedMaterial {
-                        Button(store.ui("打开搜索", "Open Search")) {
-                            withAnimation(WeiBeiMotion.panel) {
-                                store.revealReaderSearch()
-                            }
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle(active: store.showReaderSearch))
-                    } else {
-                        Text(store.ui("未选择资料", "No material selected"))
-                            .font(SettingsType.control)
-                            .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                    }
-                }
+    /// Theme gallery modeled on AionUI `ThemeLayoutPreview` cards:
+    /// mini app chrome (top bar + panes) so you can see how the theme feels.
+    private var themePicker: some View {
+        HStack(spacing: 10) {
+            ForEach(WeiBeiAppearanceMode.allCases) { mode in
+                themePreviewCard(mode)
             }
         }
     }
 
-    private var writingSettings: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            settingsGroup(store.ui("Markdown", "Markdown")) {
-                settingsRow(title: store.ui("笔记模式", "Note Mode")) {
-                    segmented(NoteRenderMode.visibleCases, active: store.noteRenderMode.visibleMode) { mode in
-                        mode.label(language: store.interfaceLanguage)
-                    } action: { mode in
-                        withAnimation(WeiBeiMotion.panel) {
-                            store.setNoteRenderMode(mode)
+    private var themeSwatchRow: some View { themePicker }
+
+    private func themePreviewCard(_ mode: WeiBeiAppearanceMode) -> some View {
+        let selected = mode == store.appearanceMode
+        return Button {
+            store.setAppearanceMode(mode)
+        } label: {
+            VStack(alignment: .leading, spacing: 7) {
+                ZStack(alignment: .topTrailing) {
+                    WeiBeiThemeLayoutPreview(mode: mode)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 96)
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .stroke(
+                                    selected
+                                        ? WeiBeiTheme.cinnabar.opacity(0.90)
+                                        : WeiBeiTheme.hairline.opacity(0.42),
+                                    lineWidth: selected ? 2 : 1
+                                )
                         }
+
+                    if selected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(WeiBeiTheme.cinnabar)
+                            .padding(7)
                     }
                 }
 
-                settingsRow(title: store.ui("新建笔记", "New Note")) {
-                    HStack(spacing: 8) {
-                        Button(store.ui("空白", "Blank")) {
-                            withAnimation(WeiBeiMotion.panel) {
-                                store.promptCreateBlankNotebookNote()
-                            }
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle())
-
-                        if store.hasSelectedMaterial {
-                            Button(store.ui("当前资料", "Current Material")) {
-                                withAnimation(WeiBeiMotion.panel) {
-                                    store.promptCreateNotebookNoteFromCurrentMaterial()
-                                }
-                            }
-                            .buttonStyle(WeiBeiTextActionButtonStyle())
-                        }
-                    }
-                }
-
-                if store.canUseSelectedMarkdownAsNotebookNote {
-                    settingsRow(title: store.ui("Markdown 资料", "Markdown Material")) {
-                        Button(store.ui("作为笔记编辑", "Edit as Note")) {
-                            store.useSelectedMarkdownAsNotebookNote()
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                    }
-                }
+                Text(mode.label(language: store.interfaceLanguage))
+                    .font(.system(size: 12, weight: selected ? .semibold : .medium))
+                    .foregroundStyle(selected ? WeiBeiTheme.ink : WeiBeiTheme.secondaryInk)
+                    .lineLimit(1)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .help(mode.detail(language: store.interfaceLanguage))
+        .accessibilityLabel(Text(mode.label(language: store.interfaceLanguage)))
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 
     /// 对话服务设置 — 实现在 Views/Settings/AgentSettingsView.swift 的 extension 中。
-    /// 历史上这里是四个并列卡片（连接配置 / 接入方式 / 提供商与模型 / 对话入口），
-    /// 现已重构为单条线性决策链（服务 → 认证 → 模型 → 状态），并把模型字段升级为
-    /// 登录后实时拉取的下拉（见 AgentModelPicker.swift）。
     private var agentSettings: some View {
         agentSettingsContent()
     }
 
+    // MARK: - Shortcuts (grouped, click key to rebind)
+
     private var shortcutSettings: some View {
-        settingsGroup(store.ui("当前快捷键", "Current Shortcuts")) {
-            ForEach(shortcutRows, id: \.0) { title, shortcut in
-                settingsRow(title: title) {
-                    Text(shortcut)
-                        .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(WeiBeiTheme.ink)
-                        .padding(.horizontal, 10)
-                        .frame(height: 28)
-                        .background(WeiBeiTheme.paperRaised.opacity(0.52))
-                        .clipShape(RoundedRectangle(cornerRadius: 7))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 7)
-                                .stroke(WeiBeiTheme.hairline.opacity(0.48), lineWidth: 1)
+        VStack(alignment: .leading, spacing: 14) {
+            Text(store.ui(
+                "点按按键后输入新组合。Esc 取消，右键恢复默认。",
+                "Click a key, then press a new chord. Esc cancels; right-click resets."
+            ))
+            .font(SettingsType.detail)
+            .foregroundStyle(WeiBeiTheme.tertiaryInk)
+            .padding(.horizontal, 2)
+
+            if let shortcutStatusMessage, !shortcutStatusMessage.isEmpty {
+                Text(shortcutStatusMessage)
+                    .font(SettingsType.detail)
+                    .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.90))
+                    .padding(.horizontal, 2)
+            }
+
+            ForEach(AppShortcutGroup.allCases) { group in
+                let items = group.shortcuts
+                settingsGroup(group.title(language: store.interfaceLanguage)) {
+                    ForEach(Array(items.enumerated()), id: \.element.id) { index, id in
+                        settingsRow(
+                            title: id.title(language: store.interfaceLanguage),
+                            showsBottomDivider: index < items.count - 1
+                        ) {
+                            shortcutKeyChip(id)
                         }
+                    }
                 }
+            }
+
+            Button(store.ui("全部恢复默认", "Reset All to Defaults")) {
+                stopShortcutRecording()
+                store.resetAllShortcuts()
+                shortcutStatusMessage = store.ui("已恢复全部默认快捷键。", "All shortcuts restored to defaults.")
+            }
+            .buttonStyle(WeiBeiTextActionButtonStyle())
+            .padding(.top, 2)
+        }
+        .onDisappear { stopShortcutRecording() }
+    }
+
+    private func shortcutKeyChip(_ id: AppShortcutID) -> some View {
+        let recording = recordingShortcutID == id
+        let chord = store.chord(for: id)
+        return Button {
+            beginShortcutRecording(id)
+        } label: {
+            Text(recording
+                 ? store.ui("按下…", "Press…")
+                 : chord.display)
+                .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                .foregroundStyle(recording ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+                .padding(.horizontal, 7)
+                .frame(height: 22)
+                .background(
+                    recording
+                        ? WeiBeiTheme.cinnabar.opacity(0.10)
+                        : WeiBeiTheme.paperInset.opacity(0.45)
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 5)
+                        .stroke(
+                            recording ? WeiBeiTheme.cinnabar.opacity(0.55) : WeiBeiTheme.hairline.opacity(0.36),
+                            lineWidth: 1
+                        )
+                }
+        }
+        .buttonStyle(.plain)
+        .help(store.ui("点按后按下新组合；右键恢复默认", "Click then press a new chord; right-click to reset"))
+        .contextMenu {
+            Button(store.ui("恢复默认", "Reset to Default")) {
+                stopShortcutRecording()
+                store.resetShortcut(id)
+                shortcutStatusMessage = nil
             }
         }
     }
 
-    private var shortcutRows: [(String, String)] {
-        [
-            (store.ui("命令面板", "Command Palette"), "⌘K"),
-            (store.ui("课程目录", "Course Index"), "⌘B"),
-            (store.ui("资料内搜索", "Search in Material"), "⌘F"),
-            (store.ui("聚焦课程目录", "Focus Course Index"), "⌘1"),
-            (store.ui("聚焦阅读", "Focus Reader"), "⌘2"),
-            (store.ui("聚焦笔记", "Focus Notes"), "⌘3"),
-            (store.ui("聚焦对话", "Focus Chat"), "⌘4"),
-            (store.ui("沉浸阅读", "Immersive Reading"), "⌥⌘R"),
-            (store.ui("沉浸对话", "Immersive Chat"), "⌥⌘A"),
-            (store.ui("沉浸写作", "Immersive Writing"), "⌥⌘N"),
-            (store.ui("选区轻提示", "Selection Prompt"), "⌃⌥3"),
-            (store.ui("隐藏对话浮层", "Hide Chat Overlay"), "⌃⌥0"),
-            (store.ui("切换外观主题", "Switch Appearance Theme"), "⌥⌘T"),
-            (store.ui("后退", "Back"), "⌘["),
-            (store.ui("前进", "Forward"), "⌘]"),
-        ]
-    }
-
-    private var dataSettings: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            settingsGroup(store.ui("课程资料", "Course Materials")) {
-                settingsRow(title: store.ui("导入资料", "Import Material")) {
-                    Button(store.ui("导入", "Import")) {
-                        store.importFilesFromPanel()
-                    }
-                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                }
+    private func beginShortcutRecording(_ id: AppShortcutID) {
+        if recordingShortcutID == id {
+            stopShortcutRecording()
+            return
+        }
+        stopShortcutRecording()
+        recordingShortcutID = id
+        shortcutStatusMessage = nil
+        shortcutRecordMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            // Esc cancels without changing the binding.
+            if event.keyCode == 53 {
+                DispatchQueue.main.async { stopShortcutRecording() }
+                return nil
             }
-
-            settingsGroup(store.ui("笔记", "Notes")) {
-                settingsRow(title: store.ui("选区上下文", "Selection Context")) {
-                    if store.hasSelectionAttachments {
-                        Button(store.ui("清空片段", "Clear Fragments")) {
-                            store.clearSelectionAttachments()
-                        }
-                        .buttonStyle(WeiBeiTextActionButtonStyle())
-                    } else {
-                        Text(store.ui("无片段", "None"))
-                            .font(SettingsType.control)
-                            .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                    }
-                }
+            guard let chord = AppShortcutChord.from(event: event) else { return event }
+            DispatchQueue.main.async {
+                applyRecordedShortcut(id, chord: chord)
             }
+            return nil
         }
     }
+
+    private func applyRecordedShortcut(_ id: AppShortcutID, chord: AppShortcutChord) {
+        defer { stopShortcutRecording() }
+        if let conflict = AppShortcutCatalog.conflict(
+            for: chord,
+            excluding: id,
+            overrides: store.customShortcutOverrides
+        ) {
+            // Still apply, but surface the conflict so the user can fix the other binding.
+            store.setShortcut(id, chord: chord)
+            shortcutStatusMessage = store.ui(
+                "已改绑；与「\(conflict.title(language: store.interfaceLanguage))」冲突，请再改其中一项。",
+                "Saved; conflicts with “\(conflict.title(language: store.interfaceLanguage))”. Rebind one of them."
+            )
+            return
+        }
+        store.setShortcut(id, chord: chord)
+        shortcutStatusMessage = nil
+    }
+
+    private func stopShortcutRecording() {
+        if let shortcutRecordMonitor {
+            NSEvent.removeMonitor(shortcutRecordMonitor)
+        }
+        shortcutRecordMonitor = nil
+        recordingShortcutID = nil
+    }
+
+    // MARK: - About
 
     private var aboutSettings: some View {
-        // User-facing only: version + build + update check.
-        // Commit / dirty / shipping notes stay out of the UI (copy diagnostics if needed).
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 20) {
+            // Version number + check only. No copy control (build/version still go into feedback).
             settingsGroup(store.ui("版本", "Version")) {
-                settingsRow(title: store.ui("版本", "Version")) {
-                    Text(buildInfo.version)
-                        .font(SettingsType.control)
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .textSelection(.enabled)
-                }
-                settingsRow(title: store.ui("构建号", "Build")) {
-                    Text("\(buildInfo.build)")
-                        .font(SettingsType.control)
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .textSelection(.enabled)
-                }
                 settingsRow(
-                    title: store.ui("复制版本信息", "Copy Version Info"),
-                    showsBottomDivider: false
-                ) {
-                    Button(store.ui("复制", "Copy")) {
-                        copyUserFacingVersionInfo()
-                    }
-                    .buttonStyle(WeiBeiTextActionButtonStyle())
-                }
-            }
-
-            settingsGroup(store.ui("更新", "Updates")) {
-                settingsRow(
-                    title: store.ui("检查更新", "Check for Updates"),
-                    showsBottomDivider: availableUpdate != nil || (updateCheckStatus?.isEmpty == false)
+                    title: buildInfo.version,
+                    showsBottomDivider: availableUpdate != nil
                 ) {
                     Button {
                         Task { await runUpdateCheck() }
                     } label: {
                         if updateCheckBusy {
-                            ProgressView()
-                                .controlSize(.small)
+                            ProgressView().controlSize(.mini)
                         } else {
-                            Text(store.ui("检查", "Check"))
+                            Text(updateActionLabel)
                         }
                     }
-                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                    .buttonStyle(WeiBeiTextActionButtonStyle(active: availableUpdate != nil || !isVersionUpToDate))
                     .disabled(updateCheckBusy)
-                }
-
-                if let updateCheckStatus, !updateCheckStatus.isEmpty {
-                    settingsNote(
-                        updateCheckStatus,
-                        icon: availableUpdate == nil ? "checkmark.circle" : "arrow.down.circle"
-                    )
                 }
 
                 if let availableUpdate {
@@ -530,6 +477,225 @@ struct SettingsView: View {
                     }
                 }
             }
+
+            settingsGroup(store.ui("反馈", "Feedback")) {
+                settingsRow(
+                    title: store.ui("提交反馈", "Send Feedback"),
+                    showsBottomDivider: false
+                ) {
+                    Button(store.ui("写反馈…", "Write…")) {
+                        feedbackTitle = ""
+                        feedbackBody = ""
+                        feedbackStatus = nil
+                        showFeedbackSheet = true
+                    }
+                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                }
+            }
+
+            if let updateCheckStatus, !updateCheckStatus.isEmpty, !isVersionUpToDate, availableUpdate == nil {
+                // Only surface failures — success is the button label "已是最新".
+                Text(updateCheckStatus)
+                    .font(SettingsType.detail)
+                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                    .padding(.horizontal, 4)
+            }
+
+            Text(store.ui(
+                "密钥与对话凭证仅保存在本机魏碑数据目录，不上传。",
+                "Keys and chat credentials stay in the local WeiBei data folder and are never uploaded."
+            ))
+            .font(SettingsType.detail)
+            .foregroundStyle(WeiBeiTheme.tertiaryInk)
+            .padding(.horizontal, 4)
+        }
+        .sheet(isPresented: $showFeedbackSheet) {
+            feedbackSheet
+        }
+    }
+
+    private var updateActionLabel: String {
+        if availableUpdate != nil {
+            return store.ui("有新版本", "Update available")
+        }
+        if isVersionUpToDate {
+            return store.ui("已是最新", "Up to date")
+        }
+        return store.ui("检查更新", "Check for Updates")
+    }
+
+    private var feedbackSheet: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(store.ui("提交反馈", "Send Feedback"))
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.ink)
+
+            Text(store.ui(
+                "描述尽量具体。会自动附上版本与系统信息。",
+                "Be specific. Version and system info are attached automatically."
+            ))
+            .font(SettingsType.detail)
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
+
+            TextField(
+                "",
+                text: $feedbackTitle,
+                prompt: Text(store.ui("标题", "Title"))
+                    .foregroundStyle(WeiBeiTheme.placeholderInk)
+            )
+            .textFieldStyle(.plain)
+            .font(.system(size: 13))
+            .foregroundColor(WeiBeiTheme.ink)
+            .weibeiInputSurface(active: true, height: 34)
+
+            ZStack(alignment: .topLeading) {
+                if feedbackBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text(store.ui("发生了什么？如何复现？", "What happened? How can we reproduce it?"))
+                        .font(.system(size: 13))
+                        .foregroundStyle(WeiBeiTheme.placeholderInk)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 10)
+                        .allowsHitTesting(false)
+                }
+                TextEditor(text: $feedbackBody)
+                    .font(.system(size: 13))
+                    .foregroundColor(WeiBeiTheme.ink)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 140, maxHeight: 200)
+                    .padding(6)
+            }
+            .background(WeiBeiTheme.paperRaised.opacity(0.52))
+            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .overlay {
+                RoundedRectangle(cornerRadius: 7)
+                    .stroke(WeiBeiTheme.hairline.opacity(0.48), lineWidth: 1)
+            }
+
+            if let feedbackStatus, !feedbackStatus.isEmpty {
+                Text(feedbackStatus)
+                    .font(SettingsType.detail)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+            }
+
+            HStack {
+                Button(store.ui("取消", "Cancel")) {
+                    showFeedbackSheet = false
+                }
+                .buttonStyle(WeiBeiTextActionButtonStyle())
+                .disabled(feedbackBusy)
+
+                Spacer()
+
+                Button {
+                    Task { await submitFeedback() }
+                } label: {
+                    if feedbackBusy {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Text(store.ui("提交", "Submit"))
+                    }
+                }
+                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                .disabled(feedbackBusy || !canSubmitFeedback)
+            }
+        }
+        .padding(20)
+        .frame(width: 440)
+        .background(WeiBeiTheme.paper)
+        .preferredColorScheme(store.appearanceMode.colorScheme)
+    }
+
+    private var canSubmitFeedback: Bool {
+        !feedbackTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !feedbackBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    @MainActor
+    private func submitFeedback() async {
+        let title = feedbackTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = feedbackBody.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, !body.isEmpty else { return }
+
+        feedbackBusy = true
+        feedbackStatus = store.ui("正在提交…", "Submitting…")
+        let fullBody = feedbackIssueBody(userBody: body)
+
+        // Prefer `gh` when the machine is already authenticated — truly hands-off.
+        if let url = await createIssueWithGitHubCLI(title: title, body: fullBody) {
+            feedbackBusy = false
+            feedbackStatus = store.ui("已提交。", "Submitted.")
+            showFeedbackSheet = false
+            NSWorkspace.shared.open(url)
+            return
+        }
+
+        // Fallback: open a prefilled GitHub new-issue page (one confirm click if logged in).
+        openPrefilledGitHubIssue(title: title, body: fullBody)
+        feedbackBusy = false
+        feedbackStatus = store.ui(
+            "已打开提交页，确认后即可发送。",
+            "Opened the submit page — confirm there to send."
+        )
+        // Keep sheet briefly so the status is readable, then close.
+        try? await Task.sleep(nanoseconds: 900_000_000)
+        showFeedbackSheet = false
+    }
+
+    private func feedbackIssueBody(userBody: String) -> String {
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        let osLine = "macOS \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)"
+        return """
+        ### 说明 / Report
+        \(userBody)
+
+        ### 环境 / Environment
+        - 魏碑 \(buildInfo.version) (\(buildInfo.build))
+        - \(osLine)
+        """
+    }
+
+    private func createIssueWithGitHubCLI(title: String, body: String) async -> URL? {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                process.arguments = [
+                    "gh", "issue", "create",
+                    "--repo", "weibei-app/weibei",
+                    "--title", title,
+                    "--body", body,
+                    "--label", "bug",
+                ]
+                let pipe = Pipe()
+                process.standardOutput = pipe
+                process.standardError = Pipe()
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+                    guard process.terminationStatus == 0 else {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                    let text = String(data: data, encoding: .utf8)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    continuation.resume(returning: URL(string: text))
+                } catch {
+                    continuation.resume(returning: nil)
+                }
+            }
+        }
+    }
+
+    private func openPrefilledGitHubIssue(title: String, body: String) {
+        var components = URLComponents(string: "https://github.com/weibei-app/weibei/issues/new")!
+        components.queryItems = [
+            URLQueryItem(name: "title", value: title),
+            URLQueryItem(name: "body", value: body),
+            URLQueryItem(name: "labels", value: "bug"),
+        ]
+        if let url = components.url {
+            NSWorkspace.shared.open(url)
         }
     }
 
@@ -538,20 +704,21 @@ struct SettingsView: View {
         updateCheckBusy = true
         updateCheckStatus = nil
         availableUpdate = nil
+        isVersionUpToDate = false
         let result = await WeiBeiUpdateChecker.check(local: buildInfo)
         updateCheckBusy = false
         switch result {
         case .upToDate:
             availableUpdate = nil
-            updateCheckStatus = store.ui("已是最新版本。", "You are up to date.")
+            isVersionUpToDate = true
+            updateCheckStatus = nil
         case let .updateAvailable(_, remote):
             availableUpdate = remote
-            updateCheckStatus = store.ui(
-                "有新版本可用：\(remote.version)。",
-                "A newer version is available: \(remote.version)."
-            )
+            isVersionUpToDate = false
+            updateCheckStatus = nil
         case .failed:
             availableUpdate = nil
+            isVersionUpToDate = false
             updateCheckStatus = store.ui(
                 "暂时无法检查更新，请稍后重试。",
                 "Could not check for updates. Please try again later."
@@ -566,22 +733,12 @@ struct SettingsView: View {
 
     private func userFacingUpdateDetail(_ remote: WeiBeiUpdateManifest) -> String {
         if let notes = remote.notes?.trimmingCharacters(in: .whitespacesAndNewlines), !notes.isEmpty {
-            // Keep notes short in UI; strip engineering jargon if present.
             let cleaned = notes
                 .replacingOccurrences(of: " (no login-keychain prompts)", with: "")
                 .replacingOccurrences(of: "（无钥匙串弹窗）", with: "")
             return "\(remote.version) · \(cleaned)"
         }
         return remote.version
-    }
-
-    private func copyUserFacingVersionInfo() {
-        // Include commit for support triage, but never surface "dirty" in the pasteboard label.
-        let line = "魏碑 \(buildInfo.version) (\(buildInfo.build))"
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(line, forType: .string)
-        updateCheckStatus = store.ui("已复制版本信息。", "Version info copied.")
-        availableUpdate = nil
     }
 
     private func settingsSidebarButton(_ section: SettingsSection) -> some View {
@@ -591,7 +748,6 @@ struct SettingsView: View {
                 selectedSection = section
             }
         } label: {
-            // Full-row hit target: contentShape + maxWidth so padding/background count.
             HStack(spacing: 10) {
                 Image(systemName: section.icon)
                     .font(.system(size: 13, weight: .semibold))
@@ -642,9 +798,6 @@ struct SettingsView: View {
                 RoundedRectangle(cornerRadius: 8)
                     .stroke(WeiBeiTheme.hairline.opacity(0.42), lineWidth: 1)
             }
-            // L3: each settingsRow draws a bottom hairline. Paint the card fill over
-            // the final pixel so the last row does not leave a floating divider on
-            // the card edge (without requiring every call site to pass isLast).
             .overlay(alignment: .bottom) {
                 Rectangle()
                     .fill(cardFill)
@@ -654,18 +807,14 @@ struct SettingsView: View {
         }
     }
 
-    /// Shared Settings row primitive (title + optional detail + trailing control).
-    ///
-    /// Prefer title-only rows. Pass `detail` only when the control itself cannot
-    /// convey a critical constraint (e.g. env-var override is handled by notes).
-    /// `showsBottomDivider` defaults to true — the group covers the last hairline (L3).
+    /// Shared Settings row: title grows, trailing control stays content-sized (right-aligned).
     func settingsRow<Control: View>(
         title: String,
         detail: String = "",
         showsBottomDivider: Bool = true,
         @ViewBuilder control: () -> Control
     ) -> some View {
-        HStack(alignment: .center, spacing: 18) {
+        HStack(alignment: .center, spacing: 16) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(title)
                     .font(SettingsType.rowTitle(active: true))
@@ -678,7 +827,7 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            Spacer(minLength: 18)
+            Spacer(minLength: 12)
             control()
         }
         .padding(.horizontal, 14)
@@ -744,28 +893,30 @@ struct SettingsView: View {
         }
     }
 
-    /// Shared compact dropdown menu used across Settings.
+    /// Shared compact dropdown — hugs label width, no forced wide track.
     func compactMenu<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         Menu {
             content()
         } label: {
-            HStack(spacing: 7) {
+            HStack(spacing: 5) {
                 Text(title)
                     .font(SettingsType.menu)
+                    .lineLimit(1)
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: 8, weight: .bold))
             }
             .foregroundStyle(WeiBeiTheme.ink)
-            .padding(.horizontal, 10)
-            .frame(height: 30)
+            .padding(.horizontal, 9)
+            .frame(height: 26)
             .background(WeiBeiTheme.paperRaised.opacity(0.52))
-            .clipShape(RoundedRectangle(cornerRadius: 7))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay {
-                RoundedRectangle(cornerRadius: 7)
+                RoundedRectangle(cornerRadius: 6)
                     .stroke(WeiBeiTheme.hairline.opacity(0.48), lineWidth: 1)
             }
         }
         .buttonStyle(.plain)
+        .fixedSize(horizontal: true, vertical: true)
     }
 
     /// Shared Settings group title label.
@@ -777,9 +928,6 @@ struct SettingsView: View {
 }
 
 // MARK: - Settings type scale
-//
-// One shared scale so row titles / controls / notes / pills stay visually unified.
-// Display titles (page / section) still use WeiBeiTypography.brandFont.
 
 private enum SettingsType {
     static func rowTitle(active: Bool) -> Font {

@@ -4,9 +4,11 @@ import Foundation
 public enum WeiBeiInterfaceLanguage: String, CaseIterable, Identifiable, Codable, Sendable {
     case chinese = "zh-Hans"
     case english = "en"
+    // Add more locales here when string tables are ready; `text` falls back to English.
 
     public var id: String { rawValue }
 
+    /// Native endonym for menus (中文 / English / …).
     public var label: String {
         switch self {
         case .chinese:
@@ -16,14 +18,11 @@ public enum WeiBeiInterfaceLanguage: String, CaseIterable, Identifiable, Codable
         }
     }
 
-    public var settingsLabel: String {
-        switch self {
-        case .chinese:
-            return "中文界面"
-        case .english:
-            return "English interface"
-        }
-    }
+    /// Preferred name in language pickers.
+    public var nativeName: String { label }
+
+    /// Same as `label` — kept for call sites that used the old "中文界面" wording.
+    public var settingsLabel: String { label }
 
     public func text(_ chinese: String, _ english: String) -> String {
         switch self {

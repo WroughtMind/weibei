@@ -299,11 +299,7 @@ private struct UnifiedTopBarView: View {
                 searchButton
             }
 
-            if shouldShowReferenceAction {
-                topIconButton("quote.opening", help: store.copyReferenceActionTitle) {
-                    store.copyCurrentReference()
-                }
-            }
+            // Copy-reference is not top-bar chrome: use ⌘⇧C, menu, or command palette when needed.
 
             topIconButton("command", help: store.ui("命令面板", "Command palette")) {
                 withAnimation(WeiBeiMotion.panel) {
@@ -370,10 +366,6 @@ private struct UnifiedTopBarView: View {
 
     private var shouldShowSearchAction: Bool {
         store.hasSelectedMaterial && hasReaderScopedTopActions
-    }
-
-    private var shouldShowReferenceAction: Bool {
-        store.canCopyReference && hasReaderScopedTopActions
     }
 
     private var hasReaderScopedTopActions: Bool {
