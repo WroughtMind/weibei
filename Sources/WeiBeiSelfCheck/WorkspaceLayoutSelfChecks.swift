@@ -11,11 +11,6 @@ enum WorkspaceLayoutSelfChecks {
      */
     @MainActor
     static func run(repositoryURL: URL) throws {
-        let appSource = SelfCheckSupport.source(
-            "Sources/WeiBei/App/WeiBeiApp.swift",
-            repositoryURL: repositoryURL
-        )
-
         expect(MarkdownTagSearch.matches(query: "finance", in: "#finance/rate")
             && MarkdownTagSearch.matches(query: "macro", in: "---\ntags: [banking, macro/rate]\n---")
             && MarkdownTagSearch.matches(query: "#nested", in: "#nested/tag")
@@ -289,9 +284,7 @@ enum WorkspaceLayoutSelfChecks {
                 .compactMap { try? String(contentsOf: $0, encoding: .utf8) }
                 .joined(separator: "\n")
         }()
-        // appSource is defined later; for early theme checks only the settings union is needed.
-        // Full agentSettingsSource (app + settings) is rebound after appSource loads.
-        var agentSettingsSource = settingsViewsSourceEarly
+        let agentSettingsSource = settingsViewsSourceEarly
         expect(themeSource.contains(".fill(.regularMaterial)") && themeSource.contains("paperWashOpacity"), "header glass uses one shared paper material wash")
         expect(themeSource.contains("WeiBeiTheme.glassTint.opacity(0.16 * opacity)") && !themeSource.contains("WeiBeiTheme.paperInset.opacity(0.10 * opacity)"), "header handoff fade avoids a hard paper edge")
         expect(themeSource.contains("static func glassTint(for mode:")

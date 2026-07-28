@@ -152,9 +152,9 @@ enum AgentBehaviorSelfChecks {
 
         expect(
             {
-                let paths = readSource("Sources/WeiBeiCore/WeiBeiAgentDataPaths.swift")
-                let oauth = readSource("Sources/WeiBei/Support/PiOAuthService.swift")
-                let runtime = readSource("Sources/WeiBeiCore/PiAgentRuntime.swift")
+                let paths = SelfCheckSupport.source("Sources/WeiBeiCore/WeiBeiAgentDataPaths.swift", repositoryURL: repositoryURL)
+                let oauth = SelfCheckSupport.source("Sources/WeiBei/Support/PiOAuthService.swift", repositoryURL: repositoryURL)
+                let runtime = SelfCheckSupport.source("Sources/WeiBeiCore/PiAgentRuntime.swift", repositoryURL: repositoryURL)
                 return paths.contains("enum WeiBeiAgentDataPaths")
                     && paths.contains("piAuthJSON")
                     && oauth.contains("WeiBeiAgentDataPaths.piAuthJSON")
