@@ -131,6 +131,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     private var failure: String?
     private var activatedWikiTitle: String?
     private var attachmentRequests = 0
+    private var imagePickerRequests = 0
 
     override init() {
         let configuration = WKWebViewConfiguration()
@@ -147,7 +148,7 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
         configuration.userContentController = controller
         webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 960, height: 720), configuration: configuration)
         super.init()
-        for name in ["editorReady", "markdownChanged", "selectionChanged", "askAgentWithSelection", "wikiLinkActivated", "imageAttachmentRequested"] {
+        for name in ["editorReady", "markdownChanged", "selectionChanged", "askAgentWithSelection", "wikiLinkActivated", "imageAttachmentRequested", "imagePickerRequested"] {
             controller.add(self, name: name)
         }
     }
@@ -181,6 +182,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             activatedWikiTitle = (message.body as? [String: Any])?["title"] as? String
         case "imageAttachmentRequested":
             attachmentRequests += 1
+        case "imagePickerRequested":
+            imagePickerRequests += 1
         default:
             break
         }
@@ -1345,6 +1348,260 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             if !markdown.contains("空项目退出列表") {
                 self.fail("block Enter exit check did not finish all isolated cases: \(markdown)")
+                return
+            }
+            self.validateSlashCommands()
+        }
+    }
+
+    /**
+     * Verifies slash visibility, filtering, command insertion, table sizing, image resolution, and undo.
+     */
+    private func validateSlashCommands() {
+        let script: String = """
+        (() => {
+        try {
+          const prepare = (prefix = '# Slash 命令验收\\n') => {
+            window.WeiBeiEditor.setMarkdown(prefix);
+            window.WeiBeiEditor.insertMarkdown('\\n\\n{{WEIBEI_CURSOR}}');
+          };
+          const open = (query = '/') => {
+            if (!window.WeiBeiEditor.typeTextForCheck(query)) throw new Error('slash query could not be typed: ' + query);
+            if (!window.WeiBeiEditor.openSlashMenuForCheck()) throw new Error('slash menu did not open: ' + query);
+            return window.WeiBeiEditor.slashStateForCheck();
+          };
+
+          prepare();
+          const initial = open('/');
+          if (initial.commands.length !== 13
+              || initial.icons !== 0
+              || initial.descriptions !== 0
+              || !initial.groups.includes('结构')
+              || !initial.groups.includes('丰富内容')
+              || initial.commands.some((name) => name.includes('公式'))) {
+            throw new Error('initial slash menu did not match the compact 13-command specification: ' + JSON.stringify(initial));
+          }
+
+          prepare();
+          const englishFilter = open('/h2');
+          if (englishFilter.commands.length !== 1 || englishFilter.commands[0] !== '二级标题') {
+            throw new Error('English slash alias did not filter to H2: ' + JSON.stringify(englishFilter));
+          }
+
+          prepare();
+          window.WeiBeiEditor.typeTextForCheck('/标题');
+          window.WeiBeiEditor.openSlashMenuForCheck();
+          const chineseFilter = window.WeiBeiEditor.slashStateForCheck();
+          if (chineseFilter.commands.length !== 3) {
+            throw new Error('Chinese slash alias did not retain all headings: ' + JSON.stringify(chineseFilter));
+          }
+
+          prepare();
+          window.WeiBeiEditor.typeTextForCheck('/h');
+          window.WeiBeiEditor.openSlashMenuForCheck();
+          window.WeiBeiEditor.pressKeyForCheck('Escape');
+          const escaped = window.WeiBeiEditor.slashStateForCheck();
+          const escapedMarkdown = window.WeiBeiEditor.getMarkdown();
+          if (escaped.show || !escapedMarkdown.includes('/h')) {
+            throw new Error('Escape did not preserve the slash query: ' + escapedMarkdown);
+          }
+
+          window.WeiBeiEditor.setMarkdown('# Slash 命令验收\\n');
+          window.WeiBeiEditor.insertMarkdown('\\n\\n- {{WEIBEI_CURSOR}}');
+          window.WeiBeiEditor.typeTextForCheck('/');
+          if (window.WeiBeiEditor.openSlashMenuForCheck()) {
+            throw new Error('slash menu should not open inside a list item');
+          }
+
+          window.WeiBeiEditor.setMarkdown('# Slash 命令验收\\n');
+          window.WeiBeiEditor.insertMarkdown('\\n\\n> {{WEIBEI_CURSOR}}');
+          window.WeiBeiEditor.typeTextForCheck('/');
+          if (!window.WeiBeiEditor.openSlashMenuForCheck()) {
+            throw new Error('slash menu should open inside a blockquote');
+          }
+
+          const commandCases = [
+            ['heading1', '一级标题正文', '# 一级标题正文'],
+            ['heading2', '二级标题正文', '## 二级标题正文'],
+            ['heading3', '三级标题正文', '### 三级标题正文'],
+            ['bulletList', '无序项目', '无序项目'],
+            ['orderedList', '有序项目', '有序项目'],
+            ['taskList', '待办项目', '[ ] 待办项目'],
+            ['quote', '引用正文', '> 引用正文'],
+            ['callout', '提示正文', '[!note]'],
+            ['code', 'let slash = true', 'let slash = true'],
+            ['divider', '分隔线后正文', '分隔线后正文'],
+            ['mermaid', 'graph TD; A-->B', '```mermaid']
+          ];
+          for (const [command, typed, expected] of commandCases) {
+            prepare();
+            open('/');
+            window.WeiBeiEditor.executeSlashCommandForCheck(command);
+            window.WeiBeiEditor.typeTextForCheck(typed);
+            const markdown = window.WeiBeiEditor.getMarkdown();
+            if (!markdown.includes(expected)) {
+              throw new Error(command + ' slash command did not serialize expected Markdown\\n' + markdown);
+            }
+            if (command === 'bulletList' && !/[-*+] 无序项目/.test(markdown)) {
+              throw new Error('bullet list slash command did not create a list\\n' + markdown);
+            }
+            if (command === 'orderedList' && !/1\\. 有序项目/.test(markdown)) {
+              throw new Error('ordered list slash command did not create a list\\n' + markdown);
+            }
+            if (command === 'callout' && !markdown.includes('> 提示正文')) {
+              throw new Error('callout slash command did not place the caret in its body\\n' + markdown);
+            }
+            if (command === 'code' && !markdown.includes('```')) {
+              throw new Error('code slash command did not create a fenced block\\n' + markdown);
+            }
+            if (command === 'divider' && !/(^|\\n)(---|\\*\\*\\*|___)(\\n|$)/.test(markdown)) {
+              throw new Error('divider slash command did not create a divider\\n' + markdown);
+            }
+          }
+
+          prepare();
+          open('/table');
+          window.WeiBeiEditor.pressKeyForCheck('Enter');
+          let tableState = window.WeiBeiEditor.slashStateForCheck();
+          if (!tableState.tableOpen || !window.WeiBeiEditor.getMarkdown().includes('/table')) {
+            throw new Error('Enter on table should open dimensions without inserting: ' + JSON.stringify(tableState));
+          }
+          window.WeiBeiEditor.setSlashTableSizeForCheck(4, 5);
+          tableState = window.WeiBeiEditor.slashStateForCheck();
+          if (tableState.rows !== 4 || tableState.columns !== 5) {
+            throw new Error('table dimensions were not retained: ' + JSON.stringify(tableState));
+          }
+          window.WeiBeiEditor.pressKeyForCheck('Enter');
+          window.WeiBeiEditor.typeTextForCheck('首格');
+          const tableMarkdown = window.WeiBeiEditor.getMarkdown();
+          const table = document.querySelector('.ProseMirror table');
+          if (!table
+              || table.querySelectorAll('tr').length !== 4
+              || table.querySelector('tr')?.children.length !== 5
+              || !tableMarkdown.includes('首格')) {
+            throw new Error('table slash command did not create 4x5 table\\n' + tableMarkdown + '\\n' + document.querySelector('.ProseMirror')?.innerHTML);
+          }
+
+          prepare();
+          open('/image');
+          window.WeiBeiEditor.executeSlashCommandForCheck('image');
+          const pickerID = window.WeiBeiEditor.pendingImagePickerIDsForCheck()[0];
+          if (!pickerID) throw new Error('image slash command did not request the native picker');
+          window.WeiBeiEditor.resolveImagePicker(pickerID, 'assets/weibei.svg', 'Slash Image');
+          const imageMarkdown = window.WeiBeiEditor.getMarkdown();
+          if (!imageMarkdown.includes('![Slash Image](assets/weibei.svg)')) {
+            throw new Error('image slash command did not insert the resolved attachment\\n' + imageMarkdown);
+          }
+          if (!window.WeiBeiEditor.undoForCheck()) {
+            throw new Error('image slash command did not create an undo history entry');
+          }
+          const imageUndoMarkdown = window.WeiBeiEditor.getMarkdown();
+          if (!imageUndoMarkdown.includes('/image') || imageUndoMarkdown.includes('Slash Image')) {
+            throw new Error('image slash command was not a single undoable transaction\\n' + imageUndoMarkdown);
+          }
+
+          return { ok: true, markdown: window.WeiBeiEditor.getMarkdown() };
+        } catch (error) {
+          return { ok: false, reason: String(error?.message || error), stack: String(error?.stack || '') };
+        }
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            if let error {
+                self.fail("slash command check threw \(error.localizedDescription)")
+                return
+            }
+            guard let result = value as? [String: Any],
+                  result["ok"] as? Bool == true else {
+                self.fail("slash command check failed: \(String(describing: value))")
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                guard self.imagePickerRequests == 1 else {
+                    self.fail("slash image command did not emit exactly one native picker request: \(self.imagePickerRequests)")
+                    return
+                }
+                self.validateCodeBlockArrowExit()
+            }
+        }
+    }
+
+    /**
+     * Verifies terminal code and Mermaid blocks exit with forward and downward navigation.
+     */
+    private func validateCodeBlockArrowExit() {
+        let script = """
+        (() => {
+        try {
+          window.WeiBeiEditor.setMarkdown('# 代码块方向键验收\\n');
+          window.WeiBeiEditor.insertMarkdown('\\n\\n```swift\\nlet value = 1{{WEIBEI_CURSOR}}\\n```');
+          window.WeiBeiEditor.pressKeyForCheck('ArrowRight');
+          window.WeiBeiEditor.typeTextForCheck('右键退出正文');
+          let markdown = window.WeiBeiEditor.getMarkdown();
+          let code = document.querySelector('.ProseMirror pre');
+          if (!markdown.includes('\\n\\n右键退出正文') || code?.textContent.includes('右键退出正文')) {
+            throw new Error('ArrowRight did not exit a terminal code block\\n' + markdown);
+          }
+
+          window.WeiBeiEditor.setMarkdown('# 代码块方向键验收\\n');
+          window.WeiBeiEditor.insertMarkdown('\\n\\n```swift\\nalpha\\nomega\\n```');
+          if (!window.WeiBeiEditor.placeCursorAtTextForCheck('omega', 0)) {
+            throw new Error('could not place caret on final visual code line');
+          }
+          window.WeiBeiEditor.pressKeyForCheck('ArrowDown');
+          window.WeiBeiEditor.typeTextForCheck('下键退出正文');
+          markdown = window.WeiBeiEditor.getMarkdown();
+          code = document.querySelector('.ProseMirror pre');
+          if (!markdown.includes('\\n\\n下键退出正文') || code?.textContent.includes('下键退出正文')) {
+            throw new Error('ArrowDown did not exit the final visual code line\\n' + markdown);
+          }
+
+          window.WeiBeiEditor.setMarkdown('# 代码块方向键验收\\n');
+          window.WeiBeiEditor.insertMarkdown('\\n\\n```mermaid\\ngraph TD; A-->B{{WEIBEI_CURSOR}}\\n```');
+          window.WeiBeiEditor.pressKeyForCheck('ArrowRight');
+          window.WeiBeiEditor.typeTextForCheck('Mermaid 后正文');
+          markdown = window.WeiBeiEditor.getMarkdown();
+          code = document.querySelector('.ProseMirror pre');
+          if (!markdown.includes('```mermaid')
+              || !markdown.includes('\\n\\nMermaid 后正文')
+              || code?.textContent.includes('Mermaid 后正文')) {
+            throw new Error('ArrowRight did not exit a terminal Mermaid block\\n' + markdown);
+          }
+
+          window.WeiBeiEditor.setMarkdown('```swift\\nnonterminal\\n```\\n\\n已有正文');
+          window.WeiBeiEditor.placeCursorAtTextForCheck('nonterminal', 11);
+          const before = window.WeiBeiEditor.getMarkdown();
+          const paragraphCount = document.querySelectorAll('.ProseMirror > p').length;
+          window.WeiBeiEditor.pressKeyForCheck('ArrowRight');
+          const after = window.WeiBeiEditor.getMarkdown();
+          if (after !== before || document.querySelectorAll('.ProseMirror > p').length !== paragraphCount) {
+            throw new Error('ArrowRight inserted an extra paragraph after a non-terminal code block\\n' + after);
+          }
+
+          window.WeiBeiEditor.setMarkdown('> ```swift\\n> nested\\n> ```');
+          window.WeiBeiEditor.placeCursorAtTextForCheck('nested', 6);
+          window.WeiBeiEditor.pressKeyForCheck('ArrowRight');
+          window.WeiBeiEditor.typeTextForCheck('仍在引用');
+          markdown = window.WeiBeiEditor.getMarkdown();
+          if (!markdown.includes('> 仍在引用') || markdown.includes('\\n\\n仍在引用')) {
+            throw new Error('nested code exit did not stay in the parent blockquote\\n' + markdown);
+          }
+          return { ok: true, markdown };
+        } catch (error) {
+          return { ok: false, reason: String(error?.message || error), stack: String(error?.stack || '') };
+        }
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            if let error {
+                self.fail("code block arrow exit check threw \(error.localizedDescription)")
+                return
+            }
+            guard let result = value as? [String: Any],
+                  result["ok"] as? Bool == true else {
+                self.fail("code block arrow exit check failed: \(String(describing: value))")
                 return
             }
             self.isDone = true

@@ -28,6 +28,7 @@ I built WeiBei so the material, the question, its evidence, and the resulting no
 
 - Imports individual files or course folders containing PDF, HTML, Markdown, and plain text.
 - Keeps the reader, Agent conversation, and Milkdown note editor in one native macOS window.
+- Inserts headings, lists, callouts, code, tables, images, and diagrams from a keyboard-first slash menu in live writing mode.
 - Searches the current course locally and returns citations that can jump to the exact file, PDF page, HTML section, or note.
 - Opens a persistent question thread from a selected passage. The passage keeps a visible cinnabar underline that can reopen the related conversation later.
 - Links notes and source materials through real many-to-many course relationships.

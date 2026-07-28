@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 import WebKit
 import WeiBeiCore
 
@@ -470,6 +471,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         "wikiLinkActivated",
         "sourceReferenceActivated",
         "imageAttachmentRequested",
+        "imagePickerRequested",
         "contentHeightChanged",
         "activeHeadingChanged",
         "compactPreviewWheel",
@@ -735,6 +737,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 } else {
                     evaluate("window.WeiBeiEditor?.rejectAttachment(\(Self.json(id)), \(Self.json(interfaceLanguage.text("图片无法写入本地附件目录", "Image could not be written to the local attachments folder")))")
                 }
+            case "imagePickerRequested":
+                guard isEditable,
+                      let body = message.body as? [String: Any],
+                      let id = body["id"] as? String else { return }
+                presentImagePicker(requestID: id, documentID: documentID)
             case "appShortcut":
                 guard let body = message.body as? [String: Any],
                       let key = body["key"] as? String else { return }
@@ -904,6 +911,62 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 dataURL: dataURL,
                 originalName: originalName,
                 mime: mime,
+                attachmentDirectory: attachmentDirectory,
+                markdownBaseURLString: markdownBaseURLString
+            )
+        }
+
+        /**
+         * Presents the native single-image picker for a slash image command.
+         *
+         * @param requestID - JavaScript request identifier
+         * @param documentID - Document identity captured when the command was issued
+         */
+        private func presentImagePicker(requestID: String, documentID requestedDocumentID: String) {
+            guard let window = webView?.window else {
+                evaluate("window.WeiBeiEditor?.cancelImagePicker(\(Self.json(requestID)))")
+                return
+            }
+            let panel = NSOpenPanel()
+            panel.title = interfaceLanguage.text("插入图片", "Insert Image")
+            panel.prompt = interfaceLanguage.text("插入", "Insert")
+            panel.message = interfaceLanguage.text("选择一张图片收纳到当前笔记附件目录", "Choose one image to save in the current note attachments folder")
+            panel.allowedContentTypes = [.png, .jpeg, .gif, .webP, .tiff, .heic]
+            panel.allowsMultipleSelection = false
+            panel.canChooseDirectories = false
+            panel.canChooseFiles = true
+            panel.beginSheetModal(for: window) { [weak self] response in
+                guard let self else { return }
+                guard response == .OK,
+                      self.documentID == requestedDocumentID,
+                      let fileURL = panel.url,
+                      let attachment = self.saveImageAttachment(fromFileURL: fileURL) else {
+                    self.evaluate("window.WeiBeiEditor?.cancelImagePicker(\(Self.json(requestID)))")
+                    return
+                }
+                self.evaluate("""
+                window.WeiBeiEditor?.resolveImagePicker(
+                  \(Self.json(requestID)),
+                  \(Self.json(attachment.src)),
+                  \(Self.json(attachment.alt))
+                )
+                """)
+            }
+        }
+
+        /**
+         * Saves a file chosen by the native picker through the existing Markdown attachment store.
+         *
+         * @param fileURL - User-selected image URL
+         * @returns Saved attachment metadata, or nil when the file cannot be stored
+         */
+        private func saveImageAttachment(fromFileURL fileURL: URL) -> MarkdownAttachment? {
+            guard let attachmentDirectory,
+                  let data = try? Data(contentsOf: fileURL) else { return nil }
+            return try? MarkdownAttachmentStore.save(
+                data: data,
+                originalName: fileURL.lastPathComponent,
+                mime: MarkdownAttachmentStore.mimeType(forFileExtension: fileURL.pathExtension),
                 attachmentDirectory: attachmentDirectory,
                 markdownBaseURLString: markdownBaseURLString
             )
