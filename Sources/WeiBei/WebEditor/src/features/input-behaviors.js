@@ -19,6 +19,7 @@ export function createInputBehaviors({
   showFailure,
   slash,
 }) {
+  const listItemTypeNames = new Set(['list_item', 'task_list_item']);
   const meaningfulListText = (node) => (node.textContent || '').replace(/[\u200B\uFEFF]/g, '').trim();
 
   const emptyListItemTypeAtSelection = (state) => {

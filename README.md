@@ -124,13 +124,14 @@ No private course data is included. Use a small folder containing a PDF, HTML pa
 Individual checks are also available:
 
 ```bash
-./script/prepare_web_editor.sh
-swift build
-swift run WeiBeiSelfCheck
-swift run WeiBeiWebEditorCheck
+./script/swift_with_web_editor.sh build
+./script/swift_with_web_editor.sh run WeiBeiSelfCheck
+./script/swift_with_web_editor.sh run WeiBeiWebEditorCheck
 PI_RUNTIME="$(./script/prepare_pi_runtime.sh)"
-WEIBEI_PI_EXECUTABLE="$PI_RUNTIME/bin/pi" swift run WeiBeiPiCheck
+WEIBEI_PI_EXECUTABLE="$PI_RUNTIME/bin/pi" ./script/swift_with_web_editor.sh run WeiBeiPiCheck
 ```
+
+The Swift wrapper rebuilds the ignored WebEditor resources before invoking Swift.
 
 Live-provider checks require valid local credentials and are not silently replaced with mock answers.
 

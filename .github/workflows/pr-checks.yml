@@ -40,20 +40,17 @@ jobs:
           node-version: 22.22.3
           cache: npm
 
-      - name: 生成网页编辑器资源
-        run: ./script/prepare_web_editor.sh
-
       - name: 编译
-        run: swift build
+        run: ./script/swift_with_web_editor.sh build
 
       - name: 运行应用自检
-        run: swift run WeiBeiSelfCheck
+        run: ./script/swift_with_web_editor.sh run WeiBeiSelfCheck
 
       - name: 运行 Pi 终止语义自检
-        run: WEIBEI_PI_TERMINAL_SELF_CHECK_ONLY=1 swift run WeiBeiSelfCheck
+        run: WEIBEI_PI_TERMINAL_SELF_CHECK_ONLY=1 ./script/swift_with_web_editor.sh run WeiBeiSelfCheck
 
       - name: 运行编辑器自检
-        run: swift run WeiBeiWebEditorCheck
+        run: ./script/swift_with_web_editor.sh run WeiBeiWebEditorCheck
 
       - name: 生成可追溯安装包
         run: ./script/build_and_run.sh package
