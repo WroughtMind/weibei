@@ -1,4 +1,31 @@
-.build/
-dist/
-node_modules/
+# Swift / SwiftPM / Xcode
+/.build/
+/.swiftpm/
+/DerivedData/
+*.xcarchive
+
+# Application packages
+/dist/
+
+# Node.js
+/node_modules/
+/Prototypes/RichAnswerWebRuntime/node_modules/
+/Prototypes/RichAnswerWebRuntime/dist/
+/Prototypes/RichAnswerWebRuntime/*.tsbuildinfo
+/Prototypes/RichAnswerWebRuntime/vite.config.js
+/Prototypes/RichAnswerWebRuntime/vite.config.d.ts
+
+# Generated WebEditor resources
+/Sources/WeiBei/Resources/Editor/editor.js
+/Sources/WeiBei/Resources/Editor/editor.css
+/Sources/WeiBei/Resources/Editor/fonts/
+
+# Generated evidence outputs
+/Docs/release-evidence/**/out/
+/Prototypes/RichAnswerEvidenceViewer/out/
+
+# Editors
+/.vscode/
+
+# macOS
 .DS_Store

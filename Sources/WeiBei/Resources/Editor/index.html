@@ -657,7 +657,7 @@
 
     .ProseMirror pre {
       position: relative;
-      padding: 14px 15px;
+      padding: 29px 15px 14px;
       border: 1px solid var(--line);
       background: var(--code-paper);
       overflow: auto;
@@ -670,19 +670,33 @@
       box-shadow: none;
     }
 
-    .ProseMirror pre[data-language]::before {
-      content: attr(data-language);
+    .weibei-code-language-input {
       position: absolute;
       top: 6px;
-      right: 10px;
+      right: 8px;
+      width: 82px;
+      height: 20px;
+      box-sizing: border-box;
+      padding: 1px 5px;
       color: var(--faint);
+      background: color-mix(in srgb, var(--code-paper) 92%, transparent);
+      border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+      border-radius: 4px;
+      outline: none;
       font: 10px/1.4 "SF Mono", Menlo, ui-monospace, monospace;
-      text-transform: uppercase;
       letter-spacing: 0;
+      text-align: right;
     }
 
-    .ProseMirror pre[data-language=""]::before {
-      content: none;
+    .weibei-code-language-input:focus {
+      color: var(--ink);
+      border-color: color-mix(in srgb, var(--cinnabar) 68%, var(--line));
+      box-shadow: 0 0 0 2px var(--cinnabar-soft);
+    }
+
+    body[data-editable="false"] .weibei-code-language-input {
+      pointer-events: none;
+      border-color: transparent;
     }
 
     .ProseMirror pre code {

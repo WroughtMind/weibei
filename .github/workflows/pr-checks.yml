@@ -34,6 +34,17 @@ jobs:
           swift --version
           xcodebuild -version
 
+      - name: 准备 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.3
+          cache: npm
+
+      - name: 生成网页编辑器资源
+        run: |
+          npm ci
+          npm run build:editor
+
       - name: 编译
         run: swift build
 

@@ -5,7 +5,7 @@ import { listener, listenerCtx } from '@milkdown/kit/plugin/listener';
 import { history } from '@milkdown/kit/plugin/history';
 import { SlashProvider, slashFactory } from '@milkdown/kit/plugin/slash';
 import { readImageAsBase64, upload, uploadConfig } from '@milkdown/kit/plugin/upload';
-import { exitCode } from '@milkdown/kit/prose/commands';
+import { exitCode, setBlockType } from '@milkdown/kit/prose/commands';
 import { closeHistory, undo } from '@milkdown/kit/prose/history';
 import { Fragment } from '@milkdown/kit/prose/model';
 import { Plugin, Selection, TextSelection } from '@milkdown/kit/prose/state';
@@ -147,6 +147,8 @@ const editorLabels = {
     slashRows: '行',
     slashColumns: '列',
     slashInsertTable: '插入表格',
+    codeLanguage: '代码语言',
+    codeLanguagePlaceholder: '语言',
   },
   en: {
     properties: 'Properties',
@@ -181,6 +183,8 @@ const editorLabels = {
     slashRows: 'Rows',
     slashColumns: 'Columns',
     slashInsertTable: 'Insert table',
+    codeLanguage: 'Code language',
+    codeLanguagePlaceholder: 'Language',
   },
 };
 const editorLabel = (key, values = {}) => {
@@ -364,6 +368,7 @@ slashMenuElement.className = 'weibei-slash-menu';
 slashMenuElement.dataset.show = 'false';
 slashMenuElement.setAttribute('role', 'listbox');
 slashMenuElement.setAttribute('aria-label', 'Slash commands');
+let slashTablePanelElement = null;
 
 const slashGroups = [
   { id: 'structure', label: 'slashStructure' },
@@ -400,6 +405,8 @@ const slashRuntime = {
   tableFocus: 'rows',
   tableRows: 3,
   tableColumns: 3,
+  pointerX: null,
+  pointerY: null,
 };
 
 const slashExcludedAncestors = new Set([
@@ -631,12 +638,13 @@ const executeSlashCommand = (commandID) => {
  * Keeps the table size panel visible inside the viewport, preferring the right side.
  *
  * @param {HTMLElement} panel - Rendered table size panel
+ * @param {HTMLElement} anchor - Table command button used as the positioning anchor
  */
-const positionTableSlashPanel = (panel) => {
+const positionTableSlashPanel = (panel, anchor) => {
   panel.style.visibility = 'hidden';
   window.requestAnimationFrame(() => {
-    if (!panel.isConnected || !(panel.parentElement instanceof HTMLElement)) return;
-    const rowRect = panel.parentElement.getBoundingClientRect();
+    if (!panel.isConnected || !anchor.isConnected) return;
+    const rowRect = anchor.getBoundingClientRect();
     const panelRect = panel.getBoundingClientRect();
     const opensLeft = rowRect.right + 6 + panelRect.width > window.innerWidth - 8;
     const left = opensLeft
@@ -705,6 +713,8 @@ const renderSlashTableStepper = (kind) => {
  * Renders the current command results and table secondary panel.
  */
 const renderSlashMenu = () => {
+  slashTablePanelElement?.remove();
+  slashTablePanelElement = null;
   const view = slashRuntime.view;
   if (!view) {
     slashRuntime.provider?.hide();
@@ -722,6 +732,8 @@ const renderSlashMenu = () => {
     slashRuntime.tableFocus = 'rows';
     slashRuntime.tableRows = 3;
     slashRuntime.tableColumns = 3;
+    slashRuntime.pointerX = null;
+    slashRuntime.pointerY = null;
   }
   slashRuntime.context = context;
   slashRuntime.commands = filteredSlashCommands(context.query, context, view.state.schema);
@@ -776,9 +788,14 @@ const renderSlashMenu = () => {
         button.appendChild(arrow);
       }
       button.addEventListener('pointerdown', (event) => event.preventDefault());
-      button.addEventListener('pointerenter', () => {
+      button.addEventListener('pointermove', (event) => {
+        if (slashRuntime.pointerX === event.clientX && slashRuntime.pointerY === event.clientY) return;
+        slashRuntime.pointerX = event.clientX;
+        slashRuntime.pointerY = event.clientY;
+        const nextTableOpen = command.id === 'table';
+        if (slashRuntime.activeIndex === commandIndex && slashRuntime.tableOpen === nextTableOpen) return;
         slashRuntime.activeIndex = commandIndex;
-        slashRuntime.tableOpen = command.id === 'table';
+        slashRuntime.tableOpen = nextTableOpen;
         renderSlashMenu();
       });
       button.addEventListener('click', () => {
@@ -806,8 +823,9 @@ const renderSlashMenu = () => {
         insertButton.addEventListener('pointerdown', (event) => event.preventDefault());
         insertButton.addEventListener('click', () => executeSlashCommand('table'));
         panel.appendChild(insertButton);
-        row.appendChild(panel);
-        positionTableSlashPanel(panel);
+        slashTablePanelElement = panel;
+        document.body.appendChild(panel);
+        positionTableSlashPanel(panel, button);
       }
       section.appendChild(row);
     }
@@ -839,25 +857,19 @@ const handleSlashMenuKeyDown = (view, event) => {
     return true;
   }
   if (slashRuntime.tableOpen) {
-    if (event.key === 'ArrowLeft') {
-      slashRuntime.tableOpen = false;
-      renderSlashMenu();
-      event.preventDefault();
-      return true;
-    }
-    if (event.key === 'Tab') {
-      slashRuntime.tableFocus = slashRuntime.tableFocus === 'rows' ? 'columns' : 'rows';
-      renderSlashMenu();
-      event.preventDefault();
-      return true;
-    }
-    if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
-      const delta = event.key === 'ArrowUp' ? 1 : -1;
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      const delta = event.key === 'ArrowLeft' ? -1 : 1;
       if (slashRuntime.tableFocus === 'rows') {
         slashRuntime.tableRows = Math.min(20, Math.max(1, slashRuntime.tableRows + delta));
       } else {
         slashRuntime.tableColumns = Math.min(12, Math.max(1, slashRuntime.tableColumns + delta));
       }
+      renderSlashMenu();
+      event.preventDefault();
+      return true;
+    }
+    if (event.key === 'Tab' || event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      slashRuntime.tableFocus = slashRuntime.tableFocus === 'rows' ? 'columns' : 'rows';
       renderSlashMenu();
       event.preventDefault();
       return true;
@@ -1509,13 +1521,16 @@ const mermaidWidget = (source) => {
   container.className = 'weibei-mermaid-render';
   container.textContent = editorLabel('mermaidRendering');
   window.setTimeout(async () => {
+    if (!container.isConnected) return;
     try {
       const id = `weibei-mermaid-${mermaidRenderID += 1}`;
       const { svg, bindFunctions } = await mermaid.render(id, source, container);
+      if (!container.isConnected) return;
       container.innerHTML = svg;
       bindFunctions?.(container);
       container.dataset.rendered = 'true';
     } catch (error) {
+      if (!container.isConnected) return;
       container.classList.add('weibei-mermaid-error');
       container.textContent = editorLabel('mermaidFailed', { value: String(error?.message || error) });
     }
@@ -1529,7 +1544,14 @@ const decorateMermaidBlock = (decorations, node, pos) => {
     class: 'weibei-code-block weibei-mermaid-block',
     'data-language': 'mermaid',
   }));
-  decorations.push(Decoration.widget(pos + node.nodeSize - 1, () => mermaidWidget(node.textContent), { side: 1 }));
+  const source = node.textContent.trim();
+  if (source) {
+    decorations.push(Decoration.widget(
+      pos + node.nodeSize,
+      () => mermaidWidget(node.textContent),
+      { side: -1, key: `weibei-mermaid:${pos}:${node.textContent}` }
+    ));
+  }
   return true;
 };
 
@@ -1625,6 +1647,67 @@ const decorateCodeBlock = (decorations, node, pos) => {
   } catch {
     // Prism should not be allowed to break editing.
   }
+};
+
+/**
+ * Adds an editable language field to a fenced code block and writes changes to its node attributes.
+ *
+ * @param {Decoration[]} decorations - Decoration collection for the current document
+ * @param {import('@milkdown/kit/prose/model').Node} node - Code block node
+ * @param {number} pos - Code block position
+ */
+const decorateCodeLanguageEditor = (decorations, node, pos) => {
+  const language = String(node.attrs.language || '');
+  decorations.push(Decoration.widget(pos + 1, () => {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'weibei-code-language-input';
+    input.value = language;
+    input.placeholder = editorLabel('codeLanguagePlaceholder');
+    input.setAttribute('aria-label', editorLabel('codeLanguage'));
+    input.setAttribute('autocomplete', 'off');
+    input.setAttribute('autocapitalize', 'none');
+    input.setAttribute('spellcheck', 'false');
+    input.maxLength = 32;
+
+    const commit = () => {
+      if (!isEditable || !editor) {
+        input.value = language;
+        return;
+      }
+      const nextLanguage = input.value.trim().split(/\s+/u)[0] || '';
+      input.value = nextLanguage;
+      if (nextLanguage === language) return;
+      editor.action((ctx) => {
+        const view = ctx.get(editorViewCtx);
+        const currentNode = view.state.doc.nodeAt(pos);
+        if (currentNode?.type.name !== 'code_block') return;
+        view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, {
+          ...currentNode.attrs,
+          language: nextLanguage,
+        }));
+      });
+    };
+
+    input.addEventListener('change', commit);
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') input.value = language;
+      if (event.key !== 'Enter' && event.key !== 'Escape') return;
+      event.preventDefault();
+      commit();
+      input.blur();
+      window.setTimeout(() => {
+        if (!editor) return;
+        editor.action((ctx) => ctx.get(editorViewCtx).focus());
+      }, 0);
+    });
+    return input;
+  }, {
+    side: -1,
+    key: `weibei-code-language:${pos}:${language}`,
+    stopEvent: (event) => event.target instanceof HTMLInputElement,
+  }));
 };
 
 const wikiTitleAtSelection = () => {
@@ -1840,6 +1923,29 @@ const exitEmptyListItem = (view) => {
 };
 
 /**
+ * Replaces an empty code block with a paragraph so Backspace and Delete can remove the container.
+ *
+ * @param {import('@milkdown/kit/prose/view').EditorView} view - Current ProseMirror view
+ * @param {KeyboardEvent} event - Key event from the editor
+ * @returns {boolean}
+ */
+const clearEmptyCodeBlock = (view, event) => {
+  if (!isEditable
+      || event.shiftKey
+      || event.altKey
+      || event.metaKey
+      || event.ctrlKey
+      || (event.key !== 'Backspace' && event.key !== 'Delete')) {
+    return false;
+  }
+  const { selection, schema } = view.state;
+  if (!(selection instanceof TextSelection) || !selection.empty) return false;
+  if (selection.$from.parent.type.spec.code !== true || selection.$from.parent.content.size !== 0) return false;
+  const paragraph = schema.nodes.paragraph;
+  return Boolean(paragraph && setBlockType(paragraph)(view.state, view.dispatch));
+};
+
+/**
  * Moves the caret out of a terminal code block using forward navigation keys.
  *
  * @param {import('@milkdown/kit/prose/view').EditorView} view - Current ProseMirror view
@@ -1936,6 +2042,10 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
     },
     handleKeyDown(view, event) {
       if (handleSlashMenuKeyDown(view, event)) return true;
+      if (clearEmptyCodeBlock(view, event)) {
+        event.preventDefault();
+        return true;
+      }
       if (exitTerminalCodeBlock(view, event)) {
         event.preventDefault();
         return true;
@@ -2006,6 +2116,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
         }
 
         if (typeName === 'code_block') {
+          decorateCodeLanguageEditor(decorations, node, pos);
           if (decorateMermaidBlock(decorations, node, pos)) return false;
           decorations.push(Decoration.node(pos, pos + node.nodeSize, {
             class: 'weibei-code-block',
@@ -2366,7 +2477,7 @@ if (window.weiBeiEditorCheckMode) {
       .map((group) => group.textContent || ''),
     icons: slashMenuElement.querySelectorAll('svg, img, [class*="icon"]').length,
     descriptions: slashMenuElement.querySelectorAll('[class*="description"]').length,
-    tableOpen: Boolean(slashMenuElement.querySelector('.weibei-slash-table-panel')),
+    tableOpen: Boolean(slashTablePanelElement?.isConnected),
     rows: slashRuntime.tableRows,
     columns: slashRuntime.tableColumns,
   });
@@ -2451,10 +2562,15 @@ Editor
           slashRuntime.context = null;
           slashRuntime.activationContext = '';
           slashRuntime.tableOpen = false;
+          slashRuntime.pointerX = null;
+          slashRuntime.pointerY = null;
+          slashTablePanelElement?.remove();
+          slashTablePanelElement = null;
         };
         const dismissOutside = (event) => {
           if (slashMenuElement.dataset.show !== 'true'
               || slashMenuElement.contains(event.target)
+              || slashTablePanelElement?.contains(event.target)
               || view.dom.contains(event.target)) {
             return;
           }
@@ -2484,6 +2600,8 @@ Editor
             window.removeEventListener('blur', dismissOnWindowBlur);
             provider.destroy();
             slashMenuElement.remove();
+            slashTablePanelElement?.remove();
+            slashTablePanelElement = null;
             slashRuntime.provider = null;
             slashRuntime.view = null;
           },
