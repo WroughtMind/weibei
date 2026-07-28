@@ -17,7 +17,7 @@
 | 命令面板 | `CommandPaletteView` |
 | 空工作区 | `EmptyWorkspaceLauncherView` |
 | 内容轨道 | `ContentRailView` |
-| 设计回归断言 | `Sources/WeiBeiSelfCheck/SelfChecks.swift` |
+| 设计回归断言 | `Sources/WeiBeiSelfCheck/*SelfChecks.swift` |
 | 历史视觉参考 | `DesignReferences/` |
 | 手工应用打包 | `script/build_and_run.sh` |
 | 发布元数据验证 | `script/verify_release_metadata.sh` |

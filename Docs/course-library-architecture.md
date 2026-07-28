@@ -42,7 +42,7 @@
 - `Sources/WeiBei/Stores/WorkspaceStore.swift`：课程实体、归属、导入和打开动作。
 - `Sources/WeiBei/Views/ContentView.swift`：在稳定面板树上方挂载临时课程抽屉。
 - `Sources/WeiBei/Views/CourseWorkspaceView.swift`：关系台入口、筛选和聚焦状态。
-- `Sources/WeiBeiSelfCheck/SelfChecks.swift`：数据迁移、抽屉挂载和关系台结构自检。
+- `Sources/WeiBeiSelfCheck/WorkspaceStoreSelfChecks.swift` 与 `Sources/WeiBeiSelfCheck/WorkspaceModelSelfChecks.swift`：数据迁移、抽屉挂载和关系台结构自检。
 
 预计释放条件：课程数据可向后兼容保存；小抽屉不重建稳定面板；关系台可查看、建立和删除真实关系；构建、自检和隔离数据真实窗口验收完成。
 

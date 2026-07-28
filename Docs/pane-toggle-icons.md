@@ -70,7 +70,7 @@ case .documentAgentNotes, .documentNotesAgent:
 `PersistedWorkspace` — `Sources/WeiBeiCore/WorkspaceModels.swift:701-731`。已有 `showLibrary: Bool?`、`showRightPane: Bool?`。新增字段照此模式加可选字段。
 
 ### SelfCheck 是字符串匹配测试
-`Sources/WeiBeiSelfCheck/SelfChecks.swift` 用 `.contains("func xxx()")` 匹配源码。新增/重命名符号后要同步更新断言,否则会挂。
+`Sources/WeiBeiSelfCheck/WorkspaceLayoutSelfChecks.swift` 和 `Sources/WeiBeiSelfCheck/WorkspaceStoreSelfChecks.swift` 用 `.contains("func xxx()")` 匹配源码。新增/重命名符号后要同步更新断言,否则会挂。
 
 ---
 
@@ -146,7 +146,7 @@ case .documentAgentNotes, .documentNotesAgent:
 - **三栏渲染分支**(`ContentView.swift:778-803`):`showRightPane=false` 现在走"只渲染 reader"。改成按 `showReader`/`showAgent`/`showNotes` 组合决定渲染 0~3 个 pane。全关→空白页;只开 reader→`ReaderPaneView()`;reader+一个→`ResizableTwoPane`;三个全开→`documentThreePaneView`(现状)。
 - **拖拽换位**:`threePaneOrder` 保持存全部 3 个 role 顺序,隐藏的 pane 只是不渲染、不参与拖拽,顺序不变。`PaneHeaderReorderModifier` 只挂在可见 pane 上。
 - **沉浸态**(immersiveReading/Writing/Conversation,`ContentView.swift:804-878`):不走三栏逻辑。图标 active 状态来自当前 layout 的真实可见 pane;点击任一图标先退出沉浸,再按普通三板块集合开/关。
-- **SelfCheck**:新增 `toggleReader`/`toggleAgent`/`showReader`/`showAgent` 等符号后,`Sources/WeiBeiSelfCheck/SelfChecks.swift` 里的 `contains(...)` 断言同步更新。
+- **SelfCheck**:新增 `toggleReader`/`toggleAgent`/`showReader`/`showAgent` 等符号后,同步更新 `Sources/WeiBeiSelfCheck/WorkspaceLayoutSelfChecks.swift` 和 `Sources/WeiBeiSelfCheck/WorkspaceStoreSelfChecks.swift` 里的 `contains(...)` 断言。
 - **验证场景** `runVerificationScenarioIfNeeded`(`WorkspaceStore.swift` 约 `:1813`):它会 setLayout + toggle,确认不被新标志破坏。
 - **快捷键**:⌘B(`toggleLibrary`)、⌘J(`toggleRightPane`)保留,不新增。
 

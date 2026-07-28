@@ -9,8 +9,10 @@ enum SelfCheckRunner {
      */
     @MainActor
     static func run() async throws {
+        let repositoryURL = SelfCheckSupport.repositoryURL
+
         if ProcessInfo.processInfo.environment["WEIBEI_RICH_ANSWER_SELF_CHECK_ONLY"] == "1" {
-            runRichAnswerEmbeddingSelfChecks()
+            RichAnswerEmbeddingSelfChecks.run(repositoryURL: repositoryURL)
             print("WeiBei rich-answer embedding self-check passed")
             return
         }
@@ -21,6 +23,17 @@ enum SelfCheckRunner {
             return
         }
 
-        try await runWeiBeiSelfChecks()
+        try runPiAgentSelfChecks()
+        try ProductResourceSelfChecks.run(repositoryURL: repositoryURL)
+        try EditorSelfChecks.run(repositoryURL: repositoryURL)
+        try await DocumentPipelineSelfChecks.run(repositoryURL: repositoryURL)
+        try AgentBehaviorSelfChecks.run(repositoryURL: repositoryURL)
+        try WorkspaceLayoutSelfChecks.run(repositoryURL: repositoryURL)
+        RichAnswerEmbeddingSelfChecks.run(repositoryURL: repositoryURL)
+        try NotesAgentUISelfChecks.run(repositoryURL: repositoryURL)
+        try SettingsSelfChecks.run(repositoryURL: repositoryURL)
+        try WorkspaceStoreSelfChecks.run(repositoryURL: repositoryURL)
+        try WorkspaceModelSelfChecks.run(repositoryURL: repositoryURL)
+        print("WeiBei self-check passed")
     }
 }
