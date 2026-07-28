@@ -41,9 +41,7 @@ jobs:
           cache: npm
 
       - name: 生成网页编辑器资源
-        run: |
-          npm ci
-          npm run build:editor
+        run: ./script/prepare_web_editor.sh
 
       - name: 编译
         run: swift build
