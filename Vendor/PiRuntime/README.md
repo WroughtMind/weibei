@@ -5,9 +5,9 @@ executable and starts only that copy. It never searches the user's PATH, Node,
 NVM, Bun, or global Pi installation.
 
 `manifest.json` is the source of truth for the Pi version, source commit, release
-artifacts, and archive digests. `script/prepare_pi_runtime.sh` downloads the
-matching macOS artifact, verifies SHA-256 before extraction, and keeps only the
-files needed by WeiBei RPC mode.
+artifacts, and archive digests. `swift run WeiBeiDevTool prepare pi-runtime`
+downloads the matching macOS artifact, verifies SHA-256 before extraction, and
+keeps only the files needed by WeiBei RPC mode.
 
 WeiBei-specific behavior is deliberately outside the upstream CLI surface:
 

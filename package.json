@@ -4,6 +4,9 @@
   "private": true,
   "license": "AGPL-3.0-only",
   "repository": "https://github.com/weibei-app/weibei",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build:editor": "esbuild Sources/WeiBei/WebEditor/src/editor.js --bundle --format=iife --outfile=Sources/WeiBei/Resources/Editor/editor.js --minify --loader:.woff=file --loader:.woff2=file --loader:.ttf=file --asset-names=fonts/[name]"
   },

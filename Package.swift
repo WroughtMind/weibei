@@ -11,7 +11,14 @@ let package = Package(
         .executable(name: "WeiBeiSelfCheck", targets: ["WeiBeiSelfCheck"]),
         .executable(name: "WeiBeiWebEditorCheck", targets: ["WeiBeiWebEditorCheck"]),
         .executable(name: "WeiBeiPiCheck", targets: ["WeiBeiPiCheck"]),
-        .executable(name: "WeiBeiPDFTextWorker", targets: ["WeiBeiPDFTextWorker"])
+        .executable(name: "WeiBeiPDFTextWorker", targets: ["WeiBeiPDFTextWorker"]),
+        .executable(name: "WeiBeiDevTool", targets: ["WeiBeiDevTool"])
+    ],
+    dependencies: [
+        .package(
+            url: "https://github.com/apple/swift-argument-parser",
+            exact: "1.7.1"
+        )
     ],
     targets: [
         .target(
@@ -64,6 +71,33 @@ let package = Package(
             name: "WeiBeiPDFTextWorker",
             linkerSettings: [
                 .linkedFramework("PDFKit")
+            ]
+        ),
+        .target(
+            name: "WeiBeiDevCore",
+            linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("CoreGraphics"),
+                .linkedFramework("ScreenCaptureKit")
+            ]
+        ),
+        .executableTarget(
+            name: "WeiBeiDevTool",
+            dependencies: [
+                "WeiBeiDevCore",
+                .product(name: "ArgumentParser", package: "swift-argument-parser")
+            ]
+        ),
+        .testTarget(
+            name: "WeiBeiDevCoreTests",
+            dependencies: ["WeiBeiDevCore"]
+        ),
+        .testTarget(
+            name: "WeiBeiDevToolTests",
+            dependencies: [
+                "WeiBeiDevCore",
+                "WeiBeiDevTool",
+                .product(name: "ArgumentParser", package: "swift-argument-parser")
             ]
         )
     ]

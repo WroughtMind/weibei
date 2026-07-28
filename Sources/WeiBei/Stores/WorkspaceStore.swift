@@ -6741,9 +6741,10 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func executeStudyAgentRequest(_ request: StudyAgentRequest) async throws -> StudyAgentReply {
+        let verificationScenario = Self.environmentValue("WEIBEI_VERIFY_SCENARIO")
         let isExplicitOfflineVerification = Self.environmentValue("WEIBEI_FORCE_OFFLINE_AGENT") == "1"
             && Self.environmentValue("WEIBEI_SUPPRESS_ACTIVATION") == "1"
-            && Self.environmentValue("WEIBEI_VERIFY_SCENARIO") == "offline-learning-flow"
+            && ["offline-learning-flow", "immersive-conversation-flow"].contains(verificationScenario)
         if isExplicitOfflineVerification {
             return try await OfflineStudyAgentRuntime().respond(to: request)
         }

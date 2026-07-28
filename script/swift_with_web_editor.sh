@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [[ ! -f Package.swift || ! -f package.json || ! -d Sources/WeiBei ]]; then
+  echo "legacy Swift wrapper must be run from the repository root" >&2
+  exit 2
+fi
 
-"$ROOT_DIR/script/prepare_web_editor.sh"
+swift run WeiBeiDevTool prepare web-editor
 exec swift "$@"

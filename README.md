@@ -84,7 +84,7 @@ For long or scanned PDFs, WeiBei extracts text in a resource-bounded helper proc
 
 - macOS 14 or later
 - Xcode Command Line Tools with Swift 5.9 support
-- Node.js 22 with npm
+- Node.js 22 or later with npm; `.nvmrc` pins the currently verified release
 - Internet access on the first build to download and verify the pinned Pi runtime
 - A configured supported model provider for live Agent responses
 
@@ -93,11 +93,14 @@ For long or scanned PDFs, WeiBei extracts text in a resource-bounded helper proc
 ```bash
 git clone https://github.com/weibei-app/weibei.git
 cd weibei
-./script/build_and_run.sh
+swift run WeiBeiDevTool run
 ```
 
-On a fresh clone, the script installs the locked Node.js dependencies, generates
-the ignored Milkdown editor resources, and then builds and opens `dist/魏碑.app`.
+On a fresh clone, the development tool installs the locked Node.js dependencies,
+generates the ignored Milkdown editor resources, prepares the pinned Pi runtime,
+and then builds and opens the application. The tool deliberately locates the
+repository only from the current working directory, so run it at the repository
+root.
 Generated web resources and application packages remain local and are not
 tracked by Git.
 
@@ -117,21 +120,21 @@ No private course data is included. Use a small folder containing a PDF, HTML pa
 ## Checks
 
 ```bash
-./script/build_and_run.sh check
-./script/build_and_run.sh --verify
+swift run WeiBeiDevTool check
+swift run WeiBeiDevTool verify
 ```
 
 Individual checks are also available:
 
 ```bash
-./script/swift_with_web_editor.sh build
-./script/swift_with_web_editor.sh run WeiBeiSelfCheck
-./script/swift_with_web_editor.sh run WeiBeiWebEditorCheck
-PI_RUNTIME="$(./script/prepare_pi_runtime.sh)"
-WEIBEI_PI_EXECUTABLE="$PI_RUNTIME/bin/pi" ./script/swift_with_web_editor.sh run WeiBeiPiCheck
+swift run WeiBeiDevTool prepare web-editor
+swift run WeiBeiDevTool prepare pi-runtime
+swift run WeiBeiDevTool prepare all
 ```
 
-The Swift wrapper rebuilds the ignored WebEditor resources before invoking Swift.
+The four existing startup and preparation shell scripts are transitional,
+no-fallback forwarders to `WeiBeiDevTool`; new automation should call the Swift
+CLI directly.
 
 Live-provider checks require valid local credentials and are not silently replaced with mock answers.
 
