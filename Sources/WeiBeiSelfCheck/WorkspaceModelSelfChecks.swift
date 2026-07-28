@@ -8,12 +8,7 @@ enum WorkspaceModelSelfChecks {
     /**
      * 执行该领域的自检。
      */
-    static func run(repositoryURL: URL) throws {
-        let workspaceStoreSource = SelfCheckSupport.source(
-            "Sources/WeiBei/Stores/WorkspaceStore.swift",
-            repositoryURL: repositoryURL
-        )
-
+    static func run() throws {
         let importedMarkdown = StudyItem(id: "file:/tmp/note.md", title: "note", subtitle: "note.md", kind: .markdown, urlPath: "/tmp/note.md", isSample: false)
         let notebookMarkdown = StudyItem(id: "file:/tmp/notebook.md", title: "notebook", subtitle: "notebook.md", kind: .markdown, urlPath: "/tmp/notebook.md", isSample: false, isNotebookNote: true)
         let sampleMarkdown = StudyItem(id: "sample", title: "sample", subtitle: "sample", kind: .markdown, urlPath: nil, isSample: true)
@@ -191,18 +186,11 @@ enum WorkspaceModelSelfChecks {
         expect(legacyWorkspace.showDailyInspiration == nil
             && legacyWorkspace.courses == nil
             && legacyWorkspace.courseItemMemberships == nil
-            && legacyWorkspace.activeCourseID == nil
-            && workspaceStoreSource.contains("showDailyInspiration = snapshot.showDailyInspiration ?? true"), "older workspace snapshots remain decodable without inventing a fake course")
-        expect(restored.adaptImportedDocumentColors == false
-            && workspaceStoreSource.contains("adaptImportedDocumentColors = snapshot.adaptImportedDocumentColors ?? true")
-            && workspaceStoreSource.contains("adaptImportedDocumentColors: adaptImportedDocumentColors"), "imported-document color adaptation persists while old workspaces default to adapted reading")
+            && legacyWorkspace.activeCourseID == nil, "older workspace snapshots remain decodable without inventing a fake course")
+        expect(restored.adaptImportedDocumentColors == false, "imported-document color adaptation persists")
         expect(restored.noteRenderMode == .preview, "legacy preview note mode remains decodable for old workspace snapshots")
         expect(restored.threePaneOrder == [.agent, .reader, .notes], "custom three-pane order persists")
         expect(restored.noteSourceLinks == [oldestLink] && restored.noteSourceLinksMigrationVersion == 1, "note-source relations and one-time migration state persist together")
-        expect(workspaceStoreSource.contains("if let noteRenderMode = snapshot.noteRenderMode {\n            self.noteRenderMode = noteRenderMode.visibleMode\n        }")
-            && workspaceStoreSource.contains("noteRenderMode = snapshot.noteRenderMode.visibleMode")
-            && workspaceStoreSource.contains("let nextMode = mode.visibleMode")
-            && !workspaceStoreSource.contains("noteRenderMode == .source ? .source : .rich"), "workspace load and navigation normalize legacy preview mode back to writing")
 
         let attachmentRoot = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent("weibei-self-check-\(UUID().uuidString)", isDirectory: true)

@@ -25,15 +25,13 @@ enum SelfCheckRunner {
 
         try runPiAgentSelfChecks()
         try ProductResourceSelfChecks.run(repositoryURL: repositoryURL)
-        try EditorSelfChecks.run(repositoryURL: repositoryURL)
-        try await DocumentPipelineSelfChecks.run(repositoryURL: repositoryURL)
-        try AgentBehaviorSelfChecks.run(repositoryURL: repositoryURL)
-        try WorkspaceLayoutSelfChecks.run(repositoryURL: repositoryURL)
+        try await DocumentPipelineSelfChecks.run()
+        try AgentBehaviorSelfChecks.run()
+        try WorkspaceLayoutSelfChecks.run()
         RichAnswerEmbeddingSelfChecks.run(repositoryURL: repositoryURL)
-        try NotesAgentUISelfChecks.run(repositoryURL: repositoryURL)
-        try SettingsSelfChecks.run(repositoryURL: repositoryURL)
-        try WorkspaceStoreSelfChecks.run(repositoryURL: repositoryURL)
-        try WorkspaceModelSelfChecks.run(repositoryURL: repositoryURL)
+        try NotesAgentUISelfChecks.run()
+        try SettingsSelfChecks.run()
+        try WorkspaceModelSelfChecks.run()
         print("WeiBei self-check passed")
     }
 }

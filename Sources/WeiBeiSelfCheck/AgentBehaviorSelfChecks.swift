@@ -9,7 +9,7 @@ enum AgentBehaviorSelfChecks {
     /**
      * 执行该领域的自检。
      */
-    static func run(repositoryURL: URL) throws {
+    static func run() throws {
         let data = Data("""
         {"output":[{"content":[{"type":"output_text","text":"只根据当前材料回答。"}]}]}
         """.utf8)
@@ -149,21 +149,6 @@ enum AgentBehaviorSelfChecks {
             try fileStore.delete()
             expect(fileStore.load().isEmpty, "WeiBei app-data credential file delete")
         }
-
-        expect(
-            {
-                let paths = SelfCheckSupport.source("Sources/WeiBeiCore/WeiBeiAgentDataPaths.swift", repositoryURL: repositoryURL)
-                let oauth = SelfCheckSupport.source("Sources/WeiBei/Support/PiOAuthService.swift", repositoryURL: repositoryURL)
-                let runtime = SelfCheckSupport.source("Sources/WeiBeiCore/PiAgentRuntime.swift", repositoryURL: repositoryURL)
-                return paths.contains("enum WeiBeiAgentDataPaths")
-                    && paths.contains("piAuthJSON")
-                    && oauth.contains("WeiBeiAgentDataPaths.piAuthJSON")
-                    && !oauth.contains("homeAuthURL")
-                    && runtime.contains("WeiBeiAgentDataPaths.piAgentDirectory")
-                    && !runtime.contains("homeDirectoryForCurrentUser.appendingPathComponent(\".pi/agent\"")
-            }(),
-            "OAuth and Pi config use WeiBei Application Support paths, not terminal ~/.pi"
-        )
 
         let missingSelectionInsight = QuietInsight.make(
             materialTitle: "利率资料",

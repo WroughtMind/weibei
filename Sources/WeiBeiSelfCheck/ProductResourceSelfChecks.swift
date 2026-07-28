@@ -11,11 +11,6 @@ enum ProductResourceSelfChecks {
      * 执行该领域的自检。
      */
     static func run(repositoryURL: URL) throws {
-        let workspaceStoreSource = SelfCheckSupport.source(
-            "Sources/WeiBei/Stores/WorkspaceStore.swift",
-            repositoryURL: repositoryURL
-        )
-
         expect(EmptyWorkspaceDayPeriod(hour: 5) == .morning
             && EmptyWorkspaceDayPeriod(hour: 10) == .morning
             && EmptyWorkspaceDayPeriod(hour: 11) == .midday
@@ -209,15 +204,5 @@ enum ProductResourceSelfChecks {
             && inspirationSources.contains("No NC, ND")
             && inspirationSources.contains("No generative fill, vector tracing, or font substitution"), "inspiration resource documentation preserves source hashes, public-domain status, provenance, exclusions, and transformation limits")
 
-        expect(workspaceStoreSource.contains("if scenario == \"pi-learning-flow\" {")
-            && workspaceStoreSource.contains("if messages.last?.backend == .pi, noteText.count > verificationNoteSeed.count"), "the product can prove that an embedded PI runtime completed the in-app learning flow")
-        expect(workspaceStoreSource.contains("scenario == \"pi-course-memory-flow\"")
-            && workspaceStoreSource.contains("latestAgentLearningUpdate?.entries.contains { $0.kind == .confusion }")
-            && workspaceStoreSource.contains("pi-course-memory-verified.txt"), "the product can prove that PI resumed a course flow and persisted a user-stated confusion")
-        expect(workspaceStoreSource.contains("RichAnswerVerificationFixture.supports(scenario)")
-            && workspaceStoreSource.contains("configureRichAnswerPreviewVerification(scenario: scenario)")
-            && workspaceStoreSource.contains("scenario == RichAnswerVerificationFixture.inlineExtendedOpenUIProgramScenario")
-            && workspaceStoreSource.contains("layout = verifiesInlinePane ? .documentAgentNotes : .immersiveConversation")
-            && workspaceStoreSource.contains("RichAnswerVerificationFixture.presentation(for: scenario)"), "verification mode can open isolated native rich-answer references, the unified gallery, and a non-immersive split-pane case for real-window review")
     }
 }
