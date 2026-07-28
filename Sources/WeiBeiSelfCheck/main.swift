@@ -888,9 +888,38 @@ expect(editorIndexSource.contains(":root[data-weibei-compact-preview=\"true\"] #
     && editorIndexSource.contains(":root[data-weibei-compact-preview=\"true\"][data-weibei-theme=\"inkstone\"] body")
     && editorIndexSource.contains(":root[data-weibei-compact-preview=\"true\"][data-weibei-theme=\"inkstone\"] #editor")
     && editorIndexSource.contains("min-height: 0;"), "web markdown renderer has a compact preview mode for inline agent answers without dark theme background blocks")
-let editorScriptURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-    .appendingPathComponent("Sources/WeiBei/WebEditor/src/editor.js")
-let editorScriptSource = (try? String(contentsOf: editorScriptURL, encoding: .utf8)) ?? ""
+let webEditorSourceDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    .appendingPathComponent("Sources/WeiBei/WebEditor/src")
+let webEditorSourceURLs = ((FileManager.default.enumerator(
+    at: webEditorSourceDirectoryURL,
+    includingPropertiesForKeys: nil
+)?.allObjects as? [URL]) ?? [])
+    .filter { $0.pathExtension == "js" }
+    .sorted { $0.path < $1.path }
+let webEditorSource = webEditorSourceURLs
+    .compactMap { try? String(contentsOf: $0, encoding: .utf8) }
+    .joined(separator: "\n")
+let editorScriptSource = webEditorSource
+let webEditorRelativeSourcePaths = Set(webEditorSourceURLs.map {
+    $0.path.replacingOccurrences(of: webEditorSourceDirectoryURL.path + "/", with: "")
+})
+expect(Set([
+    "api.js",
+    "core/bridge.js",
+    "core/i18n.js",
+    "core/theme.js",
+    "editor.js",
+    "features/code-rendering.js",
+    "features/decorations.js",
+    "features/images.js",
+    "features/input-behaviors.js",
+    "features/preview.js",
+    "features/selection.js",
+    "features/slash/commands.js",
+    "features/slash/menu.js",
+    "markdown/normalize.js",
+    "markdown/obsidian.js",
+]).isSubset(of: webEditorRelativeSourcePaths), "web editor behavior is split into explicit core, markdown, feature, slash, and public API modules")
 expect(editorScriptSource.contains("installQuietScrollIndicators")
     && editorScriptSource.contains("const quietScrollableSelector = '#editor, .ProseMirror pre")
     && editorScriptSource.contains("weibei-scroll-active")
@@ -905,7 +934,8 @@ expect(editorScriptSource.contains("import { liftListItem } from '@milkdown/kit/
     && editorScriptSource.contains("event.key === 'Enter'")
     && editorScriptSource.contains("&& exitEmptyListItem(view)")
     && editorScriptSource.contains("event.preventDefault();")
-    && editorScriptSource.contains("window.WeiBeiEditor.pressKeyForCheck = pressKeyForCheck"), "web editor exits an empty Markdown list item on a second Enter instead of looping bullets")
+    && editorScriptSource.contains("pressKeyForCheck")
+    && editorScriptSource.contains("selection.checkAPI()"), "web editor exits an empty Markdown list item on a second Enter instead of looping bullets")
 expect(editorScriptSource.contains("const isCompactPreview = window.weiBeiMarkdownCompactPreview === true")
     && editorScriptSource.contains("post('contentHeightChanged', { height })")
     && editorScriptSource.contains("new ResizeObserver(reportContentHeight)")
@@ -2690,26 +2720,25 @@ expect(richEditorSource.contains("window.weiBeiInterfaceLanguage =")
     && richEditorSource.contains("document.documentElement.dataset.weibeiLanguage = window.weiBeiInterfaceLanguage")
     && richEditorSource.contains("func setInterfaceLanguage(_ language: WeiBeiInterfaceLanguage)")
     && richEditorSource.contains("context.coordinator.setInterfaceLanguage(interfaceLanguage)"), "rich markdown editor passes interface language changes into the web editor")
-let webEditorSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-    .appendingPathComponent("Sources/WeiBei/WebEditor/src/editor.js")
-let webEditorSource = (try? String(contentsOf: webEditorSourceURL, encoding: .utf8)) ?? ""
 expect(!webEditorSource.contains("event.metaKey && event.shiftKey && event.key.toLowerCase() === 'a'"), "web editor does not steal command-shift-a from Swift agent write action")
 expect(webEditorSource.contains("const insertionCursorMarker = '{{WEIBEI_CURSOR}}'")
     && webEditorSource.contains("insertionSelectionStartMarker")
     && webEditorSource.contains("placeCursorAtInsertionMarker()"), "web editor removes command snippet cursor markers after insertion")
-expect(webEditorSource.contains("let currentDocumentID = window.weiBeiDocumentID || ''")
+expect(webEditorSource.contains("createBridge(window.webkit?.messageHandlers, window.weiBeiDocumentID || '')")
+    && webEditorSource.contains("let currentDocumentID = initialDocumentID || ''")
     && webEditorSource.contains("postMessage({ ...body, documentID: currentDocumentID })")
-    && webEditorSource.contains("setDocumentID: (next) =>"), "web editor tags bridge messages with the current document identity")
+    && webEditorSource.contains("setDocumentID(next)"), "web editor tags bridge messages with the current document identity")
 expect(webEditorSource.contains("let lastSelectionReport = { text: null, rectKey: null }")
     && webEditorSource.contains("post('selectionChanged', { text: '', rect: null })")
     && webEditorSource.contains("lastSelectionRange = null")
-    && webEditorSource.contains("if (window.weiBeiSuppressSelectionReport) return;")
+    && webEditorSource.contains("if (isSelectionReportSuppressed()) return;")
     && webEditorSource.contains("if (text === lastSelectionReport.text && rectKey === lastSelectionReport.rectKey) return"), "web editor reports cleared selections once so floating selection UI and included-selection badges disappear")
-expect(webEditorSource.contains("const palette = currentTheme === 'inkstone'")
+expect(webEditorSource.contains("const palette = getCurrentTheme() === 'inkstone'")
     && webEditorSource.contains("background: '#151515', accent: '#a6362b', text: '#d7cbb0'")
     && webEditorSource.contains("background: '#efe6d8', accent: '#9f3b2f', text: '#6b5148'")
     && webEditorSource.contains("img[data-weibei-image-placeholder=\"true\"]")
-    && webEditorSource.contains("image.setAttribute('src', missingImageURL())"), "web missing-image placeholders follow the current theme and refresh after theme switches")
+    && webEditorSource.contains("image.setAttribute('src', missingImageURL());")
+    && webEditorSource.contains("images.refreshMissingPlaceholders()"), "web missing-image placeholders follow the current theme and refresh after theme switches")
 expect(webEditorSource.contains("const decorateCalloutHeadingSource = (decorations, node, pos) =>")
     && webEditorSource.contains("const firstParagraphText = (node) =>")
     && webEditorSource.contains("const calloutMatchForBlockquote = (node) =>")
@@ -2732,7 +2761,8 @@ expect(webEditorSource.contains("const decorateCalloutHeadingSource = (decoratio
     && webEditorSource.contains("if (insideBlockquote) decorateLeakedCalloutControls(decorations, text, textPos);")
     && !webEditorSource.contains("Array.from(calloutTypes).join('|')"), "callout heading decorations collapse the raw [!type] marker at paragraph range level so split inline nodes do not leak")
 expect(webEditorSource.contains("const normalizeInterfaceLanguage")
-    && webEditorSource.contains("let currentLanguage = normalizeInterfaceLanguage(window.weiBeiInterfaceLanguage)")
+    && webEditorSource.contains("let currentLanguage = normalizeInterfaceLanguage('zh-Hans')")
+    && webEditorSource.contains("setInterfaceLanguage(window.weiBeiInterfaceLanguage)")
     && webEditorSource.contains("const calloutLabels = {")
     && webEditorSource.contains("en: {")
     && webEditorSource.contains("note: 'Note'")
@@ -4476,10 +4506,7 @@ expect(!notesAgentSource.contains(".help(\"收起右下角 Agent\")")
 expect(commandPaletteSource.contains("插入行内公式") && commandPaletteSource.contains("${{WEIBEI_SELECT_START}}x_i = \\\\frac{a}{b}{{WEIBEI_SELECT_END}}$") && commandPaletteSource.contains("插入矩阵公式"), "markdown command templates keep an editable landing point")
 expect(commandPaletteSource.contains("插入 Callout") && commandPaletteSource.contains("> [!note] 标题\\n>\\n> {{WEIBEI_SELECT_START}}内容{{WEIBEI_SELECT_END}}"), "callout insertion separates title from body")
 expect(commandPaletteSource.contains("private func markdownInsertCommand") && commandPaletteSource.contains("animation: WeiBeiMotion.layout"), "markdown insert commands use layout motion when revealing writing")
-let editorSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-    .appendingPathComponent("Sources/WeiBei/WebEditor/src/editor.js")
-let editorSource = (try? String(contentsOf: editorSourceURL, encoding: .utf8)) ?? ""
-expect(editorSource.contains("decorateSourceReferences") && editorSource.contains("sourceReferenceActivated") && editorSource.contains("activateSourceReference"), "web editor exposes source references as clickable bridge actions")
+expect(webEditorSource.contains("decorateSourceReferences") && webEditorSource.contains("sourceReferenceActivated") && webEditorSource.contains("activateSourceReference"), "web editor exposes source references as clickable bridge actions")
 let richMarkdownEditorSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/RichMarkdownEditorView.swift")
 let richMarkdownEditorSource = (try? String(contentsOf: richMarkdownEditorSourceURL, encoding: .utf8)) ?? ""
