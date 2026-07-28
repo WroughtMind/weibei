@@ -28,6 +28,7 @@ I built WeiBei so the material, the question, its evidence, and the resulting no
 
 - Imports individual files or course folders containing PDF, HTML, Markdown, and plain text.
 - Keeps the reader, Agent conversation, and Milkdown note editor in one native macOS window.
+- Inserts headings, lists, callouts, code, tables, images, and diagrams from a keyboard-first slash menu in live writing mode.
 - Searches the current course locally and returns citations that can jump to the exact file, PDF page, HTML section, or note.
 - Opens a persistent question thread from a selected passage. The passage keeps a visible cinnabar underline that can reopen the related conversation later.
 - Links notes and source materials through real many-to-many course relationships.
@@ -83,9 +84,9 @@ For long or scanned PDFs, WeiBei extracts text in a resource-bounded helper proc
 
 - macOS 14 or later
 - Xcode Command Line Tools with Swift 5.9 support
+- Node.js 22 with npm
 - Internet access on the first build to download and verify the pinned Pi runtime
 - A configured supported model provider for live Agent responses
-- Node.js only when rebuilding the Milkdown web editor source
 
 ## Build and run
 
@@ -95,7 +96,10 @@ cd weibei
 ./script/build_and_run.sh
 ```
 
-The script builds and opens `dist/魏碑.app`.
+On a fresh clone, the script installs the locked Node.js dependencies, generates
+the ignored Milkdown editor resources, and then builds and opens `dist/魏碑.app`.
+Generated web resources and application packages remain local and are not
+tracked by Git.
 
 ## Suggested judge test
 
@@ -120,6 +124,7 @@ No private course data is included. Use a small folder containing a PDF, HTML pa
 Individual checks are also available:
 
 ```bash
+./script/prepare_web_editor.sh
 swift build
 swift run WeiBeiSelfCheck
 swift run WeiBeiWebEditorCheck

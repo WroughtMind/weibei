@@ -2,8 +2,13 @@ import { Editor, defaultValueCtx, editorViewCtx, editorViewOptionsCtx, rootCtx }
 import { commonmark } from '@milkdown/kit/preset/commonmark';
 import { gfm } from '@milkdown/kit/preset/gfm';
 import { listener, listenerCtx } from '@milkdown/kit/plugin/listener';
+import { history } from '@milkdown/kit/plugin/history';
+import { SlashProvider, slashFactory } from '@milkdown/kit/plugin/slash';
 import { readImageAsBase64, upload, uploadConfig } from '@milkdown/kit/plugin/upload';
-import { Plugin, TextSelection } from '@milkdown/kit/prose/state';
+import { exitCode, setBlockType } from '@milkdown/kit/prose/commands';
+import { closeHistory, undo } from '@milkdown/kit/prose/history';
+import { Fragment } from '@milkdown/kit/prose/model';
+import { Plugin, Selection, TextSelection } from '@milkdown/kit/prose/state';
 import { liftListItem } from '@milkdown/kit/prose/schema-list';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
 import { getMarkdown as readMarkdown, insert, replaceAll, replaceRange, $prose } from '@milkdown/kit/utils';
@@ -42,6 +47,8 @@ let attachmentRequestID = 0;
 let imageRefreshFrame = 0;
 let mermaidRenderID = 0;
 const pendingAttachments = new Map();
+const pendingImagePickers = new Map();
+const weiBeiSlash = slashFactory('WEIBEI_BLOCK_COMMAND');
 const insertionCursorMarker = '{{WEIBEI_CURSOR}}';
 const insertionSelectionStartMarker = '{{WEIBEI_SELECT_START}}';
 const insertionSelectionEndMarker = '{{WEIBEI_SELECT_END}}';
@@ -119,6 +126,29 @@ const editorLabels = {
     mermaidFailed: 'Mermaid 图表未解析\n{value}',
     mathError: '公式没有通过 KaTeX 解析。常用写法：x_i、x^{2}、\\frac{a}{b}、\\begin{bmatrix}...\\end{bmatrix}',
     uploadingImage: '正在收纳图片...',
+    slashNoResults: '没有匹配命令',
+    slashStructure: '结构',
+    slashLists: '列表',
+    slashContent: '内容',
+    slashRichContent: '丰富内容',
+    slashHeading1: '一级标题',
+    slashHeading2: '二级标题',
+    slashHeading3: '三级标题',
+    slashBulletList: '无序列表',
+    slashOrderedList: '有序列表',
+    slashTaskList: '待办列表',
+    slashQuote: '引用',
+    slashCallout: '提示块',
+    slashCode: '代码块',
+    slashDivider: '分隔线',
+    slashTable: '表格',
+    slashImage: '图片',
+    slashMermaid: 'Mermaid 图表',
+    slashRows: '行',
+    slashColumns: '列',
+    slashInsertTable: '插入表格',
+    codeLanguage: '代码语言',
+    codeLanguagePlaceholder: '语言',
   },
   en: {
     properties: 'Properties',
@@ -132,6 +162,29 @@ const editorLabels = {
     mermaidFailed: 'Mermaid diagram did not parse\n{value}',
     mathError: 'KaTeX could not parse this formula. Common forms: x_i, x^{2}, \\frac{a}{b}, \\begin{bmatrix}...\\end{bmatrix}',
     uploadingImage: 'Saving image...',
+    slashNoResults: 'No matching commands',
+    slashStructure: 'Structure',
+    slashLists: 'Lists',
+    slashContent: 'Content',
+    slashRichContent: 'Rich content',
+    slashHeading1: 'Heading 1',
+    slashHeading2: 'Heading 2',
+    slashHeading3: 'Heading 3',
+    slashBulletList: 'Bulleted list',
+    slashOrderedList: 'Numbered list',
+    slashTaskList: 'To-do list',
+    slashQuote: 'Quote',
+    slashCallout: 'Callout',
+    slashCode: 'Code block',
+    slashDivider: 'Divider',
+    slashTable: 'Table',
+    slashImage: 'Image',
+    slashMermaid: 'Mermaid diagram',
+    slashRows: 'Rows',
+    slashColumns: 'Columns',
+    slashInsertTable: 'Insert table',
+    codeLanguage: 'Code language',
+    codeLanguagePlaceholder: 'Language',
   },
 };
 const editorLabel = (key, values = {}) => {
@@ -308,6 +361,558 @@ window.addEventListener('unhandledrejection', (event) => showFailure(event.reaso
 
 const post = (name, body = {}) => {
   bridge?.[name]?.postMessage({ ...body, documentID: currentDocumentID });
+};
+
+const slashMenuElement = document.createElement('div');
+slashMenuElement.className = 'weibei-slash-menu';
+slashMenuElement.dataset.show = 'false';
+slashMenuElement.setAttribute('role', 'listbox');
+slashMenuElement.setAttribute('aria-label', 'Slash commands');
+let slashTablePanelElement = null;
+
+const slashGroups = [
+  { id: 'structure', label: 'slashStructure' },
+  { id: 'lists', label: 'slashLists' },
+  { id: 'content', label: 'slashContent' },
+  { id: 'rich', label: 'slashRichContent' },
+];
+
+const slashCommands = [
+  { id: 'heading1', group: 'structure', label: 'slashHeading1', aliases: ['h1', 'heading 1', '一级', '标题1'] },
+  { id: 'heading2', group: 'structure', label: 'slashHeading2', aliases: ['h2', 'heading 2', '二级', '标题2'] },
+  { id: 'heading3', group: 'structure', label: 'slashHeading3', aliases: ['h3', 'heading 3', '三级', '标题3'] },
+  { id: 'bulletList', group: 'lists', label: 'slashBulletList', aliases: ['bullet', 'bulleted list', 'unordered list', 'ul', '无序', '项目符号'] },
+  { id: 'orderedList', group: 'lists', label: 'slashOrderedList', aliases: ['numbered list', 'ordered list', 'ol', '有序', '编号'] },
+  { id: 'taskList', group: 'lists', label: 'slashTaskList', aliases: ['todo', 'task', 'task list', 'checklist', '待办', '任务'] },
+  { id: 'quote', group: 'lists', label: 'slashQuote', aliases: ['quote', 'blockquote', '引用'] },
+  { id: 'callout', group: 'content', label: 'slashCallout', aliases: ['callout', 'note', '提示', '札记'] },
+  { id: 'code', group: 'content', label: 'slashCode', aliases: ['code', 'code block', '代码'] },
+  { id: 'divider', group: 'content', label: 'slashDivider', aliases: ['divider', 'horizontal rule', 'hr', '分隔', '横线'] },
+  { id: 'table', group: 'rich', label: 'slashTable', aliases: ['table', 'grid', '表格'] },
+  { id: 'image', group: 'rich', label: 'slashImage', aliases: ['image', 'photo', 'picture', '图片', '照片'] },
+  { id: 'mermaid', group: 'rich', label: 'slashMermaid', aliases: ['mermaid', 'diagram', 'flowchart', '图表', '流程图'] },
+];
+
+const slashRuntime = {
+  provider: null,
+  view: null,
+  context: null,
+  commands: [],
+  activeIndex: 0,
+  dismissedContext: '',
+  activationContext: '',
+  tableOpen: false,
+  tableFocus: 'rows',
+  tableRows: 3,
+  tableColumns: 3,
+  pointerX: null,
+  pointerY: null,
+};
+
+const slashExcludedAncestors = new Set([
+  'list_item',
+  'task_list_item',
+  'table',
+  'table_row',
+  'table_header_row',
+  'table_cell',
+  'table_header',
+  'code_block',
+  'math_block',
+]);
+
+/**
+ * Returns the active slash query when the caret is in an eligible empty-origin paragraph.
+ *
+ * @param {import('@milkdown/kit/prose/view').EditorView} view - Current ProseMirror view
+ * @returns {null | { query: string, source: string, blockFrom: number, blockTo: number, index: number, container: import('@milkdown/kit/prose/model').Node, key: string }}
+ */
+const slashContextForView = (view) => {
+  if (!isEditable || view.composing) return null;
+  const { selection } = view.state;
+  if (!(selection instanceof TextSelection) || !selection.empty) return null;
+  const { $from } = selection;
+  if ($from.parent.type.name !== 'paragraph' || $from.parentOffset !== $from.parent.content.size) return null;
+  for (let depth = $from.depth; depth > 0; depth -= 1) {
+    if (slashExcludedAncestors.has($from.node(depth).type.name)) return null;
+  }
+  const source = $from.parent.textContent || '';
+  const match = source.match(/^\/([^\s/]*)$/u);
+  if (!match) return null;
+  const paragraphDepth = $from.depth;
+  const containerDepth = paragraphDepth - 1;
+  const blockFrom = $from.before(paragraphDepth);
+  const blockTo = $from.after(paragraphDepth);
+  return {
+    query: match[1] || '',
+    source,
+    blockFrom,
+    blockTo,
+    index: $from.index(containerDepth),
+    container: $from.node(containerDepth),
+    key: `${blockFrom}:${blockTo}:${source}`,
+  };
+};
+
+/**
+ * Builds a schema-valid block replacement and the caret position within it.
+ *
+ * @param {string} commandID - Slash command identifier
+ * @param {import('@milkdown/kit/prose/model').Schema} schema - Active editor schema
+ * @param {{ rows?: number, columns?: number }} options - Command-specific dimensions
+ * @returns {null | { content: Fragment, selectionOffset: number }}
+ */
+const slashReplacement = (commandID, schema, options = {}) => {
+  const paragraph = schema.nodes.paragraph;
+  if (!paragraph) return null;
+  if (commandID.startsWith('heading')) {
+    const heading = schema.nodes.heading;
+    const level = Number(commandID.at(-1));
+    if (!heading || !Number.isFinite(level)) return null;
+    return { content: Fragment.from(heading.create({ level })), selectionOffset: 1 };
+  }
+  if (commandID === 'bulletList' || commandID === 'orderedList' || commandID === 'taskList') {
+    const list = commandID === 'orderedList' ? schema.nodes.ordered_list : schema.nodes.bullet_list;
+    const listItem = schema.nodes.list_item;
+    if (!list || !listItem) return null;
+    const item = listItem.createAndFill(commandID === 'taskList' ? { checked: false } : null, paragraph.create());
+    const listNode = item ? list.createAndFill(null, item) : null;
+    return listNode ? { content: Fragment.from(listNode), selectionOffset: 3 } : null;
+  }
+  if (commandID === 'quote') {
+    const blockquote = schema.nodes.blockquote || schema.nodes.block_quote;
+    if (!blockquote) return null;
+    return { content: Fragment.from(blockquote.create(null, paragraph.create())), selectionOffset: 2 };
+  }
+  if (commandID === 'callout') {
+    const blockquote = schema.nodes.blockquote || schema.nodes.block_quote;
+    if (!blockquote) return null;
+    const header = paragraph.create(null, schema.text('[!note]'));
+    const callout = blockquote.create(null, [header, paragraph.create()]);
+    return { content: Fragment.from(callout), selectionOffset: header.nodeSize + 2 };
+  }
+  if (commandID === 'code' || commandID === 'mermaid') {
+    const codeBlock = schema.nodes.code_block;
+    if (!codeBlock) return null;
+    const language = commandID === 'mermaid' ? 'mermaid' : '';
+    return { content: Fragment.from(codeBlock.create({ language })), selectionOffset: 1 };
+  }
+  if (commandID === 'divider') {
+    const divider = schema.nodes.hr || schema.nodes.horizontal_rule;
+    if (!divider) return null;
+    const dividerNode = divider.create();
+    return { content: Fragment.from([dividerNode, paragraph.create()]), selectionOffset: dividerNode.nodeSize + 1 };
+  }
+  if (commandID === 'table') {
+    const table = schema.nodes.table;
+    const headerRow = schema.nodes.table_header_row;
+    const row = schema.nodes.table_row;
+    const headerCell = schema.nodes.table_header;
+    const cell = schema.nodes.table_cell;
+    if (!table || !headerRow || !row || !headerCell || !cell) return null;
+    const rows = Math.min(20, Math.max(1, Number(options.rows) || 3));
+    const columns = Math.min(12, Math.max(1, Number(options.columns) || 3));
+    const headerCells = Array.from({ length: columns }, () => headerCell.createAndFill());
+    if (headerCells.some((node) => !node)) return null;
+    const bodyRows = Array.from({ length: rows - 1 }, () => {
+      const cells = Array.from({ length: columns }, () => cell.createAndFill());
+      return cells.some((node) => !node) ? null : row.create(null, cells);
+    });
+    if (bodyRows.some((node) => !node)) return null;
+    const tableNode = table.create(null, [headerRow.create(null, headerCells), ...bodyRows]);
+    return { content: Fragment.from(tableNode), selectionOffset: 4 };
+  }
+  if (commandID === 'image') {
+    const image = schema.nodes.image;
+    if (!image || !options.src) return null;
+    const imageNode = image.create({ src: options.src, alt: options.alt || 'image' });
+    return { content: Fragment.from(paragraph.create(null, imageNode)), selectionOffset: 2 };
+  }
+  return null;
+};
+
+/**
+ * Checks whether a command can replace the current paragraph without changing its parent container.
+ *
+ * @param {object} command - Slash command specification
+ * @param {ReturnType<typeof slashContextForView>} context - Active slash context
+ * @param {import('@milkdown/kit/prose/model').Schema} schema - Active editor schema
+ * @returns {boolean}
+ */
+const slashCommandIsAllowed = (command, context, schema) => {
+  if (!context) return false;
+  if (command.id === 'image') return Boolean(schema.nodes.image);
+  const replacement = slashReplacement(command.id, schema, { rows: 3, columns: 3 });
+  return Boolean(replacement && context.container.canReplace(
+    context.index,
+    context.index + 1,
+    replacement.content
+  ));
+};
+
+/**
+ * Filters commands using localized labels and stable bilingual aliases.
+ *
+ * @param {string} query - Text after the slash
+ * @param {ReturnType<typeof slashContextForView>} context - Active slash context
+ * @param {import('@milkdown/kit/prose/model').Schema} schema - Active editor schema
+ * @returns {typeof slashCommands}
+ */
+const filteredSlashCommands = (query, context, schema) => {
+  const normalized = String(query || '').trim().toLocaleLowerCase();
+  return slashCommands.filter((command) => {
+    if (!slashCommandIsAllowed(command, context, schema)) return false;
+    if (!normalized) return true;
+    const labels = [
+      editorLabels['zh-Hans'][command.label],
+      editorLabels.en[command.label],
+      ...command.aliases,
+    ].filter(Boolean).map((value) => String(value).toLocaleLowerCase());
+    return labels.some((value) => value.includes(normalized));
+  });
+};
+
+/**
+ * Replaces the slash paragraph in one ProseMirror transaction and places the caret in the new block.
+ *
+ * @param {import('@milkdown/kit/prose/view').EditorView} view - Current ProseMirror view
+ * @param {ReturnType<typeof slashContextForView>} context - Slash paragraph snapshot
+ * @param {{ content: Fragment, selectionOffset: number }} replacement - Replacement block and caret offset
+ * @returns {boolean}
+ */
+const applySlashReplacement = (view, context, replacement) => {
+  if (!context || !replacement) return false;
+  const currentNode = view.state.doc.nodeAt(context.blockFrom);
+  if (currentNode?.type.name !== 'paragraph' || currentNode.textContent !== context.source) return false;
+  const tr = closeHistory(view.state.tr.replaceWith(context.blockFrom, context.blockTo, replacement.content));
+  const requestedPosition = context.blockFrom + replacement.selectionOffset;
+  const selection = Selection.findFrom(
+    tr.doc.resolve(Math.min(requestedPosition, tr.doc.content.size)),
+    1,
+    true
+  );
+  if (selection) tr.setSelection(selection);
+  view.dispatch(tr.scrollIntoView());
+  lastSelectionRange = null;
+  slashRuntime.dismissedContext = '';
+  slashRuntime.provider?.hide();
+  return true;
+};
+
+/**
+ * Opens the native image picker while preserving the slash paragraph for a single undoable replacement.
+ *
+ * @param {import('@milkdown/kit/prose/view').EditorView} view - Current ProseMirror view
+ * @param {ReturnType<typeof slashContextForView>} context - Slash paragraph snapshot
+ */
+const requestSlashImage = (view, context) => {
+  const id = `image-picker-${Date.now()}-${attachmentRequestID += 1}`;
+  pendingImagePickers.set(id, { view, context });
+  slashRuntime.dismissedContext = context.key;
+  slashRuntime.provider?.hide();
+  post('imagePickerRequested', { id });
+};
+
+/**
+ * Executes the highlighted command or opens its secondary control.
+ *
+ * @param {string} commandID - Slash command identifier
+ */
+const executeSlashCommand = (commandID) => {
+  const view = slashRuntime.view;
+  if (!view) return;
+  const context = slashContextForView(view);
+  if (!context) return;
+  if (commandID === 'image') {
+    requestSlashImage(view, context);
+    return;
+  }
+  const replacement = slashReplacement(commandID, view.state.schema, {
+    rows: slashRuntime.tableRows,
+    columns: slashRuntime.tableColumns,
+  });
+  applySlashReplacement(view, context, replacement);
+};
+
+/**
+ * Keeps the table size panel visible inside the viewport, preferring the right side.
+ *
+ * @param {HTMLElement} panel - Rendered table size panel
+ * @param {HTMLElement} anchor - Table command button used as the positioning anchor
+ */
+const positionTableSlashPanel = (panel, anchor) => {
+  panel.style.visibility = 'hidden';
+  window.requestAnimationFrame(() => {
+    if (!panel.isConnected || !anchor.isConnected) return;
+    const rowRect = anchor.getBoundingClientRect();
+    const panelRect = panel.getBoundingClientRect();
+    const opensLeft = rowRect.right + 6 + panelRect.width > window.innerWidth - 8;
+    const left = opensLeft
+      ? Math.max(8, rowRect.left - panelRect.width - 6)
+      : Math.min(window.innerWidth - panelRect.width - 8, rowRect.right + 6);
+    const top = Math.min(
+      Math.max(8, rowRect.top),
+      Math.max(8, window.innerHeight - panelRect.height - 8)
+    );
+    panel.classList.toggle('weibei-slash-table-panel-left', opensLeft);
+    panel.style.left = `${left}px`;
+    panel.style.top = `${top}px`;
+    panel.style.visibility = 'visible';
+  });
+};
+
+/**
+ * Renders a compact row/column stepper for the table secondary panel.
+ *
+ * @param {'rows' | 'columns'} kind - Dimension being edited
+ * @returns {HTMLElement}
+ */
+const renderSlashTableStepper = (kind) => {
+  const isRows = kind === 'rows';
+  const minimum = 1;
+  const maximum = isRows ? 20 : 12;
+  const value = isRows ? slashRuntime.tableRows : slashRuntime.tableColumns;
+  const stepper = document.createElement('div');
+  stepper.className = `weibei-slash-stepper${slashRuntime.tableFocus === kind ? ' is-focused' : ''}`;
+  stepper.setAttribute('role', 'group');
+  stepper.setAttribute('aria-label', editorLabel(isRows ? 'slashRows' : 'slashColumns'));
+
+  const label = document.createElement('span');
+  label.className = 'weibei-slash-stepper-label';
+  label.textContent = editorLabel(isRows ? 'slashRows' : 'slashColumns');
+
+  const controls = document.createElement('div');
+  controls.className = 'weibei-slash-stepper-controls';
+  for (const [symbol, delta] of [['−', -1], ['+', 1]]) {
+    if (delta > 0) {
+      const number = document.createElement('output');
+      number.textContent = String(value);
+      number.setAttribute('aria-live', 'polite');
+      controls.appendChild(number);
+    }
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = symbol;
+    button.disabled = delta < 0 ? value <= minimum : value >= maximum;
+    button.setAttribute('aria-label', `${editorLabel(isRows ? 'slashRows' : 'slashColumns')} ${symbol}`);
+    button.addEventListener('pointerdown', (event) => event.preventDefault());
+    button.addEventListener('click', () => {
+      const next = Math.min(maximum, Math.max(minimum, value + delta));
+      if (isRows) slashRuntime.tableRows = next;
+      else slashRuntime.tableColumns = next;
+      slashRuntime.tableFocus = kind;
+      renderSlashMenu();
+    });
+    controls.appendChild(button);
+  }
+  stepper.append(label, controls);
+  return stepper;
+};
+
+/**
+ * Renders the current command results and table secondary panel.
+ */
+const renderSlashMenu = () => {
+  slashTablePanelElement?.remove();
+  slashTablePanelElement = null;
+  const view = slashRuntime.view;
+  if (!view) {
+    slashRuntime.provider?.hide();
+    return;
+  }
+  const context = slashContextForView(view);
+  if (!context || slashRuntime.dismissedContext === context.key) {
+    slashRuntime.provider?.hide();
+    return;
+  }
+  if (slashRuntime.activationContext !== `${context.blockFrom}:${currentDocumentID}`) {
+    slashRuntime.activationContext = `${context.blockFrom}:${currentDocumentID}`;
+    slashRuntime.activeIndex = 0;
+    slashRuntime.tableOpen = false;
+    slashRuntime.tableFocus = 'rows';
+    slashRuntime.tableRows = 3;
+    slashRuntime.tableColumns = 3;
+    slashRuntime.pointerX = null;
+    slashRuntime.pointerY = null;
+  }
+  slashRuntime.context = context;
+  slashRuntime.commands = filteredSlashCommands(context.query, context, view.state.schema);
+  slashRuntime.activeIndex = Math.min(
+    Math.max(0, slashRuntime.activeIndex),
+    Math.max(0, slashRuntime.commands.length - 1)
+  );
+
+  slashMenuElement.replaceChildren();
+  slashMenuElement.setAttribute(
+    'aria-activedescendant',
+    slashRuntime.commands[slashRuntime.activeIndex]
+      ? `weibei-slash-command-${slashRuntime.commands[slashRuntime.activeIndex].id}`
+      : ''
+  );
+
+  if (slashRuntime.commands.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'weibei-slash-empty';
+    empty.textContent = editorLabel('slashNoResults');
+    slashMenuElement.appendChild(empty);
+    return;
+  }
+
+  for (const group of slashGroups) {
+    const commands = slashRuntime.commands.filter((command) => command.group === group.id);
+    if (commands.length === 0) continue;
+    const section = document.createElement('section');
+    section.className = 'weibei-slash-section';
+    const heading = document.createElement('div');
+    heading.className = 'weibei-slash-group';
+    heading.textContent = editorLabel(group.label);
+    section.appendChild(heading);
+
+    for (const command of commands) {
+      const commandIndex = slashRuntime.commands.findIndex((candidate) => candidate.id === command.id);
+      const row = document.createElement('div');
+      row.id = `weibei-slash-command-${command.id}`;
+      row.className = `weibei-slash-command${commandIndex === slashRuntime.activeIndex ? ' is-active' : ''}`;
+      row.setAttribute('role', 'option');
+      row.setAttribute('aria-selected', commandIndex === slashRuntime.activeIndex ? 'true' : 'false');
+
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'weibei-slash-command-button';
+      button.textContent = editorLabel(command.label);
+      button.tabIndex = -1;
+      if (command.id === 'table') {
+        const arrow = document.createElement('span');
+        arrow.className = 'weibei-slash-command-arrow';
+        arrow.textContent = '›';
+        button.appendChild(arrow);
+      }
+      button.addEventListener('pointerdown', (event) => event.preventDefault());
+      button.addEventListener('pointermove', (event) => {
+        if (slashRuntime.pointerX === event.clientX && slashRuntime.pointerY === event.clientY) return;
+        slashRuntime.pointerX = event.clientX;
+        slashRuntime.pointerY = event.clientY;
+        const nextTableOpen = command.id === 'table';
+        if (slashRuntime.activeIndex === commandIndex && slashRuntime.tableOpen === nextTableOpen) return;
+        slashRuntime.activeIndex = commandIndex;
+        slashRuntime.tableOpen = nextTableOpen;
+        renderSlashMenu();
+      });
+      button.addEventListener('click', () => {
+        if (command.id === 'table') {
+          slashRuntime.tableOpen = true;
+          slashRuntime.tableFocus = 'rows';
+          renderSlashMenu();
+          return;
+        }
+        executeSlashCommand(command.id);
+      });
+      row.appendChild(button);
+
+      if (command.id === 'table' && slashRuntime.tableOpen) {
+        const panel = document.createElement('div');
+        panel.className = 'weibei-slash-table-panel';
+        panel.setAttribute('role', 'group');
+        panel.setAttribute('aria-label', editorLabel('slashTable'));
+        panel.addEventListener('pointerdown', (event) => event.preventDefault());
+        panel.append(renderSlashTableStepper('rows'), renderSlashTableStepper('columns'));
+        const insertButton = document.createElement('button');
+        insertButton.type = 'button';
+        insertButton.className = 'weibei-slash-table-insert';
+        insertButton.textContent = editorLabel('slashInsertTable');
+        insertButton.addEventListener('pointerdown', (event) => event.preventDefault());
+        insertButton.addEventListener('click', () => executeSlashCommand('table'));
+        panel.appendChild(insertButton);
+        slashTablePanelElement = panel;
+        document.body.appendChild(panel);
+        positionTableSlashPanel(panel, button);
+      }
+      section.appendChild(row);
+    }
+    slashMenuElement.appendChild(section);
+  }
+
+  const active = slashMenuElement.querySelector('.weibei-slash-command.is-active');
+  active?.scrollIntoView({ block: 'nearest' });
+};
+
+/**
+ * Handles keyboard navigation while the slash menu remains focused in ProseMirror.
+ *
+ * @param {import('@milkdown/kit/prose/view').EditorView} view - Current ProseMirror view
+ * @param {KeyboardEvent} event - Key event from the editor
+ * @returns {boolean}
+ */
+const handleSlashMenuKeyDown = (view, event) => {
+  const context = slashContextForView(view);
+  const visible = slashMenuElement.dataset.show === 'true'
+    && context
+    && slashRuntime.dismissedContext !== context.key;
+  if (!visible || event.isComposing || event.keyCode === 229) return false;
+
+  if (event.key === 'Escape') {
+    slashRuntime.dismissedContext = context.key;
+    slashRuntime.provider?.hide();
+    event.preventDefault();
+    return true;
+  }
+  if (slashRuntime.tableOpen) {
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      const delta = event.key === 'ArrowLeft' ? -1 : 1;
+      if (slashRuntime.tableFocus === 'rows') {
+        slashRuntime.tableRows = Math.min(20, Math.max(1, slashRuntime.tableRows + delta));
+      } else {
+        slashRuntime.tableColumns = Math.min(12, Math.max(1, slashRuntime.tableColumns + delta));
+      }
+      renderSlashMenu();
+      event.preventDefault();
+      return true;
+    }
+    if (event.key === 'Tab' || event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+      slashRuntime.tableFocus = slashRuntime.tableFocus === 'rows' ? 'columns' : 'rows';
+      renderSlashMenu();
+      event.preventDefault();
+      return true;
+    }
+    if (event.key === 'Enter') {
+      executeSlashCommand('table');
+      event.preventDefault();
+      return true;
+    }
+  }
+
+  if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+    if (slashRuntime.commands.length === 0) return true;
+    const delta = event.key === 'ArrowUp' ? -1 : 1;
+    slashRuntime.activeIndex = (
+      slashRuntime.activeIndex + delta + slashRuntime.commands.length
+    ) % slashRuntime.commands.length;
+    slashRuntime.tableOpen = false;
+    renderSlashMenu();
+    event.preventDefault();
+    return true;
+  }
+
+  const activeCommand = slashRuntime.commands[slashRuntime.activeIndex];
+  if (event.key === 'ArrowRight' && activeCommand?.id === 'table') {
+    slashRuntime.tableOpen = true;
+    slashRuntime.tableFocus = 'rows';
+    renderSlashMenu();
+    event.preventDefault();
+    return true;
+  }
+  if ((event.key === 'Enter' || event.key === 'Tab') && activeCommand) {
+    if (activeCommand.id === 'table') {
+      slashRuntime.tableOpen = true;
+      slashRuntime.tableFocus = 'rows';
+      renderSlashMenu();
+    } else {
+      executeSlashCommand(activeCommand.id);
+    }
+    event.preventDefault();
+    return true;
+  }
+  return false;
 };
 
 document.documentElement.dataset.weibeiCompactPreview = isCompactPreview ? 'true' : 'false';
@@ -916,13 +1521,16 @@ const mermaidWidget = (source) => {
   container.className = 'weibei-mermaid-render';
   container.textContent = editorLabel('mermaidRendering');
   window.setTimeout(async () => {
+    if (!container.isConnected) return;
     try {
       const id = `weibei-mermaid-${mermaidRenderID += 1}`;
       const { svg, bindFunctions } = await mermaid.render(id, source, container);
+      if (!container.isConnected) return;
       container.innerHTML = svg;
       bindFunctions?.(container);
       container.dataset.rendered = 'true';
     } catch (error) {
+      if (!container.isConnected) return;
       container.classList.add('weibei-mermaid-error');
       container.textContent = editorLabel('mermaidFailed', { value: String(error?.message || error) });
     }
@@ -936,7 +1544,14 @@ const decorateMermaidBlock = (decorations, node, pos) => {
     class: 'weibei-code-block weibei-mermaid-block',
     'data-language': 'mermaid',
   }));
-  decorations.push(Decoration.widget(pos + node.nodeSize - 1, () => mermaidWidget(node.textContent), { side: 1 }));
+  const source = node.textContent.trim();
+  if (source) {
+    decorations.push(Decoration.widget(
+      pos + node.nodeSize,
+      () => mermaidWidget(node.textContent),
+      { side: -1, key: `weibei-mermaid:${pos}:${node.textContent}` }
+    ));
+  }
   return true;
 };
 
@@ -1032,6 +1647,67 @@ const decorateCodeBlock = (decorations, node, pos) => {
   } catch {
     // Prism should not be allowed to break editing.
   }
+};
+
+/**
+ * Adds an editable language field to a fenced code block and writes changes to its node attributes.
+ *
+ * @param {Decoration[]} decorations - Decoration collection for the current document
+ * @param {import('@milkdown/kit/prose/model').Node} node - Code block node
+ * @param {number} pos - Code block position
+ */
+const decorateCodeLanguageEditor = (decorations, node, pos) => {
+  const language = String(node.attrs.language || '');
+  decorations.push(Decoration.widget(pos + 1, () => {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'weibei-code-language-input';
+    input.value = language;
+    input.placeholder = editorLabel('codeLanguagePlaceholder');
+    input.setAttribute('aria-label', editorLabel('codeLanguage'));
+    input.setAttribute('autocomplete', 'off');
+    input.setAttribute('autocapitalize', 'none');
+    input.setAttribute('spellcheck', 'false');
+    input.maxLength = 32;
+
+    const commit = () => {
+      if (!isEditable || !editor) {
+        input.value = language;
+        return;
+      }
+      const nextLanguage = input.value.trim().split(/\s+/u)[0] || '';
+      input.value = nextLanguage;
+      if (nextLanguage === language) return;
+      editor.action((ctx) => {
+        const view = ctx.get(editorViewCtx);
+        const currentNode = view.state.doc.nodeAt(pos);
+        if (currentNode?.type.name !== 'code_block') return;
+        view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, {
+          ...currentNode.attrs,
+          language: nextLanguage,
+        }));
+      });
+    };
+
+    input.addEventListener('change', commit);
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') input.value = language;
+      if (event.key !== 'Enter' && event.key !== 'Escape') return;
+      event.preventDefault();
+      commit();
+      input.blur();
+      window.setTimeout(() => {
+        if (!editor) return;
+        editor.action((ctx) => ctx.get(editorViewCtx).focus());
+      }, 0);
+    });
+    return input;
+  }, {
+    side: -1,
+    key: `weibei-code-language:${pos}:${language}`,
+    stopEvent: (event) => event.target instanceof HTMLInputElement,
+  }));
 };
 
 const wikiTitleAtSelection = () => {
@@ -1246,6 +1922,75 @@ const exitEmptyListItem = (view) => {
   return liftListItem(listItemType)(view.state, view.dispatch, view);
 };
 
+/**
+ * Replaces an empty code block with a paragraph so Backspace and Delete can remove the container.
+ *
+ * @param {import('@milkdown/kit/prose/view').EditorView} view - Current ProseMirror view
+ * @param {KeyboardEvent} event - Key event from the editor
+ * @returns {boolean}
+ */
+const clearEmptyCodeBlock = (view, event) => {
+  if (!isEditable
+      || event.shiftKey
+      || event.altKey
+      || event.metaKey
+      || event.ctrlKey
+      || (event.key !== 'Backspace' && event.key !== 'Delete')) {
+    return false;
+  }
+  const { selection, schema } = view.state;
+  if (!(selection instanceof TextSelection) || !selection.empty) return false;
+  if (selection.$from.parent.type.spec.code !== true || selection.$from.parent.content.size !== 0) return false;
+  const paragraph = schema.nodes.paragraph;
+  return Boolean(paragraph && setBlockType(paragraph)(view.state, view.dispatch));
+};
+
+/**
+ * Moves the caret out of a terminal code block using forward navigation keys.
+ *
+ * @param {import('@milkdown/kit/prose/view').EditorView} view - Current ProseMirror view
+ * @param {KeyboardEvent} event - Key event from the editor
+ * @returns {boolean}
+ */
+const exitTerminalCodeBlock = (view, event) => {
+  if (!isEditable
+      || event.shiftKey
+      || event.altKey
+      || event.metaKey
+      || event.ctrlKey
+      || (event.key !== 'ArrowRight' && event.key !== 'ArrowDown')) {
+    return false;
+  }
+  const { selection } = view.state;
+  if (!(selection instanceof TextSelection) || !selection.empty) return false;
+  const { $from } = selection;
+  if ($from.parent.type.spec.code !== true) return false;
+  const container = $from.node(-1);
+  if ($from.indexAfter(-1) !== container.childCount) return false;
+  let atExitBoundary = $from.parentOffset === $from.parent.content.size;
+  if (event.key === 'ArrowDown' && !atExitBoundary) {
+    atExitBoundary = view.endOfTextblock('down');
+    if (!atExitBoundary) {
+      const codeDOM = view.nodeDOM($from.before());
+      const domPosition = view.domAtPos($from.pos);
+      if (codeDOM instanceof HTMLElement && codeDOM.contains(domPosition.node)) {
+        const trailingRange = document.createRange();
+        trailingRange.setStart(domPosition.node, domPosition.offset);
+        trailingRange.setEnd(codeDOM, codeDOM.childNodes.length);
+        const caretRect = view.coordsAtPos($from.pos);
+        atExitBoundary = Array.from(trailingRange.getClientRects())
+          .filter((rect) => rect.height > 1 && rect.width > 0)
+          .every((rect) => rect.top < caretRect.bottom + 1);
+      }
+      if (!atExitBoundary) {
+        atExitBoundary = !$from.parent.textContent.slice($from.parentOffset).includes('\n');
+      }
+    }
+  }
+  if (!atExitBoundary) return false;
+  return exitCode(view.state, view.dispatch);
+};
+
 const weiBeiDialectPlugin = $prose(() => new Plugin({
   view(view) {
     scheduleImageResolution(view);
@@ -1296,6 +2041,15 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
         || toggleFoldedCallout(event.target);
     },
     handleKeyDown(view, event) {
+      if (handleSlashMenuKeyDown(view, event)) return true;
+      if (clearEmptyCodeBlock(view, event)) {
+        event.preventDefault();
+        return true;
+      }
+      if (exitTerminalCodeBlock(view, event)) {
+        event.preventDefault();
+        return true;
+      }
       if (
         event.key === 'Enter'
         && isEditable
@@ -1362,6 +2116,7 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
         }
 
         if (typeName === 'code_block') {
+          decorateCodeLanguageEditor(decorations, node, pos);
           if (decorateMermaidBlock(decorations, node, pos)) return false;
           decorations.push(Decoration.node(pos, pos + node.nodeSize, {
             class: 'weibei-code-block',
@@ -1484,6 +2239,34 @@ const selectFirstTextForCheck = (needle) => {
     if (!range) return false;
     view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, range.from, range.to)));
     lastSelectionRange = range;
+    return true;
+  });
+};
+
+/**
+ * Places a collapsed test caret at an offset inside the first matching text node.
+ *
+ * @param {string} needle - Text node fragment to find
+ * @param {number} offset - Offset from the fragment start
+ * @returns {boolean}
+ */
+const placeCursorAtTextForCheck = (needle, offset = 0) => {
+  ensureEditor();
+  if (!window.weiBeiEditorCheckMode || !needle) return false;
+  return editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    let position = null;
+    view.state.doc.descendants((node, pos) => {
+      if (!node.isText || position !== null) return true;
+      const index = (node.text || '').indexOf(needle);
+      if (index < 0) return true;
+      position = pos + index + Math.min(Math.max(0, Number(offset) || 0), needle.length);
+      return false;
+    });
+    if (position === null) return false;
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, position)));
+    lastSelectionRange = null;
+    view.focus();
     return true;
   });
 };
@@ -1618,6 +2401,24 @@ window.WeiBeiEditor = {
     pendingAttachments.delete(id);
     pending.reject(new Error(message || 'Attachment save failed'));
   },
+  resolveImagePicker: (id, src, alt) => {
+    const pending = pendingImagePickers.get(id);
+    if (!pending) return false;
+    pendingImagePickers.delete(id);
+    const replacement = slashReplacement('image', pending.view.state.schema, { src, alt });
+    return applySlashReplacement(pending.view, pending.context, replacement);
+  },
+  cancelImagePicker: (id) => {
+    const pending = pendingImagePickers.get(id);
+    if (!pending) return false;
+    pendingImagePickers.delete(id);
+    const paragraph = pending.view.state.schema.nodes.paragraph;
+    if (!paragraph) return false;
+    return applySlashReplacement(pending.view, pending.context, {
+      content: Fragment.from(paragraph.create()),
+      selectionOffset: 1,
+    });
+  },
   setEditable: (next) => {
     isEditable = next !== false;
     syncEditableState();
@@ -1644,6 +2445,7 @@ window.WeiBeiEditor = {
     currentLanguage = normalizeInterfaceLanguage(next);
     document.documentElement.dataset.weibeiLanguage = currentLanguage;
     syncFrontmatterPanel();
+    if (slashMenuElement.dataset.show === 'true') renderSlashMenu();
     if (!editor) return;
     editor.action((ctx) => {
       const view = ctx.get(editorViewCtx);
@@ -1655,9 +2457,57 @@ window.WeiBeiEditor = {
 
 if (window.weiBeiEditorCheckMode) {
   window.WeiBeiEditor.selectFirstTextForCheck = selectFirstTextForCheck;
+  window.WeiBeiEditor.placeCursorAtTextForCheck = placeCursorAtTextForCheck;
   window.WeiBeiEditor.selectedTextForCheck = editorSelectedText;
   window.WeiBeiEditor.typeTextForCheck = typeTextForCheck;
   window.WeiBeiEditor.pressKeyForCheck = pressKeyForCheck;
+  window.WeiBeiEditor.openSlashMenuForCheck = () => {
+    const view = slashRuntime.view;
+    if (!view || !slashContextForView(view)) return false;
+    slashRuntime.dismissedContext = '';
+    slashRuntime.provider?.show();
+    renderSlashMenu();
+    return slashMenuElement.dataset.show === 'true';
+  };
+  window.WeiBeiEditor.slashStateForCheck = () => ({
+    show: slashMenuElement.dataset.show === 'true',
+    commands: Array.from(slashMenuElement.querySelectorAll('.weibei-slash-command-button'))
+      .map((button) => button.firstChild?.textContent || button.textContent || ''),
+    groups: Array.from(slashMenuElement.querySelectorAll('.weibei-slash-group'))
+      .map((group) => group.textContent || ''),
+    icons: slashMenuElement.querySelectorAll('svg, img, [class*="icon"]').length,
+    descriptions: slashMenuElement.querySelectorAll('[class*="description"]').length,
+    tableOpen: Boolean(slashTablePanelElement?.isConnected),
+    rows: slashRuntime.tableRows,
+    columns: slashRuntime.tableColumns,
+  });
+  window.WeiBeiEditor.openSlashTableForCheck = () => {
+    const index = slashRuntime.commands.findIndex((command) => command.id === 'table');
+    if (index < 0) return false;
+    slashRuntime.activeIndex = index;
+    slashRuntime.tableOpen = true;
+    slashRuntime.tableFocus = 'rows';
+    renderSlashMenu();
+    return true;
+  };
+  window.WeiBeiEditor.setSlashTableSizeForCheck = (rows, columns) => {
+    slashRuntime.tableRows = Math.min(20, Math.max(1, Number(rows) || 3));
+    slashRuntime.tableColumns = Math.min(12, Math.max(1, Number(columns) || 3));
+    renderSlashMenu();
+    return true;
+  };
+  window.WeiBeiEditor.executeSlashCommandForCheck = (commandID) => {
+    executeSlashCommand(commandID);
+    return true;
+  };
+  window.WeiBeiEditor.pendingImagePickerIDsForCheck = () => Array.from(pendingImagePickers.keys());
+  /**
+   * Reverts one ProseMirror history event without relying on synthetic browser shortcuts.
+   */
+  window.WeiBeiEditor.undoForCheck = () => editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    return undo(view.state, view.dispatch);
+  });
 }
 
 const initialDocument = splitFrontmatter(window.initialMarkdown || '');
@@ -1689,7 +2539,79 @@ Editor
       trust: false,
     });
   })
+  .config((ctx) => {
+    ctx.set(weiBeiSlash.key, {
+      view(view) {
+        const provider = new SlashProvider({
+          content: slashMenuElement,
+          debounce: 0,
+          offset: 6,
+          root: document.body,
+          shouldShow(updatedView) {
+            const context = slashContextForView(updatedView);
+            return Boolean(context && slashRuntime.dismissedContext !== context.key);
+          },
+        });
+        slashRuntime.provider = provider;
+        slashRuntime.view = view;
+        provider.onShow = () => {
+          slashRuntime.view = view;
+          renderSlashMenu();
+        };
+        provider.onHide = () => {
+          slashRuntime.context = null;
+          slashRuntime.activationContext = '';
+          slashRuntime.tableOpen = false;
+          slashRuntime.pointerX = null;
+          slashRuntime.pointerY = null;
+          slashTablePanelElement?.remove();
+          slashTablePanelElement = null;
+        };
+        const dismissOutside = (event) => {
+          if (slashMenuElement.dataset.show !== 'true'
+              || slashMenuElement.contains(event.target)
+              || slashTablePanelElement?.contains(event.target)
+              || view.dom.contains(event.target)) {
+            return;
+          }
+          const context = slashContextForView(view);
+          if (context) slashRuntime.dismissedContext = context.key;
+          provider.hide();
+        };
+        const dismissOnWindowBlur = () => {
+          const context = slashContextForView(view);
+          if (context) slashRuntime.dismissedContext = context.key;
+          provider.hide();
+        };
+        document.addEventListener('pointerdown', dismissOutside, true);
+        window.addEventListener('blur', dismissOnWindowBlur);
+        provider.update(view);
+        return {
+          update(updatedView, previousState) {
+            slashRuntime.view = updatedView;
+            const context = slashContextForView(updatedView);
+            if (slashRuntime.dismissedContext && context?.key !== slashRuntime.dismissedContext) {
+              slashRuntime.dismissedContext = '';
+            }
+            provider.update(updatedView, previousState);
+          },
+          destroy() {
+            document.removeEventListener('pointerdown', dismissOutside, true);
+            window.removeEventListener('blur', dismissOnWindowBlur);
+            provider.destroy();
+            slashMenuElement.remove();
+            slashTablePanelElement?.remove();
+            slashTablePanelElement = null;
+            slashRuntime.provider = null;
+            slashRuntime.view = null;
+          },
+        };
+      },
+    });
+  })
   .use(weiBeiDialectPlugin)
+  .use(weiBeiSlash)
+  .use(history)
   .use(commonmark)
   .use(gfm)
   .use(math)

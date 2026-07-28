@@ -110,9 +110,7 @@ else
   done
 fi
 
-if [[ -d "$ROOT_DIR/node_modules" ]]; then
-  npm run build:editor >/dev/null
-fi
+"$ROOT_DIR/script/prepare_web_editor.sh"
 
 if [[ "$CHECK_ONLY" != true ]]; then
   if [[ ! -f "$VERSION_FILE" ]]; then
