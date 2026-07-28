@@ -1,0 +1,10 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./tsconfig.web-editor.json" },
+    { "path": "./tsconfig.website.json" },
+    { "path": "./tsconfig.node.json" },
+    { "path": "./tsconfig.agent.json" },
+    { "path": "./Prototypes/RichAnswerWebRuntime" }
+  ]
+}

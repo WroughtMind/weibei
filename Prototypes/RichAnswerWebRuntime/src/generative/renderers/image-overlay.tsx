@@ -120,7 +120,7 @@ function imageOverlayLinePoints(feature: Extract<ImageOverlayFeature, { kind: "l
 
 function polylineLengthPxl(points: Array<{ x: number; y: number }>) {
   return points.slice(1).reduce(
-    (sum, point, index) => sum + segmentLengthPxl(points[index], point),
+    (sum, point, index) => sum + segmentLengthPxl(points[index]!, point),
     0,
   );
 }
@@ -366,7 +366,7 @@ function featureNodes(
     if (linePoints.length < 2) return [];
     const len = polylineLengthPxl(linePoints);
     const displayValue = feature.value ?? formatMeasurement(len, specMeasurement);
-    const middle = linePoints[Math.floor((linePoints.length - 1) / 2)];
+    const middle = linePoints[Math.floor((linePoints.length - 1) / 2)]!;
 
     return [
       <g key={keyBase} opacity={featureOpacity}>
@@ -451,12 +451,13 @@ function featureNodes(
   }).join(" ");
 
   const perimeter = feature.points.reduce((sum, point, index) => {
-    const next = feature.points[(index + 1) % feature.points.length];
+    const next = feature.points[(index + 1) % feature.points.length]!;
     const a = computePointOnImage(point, viewRect);
     const b = computePointOnImage(next, viewRect);
     return sum + segmentLengthPxl(a, b);
   }, 0);
   const measure = feature.value ?? formatMeasurement(perimeter, specMeasurement);
+  const firstPoint = computePointOnImage(feature.points[0]!, viewRect);
 
   return [
     <g key={keyBase} opacity={featureOpacity}>
@@ -475,8 +476,8 @@ function featureNodes(
     </polygon>
     {labelBadgeNode({
       key: `${keyBase}-badge`,
-      x: computePointOnImage(feature.points[0], viewRect).x + 16,
-      y: computePointOnImage(feature.points[0], viewRect).y - 16,
+      x: firstPoint.x + 16,
+      y: firstPoint.y - 16,
       marker,
       color: stroke,
       emphasis: feature.emphasis,
@@ -539,7 +540,7 @@ function makeMeasureText(
       }
       if (feature.kind === "polygon") {
         const raw = feature.points.reduce((sum, point, i) => {
-          const next = feature.points[(i + 1) % feature.points.length];
+          const next = feature.points[(i + 1) % feature.points.length]!;
           const a = computePointOnImage(point, viewRect);
           const b = computePointOnImage(next, viewRect);
           return sum + segmentLengthPxl(a, b);

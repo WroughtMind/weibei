@@ -186,6 +186,15 @@ public struct DevelopmentWorkflow {
         ).prepare()
     }
 
+    /// Installs locked Node dependencies and regenerates Rich Answer resources.
+    public func prepareRichAnswer() async throws -> RichAnswerPreparationResult {
+        try await RichAnswerPreparationWorkflow(
+            repository: repository,
+            toolchain: NodeBuildToolchain(node: toolchain.node, npm: toolchain.npm),
+            processExecutor: processExecutor
+        ).prepare()
+    }
+
     /// Downloads or reuses the manifest-pinned PI runtime and validates it.
     public func preparePiRuntime() async throws -> PreparedPiRuntime {
         try await piRuntimePreparer.prepare(
@@ -193,7 +202,10 @@ public struct DevelopmentWorkflow {
         )
     }
 
-    /// Prepares every dependency owned by the Swift development tool.
+    /// Prepares all generated application resources and the PI runtime.
+    ///
+    /// `prepareWebEditor` invokes `build:app-resources`, which builds the editor,
+    /// OAuth helper, and Rich Answer runtime from the locked TypeScript toolchain.
     public func prepareAll() async throws -> PreparedPiRuntime {
         _ = try await prepareWebEditor()
         return try await preparePiRuntime()

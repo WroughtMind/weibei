@@ -84,7 +84,7 @@ For long or scanned PDFs, WeiBei extracts text in a resource-bounded helper proc
 
 - macOS 14 or later
 - Xcode Command Line Tools with Swift 5.9 support
-- Node.js 22 or later with npm; `.nvmrc` pins the currently verified release
+- Node.js 22 with npm (`>=22 <23`); `.nvmrc` pins the currently verified release
 - Internet access on the first build to download and verify the pinned Pi runtime
 - A configured supported model provider for live Agent responses
 
@@ -97,12 +97,13 @@ swift run WeiBeiDevTool run
 ```
 
 On a fresh clone, the development tool installs the locked Node.js dependencies,
-generates the ignored Milkdown editor resources, prepares the pinned Pi runtime,
-and then builds and opens the application. The tool deliberately locates the
-repository only from the current working directory, so run it at the repository
-root.
-Generated web resources and application packages remain local and are not
-tracked by Git.
+generates the web resources, prepares the pinned Pi runtime, and then builds and
+opens the application. The tool deliberately locates the repository only from
+the current working directory, so run it at the repository root. All generated
+browser resources and application packages remain local and are ignored by
+Git. `npm run verify:generated` performs two isolated builds and compares the
+complete output set with SHA-256, so a fresh checkout does not depend on
+committed JavaScript or CSS.
 
 ## Suggested judge test
 
@@ -128,9 +129,35 @@ Individual checks are also available:
 
 ```bash
 swift run WeiBeiDevTool prepare web-editor
+swift run WeiBeiDevTool prepare rich-answer
 swift run WeiBeiDevTool prepare pi-runtime
 swift run WeiBeiDevTool prepare all
 ```
+
+All handwritten browser and Node tooling sources use TypeScript. The stable npm
+commands are:
+
+```bash
+npm run check
+npm run lint
+npm run typecheck
+npm run test
+npm run build:editor
+npm run build:website
+npm run build:rich-answer
+npm run verify:generated
+npm run clean:generated
+```
+
+The repository uses TypeScript for strict cross-project checking, `tsx` to run
+Node-oriented `.ts` tools without maintaining a custom loader, Vitest for unit
+and protocol self-checks, esbuild for the editor, website, and OAuth outputs,
+Vite for the React Rich Answer runtime, ESLint for static rules, and Prettier
+for deterministic formatting. These maintained libraries replace custom
+transpilation, test, lint, and formatting implementations. Install the exact
+locked toolchain with `npm ci`; the primary APIs are exposed through the npm
+commands above, and Pi development types are pinned to the same `0.80.2`
+version as `Vendor/PiRuntime/manifest.json`.
 
 The four existing startup and preparation shell scripts are transitional,
 no-fallback forwarders to `WeiBeiDevTool`; new automation should call the Swift
@@ -165,4 +192,4 @@ Contributions are welcome under [`CONTRIBUTING.md`](CONTRIBUTING.md) and the
 
 ## Technology
 
-Swift, SwiftUI, AppKit, PDFKit, WebKit, Vision OCR, SQLite FTS5, Milkdown, KaTeX, Mermaid, Pi, OpenAI Codex OAuth
+Swift, SwiftUI, AppKit, PDFKit, WebKit, Vision OCR, SQLite FTS5, TypeScript, React, Vite, Milkdown, KaTeX, Mermaid, Pi, OpenAI Codex OAuth

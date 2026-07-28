@@ -152,7 +152,7 @@ WEIBEI_PI_APP_BUNDLE="$RELEASE_APP" \
 WEIBEI_PI_LIVE_CHECK=0 \
   "$BUILD_DIR/WeiBeiPiCheck"
 
-node "$ROOT_DIR/script/dmg/build_dmg.mjs" "$ROOT_DIR" "$RELEASE_APP" "$DMG_PATH" "$APP_VERSION"
+npm --prefix "$ROOT_DIR" exec -- tsx "$ROOT_DIR/script/dmg/build_dmg.ts" "$ROOT_DIR" "$RELEASE_APP" "$DMG_PATH" "$APP_VERSION"
 
 if [[ "$MODE" == "notarized" ]]; then
   /usr/bin/codesign --force --timestamp --sign "$SIGN_IDENTITY" "$DMG_PATH"
@@ -224,7 +224,7 @@ detach_release_mount
 
 DMG_SHA256="$(/usr/bin/shasum -a 256 "$DMG_PATH" | /usr/bin/awk '{print $1}')"
 /usr/bin/printf '%s  %s\n' "$DMG_SHA256" "$DMG_NAME" | /usr/bin/tee "$DMG_SHA_PATH" >/dev/null
-node "$ROOT_DIR/script/homebrew/generate_cask.mjs" "$APP_VERSION" "$DMG_SHA256" "$CASK_PATH"
+npm --prefix "$ROOT_DIR" exec -- tsx "$ROOT_DIR/script/homebrew/generate_cask.ts" "$APP_VERSION" "$DMG_SHA256" "$CASK_PATH"
 /usr/bin/ruby -c "$CASK_PATH" >/dev/null
 
 echo "release_mode=$MODE"

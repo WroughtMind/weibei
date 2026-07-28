@@ -29,13 +29,13 @@ function median(values: number[]) {
   if (!values.length) return Number.NaN;
   const sorted = [...values].sort((left, right) => left - right);
   const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+  return sorted.length % 2 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
 }
 
 function coordinatePairs(values: number[]) {
   const pairs: Array<[number, number]> = [];
   for (let index = 0; index + 1 < values.length; index += 2) {
-    pairs.push([clamp(values[index], 0, 1), clamp(values[index + 1], 0, 1)]);
+    pairs.push([clamp(values[index]!, 0, 1), clamp(values[index + 1]!, 0, 1)]);
   }
   return pairs;
 }
@@ -356,8 +356,8 @@ export const DistributionBrush = defineComponent({
         const sampleBins = Array.from({ length: props.binCount }, () => 0);
         props.values.forEach((value) => {
           const index = Math.min(props.binCount - 1, Math.floor(((value - minimum) / range) * props.binCount));
-          bins[index] += 1;
-          if (value >= lower && value <= upper) sampleBins[index] += 1;
+          bins[index] = (bins[index] ?? 0) + 1;
+          if (value >= lower && value <= upper) sampleBins[index] = (sampleBins[index] ?? 0) + 1;
         });
         const maxBin = Math.max(...bins, 1);
         const toX = (value: number) => left + ((value - minimum) / range) * plotWidth;
@@ -385,8 +385,9 @@ export const DistributionBrush = defineComponent({
           const y = top + plotHeight - barHeight;
           context.fillStyle = "rgba(92, 84, 73, 0.18)";
           context.fillRect(x, y, barWidth, barHeight);
-          if (sampleBins[index]) {
-            const selectedHeight = (sampleBins[index] / maxBin) * (plotHeight - 18);
+          const selectedCount = sampleBins[index] ?? 0;
+          if (selectedCount) {
+            const selectedHeight = (selectedCount / maxBin) * (plotHeight - 18);
             context.fillStyle = "rgba(63, 113, 107, 0.78)";
             context.fillRect(x, top + plotHeight - selectedHeight, barWidth, selectedHeight);
           }
@@ -421,7 +422,7 @@ export const DistributionBrush = defineComponent({
         let largestGapIndex = 0;
         let largestGap = Number.NEGATIVE_INFINITY;
         for (let index = 0; index < sortedValues.length - 1; index += 1) {
-          const gap = sortedValues[index + 1] - sortedValues[index];
+          const gap = sortedValues[index + 1]! - sortedValues[index]!;
           if (gap > largestGap) {
             largestGap = gap;
             largestGapIndex = index;
@@ -577,19 +578,19 @@ export const FlowMetric = defineComponent({
 
 function evaluateOperation(operation: z.infer<typeof flowOperationSchema>, sources: number[], parameters: number[]) {
   switch (operation) {
-    case "identity": return sources[0];
+    case "identity": return sources[0]!;
     case "sum": return sources.reduce((total, value) => total + value, 0);
-    case "difference": return sources.slice(1).reduce((result, value) => result - value, sources[0]);
+    case "difference": return sources.slice(1).reduce((result, value) => result - value, sources[0]!);
     case "product": return sources.reduce((result, value) => result * value, 1);
-    case "ratio": return Math.abs(sources[1]) < 1e-12 ? Number.NaN : sources[0] / sources[1];
+    case "ratio": return Math.abs(sources[1]!) < 1e-12 ? Number.NaN : sources[0]! / sources[1]!;
     case "weightedSum": {
       const weighted = sources.reduce((total, value, index) => total + value * (parameters[index] ?? 1), 0);
-      return weighted + (parameters.length > sources.length ? parameters[sources.length] : 0);
+      return weighted + (parameters.length > sources.length ? parameters[sources.length]! : 0);
     }
-    case "power": return Math.pow(sources[0], parameters[0] ?? sources[1] ?? 1);
+    case "power": return Math.pow(sources[0]!, parameters[0] ?? sources[1] ?? 1);
     case "minimum": return Math.min(...sources);
     case "maximum": return Math.max(...sources);
-    case "percentChange": return Math.abs(sources[1]) < 1e-12 ? Number.NaN : ((sources[0] - sources[1]) / Math.abs(sources[1])) * 100;
+    case "percentChange": return Math.abs(sources[1]!) < 1e-12 ? Number.NaN : ((sources[0]! - sources[1]!) / Math.abs(sources[1]!)) * 100;
   }
 }
 
@@ -617,12 +618,12 @@ export const DependencyFlow = defineComponent({
       assumption.props.maximum,
     ));
     const focusedIndex = Math.max(0, Math.min(props.assumptions.length - 1, Math.round(numeric(focusField.value))));
-    const focusedAssumption = props.assumptions[focusedIndex];
+    const focusedAssumption = props.assumptions[focusedIndex]!;
     const orderedNodes = [...props.nodes].sort((left, right) => left.props.layer - right.props.layer);
 
     const compute = (candidateValues: number[]) => {
       const computed = new Map<string, number>();
-      props.assumptions.forEach((assumption, index) => computed.set(assumption.props.id, candidateValues[index]));
+      props.assumptions.forEach((assumption, index) => computed.set(assumption.props.id, candidateValues[index]!));
       for (let pass = 0; pass < orderedNodes.length; pass += 1) {
         let changed = false;
         orderedNodes.forEach((node) => {
@@ -645,7 +646,7 @@ export const DependencyFlow = defineComponent({
     const computed = compute(inputValues);
     const sensitivityInputs = [...inputValues];
     sensitivityInputs[focusedIndex] = clamp(
-      sensitivityInputs[focusedIndex] + focusedAssumption.props.step,
+      sensitivityInputs[focusedIndex]! + focusedAssumption.props.step,
       focusedAssumption.props.minimum,
       focusedAssumption.props.maximum,
     );
@@ -674,7 +675,7 @@ export const DependencyFlow = defineComponent({
             {props.assumptions.map((assumption, index) => (
               <label key={assumption.props.id} className={index === focusedIndex ? "is-active" : ""}>
                 <span>{assumption.props.label}</span>
-                <output>{formatNumber(inputValues[index])} {assumption.props.unit}</output>
+                <output>{formatNumber(inputValues[index]!)} {assumption.props.unit}</output>
                 <input
                   aria-label={`${props.title} 输入：${assumption.props.label}`}
                   data-weibei-control="dependency-input-slider"

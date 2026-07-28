@@ -44,7 +44,7 @@ public enum BuildWorkflowError: Error, Equatable, LocalizedError, Sendable {
         case let .missingRequiredFile(url):
             return "Required build input is missing at \(url.path)."
         case let .unsupportedNodeVersion(version):
-            return "Node.js 22 or later is required, but \(version) is active. Run `nvm install 22.22.3 && nvm use 22.22.3`."
+            return "Node.js >=22 <23 is required, but \(version) is active. Run `nvm install 22.22.3 && nvm use 22.22.3`."
         case let .unreadableNodeVersion(output):
             return "Could not parse the Node.js version from '\(output)'."
         case let .commandFailed(command, exitDescription, standardError):

@@ -11,7 +11,7 @@
 /node_modules/
 /Prototypes/RichAnswerWebRuntime/node_modules/
 /Prototypes/RichAnswerWebRuntime/dist/
-/Prototypes/RichAnswerWebRuntime/*.tsbuildinfo
+*.tsbuildinfo
 /Prototypes/RichAnswerWebRuntime/vite.config.js
 /Prototypes/RichAnswerWebRuntime/vite.config.d.ts
 
@@ -19,6 +19,13 @@
 /Sources/WeiBei/Resources/Editor/editor.js
 /Sources/WeiBei/Resources/Editor/editor.css
 /Sources/WeiBei/Resources/Editor/fonts/
+
+# Generated application and website resources
+/Sources/WeiBei/Resources/pi-oauth-login.mjs
+/Sources/WeiBei/Resources/rich-answer.html
+/Sources/WeiBei/Resources/rich-answer-runtime.css
+/Sources/WeiBei/Resources/rich-answer-runtime.js
+/website/main.js
 
 # Generated evidence outputs
 /Docs/release-evidence/**/out/

@@ -210,7 +210,8 @@ function evaluateFunction(
 }
 
 function applyOperation(name: z.infer<typeof operation>, inputs: number[]) {
-  const [first, second] = inputs;
+  const first = inputs[0] ?? Number.NaN;
+  const second = inputs[1] ?? Number.NaN;
   if (inputs.some((value) => !Number.isFinite(value))) return Number.NaN;
   switch (name) {
     case "abs": return Math.abs(first);
@@ -279,7 +280,7 @@ function quantile(values: number[], ratio: number) {
   const lower = Math.floor(position);
   const upper = Math.ceil(position);
   const weight = position - lower;
-  return values[lower] * (1 - weight) + values[upper] * weight;
+  return values[lower]! * (1 - weight) + values[upper]! * weight;
 }
 
 function splitSegments(points: Array<[number, number]>) {

@@ -2,7 +2,7 @@
 
 ## 1. 新增文件
 本任务仅新增：
-- `generate-offline-evidence-package.mjs`
+- `generate-offline-evidence-package.ts`
 - `README_OFFLINE_EVIDENCE_VIEWER.md`
 - `fixtures/demo-run/...`（本地验证用例）
 - `out/demo-offline-viewer/...`（脚本生成结果，仅作本地验收输出示例）
@@ -10,8 +10,8 @@
 ## 2. 生成命令
 
 ```bash
-cd /Users/changfenhuang/.codex/worktrees/rich-answer-protocol/魏碑
-node Prototypes/RichAnswerEvidenceViewer/generate-offline-evidence-package.mjs \
+# 从仓库根目录运行
+npm exec -- tsx Prototypes/RichAnswerEvidenceViewer/generate-offline-evidence-package.ts \
   --run-dir Prototypes/RichAnswerEvidenceViewer/fixtures/demo-run \
   --output Prototypes/RichAnswerEvidenceViewer/out/demo-offline-viewer \
   --force
@@ -20,7 +20,7 @@ node Prototypes/RichAnswerEvidenceViewer/generate-offline-evidence-package.mjs \
 ## 3. 推荐命令（真实 run）
 
 ```bash
-node Prototypes/RichAnswerEvidenceViewer/generate-offline-evidence-package.mjs \
+npm exec -- tsx Prototypes/RichAnswerEvidenceViewer/generate-offline-evidence-package.ts \
   --run-id <runID> \
   --source .build/rich-answer-evidence \
   --output Prototypes/RichAnswerEvidenceViewer/out/<runID>-viewer \
@@ -30,7 +30,7 @@ node Prototypes/RichAnswerEvidenceViewer/generate-offline-evidence-package.mjs \
 需要浏览 56 题 × 4 轮的大包时，使用支持显式截图路径与节省磁盘模式的生成器：
 
 ```bash
-node Prototypes/RichAnswerEvidenceViewer/generate-evidence-package.mjs \
+npm exec -- tsx Prototypes/RichAnswerEvidenceViewer/generate-evidence-package.ts \
   --run-dir <run目录> \
   --output <验收包目录> \
   --asset-mode symlink \

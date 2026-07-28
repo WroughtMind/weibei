@@ -1377,8 +1377,8 @@ function currentTurnEvidenceMatches(snapshot: ContextSnapshotV2, evidence: strin
     const index = snapshot.question.indexOf(statement, searchStart);
     if (index < 0) return false;
     const end = index + statement.length;
-    const before = index === 0 ? "" : snapshot.question[index - 1];
-    const after = end >= snapshot.question.length ? "" : snapshot.question[end];
+    const before = index === 0 ? "" : (snapshot.question[index - 1] ?? "");
+    const after = end >= snapshot.question.length ? "" : (snapshot.question[end] ?? "");
     const isBoundary = (value: string) => !value || /[\p{P}\p{Z}\s]/u.test(value);
     const prefix = snapshot.question.slice(0, index).toLowerCase();
     const immediate = prefix.trimEnd();
@@ -1511,16 +1511,16 @@ function courseHeading(rawHeading: string): { title: string; ordinal?: number; l
   const stableMatch = rawHeading.match(/^\[(html-section-[A-Za-z0-9-]+)\]\[html-heading-(\d+)\]\s+(.+)$/);
   if (stableMatch) {
     return {
-      title: stableMatch[3],
-      ordinal: Number(stableMatch[2]) + 1,
-      locationID: stableMatch[1],
+      title: stableMatch[3]!,
+      ordinal: Number(stableMatch[2]!) + 1,
+      locationID: stableMatch[1]!,
     };
   }
   const stableOnlyMatch = rawHeading.match(/^\[(html-section-[A-Za-z0-9-]+)\]\s+(.+)$/);
-  if (stableOnlyMatch) return { title: stableOnlyMatch[2], locationID: stableOnlyMatch[1] };
+  if (stableOnlyMatch) return { title: stableOnlyMatch[2]!, locationID: stableOnlyMatch[1]! };
   const legacyMatch = rawHeading.match(/^\[html-heading-(\d+)\]\s+(.+)$/);
   if (!legacyMatch) return { title: rawHeading };
-  return { title: legacyMatch[2], ordinal: Number(legacyMatch[1]) + 1 };
+  return { title: legacyMatch[2]!, ordinal: Number(legacyMatch[1]!) + 1 };
 }
 
 function coursePage(rawHeading: string): number | undefined {
@@ -3685,7 +3685,7 @@ export function validateRichAnswerNarrativeFlow(
         `富回答 narrative 第 ${index + 1} 行的场景标记格式无效；必须独占一行写成 <!-- weibei-scene:场景ID -->`,
       );
     }
-    const sceneID = match[1];
+    const sceneID = match[1]!;
     if (!knownSceneIDs.has(sceneID)) {
       throw new Error(`富回答 narrative 引用了不存在的场景 ${sceneID}`);
     }
@@ -3766,26 +3766,39 @@ interface RichAnswerPointParam {
   y: number;
 }
 
+interface RichAnswerRegionParam extends RichAnswerPointParam {
+  width: number;
+  height: number;
+}
+
+interface RichAnswerAxisParam {
+  label: string;
+  minimum: number;
+  maximum: number;
+  unit?: string;
+}
+
 interface RichAnswerObjectParam {
   id: string;
   kind: string;
+  label: string;
   text?: string;
   number?: number;
+  unit?: string;
+  evidenceIDs?: string[];
   assetID?: string;
   frameID?: string;
   coordinate?: RichAnswerPointParam;
-  bounds?: {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  };
+  bounds?: RichAnswerRegionParam;
 }
 
 interface RichAnswerRelationParam {
   id: string;
+  kind: string;
   sourceID: string;
   targetID: string;
+  label?: string;
+  evidenceIDs?: string[];
 }
 
 interface RichAnswerOperationParam {
@@ -3807,8 +3820,12 @@ interface RichAnswerOperationParam {
 interface RichAnswerFrameParam {
   id: string;
   kind: string;
+  title: string;
   objectIDs?: string[];
+  xAxis?: RichAnswerAxisParam;
+  yAxis?: RichAnswerAxisParam;
   assetID?: string;
+  evidenceIDs?: string[];
 }
 
 interface RichAnswerUIDataRowParam {
@@ -3876,6 +3893,7 @@ interface RichAnswerUIProgramParam {
 interface RichAnswerRenderPlanChartSeriesParam {
   name: string;
   values: number[];
+  xValues?: number[];
   chartKind?: "line" | "bar";
   unit?: string;
 }
@@ -3929,7 +3947,8 @@ interface RichAnswerMathFunctionSpecParam {
 
 type RichAnswerRenderPlanSpecParam =
   | RichAnswerRenderPlanChartSpecParam
-  | RichAnswerMathFunctionSpecParam;
+  | RichAnswerMathFunctionSpecParam
+  | Record<string, unknown>;
 
 interface RichAnswerRenderPlanInteractionBindingParam {
   id: string;
@@ -3951,9 +3970,15 @@ interface RichAnswerRenderPlanSourceBindingParam {
 
 interface RichAnswerRenderPlanArtifactRefParam {
   id: string;
-  kind: "generated" | "source" | "snapshot";
-  label: string;
-  sourceBindingID?: string;
+  kind: string;
+  mimeType: string;
+  role: string;
+  width?: number;
+  height?: number;
+  sizeBytes?: number;
+  checksum?: string;
+  summary?: string;
+  metadata?: Record<string, unknown>;
 }
 
 interface RichAnswerRenderPlanFallbackParam {
@@ -4344,7 +4369,10 @@ function richAnswerRenderPlanIntegerInRange(
   minimum: number,
   maximum: number,
 ): value is number {
-  return Number.isInteger(value) && value >= minimum && value <= maximum;
+  return typeof value === "number"
+    && Number.isInteger(value)
+    && value >= minimum
+    && value <= maximum;
 }
 
 function validateRichAnswerChartSpec(
@@ -4424,7 +4452,10 @@ function validateRichAnswerChartSpec(
     if (chartKind === "bar" && rawSeries.chartKind !== undefined && rawSeries.chartKind !== "bar") {
       issue(`富回答场景 ${scene.id} 的 bar 图不能包含非 bar series`);
     }
-    if (chartKind === "mixed" && rawSeries.chartKind !== undefined && !["line", "bar"].includes(rawSeries.chartKind)) {
+    if (chartKind === "mixed"
+      && rawSeries.chartKind !== undefined
+      && rawSeries.chartKind !== "line"
+      && rawSeries.chartKind !== "bar") {
       issue(`富回答场景 ${scene.id} 的 mixed 图每个 series.chartKind 必须是 line 或 bar`);
     }
     const values = richAnswerRenderPlanNumberArray(rawSeries.values);
@@ -4778,6 +4809,53 @@ function richAnswerRenderPlanFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+/**
+ * Narrows a renderer record to a normalized rectangle after validating every numeric edge.
+ */
+function richAnswerRenderPlanRegion(value: unknown): value is RichAnswerRegionParam {
+  return isRecord(value)
+    && richAnswerRenderPlanFiniteNumber(value.x)
+    && richAnswerRenderPlanFiniteNumber(value.y)
+    && richAnswerRenderPlanFiniteNumber(value.width)
+    && richAnswerRenderPlanFiniteNumber(value.height);
+}
+
+interface RichAnswerCoordinateBoundsParam {
+  xMin: number;
+  xMax: number;
+  yMin: number;
+  yMax: number;
+}
+
+/**
+ * Narrows renderer coordinate bounds only after all four limits are finite numbers.
+ */
+function richAnswerRenderPlanCoordinateBounds(value: unknown): value is RichAnswerCoordinateBoundsParam {
+  return isRecord(value)
+    && richAnswerRenderPlanFiniteNumber(value.xMin)
+    && richAnswerRenderPlanFiniteNumber(value.xMax)
+    && richAnswerRenderPlanFiniteNumber(value.yMin)
+    && richAnswerRenderPlanFiniteNumber(value.yMax);
+}
+
+interface RichAnswerSliderValuesParam {
+  value: number;
+  minimum: number;
+  maximum: number;
+  step: number;
+}
+
+/**
+ * Narrows a slider record only after its value, range, and step are all finite.
+ */
+function richAnswerRenderPlanSliderValues(value: unknown): value is RichAnswerSliderValuesParam {
+  return isRecord(value)
+    && richAnswerRenderPlanFiniteNumber(value.value)
+    && richAnswerRenderPlanFiniteNumber(value.minimum)
+    && richAnswerRenderPlanFiniteNumber(value.maximum)
+    && richAnswerRenderPlanFiniteNumber(value.step);
+}
+
 function richAnswerRenderPlanControlValue(value: unknown): value is number | string {
   return richAnswerRenderPlanFiniteNumber(value) || (
     typeof value === "string" &&
@@ -4813,10 +4891,10 @@ function richAnswerNormalizeScene3DRange(
     Array.isArray(value) &&
     value.length === 2 &&
     value.every(richAnswerRenderPlanFiniteNumber) &&
-    value[0] < value[1]
+    value[0]! < value[1]!
   ) {
     normalizations.push(`${path} 已由 [min,max] 归一化为 {min,max}`);
-    return { min: value[0], max: value[1] };
+    return { min: value[0]!, max: value[1]! };
   }
   if (
     isRecord(value) &&
@@ -4908,7 +4986,7 @@ function normalizeRichAnswerScene3DSpec(
     spec.controls = controls;
   }
 
-  plan.spec = spec as RichAnswerRenderPlanSpecParam;
+  plan.spec = spec;
   return normalizations;
 }
 
@@ -4931,7 +5009,7 @@ function richAnswerValidateCoordinate2D(
   path: string,
   issue: (message: string) => void,
   normalized = false,
-): value is Record<string, unknown> {
+): value is RichAnswerPointParam {
   if (!richAnswerValidateNestedFields(scene, value, ["x", "y"], path, issue)) return false;
   if (!richAnswerRenderPlanFiniteNumber(value.x) || !richAnswerRenderPlanFiniteNumber(value.y)) {
     issue(`富回答场景 ${scene.id} 的 ${path}.x/y 必须是有限数字`);
@@ -5154,7 +5232,7 @@ function validateRichAnswerImageOverlaySpec(
         )) {
           const box = rawFeature.box;
           if (
-            ![box.x, box.y, box.width, box.height].every(richAnswerRenderPlanFiniteNumber) ||
+            !richAnswerRenderPlanRegion(box) ||
             box.x < 0 || box.y < 0 || box.width <= 0 || box.height <= 0 ||
             box.x + box.width > 1 || box.y + box.height > 1
           ) issue(`富回答场景 ${scene.id} 的 ${featurePath}.box 必须是 0–1 内的正面积矩形`);
@@ -5256,7 +5334,7 @@ function validateRichAnswerSpatialMapSpec(
   )) {
     const bounds = spec.bounds;
     if (
-      ![bounds.xMin, bounds.xMax, bounds.yMin, bounds.yMax].every(richAnswerRenderPlanFiniteNumber) ||
+      !richAnswerRenderPlanCoordinateBounds(bounds) ||
       bounds.xMin >= bounds.xMax || bounds.yMin >= bounds.yMax
     ) issue(`富回答场景 ${scene.id} 的 spec.bounds 必须满足有限数 xMin<xMax、yMin<yMax`);
   }
@@ -5390,7 +5468,7 @@ function validateRichAnswerGeometry2DSpec(
   )) return 0;
   const coordinateSpace = spec.coordinateSpace;
   if (
-    ![coordinateSpace.xMin, coordinateSpace.xMax, coordinateSpace.yMin, coordinateSpace.yMax].every(richAnswerRenderPlanFiniteNumber) ||
+    !richAnswerRenderPlanCoordinateBounds(coordinateSpace) ||
     coordinateSpace.xMin >= coordinateSpace.xMax || coordinateSpace.yMin >= coordinateSpace.yMax
   ) issue(`富回答场景 ${scene.id} 的 spec.coordinateSpace 范围无效`);
 
@@ -5555,7 +5633,7 @@ function validateRichAnswerGeometry2DSpec(
     }
     if (presentation === "slider") {
       if (
-        ![rawControl.value, rawControl.minimum, rawControl.maximum, rawControl.step].every(richAnswerRenderPlanFiniteNumber) ||
+        !richAnswerRenderPlanSliderValues(rawControl) ||
         rawControl.minimum >= rawControl.maximum || rawControl.step <= 0 ||
         rawControl.value < rawControl.minimum || rawControl.value > rawControl.maximum
       ) issue(`富回答场景 ${scene.id} 的 ${controlPath} 滑杆范围或初值无效`);
@@ -7022,6 +7100,7 @@ function openUIRuleDescription(rule: OpenUIArgumentRule): string {
         case "string": return "$字符串状态引用";
         case "numberArray": return "$数字数组状态引用";
         case "stringArray": return "$字符串数组状态引用";
+        default: throw new Error(`未知 OpenUI 状态类型：${String(rule.valueKind)}`);
       }
     case "reference":
       return `${rule.components.join("|")} 的组件 id`;
@@ -7190,7 +7269,7 @@ function validateOpenUIReactiveName(
       `组件 ${declaration.id} 的状态名 ${JSON.stringify(declaredName)} 与引用 $${stateName} 不一致`,
       `让名称参数与状态引用同名，例如 ${JSON.stringify(stateName)}, $${stateName}`,
       declaration.line,
-      declaration.arguments[nameIndex].column,
+      declaration.arguments[nameIndex]!.column,
     );
   }
 }
@@ -7209,7 +7288,7 @@ function validateOpenUIIndexedState(
       `组件 ${declaration.id} 的初始索引 ${initialValue} 不在 0–${itemCount - 1} 内`,
       `把 $${openUIStateName(declaration, stateIndex)} 初始化为有效整数索引`,
       declaration.line,
-      declaration.arguments[stateIndex].column,
+      declaration.arguments[stateIndex]!.column,
     );
   }
 }
@@ -7225,7 +7304,7 @@ function validateOpenUIComponentSemantics(
     `组件 ${declaration.id}（${declaration.component}）${message}`,
     fix,
     declaration.line,
-    argumentIndex === undefined ? declaration.column : declaration.arguments[argumentIndex].column,
+    argumentIndex === undefined ? declaration.column : declaration.arguments[argumentIndex]!.column,
   );
   const validateNamedState = (nameIndex: number, stateIndex: number): void =>
     validateOpenUIReactiveName(scene, declaration, nameIndex, stateIndex);
@@ -7495,7 +7574,8 @@ function validateOpenUIComponentSemantics(
         const minimum = openUINumberValue(assumption, 2);
         const maximum = openUINumberValue(assumption, 3);
         const step = openUINumberValue(assumption, 4);
-        if (maximum <= minimum || step <= 0 || inputValues[index] < minimum || inputValues[index] > maximum) {
+        const initialValue = inputValues[index]!;
+        if (maximum <= minimum || step <= 0 || initialValue < minimum || initialValue > maximum) {
           fail(
             `的输入 ${openUIStringValue(assumption, 0)} 范围或初值无效`,
             "保证每个输入 maximum > minimum、step > 0，且对应初值位于范围内",
@@ -7741,7 +7821,7 @@ export function validateRichAnswerProgram(
     }
     declaration.arguments.forEach((value, index) => {
       try {
-        validateOpenUIArgument(scene, declaration, value, rules[index], index, statesByName, componentsByID);
+        validateOpenUIArgument(scene, declaration, value, rules[index]!, index, statesByName, componentsByID);
       } catch (error) {
         argumentErrors.push(error instanceof Error ? error.message : String(error));
       }
@@ -7796,7 +7876,7 @@ export function validateRichAnswerProgram(
       visit("root", []);
       const orphaned = Array.from(componentsByID.keys()).filter((componentID) => !visited.has(componentID));
       if (orphaned.length > 0) {
-        const declaration = componentsByID.get(orphaned[0])!;
+        const declaration = componentsByID.get(orphaned[0]!)!;
         captureStructuralError(() =>
           openUIProgramFailure(
             scene.id,
@@ -7864,7 +7944,8 @@ export function validateRichAnswerProgram(
             ? 7
           : undefined;
     if (evidenceIndex === undefined) continue;
-    if (declaration.arguments[evidenceIndex] === undefined || declaration.arguments[evidenceIndex].kind === "null") continue;
+    const evidenceArgument = declaration.arguments[evidenceIndex];
+    if (evidenceArgument === undefined || evidenceArgument.kind === "null") continue;
     const evidenceID = openUIStringValue(declaration, evidenceIndex);
     if (!sceneEvidenceIDs.has(evidenceID)) {
       captureSemanticError(() =>
@@ -7873,7 +7954,7 @@ export function validateRichAnswerProgram(
           `组件 ${declaration.id} 引用了未在 scene.evidenceIDs 声明的证据 ${JSON.stringify(evidenceID)}`,
           "改用本场景 evidenceIDs 中的真实 id，或把经过 evidenceLedger 校验的 id 加入 scene.evidenceIDs",
           declaration.line,
-          declaration.arguments[evidenceIndex].column,
+          evidenceArgument.column,
         )
       );
     }
@@ -8650,9 +8731,10 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       );
       const jumpEvidence = Object.fromEntries(
         presentedResults.flatMap((item) => {
-          if (!item.evidenceLabel || !item.jumpReference) return [];
+          const evidenceLabel = item.evidenceLabel;
+          if (!evidenceLabel || !item.jumpReference) return [];
           return [item.jumpReference, ...item.sectionJumpReferences, ...item.pageJumpReferences]
-            .map((jumpReference) => [jumpReference, item.evidenceLabel] as const);
+            .map((jumpReference) => [jumpReference, evidenceLabel] as const);
         }),
       );
       const jumpReferences = Object.keys(jumpEvidence);
@@ -8822,7 +8904,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       if (result.artifacts.length !== 1) {
         throw new Error("受控 Python 工人必须且只能返回一个请求产物");
       }
-      const artifact = result.artifacts[0];
+      const artifact = result.artifacts[0]!;
       if (
         artifact.id !== params.requestedOutput.id ||
         artifact.kind !== params.requestedOutput.kind ||
@@ -9340,7 +9422,8 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       const allowedEvidenceIDs = new Set<string>(evidenceIDs);
       let operationCount = 0;
       const renderPlanNormalizations: string[] = [];
-      for (const [sceneIndex, scene] of params.scenes.entries()) {
+      for (const [sceneIndex, submittedScene] of params.scenes.entries()) {
+        const scene: RichAnswerSceneParam = submittedScene;
         const scenePath = `$.scenes[${sceneIndex}]`;
         const sceneLayerCount = [
           scene.program,

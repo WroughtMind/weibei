@@ -11,11 +11,13 @@ final class BuildWorkflowTests: XCTestCase {
         XCTAssertNoThrow(try version.requireSupportedMajor())
     }
 
-    /// Accepts Node.js releases newer than the minimum supported major version.
-    func testNodeVersionAcceptsNewerMajorVersions() throws {
+    /// Rejects Node.js releases newer than the supported major version.
+    func testNodeVersionRejectsNewerMajorVersions() throws {
         let version = try NodeVersion.parse("v23.0.0")
 
-        XCTAssertNoThrow(try version.requireSupportedMajor())
+        XCTAssertThrowsError(try version.requireSupportedMajor()) { error in
+            XCTAssertEqual((error as? BuildWorkflowError)?.errorCode, "unsupported_node_version")
+        }
     }
 
     /// Rejects Node.js releases below the minimum supported major version.

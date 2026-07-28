@@ -11,7 +11,9 @@ const groupLabels: Record<SubjectGroup, string> = {
 };
 
 function readScene() {
-  return sceneForKey(new URLSearchParams(window.location.search).get("case"));
+  const scene = sceneForKey(new URLSearchParams(window.location.search).get("case"));
+  if (!scene) throw new Error("旧版场景目录不能为空。");
+  return scene;
 }
 
 function navigate(scene: SceneDescriptor) {

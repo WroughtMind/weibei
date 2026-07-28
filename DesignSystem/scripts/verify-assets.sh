@@ -63,8 +63,10 @@ has_alpha "$ROOT/assets/logo/exports/wordmark/weibei-wordmark-stamped.png"
   exit 1
 }
 has_alpha "$ROOT/assets/logo/exports/transparent/weibei-mark-flat-1024.png"
-node --check "$ROOT/scripts/build-icns.mjs"
-node --check "$ROOT/scripts/build-manifest.mjs"
-node "$ROOT/scripts/build-manifest.mjs" "$ROOT" --check
+TEMP_ICNS="$(mktemp "${TMPDIR:-/tmp}/weibei-app-icon.XXXXXX.icns")"
+trap 'rm -f "$TEMP_ICNS"' EXIT
+npm --prefix "$ROOT/.." exec -- tsx "$ROOT/scripts/build-icns.ts" "$ICON" "$TEMP_ICNS"
+/usr/bin/cmp "$TEMP_ICNS" "$ROOT/assets/app-icon/AppIcon.icns"
+npm --prefix "$ROOT/.." exec -- tsx "$ROOT/scripts/build-manifest.ts" "$ROOT" --check
 
 echo "asset verification passed"

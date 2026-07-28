@@ -32,7 +32,7 @@ public struct NodePreparationWorkflow: Sendable {
         self.stampStore = stampStore
     }
 
-    /// Ensures the repository has dependencies installed for Node.js 22 or later.
+    /// Ensures the repository has dependencies installed with Node.js 22.
     ///
     /// `npm ci` runs only when the lockfile digest or complete Node.js version
     /// differs from the recorded installation inputs.

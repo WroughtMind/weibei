@@ -220,7 +220,7 @@ const policyEvents = [
 export function EconomicsPolicyScene({ title, prompt, onEvidence }: LearningSceneProps) {
   const [selectedID, setSelectedID] = useState("tighten");
   const selectedIndex = policyEvents.findIndex((event) => event.id === selectedID);
-  const selected = policyEvents[selectedIndex];
+  const selected = policyEvents[selectedIndex] ?? policyEvents[0]!;
   const points = policyEvents.map((event, index) => `${42 + index * 104},${154 - (event.index - 96) * 6}`).join(" ");
 
   return (
@@ -293,7 +293,7 @@ const sortCode = [
 export function CodeSortScene({ title, prompt, onEvidence }: LearningSceneProps) {
   const frames = useMemo(() => buildBubbleSortFrames([7, 3, 5, 2, 6]), []);
   const [step, setStep] = useState(0);
-  const frame = frames[step];
+  const frame = frames[step]!;
   const next = () => setStep((current) => Math.min(frames.length - 1, current + 1));
   const previous = () => setStep((current) => Math.max(0, current - 1));
 
@@ -360,7 +360,7 @@ function median(values: number[]) {
   if (!values.length) return 0;
   const sorted = [...values].sort((left, right) => left - right);
   const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+  return sorted.length % 2 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2;
 }
 
 function buildCashflowModel(assumptions: { growth: number; margin: number; discount: number }) {
@@ -375,7 +375,7 @@ function buildCashflowModel(assumptions: { growth: number; margin: number; disco
     return { year: index + 1, revenue, cashflow, presentValue };
   });
   const safeSpread = Math.max(0.015, discount - Math.min(growth, discount - 0.015));
-  const terminalValue = (years[4].cashflow * (1 + Math.min(growth, discount - 0.015))) / safeSpread;
+  const terminalValue = (years[4]!.cashflow * (1 + Math.min(growth, discount - 0.015))) / safeSpread;
   const terminalPresentValue = terminalValue / (1 + discount) ** 5;
   const cashflowPresentValue = years.reduce((total, year) => total + year.presentValue, 0);
   const valuation = cashflowPresentValue + terminalPresentValue;
@@ -404,16 +404,19 @@ function buildBubbleSortFrames(initial: number[]) {
   ];
   for (let end = values.length - 1; end > 0; end -= 1) {
     for (let index = 0; index < end; index += 1) {
+      const left = values[index]!;
+      const right = values[index + 1]!;
       frames.push({
         values: [...values],
         line: 2,
         pair: [index, index + 1],
         iteration: values.length - end,
-        message: `比较 ${values[index]} 和 ${values[index + 1]}。`,
+        message: `比较 ${left} 和 ${right}。`,
         swapped: false,
       });
-      if (values[index] > values[index + 1]) {
-        [values[index], values[index + 1]] = [values[index + 1], values[index]];
+      if (left > right) {
+        values[index] = right;
+        values[index + 1] = left;
         frames.push({
           values: [...values],
           line: 3,

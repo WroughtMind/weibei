@@ -9,7 +9,7 @@
 
 ## 输出
 
-`scripts/build-assets.sh` 生成透明、单色、反白、真实字体英文组合标、App Icon、Web、GitHub、Social 和预览图。它会保留原 hero 构图，但用 `WeiBeiStele` 替换生成图中的英文名称。`scripts/build-icns.mjs` 把标准 PNG 槽位封装成现代 ICNS；`scripts/build-manifest.mjs` 记录路径、体积与 SHA-256。
+`scripts/build-assets.sh` 生成透明、单色、反白、真实字体英文组合标、App Icon、Web、GitHub、Social 和预览图。它会保留原 hero 构图，但用 `WeiBeiStele` 替换生成图中的英文名称。`scripts/build-icns.ts` 把标准 PNG 槽位封装成现代 ICNS；`scripts/build-manifest.ts` 记录路径、体积与 SHA-256。这两个 Node 工具通过仓库根目录安装的 `tsx` 执行。
 
 ## 重建
 

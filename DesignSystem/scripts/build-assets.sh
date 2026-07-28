@@ -217,7 +217,7 @@ convert -size 1600x900 xc:'#F4EAD5' "$TMP/board-logo.png" -geometry +40+40 -comp
   "$TMP/board-palette.png" -geometry +860+565 -composite \
   "$ROOT/assets/examples/design-system-overview.png"
 
-node "$ROOT/scripts/build-icns.mjs" "$ICON/AppIcon.iconset" "$ICON/AppIcon.icns"
-node "$ROOT/scripts/build-manifest.mjs" "$ROOT"
+npm --prefix "$ROOT/.." exec -- tsx "$ROOT/scripts/build-icns.ts" "$ICON/AppIcon.iconset" "$ICON/AppIcon.icns"
+npm --prefix "$ROOT/.." exec -- tsx "$ROOT/scripts/build-manifest.ts" "$ROOT"
 
 echo "WeiBei design assets rebuilt at $ROOT/assets"

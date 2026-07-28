@@ -7,6 +7,7 @@ public struct PrepareCommand: AsyncParsableCommand {
         abstract: "准备并校验开发依赖。",
         subcommands: [
             PrepareWebEditorCommand.self,
+            PrepareRichAnswerCommand.self,
             PreparePiRuntimeCommand.self,
             PrepareAllCommand.self
         ]
@@ -31,6 +32,24 @@ public struct PrepareWebEditorCommand: AsyncParsableCommand {
     /// 将 WebEditor 准备请求交给核心工作流。
     public mutating func run() async throws {
         try await executeDevToolRequest(.prepare(.webEditor), format: output.format)
+    }
+}
+
+/// 准备 Rich Answer Web Runtime 生成资源。
+public struct PrepareRichAnswerCommand: AsyncParsableCommand {
+    public static let configuration = CommandConfiguration(
+        commandName: "rich-answer",
+        abstract: "构建并校验 Rich Answer Web Runtime 资源。"
+    )
+
+    @OptionGroup public var output: DevToolOutputOptions
+
+    /// 创建 Rich Answer 准备命令。
+    public init() {}
+
+    /// 将 Rich Answer 准备请求交给核心工作流。
+    public mutating func run() async throws {
+        try await executeDevToolRequest(.prepare(.richAnswer), format: output.format)
     }
 }
 

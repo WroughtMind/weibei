@@ -312,8 +312,8 @@ function drawDeferredLabels(
 function polygonContains(points: Array<{ x: number; y: number }>, target: { x: number; y: number }) {
   let inside = false;
   for (let i = 0; i < points.length; i += 1) {
-    const a = points[i];
-    const b = points[(i + 1) % points.length];
+    const a = points[i]!;
+    const b = points[(i + 1) % points.length]!;
     const intersect = ((a.y > target.y) !== (b.y > target.y))
       && (target.x < (b.x - a.x) * (target.y - a.y) / ((b.y - a.y) || 1e-12) + a.x);
     if (intersect) inside = !inside;
@@ -322,15 +322,15 @@ function polygonContains(points: Array<{ x: number; y: number }>, target: { x: n
 }
 
 function distancePointToPoints(points: Array<{ x: number; y: number }>, target: { x: number; y: number }) {
-  if (points.length === 1) return pointDistance(points[0], target);
+  if (points.length === 1) return pointDistance(points[0]!, target);
   let min = Number.POSITIVE_INFINITY;
   for (let i = 0; i < points.length - 1; i += 1) {
-    const a = points[i];
-    const b = points[i + 1];
+    const a = points[i]!;
+    const b = points[i + 1]!;
     min = Math.min(min, pointLineDistance(target, a, b));
   }
   if (points.length > 2) {
-    min = Math.min(min, pointLineDistance(target, points[points.length - 1], points[0]));
+    min = Math.min(min, pointLineDistance(target, points[points.length - 1]!, points[0]!));
   }
   return min;
 }
@@ -597,9 +597,9 @@ function SpatialMapMount({ compiled, context }: { compiled: SpatialCompiled; con
             : "transparent";
 
           ctx.beginPath();
-          ctx.moveTo(points[0].x, points[0].y);
+          ctx.moveTo(points[0]!.x, points[0]!.y);
           for (let i = 1; i < points.length; i += 1) {
-            ctx.lineTo(points[i].x, points[i].y);
+            ctx.lineTo(points[i]!.x, points[i]!.y);
           }
           if (feature.kind === "polygon" || feature.closed) {
             ctx.closePath();

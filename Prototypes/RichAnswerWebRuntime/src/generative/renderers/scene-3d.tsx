@@ -261,7 +261,7 @@ function surfacePoint(object: Extract<Scene3DObject, { kind: "surface" }>, row: 
   const colCount = object.yValues[0]?.length ?? 1;
   return [
     object.xRange.min + (object.xRange.max - object.xRange.min) * (col / Math.max(1, colCount - 1)),
-    object.yValues[row][col],
+    object.yValues[row]![col]!,
     object.zRange.min + (object.zRange.max - object.zRange.min) * (row / Math.max(1, rowCount - 1)),
   ];
 }
@@ -612,7 +612,7 @@ function drawLabelCandidates(
     if (placed.length >= maxLabels) break;
     const measuredWidth = Math.min(width < 360 ? 72 : 110, context.measureText(candidate.text).width + 14);
     const labelHeight = width < 360 ? 20 : 22;
-    const offsetOptions = candidate.align === "center"
+    const offsetOptions: Array<readonly [number, number]> = candidate.align === "center"
       ? [[-measuredWidth / 2, -labelHeight / 2], [-measuredWidth / 2, -labelHeight - 6], [-measuredWidth / 2, 6]]
       : [[8, -12], [8, 8], [-measuredWidth - 8, -12], [-measuredWidth - 8, 8]];
     let target: { x: number; y: number; width: number; height: number } | null = null;

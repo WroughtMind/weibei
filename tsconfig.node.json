@@ -1,0 +1,19 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "lib": ["ES2023"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"]
+  },
+  "include": [
+    "DesignSystem/scripts/**/*.ts",
+    "Prototypes/RichAnswerEvidenceViewer/**/*.ts",
+    "Prototypes/RichAnswerWebRuntime/scripts/embed-runtime.ts",
+    "script/dmg/**/*.ts",
+    "script/homebrew/**/*.ts",
+    "tooling/**/*.ts",
+    "vitest.config.ts"
+  ]
+}

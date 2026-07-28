@@ -66,21 +66,24 @@ export type WeiBeiRuntimeMessage =
   | { type: "weibei:action"; programID: string; action: unknown }
   | { type: "weibei:error"; programID?: string; message: string };
 
+interface WeiBeiRuntimeWindow extends Window {
+  webkit?: {
+    messageHandlers?: {
+      weibeiRichAnswer?: {
+        postMessage: (message: WeiBeiRuntimeMessage) => void;
+      };
+    };
+  };
+}
+
 declare global {
   interface Window {
     __WEIBEI_EMBEDDED__?: boolean;
-    webkit?: {
-      messageHandlers?: {
-        weibeiRichAnswer?: {
-          postMessage: (message: WeiBeiRuntimeMessage) => void;
-        };
-      };
-    };
   }
 }
 
 export function postRuntimeMessage(message: WeiBeiRuntimeMessage) {
-  window.webkit?.messageHandlers?.weibeiRichAnswer?.postMessage(message);
+  (window as WeiBeiRuntimeWindow).webkit?.messageHandlers?.weibeiRichAnswer?.postMessage(message);
   if (window.parent !== window) {
     window.parent.postMessage(message, "*");
   }

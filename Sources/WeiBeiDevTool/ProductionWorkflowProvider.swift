@@ -49,6 +49,24 @@ public struct ProductionWorkflowProvider: WorkflowProviding {
                     primaryPath: result.products.editorJavaScript.path
                 )
             }
+            if request == .prepare(.richAnswer) {
+                let nodeToolchain = try NodeBuildToolchain.resolve(environment: environment)
+                let result = try await RichAnswerPreparationWorkflow(
+                    repository: repository,
+                    toolchain: nodeToolchain,
+                    processExecutor: processExecutor
+                ).prepare()
+                return DevToolWorkflowResult(
+                    summary: "Rich Answer resources are ready.",
+                    details: [
+                        "html": result.products.html.path,
+                        "node": result.node.version.description,
+                        "runtime": result.products.javaScript.path,
+                        "stylesheet": result.products.stylesheet.path,
+                    ],
+                    primaryPath: result.products.html.path
+                )
+            }
             let toolchain = try BuildToolchain.resolve(environment: environment)
             let workflow = DevelopmentWorkflow(
                 repository: repository,
@@ -69,13 +87,25 @@ public struct ProductionWorkflowProvider: WorkflowProviding {
                         ],
                         primaryPath: result.products.editorJavaScript.path
                     )
+                case .richAnswer:
+                    let result = try await workflow.prepareRichAnswer()
+                    return DevToolWorkflowResult(
+                        summary: "Rich Answer resources are ready.",
+                        details: [
+                            "html": result.products.html.path,
+                            "node": result.node.version.description,
+                            "runtime": result.products.javaScript.path,
+                            "stylesheet": result.products.stylesheet.path,
+                        ],
+                        primaryPath: result.products.html.path
+                    )
                 case .piRuntime:
                     let runtime = try await workflow.preparePiRuntime()
                     return runtimeResult(runtime)
                 case .all:
                     let runtime = try await workflow.prepareAll()
                     return DevToolWorkflowResult(
-                        summary: "All Swift development dependencies are ready.",
+                        summary: "All development dependencies are ready.",
                         details: [
                             "piRuntime": runtime.directoryURL.path,
                             "piVersion": runtime.manifest.piVersion,

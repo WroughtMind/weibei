@@ -435,7 +435,7 @@ const ProcessStepper = defineComponent({
   component: ({ props }) => {
     const field = useStateField(props.stateName, props.activeStep);
     const activeIndex = Math.max(0, Math.min(props.steps.length - 1, Math.round(numeric(field.value))));
-    const active = props.steps[activeIndex];
+    const active = props.steps[activeIndex]!;
 
     return (
       <div className="ra-stepper">

@@ -1,6 +1,6 @@
 # 魏碑富回答网页运行时原型
 
-这是一个本地验收台，用真实 `@openuidev/react-lang` 验证“OpenUI 受控生成协议 + 魏碑深学习组件 + 通用组合原语”的路线。它不导入 OpenUI 默认组件库，也不把能力封死在少数固定案例里。
+这是魏碑内置的富回答网页运行时及本地验收台，用真实 `@openuidev/react-lang` 承载“OpenUI 受控生成协议 + 魏碑深学习组件 + 通用组合原语”。它不导入 OpenUI 默认组件库，也不把能力封死在少数固定案例里。
 
 ## 跨学科压力样例
 
@@ -17,16 +17,34 @@
 ## 运行命令
 
 ```bash
+cd /path/to/weibei
+nvm use
+npm ci
 cd Prototypes/RichAnswerWebRuntime
-npm install
 npm run dev
 ```
+
+依赖由仓库根 npm workspace 统一安装；本目录不再维护独立安装结果或 lockfile。
 
 构建和本地预览：
 
 ```bash
+npm run typecheck
+npm run test
 npm run build
 npm run serve
+```
+
+一次运行类型检查、单元测试和生产构建：
+
+```bash
+npm run check
+```
+
+只运行现有 renderer 行为自检：
+
+```bash
+npm run self-check
 ```
 
 把当前源码构建并同步到魏碑 App 的内置资源：
@@ -54,9 +72,8 @@ App 验收前必须使用这个命令，避免本地原型源码与 App 内实�
 /?case=code-sort
 ```
 
-## 非生产边界
+## 当前边界
 
-- 本目录是 throwaway 原型，不是魏碑正式富回答运行时。
 - package 依赖写死版本，方便复现这次判断。
 - 当前入口验证 `@openuidev/react-lang` 自定义组件库能否承载多学科深组件和新组合程序；十二个旧 URL 只是回归入口。
 - 任意 HTML/JavaScript 的沙盒路线留在架构决策文档，不作为产品默认入口。

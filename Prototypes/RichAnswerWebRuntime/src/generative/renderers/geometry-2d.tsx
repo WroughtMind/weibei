@@ -740,7 +740,8 @@ function shiftedLinearShapeEndpoints(
 }
 
 function circleRadiusForShape(shape: Extract<GeometryShape, { kind: "circle" }>, scene: SceneState) {
-  if (scene.radiusOverrides[shape.id] !== undefined) return scene.radiusOverrides[shape.id];
+  const radiusOverride = scene.radiusOverrides[shape.id];
+  if (radiusOverride !== undefined) return radiusOverride;
   if (shape.radius !== undefined) return shape.radius;
   const center = scene.points.get(shape.center);
   const through = shape.through ? scene.points.get(shape.through) : undefined;
@@ -1075,9 +1076,10 @@ function Geometry2DMount({ compiled, context }: { compiled: GeometryCompiled; co
       const firstControl = spec.controls[0];
       if (firstControl) {
         const current = controlValues[firstControl.id] ?? firstControl.value;
-        const optionIndex = firstControl.options?.findIndex((option) => controlValueEquals(option.value, current)) ?? -1;
-        const next = firstControl.options?.length
-          ? firstControl.options[(optionIndex + 1 + firstControl.options.length) % firstControl.options.length].value
+        const options = firstControl.options;
+        const optionIndex = options?.findIndex((option) => controlValueEquals(option.value, current)) ?? -1;
+        const next = options?.length
+          ? options[(optionIndex + 1 + options.length) % options.length]!.value
           : typeof current === "number" && firstControl.step !== undefined && firstControl.minimum !== undefined && firstControl.maximum !== undefined
             ? current + firstControl.step <= firstControl.maximum
               ? current + firstControl.step

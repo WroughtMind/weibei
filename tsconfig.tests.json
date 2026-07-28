@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["DOM", "DOM.Iterable", "ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "types": ["node", "vitest"]
+  },
+  "include": [
+    "TypeScriptTests/**/*.test.ts",
+    "Prototypes/RichAnswerWebRuntime/tests/**/*.test.ts"
+  ]
+}

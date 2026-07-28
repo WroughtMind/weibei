@@ -92,7 +92,7 @@ const surfaceObjectSchema = baseObjectSchema.extend({
 }).strict().superRefine((surface, context) => {
   const width = surface.yValues[0]?.length ?? 0;
   for (let index = 1; index < surface.yValues.length; index += 1) {
-    if (surface.yValues[index].length !== width) {
+      if (surface.yValues[index]!.length !== width) {
       context.addIssue({
         code: "custom",
         message: "surface.yValues 必须是规则矩阵，不能交给 renderer 猜网格。",

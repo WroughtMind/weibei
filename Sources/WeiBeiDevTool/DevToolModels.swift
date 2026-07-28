@@ -3,6 +3,7 @@ import Foundation
 /// 可由开发工具执行的依赖准备目标。
 public enum PrepareTarget: String, Codable, Equatable, Sendable {
     case webEditor = "web-editor"
+    case richAnswer = "rich-answer"
     case piRuntime = "pi-runtime"
     case all
 }

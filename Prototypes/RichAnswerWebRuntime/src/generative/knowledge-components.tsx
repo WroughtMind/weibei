@@ -27,7 +27,7 @@ function visibleUnit(value: string) {
   return ["", "无单位", "unitless", "dimensionless", "none"].includes(unit.toLowerCase()) ? "" : unit;
 }
 
-const chartColors = ["#8f3f2f", "#3f716b", "#b0793b", "#5d6385", "#7f6558", "#607344"];
+const chartColors = ["#8f3f2f", "#3f716b", "#b0793b", "#5d6385", "#7f6558", "#607344"] as const;
 
 export const ChartSeries = defineComponent({
   name: "ChartSeries",
@@ -108,8 +108,8 @@ export const LinkedDataChart = defineComponent({
         barMaxWidth: 24,
         smooth: false,
         animationDuration: 180,
-        itemStyle: { color: chartColorByName[series.props.color] ?? chartColors[seriesIndex % chartColors.length] },
-        lineStyle: { width: 2.2, color: chartColorByName[series.props.color] ?? chartColors[seriesIndex % chartColors.length] },
+        itemStyle: { color: chartColorByName[series.props.color] ?? chartColors[seriesIndex % chartColors.length] ?? chartColors[0] },
+        lineStyle: { width: 2.2, color: chartColorByName[series.props.color] ?? chartColors[seriesIndex % chartColors.length] ?? chartColors[0] },
         markLine: seriesIndex === 0
           ? {
               silent: true,
@@ -239,7 +239,7 @@ export const ExecutionTrack = defineComponent({
   component: ({ props }) => {
     const stepField = useStateField(props.stateName, props.activeStep);
     const activeIndex = Math.max(0, Math.min(props.frames.length - 1, Math.round(numeric(stepField.value))));
-    const activeFrame = props.frames[activeIndex];
+    const activeFrame = props.frames[activeIndex]!;
     const progress = ((activeIndex + 1) / props.frames.length) * 100;
 
     return (
@@ -318,7 +318,7 @@ export const ArgumentReader = defineComponent({
   component: ({ props }) => {
     const activeField = useStateField(props.stateName, props.activeUnit);
     const activeIndex = Math.max(0, Math.min(props.units.length - 1, Math.round(numeric(activeField.value))));
-    const active = props.units[activeIndex];
+    const active = props.units[activeIndex]!;
 
     return (
       <section className="ra-argument-reader">
@@ -382,7 +382,7 @@ export const CausalTrack = defineComponent({
   component: ({ props }) => {
     const activeField = useStateField(props.stateName, props.activeEvent);
     const activeIndex = Math.max(0, Math.min(props.events.length - 1, Math.round(numeric(activeField.value))));
-    const active = props.events[activeIndex];
+    const active = props.events[activeIndex]!;
 
     return (
       <section className="ra-causal-track">

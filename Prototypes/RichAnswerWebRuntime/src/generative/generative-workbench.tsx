@@ -391,10 +391,12 @@ export function GenerativeWorkbench() {
         candidate.evidenceBindings.some((binding) => binding.id === detail.evidenceID));
       const primaryProgram = currentPrograms[0];
       if (!owner && !primaryProgram) return;
+      const programID = owner?.id ?? primaryProgram?.id;
+      if (programID === undefined) return;
       showNotice(`已请求定位材料·${detail.evidenceID}`);
       postRuntimeMessage({
         type: "weibei:evidence",
-        programID: owner?.id ?? primaryProgram.id,
+        programID,
         evidenceID: detail.evidenceID,
       });
     };

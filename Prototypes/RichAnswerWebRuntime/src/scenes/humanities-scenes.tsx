@@ -15,7 +15,7 @@ const argumentSentences = [
 
 export function TextArgumentScene({ title, prompt, onEvidence }: LearningSceneProps) {
   const [selectedID, setSelectedID] = useState("claim");
-  const selected = argumentSentences.find((sentence) => sentence.id === selectedID) ?? argumentSentences[0];
+  const selected = argumentSentences.find((sentence) => sentence.id === selectedID) ?? argumentSentences[0]!;
 
   return (
     <LearningSurface
@@ -84,7 +84,7 @@ const historyEdges = [
 
 export function HistoryCausalityScene({ title, prompt, onEvidence }: LearningSceneProps) {
   const [selectedID, setSelectedID] = useState("assembly");
-  const selected = historyNodes.find((node) => node.id === selectedID) ?? historyNodes[0];
+  const selected = historyNodes.find((node) => node.id === selectedID) ?? historyNodes[0]!;
   const connected = new Set(
     historyEdges.filter((edge) => edge.from === selectedID || edge.to === selectedID).flatMap((edge) => [edge.from, edge.to]),
   );
@@ -158,7 +158,7 @@ const mapPlaces = [
 export function GeographyMapScene({ title, prompt, onEvidence }: LearningSceneProps) {
   const [layers, setLayers] = useState({ terrain: true, region: true, route: true });
   const [selectedID, setSelectedID] = useState("market");
-  const selected = mapPlaces.find((place) => place.id === selectedID) ?? mapPlaces[0];
+  const selected = mapPlaces.find((place) => place.id === selectedID) ?? mapPlaces[0]!;
 
   return (
     <LearningSurface
@@ -238,7 +238,7 @@ export function ArtObservationScene({ title, prompt, onEvidence }: LearningScene
   const [selectedID, setSelectedID] = useState("center");
   const [showStructure, setShowStructure] = useState(true);
   const canvasRef = useRef<HTMLDivElement>(null);
-  const selected = artHotspots.find((hotspot) => hotspot.id === selectedID) ?? artHotspots[0];
+  const selected = artHotspots.find((hotspot) => hotspot.id === selectedID) ?? artHotspots[0]!;
 
   const moveLens = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!dragging && event.type !== "pointerdown") return;

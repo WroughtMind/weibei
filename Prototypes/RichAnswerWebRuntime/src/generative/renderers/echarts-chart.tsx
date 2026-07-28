@@ -183,7 +183,7 @@ function histogramBins(samples: number[], binCount: number) {
   for (const sample of samples) {
     const rawIndex = max === min ? 0 : Math.floor((sample - min) / width);
     const index = Math.max(0, Math.min(binCount - 1, rawIndex));
-    bins[index].count += 1;
+    bins[index]!.count += 1;
   }
 
   return bins.map((bin) => ({

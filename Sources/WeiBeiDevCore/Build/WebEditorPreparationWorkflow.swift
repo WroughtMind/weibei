@@ -44,7 +44,7 @@ public struct WebEditorPreparationWorkflow: Sendable {
         let nodeResult = try await nodePreparation.prepare()
         let buildCommand = ProcessExecutionRequest(
             executableURL: toolchain.npm,
-            arguments: ["run", "build:editor"],
+            arguments: ["run", "build:app-resources"],
             workingDirectoryURL: repository.rootDirectory,
             timeout: .seconds(600)
         )

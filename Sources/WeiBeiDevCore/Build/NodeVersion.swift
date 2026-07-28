@@ -40,9 +40,9 @@ public struct NodeVersion: Codable, Equatable, Sendable {
         return NodeVersion(major: major, minor: minor, patch: patch)
     }
 
-    /// Ensures the version meets the minimum supported Node.js major release.
+    /// Ensures the version uses the repository's supported Node.js major release.
     public func requireSupportedMajor() throws {
-        guard major >= 22 else {
+        guard major == 22 else {
             throw BuildWorkflowError.unsupportedNodeVersion(description)
         }
     }
