@@ -17,7 +17,9 @@
 - `Sources/WeiBei/App/WeiBeiApp.swift`
 - `Sources/WeiBei/Views/ContentView.swift`
 - `Sources/WeiBei/Views/StableDocumentWorkspace.swift`
-- `Sources/WeiBeiSelfCheck/main.swift`
+- `Sources/WeiBeiSelfCheck/SelfChecks.swift`
+- `Sources/WeiBeiSelfCheck/SelfCheckRunner.swift`
+- `Sources/WeiBeiSelfCheck/WeiBeiSelfCheckMain.swift`
 - `Package.swift`
 - `script/`
 - `.github/`

@@ -13,6 +13,7 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     }
 }
 
+@MainActor
 final class RichAnswerWebRuntimeHarness: NSObject, WKScriptMessageHandler {
     private let webView: WKWebView
     private var messages: [[String: Any]] = []
@@ -242,6 +243,7 @@ final class RichAnswerWebRuntimeHarness: NSObject, WKScriptMessageHandler {
     }
 }
 
+@MainActor
 func runRichAnswerEmbeddingSelfChecks() {
     let repositoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     func source(_ path: String) -> String {
@@ -483,18 +485,11 @@ func runRichAnswerEmbeddingSelfChecks() {
     }
 }
 
-if ProcessInfo.processInfo.environment["WEIBEI_RICH_ANSWER_SELF_CHECK_ONLY"] == "1" {
-    runRichAnswerEmbeddingSelfChecks()
-    print("WeiBei rich-answer embedding self-check passed")
-    exit(0)
-}
-
-if ProcessInfo.processInfo.environment["WEIBEI_PI_TERMINAL_SELF_CHECK_ONLY"] == "1" {
-    try await runPiTerminalRuntimeSelfChecks()
-    print("WeiBei PI terminal runtime self-check passed")
-    exit(0)
-}
-
+/**
+ * 运行默认的完整自检集合。
+ */
+@MainActor
+func runWeiBeiSelfChecks() async throws {
 try runPiAgentSelfChecks()
 
 expect(EmptyWorkspaceDayPeriod(hour: 5) == .morning
@@ -4835,3 +4830,4 @@ expect(middleBlockInsert.text == "前文\n\n![pasted](Attachments/pasted.png)\n\
 try? FileManager.default.removeItem(at: attachmentRoot)
 
 print("WeiBei self-check passed")
+}
