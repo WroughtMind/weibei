@@ -11,16 +11,16 @@ export const slashGroups = [
 ];
 
 export const slashCommands = [
-  { id: 'heading1', group: 'structure', label: 'slashHeading1', aliases: ['h1', 'heading_1', 'heading 1', 'yjbt', '一级', '标题1'] },
-  { id: 'heading2', group: 'structure', label: 'slashHeading2', aliases: ['h2', 'heading_2', 'heading 2', 'ejbt', '二级', '标题2'] },
-  { id: 'heading3', group: 'structure', label: 'slashHeading3', aliases: ['h3', 'heading_3', 'heading 3', 'sjbt', '三级', '标题3'] },
-  { id: 'bulletList', group: 'lists', label: 'slashBulletList', aliases: ['bullet_list', 'bullet', 'bulleted list', 'unordered list', 'ul', 'wxlb', '无序', '项目符号'] },
-  { id: 'orderedList', group: 'lists', label: 'slashOrderedList', aliases: ['ordered_list', 'numbered list', 'ordered list', 'ol', 'yxlb', '有序', '编号'] },
-  { id: 'taskList', group: 'lists', label: 'slashTaskList', aliases: ['task_list', 'todo', 'task', 'task list', 'checklist', 'dblb', '待办', '任务'] },
+  { id: 'heading1', group: 'structure', label: 'slashHeading1', aliases: ['h1', 'heading_1', 'yjbt', '一级', '标题1'] },
+  { id: 'heading2', group: 'structure', label: 'slashHeading2', aliases: ['h2', 'heading_2', 'ejbt', '二级', '标题2'] },
+  { id: 'heading3', group: 'structure', label: 'slashHeading3', aliases: ['h3', 'heading_3', 'sjbt', '三级', '标题3'] },
+  { id: 'bulletList', group: 'lists', label: 'slashBulletList', aliases: ['bullet_list', 'bullet', 'ul', 'wxlb', '无序', '项目符号'] },
+  { id: 'orderedList', group: 'lists', label: 'slashOrderedList', aliases: ['ordered_list', 'ol', 'yxlb', '有序', '编号'] },
+  { id: 'taskList', group: 'lists', label: 'slashTaskList', aliases: ['task_list', 'todo', 'task', 'checklist', 'dblb', '待办', '任务'] },
   { id: 'quote', group: 'lists', label: 'slashQuote', aliases: ['quote', 'blockquote', 'yy', '引用'] },
   { id: 'callout', group: 'content', label: 'slashCallout', aliases: ['callout', 'note', 'tsk', '提示', '札记'] },
-  { id: 'code', group: 'content', label: 'slashCode', aliases: ['code', 'code_block', 'code block', 'dmk', '代码'] },
-  { id: 'divider', group: 'content', label: 'slashDivider', aliases: ['divider', 'horizontal_rule', 'horizontal rule', 'hr', 'fgx', '分隔', '横线'] },
+  { id: 'code', group: 'content', label: 'slashCode', aliases: ['code', 'code_block', 'dmk', '代码'] },
+  { id: 'divider', group: 'content', label: 'slashDivider', aliases: ['divider', 'horizontal_rule', 'hr', 'fgx', '分隔', '横线'] },
   { id: 'table', group: 'rich', label: 'slashTable', aliases: ['table', 'grid', 'bg', '表格'] },
   { id: 'image', group: 'rich', label: 'slashImage', aliases: ['image', 'photo', 'picture', 'tp', '图片', '照片'] },
   { id: 'mermaid', group: 'rich', label: 'slashMermaid', aliases: ['mermaid', 'diagram', 'flowchart', 'lct', '图表', '流程图'] },
@@ -53,7 +53,7 @@ export const slashContextForView = (view, isEditable) => {
     if (slashExcludedAncestors.has($from.node(depth).type.name)) return null;
   }
   const source = $from.parent.textContent || '';
-  const match = source.match(/^\/([^/\n]*)$/u);
+  const match = source.match(/^\/([^\s/]*)$/u);
   if (!match) return null;
   const paragraphDepth = $from.depth;
   const containerDepth = paragraphDepth - 1;

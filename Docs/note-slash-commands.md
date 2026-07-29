@@ -9,7 +9,7 @@
 - 内容：提示块、代码块、分隔线
 - 丰富内容：表格、图片、Mermaid 图表
 
-每个命令都有一个稳定英文输入：`/h1`、`/h2`、`/h3`、`/bullet_list`、`/ordered_list`、`/task_list`、`/quote`、`/callout`、`/code`、`/divider`、`/table`、`/image`、`/mermaid`。也可输入带空格的英文别名，如 `/code block`、`/ordered list`，或拼音缩写，如 `/dmk`、`/yxlb`。中文显示名继续可直接筛选，例如 `/代码块`、`/有序列表`。
+每个命令都有一个稳定英文输入：`/h1`、`/h2`、`/h3`、`/bullet_list`、`/ordered_list`、`/task_list`、`/quote`、`/callout`、`/code`、`/divider`、`/table`、`/image`、`/mermaid`。命令不接受空格写法；也可输入拼音缩写，如 `/dmk`、`/yxlb`。中文显示名继续可直接筛选，例如 `/代码块`、`/有序列表`。
 
 提示块默认使用“札记”类型。代码块不要求预选语言，创建后可在右上角文本框直接填写或清空语言；Mermaid 会创建语言为 `mermaid` 的代码块，也可通过同一文本框修改。块公式不在菜单中，因为当前块公式渲染节点不提供原地编辑光标。
 

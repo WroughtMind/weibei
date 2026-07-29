@@ -1384,10 +1384,16 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             throw new Error('initial slash menu did not match the compact 13-command specification: ' + JSON.stringify(initial));
           }
 
+          for (const query of ['/code block', '/ordered list']) {
+            prepare();
+            window.WeiBeiEditor.typeTextForCheck(query);
+            if (window.WeiBeiEditor.openSlashMenuForCheck()) {
+              throw new Error('Slash query with spaces remained available: ' + query);
+            }
+          }
+
           const aliasCases = [
             ['/h2', '二级标题'],
-            ['/code block', '代码块'],
-            ['/ordered list', '有序列表'],
             ['/ordered_list', '有序列表'],
             ['/dmk', '代码块'],
             ['/yxlb', '有序列表'],
