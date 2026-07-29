@@ -1,4 +1,5 @@
 import { editorViewCtx } from "@milkdown/kit/core";
+import type { Editor } from "@milkdown/kit/core";
 import { undo } from "@milkdown/kit/prose/history";
 import {
   getMarkdown as readMarkdown,
@@ -16,24 +17,39 @@ import {
   splitFrontmatter,
   withFrontmatter,
 } from "./markdown/normalize.js";
-import type { createImageFeature } from "./features/images.js";
-import type { createPreviewFeature } from "./features/preview.js";
-import type { createSelectionFeature } from "./features/selection.js";
-import type { createSlashFeature } from "./features/slash/menu.js";
-import type { EditorBridge, GetEditor, ShowFailure } from "./types.js";
+import type { ImageFeature } from "./features/images.js";
+import type { PreviewFeature } from "./features/preview.js";
+import type { SelectionFeature } from "./features/selection.js";
+import type { SlashFeature } from "./features/slash/menu.js";
+import type {
+  EditorBridge,
+  EditorPublicAPI,
+  GetEditor,
+  ShowFailure,
+} from "./types.js";
 
 interface EditorAPIDependencies {
   bridge: EditorBridge;
   frontmatterLabel: () => string;
   getEditor: GetEditor;
-  images: ReturnType<typeof createImageFeature>;
+  images: ImageFeature;
   initialFrontmatter: string;
   isCheckMode: boolean;
-  preview: ReturnType<typeof createPreviewFeature>;
-  selection: ReturnType<typeof createSelectionFeature>;
+  preview: PreviewFeature;
+  selection: SelectionFeature;
   setEditable: (next: boolean) => void;
   showFailure: ShowFailure;
-  slash: ReturnType<typeof createSlashFeature>;
+  slash: SlashFeature;
+}
+
+/** Coordinates the public editor API with the document lifecycle. */
+export interface EditorController {
+  publicAPI: EditorPublicAPI;
+  getLastMarkdown(): string;
+  handleMarkdownUpdated(markdown: string): void;
+  markReady(): string;
+  replaceSelectionInternal(markdown: string): void;
+  syncFrontmatterPanel(): void;
 }
 
 /**
@@ -54,12 +70,14 @@ export function createEditorAPI({
   setEditable,
   showFailure,
   slash,
-}: EditorAPIDependencies) {
+}: EditorAPIDependencies): EditorController {
   let frontmatterBlock = initialFrontmatter || "";
   let lastMarkdown = "";
 
-  const ensureEditor = (): void => {
-    if (!getEditor()) throw new Error("WeiBei editor is not ready");
+  const requireEditor = (): Editor => {
+    const editor = getEditor();
+    if (!editor) throw new Error("WeiBei editor is not ready");
+    return editor;
   };
 
   const syncFrontmatterPanel = (): void => {
@@ -79,32 +97,30 @@ export function createEditorAPI({
   };
 
   const getMarkdownInternal = (): string => {
-    ensureEditor();
     return withFrontmatter(
       frontmatterBlock,
-      getEditor()!.action(readMarkdown()),
+      requireEditor().action(readMarkdown()),
     );
   };
 
   const setMarkdownInternal = (markdown: string): void => {
-    ensureEditor();
     const document = splitFrontmatter(markdown || "");
     const body = normalizeHtmlBreaks(document.body);
     frontmatterBlock = document.frontmatter;
     syncFrontmatterPanel();
-    getEditor()!.action(replaceAll(body));
+    requireEditor().action(replaceAll(body));
     lastMarkdown = withFrontmatter(frontmatterBlock, body);
     preview.scheduleContentHeightReports();
   };
 
   const replaceSelectionInternal = (markdown: string): void => {
-    ensureEditor();
+    const editor = requireEditor();
     const insertion = normalizeHtmlBreaks(markdown || "");
     const range = selection.getStoredRange() || selection.getCurrentRange();
     if (range) {
-      getEditor()!.action(replaceRange(insertion, range));
+      editor.action(replaceRange(insertion, range));
     } else {
-      getEditor()!.action(insert(insertion));
+      editor.action(insert(insertion));
     }
     const next = getMarkdownInternal();
     lastMarkdown = next;
@@ -113,15 +129,15 @@ export function createEditorAPI({
   };
 
   const insertMarkdownInternal = (markdown: string): void => {
-    ensureEditor();
+    const editor = requireEditor();
     const range = selection.getCurrentRange();
     const insertion = selection.normalizeMarkdownInsertion(
       normalizeHtmlBreaks(markdown),
     );
     if (range) {
-      getEditor()!.action(replaceRange(insertion, range));
+      editor.action(replaceRange(insertion, range));
     } else {
-      getEditor()!.action(insert(insertion));
+      editor.action(insert(insertion));
     }
     if (!selection.placeCursorAtInsertionMarker()) {
       selection.collapseSelectionToEnd();
@@ -145,7 +161,7 @@ export function createEditorAPI({
       }
     };
 
-  const publicAPI = {
+  const publicAPI: EditorPublicAPI = {
     getMarkdown: getMarkdownInternal,
     setMarkdown: setMarkdownInternal,
     replaceSelection: guarded(replaceSelectionInternal),
@@ -186,8 +202,9 @@ export function createEditorAPI({
     setTheme: (next: string) => {
       applyTheme(next);
       images.refreshMissingPlaceholders();
-      if (!getEditor()) return;
-      getEditor()!.action((ctx) => {
+      const editor = getEditor();
+      if (!editor) return;
+      editor.action((ctx) => {
         const view = ctx.get(editorViewCtx);
         view.dispatch(
           view.state.tr.setMeta("weibeiThemeChanged", getCurrentTheme()),
@@ -199,8 +216,9 @@ export function createEditorAPI({
       document.documentElement.dataset.weibeiLanguage = language;
       syncFrontmatterPanel();
       if (slash.isVisible()) slash.refresh();
-      if (!getEditor()) return;
-      getEditor()!.action((ctx) => {
+      const editor = getEditor();
+      if (!editor) return;
+      editor.action((ctx) => {
         const view = ctx.get(editorViewCtx);
         view.dispatch(
           view.state.tr.setMeta(
@@ -216,7 +234,7 @@ export function createEditorAPI({
   if (isCheckMode) {
     Object.assign(publicAPI, selection.checkAPI(), slash.checkAPI(), {
       undoForCheck: () =>
-        getEditor()!.action((ctx) => {
+        requireEditor().action((ctx) => {
           const view = ctx.get(editorViewCtx);
           return undo(view.state, view.dispatch);
         }),

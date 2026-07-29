@@ -1,53 +1,9 @@
 #!/usr/bin/env -S npm exec -- tsx
 import fs from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
 import process from "node:process";
 
-interface DMGProgressEvent {
-  type?: string;
-  status?: string;
-  title?: string;
-}
-
-interface DMGEmitter {
-  on(
-    event: "progress",
-    listener: (event: DMGProgressEvent) => void,
-  ): DMGEmitter;
-  on(event: "finish", listener: () => void): DMGEmitter;
-  on(event: "error", listener: (error: Error) => void): DMGEmitter;
-}
-
-interface AppDMGFactory {
-  (configuration: {
-    target: string;
-    basepath: string;
-    specification: {
-      title: string;
-      icon: string;
-      background: string;
-      "icon-size": number;
-      format: string;
-      filesystem: string;
-      window: {
-        position: { x: number; y: number };
-        size: { width: number; height: number };
-      };
-      contents: Array<{
-        x: number;
-        y: number;
-        type: "file" | "link";
-        path: string;
-        name: string;
-      }>;
-    };
-  }): DMGEmitter;
-}
-
-// appdmg 0.6.6 does not publish TypeScript declarations.
-const require = createRequire(import.meta.url);
-const appdmg = require("appdmg") as AppDMGFactory;
+import appdmg from "appdmg";
 
 const [rootArgument, appArgument, targetArgument, version] =
   process.argv.slice(2);

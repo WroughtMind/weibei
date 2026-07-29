@@ -144,9 +144,11 @@ export const parseObsidianTarget = (
     .map((field) => field.value)
     .join("|")
     .trim();
+  const firstAliasField = aliasFields[0];
+  const lastAliasField = aliasFields.at(-1);
   const aliasRange =
-    aliasFields.length > 0
-      ? rawTrimRange(source, aliasFields[0]!.start, aliasFields.at(-1)!.end)
+    firstAliasField && lastAliasField
+      ? rawTrimRange(source, firstAliasField.start, lastAliasField.end)
       : null;
   const hashIndex = target.indexOf("#");
   const noteTitle = hashIndex >= 0 ? target.slice(0, hashIndex).trim() : target;

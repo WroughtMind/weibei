@@ -3,8 +3,8 @@ import type { EditorState } from "@milkdown/kit/prose/state";
 import { Decoration, DecorationSet } from "@milkdown/kit/prose/view";
 import type { DecorationAttrs } from "@milkdown/kit/prose/view";
 
-import type { createCodeRendering } from "./code-rendering.js";
-import type { createImageFeature } from "./images.js";
+import type { CodeRenderingFeature } from "./code-rendering.js";
+import type { ImageFeature } from "./images.js";
 import {
   applyImageSize,
   imageTargetPattern,
@@ -15,11 +15,26 @@ import type { EditorBridge, EditorLabel } from "../types.js";
 
 interface DecorationFeatureDependencies {
   calloutLabel: (type: string) => string;
-  codeRendering: ReturnType<typeof createCodeRendering>;
-  images: ReturnType<typeof createImageFeature>;
+  codeRendering: CodeRenderingFeature;
+  images: ImageFeature;
   isEditable: () => boolean;
   label: EditorLabel;
   post: EditorBridge["post"];
+}
+
+/** Editor decorations and interactive Markdown link behavior. */
+export interface DecorationFeature {
+  activateSourceReference(target: EventTarget | null): boolean;
+  activateWikiLink(target: EventTarget | null): boolean;
+  addRangeDecoration(
+    decorations: Decoration[],
+    from: number,
+    to: number,
+    className: string,
+    attrs?: DecorationAttrs,
+  ): void;
+  buildDecorations(state: EditorState): DecorationSet;
+  toggleFoldedCallout(target: EventTarget | null): boolean;
 }
 
 interface CommentState {
@@ -39,7 +54,7 @@ export function createDecorationFeature({
   isEditable,
   label,
   post,
-}: DecorationFeatureDependencies) {
+}: DecorationFeatureDependencies): DecorationFeature {
   const { missingImageURL, resolveMarkdownURL } = images;
 
   const calloutTypes = new Set([

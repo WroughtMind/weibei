@@ -1,23 +1,22 @@
 import { editorViewCtx } from "@milkdown/kit/core";
+import type { Editor } from "@milkdown/kit/core";
 import { TextSelection } from "@milkdown/kit/prose/state";
 import type { EditorView } from "@milkdown/kit/prose/view";
 
 import { cleanSelectedText } from "../markdown/normalize.js";
 import { parseObsidianTarget } from "../markdown/obsidian.js";
-import type { EditorBridge, EditorRange, GetEditor } from "../types.js";
+import type {
+  EditorBridge,
+  EditorRange,
+  GetEditor,
+  SelectionRectangle,
+} from "../types.js";
 
 interface SelectionFeatureDependencies {
   getEditor: GetEditor;
   isCheckMode: boolean;
   isSelectionReportSuppressed: () => boolean;
   post: EditorBridge["post"];
-}
-
-interface SelectionRectangle {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
 }
 
 interface InsertionSelectionRange {
@@ -32,6 +31,33 @@ interface KeyOptions {
   altKey?: boolean;
   metaKey?: boolean;
   ctrlKey?: boolean;
+}
+
+/** Selection operations exposed only to editor self-checks. */
+export interface SelectionCheckAPI {
+  selectFirstTextForCheck(needle: string): boolean;
+  placeCursorAtTextForCheck(needle: string, offset?: number): boolean;
+  selectedTextForCheck(): string;
+  typeTextForCheck(text: string): boolean;
+  pressKeyForCheck(key: string, options?: KeyOptions): boolean;
+}
+
+/** Selection reporting, insertion markers, and self-check operations. */
+export interface SelectionFeature {
+  checkAPI(): SelectionCheckAPI;
+  clearStoredRange(): void;
+  collapseSelectionToEnd(): void;
+  editorSelectedText(): string;
+  getCurrentRange(): EditorRange | null;
+  getStoredRange(): EditorRange | null;
+  install(): void;
+  normalizeMarkdownInsertion(markdown: string): string;
+  placeCursorAtInsertionMarker(): boolean;
+  rectFromSelection(): SelectionRectangle | null;
+  reportSelection(): void;
+  selectedText(): string;
+  setStoredRange(range: EditorRange | null): void;
+  wikiTitleAtSelection(): string;
 }
 
 const insertionCursorMarker = "{{WEIBEI_CURSOR}}";
@@ -49,11 +75,17 @@ export function createSelectionFeature({
   isCheckMode,
   isSelectionReportSuppressed,
   post,
-}: SelectionFeatureDependencies) {
+}: SelectionFeatureDependencies): SelectionFeature {
   let lastSelectionRange: EditorRange | null = null;
   let lastSelectionReport: { text: string | null; rectKey: string | null } = {
     text: null,
     rectKey: null,
+  };
+
+  const requireEditor = (): Editor => {
+    const editor = getEditor();
+    if (!editor) throw new Error("WeiBei editor is not ready");
+    return editor;
   };
 
   const rectFromSelection = (): SelectionRectangle | null => {
@@ -143,38 +175,45 @@ export function createSelectionFeature({
     return `\n\n${text.trim()}\n\n`;
   };
 
-  const placeCursorAtInsertionMarker = (): boolean =>
-    getEditor()!.action((ctx) => {
-      const view = ctx.get(editorViewCtx);
-      const selectionRange: { current: InsertionSelectionRange | null } = {
-        current: null,
-      };
-      const range: { current: EditorRange | null } = { current: null };
-      view.state.doc.descendants((node, pos) => {
-        if (!node.isText || selectionRange.current || range.current)
-          return true;
-        const text = node.text || "";
-        const startIndex = text.indexOf(insertionSelectionStartMarker);
-        const endIndex = text.indexOf(insertionSelectionEndMarker);
-        if (startIndex >= 0 && endIndex > startIndex) {
-          selectionRange.current = {
-            startFrom: pos + startIndex,
-            startTo: pos + startIndex + insertionSelectionStartMarker.length,
-            endFrom: pos + endIndex,
-            endTo: pos + endIndex + insertionSelectionEndMarker.length,
-          };
-          return false;
-        }
-        const index = text.indexOf(insertionCursorMarker);
-        if (index < 0) return true;
-        range.current = {
-          from: pos + index,
-          to: pos + index + insertionCursorMarker.length,
+  const insertionMarkerRanges = (
+    view: EditorView,
+  ): {
+    selectionRange: InsertionSelectionRange | null;
+    cursorRange: EditorRange | null;
+  } => {
+    let selectionRange: InsertionSelectionRange | null = null;
+    let cursorRange: EditorRange | null = null;
+    view.state.doc.descendants((node, pos) => {
+      if (!node.isText || selectionRange || cursorRange) return true;
+      const text = node.text || "";
+      const startIndex = text.indexOf(insertionSelectionStartMarker);
+      const endIndex = text.indexOf(insertionSelectionEndMarker);
+      if (startIndex >= 0 && endIndex > startIndex) {
+        selectionRange = {
+          startFrom: pos + startIndex,
+          startTo: pos + startIndex + insertionSelectionStartMarker.length,
+          endFrom: pos + endIndex,
+          endTo: pos + endIndex + insertionSelectionEndMarker.length,
         };
         return false;
-      });
-      if (selectionRange.current) {
-        const selectedRange = selectionRange.current;
+      }
+      const index = text.indexOf(insertionCursorMarker);
+      if (index < 0) return true;
+      cursorRange = {
+        from: pos + index,
+        to: pos + index + insertionCursorMarker.length,
+      };
+      return false;
+    });
+    return { selectionRange, cursorRange };
+  };
+
+  const placeCursorAtInsertionMarker = (): boolean =>
+    requireEditor().action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const { selectionRange, cursorRange } = insertionMarkerRanges(view);
+      if (selectionRange) {
+        const selectedRange = selectionRange;
         const tr = view.state.tr
           .delete(selectedRange.endFrom, selectedRange.endTo)
           .delete(selectedRange.startFrom, selectedRange.startTo);
@@ -190,8 +229,7 @@ export function createSelectionFeature({
         view.dispatch(tr);
         return true;
       }
-      if (!range.current) return false;
-      const cursorRange = range.current;
+      if (!cursorRange) return false;
       const tr = view.state.tr.delete(cursorRange.from, cursorRange.to);
       const selectionPosition = Math.min(cursorRange.from, tr.doc.content.size);
       tr.setSelection(TextSelection.create(tr.doc, selectionPosition));
@@ -200,7 +238,7 @@ export function createSelectionFeature({
     });
 
   const collapseSelectionToEnd = (): void =>
-    getEditor()!.action((ctx) => {
+    requireEditor().action((ctx) => {
       const view = ctx.get(editorViewCtx);
       const position = Math.min(
         view.state.selection.to,
@@ -234,29 +272,33 @@ export function createSelectionFeature({
     lastSelectionRange = editorSelectionRange();
     post("selectionChanged", { text, rect });
   };
+  const firstTextRange = (
+    view: EditorView,
+    needle: string,
+  ): EditorRange | null => {
+    let range: EditorRange | null = null;
+    view.state.doc.descendants((node, pos) => {
+      if (!node.isText || range) return true;
+      const index = (node.text || "").indexOf(needle);
+      if (index < 0) return true;
+      range = { from: pos + index, to: pos + index + needle.length };
+      return false;
+    });
+    return range;
+  };
+
   const selectFirstTextForCheck = (needle: string): boolean => {
     if (!isCheckMode || !needle) return false;
-    return getEditor()!.action((ctx) => {
+    return requireEditor().action((ctx) => {
       const view = ctx.get(editorViewCtx);
-      const range: { current: EditorRange | null } = { current: null };
-      view.state.doc.descendants((node, pos) => {
-        if (!node.isText || range.current) return true;
-        const index = (node.text || "").indexOf(needle);
-        if (index < 0) return true;
-        range.current = { from: pos + index, to: pos + index + needle.length };
-        return false;
-      });
-      if (!range.current) return false;
+      const range = firstTextRange(view, needle);
+      if (!range) return false;
       view.dispatch(
         view.state.tr.setSelection(
-          TextSelection.create(
-            view.state.doc,
-            range.current.from,
-            range.current.to,
-          ),
+          TextSelection.create(view.state.doc, range.from, range.to),
         ),
       );
-      lastSelectionRange = range.current;
+      lastSelectionRange = range;
       return true;
     });
   };
@@ -270,7 +312,7 @@ export function createSelectionFeature({
    */
   const placeCursorAtTextForCheck = (needle: string, offset = 0): boolean => {
     if (!isCheckMode || !needle) return false;
-    return getEditor()!.action((ctx) => {
+    return requireEditor().action((ctx) => {
       const view = ctx.get(editorViewCtx);
       let position: number | null = null;
       view.state.doc.descendants((node, pos) => {
@@ -297,7 +339,7 @@ export function createSelectionFeature({
 
   const typeTextForCheck = (text: string): boolean => {
     if (!isCheckMode) return false;
-    return getEditor()!.action((ctx) => {
+    return requireEditor().action((ctx) => {
       const view = ctx.get(editorViewCtx);
       view.focus();
       for (const character of String(text || "")) {
@@ -324,7 +366,7 @@ export function createSelectionFeature({
 
   const pressKeyForCheck = (key: string, options: KeyOptions = {}): boolean => {
     if (!isCheckMode) return false;
-    return getEditor()!.action((ctx) => {
+    return requireEditor().action((ctx) => {
       const view = ctx.get(editorViewCtx);
       view.focus();
       const event = new KeyboardEvent("keydown", {

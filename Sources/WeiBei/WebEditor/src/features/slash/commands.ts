@@ -7,16 +7,17 @@ import { TextSelection } from "@milkdown/kit/prose/state";
 import type { EditorView } from "@milkdown/kit/prose/view";
 
 import { editorLabels } from "../../core/i18n.js";
+import type { EditorLabelKey } from "../../core/i18n.js";
 
 export interface SlashGroup {
   id: string;
-  label: string;
+  label: EditorLabelKey;
 }
 
 export interface SlashCommand {
   id: string;
   group: string;
-  label: string;
+  label: EditorLabelKey;
   aliases: string[];
 }
 

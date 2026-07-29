@@ -5,6 +5,15 @@ interface PreviewDependencies {
   post: EditorBridge["post"];
 }
 
+/** Preview measurement, heading tracking, and scrolling operations. */
+export interface PreviewFeature {
+  installContentHeightObserver(): void;
+  installQuietScrollIndicators(): void;
+  reportActiveHeading(): void;
+  scheduleContentHeightReports(): void;
+  scrollToHeading(rawIndex: unknown): boolean;
+}
+
 /**
  * Resolves the next compact-preview height and suppresses unchanged reports.
  *
@@ -71,7 +80,7 @@ export function normalizedPreviewHeadingIndex(
 export function createPreviewFeature({
   isCompactPreview,
   post,
-}: PreviewDependencies) {
+}: PreviewDependencies): PreviewFeature {
   document.documentElement.dataset.weibeiCompactPreview = isCompactPreview
     ? "true"
     : "false";

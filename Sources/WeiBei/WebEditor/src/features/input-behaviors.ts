@@ -6,22 +6,22 @@ import { liftListItem } from "@milkdown/kit/prose/schema-list";
 import type { EditorView } from "@milkdown/kit/prose/view";
 import { $prose } from "@milkdown/kit/utils";
 
-import type { createCodeRendering } from "./code-rendering.js";
-import type { createDecorationFeature } from "./decorations.js";
-import type { createImageFeature } from "./images.js";
-import type { createSelectionFeature } from "./selection.js";
-import type { createSlashFeature } from "./slash/menu.js";
+import type { CodeRenderingFeature } from "./code-rendering.js";
+import type { DecorationFeature } from "./decorations.js";
+import type { ImageFeature } from "./images.js";
+import type { SelectionFeature } from "./selection.js";
+import type { SlashFeature } from "./slash/menu.js";
 import type { EditorBridge, ShowFailure } from "../types.js";
 
 interface InputBehaviorDependencies {
-  codeRendering: ReturnType<typeof createCodeRendering>;
-  decorations: ReturnType<typeof createDecorationFeature>;
-  images: ReturnType<typeof createImageFeature>;
+  codeRendering: CodeRenderingFeature;
+  decorations: DecorationFeature;
+  images: ImageFeature;
   isEditable: () => boolean;
   post: EditorBridge["post"];
-  selection: ReturnType<typeof createSelectionFeature>;
+  selection: SelectionFeature;
   showFailure: ShowFailure;
-  slash: ReturnType<typeof createSlashFeature>;
+  slash: SlashFeature;
 }
 
 /**
