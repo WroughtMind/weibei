@@ -1748,7 +1748,9 @@ struct AgentPaneView: View {
                                     wide: wide
                                 )
                             }
-                            if store.isAskingAgent && !store.agentStreamingText.isEmpty {
+                            if store.isAskingAgent
+                                && !store.hasPersistedGeneratingAgentReply
+                                && !store.agentStreamingText.isEmpty {
                                 agentReadingColumn(
                                     geometryWidth: geometryWidth,
                                     contentWidth: contentWidth,
@@ -1760,7 +1762,9 @@ struct AgentPaneView: View {
                                 .id("agent-streaming-response")
                                 .transition(WeiBeiTransition.message)
                             }
-                            if store.isAskingAgent && store.agentStreamingText.isEmpty {
+                            if store.isAskingAgent
+                                && !store.hasPersistedGeneratingAgentReply
+                                && store.agentStreamingText.isEmpty {
                                 agentReadingColumn(
                                     geometryWidth: geometryWidth,
                                     contentWidth: contentWidth,
@@ -2850,21 +2854,32 @@ struct FloatingSelectionAgentView: View {
                     }
 
                     ForEach(visibleFloatingMessages) { message in
-                        floatBubble(
-                            messageID: message.id,
-                            roleLabel: message.role == .user ? store.ui("你", "You") : "WeiBei",
-                            text: floatingText(for: message),
-                            isUser: message.role == .user,
-                            isError: WorkspaceStore.isAgentFailureMessage(message.text)
-                        )
+                        if message.completionState == .generating
+                            && message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            AgentThinkingIndicator()
+                                .id(message.id)
+                                .padding(.vertical, 4)
+                        } else {
+                            floatBubble(
+                                messageID: message.id,
+                                roleLabel: message.role == .user ? store.ui("你", "You") : "WeiBei",
+                                text: floatingText(for: message),
+                                isUser: message.role == .user,
+                                isError: WorkspaceStore.isAgentFailureMessage(message.text)
+                            )
+                        }
                     }
 
-                    if store.isAskingAgent && !store.agentStreamingText.isEmpty {
+                    if store.isAskingAgent
+                        && !store.hasPersistedGeneratingAgentReply
+                        && !store.agentStreamingText.isEmpty {
                         floatStreamingBubble(text: store.agentStreamingText)
                             .id("selection-float-streaming")
                     }
 
-                    if store.isAskingAgent && store.agentStreamingText.isEmpty {
+                    if store.isAskingAgent
+                        && !store.hasPersistedGeneratingAgentReply
+                        && store.agentStreamingText.isEmpty {
                         AgentThinkingIndicator()
                             .id("selection-float-thinking")
                             .padding(.vertical, 4)
@@ -3223,7 +3238,13 @@ private struct AgentBubble: View {
         return VStack(alignment: .leading, spacing: 8) {
             messageMetadata
 
-            if let richAnswer = message.richAnswer,
+            if message.completionState == .generating {
+                if message.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    AgentThinkingIndicator()
+                } else {
+                    AgentStreamingResponse(text: message.text)
+                }
+            } else if let richAnswer = message.richAnswer,
                richAnswer.mode == .rich,
                !richAnswer.scenes.isEmpty {
                 richAnswerFlow(richAnswer)
@@ -3244,20 +3265,39 @@ private struct AgentBubble: View {
                 }
             }
 
-            if isFailureMessage {
+            if message.completionState == .interrupted && !isFailureMessage {
                 HStack(spacing: 6) {
-                    if store.canRetryLastFailedAgentRequest {
+                    Text(store.ui("回答已中断，已保留现有内容", "Response interrupted; existing content was kept"))
+                        .font(.caption)
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    if store.canRetryAgentRequest(
+                        question: message.retryQuestion,
+                        failureKind: message.failureKind
+                    ), let question = message.retryQuestion {
                         Button(store.ui("重试", "Retry")) {
-                            store.retryLastFailedAgentRequest()
+                            store.retryAgentRequest(question)
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                     }
-                    Button(store.ui("回填问题", "Restore question")) {
-                        if let question = store.lastFailedAgentQuestion, !question.isEmpty {
+                }
+                .padding(.top, 2)
+            } else if isFailureMessage {
+                HStack(spacing: 6) {
+                    if store.canRetryAgentRequest(
+                        question: message.retryQuestion,
+                        failureKind: message.failureKind
+                    ), let question = message.retryQuestion {
+                        Button(store.ui("重试", "Retry")) {
+                            store.retryAgentRequest(question)
+                        }
+                        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                    }
+                    if let question = message.retryQuestion, !question.isEmpty {
+                        Button(store.ui("回填问题", "Restore question")) {
                             store.agentDraft = question
                         }
+                        .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
-                    .buttonStyle(WeiBeiTextActionButtonStyle())
                 }
                 .padding(.top, 2)
             } else if message.id == store.lastUsableAgentAnswerID {

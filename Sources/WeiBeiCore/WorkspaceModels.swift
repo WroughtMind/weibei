@@ -905,23 +905,32 @@ public struct NoteEditorCommand: Identifiable, Hashable {
     }
 }
 
-public enum SelectionSource: String, Codable, Hashable {
+public enum SelectionSource: String, Codable, Hashable, Sendable {
     case document
     case note
 }
 
-public struct SelectionContext: Identifiable, Codable, Hashable {
+public struct SelectionContext: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var text: String
     public var source: SelectionSource
     public var ownerTitle: String
+    public var itemID: String?
     public var isEditable: Bool
 
-    public init(id: UUID = UUID(), text: String, source: SelectionSource, ownerTitle: String, isEditable: Bool = true) {
+    public init(
+        id: UUID = UUID(),
+        text: String,
+        source: SelectionSource,
+        ownerTitle: String,
+        itemID: String? = nil,
+        isEditable: Bool = true
+    ) {
         self.id = id
         self.text = text
         self.source = source
         self.ownerTitle = ownerTitle
+        self.itemID = itemID
         self.isEditable = isEditable
     }
 
@@ -1324,6 +1333,142 @@ public enum StudyAgentBackend: String, Codable, Hashable, Sendable {
     case offline
 }
 
+public enum AgentReplyCompletionState: String, Codable, Hashable, Sendable {
+    case generating
+    case completed
+    case interrupted
+}
+
+public enum AgentReplySourceKind: String, Codable, Hashable, Sendable {
+    case material
+    case note
+    case selection
+}
+
+public struct AgentReplySource: Identifiable, Codable, Hashable, Sendable {
+    public var id: UUID
+    public var itemID: String?
+    public var courseID: UUID?
+    public var kind: AgentReplySourceKind
+    public var title: String
+    public var label: String
+    public var excerpt: String
+    public var pageIndex: Int?
+    public var sectionTitle: String?
+    public var sectionLocationID: String?
+    public var sectionOrdinal: Int?
+    public var courseItemOrdinal: Int?
+
+    public init(
+        id: UUID = UUID(),
+        itemID: String?,
+        courseID: UUID? = nil,
+        kind: AgentReplySourceKind,
+        title: String,
+        label: String,
+        excerpt: String,
+        pageIndex: Int? = nil,
+        sectionTitle: String? = nil,
+        sectionLocationID: String? = nil,
+        sectionOrdinal: Int? = nil,
+        courseItemOrdinal: Int? = nil
+    ) {
+        self.id = id
+        self.itemID = itemID
+        self.courseID = courseID
+        self.kind = kind
+        self.title = title
+        self.label = label
+        self.excerpt = excerpt
+        self.pageIndex = pageIndex
+        self.sectionTitle = sectionTitle
+        self.sectionLocationID = sectionLocationID
+        self.sectionOrdinal = sectionOrdinal
+        self.courseItemOrdinal = courseItemOrdinal
+    }
+}
+
+public enum AgentReplyActionKind: String, Codable, Hashable, Sendable {
+    case writeNote
+    case createRelation
+}
+
+public enum AgentReplyActionState: String, Codable, Hashable, Sendable {
+    case pending
+    case executed
+    case cancelled
+    case failed
+}
+
+public struct AgentReplyAction: Identifiable, Codable, Hashable, Sendable {
+    public var id: UUID
+    public var kind: AgentReplyActionKind
+    public var state: AgentReplyActionState
+    public var targetItemID: String?
+    public var sourceItemID: String?
+    public var proposedMarkdown: String?
+    public var evidence: [String]
+    public var contextRevision: String?
+    public var baselineContentDigest: String?
+    public var failureMessage: String?
+    public var createdAt: Date
+    public var updatedAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        kind: AgentReplyActionKind,
+        state: AgentReplyActionState = .pending,
+        targetItemID: String? = nil,
+        sourceItemID: String? = nil,
+        proposedMarkdown: String? = nil,
+        evidence: [String] = [],
+        contextRevision: String? = nil,
+        baselineContentDigest: String? = nil,
+        failureMessage: String? = nil,
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.kind = kind
+        self.state = state
+        self.targetItemID = targetItemID
+        self.sourceItemID = sourceItemID
+        self.proposedMarkdown = proposedMarkdown
+        self.evidence = evidence
+        self.contextRevision = contextRevision
+        self.baselineContentDigest = baselineContentDigest
+        self.failureMessage = failureMessage
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+}
+
+public struct AgentReplyMemoryUpdate: Codable, Hashable, Sendable {
+    public var memoryIDs: [UUID]
+    public var summary: String
+
+    public init(memoryIDs: [UUID], summary: String) {
+        self.memoryIDs = memoryIDs
+        self.summary = summary
+    }
+}
+
+public struct AgentReplyOrigin: Codable, Hashable, Sendable {
+    public var requestID: UUID
+    public var chatID: UUID
+    public var courseID: UUID?
+
+    public init(
+        requestID: UUID,
+        chatID: UUID,
+        courseID: UUID?
+    ) {
+        self.requestID = requestID
+        self.chatID = chatID
+        self.courseID = courseID
+    }
+}
+
 public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var role: AgentRole
@@ -1331,6 +1476,13 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
     public var source: String?
     public var backend: StudyAgentBackend?
     public var richAnswer: RichAnswerPresentation?
+    public var completionState: AgentReplyCompletionState
+    public var sources: [AgentReplySource]
+    public var actions: [AgentReplyAction]
+    public var memoryUpdate: AgentReplyMemoryUpdate?
+    public var origin: AgentReplyOrigin?
+    public var failureKind: AgentFailureKind?
+    public var retryQuestion: String?
     public var toolTrace: [String]
     public var createdAt: Date
 
@@ -1341,6 +1493,13 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         source: String?,
         backend: StudyAgentBackend? = nil,
         richAnswer: RichAnswerPresentation? = nil,
+        completionState: AgentReplyCompletionState = .completed,
+        sources: [AgentReplySource] = [],
+        actions: [AgentReplyAction] = [],
+        memoryUpdate: AgentReplyMemoryUpdate? = nil,
+        origin: AgentReplyOrigin? = nil,
+        failureKind: AgentFailureKind? = nil,
+        retryQuestion: String? = nil,
         toolTrace: [String] = [],
         createdAt: Date = Date()
     ) {
@@ -1352,6 +1511,13 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         self.richAnswer = richAnswer.map {
             RichAnswerEngine.admit(presentation: $0)
         }
+        self.completionState = completionState
+        self.sources = sources
+        self.actions = actions
+        self.memoryUpdate = memoryUpdate
+        self.origin = origin
+        self.failureKind = failureKind
+        self.retryQuestion = retryQuestion
         self.toolTrace = toolTrace
         self.createdAt = createdAt
     }
@@ -1363,6 +1529,13 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         case source
         case backend
         case richAnswer
+        case completionState
+        case sources
+        case actions
+        case memoryUpdate
+        case origin
+        case failureKind
+        case retryQuestion
         case toolTrace
         case createdAt
     }
@@ -1372,16 +1545,83 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         id = try container.decode(UUID.self, forKey: .id)
         role = try container.decode(AgentRole.self, forKey: .role)
         text = try container.decode(String.self, forKey: .text)
-        source = try container.decodeIfPresent(String.self, forKey: .source)
-        backend = try container.decodeIfPresent(StudyAgentBackend.self, forKey: .backend)
-        let decodedRichAnswer = try? container.decodeIfPresent(
-            RichAnswerPresentation.self,
-            forKey: .richAnswer
+        var decodedToolTrace: [String]
+        do {
+            decodedToolTrace = try container.decodeIfPresent([String].self, forKey: .toolTrace) ?? []
+        } catch {
+            decodedToolTrace = ["tool-trace:decode-failed"]
+        }
+        func decodeLossy<T: Decodable>(
+            _ type: T.Type,
+            forKey key: CodingKeys,
+            marker: String
+        ) -> T? {
+            do {
+                return try container.decodeIfPresent(type, forKey: key)
+            } catch {
+                decodedToolTrace.append(marker)
+                return nil
+            }
+        }
+        source = decodeLossy(
+            String.self,
+            forKey: .source,
+            marker: "reply-source:decode-failed"
         )
+        backend = decodeLossy(
+            StudyAgentBackend.self,
+            forKey: .backend,
+            marker: "reply-backend:decode-failed"
+        )
+        let decodedRichAnswer: RichAnswerPresentation?
+        do {
+            decodedRichAnswer = try container.decodeIfPresent(
+                RichAnswerPresentation.self,
+                forKey: .richAnswer
+            )
+        } catch {
+            decodedRichAnswer = nil
+            decodedToolTrace.append("rich-answer:decode-failed")
+        }
         richAnswer = decodedRichAnswer.map {
             RichAnswerEngine.admit(presentation: $0)
         }
-        toolTrace = try container.decodeIfPresent([String].self, forKey: .toolTrace) ?? []
+        completionState = decodeLossy(
+            AgentReplyCompletionState.self,
+            forKey: .completionState,
+            marker: "reply-state:decode-failed"
+        ) ?? .completed
+        sources = decodeLossy(
+            [AgentReplySource].self,
+            forKey: .sources,
+            marker: "reply-sources:decode-failed"
+        ) ?? []
+        actions = decodeLossy(
+            [AgentReplyAction].self,
+            forKey: .actions,
+            marker: "reply-actions:decode-failed"
+        ) ?? []
+        memoryUpdate = decodeLossy(
+            AgentReplyMemoryUpdate.self,
+            forKey: .memoryUpdate,
+            marker: "reply-memory:decode-failed"
+        )
+        origin = decodeLossy(
+            AgentReplyOrigin.self,
+            forKey: .origin,
+            marker: "reply-origin:decode-failed"
+        )
+        failureKind = decodeLossy(
+            AgentFailureKind.self,
+            forKey: .failureKind,
+            marker: "reply-failure:decode-failed"
+        )
+        retryQuestion = decodeLossy(
+            String.self,
+            forKey: .retryQuestion,
+            marker: "reply-retry:decode-failed"
+        )
+        toolTrace = decodedToolTrace
         createdAt = try container.decode(Date.self, forKey: .createdAt)
     }
 
@@ -1393,6 +1633,19 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         try container.encodeIfPresent(source, forKey: .source)
         try container.encodeIfPresent(backend, forKey: .backend)
         try container.encodeIfPresent(richAnswer, forKey: .richAnswer)
+        if completionState != .completed {
+            try container.encode(completionState, forKey: .completionState)
+        }
+        if !sources.isEmpty {
+            try container.encode(sources, forKey: .sources)
+        }
+        if !actions.isEmpty {
+            try container.encode(actions, forKey: .actions)
+        }
+        try container.encodeIfPresent(memoryUpdate, forKey: .memoryUpdate)
+        try container.encodeIfPresent(origin, forKey: .origin)
+        try container.encodeIfPresent(failureKind, forKey: .failureKind)
+        try container.encodeIfPresent(retryQuestion, forKey: .retryQuestion)
         if !toolTrace.isEmpty {
             try container.encode(toolTrace, forKey: .toolTrace)
         }
@@ -1401,6 +1654,8 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
 
     public var isUsableAgentAnswer: Bool {
         role == .assistant
+            && completionState != .generating
+            && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !text.hasPrefix("未配置密钥")
             && !text.hasPrefix("未配置 OPENAI_API_KEY")
             && !text.hasPrefix("No key is configured")

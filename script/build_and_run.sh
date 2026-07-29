@@ -838,6 +838,42 @@ verify_reader_scroll_persistence() {
   return 1
 }
 
+verify_chat_reply_persistence() {
+  if [[ "$VERIFY_SCENARIO" != "chat-reply-persistence-flow" ]]; then
+    return 0
+  fi
+
+  local report_file="$VERIFY_DATA_DIR/chat-reply-persistence-report.txt"
+  local workspace_file="$VERIFY_DATA_DIR/chat-reply-persistence-workspace/workspace.json"
+  for _ in {1..60}; do
+    if [[ -f "$report_file" ]]; then
+      if /usr/bin/grep -q '^result=pass$' "$report_file" \
+        && /usr/bin/grep -q '^streamed=true$' "$report_file" \
+        && /usr/bin/grep -q '^cancelled=true$' "$report_file" \
+        && /usr/bin/grep -q '^stream_backend=pi$' "$report_file" \
+        && /usr/bin/grep -q '^stream_recovered=true$' "$report_file" \
+        && /usr/bin/grep -q '^switch_isolated=true$' "$report_file" \
+        && /usr/bin/grep -q '^state=interrupted$' "$report_file" \
+        && /usr/bin/grep -q '^sources=1$' "$report_file" \
+        && /usr/bin/grep -q '^source_id=material:rates$' "$report_file" \
+        && /usr/bin/grep -q '^actions=1$' "$report_file" \
+        && /usr/bin/grep -q '^rich_answer=true$' "$report_file" \
+        && /usr/bin/grep -q '"completionState":"interrupted"' "$workspace_file"; then
+        return 0
+      fi
+      echo "verify failed: Chat reply body or attachments did not survive reopen." >&2
+      cat "$report_file" >&2
+      return 1
+    fi
+    sleep 0.2
+  done
+
+  echo "verify failed: Chat reply persistence report was not produced." >&2
+  [[ -f "$VERIFY_DATA_DIR/verification-state.txt" ]] && cat "$VERIFY_DATA_DIR/verification-state.txt" >&2
+  [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
+  return 1
+}
+
 finish_verify_window() {
   verify_learning_flow_persistence
   verify_empty_workspace_state
@@ -847,6 +883,7 @@ finish_verify_window() {
   verify_pane_layout_stability
   verify_pane_reorder_width
   verify_reader_scroll_persistence
+  verify_chat_reply_persistence
   if [[ "$RUN_VISUAL_VERIFY" == true ]]; then
     visual_verify_window
   fi

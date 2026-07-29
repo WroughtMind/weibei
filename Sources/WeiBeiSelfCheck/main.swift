@@ -2935,6 +2935,7 @@ func readSource(_ relativePath: String) -> String {
 let workspaceStoreSource = readSource("Sources/WeiBei/Stores/WorkspaceStore.swift")
 let modelListServiceSource = readSource("Sources/WeiBeiCore/AgentModelListService.swift")
 let workspaceModelsSource = readSource("Sources/WeiBeiCore/WorkspaceModels.swift")
+let piAgentRuntimeSource = readSource("Sources/WeiBeiCore/PiAgentRuntime.swift")
 expect(modelListServiceSource.contains("enum ModelListStrategy")
     && modelListServiceSource.contains("case openAICompatible")
     && modelListServiceSource.contains("case anthropic")
@@ -3440,6 +3441,10 @@ expect(workspaceStoreSource.contains("@Published var selectionAttachments: [Sele
     && workspaceStoreSource.contains("if selectionAttachments.isEmpty,\n           let selectionContext,"), "agent selection context uses removable attachments, falls back to live selection, and attaches before send")
 expect(workspaceStoreSource.contains("selectionTitle: sentSelectionTitle")
     && workspaceStoreSource.contains("selectionText: sentSelectionText")
+    && workspaceStoreSource.contains("selectionSources: sentSelectionSources")
+    && workspaceStoreSource.contains("itemID: source == .note ? activeNotebookItemID : selectedItemID")
+    && piAgentRuntimeSource.contains("sources.append(contentsOf: request.selectionSources)")
+    && piAgentRuntimeSource.contains("run.persistentAssetIDsByContextID[itemID]")
     && !workspaceStoreSource.contains("selectionText: selectionContext?.text,\n                recentMessages: recentMessages"), "agent requests capture selection via sentSelectionText (attachments or live fallback), not a raw live-only field")
 expect(workspaceStoreSource.contains("let sentSelectionTitle = agentSelectionTitle")
     && workspaceStoreSource.contains("let sentSelectionText = agentSelectionText")
@@ -3656,7 +3661,7 @@ expect(!workspaceStoreSource.contains("selectedItem?.title ?? \"当前材料\"")
     && !workspaceStoreSource.contains("Agent 不会编造回答")
     && workspaceStoreSource.contains("AgentFailureKind.classify(error)")
     && workspaceStoreSource.contains("draftPreserved: true")
-    && workspaceStoreSource.contains("func retryLastFailedAgentRequest()")
+    && workspaceStoreSource.contains("func retryAgentRequest(_ question: String)")
     && !workspaceStoreSource.contains("Agent 设置")
     && workspaceStoreSource.contains("PI 与在线密钥均不可用，当前使用离线草稿。")
     && workspaceStoreSource.contains("OfflineStudyAgentRuntime().respond")
@@ -3685,6 +3690,23 @@ expect(
         && workspaceStoreSource.contains("thinkingLevel: thinking.isEmpty ? \"medium\" : thinking"),
     "PI honors the selected provider, reuses subscription OAuth without injecting an API key, and keeps the current thinking default"
 )
+if let failureStart = workspaceStoreSource.range(of: "private func recordAgentTargetFailure")?.lowerBound,
+   let requestStart = workspaceStoreSource.range(of: "private func askAgentAndWait")?.lowerBound {
+    let failureSource = String(workspaceStoreSource[failureStart..<requestStart])
+    expect(failureSource.contains("let userMessage = AgentMessage(role: .user")
+        && failureSource.contains("completionState: .interrupted")
+        && failureSource.contains("origin: AgentReplyOrigin(")
+        && failureSource.contains("failureKind: .generic")
+        && failureSource.contains("retryQuestion: question")
+        && failureSource.contains("_ = flushPendingWorkspaceSave()"), "preflight Chat failures persist the question, interrupted reply, origin, and exact retry state")
+} else {
+    expect(false, "preflight Chat failure source is readable")
+}
+expect(workspaceStoreSource.contains("restoreAgentReplyState(from: match)")
+    && notesAgentSource.contains("store.canRetryAgentRequest(")
+    && notesAgentSource.contains("question: message.retryQuestion")
+    && notesAgentSource.contains("store.retryAgentRequest(question)")
+    && notesAgentSource.contains("store.agentDraft = question"), "switching Chats restores that Chat reply state and each failure bubble retries or restores its own question")
 if let requestStart = workspaceStoreSource.range(of: "private func performAgentRequest(target:")?.lowerBound,
    let executionStart = workspaceStoreSource.range(of: "private func executeStudyAgentRequest")?.lowerBound {
     let requestSource = String(workspaceStoreSource[requestStart..<executionStart])
@@ -3709,6 +3731,8 @@ if let requestStart = workspaceStoreSource.range(of: "private func performAgentR
         && requestSource.contains("expectedUserQuestion: request.question")
         && requestSource.contains("requestWorkspaceRevision == agentContextRevision")
         && requestSource.contains("requestMemoryRevision == learningMemoryRevision")
+        && requestSource.contains("guard activeAgentRequestID == request.id else { return }")
+        && !requestSource.contains("guard activeAgentRequestID == request.id,\n                  requestWorkspaceRevision")
         && requestSource.contains("lastAgentReplyContextRevision = requestWorkspaceRevision")
         && requestSource.contains("_ = flushPendingWorkspaceSave()")
         && requestSource.contains("contextRevision: \"\\(requestWorkspaceRevision):\\(requestID.uuidString.lowercased())\""),
@@ -3788,7 +3812,9 @@ expect(workspaceStoreSource.contains("private func noteBlockForAgentAnswer")
     && workspaceStoreSource.contains("AgentOfflinePreview.suggestedNoteBlock(from: text, language: interfaceLanguage)")
     && workspaceStoreSource.contains("guard !text.hasPrefix(\"#\") else { return text }")
     && workspaceStoreSource.contains("return \"## \\(ui(\"整理建议\", \"Organization suggestion\"))\\n\\(text)\"")
-    && workspaceStoreSource.contains("let content = latestAgentNoteProposal?.markdown ?? answer.text")
+    && workspaceStoreSource.contains("private func lastAgentAnswerContentForCurrentNote()")
+    && workspaceStoreSource.contains("return action.proposedMarkdown ?? answer.text")
+    && workspaceStoreSource.contains("targetItemID != activeNoteItemID")
     && workspaceStoreSource.contains("markdown: \"\\n\\(noteBlockForAgentAnswer(content))\"")
     && !workspaceStoreSource.contains("## Agent 整理建议"), "agent note writeback prefers a revision-matched PI proposal before falling back to a reader-facing answer section")
 expect(workspaceStoreSource.contains("func createBlankNotebookNote()")
@@ -3814,7 +3840,9 @@ expect(workspaceStoreSource.contains("func cancelNotebookNoteCreation()")
     && workspaceStoreSource.contains("notebookCreationDraft = NotebookCreationDraft(")
     && workspaceStoreSource.contains("let title = draft.title.trimmingCharacters")
     && workspaceStoreSource.contains("func select(itemID: String?)")
-    && workspaceStoreSource.contains("private func selectMeasured(itemID: String?) {\n        invalidateAgentContext()\n        persistCurrentNote()\n        notebookCreationDraft = nil")
+    && workspaceStoreSource.contains("private func selectMeasured(itemID: String?) {")
+    && workspaceStoreSource.contains("restoreAgentDraft: destinationSessionID == nil")
+    && workspaceStoreSource.contains("persistCurrentNote()\n        notebookCreationDraft = nil")
     && !workspaceStoreSource.contains("private func promptCreateNotebookNote(seed: NotebookNoteSeed)")
     && !workspaceStoreSource.contains("alert.messageText = seed.isBlank"), "new-note creation opens the inline naming strip and confirms through the shared local markdown creator")
 expect(workspaceStoreSource.contains("importedItems.append(item)")
@@ -4379,8 +4407,9 @@ if let thinkingStart = notesAgentSource.range(of: "private struct AgentThinkingI
 } else {
     expect(false, "AgentThinkingIndicator and AgentStreamingResponse source bounds are inspectable")
 }
-expect(notesAgentSource.contains("if store.isAskingAgent && store.agentStreamingText.isEmpty")
-    && notesAgentSource.contains("AgentThinkingIndicator()"), "loading motion appears only while asking and streaming text is still empty")
+expect(notesAgentSource.contains("if message.completionState == .generating")
+    && notesAgentSource.contains("store.hasPersistedGeneratingAgentReply")
+    && notesAgentSource.contains("AgentThinkingIndicator()"), "loading motion belongs to the persisted generating reply, with a fallback only before that record exists")
 // Deleted overlay views (drawer / corner / quiet insight / compact previews) are gone.
 expect(!notesAgentSource.contains("struct AgentDrawerView")
     && !notesAgentSource.contains("struct CornerAgentView")
@@ -4539,6 +4568,11 @@ expect(SelectionContext(text: "文档", source: .document, ownerTitle: "资料")
 expect(SelectionContext(text: "笔记", source: .note, ownerTitle: "资料").isNoteSelection == true, "note selection is replaceable")
 expect(SelectionContext(text: "笔记", source: .note, ownerTitle: "资料").isReplaceableNoteSelection, "editable note selection can be replaced")
 expect(!SelectionContext(text: "预览", source: .note, ownerTitle: "资料", isEditable: false).isReplaceableNoteSelection, "preview note selection is not replaceable")
+let legacySelection = try! JSONDecoder().decode(
+    SelectionContext.self,
+    from: Data(#"{"id":"40000000-0000-0000-0000-000000000001","text":"旧选区","source":"note","ownerTitle":"旧笔记","isEditable":true}"#.utf8)
+)
+expect(legacySelection.itemID == nil && legacySelection.text == "旧选区", "selection records saved before stable item IDs still reopen")
 expect(SelectionAttachmentMerge.mergedText(existing: "当前笔记已经覆盖材", incoming: "开头。建议检查是否写了来源、例子和待追问。", withinSelectionGesture: true) == "当前笔记已经覆盖材开头。建议检查是否写了来源、例子和待追问。", "same-gesture selection attachment stitches split live selection fragments into one attachment")
 expect(SelectionAttachmentMerge.mergedText(existing: "利率是资金使用", incoming: "使用价格的表达", withinSelectionGesture: true) == "利率是资金使用价格的表达", "same-gesture overlapping fragments merge without duplicate overlap text")
 expect(SelectionAttachmentMerge.mergedText(existing: "你们", incoming: "好", withinSelectionGesture: true) == "你们好", "same-gesture single-character live-selection fragments merge into one human selection")
@@ -4549,6 +4583,8 @@ expect(SelectionAttachmentMerge.mergedText(existing: "利率是资金使用价�
 expect(SelectionAttachmentMerge.containsSelection("当前笔记已经覆盖材料开头。建议检查是否写了来源。", fragment: "材料 开头。")
     && !SelectionAttachmentMerge.containsSelection("利率是资金使用价格", fragment: ""), "selection attachment containment ignores whitespace and rejects empty fragments")
 expect(workspaceStoreSource.contains("SelectionAttachmentMerge.containsSelection($0.text, fragment: cleanedText)")
+    && workspaceStoreSource.contains("$0.itemID == nil || cleanedSelection.itemID == nil || $0.itemID == cleanedSelection.itemID")
+    && workspaceStoreSource.contains("existing.itemID == nil || incoming.itemID == nil || existing.itemID == incoming.itemID")
     && workspaceStoreSource.contains("selectionAttachments.removeAll")
     && workspaceStoreSource.contains("SelectionAttachmentMerge.containsSelection(cleanedText, fragment: $0.text)"), "selection attachment intake collapses stale short fragments once the fuller live selection arrives")
 expect(SelectionAnchorCoordinate.y(20, contentHeight: 100, contentViewIsFlipped: true) == 20, "flipped content view keeps selection y")
@@ -4613,6 +4649,105 @@ expect(AgentMessage(role: .assistant, text: offlineEnglishPreview, source: nil).
 expect(!AgentMessage(role: .assistant, text: "请求失败：网络错误", source: nil).isUsableAgentAnswer, "agent error is not writable")
 expect(!AgentMessage(role: .assistant, text: "请求失败\n可直接重试。", source: nil).isUsableAgentAnswer, "generic failure header without colon is not writable")
 expect(!AgentMessage(role: .assistant, text: "Agent 请求失败：网络错误", source: nil).isUsableAgentAnswer, "legacy agent error is not writable")
+expect(!AgentMessage(
+    role: .assistant,
+    text: "尚未完成",
+    source: nil,
+    completionState: .generating
+).isUsableAgentAnswer, "a generating reply is not writable before it finishes")
+expect(AgentMessage(
+    role: .assistant,
+    text: "已经生成的安全正文",
+    source: nil,
+    completionState: .interrupted,
+    failureKind: .cancelled,
+    retryQuestion: "继续解释"
+).isUsableAgentAnswer, "an interrupted reply preserves already generated body text")
+
+let replySource = AgentReplySource(
+    id: UUID(uuidString: "30000000-0000-0000-0000-000000000001")!,
+    itemID: "material:rates",
+    courseID: UUID(uuidString: "30000000-0000-0000-0000-000000000002"),
+    kind: .material,
+    title: "利率",
+    label: "[材料：利率]",
+    excerpt: "利率是资金的价格。",
+    pageIndex: 17
+)
+let replyAction = AgentReplyAction(
+    id: UUID(uuidString: "30000000-0000-0000-0000-000000000003")!,
+    kind: .writeNote,
+    targetItemID: "note:rates",
+    sourceItemID: "material:rates",
+    proposedMarkdown: "## 利率\n利率是资金的价格。",
+    evidence: ["[材料：利率]"],
+    contextRevision: "revision-1",
+    baselineContentDigest: "digest",
+    createdAt: Date(timeIntervalSince1970: 10),
+    updatedAt: Date(timeIntervalSince1970: 11)
+)
+let persistentReply = AgentMessage(
+    id: UUID(uuidString: "30000000-0000-0000-0000-000000000004")!,
+    role: .assistant,
+    text: "已经生成的安全正文",
+    source: "利率",
+    backend: .pi,
+    completionState: .interrupted,
+    sources: [replySource],
+    actions: [replyAction],
+    memoryUpdate: AgentReplyMemoryUpdate(
+        memoryIDs: [UUID(uuidString: "30000000-0000-0000-0000-000000000005")!],
+        summary: "已经理解利率"
+    ),
+    origin: AgentReplyOrigin(
+        requestID: UUID(uuidString: "30000000-0000-0000-0000-000000000006")!,
+        chatID: UUID(uuidString: "30000000-0000-0000-0000-000000000007")!,
+        courseID: UUID(uuidString: "30000000-0000-0000-0000-000000000002")
+    ),
+    failureKind: .cancelled,
+    retryQuestion: "继续解释",
+    toolTrace: ["course-search"],
+    createdAt: Date(timeIntervalSince1970: 12)
+)
+let persistentReplyData = try! JSONEncoder().encode(persistentReply)
+let reopenedPersistentReply = try! JSONDecoder().decode(AgentMessage.self, from: persistentReplyData)
+expect(reopenedPersistentReply == persistentReply, "reply body, sources, actions, memory update, origin, and interruption state survive JSON reopen")
+
+let legacyReply = AgentMessage(role: .assistant, text: "旧回复", source: nil)
+let reopenedLegacyReply = try! JSONDecoder().decode(
+    AgentMessage.self,
+    from: JSONEncoder().encode(legacyReply)
+)
+expect(reopenedLegacyReply.completionState == .completed
+    && reopenedLegacyReply.sources.isEmpty
+    && reopenedLegacyReply.actions.isEmpty, "old reply JSON defaults to a completed reply with no attachments")
+
+var malformedRichReplyObject = try! JSONSerialization.jsonObject(
+    with: JSONEncoder().encode(AgentMessage(role: .assistant, text: "正文必须保留", source: nil))
+) as! [String: Any]
+malformedRichReplyObject["richAnswer"] = ["mode": "broken"]
+malformedRichReplyObject["source"] = 42
+malformedRichReplyObject["backend"] = "future-backend"
+malformedRichReplyObject["completionState"] = "future-state"
+malformedRichReplyObject["sources"] = "broken"
+malformedRichReplyObject["actions"] = "broken"
+let malformedRichReply = try! JSONDecoder().decode(
+    AgentMessage.self,
+    from: JSONSerialization.data(withJSONObject: malformedRichReplyObject)
+)
+expect(malformedRichReply.text == "正文必须保留"
+    && malformedRichReply.source == nil
+    && malformedRichReply.backend == nil
+    && malformedRichReply.richAnswer == nil
+    && malformedRichReply.completionState == .completed
+    && malformedRichReply.sources.isEmpty
+    && malformedRichReply.actions.isEmpty
+    && malformedRichReply.toolTrace.contains("rich-answer:decode-failed")
+    && malformedRichReply.toolTrace.contains("reply-source:decode-failed")
+    && malformedRichReply.toolTrace.contains("reply-backend:decode-failed")
+    && malformedRichReply.toolTrace.contains("reply-state:decode-failed")
+    && malformedRichReply.toolTrace.contains("reply-sources:decode-failed")
+    && malformedRichReply.toolTrace.contains("reply-actions:decode-failed"), "broken reply attachments are dropped and diagnosed without swallowing the reply body")
 
 let importedMarkdown = StudyItem(id: "file:/tmp/note.md", title: "note", subtitle: "note.md", kind: .markdown, urlPath: "/tmp/note.md", isSample: false)
 let notebookMarkdown = StudyItem(id: "file:/tmp/notebook.md", title: "notebook", subtitle: "notebook.md", kind: .markdown, urlPath: "/tmp/notebook.md", isSample: false, isNotebookNote: true)

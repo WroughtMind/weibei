@@ -354,6 +354,7 @@ public struct StudyAgentRequest: Sendable {
     public var noteText: String
     public var selectionTitle: String?
     public var selectionText: String?
+    public var selectionSources: [AgentReplySource]
     public var recentMessages: [AgentMessage]
     public var courseContext: StudyAgentCourseContext
     public var visualAssets: [StudyAgentVisualAsset]
@@ -374,6 +375,7 @@ public struct StudyAgentRequest: Sendable {
         noteText: String,
         selectionTitle: String? = nil,
         selectionText: String? = nil,
+        selectionSources: [AgentReplySource] = [],
         recentMessages: [AgentMessage] = [],
         courseContext: StudyAgentCourseContext = .empty,
         visualAssets: [StudyAgentVisualAsset] = [],
@@ -393,6 +395,7 @@ public struct StudyAgentRequest: Sendable {
         self.noteText = noteText
         self.selectionTitle = selectionTitle
         self.selectionText = selectionText
+        self.selectionSources = selectionSources
         self.recentMessages = recentMessages
         self.courseContext = courseContext
         self.visualAssets = visualAssets
@@ -526,6 +529,7 @@ public struct StudyAgentReply: Equatable, Sendable {
     public var text: String
     public var backend: StudyAgentBackend
     public var richAnswer: RichAnswerPresentation?
+    public var sources: [AgentReplySource]
     public var noteProposal: StudyAgentNoteProposal?
     public var learningUpdate: StudyAgentLearningUpdate?
     public var loadedSkills: [StudyAgentLoadedSkill]
@@ -535,6 +539,7 @@ public struct StudyAgentReply: Equatable, Sendable {
         text: String,
         backend: StudyAgentBackend,
         richAnswer: RichAnswerPresentation? = nil,
+        sources: [AgentReplySource] = [],
         noteProposal: StudyAgentNoteProposal? = nil,
         learningUpdate: StudyAgentLearningUpdate? = nil,
         loadedSkills: [StudyAgentLoadedSkill] = [],
@@ -543,6 +548,7 @@ public struct StudyAgentReply: Equatable, Sendable {
         self.text = text
         self.backend = backend
         self.richAnswer = richAnswer
+        self.sources = sources
         self.noteProposal = noteProposal
         self.learningUpdate = learningUpdate
         self.loadedSkills = loadedSkills
@@ -559,7 +565,7 @@ public enum StudyAgentProgress: Equatable, Sendable {
 public typealias StudyAgentProgressHandler = @Sendable (StudyAgentProgress) async -> Void
 
 /// User-facing classification for agent request failures (Pi + OpenAI + offline).
-public enum AgentFailureKind: String, Equatable, Sendable {
+public enum AgentFailureKind: String, Codable, Equatable, Sendable {
     case offline
     case unauthorized
     case rateLimited
@@ -607,12 +613,7 @@ public enum AgentFailureKind: String, Equatable, Sendable {
     }
 
     public var isRetryable: Bool {
-        switch self {
-        case .cancelled:
-            return false
-        case .offline, .unauthorized, .rateLimited, .serverError, .timedOut, .generic:
-            return true
-        }
+        true
     }
 
     public static func classify(_ error: Error) -> AgentFailureKind {

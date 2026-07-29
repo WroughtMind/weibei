@@ -374,6 +374,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var allowedLearningLabels: Set<String> = []
         var lastLocationSourceLabel: String?
         var allowedNoteSourceLabels: Set<String>
+        var contextSources: [AgentReplySource]
+        var sources: [AgentReplySource] = []
         var didReadContext = false
         var answeredBeforeContext = false
         var streamedText = ""
@@ -533,6 +535,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             jumpEvidenceLabels: currentJumpEvidence,
             lastLocationSourceLabel: context.learning.lastLocation.map { "[材料：\($0.itemTitle)]" },
             allowedNoteSourceLabels: currentSourceLabels,
+            contextSources: currentReplySources(request: request, context: context),
             progressDelivery: progressDelivery
         )
         progressDelivery?.yield(.readingContext)
@@ -853,6 +856,80 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private func currentAssetIDs(in context: StudyAgentContextEnvelope) -> Set<String> {
         Set(context.course.catalog.lazy.filter(\.isCurrentMaterial).map(\.id))
+    }
+
+    private func currentReplySources(
+        request: StudyAgentRequest,
+        context: StudyAgentContextEnvelope
+    ) -> [AgentReplySource] {
+        var sources: [AgentReplySource] = []
+        func append(
+            itemID: String?,
+            kind: AgentReplySourceKind,
+            title: String,
+            label: String,
+            text: String
+        ) {
+            let excerpt = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !excerpt.isEmpty else { return }
+            let parsed = SourceReferenceTitle.parse(title)
+            sources.append(
+                AgentReplySource(
+                    itemID: itemID,
+                    kind: kind,
+                    title: parsed.title,
+                    label: label,
+                    excerpt: String(excerpt.prefix(400)),
+                    pageIndex: parsed.pageIndex,
+                    sectionTitle: parsed.sectionTitle,
+                    sectionLocationID: parsed.sectionLocationID,
+                    sectionOrdinal: parsed.sectionOrdinal,
+                    courseItemOrdinal: parsed.courseItemOrdinal
+                )
+            )
+        }
+
+        let materialID = context.course.catalog.first(where: \.isCurrentMaterial)?.id
+        if let material = context.material {
+            append(
+                itemID: materialID,
+                kind: .material,
+                title: material.title,
+                label: "[材料：\(material.title)]",
+                text: material.text
+            )
+        }
+        let noteID = context.course.catalog.first(where: \.isCurrentNote)?.id
+        append(
+            itemID: noteID,
+            kind: .note,
+            title: context.note.title,
+            label: "[笔记：\(context.note.title)]",
+            text: context.note.text
+        )
+        sources.append(contentsOf: request.selectionSources)
+        return sources
+    }
+
+    private func appendSources(_ sources: [AgentReplySource], to run: inout ActiveRun) {
+        for candidate in sources {
+            var source = candidate
+            if let itemID = source.itemID,
+               let persistentID = run.persistentAssetIDsByContextID[itemID] {
+                source.itemID = persistentID
+            }
+            let isDuplicate = run.sources.contains {
+                $0.itemID == source.itemID
+                    && $0.kind == source.kind
+                    && $0.pageIndex == source.pageIndex
+                    && $0.sectionLocationID == source.sectionLocationID
+                    && $0.sectionOrdinal == source.sectionOrdinal
+                    && $0.label == source.label
+            }
+            if !isDuplicate {
+                run.sources.append(source)
+            }
+        }
     }
 
     private func persistentAssetIDsByContextID(
@@ -1399,16 +1476,18 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 return
             }
             run.didReadContext = true
+            appendSources(run.contextSources, to: &run)
             activeRun = run
             trace("context read revision matched")
             refreshRunWatchdog()
 
-        case let .courseSourcesRead(_, contextRevision, labels, assetIDs, jumpEvidence):
+        case let .courseSourcesRead(_, contextRevision, labels, assetIDs, jumpEvidence, sources):
             guard var run = activeRun, contextRevision == run.contextRevision else { return }
             run.allowedSourceLabels.formUnion(labels)
             run.allowedNoteSourceLabels.formUnion(labels)
             run.allowedAssetIDs.formUnion(assetIDs)
             registerJumpEvidence(jumpEvidence, in: &run)
+            appendSources(sources, to: &run)
             activeRun = run
             refreshRunWatchdog()
 
@@ -1633,6 +1712,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 text: finalText,
                 backend: .pi,
                 richAnswer: run.richAnswer,
+                sources: run.sources,
                 noteProposal: run.proposal,
                 learningUpdate: run.learningUpdate,
                 loadedSkills: run.loadedSkills,
@@ -1653,6 +1733,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                             text: proposal.markdown,
                             backend: .pi,
                             richAnswer: run.richAnswer,
+                            sources: run.sources,
                             noteProposal: proposal,
                             learningUpdate: run.learningUpdate,
                             loadedSkills: run.loadedSkills,
