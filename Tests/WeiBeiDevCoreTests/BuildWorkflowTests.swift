@@ -202,6 +202,43 @@ final class BuildWorkflowTests: XCTestCase {
         )
     }
 
+    /// Builds only the products requested by packaging workflows.
+    func testSwiftBuildWorkflowBuildsOnlyRequestedProducts() async throws {
+        let repository = try makeRepositoryFixture()
+        defer { try? FileManager.default.removeItem(at: repository.rootDirectory) }
+        let productsDirectory = repository.rootDirectory.appendingPathComponent(".build/release")
+        try FileManager.default.createDirectory(at: productsDirectory, withIntermediateDirectories: true)
+        let executor = StubProcessExecutor(outputs: [
+            StubProcessOutput(),
+            StubProcessOutput(),
+            StubProcessOutput(),
+            StubProcessOutput(standardOutput: "\(productsDirectory.path)\n"),
+        ])
+        let toolchain = fixtureToolchain(repository: repository)
+        let workflow = SwiftBuildWorkflow(
+            repository: repository,
+            toolchain: toolchain,
+            processExecutor: executor
+        )
+
+        let result = try await workflow.build(
+            configuration: .release,
+            products: ["WeiBei", "WeiBeiPDFTextWorker", "WeiBeiPiCheck"]
+        )
+
+        XCTAssertEqual(result.productsDirectory, productsDirectory)
+        let requests = await executor.recordedRequests()
+        XCTAssertEqual(
+            requests.map(\.arguments),
+            [
+                ["build", "-c", "release", "--product", "WeiBei"],
+                ["build", "-c", "release", "--product", "WeiBeiPDFTextWorker"],
+                ["build", "-c", "release", "--product", "WeiBeiPiCheck"],
+                ["build", "-c", "release", "--show-bin-path"],
+            ]
+        )
+    }
+
     /// Builds once, runs Swift package tests, and invokes each verifier directly from the bin path.
     func testCheckWorkflowExecutesBuiltVerifierProductsDirectly() async throws {
         let repository = try makeRepositoryFixture()

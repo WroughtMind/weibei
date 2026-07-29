@@ -388,7 +388,10 @@ public struct DevelopmentWorkflow {
             toolchain: toolchain,
             processExecutor: processExecutor,
             fileManager: fileManager
-        ).build(configuration: configuration)
+        ).build(
+            configuration: configuration,
+            products: ["WeiBei", "WeiBeiPDFTextWorker", "WeiBeiPiCheck"]
+        )
         let metadata = try await GitBuildMetadataResolver(
             processExecutor: processExecutor,
             fileManager: fileManager

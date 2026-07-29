@@ -2,7 +2,7 @@
 
 # 构建临时应用并使用默认模式启动。
 run:
-	swift run WeiBeiDevTool run
+	swift run -c release WeiBeiDevTool run
 
 # Swift 检查会在 fresh clone 中准备锁定依赖；随后执行 TypeScript 质量门。
 check:

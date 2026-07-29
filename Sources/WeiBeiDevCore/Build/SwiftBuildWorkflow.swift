@@ -45,16 +45,28 @@ public struct SwiftBuildWorkflow: @unchecked Sendable {
     /// `--show-bin-path` is invoked only after the configured build succeeds
     /// and is used for direct execution of the resulting binaries.
     ///
-    /// - Parameter configuration: Fixed SwiftPM build configuration.
+    /// - Parameters:
+    ///   - configuration: Fixed SwiftPM build configuration.
+    ///   - products: Products required by the caller; an empty list builds the complete package.
     /// - Returns: Configuration and normalized product directory.
-    public func build(configuration: SwiftBuildConfiguration) async throws -> SwiftBuildResult {
-        let buildRequest = ProcessExecutionRequest(
-            executableURL: toolchain.swift,
-            arguments: ["build", "-c", configuration.rawValue],
-            workingDirectoryURL: repository.rootDirectory,
-            timeout: .seconds(1_800)
-        )
-        try await executeSuccessfully(buildRequest)
+    public func build(
+        configuration: SwiftBuildConfiguration,
+        products: [String] = []
+    ) async throws -> SwiftBuildResult {
+        let requestedProducts: [String?] = products.isEmpty ? [nil] : products.map(Optional.some)
+        for product in requestedProducts {
+            var arguments = ["build", "-c", configuration.rawValue]
+            if let product {
+                arguments += ["--product", product]
+            }
+            let buildRequest = ProcessExecutionRequest(
+                executableURL: toolchain.swift,
+                arguments: arguments,
+                workingDirectoryURL: repository.rootDirectory,
+                timeout: .seconds(1_800)
+            )
+            try await executeSuccessfully(buildRequest)
+        }
 
         let pathRequest = ProcessExecutionRequest(
             executableURL: toolchain.swift,
