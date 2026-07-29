@@ -551,6 +551,18 @@ final class WorkspaceStore: ObservableObject {
         var selectedMaterialIsTruncated: Bool
     }
 
+    private struct AgentConversationTarget: Sendable {
+        var sessionID: UUID
+        var workingDirectory: URL
+        var courseID: UUID?
+        var courseRootIdentity: ImportedFileIdentity?
+    }
+
+    private struct AgentConversationTargetError: LocalizedError {
+        var message: String
+        var errorDescription: String? { message }
+    }
+
     private struct ResolvedImportedFileBookmark {
         var url: URL
         var isStale: Bool
@@ -6747,7 +6759,17 @@ final class WorkspaceStore: ObservableObject {
         let deletingActiveSession = activeStudySessionID == id
         if deletingActiveSession { cancelAgentRequest() }
         studySessions.remove(at: index)
-        learningMemoryEntries.removeAll { $0.sessionID == id && $0.origin == .agentInference }
+        let runtime = piRuntime
+        Task { @MainActor [weak self] in
+            do {
+                try await runtime.deleteSession(id)
+            } catch {
+                self?.workspaceSaveError = self?.ui(
+                    "Chat 已删除，但对应的 Pi 运行状态清理失败：\(error.localizedDescription)",
+                    "The Chat was deleted, but its Pi runtime state could not be removed: \(error.localizedDescription)"
+                )
+            }
+        }
         if deletingActiveSession, let replacement = orderedStudySessions.first {
             activeStudySessionID = replacement.id
             messages = replacement.messages
@@ -6756,7 +6778,6 @@ final class WorkspaceStore: ObservableObject {
             lastAgentReplyContextRevision = nil
             invalidateAgentContext()
         }
-        learningMemoryRevision &+= 1
         save()
     }
 
@@ -11366,6 +11387,12 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         if scenario == "pi-learning-flow" || scenario == "pi-course-memory-flow" {
+            // Keep the packaged-App check isolated from the user's saved profiles while
+            // exercising the same in-memory values that Settings sends into Pi.
+            agentProviderID = .openaiCodex
+            agentAuthMethod = .subscription
+            modelName = AgentModelListService.codexDefaultModel
+            save()
             await waitForReaderContextToSettle()
         }
         if scenario == "notebook-creation-flow" {
@@ -11413,19 +11440,67 @@ final class WorkspaceStore: ObservableObject {
             ownerTitle: currentSourceReferenceTitle
         )
         recordVerificationStage("context-prepared")
-        agentDraft = ui("解释选区，并整理成可以写入笔记的要点。", "Explain the selection and turn it into note-ready points.")
+        let continuityToken = ui("玉兰七号", "Magnolia Seven")
+        agentDraft = scenario == "pi-learning-flow"
+            ? ui(
+                "用两句话解释当前选区，并在回答最后单独写出校验词“\(continuityToken)”。",
+                "Explain the current selection in two sentences, then end with the check phrase “\(continuityToken)” on its own line."
+            )
+            : ui(
+                "解释选区，并整理成可以写入笔记的要点。",
+                "Explain the selection and turn it into note-ready points."
+            )
+        let verificationSessionID = activeStudySessionID
+        let firstReplyStartedAt = Date()
         await askAgentAndWait()
+        let firstReplySeconds = Date().timeIntervalSince(firstReplyStartedAt)
+        let firstReplyBackend = messages.last?.backend
         recordVerificationStage("reply:\(messages.last?.backend?.rawValue ?? "none")")
         if messages.last?.backend == nil, let message = messages.last?.text {
             recordVerificationStage("failure:\(String(message.prefix(500)))")
         }
-        applyLastAgentAnswerToNote()
         if scenario == "pi-learning-flow" {
+            let firstTurnMessageCount = messages.count
+            agentDraft = ui(
+                "刚才让我记住的暗号是什么？只回答暗号。",
+                "What code phrase did I ask you to remember? Reply with only the code phrase."
+            )
+            let secondReplyStartedAt = Date()
+            await askAgentAndWait()
+            let secondReplySeconds = Date().timeIntervalSince(secondReplyStartedAt)
+            let secondReply = messages.last
+            let linkedOAuth = PiOAuthService.readLinkedOAuthProviders(
+                from: WeiBeiAgentDataPaths.piAuthJSON
+            ).contains("openai-codex")
+            let sameChatContinued = activeStudySessionID == verificationSessionID
+                && messages.count >= firstTurnMessageCount + 2
+                && secondReply?.backend == .pi
+                && secondReply?.text.localizedCaseInsensitiveContains(continuityToken) == true
+            recordVerificationStage("pi-provider:\(agentProviderID.rawValue)")
+            recordVerificationStage("pi-model:\(modelName)")
+            recordVerificationStage("pi-oauth:\(linkedOAuth)")
+            recordVerificationStage("pi-continuity:\(sameChatContinued)")
+            recordVerificationStage(
+                String(format: "pi-speed:%.2f:%.2f", firstReplySeconds, secondReplySeconds)
+            )
             try? await Task.sleep(nanoseconds: 700_000_000)
-            if messages.last?.backend == .pi, noteText.count > verificationNoteSeed.count {
+            if firstReplyBackend == .pi,
+               sameChatContinued,
+               linkedOAuth,
+               firstReplySeconds < 60,
+               secondReplySeconds < 60 {
                 let markerURL = storageURL.deletingLastPathComponent().appendingPathComponent("pi-agent-verified.txt")
-                try? "PI backend completed the packaged learning flow and persisted its note proposal\n"
-                    .write(to: markerURL, atomically: true, encoding: .utf8)
+                let marker = """
+                provider=\(agentProviderID.rawValue)
+                model=\(modelName)
+                oauth=linked
+                session=\(verificationSessionID?.uuidString.lowercased() ?? "none")
+                continuity=true
+                first_seconds=\(String(format: "%.2f", firstReplySeconds))
+                second_seconds=\(String(format: "%.2f", secondReplySeconds))
+
+                """
+                try? marker.write(to: markerURL, atomically: true, encoding: .utf8)
             }
         }
         recordVerificationStage("completed")
@@ -12607,9 +12682,127 @@ final class WorkspaceStore: ObservableObject {
         guard agentRequestTask == nil,
               !isAskingAgent,
               !agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        agentRequestTask = Task { @MainActor [weak self] in
-            await self?.performAgentRequest()
+        let question = agentDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let target: AgentConversationTarget
+        do {
+            target = try agentConversationTarget()
+        } catch {
+            recordAgentTargetFailure(question: question, error: error)
+            return
         }
+        agentRequestTask = Task { @MainActor [weak self] in
+            await self?.performAgentRequest(target: target)
+        }
+    }
+
+    private func agentConversationTarget() throws -> AgentConversationTarget {
+        guard let session = activeStudySession else {
+            throw AgentConversationTargetError(
+                message: ui(
+                    "当前 Chat 尚未准备完成，请重新打开后再试。",
+                    "The current Chat is not ready. Reopen it and try again."
+                )
+            )
+        }
+        guard session.scopeNeedsReview == false else {
+            throw AgentConversationTargetError(
+                message: ui(
+                    "这个旧 Chat 还没有确认属于哪门课程，请先完成归类。",
+                    "This older Chat still needs a confirmed course scope."
+                )
+            )
+        }
+        if let courseID = session.courseID {
+            guard let course = course(withID: courseID),
+                  let expectedIdentity = course.sourceRootIdentity,
+                  let root = courseRootURL(for: courseID),
+                  let resolvedRoot = try? CourseProjectPathPolicy.existingDirectory(root),
+                  importedFileIdentityResolver(resolvedRoot) == expectedIdentity else {
+                throw AgentConversationTargetError(
+                    message: ui(
+                        "这门课程的课程文件夹当前不可用，魏碑没有把问题发送到其他目录。",
+                        "This course folder is unavailable. WeiBei did not send the question elsewhere."
+                    )
+                )
+            }
+            return AgentConversationTarget(
+                sessionID: session.id,
+                workingDirectory: resolvedRoot,
+                courseID: courseID,
+                courseRootIdentity: expectedIdentity
+            )
+        }
+
+        let globalDirectory = workspaceDirectory
+            .appendingPathComponent("AgentRuntime/GlobalWorkspace", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(
+                at: globalDirectory,
+                withIntermediateDirectories: true
+            )
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: globalDirectory.path
+            )
+        } catch {
+            throw AgentConversationTargetError(
+                message: ui(
+                    "魏碑无法准备全局 Chat 的本地工作目录：\(error.localizedDescription)",
+                    "WeiBei could not prepare the global Chat workspace: \(error.localizedDescription)"
+                )
+            )
+        }
+        return AgentConversationTarget(
+            sessionID: session.id,
+            workingDirectory: globalDirectory,
+            courseID: nil,
+            courseRootIdentity: nil
+        )
+    }
+
+    private func validateAgentConversationTarget(_ target: AgentConversationTarget) throws {
+        guard activeStudySessionID == target.sessionID,
+              let session = activeStudySession,
+              session.id == target.sessionID,
+              session.courseID == target.courseID else {
+            throw AgentConversationTargetError(
+                message: ui(
+                    "发送前 Chat 已经切换，这条问题没有发到其他 Chat。",
+                    "The Chat changed before sending. This question was not sent to another Chat."
+                )
+            )
+        }
+        guard let courseID = target.courseID else { return }
+        guard let expectedIdentity = target.courseRootIdentity,
+              course(withID: courseID)?.sourceRootIdentity == expectedIdentity,
+              let resolvedRoot = try? CourseProjectPathPolicy.existingDirectory(
+                target.workingDirectory
+              ),
+              importedFileIdentityResolver(resolvedRoot) == expectedIdentity else {
+            throw AgentConversationTargetError(
+                message: ui(
+                    "发送前课程文件夹发生了变化，魏碑没有让 Agent 在错误目录工作。",
+                    "The course folder changed before sending. WeiBei did not run the Agent in the wrong directory."
+                )
+            )
+        }
+    }
+
+    private func recordAgentTargetFailure(question: String, error: Error) {
+        lastAgentFailureKind = .generic
+        lastFailedAgentQuestion = question
+        focusedPane = .agent
+        appendAgentMessage(
+            AgentMessage(
+                role: .assistant,
+                text: AgentFailureKind.generic.userMessage(
+                    language: interfaceLanguage,
+                    detail: error.localizedDescription,
+                    draftPreserved: true
+                ),
+                source: agentMessageSourceTitle
+            )
+        )
     }
 
     private func askAgentAndWait() async {
@@ -12638,10 +12831,21 @@ final class WorkspaceStore: ObservableObject {
         return [StudyAgentVisualAsset(id: item.id, filePath: path, mediaType: mediaType)]
     }
 
-    private func performAgentRequest() async {
+    private func performAgentRequest(target: AgentConversationTarget) async {
+        guard !Task.isCancelled, activeStudySessionID == target.sessionID else {
+            agentRequestTask = nil
+            return
+        }
         flushStagedNoteDraftForAgentContext()
         let question = agentDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !question.isEmpty, !isAskingAgent else {
+            agentRequestTask = nil
+            return
+        }
+        do {
+            try validateAgentConversationTarget(target)
+        } catch {
+            recordAgentTargetFailure(question: question, error: error)
             agentRequestTask = nil
             return
         }
@@ -12670,32 +12874,6 @@ final class WorkspaceStore: ObservableObject {
         let sentLanguage = interfaceLanguage
         let courseQuery = [question, sentSelectionText ?? "", String(sentNoteText.prefix(2_000))]
             .joined(separator: "\n\n")
-        agentDraft = ""
-        latestAgentNoteProposal = nil
-        latestAgentLearningUpdate = nil
-        if !selectionAttachments.isEmpty {
-            withAnimation(WeiBeiMotion.panel) {
-                cancelPendingSelectionAttachment()
-                selectionAttachments = []
-                lastSelectionAttachmentDate = nil
-                lastSelectionUpdateDate = nil
-            }
-        }
-        // Keep the floating selection agent open while answering — do not dismiss it mid-stream.
-        // (Previously clearUnpinnedFloatingSelection killed the float as soon as ask started.)
-        // Conversation pane already open → answer there; never re-raise the float.
-        if isConversationSurfaceVisible {
-            agentSurface = .hidden
-            keepFloatingSelectionForAnswer = false
-            if shouldClearSentDocumentSelection, !pinnedFloatingAgent {
-                clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)
-            }
-        } else if shouldClearSentDocumentSelection, !keepFloatingSelectionForAnswer, !pinnedFloatingAgent {
-            clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)
-        } else if keepFloatingSelectionForAnswer || pinnedFloatingAgent {
-            agentSurface = .selectionFloat
-            pinnedFloatingAgent = true
-        }
         isAskingAgent = true
         activeAgentRequestID = requestID
         agentStreamingText = ""
@@ -12717,15 +12895,63 @@ final class WorkspaceStore: ObservableObject {
 
         var didAppendUserMessage = false
         do {
+            let userMessage = AgentMessage(role: .user, text: question, source: sourceTitle)
+            appendAgentMessage(userMessage)
+            appendMessageToActiveSelectionAskThread(userMessage.id)
+            didAppendUserMessage = true
+            guard flushPendingWorkspaceSave() else {
+                throw AgentConversationTargetError(
+                    message: workspaceSaveError
+                        ?? ui(
+                            "问题尚未安全写入本地，魏碑没有把它发送给 Agent。",
+                            "The question was not safely saved, so WeiBei did not send it to the Agent."
+                        )
+                )
+            }
+
+            agentDraft = ""
+            lastFailedAgentQuestion = nil
+            lastAgentFailureKind = nil
+            latestAgentNoteProposal = nil
+            latestAgentLearningUpdate = nil
+            if !selectionAttachments.isEmpty {
+                withAnimation(WeiBeiMotion.panel) {
+                    cancelPendingSelectionAttachment()
+                    selectionAttachments = []
+                    lastSelectionAttachmentDate = nil
+                    lastSelectionUpdateDate = nil
+                }
+            }
+            // Keep the floating selection agent open while answering — do not dismiss it mid-stream.
+            if isConversationSurfaceVisible {
+                agentSurface = .hidden
+                keepFloatingSelectionForAnswer = false
+                if shouldClearSentDocumentSelection, !pinnedFloatingAgent {
+                    clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)
+                }
+            } else if shouldClearSentDocumentSelection,
+                      !keepFloatingSelectionForAnswer,
+                      !pinnedFloatingAgent {
+                clearUnpinnedFloatingSelection(
+                    keepContext: false,
+                    invalidatesAgentContext: false
+                )
+            } else if keepFloatingSelectionForAnswer || pinnedFloatingAgent {
+                agentSurface = .selectionFloat
+                pinnedFloatingAgent = true
+            }
+
             let courseBuild = try await makeCourseContext(query: courseQuery)
             guard activeAgentRequestID == requestID,
                   requestWorkspaceRevision == agentContextRevision,
                   requestMemoryRevision == learningMemoryRevision else {
-                if agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if activeStudySessionID == target.sessionID,
+                   agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     agentDraft = question
                 }
                 return
             }
+            try validateAgentConversationTarget(target)
             let request = StudyAgentRequest(
                 id: requestID,
                 purpose: .conversation,
@@ -12744,15 +12970,14 @@ final class WorkspaceStore: ObservableObject {
                 language: sentLanguage,
                 contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())"
             )
-            let userMessage = AgentMessage(role: .user, text: question, source: sourceTitle)
-            appendAgentMessage(userMessage)
-            appendMessageToActiveSelectionAskThread(userMessage.id)
-            didAppendUserMessage = true
             agentActivityText = ui("正在读取上下文", "Reading context")
             if isGeneratingQuietInsight {
                 await piRuntime.cancel()
             }
-            let reply = try await executeStudyAgentRequest(request)
+            let reply = try await executeStudyAgentRequest(
+                request,
+                target: target
+            )
             guard activeAgentRequestID == request.id,
                   requestWorkspaceRevision == agentContextRevision,
                   requestMemoryRevision == learningMemoryRevision else { return }
@@ -12774,14 +12999,19 @@ final class WorkspaceStore: ObservableObject {
             )
             appendAgentMessage(assistantMessage)
             appendMessageToActiveSelectionAskThread(assistantMessage.id)
+            // The visible reply is durable before this request is considered finished.
+            // A save error must not replace or hide the answer that already arrived.
+            _ = flushPendingWorkspaceSave()
         } catch PiAgentRuntimeError.cancelled, is CancellationError {
-            if agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if activeStudySessionID == target.sessionID,
+               agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 agentDraft = question
             }
             lastAgentFailureKind = .cancelled
             return
         } catch {
-            guard activeAgentRequestID == requestID else { return }
+            guard activeAgentRequestID == requestID,
+                  activeStudySessionID == target.sessionID else { return }
             if !didAppendUserMessage {
                 appendAgentMessage(AgentMessage(role: .user, text: question, source: sourceTitle))
             }
@@ -12845,7 +13075,10 @@ final class WorkspaceStore: ObservableObject {
             || text.hasPrefix("Request failed")
     }
 
-    private func executeStudyAgentRequest(_ request: StudyAgentRequest) async throws -> StudyAgentReply {
+    private func executeStudyAgentRequest(
+        _ request: StudyAgentRequest,
+        target: AgentConversationTarget
+    ) async throws -> StudyAgentReply {
         let isExplicitOfflineVerification = Self.environmentValue("WEIBEI_FORCE_OFFLINE_AGENT") == "1"
             && Self.environmentValue("WEIBEI_SUPPRESS_ACTIVATION") == "1"
             && Self.environmentValue("WEIBEI_VERIFY_SCENARIO") == "offline-learning-flow"
@@ -12891,7 +13124,11 @@ final class WorkspaceStore: ObservableObject {
             )
 
             do {
-                return try await piRuntime.respond(to: request) { [weak self] progress in
+                return try await piRuntime.respond(
+                    to: request,
+                    sessionID: target.sessionID,
+                    workingDirectory: target.workingDirectory
+                ) { [weak self] progress in
                     await self?.applyAgentProgress(progress, requestID: request.id)
                 }
             } catch let error as PiAgentRuntimeError {

@@ -185,8 +185,9 @@ struct WeiBeiPiCheckMain {
             let runsLiveCheck = runsEvaluation
                 || liveCheckSetting == "1"
                 || (liveCheckSetting != "0" && hasConfiguredAuth)
+            var expectedSessionID: UUID?
             if runsLiveCheck {
-                try await checkNoteMaking(runtime)
+                expectedSessionID = try await checkNoteMaking(runtime)
             }
             if runsRichAnswerCheck || runsEvaluation {
                 try await checkRichAnswer(
@@ -201,9 +202,11 @@ struct WeiBeiPiCheckMain {
                 try await checkRecallPractice(runtime)
                 print("pi-eval completed: study-companion, course-wayfinding, close-reading, rich-answer, note-making, recall-practice; rich-answer final status remains pending user acceptance")
             }
-            try verifyNoPersistedTurnState(runtimeRoot)
-
             await runtime.shutdown()
+            try verifyPersistedSessionStateAfterShutdown(
+                runtimeRoot,
+                expectedSessionID: expectedSessionID
+            )
             try? FileManager.default.removeItem(at: runtimeRoot)
         } catch {
             await runtime.shutdown()
@@ -213,14 +216,13 @@ struct WeiBeiPiCheckMain {
         }
     }
 
-    private static func checkNoteMaking(_ runtime: PiAgentRuntime) async throws {
-        let reply = try await runtime.respond(
-            to: request(
-                workflow: .noteMaking,
-                question: "请把当前选区整理成一个带来源的 Markdown 核心要点，并提交待确认的笔记建议。",
-                revision: "pi-check-note"
-            )
+    private static func checkNoteMaking(_ runtime: PiAgentRuntime) async throws -> UUID {
+        let liveRequest = request(
+            workflow: .noteMaking,
+            question: "请把当前选区整理成一个带来源的 Markdown 核心要点，并提交待确认的笔记建议。",
+            revision: "pi-check-note"
         )
+        let reply = try await runtime.respond(to: liveRequest)
         guard reply.backend == .pi,
               !reply.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               let proposal = reply.noteProposal,
@@ -230,6 +232,7 @@ struct WeiBeiPiCheckMain {
             throw PiCheckError.invalidLiveReply
         }
         print("pi-live-check passed: proposal=\(proposal.markdown.count) chars evidence=\(proposal.evidence.count)")
+        return liveRequest.id
     }
 
     private static func checkCloseReading(_ runtime: PiAgentRuntime) async throws {
@@ -308,7 +311,8 @@ struct WeiBeiPiCheckMain {
                         request = richAnswerRequest(checkCase)
                         let liveReply = try await withFreshRichAnswerRuntime(
                             executableURL: executableURL,
-                            providerConfiguration: runConfiguration.piProviderConfiguration
+                            providerConfiguration: runConfiguration.piProviderConfiguration,
+                            expectedSessionID: request!.id
                         ) { runtime in
                             try await runtime.respond(to: request!)
                         }
@@ -338,7 +342,8 @@ struct WeiBeiPiCheckMain {
                         request = richAnswerTextOnlyRequest(checkCase)
                         let liveReply = try await withFreshRichAnswerRuntime(
                             executableURL: executableURL,
-                            providerConfiguration: runConfiguration.piProviderConfiguration
+                            providerConfiguration: runConfiguration.piProviderConfiguration,
+                            expectedSessionID: request!.id
                         ) { runtime in
                             try await runtime.respond(to: request!)
                         }
@@ -363,7 +368,8 @@ struct WeiBeiPiCheckMain {
                         request = richAnswerDegradationRequest(checkCase)
                         let liveReply = try await withFreshRichAnswerRuntime(
                             executableURL: executableURL,
-                            providerConfiguration: runConfiguration.piProviderConfiguration
+                            providerConfiguration: runConfiguration.piProviderConfiguration,
+                            expectedSessionID: request!.id
                         ) { runtime in
                             try await runtime.respond(to: request!)
                         }
@@ -403,9 +409,6 @@ struct WeiBeiPiCheckMain {
                     print("pi-rich-answer technical record completed: rep=\(repetition) \(runCase.id) final-gates=pending")
                     fflush(stdout)
                 } catch {
-                    if let rejectedReply = error as? PiAgentRejectedReplyError {
-                        reply = rejectedReply.reply
-                    }
                     let elapsedSeconds = Date().timeIntervalSince(startedAt)
                     let validation: RichAnswerEvidenceValidationSnapshot
                     if case .invalidProtocol = runCase {
@@ -468,6 +471,7 @@ struct WeiBeiPiCheckMain {
     private static func withFreshRichAnswerRuntime<T>(
         executableURL: URL,
         providerConfiguration: PiAgentProviderConfiguration,
+        expectedSessionID: UUID,
         operation: (PiAgentRuntime) async throws -> T
     ) async throws -> T {
         let runtimeRoot = FileManager.default.temporaryDirectory
@@ -481,7 +485,10 @@ struct WeiBeiPiCheckMain {
             _ = try await runtime.healthCheck()
             let result = try await operation(runtime)
             await runtime.shutdown()
-            try verifyNoPersistedTurnState(runtimeRoot)
+            try verifyPersistedSessionStateAfterShutdown(
+                runtimeRoot,
+                expectedSessionID: expectedSessionID
+            )
             try? FileManager.default.removeItem(at: runtimeRoot)
             return result
         } catch {
@@ -2294,12 +2301,34 @@ struct WeiBeiPiCheckMain {
             || text.contains("[学习记忆：")
     }
 
-    private static func verifyNoPersistedTurnState(_ runtimeRoot: URL) throws {
+    private static func verifyPersistedSessionStateAfterShutdown(
+        _ runtimeRoot: URL,
+        expectedSessionID: UUID?
+    ) throws {
         let fileManager = FileManager.default
         let contextURL = runtimeRoot.appendingPathComponent("context.json")
-        let sessionsURL = runtimeRoot.appendingPathComponent("Sessions", isDirectory: true)
-        let sessionEntries = (try? fileManager.contentsOfDirectory(atPath: sessionsURL.path)) ?? []
-        guard !fileManager.fileExists(atPath: contextURL.path), sessionEntries.isEmpty else {
+        guard !fileManager.fileExists(atPath: contextURL.path) else {
+            throw PiCheckError.persistedTurnState
+        }
+        guard let expectedSessionID else { return }
+        let sessionDirectory = runtimeRoot
+            .appendingPathComponent("Sessions", isDirectory: true)
+            .appendingPathComponent(
+                expectedSessionID.uuidString.lowercased(),
+                isDirectory: true
+            )
+        let sessionFiles = try fileManager.contentsOfDirectory(
+            at: sessionDirectory,
+            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey]
+        )
+        guard sessionFiles.contains(where: { url in
+            guard let values = try? url.resourceValues(
+                forKeys: [.isRegularFileKey, .fileSizeKey]
+            ) else {
+                return false
+            }
+            return values.isRegularFile == true && (values.fileSize ?? 0) > 0
+        }) else {
             throw PiCheckError.persistedTurnState
         }
     }
@@ -2434,7 +2463,7 @@ private enum PiCheckError: LocalizedError {
         case .missingIsolatedConfiguration:
             "PI did not use an isolated WeiBei configuration directory"
         case .persistedTurnState:
-            "PI persisted a context snapshot or session after the turn"
+            "PI did not keep only durable per-Chat sessions after shutdown"
         }
     }
 }

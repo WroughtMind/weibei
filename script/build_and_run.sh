@@ -357,8 +357,9 @@ open_app_for_verify() {
   if [[ "$VERIFY_SCENARIO" == "pi-learning-flow" || "$VERIFY_SCENARIO" == "pi-course-memory-flow" ]]; then
     agent_environment=(
       WEIBEI_FORCE_OFFLINE_AGENT=0
-      WEIBEI_PI_PROVIDER=openai-codex
-      WEIBEI_PI_MODEL=gpt-5.5
+      WEIBEI_PI_PROVIDER=
+      WEIBEI_PI_MODEL=
+      WEIBEI_OPENAI_MODEL=
     )
   fi
   if [[ "$VERIFY_SCENARIO" == "pane-layout-stability-flow" || "$VERIFY_SCENARIO" == "pane-toggle-continuity-flow" || "$VERIFY_SCENARIO" == "pane-reorder-width-flow" ]]; then
@@ -461,8 +462,24 @@ verify_learning_flow_persistence() {
         && [[ -f "$workspace_file" ]] \
         && /usr/bin/grep -q "视觉验收笔记" "$workspace_file" \
         && /usr/bin/grep -q "利率" "$workspace_file" \
+        && /usr/bin/grep -q "玉兰七号" "$workspace_file" \
+        && /usr/bin/grep -q '"agentProviderID":"openai-codex"' "$workspace_file" \
+        && /usr/bin/grep -q '"modelName":"gpt-5.4"' "$workspace_file" \
+        && /usr/bin/grep -q '^oauth=linked$' "$marker_file" \
+        && /usr/bin/grep -q '^continuity=true$' "$marker_file" \
         && ! /usr/bin/grep -q "## 离线草稿" "$workspace_file"; then
-        return 0
+        local session_id child_pid command_line
+        session_id="$(/usr/bin/awk -F= '$1 == "session" { print $2 }' "$marker_file")"
+        while IFS= read -r child_pid; do
+          [[ -n "$child_pid" ]] || continue
+          command_line="$(/bin/ps -ww -p "$child_pid" -o command= 2>/dev/null || true)"
+          if [[ "$command_line" == *"--mode rpc"* \
+            && "$command_line" == *"--provider openai-codex"* \
+            && "$command_line" == *"--model gpt-5.4"* \
+            && "$command_line" == *"--session-id $session_id"* ]]; then
+            return 0
+          fi
+        done < <(/usr/bin/pgrep -P "$VERIFY_PID" 2>/dev/null || true)
       fi
       sleep 0.2
     done
@@ -470,6 +487,8 @@ verify_learning_flow_persistence() {
     if [[ -f "$VERIFY_DATA_DIR/verification-state.txt" ]]; then
       cat "$VERIFY_DATA_DIR/verification-state.txt" >&2
     fi
+    [[ -s "$marker_file" ]] && cat "$marker_file" >&2
+    [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
     return 1
   fi
 

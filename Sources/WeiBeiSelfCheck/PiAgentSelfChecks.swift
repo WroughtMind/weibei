@@ -4,70 +4,10 @@ import WeiBeiCore
 func runPiAgentSelfChecks() throws {
     try checkPiProviderConfiguration()
     try checkJSONLFraming()
-    try checkAnswerGrounding()
     try checkRPCDecoding()
     try checkStudyAgentContext()
     try checkBundledAgentResources()
     try checkPiExecutableLocation()
-}
-
-private func checkAnswerGrounding() throws {
-    for question in [
-        "给我讲一个笑话",
-        "你叫什么",
-        "你好",
-        "连通测试：只回复“Pi订阅登录已连通”，不要生成富回答。",
-        "2026-07-21 候选包连通测试：只回复“Pi订阅登录已连通”，不要生成富回答。",
-    ] {
-        try piRequire(
-            StudyAgentQuestionScope.allowsSourceFreeAnswer(question),
-            "source-free PI answer scope accepts \(question)"
-        )
-        try piRequire(
-            PiAnswerEvidenceRequirement.validationError(
-                contentLabels: [],
-                learningLabels: [],
-                allowsLearningOnlyAnswer: false,
-                allowsSourceFreeAnswer: true
-            ) == nil,
-            "source-free PI answers are not rejected as missing course evidence"
-        )
-    }
-
-    try piRequire(
-        !StudyAgentQuestionScope.allowsSourceFreeAnswer("费雪方程是什么意思？"),
-        "course-content questions do not bypass current-turn evidence"
-    )
-    for question in [
-        "你叫什么，顺便解释费雪方程",
-        "讲一个关于费雪方程的笑话",
-        "你是谁写的这本教材？",
-        "连通测试，顺便解释费雪方程",
-        "2026-07-21 候选包连通测试，顺便解释费雪方程",
-    ] {
-        try piRequire(
-            !StudyAgentQuestionScope.allowsSourceFreeAnswer(question),
-            "mixed or course-dependent questions do not bypass evidence: \(question)"
-        )
-    }
-    try piRequire(
-        PiAnswerEvidenceRequirement.validationError(
-            contentLabels: [],
-            learningLabels: [],
-            allowsLearningOnlyAnswer: false,
-            allowsSourceFreeAnswer: false
-        ) == "PI returned a content answer without a current-turn source citation",
-        "course-content answers still require current-turn evidence"
-    )
-    try piRequire(
-        PiAnswerEvidenceRequirement.validationError(
-            contentLabels: [],
-            learningLabels: ["[学习记录：上次位置]"],
-            allowsLearningOnlyAnswer: true,
-            allowsSourceFreeAnswer: false
-        ) == nil,
-        "learning-only answers continue to accept current-turn learning evidence"
-    )
 }
 
 private func checkPiProviderConfiguration() throws {
@@ -464,14 +404,6 @@ private func checkStudyAgentContext() throws {
         contextRevision: "revision-9"
     )
     try piRequire(request.resolvedWorkflow == .recallPractice, "study-agent automatic routing selects recall practice")
-    try piRequire(
-        StudyAgentSourceLimitation.isHonest("当前没有可读材料或数据，因此无法给出剂量结论。")
-            && StudyAgentSourceLimitation.isHonest("No readable source data was provided, so I cannot calculate a dose.")
-            && !StudyAgentSourceLimitation.isHonest("我不能回答这个问题。")
-            && !StudyAgentSourceLimitation.isHonest("材料显示安全剂量为 10 mg。")
-            && !StudyAgentSourceLimitation.isHonest("当前缺少材料，所以我估计安全剂量约为 10 mg。"),
-        "source-free answers are limited to explicit evidence-gap explanations"
-    )
     let noteRequest = StudyAgentRequest(
         purpose: .conversation,
         question: "整理成笔记",
@@ -502,15 +434,6 @@ private func checkStudyAgentContext() throws {
         contextRevision: "revision-companion"
     )
     try piRequire(companionRequest.resolvedWorkflow == .studyCompanion, "study-agent automatic routing selects the study companion")
-    try piRequire(
-        StudyAgentQuestionScope.allowsLearningOnlyAnswer("我上次学到哪了？请告诉我位置和下一步。")
-            && StudyAgentQuestionScope.allowsLearningOnlyAnswer("我的学习目标是什么？")
-            && !StudyAgentQuestionScope.allowsLearningOnlyAnswer("继续学习")
-            && !StudyAgentQuestionScope.allowsLearningOnlyAnswer("continue learning")
-            && !StudyAgentQuestionScope.allowsLearningOnlyAnswer("我上次学到的费雪方程怎么算？")
-            && !StudyAgentQuestionScope.allowsLearningOnlyAnswer("我的困惑是名义利率；请解释它和实际利率的区别。"),
-        "learning-only answers are limited to structured progress and memory questions, not course-content questions that mention prior study"
-    )
     try piRequire(
         StudyAgentCurrentTurnEvidence.matches(
             "[用户：本轮]我还不懂名义利率和实际利率的区别",
@@ -1099,20 +1022,22 @@ private func checkBundledAgentResources() throws {
             && runtimeSource.contains("RichAnswerEngine.prepare")
             && runtimeSource.contains("memoryRevision")
             && runtimeSource.contains("courseSourcesRead")
-            && runtimeSource.contains("allowedJumpReferences")
-            && runtimeSource.contains("jumpEvidenceLabels")
             && runtimeSource.contains("registerJumpEvidence")
             && runtimeSource.contains("canonicalJumpReference")
-            && runtimeSource.contains("isDedicatedJumpLine")
             && runtimeSource.contains("contextRevision == run.contextRevision")
-            && runtimeSource.contains("citedJumpReferences")
             && runtimeSource.contains("learningUpdateValidationError")
+            && runtimeSource.contains("private func recordRejectedAction")
+            && runtimeSource.contains("run.streamedText += delta")
+            && !runtimeSource.contains("guard run.didReadContext else")
+            && !runtimeSource.contains("answerValidationError")
+            && !runtimeSource.contains("PiAgentRejectedReplyError")
+            && !runtimeSource.contains("else if run.workflow == .noteMaking, run.proposal == nil")
             && runtimeSource.contains("resolutionEvidenceMatches")
             && runtimeSource.contains("StudyAgentResolutionEvidence.matches")
             && runtimeSource.contains("StudyAgentCurrentTurnEvidence.matches")
-            && runtimeSource.contains("allowsLearningOnlyAnswer")
-            && runtimeSource.contains("allowsSourcelessLimitation")
-            && runtimeSource.contains("StudyAgentSourceLimitation.isHonest")
+            && !runtimeSource.contains("allowsLearningOnlyAnswer")
+            && !runtimeSource.contains("allowsSourcelessLimitation")
+            && !runtimeSource.contains("StudyAgentSourceLimitation.isHonest")
             && runtimeSource.contains("text_only_policy")
             && runtimeSource.contains("private static let allowedToolNames")
             && runtimeSource.contains("\"read\"")
@@ -1138,10 +1063,10 @@ private func checkBundledAgentResources() throws {
             && runtimeSource.contains("WeiBeiAgentDataPaths.migrateHomePiAuthIfNeeded()")
             && runtimeSource.contains("WeiBei store wins for OAuth providers")
             && !runtimeSource.contains("Always take home OAuth entries")
-            && runtimeSource.contains("PI returned a content answer without a current-turn source citation")
+            && !runtimeSource.contains("PI returned a content answer without a current-turn source citation")
             && runtimeSource.contains("binary.sha256")
             && runtimeSource.contains("SecStaticCodeCheckValidity"),
-        "PI host enforces context-first answers, source labels, binary integrity, and code signatures"
+        "PI host preserves ordinary text answers while isolating rejected actions and validating binary integrity and code signatures"
     )
 }
 

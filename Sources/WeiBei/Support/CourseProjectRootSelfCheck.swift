@@ -7,6 +7,7 @@ enum CourseProjectRootSelfCheck {
         try courseEntryPresentationResetsIntent()
         try escapeBridgeDefersToPresentedSurfaces()
         try libraryGrantPersistsAndBalancesSecurityScope()
+        try unavailableCourseRootBlocksChatWithoutClearingDraft()
         try libraryCannotEqualOrSitInsideRegisteredCourse()
         try deniedSecurityScopeKeepsCourseUnavailable()
         try movedLibraryIntoWorkspaceIsRejectedOnRestore()
@@ -57,6 +58,49 @@ enum CourseProjectRootSelfCheck {
         try sharedRemovalCrashRecoversCommittedMembership()
         try sharedLinkRecoveryIsIdempotent()
         try legacyCourseSnapshotStillDecodes()
+    }
+
+    @MainActor
+    private static func unavailableCourseRootBlocksChatWithoutClearingDraft() throws {
+        let fixture = try Fixture(name: "unavailable-course-chat")
+        defer { fixture.remove() }
+        let library = try fixture.makeDirectory("课程资料库")
+        let courseRoot = library.appendingPathComponent("会话课程", isDirectory: true)
+        var store: WorkspaceStore? = makeStore(fixture: fixture)
+        try store?.configureCourseLibrary(at: library)
+        let courseID = try require(
+            store?.createCourse(title: "会话课程", at: courseRoot),
+            "无法建立课程 Chat 的课程根样本"
+        )
+        try check(store?.flushPendingWorkspaceSave() == true, "课程 Chat 样本无法保存")
+        store = nil
+
+        let workspaceURL = fixture.workspaceDirectory.appendingPathComponent("workspace.json")
+        var snapshot = try JSONDecoder().decode(
+            PersistedWorkspace.self,
+            from: Data(contentsOf: workspaceURL)
+        )
+        let session = StudySession(
+            title: "固定课程 Chat",
+            courseID: courseID
+        )
+        snapshot.studySessions = [session]
+        snapshot.activeStudySessionID = session.id
+        try JSONEncoder().encode(snapshot).write(to: workspaceURL, options: [.atomic])
+
+        let reopened = makeStore(fixture: fixture)
+        try FileManager.default.removeItem(at: courseRoot)
+        let marker = "课程根失效时不要清空这句话"
+        reopened.agentDraft = marker
+        reopened.askAgent()
+
+        try check(reopened.agentDraft == marker, "课程根失效时清空了用户草稿")
+        try check(reopened.lastFailedAgentQuestion == marker, "课程根失效时没有保留精确重试问题")
+        try check(!reopened.isAskingAgent, "课程根失效后仍启动了 Agent 请求")
+        try check(
+            reopened.messages.last?.text.contains("课程文件夹") == true,
+            "课程根失效时没有给出明确可见提示"
+        )
     }
 
     private static func courseEntryPresentationResetsIntent() throws {

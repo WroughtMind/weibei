@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
-  "piVersion": "0.80.2",
+  "piVersion": "0.82.1",
   "sourceRepository": "https://github.com/earendil-works/pi",
-  "sourceCommit": "0201806adfa825ab3d7957a4267d46e5030fd357",
+  "sourceCommit": "b4f293684bba718d59cc1157679bcf6157b3a7f5",
   "license": "MIT",
   "artifacts": {
     "darwin-arm64": {
       "archive": "pi-darwin-arm64.tar.gz",
-      "sha256": "c7d125bbdebd863fa76d92274458ba0eb405e5cde39db34db1f49f767ed9f1dd"
+      "sha256": "ca5b660ee0dbf2b4169f69753cf60f4e0edddff4a49427cdd34660e41280249f"
     },
     "darwin-x64": {
       "archive": "pi-darwin-x64.tar.gz",
-      "sha256": "d4b6b62a0c34c0f2e4cb16ee6fd4f0086b86ad70e0488fd3daa9231216d84e2b"
+      "sha256": "a28cd67f9397a5ad99f9387713bf1c134b747d4b6cb25e00db4f7d009ee9f8c2"
     }
   }
 }
