@@ -679,24 +679,30 @@
       box-sizing: border-box;
       padding: 1px 5px;
       color: var(--faint);
-      background: color-mix(in srgb, var(--code-paper) 92%, transparent);
-      border: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+      background: transparent;
+      border: 0;
       border-radius: 4px;
       outline: none;
+      caret-color: var(--cinnabar);
       font: 10px/1.4 "SF Mono", Menlo, ui-monospace, monospace;
       letter-spacing: 0;
       text-align: right;
     }
 
-    .weibei-code-language-input:focus {
-      color: var(--ink);
-      border-color: color-mix(in srgb, var(--cinnabar) 68%, var(--line));
-      box-shadow: 0 0 0 2px var(--cinnabar-soft);
-    }
-
     body[data-editable="false"] .weibei-code-language-input {
       pointer-events: none;
-      border-color: transparent;
+    }
+
+    .weibei-visually-hidden {
+      position: fixed !important;
+      width: 1px !important;
+      height: 1px !important;
+      padding: 0 !important;
+      margin: -1px !important;
+      overflow: hidden !important;
+      clip: rect(0, 0, 0, 0) !important;
+      white-space: nowrap !important;
+      border: 0 !important;
     }
 
     .ProseMirror pre code {
@@ -1248,6 +1254,16 @@
       color: var(--faint);
       font-size: 12px;
       line-height: 1.4;
+    }
+
+    .weibei-slash-error {
+      margin: 3px 4px 5px;
+      padding: 6px 7px;
+      color: var(--cinnabar);
+      background: var(--cinnabar-soft);
+      border-radius: 5px;
+      font-size: 11px;
+      line-height: 1.35;
     }
 
     .weibei-slash-table-panel {

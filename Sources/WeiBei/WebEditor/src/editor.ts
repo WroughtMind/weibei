@@ -74,6 +74,13 @@ const showFailure = (error: unknown): void => {
 const setEditable = (next: boolean): void => {
   isEditable = next !== false;
   document.body.dataset.editable = isEditable ? "true" : "false";
+  document
+    .querySelectorAll<HTMLInputElement>(".weibei-code-language-input")
+    .forEach((input) => {
+      input.readOnly = !isEditable;
+      input.tabIndex = isEditable ? 0 : -1;
+      input.setAttribute("aria-readonly", input.readOnly ? "true" : "false");
+    });
 };
 
 applyTheme(window.weiBeiTheme);

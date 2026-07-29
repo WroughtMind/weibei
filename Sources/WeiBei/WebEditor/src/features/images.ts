@@ -30,6 +30,7 @@ interface SavedImage {
 interface PendingAttachment {
   resolve: (image: SavedImage) => void;
   reject: (reason: Error) => void;
+  documentID: string;
 }
 
 /**
@@ -151,13 +152,21 @@ export function createImageFeature({
   };
 
   const requestAttachment = async (file: File): Promise<SavedImage> => {
+    const documentID = bridge.getDocumentID();
     const { alt, src } = await readImageAsBase64(file);
+    if (documentID !== bridge.getDocumentID()) {
+      throw new DOMException("Document changed", "AbortError");
+    }
     if (!bridge.hasHandler("imageAttachmentRequested")) {
       return { alt, src };
     }
     const id = `attachment-${Date.now()}-${(attachmentRequestID += 1)}`;
     return new Promise<SavedImage>((resolve, reject) => {
-      pendingAttachments.set(id, { resolve, reject });
+      pendingAttachments.set(id, {
+        resolve,
+        reject,
+        documentID,
+      });
       bridge.post("imageAttachmentRequested", {
         id,
         name: file.name || alt || "image",
@@ -219,6 +228,10 @@ export function createImageFeature({
     const pending = pendingAttachments.get(id);
     if (!pending) return;
     pendingAttachments.delete(id);
+    if (pending.documentID !== bridge.getDocumentID()) {
+      pending.reject(new DOMException("Document changed", "AbortError"));
+      return;
+    }
     pending.resolve({ src, alt });
   };
 
@@ -230,6 +243,34 @@ export function createImageFeature({
     if (!pending) return;
     pendingAttachments.delete(id);
     pending.reject(new Error(message || "Attachment save failed"));
+  };
+
+  /**
+   * Discards a native attachment response that belongs to a previous document.
+   *
+   * @param id - Native attachment request identifier
+   * @returns Whether a pending request was discarded
+   */
+  const discardAttachment = (id: string): boolean => {
+    const pending = pendingAttachments.get(id);
+    if (!pending) return false;
+    pendingAttachments.delete(id);
+    pending.reject(new DOMException("Document changed", "AbortError"));
+    return true;
+  };
+
+  /**
+   * Aborts all outstanding attachment requests before replacing the document.
+   *
+   * @returns Number of discarded requests
+   */
+  const discardAllAttachments = (): number => {
+    const pending = Array.from(pendingAttachments.values());
+    pendingAttachments.clear();
+    pending.forEach(({ reject }) =>
+      reject(new DOMException("Document changed", "AbortError")),
+    );
+    return pending.length;
   };
 
   /**
@@ -254,6 +295,8 @@ export function createImageFeature({
   };
 
   return {
+    discardAllAttachments,
+    discardAttachment,
     insertImageFiles,
     imageFilesFromItems,
     localImageUploader,

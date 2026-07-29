@@ -20,6 +20,7 @@ import {
   parseObsidianEmbed,
   parseObsidianTarget,
 } from "../../Sources/WeiBei/WebEditor/src/markdown/obsidian.js";
+import { slashCommands } from "../../Sources/WeiBei/WebEditor/src/features/slash/commands.js";
 
 afterEach(() => {
   setInterfaceLanguage("zh-Hans");
@@ -59,6 +60,50 @@ describe("WebEditor localization", () => {
     expect(editorLabel("openSource", { value: "design.md" })).toBe(
       "Open source: design.md",
     );
+  });
+
+  it("uses a language-neutral code language placeholder", () => {
+    expect(editorLabel("codeLanguagePlaceholder")).toBe("text");
+    setInterfaceLanguage("en");
+    expect(editorLabel("codeLanguagePlaceholder")).toBe("text");
+  });
+});
+
+describe("WebEditor Slash command aliases", () => {
+  it("publishes stable aliases without accepting whitespace forms", () => {
+    const stableAliases = [
+      "h1",
+      "h2",
+      "h3",
+      "bullet_list",
+      "ordered_list",
+      "task_list",
+      "quote",
+      "callout",
+      "code",
+      "divider",
+      "table",
+      "image",
+      "mermaid",
+    ];
+
+    expect(slashCommands).toHaveLength(13);
+    expect(
+      stableAliases.every((alias) =>
+        slashCommands.some((command) => command.aliases.includes(alias)),
+      ),
+    ).toBe(true);
+    expect(
+      slashCommands
+        .flatMap((command) => command.aliases)
+        .some((alias) => /\s/u.test(alias)),
+    ).toBe(false);
+    expect(
+      slashCommands.find((command) => command.id === "code")?.aliases,
+    ).toContain("dmk");
+    expect(
+      slashCommands.find((command) => command.id === "orderedList")?.aliases,
+    ).toContain("yxlb");
   });
 });
 

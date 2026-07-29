@@ -228,6 +228,12 @@ export function createCodeRendering({
           input.setAttribute("autocomplete", "off");
           input.setAttribute("autocapitalize", "none");
           input.setAttribute("spellcheck", "false");
+          input.readOnly = !isEditable();
+          input.tabIndex = isEditable() ? 0 : -1;
+          input.setAttribute(
+            "aria-readonly",
+            input.readOnly ? "true" : "false",
+          );
           input.maxLength = 32;
 
           const commit = () => {

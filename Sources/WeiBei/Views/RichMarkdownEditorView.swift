@@ -400,8 +400,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.markdown = $markdown
         context.coordinator.command = $command
         if context.coordinator.documentID != documentID {
-            context.coordinator.documentID = documentID
-            context.coordinator.setDocumentID(documentID)
+            context.coordinator.transition(toDocumentID: documentID)
         }
         context.coordinator.attachmentDirectory = attachmentDirectory
         context.coordinator.imageSchemeHandler.update(
@@ -458,6 +457,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
+        coordinator.invalidateDocumentRequests()
         for name in scriptMessageNames {
             view.configuration.userContentController.removeScriptMessageHandler(forName: name)
         }
@@ -609,6 +609,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         private var lastAppliedSearchQuery = ""
         private var lastAppliedFocusRequest = -1
         private var lastAppliedSelectionAskMarks = ""
+        private var documentRevision: UInt64 = 0
+        private var acceptsDocumentRequests = true
 
         init(
             documentID: String,
@@ -801,6 +803,26 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             evaluate("window.WeiBeiEditor?.setDocumentID(\(Self.json(id)))")
         }
 
+        /**
+         * Advances the document generation before notifying the WebEditor.
+         *
+         * @param id - Newly active document identity
+         */
+        func transition(toDocumentID id: String) {
+            guard documentID != id else { return }
+            documentID = id
+            documentRevision &+= 1
+            setDocumentID(id)
+        }
+
+        /**
+         * Invalidates asynchronous document work when the native editor is dismantled.
+         */
+        func invalidateDocumentRequests() {
+            acceptsDocumentRequests = false
+            documentRevision &+= 1
+        }
+
         func setMarkdownBaseURL(_ url: String) {
             evaluate("window.WeiBeiEditor?.setMarkdownBaseURL(\(Self.json(url)))")
         }
@@ -923,8 +945,14 @@ struct RichMarkdownEditorView: NSViewRepresentable {
          * @param documentID - Document identity captured when the command was issued
          */
         private func presentImagePicker(requestID: String, documentID requestedDocumentID: String) {
+            let requestedDocumentRevision = documentRevision
             guard let window = webView?.window else {
-                evaluate("window.WeiBeiEditor?.cancelImagePicker(\(Self.json(requestID)))")
+                evaluate("""
+                window.WeiBeiEditor?.rejectImagePicker(
+                  \(Self.json(requestID)),
+                  \(Self.json(interfaceLanguage.text("无法打开图片选择器", "Image picker could not be opened")))
+                )
+                """)
                 return
             }
             let panel = NSOpenPanel()
@@ -937,33 +965,99 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             panel.canChooseFiles = true
             panel.beginSheetModal(for: window) { [weak self] response in
                 guard let self else { return }
-                guard response == .OK,
+                guard self.acceptsDocumentRequests,
                       self.documentID == requestedDocumentID,
-                      let fileURL = panel.url,
-                      let attachment = self.saveImageAttachment(fromFileURL: fileURL) else {
+                      self.documentRevision == requestedDocumentRevision else {
+                    self.evaluate("window.WeiBeiEditor?.discardImagePicker(\(Self.json(requestID)))")
+                    return
+                }
+                guard response == .OK else {
                     self.evaluate("window.WeiBeiEditor?.cancelImagePicker(\(Self.json(requestID)))")
                     return
                 }
-                self.evaluate("""
-                window.WeiBeiEditor?.resolveImagePicker(
-                  \(Self.json(requestID)),
-                  \(Self.json(attachment.src)),
-                  \(Self.json(attachment.alt))
+                guard let fileURL = panel.url,
+                      let attachmentDirectory = self.attachmentDirectory else {
+                    self.evaluate("""
+                    window.WeiBeiEditor?.rejectImagePicker(
+                      \(Self.json(requestID)),
+                      \(Self.json(self.interfaceLanguage.text("图片无法写入本地附件目录", "Image could not be written to the local attachments folder")))
+                    )
+                    """)
+                    return
+                }
+
+                let markdownBaseURLString = self.markdownBaseURLString
+                let failureMessage = self.interfaceLanguage.text(
+                    "图片读取或写入失败，请检查文件与附件目录权限",
+                    "Image could not be read or saved. Check the file and attachments folder permissions."
                 )
-                """)
+                DispatchQueue.global(qos: .userInitiated).async {
+                    let result = Result {
+                        try Self.saveImageAttachment(
+                            fromFileURL: fileURL,
+                            attachmentDirectory: attachmentDirectory,
+                            markdownBaseURLString: markdownBaseURLString
+                        )
+                    }
+                    DispatchQueue.main.async { [weak self] in
+                        guard let self else {
+                            if case let .success(attachment) = result {
+                                let savedFileURL = attachmentDirectory.appendingPathComponent(
+                                    URL(fileURLWithPath: attachment.src).lastPathComponent
+                                )
+                                try? FileManager.default.removeItem(at: savedFileURL)
+                            }
+                            return
+                        }
+                        guard self.acceptsDocumentRequests,
+                              self.documentID == requestedDocumentID,
+                              self.documentRevision == requestedDocumentRevision else {
+                            if case let .success(attachment) = result {
+                                let savedFileURL = attachmentDirectory.appendingPathComponent(
+                                    URL(fileURLWithPath: attachment.src).lastPathComponent
+                                )
+                                try? FileManager.default.removeItem(at: savedFileURL)
+                            }
+                            self.evaluate("window.WeiBeiEditor?.discardImagePicker(\(Self.json(requestID)))")
+                            return
+                        }
+                        switch result {
+                        case let .success(attachment):
+                            self.evaluate("""
+                            window.WeiBeiEditor?.resolveImagePicker(
+                              \(Self.json(requestID)),
+                              \(Self.json(attachment.src)),
+                              \(Self.json(attachment.alt))
+                            )
+                            """)
+                        case .failure:
+                            self.evaluate("""
+                            window.WeiBeiEditor?.rejectImagePicker(
+                              \(Self.json(requestID)),
+                              \(Self.json(failureMessage))
+                            )
+                            """)
+                        }
+                    }
+                }
             }
         }
 
         /**
-         * Saves a file chosen by the native picker through the existing Markdown attachment store.
+         * Reads and saves a file chosen by the native picker.
          *
          * @param fileURL - User-selected image URL
-         * @returns Saved attachment metadata, or nil when the file cannot be stored
+         * @param attachmentDirectory - Destination directory captured for the requesting document
+         * @param markdownBaseURLString - Markdown base URL captured for the requesting document
+         * @returns Saved attachment metadata
          */
-        private func saveImageAttachment(fromFileURL fileURL: URL) -> MarkdownAttachment? {
-            guard let attachmentDirectory,
-                  let data = try? Data(contentsOf: fileURL) else { return nil }
-            return try? MarkdownAttachmentStore.save(
+        private static func saveImageAttachment(
+            fromFileURL fileURL: URL,
+            attachmentDirectory: URL,
+            markdownBaseURLString: String
+        ) throws -> MarkdownAttachment {
+            let data = try Data(contentsOf: fileURL, options: [.mappedIfSafe])
+            return try MarkdownAttachmentStore.save(
                 data: data,
                 originalName: fileURL.lastPathComponent,
                 mime: MarkdownAttachmentStore.mimeType(forFileExtension: fileURL.pathExtension),

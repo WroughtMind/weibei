@@ -11,6 +11,8 @@ public struct MarkdownAttachment: Equatable {
 }
 
 public enum MarkdownAttachmentStore {
+    private static let attachmentWriteLock = NSLock()
+
     public static func save(
         dataURL: String,
         originalName: String,
@@ -52,6 +54,8 @@ public enum MarkdownAttachmentStore {
             : URL(fileURLWithPath: originalName).deletingPathExtension().lastPathComponent
         let stem = safeFileStem(rawStem, fallback: "image", limit: 72)
 
+        attachmentWriteLock.lock()
+        defer { attachmentWriteLock.unlock() }
         var target = attachmentDirectory.appendingPathComponent("\(stem).\(ext)")
         var index = 2
         while FileManager.default.fileExists(atPath: target.path) {
@@ -59,7 +63,7 @@ public enum MarkdownAttachmentStore {
             index += 1
         }
 
-        try data.write(to: target, options: [.atomic])
+        try data.write(to: target, options: .atomic)
         return MarkdownAttachment(
             src: relativePath(to: target, markdownBaseURLString: markdownBaseURLString),
             alt: stem.replacingOccurrences(of: "-", with: " ")
@@ -105,7 +109,7 @@ public enum MarkdownAttachmentStore {
     }
 
     public static func isSupportedImageExtension(_ value: String) -> Bool {
-        ["png", "jpg", "jpeg", "gif", "webp", "tiff", "heic"].contains(value.lowercased())
+        ["png", "jpg", "jpeg", "gif", "webp", "tif", "tiff", "heic"].contains(value.lowercased())
     }
 
     public static func mimeType(forFileExtension value: String) -> String {
@@ -113,7 +117,7 @@ public enum MarkdownAttachmentStore {
         case "jpg", "jpeg": return "image/jpeg"
         case "gif": return "image/gif"
         case "webp": return "image/webp"
-        case "tiff": return "image/tiff"
+        case "tif", "tiff": return "image/tiff"
         case "heic": return "image/heic"
         default: return "image/png"
         }

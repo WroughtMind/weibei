@@ -7,11 +7,14 @@ public struct NodeDependencyStamp: Codable, Equatable, Sendable {
     public let nodeVersion: NodeVersion
     /// Lowercase SHA-256 digest of `package-lock.json`.
     public let packageLockSHA256: String
+    /// Lowercase SHA-256 digest of `package.json`.
+    public let packageJSONSHA256: String
 
-    /// Creates a stamp for one Node.js version and lockfile digest.
-    public init(nodeVersion: NodeVersion, packageLockSHA256: String) {
+    /// Creates a stamp for one Node.js version and both npm manifest digests.
+    public init(nodeVersion: NodeVersion, packageLockSHA256: String, packageJSONSHA256: String) {
         self.nodeVersion = nodeVersion
         self.packageLockSHA256 = packageLockSHA256
+        self.packageJSONSHA256 = packageJSONSHA256
     }
 }
 
@@ -20,22 +23,33 @@ public struct NodeDependencyStampStore: Sendable {
     /// Creates a stamp store.
     public init() {}
 
-    /// Creates the expected stamp for the active Node.js version and lockfile.
+    /// Creates the expected stamp for the active Node.js version and npm manifests.
     ///
     /// - Parameters:
     ///   - nodeVersion: Active supported Node.js version.
+    ///   - packageJSON: Root npm package manifest.
     ///   - packageLock: Repository package lockfile.
     /// - Returns: Stamp describing the locked dependency installation inputs.
     public func expectedStamp(
         nodeVersion: NodeVersion,
+        packageJSON: URL,
         packageLock: URL
     ) throws -> NodeDependencyStamp {
+        guard FileManager.default.fileExists(atPath: packageJSON.path) else {
+            throw BuildWorkflowError.missingRequiredFile(packageJSON)
+        }
         guard FileManager.default.fileExists(atPath: packageLock.path) else {
             throw BuildWorkflowError.missingRequiredFile(packageLock)
         }
+        let packageData = try Data(contentsOf: packageJSON)
         let lockData = try Data(contentsOf: packageLock)
-        let digest = SHA256.hash(data: lockData).map { String(format: "%02x", $0) }.joined()
-        return NodeDependencyStamp(nodeVersion: nodeVersion, packageLockSHA256: digest)
+        let packageDigest = SHA256.hash(data: packageData).map { String(format: "%02x", $0) }.joined()
+        let lockDigest = SHA256.hash(data: lockData).map { String(format: "%02x", $0) }.joined()
+        return NodeDependencyStamp(
+            nodeVersion: nodeVersion,
+            packageLockSHA256: lockDigest,
+            packageJSONSHA256: packageDigest
+        )
     }
 
     /// Determines whether `npm ci` must recreate the locked installation.

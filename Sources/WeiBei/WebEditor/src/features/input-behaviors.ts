@@ -40,6 +40,16 @@ export function createInputBehaviors({
   showFailure,
   slash,
 }: InputBehaviorDependencies) {
+  /**
+   * Ignores document-switch cancellations while surfacing real image failures.
+   *
+   * @param error - Image insertion failure
+   */
+  const reportImageFailure = (error: unknown): void => {
+    if (error instanceof DOMException && error.name === "AbortError") return;
+    showFailure(error);
+  };
+
   const listItemTypeNames = new Set(["list_item", "task_list_item"]);
   const meaningfulListText = (node: ProseMirrorNode): string =>
     (node.textContent || "").replace(/[\u200B\uFEFF]/g, "").trim();
@@ -119,6 +129,68 @@ export function createInputBehaviors({
   };
 
   /**
+   * Returns the rendered rectangle of a code character at a text offset.
+   *
+   * A DOM range avoids the upstream line bias of `coordsAtPos` at newline
+   * boundaries while still following browser line wrapping.
+   *
+   * @param codeDOM - ProseMirror DOM node for the code block
+   * @param textOffset - Character offset in the code block
+   * @returns Character rectangle when one can be measured
+   */
+  const codeCharacterRectAtOffset = (
+    codeDOM: Node | null,
+    textOffset: number,
+  ): DOMRect | null => {
+    if (!(codeDOM instanceof HTMLElement)) return null;
+    const codeContent = codeDOM.matches("code")
+      ? codeDOM
+      : codeDOM.querySelector("code") || codeDOM;
+    const walker = document.createTreeWalker(
+      codeContent,
+      NodeFilter.SHOW_TEXT,
+    );
+    let remainingOffset = Math.max(0, Math.trunc(textOffset));
+    let fallback: { node: Node; offset: number } | null = null;
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const text = node.textContent || "";
+      if (text.length === 0) continue;
+      for (let index = text.length - 1; index >= 0; index -= 1) {
+        if (text[index] !== "\n" && text[index] !== "\r") {
+          fallback = { node, offset: index };
+          break;
+        }
+      }
+      if (remainingOffset >= text.length) {
+        remainingOffset -= text.length;
+        continue;
+      }
+      let offset = remainingOffset;
+      while (
+        offset < text.length &&
+        (text[offset] === "\n" || text[offset] === "\r")
+      ) {
+        offset += 1;
+      }
+      if (offset >= text.length) {
+        remainingOffset = 0;
+        continue;
+      }
+      const range = document.createRange();
+      range.setStart(node, offset);
+      range.setEnd(node, offset + 1);
+      const rect = range.getBoundingClientRect();
+      return rect.height > 1 && rect.width > 0 ? rect : null;
+    }
+    if (!fallback) return null;
+    const range = document.createRange();
+    range.setStart(fallback.node, fallback.offset);
+    range.setEnd(fallback.node, fallback.offset + 1);
+    const rect = range.getBoundingClientRect();
+    return rect.height > 1 && rect.width > 0 ? rect : null;
+  };
+
+  /**
    * Moves the caret out of a terminal code block using forward navigation keys.
    *
    * @param view - Current ProseMirror view
@@ -147,28 +219,21 @@ export function createInputBehaviors({
     if ($from.indexAfter(-1) !== container.childCount) return false;
     let atExitBoundary = $from.parentOffset === $from.parent.content.size;
     if (event.key === "ArrowDown" && !atExitBoundary) {
-      atExitBoundary = view.endOfTextblock("down");
-      if (!atExitBoundary) {
-        const codeDOM = view.nodeDOM($from.before());
-        const domPosition = view.domAtPos($from.pos);
-        if (
-          codeDOM instanceof HTMLElement &&
-          codeDOM.contains(domPosition.node)
-        ) {
-          const trailingRange = document.createRange();
-          trailingRange.setStart(domPosition.node, domPosition.offset);
-          trailingRange.setEnd(codeDOM, codeDOM.childNodes.length);
-          const caretRect = view.coordsAtPos($from.pos);
-          atExitBoundary = Array.from(trailingRange.getClientRects())
-            .filter((rect) => rect.height > 1 && rect.width > 0)
-            .every((rect) => rect.top < caretRect.bottom + 1);
-        }
-        if (!atExitBoundary) {
-          atExitBoundary = !$from.parent.textContent
-            .slice($from.parentOffset)
-            .includes("\n");
-        }
-      }
+      const codeDOM = view.nodeDOM($from.before());
+      const caretRect = codeCharacterRectAtOffset(
+        codeDOM,
+        $from.parentOffset,
+      );
+      const finalRect = codeCharacterRectAtOffset(
+        codeDOM,
+        $from.parent.content.size - 1,
+      );
+      atExitBoundary = Boolean(
+        caretRect &&
+        finalRect &&
+        finalRect.top < caretRect.bottom + 1 &&
+        finalRect.bottom > caretRect.top - 1,
+      );
     }
     if (!atExitBoundary) return false;
     return exitCode(view.state, view.dispatch);
@@ -195,7 +260,7 @@ export function createInputBehaviors({
             );
             if (files.length === 0) return false;
             event.preventDefault();
-            images.insertImageFiles(files).catch(showFailure);
+            images.insertImageFiles(files).catch(reportImageFailure);
             return true;
           },
           handleDrop(_, event) {
@@ -203,7 +268,7 @@ export function createInputBehaviors({
             const files = images.imageFilesFromItems(event.dataTransfer?.items);
             if (files.length === 0) return false;
             event.preventDefault();
-            images.insertImageFiles(files).catch(showFailure);
+            images.insertImageFiles(files).catch(reportImageFailure);
             return true;
           },
           handleTextInput(view, from, to, text) {

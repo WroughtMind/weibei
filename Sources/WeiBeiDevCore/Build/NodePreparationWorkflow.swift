@@ -34,8 +34,8 @@ public struct NodePreparationWorkflow: Sendable {
 
     /// Ensures the repository has dependencies installed with Node.js 22.
     ///
-    /// `npm ci` runs only when the lockfile digest or complete Node.js version
-    /// differs from the recorded installation inputs.
+    /// `npm ci` runs when either npm manifest, the complete Node.js version, the
+    /// required build executable, or the installed dependency graph is stale.
     ///
     /// - Returns: Active Node.js version and whether installation occurred.
     public func prepare() async throws -> NodePreparationResult {
@@ -58,13 +58,31 @@ public struct NodePreparationWorkflow: Sendable {
         try version.requireSupportedMajor()
         let expectedStamp = try stampStore.expectedStamp(
             nodeVersion: version,
+            packageJSON: repository.packageJSON,
             packageLock: repository.packageLock
         )
 
-        guard stampStore.needsInstallation(
+        var needsInstallation = stampStore.needsInstallation(
             expectedStamp: expectedStamp,
             stampURL: repository.nodePreparationStamp
-        ) else {
+        )
+        let esbuild = repository.nodeModulesDirectory.appendingPathComponent(".bin/esbuild")
+        if !needsInstallation {
+            if !FileManager.default.isExecutableFile(atPath: esbuild.path) {
+                needsInstallation = true
+            } else {
+                let integrityCommand = ProcessExecutionRequest(
+                    executableURL: toolchain.npm,
+                    arguments: ["ls", "--all"],
+                    workingDirectoryURL: repository.rootDirectory,
+                    timeout: .seconds(300)
+                )
+                let integrityResult = try await processExecutor.execute(integrityCommand)
+                needsInstallation = !integrityResult.succeeded
+            }
+        }
+
+        guard needsInstallation else {
             return NodePreparationResult(version: version, installedDependencies: false)
         }
 
@@ -76,6 +94,17 @@ public struct NodePreparationWorkflow: Sendable {
         )
         let installResult = try await processExecutor.execute(installCommand)
         try requireSuccess(installResult, request: installCommand)
+        guard FileManager.default.isExecutableFile(atPath: esbuild.path) else {
+            throw BuildWorkflowError.missingBuildProduct(esbuild)
+        }
+        let integrityCommand = ProcessExecutionRequest(
+            executableURL: toolchain.npm,
+            arguments: ["ls", "--all"],
+            workingDirectoryURL: repository.rootDirectory,
+            timeout: .seconds(300)
+        )
+        let integrityResult = try await processExecutor.execute(integrityCommand)
+        try requireSuccess(integrityResult, request: integrityCommand)
         try stampStore.write(expectedStamp, to: repository.nodePreparationStamp)
         return NodePreparationResult(version: version, installedDependencies: true)
     }

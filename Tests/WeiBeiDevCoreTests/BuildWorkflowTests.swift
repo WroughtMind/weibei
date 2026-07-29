@@ -65,12 +65,15 @@ final class BuildWorkflowTests: XCTestCase {
             .appendingPathComponent("weibei-node-stamp-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
+        let packageJSON = directory.appendingPathComponent("package.json")
         let packageLock = directory.appendingPathComponent("package-lock.json")
         let stampURL = directory.appendingPathComponent("node_modules/.weibei-install-state.json")
+        try Data("{\"name\":\"fixture\"}".utf8).write(to: packageJSON)
         try Data("{\"lockfileVersion\":3}".utf8).write(to: packageLock)
         let store = NodeDependencyStampStore()
         let initialStamp = try store.expectedStamp(
             nodeVersion: NodeVersion(major: 22, minor: 22, patch: 3),
+            packageJSON: packageJSON,
             packageLock: packageLock
         )
 
@@ -80,6 +83,7 @@ final class BuildWorkflowTests: XCTestCase {
 
         let newerNodeStamp = try store.expectedStamp(
             nodeVersion: NodeVersion(major: 22, minor: 23, patch: 0),
+            packageJSON: packageJSON,
             packageLock: packageLock
         )
         XCTAssertTrue(store.needsInstallation(expectedStamp: newerNodeStamp, stampURL: stampURL))
@@ -87,9 +91,18 @@ final class BuildWorkflowTests: XCTestCase {
         try Data("{\"lockfileVersion\":3,\"changed\":true}".utf8).write(to: packageLock)
         let changedLockStamp = try store.expectedStamp(
             nodeVersion: NodeVersion(major: 22, minor: 22, patch: 3),
+            packageJSON: packageJSON,
             packageLock: packageLock
         )
         XCTAssertTrue(store.needsInstallation(expectedStamp: changedLockStamp, stampURL: stampURL))
+
+        try Data("{\"name\":\"changed\"}".utf8).write(to: packageJSON)
+        let changedPackageStamp = try store.expectedStamp(
+            nodeVersion: NodeVersion(major: 22, minor: 22, patch: 3),
+            packageJSON: packageJSON,
+            packageLock: packageLock
+        )
+        XCTAssertTrue(store.needsInstallation(expectedStamp: changedPackageStamp, stampURL: stampURL))
     }
 
     /// Requires every generated resource to exist and contain data.
@@ -122,10 +135,13 @@ final class BuildWorkflowTests: XCTestCase {
     func testNodePreparationRunsNPMCIOnlyWhenStampIsStale() async throws {
         let repository = try makeRepositoryFixture()
         defer { try? FileManager.default.removeItem(at: repository.rootDirectory) }
+        try createExecutable(repository.nodeModulesDirectory.appendingPathComponent(".bin/esbuild"))
         let executor = StubProcessExecutor(outputs: [
             StubProcessOutput(standardOutput: "v22.22.3\n"),
             StubProcessOutput(),
+            StubProcessOutput(),
             StubProcessOutput(standardOutput: "v22.22.3\n"),
+            StubProcessOutput(),
         ])
         let workflow = NodePreparationWorkflow(
             repository: repository,
@@ -142,7 +158,48 @@ final class BuildWorkflowTests: XCTestCase {
         XCTAssertTrue(firstResult.installedDependencies)
         XCTAssertFalse(secondResult.installedDependencies)
         let requests = await executor.recordedRequests()
-        XCTAssertEqual(requests.map(\.arguments), [["--version"], ["ci"], ["--version"]])
+        XCTAssertEqual(
+            requests.map(\.arguments),
+            [["--version"], ["ci"], ["ls", "--all"], ["--version"], ["ls", "--all"]]
+        )
+    }
+
+    /// Reinstalls a stamped dependency tree when npm reports missing or invalid packages.
+    func testNodePreparationRepairsInvalidInstalledDependencyTree() async throws {
+        let repository = try makeRepositoryFixture()
+        defer { try? FileManager.default.removeItem(at: repository.rootDirectory) }
+        try createExecutable(repository.nodeModulesDirectory.appendingPathComponent(".bin/esbuild"))
+        let version = NodeVersion(major: 22, minor: 22, patch: 3)
+        let stampStore = NodeDependencyStampStore()
+        let stamp = try stampStore.expectedStamp(
+            nodeVersion: version,
+            packageJSON: repository.packageJSON,
+            packageLock: repository.packageLock
+        )
+        try stampStore.write(stamp, to: repository.nodePreparationStamp)
+        let executor = StubProcessExecutor(outputs: [
+            StubProcessOutput(standardOutput: "v22.22.3\n"),
+            StubProcessOutput(termination: .exited(code: 1)),
+            StubProcessOutput(),
+            StubProcessOutput(),
+        ])
+        let workflow = NodePreparationWorkflow(
+            repository: repository,
+            toolchain: NodeBuildToolchain(
+                node: repository.rootDirectory.appendingPathComponent("tools/node"),
+                npm: repository.rootDirectory.appendingPathComponent("tools/npm")
+            ),
+            processExecutor: executor
+        )
+
+        let result = try await workflow.prepare()
+
+        XCTAssertTrue(result.installedDependencies)
+        let requests = await executor.recordedRequests()
+        XCTAssertEqual(
+            requests.map(\.arguments),
+            [["--version"], ["ls", "--all"], ["ci"], ["ls", "--all"]]
+        )
     }
 
     /// Builds once, runs Swift package tests, and invokes each verifier directly from the bin path.
@@ -150,6 +207,7 @@ final class BuildWorkflowTests: XCTestCase {
         let repository = try makeRepositoryFixture()
         defer { try? FileManager.default.removeItem(at: repository.rootDirectory) }
         try createEditorProducts(repository: repository)
+        try createExecutable(repository.nodeModulesDirectory.appendingPathComponent(".bin/esbuild"))
         let productsDirectory = repository.rootDirectory.appendingPathComponent(".build/debug")
         try FileManager.default.createDirectory(at: productsDirectory, withIntermediateDirectories: true)
         for name in ["WeiBeiSelfCheck", "WeiBei", "WeiBeiWebEditorCheck", "WeiBeiPiCheck"] {
@@ -159,6 +217,7 @@ final class BuildWorkflowTests: XCTestCase {
         try createExecutable(piExecutable)
         let executor = StubProcessExecutor(outputs: [
             StubProcessOutput(standardOutput: "v22.22.3\n"),
+            StubProcessOutput(),
             StubProcessOutput(),
             StubProcessOutput(),
             StubProcessOutput(),

@@ -1046,6 +1046,7 @@ default:
 SWIFT
 
 build_app_bundle() {
+  swift run WeiBeiDevTool prepare web-editor
   BUILD_SOURCE_FINGERPRINT="$(source_input_fingerprint)"
 
   package_app_from_build_dir() {
