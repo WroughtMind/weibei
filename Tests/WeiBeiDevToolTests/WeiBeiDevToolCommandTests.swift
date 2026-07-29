@@ -1,6 +1,7 @@
 import ArgumentParser
 import Foundation
 import XCTest
+import WeiBeiDevCore
 @testable import WeiBeiDevTool
 
 final class WeiBeiDevToolCommandTests: XCTestCase {
@@ -47,6 +48,68 @@ final class WeiBeiDevToolCommandTests: XCTestCase {
             XCTFail("预期未知场景被拒绝")
         } catch {
             XCTAssertTrue(VerifyCommand.message(for: error).contains("not-registered"))
+        }
+    }
+
+    /// 验证裸 verify 映射为由核心注册表选择单一默认场景的请求。
+    func testBareVerifyBuildsDefaultScenarioRequest() async throws {
+        let workflow = RecordingWorkflow()
+        let output = RecordingOutput()
+        DevToolServices.install(workflow: workflow, output: output)
+        defer { DevToolServices.reset() }
+        var command = try VerifyCommand.parse([])
+
+        try await command.run()
+
+        let requests = await workflow.requests
+        XCTAssertEqual(
+            requests,
+            [
+                .verify(
+                    VerificationOptions(
+                        scenario: nil,
+                        runsAllScenarios: false,
+                        includesLivePi: false,
+                        performsVisualChecks: false,
+                        failsFast: false
+                    )
+                )
+            ]
+        )
+    }
+
+    /// 验证显式全部场景完整映射，且在线 PI 仍需单独许可。
+    func testVerifyAllBuildsTypedOptions() async throws {
+        let workflow = RecordingWorkflow()
+        let output = RecordingOutput()
+        DevToolServices.install(workflow: workflow, output: output)
+        defer { DevToolServices.reset() }
+        var command = try VerifyCommand.parse(["--all", "--include-live-pi"])
+
+        try await command.run()
+
+        let requests = await workflow.requests
+        XCTAssertEqual(
+            requests,
+            [
+                .verify(
+                    VerificationOptions(
+                        scenario: nil,
+                        runsAllScenarios: true,
+                        includesLivePi: true,
+                        performsVisualChecks: false,
+                        failsFast: false
+                    )
+                )
+            ]
+        )
+    }
+
+    /// 验证应用支持的每个 Rich Answer fixture 都可由 CLI 显式选择。
+    func testVerifyAcceptsEveryRichAnswerScenario() throws {
+        for id in VerificationScenarioRegistry.richAnswerScenarioIDs {
+            let command = try VerifyCommand.parse(["--scenario", id.rawValue])
+            XCTAssertEqual(command.scenario?.rawValue, id.rawValue)
         }
     }
 

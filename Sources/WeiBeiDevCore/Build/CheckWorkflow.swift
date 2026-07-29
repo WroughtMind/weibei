@@ -135,11 +135,17 @@ public struct CheckWorkflow: @unchecked Sendable {
     ) async throws -> ProcessExecutionResult {
         let result = try await processExecutor.execute(request)
         guard result.succeeded else {
+            let diagnostics = [
+                result.standardOutput?.stringUTF8,
+                result.standardError?.stringUTF8,
+            ]
+                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+                .joined(separator: "\n")
             throw BuildWorkflowError.commandFailed(
                 command: ([request.executableURL.path] + request.arguments).joined(separator: " "),
                 exitDescription: String(describing: result.termination),
-                standardError: (result.standardError?.stringUTF8 ?? "")
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                standardError: diagnostics
             )
         }
         return result

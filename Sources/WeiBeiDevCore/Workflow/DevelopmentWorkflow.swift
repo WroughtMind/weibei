@@ -33,6 +33,22 @@ public struct DevelopmentVerificationOptions: Sendable {
     }
 }
 
+extension VerificationScenarioRegistry {
+    /// 将验证选项解析为确定的场景列表，保证 CLI 默认、单场景与完整套件共用同一选择规则。
+    func scenarios(for options: DevelopmentVerificationOptions) throws -> [VerificationScenario] {
+        if let scenarioName = options.scenario {
+            guard let scenario = scenario(named: scenarioName) else {
+                throw DevelopmentWorkflowError.unknownScenario(scenarioName)
+            }
+            return [scenario]
+        }
+        if options.allScenarios {
+            return allScenarios(includeLivePI: options.includeLivePI)
+        }
+        return defaultScenarios
+    }
+}
+
 /// Stable failures produced while composing the developer workflows.
 public enum DevelopmentWorkflowError: Error, LocalizedError, Sendable {
     case commandFailed(tool: String, termination: ProcessTermination, standardError: String)
@@ -302,17 +318,7 @@ public struct DevelopmentWorkflow {
             distributionDirectory: temporaryRootURL.appendingPathComponent("verify", isDirectory: true)
         ).appBundle
         let registry = VerificationScenarioRegistry()
-        let scenarios: [VerificationScenario]
-        if let scenarioName = options.scenario {
-            guard let scenario = registry.scenario(named: scenarioName) else {
-                throw DevelopmentWorkflowError.unknownScenario(scenarioName)
-            }
-            scenarios = [scenario]
-        } else if options.allScenarios {
-            scenarios = registry.allScenarios(includeLivePI: options.includeLivePI)
-        } else {
-            scenarios = registry.defaultScenarios
-        }
+        let scenarios = try registry.scenarios(for: options)
 
         let artifactsRoot = repository.rootDirectory
             .appendingPathComponent(".build/weibei-dev-tool/verification", isDirectory: true)

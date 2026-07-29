@@ -118,15 +118,15 @@ struct ContentView: View {
         // Show the selection capsule in multi-pane as well as immersive reading.
         // When the chat pane is open, the float still appears; "问" routes into the
         // conversation via `routesToConversation` (do not hide the capsule).
-        !store.courseWorkspacePresented
-            && store.canShowSelectionPromptSurface
-            && SelectionFloatingAgentPlacement.isVisible(
-                surface: store.agentSurface,
-                hasSelection: store.selectionContext != nil || store.keepFloatingSelectionForAnswer,
-                hasAnchor: store.selectionAnchor != nil,
-                pinned: store.pinnedFloatingAgent,
-                keepOpen: store.keepFloatingSelectionForAnswer
-            )
+        AppChromePolicy.showsGlobalFloatingAgent(
+            courseWorkspacePresented: store.courseWorkspacePresented,
+            canShowSelectionPromptSurface: store.canShowSelectionPromptSurface,
+            surface: store.agentSurface,
+            hasSelection: store.selectionContext != nil || store.keepFloatingSelectionForAnswer,
+            hasAnchor: store.selectionAnchor != nil,
+            pinned: store.pinnedFloatingAgent,
+            keepOpen: store.keepFloatingSelectionForAnswer
+        )
     }
 
     private var isImmersiveLayout: Bool {
@@ -365,7 +365,10 @@ private struct UnifiedTopBarView: View {
     }
 
     private var shouldShowSearchAction: Bool {
-        store.hasSelectedMaterial && hasReaderScopedTopActions
+        AppChromePolicy.showsReaderSearchAction(
+            hasSelectedMaterial: store.hasSelectedMaterial,
+            readerIsActive: hasReaderScopedTopActions
+        )
     }
 
     private var hasReaderScopedTopActions: Bool {

@@ -21,6 +21,18 @@ enum ModelListStatus: Equatable {
     }
 }
 
+struct AgentRequestRevisionSnapshot: Equatable {
+    let workspace: UInt64
+    let memory: UInt64
+
+    /**
+     * 判断异步 Agent 结果是否仍属于当前工作区和学习记忆版本。
+     */
+    func isCurrent(workspace: UInt64, memory: UInt64) -> Bool {
+        self.workspace == workspace && self.memory == memory
+    }
+}
+
 enum NotebookCreationKind: String {
     case blank
     case currentMaterial
@@ -305,10 +317,8 @@ final class WorkspaceStore: ObservableObject {
     @Published var openAIAPIKey: String = ""
     @Published var openAIKeyStatus: String?
     @Published var agentAuthMethod: AgentAuthMethod = .apiKey
-    @Published var agentCredentialProfiles: [AgentCredentialProfile] = AgentCredentialProfileStore.loadProfiles()
-    @Published var activeAgentProfileID: UUID = AgentCredentialProfileStore.activeProfileID()
-        ?? AgentCredentialProfileStore.loadProfiles().first?.id
-        ?? AgentCredentialProfileStore.defaultProfile().id
+    @Published var agentCredentialProfiles: [AgentCredentialProfile]
+    @Published var activeAgentProfileID: UUID
     // Model-list discovery (settings UI). Backed by `AgentModelListService`.
     @Published var availableModels: [String] = []
     @Published var modelListStatus: ModelListStatus = .idle
@@ -340,6 +350,9 @@ final class WorkspaceStore: ObservableObject {
     private let notebookMarkdownWriter: (String, URL) throws -> Void
     private let notebookFileMover: (URL, URL) throws -> Void
     private let workspaceSnapshotWriter: (Data, URL) throws -> Void
+    private let storedAPIKeyResolver: (() -> String)?
+    private let modelListFetcher: (ModelListStrategy, String) async throws -> [String]
+    private let agentRequestExecutor: ((StudyAgentRequest) async throws -> StudyAgentReply)?
     private let piRuntime: PiAgentRuntime
     private let courseDocumentSearchIndex: CourseDocumentSearchIndex
     private var activeAgentRequestID: UUID?
@@ -448,7 +461,7 @@ final class WorkspaceStore: ObservableObject {
 
     private static let shortcutModifierMask: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
 
-    let sampleItems: [StudyItem] = WorkspaceStore.makeSampleItems()
+    let sampleItems: [StudyItem]
 
     convenience init() {
         let folder = Self.workspaceRootDirectory()
@@ -462,8 +475,23 @@ final class WorkspaceStore: ObservableObject {
         notebookMarkdownReader: @escaping (URL) throws -> String = WorkspaceStore.readNotebookMarkdown,
         notebookMarkdownWriter: @escaping (String, URL) throws -> Void = WorkspaceStore.writeNotebookMarkdown,
         notebookFileMover: @escaping (URL, URL) throws -> Void = WorkspaceStore.moveNotebookFile,
-        workspaceSnapshotWriter: @escaping (Data, URL) throws -> Void = WorkspaceStore.writeWorkspaceSnapshot
+        workspaceSnapshotWriter: @escaping (Data, URL) throws -> Void = WorkspaceStore.writeWorkspaceSnapshot,
+        credentialProfiles: [AgentCredentialProfile]? = nil,
+        activeCredentialProfileID: UUID? = nil,
+        storedAPIKeyResolver: (() -> String)? = nil,
+        modelListFetcher: @escaping (ModelListStrategy, String) async throws -> [String] = {
+            try await AgentModelListService.shared.fetchModels(strategy: $0, apiKey: $1)
+        },
+        agentRequestExecutor: ((StudyAgentRequest) async throws -> StudyAgentReply)? = nil
     ) {
+        let loadedProfiles = credentialProfiles ?? AgentCredentialProfileStore.loadProfiles()
+        let resolvedActiveProfileID = activeCredentialProfileID
+            ?? AgentCredentialProfileStore.activeProfileID()
+            ?? loadedProfiles.first?.id
+            ?? AgentCredentialProfileStore.defaultProfile().id
+        sampleItems = Self.makeSampleItems(workspaceDirectory: folder)
+        agentCredentialProfiles = loadedProfiles
+        activeAgentProfileID = resolvedActiveProfileID
         storageURL = folder.appendingPathComponent("workspace.json")
         notebookRenameJournalURL = folder.appendingPathComponent("pending-notebook-rename.json")
         self.importedFileIdentityResolver = importedFileIdentityResolver
@@ -471,6 +499,9 @@ final class WorkspaceStore: ObservableObject {
         self.notebookMarkdownWriter = notebookMarkdownWriter
         self.notebookFileMover = notebookFileMover
         self.workspaceSnapshotWriter = workspaceSnapshotWriter
+        self.storedAPIKeyResolver = storedAPIKeyResolver
+        self.modelListFetcher = modelListFetcher
+        self.agentRequestExecutor = agentRequestExecutor
         piRuntime = PiAgentRuntime(runtimeDirectory: folder.appendingPathComponent("AgentRuntime", isDirectory: true))
         let courseIndexDirectory = folder.appendingPathComponent("CourseIndex", isDirectory: true)
         Self.removeLegacyCourseIndex(in: courseIndexDirectory)
@@ -2907,7 +2938,7 @@ final class WorkspaceStore: ObservableObject {
         guard myGen == modelFetchGeneration else { return }
         modelListStatus = .loading
         do {
-            let models = try await AgentModelListService.shared.fetchModels(strategy: strategy, apiKey: apiKey)
+            let models = try await modelListFetcher(strategy, apiKey)
             // Discard if a newer request superseded this one, or this scheduled task
             // was cancelled by a later scheduleModelListRefresh().
             guard myGen == modelFetchGeneration, !Task.isCancelled else { return }
@@ -5110,6 +5141,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         let scenario = Self.environmentValue("WEIBEI_VERIFY_SCENARIO")
+        let agentVerificationFlow = AgentVerificationScenarioPolicy.flow(for: scenario)
         let emptyWorkspaceScenarios: Set<String> = [
             "empty-workspace-light-wide",
             "empty-workspace-light-narrow",
@@ -5122,9 +5154,7 @@ final class WorkspaceStore: ObservableObject {
             "empty-workspace-open-chat",
             "empty-workspace-open-notes",
         ]
-        guard scenario == "offline-learning-flow"
-            || scenario == "pi-learning-flow"
-            || scenario == "pi-course-memory-flow"
+        guard agentVerificationFlow != nil
             || RichAnswerVerificationFixture.supports(scenario)
             || scenario == "immersive-conversation-flow"
             || scenario == "notebook-creation-flow"
@@ -5242,14 +5272,14 @@ final class WorkspaceStore: ObservableObject {
             save()
             return
         }
-        if scenario == "pi-learning-flow" || scenario == "pi-course-memory-flow" {
+        if agentVerificationFlow?.waitsForReaderContext == true {
             await waitForReaderContextToSettle()
         }
         if scenario == "notebook-creation-flow" {
             promptCreateBlankNotebookNote()
             return
         }
-        if scenario == "pi-course-memory-flow" {
+        if agentVerificationFlow == .piCourseMemory {
             updateReaderLocationTitle(ui("实际利率", "Real interest rates"))
             updateNote(ui("# 课程学习记录\n\n", "# Course study record\n\n"))
             recordVerificationStage("course-memory-context-prepared")
@@ -5297,7 +5327,7 @@ final class WorkspaceStore: ObservableObject {
             recordVerificationStage("failure:\(String(message.prefix(500)))")
         }
         applyLastAgentAnswerToNote()
-        if scenario == "pi-learning-flow" {
+        if agentVerificationFlow == .piLearning {
             try? await Task.sleep(nanoseconds: 700_000_000)
             if messages.last?.backend == .pi, noteText.count > verificationNoteSeed.count {
                 let markerURL = storageURL.deletingLastPathComponent().appendingPathComponent("pi-agent-verified.txt")
@@ -6507,7 +6537,10 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func askAgentAndWait() async {
+    /**
+     * 发起当前草稿请求并等待该次 Store 管理的任务结束。
+     */
+    func askAgentAndWait() async {
         askAgent()
         await agentRequestTask?.value
     }
@@ -6554,8 +6587,10 @@ final class WorkspaceStore: ObservableObject {
         let recentMessages = Array(messages.suffix(20))
         let sourceTitle = agentMessageSourceTitle
         let requestID = UUID()
-        let requestWorkspaceRevision = agentContextRevision
-        let requestMemoryRevision = learningMemoryRevision
+        let requestRevision = AgentRequestRevisionSnapshot(
+            workspace: agentContextRevision,
+            memory: learningMemoryRevision
+        )
         let sentMaterialTitle = currentSourceReferenceTitle
         let sentMaterialText = selectedContextText
         let sentNoteTitle = agentNoteTitle
@@ -6614,8 +6649,10 @@ final class WorkspaceStore: ObservableObject {
         do {
             let courseBuild = try await makeCourseContext(query: courseQuery)
             guard activeAgentRequestID == requestID,
-                  requestWorkspaceRevision == agentContextRevision,
-                  requestMemoryRevision == learningMemoryRevision else {
+                  requestRevision.isCurrent(
+                    workspace: agentContextRevision,
+                    memory: learningMemoryRevision
+                  ) else {
                 if agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     agentDraft = question
                 }
@@ -6637,7 +6674,7 @@ final class WorkspaceStore: ObservableObject {
                 visualAssets: sentVisualAssets,
                 learningContext: sentLearningContext,
                 language: sentLanguage,
-                contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())"
+                contextRevision: "\(requestRevision.workspace):\(requestID.uuidString.lowercased())"
             )
             let userMessage = AgentMessage(role: .user, text: question, source: sourceTitle)
             appendAgentMessage(userMessage)
@@ -6649,16 +6686,18 @@ final class WorkspaceStore: ObservableObject {
             }
             let reply = try await executeStudyAgentRequest(request)
             guard activeAgentRequestID == request.id,
-                  requestWorkspaceRevision == agentContextRevision,
-                  requestMemoryRevision == learningMemoryRevision else { return }
+                  requestRevision.isCurrent(
+                    workspace: agentContextRevision,
+                    memory: learningMemoryRevision
+                  ) else { return }
             latestAgentNoteProposal = reply.noteProposal
             applyLearningUpdate(
                 reply.learningUpdate,
                 expectedContextRevision: request.contextRevision,
-                expectedMemoryRevision: requestMemoryRevision,
+                expectedMemoryRevision: requestRevision.memory,
                 expectedUserQuestion: request.question
             )
-            lastAgentReplyContextRevision = requestWorkspaceRevision
+            lastAgentReplyContextRevision = requestRevision.workspace
             let assistantMessage = AgentMessage(
                 role: .assistant,
                 text: reply.noteProposal?.markdown ?? reply.richAnswer?.narrative ?? reply.text,
@@ -6741,6 +6780,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func executeStudyAgentRequest(_ request: StudyAgentRequest) async throws -> StudyAgentReply {
+        if let agentRequestExecutor {
+            return try await agentRequestExecutor(request)
+        }
         let verificationScenario = Self.environmentValue("WEIBEI_VERIFY_SCENARIO")
         let isExplicitOfflineVerification = Self.environmentValue("WEIBEI_FORCE_OFFLINE_AGENT") == "1"
             && Self.environmentValue("WEIBEI_SUPPRESS_ACTIVATION") == "1"
@@ -6943,17 +6985,22 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private static func makeSampleItems() -> [StudyItem] {
+    /**
+     * 创建绑定到当前工作区的内置样例，避免显式工作区仍写入全局用户目录。
+     */
+    private static func makeSampleItems(workspaceDirectory: URL) -> [StudyItem] {
         [
             StudyItem(id: "sample-html", title: "货币金融学课程 HTML", subtitle: "HTML 教程", kind: .html, urlPath: nil, isSample: true),
-            StudyItem(id: "sample-pdf", title: "Mishkin 教材样例", subtitle: "PDF 阅读", kind: .pdf, urlPath: samplePDFURL()?.path, isSample: true),
+            StudyItem(id: "sample-pdf", title: "Mishkin 教材样例", subtitle: "PDF 阅读", kind: .pdf, urlPath: samplePDFURL(workspaceDirectory: workspaceDirectory)?.path, isSample: true),
             StudyItem(id: "sample-md", title: "课堂笔记样例", subtitle: "Markdown", kind: .markdown, urlPath: nil, isSample: true)
         ]
     }
 
-    private static func samplePDFURL() -> URL? {
-        guard let root = workspaceRootDirectory() else { return nil }
-        let directory = root.appendingPathComponent("Samples", isDirectory: true)
+    /**
+     * 在 Store 已选定的工作区内准备 PDF 样例。
+     */
+    private static func samplePDFURL(workspaceDirectory: URL) -> URL? {
+        let directory = workspaceDirectory.appendingPathComponent("Samples", isDirectory: true)
         let url = directory.appendingPathComponent("mishkin-sample.pdf")
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return writeSamplePDF(to: url) ? url : nil
@@ -7986,6 +8033,9 @@ final class WorkspaceStore: ObservableObject {
 
     /// One-shot credential resolve used at workspace load / profile switch.
     private func resolveStoredAPIKey() -> String {
+        if let storedAPIKeyResolver {
+            return storedAPIKeyResolver()
+        }
         let profileKey = AgentCredentialProfileStore.loadAPIKey(profileID: activeAgentProfileID)
         if !profileKey.isEmpty { return profileKey }
         return OpenAIAPIKeyStore.load(provider: agentProviderID.piProviderName)

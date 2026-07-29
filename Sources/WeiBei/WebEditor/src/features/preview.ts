@@ -6,6 +6,63 @@ interface PreviewDependencies {
 }
 
 /**
+ * Resolves the next compact-preview height and suppresses unchanged reports.
+ *
+ * @param measurements - Heights reported by the preview measurement nodes
+ * @param lastReportedHeight - Last height delivered to the native host
+ * @returns The normalized height, or null when the host already has that height
+ */
+export function nextPreviewContentHeight(
+  measurements: readonly number[],
+  lastReportedHeight: number,
+): number | null {
+  const height = Math.ceil(
+    Math.max(
+      1,
+      ...measurements.filter((measurement) => Number.isFinite(measurement)),
+    ),
+  );
+  return Math.abs(height - lastReportedHeight) < 1 ? null : height;
+}
+
+/**
+ * Selects the heading at or immediately above the preview reading line.
+ *
+ * @param headingTops - Heading positions relative to the viewport
+ * @param viewportHeight - Current viewport height
+ * @returns The active heading index, or null when the document has no headings
+ */
+export function activePreviewHeadingIndex(
+  headingTops: readonly number[],
+  viewportHeight: number,
+): number | null {
+  if (headingTops.length === 0) return null;
+  const readingLine = Math.max(0, viewportHeight * 0.32);
+  let activeIndex = 0;
+  headingTops.forEach((top, index) => {
+    if (top <= readingLine) activeIndex = index;
+  });
+  return activeIndex;
+}
+
+/**
+ * Normalizes an untrusted native heading index to an available heading.
+ *
+ * @param rawIndex - Index supplied by the native bridge
+ * @param headingCount - Number of headings currently in the document
+ * @returns A valid heading index, or null when the request cannot be fulfilled
+ */
+export function normalizedPreviewHeadingIndex(
+  rawIndex: unknown,
+  headingCount: number,
+): number | null {
+  const index = Number(rawIndex);
+  if (!Number.isFinite(index) || headingCount <= 0) return null;
+  const normalized = Math.max(0, Math.floor(index));
+  return normalized < headingCount ? normalized : null;
+}
+
+/**
  * Creates compact-preview measurement, heading tracking, and quiet scrollbar behavior.
  *
  * @param dependencies - Preview dependencies
@@ -47,10 +104,16 @@ export function createPreviewFeature({
     window.cancelAnimationFrame(contentHeightFrame);
     contentHeightFrame = window.requestAnimationFrame(() => {
       const nodes = compactPreviewMeasureNodes();
-      const height = Math.ceil(Math.max(1, ...nodes.map(measuredNodeHeight)));
-      window.WeiBeiCompactPreviewHeight = height;
+      const measuredHeight = Math.ceil(
+        Math.max(1, ...nodes.map(measuredNodeHeight)),
+      );
+      const height = nextPreviewContentHeight(
+        [measuredHeight],
+        lastReportedContentHeight,
+      );
+      window.WeiBeiCompactPreviewHeight = measuredHeight;
       window.WeiBeiCompactPreviewMeasuredAt = Date.now();
-      if (Math.abs(height - lastReportedContentHeight) < 1) return;
+      if (height === null) return;
       lastReportedContentHeight = height;
       post("contentHeightChanged", { height });
     });
@@ -131,19 +194,17 @@ export function createPreviewFeature({
     window.cancelAnimationFrame(activeHeadingFrame);
     activeHeadingFrame = window.requestAnimationFrame(() => {
       const headings = headingElements();
-      if (headings.length === 0) {
+      const activeIndex = activePreviewHeadingIndex(
+        headings.map((heading) => heading.getBoundingClientRect().top),
+        window.innerHeight,
+      );
+      if (activeIndex === null) {
         if (lastActiveHeadingIndex !== -1) {
           lastActiveHeadingIndex = -1;
           post("activeHeadingChanged", { index: null });
         }
         return;
       }
-      const readingLine = Math.max(0, window.innerHeight * 0.32);
-      let activeIndex = 0;
-      headings.forEach((heading, index) => {
-        if (heading.getBoundingClientRect().top <= readingLine)
-          activeIndex = index;
-      });
       if (activeIndex === lastActiveHeadingIndex) return;
       lastActiveHeadingIndex = activeIndex;
       post("activeHeadingChanged", { index: activeIndex });
@@ -151,11 +212,9 @@ export function createPreviewFeature({
   };
 
   const scrollToHeadingInternal = (rawIndex: unknown): boolean => {
-    const index = Number(rawIndex);
     const headings = headingElements();
-    const heading = Number.isFinite(index)
-      ? headings[Math.max(0, Math.floor(index))]
-      : null;
+    const index = normalizedPreviewHeadingIndex(rawIndex, headings.length);
+    const heading = index === null ? null : headings[index];
     if (!heading) return false;
     heading.scrollIntoView({ block: "start", behavior: "smooth" });
     window.setTimeout(reportActiveHeading, 180);

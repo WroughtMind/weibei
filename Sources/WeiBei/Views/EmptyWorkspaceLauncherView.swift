@@ -284,33 +284,18 @@ private struct EmptyWorkspaceEntryRow: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            EmptyWorkspaceEntryButton(
-                title: "DOC",
-                accessibilityLabel: store.ui("打开文稿", "Open document"),
-                identifier: "empty-workspace-entry-doc",
-                width: entryWidth,
-                action: store.toggleReader
-            )
-
-            entryDivider
-
-            EmptyWorkspaceEntryButton(
-                title: "CHAT",
-                accessibilityLabel: store.ui("打开对话", "Open chat"),
-                identifier: "empty-workspace-entry-chat",
-                width: entryWidth,
-                action: store.toggleAgent
-            )
-
-            entryDivider
-
-            EmptyWorkspaceEntryButton(
-                title: "NOTES",
-                accessibilityLabel: store.ui("打开笔记", "Open notes"),
-                identifier: "empty-workspace-entry-notes",
-                width: entryWidth,
-                action: store.toggleNotes
-            )
+            ForEach(Array(EmptyWorkspaceEntry.allCases.enumerated()), id: \.element) { index, entry in
+                if index > 0 {
+                    entryDivider
+                }
+                EmptyWorkspaceEntryButton(
+                    title: entry.title,
+                    accessibilityLabel: accessibilityLabel(for: entry),
+                    identifier: entry.accessibilityIdentifier,
+                    width: entryWidth,
+                    action: { toggle(entry) }
+                )
+            }
         }
         .fixedSize(horizontal: true, vertical: false)
         .accessibilityElement(children: .contain)
@@ -321,6 +306,28 @@ private struct EmptyWorkspaceEntryRow: View {
             .fill(WeiBeiTheme.hairline.opacity(0.78))
             .frame(width: 1, height: 18)
             .accessibilityHidden(true)
+    }
+
+    /**
+     * Returns the localized action label for a semantic empty-workspace entry.
+     */
+    private func accessibilityLabel(for entry: EmptyWorkspaceEntry) -> String {
+        switch entry {
+        case .document: store.ui("打开文稿", "Open document")
+        case .chat: store.ui("打开对话", "Open chat")
+        case .notes: store.ui("打开笔记", "Open notes")
+        }
+    }
+
+    /**
+     * Routes an empty-workspace entry through the same pane toggle used by app chrome.
+     */
+    private func toggle(_ entry: EmptyWorkspaceEntry) {
+        switch entry.paneRole {
+        case .reader: store.toggleReader()
+        case .agent: store.toggleAgent()
+        case .notes: store.toggleNotes()
+        }
     }
 }
 

@@ -31,13 +31,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
-        if !flag {
-            if let window = sender.windows.first(where: { $0.canBecomeKey }) {
+        let reusableWindow = sender.windows.first(where: { $0.canBecomeKey })
+        switch MainWindowReopenPolicy.action(hasVisibleWindows: flag, hasReusableWindow: reusableWindow != nil) {
+        case .none:
+            break
+        case .showExistingWindow:
+            if let window = reusableWindow {
                 window.deminiaturize(nil)
                 window.makeKeyAndOrderFront(nil)
-            } else {
-                reopenMainWindow?()
             }
+        case .openMainWindow:
+            reopenMainWindow?()
         }
         if shouldActivateOnLaunch {
             NSApp.activate(ignoringOtherApps: true)
@@ -61,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private var shouldActivateOnLaunch: Bool {
-        ProcessInfo.processInfo.environment["WEIBEI_SUPPRESS_ACTIVATION"] != "1"
+        AppLaunchPolicy.shouldActivate(environment: ProcessInfo.processInfo.environment)
     }
 }
 
@@ -327,8 +331,7 @@ struct WeiBeiAppearanceTransition: ViewModifier {
             .onChange(of: mode) { oldMode, _ in
                 // Brief wash only when light↔dark family flips; same-family (纸面↔宣纸)
                 // must feel instant without a laggy overlay.
-                let crossFamily = oldMode.isDark != mode.isDark
-                guard crossFamily else {
+                guard AppearanceTransitionPolicy.stagesWash(from: oldMode, to: mode) else {
                     washOpacity = 0
                     return
                 }

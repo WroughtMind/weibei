@@ -9,7 +9,7 @@ public enum WeiBeiAgentDataPaths {
     public static var applicationSupportRoot: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-        return base.appendingPathComponent("com.changfenhuang.weibei", isDirectory: true)
+        return applicationSupportRoot(baseDirectory: base)
     }
 
     /// API keys (0600 files), one file per service/account.
@@ -42,17 +42,42 @@ public enum WeiBeiAgentDataPaths {
     /// One-time migration: if WeiBei has no OAuth auth yet but `~/.pi/agent/auth.json`
     /// does, copy it once so existing logins keep working without ongoing CLI sharing.
     public static func migrateHomePiAuthIfNeeded() {
-        let fileManager = FileManager.default
-        let destination = piAuthJSON
+        migratePiAuthIfNeeded(
+            source: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".pi/agent/auth.json"),
+            destination: piAuthJSON,
+            fileManager: .default
+        )
+    }
+
+    /**
+     * Resolves the application-owned data directory beneath a supplied Application Support root.
+     *
+     * This keeps path construction deterministic for alternate containers such as app previews,
+     * managed installations, and isolated test environments.
+     */
+    static func applicationSupportRoot(baseDirectory: URL) -> URL {
+        baseDirectory.appendingPathComponent("com.changfenhuang.weibei", isDirectory: true)
+    }
+
+    /**
+     * Copies an existing Pi authentication document into WeiBei's private store when no usable
+     * destination exists.
+     */
+    static func migratePiAuthIfNeeded(source: URL, destination: URL, fileManager: FileManager) {
         if let existing = try? Data(contentsOf: destination), !existing.isEmpty {
             return
         }
-        let homeAuth = fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent(".pi/agent/auth.json")
-        guard let data = try? Data(contentsOf: homeAuth),
+        guard let data = try? Data(contentsOf: source),
               data.count <= 1_048_576,
               data.count > 2 else { return }
-        try? ensurePiAgentDirectory()
+        try? fileManager.createDirectory(
+            at: destination.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try? fileManager.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: destination.deletingLastPathComponent().path
+        )
         try? data.write(to: destination, options: [.atomic])
         try? fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: destination.path)
     }

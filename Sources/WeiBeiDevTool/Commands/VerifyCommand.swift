@@ -20,7 +20,7 @@ public struct VerificationScenarioArgument: ExpressibleByArgument, Hashable {
 public struct VerifyCommand: AsyncParsableCommand {
     public static let configuration = CommandConfiguration(
         commandName: "verify",
-        abstract: "构建临时 App 并运行验收场景。"
+        abstract: "构建临时 App 并运行验收场景；默认仅运行 offline-learning-flow。"
     )
 
     @Option(name: .long, help: "只运行指定的已注册场景。")

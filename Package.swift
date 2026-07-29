@@ -93,6 +93,18 @@ let package = Package(
             dependencies: ["WeiBeiDevCore"]
         ),
         .testTarget(
+            name: "WeiBeiCoreTests",
+            dependencies: ["WeiBeiCore"]
+        ),
+        .testTarget(
+            name: "WeiBeiAppTests",
+            dependencies: [
+                "WeiBei",
+                "WeiBeiCore",
+                "WeiBeiDevCore"
+            ]
+        ),
+        .testTarget(
             name: "WeiBeiDevToolTests",
             dependencies: [
                 "WeiBeiDevCore",

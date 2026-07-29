@@ -140,6 +140,29 @@ make prepare
 make clean-generated
 ```
 
+`make verify` preserves the original launcher's default acceptance behavior: it
+packages a temporary app and runs only `offline-learning-flow`. Select a
+different real-window scenario explicitly, or opt into the complete offline
+suite:
+
+```bash
+swift run WeiBeiDevTool verify --scenario pane-toggle-continuity-flow
+swift run WeiBeiDevTool verify --scenario rich-answer-openui-extended-inline
+swift run WeiBeiDevTool verify --all
+```
+
+`--include-live-pi` grants permission but does not select a scenario by itself.
+Run online PI checks explicitly with either:
+
+```bash
+swift run WeiBeiDevTool verify --scenario pi-learning-flow --include-live-pi
+swift run WeiBeiDevTool verify --all --include-live-pi
+```
+
+The migration from source-text self-checks to executable behavior coverage is
+tracked in
+[`Docs/testing/swift-source-self-check-coverage.md`](Docs/testing/swift-source-self-check-coverage.md).
+
 Granular preparation commands remain available when diagnosing one subsystem:
 
 ```bash

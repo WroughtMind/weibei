@@ -27,7 +27,7 @@ public struct VerificationOptions: Codable, Equatable, Sendable {
     /// 创建验收流程配置。
     ///
     /// - Parameters:
-    ///   - scenario: 只运行的已注册场景名称；为 `nil` 时运行默认离线套件
+    ///   - scenario: 只运行的已注册场景名称；为 `nil` 且未选择全部场景时运行 `offline-learning-flow`
     ///   - runsAllScenarios: 是否选择全部可用场景
     ///   - includesLivePi: 是否允许运行依赖在线 PI 的场景
     ///   - performsVisualChecks: 是否对所选场景执行视觉检查

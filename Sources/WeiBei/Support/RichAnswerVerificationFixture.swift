@@ -103,13 +103,20 @@ enum RichAnswerVerificationFixture {
     static let extendedOpenUIProgramScenario = "rich-answer-openui-extended"
     static let inlineExtendedOpenUIProgramScenario = "rich-answer-openui-extended-inline"
 
+    /// 返回此 fixture 能生成的全部稳定场景名称，供行为契约测试核对 CLI 注册表。
+    static var supportedScenarios: Set<String> {
+        Set(Example.allCases.map(\.rawValue)).union([
+            "rich-answer-preview",
+            galleryScenario,
+            openUIProgramScenario,
+            extendedOpenUIProgramScenario,
+            inlineExtendedOpenUIProgramScenario
+        ])
+    }
+
+    /// 判断场景是否拥有可运行的 Rich Answer fixture。
     static func supports(_ scenario: String) -> Bool {
-        scenario == "rich-answer-preview"
-            || scenario == galleryScenario
-            || scenario == openUIProgramScenario
-            || scenario == extendedOpenUIProgramScenario
-            || scenario == inlineExtendedOpenUIProgramScenario
-            || Example(rawValue: scenario) != nil
+        supportedScenarios.contains(scenario)
     }
 
     static func question(for scenario: String) -> String {

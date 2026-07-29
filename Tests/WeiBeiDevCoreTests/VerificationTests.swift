@@ -28,29 +28,88 @@ final class VerificationTests: XCTestCase {
         try super.tearDownWithError()
     }
 
-    /// 注册表默认集合严格包含共同约定的十三个离线行为场景。
-    func testRegistryContainsThirteenDefaultOfflineScenarios() {
+    /// 裸 verify 严格恢复为旧入口的单一离线学习场景。
+    func testRegistryContainsSingleDefaultOfflineScenario() {
         let registry = VerificationScenarioRegistry()
 
-        XCTAssertTrue(registry.defaultScenarios.count == 13)
+        XCTAssertEqual(registry.defaultScenarios.map(\.id), [.offlineLearningFlow])
         XCTAssertTrue(registry.defaultScenarios.allSatisfy { !$0.requirements.requiresOnlinePI })
-        XCTAssertTrue(
-            Set(registry.defaultScenarios.map(\.id)) == Set([
-                .offlineLearningFlow,
-                .immersiveConversationFlow,
-                .emptyWorkspaceInspirationOff,
-                .emptyWorkspaceOpenDoc,
-                .emptyWorkspaceOpenChat,
-                .emptyWorkspaceOpenNotes,
-                .linkedSourcesFlow,
-                .courseWorkspaceOverviewFlow,
-                .courseWorkspaceWorkflowFlow,
-                .paneToggleContinuityFlow,
-                .paneLayoutStabilityFlow,
-                .paneReorderWidthFlow,
-                .readerScrollPersistenceFlow
-            ])
+    }
+
+    /// 显式全部场景仍包含所有离线行为、视觉和 Rich Answer 场景。
+    func testRegistryAllScenariosContainsEveryOfflineScenario() {
+        let registry = VerificationScenarioRegistry()
+        let selected = registry.allScenarios(includeLivePI: false)
+
+        let expectedOfflineIDs: Set<VerificationScenarioID> = [
+            .offlineLearningFlow,
+            .immersiveConversationFlow,
+            .emptyWorkspaceInspirationOff,
+            .emptyWorkspaceOpenDoc,
+            .emptyWorkspaceOpenChat,
+            .emptyWorkspaceOpenNotes,
+            .linkedSourcesFlow,
+            .courseWorkspaceOverviewFlow,
+            .courseWorkspaceWorkflowFlow,
+            .paneToggleContinuityFlow,
+            .paneLayoutStabilityFlow,
+            .paneReorderWidthFlow,
+            .readerScrollPersistenceFlow,
+            .emptyWorkspaceLightWide,
+            .emptyWorkspaceLightNarrow,
+            .emptyWorkspaceDarkWide,
+            .emptyWorkspaceDarkNarrow,
+            .emptyWorkspaceCalligraphyLight,
+            .emptyWorkspaceCalligraphyDark,
+            .notebookCreationFlow,
+            .pureWritingFlow,
+            .contentRailDormantPreview,
+            .contentRailActivationPreview,
+            .loadingIndicatorSamples,
+            .richAnswerPreview,
+            .richAnswerGallery,
+            .richAnswerOpenUI,
+            .richAnswerOpenUIExtended,
+            .richAnswerOpenUIExtendedInline,
+            .richAnswerText,
+            .richAnswerQuantity,
+            .richAnswerProcess,
+            .richAnswerRelation,
+            .richAnswerTimeline,
+            .richAnswerSpace,
+            .richAnswerImage,
+            .richAnswerComparison,
+            .richAnswerCalculation,
+            .richAnswerPendulum,
+            .richAnswerSequence,
+        ]
+
+        XCTAssertEqual(Set(selected.map(\.id)), expectedOfflineIDs)
+        XCTAssertFalse(selected.contains { $0.requirements.requiresOnlinePI })
+        XCTAssertEqual(
+            Set(registry.allScenarios(includeLivePI: true).map(\.id)),
+            expectedOfflineIDs.union([.piLearningFlow, .piCourseMemoryFlow])
         )
+    }
+
+    /// Rich Answer 场景完整注册为显式、非默认的视觉验收场景。
+    func testRegistryContainsSixteenNonDefaultRichAnswerScenarios() throws {
+        let registry = VerificationScenarioRegistry()
+        let declaredIDs = VerificationScenarioRegistry.richAnswerScenarioIDs
+        let registeredIDs = Set(
+            registry.scenarios
+                .map(\.id)
+                .filter { $0.rawValue.hasPrefix("rich-answer-") }
+        )
+        let scenarios = try declaredIDs.map { id in
+            try XCTUnwrap(registry.scenario(named: id.rawValue))
+        }
+
+        XCTAssertEqual(registeredIDs, declaredIDs)
+        XCTAssertEqual(scenarios.count, 16)
+        XCTAssertTrue(scenarios.allSatisfy(\.requirements.requiresVisualInspection))
+        XCTAssertTrue(scenarios.allSatisfy { $0.resultContract == .visualOnly })
+        XCTAssertTrue(scenarios.allSatisfy { !$0.isDefault })
     }
 
     /// 注册表将在线 PI 和视觉要求作为类型化元数据暴露。

@@ -28,6 +28,23 @@ public enum VerificationScenarioID: String, CaseIterable, Codable, Sendable {
     case contentRailActivationPreview = "content-rail-activation-preview"
     case loadingIndicatorSamples = "loading-indicator-samples"
 
+    case richAnswerPreview = "rich-answer-preview"
+    case richAnswerGallery = "rich-answer-gallery"
+    case richAnswerOpenUI = "rich-answer-openui"
+    case richAnswerOpenUIExtended = "rich-answer-openui-extended"
+    case richAnswerOpenUIExtendedInline = "rich-answer-openui-extended-inline"
+    case richAnswerText = "rich-answer-text"
+    case richAnswerQuantity = "rich-answer-quantity"
+    case richAnswerProcess = "rich-answer-process"
+    case richAnswerRelation = "rich-answer-relation"
+    case richAnswerTimeline = "rich-answer-timeline"
+    case richAnswerSpace = "rich-answer-space"
+    case richAnswerImage = "rich-answer-image"
+    case richAnswerComparison = "rich-answer-comparison"
+    case richAnswerCalculation = "rich-answer-calculation"
+    case richAnswerPendulum = "rich-answer-pendulum"
+    case richAnswerSequence = "rich-answer-sequence"
+
     case piLearningFlow = "pi-learning-flow"
     case piCourseMemoryFlow = "pi-course-memory-flow"
 }
@@ -94,9 +111,31 @@ public struct VerificationScenarioRegistry: Sendable {
         self.scenarios = scenarios
     }
 
-    /// 返回默认运行的十三个离线行为场景。
+    /// 返回裸 `verify` 运行的单一离线学习场景。
     public var defaultScenarios: [VerificationScenario] {
         scenarios.filter(\.isDefault)
+    }
+
+    /// 返回应用 Rich Answer fixture 支持的全部显式视觉场景标识。
+    public static var richAnswerScenarioIDs: Set<VerificationScenarioID> {
+        [
+            .richAnswerPreview,
+            .richAnswerGallery,
+            .richAnswerOpenUI,
+            .richAnswerOpenUIExtended,
+            .richAnswerOpenUIExtendedInline,
+            .richAnswerText,
+            .richAnswerQuantity,
+            .richAnswerProcess,
+            .richAnswerRelation,
+            .richAnswerTimeline,
+            .richAnswerSpace,
+            .richAnswerImage,
+            .richAnswerComparison,
+            .richAnswerCalculation,
+            .richAnswerPendulum,
+            .richAnswerSequence
+        ]
     }
 
     /// 返回全部场景；在线场景仅在调用方明确允许时出现。
@@ -112,18 +151,18 @@ public struct VerificationScenarioRegistry: Sendable {
     /// 内置场景及其与旧验证脚本一致的最大等待时间。
     public static let builtInScenarios: [VerificationScenario] = [
         .init(id: .offlineLearningFlow, timeoutSeconds: 6, requirements: .init(), resultContract: .offlineLearning, isDefault: true),
-        .init(id: .immersiveConversationFlow, timeoutSeconds: 6, requirements: .init(), resultContract: .offlineLearning, isDefault: true),
-        .init(id: .emptyWorkspaceInspirationOff, timeoutSeconds: 6, requirements: .init(), resultContract: .emptyWorkspace, isDefault: true),
-        .init(id: .emptyWorkspaceOpenDoc, timeoutSeconds: 6, requirements: .init(), resultContract: .emptyWorkspace, isDefault: true),
-        .init(id: .emptyWorkspaceOpenChat, timeoutSeconds: 6, requirements: .init(), resultContract: .emptyWorkspace, isDefault: true),
-        .init(id: .emptyWorkspaceOpenNotes, timeoutSeconds: 6, requirements: .init(), resultContract: .emptyWorkspace, isDefault: true),
-        .init(id: .linkedSourcesFlow, timeoutSeconds: 6, requirements: .init(), resultContract: .linkedSources, isDefault: true),
-        .init(id: .courseWorkspaceOverviewFlow, timeoutSeconds: 30, requirements: .init(), resultContract: .courseWorkspaceOverview, isDefault: true),
-        .init(id: .courseWorkspaceWorkflowFlow, timeoutSeconds: 30, requirements: .init(), resultContract: .courseWorkspaceWorkflow, isDefault: true),
-        .init(id: .paneToggleContinuityFlow, timeoutSeconds: 360, requirements: .init(), resultContract: .paneToggleContinuity, isDefault: true),
-        .init(id: .paneLayoutStabilityFlow, timeoutSeconds: 36, requirements: .init(), resultContract: .paneLayoutStability, isDefault: true),
-        .init(id: .paneReorderWidthFlow, timeoutSeconds: 36, requirements: .init(), resultContract: .paneReorderWidth, isDefault: true),
-        .init(id: .readerScrollPersistenceFlow, timeoutSeconds: 24, requirements: .init(), resultContract: .readerScrollPersistence, isDefault: true),
+        .init(id: .immersiveConversationFlow, timeoutSeconds: 6, requirements: .init(), resultContract: .offlineLearning, isDefault: false),
+        .init(id: .emptyWorkspaceInspirationOff, timeoutSeconds: 6, requirements: .init(), resultContract: .emptyWorkspace, isDefault: false),
+        .init(id: .emptyWorkspaceOpenDoc, timeoutSeconds: 6, requirements: .init(), resultContract: .emptyWorkspace, isDefault: false),
+        .init(id: .emptyWorkspaceOpenChat, timeoutSeconds: 6, requirements: .init(), resultContract: .emptyWorkspace, isDefault: false),
+        .init(id: .emptyWorkspaceOpenNotes, timeoutSeconds: 6, requirements: .init(), resultContract: .emptyWorkspace, isDefault: false),
+        .init(id: .linkedSourcesFlow, timeoutSeconds: 6, requirements: .init(), resultContract: .linkedSources, isDefault: false),
+        .init(id: .courseWorkspaceOverviewFlow, timeoutSeconds: 30, requirements: .init(), resultContract: .courseWorkspaceOverview, isDefault: false),
+        .init(id: .courseWorkspaceWorkflowFlow, timeoutSeconds: 30, requirements: .init(), resultContract: .courseWorkspaceWorkflow, isDefault: false),
+        .init(id: .paneToggleContinuityFlow, timeoutSeconds: 360, requirements: .init(), resultContract: .paneToggleContinuity, isDefault: false),
+        .init(id: .paneLayoutStabilityFlow, timeoutSeconds: 36, requirements: .init(), resultContract: .paneLayoutStability, isDefault: false),
+        .init(id: .paneReorderWidthFlow, timeoutSeconds: 36, requirements: .init(), resultContract: .paneReorderWidth, isDefault: false),
+        .init(id: .readerScrollPersistenceFlow, timeoutSeconds: 24, requirements: .init(), resultContract: .readerScrollPersistence, isDefault: false),
 
         .init(id: .emptyWorkspaceLightWide, timeoutSeconds: 10, requirements: .init(requiresVisualInspection: true), resultContract: .visualOnly, isDefault: false),
         .init(id: .emptyWorkspaceLightNarrow, timeoutSeconds: 10, requirements: .init(requiresVisualInspection: true), resultContract: .visualOnly, isDefault: false),
@@ -136,6 +175,23 @@ public struct VerificationScenarioRegistry: Sendable {
         .init(id: .contentRailDormantPreview, timeoutSeconds: 10, requirements: .init(requiresVisualInspection: true), resultContract: .visualOnly, isDefault: false),
         .init(id: .contentRailActivationPreview, timeoutSeconds: 10, requirements: .init(requiresVisualInspection: true), resultContract: .visualOnly, isDefault: false),
         .init(id: .loadingIndicatorSamples, timeoutSeconds: 10, requirements: .init(requiresVisualInspection: true), resultContract: .visualOnly, isDefault: false),
+
+        .init(id: .richAnswerPreview, timeoutSeconds: 10, requirements: .init(requiresVisualInspection: true), resultContract: .visualOnly, isDefault: false),
+        .init(id: .richAnswerGallery, timeoutSeconds: 10, requirements: .init(requiresVisualInspection: true), resultContract: .visualOnly, isDefault: false),
+        .init(id: .richAnswerOpenUI, timeoutSeconds: 10, requirements: .init(requiresVisualInspection: true), resultContract: .visualOnly, isDefault: false),
+        .init(id: .richAnswerOpenUIExtended, timeoutSeconds: 10, requirements: .init(requiresVisualInspection: true), resultContract: .visualOnly, isDefault: false),
+        .init(id: .richAnswerOpenUIExtendedInline, timeoutSeconds: 10, requirements: .init(requiresVisualInspection: true), resultContract: .visualOnly, isDefault: false),
+        .init(id: .richAnswerText, timeoutSeconds: 10, requirements: .init(requiresVisualInspection: true), resultContract: .visualOnly, isDefault: false),
+        .init(id: .richAnswerQuantity, timeoutSeconds: 10, requirements: .init(requiresVisualInspection: true), resultContract: .visualOnly, isDefault: false),
+        .init(id: .richAnswerProcess, timeoutSeconds: 10, requirements: .init(requiresVisualInspection: true), resultContract: .visualOnly, isDefault: false),
+        .init(id: .richAnswerRelation, timeoutSeconds: 10, requirements: .init(requiresVisualInspection: true), resultContract: .visualOnly, isDefault: false),
+        .init(id: .richAnswerTimeline, timeoutSeconds: 10, requirements: .init(requiresVisualInspection: true), resultContract: .visualOnly, isDefault: false),
+        .init(id: .richAnswerSpace, timeoutSeconds: 10, requirements: .init(requiresVisualInspection: true), resultContract: .visualOnly, isDefault: false),
+        .init(id: .richAnswerImage, timeoutSeconds: 10, requirements: .init(requiresVisualInspection: true), resultContract: .visualOnly, isDefault: false),
+        .init(id: .richAnswerComparison, timeoutSeconds: 10, requirements: .init(requiresVisualInspection: true), resultContract: .visualOnly, isDefault: false),
+        .init(id: .richAnswerCalculation, timeoutSeconds: 10, requirements: .init(requiresVisualInspection: true), resultContract: .visualOnly, isDefault: false),
+        .init(id: .richAnswerPendulum, timeoutSeconds: 10, requirements: .init(requiresVisualInspection: true), resultContract: .visualOnly, isDefault: false),
+        .init(id: .richAnswerSequence, timeoutSeconds: 10, requirements: .init(requiresVisualInspection: true), resultContract: .visualOnly, isDefault: false),
 
         .init(id: .piLearningFlow, timeoutSeconds: 120, requirements: .init(requiresOnlinePI: true), resultContract: .piLearning, isDefault: false),
         .init(id: .piCourseMemoryFlow, timeoutSeconds: 120, requirements: .init(requiresOnlinePI: true), resultContract: .piCourseMemory, isDefault: false)

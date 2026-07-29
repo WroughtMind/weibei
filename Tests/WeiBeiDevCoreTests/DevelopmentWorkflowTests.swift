@@ -3,6 +3,62 @@ import XCTest
 @testable import WeiBeiDevCore
 
 final class DevelopmentWorkflowTests: XCTestCase {
+    /// 验证裸 verify 只选择离线学习场景。
+    func testVerificationSelectionDefaultsToOfflineLearning() throws {
+        let scenarios = try VerificationScenarioRegistry().scenarios(
+            for: DevelopmentVerificationOptions(
+                scenario: nil,
+                allScenarios: false,
+                includeLivePI: false,
+                visual: false,
+                failFast: false
+            )
+        )
+
+        XCTAssertEqual(scenarios.map(\.id), [.offlineLearningFlow])
+    }
+
+    /// 验证显式场景不会连带运行默认或其他视觉场景。
+    func testVerificationSelectionRunsOnlyNamedScenario() throws {
+        let scenarios = try VerificationScenarioRegistry().scenarios(
+            for: DevelopmentVerificationOptions(
+                scenario: VerificationScenarioID.richAnswerOpenUIExtendedInline.rawValue,
+                allScenarios: false,
+                includeLivePI: false,
+                visual: false,
+                failFast: false
+            )
+        )
+
+        XCTAssertEqual(scenarios.map(\.id), [.richAnswerOpenUIExtendedInline])
+    }
+
+    /// 验证显式完整套件包含离线场景，并按许可控制在线 PI。
+    func testVerificationSelectionAllControlsLivePI() throws {
+        let registry = VerificationScenarioRegistry()
+        let offlineScenarios = try registry.scenarios(
+            for: DevelopmentVerificationOptions(
+                scenario: nil,
+                allScenarios: true,
+                includeLivePI: false,
+                visual: false,
+                failFast: false
+            )
+        )
+        let liveScenarios = try registry.scenarios(
+            for: DevelopmentVerificationOptions(
+                scenario: nil,
+                allScenarios: true,
+                includeLivePI: true,
+                visual: false,
+                failFast: false
+            )
+        )
+
+        XCTAssertFalse(offlineScenarios.contains { $0.requirements.requiresOnlinePI })
+        XCTAssertEqual(liveScenarios.map(\.id), registry.scenarios.map(\.id))
+    }
+
     /// 验证已有活跃租约时拒绝并发生命周期操作。
     func testLifecycleLeaseRejectsConcurrentOperation() throws {
         let temporaryDirectory = FileManager.default.temporaryDirectory
