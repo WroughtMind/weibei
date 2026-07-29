@@ -781,10 +781,11 @@ struct NotePaneView: View {
                         fitsContentHeight: false,
                         onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
                         onSourceReference: { reference in store.openSourceReference(reference) },
-                        onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) }
-                    ) { text, anchor in
-                        store.updateSelection(text, source: .note, anchor: anchor, isEditable: false)
-                    }
+                        onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) },
+                        onSelectionChange: { text, anchor in
+                            store.updateSelection(text, source: .note, anchor: anchor, isEditable: false)
+                        }
+                    )
                         .frame(minWidth: 220)
                 }
             case .source:
@@ -1515,11 +1516,14 @@ struct MarkdownPreviewView: View {
     var freezeHeightAfterMeasure = false
     /// Seed from a session cache so recycled rows do not collapse then grow.
     var seedContentHeight: CGFloat? = nil
-    /// When this changes (window / panel width bucket), unfreeze and remeasure.
-    var layoutWidthBucket: Int = 0
+    /// Exact point-rounded layout width. Every real 1pt change unfreezes the
+    /// existing WebView; the coarser cache bucket is only a first-frame seed.
+    var layoutWidthKey: Int = 0
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
+    var onRenderReady: () -> Void = {}
+    var onRenderFailure: () -> Void = {}
     var onSelectionChange: (String, CGPoint?) -> Void = { _, _ in }
     var onContentHeightChange: () -> Void = {}
     private static let compactPreviewLoadingHeight: CGFloat = 44
@@ -1529,7 +1533,7 @@ struct MarkdownPreviewView: View {
     @State private var command: NoteEditorCommand?
     @State private var contentHeight: CGFloat = Self.compactPreviewLoadingHeight
     @State private var heightFrozen = false
-    @State private var lastWidthBucket = 0
+    @State private var lastLayoutWidthKey = 0
 
     var body: some View {
         RichMarkdownEditorView(
@@ -1547,44 +1551,58 @@ struct MarkdownPreviewView: View {
                 guard height.isFinite,
                       height > 0,
                       height <= Self.compactPreviewMaximumHeight else { return }
-                if freezeHeightAfterMeasure, heightFrozen { return }
-                let next = max(ceil(height), Self.compactPreviewLoadingHeight)
-                // Ignore sub-pixel ResizeObserver jitter once we have a real measure.
-                if contentHeight >= Self.compactPreviewLoadingHeight,
-                   abs(contentHeight - next) < 2 {
-                    if freezeHeightAfterMeasure { heightFrozen = true }
+                let measuredHeight = ceil(height)
+                let nextFrameHeight = max(measuredHeight, Self.compactPreviewLoadingHeight)
+                // A frozen row ignores same-height/sub-2pt jitter and all
+                // shrink reports, but a late image/diagram may still grow it.
+                // Width changes explicitly unfreeze below, so their legitimate
+                // smaller reflow measurement remains accepted.
+                if freezeHeightAfterMeasure,
+                   heightFrozen,
+                   nextFrameHeight < contentHeight + 2 {
                     return
                 }
-                contentHeight = next
-                onMeasuredHeight(next)
-                if freezeHeightAfterMeasure, next > Self.compactPreviewLoadingHeight {
+                // This callback only receives a real JS measurement. Keep its
+                // success separate from the 44pt minimum SwiftUI frame so a
+                // legitimate short quote/list can reveal and freeze too.
+                onMeasuredHeight(measuredHeight)
+                // Ignore sub-pixel ResizeObserver jitter once we have a real measure.
+                if contentHeight >= Self.compactPreviewLoadingHeight,
+                   abs(contentHeight - nextFrameHeight) < 2 {
+                    if freezeHeightAfterMeasure {
+                        heightFrozen = true
+                    }
+                    return
+                }
+                contentHeight = nextFrameHeight
+                if freezeHeightAfterMeasure {
                     heightFrozen = true
                 }
                 onContentHeightChange()
             },
             onWikiLink: onWikiLink,
             onSourceReference: onSourceReference,
-            onAppShortcut: onAppShortcut
+            onAppShortcut: onAppShortcut,
+            onRenderReady: onRenderReady,
+            onRenderFailure: onRenderFailure
         )
         .background(compact ? Color.clear : WeiBeiTheme.paper)
         .frame(height: compact && fitsContentHeight ? max(contentHeight, Self.compactPreviewLoadingHeight) : nil)
         .onAppear {
-            lastWidthBucket = layoutWidthBucket
-            if let seed = seedContentHeight, seed > Self.compactPreviewLoadingHeight {
-                contentHeight = seed
-                if freezeHeightAfterMeasure {
-                    heightFrozen = true
-                }
+            lastLayoutWidthKey = layoutWidthKey
+            if let seed = seedContentHeight, seed.isFinite, seed > 0 {
+                contentHeight = max(ceil(seed), Self.compactPreviewLoadingHeight)
             }
-        }
-        .onChange(of: layoutWidthBucket) { _, bucket in
-            guard bucket != lastWidthBucket else { return }
-            lastWidthBucket = bucket
-            // Window / selection-float resize: allow a fresh measure for the new width.
+            // A 24pt-bucket cache value is only a visual seed. The current
+            // point-exact width must still produce its own real measurement.
             heightFrozen = false
-            if let seed = seedContentHeight, seed > Self.compactPreviewLoadingHeight {
-                contentHeight = seed
-            }
+        }
+        .onChange(of: layoutWidthKey) { _, widthKey in
+            guard widthKey != lastLayoutWidthKey else { return }
+            lastLayoutWidthKey = widthKey
+            // Keep this WKWebView alive; ResizeObserver will report the new
+            // height after every real 1pt window / selection-float resize.
+            heightFrozen = false
         }
         .onChange(of: markdown) { _, _ in
             guard compact && fitsContentHeight else { return }
@@ -3911,8 +3929,8 @@ private struct AgentCitationTag: View {
     }
 }
 
-/// Session-scoped height cache for finalized agent KaTeX rows.
-/// Key includes a width bucket so resize can remeasure without thrash.
+/// Session-scoped first-frame height seeds for finalized agent Markdown rows.
+/// The bucket never proves measurement success at the current exact width.
 private enum AgentFinalizedMarkdownHeightCache {
     private static let lock = NSLock()
     private static var values: [String: CGFloat] = [:]
@@ -3923,7 +3941,10 @@ private enum AgentFinalizedMarkdownHeightCache {
     }
 
     static func store(_ height: CGFloat, for key: String) {
-        guard height > 44 else { return }
+        // Called only from a real WebKit contentHeightChanged event. Store the
+        // raw measured value, including legitimate <=44pt short block content;
+        // the synthetic 44pt SwiftUI loading frame never reaches this method.
+        guard height.isFinite, height > 0 else { return }
         lock.lock(); defer { lock.unlock() }
         if let existing = values[key], abs(existing - height) < 2 { return }
         values[key] = height
@@ -3952,8 +3973,8 @@ private extension EnvironmentValues {
 }
 
 /// Agent chat markdown — shared by immersive conversation and selection float.
-/// - Finalized assistant turns: hang-proof KaTeX via `MarkdownPreviewView` with width-aware height.
-/// - Streaming / user / failures / no-math: native `AttributedString`.
+/// - Finalized assistant turns: full `MarkdownPreviewView` with width-aware frozen height.
+/// - Streaming, user turns, failures, and renderer fallback: native `AttributedString`.
 private struct AgentMessageMarkdownText: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.agentChatLayoutWidth) private var layoutWidth
@@ -3964,63 +3985,99 @@ private struct AgentMessageMarkdownText: View {
     /// Completed assistant turns only — never streaming, user, or failure bubbles.
     var usesFinalizedKaTeX: Bool = false
     var messageID: UUID? = nil
+    @State private var finalizedRendererReady = false
+    @State private var finalizedRendererFailed = false
 
-    private var katexMarkdown: String {
+    private var finalizedMarkdown: String {
         AgentChatKaTeXMarkdown.prepare(text)
     }
 
-    private var widthBucket: Int {
+    /// Coarse cache bucket only; exactLayoutWidthKey below controls remeasurement.
+    private var layoutWidthBucket: Int {
         AgentFinalizedMarkdownHeightCache.widthBucket(layoutWidth)
     }
 
-    private var shouldUseKaTeX: Bool {
-        usesFinalizedKaTeX
-            && rendersRichMarkdown
-            && AgentChatKaTeXMarkdown.containsRecognizableMath(katexMarkdown)
+    private var exactLayoutWidthKey: Int {
+        max(Int(layoutWidth.rounded()), 0)
+    }
+
+    private var shouldUseFinalizedMarkdown: Bool {
+        usesFinalizedKaTeX && rendersRichMarkdown
+            && AgentChatKaTeXMarkdown.requiresWebRenderer(finalizedMarkdown)
     }
 
     var body: some View {
         Group {
-            if shouldUseKaTeX {
-                finalizedKaTeXBody
+            if shouldUseFinalizedMarkdown {
+                finalizedMarkdownBody
             } else {
                 nativeBody
             }
         }
         .modifier(AgentMessageTextWidthModifier(fillsReadingColumn: rendersRichMarkdown || compact))
+        .onChange(of: finalizedMarkdown) { _, _ in
+            finalizedRendererReady = false
+            finalizedRendererFailed = false
+        }
     }
 
     private var cacheKey: String {
         AgentFinalizedMarkdownHeightCache.cacheKey(
             messageID: messageID,
-            text: katexMarkdown,
-            widthBucket: widthBucket
+            text: finalizedMarkdown,
+            widthBucket: layoutWidthBucket
         )
     }
 
+    private var cachedFinalizedHeight: CGFloat? {
+        AgentFinalizedMarkdownHeightCache.height(for: cacheKey)
+    }
+
     @ViewBuilder
-    private var finalizedKaTeXBody: some View {
-        // Hang-proof KaTeX: compact preview forwards wheel to the conversation ScrollView.
-        // Height freezes per width-bucket; resize changes the bucket and remasures.
+    private var finalizedMarkdownBody: some View {
+        // The mature Markdown renderer handles paragraphs, headings, lists, tables,
+        // fenced code and KaTeX through one path. Native text stays visible until
+        // the first valid measurement and returns immediately if WebKit fails.
+        // Height freezes only after a real measure at the current exact width.
+        // The 24pt-bucket cache supplies a first-frame seed, never readiness.
         // NEVER wire onContentHeightChange to scrollAgentToBottom.
-        MarkdownPreviewView(
-            markdown: katexMarkdown,
-            markdownBaseURL: store.currentMarkdownBaseURL,
-            appearanceMode: store.appearanceMode,
-            interfaceLanguage: store.interfaceLanguage,
-            compact: true,
-            fitsContentHeight: true,
-            freezeHeightAfterMeasure: true,
-            seedContentHeight: AgentFinalizedMarkdownHeightCache.height(for: cacheKey),
-            layoutWidthBucket: widthBucket,
-            onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
-            onSourceReference: { reference in store.openSourceReference(reference) },
-            onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) },
-            onMeasuredHeight: { height in
-                AgentFinalizedMarkdownHeightCache.store(height, for: cacheKey)
+        ZStack(alignment: .topLeading) {
+            if !finalizedRendererReady {
+                nativeBody
+                    .background(WeiBeiTheme.paper)
+                    .zIndex(1)
             }
-        )
-        .id("\(messageID?.uuidString ?? "msg")-\(widthBucket)")
+            if !finalizedRendererFailed {
+                MarkdownPreviewView(
+                    markdown: finalizedMarkdown,
+                    markdownBaseURL: store.currentMarkdownBaseURL,
+                    appearanceMode: store.appearanceMode,
+                    interfaceLanguage: store.interfaceLanguage,
+                    compact: true,
+                    fitsContentHeight: true,
+                    freezeHeightAfterMeasure: true,
+                    seedContentHeight: cachedFinalizedHeight,
+                    layoutWidthKey: exactLayoutWidthKey,
+                    onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
+                    onSourceReference: { reference in store.openSourceReference(reference) },
+                    onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) },
+                    onRenderReady: {
+                        finalizedRendererFailed = false
+                    },
+                    onRenderFailure: {
+                        finalizedRendererReady = false
+                        finalizedRendererFailed = true
+                    },
+                    onMeasuredHeight: { height in
+                        AgentFinalizedMarkdownHeightCache.store(height, for: cacheKey)
+                        finalizedRendererReady = true
+                    }
+                )
+                .allowsHitTesting(finalizedRendererReady)
+                .accessibilityHidden(!finalizedRendererReady)
+                .zIndex(0)
+            }
+        }
     }
 
     private var nativeBody: some View {

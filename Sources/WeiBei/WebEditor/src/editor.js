@@ -314,6 +314,7 @@ document.documentElement.dataset.weibeiCompactPreview = isCompactPreview ? 'true
 
 let contentHeightFrame = 0;
 let lastReportedContentHeight = 0;
+let lastReportedContentWidth = 0;
 const contentHeightDelayHandles = new Set();
 
 const compactPreviewMeasureNodes = () => [
@@ -333,18 +334,31 @@ const measuredNodeHeight = (node) => {
   );
 };
 
+const publishContentHeight = () => {
+  const nodes = compactPreviewMeasureNodes();
+  const height = Math.ceil(Math.max(1, ...nodes.map(measuredNodeHeight)));
+  const width = Math.ceil(Math.max(1, ...nodes.map((node) => (
+    node.getBoundingClientRect?.().width || node.clientWidth || 0
+  ))));
+  window.WeiBeiCompactPreviewHeight = height;
+  window.WeiBeiCompactPreviewMeasuredAt = Date.now();
+  if (
+    Math.abs(height - lastReportedContentHeight) < 1
+    && Math.abs(width - lastReportedContentWidth) < 1
+  ) return;
+  lastReportedContentHeight = height;
+  lastReportedContentWidth = width;
+  post('contentHeightChanged', { height });
+};
+
 const reportContentHeight = () => {
   if (!isCompactPreview) return;
+  // Background/off-screen WKWebViews can throttle requestAnimationFrame.
+  // Publish once synchronously so compact Chat rows still receive a real
+  // height, then measure again on the next painted frame for font/layout drift.
+  publishContentHeight();
   window.cancelAnimationFrame(contentHeightFrame);
-  contentHeightFrame = window.requestAnimationFrame(() => {
-    const nodes = compactPreviewMeasureNodes();
-    const height = Math.ceil(Math.max(1, ...nodes.map(measuredNodeHeight)));
-    window.WeiBeiCompactPreviewHeight = height;
-    window.WeiBeiCompactPreviewMeasuredAt = Date.now();
-    if (Math.abs(height - lastReportedContentHeight) < 1) return;
-    lastReportedContentHeight = height;
-    post('contentHeightChanged', { height });
-  });
+  contentHeightFrame = window.requestAnimationFrame(publishContentHeight);
 };
 
 const scheduleContentHeightReports = () => {
@@ -352,6 +366,7 @@ const scheduleContentHeightReports = () => {
   for (const handle of contentHeightDelayHandles) window.clearTimeout(handle);
   contentHeightDelayHandles.clear();
   lastReportedContentHeight = 0;
+  lastReportedContentWidth = 0;
   reportContentHeight();
   window.requestAnimationFrame(() => {
     reportContentHeight();
@@ -1739,10 +1754,9 @@ Editor
     document.addEventListener('keyup', (event) => {
       reportSelection();
     });
-    installContentHeightObserver();
     document.addEventListener('scroll', reportActiveHeading, true);
     post('editorReady', { markdown: lastMarkdown });
-    scheduleContentHeightReports();
+    installContentHeightObserver();
     reportActiveHeading();
   })
   .catch(showFailure);
