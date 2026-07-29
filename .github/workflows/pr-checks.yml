@@ -8,6 +8,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      full_suite:
+        description: "明确阶段整合或最终候选版：运行全部专项与安装包追溯"
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -17,8 +23,79 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build-check-package:
-    name: 编译、自检与安装包追溯
+  fast-check:
+    name: 快速编译与核心自检
+    runs-on: macos-26
+    timeout-minutes: 15
+    outputs:
+      release: ${{ steps.scope.outputs.release }}
+
+    steps:
+      - name: 取出完整源码历史
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: 判断本次风险范围
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          ./script/ci_changed_scopes.sh --self-check
+          base="$PUSH_BEFORE_SHA"
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            base="$(git merge-base "$PR_BASE_SHA" "$HEAD_SHA")"
+          elif [[ "$EVENT_NAME" == "workflow_dispatch" || "$base" =~ ^0+$ ]] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            base="$(git rev-parse "$HEAD_SHA^")"
+          fi
+          scopes="$(./script/ci_changed_scopes.sh "$base" "$HEAD_SHA")"
+          printf '%s\n' "$scopes"
+          printf '%s\n' "$scopes" >> "$GITHUB_OUTPUT"
+
+      - name: 记录构建工具链
+        run: |
+          swift --version
+          xcodebuild -version
+
+      - name: 编译
+        if: github.event_name != 'pull_request' || steps.scope.outputs.code == 'true'
+        run: swift build
+
+      - name: 运行应用自检
+        if: github.event_name != 'pull_request' || steps.scope.outputs.code == 'true'
+        run: swift run WeiBeiSelfCheck
+
+      - name: 运行 Pi 终止语义自检
+        if: (github.event_name == 'pull_request' && steps.scope.outputs.pi == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
+        run: WEIBEI_PI_TERMINAL_SELF_CHECK_ONLY=1 swift run WeiBeiSelfCheck
+
+      - name: 运行编辑器自检
+        if: (github.event_name == 'pull_request' && steps.scope.outputs.editor == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
+        run: |
+          npm ci
+          npm run build:editor
+          git diff --exit-code -- Sources/WeiBei/Resources/Editor
+          swift run WeiBeiWebEditorCheck
+
+      - name: 运行课程目录与数据安全自检
+        if: (github.event_name == 'pull_request' && steps.scope.outputs.data_safety == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)
+        run: |
+          WEIBEI_SUPPRESS_ACTIVATION=1 swift run WeiBei --self-check-imported-identity
+          WEIBEI_SUPPRESS_ACTIVATION=1 swift run WeiBei --self-check-course-project-root
+
+      - name: 检查空白与生成文件
+        run: |
+          git diff --check
+          git diff --exit-code
+          test -z "$(git status --porcelain=v1)"
+
+  release-package:
+    name: 完整候选构建与安装包追溯
+    needs: fast-check
+    if: ${{ needs.fast-check.result == 'success' && ((github.event_name == 'pull_request' && needs.fast-check.outputs.release == 'true') || (github.event_name == 'workflow_dispatch' && inputs.full_suite)) }}
     runs-on: macos-26
     timeout-minutes: 45
 
@@ -27,23 +104,6 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
-
-      - name: 记录构建工具链
-        run: |
-          swift --version
-          xcodebuild -version
-
-      - name: 编译
-        run: swift build
-
-      - name: 运行应用自检
-        run: swift run WeiBeiSelfCheck
-
-      - name: 运行 Pi 终止语义自检
-        run: WEIBEI_PI_TERMINAL_SELF_CHECK_ONLY=1 swift run WeiBeiSelfCheck
-
-      - name: 运行编辑器自检
-        run: swift run WeiBeiWebEditorCheck
 
       - name: 生成可追溯安装包
         run: ./script/build_and_run.sh package
