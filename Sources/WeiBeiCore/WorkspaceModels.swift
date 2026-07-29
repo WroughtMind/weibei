@@ -905,23 +905,32 @@ public struct NoteEditorCommand: Identifiable, Hashable {
     }
 }
 
-public enum SelectionSource: String, Codable, Hashable {
+public enum SelectionSource: String, Codable, Hashable, Sendable {
     case document
     case note
 }
 
-public struct SelectionContext: Identifiable, Codable, Hashable {
+public struct SelectionContext: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var text: String
     public var source: SelectionSource
     public var ownerTitle: String
+    public var itemID: String?
     public var isEditable: Bool
 
-    public init(id: UUID = UUID(), text: String, source: SelectionSource, ownerTitle: String, isEditable: Bool = true) {
+    public init(
+        id: UUID = UUID(),
+        text: String,
+        source: SelectionSource,
+        ownerTitle: String,
+        itemID: String? = nil,
+        isEditable: Bool = true
+    ) {
         self.id = id
         self.text = text
         self.source = source
         self.ownerTitle = ownerTitle
+        self.itemID = itemID
         self.isEditable = isEditable
     }
 
@@ -1536,9 +1545,34 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         id = try container.decode(UUID.self, forKey: .id)
         role = try container.decode(AgentRole.self, forKey: .role)
         text = try container.decode(String.self, forKey: .text)
-        source = try container.decodeIfPresent(String.self, forKey: .source)
-        backend = try container.decodeIfPresent(StudyAgentBackend.self, forKey: .backend)
-        var decodedToolTrace = try container.decodeIfPresent([String].self, forKey: .toolTrace) ?? []
+        var decodedToolTrace: [String]
+        do {
+            decodedToolTrace = try container.decodeIfPresent([String].self, forKey: .toolTrace) ?? []
+        } catch {
+            decodedToolTrace = ["tool-trace:decode-failed"]
+        }
+        func decodeLossy<T: Decodable>(
+            _ type: T.Type,
+            forKey key: CodingKeys,
+            marker: String
+        ) -> T? {
+            do {
+                return try container.decodeIfPresent(type, forKey: key)
+            } catch {
+                decodedToolTrace.append(marker)
+                return nil
+            }
+        }
+        source = decodeLossy(
+            String.self,
+            forKey: .source,
+            marker: "reply-source:decode-failed"
+        )
+        backend = decodeLossy(
+            StudyAgentBackend.self,
+            forKey: .backend,
+            marker: "reply-backend:decode-failed"
+        )
         let decodedRichAnswer: RichAnswerPresentation?
         do {
             decodedRichAnswer = try container.decodeIfPresent(
@@ -1552,16 +1586,41 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         richAnswer = decodedRichAnswer.map {
             RichAnswerEngine.admit(presentation: $0)
         }
-        completionState = try container.decodeIfPresent(
+        completionState = decodeLossy(
             AgentReplyCompletionState.self,
-            forKey: .completionState
+            forKey: .completionState,
+            marker: "reply-state:decode-failed"
         ) ?? .completed
-        sources = try container.decodeIfPresent([AgentReplySource].self, forKey: .sources) ?? []
-        actions = try container.decodeIfPresent([AgentReplyAction].self, forKey: .actions) ?? []
-        memoryUpdate = try container.decodeIfPresent(AgentReplyMemoryUpdate.self, forKey: .memoryUpdate)
-        origin = try container.decodeIfPresent(AgentReplyOrigin.self, forKey: .origin)
-        failureKind = try container.decodeIfPresent(AgentFailureKind.self, forKey: .failureKind)
-        retryQuestion = try container.decodeIfPresent(String.self, forKey: .retryQuestion)
+        sources = decodeLossy(
+            [AgentReplySource].self,
+            forKey: .sources,
+            marker: "reply-sources:decode-failed"
+        ) ?? []
+        actions = decodeLossy(
+            [AgentReplyAction].self,
+            forKey: .actions,
+            marker: "reply-actions:decode-failed"
+        ) ?? []
+        memoryUpdate = decodeLossy(
+            AgentReplyMemoryUpdate.self,
+            forKey: .memoryUpdate,
+            marker: "reply-memory:decode-failed"
+        )
+        origin = decodeLossy(
+            AgentReplyOrigin.self,
+            forKey: .origin,
+            marker: "reply-origin:decode-failed"
+        )
+        failureKind = decodeLossy(
+            AgentFailureKind.self,
+            forKey: .failureKind,
+            marker: "reply-failure:decode-failed"
+        )
+        retryQuestion = decodeLossy(
+            String.self,
+            forKey: .retryQuestion,
+            marker: "reply-retry:decode-failed"
+        )
         toolTrace = decodedToolTrace
         createdAt = try container.decode(Date.self, forKey: .createdAt)
     }

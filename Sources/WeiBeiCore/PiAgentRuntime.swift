@@ -535,7 +535,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             jumpEvidenceLabels: currentJumpEvidence,
             lastLocationSourceLabel: context.learning.lastLocation.map { "[材料：\($0.itemTitle)]" },
             allowedNoteSourceLabels: currentSourceLabels,
-            contextSources: currentReplySources(context: context),
+            contextSources: currentReplySources(request: request, context: context),
             progressDelivery: progressDelivery
         )
         progressDelivery?.yield(.readingContext)
@@ -858,7 +858,10 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         Set(context.course.catalog.lazy.filter(\.isCurrentMaterial).map(\.id))
     }
 
-    private func currentReplySources(context: StudyAgentContextEnvelope) -> [AgentReplySource] {
+    private func currentReplySources(
+        request: StudyAgentRequest,
+        context: StudyAgentContextEnvelope
+    ) -> [AgentReplySource] {
         var sources: [AgentReplySource] = []
         func append(
             itemID: String?,
@@ -904,20 +907,17 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             label: "[笔记：\(context.note.title)]",
             text: context.note.text
         )
-        if let selection = context.selection {
-            append(
-                itemID: materialID ?? noteID,
-                kind: .selection,
-                title: selection.title,
-                label: "[选区：\(selection.title)]",
-                text: selection.text
-            )
-        }
+        sources.append(contentsOf: request.selectionSources)
         return sources
     }
 
     private func appendSources(_ sources: [AgentReplySource], to run: inout ActiveRun) {
-        for source in sources {
+        for candidate in sources {
+            var source = candidate
+            if let itemID = source.itemID,
+               let persistentID = run.persistentAssetIDsByContextID[itemID] {
+                source.itemID = persistentID
+            }
             let isDuplicate = run.sources.contains {
                 $0.itemID == source.itemID
                     && $0.kind == source.kind

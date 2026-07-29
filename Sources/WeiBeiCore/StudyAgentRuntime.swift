@@ -354,6 +354,7 @@ public struct StudyAgentRequest: Sendable {
     public var noteText: String
     public var selectionTitle: String?
     public var selectionText: String?
+    public var selectionSources: [AgentReplySource]
     public var recentMessages: [AgentMessage]
     public var courseContext: StudyAgentCourseContext
     public var visualAssets: [StudyAgentVisualAsset]
@@ -374,6 +375,7 @@ public struct StudyAgentRequest: Sendable {
         noteText: String,
         selectionTitle: String? = nil,
         selectionText: String? = nil,
+        selectionSources: [AgentReplySource] = [],
         recentMessages: [AgentMessage] = [],
         courseContext: StudyAgentCourseContext = .empty,
         visualAssets: [StudyAgentVisualAsset] = [],
@@ -393,6 +395,7 @@ public struct StudyAgentRequest: Sendable {
         self.noteText = noteText
         self.selectionTitle = selectionTitle
         self.selectionText = selectionText
+        self.selectionSources = selectionSources
         self.recentMessages = recentMessages
         self.courseContext = courseContext
         self.visualAssets = visualAssets

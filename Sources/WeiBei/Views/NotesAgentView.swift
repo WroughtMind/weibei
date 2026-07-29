@@ -3270,9 +3270,12 @@ private struct AgentBubble: View {
                     Text(store.ui("回答已中断，已保留现有内容", "Response interrupted; existing content was kept"))
                         .font(.caption)
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    if store.canRetryLastFailedAgentRequest {
+                    if store.canRetryAgentRequest(
+                        question: message.retryQuestion,
+                        failureKind: message.failureKind
+                    ), let question = message.retryQuestion {
                         Button(store.ui("重试", "Retry")) {
-                            store.retryLastFailedAgentRequest()
+                            store.retryAgentRequest(question)
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                     }
@@ -3280,18 +3283,21 @@ private struct AgentBubble: View {
                 .padding(.top, 2)
             } else if isFailureMessage {
                 HStack(spacing: 6) {
-                    if store.canRetryLastFailedAgentRequest {
+                    if store.canRetryAgentRequest(
+                        question: message.retryQuestion,
+                        failureKind: message.failureKind
+                    ), let question = message.retryQuestion {
                         Button(store.ui("重试", "Retry")) {
-                            store.retryLastFailedAgentRequest()
+                            store.retryAgentRequest(question)
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                     }
-                    Button(store.ui("回填问题", "Restore question")) {
-                        if let question = store.lastFailedAgentQuestion, !question.isEmpty {
+                    if let question = message.retryQuestion, !question.isEmpty {
+                        Button(store.ui("回填问题", "Restore question")) {
                             store.agentDraft = question
                         }
+                        .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
-                    .buttonStyle(WeiBeiTextActionButtonStyle())
                 }
                 .padding(.top, 2)
             } else if message.id == store.lastUsableAgentAnswerID {
