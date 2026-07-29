@@ -6977,6 +6977,17 @@ final class WorkspaceStore: ObservableObject {
            studySessions[index].messages.filter({ $0.role == .user }).count == 1 {
             studySessions[index].title = Self.sessionTitle(from: titleSeed)
         }
+        if studySessions[index].scopeNeedsReview == false {
+            var session = studySessions[index]
+            session.focusItemIDs = session.focusItemIDs.filter {
+                itemID($0, belongsTo: session)
+            }
+            if let materialItemID = session.materialItemID,
+               !itemID(materialItemID, belongsTo: session) {
+                session.materialItemID = nil
+            }
+            studySessions[index] = session
+        }
         if studySessions[index].materialItemID == nil,
            let materialID = selectedMaterialItem?.id,
            itemID(materialID, belongsTo: studySessions[index]) {
@@ -10840,6 +10851,22 @@ final class WorkspaceStore: ObservableObject {
         let scopedItems = courseID.map { courseItems(in: $0) } ?? allItems
         let scopedItemIDs = Set(scopedItems.map(\.id))
         let candidates = scopedItems.map { item in
+            let baseSubtitle = displaySubtitle(for: item)
+            let subtitle: String
+            if courseID == nil {
+                let membershipIDs = Set(courseMembershipIndex.courseIDs(for: item.id))
+                let courseTitles = courses
+                    .filter { membershipIDs.contains($0.id) }
+                    .map(\.title)
+                subtitle = courseTitles.isEmpty
+                    ? ui("未归入课程 · \(baseSubtitle)", "Not in a course · \(baseSubtitle)")
+                    : ui(
+                        "课程：\(courseTitles.joined(separator: "、")) · \(baseSubtitle)",
+                        "Courses: \(courseTitles.joined(separator: ", ")) · \(baseSubtitle)"
+                    )
+            } else {
+                subtitle = baseSubtitle
+            }
             let embeddedText: String?
             if item.isNotebookNote {
                 embeddedText = noteMarkdownText(for: item)
@@ -10854,7 +10881,7 @@ final class WorkspaceStore: ObservableObject {
             return CourseIndexCandidate(
                 item: item,
                 title: displayTitle(for: item),
-                subtitle: displaySubtitle(for: item),
+                subtitle: subtitle,
                 embeddedText: embeddedText,
                 fallbackText: fallbackText
             )
@@ -10955,7 +10982,9 @@ final class WorkspaceStore: ObservableObject {
                 title: session.title,
                 summary: sessionContinuitySummary(for: session),
                 phase: session.flow.phase.rawValue,
-                focusItemIDs: session.focusItemIDs,
+                focusItemIDs: session.focusItemIDs.filter {
+                    itemID($0, belongsTo: session)
+                },
                 turnCount: session.messages.count
             )
         }
@@ -12117,6 +12146,10 @@ final class WorkspaceStore: ObservableObject {
             )
             studySessions.append(courseBSession)
             let courseAChatID = activeSession.id
+            if let courseAIndex = studySessions.firstIndex(where: { $0.id == courseAChatID }) {
+                studySessions[courseAIndex].focusItemIDs.append(materialC.id)
+                studySessions[courseAIndex].materialItemID = materialC.id
+            }
             layout = .immersiveConversation
             showLibrary = false
             showReader = false
@@ -12137,6 +12170,7 @@ final class WorkspaceStore: ObservableObject {
             let focusIsolated = activeStudySessionID == courseAChatID
                 && activeStudySession?.courseID == courseA.id
                 && activeStudySession?.focusItemIDs.contains(materialC.id) == false
+                && activeStudySession?.materialItemID != materialC.id
                 && !canUseSelectedMaterialInActiveChat
                 && agentContextScopeNotice != nil
             let wrongScopeRejected = !activateStudySession(
@@ -12155,6 +12189,16 @@ final class WorkspaceStore: ObservableObject {
             )
             let courseACatalogIDs = Set(courseAContext?.context.catalog.map(\.id) ?? [])
             let globalCatalogIDs = Set(globalContext?.context.catalog.map(\.id) ?? [])
+            let globalCatalog = globalContext?.context.catalog ?? []
+            let globalCourseIdentityPassed = globalCatalog.first {
+                $0.id == materialA.id
+            }?.subtitle.contains(courseA.title) == true
+                && globalCatalog.first {
+                    $0.id == materialB.id
+                }?.subtitle.contains(courseA.title) == true
+                && globalCatalog.first {
+                    $0.id == materialB.id
+                }?.subtitle.contains(courseB.title) == true
             let courseContextIsolated = courseACatalogIDs == courseAAllowedIDs
                 && !courseACatalogIDs.contains(materialC.id)
                 && !courseACatalogIDs.contains(noteC.id)
@@ -12176,6 +12220,7 @@ final class WorkspaceStore: ObservableObject {
                 && selectionIsolated
                 && wrongScopeRejected
                 && courseContextIsolated
+                && globalCourseIdentityPassed
                 && explicitCourseCreationPassed
                 && explicitGlobalCreationPassed
                 && restoredCourseChat
@@ -12187,6 +12232,7 @@ final class WorkspaceStore: ObservableObject {
                     "selectionIsolated": selectionIsolated,
                     "wrongScopeRejected": wrongScopeRejected,
                     "courseContextIsolated": courseContextIsolated,
+                    "globalCourseIdentityPassed": globalCourseIdentityPassed,
                     "explicitCourseCreationPassed": explicitCourseCreationPassed,
                     "explicitGlobalCreationPassed": explicitGlobalCreationPassed,
                     "restoredCourseChat": restoredCourseChat,

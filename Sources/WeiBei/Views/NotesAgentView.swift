@@ -2251,8 +2251,8 @@ struct AgentPaneView: View {
 
     @ViewBuilder
     private var sessionCatalogContent: some View {
-        if let courseID = store.activeStudySession?.courseID,
-           store.activeStudySession?.scopeNeedsReview == false,
+        if store.activeStudySession?.scopeNeedsReview == false,
+           let courseID = store.activeStudySession?.courseID ?? store.activeCourseID,
            let course = store.course(withID: courseID) {
             Button {
                 store.createStudySession(courseID: courseID)
