@@ -1417,6 +1417,392 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
     }
 }
 
+private let finalizedAgentMarkdown = """
+# 完成态回答
+
+第一段保留自己的段落边界，并且包含 **重点**。
+
+## 要点
+
+- 第一项
+- 第二项
+
+| 能力 | 状态 |
+| --- | --- |
+| 段落 | 分开 |
+| 表格 | 可读 |
+
+```swift
+let greeting = "你好，Markdown"
+print(greeting)
+```
+
+中文与 English mixed text should wrap naturally.
+
+[外部链接](https://example.com/weibei-link-check)
+
+\((1...120).map { "超长回答第 \($0) 段：重开后仍须使用同一套块级 Markdown 渲染。" }.joined(separator: "\n\n"))
+"""
+
+/// The Chat uses this exact read-only compact editor for finalized assistant turns.
+/// Booting it from a complete string also covers reopening a persisted message.
+private final class FinalizedAgentMarkdownHarness: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+    private enum Phase: Equatable {
+        case initial
+        case externalLink
+        case delayedGrowth
+        case sameBucketResize
+        case crossBucketResize
+        case shortBlock
+    }
+
+    private let webView: WKWebView
+    private var phase: Phase = .initial
+    private var didReceiveEditorReady = false
+    private var didValidateDOM = false
+    private var didMeasureHeight = false
+    private var didCancelExternalLink = false
+    private var didPreserveBodyAfterExternalLink = false
+    private var didMeasureDelayedGrowth = false
+    private var didMeasureSameBucketResize = false
+    private var didMeasureCrossBucketResize = false
+    private var didMeasureShortBlock = false
+    private var measuredHeight: Double = 0
+    private var initialReportedWidth: Double?
+    private var sameBucketReportedWidth: Double?
+    private var crossBucketReportedWidth: Double?
+    private var delayedGrowthHeight: Double = 0
+    private var shortBlockHeight: Double = 0
+    private var isDone = false
+    private var failure: String?
+
+    override init() {
+        let configuration = WKWebViewConfiguration()
+        let controller = WKUserContentController()
+        controller.addUserScript(WKUserScript(
+            source: """
+            window.initialMarkdown = \(json(finalizedAgentMarkdown));
+            window.weiBeiDocumentID = "finalized-agent-markdown-check";
+            window.weiBeiMarkdownEditable = false;
+            window.weiBeiMarkdownCompactPreview = true;
+            window.weiBeiTheme = "paper";
+            window.weiBeiInterfaceLanguage = "zh";
+            """,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
+        configuration.userContentController = controller
+        webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 680, height: 720), configuration: configuration)
+        super.init()
+        webView.navigationDelegate = self
+        for name in ["editorReady", "contentHeightChanged", "editorFailure"] {
+            controller.add(self, name: name)
+        }
+    }
+
+    func run() {
+        let indexURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Sources/WeiBei/Resources/Editor/index.html")
+        webView.loadFileURL(indexURL, allowingReadAccessTo: indexURL.deletingLastPathComponent())
+
+        let timeout = Date().addingTimeInterval(15)
+        while !isDone && Date() < timeout {
+            RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+
+        if let failure {
+            fputs("web-editor-check failed: \(failure)\n", stderr)
+            exit(1)
+        }
+        expect(
+            isDone,
+            "finalized agent Markdown did not become ready "
+                + "(dom=\(didValidateDOM), measured=\(didMeasureHeight), "
+                + "externalLink=\(didCancelExternalLink && didPreserveBodyAfterExternalLink), "
+                + "delayedGrowth=\(didMeasureDelayedGrowth), "
+                + "sameBucket=\(didMeasureSameBucketResize), crossBucket=\(didMeasureCrossBucketResize), "
+                + "short=\(didMeasureShortBlock), height=\(measuredHeight), shortHeight=\(shortBlockHeight))"
+        )
+        print(
+            "Finalized Agent Markdown measurements passed: "
+                + "initialWidth=\(initialReportedWidth ?? 0), "
+                + "sameBucketWidth=\(sameBucketReportedWidth ?? 0), "
+                + "crossBucketWidth=\(crossBucketReportedWidth ?? 0), "
+                + "longHeight=\(measuredHeight), delayedGrowthHeight=\(delayedGrowthHeight), "
+                + "shortHeight=\(shortBlockHeight)"
+        )
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        guard navigationAction.navigationType == .linkActivated else {
+            decisionHandler(.allow)
+            return
+        }
+        guard phase == .externalLink,
+              navigationAction.request.url?.absoluteString == "https://example.com/weibei-link-check" else {
+            fail("unexpected finalized Agent Markdown link navigation: \(navigationAction.request.url?.absoluteString ?? "nil")")
+            decisionHandler(.cancel)
+            return
+        }
+        didCancelExternalLink = true
+        decisionHandler(.cancel)
+        DispatchQueue.main.async { [weak self] in
+            self?.validateBodyAfterCancelledExternalLink()
+        }
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        switch message.name {
+        case "editorReady":
+            didReceiveEditorReady = true
+            validateDOM()
+        case "contentHeightChanged":
+            guard didReceiveEditorReady else {
+                fail("finalized agent Markdown reported height before editorReady")
+                return
+            }
+            guard let height = (message.body as? [String: Any])?["height"] as? Double else {
+                fail("finalized agent Markdown reported no height")
+                return
+            }
+            handleMeasurement(height: height, width: Double(webView.frame.width))
+        case "editorFailure":
+            fail("finalized agent Markdown renderer failed")
+        default:
+            break
+        }
+    }
+
+    private func validateDOM() {
+        let script = """
+        (() => {
+          const root = document.querySelector('.ProseMirror');
+          if (!root) return { ok: false, reason: 'missing ProseMirror root' };
+          const code = root.querySelector('pre code')?.textContent || '';
+          const measuredNodes = [
+            document.querySelector('#editor'),
+            document.querySelector('.milkdown'),
+            root
+          ].filter(Boolean);
+          const height = Math.ceil(Math.max(...measuredNodes.map((node) =>
+            Math.max(node.scrollHeight || 0, node.offsetHeight || 0, node.clientHeight || 0)
+          )));
+          return {
+            ok: root.querySelectorAll('h1').length === 1
+              && root.querySelectorAll('h2').length === 1
+              && root.querySelectorAll('li').length >= 2
+              && root.querySelectorAll('table tr').length >= 3
+              && code.includes('let greeting')
+              && root.textContent.includes('第一段保留自己的段落边界')
+              && root.textContent.includes('中文与 English mixed text')
+              && root.textContent.includes('超长回答第 120 段'),
+            paragraphCount: root.querySelectorAll('p').length,
+            listItemCount: root.querySelectorAll('li').length,
+            tableRowCount: root.querySelectorAll('table tr').length,
+            height,
+            code
+          };
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] value, error in
+            guard let self else { return }
+            if let error {
+                self.fail("finalized agent Markdown DOM check threw \(error.localizedDescription)")
+                return
+            }
+            guard let result = value as? [String: Any],
+                  result["ok"] as? Bool == true else {
+                self.fail("finalized agent Markdown lost block structure: \(String(describing: value))")
+                return
+            }
+            self.didValidateDOM = true
+            self.advanceFromInitialIfReady()
+        }
+    }
+
+    private func handleMeasurement(height: Double, width: Double?) {
+        switch phase {
+        case .initial:
+            measuredHeight = max(measuredHeight, height)
+            didMeasureHeight = height > 1_500
+            if initialReportedWidth == nil {
+                initialReportedWidth = width
+            }
+            advanceFromInitialIfReady()
+        case .externalLink:
+            break
+        case .delayedGrowth:
+            guard height >= measuredHeight + 100 else { return }
+            delayedGrowthHeight = height
+            didMeasureDelayedGrowth = true
+            phase = .sameBucketResize
+            DispatchQueue.main.async { [weak self] in
+                self?.webView.setFrameSize(CGSize(width: 679, height: 720))
+            }
+        case .sameBucketResize:
+            guard let width,
+                  let initialReportedWidth,
+                  abs(width - initialReportedWidth) >= 0.5 else { return }
+            didMeasureSameBucketResize = true
+            sameBucketReportedWidth = width
+            phase = .crossBucketResize
+            DispatchQueue.main.async { [weak self] in
+                self?.webView.setFrameSize(CGSize(width: 620, height: 720))
+            }
+        case .crossBucketResize:
+            guard let width,
+                  let sameBucketReportedWidth,
+                  abs(width - sameBucketReportedWidth) >= 20 else { return }
+            didMeasureCrossBucketResize = true
+            crossBucketReportedWidth = width
+            phase = .shortBlock
+            webView.evaluateJavaScript("window.WeiBeiEditor.setMarkdown('> 短引用')") { [weak self] _, error in
+                if let error {
+                    self?.fail("short finalized block could not be installed: \(error.localizedDescription)")
+                }
+            }
+        case .shortBlock:
+            guard height > 0 else { return }
+            validateShortBlock(measuredHeight: height)
+        }
+    }
+
+    private func advanceFromInitialIfReady() {
+        guard phase == .initial, didValidateDOM && didMeasureHeight else { return }
+        phase = .externalLink
+        webView.evaluateJavaScript("""
+        document.querySelector('a[href="https://example.com/weibei-link-check"]')?.click()
+        """) { [weak self] _, error in
+            if let error {
+                self?.fail("finalized Agent Markdown external-link click failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func validateBodyAfterCancelledExternalLink() {
+        webView.evaluateJavaScript("""
+        (() => {
+          const root = document.querySelector('.ProseMirror');
+          return Boolean(root
+            && root.textContent.includes('超长回答第 120 段')
+            && location.href.startsWith('file:'));
+        })();
+        """) { [weak self] value, error in
+            guard let self else { return }
+            guard error == nil, value as? Bool == true else {
+                fail("cancelled external link replaced finalized Agent Markdown")
+                return
+            }
+            didPreserveBodyAfterExternalLink = true
+            beginDelayedGrowthCheck()
+        }
+    }
+
+    private func beginDelayedGrowthCheck() {
+        phase = .delayedGrowth
+        webView.evaluateJavaScript("""
+        (() => {
+          const root = document.querySelector('.ProseMirror');
+          if (!root) return false;
+          const lateBlock = document.createElement('div');
+          lateBlock.id = 'weibei-delayed-growth-check';
+          lateBlock.style.height = '240px';
+          lateBlock.textContent = '延迟加载的图片或图表占位';
+          root.appendChild(lateBlock);
+          return true;
+        })();
+        """) { [weak self] value, error in
+            if error != nil || value as? Bool != true {
+                self?.fail("could not simulate delayed finalized Markdown growth")
+            }
+        }
+    }
+
+    private func validateShortBlock(measuredHeight: Double) {
+        webView.evaluateJavaScript("""
+        (() => {
+          const root = document.querySelector('.ProseMirror');
+          return Boolean(root?.querySelector('blockquote')
+            && root.textContent.trim() === '短引用');
+        })();
+        """) { [weak self] value, error in
+            guard let self else { return }
+            if error != nil || value as? Bool != true {
+                // A delayed report from the previous long document can race the
+                // replacement. Ignore it and wait for the short block's report.
+                return
+            }
+            shortBlockHeight = measuredHeight
+            didMeasureShortBlock = measuredHeight > 0
+            isDone = didMeasureSameBucketResize
+                && didMeasureCrossBucketResize
+                && didMeasureShortBlock
+        }
+    }
+
+    private func fail(_ message: String) {
+        failure = message
+        isDone = true
+    }
+}
+
+private func verifyAgentChatMarkdownSourceContract() {
+    let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+    let classifierPath = root.appendingPathComponent(
+        "Sources/WeiBei/Support/AgentChatKaTeXMarkdown.swift"
+    )
+    let chatPath = root.appendingPathComponent("Sources/WeiBei/Views/NotesAgentView.swift")
+    let richMarkdownPath = root.appendingPathComponent(
+        "Sources/WeiBei/Views/RichMarkdownEditorView.swift"
+    )
+    guard let classifier = try? String(contentsOf: classifierPath, encoding: .utf8),
+          let chat = try? String(contentsOf: chatPath, encoding: .utf8),
+          let richMarkdown = try? String(contentsOf: richMarkdownPath, encoding: .utf8) else {
+        expect(false, "could not read finalized Agent Markdown source contract")
+        return
+    }
+
+    expect(
+        classifier.contains("isSetextUnderline")
+            && classifier.contains("marker.isLetter || marker == \"!\" || marker == \"?\" || marker == \"/\"")
+            && classifier.contains("(\"Setext 标题\\n===\", true)")
+            && classifier.contains("(\"<article>文章</article>\", true)"),
+        "finalized Agent Markdown classifier lost Setext or general HTML-block routing checks"
+    )
+    expect(
+        chat.contains("layoutWidthKey: exactLayoutWidthKey")
+            && chat.contains("max(Int(layoutWidth.rounded()), 0)")
+            && !chat.contains(".id(\"\\(messageID?.uuidString ?? \"msg\")-\\(widthBucket)\")"),
+        "finalized Agent Markdown width changes must remeasure without rebuilding WKWebView"
+    )
+    expect(
+        chat.contains("onMeasuredHeight(measuredHeight)")
+            && chat.contains("let nextFrameHeight = max(measuredHeight, Self.compactPreviewLoadingHeight)")
+            && chat.contains("guard height.isFinite, height > 0 else { return }")
+            && chat.contains("nextFrameHeight < contentHeight + 2")
+            && !chat.contains("if freezeHeightAfterMeasure, heightFrozen { return }"),
+        "real short-block measurement must be independent from the 44pt minimum frame"
+    )
+    expect(
+        chat.contains(".environment(\\.agentChatLayoutWidth, max(panelWidth - 28, 1))"),
+        "selection-float Agent Markdown must receive its real panel width"
+    )
+    expect(
+        richMarkdown.contains("navigationAction.navigationType == .linkActivated")
+            && richMarkdown.contains("isSamePageFragment(targetURL, currentURL: webView.url)")
+            && richMarkdown.contains("scheme == \"http\" || scheme == \"https\" || scheme == \"mailto\"")
+            && richMarkdown.contains("NSWorkspace.shared.open(targetURL)")
+            && richMarkdown.contains("decisionHandler(.cancel)"),
+        "Markdown external links must open natively without replacing the current editor/answer"
+    )
+}
+
 NSApplication.shared.setActivationPolicy(.prohibited)
+verifyAgentChatMarkdownSourceContract()
 EditorHarness().run()
+FinalizedAgentMarkdownHarness().run()
 print("WeiBei web editor check passed")

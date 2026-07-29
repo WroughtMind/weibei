@@ -1163,6 +1163,10 @@
       root.innerHTML = '<pre class="editor-status error">Milkdown 初始化失败\n' + text.replace(/[<>&]/g, function(ch) {
         return { '<': '&lt;', '>': '&gt;', '&': '&amp;' }[ch];
       }) + '</pre>';
+      window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.editorFailure
+        && window.webkit.messageHandlers.editorFailure.postMessage({
+          documentID: window.weiBeiDocumentID || ''
+        });
     };
     window.addEventListener('error', function(event) {
       window.WeiBeiEditorBootFailed(event.error || event.message);

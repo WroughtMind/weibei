@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import WebKit
 import WeiBeiCore
@@ -259,6 +260,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
+    var onRenderReady: () -> Void = {}
+    var onRenderFailure: () -> Void = {}
     /// JSON array of `{id,text}` for selection-ask underline marks (read-only surfaces).
     var selectionAskMarks: String = "[]"
     var onSelectionAskMark: (String) -> Void = { _ in }
@@ -285,6 +288,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onWikiLink: onWikiLink,
             onSourceReference: onSourceReference,
             onAppShortcut: onAppShortcut,
+            onRenderReady: onRenderReady,
+            onRenderFailure: onRenderFailure,
             onSelectionAskMark: onSelectionAskMark
         )
     }
@@ -383,6 +388,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         view.handleAppShortcut = { [weak coordinator = context.coordinator] key, modifiers in
             coordinator?.handleAppShortcut(key: key, modifiers: modifiers) ?? false
         }
+        view.navigationDelegate = context.coordinator
         context.coordinator.webView = view
         if let url = WeiBeiResources.bundle.url(forResource: "index", withExtension: "html") {
             let editorDirectory = url.deletingLastPathComponent()
@@ -427,6 +433,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.onWikiLink = onWikiLink
         context.coordinator.onSourceReference = onSourceReference
         context.coordinator.onAppShortcut = onAppShortcut
+        context.coordinator.onRenderReady = onRenderReady
+        context.coordinator.onRenderFailure = onRenderFailure
         let nextBaseURL = markdownBaseURL?.absoluteString ?? ""
         if context.coordinator.markdownBaseURLString != nextBaseURL {
             context.coordinator.markdownBaseURLString = nextBaseURL
@@ -457,6 +465,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     }
 
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
+        view.navigationDelegate = nil
         for name in scriptMessageNames {
             view.configuration.userContentController.removeScriptMessageHandler(forName: name)
         }
@@ -469,6 +478,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         "askAgentWithSelection",
         "wikiLinkActivated",
         "sourceReferenceActivated",
+        "editorFailure",
         "imageAttachmentRequested",
         "contentHeightChanged",
         "activeHeadingChanged",
@@ -577,7 +587,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         return String(data: data, encoding: .utf8) ?? "\"\""
     }
 
-    final class Coordinator: NSObject, WKScriptMessageHandler {
+    final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         var markdown: Binding<String>
         var command: Binding<NoteEditorCommand?>
         var documentID: String
@@ -588,6 +598,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var onWikiLink: (String) -> Void
         var onSourceReference: (String) -> Void
         var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool
+        var onRenderReady: () -> Void
+        var onRenderFailure: () -> Void
         var onSelectionAskMark: (String) -> Void
         var selectionAskMarks: String
         weak var webView: WKWebView?
@@ -628,6 +640,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onWikiLink: @escaping (String) -> Void,
             onSourceReference: @escaping (String) -> Void,
             onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool,
+            onRenderReady: @escaping () -> Void,
+            onRenderFailure: @escaping () -> Void,
             onSelectionAskMark: @escaping (String) -> Void
         ) {
             self.documentID = documentID
@@ -649,11 +663,69 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.onWikiLink = onWikiLink
             self.onSourceReference = onSourceReference
             self.onAppShortcut = onAppShortcut
+            self.onRenderReady = onRenderReady
+            self.onRenderFailure = onRenderFailure
             self.onSelectionAskMark = onSelectionAskMark
         }
 
         func handleAppShortcut(key: String, modifiers: NSEvent.ModifierFlags) -> Bool {
             onAppShortcut(key, modifiers)
+        }
+
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            reportRenderFailure()
+        }
+
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            reportRenderFailure()
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        ) {
+            guard navigationAction.navigationType == .linkActivated else {
+                // Initial local editor load and in-page programmatic updates.
+                decisionHandler(.allow)
+                return
+            }
+            guard let targetURL = navigationAction.request.url else {
+                decisionHandler(.cancel)
+                return
+            }
+            if Self.isSamePageFragment(targetURL, currentURL: webView.url) {
+                decisionHandler(.allow)
+                return
+            }
+
+            let scheme = targetURL.scheme?.lowercased()
+            if scheme == "http" || scheme == "https" || scheme == "mailto" {
+                NSWorkspace.shared.open(targetURL)
+            }
+            // Never replace an answer/editor with an external or unknown page.
+            decisionHandler(.cancel)
+        }
+
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            reportRenderFailure()
+        }
+
+        private static func isSamePageFragment(_ targetURL: URL, currentURL: URL?) -> Bool {
+            guard targetURL.fragment?.isEmpty == false,
+                  let currentURL,
+                  var target = URLComponents(url: targetURL, resolvingAgainstBaseURL: true),
+                  var current = URLComponents(url: currentURL, resolvingAgainstBaseURL: true) else {
+                return false
+            }
+            target.fragment = nil
+            current.fragment = nil
+            return target.url == current.url
+        }
+
+        private func reportRenderFailure() {
+            isReady = false
+            onRenderFailure()
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -686,6 +758,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 applyFocus()
                 applySelectionAskMarks(force: true)
                 runPendingCommandIfReady()
+                onRenderReady()
             case "markdownChanged":
                 guard let text = (message.body as? [String: Any])?["markdown"] as? String else { return }
                 if let pendingExternalMarkdown {
@@ -743,6 +816,8 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 guard let body = message.body as? [String: Any],
                       let height = body["height"] as? Double else { return }
                 onContentHeightChange(CGFloat(height))
+            case "editorFailure":
+                reportRenderFailure()
             case "activeHeadingChanged":
                 guard let body = message.body as? [String: Any] else { return }
                 onActiveHeadingChange((body["index"] as? NSNumber)?.intValue)

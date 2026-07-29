@@ -3,6 +3,10 @@ import Foundation
 /// Prepares agent markdown so Milkdown/KaTeX can parse model output that uses
 /// pseudo-delimiters like `[ y_i=\hat y_i ]` instead of `$$...$$` / `\[...\]`.
 enum AgentChatKaTeXMarkdown {
+    private static let inlineMath = try? NSRegularExpression(
+        pattern: #"(?<!\\)\$(?!\s)(?:\\.|[^$\n])+\$(?!\d)"#
+    )
+
     static func prepare(_ raw: String) -> String {
         var text = raw
         text = convertBracketDisplayMath(in: text)
@@ -10,12 +14,140 @@ enum AgentChatKaTeXMarkdown {
         return text
     }
 
-    static func containsRecognizableMath(_ text: String) -> Bool {
-        text.contains("$$")
-            || text.contains("\\(")
-            || text.contains("\\[")
-            || text.contains("$")
+    /// Keep ordinary one-paragraph / inline Markdown on native SwiftUI text.
+    /// WebKit is reserved for syntax whose layout or rendering actually needs
+    /// the mature block renderer (paragraphs, lists, tables, code, math, etc.).
+    static func requiresWebRenderer(_ preparedText: String) -> Bool {
+        #if DEBUG
+        assert(classifierSelfCheckPassed, "Agent Chat Markdown routing self-check failed")
+        #endif
+        return requiresWebRendererUnchecked(preparedText)
     }
+
+    private static func requiresWebRendererUnchecked(_ preparedText: String) -> Bool {
+        if preparedText.contains("$$")
+            || preparedText.contains("\\(")
+            || preparedText.contains("\\[")
+            || preparedText.contains("\\begin{")
+            || hasInlineMath(in: preparedText)
+            || preparedText.contains("[[")
+            || preparedText.contains("![") {
+            return true
+        }
+
+        let lines = preparedText.split(
+            omittingEmptySubsequences: false,
+            whereSeparator: \.isNewline
+        )
+        var hasContent = false
+        var hasGapAfterContent = false
+        for lineSlice in lines {
+            let line = String(lineSlice)
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty {
+                if hasContent { hasGapAfterContent = true }
+                continue
+            }
+            if hasGapAfterContent {
+                return true
+            }
+            hasContent = true
+            if isBlockLine(trimmed, original: line) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func hasInlineMath(in text: String) -> Bool {
+        guard let inlineMath else { return false }
+        return inlineMath.firstMatch(
+            in: text,
+            range: NSRange(text.startIndex..<text.endIndex, in: text)
+        ) != nil
+    }
+
+    private static func isBlockLine(_ trimmed: String, original: String) -> Bool {
+        if isHeading(trimmed)
+            || trimmed.hasPrefix(">")
+            || trimmed.hasPrefix("```")
+            || trimmed.hasPrefix("~~~")
+            || trimmed.hasPrefix("- ")
+            || trimmed.hasPrefix("* ")
+            || trimmed.hasPrefix("+ ")
+            || isOrderedListItem(trimmed)
+            || isHorizontalRule(trimmed)
+            || isSetextUnderline(trimmed)
+            || isTableDelimiter(trimmed)
+            || trimmed.hasPrefix("[^")
+            || isHTMLBlock(trimmed)
+            || original.hasPrefix("\t")
+            || original.hasPrefix("    ") {
+            return true
+        }
+        return false
+    }
+
+    private static func isHeading(_ line: String) -> Bool {
+        let markerCount = line.prefix { $0 == "#" }.count
+        guard (1...6).contains(markerCount), line.count > markerCount else { return false }
+        let markerEnd = line.index(line.startIndex, offsetBy: markerCount)
+        return line[markerEnd].isWhitespace
+    }
+
+    private static func isOrderedListItem(_ line: String) -> Bool {
+        let digits = line.prefix { $0.isNumber }
+        guard !digits.isEmpty, digits.count < line.count else { return false }
+        let punctuationIndex = line.index(line.startIndex, offsetBy: digits.count)
+        guard line[punctuationIndex] == "." || line[punctuationIndex] == ")" else { return false }
+        let contentIndex = line.index(after: punctuationIndex)
+        return contentIndex < line.endIndex && line[contentIndex].isWhitespace
+    }
+
+    private static func isHorizontalRule(_ line: String) -> Bool {
+        let compact = line.filter { !$0.isWhitespace }
+        guard compact.count >= 3, let marker = compact.first, "-*_".contains(marker) else {
+            return false
+        }
+        return compact.allSatisfy { $0 == marker }
+    }
+
+    private static func isSetextUnderline(_ line: String) -> Bool {
+        guard let marker = line.first, marker == "=" || marker == "-" else { return false }
+        return line.allSatisfy { $0 == marker }
+    }
+
+    private static func isTableDelimiter(_ line: String) -> Bool {
+        guard line.contains("|"), line.contains("-") else { return false }
+        return line.allSatisfy { $0 == "|" || $0 == ":" || $0 == "-" || $0.isWhitespace }
+    }
+
+    private static func isHTMLBlock(_ line: String) -> Bool {
+        guard line.first == "<", line.count > 1 else { return false }
+        let marker = line[line.index(after: line.startIndex)]
+        // Route any line-leading HTML declaration/tag through the mature
+        // renderer instead of maintaining a permanently incomplete tag list.
+        return marker.isLetter || marker == "!" || marker == "?" || marker == "/"
+    }
+
+    #if DEBUG
+    private static let classifierSelfCheckPassed: Bool = {
+        let cases: [(String, Bool)] = [
+            ("普通单段文字", false),
+            ("带有 **行内强调** 的单段", false),
+            ("Setext 标题\n===", true),
+            ("<!-- HTML comment -->", true),
+            ("<p>段落</p>", true),
+            ("<section>章节</section>", true),
+            ("<article>文章</article>", true),
+            ("<nav>导航</nav>", true),
+            ("<script>void 0</script>", true),
+            ("> 短引用", true),
+            ("- 单项列表", true),
+        ]
+        return cases.allSatisfy { requiresWebRendererUnchecked($0.0) == $0.1 }
+    }()
+    #endif
 
     /// Standalone `[ ... \cmd ... ]` (single- or multi-line) → `$$...$$`.
     /// Citations like `[材料：…]` are stripped before this runs.
