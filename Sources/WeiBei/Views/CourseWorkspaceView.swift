@@ -144,13 +144,23 @@ struct CourseWorkspaceView: View {
     }
 
     private func createNewNote() {
-        guard let noteID = store.createCourseNotebookNote(title: newNoteTitle) else {
-            newNoteError = store.noteFileError ?? store.ui("无法新建笔记。", "Could not create the note.")
+        guard let courseID = store.activeCourseID else {
+            newNoteError = store.ui("无法新建笔记。", "Could not create the note.")
             return
         }
-        selectedNoteID = noteID
-        page = .hub
-        showsNewNotePrompt = false
+        Task { @MainActor in
+            guard let noteID = await store.createCourseNotebookNote(
+                courseID: courseID,
+                title: newNoteTitle
+            ) else {
+                newNoteError = store.noteFileError
+                    ?? store.ui("无法新建笔记。", "Could not create the note.")
+                return
+            }
+            selectedNoteID = noteID
+            page = .hub
+            showsNewNotePrompt = false
+        }
     }
 
     private func prepareInitialRoute() {
@@ -196,7 +206,7 @@ private struct CourseNewNoteSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(store.ui("新建课程笔记", "New course note"))
                     .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 20, weight: .semibold))
-                Text(store.ui("新笔记会进入当前课程的笔记栏，并保存到本地笔记目录。", "The note will appear in the current course and save locally."))
+                Text(store.ui("新笔记会写入当前课程文件夹里的“笔记”目录。", "The note will be written to the Notes folder inside this course."))
                     .font(.system(size: 12))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }

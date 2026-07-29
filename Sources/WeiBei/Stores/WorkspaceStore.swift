@@ -179,6 +179,111 @@ enum CourseWorkspaceDestination: String, CaseIterable, Sendable {
     case sessions
 }
 
+enum CourseOwnedFileRole: String, Codable, Sendable {
+    case material
+    case note
+
+    var directoryName: String {
+        switch self {
+        case .material: "文稿"
+        case .note: "笔记"
+        }
+    }
+}
+
+enum CourseFileConflictResolution: Equatable, Sendable {
+    case cancel
+    case keepBoth(preferredFileName: String?)
+    case replace
+}
+
+enum CourseKeepBothNaming {
+    static func suggestedFileName(
+        originalName: String,
+        conflictingTargets: [URL]
+    ) -> String {
+        let originalURL = URL(fileURLWithPath: originalName)
+        let stem = originalURL.deletingPathExtension().lastPathComponent
+        let pathExtension = originalURL.pathExtension
+        let directories = conflictingTargets.map {
+            $0.deletingLastPathComponent().standardizedFileURL
+        }
+        for suffix in 2...9_999 {
+            let candidate = pathExtension.isEmpty
+                ? "\(stem) \(suffix)"
+                : "\(stem) \(suffix).\(pathExtension)"
+            if directories.allSatisfy({
+                !FileManager.default.fileExists(
+                    atPath: $0.appendingPathComponent(candidate).path
+                )
+            }) {
+                return candidate
+            }
+        }
+        return pathExtension.isEmpty
+            ? "\(stem) \(UUID().uuidString.lowercased())"
+            : "\(stem) \(UUID().uuidString.lowercased()).\(pathExtension)"
+    }
+}
+
+struct CourseOwnedFileImportResult {
+    var item: StudyItem
+    var sourceCleanupPending: Bool
+}
+
+struct CourseFileOperationProgress: Equatable, Sendable {
+    var completed: Int
+    var total: Int
+    var currentFileName: String
+}
+
+enum CourseFileRemovalOutcome: Sendable {
+    case removed
+    case restored
+    case quarantined(URL)
+}
+
+enum CourseOwnedFileError: LocalizedError {
+    case courseNotFound
+    case courseRootUnavailable
+    case sourceMustBeRegularFile
+    case unsupportedFile
+    case sourceAlreadyInsideCourse
+    case sourceIdentityChanged
+    case unsafeCoursePath
+    case targetConflict(URL)
+    case replacementTargetIsShared
+    case verificationFailed
+    case workspaceSaveFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .courseNotFound:
+            "找不到要接收文件的课程。"
+        case .courseRootUnavailable:
+            "课程文件夹当前不可访问。"
+        case .sourceMustBeRegularFile:
+            "首个版本只接收普通本地文件；符号链接和别名不会被移动。"
+        case .unsupportedFile:
+            "这个文件类型当前不能加入课程。"
+        case .sourceAlreadyInsideCourse:
+            "这个文件已经位于当前课程文件夹中。"
+        case .sourceIdentityChanged:
+            "复制期间来源文件发生了变化，魏碑没有删除或登记它。"
+        case .unsafeCoursePath:
+            "课程目标路径越出了当前课程文件夹，魏碑已停止操作。"
+        case .targetConflict(let url):
+            "课程中已经存在“\(url.lastPathComponent)”。魏碑没有覆盖它。"
+        case .replacementTargetIsShared:
+            "这份共享原件正被其他课程使用，不能替换；可以取消或改名保留两份。"
+        case .verificationFailed:
+            "复制后的文件校验失败，原文件保持不变。"
+        case .workspaceSaveFailed:
+            "课程文件已经复制，但课程状态没有成功保存；魏碑已安全撤销本次登记。"
+        }
+    }
+}
+
 /// Isolated chrome state for the course drawer.
 /// Kept off `WorkspaceStore`'s `@Published` surface so opening/closing the drawer
 /// does not invalidate reader/agent/notes bodies (that was the multi-second pre-slide lag).
@@ -292,6 +397,7 @@ final class WorkspaceStore: ObservableObject {
     /// Success / info banner for note create/switch — separate from errors so it auto-dismisses cleanly.
     @Published var transientNoteStatus: String?
     @Published private(set) var workspaceSaveError: String?
+    @Published private(set) var courseFileOperationProgress: CourseFileOperationProgress?
     @Published var notebookCreationDraft: NotebookCreationDraft?
     @Published var notebookRenameDraft: NotebookRenameDraft?
     @Published var modelName: String = ProcessInfo.processInfo.environment["WEIBEI_OPENAI_MODEL"] ?? "gpt-5.5"
@@ -329,6 +435,12 @@ final class WorkspaceStore: ObservableObject {
     private var notesByItemID: [String: String] = [:]
     private var pendingNoteWritesByItemID: [String: PendingNoteWriteState] = [:]
     private var noteBackingContentDigestsByItemID: [String: String] = [:]
+    private var loadedCourseNoteTextByItemID: [String: String] = [:]
+    private var courseNoteLoadTasksByItemID: [String: Task<Void, Never>] = [:]
+    private var courseNoteLoadGenerationByItemID: [String: UInt64] = [:]
+    private var courseNoteWritesInFlight = Set<String>()
+    private var lastCourseNoteReadRanOnMainThread: Bool?
+    private var lastCourseNoteWriteRanOnMainThread: Bool?
     private let workspaceDirectory: URL
     private let storageURL: URL
     private let notebookRenameJournalURL: URL
@@ -341,6 +453,7 @@ final class WorkspaceStore: ObservableObject {
     private let notebookMarkdownReader: (URL) throws -> String
     private let notebookMarkdownWriter: (String, URL) throws -> Void
     private let notebookFileMover: (URL, URL) throws -> Void
+    private let courseFileSourceRemover: @Sendable (URL) throws -> Void
     private let workspaceSnapshotWriter: (Data, URL) throws -> Void
     private let selectionAskThreadDefaults: UserDefaults
     private let piRuntime: PiAgentRuntime
@@ -381,6 +494,10 @@ final class WorkspaceStore: ObservableObject {
     private var activeCourseSecurityScopes: [String: URL] = [:]
     private var resolvedCourseRootURLs: [UUID: URL] = [:]
     private var courseRootUnavailableReasons: [UUID: String] = [:]
+    private let courseProjectFileWorker = CourseProjectFileWorker()
+    private var courseReconciliationTask: Task<Void, Never>?
+    private var courseReconciliationInFlight = false
+    private var lastCourseReconciliationLookupCount = 0
 
     var showRightPane: Bool {
         get { showNotes || showAgent }
@@ -466,6 +583,158 @@ final class WorkspaceStore: ObservableObject {
         var retitledContentDigest: String
     }
 
+    private struct PendingCourseFileTransactionJournal: Codable, Sendable {
+        enum Stage: String, Codable, Sendable {
+            case prepared
+            case staged
+            case replacementPreparing
+            case replacementRollbackReserved
+            case replacementIsolated
+            case replacementRollbackPrepared
+            case replacementTrashed
+            case placed
+            case workspaceCommitted
+            case sourceCleanupPending
+        }
+
+        var transactionID: UUID
+        var transactionDirectoryIdentity: ImportedFileIdentity
+        var courseID: UUID
+        var role: CourseOwnedFileRole
+        var itemID: String
+        var retiredSourceItemID: String?
+        var sourcePath: String?
+        var sourceQuarantinePath: String?
+        var sourceIdentity: ImportedFileIdentity?
+        var sourceSnapshot: CourseFileSnapshot
+        var targetRelativePath: String
+        var destinationDirectoryIdentity: ImportedFileIdentity
+        var stagedIdentity: ImportedFileIdentity?
+        var targetIdentity: ImportedFileIdentity?
+        var replacedTargetIdentity: ImportedFileIdentity?
+        var replacedTargetSnapshot: CourseFileSnapshot?
+        var replacedRollbackIdentity: ImportedFileIdentity?
+        var replacedTrashPath: String?
+        var stage: Stage
+    }
+
+    private struct PendingCourseMarkdownWriteJournal: Codable, Sendable {
+        enum Stage: String, Codable, Sendable {
+            case prepared
+            case staged
+            case targetIsolated
+            case placed
+        }
+
+        var transactionID: UUID
+        var transactionDirectoryIdentity: ImportedFileIdentity
+        var courseID: UUID
+        var itemID: String
+        var targetPath: String
+        var targetRelativePath: String
+        var targetIdentity: ImportedFileIdentity
+        var targetSnapshot: CourseFileSnapshot
+        var replacementSnapshot: CourseFileSnapshot
+        var stagedIdentity: ImportedFileIdentity?
+        var stage: Stage
+    }
+
+    private struct CourseMarkdownWriteTransaction {
+        var result: CourseMarkdownWriteResult
+        var journal: PendingCourseMarkdownWriteJournal
+        var transactionDirectory: URL
+    }
+
+    private struct CourseRecoveryInput: Sendable {
+        var courseID: UUID
+        var root: URL
+        var libraryRoot: URL?
+        var courseRootsByID: [UUID: URL]
+        var importedItems: [StudyItem]
+        var memberships: [CourseItemMembership]
+    }
+
+    private struct PendingSharedFileTransactionJournal: Codable, Sendable {
+        enum Stage: String, Codable, Sendable {
+            case prepared
+            case linksPreparing
+            case sharedPlaced
+            case linksPrepared
+            case linksPlaced
+            case workspaceCommitted
+        }
+
+        var transactionID: UUID
+        var transactionDirectoryIdentity: ImportedFileIdentity
+        var itemID: String
+        var ownerCourseID: UUID
+        var addedCourseID: UUID
+        var sourcePath: String
+        var sourceRelativePath: String
+        var sourceIdentity: ImportedFileIdentity
+        var sourceSnapshot: CourseFileSnapshot
+        var sourceQuarantinePath: String
+        var sharedPath: String
+        var sharedRelativePath: String
+        var sharedPayloadPath: String?
+        var sharedIdentity: ImportedFileIdentity?
+        var ownerLinkIdentity: ImportedFileIdentity?
+        var addedLinkPath: String
+        var addedLinkRelativePath: String
+        var addedLinkIdentity: ImportedFileIdentity?
+        var stage: Stage
+    }
+
+    private struct PendingSharedLinkRemovalJournal: Codable, Sendable {
+        enum Stage: String, Codable, Sendable {
+            case prepared
+            case linkIsolated
+            case workspaceCommitted
+        }
+
+        var transactionID: UUID
+        var transactionDirectoryIdentity: ImportedFileIdentity
+        var itemID: String
+        var courseID: UUID
+        var sharedPath: String
+        var sharedRelativePath: String
+        var sharedIdentity: ImportedFileIdentity
+        var sharedSnapshot: CourseFileSnapshot
+        var linkPath: String
+        var linkRelativePath: String
+        var linkIdentity: ImportedFileIdentity
+        var stage: Stage
+    }
+
+    private struct PendingSharedLinkTransactionJournal: Codable, Sendable {
+        enum Stage: String, Codable, Sendable {
+            case prepared
+            case linkPreparing
+            case linkPlaced
+            case workspaceCommitted
+        }
+
+        var transactionID: UUID
+        var transactionDirectoryIdentity: ImportedFileIdentity
+        var itemID: String
+        var courseID: UUID
+        var sharedPath: String
+        var sharedRelativePath: String
+        var sharedIdentity: ImportedFileIdentity
+        var sharedSnapshot: CourseFileSnapshot
+        var linkPath: String
+        var linkRelativePath: String
+        var linkIdentity: ImportedFileIdentity?
+        var stage: Stage
+    }
+
+    private struct RecoveredCourseFileTarget: Sendable {
+        var journal: PendingCourseFileTransactionJournal
+        var targetURL: URL
+        var targetIdentity: ImportedFileIdentity
+        var metadata: CourseFileSourceInfo
+    }
+
     private var lastUsableAgentAnswer: AgentMessage? {
         guard lastAgentReplyContextRevision == agentContextRevision else { return nil }
         return messages.last { $0.isUsableAgentAnswer }
@@ -493,6 +762,9 @@ final class WorkspaceStore: ObservableObject {
         notebookMarkdownReader: @escaping (URL) throws -> String = WorkspaceStore.readNotebookMarkdown,
         notebookMarkdownWriter: @escaping (String, URL) throws -> Void = WorkspaceStore.writeNotebookMarkdown,
         notebookFileMover: @escaping (URL, URL) throws -> Void = WorkspaceStore.moveNotebookFile,
+        courseFileSourceRemover: @escaping @Sendable (URL) throws -> Void = {
+            try FileManager.default.removeItem(at: $0)
+        },
         workspaceSnapshotWriter: @escaping (Data, URL) throws -> Void = WorkspaceStore.writeWorkspaceSnapshot,
         selectionAskThreadDefaults: UserDefaults = .standard
     ) {
@@ -508,6 +780,7 @@ final class WorkspaceStore: ObservableObject {
         self.notebookMarkdownReader = notebookMarkdownReader
         self.notebookMarkdownWriter = notebookMarkdownWriter
         self.notebookFileMover = notebookFileMover
+        self.courseFileSourceRemover = courseFileSourceRemover
         self.workspaceSnapshotWriter = workspaceSnapshotWriter
         self.selectionAskThreadDefaults = selectionAskThreadDefaults
         piRuntime = PiAgentRuntime(runtimeDirectory: folder.appendingPathComponent("AgentRuntime", isDirectory: true))
@@ -520,6 +793,9 @@ final class WorkspaceStore: ObservableObject {
         load()
         loadLegacySelectionAskThreadsIfWorkspaceFieldMissing()
         let restoredCourseProjectRoots = restoreCourseProjectRoots()
+        if ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root") {
+            recoverPendingCourseFileTransactions()
+        }
         WeiBeiThemeRuntime.mode = appearanceMode
         let recoveredPendingNotebookRename = recoverPendingNotebookRenameIfNeeded()
         let resolvedImportedFileBookmarks = resolvePersistedImportedFileBookmarks()
@@ -561,9 +837,14 @@ final class WorkspaceStore: ObservableObject {
             restoreCurrentStudyLocation()
             recordCurrentStudyLocation(incrementVisit: false)
         }
+        if !ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root") {
+            startCourseFileMaintenance()
+        }
     }
 
     deinit {
+        courseReconciliationTask?.cancel()
+        courseNoteLoadTasksByItemID.values.forEach { $0.cancel() }
         for url in activeCourseSecurityScopes.values {
             courseSecurityScopeStopper(url)
         }
@@ -817,6 +1098,9 @@ final class WorkspaceStore: ObservableObject {
         let previousCourses = courses
         let previousResolvedCourseRootURLs = resolvedCourseRootURLs
         let previousCourseRootUnavailableReasons = courseRootUnavailableReasons
+        let previousImportedItems = importedItems
+        let previousMemberships = courseItemMemberships
+        let previousNoteBackingDigests = noteBackingContentDigestsByItemID
 
         activeCourseSecurityScopes[ownerKey] = scopedURL
         courseLibraryRootPath = resolvedRoot.path
@@ -825,6 +1109,9 @@ final class WorkspaceStore: ObservableObject {
         courseLibraryRootURL = resolvedRoot
         courseLibraryUnavailableReason = nil
         _ = restoreCourseReferencesInsideLibrary()
+        for course in courses where resolvedCourseRootURLs[course.id] != nil {
+            _ = resolveCourseOwnedItems(for: course.id)
+        }
         guard performSaveNow() else {
             courseSecurityScopeStopper(scopedURL)
             if let previousScope {
@@ -840,8 +1127,13 @@ final class WorkspaceStore: ObservableObject {
             courses = previousCourses
             resolvedCourseRootURLs = previousResolvedCourseRootURLs
             courseRootUnavailableReasons = previousCourseRootUnavailableReasons
+            importedItems = previousImportedItems
+            courseItemMemberships = previousMemberships
+            noteBackingContentDigestsByItemID = previousNoteBackingDigests
             throw CourseProjectRootError.workspaceSaveFailed
         }
+        courseDocumentSearchIndex.synchronize(allItems)
+        invalidateAgentContext()
         if let previousScope, previousScope != scopedURL {
             courseSecurityScopeStopper(previousScope)
         } else if previousScope == scopedURL {
@@ -908,11 +1200,22 @@ final class WorkspaceStore: ObservableObject {
         var createdMetadataFingerprint: TransactionDirectoryFingerprint?
         let courseID: UUID
         if FileManager.default.fileExists(atPath: metadataURL.path) {
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: metadataURL.path, isDirectory: &isDirectory),
-                  isDirectory.boolValue,
+            let metadataValues = try? metadataURL.resourceValues(forKeys: [
+                .isDirectoryKey,
+                .isSymbolicLinkKey,
+                .isAliasFileKey,
+            ])
+            guard metadataValues?.isDirectory == true,
+                  metadataValues?.isSymbolicLink != true,
+                  metadataValues?.isAliasFile != true,
+                  !CourseProjectFileWorker.isSymbolicLink(at: metadataURL),
+                  CourseProjectPathPolicy.isSame(
+                    metadataURL,
+                    metadataURL.resolvingSymlinksInPath()
+                  ),
                   let manifest = try? CourseProjectManifest.read(from: manifestURL),
-                  manifest.schemaVersion == CourseProjectManifest.currentSchemaVersion else {
+                  manifest.schemaVersion == CourseProjectManifest.currentSchemaVersion,
+                  importedFileIdentityResolver(canonicalRoot) == identity else {
                 if let externalScopeURL { courseSecurityScopeStopper(externalScopeURL) }
                 throw CourseProjectRootError.metadataConflict
             }
@@ -928,6 +1231,9 @@ final class WorkspaceStore: ObservableObject {
                 isDirectory: true
             )
             do {
+                guard importedFileIdentityResolver(canonicalRoot) == identity else {
+                    throw CourseProjectRootError.rootIdentityUnavailable
+                }
                 try FileManager.default.createDirectory(at: stagedMetadataURL, withIntermediateDirectories: false)
                 guard let emptyFingerprint = transactionDirectoryFingerprint(at: stagedMetadataURL) else {
                     throw CourseProjectRootError.rootIdentityUnavailable
@@ -943,12 +1249,24 @@ final class WorkspaceStore: ObservableObject {
                     throw CourseProjectRootError.rootIdentityUnavailable
                 }
                 createdMetadataFingerprint = completeFingerprint
+                guard importedFileIdentityResolver(canonicalRoot) == identity,
+                      !FileManager.default.fileExists(atPath: metadataURL.path) else {
+                    throw CourseProjectRootError.rootIdentityUnavailable
+                }
                 try FileManager.default.moveItem(at: stagedMetadataURL, to: metadataURL)
                 createdMetadata = true
+                guard importedFileIdentityResolver(canonicalRoot) == identity,
+                      !CourseProjectFileWorker.isSymbolicLink(at: metadataURL),
+                      CourseProjectPathPolicy.isSame(
+                        metadataURL,
+                        metadataURL.resolvingSymlinksInPath()
+                ) else {
+                    throw CourseProjectRootError.rootIdentityUnavailable
+                }
             } catch {
                 if let createdMetadataFingerprint {
                     safelyRemoveTransactionDirectory(
-                        at: stagedMetadataURL,
+                        at: createdMetadata ? metadataURL : stagedMetadataURL,
                         expected: createdMetadataFingerprint
                     )
                 }
@@ -959,6 +1277,10 @@ final class WorkspaceStore: ObservableObject {
 
         let previousCourses = courses
         let previousActiveCourseID = activeCourseID
+        guard importedFileIdentityResolver(canonicalRoot) == identity else {
+            if let externalScopeURL { courseSecurityScopeStopper(externalScopeURL) }
+            throw CourseProjectRootError.rootIdentityUnavailable
+        }
         let course = Course(
             id: courseID,
             title: title,
@@ -993,6 +1315,11 @@ final class WorkspaceStore: ObservableObject {
                 )
             }
             throw CourseProjectRootError.workspaceSaveFailed
+        }
+        if !ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root") {
+            Task { @MainActor [weak self] in
+                await self?.reconcileCourseFilesNow(courseID: course.id)
+            }
         }
         return course.id
     }
@@ -1058,6 +1385,9 @@ final class WorkspaceStore: ObservableObject {
         let previousResolvedRoot = resolvedCourseRootURLs[existing.id]
         let previousUnavailableReason = courseRootUnavailableReasons[existing.id]
         let previousScope = activeCourseSecurityScopes[scopeKey]
+        let previousImportedItems = importedItems
+        let previousMemberships = courseItemMemberships
+        let previousNoteBackingDigests = noteBackingContentDigestsByItemID
 
         var refreshedCourse = previousCourse
         refreshedCourse.sourceRootPath = libraryRelativePath == nil ? resolvedRoot.path : nil
@@ -1073,6 +1403,7 @@ final class WorkspaceStore: ObservableObject {
         } else {
             activeCourseSecurityScopes.removeValue(forKey: scopeKey)
         }
+        _ = resolveCourseOwnedItems(for: existing.id)
 
         guard performSaveNow() else {
             courses[courseIndex] = previousCourse
@@ -1091,12 +1422,22 @@ final class WorkspaceStore: ObservableObject {
             } else {
                 activeCourseSecurityScopes.removeValue(forKey: scopeKey)
             }
+            importedItems = previousImportedItems
+            courseItemMemberships = previousMemberships
+            noteBackingContentDigestsByItemID = previousNoteBackingDigests
             if let newScopeURL { courseSecurityScopeStopper(newScopeURL) }
             throw CourseProjectRootError.workspaceSaveFailed
         }
 
         if let previousScope {
             courseSecurityScopeStopper(previousScope)
+        }
+        courseDocumentSearchIndex.synchronize(allItems)
+        invalidateAgentContext()
+        if !ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root") {
+            Task { @MainActor [weak self] in
+                await self?.reconcileCourseFilesNow(courseID: existing.id)
+            }
         }
         return existing.id
     }
@@ -1107,6 +1448,4125 @@ final class WorkspaceStore: ObservableObject {
 
     func courseRootUnavailableReason(for courseID: UUID) -> String? {
         courseRootUnavailableReasons[courseID]
+    }
+
+    @discardableResult
+    func importFileIntoCourse(
+        _ sourceURL: URL,
+        courseID: UUID,
+        role: CourseOwnedFileRole,
+        conflictResolution: CourseFileConflictResolution = .cancel
+    ) async throws -> CourseOwnedFileImportResult {
+        let sourceInfo: CourseFileSourceInfo
+        do {
+            sourceInfo = try await courseProjectFileWorker.validatedRegularSource(sourceURL)
+        } catch {
+            throw CourseOwnedFileError.sourceMustBeRegularFile
+        }
+        return try await transactCourseOwnedFile(
+            courseID: courseID,
+            role: role,
+            fileName: sourceInfo.url.lastPathComponent,
+            sourceURL: sourceInfo.url,
+            sourceIdentity: sourceInfo.identity,
+            generatedData: nil,
+            conflictResolution: conflictResolution
+        )
+    }
+
+    /// Synchronous bridge used only by the executable self-check harness.
+    /// The run loop keeps servicing the main actor while all file work stays on the worker actor.
+    @discardableResult
+    func importFileIntoCourseForSelfCheck(
+        _ sourceURL: URL,
+        courseID: UUID,
+        role: CourseOwnedFileRole,
+        conflictResolution: CourseFileConflictResolution = .cancel
+    ) throws -> CourseOwnedFileImportResult {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        return try waitForCourseFileOperation {
+            try await self.importFileIntoCourse(
+                sourceURL,
+                courseID: courseID,
+                role: role,
+                conflictResolution: conflictResolution
+            )
+        }
+    }
+
+    @discardableResult
+    func migrateLegacyExternalItemIntoCourse(
+        itemID: String,
+        courseID: UUID,
+        conflictResolution: CourseFileConflictResolution = .cancel
+    ) async throws -> CourseOwnedFileImportResult {
+        guard let item = importedItems.first(where: { $0.id == itemID }),
+              item.storage == .legacyExternal,
+              let sourceURL = item.url else {
+            throw CourseOwnedFileError.sourceMustBeRegularFile
+        }
+        let sourceInfo = try await courseProjectFileWorker.validatedRegularSource(sourceURL)
+        return try await transactCourseOwnedFile(
+            courseID: courseID,
+            role: item.isNotebookNote ? .note : .material,
+            fileName: sourceInfo.url.lastPathComponent,
+            sourceURL: sourceInfo.url,
+            sourceIdentity: sourceInfo.identity,
+            generatedData: nil,
+            conflictResolution: conflictResolution,
+            preservingItemID: itemID
+        )
+    }
+
+    @discardableResult
+    func moveCourseOwnedItem(
+        itemID: String,
+        toCourseID courseID: UUID,
+        conflictResolution: CourseFileConflictResolution = .cancel
+    ) async throws -> CourseOwnedFileImportResult {
+        guard let item = importedItems.first(where: { $0.id == itemID }),
+              case .courseOwned(let ownerCourseID) = item.storage,
+              ownerCourseID != courseID,
+              let sourceURL = item.url else {
+            throw CourseOwnedFileError.sourceMustBeRegularFile
+        }
+        let sourceInfo = try await courseProjectFileWorker.validatedRegularSource(sourceURL)
+        return try await transactCourseOwnedFile(
+            courseID: courseID,
+            role: item.isNotebookNote ? .note : .material,
+            fileName: sourceInfo.url.lastPathComponent,
+            sourceURL: sourceInfo.url,
+            sourceIdentity: sourceInfo.identity,
+            generatedData: nil,
+            conflictResolution: conflictResolution,
+            preservingItemID: itemID
+        )
+    }
+
+    func shareCourseOwnedItem(
+        itemID: String,
+        withCourseID addedCourseID: UUID,
+        conflictResolution: CourseFileConflictResolution = .cancel
+    ) async throws {
+        guard conflictResolution != .replace else {
+            throw CourseOwnedFileError.replacementTargetIsShared
+        }
+        guard let itemIndex = importedItems.firstIndex(where: { $0.id == itemID }),
+              !importedItems[itemIndex].isNotebookNote else {
+            throw CourseOwnedFileError.unsupportedFile
+        }
+        if case .shared = importedItems[itemIndex].storage {
+            try await linkSharedItem(
+                itemID: itemID,
+                toCourseID: addedCourseID,
+                conflictResolution: conflictResolution
+            )
+            return
+        }
+        guard case .courseOwned(let ownerCourseID) = importedItems[itemIndex].storage,
+              ownerCourseID != addedCourseID,
+              let ownerRoot = courseRootURL(for: ownerCourseID),
+              let addedRoot = courseRootURL(for: addedCourseID),
+              let ownerMembershipIndex = uniqueCourseOwnedMembershipIndex(
+                itemID: itemID,
+                courseID: ownerCourseID
+              ),
+              let sourceRelativePath = courseItemMemberships[ownerMembershipIndex].courseRelativePath,
+              let sourceURL = safeCourseOwnedFileURL(
+                relativePath: sourceRelativePath,
+                role: .material,
+                inside: ownerRoot
+              ),
+              let libraryRoot = courseLibraryRootURL else {
+            throw CourseOwnedFileError.courseRootUnavailable
+        }
+        let sourceInfo = try await courseProjectFileWorker.validatedRegularSource(sourceURL)
+        let sourceSnapshot = try await courseProjectFileWorker.stableSnapshot(
+            at: sourceInfo.url,
+            expectedIdentity: sourceInfo.identity
+        )
+        let sharedDirectory = try await courseProjectFileWorker.ensureRealDirectory(
+            libraryRoot.appendingPathComponent("共享文稿", isDirectory: true),
+            inside: libraryRoot
+        )
+        let sharedTarget = try resolvedCourseImportTarget(
+            fileName: sourceURL.lastPathComponent,
+            destinationDirectory: sharedDirectory,
+            role: .material,
+            conflictResolution: conflictResolution
+        )
+        if FileManager.default.fileExists(atPath: sharedTarget.path) {
+            throw CourseOwnedFileError.replacementTargetIsShared
+        }
+        let addedDirectory = try await courseProjectFileWorker.ensureRealDirectory(
+            addedRoot.appendingPathComponent("文稿", isDirectory: true),
+            inside: addedRoot
+        )
+        let addedLinkURL = try resolvedCourseImportTarget(
+            fileName: sharedTarget.lastPathComponent,
+            destinationDirectory: addedDirectory,
+            role: .material,
+            conflictResolution: conflictResolution == .replace ? .cancel : conflictResolution
+        )
+        let transactionID = UUID()
+        let transactionDirectory = try courseFileTransactionDirectory(
+            transactionID: transactionID,
+            inside: ownerRoot
+        )
+        guard let transactionDirectoryIdentity = importedFileIdentityResolver(transactionDirectory),
+              let sharedDirectoryIdentity = importedFileIdentityResolver(sharedDirectory) else {
+            throw CourseOwnedFileError.unsafeCoursePath
+        }
+        let payloadURL = sharedDirectory.appendingPathComponent(
+            ".\(sharedTarget.lastPathComponent).weibei-share-stage-\(transactionID.uuidString.lowercased())"
+        )
+        let journalURL = transactionDirectory.appendingPathComponent("shared.json")
+        let preparedOwnerLinkURL = transactionDirectory.appendingPathComponent(
+            "prepared-owner-link"
+        )
+        let preparedAddedLinkURL = transactionDirectory.appendingPathComponent(
+            "prepared-added-link"
+        )
+        let ownerDirectory = sourceURL.deletingLastPathComponent()
+        guard let libraryRootIdentity = CourseProjectFileWorker.identity(at: libraryRoot),
+              let ownerRootIdentity = CourseProjectFileWorker.identity(at: ownerRoot),
+              let addedRootIdentity = CourseProjectFileWorker.identity(at: addedRoot),
+              let ownerDirectoryIdentity = CourseProjectFileWorker.identity(
+                at: ownerDirectory
+              ),
+              let addedDirectoryIdentity = CourseProjectFileWorker.identity(
+                at: addedDirectory
+              ) else {
+            throw CourseOwnedFileError.unsafeCoursePath
+        }
+        let sourceQuarantineURL = sourceURL.deletingLastPathComponent()
+            .appendingPathComponent(
+                ".\(sourceURL.lastPathComponent).weibei-share-\(transactionID.uuidString.lowercased())"
+            )
+        let sharedRelativePath = CourseProjectPathPolicy.relativePath(
+            of: sharedTarget,
+            inside: libraryRoot
+        ) ?? "共享文稿/\(sharedTarget.lastPathComponent)"
+        let addedRelativePath = CourseProjectPathPolicy.relativePath(
+            of: addedLinkURL,
+            inside: addedRoot
+        ) ?? "文稿/\(addedLinkURL.lastPathComponent)"
+        var journal = PendingSharedFileTransactionJournal(
+            transactionID: transactionID,
+            transactionDirectoryIdentity: transactionDirectoryIdentity,
+            itemID: itemID,
+            ownerCourseID: ownerCourseID,
+            addedCourseID: addedCourseID,
+            sourcePath: sourceURL.path,
+            sourceRelativePath: sourceRelativePath,
+            sourceIdentity: sourceInfo.identity,
+            sourceSnapshot: sourceSnapshot,
+            sourceQuarantinePath: sourceQuarantineURL.path,
+            sharedPath: sharedTarget.path,
+            sharedRelativePath: sharedRelativePath,
+            sharedPayloadPath: payloadURL.path,
+            sharedIdentity: nil,
+            ownerLinkIdentity: nil,
+            addedLinkPath: addedLinkURL.path,
+            addedLinkRelativePath: addedRelativePath,
+            addedLinkIdentity: nil,
+            stage: .prepared
+        )
+        let previousItems = importedItems
+        let previousMemberships = courseItemMemberships
+        func revalidatedSharedArtifacts(
+            sharedIdentity: ImportedFileIdentity,
+            ownerLinkIdentity: ImportedFileIdentity,
+            addedLinkIdentity: ImportedFileIdentity
+        ) async throws -> CourseFileSourceInfo {
+            guard CourseProjectFileWorker.identity(at: libraryRoot)
+                    == libraryRootIdentity,
+                  CourseProjectFileWorker.identity(at: ownerRoot)
+                    == ownerRootIdentity,
+                  CourseProjectFileWorker.identity(at: addedRoot)
+                    == addedRootIdentity,
+                  CourseProjectFileWorker.identity(at: sharedDirectory)
+                    == sharedDirectoryIdentity,
+                  CourseProjectFileWorker.identity(at: ownerDirectory)
+                    == ownerDirectoryIdentity,
+                  CourseProjectFileWorker.identity(at: addedDirectory)
+                    == addedDirectoryIdentity,
+                  CourseProjectPathPolicy.isSame(
+                    sharedDirectory,
+                    sharedDirectory.resolvingSymlinksInPath()
+                  ),
+                  CourseProjectPathPolicy.isSame(
+                    ownerDirectory,
+                    ownerDirectory.resolvingSymlinksInPath()
+                  ),
+                  CourseProjectPathPolicy.isSame(
+                    addedDirectory,
+                    addedDirectory.resolvingSymlinksInPath()
+                  ),
+                  CourseProjectFileWorker.identity(at: sourceURL)
+                    == ownerLinkIdentity,
+                  CourseProjectFileWorker.symbolicLink(
+                    at: sourceURL,
+                    pointsTo: sharedTarget
+                  ),
+                  CourseProjectFileWorker.identity(at: addedLinkURL)
+                    == addedLinkIdentity,
+                  CourseProjectFileWorker.symbolicLink(
+                    at: addedLinkURL,
+                    pointsTo: sharedTarget
+                  ) else {
+                throw CourseOwnedFileError.verificationFailed
+            }
+            return try await courseProjectFileWorker.stableMetadata(
+                at: sharedTarget,
+                expectedIdentity: sharedIdentity,
+                expectedSnapshot: sourceSnapshot
+            )
+        }
+        do {
+            try await courseProjectFileWorker.write(
+                JSONEncoder().encode(journal),
+                to: journalURL
+            )
+            let stagedIdentity = try await courseProjectFileWorker.copyAndVerify(
+                from: sourceURL,
+                generatedData: nil,
+                to: payloadURL,
+                expectedSnapshot: sourceSnapshot
+            )
+            journal.sharedIdentity = stagedIdentity
+            try await courseProjectFileWorker.write(
+                JSONEncoder().encode(journal),
+                to: journalURL
+            )
+            try courseProjectMutationHook(
+                .afterSharedSameVolumeStagingJournal
+            )
+            let sharedIdentity = try await courseProjectFileWorker.placeWithoutReplacement(
+                from: payloadURL,
+                to: sharedTarget,
+                courseRoot: libraryRoot,
+                destinationDirectory: sharedDirectory,
+                expectedDestinationIdentity: sharedDirectoryIdentity,
+                expectedSnapshot: sourceSnapshot
+            )
+            try courseProjectMutationHook(.afterSharedFilePlacementBeforeJournal)
+            guard stagedIdentity == sharedIdentity,
+                  await courseProjectFileWorker.isolateWithoutReplacement(
+                    from: sourceURL,
+                    to: sourceQuarantineURL
+                  ) else {
+                throw CourseOwnedFileError.verificationFailed
+            }
+            try courseProjectMutationHook(.afterSharedSourceIsolationBeforeJournal)
+            _ = try await courseProjectFileWorker.stableSnapshot(
+                at: sourceQuarantineURL,
+                expectedIdentity: sourceInfo.identity,
+                expectedSnapshot: sourceSnapshot
+            )
+            journal.sharedIdentity = sharedIdentity
+            journal.stage = .sharedPlaced
+            try await courseProjectFileWorker.write(
+                JSONEncoder().encode(journal),
+                to: journalURL
+            )
+            journal.stage = .linksPreparing
+            try await courseProjectFileWorker.write(
+                JSONEncoder().encode(journal),
+                to: journalURL
+            )
+            let ownerLinkIdentity = try await courseProjectFileWorker.prepareSymbolicLink(
+                at: preparedOwnerLinkURL,
+                destinationURL: sharedTarget
+            )
+            try courseProjectMutationHook(
+                .afterSharedOwnerLinkPrepareBeforeJournalIdentity
+            )
+            journal.ownerLinkIdentity = ownerLinkIdentity
+            try await courseProjectFileWorker.write(
+                JSONEncoder().encode(journal),
+                to: journalURL
+            )
+            let addedLinkIdentity = try await courseProjectFileWorker.prepareSymbolicLink(
+                at: preparedAddedLinkURL,
+                destinationURL: sharedTarget
+            )
+            try courseProjectMutationHook(
+                .afterSharedAddedLinkPrepareBeforeJournalIdentity
+            )
+            journal.addedLinkIdentity = addedLinkIdentity
+            journal.stage = .linksPrepared
+            try await courseProjectFileWorker.write(
+                JSONEncoder().encode(journal),
+                to: journalURL
+            )
+            try await courseProjectFileWorker.placePreparedSymbolicLink(
+                from: preparedOwnerLinkURL,
+                to: sourceURL,
+                destinationURL: sharedTarget,
+                allowedRoot: ownerRoot,
+                expectedIdentity: ownerLinkIdentity
+            )
+            try courseProjectMutationHook(.afterSharedOwnerLinkPlacementBeforeJournal)
+            try await courseProjectFileWorker.placePreparedSymbolicLink(
+                from: preparedAddedLinkURL,
+                to: addedLinkURL,
+                destinationURL: sharedTarget,
+                allowedRoot: addedRoot,
+                expectedIdentity: addedLinkIdentity
+            )
+            try courseProjectMutationHook(.afterSharedAddedLinkPlacementBeforeJournal)
+            journal.stage = .linksPlaced
+            try await courseProjectFileWorker.write(
+                JSONEncoder().encode(journal),
+                to: journalURL
+            )
+
+            let sharedInfo = try await revalidatedSharedArtifacts(
+                sharedIdentity: sharedIdentity,
+                ownerLinkIdentity: ownerLinkIdentity,
+                addedLinkIdentity: addedLinkIdentity
+            )
+            importedItems[itemIndex].urlPath = sharedTarget.path
+            importedItems[itemIndex].importedFileLastKnownPath = sharedTarget.path
+            importedItems[itemIndex].importedFileIdentity = sharedIdentity
+            importedItems[itemIndex].importedFileBookmarkData = nil
+            importedItems[itemIndex].storage = .shared(
+                sharedRelativePath: sharedRelativePath
+            )
+            importedItems[itemIndex].fileByteCount = sharedInfo.byteCount
+            importedItems[itemIndex].fileModificationTimeNanoseconds =
+                sharedInfo.modificationTimeNanoseconds
+            courseItemMemberships[ownerMembershipIndex].entryIdentity = ownerLinkIdentity
+            courseItemMemberships[ownerMembershipIndex].documentIdentifier = nil
+            courseItemMemberships.append(
+                CourseItemMembership(
+                    courseID: addedCourseID,
+                    itemID: itemID,
+                    courseRelativePath: addedRelativePath,
+                    entryIdentity: addedLinkIdentity,
+                    documentIdentifier: nil
+                )
+            )
+            guard performSaveNow() else {
+                throw CourseOwnedFileError.workspaceSaveFailed
+            }
+            journal.stage = .workspaceCommitted
+            try? await courseProjectFileWorker.write(
+                JSONEncoder().encode(journal),
+                to: journalURL
+            )
+            try courseProjectMutationHook(
+                .afterSharedWorkspaceSaveBeforeSourceCleanup
+            )
+            if (try? await revalidatedSharedArtifacts(
+                sharedIdentity: sharedIdentity,
+                ownerLinkIdentity: ownerLinkIdentity,
+                addedLinkIdentity: addedLinkIdentity
+            )) != nil {
+                let cleanup = await courseProjectFileWorker
+                    .isolateAndRemoveVerifiedFile(
+                        at: sourceQuarantineURL,
+                        quarantineURL: transactionDirectory
+                            .appendingPathComponent("source-cleanup"),
+                        expectedIdentity: sourceInfo.identity,
+                        expectedSnapshot: sourceSnapshot,
+                        remover: { try FileManager.default.removeItem(at: $0) }
+                    )
+                if case .removed = cleanup {
+                    try courseProjectMutationHook(
+                        .afterSharedSourceCleanupBeforeTransactionCleanup
+                    )
+                    await safelyRemoveSharedTransactionDirectoryInBackground(
+                        transactionDirectory,
+                        expectedIdentity: transactionDirectoryIdentity
+                    )
+                }
+            }
+            courseDocumentSearchIndex.schedule([importedItems[itemIndex]])
+            invalidateAgentContext()
+        } catch {
+            if ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            ), error is CourseProjectSimulatedCrash {
+                throw error
+            }
+            importedItems = previousItems
+            courseItemMemberships = previousMemberships
+            _ = await courseProjectFileWorker.isolateAndRemoveSymbolicLinkIfMatching(
+                at: addedLinkURL,
+                quarantineURL: transactionDirectory.appendingPathComponent(
+                    "added-link-cleanup"
+                ),
+                destinationURL: sharedTarget,
+                expectedIdentity: journal.addedLinkIdentity
+            )
+            _ = await courseProjectFileWorker.isolateAndRemoveSymbolicLinkIfMatching(
+                at: sourceURL,
+                quarantineURL: transactionDirectory.appendingPathComponent(
+                    "owner-link-cleanup"
+                ),
+                destinationURL: sharedTarget,
+                expectedIdentity: journal.ownerLinkIdentity
+            )
+            _ = await courseProjectFileWorker.isolateAndRemoveSymbolicLinkIfMatching(
+                at: preparedAddedLinkURL,
+                quarantineURL: transactionDirectory.appendingPathComponent(
+                    "prepared-added-link-cleanup"
+                ),
+                destinationURL: sharedTarget,
+                expectedIdentity: journal.addedLinkIdentity
+            )
+            _ = await courseProjectFileWorker.isolateAndRemoveSymbolicLinkIfMatching(
+                at: preparedOwnerLinkURL,
+                quarantineURL: transactionDirectory.appendingPathComponent(
+                    "prepared-owner-link-cleanup"
+                ),
+                destinationURL: sharedTarget,
+                expectedIdentity: journal.ownerLinkIdentity
+            )
+            if !FileManager.default.fileExists(atPath: sourceURL.path) {
+                _ = await courseProjectFileWorker.restoreIsolatedFile(
+                    from: sourceQuarantineURL,
+                    to: sourceURL
+                )
+            }
+            let sourceWasRestored =
+                (try? await courseProjectFileWorker.stableMetadata(
+                    at: sourceURL,
+                    expectedIdentity: sourceInfo.identity,
+                    expectedSnapshot: sourceSnapshot
+                )) != nil
+            var sharedArtifactsWereRemoved = true
+            if let sharedIdentity = journal.sharedIdentity {
+                let sharedRemoval = await courseProjectFileWorker
+                    .isolateAndRemoveVerifiedFile(
+                    at: sharedTarget,
+                    quarantineURL: sharedDirectory.appendingPathComponent(
+                        ".\(sharedTarget.lastPathComponent).weibei-cleanup-\(UUID().uuidString.lowercased())"
+                    ),
+                    expectedIdentity: sharedIdentity,
+                    expectedSnapshot: sourceSnapshot,
+                    remover: { try FileManager.default.removeItem(at: $0) }
+                )
+                let payloadRemoval = await courseProjectFileWorker
+                    .isolateAndRemoveVerifiedFile(
+                    at: payloadURL,
+                    quarantineURL: sharedDirectory.appendingPathComponent(
+                        ".\(payloadURL.lastPathComponent).weibei-cleanup-\(UUID().uuidString.lowercased())"
+                    ),
+                    expectedIdentity: sharedIdentity,
+                    expectedSnapshot: sourceSnapshot,
+                    remover: { try FileManager.default.removeItem(at: $0) }
+                )
+                if case .removed = sharedRemoval {
+                    if case .removed = payloadRemoval {
+                        sharedArtifactsWereRemoved = true
+                    } else {
+                        sharedArtifactsWereRemoved = false
+                    }
+                } else {
+                    sharedArtifactsWereRemoved = false
+                }
+            } else if CourseProjectFileWorker.identity(at: sharedTarget) != nil
+                || CourseProjectFileWorker.identity(at: payloadURL) != nil {
+                sharedArtifactsWereRemoved = false
+            }
+            if sourceWasRestored, sharedArtifactsWereRemoved {
+                await safelyRemoveSharedTransactionDirectoryInBackground(
+                    transactionDirectory,
+                    expectedIdentity: transactionDirectoryIdentity
+                )
+            }
+            throw error
+        }
+    }
+
+    private func linkSharedItem(
+        itemID: String,
+        toCourseID courseID: UUID,
+        conflictResolution: CourseFileConflictResolution
+    ) async throws {
+        guard conflictResolution != .replace else {
+            throw CourseOwnedFileError.replacementTargetIsShared
+        }
+        guard let itemIndex = importedItems.firstIndex(where: { $0.id == itemID }),
+              case .shared(let sharedRelativePath) = importedItems[itemIndex].storage,
+              let sharedURL = importedItems[itemIndex].url,
+              let courseRoot = courseRootURL(for: courseID),
+              let libraryRoot = courseLibraryRootURL,
+              let expectedSharedURL = CourseProjectPathPolicy.resolvedRelativePath(
+                sharedRelativePath,
+                inside: libraryRoot
+              ),
+              CourseProjectPathPolicy.isSame(expectedSharedURL, sharedURL),
+              sharedRelativePath == "共享文稿/\(expectedSharedURL.lastPathComponent)" else {
+            throw CourseOwnedFileError.courseRootUnavailable
+        }
+        if courseItemMemberships.contains(where: {
+            $0.courseID == courseID && $0.itemID == itemID
+        }) {
+            return
+        }
+        let sharedInfo = try await courseProjectFileWorker.validatedRegularSource(
+            expectedSharedURL
+        )
+        let sharedSnapshot = try await courseProjectFileWorker.stableSnapshot(
+            at: sharedInfo.url,
+            expectedIdentity: sharedInfo.identity
+        )
+        let materialDirectory = try await courseProjectFileWorker.ensureRealDirectory(
+            courseRoot.appendingPathComponent("文稿", isDirectory: true),
+            inside: courseRoot
+        )
+        let linkURL = try resolvedCourseImportTarget(
+            fileName: sharedURL.lastPathComponent,
+            destinationDirectory: materialDirectory,
+            role: .material,
+            conflictResolution: conflictResolution == .replace ? .cancel : conflictResolution
+        )
+        guard let linkRelativePath = CourseProjectPathPolicy.relativePath(
+            of: linkURL,
+            inside: courseRoot
+        ) else {
+            throw CourseOwnedFileError.unsafeCoursePath
+        }
+        let transactionID = UUID()
+        let transactionDirectory = try courseFileTransactionDirectory(
+            transactionID: transactionID,
+            inside: courseRoot
+        )
+        guard let transactionDirectoryIdentity = importedFileIdentityResolver(
+            transactionDirectory
+        ) else {
+            throw CourseOwnedFileError.unsafeCoursePath
+        }
+        let journalURL = transactionDirectory.appendingPathComponent(
+            "shared-link.json"
+        )
+        let preparedLinkURL = transactionDirectory.appendingPathComponent(
+            "prepared-link"
+        )
+        var journal = PendingSharedLinkTransactionJournal(
+            transactionID: transactionID,
+            transactionDirectoryIdentity: transactionDirectoryIdentity,
+            itemID: itemID,
+            courseID: courseID,
+            sharedPath: expectedSharedURL.path,
+            sharedRelativePath: sharedRelativePath,
+            sharedIdentity: sharedInfo.identity,
+            sharedSnapshot: sharedSnapshot,
+            linkPath: linkURL.path,
+            linkRelativePath: linkRelativePath,
+            linkIdentity: nil,
+            stage: .prepared
+        )
+        let previousMemberships = courseItemMemberships
+        do {
+            try await courseProjectFileWorker.write(
+                JSONEncoder().encode(journal),
+                to: journalURL
+            )
+            journal.stage = .linkPreparing
+            try await courseProjectFileWorker.write(
+                JSONEncoder().encode(journal),
+                to: journalURL
+            )
+            let linkIdentity = try await courseProjectFileWorker.prepareSymbolicLink(
+                at: preparedLinkURL,
+                destinationURL: expectedSharedURL
+            )
+            try courseProjectMutationHook(
+                .afterSharedLinkPrepareBeforeJournalIdentity
+            )
+            journal.linkIdentity = linkIdentity
+            try await courseProjectFileWorker.write(
+                JSONEncoder().encode(journal),
+                to: journalURL
+            )
+            try await courseProjectFileWorker.placePreparedSymbolicLink(
+                from: preparedLinkURL,
+                to: linkURL,
+                destinationURL: expectedSharedURL,
+                allowedRoot: courseRoot,
+                expectedIdentity: linkIdentity
+            )
+            try courseProjectMutationHook(.afterSharedLinkPlacementBeforeJournal)
+            journal.stage = .linkPlaced
+            try await courseProjectFileWorker.write(
+                JSONEncoder().encode(journal),
+                to: journalURL
+            )
+            courseItemMemberships.append(
+                CourseItemMembership(
+                    courseID: courseID,
+                    itemID: itemID,
+                    courseRelativePath: linkRelativePath,
+                    entryIdentity: linkIdentity
+                )
+            )
+            guard performSaveNow() else {
+                throw CourseOwnedFileError.workspaceSaveFailed
+            }
+            journal.stage = .workspaceCommitted
+            try? await courseProjectFileWorker.write(
+                JSONEncoder().encode(journal),
+                to: journalURL
+            )
+            await safelyRemoveSharedTransactionDirectoryInBackground(
+                transactionDirectory,
+                expectedIdentity: transactionDirectoryIdentity
+            )
+            invalidateAgentContext()
+        } catch {
+            if ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            ), error is CourseProjectSimulatedCrash {
+                throw error
+            }
+            courseItemMemberships = previousMemberships
+            _ = await courseProjectFileWorker.isolateAndRemoveSymbolicLinkIfMatching(
+                at: linkURL,
+                quarantineURL: transactionDirectory.appendingPathComponent(
+                    "link-cleanup"
+                ),
+                destinationURL: expectedSharedURL,
+                expectedIdentity: journal.linkIdentity
+            )
+            _ = await courseProjectFileWorker.isolateAndRemoveSymbolicLinkIfMatching(
+                at: preparedLinkURL,
+                quarantineURL: transactionDirectory.appendingPathComponent(
+                    "prepared-link-cleanup"
+                ),
+                destinationURL: expectedSharedURL,
+                expectedIdentity: journal.linkIdentity
+            )
+            await safelyRemoveSharedTransactionDirectoryInBackground(
+                transactionDirectory,
+                expectedIdentity: transactionDirectoryIdentity
+            )
+            throw error
+        }
+    }
+
+    func courseFileSnapshotRunsOffMainForSelfCheck(_ url: URL) throws -> Bool {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        let evidence = try waitForCourseFileOperation {
+            try await self.courseProjectFileWorker.snapshotWithThreadEvidence(at: url)
+        }
+        return evidence.snapshot.byteCount > 0 && !evidence.ranOnMainThread
+    }
+
+    func courseMarkdownRoundTripRunsOffMainForSelfCheck(
+        itemID: String,
+        markdown: String
+    ) throws -> (read: Bool, write: Bool) {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        return try waitForCourseFileOperation {
+            guard let item = self.importedItems.first(where: {
+                $0.id == itemID
+            }),
+            item.isNotebookNote,
+            case .courseOwned = item.storage,
+            let url = item.url,
+            let identity = item.importedFileIdentity else {
+                throw CourseOwnedFileError.verificationFailed
+            }
+            let read = try await self.courseProjectFileWorker.readMarkdown(
+                at: url,
+                expectedIdentity: identity
+            )
+            let transaction = try await self.beginCourseMarkdownWrite(
+                markdown,
+                item: item,
+                expectedContentDigest: read.snapshot.sha256
+            )
+            let write = transaction.result
+            self.lastCourseNoteReadRanOnMainThread = read.ranOnMainThread
+            self.lastCourseNoteWriteRanOnMainThread = write.ranOnMainThread
+            self.applyCourseMarkdownWriteResult(
+                write,
+                itemID: itemID,
+                markdown: markdown
+            )
+            guard self.performSaveNow() else {
+                await self.rollbackCourseMarkdownWrite(
+                    journal: transaction.journal,
+                    transactionDirectory: transaction.transactionDirectory
+                )
+                throw CourseOwnedFileError.workspaceSaveFailed
+            }
+            await self.finishCourseMarkdownWrite(transaction)
+            return (!read.ranOnMainThread, !write.ranOnMainThread)
+        }
+    }
+
+    func writeCourseMarkdownForSelfCheck(
+        itemID: String,
+        markdown: String
+    ) throws {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        try waitForCourseFileOperation {
+            guard let item = self.importedItems.first(where: {
+                $0.id == itemID
+            }),
+            item.isNotebookNote,
+            case .courseOwned = item.storage else {
+                throw CourseOwnedFileError.verificationFailed
+            }
+            self.retainPendingNoteWrite(
+                markdown,
+                itemID: itemID,
+                fallbackURL: nil
+            )
+            guard self.performSaveNow() else {
+                throw CourseOwnedFileError.workspaceSaveFailed
+            }
+            let expectedDigest = self.pendingNoteWritesByItemID[itemID]?
+                .baselineContentDigest
+            let transaction = try await self.beginCourseMarkdownWrite(
+                markdown,
+                item: item,
+                expectedContentDigest: expectedDigest
+            )
+            let previousItems = self.importedItems
+            let previousMemberships = self.courseItemMemberships
+            let previousBackingDigests =
+                self.noteBackingContentDigestsByItemID
+            let previousLoadedNotes = self.loadedCourseNoteTextByItemID
+            self.applyCourseMarkdownWriteResult(
+                transaction.result,
+                itemID: itemID,
+                markdown: markdown
+            )
+            self.notesByItemID.removeValue(forKey: itemID)
+            self.pendingNoteWritesByItemID.removeValue(forKey: itemID)
+            guard self.performSaveNow() else {
+                self.importedItems = previousItems
+                self.courseItemMemberships = previousMemberships
+                self.noteBackingContentDigestsByItemID =
+                    previousBackingDigests
+                self.loadedCourseNoteTextByItemID = previousLoadedNotes
+                self.notesByItemID[itemID] = markdown
+                self.pendingNoteWritesByItemID[itemID] =
+                    PendingNoteWriteState(
+                        baselineContentDigest: expectedDigest
+                    )
+                await self.rollbackCourseMarkdownWrite(
+                    journal: transaction.journal,
+                    transactionDirectory: transaction.transactionDirectory
+                )
+                throw CourseOwnedFileError.workspaceSaveFailed
+            }
+            await self.finishCourseMarkdownWrite(transaction)
+        }
+    }
+
+    func pendingCourseMarkdownDraftForSelfCheck(
+        itemID: String
+    ) -> String? {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        guard pendingNoteWritesByItemID[itemID] != nil else { return nil }
+        return notesByItemID[itemID]
+    }
+
+    func waitForCourseNoteWritesForSelfCheck() throws {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        let deadline = Date(timeIntervalSinceNow: 20)
+        while !courseNoteWritesInFlight.isEmpty, Date() < deadline {
+            RunLoop.current.run(
+                mode: .default,
+                before: Date(timeIntervalSinceNow: 0.01)
+            )
+        }
+        guard courseNoteWritesInFlight.isEmpty else {
+            throw CourseOwnedFileError.verificationFailed
+        }
+    }
+
+    func migrateLegacyExternalItemForSelfCheck(
+        itemID: String,
+        courseID: UUID,
+        conflictResolution: CourseFileConflictResolution = .cancel
+    ) throws -> CourseOwnedFileImportResult {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        return try waitForCourseFileOperation {
+            try await self.migrateLegacyExternalItemIntoCourse(
+                itemID: itemID,
+                courseID: courseID,
+                conflictResolution: conflictResolution
+            )
+        }
+    }
+
+    func moveCourseOwnedItemForSelfCheck(
+        itemID: String,
+        toCourseID courseID: UUID,
+        conflictResolution: CourseFileConflictResolution = .cancel
+    ) throws -> CourseOwnedFileImportResult {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        return try waitForCourseFileOperation {
+            try await self.moveCourseOwnedItem(
+                itemID: itemID,
+                toCourseID: courseID,
+                conflictResolution: conflictResolution
+            )
+        }
+    }
+
+    func shareCourseOwnedItemForSelfCheck(
+        itemID: String,
+        withCourseID courseID: UUID,
+        conflictResolution: CourseFileConflictResolution = .cancel
+    ) throws {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        try waitForCourseFileOperation {
+            try await self.shareCourseOwnedItem(
+                itemID: itemID,
+                withCourseID: courseID,
+                conflictResolution: conflictResolution
+            )
+        }
+    }
+
+    private func transactCourseOwnedFile(
+        courseID: UUID,
+        role: CourseOwnedFileRole,
+        fileName: String,
+        sourceURL: URL?,
+        sourceIdentity: ImportedFileIdentity?,
+        generatedData: Data?,
+        conflictResolution: CourseFileConflictResolution = .cancel,
+        preservingItemID: String? = nil
+    ) async throws -> CourseOwnedFileImportResult {
+        guard courses.contains(where: { $0.id == courseID }) else {
+            throw CourseOwnedFileError.courseNotFound
+        }
+        guard let root = courseRootURL(for: courseID),
+              let canonicalRoot = try? CourseProjectPathPolicy.existingDirectory(root),
+              let canonicalRootIdentity = importedFileIdentityResolver(canonicalRoot) else {
+            throw CourseOwnedFileError.courseRootUnavailable
+        }
+        if let sourceURL, CourseProjectPathPolicy.contains(canonicalRoot, sourceURL) {
+            throw CourseOwnedFileError.sourceAlreadyInsideCourse
+        }
+        guard isSupportedCourseFileName(fileName, role: role) else {
+            throw CourseOwnedFileError.unsupportedFile
+        }
+
+        let destinationDirectory = try courseOwnedDestinationDirectory(
+            role: role,
+            inside: canonicalRoot
+        )
+        guard let destinationDirectoryIdentity = importedFileIdentityResolver(destinationDirectory) else {
+            throw CourseOwnedFileError.unsafeCoursePath
+        }
+        let targetURL = try resolvedCourseImportTarget(
+            fileName: fileName,
+            destinationDirectory: destinationDirectory,
+            role: role,
+            conflictResolution: conflictResolution
+        )
+        guard CourseProjectPathPolicy.contains(destinationDirectory, targetURL, includingRoot: false),
+              CourseProjectPathPolicy.contains(canonicalRoot, targetURL, includingRoot: false) else {
+            throw CourseOwnedFileError.unsafeCoursePath
+        }
+        let replacingItemIndex = try replacementItemIndex(
+            at: targetURL,
+            courseID: courseID,
+            conflictResolution: conflictResolution
+        )
+        let replacesExistingTarget = conflictResolution == .replace
+            && FileManager.default.fileExists(atPath: targetURL.path)
+        guard let targetRelativePath = CourseProjectPathPolicy.relativePath(
+            of: targetURL,
+            inside: canonicalRoot
+        ) else {
+            throw CourseOwnedFileError.unsafeCoursePath
+        }
+        let sourceSnapshot: CourseFileSnapshot
+        if let sourceURL, let sourceIdentity {
+            do {
+                sourceSnapshot = try await courseProjectFileWorker.stableSnapshot(
+                    at: sourceURL,
+                    expectedIdentity: sourceIdentity
+                )
+            } catch {
+                throw CourseOwnedFileError.sourceIdentityChanged
+            }
+        } else if let generatedData {
+            sourceSnapshot = await courseProjectFileWorker.snapshot(of: generatedData)
+        } else {
+            throw CourseOwnedFileError.verificationFailed
+        }
+
+        let transactionID = UUID()
+        let transactionDirectory = try courseFileTransactionDirectory(
+            transactionID: transactionID,
+            inside: canonicalRoot
+        )
+        guard let transactionDirectoryIdentity = importedFileIdentityResolver(transactionDirectory) else {
+            throw CourseOwnedFileError.unsafeCoursePath
+        }
+        let payloadURL = transactionDirectory.appendingPathComponent("payload", isDirectory: false)
+        let journalURL = transactionDirectory.appendingPathComponent("journal.json", isDirectory: false)
+        let sourceQuarantineURL = sourceURL.map {
+            $0.deletingLastPathComponent().appendingPathComponent(
+                ".\($0.lastPathComponent).weibei-quarantine-\(transactionID.uuidString.lowercased())",
+                isDirectory: false
+            )
+        }
+        let replacementTargetItemID = replacingItemIndex.map { importedItems[$0].id }
+        let itemID = replacementTargetItemID
+            ?? preservingItemID
+            ?? Self.makeImportedItemID()
+        let retiredSourceItemID = preservingItemID.flatMap { sourceItemID in
+            replacementTargetItemID != nil && replacementTargetItemID != sourceItemID
+                ? sourceItemID
+                : nil
+        }
+        var journal = PendingCourseFileTransactionJournal(
+            transactionID: transactionID,
+            transactionDirectoryIdentity: transactionDirectoryIdentity,
+            courseID: courseID,
+            role: role,
+            itemID: itemID,
+            retiredSourceItemID: retiredSourceItemID,
+            sourcePath: sourceURL?.path,
+            sourceQuarantinePath: sourceQuarantineURL?.path,
+            sourceIdentity: sourceIdentity,
+            sourceSnapshot: sourceSnapshot,
+            targetRelativePath: targetRelativePath,
+            destinationDirectoryIdentity: destinationDirectoryIdentity,
+            stagedIdentity: nil,
+            targetIdentity: nil,
+            replacedTargetIdentity: nil,
+            replacedTargetSnapshot: nil,
+            replacedRollbackIdentity: nil,
+            replacedTrashPath: nil,
+            stage: .prepared
+        )
+        let previousImportedItems = importedItems
+        let previousMemberships = courseItemMemberships
+        let previousNotes = notesByItemID
+        let previousPendingNoteWrites = pendingNoteWritesByItemID
+        let previousBackingDigests = noteBackingContentDigestsByItemID
+        let previousLoadedCourseNotes = loadedCourseNoteTextByItemID
+        let previousSelectedItemID = selectedItemID
+        let previousActiveNotebookItemID = activeNotebookItemID
+        let previousCourseWorkspaceTargetItemID = courseWorkspaceTargetItemID
+        let previousNoteSourceLinks = noteSourceLinks
+        let previousStudyLocations = studyLocationsByItemID
+        let previousStudySessions = studySessions
+        let previousSelectionAskThreads = selectionAskThreads
+        let previousStagedNoteDraft = stagedNoteDraft
+        let previousNotebookCreationDraft = notebookCreationDraft
+        let previousNotebookRenameDraft = notebookRenameDraft
+        let previousPendingNotePersistence = pendingNotePersistenceByItemID
+        let previousBackNavigationStack = backNavigationStack
+        let previousForwardNavigationStack = forwardNavigationStack
+        var placedTargetIdentity: ImportedFileIdentity?
+        var workspaceCommitted = false
+        let replacementQuarantineURL = transactionDirectory.appendingPathComponent(
+            "replaced-target",
+            isDirectory: false
+        )
+        let replacementRollbackURL = transactionDirectory.appendingPathComponent(
+            "replacement-rollback",
+            isDirectory: false
+        )
+
+        do {
+            try await writeCourseFileTransactionJournalInBackground(journal, to: journalURL)
+            try courseProjectMutationHook(.beforeCourseFileStagingCopy)
+            let stagedIdentity = try await courseProjectFileWorker.copyAndVerify(
+                from: sourceURL,
+                generatedData: generatedData,
+                to: payloadURL,
+                expectedSnapshot: sourceSnapshot
+            )
+            try courseProjectMutationHook(.afterCourseFileStagingCopy)
+
+            journal.stagedIdentity = stagedIdentity
+            journal.stage = .staged
+            try await writeCourseFileTransactionJournalInBackground(journal, to: journalURL)
+
+            if let sourceURL, let sourceIdentity {
+                do {
+                    _ = try await courseProjectFileWorker.stableSnapshot(
+                        at: sourceURL,
+                        expectedIdentity: sourceIdentity,
+                        expectedSnapshot: sourceSnapshot
+                    )
+                } catch {
+                    throw CourseOwnedFileError.sourceIdentityChanged
+                }
+            }
+            if replacesExistingTarget {
+                guard let replacementIdentity = importedFileIdentityResolver(targetURL) else {
+                    throw CourseOwnedFileError.targetConflict(targetURL)
+                }
+                let replacementSnapshot = try await courseProjectFileWorker.stableSnapshot(
+                    at: targetURL,
+                    expectedIdentity: replacementIdentity
+                )
+                journal.replacedTargetIdentity = replacementIdentity
+                journal.replacedTargetSnapshot = replacementSnapshot
+                journal.stage = .replacementPreparing
+                try await writeCourseFileTransactionJournalInBackground(
+                    journal,
+                    to: journalURL
+                )
+                let rollbackIdentity = try await courseProjectFileWorker.reserveRollbackFile(
+                    at: replacementRollbackURL
+                )
+                try courseProjectMutationHook(
+                    .afterCourseFileRollbackArtifactCreationBeforeJournalIdentity
+                )
+                journal.replacedRollbackIdentity = rollbackIdentity
+                journal.stage = .replacementRollbackReserved
+                try await writeCourseFileTransactionJournalInBackground(
+                    journal,
+                    to: journalURL
+                )
+                guard await courseProjectFileWorker.isolateWithoutReplacement(
+                    from: targetURL,
+                    to: replacementQuarantineURL
+                ) else {
+                    throw CourseOwnedFileError.targetConflict(targetURL)
+                }
+                try courseProjectMutationHook(
+                    .afterCourseFileReplacementIsolationBeforeJournal
+                )
+                _ = try await courseProjectFileWorker.stableSnapshot(
+                    at: replacementQuarantineURL,
+                    expectedIdentity: replacementIdentity,
+                    expectedSnapshot: replacementSnapshot
+                )
+                journal.stage = .replacementIsolated
+                try await writeCourseFileTransactionJournalInBackground(journal, to: journalURL)
+                try await courseProjectFileWorker.fillReservedRollbackFile(
+                    from: replacementQuarantineURL,
+                    to: replacementRollbackURL,
+                    expectedDestinationIdentity: rollbackIdentity,
+                    expectedSnapshot: replacementSnapshot
+                )
+                try courseProjectMutationHook(
+                    .afterCourseFileReplacementRollbackCopyBeforeJournal
+                )
+                journal.stage = .replacementRollbackPrepared
+                try await writeCourseFileTransactionJournalInBackground(
+                    journal,
+                    to: journalURL
+                )
+                let trashURL = try await courseProjectFileWorker
+                    .moveReplacedFileToTrash(
+                        at: replacementQuarantineURL,
+                        selfCheckDestination: transactionDirectory
+                            .appendingPathComponent("trashed-replaced-target")
+                    )
+                _ = try await courseProjectFileWorker.stableSnapshot(
+                    at: trashURL,
+                    expectedIdentity: replacementIdentity,
+                    expectedSnapshot: replacementSnapshot
+                )
+                try courseProjectMutationHook(
+                    .afterCourseFileReplacementTrashMoveBeforeJournal
+                )
+                journal.replacedTrashPath = trashURL.path
+                journal.stage = .replacementTrashed
+                try await writeCourseFileTransactionJournalInBackground(
+                    journal,
+                    to: journalURL
+                )
+                try courseProjectMutationHook(.afterCourseFileReplacementTrashed)
+            }
+            try courseProjectMutationHook(.beforeCourseFileAtomicPlacement)
+            let targetIdentity: ImportedFileIdentity
+            do {
+                targetIdentity = try await courseProjectFileWorker.placeWithoutReplacement(
+                    from: payloadURL,
+                    to: targetURL,
+                    courseRoot: canonicalRoot,
+                    destinationDirectory: destinationDirectory,
+                    expectedDestinationIdentity: destinationDirectoryIdentity,
+                    expectedSnapshot: sourceSnapshot,
+                    beforeRename: {
+                        try self.courseProjectMutationHook(
+                            .afterCourseFileDestinationValidationBeforeRename
+                        )
+                    }
+                )
+            } catch CourseProjectFileWorkerError.targetExists {
+                throw CourseOwnedFileError.targetConflict(targetURL)
+            } catch {
+                throw CourseOwnedFileError.verificationFailed
+            }
+            try courseProjectMutationHook(.afterCourseFileAtomicPlacement)
+
+            let resolvedTarget = targetURL.resolvingSymlinksInPath().standardizedFileURL
+            guard CourseProjectPathPolicy.isSame(targetURL, resolvedTarget),
+                  CourseProjectPathPolicy.contains(destinationDirectory, resolvedTarget, includingRoot: false),
+                  CourseProjectPathPolicy.contains(canonicalRoot, resolvedTarget, includingRoot: false),
+                  targetIdentity == stagedIdentity else {
+                throw CourseOwnedFileError.verificationFailed
+            }
+            placedTargetIdentity = targetIdentity
+            journal.targetIdentity = targetIdentity
+            journal.stage = .placed
+            try await writeCourseFileTransactionJournalInBackground(journal, to: journalURL)
+            _ = try await revalidatedCourseFileTargetInBackground(
+                courseID: courseID,
+                expectedRoot: canonicalRoot,
+                expectedRootIdentity: canonicalRootIdentity,
+                role: role,
+                expectedDestinationIdentity: destinationDirectoryIdentity,
+                targetURL: resolvedTarget,
+                expectedIdentity: targetIdentity,
+                expectedSnapshot: sourceSnapshot
+            )
+
+            let targetInfo = try await courseProjectFileWorker.metadata(at: resolvedTarget)
+            if let retiredSourceItemID {
+                replaceItemIDEverywhere(retiredSourceItemID, with: itemID)
+                importedItems.removeAll { $0.id == retiredSourceItemID }
+            }
+            let existingItemIndex = importedItems.firstIndex { $0.id == itemID }
+            let previousItem = existingItemIndex.map { importedItems[$0] }
+            var item = StudyItem(
+                id: itemID,
+                title: resolvedTarget.deletingPathExtension().lastPathComponent,
+                subtitle: resolvedTarget.lastPathComponent,
+                kind: StudyItemKind.detect(from: resolvedTarget),
+                urlPath: resolvedTarget.path,
+                importedFileIdentity: targetIdentity,
+                importedFileBookmarkData: nil,
+                importedFileLastKnownPath: resolvedTarget.path,
+                isSample: false,
+                isNotebookNote: role == .note,
+                storage: .courseOwned(ownerCourseID: courseID),
+                contentRevision: replacingItemIndex == nil
+                    ? (previousItem?.contentRevision ?? 1)
+                    : (previousItem?.contentRevision ?? 0) &+ 1,
+                contentDigest: sourceSnapshot.sha256,
+                fileByteCount: targetInfo.byteCount,
+                fileModificationTimeNanoseconds: targetInfo.modificationTimeNanoseconds
+            )
+            let membership = CourseItemMembership(
+                courseID: courseID,
+                itemID: itemID,
+                courseRelativePath: targetRelativePath,
+                entryIdentity: targetIdentity,
+                documentIdentifier: targetInfo.identity == targetIdentity
+                    ? courseFileDocumentIdentifier(at: resolvedTarget)
+                    : nil
+            )
+            if let existingItemIndex {
+                item.id = importedItems[existingItemIndex].id
+                importedItems[existingItemIndex] = item
+                courseItemMemberships.removeAll { $0.itemID == item.id }
+            } else {
+                importedItems.append(item)
+            }
+            courseItemMemberships.append(membership)
+            if role == .note {
+                noteBackingContentDigestsByItemID[itemID] = sourceSnapshot.sha256
+            }
+            try courseProjectMutationHook(.beforeCourseFileWorkspaceSave)
+            _ = try await revalidatedCourseFileTargetInBackground(
+                courseID: courseID,
+                expectedRoot: canonicalRoot,
+                expectedRootIdentity: canonicalRootIdentity,
+                role: role,
+                expectedDestinationIdentity: destinationDirectoryIdentity,
+                targetURL: resolvedTarget,
+                expectedIdentity: targetIdentity,
+                expectedSnapshot: sourceSnapshot
+            )
+            guard performSaveNow() else {
+                throw CourseOwnedFileError.workspaceSaveFailed
+            }
+            workspaceCommitted = true
+            journal.stage = .workspaceCommitted
+            try? await writeCourseFileTransactionJournalInBackground(journal, to: journalURL)
+
+            var sourceCleanupPending = false
+            if let sourceURL, let sourceIdentity {
+                do {
+                    try courseProjectMutationHook(.beforeCourseFileSourceRemoval)
+                    _ = try await revalidatedCourseFileTargetInBackground(
+                        courseID: courseID,
+                        expectedRoot: canonicalRoot,
+                        expectedRootIdentity: canonicalRootIdentity,
+                        role: role,
+                        expectedDestinationIdentity: destinationDirectoryIdentity,
+                        targetURL: resolvedTarget,
+                        expectedIdentity: targetIdentity,
+                        expectedSnapshot: sourceSnapshot
+                    )
+                    _ = try await courseProjectFileWorker.stableSnapshot(
+                        at: sourceURL,
+                        expectedIdentity: sourceIdentity,
+                        expectedSnapshot: sourceSnapshot
+                    )
+                    guard let sourceQuarantineURL else {
+                        throw CourseOwnedFileError.verificationFailed
+                    }
+                    let removalOutcome = await courseProjectFileWorker.isolateAndRemoveVerifiedFile(
+                        at: sourceURL,
+                        quarantineURL: sourceQuarantineURL,
+                        expectedIdentity: sourceIdentity,
+                        expectedSnapshot: sourceSnapshot,
+                        remover: courseFileSourceRemover
+                    )
+                    guard case .removed = removalOutcome else {
+                        throw CourseOwnedFileError.sourceIdentityChanged
+                    }
+                } catch {
+                    sourceCleanupPending = true
+                    journal.stage = .sourceCleanupPending
+                    try? await writeCourseFileTransactionJournalInBackground(journal, to: journalURL)
+                }
+            }
+            if let rollbackIdentity = journal.replacedRollbackIdentity,
+               let replacedSnapshot = journal.replacedTargetSnapshot {
+                do {
+                    try await courseProjectFileWorker.removeVerifiedFile(
+                        at: replacementRollbackURL,
+                        expectedIdentity: rollbackIdentity,
+                        expectedSnapshot: replacedSnapshot,
+                        beforeRemoval: {
+                            try self.courseProjectMutationHook(
+                                .afterCourseFileCleanupValidationBeforeIsolation
+                            )
+                        }
+                    )
+                } catch {
+                    sourceCleanupPending = true
+                    journal.stage = .sourceCleanupPending
+                    try? await writeCourseFileTransactionJournalInBackground(
+                        journal,
+                        to: journalURL
+                    )
+                }
+            }
+            if let replacedTrashPath = journal.replacedTrashPath {
+                do {
+                    try await courseProjectFileWorker.finishSelfCheckTrash(
+                        at: URL(fileURLWithPath: replacedTrashPath)
+                    )
+                } catch {
+                    sourceCleanupPending = true
+                    journal.stage = .sourceCleanupPending
+                    try? await writeCourseFileTransactionJournalInBackground(journal, to: journalURL)
+                }
+            }
+            if !sourceCleanupPending {
+                await safelyRemoveCourseFileTransactionDirectoryInBackground(
+                    transactionDirectory,
+                    expectedIdentity: transactionDirectoryIdentity
+                )
+            }
+            courseDocumentSearchIndex.schedule([item])
+            invalidateAgentContext()
+            return CourseOwnedFileImportResult(
+                item: item,
+                sourceCleanupPending: sourceCleanupPending
+            )
+        } catch {
+            if ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            ), error is CourseProjectSimulatedCrash {
+                throw error
+            }
+            if !workspaceCommitted {
+                importedItems = previousImportedItems
+                courseItemMemberships = previousMemberships
+                notesByItemID = previousNotes
+                pendingNoteWritesByItemID = previousPendingNoteWrites
+                noteBackingContentDigestsByItemID = previousBackingDigests
+                loadedCourseNoteTextByItemID = previousLoadedCourseNotes
+                selectedItemID = previousSelectedItemID
+                activeNotebookItemID = previousActiveNotebookItemID
+                courseWorkspaceTargetItemID =
+                    previousCourseWorkspaceTargetItemID
+                noteSourceLinks = previousNoteSourceLinks
+                studyLocationsByItemID = previousStudyLocations
+                studySessions = previousStudySessions
+                selectionAskThreads = previousSelectionAskThreads
+                stagedNoteDraft = previousStagedNoteDraft
+                notebookCreationDraft = previousNotebookCreationDraft
+                notebookRenameDraft = previousNotebookRenameDraft
+                backNavigationStack = previousBackNavigationStack
+                forwardNavigationStack = previousForwardNavigationStack
+                let remappedIDs = Set(
+                    [itemID, retiredSourceItemID].compactMap { $0 }
+                )
+                for remappedID in remappedIDs {
+                    pendingNotePersistenceTasks.removeValue(
+                        forKey: remappedID
+                    )?.cancel()
+                }
+                pendingNotePersistenceByItemID =
+                    previousPendingNotePersistence
+                for remappedID in remappedIDs {
+                    if let pending =
+                        previousPendingNotePersistence[remappedID] {
+                        scheduleNotePersistence(
+                            pending.markdown,
+                            for: pending.item
+                        )
+                    }
+                }
+                let expectedTargetIdentity =
+                    placedTargetIdentity ?? journal.targetIdentity ?? journal.stagedIdentity
+                let destinationStillTrusted = (try? revalidatedCourseFileDestination(
+                    courseID: courseID,
+                    expectedRoot: canonicalRoot,
+                    expectedRootIdentity: canonicalRootIdentity,
+                    role: role,
+                    expectedDestinationIdentity: destinationDirectoryIdentity
+                )) != nil
+                let sourceStillVerified: Bool
+                if let sourceURL, let sourceIdentity {
+                    sourceStillVerified = (try? await courseProjectFileWorker.stableSnapshot(
+                        at: sourceURL,
+                        expectedIdentity: sourceIdentity,
+                        expectedSnapshot: sourceSnapshot
+                    )) != nil
+                } else {
+                    sourceStillVerified = false
+                }
+                if sourceStillVerified,
+                   placedTargetIdentity == nil,
+                   journal.targetIdentity == nil,
+                   !replacesExistingTarget {
+                    await safelyRemoveCourseFileTransactionDirectoryInBackground(
+                        transactionDirectory,
+                        expectedIdentity: transactionDirectoryIdentity
+                    )
+                } else if destinationStillTrusted, sourceStillVerified {
+                    let targetQuarantineURL = transactionDirectory
+                        .appendingPathComponent("target-quarantine", isDirectory: false)
+                    var targetSafelyAbsent =
+                        !FileManager.default.fileExists(atPath: targetURL.path)
+                        || (placedTargetIdentity == nil
+                            && journal.targetIdentity == nil
+                            && !replacesExistingTarget)
+                    if let expectedTargetIdentity, !targetSafelyAbsent {
+                        let removalOutcome = await courseProjectFileWorker.isolateAndRemoveVerifiedFile(
+                            at: targetURL,
+                            quarantineURL: targetQuarantineURL,
+                            expectedIdentity: expectedTargetIdentity,
+                            expectedSnapshot: sourceSnapshot,
+                            remover: { try FileManager.default.removeItem(at: $0) }
+                        )
+                        if case .removed = removalOutcome {
+                            targetSafelyAbsent = true
+                        }
+                    }
+                    var replacementRestored = journal.replacedTargetIdentity == nil
+                    let replacementRestore: (url: URL, identity: ImportedFileIdentity?) = {
+                        if FileManager.default.fileExists(
+                            atPath: replacementQuarantineURL.path
+                        ) {
+                            return (
+                                replacementQuarantineURL,
+                                journal.replacedTargetIdentity
+                            )
+                        }
+                        if FileManager.default.fileExists(
+                            atPath: replacementRollbackURL.path
+                        ) {
+                            return (
+                                replacementRollbackURL,
+                                journal.replacedRollbackIdentity
+                            )
+                        }
+                        return (
+                            journal.replacedTrashPath.map {
+                                URL(fileURLWithPath: $0).standardizedFileURL
+                            } ?? replacementQuarantineURL,
+                            journal.replacedTargetIdentity
+                        )
+                    }()
+                    if let replacedIdentity = journal.replacedTargetIdentity,
+                       let replacedSnapshot = journal.replacedTargetSnapshot,
+                       replacementRestore.identity != nil,
+                       targetSafelyAbsent,
+                       (try? await courseProjectFileWorker.stableSnapshot(
+                        at: replacementRestore.url,
+                        expectedIdentity: replacementRestore.identity
+                            ?? replacedIdentity,
+                        expectedSnapshot: replacedSnapshot
+                       )) != nil,
+                       case .restored = await courseProjectFileWorker.restoreIsolatedFile(
+                        from: replacementRestore.url,
+                        to: targetURL
+                       ) {
+                        replacementRestored = true
+                    }
+                    if replacementRestored,
+                       let rollbackIdentity = journal.replacedRollbackIdentity,
+                       FileManager.default.fileExists(
+                        atPath: replacementRollbackURL.path
+                       ) {
+                        switch journal.stage {
+                        case .replacementRollbackReserved, .replacementIsolated:
+                            try? await courseProjectFileWorker.removeFileIfIdentityMatches(
+                                at: replacementRollbackURL,
+                                expectedIdentity: rollbackIdentity
+                            )
+                        default:
+                            try? await courseProjectFileWorker.removeVerifiedFile(
+                                at: replacementRollbackURL,
+                                expectedIdentity: rollbackIdentity,
+                                expectedSnapshot: journal.replacedTargetSnapshot
+                                    ?? sourceSnapshot
+                            )
+                        }
+                    }
+                    if replacementRestored,
+                       let replacedTrashPath = journal.replacedTrashPath,
+                       let replacedIdentity = journal.replacedTargetIdentity,
+                       let replacedSnapshot = journal.replacedTargetSnapshot {
+                        let trashURL = URL(
+                            fileURLWithPath: replacedTrashPath
+                        ).standardizedFileURL
+                        if FileManager.default.fileExists(atPath: trashURL.path) {
+                            try? await courseProjectFileWorker.removeVerifiedFile(
+                                at: trashURL,
+                                expectedIdentity: replacedIdentity,
+                                expectedSnapshot: replacedSnapshot
+                            )
+                        }
+                    }
+                    if targetSafelyAbsent, replacementRestored {
+                        await safelyRemoveCourseFileTransactionDirectoryInBackground(
+                            transactionDirectory,
+                            expectedIdentity: transactionDirectoryIdentity
+                        )
+                    }
+                }
+            }
+            throw error
+        }
+    }
+
+    private func validatedCourseImportSource(_ sourceURL: URL) throws -> URL {
+        guard sourceURL.isFileURL else {
+            throw CourseOwnedFileError.sourceMustBeRegularFile
+        }
+        let source = sourceURL.standardizedFileURL
+        let resolvedSource = source.resolvingSymlinksInPath().standardizedFileURL
+        let values = try source.resourceValues(forKeys: [
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+            .isAliasFileKey,
+        ])
+        guard values.isRegularFile == true,
+              values.isSymbolicLink != true,
+              values.isAliasFile != true,
+              CourseProjectPathPolicy.isSame(source, resolvedSource) else {
+            throw CourseOwnedFileError.sourceMustBeRegularFile
+        }
+        return resolvedSource
+    }
+
+    private func isSupportedCourseFileName(
+        _ fileName: String,
+        role: CourseOwnedFileRole
+    ) -> Bool {
+        guard !fileName.isEmpty,
+              fileName != ".",
+              fileName != "..",
+              URL(fileURLWithPath: fileName).lastPathComponent == fileName else {
+            return false
+        }
+        let fileURL = URL(fileURLWithPath: fileName)
+        switch role {
+        case .material:
+            return Self.isSupportedCourseFile(fileURL)
+        case .note:
+            return Self.isMarkdownFile(fileURL)
+        }
+    }
+
+    private func resolvedCourseImportTarget(
+        fileName: String,
+        destinationDirectory: URL,
+        role: CourseOwnedFileRole,
+        conflictResolution: CourseFileConflictResolution
+    ) throws -> URL {
+        let requestedName: String
+        switch conflictResolution {
+        case .cancel, .replace:
+            requestedName = fileName
+        case .keepBoth(let preferredFileName):
+            let preferred = preferredFileName?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let preferred, !preferred.isEmpty {
+                requestedName = preferred
+            } else {
+                requestedName = fileName
+            }
+        }
+        guard isSupportedCourseFileName(requestedName, role: role) else {
+            throw CourseOwnedFileError.unsupportedFile
+        }
+        let requested = destinationDirectory
+            .appendingPathComponent(requestedName, isDirectory: false)
+            .standardizedFileURL
+        switch conflictResolution {
+        case .cancel, .replace:
+            return requested
+        case .keepBoth:
+            guard FileManager.default.fileExists(atPath: requested.path) else {
+                return requested
+            }
+            let stem = requested.deletingPathExtension().lastPathComponent
+            let pathExtension = requested.pathExtension
+            for suffix in 2...9_999 {
+                let candidateName = pathExtension.isEmpty
+                    ? "\(stem) \(suffix)"
+                    : "\(stem) \(suffix).\(pathExtension)"
+                let candidate = destinationDirectory.appendingPathComponent(candidateName)
+                if !FileManager.default.fileExists(atPath: candidate.path) {
+                    return candidate
+                }
+            }
+            throw CourseOwnedFileError.targetConflict(requested)
+        }
+    }
+
+    private func replacementItemIndex(
+        at targetURL: URL,
+        courseID: UUID,
+        conflictResolution: CourseFileConflictResolution
+    ) throws -> Int? {
+        let exists = FileManager.default.fileExists(atPath: targetURL.path)
+        switch conflictResolution {
+        case .cancel:
+            if exists { throw CourseOwnedFileError.targetConflict(targetURL) }
+            return nil
+        case .keepBoth:
+            if exists { throw CourseOwnedFileError.targetConflict(targetURL) }
+            return nil
+        case .replace:
+            guard exists else { return nil }
+            let membership = courseItemMemberships.first {
+                $0.courseID == courseID
+                    && $0.courseRelativePath.map {
+                        CourseProjectPathPolicy.isSame(
+                            targetURL,
+                            courseRootURL(for: courseID)?.appendingPathComponent($0) ?? targetURL
+                        )
+                    } == true
+            }
+            guard let membership,
+                  let index = importedItems.firstIndex(where: { $0.id == membership.itemID }) else {
+                return nil
+            }
+            if case .shared = importedItems[index].storage {
+                throw CourseOwnedFileError.replacementTargetIsShared
+            }
+            return index
+        }
+    }
+
+    private func courseOwnedDestinationDirectory(
+        role: CourseOwnedFileRole,
+        inside root: URL
+    ) throws -> URL {
+        let rawDirectory = root.appendingPathComponent(role.directoryName, isDirectory: true)
+        return try realCourseOwnedDirectory(
+            rawDirectory,
+            inside: root,
+            createIfMissing: true
+        )
+    }
+
+    private func realCourseOwnedDirectory(
+        _ rawDirectory: URL,
+        inside parent: URL,
+        createIfMissing: Bool
+    ) throws -> URL {
+        if !FileManager.default.fileExists(atPath: rawDirectory.path) {
+            guard createIfMissing else {
+                throw CourseOwnedFileError.unsafeCoursePath
+            }
+            try FileManager.default.createDirectory(
+                at: rawDirectory,
+                withIntermediateDirectories: false
+            )
+        }
+        let values = try rawDirectory.resourceValues(forKeys: [
+            .isDirectoryKey,
+            .isSymbolicLinkKey,
+            .isAliasFileKey,
+        ])
+        guard values.isDirectory == true,
+              values.isSymbolicLink != true,
+              values.isAliasFile != true else {
+            throw CourseOwnedFileError.unsafeCoursePath
+        }
+        let directory = try CourseProjectPathPolicy.existingDirectory(rawDirectory)
+        guard CourseProjectPathPolicy.isSame(rawDirectory.standardizedFileURL, directory),
+              CourseProjectPathPolicy.contains(parent, directory, includingRoot: false) else {
+            throw CourseOwnedFileError.unsafeCoursePath
+        }
+        return directory
+    }
+
+    private func courseFileTransactionDirectory(
+        transactionID: UUID,
+        inside root: URL
+    ) throws -> URL {
+        let metadata = try realCourseOwnedDirectory(
+            root.appendingPathComponent(".weibei", isDirectory: true),
+            inside: root,
+            createIfMissing: false
+        )
+        let rawTransactions = metadata.appendingPathComponent("transactions", isDirectory: true)
+        let transactions = try realCourseOwnedDirectory(
+            rawTransactions,
+            inside: metadata,
+            createIfMissing: true
+        )
+        let transactionDirectory = transactions.appendingPathComponent(
+            transactionID.uuidString.lowercased(),
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: transactionDirectory,
+            withIntermediateDirectories: false
+        )
+        return try realCourseOwnedDirectory(
+            transactionDirectory,
+            inside: transactions,
+            createIfMissing: false
+        )
+    }
+
+    private func writeCourseFileTransactionJournal(
+        _ journal: PendingCourseFileTransactionJournal,
+        to url: URL
+    ) throws {
+        try JSONEncoder().encode(journal).write(to: url, options: [.atomic])
+    }
+
+    private func writeCourseFileTransactionJournalInBackground(
+        _ journal: PendingCourseFileTransactionJournal,
+        to url: URL
+    ) async throws {
+        try await courseProjectFileWorker.write(
+            JSONEncoder().encode(journal),
+            to: url
+        )
+    }
+
+    private func stableCourseFileSnapshot(
+        at url: URL,
+        expectedIdentity: ImportedFileIdentity,
+        expectedSnapshot: CourseFileSnapshot? = nil
+    ) throws -> CourseFileSnapshot {
+        guard importedFileIdentityResolver(url) == expectedIdentity else {
+            throw CourseOwnedFileError.sourceIdentityChanged
+        }
+        let snapshot = try courseFileSnapshot(at: url)
+        guard importedFileIdentityResolver(url) == expectedIdentity,
+              expectedSnapshot.map({ $0 == snapshot }) ?? true else {
+            throw CourseOwnedFileError.sourceIdentityChanged
+        }
+        return snapshot
+    }
+
+    nonisolated private static func streamingCourseFileSnapshot(
+        at url: URL
+    ) throws -> CourseFileSnapshot {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        var byteCount: UInt64 = 0
+        while let chunk = try handle.read(upToCount: 1_048_576), !chunk.isEmpty {
+            hasher.update(data: chunk)
+            byteCount += UInt64(chunk.count)
+        }
+        let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        return CourseFileSnapshot(byteCount: byteCount, sha256: digest)
+    }
+
+    private func courseFileSnapshot(at url: URL) throws -> CourseFileSnapshot {
+        try Self.streamingCourseFileSnapshot(at: url)
+    }
+
+    private func courseFileDocumentIdentifier(at url: URL) -> UInt64? {
+        guard let value = try? url.resourceValues(
+            forKeys: [.documentIdentifierKey]
+        ).documentIdentifier,
+        value >= 0 else { return nil }
+        return UInt64(value)
+    }
+
+    private func revalidatedCourseFileDestination(
+        courseID: UUID,
+        expectedRoot: URL,
+        expectedRootIdentity: ImportedFileIdentity,
+        role: CourseOwnedFileRole,
+        expectedDestinationIdentity: ImportedFileIdentity
+    ) throws -> URL {
+        guard let registeredRoot = courseRootURL(for: courseID),
+              let canonicalRoot = try? CourseProjectPathPolicy.existingDirectory(registeredRoot),
+              CourseProjectPathPolicy.isSame(canonicalRoot, expectedRoot),
+              importedFileIdentityResolver(canonicalRoot) == expectedRootIdentity,
+              let destinationDirectory = try? realCourseOwnedDirectory(
+                canonicalRoot.appendingPathComponent(role.directoryName, isDirectory: true),
+                inside: canonicalRoot,
+                createIfMissing: false
+              ),
+              importedFileIdentityResolver(destinationDirectory) == expectedDestinationIdentity else {
+            throw CourseOwnedFileError.unsafeCoursePath
+        }
+        return destinationDirectory
+    }
+
+    private func revalidatedCourseFileTarget(
+        courseID: UUID,
+        expectedRoot: URL,
+        expectedRootIdentity: ImportedFileIdentity,
+        role: CourseOwnedFileRole,
+        expectedDestinationIdentity: ImportedFileIdentity,
+        targetURL: URL,
+        expectedIdentity: ImportedFileIdentity,
+        expectedSnapshot: CourseFileSnapshot
+    ) throws -> URL {
+        let destinationDirectory = try revalidatedCourseFileDestination(
+            courseID: courseID,
+            expectedRoot: expectedRoot,
+            expectedRootIdentity: expectedRootIdentity,
+            role: role,
+            expectedDestinationIdentity: expectedDestinationIdentity
+        )
+        let expectedTargetURL = destinationDirectory
+            .appendingPathComponent(targetURL.lastPathComponent, isDirectory: false)
+            .standardizedFileURL
+        guard CourseProjectPathPolicy.isSame(expectedTargetURL, targetURL),
+              let rawValues = try? expectedTargetURL.resourceValues(forKeys: [
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+            .isAliasFileKey,
+              ]),
+              rawValues.isRegularFile == true,
+              rawValues.isSymbolicLink != true,
+              rawValues.isAliasFile != true else {
+            throw CourseOwnedFileError.unsafeCoursePath
+        }
+        let resolved = expectedTargetURL.resolvingSymlinksInPath().standardizedFileURL
+        guard CourseProjectPathPolicy.isSame(expectedTargetURL, resolved),
+              CourseProjectPathPolicy.contains(destinationDirectory, resolved, includingRoot: false),
+              CourseProjectPathPolicy.contains(expectedRoot, resolved, includingRoot: false),
+              importedFileIdentityResolver(resolved) == expectedIdentity,
+              (try? courseFileSnapshot(at: resolved)) == expectedSnapshot else {
+            throw CourseOwnedFileError.verificationFailed
+        }
+        return resolved
+    }
+
+    private func revalidatedCourseFileTargetInBackground(
+        courseID: UUID,
+        expectedRoot: URL,
+        expectedRootIdentity: ImportedFileIdentity,
+        role: CourseOwnedFileRole,
+        expectedDestinationIdentity: ImportedFileIdentity,
+        targetURL: URL,
+        expectedIdentity: ImportedFileIdentity,
+        expectedSnapshot: CourseFileSnapshot
+    ) async throws -> URL {
+        let destinationDirectory = try revalidatedCourseFileDestination(
+            courseID: courseID,
+            expectedRoot: expectedRoot,
+            expectedRootIdentity: expectedRootIdentity,
+            role: role,
+            expectedDestinationIdentity: expectedDestinationIdentity
+        )
+        let expectedTargetURL = destinationDirectory
+            .appendingPathComponent(targetURL.lastPathComponent, isDirectory: false)
+            .standardizedFileURL
+        let resolved = expectedTargetURL.resolvingSymlinksInPath().standardizedFileURL
+        guard CourseProjectPathPolicy.isSame(expectedTargetURL, targetURL),
+              CourseProjectPathPolicy.isSame(expectedTargetURL, resolved),
+              CourseProjectPathPolicy.contains(destinationDirectory, resolved, includingRoot: false),
+              CourseProjectPathPolicy.contains(expectedRoot, resolved, includingRoot: false),
+              importedFileIdentityResolver(resolved) == expectedIdentity else {
+            throw CourseOwnedFileError.unsafeCoursePath
+        }
+        do {
+            _ = try await courseProjectFileWorker.stableSnapshot(
+                at: resolved,
+                expectedIdentity: expectedIdentity,
+                expectedSnapshot: expectedSnapshot
+            )
+        } catch {
+            throw CourseOwnedFileError.verificationFailed
+        }
+        return resolved
+    }
+
+    private func atomicRenameWithoutReplacement(from source: URL, to destination: URL) -> Bool {
+        source.withUnsafeFileSystemRepresentation { sourcePath in
+            destination.withUnsafeFileSystemRepresentation { destinationPath in
+                guard let sourcePath, let destinationPath else { return false }
+                return Darwin.renamex_np(
+                    sourcePath,
+                    destinationPath,
+                    UInt32(RENAME_EXCL)
+                ) == 0
+            }
+        }
+    }
+
+    private func restoreIsolatedCourseFile(
+        from quarantineURL: URL,
+        to originalURL: URL
+    ) -> CourseFileRemovalOutcome {
+        guard FileManager.default.fileExists(atPath: quarantineURL.path) else {
+            return .quarantined(quarantineURL)
+        }
+        guard !FileManager.default.fileExists(atPath: originalURL.path),
+              atomicRenameWithoutReplacement(from: quarantineURL, to: originalURL) else {
+            return .quarantined(quarantineURL)
+        }
+        return .restored
+    }
+
+    private func atomicallyIsolateVerifiedCourseFile(
+        at originalURL: URL,
+        quarantineURL: URL,
+        expectedIdentity: ImportedFileIdentity,
+        expectedSnapshot: CourseFileSnapshot
+    ) -> Bool {
+        guard FileManager.default.fileExists(atPath: originalURL.path),
+              !FileManager.default.fileExists(atPath: quarantineURL.path),
+              atomicRenameWithoutReplacement(
+                from: originalURL,
+                to: quarantineURL
+              ) else {
+            return false
+        }
+        guard (try? stableCourseFileSnapshot(
+            at: quarantineURL,
+            expectedIdentity: expectedIdentity,
+            expectedSnapshot: expectedSnapshot
+        )) != nil else {
+            _ = restoreIsolatedCourseFile(
+                from: quarantineURL,
+                to: originalURL
+            )
+            return false
+        }
+        return true
+    }
+
+    private func atomicallyIsolateAndRemoveCourseFile(
+        at originalURL: URL,
+        quarantineURL: URL,
+        expectedIdentity: ImportedFileIdentity,
+        expectedSnapshot: CourseFileSnapshot,
+        remover: (URL) throws -> Void
+    ) -> CourseFileRemovalOutcome {
+        guard FileManager.default.fileExists(atPath: originalURL.path) else {
+            return FileManager.default.fileExists(atPath: quarantineURL.path)
+                ? .quarantined(quarantineURL)
+                : .removed
+        }
+        guard atomicallyIsolateVerifiedCourseFile(
+            at: originalURL,
+            quarantineURL: quarantineURL,
+            expectedIdentity: expectedIdentity,
+            expectedSnapshot: expectedSnapshot
+        ) else {
+            return FileManager.default.fileExists(atPath: quarantineURL.path)
+                ? .quarantined(quarantineURL)
+                : .restored
+        }
+        do {
+            try remover(quarantineURL)
+        } catch {
+            if !FileManager.default.fileExists(atPath: quarantineURL.path) {
+                return .removed
+            }
+            return restoreIsolatedCourseFile(
+                from: quarantineURL,
+                to: originalURL
+            )
+        }
+        guard FileManager.default.fileExists(atPath: quarantineURL.path) else {
+            return .removed
+        }
+        return restoreIsolatedCourseFile(
+            from: quarantineURL,
+            to: originalURL
+        )
+    }
+
+    private func safelyRemoveCourseFileTransactionDirectory(
+        _ transactionDirectory: URL,
+        expectedIdentity: ImportedFileIdentity
+    ) {
+        guard importedFileIdentityResolver(transactionDirectory) == expectedIdentity,
+              let entries = try? FileManager.default.contentsOfDirectory(
+                at: transactionDirectory,
+                includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .isAliasFileKey],
+                options: []
+              ),
+              entries.allSatisfy({ ["journal.json", "payload"].contains($0.lastPathComponent) }) else {
+            return
+        }
+        for entry in entries {
+            guard let values = try? entry.resourceValues(forKeys: [
+                .isRegularFileKey,
+                .isSymbolicLinkKey,
+                .isAliasFileKey,
+            ]),
+            values.isRegularFile == true,
+            values.isSymbolicLink != true,
+            values.isAliasFile != true else {
+                return
+            }
+        }
+        for entry in entries {
+            try? FileManager.default.removeItem(at: entry)
+        }
+        if (try? FileManager.default.contentsOfDirectory(atPath: transactionDirectory.path).isEmpty) == true {
+            try? FileManager.default.removeItem(at: transactionDirectory)
+        }
+    }
+
+    private func safelyRemoveCourseFileTransactionDirectoryInBackground(
+        _ transactionDirectory: URL,
+        expectedIdentity: ImportedFileIdentity
+    ) async {
+        await Task.detached(priority: .utility) {
+            guard CourseProjectFileWorker.identity(at: transactionDirectory) == expectedIdentity,
+                  let entries = try? FileManager.default.contentsOfDirectory(
+                    at: transactionDirectory,
+                    includingPropertiesForKeys: [
+                        .isRegularFileKey,
+                        .isSymbolicLinkKey,
+                        .isAliasFileKey,
+                    ],
+                    options: []
+                  ),
+                  entries.allSatisfy({
+                    ["journal.json", "payload"].contains($0.lastPathComponent)
+                  }) else {
+                return
+            }
+            for entry in entries {
+                guard let values = try? entry.resourceValues(forKeys: [
+                    .isRegularFileKey,
+                    .isSymbolicLinkKey,
+                    .isAliasFileKey,
+                ]),
+                values.isRegularFile == true,
+                values.isSymbolicLink != true,
+                values.isAliasFile != true else {
+                    return
+                }
+            }
+            for entry in entries {
+                try? FileManager.default.removeItem(at: entry)
+            }
+            if (try? FileManager.default.contentsOfDirectory(
+                atPath: transactionDirectory.path
+            ).isEmpty) == true {
+                try? FileManager.default.removeItem(at: transactionDirectory)
+            }
+        }.value
+    }
+
+    private func safelyRemoveCourseMarkdownTransactionDirectoryInBackground(
+        _ transactionDirectory: URL,
+        expectedIdentity: ImportedFileIdentity
+    ) async {
+        await Task.detached(priority: .utility) {
+            guard CourseProjectFileWorker.identity(at: transactionDirectory)
+                    == expectedIdentity,
+                  let entries = try? FileManager.default.contentsOfDirectory(
+                    at: transactionDirectory,
+                    includingPropertiesForKeys: [
+                        .isRegularFileKey,
+                        .isSymbolicLinkKey,
+                        .isAliasFileKey,
+                    ],
+                    options: []
+                  ),
+                  entries.allSatisfy({
+                    ["course-note.json", "payload"]
+                        .contains($0.lastPathComponent)
+                  }) else {
+                return
+            }
+            for entry in entries {
+                guard let values = try? entry.resourceValues(forKeys: [
+                    .isRegularFileKey,
+                    .isSymbolicLinkKey,
+                    .isAliasFileKey,
+                ]),
+                values.isRegularFile == true,
+                values.isSymbolicLink != true,
+                values.isAliasFile != true else {
+                    return
+                }
+            }
+            for entry in entries {
+                try? FileManager.default.removeItem(at: entry)
+            }
+            if (try? FileManager.default.contentsOfDirectory(
+                atPath: transactionDirectory.path
+            ).isEmpty) == true {
+                try? FileManager.default.removeItem(at: transactionDirectory)
+            }
+        }.value
+    }
+
+    private func safelyRemoveSharedTransactionDirectoryInBackground(
+        _ transactionDirectory: URL,
+        expectedIdentity: ImportedFileIdentity
+    ) async {
+        await Task.detached(priority: .utility) {
+            guard CourseProjectFileWorker.identity(at: transactionDirectory) == expectedIdentity,
+                  let entries = try? FileManager.default.contentsOfDirectory(
+                    at: transactionDirectory,
+                    includingPropertiesForKeys: [
+                        .isRegularFileKey,
+                        .isSymbolicLinkKey,
+                        .isAliasFileKey,
+                    ],
+                    options: []
+                  ),
+                  entries.allSatisfy({
+                    [
+                        "shared.json",
+                        "shared-link.json",
+                        "shared-link-removal.json",
+                        "payload",
+                    ]
+                        .contains($0.lastPathComponent)
+                  }) else {
+                return
+            }
+            for entry in entries {
+                guard let values = try? entry.resourceValues(forKeys: [
+                    .isRegularFileKey,
+                    .isSymbolicLinkKey,
+                    .isAliasFileKey,
+                ]),
+                values.isRegularFile == true,
+                values.isSymbolicLink != true,
+                values.isAliasFile != true else {
+                    return
+                }
+            }
+            for entry in entries {
+                try? FileManager.default.removeItem(at: entry)
+            }
+            if (try? FileManager.default.contentsOfDirectory(
+                atPath: transactionDirectory.path
+            ).isEmpty) == true {
+                try? FileManager.default.removeItem(at: transactionDirectory)
+            }
+        }.value
+    }
+
+    private func recoverPendingCourseFileTransactionsInBackground() async {
+        let importedItems = self.importedItems
+        let memberships = courseItemMemberships
+        let courseRootsByID = Dictionary(uniqueKeysWithValues: courses.compactMap { course in
+            courseRootURL(for: course.id).map { root in (course.id, root) }
+        })
+        let inputs = courses.compactMap { course -> CourseRecoveryInput? in
+            guard let root = courseRootURL(for: course.id) else { return nil }
+            return CourseRecoveryInput(
+                courseID: course.id,
+                root: root,
+                libraryRoot: courseLibraryRootURL,
+                courseRootsByID: courseRootsByID,
+                importedItems: importedItems,
+                memberships: memberships
+            )
+        }
+        let recoveredTargets = await Task.detached(priority: .utility) {
+            var targets: [RecoveredCourseFileTarget] = []
+            for input in inputs {
+                targets.append(contentsOf: Self.recoverCourseTransactions(input))
+            }
+            return targets
+        }.value
+        guard !recoveredTargets.isEmpty else { return }
+        let previousItems = self.importedItems
+        let previousMemberships = courseItemMemberships
+        let previousBackingDigests = noteBackingContentDigestsByItemID
+        for recovered in recoveredTargets {
+            let journal = recovered.journal
+            if let retiredSourceItemID = journal.retiredSourceItemID,
+               retiredSourceItemID != journal.itemID {
+                replaceItemIDEverywhere(retiredSourceItemID, with: journal.itemID)
+                self.importedItems.removeAll { $0.id == retiredSourceItemID }
+            }
+            let existingIndex = self.importedItems.firstIndex {
+                $0.id == journal.itemID
+            }
+            let previousRevision = existingIndex.map {
+                self.importedItems[$0].contentRevision
+            } ?? 0
+            let item = StudyItem(
+                id: journal.itemID,
+                title: recovered.targetURL.deletingPathExtension().lastPathComponent,
+                subtitle: recovered.targetURL.lastPathComponent,
+                kind: StudyItemKind.detect(from: recovered.targetURL),
+                urlPath: recovered.targetURL.path,
+                importedFileIdentity: recovered.targetIdentity,
+                importedFileBookmarkData: nil,
+                importedFileLastKnownPath: recovered.targetURL.path,
+                isSample: false,
+                isNotebookNote: journal.role == .note,
+                storage: .courseOwned(ownerCourseID: journal.courseID),
+                contentRevision: max(1, previousRevision &+ (existingIndex == nil ? 0 : 1)),
+                contentDigest: journal.sourceSnapshot.sha256,
+                fileByteCount: recovered.metadata.byteCount,
+                fileModificationTimeNanoseconds:
+                    recovered.metadata.modificationTimeNanoseconds
+            )
+            if let existingIndex {
+                self.importedItems[existingIndex] = item
+            } else {
+                self.importedItems.append(item)
+            }
+            courseItemMemberships.removeAll { $0.itemID == journal.itemID }
+            courseItemMemberships.append(
+                CourseItemMembership(
+                    courseID: journal.courseID,
+                    itemID: journal.itemID,
+                    courseRelativePath: journal.targetRelativePath,
+                    entryIdentity: recovered.targetIdentity
+                )
+            )
+            if journal.role == .note {
+                noteBackingContentDigestsByItemID[journal.itemID] =
+                    journal.sourceSnapshot.sha256
+            }
+        }
+        guard performSaveNow() else {
+            self.importedItems = previousItems
+            courseItemMemberships = previousMemberships
+            noteBackingContentDigestsByItemID = previousBackingDigests
+            workspaceSaveError = ui(
+                "课程中有已校验文件等待恢复，状态保存成功后会自动显示。",
+                "Verified course files are waiting to be recovered after workspace saving succeeds."
+            )
+            return
+        }
+        let updatedItems = self.importedItems
+        let updatedMemberships = courseItemMemberships
+        let updatedInputs = inputs.map {
+            CourseRecoveryInput(
+                courseID: $0.courseID,
+                root: $0.root,
+                libraryRoot: $0.libraryRoot,
+                courseRootsByID: $0.courseRootsByID,
+                importedItems: updatedItems,
+                memberships: updatedMemberships
+            )
+        }
+        await Task.detached(priority: .utility) {
+            for input in updatedInputs {
+                _ = Self.recoverCourseTransactions(input)
+            }
+        }.value
+    }
+
+    func recoverCourseTransactionsForSelfCheck() throws {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        try waitForCourseFileOperation {
+            await self.recoverPendingCourseFileTransactionsInBackground()
+        }
+    }
+
+    nonisolated private static func recoverCourseTransactions(
+        _ input: CourseRecoveryInput
+    ) -> [RecoveredCourseFileTarget] {
+        let fileManager = FileManager.default
+        guard let canonicalRoot = try? CourseProjectPathPolicy.existingDirectory(input.root),
+              CourseProjectPathPolicy.isSame(canonicalRoot, input.root.resolvingSymlinksInPath()) else {
+            return []
+        }
+        let transactions = canonicalRoot
+            .appendingPathComponent(".weibei/transactions", isDirectory: true)
+        guard let values = try? transactions.resourceValues(forKeys: [
+            .isDirectoryKey,
+            .isSymbolicLinkKey,
+            .isAliasFileKey,
+        ]),
+        values.isDirectory == true,
+        values.isSymbolicLink != true,
+        values.isAliasFile != true,
+        CourseProjectPathPolicy.contains(canonicalRoot, transactions, includingRoot: false),
+        let directories = try? fileManager.contentsOfDirectory(
+            at: transactions,
+            includingPropertiesForKeys: [
+                .isDirectoryKey,
+                .isSymbolicLinkKey,
+                .isAliasFileKey,
+            ],
+            options: []
+        ) else {
+            return []
+        }
+        var recoveredTargets: [RecoveredCourseFileTarget] = []
+        for transactionDirectory in directories {
+            guard UUID(uuidString: transactionDirectory.lastPathComponent) != nil,
+                  let directoryValues = try? transactionDirectory.resourceValues(forKeys: [
+                    .isDirectoryKey,
+                    .isSymbolicLinkKey,
+                    .isAliasFileKey,
+                  ]),
+                  directoryValues.isDirectory == true,
+                  directoryValues.isSymbolicLink != true,
+                  directoryValues.isAliasFile != true,
+                  CourseProjectPathPolicy.contains(
+                    transactions,
+                    transactionDirectory,
+                    includingRoot: false
+                  ) else {
+                continue
+            }
+            if let recovered = recoverCourseTransaction(
+                at: transactionDirectory,
+                input: input,
+                canonicalRoot: canonicalRoot
+            ) {
+                recoveredTargets.append(recovered)
+            }
+        }
+        return recoveredTargets
+    }
+
+    nonisolated private static func recoverCourseTransaction(
+        at transactionDirectory: URL,
+        input: CourseRecoveryInput,
+        canonicalRoot: URL
+    ) -> RecoveredCourseFileTarget? {
+        let fileManager = FileManager.default
+        if fileManager.fileExists(
+            atPath: transactionDirectory.appendingPathComponent(
+                "course-note.json"
+            ).path
+        ) {
+            recoverCourseMarkdownWriteTransaction(
+                at: transactionDirectory,
+                input: input,
+                canonicalRoot: canonicalRoot
+            )
+            return nil
+        }
+        if fileManager.fileExists(
+            atPath: transactionDirectory.appendingPathComponent(
+                "shared-link-removal.json"
+            ).path
+        ) {
+            recoverSharedLinkRemovalTransaction(
+                at: transactionDirectory,
+                input: input,
+                canonicalRoot: canonicalRoot
+            )
+            return nil
+        }
+        if fileManager.fileExists(
+            atPath: transactionDirectory.appendingPathComponent(
+                "shared-link.json"
+            ).path
+        ) {
+            recoverSharedLinkCourseTransaction(
+                at: transactionDirectory,
+                input: input,
+                canonicalRoot: canonicalRoot
+            )
+            return nil
+        }
+        if fileManager.fileExists(
+            atPath: transactionDirectory.appendingPathComponent("shared.json").path
+        ) {
+            recoverSharedCourseTransaction(
+                at: transactionDirectory,
+                input: input,
+                canonicalRoot: canonicalRoot
+            )
+            return nil
+        }
+        let journalURL = transactionDirectory.appendingPathComponent("journal.json")
+        guard let data = try? Data(contentsOf: journalURL),
+              let journal = try? JSONDecoder().decode(
+                PendingCourseFileTransactionJournal.self,
+                from: data
+              ),
+              journal.courseID == input.courseID,
+              journal.transactionID.uuidString.caseInsensitiveCompare(
+                transactionDirectory.lastPathComponent
+              ) == .orderedSame,
+              CourseProjectFileWorker.identity(at: transactionDirectory)
+                == journal.transactionDirectoryIdentity,
+              let targetURL = backgroundTargetURL(
+                journal: journal,
+                root: canonicalRoot
+              ) else {
+            return nil
+        }
+        let targetIdentity = journal.targetIdentity ?? journal.stagedIdentity
+        let targetMatches = targetIdentity.map {
+            backgroundFileMatches(
+                targetURL,
+                identity: $0,
+                snapshot: journal.sourceSnapshot
+            )
+        } ?? false
+        let item = input.importedItems.first {
+            $0.id == journal.itemID
+                && $0.contentDigest == journal.sourceSnapshot.sha256
+                && $0.importedFileIdentity == targetIdentity
+        }
+        let membership = input.memberships.first {
+            $0.courseID == input.courseID
+                && $0.itemID == journal.itemID
+                && $0.courseRelativePath == journal.targetRelativePath
+                && $0.entryIdentity == targetIdentity
+        }
+        let workspaceCommitted = item != nil && membership != nil && targetMatches
+        let replacementURL = transactionDirectory.appendingPathComponent("replaced-target")
+        let replacementRollbackURL = transactionDirectory.appendingPathComponent(
+            "replacement-rollback"
+        )
+        let unrecordedSelfCheckTrashURL = transactionDirectory.appendingPathComponent(
+            "trashed-replaced-target"
+        )
+        let trashedReplacementURL = journal.replacedTrashPath.map {
+            backgroundCanonicalRawPath(URL(fileURLWithPath: $0))
+        }
+
+        if workspaceCommitted {
+            var cleanupComplete = true
+            if let sourcePath = journal.sourcePath,
+               let sourceIdentity = journal.sourceIdentity {
+                let sourceURL = URL(fileURLWithPath: sourcePath).standardizedFileURL
+                let quarantineURL = sourceURL.deletingLastPathComponent()
+                    .appendingPathComponent(
+                        ".\(sourceURL.lastPathComponent).weibei-quarantine-\(journal.transactionID.uuidString.lowercased())"
+                    )
+                if fileManager.fileExists(atPath: quarantineURL.path) {
+                    guard backgroundFileMatches(
+                        quarantineURL,
+                        identity: sourceIdentity,
+                        snapshot: journal.sourceSnapshot
+                    ) else {
+                        return nil
+                    }
+                    try? fileManager.removeItem(at: quarantineURL)
+                    cleanupComplete = !fileManager.fileExists(atPath: quarantineURL.path)
+                } else if fileManager.fileExists(atPath: sourceURL.path) {
+                    if backgroundFileMatches(
+                        sourceURL,
+                        identity: sourceIdentity,
+                        snapshot: journal.sourceSnapshot
+                    ) {
+                        cleanupComplete = backgroundRemoveVerified(
+                            sourceURL,
+                            quarantineURL: quarantineURL,
+                            identity: sourceIdentity,
+                            snapshot: journal.sourceSnapshot
+                        )
+                    }
+                }
+            }
+            if let replacedIdentity = journal.replacedTargetIdentity,
+               let replacedSnapshot = journal.replacedTargetSnapshot,
+               fileManager.fileExists(atPath: replacementURL.path) {
+                guard backgroundFileMatches(
+                    replacementURL,
+                    identity: replacedIdentity,
+                    snapshot: replacedSnapshot
+                ) else {
+                    return nil
+                }
+                var trashed: NSURL?
+                do {
+                    try fileManager.trashItem(at: replacementURL, resultingItemURL: &trashed)
+                } catch {
+                    cleanupComplete = false
+                }
+            }
+            if let trashedReplacementURL,
+               CourseProjectPathPolicy.contains(
+                transactionDirectory,
+                trashedReplacementURL,
+                includingRoot: false
+               ),
+               fileManager.fileExists(atPath: trashedReplacementURL.path) {
+                guard let replacedIdentity = journal.replacedTargetIdentity,
+                      let replacedSnapshot = journal.replacedTargetSnapshot,
+                      backgroundFileMatches(
+                        trashedReplacementURL,
+                        identity: replacedIdentity,
+                        snapshot: replacedSnapshot
+                      ) else {
+                    return nil
+                }
+                try? fileManager.removeItem(at: trashedReplacementURL)
+                cleanupComplete = !fileManager.fileExists(
+                    atPath: trashedReplacementURL.path
+                )
+            }
+            if let rollbackIdentity = journal.replacedRollbackIdentity,
+               let replacedSnapshot = journal.replacedTargetSnapshot,
+               fileManager.fileExists(atPath: replacementRollbackURL.path) {
+                guard backgroundFileMatches(
+                    replacementRollbackURL,
+                    identity: rollbackIdentity,
+                    snapshot: replacedSnapshot
+                ) else {
+                    return nil
+                }
+                try? fileManager.removeItem(at: replacementRollbackURL)
+                cleanupComplete = !fileManager.fileExists(
+                    atPath: replacementRollbackURL.path
+                )
+            }
+            if cleanupComplete {
+                backgroundCleanupTransaction(
+                    transactionDirectory,
+                    expectedIdentity: journal.transactionDirectoryIdentity
+                )
+            }
+            return nil
+        }
+
+        let sourceIsRecoverable: Bool
+        if let sourcePath = journal.sourcePath,
+           let sourceIdentity = journal.sourceIdentity {
+            let sourceURL = URL(fileURLWithPath: sourcePath).standardizedFileURL
+            let quarantineURL = sourceURL.deletingLastPathComponent()
+                .appendingPathComponent(
+                    ".\(sourceURL.lastPathComponent).weibei-quarantine-\(journal.transactionID.uuidString.lowercased())"
+                )
+            sourceIsRecoverable = backgroundFileMatches(
+                sourceURL,
+                identity: sourceIdentity,
+                snapshot: journal.sourceSnapshot
+            ) || backgroundFileMatches(
+                quarantineURL,
+                identity: sourceIdentity,
+                snapshot: journal.sourceSnapshot
+            )
+        } else {
+            sourceIsRecoverable = false
+        }
+        if journal.stage == .replacementPreparing,
+           let replacedIdentity = journal.replacedTargetIdentity,
+           let replacedSnapshot = journal.replacedTargetSnapshot,
+           backgroundFileMatches(
+            targetURL,
+            identity: replacedIdentity,
+            snapshot: replacedSnapshot
+           ) {
+            if fileManager.fileExists(atPath: replacementRollbackURL.path) {
+                guard backgroundIsolateAndRemoveEmptyRegularFile(
+                    replacementRollbackURL,
+                    quarantineURL: transactionDirectory.appendingPathComponent(
+                        "rollback-reservation-cleanup"
+                    )
+                ) else {
+                    return nil
+                }
+            }
+            let payloadURL = transactionDirectory.appendingPathComponent(
+                "payload"
+            )
+            if fileManager.fileExists(atPath: payloadURL.path) {
+                guard let stagedIdentity = journal.stagedIdentity,
+                      backgroundRemoveVerified(
+                        payloadURL,
+                        quarantineURL: transactionDirectory
+                            .appendingPathComponent("payload-cleanup"),
+                        identity: stagedIdentity,
+                        snapshot: journal.sourceSnapshot
+                      ) else {
+                    return nil
+                }
+            }
+            backgroundCleanupTransaction(
+                transactionDirectory,
+                expectedIdentity: journal.transactionDirectoryIdentity
+            )
+            return nil
+        }
+        if targetMatches, !sourceIsRecoverable, let targetIdentity,
+           let values = try? targetURL.resourceValues(forKeys: [
+            .fileSizeKey,
+            .contentModificationDateKey,
+           ]) {
+            return RecoveredCourseFileTarget(
+                journal: journal,
+                targetURL: targetURL,
+                targetIdentity: targetIdentity,
+                metadata: CourseFileSourceInfo(
+                    url: targetURL,
+                    identity: targetIdentity,
+                    byteCount: UInt64(max(0, values.fileSize ?? 0)),
+                    modificationTimeNanoseconds: Int64(
+                        ((values.contentModificationDate?.timeIntervalSince1970 ?? 0)
+                            * 1_000_000_000).rounded()
+                    )
+                )
+            )
+        }
+
+        let targetQuarantine = transactionDirectory.appendingPathComponent("target-quarantine")
+        if targetMatches, let targetIdentity {
+            guard backgroundRemoveVerified(
+                targetURL,
+                quarantineURL: targetQuarantine,
+                identity: targetIdentity,
+                snapshot: journal.sourceSnapshot
+            ) else {
+                return nil
+            }
+        } else if fileManager.fileExists(atPath: targetURL.path) {
+            return nil
+        }
+        let replacementRestore: (url: URL, identity: ImportedFileIdentity?) = {
+            if fileManager.fileExists(atPath: replacementURL.path) {
+                return (replacementURL, journal.replacedTargetIdentity)
+            }
+            if fileManager.fileExists(atPath: replacementRollbackURL.path) {
+                return (
+                    replacementRollbackURL,
+                    journal.replacedRollbackIdentity
+                )
+            }
+            if fileManager.fileExists(atPath: unrecordedSelfCheckTrashURL.path) {
+                return (
+                    unrecordedSelfCheckTrashURL,
+                    journal.replacedTargetIdentity
+                )
+            }
+            return (
+                trashedReplacementURL ?? replacementURL,
+                journal.replacedTargetIdentity
+            )
+        }()
+        if let replacedSnapshot = journal.replacedTargetSnapshot,
+           let restoreIdentity = replacementRestore.identity,
+           fileManager.fileExists(atPath: replacementRestore.url.path) {
+            guard !fileManager.fileExists(atPath: targetURL.path),
+                  backgroundFileMatches(
+                    replacementRestore.url,
+                    identity: restoreIdentity,
+                    snapshot: replacedSnapshot
+                  ),
+                  CourseProjectFileWorker.renameWithoutReplacement(
+                    from: replacementRestore.url,
+                    to: targetURL
+                  ) else {
+                return nil
+            }
+        }
+        if let rollbackIdentity = journal.replacedRollbackIdentity,
+           fileManager.fileExists(atPath: replacementRollbackURL.path) {
+            let removed: Bool
+            switch journal.stage {
+            case .replacementRollbackReserved, .replacementIsolated:
+                removed = backgroundRemoveIdentityOnly(
+                    replacementRollbackURL,
+                    identity: rollbackIdentity
+                )
+            default:
+                guard let replacedSnapshot = journal.replacedTargetSnapshot else {
+                    return nil
+                }
+                removed = backgroundRemoveVerified(
+                    replacementRollbackURL,
+                    quarantineURL: transactionDirectory.appendingPathComponent(
+                        "rollback-cleanup"
+                    ),
+                    identity: rollbackIdentity,
+                    snapshot: replacedSnapshot
+                )
+            }
+            guard removed else { return nil }
+        } else if journal.stage == .replacementPreparing,
+                  fileManager.fileExists(
+                    atPath: replacementRollbackURL.path
+                  ) {
+            guard backgroundIsolateAndRemoveEmptyRegularFile(
+                replacementRollbackURL,
+                quarantineURL: transactionDirectory.appendingPathComponent(
+                    "rollback-reservation-cleanup"
+                )
+            ) else {
+                return nil
+            }
+        }
+        if let replacedIdentity = journal.replacedTargetIdentity,
+           let replacedSnapshot = journal.replacedTargetSnapshot,
+           fileManager.fileExists(atPath: unrecordedSelfCheckTrashURL.path) {
+            guard backgroundRemoveVerified(
+                unrecordedSelfCheckTrashURL,
+                quarantineURL: transactionDirectory.appendingPathComponent(
+                    "trash-cleanup"
+                ),
+                identity: replacedIdentity,
+                snapshot: replacedSnapshot
+            ) else {
+                return nil
+            }
+        }
+        if let sourcePath = journal.sourcePath,
+           let sourceIdentity = journal.sourceIdentity {
+            let sourceURL = URL(fileURLWithPath: sourcePath).standardizedFileURL
+            let quarantineURL = sourceURL.deletingLastPathComponent()
+                .appendingPathComponent(
+                    ".\(sourceURL.lastPathComponent).weibei-quarantine-\(journal.transactionID.uuidString.lowercased())"
+                )
+            if fileManager.fileExists(atPath: quarantineURL.path) {
+                guard !fileManager.fileExists(atPath: sourceURL.path),
+                      backgroundFileMatches(
+                        quarantineURL,
+                        identity: sourceIdentity,
+                        snapshot: journal.sourceSnapshot
+                      ),
+                      CourseProjectFileWorker.renameWithoutReplacement(
+                        from: quarantineURL,
+                        to: sourceURL
+                      ) else {
+                    return nil
+                }
+            }
+        }
+        let trashedReplacementIsAbsent = trashedReplacementURL.map {
+            !fileManager.fileExists(atPath: $0.path)
+        } ?? true
+        guard !fileManager.fileExists(atPath: targetQuarantine.path),
+              !fileManager.fileExists(atPath: replacementURL.path),
+              !fileManager.fileExists(atPath: replacementRollbackURL.path),
+              !fileManager.fileExists(atPath: unrecordedSelfCheckTrashURL.path),
+              trashedReplacementIsAbsent else {
+            return nil
+        }
+        backgroundCleanupTransaction(
+            transactionDirectory,
+            expectedIdentity: journal.transactionDirectoryIdentity
+        )
+        return nil
+    }
+
+    nonisolated private static func recoverCourseMarkdownWriteTransaction(
+        at transactionDirectory: URL,
+        input: CourseRecoveryInput,
+        canonicalRoot: URL
+    ) {
+        let journalURL = transactionDirectory.appendingPathComponent(
+            "course-note.json"
+        )
+        guard let data = try? Data(contentsOf: journalURL),
+              let journal = try? JSONDecoder().decode(
+                PendingCourseMarkdownWriteJournal.self,
+                from: data
+              ),
+              journal.courseID == input.courseID,
+              journal.transactionID.uuidString.caseInsensitiveCompare(
+                transactionDirectory.lastPathComponent
+              ) == .orderedSame,
+              CourseProjectFileWorker.identity(at: transactionDirectory)
+                == journal.transactionDirectoryIdentity,
+              let targetURL = backgroundRawRelativeURL(
+                journal.targetRelativePath,
+                inside: canonicalRoot
+              ),
+              CourseProjectPathPolicy.isSame(
+                targetURL,
+                backgroundCanonicalRawPath(
+                    URL(fileURLWithPath: journal.targetPath)
+                )
+              ) else {
+            return
+        }
+        let components = journal.targetRelativePath.split(
+            separator: "/",
+            omittingEmptySubsequences: true
+        )
+        guard components.count == 2,
+              components.first
+                == Substring(CourseOwnedFileRole.note.directoryName) else {
+            return
+        }
+        let payloadURL = transactionDirectory.appendingPathComponent("payload")
+        let originalURL = transactionDirectory.appendingPathComponent("original")
+        let stagedIdentity = journal.stagedIdentity
+        let targetMatchesReplacement = stagedIdentity.map {
+            backgroundFileMatches(
+                targetURL,
+                identity: $0,
+                snapshot: journal.replacementSnapshot
+            )
+        } ?? false
+        let payloadMatchesReplacement = stagedIdentity.map {
+            backgroundFileMatches(
+                payloadURL,
+                identity: $0,
+                snapshot: journal.replacementSnapshot
+            )
+        } ?? false
+        let originalMatches = backgroundFileMatches(
+            originalURL,
+            identity: journal.targetIdentity,
+            snapshot: journal.targetSnapshot
+        )
+        let itemCommitted = input.importedItems.contains { item in
+            guard item.id == journal.itemID,
+                  item.importedFileIdentity == stagedIdentity,
+                  item.contentDigest == journal.replacementSnapshot.sha256 else {
+                return false
+            }
+            if case .courseOwned(let ownerCourseID) = item.storage {
+                return ownerCourseID == journal.courseID
+            }
+            return false
+        }
+        let membershipCommitted = input.memberships.contains {
+            $0.courseID == journal.courseID
+                && $0.itemID == journal.itemID
+                && $0.courseRelativePath == journal.targetRelativePath
+                && $0.entryIdentity == stagedIdentity
+        }
+        let workspaceCommitted =
+            itemCommitted && membershipCommitted && targetMatchesReplacement
+
+        if workspaceCommitted {
+            if CourseProjectFileWorker.identity(at: originalURL) != nil {
+                guard originalMatches,
+                      backgroundRemoveVerified(
+                        originalURL,
+                        quarantineURL: transactionDirectory
+                            .appendingPathComponent("original-cleanup"),
+                        identity: journal.targetIdentity,
+                        snapshot: journal.targetSnapshot
+                      ) else {
+                    return
+                }
+            }
+            if CourseProjectFileWorker.identity(at: payloadURL) != nil {
+                guard payloadMatchesReplacement,
+                      let stagedIdentity,
+                      backgroundRemoveVerified(
+                        payloadURL,
+                        quarantineURL: transactionDirectory
+                            .appendingPathComponent("payload-cleanup"),
+                        identity: stagedIdentity,
+                        snapshot: journal.replacementSnapshot
+                      ) else {
+                    return
+                }
+            }
+            backgroundCleanupCourseMarkdownTransaction(
+                transactionDirectory,
+                expectedIdentity: journal.transactionDirectoryIdentity
+            )
+            return
+        }
+
+        if CourseProjectFileWorker.identity(at: targetURL) != nil {
+            guard targetMatchesReplacement,
+                  let stagedIdentity,
+                  backgroundRemoveVerified(
+                    targetURL,
+                    quarantineURL: transactionDirectory
+                        .appendingPathComponent("replacement-cleanup"),
+                    identity: stagedIdentity,
+                    snapshot: journal.replacementSnapshot
+                  ) else {
+                return
+            }
+        }
+        if CourseProjectFileWorker.identity(at: payloadURL) != nil {
+            guard payloadMatchesReplacement,
+                  let stagedIdentity,
+                  backgroundRemoveVerified(
+                    payloadURL,
+                    quarantineURL: transactionDirectory
+                        .appendingPathComponent("payload-cleanup"),
+                    identity: stagedIdentity,
+                    snapshot: journal.replacementSnapshot
+                  ) else {
+                return
+            }
+        }
+        if CourseProjectFileWorker.identity(at: originalURL) != nil {
+            guard originalMatches,
+                  CourseProjectFileWorker.identity(at: targetURL) == nil,
+                  CourseProjectFileWorker.renameWithoutReplacement(
+                    from: originalURL,
+                    to: targetURL
+                  ) else {
+                return
+            }
+        }
+        guard backgroundFileMatches(
+            targetURL,
+            identity: journal.targetIdentity,
+            snapshot: journal.targetSnapshot
+        ) else {
+            return
+        }
+        backgroundCleanupCourseMarkdownTransaction(
+            transactionDirectory,
+            expectedIdentity: journal.transactionDirectoryIdentity
+        )
+    }
+
+    nonisolated private static func recoverSharedLinkRemovalTransaction(
+        at transactionDirectory: URL,
+        input: CourseRecoveryInput,
+        canonicalRoot: URL
+    ) {
+        let journalURL = transactionDirectory.appendingPathComponent(
+            "shared-link-removal.json"
+        )
+        guard let data = try? Data(contentsOf: journalURL),
+              let journal = try? JSONDecoder().decode(
+                PendingSharedLinkRemovalJournal.self,
+                from: data
+              ),
+              journal.courseID == input.courseID,
+              journal.transactionID.uuidString.caseInsensitiveCompare(
+                transactionDirectory.lastPathComponent
+              ) == .orderedSame,
+              CourseProjectFileWorker.identity(at: transactionDirectory)
+                == journal.transactionDirectoryIdentity,
+              let libraryRoot = input.libraryRoot,
+              let sharedURL = CourseProjectPathPolicy.resolvedRelativePath(
+                journal.sharedRelativePath,
+                inside: libraryRoot
+              ),
+              journal.sharedRelativePath == "共享文稿/\(sharedURL.lastPathComponent)",
+              CourseProjectPathPolicy.isSame(
+                sharedURL,
+                URL(fileURLWithPath: journal.sharedPath).resolvingSymlinksInPath()
+              ),
+              backgroundFileMatches(
+                sharedURL,
+                identity: journal.sharedIdentity,
+                snapshot: journal.sharedSnapshot
+              ),
+              let linkURL = backgroundRawRelativeURL(
+                journal.linkRelativePath,
+                inside: canonicalRoot
+              ),
+              CourseProjectPathPolicy.isSame(
+                linkURL,
+                backgroundCanonicalRawPath(URL(fileURLWithPath: journal.linkPath))
+              ) else {
+            return
+        }
+        let membershipStillCommitted = input.memberships.contains {
+            $0.courseID == journal.courseID
+                && $0.itemID == journal.itemID
+                && $0.courseRelativePath == journal.linkRelativePath
+                && $0.entryIdentity == journal.linkIdentity
+        }
+        let isolatedLinkURL = transactionDirectory.appendingPathComponent(
+            "isolated-link"
+        )
+        let linkExists = CourseProjectFileWorker.identity(at: linkURL) != nil
+        let linkMatches = backgroundLinkMatches(
+            linkURL,
+            destination: sharedURL,
+            identity: journal.linkIdentity
+        )
+        let isolatedLinkExists =
+            CourseProjectFileWorker.identity(at: isolatedLinkURL) != nil
+        let isolatedLinkMatches = backgroundLinkMatches(
+            isolatedLinkURL,
+            destination: sharedURL,
+            identity: journal.linkIdentity
+        )
+        if membershipStillCommitted {
+            if !linkExists, isolatedLinkMatches {
+                guard CourseProjectFileWorker.renameWithoutReplacement(
+                    from: isolatedLinkURL,
+                    to: linkURL
+                ) else {
+                    return
+                }
+            } else {
+                guard linkMatches, !isolatedLinkExists else { return }
+            }
+            backgroundCleanupSharedTransaction(
+                transactionDirectory,
+                expectedIdentity: journal.transactionDirectoryIdentity
+            )
+            return
+        }
+        if isolatedLinkExists {
+            guard isolatedLinkMatches,
+                  backgroundIsolateAndRemoveMatchingLink(
+                    isolatedLinkURL,
+                    quarantineURL: transactionDirectory.appendingPathComponent(
+                        "isolated-link-cleanup"
+                    ),
+                    destination: sharedURL,
+                    identity: journal.linkIdentity
+                  ) else {
+                return
+            }
+        }
+        if linkExists {
+            guard linkMatches,
+                  backgroundIsolateAndRemoveMatchingLink(
+                    linkURL,
+                    quarantineURL: transactionDirectory.appendingPathComponent(
+                        "link-cleanup"
+                    ),
+                    destination: sharedURL,
+                    identity: journal.linkIdentity
+                  ) else {
+                return
+            }
+        }
+        backgroundCleanupSharedTransaction(
+            transactionDirectory,
+            expectedIdentity: journal.transactionDirectoryIdentity
+        )
+    }
+
+    nonisolated private static func recoverSharedLinkCourseTransaction(
+        at transactionDirectory: URL,
+        input: CourseRecoveryInput,
+        canonicalRoot: URL
+    ) {
+        let journalURL = transactionDirectory.appendingPathComponent(
+            "shared-link.json"
+        )
+        guard let data = try? Data(contentsOf: journalURL),
+              let journal = try? JSONDecoder().decode(
+                PendingSharedLinkTransactionJournal.self,
+                from: data
+              ),
+              let libraryRoot = input.libraryRoot,
+              let sharedURL = CourseProjectPathPolicy.resolvedRelativePath(
+                journal.sharedRelativePath,
+                inside: libraryRoot
+              ),
+              let linkURL = backgroundRawRelativeURL(
+                journal.linkRelativePath,
+                inside: canonicalRoot
+              ) else {
+            return
+        }
+        let checks = [
+            journal.courseID == input.courseID,
+            journal.transactionID.uuidString.caseInsensitiveCompare(
+                transactionDirectory.lastPathComponent
+            ) == .orderedSame,
+            CourseProjectFileWorker.identity(at: transactionDirectory)
+                == journal.transactionDirectoryIdentity,
+            CourseProjectPathPolicy.isSame(
+                sharedURL,
+                URL(fileURLWithPath: journal.sharedPath)
+                    .resolvingSymlinksInPath()
+            ),
+            journal.sharedRelativePath == "共享文稿/\(sharedURL.lastPathComponent)",
+            CourseProjectPathPolicy.isSame(
+                linkURL,
+                backgroundCanonicalRawPath(
+                    URL(fileURLWithPath: journal.linkPath)
+                )
+            ),
+        ]
+        guard checks.allSatisfy({ $0 }) else { return }
+        let sharedMatches = backgroundFileMatches(
+            sharedURL,
+            identity: journal.sharedIdentity,
+            snapshot: journal.sharedSnapshot
+        )
+        let preparedLinkURL = transactionDirectory.appendingPathComponent(
+            "prepared-link"
+        )
+        let committedItem = input.importedItems.first {
+            guard $0.id == journal.itemID,
+                  $0.importedFileIdentity == journal.sharedIdentity else {
+                return false
+            }
+            if case .shared(let relativePath) = $0.storage {
+                return relativePath == journal.sharedRelativePath
+            }
+            return false
+        }
+        let committedMembership = input.memberships.first {
+            $0.courseID == journal.courseID
+                && $0.itemID == journal.itemID
+                && $0.courseRelativePath == journal.linkRelativePath
+        }
+        let expectedLinkIdentity = journal.linkIdentity
+            ?? committedMembership?.entryIdentity
+        let linkMatches = expectedLinkIdentity.map {
+            backgroundLinkMatches(
+                linkURL,
+                destination: sharedURL,
+                identity: $0
+            )
+        } ?? false
+        if committedItem != nil,
+           committedMembership?.entryIdentity == expectedLinkIdentity,
+           sharedMatches,
+           linkMatches {
+            backgroundCleanupSharedTransaction(
+                transactionDirectory,
+                expectedIdentity: journal.transactionDirectoryIdentity
+            )
+            return
+        }
+
+        guard committedMembership == nil else {
+            return
+        }
+        if linkMatches {
+            guard let expectedLinkIdentity,
+                  backgroundIsolateAndRemoveMatchingLink(
+                    linkURL,
+                    quarantineURL: transactionDirectory.appendingPathComponent(
+                        "link-cleanup"
+                    ),
+                    destination: sharedURL,
+                    identity: expectedLinkIdentity
+                  ) else {
+                return
+            }
+        } else if CourseProjectFileWorker.identity(at: linkURL) != nil {
+            return
+        }
+        if CourseProjectFileWorker.identity(at: preparedLinkURL) != nil {
+            let removed = expectedLinkIdentity.map {
+                backgroundIsolateAndRemoveMatchingLink(
+                    preparedLinkURL,
+                    quarantineURL: transactionDirectory.appendingPathComponent(
+                        "prepared-link-cleanup"
+                    ),
+                    destination: sharedURL,
+                    identity: $0
+                )
+            } ?? backgroundIsolateAndRemoveUnrecordedPreparedLink(
+                preparedLinkURL,
+                quarantineURL: transactionDirectory.appendingPathComponent(
+                    "prepared-link-cleanup"
+                ),
+                destination: sharedURL
+            )
+            guard removed else {
+                return
+            }
+        }
+        backgroundCleanupSharedTransaction(
+            transactionDirectory,
+            expectedIdentity: journal.transactionDirectoryIdentity
+        )
+    }
+
+    nonisolated private static func recoverSharedCourseTransaction(
+        at transactionDirectory: URL,
+        input: CourseRecoveryInput,
+        canonicalRoot: URL
+    ) {
+        let fileManager = FileManager.default
+        let journalURL = transactionDirectory.appendingPathComponent("shared.json")
+        guard let data = try? Data(contentsOf: journalURL),
+              let journal = try? JSONDecoder().decode(
+                PendingSharedFileTransactionJournal.self,
+                from: data
+              ),
+              journal.ownerCourseID == input.courseID,
+              journal.transactionID.uuidString.caseInsensitiveCompare(
+                transactionDirectory.lastPathComponent
+              ) == .orderedSame,
+              CourseProjectFileWorker.identity(at: transactionDirectory)
+                == journal.transactionDirectoryIdentity,
+              let libraryRoot = input.libraryRoot,
+              let addedRoot = input.courseRootsByID[journal.addedCourseID],
+              let expectedSource = backgroundRawRelativeURL(
+                journal.sourceRelativePath,
+                inside: canonicalRoot
+              ),
+              CourseProjectPathPolicy.isSame(
+                expectedSource,
+                backgroundCanonicalRawPath(
+                    URL(fileURLWithPath: journal.sourcePath)
+                )
+              ),
+              let expectedAddedLink = backgroundRawRelativeURL(
+                journal.addedLinkRelativePath,
+                inside: addedRoot
+              ),
+              CourseProjectPathPolicy.isSame(
+                expectedAddedLink,
+                backgroundCanonicalRawPath(
+                    URL(fileURLWithPath: journal.addedLinkPath)
+                )
+              ),
+              let expectedShared = CourseProjectPathPolicy.resolvedRelativePath(
+                journal.sharedRelativePath,
+                inside: libraryRoot
+              ),
+              CourseProjectPathPolicy.isSame(
+                expectedShared,
+                URL(fileURLWithPath: journal.sharedPath)
+                    .resolvingSymlinksInPath()
+              ),
+              journal.sharedRelativePath == "共享文稿/\(expectedShared.lastPathComponent)" else {
+            return
+        }
+        let sourceURL = expectedSource
+        let addedLinkURL = expectedAddedLink
+        let sharedURL = expectedShared
+        let expectedSharedPayloadURL = sharedURL.deletingLastPathComponent()
+            .appendingPathComponent(
+                ".\(sharedURL.lastPathComponent).weibei-share-stage-\(journal.transactionID.uuidString.lowercased())"
+            )
+        let sharedPayloadURL: URL
+        if let sharedPayloadPath = journal.sharedPayloadPath {
+            guard CourseProjectPathPolicy.isSame(
+                expectedSharedPayloadURL,
+                backgroundCanonicalRawPath(
+                    URL(fileURLWithPath: sharedPayloadPath)
+                )
+            ) else {
+                return
+            }
+            sharedPayloadURL = expectedSharedPayloadURL
+        } else {
+            sharedPayloadURL = transactionDirectory.appendingPathComponent(
+                "payload"
+            )
+        }
+        let sourceQuarantineURL = backgroundCanonicalRawPath(
+            URL(fileURLWithPath: journal.sourceQuarantinePath)
+        )
+        let preparedOwnerLinkURL = transactionDirectory.appendingPathComponent(
+            "prepared-owner-link"
+        )
+        let preparedAddedLinkURL = transactionDirectory.appendingPathComponent(
+            "prepared-added-link"
+        )
+        let sharedMatches = journal.sharedIdentity.map {
+            backgroundFileMatches(
+                sharedURL,
+                identity: $0,
+                snapshot: journal.sourceSnapshot
+            )
+        } ?? false
+        let ownerLinkMatches = journal.ownerLinkIdentity.map {
+            backgroundLinkMatches(
+                sourceURL,
+                destination: sharedURL,
+                identity: $0
+            )
+        } ?? false
+        let addedLinkMatches = journal.addedLinkIdentity.map {
+            backgroundLinkMatches(
+                addedLinkURL,
+                destination: sharedURL,
+                identity: $0
+            )
+        } ?? false
+        let itemCommitted = input.importedItems.contains {
+            guard $0.id == journal.itemID,
+                  $0.importedFileIdentity == journal.sharedIdentity,
+                  $0.contentDigest == journal.sourceSnapshot.sha256 else {
+                return false
+            }
+            if case .shared(let relativePath) = $0.storage {
+                return relativePath == journal.sharedRelativePath
+            }
+            return false
+        }
+        let ownerMembershipCommitted = input.memberships.contains {
+            $0.courseID == journal.ownerCourseID
+                && $0.itemID == journal.itemID
+                && $0.courseRelativePath == journal.sourceRelativePath
+                && $0.entryIdentity == journal.ownerLinkIdentity
+        }
+        let addedMembershipCommitted = input.memberships.contains {
+            $0.courseID == journal.addedCourseID
+                && $0.itemID == journal.itemID
+                && $0.courseRelativePath == journal.addedLinkRelativePath
+                && $0.entryIdentity == journal.addedLinkIdentity
+        }
+        if itemCommitted,
+           ownerMembershipCommitted,
+           addedMembershipCommitted {
+            guard sharedMatches else {
+                return
+            }
+            if CourseProjectFileWorker.identity(at: sharedPayloadURL) != nil {
+                guard let sharedIdentity = journal.sharedIdentity,
+                      backgroundRemoveVerified(
+                        sharedPayloadURL,
+                        quarantineURL: sharedPayloadURL
+                            .deletingLastPathComponent()
+                            .appendingPathComponent(
+                                ".\(sharedPayloadURL.lastPathComponent).weibei-cleanup-\(UUID().uuidString.lowercased())"
+                            ),
+                        identity: sharedIdentity,
+                        snapshot: journal.sourceSnapshot
+                      ) else {
+                    return
+                }
+            }
+            if CourseProjectFileWorker.identity(at: sourceQuarantineURL) != nil {
+                guard backgroundRemoveVerified(
+                    sourceQuarantineURL,
+                    quarantineURL: sourceQuarantineURL
+                        .deletingLastPathComponent()
+                        .appendingPathComponent(
+                            ".\(sourceQuarantineURL.lastPathComponent).weibei-cleanup-\(UUID().uuidString.lowercased())"
+                        ),
+                    identity: journal.sourceIdentity,
+                    snapshot: journal.sourceSnapshot
+                ) else {
+                    return
+                }
+            }
+            backgroundCleanupSharedTransaction(
+                transactionDirectory,
+                expectedIdentity: journal.transactionDirectoryIdentity
+            )
+            return
+        }
+
+        if addedLinkMatches {
+            guard let addedLinkIdentity = journal.addedLinkIdentity,
+                  backgroundIsolateAndRemoveMatchingLink(
+                    addedLinkURL,
+                    quarantineURL: transactionDirectory.appendingPathComponent(
+                        "added-link-cleanup"
+                    ),
+                    destination: sharedURL,
+                    identity: addedLinkIdentity
+                  ) else {
+                return
+            }
+        } else if fileManager.fileExists(atPath: addedLinkURL.path) {
+            return
+        }
+        if ownerLinkMatches {
+            guard let ownerLinkIdentity = journal.ownerLinkIdentity,
+                  backgroundIsolateAndRemoveMatchingLink(
+                    sourceURL,
+                    quarantineURL: transactionDirectory.appendingPathComponent(
+                        "owner-link-cleanup"
+                    ),
+                    destination: sharedURL,
+                    identity: ownerLinkIdentity
+                  ) else {
+                return
+            }
+        } else if fileManager.fileExists(atPath: sourceURL.path) {
+            guard backgroundFileMatches(
+                sourceURL,
+                identity: journal.sourceIdentity,
+                snapshot: journal.sourceSnapshot
+            ) else {
+                return
+            }
+        }
+        if CourseProjectFileWorker.identity(at: preparedAddedLinkURL) != nil {
+            let removed = journal.addedLinkIdentity.map {
+                backgroundIsolateAndRemoveMatchingLink(
+                    preparedAddedLinkURL,
+                    quarantineURL: transactionDirectory.appendingPathComponent(
+                        "prepared-added-link-cleanup"
+                    ),
+                    destination: sharedURL,
+                    identity: $0
+                )
+            } ?? backgroundIsolateAndRemoveUnrecordedPreparedLink(
+                preparedAddedLinkURL,
+                quarantineURL: transactionDirectory.appendingPathComponent(
+                    "prepared-added-link-cleanup"
+                ),
+                destination: sharedURL
+            )
+            guard removed else {
+                return
+            }
+        }
+        if CourseProjectFileWorker.identity(at: preparedOwnerLinkURL) != nil {
+            let removed = journal.ownerLinkIdentity.map {
+                backgroundIsolateAndRemoveMatchingLink(
+                    preparedOwnerLinkURL,
+                    quarantineURL: transactionDirectory.appendingPathComponent(
+                        "prepared-owner-link-cleanup"
+                    ),
+                    destination: sharedURL,
+                    identity: $0
+                )
+            } ?? backgroundIsolateAndRemoveUnrecordedPreparedLink(
+                preparedOwnerLinkURL,
+                quarantineURL: transactionDirectory.appendingPathComponent(
+                    "prepared-owner-link-cleanup"
+                ),
+                destination: sharedURL
+            )
+            guard removed else {
+                return
+            }
+        }
+        if sharedMatches, let sharedIdentity = journal.sharedIdentity {
+            guard backgroundRemoveVerified(
+                sharedURL,
+                quarantineURL: sharedURL.deletingLastPathComponent()
+                    .appendingPathComponent(
+                        ".\(sharedURL.lastPathComponent).weibei-cleanup-\(UUID().uuidString.lowercased())"
+                    ),
+                identity: sharedIdentity,
+                snapshot: journal.sourceSnapshot
+            ) else {
+                return
+            }
+        } else if fileManager.fileExists(atPath: sharedURL.path) {
+            return
+        }
+        if CourseProjectFileWorker.identity(at: sharedPayloadURL) != nil {
+            guard let sharedIdentity = journal.sharedIdentity,
+                  backgroundRemoveVerified(
+                    sharedPayloadURL,
+                    quarantineURL: sharedPayloadURL.deletingLastPathComponent()
+                        .appendingPathComponent(
+                            ".\(sharedPayloadURL.lastPathComponent).weibei-cleanup-\(UUID().uuidString.lowercased())"
+                        ),
+                    identity: sharedIdentity,
+                    snapshot: journal.sourceSnapshot
+                  ) else {
+                return
+            }
+        }
+        if fileManager.fileExists(atPath: sourceQuarantineURL.path) {
+            guard !fileManager.fileExists(atPath: sourceURL.path),
+                  backgroundFileMatches(
+                    sourceQuarantineURL,
+                    identity: journal.sourceIdentity,
+                    snapshot: journal.sourceSnapshot
+                  ),
+                  CourseProjectFileWorker.renameWithoutReplacement(
+                    from: sourceQuarantineURL,
+                    to: sourceURL
+                  ) else {
+                return
+            }
+        }
+        backgroundCleanupSharedTransaction(
+            transactionDirectory,
+            expectedIdentity: journal.transactionDirectoryIdentity
+        )
+    }
+
+    nonisolated private static func backgroundLinkMatches(
+        _ linkURL: URL,
+        destination: URL,
+        identity: ImportedFileIdentity
+    ) -> Bool {
+        CourseProjectFileWorker.isSymbolicLink(at: linkURL)
+            && CourseProjectFileWorker.identity(at: linkURL) == identity
+            && CourseProjectPathPolicy.isSame(
+                linkURL.resolvingSymlinksInPath(),
+                destination.resolvingSymlinksInPath()
+            )
+    }
+
+    nonisolated private static func backgroundIsolateAndRemoveMatchingLink(
+        _ linkURL: URL,
+        quarantineURL: URL,
+        destination: URL,
+        identity: ImportedFileIdentity
+    ) -> Bool {
+        guard CourseProjectFileWorker.identity(at: quarantineURL) == nil,
+              CourseProjectFileWorker.renameWithoutReplacement(
+                from: linkURL,
+                to: quarantineURL
+              ) else {
+            return false
+        }
+        guard backgroundLinkMatches(
+            quarantineURL,
+            destination: destination,
+            identity: identity
+        ) else {
+            _ = CourseProjectFileWorker.renameWithoutReplacement(
+                from: quarantineURL,
+                to: linkURL
+            )
+            return false
+        }
+        try? FileManager.default.removeItem(at: quarantineURL)
+        return CourseProjectFileWorker.identity(at: quarantineURL) == nil
+    }
+
+    nonisolated private static func backgroundIsolateAndRemoveUnrecordedPreparedLink(
+        _ linkURL: URL,
+        quarantineURL: URL,
+        destination: URL
+    ) -> Bool {
+        guard CourseProjectFileWorker.isSymbolicLink(at: linkURL),
+              CourseProjectFileWorker.symbolicLink(
+                at: linkURL,
+                pointsTo: destination
+              ),
+              let identity = CourseProjectFileWorker.identity(at: linkURL) else {
+            return false
+        }
+        return backgroundIsolateAndRemoveMatchingLink(
+            linkURL,
+            quarantineURL: quarantineURL,
+            destination: destination,
+            identity: identity
+        )
+    }
+
+    nonisolated private static func backgroundIsolateAndRemoveEmptyRegularFile(
+        _ url: URL,
+        quarantineURL: URL
+    ) -> Bool {
+        guard CourseProjectFileWorker.identity(at: quarantineURL) == nil,
+              CourseProjectFileWorker.renameWithoutReplacement(
+                from: url,
+                to: quarantineURL
+              ) else {
+            return false
+        }
+        let validReservation = !CourseProjectFileWorker.isSymbolicLink(
+            at: quarantineURL
+        )
+            && ((try? CourseProjectFileWorker.snapshotFile(
+                at: quarantineURL
+            ))?.byteCount == 0)
+        guard validReservation else {
+            _ = CourseProjectFileWorker.renameWithoutReplacement(
+                from: quarantineURL,
+                to: url
+            )
+            return false
+        }
+        try? FileManager.default.removeItem(at: quarantineURL)
+        return CourseProjectFileWorker.identity(at: quarantineURL) == nil
+    }
+
+    nonisolated private static func backgroundRawRelativeURL(
+        _ relativePath: String,
+        inside root: URL
+    ) -> URL? {
+        let components = relativePath
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+        guard !components.isEmpty,
+              components.first != ".weibei",
+              !components.contains("."),
+              !components.contains("..") else {
+            return nil
+        }
+        let candidate = components.reduce(root) {
+            $0.appendingPathComponent($1, isDirectory: false)
+        }.standardizedFileURL
+        guard CourseProjectPathPolicy.contains(root, candidate, includingRoot: false) else {
+            return nil
+        }
+        return candidate
+    }
+
+    nonisolated private static func backgroundCanonicalRawPath(_ url: URL) -> URL {
+        url.deletingLastPathComponent()
+            .resolvingSymlinksInPath()
+            .appendingPathComponent(url.lastPathComponent, isDirectory: false)
+            .standardizedFileURL
+    }
+
+    nonisolated private static func backgroundCleanupSharedTransaction(
+        _ transactionDirectory: URL,
+        expectedIdentity: ImportedFileIdentity
+    ) {
+        let fileManager = FileManager.default
+        guard CourseProjectFileWorker.identity(at: transactionDirectory) == expectedIdentity,
+              let entries = try? fileManager.contentsOfDirectory(
+                at: transactionDirectory,
+                includingPropertiesForKeys: [
+                    .isRegularFileKey,
+                    .isSymbolicLinkKey,
+                    .isAliasFileKey,
+                ],
+                options: []
+              ),
+              entries.allSatisfy({
+                [
+                    "shared.json",
+                    "shared-link.json",
+                    "shared-link-removal.json",
+                    "payload",
+                ]
+                    .contains($0.lastPathComponent)
+              }) else {
+            return
+        }
+        for entry in entries {
+            guard let values = try? entry.resourceValues(forKeys: [
+                .isRegularFileKey,
+                .isSymbolicLinkKey,
+                .isAliasFileKey,
+            ]),
+            values.isRegularFile == true,
+            values.isSymbolicLink != true,
+            values.isAliasFile != true else {
+                return
+            }
+        }
+        for entry in entries {
+            try? fileManager.removeItem(at: entry)
+        }
+        if (try? fileManager.contentsOfDirectory(
+            atPath: transactionDirectory.path
+        ).isEmpty) == true {
+            try? fileManager.removeItem(at: transactionDirectory)
+        }
+    }
+
+    nonisolated private static func backgroundTargetURL(
+        journal: PendingCourseFileTransactionJournal,
+        root: URL
+    ) -> URL? {
+        let components = journal.targetRelativePath
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+        guard !components.isEmpty,
+              components.first != ".weibei",
+              !components.contains("."),
+              !components.contains("..") else {
+            return nil
+        }
+        let target = components.reduce(root) { $0.appendingPathComponent($1) }
+        let parent = target.deletingLastPathComponent()
+        guard let canonicalParent = try? CourseProjectPathPolicy.existingDirectory(parent),
+              CourseProjectPathPolicy.isSame(parent, canonicalParent),
+              CourseProjectPathPolicy.contains(root, canonicalParent, includingRoot: false),
+              CourseProjectFileWorker.identity(at: canonicalParent)
+                == journal.destinationDirectoryIdentity else {
+            return nil
+        }
+        return target.standardizedFileURL
+    }
+
+    nonisolated private static func backgroundFileMatches(
+        _ url: URL,
+        identity: ImportedFileIdentity,
+        snapshot: CourseFileSnapshot
+    ) -> Bool {
+        CourseProjectPathPolicy.isSame(url, url.resolvingSymlinksInPath())
+            && CourseProjectFileWorker.identity(at: url) == identity
+            && (try? CourseProjectFileWorker.snapshotFile(at: url)) == snapshot
+            && CourseProjectFileWorker.identity(at: url) == identity
+    }
+
+    nonisolated private static func backgroundRemoveVerified(
+        _ originalURL: URL,
+        quarantineURL: URL,
+        identity: ImportedFileIdentity,
+        snapshot: CourseFileSnapshot
+    ) -> Bool {
+        let fileManager = FileManager.default
+        guard backgroundFileMatches(originalURL, identity: identity, snapshot: snapshot),
+              !fileManager.fileExists(atPath: quarantineURL.path),
+              CourseProjectFileWorker.renameWithoutReplacement(
+                from: originalURL,
+                to: quarantineURL
+              ) else {
+            return false
+        }
+        guard backgroundFileMatches(
+            quarantineURL,
+            identity: identity,
+            snapshot: snapshot
+        ) else {
+            _ = CourseProjectFileWorker.renameWithoutReplacement(
+                from: quarantineURL,
+                to: originalURL
+            )
+            return false
+        }
+        do {
+            try fileManager.removeItem(at: quarantineURL)
+            return !fileManager.fileExists(atPath: quarantineURL.path)
+        } catch {
+            _ = CourseProjectFileWorker.renameWithoutReplacement(
+                from: quarantineURL,
+                to: originalURL
+            )
+            return false
+        }
+    }
+
+    nonisolated private static func backgroundRemoveIdentityOnly(
+        _ url: URL,
+        identity: ImportedFileIdentity
+    ) -> Bool {
+        let fileManager = FileManager.default
+        guard CourseProjectFileWorker.identity(at: url) == identity,
+              !CourseProjectFileWorker.isSymbolicLink(at: url),
+              let values = try? url.resourceValues(forKeys: [.isRegularFileKey]),
+              values.isRegularFile == true else {
+            return false
+        }
+        do {
+            try fileManager.removeItem(at: url)
+            return CourseProjectFileWorker.identity(at: url) == nil
+        } catch {
+            return false
+        }
+    }
+
+    nonisolated private static func backgroundCleanupTransaction(
+        _ transactionDirectory: URL,
+        expectedIdentity: ImportedFileIdentity
+    ) {
+        let fileManager = FileManager.default
+        guard CourseProjectFileWorker.identity(at: transactionDirectory) == expectedIdentity,
+              let entries = try? fileManager.contentsOfDirectory(
+                at: transactionDirectory,
+                includingPropertiesForKeys: [
+                    .isRegularFileKey,
+                    .isSymbolicLinkKey,
+                    .isAliasFileKey,
+                ],
+                options: []
+              ),
+              entries.allSatisfy({
+                ["journal.json", "payload"].contains($0.lastPathComponent)
+              }) else {
+            return
+        }
+        for entry in entries {
+            guard let values = try? entry.resourceValues(forKeys: [
+                .isRegularFileKey,
+                .isSymbolicLinkKey,
+                .isAliasFileKey,
+            ]),
+            values.isRegularFile == true,
+            values.isSymbolicLink != true,
+            values.isAliasFile != true else {
+                return
+            }
+        }
+        for entry in entries {
+            try? fileManager.removeItem(at: entry)
+        }
+        if (try? fileManager.contentsOfDirectory(
+            atPath: transactionDirectory.path
+        ).isEmpty) == true {
+            try? fileManager.removeItem(at: transactionDirectory)
+        }
+    }
+
+    nonisolated private static func backgroundCleanupCourseMarkdownTransaction(
+        _ transactionDirectory: URL,
+        expectedIdentity: ImportedFileIdentity
+    ) {
+        let fileManager = FileManager.default
+        guard CourseProjectFileWorker.identity(at: transactionDirectory)
+                == expectedIdentity,
+              let entries = try? fileManager.contentsOfDirectory(
+                at: transactionDirectory,
+                includingPropertiesForKeys: [
+                    .isRegularFileKey,
+                    .isSymbolicLinkKey,
+                    .isAliasFileKey,
+                ],
+                options: []
+              ),
+              entries.allSatisfy({
+                ["course-note.json", "payload"]
+                    .contains($0.lastPathComponent)
+              }) else {
+            return
+        }
+        for entry in entries {
+            guard let values = try? entry.resourceValues(forKeys: [
+                .isRegularFileKey,
+                .isSymbolicLinkKey,
+                .isAliasFileKey,
+            ]),
+            values.isRegularFile == true,
+            values.isSymbolicLink != true,
+            values.isAliasFile != true else {
+                return
+            }
+        }
+        for entry in entries {
+            try? fileManager.removeItem(at: entry)
+        }
+        if (try? fileManager.contentsOfDirectory(
+            atPath: transactionDirectory.path
+        ).isEmpty) == true {
+            try? fileManager.removeItem(at: transactionDirectory)
+        }
+    }
+
+    private func recoverPendingCourseFileTransactions() {
+        for course in courses {
+            guard let root = courseRootURL(for: course.id),
+                  let canonicalRoot = try? CourseProjectPathPolicy.existingDirectory(root),
+                  let metadata = try? realCourseOwnedDirectory(
+                    canonicalRoot.appendingPathComponent(".weibei", isDirectory: true),
+                    inside: canonicalRoot,
+                    createIfMissing: false
+                  ),
+                  let transactions = try? realCourseOwnedDirectory(
+                    metadata.appendingPathComponent("transactions", isDirectory: true),
+                    inside: metadata,
+                    createIfMissing: false
+                  ),
+                  let transactionDirectories = try? FileManager.default.contentsOfDirectory(
+                    at: transactions,
+                    includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                    options: [.skipsHiddenFiles]
+                  ) else {
+                continue
+            }
+            for rawTransactionDirectory in transactionDirectories {
+                guard UUID(uuidString: rawTransactionDirectory.lastPathComponent) != nil,
+                      let transactionDirectory = try? realCourseOwnedDirectory(
+                        rawTransactionDirectory,
+                        inside: transactions,
+                        createIfMissing: false
+                      ) else {
+                    continue
+                }
+                recoverPendingCourseFileTransaction(
+                    at: transactionDirectory,
+                    courseID: course.id,
+                    root: canonicalRoot
+                )
+            }
+        }
+    }
+
+    private func recoverPendingCourseFileTransaction(
+        at transactionDirectory: URL,
+        courseID: UUID,
+        root: URL
+    ) {
+        if FileManager.default.fileExists(
+            atPath: transactionDirectory.appendingPathComponent(
+                "course-note.json"
+            ).path
+        ) {
+            let courseRootsByID = Dictionary(
+                uniqueKeysWithValues: courses.compactMap { course in
+                    courseRootURL(for: course.id).map {
+                        (course.id, $0)
+                    }
+                }
+            )
+            Self.recoverCourseMarkdownWriteTransaction(
+                at: transactionDirectory,
+                input: CourseRecoveryInput(
+                    courseID: courseID,
+                    root: root,
+                    libraryRoot: courseLibraryRootURL,
+                    courseRootsByID: courseRootsByID,
+                    importedItems: importedItems,
+                    memberships: courseItemMemberships
+                ),
+                canonicalRoot: root
+            )
+            return
+        }
+        let journalURL = transactionDirectory.appendingPathComponent("journal.json")
+        guard let data = try? Data(contentsOf: journalURL),
+              var journal = try? JSONDecoder().decode(
+                PendingCourseFileTransactionJournal.self,
+                from: data
+              ),
+              journal.transactionID.uuidString.caseInsensitiveCompare(
+                transactionDirectory.lastPathComponent
+              ) == .orderedSame,
+              journal.courseID == courseID,
+              importedFileIdentityResolver(transactionDirectory) == journal.transactionDirectoryIdentity,
+              let destinationDirectory = try? realCourseOwnedDirectory(
+                root.appendingPathComponent(journal.role.directoryName, isDirectory: true),
+                inside: root,
+                createIfMissing: false
+              ) else {
+            return
+        }
+        let targetComponents = journal.targetRelativePath
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+        guard targetComponents.count == 2,
+              targetComponents.first == journal.role.directoryName,
+              importedFileIdentityResolver(destinationDirectory) == journal.destinationDirectoryIdentity else {
+            return
+        }
+        let targetURL = destinationDirectory
+            .appendingPathComponent(targetComponents[1], isDirectory: false)
+            .standardizedFileURL
+        let targetQuarantineURL = transactionDirectory
+            .appendingPathComponent("target-quarantine", isDirectory: false)
+
+        let expectedTargetIdentity = journal.targetIdentity ?? journal.stagedIdentity
+        func targetMatchesExpectedFile() -> Bool {
+            guard let expectedTargetIdentity else { return false }
+            return CourseProjectPathPolicy.isSame(
+                targetURL,
+                targetURL.resolvingSymlinksInPath()
+            )
+                && importedFileIdentityResolver(targetURL) == expectedTargetIdentity
+                && (try? courseFileSnapshot(at: targetURL)) == journal.sourceSnapshot
+        }
+        var targetMatches = targetMatchesExpectedFile()
+        let item = importedItems.first { item in
+            guard item.id == journal.itemID,
+                  item.contentDigest == journal.sourceSnapshot.sha256,
+                  item.importedFileIdentity == expectedTargetIdentity,
+                  item.isNotebookNote == (journal.role == .note) else {
+                return false
+            }
+            if case .courseOwned(let ownerCourseID) = item.storage {
+                return ownerCourseID == courseID
+            }
+            return false
+        }
+        let membership = courseItemMemberships.first {
+            $0.courseID == courseID
+                && $0.itemID == journal.itemID
+                && $0.courseRelativePath == journal.targetRelativePath
+                && $0.entryIdentity == expectedTargetIdentity
+        }
+        let workspaceCommitted = item != nil && membership != nil && targetMatches
+
+        if workspaceCommitted {
+            var cleanupPending = false
+            if let sourcePath = journal.sourcePath,
+               let sourceIdentity = journal.sourceIdentity {
+                let sourceURL = URL(fileURLWithPath: sourcePath).standardizedFileURL
+                let expectedSourceQuarantineURL = sourceURL
+                    .deletingLastPathComponent()
+                    .appendingPathComponent(
+                        ".\(sourceURL.lastPathComponent).weibei-quarantine-\(journal.transactionID.uuidString.lowercased())",
+                        isDirectory: false
+                    )
+                if let recordedPath = journal.sourceQuarantinePath,
+                   !CourseProjectPathPolicy.isSame(
+                    URL(fileURLWithPath: recordedPath),
+                    expectedSourceQuarantineURL
+                   ) {
+                    cleanupPending = true
+                } else {
+                    journal.sourceQuarantinePath = expectedSourceQuarantineURL.path
+                    try? writeCourseFileTransactionJournal(journal, to: journalURL)
+                }
+                let sourceExists = FileManager.default.fileExists(atPath: sourceURL.path)
+                let quarantineExists = FileManager.default.fileExists(
+                    atPath: expectedSourceQuarantineURL.path
+                )
+                if sourceExists && quarantineExists {
+                    cleanupPending = true
+                } else if !cleanupPending, quarantineExists {
+                    do {
+                        _ = try stableCourseFileSnapshot(
+                            at: expectedSourceQuarantineURL,
+                            expectedIdentity: sourceIdentity,
+                            expectedSnapshot: journal.sourceSnapshot
+                        )
+                        guard atomicRenameWithoutReplacement(
+                            from: expectedSourceQuarantineURL,
+                            to: sourceURL
+                        ) else {
+                            throw CourseOwnedFileError.sourceIdentityChanged
+                        }
+                    } catch {
+                        cleanupPending = true
+                    }
+                }
+                if !cleanupPending,
+                   FileManager.default.fileExists(atPath: sourceURL.path) {
+                    do {
+                        _ = try validatedCourseImportSource(sourceURL)
+                        _ = try stableCourseFileSnapshot(
+                            at: sourceURL,
+                            expectedIdentity: sourceIdentity,
+                            expectedSnapshot: journal.sourceSnapshot
+                        )
+                        let removalOutcome = atomicallyIsolateAndRemoveCourseFile(
+                            at: sourceURL,
+                            quarantineURL: expectedSourceQuarantineURL,
+                            expectedIdentity: sourceIdentity,
+                            expectedSnapshot: journal.sourceSnapshot,
+                            remover: courseFileSourceRemover
+                        )
+                        guard case .removed = removalOutcome else {
+                            throw CourseOwnedFileError.sourceIdentityChanged
+                        }
+                    } catch {
+                        cleanupPending = true
+                    }
+                }
+            } else if journal.sourcePath != nil
+                        || journal.sourceIdentity != nil
+                        || journal.sourceQuarantinePath != nil {
+                cleanupPending = true
+            }
+            if !cleanupPending {
+                safelyRemoveCourseFileTransactionDirectory(
+                    transactionDirectory,
+                    expectedIdentity: journal.transactionDirectoryIdentity
+                )
+            }
+            return
+        }
+
+        guard let sourcePath = journal.sourcePath,
+              let sourceIdentity = journal.sourceIdentity else {
+            return
+        }
+        let sourceURL = URL(fileURLWithPath: sourcePath).standardizedFileURL
+        let expectedSourceQuarantineURL = sourceURL
+            .deletingLastPathComponent()
+            .appendingPathComponent(
+                ".\(sourceURL.lastPathComponent).weibei-quarantine-\(journal.transactionID.uuidString.lowercased())",
+                isDirectory: false
+            )
+        guard journal.sourceQuarantinePath.map({
+            CourseProjectPathPolicy.isSame(
+                URL(fileURLWithPath: $0),
+                expectedSourceQuarantineURL
+            )
+        }) ?? true else {
+            return
+        }
+        journal.sourceQuarantinePath = expectedSourceQuarantineURL.path
+        try? writeCourseFileTransactionJournal(journal, to: journalURL)
+
+        let sourceExists = FileManager.default.fileExists(atPath: sourceURL.path)
+        let sourceQuarantineExists = FileManager.default.fileExists(
+            atPath: expectedSourceQuarantineURL.path
+        )
+        if sourceExists && sourceQuarantineExists {
+            return
+        }
+        if sourceQuarantineExists {
+            guard !sourceExists,
+                  (try? validatedCourseImportSource(expectedSourceQuarantineURL)) != nil,
+                  (try? stableCourseFileSnapshot(
+                    at: expectedSourceQuarantineURL,
+                    expectedIdentity: sourceIdentity,
+                    expectedSnapshot: journal.sourceSnapshot
+                  )) != nil,
+                  case .restored = restoreIsolatedCourseFile(
+                    from: expectedSourceQuarantineURL,
+                    to: sourceURL
+                  ) else {
+                return
+            }
+        }
+        guard (try? validatedCourseImportSource(sourceURL)) != nil,
+              atomicallyIsolateVerifiedCourseFile(
+                at: sourceURL,
+                quarantineURL: expectedSourceQuarantineURL,
+                expectedIdentity: sourceIdentity,
+                expectedSnapshot: journal.sourceSnapshot
+              ) else {
+            return
+        }
+
+        if FileManager.default.fileExists(atPath: targetQuarantineURL.path) {
+            guard !FileManager.default.fileExists(atPath: targetURL.path),
+                  let expectedTargetIdentity,
+                  (try? stableCourseFileSnapshot(
+                    at: targetQuarantineURL,
+                    expectedIdentity: expectedTargetIdentity,
+                    expectedSnapshot: journal.sourceSnapshot
+                  )) != nil,
+                  atomicRenameWithoutReplacement(
+                    from: targetQuarantineURL,
+                    to: targetURL
+                  ) else {
+                _ = restoreIsolatedCourseFile(
+                    from: expectedSourceQuarantineURL,
+                    to: sourceURL
+                )
+                return
+            }
+            targetMatches = targetMatchesExpectedFile()
+        }
+        if targetMatches, let expectedTargetIdentity {
+            let removalOutcome = atomicallyIsolateAndRemoveCourseFile(
+                at: targetURL,
+                quarantineURL: targetQuarantineURL,
+                expectedIdentity: expectedTargetIdentity,
+                expectedSnapshot: journal.sourceSnapshot,
+                remover: { try FileManager.default.removeItem(at: $0) }
+            )
+            guard case .removed = removalOutcome else {
+                _ = restoreIsolatedCourseFile(
+                    from: expectedSourceQuarantineURL,
+                    to: sourceURL
+                )
+                return
+            }
+        } else if FileManager.default.fileExists(atPath: targetURL.path) {
+            _ = restoreIsolatedCourseFile(
+                from: expectedSourceQuarantineURL,
+                to: sourceURL
+            )
+            return
+        }
+        guard !FileManager.default.fileExists(atPath: targetURL.path),
+              !FileManager.default.fileExists(atPath: targetQuarantineURL.path) else {
+            _ = restoreIsolatedCourseFile(
+                from: expectedSourceQuarantineURL,
+                to: sourceURL
+            )
+            return
+        }
+        guard case .restored = restoreIsolatedCourseFile(
+            from: expectedSourceQuarantineURL,
+            to: sourceURL
+        ) else {
+            return
+        }
+        safelyRemoveCourseFileTransactionDirectory(
+            transactionDirectory,
+            expectedIdentity: journal.transactionDirectoryIdentity
+        )
     }
 
     private func transactionDirectoryFingerprint(
@@ -1406,6 +5866,13 @@ final class WorkspaceStore: ObservableObject {
                 || CourseProjectPathPolicy.contains(root, libraryRoot, includingRoot: false) {
                 throw CourseProjectRootError.dangerousRoot
             }
+            let sharedDirectory = libraryRoot.appendingPathComponent(
+                "共享文稿",
+                isDirectory: true
+            )
+            if CourseProjectPathPolicy.overlaps(root, sharedDirectory) {
+                throw CourseProjectRootError.dangerousRoot
+            }
             if mustBeInsideLibrary,
                !CourseProjectPathPolicy.contains(libraryRoot, root, includingRoot: false) {
                 throw CourseProjectRootError.rootOutsideLibrary
@@ -1684,13 +6151,326 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func setCourseIDs(_ courseIDs: Set<UUID>, for itemID: String) {
-        guard importedItems.contains(where: { $0.id == itemID }) else { return }
+        guard let item = importedItems.first(where: { $0.id == itemID }) else { return }
         let validCourseIDs = Set(courses.map(\.id))
+        let requested = courseIDs.intersection(validCourseIDs)
+        let current = Set(self.courseIDs(for: itemID))
+        guard requested != current else { return }
+        let added = requested.subtracting(current)
+        let removed = current.subtracting(requested)
+
+        if case .legacyExternal = item.storage,
+           removed.isEmpty,
+           let courseID = added.first,
+           let sourceURL = item.url,
+           confirmManagedCourseMove(
+            sourceURL: sourceURL,
+            courseID: courseID,
+            role: item.isNotebookNote ? .note : .material,
+            verb: ui("移入课程", "Move into Course")
+           ) {
+            let resolution = courseImportConflictResolution(
+                sourceURL: sourceURL,
+                courseID: courseID,
+                role: item.isNotebookNote ? .note : .material
+            )
+            guard let resolution else { return }
+            Task { @MainActor [weak self] in
+                do {
+                    _ = try await self?.migrateLegacyExternalItemIntoCourse(
+                        itemID: itemID,
+                        courseID: courseID,
+                        conflictResolution: resolution
+                    )
+                } catch {
+                    self?.noteFileError = error.localizedDescription
+                }
+            }
+            return
+        }
+        if case .courseOwned(let ownerCourseID) = item.storage,
+           added.count == 1,
+           let courseID = added.first,
+           let sourceURL = item.url {
+            let movesOwnership = removed.contains(ownerCourseID)
+            let verb = movesOwnership
+                ? ui("移到另一门课程", "Move to Another Course")
+                : ui("转为共享文稿", "Make Shared")
+            guard confirmManagedCourseMove(
+                sourceURL: sourceURL,
+                courseID: courseID,
+                role: item.isNotebookNote ? .note : .material,
+                verb: verb
+            ) else {
+                return
+            }
+            let sharedConflictTarget = movesOwnership
+                ? nil
+                : courseLibraryRootURL?
+                    .appendingPathComponent("共享文稿", isDirectory: true)
+                    .appendingPathComponent(sourceURL.lastPathComponent)
+            let resolution = courseImportConflictResolution(
+                sourceURL: sourceURL,
+                courseID: courseID,
+                role: item.isNotebookNote ? .note : .material,
+                allowsReplace: movesOwnership,
+                additionalProtectedTarget: sharedConflictTarget
+            )
+            guard let resolution else { return }
+            Task { @MainActor [weak self] in
+                do {
+                    if movesOwnership {
+                        _ = try await self?.moveCourseOwnedItem(
+                            itemID: itemID,
+                            toCourseID: courseID,
+                            conflictResolution: resolution
+                        )
+                    } else {
+                        try await self?.shareCourseOwnedItem(
+                            itemID: itemID,
+                            withCourseID: courseID,
+                            conflictResolution: resolution
+                        )
+                    }
+                } catch {
+                    self?.noteFileError = error.localizedDescription
+                }
+            }
+            return
+        }
+        if case .shared = item.storage {
+            if let courseID = added.first,
+               let sourceURL = item.url,
+               confirmManagedCourseMove(
+                sourceURL: sourceURL,
+                courseID: courseID,
+                role: .material,
+                verb: ui("加入另一门课程", "Add to Another Course")
+               ),
+               let resolution = courseImportConflictResolution(
+                sourceURL: sourceURL,
+                courseID: courseID,
+                role: .material,
+                allowsReplace: false
+               ) {
+                Task { @MainActor [weak self] in
+                    do {
+                        try await self?.shareCourseOwnedItem(
+                            itemID: itemID,
+                            withCourseID: courseID,
+                            conflictResolution: resolution
+                        )
+                    } catch {
+                        self?.noteFileError = error.localizedDescription
+                    }
+                }
+                return
+            }
+            if let courseID = removed.first {
+                Task { @MainActor [weak self] in
+                    do {
+                        try await self?.removeSharedItem(
+                            itemID: itemID,
+                            fromCourseID: courseID
+                        )
+                    } catch {
+                        self?.noteFileError = error.localizedDescription
+                    }
+                }
+                return
+            }
+        }
+
+        // Legacy virtual memberships may still be removed without touching files.
+        guard case .legacyExternal = item.storage, added.isEmpty else { return }
         var memberships = courseMembershipIndex
-        memberships.replaceCourses(for: itemID, courseIDs: courseIDs.intersection(validCourseIDs))
-        guard memberships.values != courseItemMemberships else { return }
+        memberships.replaceCourses(for: itemID, courseIDs: requested)
         courseItemMemberships = memberships.values
         save()
+    }
+
+    private func confirmManagedCourseMove(
+        sourceURL: URL,
+        courseID: UUID,
+        role: CourseOwnedFileRole,
+        verb: String
+    ) -> Bool {
+        guard let root = courseRootURL(for: courseID) else { return false }
+        let target = root
+            .appendingPathComponent(role.directoryName, isDirectory: true)
+            .appendingPathComponent(sourceURL.lastPathComponent)
+        let alert = NSAlert()
+        alert.messageText = verb
+        alert.informativeText = "\(ui("来源", "Source"))：\(sourceURL.path)\n\(ui("目标", "Target"))：\(target.path)"
+        alert.addButton(withTitle: ui("取消", "Cancel"))
+        alert.addButton(withTitle: verb)
+        return alert.runModal() == .alertSecondButtonReturn
+    }
+
+    private func removeSharedItem(
+        itemID: String,
+        fromCourseID courseID: UUID
+    ) async throws {
+        guard let item = importedItems.first(where: { $0.id == itemID }),
+              case .shared(let sharedRelativePath) = item.storage,
+              let sharedURL = item.url,
+              let sharedIdentity = item.importedFileIdentity,
+              let root = courseRootURL(for: courseID),
+              let membership = courseItemMemberships.first(where: {
+                $0.courseID == courseID && $0.itemID == itemID
+              }),
+              let relativePath = membership.courseRelativePath,
+              let linkURL = Self.backgroundRawRelativeURL(relativePath, inside: root),
+              let linkIdentity = membership.entryIdentity else {
+            return
+        }
+        let sharedSnapshot = try await courseProjectFileWorker.stableSnapshot(
+            at: sharedURL,
+            expectedIdentity: sharedIdentity
+        )
+        let transactionID = UUID()
+        let transactionDirectory = try courseFileTransactionDirectory(
+            transactionID: transactionID,
+            inside: root
+        )
+        guard let transactionDirectoryIdentity = importedFileIdentityResolver(
+            transactionDirectory
+        ) else {
+            throw CourseOwnedFileError.unsafeCoursePath
+        }
+        let journalURL = transactionDirectory.appendingPathComponent(
+            "shared-link-removal.json"
+        )
+        let isolatedLinkURL = transactionDirectory.appendingPathComponent(
+            "isolated-link"
+        )
+        var journal = PendingSharedLinkRemovalJournal(
+            transactionID: transactionID,
+            transactionDirectoryIdentity: transactionDirectoryIdentity,
+            itemID: itemID,
+            courseID: courseID,
+            sharedPath: sharedURL.path,
+            sharedRelativePath: sharedRelativePath,
+            sharedIdentity: sharedIdentity,
+            sharedSnapshot: sharedSnapshot,
+            linkPath: linkURL.path,
+            linkRelativePath: relativePath,
+            linkIdentity: linkIdentity,
+            stage: .prepared
+        )
+        try await courseProjectFileWorker.write(
+            JSONEncoder().encode(journal),
+            to: journalURL
+        )
+        let previous = courseItemMemberships
+        do {
+            try courseProjectMutationHook(.beforeSharedLinkIsolation)
+            _ = try await courseProjectFileWorker.isolateSymbolicLinkIfMatching(
+                at: linkURL,
+                to: isolatedLinkURL,
+                destinationURL: sharedURL,
+                expectedIdentity: linkIdentity
+            )
+            try courseProjectMutationHook(
+                .afterSharedLinkIsolationBeforeJournal
+            )
+            journal.stage = .linkIsolated
+            try await courseProjectFileWorker.write(
+                JSONEncoder().encode(journal),
+                to: journalURL
+            )
+        } catch {
+            if ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            ), error is CourseProjectSimulatedCrash {
+                throw error
+            }
+            if CourseProjectFileWorker.identity(at: linkURL) == nil {
+                _ = await courseProjectFileWorker.restoreIsolatedFile(
+                    from: isolatedLinkURL,
+                    to: linkURL
+                )
+            }
+            await safelyRemoveSharedTransactionDirectoryInBackground(
+                transactionDirectory,
+                expectedIdentity: transactionDirectoryIdentity
+            )
+            throw error
+        }
+        courseItemMemberships.removeAll {
+            $0.courseID == courseID && $0.itemID == itemID
+        }
+        guard performSaveNow() else {
+            courseItemMemberships = previous
+            if CourseProjectFileWorker.identity(at: linkURL) == nil {
+                _ = await courseProjectFileWorker.restoreIsolatedFile(
+                    from: isolatedLinkURL,
+                    to: linkURL
+                )
+            }
+            await safelyRemoveSharedTransactionDirectoryInBackground(
+                transactionDirectory,
+                expectedIdentity: transactionDirectoryIdentity
+            )
+            return
+        }
+        do {
+            try courseProjectMutationHook(
+                .afterSharedLinkRemovalWorkspaceSaveBeforeJournal
+            )
+            journal.stage = .workspaceCommitted
+            try await courseProjectFileWorker.write(
+                JSONEncoder().encode(journal),
+                to: journalURL
+            )
+            guard await courseProjectFileWorker
+                .isolateAndRemoveSymbolicLinkIfMatching(
+                at: isolatedLinkURL,
+                quarantineURL: transactionDirectory.appendingPathComponent(
+                    "isolated-link-cleanup"
+                ),
+                destinationURL: sharedURL,
+                expectedIdentity: linkIdentity
+            ) else {
+                throw CourseOwnedFileError.verificationFailed
+            }
+        } catch {
+            if ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            ), error is CourseProjectSimulatedCrash {
+                throw error
+            }
+            courseItemMemberships = previous
+            if performSaveNow(),
+               CourseProjectFileWorker.identity(at: linkURL) == nil {
+                _ = await courseProjectFileWorker.restoreIsolatedFile(
+                    from: isolatedLinkURL,
+                    to: linkURL
+                )
+            }
+            if CourseProjectFileWorker.identity(at: isolatedLinkURL) == nil {
+                await safelyRemoveSharedTransactionDirectoryInBackground(
+                    transactionDirectory,
+                    expectedIdentity: transactionDirectoryIdentity
+                )
+            }
+            throw error
+        }
+        await safelyRemoveSharedTransactionDirectoryInBackground(
+            transactionDirectory,
+            expectedIdentity: transactionDirectoryIdentity
+        )
+        invalidateAgentContext()
+    }
+
+    func removeSharedItemForSelfCheck(
+        itemID: String,
+        fromCourseID courseID: UUID
+    ) throws {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        try waitForCourseFileOperation {
+            try await self.removeSharedItem(itemID: itemID, fromCourseID: courseID)
+        }
     }
 
     func assignItemIDs(_ itemIDs: Set<String>, to courseID: UUID) {
@@ -2536,6 +7316,13 @@ final class WorkspaceStore: ObservableObject {
         if let cached = notesByItemID[item.id] {
             return cached
         }
+        if case .courseOwned = item.storage {
+            if let loaded = loadedCourseNoteTextByItemID[item.id] {
+                return loaded
+            }
+            scheduleCourseNoteLoad(item)
+            return ""
+        }
         if item.editsBackingMarkdownFile, let url = item.url {
             return (try? String(contentsOf: url, encoding: .utf8)) ?? ""
         }
@@ -2703,28 +7490,212 @@ final class WorkspaceStore: ObservableObject {
         presentCourseWorkspace(.hub, courseID: courseID)
     }
 
-    /// Drop / programmatic import into the active course (materials by default; Markdown stays material unless notes panel).
-    @discardableResult
-    func importCourseFilesFromURLs(_ urls: [URL], asNotes: Bool = false) -> [StudyItem] {
-        let items = importFiles(
-            urls,
-            selectsFirstImportedItem: false,
-            markdownAsNotes: asNotes,
-            markdownOnly: asNotes,
-            reclassifiesExistingMarkdown: true
-        )
-        if let courseID = activeCourseID {
-            assignItemIDs(Set(items.map(\.id)), to: courseID)
+    /// The course surface always moves real files through the recoverable course transaction.
+    func importCourseFilesFromURLs(
+        _ urls: [URL],
+        asNotes: Bool = false,
+        completion: @escaping ([StudyItem]) -> Void = { _ in }
+    ) {
+        guard let courseID = activeCourseID else {
+            completion([])
+            return
         }
-        return items
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let expanded = await courseProjectFileWorker.expandedSupportedFiles(
+                from: urls,
+                markdownOnly: asNotes
+            )
+            guard !expanded.isEmpty,
+                  confirmCourseImportPlan(
+                    expanded,
+                    courseID: courseID,
+                    asNotes: asNotes
+                  ) else {
+                completion([])
+                return
+            }
+            var imported: [StudyItem] = []
+            for (offset, sourceURL) in expanded.enumerated() {
+                let role: CourseOwnedFileRole = asNotes ? .note : .material
+                guard let resolution = courseImportConflictResolution(
+                    sourceURL: sourceURL,
+                    courseID: courseID,
+                    role: role
+                ) else {
+                    continue
+                }
+                courseFileOperationProgress = CourseFileOperationProgress(
+                    completed: offset,
+                    total: expanded.count,
+                    currentFileName: sourceURL.lastPathComponent
+                )
+                do {
+                    let result = try await importFileIntoCourse(
+                        sourceURL,
+                        courseID: courseID,
+                        role: role,
+                        conflictResolution: resolution
+                    )
+                    imported.append(result.item)
+                } catch {
+                    noteFileError = ui(
+                        "“\(sourceURL.lastPathComponent)”未能加入课程：\(error.localizedDescription)",
+                        "Could not add “\(sourceURL.lastPathComponent)” to the course: \(error.localizedDescription)"
+                    )
+                }
+            }
+            courseFileOperationProgress = nil
+            if !imported.isEmpty {
+                activeCourseID = courseID
+                showTransientNoteStatus(
+                    ui(
+                        "已把 \(imported.count) 个文件移入课程目录。",
+                        "Moved \(imported.count) file(s) into the course folder."
+                    )
+                )
+            }
+            completion(imported)
+        }
+    }
+
+    private func confirmCourseImportPlan(
+        _ sources: [URL],
+        courseID: UUID,
+        asNotes: Bool
+    ) -> Bool {
+        guard let root = courseRootURL(for: courseID) else { return false }
+        let role: CourseOwnedFileRole = asNotes ? .note : .material
+        let mappings = sources.prefix(12).map {
+            "\($0.path)\n→ \(root.appendingPathComponent(role.directoryName).appendingPathComponent($0.lastPathComponent).path)"
+        }
+        let remaining = max(0, sources.count - mappings.count)
+        let alert = NSAlert()
+        alert.messageText = ui("确认移入课程", "Confirm moving into course")
+        alert.informativeText = mappings.joined(separator: "\n\n")
+            + (remaining > 0 ? ui("\n\n另有 \(remaining) 个文件。", "\n\nPlus \(remaining) more file(s).") : "")
+        alert.addButton(withTitle: ui("取消", "Cancel"))
+        alert.addButton(withTitle: ui("移入课程", "Move into Course"))
+        return alert.runModal() == .alertSecondButtonReturn
+    }
+
+    private func courseImportConflictResolution(
+        sourceURL: URL,
+        courseID: UUID,
+        role: CourseOwnedFileRole,
+        allowsReplace: Bool = true,
+        additionalProtectedTarget: URL? = nil
+    ) -> CourseFileConflictResolution? {
+        guard let root = courseRootURL(for: courseID) else { return nil }
+        let target = root
+            .appendingPathComponent(role.directoryName, isDirectory: true)
+            .appendingPathComponent(sourceURL.lastPathComponent)
+        let targetExists = FileManager.default.fileExists(atPath: target.path)
+        let protectedTargetExists = additionalProtectedTarget.map {
+            FileManager.default.fileExists(atPath: $0.path)
+        } ?? false
+        guard targetExists || protectedTargetExists else {
+            return .cancel
+        }
+        let alert = NSAlert()
+        alert.messageText = ui("课程中已有同名文件", "A file with this name already exists")
+        let conflictTargetURLs = [targetExists ? target : nil, protectedTargetExists
+            ? additionalProtectedTarget
+            : nil]
+            .compactMap { $0 }
+        let conflictTargets = conflictTargetURLs.map(\.path).joined(
+            separator: "\n"
+        )
+        alert.informativeText =
+            "\(ui("来源", "Source"))：\(sourceURL.path)\n\(ui("冲突目标", "Conflicting target"))：\(conflictTargets)"
+        let suggestedName = CourseKeepBothNaming.suggestedFileName(
+            originalName: sourceURL.lastPathComponent,
+            conflictingTargets: conflictTargetURLs
+        )
+        let keepBothLabel = NSTextField(
+            labelWithString: ui(
+                "选择“保留两份”时使用的新文件名",
+                "New file name when choosing Keep Both"
+            )
+        )
+        keepBothLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        keepBothLabel.textColor = .secondaryLabelColor
+        let keepBothNameField = NSTextField(string: suggestedName)
+        keepBothNameField.placeholderString = suggestedName
+        keepBothNameField.setAccessibilityLabel(keepBothLabel.stringValue)
+        let keepBothAccessory = NSStackView(
+            views: [keepBothLabel, keepBothNameField]
+        )
+        keepBothAccessory.orientation = .vertical
+        keepBothAccessory.alignment = .leading
+        keepBothAccessory.spacing = 5
+        keepBothNameField.widthAnchor.constraint(
+            equalToConstant: 360
+        ).isActive = true
+        alert.accessoryView = keepBothAccessory
+        alert.addButton(withTitle: ui("取消", "Cancel"))
+        alert.addButton(withTitle: ui("保留两份", "Keep Both"))
+        let targetItem = courseItemMemberships.first {
+            $0.courseID == courseID && $0.courseRelativePath == "\(role.directoryName)/\(sourceURL.lastPathComponent)"
+        }.flatMap { membership in
+            importedItems.first { $0.id == membership.itemID }
+        }
+        if allowsReplace,
+           !protectedTargetExists,
+           targetItem.map({ if case .shared = $0.storage { return true }; return false }) != true {
+            alert.addButton(withTitle: ui("替换", "Replace"))
+        }
+        switch alert.runModal() {
+        case .alertSecondButtonReturn:
+            let preferredName = keepBothNameField.stringValue
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return .keepBoth(
+                preferredFileName: preferredName.isEmpty
+                    ? suggestedName
+                    : preferredName
+            )
+        case .alertThirdButtonReturn:
+            return .replace
+        default:
+            return nil
+        }
     }
 
     func dismissCourseWorkspace() {
         dismissCourseWorkspace(restoringFocus: true)
     }
 
-    func openCourseMaterial(_ itemID: String) {
-        guard courseMaterials.contains(where: { $0.id == itemID }) else { return }
+    func courseMaterialIsAvailable(_ itemID: String) -> Bool {
+        courseMaterials.first(where: { $0.id == itemID })?.urlPath != nil
+    }
+
+    @discardableResult
+    func openCourseMaterial(_ itemID: String) -> Bool {
+        guard let itemIndex = importedItems.firstIndex(where: {
+            $0.id == itemID && !$0.isNotebookNote
+        }),
+        courseMaterials.contains(where: { $0.id == itemID }) else {
+            return false
+        }
+        let resolution = resolveTrackedImportedFile(at: itemIndex)
+        if resolution.changed {
+            save()
+            courseDocumentSearchIndex.schedule([importedItems[itemIndex]])
+            invalidateAgentContext()
+        }
+        guard let resolvedURL = resolution.url,
+              FileManager.default.isReadableFile(atPath: resolvedURL.path),
+              let identity = importedFileIdentityResolver(resolvedURL),
+              importedItems[itemIndex].importedFileIdentity.map({
+                $0 == identity
+              }) ?? true else {
+            noteFileError = ui(
+                "“\(displayTitle(for: importedItems[itemIndex]))”暂时不在课程文件夹中。把原文件放回课程后再打开；课程首页会继续保留。",
+                "“\(displayTitle(for: importedItems[itemIndex]))” is not currently in the course folder. Put the original file back and try again; the course home will stay open."
+            )
+            return false
+        }
+        noteFileError = nil
         dismissCourseWorkspace(restoringFocus: false)
         showLibrary = false
         select(itemID: itemID)
@@ -2735,6 +7706,42 @@ final class WorkspaceStore: ObservableObject {
             focus(.reader)
             save()
         }
+        return true
+    }
+
+    func revealCourseFolder(containing itemID: String) {
+        guard let courseID = courseItemMemberships.first(where: {
+            $0.itemID == itemID
+                && ($0.courseID == activeCourseID
+                    || activeCourseID == nil)
+        })?.courseID,
+        let root = courseRootURL(for: courseID) else {
+            return
+        }
+        let membership = courseItemMemberships.first {
+            $0.courseID == courseID && $0.itemID == itemID
+        }
+        let folder: URL
+        if let relativePath = membership?.courseRelativePath {
+            guard let entryURL = Self.backgroundRawRelativeURL(
+                relativePath,
+                inside: root
+            ) else {
+                return
+            }
+            folder = entryURL.deletingLastPathComponent()
+        } else {
+            folder = root
+        }
+        guard CourseProjectPathPolicy.contains(
+            root,
+            folder,
+            includingRoot: true
+        ),
+        FileManager.default.fileExists(atPath: folder.path) else {
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([folder])
     }
 
     func openCourseNote(_ itemID: String) {
@@ -2832,8 +7839,77 @@ final class WorkspaceStore: ObservableObject {
     }
 
     @discardableResult
-    func createCourseNotebookNote(title: String) -> String? {
-        createNotebookNote(seed: .blank, title: title)?.id
+    func createCourseNotebookNote(courseID: UUID, title rawTitle: String) async -> String? {
+        let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else {
+            noteFileError = ui("笔记名不能为空。", "Note name cannot be empty.")
+            return nil
+        }
+        let fileStem = safeFileStem(title)
+        let markdown = defaultNotebookNote(title: fileStem, sourceItem: nil)
+        let data = Data(markdown.utf8)
+        do {
+            let result = try await transactCourseOwnedFile(
+                courseID: courseID,
+                role: .note,
+                fileName: "\(fileStem).md",
+                sourceURL: nil,
+                sourceIdentity: nil,
+                generatedData: data
+            )
+            activeNotebookItemID = result.item.id
+            noteText = markdown
+            noteFileError = nil
+            revealRichWritingSurface()
+            focus(.notes)
+            showTransientNoteStatus(
+                ui(
+                    "已在课程“笔记”目录新建：\(result.item.subtitle)",
+                    "Created in the course Notes folder: \(result.item.subtitle)"
+                )
+            )
+            return result.item.id
+        } catch {
+            noteFileError = ui(
+                "无法创建课程笔记：\(error.localizedDescription)",
+                "Could not create the course note: \(error.localizedDescription)"
+            )
+            return nil
+        }
+    }
+
+    func createCourseNotebookNoteForSelfCheck(
+        courseID: UUID,
+        title: String
+    ) -> String? {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        do {
+            return try waitForCourseFileOperation {
+                await self.createCourseNotebookNote(courseID: courseID, title: title)
+            }
+        } catch {
+            return nil
+        }
+    }
+
+    private func waitForCourseFileOperation<T>(
+        _ operation: @escaping @MainActor () async throws -> T
+    ) throws -> T {
+        var result: Result<T, Error>?
+        Task { @MainActor in
+            do {
+                result = .success(try await operation())
+            } catch {
+                result = .failure(error)
+            }
+        }
+        while result == nil {
+            RunLoop.current.run(
+                mode: .default,
+                before: Date(timeIntervalSinceNow: 0.01)
+            )
+        }
+        return try result!.get()
     }
 
     func createNotebookNoteFromCurrentMaterial() {
@@ -4258,6 +9334,11 @@ final class WorkspaceStore: ObservableObject {
             : [.pdf, .html, .plainText, UTType(filenameExtension: "md") ?? .plainText, UTType(filenameExtension: "markdown") ?? .plainText]
 
         guard panel.runModal() == .OK else { return }
+        if let assigningToCourseID {
+            activeCourseID = assigningToCourseID
+            importCourseFilesFromURLs(panel.urls, asNotes: markdownAsNotes)
+            return
+        }
         let targetNoteID = linkToActiveNote ? activeNotebookItemID : nil
         let selectedItems = importFiles(
             panel.urls,
@@ -4266,17 +9347,6 @@ final class WorkspaceStore: ObservableObject {
             markdownOnly: markdownOnly,
             reclassifiesExistingMarkdown: reclassifiesExistingMarkdown
         )
-        if let assigningToCourseID {
-            let importedPaths = Set(panel.urls
-                .flatMap(Self.supportedCourseFiles(at:))
-                .map { $0.standardizedFileURL.path })
-            let importedItemIDs = Set(importedItems.compactMap { item -> String? in
-                guard let path = item.url?.standardizedFileURL.path,
-                      importedPaths.contains(path) else { return nil }
-                return item.id
-            })
-            assignItemIDs(importedItemIDs, to: assigningToCourseID)
-        }
         if let targetNoteID, targetNoteID == activeNotebookItemID {
             setLinkedSourceIDsForActiveNote(
                 Set(linkedSourceIDsForActiveNote).union(selectedItems.map(\.id))
@@ -4995,12 +10065,6 @@ final class WorkspaceStore: ObservableObject {
             }
             item.importedFileLastKnownPath = url.path
             importedItems.append(item)
-            if let activeCourseID,
-               courses.contains(where: { $0.id == activeCourseID }) {
-                var memberships = courseMembershipIndex
-                memberships.assign(itemIDs: [item.id], to: activeCourseID)
-                courseItemMemberships = memberships.values
-            }
             courseDocumentSearchIndex.synchronize(allItems)
             if let sourceItem {
                 addNoteSourceLink(noteItemID: item.id, sourceItemID: sourceItem.id)
@@ -6723,7 +11787,15 @@ final class WorkspaceStore: ObservableObject {
         }
 
         let noteCountBeforeInvalidCreation = courseNotebookItems.count
-        let invalidNoteID = createCourseNotebookNote(title: "   ")
+        let invalidNoteID: String?
+        if let activeCourseID {
+            invalidNoteID = await createCourseNotebookNote(
+                courseID: activeCourseID,
+                title: "   "
+            )
+        } else {
+            invalidNoteID = nil
+        }
         let invalidNoteCreationPassed = invalidNoteID == nil
             && courseNotebookItems.count == noteCountBeforeInvalidCreation
             && noteFileError?.isEmpty == false
@@ -7964,8 +13036,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func appOwnedFilesDirectory() -> URL {
-        let root = Self.workspaceRootDirectory() ?? FileManager.default.temporaryDirectory.appendingPathComponent("WeiBei", isDirectory: true)
-        let directory = root.appendingPathComponent("Files", isDirectory: true)
+        let directory = workspaceDirectory.appendingPathComponent("Files", isDirectory: true)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
     }
@@ -8116,6 +13187,32 @@ final class WorkspaceStore: ObservableObject {
 
     private func resolveTrackedImportedFile(at index: Int) -> (url: URL?, changed: Bool) {
         guard importedItems.indices.contains(index) else { return (nil, false) }
+        if case .courseOwned(let ownerCourseID) = importedItems[index].storage {
+            return resolveCourseOwnedFile(at: index, ownerCourseID: ownerCourseID)
+        }
+        if case .shared(let sharedRelativePath) = importedItems[index].storage {
+            guard let libraryRoot = courseLibraryRootURL,
+                  let candidate = CourseProjectPathPolicy.resolvedRelativePath(
+                    sharedRelativePath,
+                    inside: libraryRoot
+                  ),
+                  let identity = importedFileIdentityResolver(candidate),
+                  importedItems[index].importedFileIdentity.map({ $0 == identity }) ?? true else {
+                return markCourseOwnedItemUnavailable(at: index)
+            }
+            var changed = false
+            if importedItems[index].urlPath != candidate.path
+                || importedItems[index].importedFileLastKnownPath != candidate.path
+                || importedItems[index].importedFileIdentity != identity
+                || importedItems[index].importedFileBookmarkData != nil {
+                importedItems[index].urlPath = candidate.path
+                importedItems[index].importedFileLastKnownPath = candidate.path
+                importedItems[index].importedFileIdentity = identity
+                importedItems[index].importedFileBookmarkData = nil
+                changed = true
+            }
+            return (candidate, changed)
+        }
         guard let storedIdentity = importedItems[index].importedFileIdentity else {
             guard let currentURL = importedItems[index].url,
                   importedFileIdentityResolver(currentURL) != nil else {
@@ -8176,11 +13273,802 @@ final class WorkspaceStore: ObservableObject {
         return (candidateURL, changed)
     }
 
+    private func resolveCourseOwnedFile(
+        at index: Int,
+        ownerCourseID: UUID
+    ) -> (url: URL?, changed: Bool) {
+        guard let membershipIndex = uniqueCourseOwnedMembershipIndex(
+            itemID: importedItems[index].id,
+            courseID: ownerCourseID
+        ),
+        let relativePath = courseItemMemberships[membershipIndex].courseRelativePath,
+        let root = courseRootURL(for: ownerCourseID),
+        let candidate = safeCourseOwnedFileURL(
+            relativePath: relativePath,
+            role: importedItems[index].isNotebookNote ? .note : .material,
+            inside: root
+        ) else {
+            return markCourseOwnedItemUnavailable(at: index)
+        }
+
+        guard let identity = importedFileIdentityResolver(candidate),
+              importedItems[index].importedFileIdentity.map({ $0 == identity }) ?? true,
+              courseItemMemberships[membershipIndex].entryIdentity.map({ $0 == identity }) ?? true else {
+            return markCourseOwnedItemUnavailable(at: index)
+        }
+
+        var changed = false
+        if importedItems[index].urlPath != candidate.path
+            || importedItems[index].importedFileLastKnownPath != candidate.path
+            || importedItems[index].title != candidate.deletingPathExtension().lastPathComponent
+            || importedItems[index].subtitle != candidate.lastPathComponent
+            || importedItems[index].kind != StudyItemKind.detect(from: candidate)
+            || importedItems[index].importedFileIdentity != identity
+            || importedItems[index].importedFileBookmarkData != nil {
+            importedItems[index].urlPath = candidate.path
+            importedItems[index].importedFileLastKnownPath = candidate.path
+            importedItems[index].title = candidate.deletingPathExtension().lastPathComponent
+            importedItems[index].subtitle = candidate.lastPathComponent
+            importedItems[index].kind = StudyItemKind.detect(from: candidate)
+            importedItems[index].importedFileIdentity = identity
+            importedItems[index].importedFileBookmarkData = nil
+            changed = true
+        }
+        let documentIdentifier = courseFileDocumentIdentifier(at: candidate)
+        if courseItemMemberships[membershipIndex].entryIdentity != identity
+            || courseItemMemberships[membershipIndex].documentIdentifier != documentIdentifier {
+            courseItemMemberships[membershipIndex].entryIdentity = identity
+            courseItemMemberships[membershipIndex].documentIdentifier = documentIdentifier
+            changed = true
+        }
+        return (candidate, changed)
+    }
+
+    @discardableResult
+    private func resolveCourseOwnedItems(for courseID: UUID) -> Bool {
+        var changed = false
+        let itemIndices = importedItems.indices.filter { index in
+            guard case .courseOwned(let ownerCourseID) = importedItems[index].storage else {
+                return false
+            }
+            return ownerCourseID == courseID
+        }
+        for index in itemIndices {
+            if resolveCourseOwnedFile(
+                at: index,
+                ownerCourseID: courseID
+            ).changed {
+                changed = true
+            }
+        }
+        return changed
+    }
+
+    func reconcileCourseFilesNow(courseID requestedCourseID: UUID? = nil) async {
+        guard !courseReconciliationInFlight else { return }
+        courseReconciliationInFlight = true
+        defer { courseReconciliationInFlight = false }
+        if await reconcileSharedFilesNow() {
+            _ = performSaveNow()
+            courseDocumentSearchIndex.synchronize(allItems)
+            invalidateAgentContext()
+        }
+        let courseIDs = requestedCourseID.map { [$0] } ?? courses.map(\.id)
+        for courseID in courseIDs {
+            guard let root = courseRootURL(for: courseID) else { continue }
+            do {
+                let snapshot = try await courseProjectFileWorker.scanCourse(at: root)
+                var changed = await applyCourseFileObservations(
+                    snapshot,
+                    courseID: courseID,
+                    root: root
+                )
+                if let libraryRoot = courseLibraryRootURL {
+                    let sharedDirectory = libraryRoot.appendingPathComponent(
+                        "共享文稿",
+                        isDirectory: true
+                    )
+                    if FileManager.default.fileExists(atPath: sharedDirectory.path) {
+                        let sharedObservations = try await courseProjectFileWorker.scanSharedLinks(
+                            at: root,
+                            sharedDirectory: sharedDirectory
+                        )
+                        if applySharedLinkObservations(
+                            sharedObservations,
+                            courseID: courseID,
+                            libraryRoot: libraryRoot,
+                            courseRoot: root
+                        ) {
+                            changed = true
+                        }
+                    }
+                }
+                if changed {
+                    _ = performSaveNow()
+                    courseDocumentSearchIndex.synchronize(allItems)
+                    invalidateAgentContext()
+                }
+            } catch {
+                courseRootUnavailableReasons[courseID] = ui(
+                    "课程文件夹暂时无法对账：\(error.localizedDescription)",
+                    "The course folder could not be reconciled: \(error.localizedDescription)"
+                )
+            }
+        }
+    }
+
+    func reconcileCourseFilesForSelfCheck(courseID: UUID? = nil) throws {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        try waitForCourseFileOperation {
+            await self.reconcileCourseFilesNow(courseID: courseID)
+        }
+    }
+
+    func courseReconciliationLookupCountForSelfCheck() -> Int {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        return lastCourseReconciliationLookupCount
+    }
+
+    private func reconcileSharedFilesNow() async -> Bool {
+        guard let libraryRoot = courseLibraryRootURL else { return false }
+        let sharedDirectory = libraryRoot.appendingPathComponent(
+            "共享文稿",
+            isDirectory: true
+        )
+        guard FileManager.default.fileExists(atPath: sharedDirectory.path),
+              let snapshot = try? await courseProjectFileWorker
+                .scanSharedOriginals(at: sharedDirectory) else {
+            return false
+        }
+        var changed = false
+        var itemIndexByID: [String: Int] = [:]
+        for index in importedItems.indices {
+            if case .shared = importedItems[index].storage {
+                itemIndexByID[importedItems[index].id] = index
+            }
+        }
+        let itemIDs = itemIndexByID.keys.sorted()
+        let courseRootsByID = Dictionary(
+            uniqueKeysWithValues: courses.compactMap { course in
+                courseRootURL(for: course.id).map { (course.id, $0) }
+            }
+        )
+        var sharedMembershipsByItemID: [
+            String: [CourseItemMembership]
+        ] = [:]
+        for membership in courseItemMemberships
+        where itemIndexByID[membership.itemID] != nil {
+            sharedMembershipsByItemID[
+                membership.itemID,
+                default: []
+            ].append(membership)
+        }
+        var consumedObservationIndexes = Set<Int>()
+        var observationIndexByItemID: [String: Int] = [:]
+
+        for itemID in itemIDs {
+            guard let itemIndex = itemIndexByID[itemID],
+                  case .shared(let relativePath) = importedItems[itemIndex].storage,
+                  relativePath.hasPrefix("共享文稿/") else {
+                continue
+            }
+            let fileName = String(relativePath.dropFirst("共享文稿/".count))
+            guard !fileName.contains("/"),
+                  let observationIndex = snapshot.indexByRelativePath[fileName],
+                  consumedObservationIndexes.insert(observationIndex).inserted else {
+                continue
+            }
+            observationIndexByItemID[itemID] = observationIndex
+        }
+
+        func firstUnconsumed(_ indexes: [Int]?) -> Int? {
+            guard let indexes else { return nil }
+            for index in indexes
+            where consumedObservationIndexes.insert(index).inserted {
+                return index
+            }
+            return nil
+        }
+
+        for itemID in itemIDs where observationIndexByItemID[itemID] == nil {
+            guard let itemIndex = itemIndexByID[itemID],
+                  let identity = importedItems[itemIndex].importedFileIdentity,
+                  let observationIndex = firstUnconsumed(
+                    snapshot.indexesByIdentity[identity]
+                  ) else {
+                continue
+            }
+            observationIndexByItemID[itemID] = observationIndex
+        }
+
+        for itemID in itemIDs {
+            guard let itemIndex = itemIndexByID[itemID],
+                  let observationIndex = observationIndexByItemID[itemID] else {
+                if let itemIndex = itemIndexByID[itemID],
+                   markCourseOwnedItemUnavailable(at: itemIndex).changed {
+                    changed = true
+                }
+                continue
+            }
+            let observation = snapshot.observations[observationIndex]
+            let previous = importedItems[itemIndex]
+            if let oldURL = previous.url,
+               !CourseProjectPathPolicy.isSame(oldURL, observation.url),
+               previous.importedFileIdentity == observation.identity {
+                for membership in sharedMembershipsByItemID[itemID] ?? [] {
+                    guard let courseRoot =
+                            courseRootsByID[membership.courseID],
+                          let relativePath =
+                            membership.courseRelativePath,
+                          let linkIdentity = membership.entryIdentity,
+                          let linkURL = Self.backgroundRawRelativeURL(
+                            relativePath,
+                            inside: courseRoot
+                          ) else {
+                        continue
+                    }
+                    do {
+                        try courseProjectMutationHook(
+                            .beforeSharedLinkRepair
+                        )
+                        try await courseProjectFileWorker.repairSharedLink(
+                            at: linkURL,
+                            courseRoot: courseRoot,
+                            from: oldURL,
+                            to: observation.url,
+                            expectedLinkIdentity: linkIdentity
+                        )
+                    } catch {
+                        courseRootUnavailableReasons[
+                            membership.courseID
+                        ] = ui(
+                            "共享原件已改名，但课程入口暂时无法修复：\(error.localizedDescription)",
+                            "The shared original was renamed, but its course entry could not be repaired: \(error.localizedDescription)"
+                        )
+                    }
+                }
+            }
+            do {
+                let identityChanged =
+                    previous.importedFileIdentity != observation.identity
+                let metadataChanged = previous.fileByteCount != nil
+                    && previous.fileModificationTimeNanoseconds != nil
+                    && (previous.fileByteCount != observation.byteCount
+                        || previous.fileModificationTimeNanoseconds
+                            != observation.modificationTimeNanoseconds)
+                var digest = previous.contentDigest
+                var revision = previous.contentRevision
+                if identityChanged || metadataChanged {
+                    let fileSnapshot = try await courseProjectFileWorker.snapshot(
+                        at: observation.url
+                    )
+                    if identityChanged || digest != fileSnapshot.sha256 {
+                        revision &+= 1
+                    }
+                    digest = fileSnapshot.sha256
+                }
+                var nextItem = previous
+                nextItem.title =
+                    observation.url.deletingPathExtension().lastPathComponent
+                nextItem.subtitle = observation.url.lastPathComponent
+                nextItem.kind = StudyItemKind.detect(from: observation.url)
+                nextItem.urlPath = observation.url.path
+                nextItem.importedFileLastKnownPath = observation.url.path
+                nextItem.importedFileIdentity = observation.identity
+                nextItem.importedFileBookmarkData = nil
+                nextItem.storage = .shared(
+                    sharedRelativePath:
+                        "共享文稿/\(observation.relativePath)"
+                )
+                nextItem.contentRevision = revision
+                nextItem.contentDigest = digest
+                nextItem.fileByteCount = observation.byteCount
+                nextItem.fileModificationTimeNanoseconds =
+                    observation.modificationTimeNanoseconds
+                if nextItem != previous {
+                    importedItems[itemIndex] = nextItem
+                    changed = true
+                }
+            } catch {
+                if markCourseOwnedItemUnavailable(at: itemIndex).changed {
+                    changed = true
+                }
+            }
+        }
+        for (observationIndex, observation) in snapshot.observations.enumerated()
+        where !consumedObservationIndexes.contains(observationIndex) {
+            importedItems.append(
+                StudyItem(
+                    id: Self.makeImportedItemID(),
+                    title:
+                        observation.url.deletingPathExtension().lastPathComponent,
+                    subtitle: observation.url.lastPathComponent,
+                    kind: StudyItemKind.detect(from: observation.url),
+                    urlPath: observation.url.path,
+                    importedFileIdentity: observation.identity,
+                    importedFileBookmarkData: nil,
+                    importedFileLastKnownPath: observation.url.path,
+                    isSample: false,
+                    isNotebookNote: false,
+                    storage: .shared(
+                        sharedRelativePath:
+                            "共享文稿/\(observation.relativePath)"
+                    ),
+                    contentRevision: 1,
+                    contentDigest: nil,
+                    fileByteCount: observation.byteCount,
+                    fileModificationTimeNanoseconds:
+                        observation.modificationTimeNanoseconds
+                )
+            )
+            changed = true
+        }
+        return changed
+    }
+
+    private func applySharedLinkObservations(
+        _ observations: [CourseSharedLinkObservation],
+        courseID: UUID,
+        libraryRoot: URL,
+        courseRoot: URL
+    ) -> Bool {
+        var itemIDByIdentity: [ImportedFileIdentity: String] = [:]
+        var itemIDByPath: [String: String] = [:]
+        var sharedItemIDs = Set<String>()
+        for item in importedItems {
+            guard case .shared(let relativePath) = item.storage,
+                  let expectedURL = CourseProjectPathPolicy.resolvedRelativePath(
+                    relativePath,
+                    inside: libraryRoot
+                  ) else {
+                continue
+            }
+            sharedItemIDs.insert(item.id)
+            itemIDByPath[expectedURL.standardizedFileURL.path] = item.id
+            if let identity = item.importedFileIdentity {
+                itemIDByIdentity[identity] = item.id
+            }
+        }
+        let observationItemIDs: [String?] = observations.map {
+            itemIDByPath[$0.sharedURL.standardizedFileURL.path]
+                ?? itemIDByIdentity[$0.sharedIdentity]
+        }
+        var observationIndexesByItemID: [String: [Int]] = [:]
+        var observationIndexByLinkIdentity: [ImportedFileIdentity: Int] = [:]
+        var observationIndexByRelativePath: [String: Int] = [:]
+        for index in observations.indices {
+            guard let itemID = observationItemIDs[index] else { continue }
+            observationIndexesByItemID[itemID, default: []].append(index)
+            observationIndexByLinkIdentity[
+                observations[index].linkIdentity
+            ] = index
+            observationIndexByRelativePath[
+                observations[index].relativePath
+            ] = index
+        }
+        var nextCandidateOffsetByItemID: [String: Int] = [:]
+        var consumedObservationIndexes = Set<Int>()
+        func firstUnconsumed(for itemID: String) -> Int? {
+            guard let indexes = observationIndexesByItemID[itemID] else {
+                return nil
+            }
+            var offset = nextCandidateOffsetByItemID[itemID] ?? 0
+            while offset < indexes.count {
+                let index = indexes[offset]
+                offset += 1
+                if consumedObservationIndexes.insert(index).inserted {
+                    nextCandidateOffsetByItemID[itemID] = offset
+                    return index
+                }
+            }
+            nextCandidateOffsetByItemID[itemID] = offset
+            return nil
+        }
+
+        var changed = false
+        var removalIndexes = Set<Int>()
+        var matchedItemIDs = Set<String>()
+        for membershipIndex in courseItemMemberships.indices {
+            let membership = courseItemMemberships[membershipIndex]
+            guard membership.courseID == courseID,
+                  sharedItemIDs.contains(membership.itemID) else {
+                continue
+            }
+            let identityMatch = membership.entryIdentity.flatMap {
+                observationIndexByLinkIdentity[$0]
+            }.flatMap { index in
+                observationItemIDs[index] == membership.itemID
+                    && consumedObservationIndexes.insert(index).inserted
+                    ? index
+                    : nil
+            }
+            let pathMatch = identityMatch == nil
+                ? membership.courseRelativePath.flatMap {
+                    observationIndexByRelativePath[$0]
+                  }.flatMap { index in
+                    observationItemIDs[index] == membership.itemID
+                        && consumedObservationIndexes.insert(index).inserted
+                        ? index
+                        : nil
+                  }
+                : nil
+            guard let matchIndex =
+                identityMatch
+                ?? pathMatch
+                ?? firstUnconsumed(for: membership.itemID) else {
+                if let relativePath = membership.courseRelativePath,
+                   let rawEntryURL = Self.backgroundRawRelativeURL(
+                    relativePath,
+                    inside: courseRoot
+                   ),
+                   CourseProjectFileWorker.entryPresence(at: rawEntryURL)
+                    != .absent {
+                    courseRootUnavailableReasons[courseID] = ui(
+                        "共享入口暂时无法读取；已保留课程成员关系，待入口恢复后继续对账。",
+                        "A shared entry is temporarily unreadable. Its course membership was preserved until the entry recovers."
+                    )
+                    continue
+                }
+                removalIndexes.insert(membershipIndex)
+                changed = true
+                continue
+            }
+            matchedItemIDs.insert(membership.itemID)
+            let observation = observations[matchIndex]
+            if courseItemMemberships[membershipIndex].courseRelativePath
+                != observation.relativePath
+                || courseItemMemberships[membershipIndex].entryIdentity
+                    != observation.linkIdentity
+                || courseItemMemberships[membershipIndex].documentIdentifier
+                    != nil {
+                courseItemMemberships[membershipIndex].courseRelativePath =
+                    observation.relativePath
+                courseItemMemberships[membershipIndex].entryIdentity =
+                    observation.linkIdentity
+                courseItemMemberships[membershipIndex].documentIdentifier = nil
+                changed = true
+            }
+        }
+        if !removalIndexes.isEmpty {
+            courseItemMemberships = courseItemMemberships.enumerated().compactMap {
+                removalIndexes.contains($0.offset) ? nil : $0.element
+            }
+        }
+        var existingItemIDs = Set(courseItemMemberships.compactMap {
+            $0.courseID == courseID ? $0.itemID : nil
+        })
+        for index in observations.indices
+        where !consumedObservationIndexes.contains(index) {
+            guard let itemID = observationItemIDs[index],
+                  existingItemIDs.insert(itemID).inserted else {
+                continue
+            }
+            let observation = observations[index]
+            courseItemMemberships.append(
+                CourseItemMembership(
+                    courseID: courseID,
+                    itemID: itemID,
+                    courseRelativePath: observation.relativePath,
+                    entryIdentity: observation.linkIdentity
+                )
+            )
+            changed = true
+        }
+        return changed
+    }
+
+    private func applyCourseFileObservations(
+        _ snapshot: CourseFileScanSnapshot,
+        courseID: UUID,
+        root: URL
+    ) async -> Bool {
+        let observations = snapshot.observations
+        var changed = false
+        var lookupCount = 0
+        var itemIndexByID: [String: Int] = [:]
+        for index in importedItems.indices {
+            guard case .courseOwned(let ownerCourseID) = importedItems[index].storage,
+                  ownerCourseID == courseID else {
+                continue
+            }
+            itemIndexByID[importedItems[index].id] = index
+        }
+        var membershipIndexesByItemID: [String: [Int]] = [:]
+        for index in courseItemMemberships.indices
+        where courseItemMemberships[index].courseID == courseID {
+            membershipIndexesByItemID[
+                courseItemMemberships[index].itemID,
+                default: []
+            ].append(index)
+        }
+        let ownedItemIDs = itemIndexByID.keys.sorted()
+        var matchedObservationByItemID: [String: Int] = [:]
+        var consumedObservationIndexes = Set<Int>()
+
+        for itemID in ownedItemIDs {
+            lookupCount += 1
+            guard let membershipIndexes = membershipIndexesByItemID[itemID],
+                  membershipIndexes.count == 1,
+                  let relativePath = courseItemMemberships[
+                    membershipIndexes[0]
+                  ].courseRelativePath,
+                  let observationIndex = snapshot.indexByRelativePath[relativePath],
+                  consumedObservationIndexes.insert(observationIndex).inserted else {
+                continue
+            }
+            matchedObservationByItemID[itemID] = observationIndex
+        }
+
+        func firstUnconsumed(_ indexes: [Int]?) -> Int? {
+            guard let indexes else { return nil }
+            for index in indexes {
+                lookupCount += 1
+                if consumedObservationIndexes.insert(index).inserted {
+                    return index
+                }
+            }
+            return nil
+        }
+
+        for itemID in ownedItemIDs where matchedObservationByItemID[itemID] == nil {
+            lookupCount += 1
+            guard let itemIndex = itemIndexByID[itemID],
+                  let membershipIndexes = membershipIndexesByItemID[itemID],
+                  membershipIndexes.count == 1 else {
+                continue
+            }
+            let item = importedItems[itemIndex]
+            let membership = courseItemMemberships[membershipIndexes[0]]
+            let identityMatch = item.importedFileIdentity.flatMap {
+                firstUnconsumed(snapshot.indexesByIdentity[$0])
+            } ?? membership.entryIdentity.flatMap {
+                firstUnconsumed(snapshot.indexesByIdentity[$0])
+            }
+            let documentMatch = identityMatch == nil
+                ? membership.documentIdentifier.flatMap {
+                    firstUnconsumed(snapshot.indexesByDocumentIdentifier[$0])
+                }
+                : nil
+            if let match = identityMatch ?? documentMatch {
+                matchedObservationByItemID[itemID] = match
+            }
+        }
+
+        for itemID in ownedItemIDs {
+            lookupCount += 1
+            guard let itemIndex = itemIndexByID[itemID],
+                  let membershipIndexes = membershipIndexesByItemID[itemID],
+                  membershipIndexes.count == 1 else {
+                continue
+            }
+            let membershipIndex = membershipIndexes[0]
+            let item = importedItems[itemIndex]
+            let membership = courseItemMemberships[membershipIndex]
+            guard let observationIndex = matchedObservationByItemID[itemID] else {
+                if markCourseOwnedItemUnavailable(at: itemIndex).changed {
+                    changed = true
+                }
+                continue
+            }
+            let observation = observations[observationIndex]
+            let identityChanged = item.importedFileIdentity != observation.identity
+                || membership.entryIdentity != observation.identity
+            let hasMetadataBaseline = item.fileByteCount != nil
+                && item.fileModificationTimeNanoseconds != nil
+            let metadataChanged = hasMetadataBaseline
+                && (item.fileByteCount != observation.byteCount
+                    || item.fileModificationTimeNanoseconds != observation.modificationTimeNanoseconds)
+            var nextDigest = item.contentDigest
+            var nextRevision = item.contentRevision
+            if identityChanged || metadataChanged {
+                do {
+                    let snapshot = try await courseProjectFileWorker.snapshot(at: observation.url)
+                    if identityChanged || item.contentDigest != snapshot.sha256 {
+                        nextRevision &+= 1
+                    }
+                    nextDigest = snapshot.sha256
+                } catch {
+                    if markCourseOwnedItemUnavailable(at: itemIndex).changed {
+                        changed = true
+                    }
+                    continue
+                }
+            }
+
+            var nextItem = importedItems[itemIndex]
+            nextItem.title = observation.url.deletingPathExtension().lastPathComponent
+            nextItem.subtitle = observation.url.lastPathComponent
+            nextItem.kind = StudyItemKind.detect(from: observation.url)
+            nextItem.urlPath = observation.url.path
+            nextItem.importedFileIdentity = observation.identity
+            nextItem.importedFileBookmarkData = nil
+            nextItem.importedFileLastKnownPath = observation.url.path
+            nextItem.isNotebookNote = observation.isNote
+            nextItem.contentRevision = nextRevision
+            nextItem.contentDigest = nextDigest
+            nextItem.fileByteCount = observation.byteCount
+            nextItem.fileModificationTimeNanoseconds = observation.modificationTimeNanoseconds
+            if importedItems[itemIndex] != nextItem {
+                importedItems[itemIndex] = nextItem
+                changed = true
+            }
+            if observation.isNote, let nextDigest {
+                noteBackingContentDigestsByItemID[itemID] = nextDigest
+            }
+            if courseItemMemberships[membershipIndex].courseRelativePath
+                != observation.relativePath
+                || courseItemMemberships[membershipIndex].entryIdentity
+                    != observation.identity
+                || courseItemMemberships[membershipIndex].documentIdentifier
+                    != observation.documentIdentifier {
+                courseItemMemberships[membershipIndex].courseRelativePath =
+                    observation.relativePath
+                courseItemMemberships[membershipIndex].entryIdentity =
+                    observation.identity
+                courseItemMemberships[membershipIndex].documentIdentifier =
+                    observation.documentIdentifier
+                changed = true
+            }
+        }
+
+        for (observationIndex, observation) in observations.enumerated()
+        where !consumedObservationIndexes.contains(observationIndex) {
+            lookupCount += 1
+            let item = StudyItem(
+                id: Self.makeImportedItemID(),
+                title: observation.url.deletingPathExtension().lastPathComponent,
+                subtitle: observation.url.lastPathComponent,
+                kind: StudyItemKind.detect(from: observation.url),
+                urlPath: observation.url.path,
+                importedFileIdentity: observation.identity,
+                importedFileBookmarkData: nil,
+                importedFileLastKnownPath: observation.url.path,
+                isSample: false,
+                isNotebookNote: observation.isNote,
+                storage: .courseOwned(ownerCourseID: courseID),
+                contentRevision: 1,
+                contentDigest: nil,
+                fileByteCount: observation.byteCount,
+                fileModificationTimeNanoseconds: observation.modificationTimeNanoseconds
+            )
+            importedItems.append(item)
+            courseItemMemberships.append(
+                CourseItemMembership(
+                    courseID: courseID,
+                    itemID: item.id,
+                    courseRelativePath: observation.relativePath,
+                    entryIdentity: observation.identity,
+                    documentIdentifier: observation.documentIdentifier
+                )
+            )
+            changed = true
+        }
+        lastCourseReconciliationLookupCount = lookupCount
+        if changed {
+            courseRootUnavailableReasons.removeValue(forKey: courseID)
+        }
+        return changed
+    }
+
+    private func startCourseFileMaintenance() {
+        courseReconciliationTask?.cancel()
+        courseReconciliationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await recoverPendingCourseFileTransactionsInBackground()
+            await reconcileCourseFilesNow()
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                guard !Task.isCancelled else { return }
+                await reconcileCourseFilesNow()
+            }
+        }
+    }
+
+    private func markCourseOwnedItemUnavailable(
+        at index: Int
+    ) -> (url: URL?, changed: Bool) {
+        var changed = false
+        if let currentPath = importedItems[index].urlPath {
+            importedItems[index].importedFileLastKnownPath = currentPath
+            importedItems[index].urlPath = nil
+            changed = true
+        }
+        if importedItems[index].importedFileBookmarkData != nil {
+            importedItems[index].importedFileBookmarkData = nil
+            changed = true
+        }
+        return (nil, changed)
+    }
+
+    private func uniqueCourseOwnedMembershipIndex(
+        itemID: String,
+        courseID: UUID
+    ) -> Int? {
+        let matches = courseItemMemberships.indices.filter {
+            courseItemMemberships[$0].itemID == itemID
+                && courseItemMemberships[$0].courseID == courseID
+                && courseItemMemberships[$0].courseRelativePath != nil
+        }
+        guard matches.count == 1 else { return nil }
+        return matches[0]
+    }
+
+    private func safeCourseOwnedFileURL(
+        relativePath: String,
+        role: CourseOwnedFileRole,
+        inside root: URL
+    ) -> URL? {
+        let components = relativePath
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+        guard !components.isEmpty,
+              components.first != ".weibei",
+              !components.contains("."),
+              !components.contains(".."),
+              isSupportedCourseFileName(components.last ?? "", role: role),
+              let canonicalRoot = try? CourseProjectPathPolicy.existingDirectory(root) else {
+            return nil
+        }
+        let rawURL = components.reduce(canonicalRoot) {
+            $0.appendingPathComponent($1, isDirectory: false)
+        }
+        guard let rawValues = try? rawURL.resourceValues(forKeys: [
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+            .isAliasFileKey,
+        ]),
+        rawValues.isRegularFile == true,
+        rawValues.isSymbolicLink != true,
+        rawValues.isAliasFile != true,
+        CourseProjectPathPolicy.isSame(rawURL, rawURL.resolvingSymlinksInPath()),
+        let resolved = CourseProjectPathPolicy.resolvedRelativePath(
+            relativePath,
+            inside: canonicalRoot
+        ),
+        CourseProjectPathPolicy.contains(canonicalRoot, resolved, includingRoot: false) else {
+            return nil
+        }
+        return resolved
+    }
+
     @discardableResult
     private func refreshImportedFileTracking(itemID: String, url: URL) -> StudyItem? {
         guard let index = importedItems.firstIndex(where: { $0.id == itemID }),
               let identity = importedFileIdentityResolver(url) else {
             return nil
+        }
+        if case .courseOwned(let ownerCourseID) = importedItems[index].storage {
+            guard let membershipIndex = uniqueCourseOwnedMembershipIndex(
+                itemID: itemID,
+                courseID: ownerCourseID
+            ),
+            let relativePath = courseItemMemberships[membershipIndex].courseRelativePath,
+            let root = courseRootURL(for: ownerCourseID),
+            let resolvedURL = safeCourseOwnedFileURL(
+                relativePath: relativePath,
+                role: importedItems[index].isNotebookNote ? .note : .material,
+                inside: root
+            ),
+            CourseProjectPathPolicy.isSame(resolvedURL, url.resolvingSymlinksInPath()),
+            let snapshot = try? courseFileSnapshot(at: resolvedURL) else {
+                return nil
+            }
+            if let previousDigest = importedItems[index].contentDigest,
+               previousDigest != snapshot.sha256 {
+                importedItems[index].contentRevision &+= 1
+            }
+            importedItems[index].contentDigest = snapshot.sha256
+            importedItems[index].urlPath = resolvedURL.path
+            importedItems[index].importedFileIdentity = identity
+            importedItems[index].importedFileBookmarkData = nil
+            importedItems[index].importedFileLastKnownPath = resolvedURL.path
+            importedItems[index].title = resolvedURL.deletingPathExtension().lastPathComponent
+            importedItems[index].subtitle = resolvedURL.lastPathComponent
+            importedItems[index].kind = StudyItemKind.detect(from: resolvedURL)
+            courseItemMemberships[membershipIndex].entryIdentity = identity
+            courseItemMemberships[membershipIndex].documentIdentifier =
+                courseFileDocumentIdentifier(at: resolvedURL)
+            return importedItems[index]
         }
         let standardizedURL = url.standardizedFileURL
         importedItems[index].urlPath = standardizedURL.path
@@ -8219,10 +14107,23 @@ final class WorkspaceStore: ObservableObject {
                 item.importedFileLastKnownPath = path
                 changed = true
             }
-            if resolvedIdentity != nil,
-               item.importedFileBookmarkData == nil,
-               let url = item.url,
-               let bookmark = Self.makeImportedFileBookmark(for: url) {
+            let isManagedByCourseLibrary: Bool = {
+                switch item.storage {
+                case .courseOwned, .shared:
+                    return true
+                case .legacyExternal, .bundledSample:
+                    return false
+                }
+            }()
+            if isManagedByCourseLibrary {
+                if item.importedFileBookmarkData != nil {
+                    item.importedFileBookmarkData = nil
+                    changed = true
+                }
+            } else if resolvedIdentity != nil,
+                      item.importedFileBookmarkData == nil,
+                      let url = item.url,
+                      let bookmark = Self.makeImportedFileBookmark(for: url) {
                 item.importedFileBookmarkData = bookmark
                 changed = true
             }
@@ -8333,6 +14234,13 @@ final class WorkspaceStore: ObservableObject {
            noteBackingContentDigestsByItemID[newID] == nil {
             noteBackingContentDigestsByItemID[newID] = backingDigest
         }
+        if let loadedNote = loadedCourseNoteTextByItemID.removeValue(
+            forKey: oldID
+        ), loadedCourseNoteTextByItemID[newID] == nil {
+            loadedCourseNoteTextByItemID[newID] = loadedNote
+        }
+        courseNoteLoadTasksByItemID.removeValue(forKey: oldID)?.cancel()
+        courseNoteLoadGenerationByItemID.removeValue(forKey: oldID)
         if selectedItemID == oldID { selectedItemID = newID }
         if activeNotebookItemID == oldID { activeNotebookItemID = newID }
         if courseWorkspaceTargetItemID == oldID { courseWorkspaceTargetItemID = newID }
@@ -8565,6 +14473,103 @@ final class WorkspaceStore: ObservableObject {
         (try? Data(contentsOf: url)).map(noteContentDigest)
     }
 
+    private func scheduleCourseNoteLoad(_ item: StudyItem) {
+        guard item.isNotebookNote,
+              case .courseOwned = item.storage,
+              let url = item.url,
+              let identity = item.importedFileIdentity else {
+            return
+        }
+        let itemID = item.id
+        guard courseNoteLoadTasksByItemID[itemID] == nil else { return }
+        let generation = (courseNoteLoadGenerationByItemID[itemID] ?? 0) &+ 1
+        courseNoteLoadGenerationByItemID[itemID] = generation
+        let displayedText = activeNoteItemID == itemID ? noteText : nil
+        courseNoteLoadTasksByItemID[itemID] = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if courseNoteLoadGenerationByItemID[itemID] == generation {
+                    courseNoteLoadTasksByItemID[itemID] = nil
+                }
+            }
+            do {
+                let result = try await courseProjectFileWorker.readMarkdown(
+                    at: url,
+                    expectedIdentity: identity
+                )
+                guard courseNoteLoadGenerationByItemID[itemID] == generation,
+                      let currentIndex = importedItems.firstIndex(where: {
+                        $0.id == itemID
+                      }),
+                      case .courseOwned = importedItems[currentIndex].storage else {
+                    return
+                }
+                lastCourseNoteReadRanOnMainThread = result.ranOnMainThread
+                let markdown = cleanLegacyPlaceholder(result.markdown)
+                loadedCourseNoteTextByItemID[itemID] = markdown
+                let previousDigest = importedItems[currentIndex].contentDigest
+                if let previousDigest,
+                   previousDigest != result.snapshot.sha256 {
+                    importedItems[currentIndex].contentRevision &+= 1
+                }
+                importedItems[currentIndex].contentDigest =
+                    result.snapshot.sha256
+                importedItems[currentIndex].fileByteCount =
+                    result.metadata.byteCount
+                importedItems[currentIndex].fileModificationTimeNanoseconds =
+                    result.metadata.modificationTimeNanoseconds
+                importedItems[currentIndex].importedFileIdentity =
+                    result.metadata.identity
+                importedItems[currentIndex].urlPath = result.metadata.url.path
+                importedItems[currentIndex].importedFileLastKnownPath =
+                    result.metadata.url.path
+                noteBackingContentDigestsByItemID[itemID] =
+                    result.snapshot.sha256
+                if let membershipIndex = courseItemMemberships.firstIndex(
+                    where: { $0.itemID == itemID }
+                ) {
+                    courseItemMemberships[membershipIndex].entryIdentity =
+                        result.metadata.identity
+                    courseItemMemberships[membershipIndex].documentIdentifier =
+                        result.documentIdentifier
+                }
+                if let pendingWrite = pendingNoteWritesByItemID[itemID] {
+                    let hasConflict =
+                        pendingWrite.baselineContentDigest == nil
+                        || pendingWrite.baselineContentDigest
+                            != result.snapshot.sha256
+                    noteFileError = hasConflict
+                        ? ui(
+                            "检测到笔记冲突：魏碑草稿和外部文件都已保留，请对照后再处理。",
+                            "A note conflict was detected. Both the WeiBei draft and external file were kept for review."
+                        )
+                        : ui(
+                            "正在保留尚未写回原 Markdown 的最新编辑。",
+                            "Keeping the latest edit that has not yet been written back to the original Markdown."
+                        )
+                } else {
+                    if activeNoteItemID == itemID,
+                       displayedText == noteText {
+                        noteText = markdown
+                    }
+                    noteFileError = nil
+                }
+                courseDocumentSearchIndex.schedule([
+                    importedItems[currentIndex]
+                ])
+                save()
+            } catch {
+                guard courseNoteLoadGenerationByItemID[itemID] == generation else {
+                    return
+                }
+                noteFileError = ui(
+                    "无法读取原 Markdown：\(url.lastPathComponent)",
+                    "Could not read original Markdown: \(url.lastPathComponent)"
+                )
+            }
+        }
+    }
+
     private func noteText(for item: StudyItem?) -> String {
         guard let item else {
             noteFileError = nil
@@ -8572,7 +14577,18 @@ final class WorkspaceStore: ObservableObject {
         }
         if let pendingWrite = pendingNoteWritesByItemID[item.id],
            let cached = notesByItemID[item.id] {
-            let diskDigest = item.url.flatMap(Self.noteContentDigest)
+            let isCourseOwned: Bool
+            if case .courseOwned = item.storage {
+                isCourseOwned = true
+            } else {
+                isCourseOwned = false
+            }
+            if isCourseOwned {
+                scheduleCourseNoteLoad(item)
+            }
+            let diskDigest = isCourseOwned
+                ? noteBackingContentDigestsByItemID[item.id]
+                : item.url.flatMap(Self.noteContentDigest)
             if let diskDigest {
                 noteBackingContentDigestsByItemID[item.id] = diskDigest
             }
@@ -8592,6 +14608,17 @@ final class WorkspaceStore: ObservableObject {
         guard item.editsBackingMarkdownFile, let url = item.url else {
             noteFileError = nil
             return cleanLegacyPlaceholder(notesByItemID[item.id] ?? defaultNote(for: item))
+        }
+        if case .courseOwned = item.storage {
+            if let loaded = loadedCourseNoteTextByItemID[item.id] {
+                noteFileError = nil
+                return loaded
+            }
+            scheduleCourseNoteLoad(item)
+            noteFileError = nil
+            return cleanLegacyPlaceholder(
+                notesByItemID[item.id] ?? defaultNote(for: item)
+            )
         }
         do {
             let data = try Data(contentsOf: url)
@@ -8652,13 +14679,458 @@ final class WorkspaceStore: ObservableObject {
         if let existingPendingWrite = pendingNoteWritesByItemID[itemID] {
             baseline = existingPendingWrite.baselineContentDigest
         } else {
+            let permitsSynchronousFallback = !importedItems.contains {
+                guard $0.id == itemID else { return false }
+                if case .courseOwned = $0.storage { return true }
+                return false
+            }
             baseline = noteBackingContentDigestsByItemID[itemID]
-                ?? fallbackURL.flatMap(Self.noteContentDigest)
+                ?? importedItems.first(where: { $0.id == itemID })?
+                    .contentDigest
+                ?? (permitsSynchronousFallback
+                    ? fallbackURL.flatMap(Self.noteContentDigest)
+                    : nil)
         }
         notesByItemID[itemID] = markdown
         pendingNoteWritesByItemID[itemID] = PendingNoteWriteState(
             baselineContentDigest: baseline
         )
+    }
+
+    private func beginCourseMarkdownWrite(
+        _ markdown: String,
+        item: StudyItem,
+        expectedContentDigest: String?
+    ) async throws -> CourseMarkdownWriteTransaction {
+        guard item.isNotebookNote,
+              case .courseOwned(let courseID) = item.storage,
+              let targetURL = item.url,
+              let targetIdentity = item.importedFileIdentity,
+              let root = courseRootURL(for: courseID),
+              let canonicalRoot = try? CourseProjectPathPolicy.existingDirectory(
+                root
+              ),
+              let canonicalRootIdentity = importedFileIdentityResolver(
+                canonicalRoot
+              ),
+              let targetRelativePath = CourseProjectPathPolicy.relativePath(
+                of: targetURL,
+                inside: canonicalRoot
+              ) else {
+            throw CourseOwnedFileError.verificationFailed
+        }
+        let targetComponents = targetRelativePath.split(
+            separator: "/",
+            omittingEmptySubsequences: true
+        )
+        guard targetComponents.count == 2,
+              targetComponents.first
+                == Substring(CourseOwnedFileRole.note.directoryName) else {
+            throw CourseOwnedFileError.unsafeCoursePath
+        }
+        let destinationDirectory = targetURL.deletingLastPathComponent()
+        guard let destinationDirectoryIdentity = importedFileIdentityResolver(
+            destinationDirectory
+        ) else {
+            throw CourseOwnedFileError.unsafeCoursePath
+        }
+        let targetSnapshot = try await courseProjectFileWorker.stableSnapshot(
+            at: targetURL,
+            expectedIdentity: targetIdentity
+        )
+        if let expectedContentDigest,
+           targetSnapshot.sha256 != expectedContentDigest {
+            throw CourseProjectFileWorkerError.contentConflict
+        }
+
+        let transactionID = UUID()
+        let transactionDirectory = try courseFileTransactionDirectory(
+            transactionID: transactionID,
+            inside: canonicalRoot
+        )
+        guard let transactionDirectoryIdentity = importedFileIdentityResolver(
+            transactionDirectory
+        ) else {
+            throw CourseOwnedFileError.unsafeCoursePath
+        }
+        let journalURL = transactionDirectory.appendingPathComponent(
+            "course-note.json"
+        )
+        let payloadURL = transactionDirectory.appendingPathComponent("payload")
+        let originalURL = transactionDirectory.appendingPathComponent("original")
+        let replacementSnapshot = await courseProjectFileWorker.snapshot(
+            of: Data(markdown.utf8)
+        )
+        var journal = PendingCourseMarkdownWriteJournal(
+            transactionID: transactionID,
+            transactionDirectoryIdentity: transactionDirectoryIdentity,
+            courseID: courseID,
+            itemID: item.id,
+            targetPath: targetURL.path,
+            targetRelativePath: targetRelativePath,
+            targetIdentity: targetIdentity,
+            targetSnapshot: targetSnapshot,
+            replacementSnapshot: replacementSnapshot,
+            stagedIdentity: nil,
+            stage: .prepared
+        )
+        do {
+            try await courseProjectFileWorker.write(
+                JSONEncoder().encode(journal),
+                to: journalURL
+            )
+            let staged = try await courseProjectFileWorker.stageMarkdown(
+                markdown,
+                to: payloadURL
+            )
+            guard staged.snapshot == replacementSnapshot else {
+                throw CourseOwnedFileError.verificationFailed
+            }
+            journal.stagedIdentity = staged.identity
+            journal.stage = .staged
+            try await courseProjectFileWorker.write(
+                JSONEncoder().encode(journal),
+                to: journalURL
+            )
+
+            try courseProjectMutationHook(
+                .beforeCourseMarkdownTargetIsolation
+            )
+            guard await courseProjectFileWorker.isolateWithoutReplacement(
+                from: targetURL,
+                to: originalURL
+            ) else {
+                throw CourseProjectFileWorkerError.contentConflict
+            }
+            try courseProjectMutationHook(
+                .afterCourseMarkdownTargetIsolationBeforeJournal
+            )
+            do {
+                _ = try await courseProjectFileWorker.stableSnapshot(
+                    at: originalURL,
+                    expectedIdentity: targetIdentity,
+                    expectedSnapshot: targetSnapshot
+                )
+            } catch {
+                _ = await courseProjectFileWorker.restoreIsolatedFile(
+                    from: originalURL,
+                    to: targetURL
+                )
+                throw CourseProjectFileWorkerError.contentConflict
+            }
+            journal.stage = .targetIsolated
+            try await courseProjectFileWorker.write(
+                JSONEncoder().encode(journal),
+                to: journalURL
+            )
+
+            let placedIdentity: ImportedFileIdentity
+            do {
+                placedIdentity = try await courseProjectFileWorker
+                    .placeWithoutReplacement(
+                        from: payloadURL,
+                        to: targetURL,
+                        courseRoot: canonicalRoot,
+                        destinationDirectory: destinationDirectory,
+                        expectedDestinationIdentity:
+                            destinationDirectoryIdentity,
+                        expectedSnapshot: replacementSnapshot
+                    )
+            } catch CourseProjectFileWorkerError.targetExists {
+                _ = await courseProjectFileWorker.restoreIsolatedFile(
+                    from: originalURL,
+                    to: targetURL
+                )
+                throw CourseProjectFileWorkerError.contentConflict
+            }
+            try courseProjectMutationHook(
+                .afterCourseMarkdownTargetPlacementBeforeJournal
+            )
+            guard placedIdentity == staged.identity,
+                  importedFileIdentityResolver(canonicalRoot)
+                    == canonicalRootIdentity else {
+                throw CourseOwnedFileError.verificationFailed
+            }
+            journal.stage = .placed
+            try await courseProjectFileWorker.write(
+                JSONEncoder().encode(journal),
+                to: journalURL
+            )
+            let metadata = try await courseProjectFileWorker.stableMetadata(
+                at: targetURL,
+                expectedIdentity: placedIdentity,
+                expectedSnapshot: replacementSnapshot
+            )
+            let values = try targetURL.resourceValues(
+                forKeys: [.documentIdentifierKey]
+            )
+            return CourseMarkdownWriteTransaction(
+                result: CourseMarkdownWriteResult(
+                    snapshot: replacementSnapshot,
+                    metadata: metadata,
+                    documentIdentifier: values.documentIdentifier.flatMap {
+                        $0 >= 0 ? UInt64($0) : nil
+                    },
+                    ranOnMainThread: staged.ranOnMainThread
+                ),
+                journal: journal,
+                transactionDirectory: transactionDirectory
+            )
+        } catch {
+            if ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            ), error is CourseProjectSimulatedCrash {
+                throw error
+            }
+            await rollbackCourseMarkdownWrite(
+                journal: journal,
+                transactionDirectory: transactionDirectory
+            )
+            throw error
+        }
+    }
+
+    private func rollbackCourseMarkdownWrite(
+        journal: PendingCourseMarkdownWriteJournal,
+        transactionDirectory: URL
+    ) async {
+        let targetURL = URL(fileURLWithPath: journal.targetPath)
+            .standardizedFileURL
+        let payloadURL = transactionDirectory.appendingPathComponent("payload")
+        let originalURL = transactionDirectory.appendingPathComponent("original")
+        if let stagedIdentity = journal.stagedIdentity {
+            if CourseProjectFileWorker.identity(at: targetURL)
+                == stagedIdentity {
+                _ = await courseProjectFileWorker.isolateAndRemoveVerifiedFile(
+                    at: targetURL,
+                    quarantineURL: transactionDirectory.appendingPathComponent(
+                        "replacement-cleanup"
+                    ),
+                    expectedIdentity: stagedIdentity,
+                    expectedSnapshot: journal.replacementSnapshot,
+                    remover: { try FileManager.default.removeItem(at: $0) }
+                )
+            }
+            if CourseProjectFileWorker.identity(at: payloadURL)
+                == stagedIdentity {
+                _ = await courseProjectFileWorker.isolateAndRemoveVerifiedFile(
+                    at: payloadURL,
+                    quarantineURL: transactionDirectory.appendingPathComponent(
+                        "payload-cleanup"
+                    ),
+                    expectedIdentity: stagedIdentity,
+                    expectedSnapshot: journal.replacementSnapshot,
+                    remover: { try FileManager.default.removeItem(at: $0) }
+                )
+            }
+        }
+        if CourseProjectFileWorker.identity(at: targetURL) == nil,
+           (try? await courseProjectFileWorker.stableSnapshot(
+            at: originalURL,
+            expectedIdentity: journal.targetIdentity,
+            expectedSnapshot: journal.targetSnapshot
+           )) != nil {
+            _ = await courseProjectFileWorker.restoreIsolatedFile(
+                from: originalURL,
+                to: targetURL
+            )
+        }
+        await safelyRemoveCourseMarkdownTransactionDirectoryInBackground(
+            transactionDirectory,
+            expectedIdentity: journal.transactionDirectoryIdentity
+        )
+    }
+
+    private func finishCourseMarkdownWrite(
+        _ transaction: CourseMarkdownWriteTransaction
+    ) async {
+        let targetURL = URL(
+            fileURLWithPath: transaction.journal.targetPath
+        ).standardizedFileURL
+        guard let stagedIdentity = transaction.journal.stagedIdentity,
+              (try? await courseProjectFileWorker.stableMetadata(
+                at: targetURL,
+                expectedIdentity: stagedIdentity,
+                expectedSnapshot: transaction.journal.replacementSnapshot
+              )) != nil else {
+            return
+        }
+        let originalURL = transaction.transactionDirectory
+            .appendingPathComponent("original")
+        if CourseProjectFileWorker.identity(at: originalURL) != nil {
+            _ = await courseProjectFileWorker.isolateAndRemoveVerifiedFile(
+                at: originalURL,
+                quarantineURL: transaction.transactionDirectory
+                    .appendingPathComponent("original-cleanup"),
+                expectedIdentity: transaction.journal.targetIdentity,
+                expectedSnapshot: transaction.journal.targetSnapshot,
+                remover: { try FileManager.default.removeItem(at: $0) }
+            )
+        }
+        await safelyRemoveCourseMarkdownTransactionDirectoryInBackground(
+            transaction.transactionDirectory,
+            expectedIdentity:
+                transaction.journal.transactionDirectoryIdentity
+        )
+    }
+
+    private func persistCourseOwnedNote(
+        _ markdown: String,
+        itemID: String
+    ) {
+        guard let index = importedItems.firstIndex(where: { $0.id == itemID }),
+              importedItems[index].isNotebookNote,
+              case .courseOwned = importedItems[index].storage,
+              importedItems[index].url != nil,
+              importedItems[index].importedFileIdentity != nil else {
+            retainPendingNoteWrite(
+                markdown,
+                itemID: itemID,
+                fallbackURL: nil
+            )
+            noteFileError = ui(
+                "原 Markdown 已移动或不可用，最新编辑已安全保留在课程中。",
+                "The original Markdown moved or is unavailable. The latest edit is safely retained in the course."
+            )
+            save()
+            return
+        }
+        retainPendingNoteWrite(
+            markdown,
+            itemID: itemID,
+            fallbackURL: nil
+        )
+        guard performSaveNow() else {
+            noteFileError = ui(
+                "最新编辑尚未安全保存到工作区，暂不写回原 Markdown。",
+                "The latest edit is not yet safely stored in the workspace, so the original Markdown was not changed."
+            )
+            return
+        }
+        startCourseOwnedNoteWriteIfNeeded(itemID: itemID)
+    }
+
+    private func startCourseOwnedNoteWriteIfNeeded(itemID: String) {
+        guard !courseNoteWritesInFlight.contains(itemID),
+              let markdown = notesByItemID[itemID],
+              let pendingWrite = pendingNoteWritesByItemID[itemID],
+              let item = importedItems.first(where: { $0.id == itemID }),
+              item.isNotebookNote,
+              case .courseOwned = item.storage,
+              let url = item.url,
+              item.importedFileIdentity != nil else {
+            return
+        }
+        courseNoteWritesInFlight.insert(itemID)
+        let expectedDigest = pendingWrite.baselineContentDigest
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let transaction = try await beginCourseMarkdownWrite(
+                    markdown,
+                    item: item,
+                    expectedContentDigest: expectedDigest
+                )
+                let result = transaction.result
+                let previousItems = importedItems
+                let previousMemberships = courseItemMemberships
+                let previousBackingDigests =
+                    noteBackingContentDigestsByItemID
+                let previousLoadedNotes = loadedCourseNoteTextByItemID
+                let previousNotes = notesByItemID
+                let previousPendingWrites = pendingNoteWritesByItemID
+                courseNoteWritesInFlight.remove(itemID)
+                lastCourseNoteWriteRanOnMainThread = result.ranOnMainThread
+                applyCourseMarkdownWriteResult(
+                    result,
+                    itemID: itemID,
+                    markdown: markdown
+                )
+                if notesByItemID[itemID] == markdown {
+                    notesByItemID.removeValue(forKey: itemID)
+                    pendingNoteWritesByItemID.removeValue(forKey: itemID)
+                    noteFileError = nil
+                } else {
+                    pendingNoteWritesByItemID[itemID] = PendingNoteWriteState(
+                        baselineContentDigest: result.snapshot.sha256
+                    )
+                }
+                guard performSaveNow() else {
+                    importedItems = previousItems
+                    courseItemMemberships = previousMemberships
+                    noteBackingContentDigestsByItemID =
+                        previousBackingDigests
+                    loadedCourseNoteTextByItemID = previousLoadedNotes
+                    notesByItemID = previousNotes
+                    pendingNoteWritesByItemID = previousPendingWrites
+                    await rollbackCourseMarkdownWrite(
+                        journal: transaction.journal,
+                        transactionDirectory:
+                            transaction.transactionDirectory
+                    )
+                    throw CourseOwnedFileError.workspaceSaveFailed
+                }
+                await finishCourseMarkdownWrite(transaction)
+                if pendingNoteWritesByItemID[itemID] != nil {
+                    startCourseOwnedNoteWriteIfNeeded(itemID: itemID)
+                }
+            } catch CourseProjectFileWorkerError.contentConflict {
+                courseNoteWritesInFlight.remove(itemID)
+                noteFileError = ui(
+                    "检测到笔记冲突：没有覆盖外部文件，魏碑草稿也已保留。请对照两份内容后再处理。",
+                    "A note conflict was detected. The external file was not overwritten, and the WeiBei draft was retained for review."
+                )
+                scheduleCourseNoteLoad(item)
+                save()
+            } catch {
+                courseNoteWritesInFlight.remove(itemID)
+                noteFileError = ui(
+                    "无法写回原 Markdown：\(url.lastPathComponent)",
+                    "Could not write original Markdown: \(url.lastPathComponent)"
+                )
+                save()
+            }
+        }
+    }
+
+    private func applyCourseMarkdownWriteResult(
+        _ result: CourseMarkdownWriteResult,
+        itemID: String,
+        markdown: String
+    ) {
+        guard let index = importedItems.firstIndex(where: { $0.id == itemID }),
+              case .courseOwned = importedItems[index].storage else {
+            return
+        }
+        if importedItems[index].contentDigest != result.snapshot.sha256 {
+            importedItems[index].contentRevision &+= 1
+        }
+        importedItems[index].contentDigest = result.snapshot.sha256
+        importedItems[index].fileByteCount = result.metadata.byteCount
+        importedItems[index].fileModificationTimeNanoseconds =
+            result.metadata.modificationTimeNanoseconds
+        importedItems[index].importedFileIdentity = result.metadata.identity
+        importedItems[index].urlPath = result.metadata.url.path
+        importedItems[index].importedFileLastKnownPath =
+            result.metadata.url.path
+        importedItems[index].title =
+            result.metadata.url.deletingPathExtension().lastPathComponent
+        importedItems[index].subtitle = result.metadata.url.lastPathComponent
+        importedItems[index].kind = StudyItemKind.detect(
+            from: result.metadata.url
+        )
+        noteBackingContentDigestsByItemID[itemID] = result.snapshot.sha256
+        loadedCourseNoteTextByItemID[itemID] =
+            cleanLegacyPlaceholder(markdown)
+        if let membershipIndex = courseItemMemberships.firstIndex(
+            where: { $0.itemID == itemID }
+        ) {
+            courseItemMemberships[membershipIndex].entryIdentity =
+                result.metadata.identity
+            courseItemMemberships[membershipIndex].documentIdentifier =
+                result.documentIdentifier
+        }
+        courseDocumentSearchIndex.schedule([importedItems[index]])
     }
 
     private func persistNote(_ markdown: String, for item: StudyItem) {
@@ -8668,6 +15140,10 @@ final class WorkspaceStore: ObservableObject {
                 retainPendingNoteWrite(markdown, itemID: noteItemID, fallbackURL: item.url)
                 noteFileError = ui("无法确认原 Markdown 的课程身份。", "Could not resolve the original Markdown identity.")
                 save()
+                return
+            }
+            if case .courseOwned = importedItems[index].storage {
+                persistCourseOwnedNote(markdown, itemID: noteItemID)
                 return
             }
             let resolution = resolveTrackedImportedFile(at: index)

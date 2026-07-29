@@ -1218,6 +1218,8 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
     public var storage: StudyItemStorage
     public var contentRevision: UInt64
     public var contentDigest: String?
+    public var fileByteCount: UInt64?
+    public var fileModificationTimeNanoseconds: Int64?
 
     public init(
         id: String,
@@ -1232,7 +1234,9 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         isNotebookNote: Bool = false,
         storage: StudyItemStorage? = nil,
         contentRevision: UInt64 = 1,
-        contentDigest: String? = nil
+        contentDigest: String? = nil,
+        fileByteCount: UInt64? = nil,
+        fileModificationTimeNanoseconds: Int64? = nil
     ) {
         self.id = id
         self.title = title
@@ -1247,6 +1251,8 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         self.storage = storage ?? (isSample ? .bundledSample : .legacyExternal)
         self.contentRevision = contentRevision
         self.contentDigest = contentDigest
+        self.fileByteCount = fileByteCount
+        self.fileModificationTimeNanoseconds = fileModificationTimeNanoseconds
     }
 
     enum CodingKeys: String, CodingKey {
@@ -1263,6 +1269,8 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         case storage
         case contentRevision
         case contentDigest
+        case fileByteCount
+        case fileModificationTimeNanoseconds
     }
 
     public init(from decoder: Decoder) throws {
@@ -1281,6 +1289,11 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
             ?? (isSample ? .bundledSample : .legacyExternal)
         contentRevision = try container.decodeIfPresent(UInt64.self, forKey: .contentRevision) ?? 1
         contentDigest = try container.decodeIfPresent(String.self, forKey: .contentDigest)
+        fileByteCount = try container.decodeIfPresent(UInt64.self, forKey: .fileByteCount)
+        fileModificationTimeNanoseconds = try container.decodeIfPresent(
+            Int64.self,
+            forKey: .fileModificationTimeNanoseconds
+        )
     }
 
     public var url: URL? {
