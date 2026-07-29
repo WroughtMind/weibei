@@ -769,7 +769,16 @@ expect(runScript.contains("verify_learning_flow_persistence()")
     && runScript.contains("! /usr/bin/grep -q \"## 可确认\""), "verify mode checks that the offline learning flow persists only the note-ready agent suggestion into the note workspace")
 expect(runScript.contains("pi-agent-verified.txt")
     && runScript.contains("packaged PI did not complete the in-app learning flow")
-    && workspaceStoreSource.contains("scenario == \"pi-learning-flow\", messages.last?.backend == .pi"), "verify mode can prove the packaged app itself completed a real PI-backed learning flow")
+    && runScript.contains("'\"agentProviderID\":\"openai-codex\"'")
+    && runScript.contains("'\"modelName\":\"gpt-5.4\"'")
+    && runScript.contains("'^continuity=true$'")
+    && runScript.contains("\"--provider openai-codex\"")
+    && runScript.contains("\"--model gpt-5.4\"")
+    && runScript.contains("\"--session-id $session_id\"")
+    && workspaceStoreSource.contains("agentProviderID = .openaiCodex")
+    && workspaceStoreSource.contains("modelName = AgentModelListService.codexDefaultModel")
+    && workspaceStoreSource.contains("sameChatContinued")
+    && workspaceStoreSource.contains("secondReply?.text.localizedCaseInsensitiveContains(continuityToken) == true"), "verify mode proves the packaged app uses its selected PI provider/model and continues the same Chat across two real turns")
 expect(runScript.contains("pi-course-memory-verified.txt")
     && runScript.contains("packaged PI did not persist the course-memory learning flow")
     && runScript.contains("'\"learningMemoryEntries\"'")
@@ -3676,28 +3685,34 @@ expect(
         && workspaceStoreSource.contains("thinkingLevel: thinking.isEmpty ? \"medium\" : thinking"),
     "PI honors the selected provider, reuses subscription OAuth without injecting an API key, and keeps the current thinking default"
 )
-if let requestStart = workspaceStoreSource.range(of: "private func performAgentRequest() async")?.lowerBound,
+if let requestStart = workspaceStoreSource.range(of: "private func performAgentRequest(target:")?.lowerBound,
    let executionStart = workspaceStoreSource.range(of: "private func executeStudyAgentRequest")?.lowerBound {
     let requestSource = String(workspaceStoreSource[requestStart..<executionStart])
-    expect(requestSource.contains("agentDraft = \"\"")
+    expect(requestSource.contains("guard !Task.isCancelled, activeStudySessionID == target.sessionID")
+        && requestSource.components(separatedBy: "activeStudySessionID == target.sessionID").count - 1 >= 4
+        && requestSource.components(separatedBy: "validateAgentConversationTarget(target)").count - 1 == 2
+        && requestSource.contains("agentDraft = \"\"")
         && requestSource.contains("flushStagedNoteDraftForAgentContext()")
         && requestSource.contains("selectionAttachments = []")
         && requestSource.contains("let shouldClearSentDocumentSelection = sentSelectionText != nil && selectionContext?.source == .document")
         && requestSource.contains("clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)")
-        && requestSource.contains("appendAgentMessage(AgentMessage(role: .user, text: question, source: sourceTitle))")
+        && requestSource.contains("let userMessage = AgentMessage(role: .user, text: question, source: sourceTitle)")
+        && requestSource.contains("guard flushPendingWorkspaceSave() else")
         && requestSource.contains("let sentLearningContext = makeLearningContext()")
         && requestSource.contains("let courseBuild = try await makeCourseContext(query: courseQuery)")
         && requestSource.contains("materialIsTruncated: courseBuild.selectedMaterialIsTruncated")
         && requestSource.contains("courseContext: courseBuild.context")
         && requestSource.contains("learningContext: sentLearningContext")
-        && requestSource.contains("let reply = try await executeStudyAgentRequest(request)")
+        && requestSource.contains("let reply = try await executeStudyAgentRequest(")
+        && requestSource.contains("target: target")
         && requestSource.contains("applyLearningUpdate(")
         && requestSource.contains("expectedUserQuestion: request.question")
         && requestSource.contains("requestWorkspaceRevision == agentContextRevision")
         && requestSource.contains("requestMemoryRevision == learningMemoryRevision")
         && requestSource.contains("lastAgentReplyContextRevision = requestWorkspaceRevision")
+        && requestSource.contains("_ = flushPendingWorkspaceSave()")
         && requestSource.contains("contextRevision: \"\\(requestWorkspaceRevision):\\(requestID.uuidString.lowercased())\""),
-        "agent send clears the composer, executes the unified runtime, and accepts only the current context revision")
+        "agent send persists the question and reply, binds the Chat runtime, and accepts only the current context revision")
 } else {
     expect(false, "unified agent request source is readable")
 }

@@ -72,7 +72,7 @@ WeiBei is a native Swift 5.9 application for macOS 14 and later.
 - SwiftUI provides the application interface, with AppKit hosting the long-lived reader, Agent, and note panes.
 - PDFKit reads PDFs, WebKit renders HTML and the Milkdown editor, and Vision handles OCR for scanned pages.
 - SQLite FTS5 stores the local course index and search results.
-- A pinned Pi 0.80.2 runtime provides the Agent loop.
+- A pinned Pi 0.82.1 runtime provides the Agent loop.
 - WeiBei owns the material context, citations, learning memory, note write-back, and interface rendering.
 
 The Agent does not receive unrestricted file, terminal, or network access. Each request gets a bounded and revisioned snapshot of the current material, selection, note, course search results, and learning state. The Swift host validates citations, source jumps, learning updates, note proposals, and generative UI payloads before displaying or applying them.

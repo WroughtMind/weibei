@@ -1,7 +1,7 @@
 ---
 name: weibei-course-wayfinding
 description: 在当前课程的多份材料与笔记中查找知识关联、前置与复习路径，并给出可点击的来源跳转。
-compatibility: 需要 PI 0.80.2 与魏碑扩展提供的课程地图、课程搜索和学习记忆工具。
+compatibility: 需要 PI 0.82.1 与魏碑扩展提供的课程地图、课程搜索和学习记忆工具。
 allowed-tools: read weibei_context weibei_course_map weibei_course_search weibei_visual_asset weibei_learning_memory weibei_learning_update weibei_ui_catalog weibei_compute_artifact weibei_rich_answer
 ---
 

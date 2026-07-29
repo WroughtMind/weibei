@@ -1,7 +1,7 @@
 ---
 name: weibei-note-making
 description: 基于当前材料、当前笔记和当前选区整理、补充、改写或润色 Markdown 笔记建议。用户要求生成要点、整理摘录、补来源、制作大纲或修改笔记时使用。
-compatibility: 需要 PI 0.80.2 与魏碑扩展提供的 weibei_context 和 weibei_note_proposal 工具。
+compatibility: 需要 PI 0.82.1 与魏碑扩展提供的 weibei_context 和 weibei_note_proposal 工具。
 allowed-tools: weibei_context weibei_note_proposal
 ---
 

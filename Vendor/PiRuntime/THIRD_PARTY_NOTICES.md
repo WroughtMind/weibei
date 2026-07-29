@@ -1,10 +1,10 @@
 # Third-party notices
 
-WeiBei embeds the standalone macOS build of Pi coding agent 0.80.2.
+WeiBei embeds the standalone macOS build of Pi coding agent 0.82.1.
 
 - Project: Pi coding agent
 - Source: https://github.com/earendil-works/pi
-- Pinned commit: 0201806adfa825ab3d7957a4267d46e5030fd357
+- Pinned commit: b4f293684bba718d59cc1157679bcf6157b3a7f5
 - License: MIT
 - Copyright: 2025 Mario Zechner
 

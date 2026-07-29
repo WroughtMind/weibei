@@ -89,6 +89,13 @@ enum ImportedIdentitySelfCheck {
             materialItemID: orphanItem.id
         )
         let blankSession = StudySession(id: UUID(), title: "新学习会话")
+        let sharedLearningMemory = LearningMemoryEntry(
+            kind: .nextStep,
+            text: "继续完成课程 A 的复习",
+            evidence: "当前 Chat 中的学习建议",
+            origin: .agentInference,
+            sessionID: uniqueSession.id
+        )
         let snapshot = PersistedWorkspace(
             importedItems: [uniqueItem, sharedItem, orphanItem],
             selectedItemID: uniqueItem.id,
@@ -99,6 +106,7 @@ enum ImportedIdentitySelfCheck {
                 CourseItemMembership(courseID: courseB.id, itemID: sharedItem.id),
             ],
             activeCourseID: courseB.id,
+            learningMemoryEntries: [sharedLearningMemory],
             studySessions: [uniqueSession, sharedSession, orphanSession, blankSession],
             activeStudySessionID: uniqueSession.id
         )
@@ -214,6 +222,11 @@ enum ImportedIdentitySelfCheck {
                 "删除课程后所属 Chat 没有安全保留为待归类"
             )
         }
+        reopened.deleteStudySession(uniqueSession.id)
+        try check(
+            reopened.learningMemoryEntries.contains { $0.id == sharedLearningMemory.id },
+            "删除 Chat 时误删了课程共享的学习记忆"
+        )
     }
 
     private static func storageModelsDecodeLegacySnapshotsAndRoundTrip() throws {
