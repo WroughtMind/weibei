@@ -86,7 +86,14 @@ public enum PiRPCIncomingMessage: Equatable, Sendable {
     case assistantError(String)
     case toolStarted(id: String, name: String)
     case contextRead(id: String, contextRevision: String)
-    case courseSourcesRead(id: String, contextRevision: String, labels: [String], assetIDs: [String], jumpEvidence: [String: String])
+    case courseSourcesRead(
+        id: String,
+        contextRevision: String,
+        labels: [String],
+        assetIDs: [String],
+        jumpEvidence: [String: String],
+        sources: [AgentReplySource]
+    )
     case visualAssetRead(id: String, contextRevision: String, assetID: String, sha256: String, byteCount: Int)
     case learningMemoryRead(id: String, contextRevision: String, memoryRevision: UInt64, labels: [String], jumpEvidence: [String: String])
     case skillsLoaded(id: String, contextRevision: String, skills: [StudyAgentLoadedSkill])
@@ -204,6 +211,10 @@ public enum PiRPCMessageDecoder {
                 let entries = (details["catalog"] as? [[String: Any]])
                     ?? (details["results"] as? [[String: Any]])
                     ?? []
+                let readableEntries = entries.filter { entry in
+                    guard let searchText = entry["searchText"] as? String else { return false }
+                    return !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                }
                 let legacyLabels = entries.compactMap { entry -> String? in
                     guard let title = entry["title"] as? String,
                           let role = entry["role"] as? String,
@@ -214,11 +225,39 @@ public enum PiRPCMessageDecoder {
                     }
                     return role == "note" ? "[笔记：\(title)]" : "[材料：\(title)]"
                 }
+                let labels = details["evidenceLabels"] as? [String] ?? legacyLabels
+                let jumpEvidence = details["jumpEvidence"] as? [String: String] ?? [:]
+                let sources = zip(readableEntries, labels).compactMap { entry, label -> AgentReplySource? in
+                    guard let itemID = entry["id"] as? String,
+                          let title = entry["title"] as? String,
+                          let role = entry["role"] as? String,
+                          let searchText = entry["searchText"] as? String else { return nil }
+                    let reference = jumpEvidence
+                        .filter { $0.value == label }
+                        .map(\.key)
+                        .min { left, right in
+                            left.components(separatedBy: "，").count
+                                < right.components(separatedBy: "，").count
+                        }
+                    let parsed = SourceReferenceTitle.parse(reference ?? title)
+                    return AgentReplySource(
+                        itemID: itemID,
+                        kind: role == "note" ? .note : .material,
+                        title: parsed.title.isEmpty ? title : parsed.title,
+                        label: label,
+                        excerpt: String(searchText.prefix(400)),
+                        pageIndex: parsed.pageIndex,
+                        sectionTitle: parsed.sectionTitle,
+                        sectionLocationID: parsed.sectionLocationID,
+                        sectionOrdinal: parsed.sectionOrdinal,
+                        courseItemOrdinal: parsed.courseItemOrdinal
+                    )
+                }
                 return .courseSourcesRead(
                     id: object["toolCallId"] as? String ?? "",
                     contextRevision: contextRevision,
-                    labels: details["evidenceLabels"] as? [String] ?? legacyLabels,
-                    assetIDs: entries.compactMap { entry in
+                    labels: labels,
+                    assetIDs: readableEntries.compactMap { entry in
                         guard let id = entry["id"] as? String,
                               let searchText = entry["searchText"] as? String,
                               !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -226,7 +265,8 @@ public enum PiRPCMessageDecoder {
                         }
                         return id
                     },
-                    jumpEvidence: details["jumpEvidence"] as? [String: String] ?? [:]
+                    jumpEvidence: jumpEvidence,
+                    sources: sources
                 )
             }
             if name == "weibei_visual_asset",

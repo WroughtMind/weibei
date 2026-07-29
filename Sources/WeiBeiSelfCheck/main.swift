@@ -3788,7 +3788,9 @@ expect(workspaceStoreSource.contains("private func noteBlockForAgentAnswer")
     && workspaceStoreSource.contains("AgentOfflinePreview.suggestedNoteBlock(from: text, language: interfaceLanguage)")
     && workspaceStoreSource.contains("guard !text.hasPrefix(\"#\") else { return text }")
     && workspaceStoreSource.contains("return \"## \\(ui(\"整理建议\", \"Organization suggestion\"))\\n\\(text)\"")
-    && workspaceStoreSource.contains("let content = latestAgentNoteProposal?.markdown ?? answer.text")
+    && workspaceStoreSource.contains("private func lastAgentAnswerContentForCurrentNote()")
+    && workspaceStoreSource.contains("return action.proposedMarkdown ?? answer.text")
+    && workspaceStoreSource.contains("targetItemID != activeNoteItemID")
     && workspaceStoreSource.contains("markdown: \"\\n\\(noteBlockForAgentAnswer(content))\"")
     && !workspaceStoreSource.contains("## Agent 整理建议"), "agent note writeback prefers a revision-matched PI proposal before falling back to a reader-facing answer section")
 expect(workspaceStoreSource.contains("func createBlankNotebookNote()")
@@ -4379,8 +4381,9 @@ if let thinkingStart = notesAgentSource.range(of: "private struct AgentThinkingI
 } else {
     expect(false, "AgentThinkingIndicator and AgentStreamingResponse source bounds are inspectable")
 }
-expect(notesAgentSource.contains("if store.isAskingAgent && store.agentStreamingText.isEmpty")
-    && notesAgentSource.contains("AgentThinkingIndicator()"), "loading motion appears only while asking and streaming text is still empty")
+expect(notesAgentSource.contains("if message.completionState == .generating")
+    && notesAgentSource.contains("store.hasPersistedGeneratingAgentReply")
+    && notesAgentSource.contains("AgentThinkingIndicator()"), "loading motion belongs to the persisted generating reply, with a fallback only before that record exists")
 // Deleted overlay views (drawer / corner / quiet insight / compact previews) are gone.
 expect(!notesAgentSource.contains("struct AgentDrawerView")
     && !notesAgentSource.contains("struct CornerAgentView")
@@ -4613,6 +4616,90 @@ expect(AgentMessage(role: .assistant, text: offlineEnglishPreview, source: nil).
 expect(!AgentMessage(role: .assistant, text: "请求失败：网络错误", source: nil).isUsableAgentAnswer, "agent error is not writable")
 expect(!AgentMessage(role: .assistant, text: "请求失败\n可直接重试。", source: nil).isUsableAgentAnswer, "generic failure header without colon is not writable")
 expect(!AgentMessage(role: .assistant, text: "Agent 请求失败：网络错误", source: nil).isUsableAgentAnswer, "legacy agent error is not writable")
+expect(!AgentMessage(
+    role: .assistant,
+    text: "尚未完成",
+    source: nil,
+    completionState: .generating
+).isUsableAgentAnswer, "a generating reply is not writable before it finishes")
+expect(AgentMessage(
+    role: .assistant,
+    text: "已经生成的安全正文",
+    source: nil,
+    completionState: .interrupted,
+    failureKind: .cancelled,
+    retryQuestion: "继续解释"
+).isUsableAgentAnswer, "an interrupted reply preserves already generated body text")
+
+let replySource = AgentReplySource(
+    id: UUID(uuidString: "30000000-0000-0000-0000-000000000001")!,
+    itemID: "material:rates",
+    courseID: UUID(uuidString: "30000000-0000-0000-0000-000000000002"),
+    kind: .material,
+    title: "利率",
+    label: "[材料：利率]",
+    excerpt: "利率是资金的价格。",
+    pageIndex: 17
+)
+let replyAction = AgentReplyAction(
+    id: UUID(uuidString: "30000000-0000-0000-0000-000000000003")!,
+    kind: .writeNote,
+    targetItemID: "note:rates",
+    sourceItemID: "material:rates",
+    proposedMarkdown: "## 利率\n利率是资金的价格。",
+    evidence: ["[材料：利率]"],
+    contextRevision: "revision-1",
+    baselineContentDigest: "digest",
+    createdAt: Date(timeIntervalSince1970: 10),
+    updatedAt: Date(timeIntervalSince1970: 11)
+)
+let persistentReply = AgentMessage(
+    id: UUID(uuidString: "30000000-0000-0000-0000-000000000004")!,
+    role: .assistant,
+    text: "已经生成的安全正文",
+    source: "利率",
+    backend: .pi,
+    completionState: .interrupted,
+    sources: [replySource],
+    actions: [replyAction],
+    memoryUpdate: AgentReplyMemoryUpdate(
+        memoryIDs: [UUID(uuidString: "30000000-0000-0000-0000-000000000005")!],
+        summary: "已经理解利率"
+    ),
+    origin: AgentReplyOrigin(
+        requestID: UUID(uuidString: "30000000-0000-0000-0000-000000000006")!,
+        chatID: UUID(uuidString: "30000000-0000-0000-0000-000000000007")!,
+        courseID: UUID(uuidString: "30000000-0000-0000-0000-000000000002")
+    ),
+    failureKind: .cancelled,
+    retryQuestion: "继续解释",
+    toolTrace: ["course-search"],
+    createdAt: Date(timeIntervalSince1970: 12)
+)
+let persistentReplyData = try! JSONEncoder().encode(persistentReply)
+let reopenedPersistentReply = try! JSONDecoder().decode(AgentMessage.self, from: persistentReplyData)
+expect(reopenedPersistentReply == persistentReply, "reply body, sources, actions, memory update, origin, and interruption state survive JSON reopen")
+
+let legacyReply = AgentMessage(role: .assistant, text: "旧回复", source: nil)
+let reopenedLegacyReply = try! JSONDecoder().decode(
+    AgentMessage.self,
+    from: JSONEncoder().encode(legacyReply)
+)
+expect(reopenedLegacyReply.completionState == .completed
+    && reopenedLegacyReply.sources.isEmpty
+    && reopenedLegacyReply.actions.isEmpty, "old reply JSON defaults to a completed reply with no attachments")
+
+var malformedRichReplyObject = try! JSONSerialization.jsonObject(
+    with: JSONEncoder().encode(AgentMessage(role: .assistant, text: "正文必须保留", source: nil))
+) as! [String: Any]
+malformedRichReplyObject["richAnswer"] = ["mode": "broken"]
+let malformedRichReply = try! JSONDecoder().decode(
+    AgentMessage.self,
+    from: JSONSerialization.data(withJSONObject: malformedRichReplyObject)
+)
+expect(malformedRichReply.text == "正文必须保留"
+    && malformedRichReply.richAnswer == nil
+    && malformedRichReply.toolTrace.contains("rich-answer:decode-failed"), "a broken rich attachment is dropped without swallowing the reply body")
 
 let importedMarkdown = StudyItem(id: "file:/tmp/note.md", title: "note", subtitle: "note.md", kind: .markdown, urlPath: "/tmp/note.md", isSample: false)
 let notebookMarkdown = StudyItem(id: "file:/tmp/notebook.md", title: "notebook", subtitle: "notebook.md", kind: .markdown, urlPath: "/tmp/notebook.md", isSample: false, isNotebookNote: true)

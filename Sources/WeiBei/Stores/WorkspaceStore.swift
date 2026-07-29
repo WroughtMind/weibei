@@ -459,6 +459,8 @@ final class WorkspaceStore: ObservableObject {
     private let piRuntime: PiAgentRuntime
     private let courseDocumentSearchIndex: CourseDocumentSearchIndex
     private var activeAgentRequestID: UUID?
+    private var activeAgentReplyMessageID: UUID?
+    private var activeAgentReplyChatID: UUID?
     private var agentRequestTask: Task<Void, Never>?
     private var quietInsightTask: Task<Void, Never>?
     private var quietInsightTaskID: UUID?
@@ -475,6 +477,7 @@ final class WorkspaceStore: ObservableObject {
     private var needsSelectionAskThreadsWorkspaceMigration = false
     private var shouldRemoveLegacySelectionAskThreadsAfterSave = false
     private var loadedSelectionAskThreadsFromWorkspaceSnapshot = false
+    private var recoveredInterruptedAgentReply = false
     private let selectionAttachmentMergeWindow: TimeInterval = 1.8
     private let selectionAttachmentDebounceDelay: UInt64 = 520_000_000
     private var threePaneReorderFrames: [WorkspacePaneRole: CGRect] = [:]
@@ -749,7 +752,6 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private var lastUsableAgentAnswer: AgentMessage? {
-        guard lastAgentReplyContextRevision == agentContextRevision else { return nil }
         return messages.last { $0.isUsableAgentAnswer }
     }
 
@@ -837,6 +839,7 @@ final class WorkspaceStore: ObservableObject {
                     || sanitizedCourseLibrary
                     || migratedStudySessionScopes
                     || restoredCourseProjectRoots
+                    || recoveredInterruptedAgentReply
                     || needsSelectionAskThreadsWorkspaceMigration {
             savedInitializationChanges = save()
         } else {
@@ -6728,8 +6731,7 @@ final class WorkspaceStore: ObservableObject {
         studySessions.append(session)
         activeStudySessionID = session.id
         messages = []
-        latestAgentNoteProposal = nil
-        latestAgentLearningUpdate = nil
+        restoreAgentReplyState(from: session)
         lastAgentReplyContextRevision = nil
         invalidateAgentContext()
         save()
@@ -6746,8 +6748,7 @@ final class WorkspaceStore: ObservableObject {
         syncActiveStudySession()
         activeStudySessionID = id
         messages = session.messages
-        latestAgentNoteProposal = nil
-        latestAgentLearningUpdate = nil
+        restoreAgentReplyState(from: session)
         lastAgentReplyContextRevision = nil
         invalidateAgentContext()
         save()
@@ -6773,8 +6774,7 @@ final class WorkspaceStore: ObservableObject {
         if deletingActiveSession, let replacement = orderedStudySessions.first {
             activeStudySessionID = replacement.id
             messages = replacement.messages
-            latestAgentNoteProposal = nil
-            latestAgentLearningUpdate = nil
+            restoreAgentReplyState(from: replacement)
             lastAgentReplyContextRevision = nil
             invalidateAgentContext()
         }
@@ -6816,23 +6816,97 @@ final class WorkspaceStore: ObservableObject {
         if let activeStudySessionID,
            let session = studySessions.first(where: { $0.id == activeStudySessionID }) {
             messages = session.messages
+            restoreAgentReplyState(from: session)
             return
         }
         if let session = orderedStudySessions.first {
             activeStudySessionID = session.id
             messages = session.messages
+            restoreAgentReplyState(from: session)
             return
         }
         let session = StudySession(title: ui("新学习会话", "New Study Session"))
         studySessions = [session]
         activeStudySessionID = session.id
         messages = []
+        restoreAgentReplyState(from: session)
     }
 
     private func appendAgentMessage(_ message: AgentMessage) {
         messages.append(message)
         syncActiveStudySession(titleSeed: message.role == .user ? message.text : nil)
         save()
+    }
+
+    @discardableResult
+    private func updateAgentMessage(
+        _ messageID: UUID,
+        in chatID: UUID,
+        _ update: (inout AgentMessage) -> Void
+    ) -> AgentMessage? {
+        guard let sessionIndex = studySessions.firstIndex(where: { $0.id == chatID }),
+              let messageIndex = studySessions[sessionIndex].messages.firstIndex(where: {
+                  $0.id == messageID && $0.role == .assistant
+              }) else { return nil }
+        update(&studySessions[sessionIndex].messages[messageIndex])
+        studySessions[sessionIndex].updatedAt = Date()
+        let updated = studySessions[sessionIndex].messages[messageIndex]
+        if activeStudySessionID == chatID {
+            messages = studySessions[sessionIndex].messages
+        }
+        save()
+        return updated
+    }
+
+    private func restoreAgentReplyState(from session: StudySession) {
+        guard let reply = session.messages.last(where: { $0.role == .assistant }) else {
+            latestAgentNoteProposal = nil
+            latestAgentLearningUpdate = nil
+            lastFailedAgentQuestion = nil
+            lastAgentFailureKind = nil
+            return
+        }
+        latestAgentNoteProposal = reply.actions
+            .last(where: { $0.kind == .writeNote && $0.state == .pending })
+            .flatMap(Self.noteProposal)
+        latestAgentLearningUpdate = nil
+        lastFailedAgentQuestion = reply.retryQuestion
+        lastAgentFailureKind = reply.failureKind
+    }
+
+    private static func noteProposal(from action: AgentReplyAction) -> StudyAgentNoteProposal? {
+        guard action.kind == .writeNote,
+              let markdown = action.proposedMarkdown,
+              let contextRevision = action.contextRevision else { return nil }
+        return StudyAgentNoteProposal(
+            markdown: markdown,
+            evidence: action.evidence,
+            contextRevision: contextRevision
+        )
+    }
+
+    private var lastPendingNoteAction: AgentReplyAction? {
+        lastUsableAgentAnswer?.actions.last {
+            $0.kind == .writeNote && $0.state == .pending
+        }
+    }
+
+    private func setLastPendingNoteActionState(
+        _ state: AgentReplyActionState,
+        failureMessage: String? = nil
+    ) {
+        guard let answer = lastUsableAgentAnswer,
+              let action = lastPendingNoteAction,
+              let chatID = answer.origin?.chatID ?? activeStudySessionID else { return }
+        _ = updateAgentMessage(answer.id, in: chatID) {
+            guard let index = $0.actions.firstIndex(where: { $0.id == action.id }) else { return }
+            $0.actions[index].state = state
+            $0.actions[index].failureMessage = failureMessage
+            $0.actions[index].updatedAt = Date()
+        }
+        if state != .pending {
+            latestAgentNoteProposal = nil
+        }
     }
 
     private func syncActiveStudySession(titleSeed: String? = nil) {
@@ -7094,6 +7168,10 @@ final class WorkspaceStore: ObservableObject {
         isAskingAgent ? ui("停止回答", "Stop response") : ui("发送问题", "Send question")
     }
 
+    var hasPersistedGeneratingAgentReply: Bool {
+        messages.contains { $0.role == .assistant && $0.completionState == .generating }
+    }
+
     var agentNoteTitle: String {
         if activeNoteItem?.isNotebookNote == true {
             return activeNoteItem.map(displayTitle) ?? ui("当前笔记", "Current note")
@@ -7130,7 +7208,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var agentWriteActionTitle: String {
-        latestAgentNoteProposal == nil
+        lastPendingNoteAction == nil
             ? ui("写入回答", "Write Answer")
             : ui("写入建议", "Write Proposal")
     }
@@ -10824,14 +10902,15 @@ final class WorkspaceStore: ObservableObject {
         expectedContextRevision: String,
         expectedMemoryRevision: UInt64,
         expectedUserQuestion: String
-    ) {
+    ) -> AgentReplyMemoryUpdate? {
         latestAgentLearningUpdate = nil
         guard let update,
               update.contextRevision == expectedContextRevision,
               update.memoryRevision == expectedMemoryRevision,
-              learningMemoryRevision == expectedMemoryRevision else { return }
+              learningMemoryRevision == expectedMemoryRevision else { return nil }
 
         var changed = false
+        var changedMemoryIDs: [UUID] = []
         let now = Date()
         for proposed in update.entries.prefix(12) {
             let text = proposed.text.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -10867,19 +10946,20 @@ final class WorkspaceStore: ObservableObject {
                     learningMemoryEntries[index].sessionID = activeStudySessionID
                 }
                 learningMemoryEntries[index].updatedAt = now
+                changedMemoryIDs.append(learningMemoryEntries[index].id)
                 changed = true
             } else {
-                learningMemoryEntries.append(
-                    LearningMemoryEntry(
-                        kind: proposed.kind,
-                        text: String(text.prefix(500)),
-                        evidence: String(evidence.prefix(400)),
-                        origin: proposed.origin == .observed ? .agentInference : proposed.origin,
-                        sessionID: activeStudySessionID,
-                        createdAt: now,
-                        updatedAt: now
-                    )
+                let entry = LearningMemoryEntry(
+                    kind: proposed.kind,
+                    text: String(text.prefix(500)),
+                    evidence: String(evidence.prefix(400)),
+                    origin: proposed.origin == .observed ? .agentInference : proposed.origin,
+                    sessionID: activeStudySessionID,
+                    createdAt: now,
+                    updatedAt: now
                 )
+                learningMemoryEntries.append(entry)
+                changedMemoryIDs.append(entry.id)
                 changed = true
             }
         }
@@ -10931,6 +11011,16 @@ final class WorkspaceStore: ObservableObject {
         }
         latestAgentLearningUpdate = acceptedUpdate
         latestAgentLearningUpdateQuestion = expectedUserQuestion
+        guard changed else { return nil }
+        let summary = changedMemoryIDs.compactMap { id in
+            learningMemoryEntries.first(where: { $0.id == id })?.text
+        }.prefix(3).joined(separator: "；")
+        return AgentReplyMemoryUpdate(
+            memoryIDs: changedMemoryIDs,
+            summary: summary.isEmpty
+                ? ui("学习进度已更新", "Study progress updated")
+                : String(summary.prefix(300))
+        )
     }
 
     func isLearningMemoryResolved(_ memoryID: String) -> Bool {
@@ -11235,10 +11325,10 @@ final class WorkspaceStore: ObservableObject {
 
 
     func applyLastAgentAnswerToNote() {
-        guard let answer = lastUsableAgentAnswer else { return }
-        let content = latestAgentNoteProposal?.markdown ?? answer.text
+        guard let content = lastAgentAnswerContentForCurrentNote() else { return }
         let block = "\n\n\(noteBlockForAgentAnswer(content))"
         updateNote(noteText + block)
+        setLastPendingNoteActionState(.executed)
         focus(.notes)
     }
 
@@ -12653,19 +12743,32 @@ final class WorkspaceStore: ObservableObject {
 
     func replaceSelectionWithLastAgentAnswer() {
         guard selectionContext?.isReplaceableNoteSelection == true,
-              let answer = lastUsableAgentAnswer else { return }
+              let content = lastAgentAnswerContentForCurrentNote() else { return }
         noteEditorCommand = NoteEditorCommand(
             kind: .replaceSelection,
-            markdown: latestAgentNoteProposal?.markdown ?? answer.text
+            markdown: content
         )
         focus(.notes)
     }
 
     func applyAgentPatchToEditor() {
-        guard let answer = lastUsableAgentAnswer else { return }
-        let content = latestAgentNoteProposal?.markdown ?? answer.text
+        guard let content = lastAgentAnswerContentForCurrentNote() else { return }
         noteEditorCommand = NoteEditorCommand(kind: .applyAgentPatch, markdown: "\n\(noteBlockForAgentAnswer(content))")
         focus(.notes)
+    }
+
+    private func lastAgentAnswerContentForCurrentNote() -> String? {
+        guard let answer = lastUsableAgentAnswer else { return nil }
+        guard let action = lastPendingNoteAction else { return answer.text }
+        if let targetItemID = action.targetItemID,
+           targetItemID != activeNoteItemID {
+            workspaceSaveError = ui(
+                "这条写入建议属于另一份笔记。请先打开原笔记再写入。",
+                "This proposal belongs to another note. Open that note before writing it."
+            )
+            return nil
+        }
+        return action.proposedMarkdown ?? answer.text
     }
 
     private func noteBlockForAgentAnswer(_ answer: String) -> String {
@@ -12867,8 +12970,10 @@ final class WorkspaceStore: ObservableObject {
         let requestMemoryRevision = learningMemoryRevision
         let sentMaterialTitle = currentSourceReferenceTitle
         let sentMaterialText = selectedContextText
+        let sentMaterialItemID = selectedMaterialItem?.id
         let sentNoteTitle = agentNoteTitle
         let sentNoteText = noteText
+        let sentNoteItemID = activeNoteItemID
         let sentLearningContext = makeLearningContext()
         let sentVisualAssets = currentVisualAssetsForAgent()
         let sentLanguage = interfaceLanguage
@@ -12881,6 +12986,8 @@ final class WorkspaceStore: ObservableObject {
         defer {
             if activeAgentRequestID == requestID {
                 activeAgentRequestID = nil
+                activeAgentReplyMessageID = nil
+                activeAgentReplyChatID = nil
                 isAskingAgent = false
                 agentStreamingText = ""
                 agentActivityText = nil
@@ -12905,6 +13012,32 @@ final class WorkspaceStore: ObservableObject {
                         ?? ui(
                             "问题尚未安全写入本地，魏碑没有把它发送给 Agent。",
                             "The question was not safely saved, so WeiBei did not send it to the Agent."
+                        )
+                )
+            }
+
+            let assistantMessage = AgentMessage(
+                role: .assistant,
+                text: "",
+                source: sourceTitle,
+                completionState: .generating,
+                origin: AgentReplyOrigin(
+                    requestID: requestID,
+                    chatID: target.sessionID,
+                    courseID: target.courseID
+                ),
+                retryQuestion: question
+            )
+            activeAgentReplyMessageID = assistantMessage.id
+            activeAgentReplyChatID = target.sessionID
+            appendAgentMessage(assistantMessage)
+            appendMessageToActiveSelectionAskThread(assistantMessage.id)
+            guard flushPendingWorkspaceSave() else {
+                throw AgentConversationTargetError(
+                    message: workspaceSaveError
+                        ?? ui(
+                            "回答状态尚未安全写入本地，魏碑没有继续请求 Agent。",
+                            "The reply state was not saved safely, so WeiBei did not continue the request."
                         )
                 )
             }
@@ -12945,6 +13078,7 @@ final class WorkspaceStore: ObservableObject {
             guard activeAgentRequestID == requestID,
                   requestWorkspaceRevision == agentContextRevision,
                   requestMemoryRevision == learningMemoryRevision else {
+                interruptActiveAgentReply(kind: .cancelled)
                 if activeStudySessionID == target.sessionID,
                    agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     agentDraft = question
@@ -12982,27 +13116,50 @@ final class WorkspaceStore: ObservableObject {
                   requestWorkspaceRevision == agentContextRevision,
                   requestMemoryRevision == learningMemoryRevision else { return }
             latestAgentNoteProposal = reply.noteProposal
-            applyLearningUpdate(
+            let memoryUpdate = applyLearningUpdate(
                 reply.learningUpdate,
                 expectedContextRevision: request.contextRevision,
                 expectedMemoryRevision: requestMemoryRevision,
                 expectedUserQuestion: request.question
             )
             lastAgentReplyContextRevision = requestWorkspaceRevision
-            let assistantMessage = AgentMessage(
-                role: .assistant,
-                text: reply.noteProposal?.markdown ?? reply.richAnswer?.narrative ?? reply.text,
-                source: sourceTitle,
-                backend: reply.backend,
-                richAnswer: reply.noteProposal == nil ? reply.richAnswer : nil,
-                toolTrace: reply.toolTrace
-            )
-            appendAgentMessage(assistantMessage)
-            appendMessageToActiveSelectionAskThread(assistantMessage.id)
+            let actions = reply.noteProposal.map {
+                [
+                    AgentReplyAction(
+                        kind: .writeNote,
+                        targetItemID: sentNoteItemID,
+                        sourceItemID: sentMaterialItemID,
+                        proposedMarkdown: $0.markdown,
+                        evidence: $0.evidence,
+                        contextRevision: $0.contextRevision,
+                        baselineContentDigest: Self.noteContentDigest(Data(sentNoteText.utf8))
+                    ),
+                ]
+            } ?? []
+            let sources = reply.sources.map { source in
+                var persisted = source
+                persisted.courseID = target.courseID
+                return persisted
+            }
+            if let messageID = activeAgentReplyMessageID {
+                _ = updateAgentMessage(messageID, in: target.sessionID) {
+                    $0.text = reply.richAnswer?.narrative ?? reply.text
+                    $0.backend = reply.backend
+                    $0.richAnswer = reply.richAnswer
+                    $0.completionState = .completed
+                    $0.sources = sources
+                    $0.actions = actions
+                    $0.memoryUpdate = memoryUpdate
+                    $0.failureKind = nil
+                    $0.retryQuestion = nil
+                    $0.toolTrace = reply.toolTrace
+                }
+            }
             // The visible reply is durable before this request is considered finished.
             // A save error must not replace or hide the answer that already arrived.
             _ = flushPendingWorkspaceSave()
         } catch PiAgentRuntimeError.cancelled, is CancellationError {
+            interruptActiveAgentReply(kind: .cancelled)
             if activeStudySessionID == target.sessionID,
                agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 agentDraft = question
@@ -13022,26 +13179,66 @@ final class WorkspaceStore: ObservableObject {
             lastAgentFailureKind = kind
             lastFailedAgentQuestion = question
             let detail = error.localizedDescription
-            appendAgentMessage(
-                AgentMessage(
-                    role: .assistant,
-                    text: kind.userMessage(
-                        language: interfaceLanguage,
-                        detail: detail,
-                        draftPreserved: true
-                    ),
-                    source: sourceTitle
-                )
+            let failureText = kind.userMessage(
+                language: interfaceLanguage,
+                detail: detail,
+                draftPreserved: true
             )
+            if activeAgentReplyMessageID != nil {
+                interruptActiveAgentReply(kind: kind, fallbackText: failureText)
+            } else {
+                appendAgentMessage(
+                    AgentMessage(
+                        role: .assistant,
+                        text: failureText,
+                        source: sourceTitle,
+                        completionState: .interrupted,
+                        origin: AgentReplyOrigin(
+                            requestID: requestID,
+                            chatID: target.sessionID,
+                            courseID: target.courseID
+                        ),
+                        failureKind: kind,
+                        retryQuestion: question
+                    )
+                )
+            }
+            _ = flushPendingWorkspaceSave()
         }
 
     }
 
+    private func interruptActiveAgentReply(
+        kind: AgentFailureKind,
+        fallbackText: String? = nil
+    ) {
+        guard let messageID = activeAgentReplyMessageID,
+              let chatID = activeAgentReplyChatID else { return }
+        let updated = updateAgentMessage(messageID, in: chatID) {
+            if $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               let fallbackText {
+                $0.text = fallbackText
+            }
+            $0.completionState = .interrupted
+            $0.failureKind = kind
+        }
+        guard activeStudySessionID == chatID else { return }
+        lastAgentFailureKind = kind
+        lastFailedAgentQuestion = updated?.retryQuestion
+        if agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           let question = updated?.retryQuestion {
+            agentDraft = question
+        }
+    }
+
     func cancelAgentRequest() {
         guard isAskingAgent || activeAgentRequestID != nil else { return }
+        interruptActiveAgentReply(kind: .cancelled)
         agentRequestTask?.cancel()
         agentRequestTask = nil
         activeAgentRequestID = nil
+        activeAgentReplyMessageID = nil
+        activeAgentReplyChatID = nil
         isAskingAgent = false
         agentStreamingText = ""
         agentActivityText = nil
@@ -13224,6 +13421,12 @@ final class WorkspaceStore: ObservableObject {
             }
         case let .text(text):
             agentStreamingText = text
+            if let messageID = activeAgentReplyMessageID,
+               let chatID = activeAgentReplyChatID {
+                _ = updateAgentMessage(messageID, in: chatID) {
+                    $0.text = text
+                }
+            }
             agentActivityText = ui("正在组织回答", "Composing answer")
         }
     }
@@ -15551,6 +15754,17 @@ final class WorkspaceStore: ObservableObject {
             var bounded = session
             if bounded.messages.count > 500 {
                 bounded.messages = Array(bounded.messages.suffix(500))
+            }
+            for index in bounded.messages.indices
+            where bounded.messages[index].completionState == .generating {
+                recoveredInterruptedAgentReply = true
+                bounded.messages[index].completionState = .interrupted
+                bounded.messages[index].failureKind = .cancelled
+                if bounded.messages[index].retryQuestion == nil {
+                    bounded.messages[index].retryQuestion = bounded.messages[..<index]
+                        .last(where: { $0.role == .user })?
+                        .text
+                }
             }
             return bounded
         }
