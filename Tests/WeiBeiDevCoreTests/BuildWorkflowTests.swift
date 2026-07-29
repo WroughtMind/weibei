@@ -226,7 +226,7 @@ final class BuildWorkflowTests: XCTestCase {
             products: ["WeiBei", "WeiBeiPDFTextWorker", "WeiBeiPiCheck"]
         )
 
-        XCTAssertEqual(result.productsDirectory, productsDirectory)
+        XCTAssertEqual(result.productsDirectory.path, productsDirectory.path)
         let requests = await executor.recordedRequests()
         XCTAssertEqual(
             requests.map(\.arguments),
