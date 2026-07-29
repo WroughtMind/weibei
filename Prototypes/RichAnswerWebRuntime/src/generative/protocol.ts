@@ -36,6 +36,19 @@ export const richAnswerProgramSchema = z.object({
 
 export type RichAnswerProgram = z.infer<typeof richAnswerProgramSchema>;
 
+export type RenderPlanBudgetContext = {
+  logicalPlanBytes: number;
+  trustedAssetBytes: number[];
+};
+
+export type HostItemFailure = {
+  index: number;
+  programID: string;
+  title: string;
+  fallbackReason: string;
+  fallbackText: string;
+};
+
 export type WeiBeiHostMessage = {
   type: "weibei:setProgram";
   program: RichAnswerProgram;
@@ -49,12 +62,22 @@ export type WeiBeiHostMessage = {
   renderPlan?: unknown;
   plan?: unknown;
   evidenceContent?: z.infer<typeof evidenceContentSchema>[];
+  budgetContext?: RenderPlanBudgetContext;
+  itemFailures?: HostItemFailure[];
+  sourceIndex?: number;
   heightLimit?: number;
 } | {
   type: "weibei:setRenderPlans";
   renderPlans?: unknown[];
   plans?: unknown[];
   evidenceContent?: z.infer<typeof evidenceContentSchema>[];
+  budgetContexts?: RenderPlanBudgetContext[];
+  itemFailures?: HostItemFailure[];
+  sourceIndices?: number[];
+  heightLimit?: number;
+} | {
+  type: "weibei:setRenderFailures";
+  itemFailures: HostItemFailure[];
   heightLimit?: number;
 };
 
@@ -64,7 +87,7 @@ export type WeiBeiRuntimeMessage =
   | { type: "weibei:state"; programID: string; state: Record<string, unknown> }
   | { type: "weibei:evidence"; programID: string; evidenceID: string }
   | { type: "weibei:action"; programID: string; action: unknown }
-  | { type: "weibei:error"; programID?: string; message: string };
+  | { type: "weibei:error"; programID?: string; message: string; fatal?: boolean };
 
 declare global {
   interface Window {
@@ -96,7 +119,27 @@ export function parseHostProgram(value: unknown) {
 }
 
 export function parseHostPrograms(value: unknown) {
-  return z.array(richAnswerProgramSchema).min(1).max(6).safeParse(value);
+  const group = z.array(z.unknown()).min(1).max(6).safeParse(value);
+  if (!group.success) return group;
+
+  const data: RichAnswerProgram[] = [];
+  const indices: number[] = [];
+  const issues: Array<{ index: number; message: string }> = [];
+  group.data.forEach((candidate, index) => {
+    const parsed = richAnswerProgramSchema.safeParse(candidate);
+    if (parsed.success) {
+      data.push(parsed.data);
+      indices.push(index);
+    } else {
+      issues.push({
+        index,
+        message: parsed.error.issues[0]?.message ?? "界面程序不符合协议。",
+      });
+    }
+  });
+  return data.length > 0
+    ? { success: true as const, data, indices, issues }
+    : { success: false as const, error: { issues }, issues };
 }
 
 let hostEvidenceByID = new Map<string, z.infer<typeof evidenceContentSchema>>();

@@ -382,6 +382,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var resolvableMemoryIDs: Set<String>
         var allowedSourceLabels: Set<String>
         var allowedAssetIDs: Set<String>
+        var verifiedAssetBytesByContextID: [String: Int] = [:]
         var persistentAssetIDsByContextID: [String: String]
         var allowedJumpReferences: Set<String>
         var jumpEvidenceLabels: [String: Set<String>]
@@ -393,6 +394,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var streamedText = ""
         var proposal: StudyAgentNoteProposal?
         var richAnswer: RichAnswerPresentation?
+        var safeRichAnswerNarrative: String?
         var learningUpdate: StudyAgentLearningUpdate?
         var loadedSkills: [StudyAgentLoadedSkill] = []
         var toolTrace: [String] = []
@@ -1320,7 +1322,11 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         case let .visualAssetRead(_, contextRevision, assetID, sha256, byteCount):
             guard var run = activeRun,
                   contextRevision == run.contextRevision,
-                  run.allowedAssetIDs.contains(assetID) else { return }
+                  run.allowedAssetIDs.contains(assetID),
+                  byteCount >= 0,
+                  sha256.count == 64,
+                  sha256.allSatisfy(\.isHexDigit) else { return }
+            run.verifiedAssetBytesByContextID[assetID] = byteCount
             run.toolTrace.append(
                 "weibei_visual_asset:asset=\(assetID) sha256=\(sha256.prefix(12)) bytes=\(byteCount)"
             )
@@ -1404,9 +1410,13 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 environment: RichAnswerEnvironment(
                     contextRevision: run.contextRevision,
                     allowedSourceLabels: run.allowedSourceLabels,
-                    allowedAssetIDs: run.allowedAssetIDs
+                    allowedAssetIDs: run.allowedAssetIDs,
+                    verifiedAssetBytes: run.verifiedAssetBytesByContextID
                 )
             ).resolvingAssetIDs(using: run.persistentAssetIDsByContextID)
+            let safeNarrative = presentation.narrative
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            run.safeRichAnswerNarrative = safeNarrative.isEmpty ? nil : safeNarrative
             if presentation.mode == .rich {
                 run.richAnswer = presentation
             } else {
@@ -1498,8 +1508,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             }
             let modelClosureText = (text.isEmpty ? run.streamedText : text)
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            let richNarrative = run.richAnswer?.narrative
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let richNarrative = run.safeRichAnswerNarrative
             let finalText: String
             if let richNarrative, !richNarrative.isEmpty {
                 finalText = richNarrative

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  createNarrativeFallbackNode,
   createRendererIssue,
   type CompiledRenderPlan,
   type RenderPlan,
@@ -421,24 +422,6 @@ function formatScaleBar(spec: SpatialMapSpec, viewport: ViewPort, bounds: MapBou
     pixels: Math.max(30, Math.min(pixels, viewport.width * 0.55)),
     label: `${spec.scaleBar.label}：${value.toFixed(digits)} 单位`,
   };
-}
-
-function SpatialMapFallback({ issue }: { issue: ReturnType<typeof parseSpatialMapSpec> extends infer T
-  ? T extends { issue: infer I } ? I : never
-  : never;
-}) {
-  return (
-    <div
-      className="generation-error"
-      role="alert"
-      data-weibei-renderer-issue={issue.code}
-      style={{ padding: "12px", border: "1px dashed rgba(139, 20, 20, 0.35)", borderRadius: "8px", background: "rgba(255, 245, 245, 0.95)" }}
-    >
-      <strong>{issue.code === "capability_mismatch" ? "空间地图能力不匹配" : "空间地图渲染未通过"}</strong>
-      <p style={{ margin: "6px 0 0" }}>{issue.message}</p>
-      {issue.details?.length ? <small>{issue.details.join("；")}</small> : null}
-    </div>
-  );
 }
 
 function SpatialMapMount({ compiled, context }: { compiled: SpatialCompiled; context: RendererLifecycleContext }) {
@@ -920,8 +903,24 @@ function SpatialMapMount({ compiled, context }: { compiled: SpatialCompiled; con
     setStatusText(visible ? "图层已显示" : "图层已隐藏");
   }, []);
 
+  useEffect(() => {
+    if (!imageError) return;
+    context.postMessage({
+      type: "weibei:error",
+      programID: compiled.programID,
+      message: imageError,
+      fatal: false,
+    });
+  }, [compiled.programID, context, imageError]);
+
   const isNarrow = viewport.width > 0 && viewport.width < 560;
   const canvasHeight = Math.min(surfaceHeight, Math.max(isNarrow ? 240 : 280, viewport.width * (isNarrow ? 0.72 : 0.58)));
+  if (imageError) {
+    return createNarrativeFallbackNode(
+      compiled.plan,
+      createRendererIssue("compile_error", SPATIAL_MAP_RENDERER, imageError),
+    );
+  }
 
   return (
     <figure className="weibei-spatial-map" data-weibei-renderer={SPATIAL_MAP_RENDERER} style={{ margin: 0, width: "100%", minWidth: 0, color: "inherit", fontFamily: "inherit" }}>
@@ -942,12 +941,6 @@ function SpatialMapMount({ compiled, context }: { compiled: SpatialCompiled; con
           alt={spec.mapAsset.label ?? "空间底图"}
           style={{ display: "none" }}
         />
-      ) : null}
-
-      {imageError ? (
-        <div style={{ marginBottom: 8, fontSize: 12, color: "#8b4a4a", background: "rgba(255, 239, 239, 0.8)", padding: 8, borderRadius: 6 }}>
-          {imageError}
-        </div>
       ) : null}
 
       <section
@@ -1073,8 +1066,17 @@ export const spatialMapRenderer: RichAnswerRenderer = {
     interactions: ["pan", "zoom", "toggle-layer", "probe", "double-tap-reset"],
     resources: ["canvas-2d", "local-assets", "self-check-spec"],
     maxNodes: 280,
-    maxDataPoints: 3000,
-    fallback: ["structured_error", "static_snapshot"],
+    maxDataPoints: 8_000,
+    maxArtifacts: 2,
+    maxBytes: 1_500_000,
+    maxWidth: 960,
+    maxHeight: 720,
+    maxAnimationFPS: 30,
+    maxInteractionLatencyMS: 140,
+    allowAnimation: true,
+    allowWebGL: false,
+    allowNetwork: false,
+    fallback: ["narrativeOnly"],
   },
   validate(plan: RenderPlan) {
     const viewportCheck = runSpatialMapViewportSelfCheck();
@@ -1140,7 +1142,7 @@ export const spatialMapRenderer: RichAnswerRenderer = {
   dispose(_compiled, _context) {
     return undefined;
   },
-  fallback(issue) {
-    return <SpatialMapFallback issue={issue} />;
+  fallback(plan, issue) {
+    return createNarrativeFallbackNode(plan, issue);
   },
 };

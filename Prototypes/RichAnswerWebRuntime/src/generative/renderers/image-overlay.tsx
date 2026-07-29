@@ -9,11 +9,13 @@ import {
   type WheelEvent,
 } from "react";
 import type { ReactNode } from "react";
-import type {
-  CompiledRenderPlan,
-  RenderPlan,
-  RendererLifecycleContext,
-  RichAnswerRenderer,
+import {
+  createNarrativeFallbackNode,
+  createRendererIssue,
+  type CompiledRenderPlan,
+  type RenderPlan,
+  type RendererLifecycleContext,
+  type RichAnswerRenderer,
 } from "../renderer-registry";
 import {
   computeResponsiveImageOverlayViewport,
@@ -898,6 +900,21 @@ function ImageOverlayMount({
   );
 
   const compareRatioPercent = Math.round(clamp(compareValue, 0.08, 0.92) * 100);
+  useEffect(() => {
+    if (!imageError) return;
+    context.postMessage({
+      type: "weibei:error",
+      programID: compiled.programID,
+      message: imageError,
+      fatal: false,
+    });
+  }, [compiled.programID, context, imageError]);
+  if (imageError) {
+    return createNarrativeFallbackNode(
+      compiled.plan,
+      createRendererIssue("compile_error", IMAGE_OVERLAY_RENDERER, imageError),
+    );
+  }
 
   return (
     <figure
@@ -950,25 +967,6 @@ function ImageOverlayMount({
           userSelect: "none",
         }}
       >
-        {imageError ? (
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: "12px",
-              color: "#8a2f2f",
-              fontSize: "13px",
-              background: "rgba(255, 245, 245, 0.92)",
-              zIndex: 10,
-            }}
-          >
-            {imageError}
-          </div>
-        ) : null}
-
         <div
           style={{
             position: "absolute",
@@ -1283,30 +1281,6 @@ function ImageOverlayMount({
   );
 }
 
-function ImageOverlayFallback({
-  issue,
-}: {
-  issue: { code: string; renderer: string; message: string; details?: string[] };
-}) {
-  return (
-    <div
-      className="generation-error"
-      role="alert"
-      data-weibei-renderer-issue={issue.code}
-      style={{
-        padding: "12px",
-        border: "1px dashed rgba(139, 20, 20, 0.35)",
-        borderRadius: "8px",
-        background: "rgba(255, 245, 245, 0.95)",
-      }}
-    >
-      <strong>{issue.code === "capability_mismatch" ? "渲染器能力不匹配" : "图像覆盖渲染未通过"}</strong>
-      <p style={{ margin: "6px 0 0" }}>{issue.message}</p>
-      {issue.details?.length ? <small>{issue.details.join("；")}</small> : null}
-    </div>
-  );
-}
-
 export const imageOverlayRenderer: RichAnswerRenderer = {
   id: IMAGE_OVERLAY_RENDERER,
   version: "0.1.0",
@@ -1326,8 +1300,17 @@ export const imageOverlayRenderer: RichAnswerRenderer = {
     interactions: ["pan", "zoom", "toggle-layer", "toggle-annotation", "switch-comparison", "reset-view"],
     resources: ["react-svg"],
     maxNodes: 180,
-    maxDataPoints: 1200,
-    fallback: ["structured_error", "simplified_component"],
+    maxDataPoints: 1_200,
+    maxArtifacts: 2,
+    maxBytes: 1_500_000,
+    maxWidth: 960,
+    maxHeight: 720,
+    maxAnimationFPS: 30,
+    maxInteractionLatencyMS: 140,
+    allowAnimation: true,
+    allowWebGL: false,
+    allowNetwork: false,
+    fallback: ["narrativeOnly"],
   },
   validate(plan) {
     const selfCheck = runImageOverlaySelfChecks();
@@ -1369,7 +1352,7 @@ export const imageOverlayRenderer: RichAnswerRenderer = {
   dispose() {
     return undefined;
   },
-  fallback(issue) {
-    return <ImageOverlayFallback issue={issue} />;
+  fallback(plan, issue) {
+    return createNarrativeFallbackNode(plan, issue);
   },
 };

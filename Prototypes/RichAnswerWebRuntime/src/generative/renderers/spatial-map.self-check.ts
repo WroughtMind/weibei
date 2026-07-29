@@ -18,6 +18,7 @@ const mapAssetSchema = z.object({
   label: z.string().min(1).max(80).optional(),
   width: z.number().int().min(16).max(12_000).optional(),
   height: z.number().int().min(16).max(12_000).optional(),
+  _weibeiHostInjected: z.literal(true).optional(),
 }).strict();
 
 const styleSchema = z.object({

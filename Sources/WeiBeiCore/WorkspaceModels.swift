@@ -1266,7 +1266,9 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         self.text = text
         self.source = source
         self.backend = backend
-        self.richAnswer = richAnswer
+        self.richAnswer = richAnswer.map {
+            RichAnswerEngine.admit(presentation: $0)
+        }
         self.toolTrace = toolTrace
         self.createdAt = createdAt
     }
@@ -1289,7 +1291,13 @@ public struct AgentMessage: Identifiable, Codable, Hashable, Sendable {
         text = try container.decode(String.self, forKey: .text)
         source = try container.decodeIfPresent(String.self, forKey: .source)
         backend = try container.decodeIfPresent(StudyAgentBackend.self, forKey: .backend)
-        richAnswer = try? container.decodeIfPresent(RichAnswerPresentation.self, forKey: .richAnswer)
+        let decodedRichAnswer = try? container.decodeIfPresent(
+            RichAnswerPresentation.self,
+            forKey: .richAnswer
+        )
+        richAnswer = decodedRichAnswer.map {
+            RichAnswerEngine.admit(presentation: $0)
+        }
         toolTrace = try container.decodeIfPresent([String].self, forKey: .toolTrace) ?? []
         createdAt = try container.decode(Date.self, forKey: .createdAt)
     }

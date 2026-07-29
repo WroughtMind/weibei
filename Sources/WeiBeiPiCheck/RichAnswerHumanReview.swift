@@ -1,4 +1,5 @@
 import Foundation
+import WeiBeiCore
 
 enum RichAnswerHumanReviewVerdict: String, Codable, CaseIterable, Equatable, Hashable, Sendable {
     case pass
@@ -1017,7 +1018,9 @@ enum RichAnswerHumanReviewSelfCheck {
             reviewer: "self-check",
             reviewedAt: "2026-07-18T00:00:00Z",
             evidenceRecordPath: "records/rep-\(repetition)/\(caseID)/record.json",
-            rendererUsed: caseKind == "rich" ? "openui-dom" : nil,
+            rendererUsed: caseKind == "rich"
+                ? RichAnswerRendererRegistry.openUIProgramRenderer
+                : nil,
             screenshotReferences: fixtureScreenshots(caseID: caseID, caseKind: caseKind, repetition: repetition),
             findings: policy.requiredDimensions.map { dimension in
                 RichAnswerHumanReviewFinding(

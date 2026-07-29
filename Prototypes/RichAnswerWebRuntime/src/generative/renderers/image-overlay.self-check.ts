@@ -139,6 +139,7 @@ const imageSourceSchema = z.object({
   label: z.string().min(1).max(80).optional(),
   width: z.number().int().min(16).max(12000).optional(),
   height: z.number().int().min(16).max(12000).optional(),
+  _weibeiHostInjected: z.literal(true).optional(),
 }).strict();
 
 const comparisonSchema = z.object({

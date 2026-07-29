@@ -3,6 +3,7 @@ import * as echarts from "echarts";
 import type { ECharts, EChartsOption } from "echarts";
 import { z } from "zod/v4";
 import {
+  createNarrativeFallbackNode,
   createRendererIssue,
   type CompiledRenderPlan,
   type RenderPlan,
@@ -530,16 +531,6 @@ function FunctionMount({
   );
 }
 
-function FunctionFallback({ issue }: { issue: ReturnType<typeof createRendererIssue> }) {
-  return (
-    <div className="generation-error" role="alert" data-weibei-renderer-issue={issue.code}>
-      <strong>函数图未渲染</strong>
-      <span>{issue.message}</span>
-      {issue.details?.length ? <small>{issue.details.join("；")}</small> : null}
-    </div>
-  );
-}
-
 export const mathFunctionRenderer: RichAnswerRenderer = {
   id: FUNCTION_RENDERER,
   version: "0.1.0",
@@ -551,9 +542,18 @@ export const mathFunctionRenderer: RichAnswerRenderer = {
     data: ["restricted-expression-graph", "adaptive-sampling", "discontinuity-segmentation"],
     interactions: ["parameter-adjust", "curve-probe", "responsive-resize"],
     resources: ["local-echarts-canvas"],
-    maxNodes: maxExpressionNodes,
-    maxDataPoints: maxGeneratedPoints,
-    fallback: ["structured_error", "simplified_component"],
+    maxNodes: 64,
+    maxDataPoints: 1_600,
+    maxArtifacts: 0,
+    maxBytes: 256_000,
+    maxWidth: 960,
+    maxHeight: 640,
+    maxAnimationFPS: 30,
+    maxInteractionLatencyMS: 120,
+    allowAnimation: true,
+    allowWebGL: false,
+    allowNetwork: false,
+    fallback: ["narrativeOnly"],
   },
   validate(plan) {
     const parsed = parseFunctionSpec(plan);
@@ -584,7 +584,7 @@ export const mathFunctionRenderer: RichAnswerRenderer = {
   dispose() {
     return undefined;
   },
-  fallback(issue) {
-    return <FunctionFallback issue={issue} />;
+  fallback(plan, issue) {
+    return createNarrativeFallbackNode(plan, issue);
   },
 };

@@ -8,7 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import {
-  createRendererIssue,
+  createNarrativeFallbackNode,
   type CompiledRenderPlan,
   type RendererLifecycleContext,
   type RichAnswerRenderer,
@@ -1004,26 +1004,6 @@ function readoutText(readout: GeometryReadout, scene: SceneState, controlValues:
   return `${readout.label}：${formatNumber((angle * 180) / Math.PI)}°`;
 }
 
-function GeometryFallback({ issue }: { issue: ReturnType<typeof createRendererIssue> }) {
-  return (
-    <div
-      className="generation-error"
-      role="alert"
-      data-weibei-renderer-issue={issue.code}
-      style={{
-        padding: "12px",
-        border: "1px dashed rgba(139, 20, 20, 0.35)",
-        borderRadius: "8px",
-        background: "rgba(255, 245, 245, 0.92)",
-      }}
-    >
-      <strong>{issue.code === "unsafe_payload" ? "二维几何规格不安全" : "二维几何未渲染"}</strong>
-      <p style={{ margin: "6px 0 0" }}>{issue.message}</p>
-      {issue.details?.length ? <small>{issue.details.join("；")}</small> : null}
-    </div>
-  );
-}
-
 function Geometry2DMount({ compiled, context }: { compiled: GeometryCompiled; context: RendererLifecycleContext }) {
   const { spec } = compiled;
   const surfaceMetrics = useMemo(
@@ -1576,7 +1556,16 @@ export const geometry2DRenderer: RichAnswerRenderer = {
     resources: ["local-svg-primitives", "no-network", "no-webgl"],
     maxNodes: 260,
     maxDataPoints: 1_200,
-    fallback: ["structured_error", "simplified_component"],
+    maxArtifacts: 0,
+    maxBytes: 256_000,
+    maxWidth: 960,
+    maxHeight: 720,
+    maxAnimationFPS: 30,
+    maxInteractionLatencyMS: 120,
+    allowAnimation: true,
+    allowWebGL: false,
+    allowNetwork: false,
+    fallback: ["narrativeOnly"],
   },
   validate(plan) {
     const parsed = parseGeometry2DSpec(plan);
@@ -1606,7 +1595,7 @@ export const geometry2DRenderer: RichAnswerRenderer = {
   dispose() {
     return undefined;
   },
-  fallback(issue) {
-    return <GeometryFallback issue={issue} />;
+  fallback(plan, issue) {
+    return createNarrativeFallbackNode(plan, issue);
   },
 };

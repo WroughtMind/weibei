@@ -587,6 +587,39 @@ public struct RichAnswerRenderPlan: Codable, Hashable, Sendable {
             qualityBudget: qualityBudget
         )
     }
+
+    public var referencedAssetIDs: Set<String> {
+        Set(spec.fields.values.flatMap(\.referencedAssetIDs))
+    }
+
+    public var referencedAssetBytes: [Int] {
+        artifactRefs.compactMap { artifact in
+            guard referencedAssetIDs.contains(artifact.id) else { return nil }
+            return artifact.sizeBytes
+        }
+    }
+}
+
+private extension RichAnswerRenderSpecValue {
+    var referencedAssetIDs: [String] {
+        switch self {
+        case .null, .bool, .number, .string:
+            return []
+        case let .array(values):
+            return values.flatMap(\.referencedAssetIDs)
+        case let .object(fields):
+            var ids = fields.values.flatMap(\.referencedAssetIDs)
+            if case let .string(kind)? = fields["kind"],
+               kind == "assetRef",
+               case let .string(source)? = fields["source"] {
+                let normalized = source.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !normalized.isEmpty {
+                    ids.append(normalized)
+                }
+            }
+            return ids
+        }
+    }
 }
 
 public struct RichAnswerRendererCapabilityRequest: Codable, Hashable, Sendable {
