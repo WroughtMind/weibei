@@ -93,10 +93,11 @@ For long or scanned PDFs, WeiBei extracts text in a resource-bounded helper proc
 ```bash
 git clone https://github.com/weibei-app/weibei.git
 cd weibei
-swift run WeiBeiDevTool run
+make run
 ```
 
-On a fresh clone, the development tool installs the locked Node.js dependencies,
+On a fresh clone, the Make target delegates to the Swift development tool,
+which installs the locked Node.js dependencies,
 generates the web resources, prepares the pinned Pi runtime, and then builds and
 opens the application. The tool deliberately locates the repository only from
 the current working directory, so run it at the repository root. All generated
@@ -121,11 +122,25 @@ No private course data is included. Use a small folder containing a PDF, HTML pa
 ## Checks
 
 ```bash
-swift run WeiBeiDevTool check
-swift run WeiBeiDevTool verify
+make check
+make verify
 ```
 
-Individual checks are also available:
+The root `Makefile` is a thin orchestration layer: it provides stable developer
+entry points and delegates implementation to `WeiBeiDevTool` and npm instead of
+containing build, verification, or packaging logic. The complete entry points
+are:
+
+```bash
+make run
+make check
+make verify
+make package
+make prepare
+make clean-generated
+```
+
+Granular preparation commands remain available when diagnosing one subsystem:
 
 ```bash
 swift run WeiBeiDevTool prepare web-editor
@@ -134,7 +149,7 @@ swift run WeiBeiDevTool prepare pi-runtime
 swift run WeiBeiDevTool prepare all
 ```
 
-All handwritten browser and Node tooling sources use TypeScript. The stable npm
+All handwritten browser and Node tooling sources use TypeScript. Granular npm
 commands are:
 
 ```bash
@@ -152,16 +167,18 @@ npm run clean:generated
 The repository uses TypeScript for strict cross-project checking, `tsx` to run
 Node-oriented `.ts` tools without maintaining a custom loader, Vitest for unit
 and protocol self-checks, esbuild for the editor, website, and OAuth outputs,
-Vite for the React Rich Answer runtime, ESLint for static rules, and Prettier
-for deterministic formatting. These maintained libraries replace custom
-transpilation, test, lint, and formatting implementations. Install the exact
+Vite for the React Rich Answer runtime, and ESLint for defect-focused static
+rules. These maintained libraries replace custom transpilation, test, and lint
+implementations. Install the exact
 locked toolchain with `npm ci`; the primary APIs are exposed through the npm
 commands above, and Pi development types are pinned to the same `0.80.2`
-version as `Vendor/PiRuntime/manifest.json`.
+version as `Vendor/PiRuntime/manifest.json`. Prefer the Make targets for normal
+repository work; use these npm and Swift CLI commands for focused development
+and diagnosis.
 
-The four existing startup and preparation shell scripts are transitional,
-no-fallback forwarders to `WeiBeiDevTool`; new automation should call the Swift
-CLI directly.
+Release packaging, metadata validation, and rich-answer evidence collection
+retain their dedicated shell scripts. They are release or evidence workflows,
+not development launch or preparation entry points.
 
 Live-provider checks require valid local credentials and are not silently replaced with mock answers.
 

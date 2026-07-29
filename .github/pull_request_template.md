@@ -14,7 +14,7 @@
 
 ## 分支与共享文件
 
-- [ ] 本分支从当时最新的 `origin/codex/course-workspace` 创建
+- [ ] 本分支从当时最新的 `origin/develop` 创建
 - [ ] 开工当天已推送并建立草稿合并请求
 - [ ] 未整体合入、变基或批量挑取旧功能分支 / 救援分支
 - 共享核心文件占用：无 / 请列出文件、对应任务和释放条件
@@ -23,11 +23,11 @@
 
 <!-- 写真实命令和结果；不要只写“已测试”。不适用的项目说明原因。 -->
 
-- [ ] `swift build`
-- [ ] `swift run WeiBeiSelfCheck`
-- [ ] `swift run WeiBeiWebEditorCheck`
+- [ ] `npm ci`
+- [ ] `make check`
+- [ ] `make verify`
 - [ ] 界面改动已完成真实窗口验收
-- [ ] 发布链路改动已运行 `./script/build_and_run.sh package`
+- [ ] 发布链路改动已运行 `make package`
 - [ ] 发布链路改动已运行 `./script/verify_release_metadata.sh --require-clean`
 
 ## 交给整合任务

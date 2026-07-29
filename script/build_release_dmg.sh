@@ -119,8 +119,10 @@ if [[ ! -s "$BACKGROUND" || ! -s "$BACKGROUND_2X" ]]; then
   swift "$ROOT_DIR/script/dmg/render_background.swift" "$ROOT_DIR/DesignSystem" "$BACKGROUND_2X" 2
 fi
 
-"$ROOT_DIR/script/build_and_run.sh" check
-"$ROOT_DIR/script/build_and_run.sh" package
+(
+  make -C "$ROOT_DIR" check
+  make -C "$ROOT_DIR" package
+)
 "$ROOT_DIR/script/verify_release_metadata.sh" --require-clean "$BASE_APP"
 
 mkdir -p "$RELEASE_DIR"

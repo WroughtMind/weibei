@@ -268,10 +268,10 @@ source_input_fingerprint() {
       for path in \
         "$ROOT_DIR/Package.swift" \
         "$ROOT_DIR/Package.resolved" \
+        "$ROOT_DIR/package-lock.json" \
         "$ROOT_DIR/Prototypes/RichAnswerWebRuntime/package.json" \
-        "$ROOT_DIR/Prototypes/RichAnswerWebRuntime/package-lock.json" \
         "$ROOT_DIR/Prototypes/RichAnswerWebRuntime/tsconfig.json" \
-        "$ROOT_DIR/script/prepare_pi_runtime.sh" \
+        "$ROOT_DIR/Vendor/PiRuntime/manifest.json" \
         "$ROOT_DIR/script/rich-answer-evidence-smoke.sh" \
         "$ROOT_DIR/script/rich-answer-visual-gate.swift"; do
         [[ -f "$path" ]] && printf '%s\n' "$path"
@@ -1053,7 +1053,10 @@ build_app_bundle() {
     local build_binary="$build_dir/$PRODUCT_NAME"
     local pdf_text_worker="$build_dir/WeiBeiPDFTextWorker"
     local pi_runtime_dir
-    pi_runtime_dir="$("$ROOT_DIR/script/prepare_pi_runtime.sh")"
+    pi_runtime_dir="$(
+      cd "$ROOT_DIR"
+      swift run WeiBeiDevTool prepare pi-runtime --format path
+    )"
 
     rm -rf "$APP_BUNDLE"
     mkdir -p "$APP_MACOS" "$APP_RESOURCES" "$APP_HELPERS"

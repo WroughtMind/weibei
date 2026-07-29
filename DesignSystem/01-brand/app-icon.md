@@ -4,7 +4,9 @@
 
 原始 Logo 图是 1254 × 1254 的 RGB 图片，米纸已经烘焙进去。它不是 macOS 标准母版，没有透明外框，也没有 16、32 和 64 px 的光学适配。直接缩小后，拓印纹理会变成噪点，朱砂方块在 16 px 里接近消失。
 
-仓库采用 SwiftPM 和手工 `.app` 打包。当前 `script/build_and_run.sh` 只复制资源 bundle 和运行时，没有复制图标，也没有在 Info.plist 写 `CFBundleIconFile`。因此把 PNG 放进 Resources 并不会自动成为 App 图标。
+仓库采用 SwiftPM，并由 Swift CLI 生成 `.app`。应用图标必须由打包核心复制
+到 `Contents/Resources`，同时在 Info.plist 写入 `CFBundleIconFile`；仅把
+PNG 放进 Sources 的 Resources 不会自动成为 App 图标。
 
 ## 已交付
 

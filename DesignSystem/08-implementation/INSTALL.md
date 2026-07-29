@@ -1,16 +1,18 @@
 # 接入仓库
 
-## 当前 SwiftPM 手工打包方式
+## 当前 SwiftPM 打包方式
 
-仓库没有 Xcode project，也没有已接入的 Asset Catalog。`script/build_and_run.sh` 自己创建 `魏碑.app`、Info.plist 和签名，因此最稳妥的第一步是使用 `AppIcon.icns`。
+仓库没有 Xcode project，也没有已接入的 Asset Catalog。Swift CLI 的打包
+核心负责创建 `魏碑.app`、Info.plist 和签名，因此当前使用 `AppIcon.icns`。
+根目录 Makefile 只是稳定的编排入口，不复制资产或实现打包逻辑。
 
 1. 把整个 `DesignSystem/` 放在仓库根目录。
-2. 应用 `build_and_run.icon.patch`，或手工完成同样三件事：检查 ICNS、复制到 `Contents/Resources`、写入 `CFBundleIconFile`。
+2. 在 Swift 打包核心中完成三件事：检查 ICNS、复制到 `Contents/Resources`、写入 `CFBundleIconFile`。
 3. 在 `script/verify_release_metadata.sh` 增加图标文件与 plist 引用校验。
 4. 运行：
 
 ```bash
-./script/build_and_run.sh package
+make package
 /usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' 'dist/魏碑.app/Contents/Info.plist'
 ls -lh 'dist/魏碑.app/Contents/Resources/AppIcon.icns'
 ```

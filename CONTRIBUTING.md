@@ -10,8 +10,8 @@ Thank you for helping improve WeiBei.
 3. Run the relevant checks:
 
    ```bash
-   swift run WeiBeiDevTool check
-   swift run WeiBeiDevTool verify
+   make check
+   make verify
    ```
 
 4. Describe what changed, what was intentionally left out, and which checks

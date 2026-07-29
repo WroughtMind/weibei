@@ -3,10 +3,11 @@ name: 魏碑合并请求检查
 on:
   pull_request:
     branches:
-      - codex/course-workspace
+      - develop
       - main
   push:
     branches:
+      - develop
       - main
   workflow_dispatch:
 
@@ -40,20 +41,16 @@ jobs:
           node-version: 22.22.3
           cache: npm
 
-      - name: 编译
-        run: ./script/swift_with_web_editor.sh build
+      - name: 记录 Node.js 工具链
+        run: |
+          node --version
+          npm --version
 
-      - name: 运行应用自检
-        run: ./script/swift_with_web_editor.sh run WeiBeiSelfCheck
-
-      - name: 运行 Pi 终止语义自检
-        run: WEIBEI_PI_TERMINAL_SELF_CHECK_ONLY=1 ./script/swift_with_web_editor.sh run WeiBeiSelfCheck
-
-      - name: 运行编辑器自检
-        run: ./script/swift_with_web_editor.sh run WeiBeiWebEditorCheck
+      - name: 运行项目检查
+        run: make check
 
       - name: 生成可追溯安装包
-        run: ./script/build_and_run.sh package
+        run: make package
 
       - name: 校验版本、构建号与提交来源
         run: ./script/verify_release_metadata.sh --require-clean

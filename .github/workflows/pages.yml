@@ -36,7 +36,9 @@ jobs:
         run: npm ci
 
       - name: Build website
-        run: npm run build:website
+        run: |
+          npm run build:website
+          test -s website/main.js
 
       - name: Configure Pages
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
@@ -49,6 +51,7 @@ jobs:
           rm -rf _site/qa
           touch _site/.nojekyll
           test -s _site/index.html
+          test -s _site/main.js
           test -s _site/assets/fonts/WeiBeiStele.ttf
           test -s _site/assets/fonts/WeiBeiSteleMono.ttf
           test -s _site/assets/screens/workspace.png

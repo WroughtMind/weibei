@@ -33,9 +33,9 @@ Not done here (explicitly deferred): final LICENSE, privacy/NOTICE legal copy, D
 
 ### Automatic
 
-- `./script/build_and_run.sh check` → **passed** (`Docs/release-evidence/final-check.log`)
+- `make check` → current equivalent entry; archived check **passed** (`Docs/release-evidence/final-check.log`)
   - WeiBeiSelfCheck, imported identity, web editor, pi-live-check
-- `./script/build_and_run.sh package` → **passed** (`Docs/release-evidence/final-package.log`)
+- `make package` → current equivalent entry; archived package **passed** (`Docs/release-evidence/final-package.log`)
   - App: `dist/魏碑.app`
   - `release_metadata_version=0.1.0` (not bumped; deferred)
   - `release_metadata_source_dirty=true` (expected with uncommitted evidence packing)

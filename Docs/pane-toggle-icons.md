@@ -164,5 +164,5 @@ case .documentAgentNotes, .documentNotesAgent:
 
 - `swift build` 通过
 - `swift run WeiBeiSelfCheck` 通过
-- `script/build_and_run.sh --verify` 通过(含 offline-learning-flow 场景)
+- `make verify` 通过(含 offline-learning-flow 场景)
 - 手动测:3 图标开关、2/3 pane 拖拽、全关空白页、沉浸态行为

@@ -19,7 +19,8 @@
 | 内容轨道 | `ContentRailView` |
 | 设计回归断言 | `Sources/WeiBeiSelfCheck/*SelfChecks.swift` |
 | 历史视觉参考 | `DesignReferences/` |
-| 手工应用打包 | `script/build_and_run.sh` |
+| 开发任务编排 | `Makefile` |
+| 应用构建与打包 | `Sources/WeiBeiDevCore/`、`Sources/WeiBeiDevTool/` |
 | 发布元数据验证 | `script/verify_release_metadata.sh` |
 
 ## 文档与代码同步

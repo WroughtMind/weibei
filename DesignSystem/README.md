@@ -70,4 +70,6 @@ DesignSystem/scripts/verify-assets.sh
 
 ## 当前接入状态
 
-本文件夹是独立交付，没有直接修改 GitHub `main`。仓库的 `script/build_and_run.sh` 仍需按 `08-implementation/build_and_run.icon.patch` 接入 `AppIcon.icns`。这是有意保留的最后一步，便于你先确认图标，再把资产正式并入发布流程。
+应用打包由 `make package` 统一进入 Swift CLI；`AppIcon.icns` 的复制与
+`CFBundleIconFile` 写入属于 Swift 打包核心。根目录 Makefile 只表达任务
+依赖，不承载图标复制、plist 生成或签名逻辑。

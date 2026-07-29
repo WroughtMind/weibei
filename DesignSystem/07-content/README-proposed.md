@@ -42,10 +42,10 @@
 ```bash
 git clone https://github.com/weibei-app/weibei.git
 cd weibei
-./script/build_and_run.sh
+make run
 ```
 
-第一次构建会下载并校验魏碑使用的固定版本 PI 运行体。普通使用不需要另外安装 PI、Node.js 或 Bun；只有修改 Web 编辑器源码时才需要 Node.js。
+第一次构建会下载并校验魏碑使用的固定版本 PI 运行体。开发环境要求 Node.js 22 与 npm；根目录 Makefile 只负责稳定入口和任务编排，具体实现由 Swift CLI 与 npm 承担。
 
 课程对话需要可用的 PI 提供方认证。OpenAI Key 可以在设置中填写，也可以使用环境变量：
 
@@ -57,9 +57,9 @@ export WEIBEI_OPENAI_MODEL="gpt-5.1"
 ## 开发
 
 ```bash
-./script/build_and_run.sh check
-./script/build_and_run.sh package
-./script/build_and_run.sh --verify
+make check
+make package
+make verify
 ```
 
 几个有用的入口：
