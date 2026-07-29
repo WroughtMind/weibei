@@ -30,10 +30,16 @@ export function createSlashFeature({
   const pendingImagePickers = new Map();
 
   const slashMenuElement = document.createElement('div');
+  slashMenuElement.id = 'weibei-slash-menu';
   slashMenuElement.className = 'weibei-slash-menu';
   slashMenuElement.dataset.show = 'false';
   slashMenuElement.setAttribute('role', 'listbox');
   slashMenuElement.setAttribute('aria-label', 'Slash commands');
+  const slashAnnouncementElement = document.createElement('div');
+  slashAnnouncementElement.className = 'weibei-visually-hidden';
+  slashAnnouncementElement.setAttribute('role', 'status');
+  slashAnnouncementElement.setAttribute('aria-live', 'polite');
+  slashAnnouncementElement.setAttribute('aria-atomic', 'true');
   let slashTablePanelElement = null;
   const slashRuntime = {
     provider: null,
@@ -49,6 +55,7 @@ export function createSlashFeature({
     tableColumns: 3,
     pointerX: null,
     pointerY: null,
+    errorMessage: '',
   };
   /**
    * Replaces the slash paragraph in one ProseMirror transaction and places the caret in the new block.
@@ -85,10 +92,42 @@ export function createSlashFeature({
    */
   const requestSlashImage = (view, context) => {
     const id = `image-picker-${Date.now()}-${pickerRequestID += 1}`;
-    pendingImagePickers.set(id, { view, context });
+    pendingImagePickers.set(id, { view, context, documentID: getDocumentID() });
+    slashRuntime.errorMessage = '';
     slashRuntime.dismissedContext = context.key;
     slashRuntime.provider?.hide();
     post('imagePickerRequested', { id });
+  };
+
+  /**
+   * Synchronizes the focused editor with the highlighted listbox option for VoiceOver.
+   *
+   * @param {import('@milkdown/kit/prose/view').EditorView} view - Current ProseMirror view
+   */
+  const syncActiveOptionAccessibility = (view) => {
+    const activeCommand = slashRuntime.commands[slashRuntime.activeIndex];
+    const activeID = activeCommand ? `weibei-slash-command-${activeCommand.id}` : '';
+    slashMenuElement.setAttribute('aria-activedescendant', activeID);
+    view.dom.setAttribute('aria-controls', slashMenuElement.id);
+    view.dom.setAttribute('aria-expanded', slashMenuElement.dataset.show === 'true' ? 'true' : 'false');
+    if (activeID) {
+      view.dom.setAttribute('aria-activedescendant', activeID);
+      slashAnnouncementElement.textContent = `${editorLabel(activeCommand.label)}, ${slashRuntime.activeIndex + 1} / ${slashRuntime.commands.length}`;
+    } else {
+      view.dom.removeAttribute('aria-activedescendant');
+      slashAnnouncementElement.textContent = editorLabel('slashNoResults');
+    }
+  };
+
+  /**
+   * Clears listbox accessibility state when the Slash menu closes.
+   *
+   * @param {import('@milkdown/kit/prose/view').EditorView} view - Current ProseMirror view
+   */
+  const clearActiveOptionAccessibility = (view) => {
+    view.dom.setAttribute('aria-expanded', 'false');
+    view.dom.removeAttribute('aria-activedescendant');
+    slashAnnouncementElement.textContent = '';
   };
 
   /**
@@ -221,19 +260,22 @@ export function createSlashFeature({
     );
 
     slashMenuElement.replaceChildren();
-    slashMenuElement.setAttribute(
-      'aria-activedescendant',
-      slashRuntime.commands[slashRuntime.activeIndex]
-        ? `weibei-slash-command-${slashRuntime.commands[slashRuntime.activeIndex].id}`
-        : ''
-    );
 
     if (slashRuntime.commands.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'weibei-slash-empty';
       empty.textContent = editorLabel('slashNoResults');
       slashMenuElement.appendChild(empty);
+      syncActiveOptionAccessibility(view);
       return;
+    }
+
+    if (slashRuntime.errorMessage) {
+      const error = document.createElement('div');
+      error.className = 'weibei-slash-error';
+      error.setAttribute('role', 'alert');
+      error.textContent = slashRuntime.errorMessage;
+      slashMenuElement.appendChild(error);
     }
 
     for (const group of slashGroups) {
@@ -253,6 +295,8 @@ export function createSlashFeature({
         row.className = `weibei-slash-command${commandIndex === slashRuntime.activeIndex ? ' is-active' : ''}`;
         row.setAttribute('role', 'option');
         row.setAttribute('aria-selected', commandIndex === slashRuntime.activeIndex ? 'true' : 'false');
+        row.setAttribute('aria-posinset', String(commandIndex + 1));
+        row.setAttribute('aria-setsize', String(slashRuntime.commands.length));
 
         const button = document.createElement('button');
         button.type = 'button';
@@ -312,6 +356,7 @@ export function createSlashFeature({
 
     const active = slashMenuElement.querySelector('.weibei-slash-command.is-active');
     active?.scrollIntoView({ block: 'nearest' });
+    syncActiveOptionAccessibility(view);
   };
 
   /**
@@ -413,6 +458,7 @@ export function createSlashFeature({
         });
         slashRuntime.provider = provider;
         slashRuntime.view = view;
+        document.body.appendChild(slashAnnouncementElement);
         provider.onShow = () => {
           slashRuntime.view = view;
           renderSlashMenu();
@@ -423,8 +469,10 @@ export function createSlashFeature({
           slashRuntime.tableOpen = false;
           slashRuntime.pointerX = null;
           slashRuntime.pointerY = null;
+          slashRuntime.errorMessage = '';
           slashTablePanelElement?.remove();
           slashTablePanelElement = null;
+          clearActiveOptionAccessibility(view);
         };
         const dismissOutside = (event) => {
           if (slashMenuElement.dataset.show !== 'true'
@@ -459,8 +507,12 @@ export function createSlashFeature({
             window.removeEventListener('blur', dismissOnWindowBlur);
             provider.destroy();
             slashMenuElement.remove();
+            slashAnnouncementElement.remove();
             slashTablePanelElement?.remove();
             slashTablePanelElement = null;
+            view.dom.removeAttribute('aria-controls');
+            view.dom.removeAttribute('aria-expanded');
+            view.dom.removeAttribute('aria-activedescendant');
             slashRuntime.provider = null;
             slashRuntime.view = null;
           },
@@ -476,6 +528,7 @@ export function createSlashFeature({
     const pending = pendingImagePickers.get(id);
     if (!pending) return false;
     pendingImagePickers.delete(id);
+    if (pending.documentID !== getDocumentID()) return false;
     const replacement = slashReplacement('image', pending.view.state.schema, { src, alt });
     return applySlashReplacement(pending.view, pending.context, replacement);
   };
@@ -487,12 +540,46 @@ export function createSlashFeature({
     const pending = pendingImagePickers.get(id);
     if (!pending) return false;
     pendingImagePickers.delete(id);
+    if (pending.documentID !== getDocumentID()) return false;
     const paragraph = pending.view.state.schema.nodes.paragraph;
     if (!paragraph) return false;
     return applySlashReplacement(pending.view, pending.context, {
       content: Fragment.from(paragraph.create()),
       selectionOffset: 1,
     });
+  };
+
+  /**
+   * Discards a pending picker without applying its saved transaction.
+   */
+  const discardImagePicker = (id) => pendingImagePickers.delete(id);
+
+  /**
+   * Discards every pending picker when the WebView switches documents.
+   */
+  const discardAllImagePickers = () => {
+    const discarded = pendingImagePickers.size;
+    pendingImagePickers.clear();
+    slashRuntime.errorMessage = '';
+    slashRuntime.dismissedContext = '';
+    slashRuntime.provider?.hide();
+    return discarded;
+  };
+
+  /**
+   * Reports a picker failure while preserving the original /image paragraph.
+   */
+  const rejectImagePicker = (id, message) => {
+    const pending = pendingImagePickers.get(id);
+    if (!pending) return false;
+    pendingImagePickers.delete(id);
+    if (pending.documentID !== getDocumentID()) return false;
+    slashRuntime.view = pending.view;
+    slashRuntime.dismissedContext = '';
+    slashRuntime.errorMessage = String(message || 'Image could not be saved');
+    pending.view.focus();
+    slashRuntime.provider?.show();
+    return true;
   };
 
   /**
@@ -515,6 +602,9 @@ export function createSlashFeature({
         .map((group) => group.textContent || ''),
       icons: slashMenuElement.querySelectorAll('svg, img, [class*="icon"]').length,
       descriptions: slashMenuElement.querySelectorAll('[class*="description"]').length,
+      activeDescendant: slashRuntime.view?.dom.getAttribute('aria-activedescendant') || '',
+      announcement: slashAnnouncementElement.textContent || '',
+      error: slashMenuElement.querySelector('.weibei-slash-error')?.textContent || '',
       tableOpen: Boolean(slashTablePanelElement?.isConnected),
       rows: slashRuntime.tableRows,
       columns: slashRuntime.tableColumns,
@@ -547,6 +637,9 @@ export function createSlashFeature({
     handleKeyDown: handleSlashMenuKeyDown,
     resolveImagePicker,
     cancelImagePicker,
+    discardImagePicker,
+    discardAllImagePickers,
+    rejectImagePicker,
     checkAPI,
     refresh: renderSlashMenu,
     isVisible: () => slashMenuElement.dataset.show === 'true',

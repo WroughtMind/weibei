@@ -1046,6 +1046,7 @@ default:
 SWIFT
 
 build_app_bundle() {
+  "$ROOT_DIR/script/prepare_web_editor.sh"
   BUILD_SOURCE_FINGERPRINT="$(source_input_fingerprint)"
 
   package_app_from_build_dir() {

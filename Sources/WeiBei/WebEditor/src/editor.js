@@ -56,6 +56,12 @@ const showFailure = (error) => {
 const setEditable = (next) => {
   isEditable = next !== false;
   document.body.dataset.editable = isEditable ? 'true' : 'false';
+  document.querySelectorAll('.weibei-code-language-input').forEach((input) => {
+    if (!(input instanceof HTMLInputElement)) return;
+    input.readOnly = !isEditable;
+    input.tabIndex = isEditable ? 0 : -1;
+    input.setAttribute('aria-readonly', input.readOnly ? 'true' : 'false');
+  });
 };
 
 applyTheme(window.weiBeiTheme);

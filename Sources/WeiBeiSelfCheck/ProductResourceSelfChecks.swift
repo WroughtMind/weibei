@@ -220,6 +220,35 @@ enum ProductResourceSelfChecks {
             && runScript.contains("swift run -c \"$BUILD_CONFIGURATION\" WeiBei --self-check-imported-identity")
             && runScript.contains("swift run -c \"$BUILD_CONFIGURATION\" WeiBeiWebEditorCheck")
             && runScript.contains("swift run -c \"$BUILD_CONFIGURATION\" WeiBeiPiCheck"), "user-facing app builds are optimized while check and debugger modes remain debuggable")
+        let prepareWebEditorScript = SelfCheckSupport.source(
+            "script/prepare_web_editor.sh",
+            repositoryURL: repositoryURL
+        )
+        let swiftWrapperScript = SelfCheckSupport.source(
+            "script/swift_with_web_editor.sh",
+            repositoryURL: repositoryURL
+        )
+        let richAnswerSmokeScript = SelfCheckSupport.source(
+            "script/rich-answer-evidence-smoke.sh",
+            repositoryURL: repositoryURL
+        )
+        let pullRequestWorkflow = SelfCheckSupport.source(
+            ".github/workflows/pr-checks.yml",
+            repositoryURL: repositoryURL
+        )
+        let nodeVersion = SelfCheckSupport.source(".nvmrc", repositoryURL: repositoryURL)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        expect(nodeVersion == "22.22.3"
+            && prepareWebEditorScript.contains("ACTUAL_NODE_VERSION")
+            && prepareWebEditorScript.contains("EXPECTED_NODE_VERSION")
+            && prepareWebEditorScript.contains("\"$ROOT_DIR/package.json\" \"$ROOT_DIR/package-lock.json\"")
+            && prepareWebEditorScript.contains("npm --prefix \"$ROOT_DIR\" ls --all")
+            && prepareWebEditorScript.contains("npm --prefix \"$ROOT_DIR\" ci"), "web editor dependency preparation validates the pinned Node version, manifest-lock pair, and installed dependency tree")
+        expect(swiftWrapperScript.contains("\"$ROOT_DIR/script/prepare_web_editor.sh\"")
+            && swiftWrapperScript.contains("exec swift \"$@\"")
+            && richAnswerSmokeScript.contains("build_app_bundle() {\n  \"$ROOT_DIR/script/prepare_web_editor.sh\"")
+            && pullRequestWorkflow.contains("actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0")
+            && !pullRequestWorkflow.contains("actions/setup-node@v4"), "every Swift build entry prepares generated editor resources and CI pins setup-node by commit SHA")
         expect(runScript.contains("'\"activeNotebookItemID\":\"imported:'")
             && runScript.contains("&& ! /usr/bin/grep -q '\"activeNotebookItemID\":\"file:'"), "linked-source verification requires stable notebook identity and rejects a legacy path identity")
         expect(runScript.contains("${PRODUCT_NAME}_WeiBeiCore.bundle")

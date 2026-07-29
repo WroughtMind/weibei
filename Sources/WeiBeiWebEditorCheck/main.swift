@@ -1378,14 +1378,28 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
               || initial.descriptions !== 0
               || !initial.groups.includes('结构')
               || !initial.groups.includes('丰富内容')
-              || initial.commands.some((name) => name.includes('公式'))) {
+              || initial.commands.some((name) => name.includes('公式'))
+              || initial.activeDescendant !== 'weibei-slash-command-heading1'
+              || !initial.announcement.includes('一级标题')) {
             throw new Error('initial slash menu did not match the compact 13-command specification: ' + JSON.stringify(initial));
           }
 
-          prepare();
-          const englishFilter = open('/h2');
-          if (englishFilter.commands.length !== 1 || englishFilter.commands[0] !== '二级标题') {
-            throw new Error('English slash alias did not filter to H2: ' + JSON.stringify(englishFilter));
+          const aliasCases = [
+            ['/h2', '二级标题'],
+            ['/code block', '代码块'],
+            ['/ordered list', '有序列表'],
+            ['/ordered_list', '有序列表'],
+            ['/dmk', '代码块'],
+            ['/yxlb', '有序列表'],
+            ['/代码块', '代码块'],
+            ['/有序列表', '有序列表'],
+          ];
+          for (const [query, expected] of aliasCases) {
+            prepare();
+            const filtered = open(query);
+            if (filtered.commands.length !== 1 || filtered.commands[0] !== expected) {
+              throw new Error('Slash alias did not resolve: ' + query + ' ' + JSON.stringify(filtered));
+            }
           }
 
           prepare();
@@ -1394,6 +1408,12 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           const chineseFilter = window.WeiBeiEditor.slashStateForCheck();
           if (chineseFilter.commands.length !== 3) {
             throw new Error('Chinese slash alias did not retain all headings: ' + JSON.stringify(chineseFilter));
+          }
+          window.WeiBeiEditor.pressKeyForCheck('ArrowDown');
+          const movedAccessibility = window.WeiBeiEditor.slashStateForCheck();
+          if (movedAccessibility.activeDescendant !== 'weibei-slash-command-heading2'
+              || !movedAccessibility.announcement.includes('二级标题')) {
+            throw new Error('Slash active option was not announced after keyboard navigation: ' + JSON.stringify(movedAccessibility));
           }
 
           prepare();
@@ -1500,6 +1520,30 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             throw new Error('image slash command was not a single undoable transaction\\n' + imageUndoMarkdown);
           }
 
+          prepare();
+          open('/image');
+          window.WeiBeiEditor.executeSlashCommandForCheck('image');
+          const rejectedPickerID = window.WeiBeiEditor.pendingImagePickerIDsForCheck()[0];
+          window.WeiBeiEditor.rejectImagePicker(rejectedPickerID, '图片写入失败');
+          const rejectedState = window.WeiBeiEditor.slashStateForCheck();
+          const rejectedMarkdown = window.WeiBeiEditor.getMarkdown();
+          if (!rejectedMarkdown.includes('/image')
+              || rejectedState.error !== '图片写入失败') {
+            throw new Error('image picker failure did not preserve the command and expose its error: ' + JSON.stringify(rejectedState) + '\\n' + rejectedMarkdown);
+          }
+
+          prepare();
+          open('/image');
+          window.WeiBeiEditor.executeSlashCommandForCheck('image');
+          const stalePickerID = window.WeiBeiEditor.pendingImagePickerIDsForCheck()[0];
+          window.WeiBeiEditor.setDocumentID('slash-cross-document-check');
+          window.WeiBeiEditor.setMarkdown('# 新笔记\\n\\n/image');
+          window.WeiBeiEditor.cancelImagePicker(stalePickerID);
+          const crossDocumentMarkdown = window.WeiBeiEditor.getMarkdown();
+          if (!crossDocumentMarkdown.includes('/image')) {
+            throw new Error('stale image picker cancellation mutated the new document\\n' + crossDocumentMarkdown);
+          }
+
           return { ok: true, markdown: window.WeiBeiEditor.getMarkdown() };
         } catch (error) {
           return { ok: false, reason: String(error?.message || error), stack: String(error?.stack || '') };
@@ -1518,8 +1562,8 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
                 return
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                guard self.imagePickerRequests == 1 else {
-                    self.fail("slash image command did not emit exactly one native picker request: \(self.imagePickerRequests)")
+                guard self.imagePickerRequests == 3 else {
+                    self.fail("slash image command did not emit the three requested native picker checks: \(self.imagePickerRequests)")
                     return
                 }
                 self.validateCodeBlockArrowExit()
@@ -1556,6 +1600,34 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           if (!markdown.includes('\\n\\n下键退出正文') || code?.textContent.includes('下键退出正文')) {
             throw new Error('ArrowDown did not exit the final visual code line\\n' + markdown);
           }
+
+          window.WeiBeiEditor.setMarkdown('# 代码块方向键验收\\n');
+          const wrappedCode = '0123456789'.repeat(18);
+          window.WeiBeiEditor.insertMarkdown('\\n\\n```swift\\n' + wrappedCode + '\\n```');
+          code = document.querySelector('.ProseMirror pre');
+          code.style.width = '120px';
+          code.style.whiteSpace = 'pre-wrap';
+          code.style.overflowWrap = 'anywhere';
+          if (!window.WeiBeiEditor.placeCursorAtTextForCheck(wrappedCode, 12)) {
+            throw new Error('could not place caret on a middle visual code line');
+          }
+          const wrappedBefore = window.WeiBeiEditor.getMarkdown();
+          const wrappedParagraphCount = document.querySelectorAll('.ProseMirror > p').length;
+          window.WeiBeiEditor.pressKeyForCheck('ArrowDown');
+          const wrappedAfter = window.WeiBeiEditor.getMarkdown();
+          if (wrappedAfter !== wrappedBefore
+              || document.querySelectorAll('.ProseMirror > p').length !== wrappedParagraphCount) {
+            throw new Error('ArrowDown exited from a middle visual code line\\n' + wrappedAfter);
+          }
+
+          window.WeiBeiEditor.setEditable(false);
+          const readOnlyLanguage = document.querySelector('.weibei-code-language-input');
+          if (!readOnlyLanguage?.readOnly
+              || readOnlyLanguage.getAttribute('aria-readonly') !== 'true'
+              || readOnlyLanguage.tabIndex !== -1) {
+            throw new Error('read-only code language input remained editable or keyboard-focusable');
+          }
+          window.WeiBeiEditor.setEditable(true);
 
           window.WeiBeiEditor.setMarkdown('# 代码块方向键验收\\n');
           window.WeiBeiEditor.insertMarkdown('\\n\\n```mermaid\\ngraph TD; A-->B{{WEIBEI_CURSOR}}\\n```');

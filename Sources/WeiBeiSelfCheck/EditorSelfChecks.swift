@@ -96,6 +96,10 @@ enum EditorSelfChecks {
             .compactMap { try? String(contentsOf: $0, encoding: .utf8) }
             .joined(separator: "\n")
         let editorScriptSource = webEditorSource
+        let richMarkdownEditorSource = SelfCheckSupport.source(
+            "Sources/WeiBei/Views/RichMarkdownEditorView.swift",
+            repositoryURL: repositoryURL
+        )
         let webEditorRelativeSourcePaths = Set(webEditorSourceURLs.map {
             $0.path.replacingOccurrences(of: webEditorSourceDirectoryURL.path + "/", with: "")
         })
@@ -123,6 +127,26 @@ enum EditorSelfChecks {
             && editorScriptSource.contains("}, 850)"), "web editor removes internal scroll indicator state after a short idle delay")
         expect(editorScriptSource.contains("document.addEventListener('pointerdown', () =>")
             && editorScriptSource.contains("post('selectionChanged', { text: '', rect: null });"), "web editor clears stale selection context as soon as the user starts a new click or drag")
+        expect(editorScriptSource.contains("aliases: ['ordered_list'")
+            && editorScriptSource.contains("'code_block', 'code block', 'dmk'")
+            && editorScriptSource.contains("'ordered list'")
+            && editorScriptSource.contains("'ol', 'yxlb'")
+            && editorScriptSource.contains("source.match(/^\\/([^/\\n]*)$/u)")
+            && editorScriptSource.contains("const exact = candidates.filter"), "Slash queries accept real snake-case, multi-word, pinyin, and Chinese aliases with exact matches taking priority")
+        expect(editorScriptSource.contains("slashAnnouncementElement.setAttribute('aria-live', 'polite')")
+            && editorScriptSource.contains("view.dom.setAttribute('aria-activedescendant', activeID)")
+            && editorScriptSource.contains("input.readOnly = !isEditable()")
+            && editorScriptSource.contains("input.setAttribute('aria-readonly'"), "Slash keyboard focus and read-only code language controls expose their actual accessibility state")
+        expect(editorScriptSource.contains("discardAllImagePickers")
+            && editorScriptSource.contains("pending.documentID !== getDocumentID()")
+            && editorScriptSource.contains("rejectImagePicker")
+            && richMarkdownEditorSource.contains("self.documentID == requestedDocumentID else")
+            && richMarkdownEditorSource.contains("discardImagePicker")
+            && richMarkdownEditorSource.contains("DispatchQueue.global(qos: .userInitiated).async")
+            && richMarkdownEditorSource.contains("rejectImagePicker"), "native image selection discards stale document requests, preserves failed commands, and performs file IO away from the main thread")
+        expect(!editorScriptSource.contains("!$from.parent.textContent.slice($from.parentOffset).includes('\\\\n')")
+            && editorScriptSource.contains("const codeCharacterRectAtOffset = (codeDOM, textOffset) =>")
+            && editorScriptSource.contains("finalRect.top < caretRect.bottom + 1"), "code-block ArrowDown requires the caret and final rendered character to share a visual line instead of treating every final logical line as the exit boundary")
         expect(editorScriptSource.contains("import { liftListItem } from '@milkdown/kit/prose/schema-list';")
             && editorScriptSource.contains("const emptyListItemTypeAtSelection = (state) =>")
             && editorScriptSource.contains("const exitEmptyListItem = (view) =>")

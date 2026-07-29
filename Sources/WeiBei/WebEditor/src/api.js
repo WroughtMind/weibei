@@ -130,10 +130,19 @@ export function createEditorAPI({
     insertMarkdown: guarded(insertMarkdownInternal),
     resolveAttachment: images.resolveAttachment,
     rejectAttachment: images.rejectAttachment,
+    discardAttachment: images.discardAttachment,
     resolveImagePicker: slash.resolveImagePicker,
     cancelImagePicker: slash.cancelImagePicker,
+    discardImagePicker: slash.discardImagePicker,
+    rejectImagePicker: slash.rejectImagePicker,
     setEditable,
-    setDocumentID: bridge.setDocumentID,
+    setDocumentID: (next) => {
+      const documentID = next || '';
+      if (documentID === bridge.getDocumentID()) return;
+      images.discardAllAttachments();
+      slash.discardAllImagePickers();
+      bridge.setDocumentID(documentID);
+    },
     setMarkdownBaseURL: images.setMarkdownBaseURL,
     setTheme: (next) => {
       applyTheme(next);
