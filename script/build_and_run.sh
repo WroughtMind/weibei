@@ -836,6 +836,8 @@ run_verifiers() {
     swift run -c "$BUILD_CONFIGURATION" WeiBeiSelfCheck
   WEIBEI_SUPPRESS_ACTIVATION=1 \
     swift run -c "$BUILD_CONFIGURATION" WeiBei --self-check-imported-identity
+  WEIBEI_SUPPRESS_ACTIVATION=1 \
+    swift run -c "$BUILD_CONFIGURATION" WeiBei --self-check-course-project-root
   swift run -c "$BUILD_CONFIGURATION" WeiBeiWebEditorCheck
   WEIBEI_PI_EXECUTABLE="$PI_RUNTIME_BINARY" \
     swift run -c "$BUILD_CONFIGURATION" WeiBeiPiCheck

@@ -201,6 +201,11 @@ final class WorkspaceStore: ObservableObject {
     @Published var selectedItemID: String?
     @Published var activeNotebookItemID: String?
     @Published private(set) var courses: [Course] = []
+    private(set) var courseLibraryRootPath: String?
+    private(set) var courseLibraryRootIdentity: ImportedFileIdentity?
+    private(set) var courseLibraryRootBookmarkData: Data?
+    private(set) var courseLibraryRootURL: URL?
+    private(set) var courseLibraryUnavailableReason: String?
     @Published private(set) var courseItemMemberships: [CourseItemMembership] = [] {
         didSet {
             courseMembershipIndex = CourseItemMemberships(values: courseItemMemberships)
@@ -333,9 +338,15 @@ final class WorkspaceStore: ObservableObject {
     private var notesByItemID: [String: String] = [:]
     private var pendingNoteWritesByItemID: [String: PendingNoteWriteState] = [:]
     private var noteBackingContentDigestsByItemID: [String: String] = [:]
+    private let workspaceDirectory: URL
     private let storageURL: URL
     private let notebookRenameJournalURL: URL
     private let importedFileIdentityResolver: (URL) -> ImportedFileIdentity?
+    private let courseRootBookmarkMaker: (URL) -> Data?
+    private let courseRootBookmarkResolver: (Data) -> CourseProjectResolvedBookmark?
+    private let courseSecurityScopeStarter: (URL) -> Bool
+    private let courseSecurityScopeStopper: (URL) -> Void
+    private let courseProjectMutationHook: (CourseProjectMutationStage) throws -> Void
     private let notebookMarkdownReader: (URL) throws -> String
     private let notebookMarkdownWriter: (String, URL) throws -> Void
     private let notebookFileMover: (URL, URL) throws -> Void
@@ -372,6 +383,9 @@ final class WorkspaceStore: ObservableObject {
     private var noteSourceRelationIndex = NoteSourceRelationIndex(links: [])
     private var courseMembershipIndex = CourseItemMemberships()
     private var courseWorkspaceReturnFocus: PaneFocus?
+    private var activeCourseSecurityScopes: [String: URL] = [:]
+    private var resolvedCourseRootURLs: [UUID: URL] = [:]
+    private var courseRootUnavailableReasons: [UUID: String] = [:]
 
     var showRightPane: Bool {
         get { showNotes || showAgent }
@@ -429,6 +443,22 @@ final class WorkspaceStore: ObservableObject {
         var isStale: Bool
     }
 
+    private struct TransactionDirectoryFingerprint: Equatable {
+        struct Entry: Equatable {
+            enum Kind: Equatable {
+                case directory
+                case regularFile
+            }
+
+            var kind: Kind
+            var identity: ImportedFileIdentity
+            var data: Data?
+        }
+
+        var rootIdentity: ImportedFileIdentity
+        var entriesByRelativePath: [String: Entry]
+    }
+
     private struct PendingNotebookRenameJournal: Codable {
         var oldItem: StudyItem
         var replacementItemID: String
@@ -459,14 +489,25 @@ final class WorkspaceStore: ObservableObject {
     init(
         workspaceDirectory folder: URL,
         importedFileIdentityResolver: @escaping (URL) -> ImportedFileIdentity? = WorkspaceStore.resolveImportedFileIdentity,
+        courseRootBookmarkMaker: @escaping (URL) -> Data? = WorkspaceStore.makeImportedFileBookmark,
+        courseRootBookmarkResolver: @escaping (Data) -> CourseProjectResolvedBookmark? = WorkspaceStore.resolveCourseProjectBookmark,
+        courseSecurityScopeStarter: @escaping (URL) -> Bool = { $0.startAccessingSecurityScopedResource() },
+        courseSecurityScopeStopper: @escaping (URL) -> Void = { $0.stopAccessingSecurityScopedResource() },
+        courseProjectMutationHook: @escaping (CourseProjectMutationStage) throws -> Void = { _ in },
         notebookMarkdownReader: @escaping (URL) throws -> String = WorkspaceStore.readNotebookMarkdown,
         notebookMarkdownWriter: @escaping (String, URL) throws -> Void = WorkspaceStore.writeNotebookMarkdown,
         notebookFileMover: @escaping (URL, URL) throws -> Void = WorkspaceStore.moveNotebookFile,
         workspaceSnapshotWriter: @escaping (Data, URL) throws -> Void = WorkspaceStore.writeWorkspaceSnapshot
     ) {
+        workspaceDirectory = folder.standardizedFileURL
         storageURL = folder.appendingPathComponent("workspace.json")
         notebookRenameJournalURL = folder.appendingPathComponent("pending-notebook-rename.json")
         self.importedFileIdentityResolver = importedFileIdentityResolver
+        self.courseRootBookmarkMaker = courseRootBookmarkMaker
+        self.courseRootBookmarkResolver = courseRootBookmarkResolver
+        self.courseSecurityScopeStarter = courseSecurityScopeStarter
+        self.courseSecurityScopeStopper = courseSecurityScopeStopper
+        self.courseProjectMutationHook = courseProjectMutationHook
         self.notebookMarkdownReader = notebookMarkdownReader
         self.notebookMarkdownWriter = notebookMarkdownWriter
         self.notebookFileMover = notebookFileMover
@@ -479,6 +520,7 @@ final class WorkspaceStore: ObservableObject {
         )
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         load()
+        let restoredCourseProjectRoots = restoreCourseProjectRoots()
         WeiBeiThemeRuntime.mode = appearanceMode
         loadSelectionAskThreadsIfNeeded()
         let recoveredPendingNotebookRename = recoverPendingNotebookRenameIfNeeded()
@@ -504,7 +546,8 @@ final class WorkspaceStore: ObservableObject {
                     || migratedImportedItemIdentities
                     || migratedStudyLocationTitles
                     || sanitizedNoteSourceLinks
-                    || sanitizedCourseLibrary {
+                    || sanitizedCourseLibrary
+                    || restoredCourseProjectRoots {
             savedInitializationChanges = save()
         } else {
             savedInitializationChanges = true
@@ -518,6 +561,12 @@ final class WorkspaceStore: ObservableObject {
         } else {
             restoreCurrentStudyLocation()
             recordCurrentStudyLocation(incrementVisit: false)
+        }
+    }
+
+    deinit {
+        for url in activeCourseSecurityScopes.values {
+            courseSecurityScopeStopper(url)
         }
     }
 
@@ -590,6 +639,1011 @@ final class WorkspaceStore: ObservableObject {
         return course.id
     }
 
+    @discardableResult
+    func createCourse(title rawTitle: String, at rootURL: URL) throws -> UUID {
+        let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { throw CourseProjectRootError.emptyTitle }
+        guard let libraryRoot = courseLibraryRootURL else {
+            throw courseLibraryRootPath == nil
+                ? CourseProjectRootError.missingLibrary
+                : CourseProjectRootError.unavailableLibrary
+        }
+
+        let targetRoot = try CourseProjectPathPolicy.newDirectory(rootURL)
+        try validateCourseProjectRoot(
+            targetRoot,
+            identity: nil,
+            mustBeInsideLibrary: true
+        )
+        guard let relativePath = CourseProjectPathPolicy.relativePath(
+            of: targetRoot,
+            inside: libraryRoot
+        ) else {
+            throw CourseProjectRootError.rootOutsideLibrary
+        }
+
+        let parent = targetRoot.deletingLastPathComponent()
+        guard let parentIdentity = importedFileIdentityResolver(parent) else {
+            throw CourseProjectRootError.rootIdentityUnavailable
+        }
+        let courseID = UUID()
+        let stagingRoot = parent.appendingPathComponent(
+            ".weibei-course-staging-\(courseID.uuidString.lowercased())",
+            isDirectory: true
+        )
+        var placedRoot = false
+        var ownedTreeFingerprint: TransactionDirectoryFingerprint?
+        let previousCourses = courses
+        let previousActiveCourseID = activeCourseID
+
+        do {
+            try FileManager.default.createDirectory(at: stagingRoot, withIntermediateDirectories: false)
+            guard let createdStagingIdentity = importedFileIdentityResolver(stagingRoot) else {
+                throw CourseProjectRootError.rootIdentityUnavailable
+            }
+            guard let createdFingerprint = transactionDirectoryFingerprint(at: stagingRoot) else {
+                throw CourseProjectRootError.rootIdentityUnavailable
+            }
+            ownedTreeFingerprint = createdFingerprint
+            try courseProjectMutationHook(.afterStagingDirectory)
+            for directoryName in ["文稿", "笔记", ".weibei"] {
+                try FileManager.default.createDirectory(
+                    at: stagingRoot.appendingPathComponent(directoryName, isDirectory: true),
+                    withIntermediateDirectories: false
+                )
+            }
+            guard let preparedFingerprint = transactionDirectoryFingerprint(at: stagingRoot) else {
+                throw CourseProjectRootError.rootIdentityUnavailable
+            }
+            ownedTreeFingerprint = preparedFingerprint
+            try courseProjectMutationHook(.beforeManifestWrite)
+            let stagedManifestURL = stagingRoot.appendingPathComponent(".weibei/course.json")
+            try CourseProjectManifest(courseID: courseID)
+                .encoded()
+                .write(to: stagedManifestURL, options: [.atomic])
+            let stagedManifest = try CourseProjectManifest.read(from: stagedManifestURL)
+            guard stagedManifest.courseID == courseID,
+                  stagedManifest.schemaVersion == CourseProjectManifest.currentSchemaVersion else {
+                throw CourseProjectRootError.manifestMismatch
+            }
+            guard let completeFingerprint = transactionDirectoryFingerprint(at: stagingRoot) else {
+                throw CourseProjectRootError.rootIdentityUnavailable
+            }
+            ownedTreeFingerprint = completeFingerprint
+            try courseProjectMutationHook(.beforeAtomicPlacement)
+            guard importedFileIdentityResolver(parent) == parentIdentity,
+                  !FileManager.default.fileExists(atPath: targetRoot.path) else {
+                throw CourseProjectRootError.overlappingRoot
+            }
+            try validateCourseProjectRoot(
+                targetRoot,
+                identity: nil,
+                mustBeInsideLibrary: true
+            )
+            try FileManager.default.moveItem(at: stagingRoot, to: targetRoot)
+            placedRoot = true
+
+            let canonicalRoot = try CourseProjectPathPolicy.existingDirectory(targetRoot)
+            guard let identity = importedFileIdentityResolver(canonicalRoot),
+                  identity == createdStagingIdentity else {
+                throw CourseProjectRootError.rootIdentityUnavailable
+            }
+            try validateCourseProjectRoot(
+                canonicalRoot,
+                identity: identity,
+                mustBeInsideLibrary: true
+            )
+            let course = Course(
+                id: courseID,
+                title: title,
+                colorIndex: nextCourseColorIndex(),
+                sourceRootPath: nil,
+                sourceRootRelativePath: relativePath,
+                sourceRootIdentity: identity,
+                sourceRootBookmarkData: nil
+            )
+            courses.append(course)
+            activeCourseID = course.id
+            resolvedCourseRootURLs[course.id] = canonicalRoot
+            courseRootUnavailableReasons.removeValue(forKey: course.id)
+            guard performSaveNow() else {
+                throw CourseProjectRootError.workspaceSaveFailed
+            }
+            return course.id
+        } catch {
+            courses = previousCourses
+            activeCourseID = previousActiveCourseID
+            resolvedCourseRootURLs.removeValue(forKey: courseID)
+            courseRootUnavailableReasons.removeValue(forKey: courseID)
+            if let ownedTreeFingerprint {
+                safelyRemoveTransactionDirectory(
+                    at: placedRoot ? targetRoot : stagingRoot,
+                    expected: ownedTreeFingerprint
+                )
+            }
+            throw error
+        }
+    }
+
+    func configureCourseLibrary(at rootURL: URL) throws {
+        let canonicalRoot = try CourseProjectPathPolicy.existingDirectory(rootURL)
+        try validateLibraryRoot(canonicalRoot)
+        guard let identity = importedFileIdentityResolver(canonicalRoot) else {
+            throw CourseProjectRootError.rootIdentityUnavailable
+        }
+        if let persistedIdentity = courseLibraryRootIdentity,
+           persistedIdentity != identity {
+            throw CourseProjectRootError.libraryIdentityMismatch
+        }
+        guard let bookmark = courseRootBookmarkMaker(canonicalRoot) else {
+            throw CourseProjectRootError.bookmarkUnavailable
+        }
+        guard let resolution = courseRootBookmarkResolver(bookmark) else {
+            throw CourseProjectRootError.bookmarkResolutionFailed
+        }
+        let scopedURL = resolution.url
+        guard courseSecurityScopeStarter(scopedURL) else {
+            throw CourseProjectRootError.securityScopeDenied
+        }
+        let resolvedRoot: URL
+        do {
+            resolvedRoot = try CourseProjectPathPolicy.existingDirectory(scopedURL)
+            guard importedFileIdentityResolver(resolvedRoot) == identity else {
+                throw CourseProjectRootError.bookmarkResolutionFailed
+            }
+        } catch {
+            courseSecurityScopeStopper(scopedURL)
+            throw error
+        }
+
+        let ownerKey = "library"
+        let previousScope = activeCourseSecurityScopes[ownerKey]
+        let previousPath = courseLibraryRootPath
+        let previousIdentity = courseLibraryRootIdentity
+        let previousBookmark = courseLibraryRootBookmarkData
+        let previousURL = courseLibraryRootURL
+        let previousUnavailableReason = courseLibraryUnavailableReason
+        let previousCourses = courses
+        let previousResolvedCourseRootURLs = resolvedCourseRootURLs
+        let previousCourseRootUnavailableReasons = courseRootUnavailableReasons
+
+        activeCourseSecurityScopes[ownerKey] = scopedURL
+        courseLibraryRootPath = resolvedRoot.path
+        courseLibraryRootIdentity = identity
+        courseLibraryRootBookmarkData = bookmark
+        courseLibraryRootURL = resolvedRoot
+        courseLibraryUnavailableReason = nil
+        _ = restoreCourseReferencesInsideLibrary()
+        guard performSaveNow() else {
+            courseSecurityScopeStopper(scopedURL)
+            if let previousScope {
+                activeCourseSecurityScopes[ownerKey] = previousScope
+            } else {
+                activeCourseSecurityScopes.removeValue(forKey: ownerKey)
+            }
+            courseLibraryRootPath = previousPath
+            courseLibraryRootIdentity = previousIdentity
+            courseLibraryRootBookmarkData = previousBookmark
+            courseLibraryRootURL = previousURL
+            courseLibraryUnavailableReason = previousUnavailableReason
+            courses = previousCourses
+            resolvedCourseRootURLs = previousResolvedCourseRootURLs
+            courseRootUnavailableReasons = previousCourseRootUnavailableReasons
+            throw CourseProjectRootError.workspaceSaveFailed
+        }
+        if let previousScope, previousScope != scopedURL {
+            courseSecurityScopeStopper(previousScope)
+        } else if previousScope == scopedURL {
+            courseSecurityScopeStopper(scopedURL)
+        }
+    }
+
+    @discardableResult
+    func adoptCourseFolder(at rootURL: URL, title rawTitle: String) throws -> UUID {
+        let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { throw CourseProjectRootError.emptyTitle }
+        let canonicalRoot = try CourseProjectPathPolicy.existingDirectory(rootURL)
+        guard let identity = importedFileIdentityResolver(canonicalRoot) else {
+            throw CourseProjectRootError.rootIdentityUnavailable
+        }
+        if let existing = existingCourse(at: canonicalRoot, identity: identity) {
+            return try refreshAdoptedCourse(
+                existing,
+                at: canonicalRoot,
+                identity: identity
+            )
+        }
+        try validateCourseProjectRoot(
+            canonicalRoot,
+            identity: identity,
+            mustBeInsideLibrary: false
+        )
+
+        let libraryRelativePath = courseLibraryRootURL.flatMap {
+            CourseProjectPathPolicy.relativePath(of: canonicalRoot, inside: $0)
+        }
+        var bookmark: Data?
+        var resolvedExternalRoot: URL?
+        var externalScopeURL: URL?
+        if libraryRelativePath == nil {
+            guard let madeBookmark = courseRootBookmarkMaker(canonicalRoot) else {
+                throw CourseProjectRootError.bookmarkUnavailable
+            }
+            guard let resolution = courseRootBookmarkResolver(madeBookmark) else {
+                throw CourseProjectRootError.bookmarkResolutionFailed
+            }
+            let scopedURL = resolution.url
+            guard courseSecurityScopeStarter(scopedURL) else {
+                throw CourseProjectRootError.securityScopeDenied
+            }
+            let resolved: URL
+            do {
+                resolved = try CourseProjectPathPolicy.existingDirectory(scopedURL)
+                guard importedFileIdentityResolver(resolved) == identity else {
+                    throw CourseProjectRootError.bookmarkResolutionFailed
+                }
+            } catch {
+                courseSecurityScopeStopper(scopedURL)
+                throw error
+            }
+            bookmark = madeBookmark
+            resolvedExternalRoot = resolved
+            externalScopeURL = scopedURL
+        }
+
+        let metadataURL = canonicalRoot.appendingPathComponent(".weibei", isDirectory: true)
+        let manifestURL = metadataURL.appendingPathComponent("course.json")
+        var createdMetadata = false
+        var createdMetadataFingerprint: TransactionDirectoryFingerprint?
+        let courseID: UUID
+        if FileManager.default.fileExists(atPath: metadataURL.path) {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: metadataURL.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue,
+                  let manifest = try? CourseProjectManifest.read(from: manifestURL),
+                  manifest.schemaVersion == CourseProjectManifest.currentSchemaVersion else {
+                if let externalScopeURL { courseSecurityScopeStopper(externalScopeURL) }
+                throw CourseProjectRootError.metadataConflict
+            }
+            courseID = manifest.courseID
+            guard !courses.contains(where: { $0.id == courseID }) else {
+                if let externalScopeURL { courseSecurityScopeStopper(externalScopeURL) }
+                throw CourseProjectRootError.manifestMismatch
+            }
+        } else {
+            courseID = UUID()
+            let stagedMetadataURL = canonicalRoot.appendingPathComponent(
+                ".weibei-adopt-staging-\(courseID.uuidString.lowercased())",
+                isDirectory: true
+            )
+            do {
+                try FileManager.default.createDirectory(at: stagedMetadataURL, withIntermediateDirectories: false)
+                guard let emptyFingerprint = transactionDirectoryFingerprint(at: stagedMetadataURL) else {
+                    throw CourseProjectRootError.rootIdentityUnavailable
+                }
+                createdMetadataFingerprint = emptyFingerprint
+                try CourseProjectManifest(courseID: courseID)
+                    .encoded()
+                    .write(
+                        to: stagedMetadataURL.appendingPathComponent("course.json"),
+                        options: [.atomic]
+                    )
+                guard let completeFingerprint = transactionDirectoryFingerprint(at: stagedMetadataURL) else {
+                    throw CourseProjectRootError.rootIdentityUnavailable
+                }
+                createdMetadataFingerprint = completeFingerprint
+                try FileManager.default.moveItem(at: stagedMetadataURL, to: metadataURL)
+                createdMetadata = true
+            } catch {
+                if let createdMetadataFingerprint {
+                    safelyRemoveTransactionDirectory(
+                        at: stagedMetadataURL,
+                        expected: createdMetadataFingerprint
+                    )
+                }
+                if let externalScopeURL { courseSecurityScopeStopper(externalScopeURL) }
+                throw error
+            }
+        }
+
+        let previousCourses = courses
+        let previousActiveCourseID = activeCourseID
+        let course = Course(
+            id: courseID,
+            title: title,
+            colorIndex: nextCourseColorIndex(),
+            sourceRootPath: libraryRelativePath == nil ? canonicalRoot.path : nil,
+            sourceRootRelativePath: libraryRelativePath,
+            sourceRootIdentity: identity,
+            sourceRootBookmarkData: bookmark
+        )
+        courses.append(course)
+        activeCourseID = course.id
+        resolvedCourseRootURLs[course.id] = resolvedExternalRoot ?? canonicalRoot
+        courseRootUnavailableReasons.removeValue(forKey: course.id)
+        if let externalScopeURL {
+            activeCourseSecurityScopes["course:\(course.id.uuidString)"] = externalScopeURL
+        }
+        guard performSaveNow() else {
+            courses = previousCourses
+            activeCourseID = previousActiveCourseID
+            resolvedCourseRootURLs.removeValue(forKey: course.id)
+            courseRootUnavailableReasons.removeValue(forKey: course.id)
+            if let externalScopeURL {
+                activeCourseSecurityScopes.removeValue(forKey: "course:\(course.id.uuidString)")
+                courseSecurityScopeStopper(externalScopeURL)
+            }
+            if createdMetadata,
+               importedFileIdentityResolver(canonicalRoot) == identity,
+               let createdMetadataFingerprint {
+                safelyRemoveTransactionDirectory(
+                    at: metadataURL,
+                    expected: createdMetadataFingerprint
+                )
+            }
+            throw CourseProjectRootError.workspaceSaveFailed
+        }
+        return course.id
+    }
+
+    @discardableResult
+    private func refreshAdoptedCourse(
+        _ existing: Course,
+        at canonicalRoot: URL,
+        identity: ImportedFileIdentity
+    ) throws -> UUID {
+        guard let courseIndex = courses.firstIndex(where: { $0.id == existing.id }) else {
+            throw CourseProjectRootError.rootAlreadyRegistered
+        }
+        if existing.sourceRootRelativePath != nil,
+           courseLibraryRootPath != nil,
+           courseLibraryRootURL == nil {
+            throw CourseProjectRootError.unavailableLibrary
+        }
+
+        let libraryRelativePath = courseLibraryRootURL.flatMap {
+            CourseProjectPathPolicy.relativePath(of: canonicalRoot, inside: $0)
+        }
+        var refreshedBookmark: Data?
+        var resolvedRoot = canonicalRoot
+        var newScopeURL: URL?
+        if libraryRelativePath == nil {
+            guard let bookmark = courseRootBookmarkMaker(canonicalRoot) else {
+                throw CourseProjectRootError.bookmarkUnavailable
+            }
+            guard let resolution = courseRootBookmarkResolver(bookmark) else {
+                throw CourseProjectRootError.bookmarkResolutionFailed
+            }
+            let scopedURL = resolution.url
+            guard courseSecurityScopeStarter(scopedURL) else {
+                throw CourseProjectRootError.securityScopeDenied
+            }
+            do {
+                resolvedRoot = try CourseProjectPathPolicy.existingDirectory(scopedURL)
+                guard importedFileIdentityResolver(resolvedRoot) == identity else {
+                    throw CourseProjectRootError.bookmarkResolutionFailed
+                }
+            } catch {
+                courseSecurityScopeStopper(scopedURL)
+                throw error
+            }
+            refreshedBookmark = bookmark
+            newScopeURL = scopedURL
+        }
+
+        do {
+            try validateRestoredCourseRoot(
+                resolvedRoot,
+                course: existing,
+                mustBeInsideLibrary: libraryRelativePath != nil
+            )
+        } catch {
+            if let newScopeURL { courseSecurityScopeStopper(newScopeURL) }
+            throw error
+        }
+
+        let scopeKey = "course:\(existing.id.uuidString)"
+        let previousCourse = courses[courseIndex]
+        let previousResolvedRoot = resolvedCourseRootURLs[existing.id]
+        let previousUnavailableReason = courseRootUnavailableReasons[existing.id]
+        let previousScope = activeCourseSecurityScopes[scopeKey]
+
+        var refreshedCourse = previousCourse
+        refreshedCourse.sourceRootPath = libraryRelativePath == nil ? resolvedRoot.path : nil
+        refreshedCourse.sourceRootRelativePath = libraryRelativePath
+        refreshedCourse.sourceRootIdentity = identity
+        refreshedCourse.sourceRootBookmarkData = refreshedBookmark
+        refreshedCourse.updatedAt = Date()
+        courses[courseIndex] = refreshedCourse
+        resolvedCourseRootURLs[existing.id] = resolvedRoot
+        courseRootUnavailableReasons.removeValue(forKey: existing.id)
+        if let newScopeURL {
+            activeCourseSecurityScopes[scopeKey] = newScopeURL
+        } else {
+            activeCourseSecurityScopes.removeValue(forKey: scopeKey)
+        }
+
+        guard performSaveNow() else {
+            courses[courseIndex] = previousCourse
+            if let previousResolvedRoot {
+                resolvedCourseRootURLs[existing.id] = previousResolvedRoot
+            } else {
+                resolvedCourseRootURLs.removeValue(forKey: existing.id)
+            }
+            if let previousUnavailableReason {
+                courseRootUnavailableReasons[existing.id] = previousUnavailableReason
+            } else {
+                courseRootUnavailableReasons.removeValue(forKey: existing.id)
+            }
+            if let previousScope {
+                activeCourseSecurityScopes[scopeKey] = previousScope
+            } else {
+                activeCourseSecurityScopes.removeValue(forKey: scopeKey)
+            }
+            if let newScopeURL { courseSecurityScopeStopper(newScopeURL) }
+            throw CourseProjectRootError.workspaceSaveFailed
+        }
+
+        if let previousScope {
+            courseSecurityScopeStopper(previousScope)
+        }
+        return existing.id
+    }
+
+    func courseRootURL(for courseID: UUID) -> URL? {
+        resolvedCourseRootURLs[courseID]
+    }
+
+    func courseRootUnavailableReason(for courseID: UUID) -> String? {
+        courseRootUnavailableReasons[courseID]
+    }
+
+    private func transactionDirectoryFingerprint(
+        at root: URL
+    ) -> TransactionDirectoryFingerprint? {
+        let keys: Set<URLResourceKey> = [
+            .isDirectoryKey,
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+            .fileSizeKey,
+        ]
+        guard let rootValues = try? root.resourceValues(forKeys: keys),
+              rootValues.isDirectory == true,
+              rootValues.isSymbolicLink != true,
+              let rootIdentity = importedFileIdentityResolver(root) else {
+            return nil
+        }
+
+        var encounteredError = false
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: Array(keys),
+            options: [],
+            errorHandler: { _, _ in
+                encounteredError = true
+                return false
+            }
+        ) else {
+            return nil
+        }
+        let rootComponents = root.standardizedFileURL.pathComponents
+        var entries: [String: TransactionDirectoryFingerprint.Entry] = [:]
+        for case let entryURL as URL in enumerator {
+            guard let values = try? entryURL.resourceValues(forKeys: keys),
+                  values.isSymbolicLink != true,
+                  let identity = importedFileIdentityResolver(entryURL) else {
+                return nil
+            }
+            let entryComponents = entryURL.standardizedFileURL.pathComponents
+            guard entryComponents.count > rootComponents.count,
+                  Array(entryComponents.prefix(rootComponents.count)) == rootComponents else {
+                return nil
+            }
+            let relativePath = entryComponents
+                .dropFirst(rootComponents.count)
+                .joined(separator: "/")
+            if values.isDirectory == true {
+                entries[relativePath] = .init(
+                    kind: .directory,
+                    identity: identity,
+                    data: nil
+                )
+            } else if values.isRegularFile == true,
+                      let fileSize = values.fileSize,
+                      fileSize <= 1_048_576,
+                      let data = try? Data(contentsOf: entryURL) {
+                entries[relativePath] = .init(
+                    kind: .regularFile,
+                    identity: identity,
+                    data: data
+                )
+            } else {
+                return nil
+            }
+        }
+        guard !encounteredError else { return nil }
+        return TransactionDirectoryFingerprint(
+            rootIdentity: rootIdentity,
+            entriesByRelativePath: entries
+        )
+    }
+
+    private func safelyRemoveTransactionDirectory(
+        at root: URL,
+        expected: TransactionDirectoryFingerprint
+    ) {
+        guard transactionDirectoryMatches(at: root, expected: expected),
+              (try? courseProjectMutationHook(.beforeOwnedRollbackCleanup)) != nil else {
+            return
+        }
+
+        let regularFiles = expected.entriesByRelativePath
+            .filter { $0.value.kind == .regularFile }
+            .sorted { pathDepth($0.key) > pathDepth($1.key) }
+        for (relativePath, expectedEntry) in regularFiles {
+            let fileURL = transactionURL(
+                relativePath: relativePath,
+                inside: root
+            )
+            guard transactionEntry(at: fileURL, matches: expectedEntry),
+                  unlinkPath(fileURL) else {
+                return
+            }
+        }
+
+        let directories = expected.entriesByRelativePath
+            .filter { $0.value.kind == .directory }
+            .sorted { pathDepth($0.key) > pathDepth($1.key) }
+        for (relativePath, expectedEntry) in directories {
+            let directoryURL = transactionURL(
+                relativePath: relativePath,
+                inside: root
+            )
+            guard transactionEntry(at: directoryURL, matches: expectedEntry),
+                  removeEmptyDirectory(directoryURL) else {
+                return
+            }
+        }
+
+        guard importedFileIdentityResolver(root) == expected.rootIdentity else {
+            return
+        }
+        _ = removeEmptyDirectory(root)
+    }
+
+    private func transactionDirectoryMatches(
+        at root: URL,
+        expected: TransactionDirectoryFingerprint
+    ) -> Bool {
+        guard importedFileIdentityResolver(root) == expected.rootIdentity else {
+            return false
+        }
+        let keys: Set<URLResourceKey> = [
+            .isDirectoryKey,
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+            .fileSizeKey,
+        ]
+        var encounteredError = false
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: Array(keys),
+            options: [],
+            errorHandler: { _, _ in
+                encounteredError = true
+                return false
+            }
+        ) else {
+            return false
+        }
+        let rootComponents = root.standardizedFileURL.pathComponents
+        var seenPaths = Set<String>()
+        for case let entryURL as URL in enumerator {
+            let entryComponents = entryURL.standardizedFileURL.pathComponents
+            guard entryComponents.count > rootComponents.count,
+                  Array(entryComponents.prefix(rootComponents.count)) == rootComponents else {
+                return false
+            }
+            let relativePath = entryComponents
+                .dropFirst(rootComponents.count)
+                .joined(separator: "/")
+            guard let expectedEntry = expected.entriesByRelativePath[relativePath],
+                  seenPaths.insert(relativePath).inserted,
+                  transactionEntry(at: entryURL, matches: expectedEntry) else {
+                return false
+            }
+        }
+        return !encounteredError
+            && seenPaths == Set(expected.entriesByRelativePath.keys)
+    }
+
+    private func transactionEntry(
+        at url: URL,
+        matches expected: TransactionDirectoryFingerprint.Entry
+    ) -> Bool {
+        let keys: Set<URLResourceKey> = [
+            .isDirectoryKey,
+            .isRegularFileKey,
+            .isSymbolicLinkKey,
+            .fileSizeKey,
+        ]
+        guard let values = try? url.resourceValues(forKeys: keys),
+              values.isSymbolicLink != true,
+              let identity = importedFileIdentityResolver(url) else {
+            return false
+        }
+        guard identity == expected.identity else { return false }
+        switch expected.kind {
+        case .directory:
+            return values.isDirectory == true
+                && values.isRegularFile != true
+                && expected.data == nil
+        case .regularFile:
+            guard values.isRegularFile == true,
+                  values.isDirectory != true,
+                  let expectedData = expected.data,
+                  expectedData.count <= 1_048_576,
+                  values.fileSize == expectedData.count,
+                  let currentData = try? Data(contentsOf: url) else {
+                return false
+            }
+            return currentData == expectedData
+        }
+    }
+
+    private func transactionURL(relativePath: String, inside root: URL) -> URL {
+        relativePath
+            .split(separator: "/", omittingEmptySubsequences: true)
+            .reduce(root) {
+                $0.appendingPathComponent(String($1))
+            }
+    }
+
+    private func pathDepth(_ relativePath: String) -> Int {
+        relativePath.split(separator: "/", omittingEmptySubsequences: true).count
+    }
+
+    private func unlinkPath(_ url: URL) -> Bool {
+        url.withUnsafeFileSystemRepresentation { path in
+            guard let path else { return false }
+            return Darwin.unlink(path) == 0
+        }
+    }
+
+    private func removeEmptyDirectory(_ url: URL) -> Bool {
+        url.withUnsafeFileSystemRepresentation { path in
+            guard let path else { return false }
+            return Darwin.rmdir(path) == 0
+        }
+    }
+
+    private func validateLibraryRoot(_ root: URL) throws {
+        let protectedRoots = [
+            URL(fileURLWithPath: "/", isDirectory: true),
+            FileManager.default.homeDirectoryForCurrentUser,
+            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
+        ].compactMap { $0?.resolvingSymlinksInPath().standardizedFileURL }
+        if protectedRoots.contains(where: { CourseProjectPathPolicy.contains(root, $0) })
+            || CourseProjectPathPolicy.overlaps(root, workspaceDirectory) {
+            throw CourseProjectRootError.dangerousRoot
+        }
+        for course in courses {
+            let candidates = registeredRootCandidates(
+                for: course,
+                proposedLibraryRoot: root
+            )
+            if candidates.contains(where: {
+                CourseProjectPathPolicy.isSame($0, root)
+                    || CourseProjectPathPolicy.contains($0, root, includingRoot: false)
+            }) {
+                throw CourseProjectRootError.overlappingRoot
+            }
+        }
+    }
+
+    private func registeredRootCandidates(
+        for course: Course,
+        proposedLibraryRoot: URL
+    ) -> [URL] {
+        var candidates: [URL] = []
+        if let resolved = resolvedCourseRootURLs[course.id] {
+            candidates.append(resolved)
+        }
+        if let path = course.sourceRootPath {
+            candidates.append(
+                URL(fileURLWithPath: path)
+                    .resolvingSymlinksInPath()
+                    .standardizedFileURL
+            )
+        }
+        if let bookmark = course.sourceRootBookmarkData,
+           let resolution = courseRootBookmarkResolver(bookmark) {
+            candidates.append(
+                resolution.url
+                    .resolvingSymlinksInPath()
+                    .standardizedFileURL
+            )
+        }
+        if let relativePath = course.sourceRootRelativePath,
+           let resolved = CourseProjectPathPolicy.resolvedRelativePath(
+               relativePath,
+               inside: proposedLibraryRoot
+           ) {
+            candidates.append(resolved)
+        }
+        return candidates
+    }
+
+    private func validateCourseProjectRoot(
+        _ root: URL,
+        identity: ImportedFileIdentity?,
+        mustBeInsideLibrary: Bool,
+        excludingCourseID: UUID? = nil
+    ) throws {
+        let protectedRoots = [
+            URL(fileURLWithPath: "/", isDirectory: true),
+            FileManager.default.homeDirectoryForCurrentUser,
+            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first,
+        ].compactMap { $0?.resolvingSymlinksInPath().standardizedFileURL }
+        if protectedRoots.contains(where: { CourseProjectPathPolicy.contains(root, $0) })
+            || CourseProjectPathPolicy.overlaps(root, workspaceDirectory) {
+            throw CourseProjectRootError.dangerousRoot
+        }
+
+        if let libraryRoot = courseLibraryRootURL {
+            if CourseProjectPathPolicy.isSame(root, libraryRoot)
+                || CourseProjectPathPolicy.contains(root, libraryRoot, includingRoot: false) {
+                throw CourseProjectRootError.dangerousRoot
+            }
+            if mustBeInsideLibrary,
+               !CourseProjectPathPolicy.contains(libraryRoot, root, includingRoot: false) {
+                throw CourseProjectRootError.rootOutsideLibrary
+            }
+        } else if mustBeInsideLibrary {
+            throw courseLibraryRootPath == nil
+                ? CourseProjectRootError.missingLibrary
+                : CourseProjectRootError.unavailableLibrary
+        }
+
+        for course in courses where course.id != excludingCourseID {
+            if let identity,
+               let existingIdentity = course.sourceRootIdentity,
+               identity == existingIdentity {
+                throw CourseProjectRootError.rootAlreadyRegistered
+            }
+            if let existingRoot = resolvedCourseRootURLs[course.id]
+                ?? legacyCourseRootURL(for: course),
+               CourseProjectPathPolicy.overlaps(root, existingRoot) {
+                throw CourseProjectRootError.overlappingRoot
+            }
+        }
+    }
+
+    private func existingCourse(
+        at root: URL,
+        identity: ImportedFileIdentity
+    ) -> Course? {
+        courses.first { course in
+            if let storedIdentity = course.sourceRootIdentity {
+                return storedIdentity == identity
+            }
+            guard let existingRoot = resolvedCourseRootURLs[course.id]
+                    ?? legacyCourseRootURL(for: course) else {
+                return false
+            }
+            return CourseProjectPathPolicy.isSame(existingRoot, root)
+        }
+    }
+
+    private func legacyCourseRootURL(for course: Course) -> URL? {
+        guard let path = course.sourceRootPath else { return nil }
+        return try? CourseProjectPathPolicy.existingDirectory(URL(fileURLWithPath: path))
+    }
+
+    @discardableResult
+    private func restoreCourseProjectRoots() -> Bool {
+        var changed = false
+        courseLibraryRootURL = nil
+        courseLibraryUnavailableReason = nil
+        resolvedCourseRootURLs.removeAll()
+        courseRootUnavailableReasons.removeAll()
+
+        if let bookmark = courseLibraryRootBookmarkData,
+           let expectedIdentity = courseLibraryRootIdentity,
+           let resolution = courseRootBookmarkResolver(bookmark) {
+            let scopedURL = resolution.url
+            if courseSecurityScopeStarter(scopedURL) {
+                if let resolvedRoot = try? CourseProjectPathPolicy.existingDirectory(scopedURL),
+                   importedFileIdentityResolver(resolvedRoot) == expectedIdentity {
+                    do {
+                        try validateLibraryRoot(resolvedRoot)
+                        activeCourseSecurityScopes["library"] = scopedURL
+                        courseLibraryRootURL = resolvedRoot
+                        if courseLibraryRootPath != resolvedRoot.path {
+                            courseLibraryRootPath = resolvedRoot.path
+                            changed = true
+                        }
+                        if resolution.isStale,
+                           let refreshedBookmark = courseRootBookmarkMaker(resolvedRoot) {
+                            courseLibraryRootBookmarkData = refreshedBookmark
+                            changed = true
+                        }
+                    } catch {
+                        courseSecurityScopeStopper(scopedURL)
+                        courseLibraryUnavailableReason = error.localizedDescription
+                    }
+                } else {
+                    courseSecurityScopeStopper(scopedURL)
+                    courseLibraryUnavailableReason = CourseProjectRootError.bookmarkResolutionFailed.localizedDescription
+                }
+            } else {
+                courseLibraryUnavailableReason = CourseProjectRootError.securityScopeDenied.localizedDescription
+            }
+        } else if courseLibraryRootPath != nil
+                    || courseLibraryRootIdentity != nil
+                    || courseLibraryRootBookmarkData != nil {
+            courseLibraryUnavailableReason = CourseProjectRootError.bookmarkResolutionFailed.localizedDescription
+        }
+
+        changed = restoreCourseReferencesInsideLibrary() || changed
+        for index in courses.indices where courses[index].sourceRootRelativePath == nil {
+            let courseID = courses[index].id
+            guard let bookmark = courses[index].sourceRootBookmarkData,
+                  let expectedIdentity = courses[index].sourceRootIdentity else {
+                if courses[index].sourceRootPath != nil {
+                    courseRootUnavailableReasons[courseID] = "旧课程根没有可恢复的持久授权。"
+                }
+                continue
+            }
+            guard let resolution = courseRootBookmarkResolver(bookmark) else {
+                courseRootUnavailableReasons[courseID] = CourseProjectRootError.bookmarkResolutionFailed.localizedDescription
+                continue
+            }
+            let scopedURL = resolution.url
+            guard courseSecurityScopeStarter(scopedURL) else {
+                courseRootUnavailableReasons[courseID] = CourseProjectRootError.securityScopeDenied.localizedDescription
+                continue
+            }
+            guard let resolvedRoot = try? CourseProjectPathPolicy.existingDirectory(scopedURL),
+                  importedFileIdentityResolver(resolvedRoot) == expectedIdentity else {
+                courseSecurityScopeStopper(scopedURL)
+                courseRootUnavailableReasons[courseID] = CourseProjectRootError.bookmarkResolutionFailed.localizedDescription
+                continue
+            }
+            do {
+                try validateRestoredCourseRoot(
+                    resolvedRoot,
+                    course: courses[index],
+                    mustBeInsideLibrary: false
+                )
+            } catch {
+                courseSecurityScopeStopper(scopedURL)
+                courseRootUnavailableReasons[courseID] = error.localizedDescription
+                continue
+            }
+            activeCourseSecurityScopes["course:\(courseID.uuidString)"] = scopedURL
+            resolvedCourseRootURLs[courseID] = resolvedRoot
+            if courses[index].sourceRootPath != resolvedRoot.path {
+                courses[index].sourceRootPath = resolvedRoot.path
+                courses[index].updatedAt = Date()
+                changed = true
+            }
+            if resolution.isStale,
+               let refreshedBookmark = courseRootBookmarkMaker(resolvedRoot) {
+                courses[index].sourceRootBookmarkData = refreshedBookmark
+                changed = true
+            }
+        }
+        return changed
+    }
+
+    @discardableResult
+    private func restoreCourseReferencesInsideLibrary() -> Bool {
+        guard let libraryRoot = courseLibraryRootURL else {
+            for course in courses where course.sourceRootRelativePath != nil {
+                courseRootUnavailableReasons[course.id] = courseLibraryUnavailableReason
+                    ?? CourseProjectRootError.unavailableLibrary.localizedDescription
+            }
+            return false
+        }
+        var changed = false
+        for index in courses.indices {
+            guard let relativePath = courses[index].sourceRootRelativePath,
+                  let expectedIdentity = courses[index].sourceRootIdentity else {
+                continue
+            }
+            let expectedURL = CourseProjectPathPolicy.resolvedRelativePath(
+                relativePath,
+                inside: libraryRoot
+            )
+            let resolvedURL: URL?
+            if let expectedURL,
+               importedFileIdentityResolver(expectedURL) == expectedIdentity {
+                resolvedURL = expectedURL
+            } else {
+                resolvedURL = findDirectory(
+                    with: expectedIdentity,
+                    inside: libraryRoot
+                )
+            }
+            guard let resolvedURL,
+                  let nextRelativePath = CourseProjectPathPolicy.relativePath(
+                    of: resolvedURL,
+                    inside: libraryRoot
+                  ) else {
+                courseRootUnavailableReasons[courses[index].id] = "课程文件夹当前不可用。"
+                continue
+            }
+            let courseID = courses[index].id
+            do {
+                try validateRestoredCourseRoot(
+                    resolvedURL,
+                    course: courses[index],
+                    mustBeInsideLibrary: true
+                )
+            } catch {
+                courseRootUnavailableReasons[courseID] = error.localizedDescription
+                continue
+            }
+            resolvedCourseRootURLs[courseID] = resolvedURL
+            courseRootUnavailableReasons.removeValue(forKey: courseID)
+            if courses[index].sourceRootRelativePath != nextRelativePath {
+                courses[index].sourceRootRelativePath = nextRelativePath
+                courses[index].updatedAt = Date()
+                changed = true
+            }
+        }
+        return changed
+    }
+
+    private func validateRestoredCourseRoot(
+        _ root: URL,
+        course: Course,
+        mustBeInsideLibrary: Bool
+    ) throws {
+        try validateCourseProjectRoot(
+            root,
+            identity: course.sourceRootIdentity,
+            mustBeInsideLibrary: mustBeInsideLibrary,
+            excludingCourseID: course.id
+        )
+        let manifest = try CourseProjectManifest.read(
+            from: root.appendingPathComponent(".weibei/course.json")
+        )
+        guard manifest.courseID == course.id,
+              manifest.schemaVersion == CourseProjectManifest.currentSchemaVersion else {
+            throw CourseProjectRootError.manifestMismatch
+        }
+    }
+
+    private func findDirectory(
+        with identity: ImportedFileIdentity,
+        inside libraryRoot: URL
+    ) -> URL? {
+        let keys: [URLResourceKey] = [.isDirectoryKey, .isSymbolicLinkKey]
+        guard let enumerator = FileManager.default.enumerator(
+            at: libraryRoot,
+            includingPropertiesForKeys: keys,
+            options: [.skipsHiddenFiles],
+            errorHandler: { _, _ in true }
+        ) else {
+            return nil
+        }
+        for case let candidate as URL in enumerator {
+            let values = try? candidate.resourceValues(forKeys: Set(keys))
+            guard values?.isDirectory == true else { continue }
+            if values?.isSymbolicLink == true {
+                enumerator.skipDescendants()
+                continue
+            }
+            let canonical = candidate.resolvingSymlinksInPath().standardizedFileURL
+            if importedFileIdentityResolver(canonical) == identity {
+                return canonical
+            }
+        }
+        return nil
+    }
+
     func renameCourse(_ courseID: UUID, title rawTitle: String) {
         let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty,
@@ -602,6 +1656,12 @@ final class WorkspaceStore: ObservableObject {
 
     func deleteCourse(_ courseID: UUID) {
         guard courses.contains(where: { $0.id == courseID }) else { return }
+        let scopeKey = "course:\(courseID.uuidString)"
+        if let scopedURL = activeCourseSecurityScopes.removeValue(forKey: scopeKey) {
+            courseSecurityScopeStopper(scopedURL)
+        }
+        resolvedCourseRootURLs.removeValue(forKey: courseID)
+        courseRootUnavailableReasons.removeValue(forKey: courseID)
         courses.removeAll { $0.id == courseID }
         var memberships = courseMembershipIndex
         memberships.removeCourse(courseID)
@@ -3477,6 +4537,13 @@ final class WorkspaceStore: ObservableObject {
             bookmarkDataIsStale: &isStale
         ) else { return nil }
         return ResolvedImportedFileBookmark(url: plainURL.standardizedFileURL, isStale: isStale)
+    }
+
+    nonisolated private static func resolveCourseProjectBookmark(
+        _ data: Data
+    ) -> CourseProjectResolvedBookmark? {
+        guard let resolved = resolveImportedFileBookmark(data) else { return nil }
+        return CourseProjectResolvedBookmark(url: resolved.url, isStale: resolved.isStale)
     }
 
     nonisolated private static func makeImportedItemID() -> String {
@@ -7767,6 +8834,9 @@ final class WorkspaceStore: ObservableObject {
             values: snapshot.courseItemMemberships ?? []
         ).values
         activeCourseID = snapshot.activeCourseID
+        courseLibraryRootPath = snapshot.courseLibraryRootPath
+        courseLibraryRootIdentity = snapshot.courseLibraryRootIdentity
+        courseLibraryRootBookmarkData = snapshot.courseLibraryRootBookmarkData
         noteSourceLinks = snapshot.noteSourceLinks ?? []
         noteSourceLinksMigrationVersion = snapshot.noteSourceLinksMigrationVersion ?? 0
         studyLocationsByItemID = snapshot.studyLocationsByItemID ?? [:]
@@ -7889,6 +8959,7 @@ final class WorkspaceStore: ObservableObject {
         if environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1" { return true }
         if environment["WEIBEI_FORCE_IMMEDIATE_SAVE"] == "1" { return true }
         if ProcessInfo.processInfo.arguments.contains("--self-check-imported-identity") { return true }
+        if ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root") { return true }
         return false
     }
 
@@ -7916,6 +8987,9 @@ final class WorkspaceStore: ObservableObject {
                 courses: courses,
                 courseItemMemberships: courseItemMemberships,
                 activeCourseID: activeCourseID,
+                courseLibraryRootPath: courseLibraryRootPath,
+                courseLibraryRootIdentity: courseLibraryRootIdentity,
+                courseLibraryRootBookmarkData: courseLibraryRootBookmarkData,
                 noteSourceLinks: noteSourceLinks,
                 noteSourceLinksMigrationVersion: noteSourceLinksMigrationVersion,
                 studyLocationsByItemID: studyLocationsByItemID,

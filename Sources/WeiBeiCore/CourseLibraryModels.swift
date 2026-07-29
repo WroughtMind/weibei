@@ -5,6 +5,9 @@ public struct Course: Identifiable, Codable, Hashable, Sendable {
     public var title: String
     public var colorIndex: Int
     public var sourceRootPath: String?
+    public var sourceRootRelativePath: String?
+    public var sourceRootIdentity: ImportedFileIdentity?
+    public var sourceRootBookmarkData: Data?
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -13,6 +16,9 @@ public struct Course: Identifiable, Codable, Hashable, Sendable {
         title: String,
         colorIndex: Int = 0,
         sourceRootPath: String? = nil,
+        sourceRootRelativePath: String? = nil,
+        sourceRootIdentity: ImportedFileIdentity? = nil,
+        sourceRootBookmarkData: Data? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -20,6 +26,9 @@ public struct Course: Identifiable, Codable, Hashable, Sendable {
         self.title = title
         self.colorIndex = colorIndex
         self.sourceRootPath = sourceRootPath
+        self.sourceRootRelativePath = sourceRootRelativePath
+        self.sourceRootIdentity = sourceRootIdentity
+        self.sourceRootBookmarkData = sourceRootBookmarkData
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }

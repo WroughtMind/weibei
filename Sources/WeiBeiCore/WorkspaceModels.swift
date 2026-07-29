@@ -1337,6 +1337,9 @@ public struct PersistedWorkspace: Codable {
     public var courses: [Course]?
     public var courseItemMemberships: [CourseItemMembership]?
     public var activeCourseID: UUID?
+    public var courseLibraryRootPath: String?
+    public var courseLibraryRootIdentity: ImportedFileIdentity?
+    public var courseLibraryRootBookmarkData: Data?
     public var noteSourceLinks: [NoteSourceLink]?
     public var noteSourceLinksMigrationVersion: Int?
     public var studyLocationsByItemID: [String: StudyLocation]?
@@ -1371,6 +1374,9 @@ public struct PersistedWorkspace: Codable {
         courses: [Course]? = nil,
         courseItemMemberships: [CourseItemMembership]? = nil,
         activeCourseID: UUID? = nil,
+        courseLibraryRootPath: String? = nil,
+        courseLibraryRootIdentity: ImportedFileIdentity? = nil,
+        courseLibraryRootBookmarkData: Data? = nil,
         noteSourceLinks: [NoteSourceLink]? = nil,
         noteSourceLinksMigrationVersion: Int? = nil,
         studyLocationsByItemID: [String: StudyLocation]? = nil,
@@ -1404,6 +1410,9 @@ public struct PersistedWorkspace: Codable {
         self.courses = courses
         self.courseItemMemberships = courseItemMemberships
         self.activeCourseID = activeCourseID
+        self.courseLibraryRootPath = courseLibraryRootPath
+        self.courseLibraryRootIdentity = courseLibraryRootIdentity
+        self.courseLibraryRootBookmarkData = courseLibraryRootBookmarkData
         self.noteSourceLinks = noteSourceLinks
         self.noteSourceLinksMigrationVersion = noteSourceLinksMigrationVersion
         self.studyLocationsByItemID = studyLocationsByItemID
