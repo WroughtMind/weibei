@@ -18,7 +18,11 @@ import type {
   SlashContext,
   SlashReplacement,
 } from "./commands.js";
-import type { EditorBridge, EditorLabel } from "../../types.js";
+import type {
+  EditorBridge,
+  EditorLabel,
+  SlashCheckState,
+} from "../../types.js";
 
 const weiBeiSlash = slashFactory("WEIBEI_BLOCK_COMMAND");
 
@@ -53,6 +57,31 @@ interface SlashRuntime {
   errorMessage: string;
 }
 
+/** Slash-menu operations exposed only to editor self-checks. */
+export interface SlashCheckAPI {
+  openSlashMenuForCheck(): boolean;
+  slashStateForCheck(): SlashCheckState;
+  openSlashTableForCheck(): boolean;
+  setSlashTableSizeForCheck(rows: number, columns: number): boolean;
+  executeSlashCommandForCheck(commandID: string): boolean;
+  pendingImagePickerIDsForCheck(): string[];
+}
+
+/** Slash-menu lifecycle, picker, and self-check operations. */
+export interface SlashFeature {
+  plugin: typeof weiBeiSlash;
+  configure(ctx: Ctx): void;
+  handleKeyDown(view: EditorView, event: KeyboardEvent): boolean;
+  resolveImagePicker(id: string, src: string, alt: string): boolean;
+  cancelImagePicker(id: string): boolean;
+  discardImagePicker(id: string): boolean;
+  discardAllImagePickers(): number;
+  rejectImagePicker(id: string, message?: string): boolean;
+  checkAPI(): SlashCheckAPI;
+  refresh(): void;
+  isVisible(): boolean;
+}
+
 /**
  * Creates the Slash command menu and its Milkdown plugin.
  *
@@ -65,7 +94,7 @@ export function createSlashFeature({
   isEditable,
   getDocumentID,
   clearSelectionRange,
-}: SlashFeatureDependencies) {
+}: SlashFeatureDependencies): SlashFeature {
   let pickerRequestID = 0;
   const pendingImagePickers = new Map<string, PendingImagePicker>();
 

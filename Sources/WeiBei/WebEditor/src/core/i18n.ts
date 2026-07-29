@@ -59,7 +59,7 @@ export const calloutLabel = (type: string): string =>
   calloutLabels[currentLanguage][type] ||
   calloutLabels["zh-Hans"][type] ||
   type;
-export const editorLabels: Record<InterfaceLanguage, LabelDictionary> = {
+export const editorLabels = {
   "zh-Hans": {
     properties: "属性",
     bootFailed: "Milkdown 初始化失败",
@@ -134,7 +134,13 @@ export const editorLabels: Record<InterfaceLanguage, LabelDictionary> = {
     codeLanguage: "Code language",
     codeLanguagePlaceholder: "text",
   },
-};
+} as const satisfies Record<InterfaceLanguage, LabelDictionary>;
+
+export type EditorLabelKey = keyof (typeof editorLabels)["zh-Hans"];
+export type EditorLabel = (
+  key: EditorLabelKey,
+  values?: Record<string, unknown>,
+) => string;
 /**
  * Formats a localized editor label.
  *
@@ -143,10 +149,10 @@ export const editorLabels: Record<InterfaceLanguage, LabelDictionary> = {
  * @returns Localized label
  */
 export const editorLabel = (
-  key: string,
+  key: EditorLabelKey,
   values: Record<string, unknown> = {},
 ): string => {
-  let text =
+  let text: string =
     editorLabels[currentLanguage][key] || editorLabels["zh-Hans"][key] || key;
   for (const [name, value] of Object.entries(values)) {
     text = text.split(`{${name}}`).join(String(value));

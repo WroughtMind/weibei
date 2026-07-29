@@ -18,6 +18,18 @@
 
 本次不修改 Swift 业务逻辑、Rich Answer 协议语义或生成页面的展示内容。
 
+## 技术选择
+
+- 证据输入继续使用项目已有的 Zod，通过共享 schema 的 `parse` / `safeParse` 同时完成运行时校验和 TypeScript 类型推导。运行时 JSON 边界需要真实校验，仅增加手写类型不能替代该能力；安装命令为 `npm install --save-dev --save-exact zod@4.4.3`。
+- 命令行参数使用 Node.js 内置的 `util.parseArgs`。参数解析较简单，内置 API 已覆盖别名、布尔值、必填值和未知参数校验，不需要再引入 CLI 框架。
+- Prism token 直接使用 `@types/prismjs` 提供的 `Prism.Token` / `Prism.TokenStream`；`appdmg` 没有发布类型声明，因此只在 `script/dmg/appdmg.d.ts` 提供最小模块边界，业务脚本不再维护第三方 API 的镜像接口。
+
+## 代码结构
+
+- `Prototypes/RichAnswerEvidenceViewer/evidence-contract.ts` 是两套证据生成器唯一的输入兼容与领域类型来源。
+- `Sources/WeiBei/WebEditor/src/types.ts` 定义 WebKit 消息、公开编辑器 API 和共享数据结构；各 feature 暴露具名接口。
+- CLI 入口与参数解析分离，参数解析可以在 Vitest 中直接覆盖，导入模块不会触发脚本执行。
+
 ## 验证要求
 
 - TypeScript 类型检查、ESLint 和 Vitest 全部通过。

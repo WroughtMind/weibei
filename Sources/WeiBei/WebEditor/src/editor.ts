@@ -14,6 +14,7 @@ import { katexOptionsCtx, math } from "@milkdown/plugin-math";
 import "katex/dist/katex.css";
 
 import { createEditorAPI } from "./api.js";
+import type { EditorController } from "./api.js";
 import { createBridge } from "./core/bridge.js";
 import {
   calloutLabel,
@@ -31,13 +32,14 @@ import { createSelectionFeature } from "./features/selection.js";
 import { createSlashFeature } from "./features/slash/menu.js";
 import { normalizeHtmlBreaks, splitFrontmatter } from "./markdown/normalize.js";
 import type { Editor as MilkdownEditor } from "@milkdown/kit/core";
+import type { EditorHostWindow } from "./types.js";
 
 const bridge = createBridge(
-  window.webkit?.messageHandlers,
+  (window as EditorHostWindow).webkit?.messageHandlers,
   window.weiBeiDocumentID || "",
 );
 let editor: MilkdownEditor | undefined;
-let editorAPI: ReturnType<typeof createEditorAPI> | undefined;
+let editorAPI: EditorController | undefined;
 let isEditable = window.weiBeiMarkdownEditable !== false;
 const isCompactPreview = window.weiBeiMarkdownCompactPreview === true;
 const isCheckMode = window.weiBeiEditorCheckMode === true;
@@ -119,8 +121,10 @@ const images = createImageFeature({
   label: editorLabel,
   localImageScheme: window.weiBeiLocalImageScheme,
   markdownBaseURL: window.weiBeiMarkdownBaseURL,
-  replaceSelection: (markdown: string) =>
-    editorAPI!.replaceSelectionInternal(markdown),
+  replaceSelection: (markdown: string) => {
+    if (!editorAPI) throw new Error("WeiBei editor API is not ready");
+    editorAPI.replaceSelectionInternal(markdown);
+  },
 });
 const codeRendering = createCodeRendering({
   editorLabel,

@@ -3,220 +3,32 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { parseArgs as parseNodeArgs } from "node:util";
 import { z } from "zod/v4";
-import { parseEvidenceJson } from "./evidence-json.js";
+import {
+  captureManifestSchema,
+  evidenceBooleanText,
+  evidenceNumber,
+  evidenceText,
+  indexDocumentSchema,
+  parseEvidenceJson,
+  recordDocumentSchema,
+  replyDocumentSchema,
+  requestDocumentSchema,
+  runDocumentSchema,
+  protocolSchema,
+} from "./evidence-contract.js";
+import type {
+  IndexDocument,
+  IndexEntry,
+  JsonValue,
+  RecordDocument,
+  RepairEvidence,
+  RunDocument,
+} from "./evidence-contract.js";
 
 type AssetMode = "copy" | "hardlink" | "symlink";
-
-const displayValueSchema = z.union([
-  z.string(),
-  z.number(),
-  z.boolean(),
-  z.null(),
-]);
-const screenshotSchema = z.union([
-  z.string(),
-  z.object({ path: z.string() }).passthrough(),
-  z.null(),
-]);
-const repairEvidenceSchema = z
-  .object({ manifestPath: z.string().optional() })
-  .passthrough();
-const indexEntrySchema = z
-  .object({
-    runID: displayValueSchema.optional(),
-    repetition: displayValueSchema.optional(),
-    sequence: displayValueSchema.optional(),
-    caseID: displayValueSchema.optional(),
-    caseKind: displayValueSchema.optional(),
-    status: displayValueSchema.optional(),
-    recordPath: z.string().optional(),
-    failureReason: displayValueSchema.optional(),
-    screenshots: z.record(z.string(), screenshotSchema).optional(),
-    repairEvidence: repairEvidenceSchema.optional(),
-    screenshotManifest: z.string().optional(),
-    originalScreenshotStatus: displayValueSchema.optional(),
-    screenshotStatus: displayValueSchema.optional(),
-    qualityStatus: displayValueSchema.optional(),
-  })
-  .passthrough();
-const runMetadataSchema = z
-  .object({
-    runID: displayValueSchema.optional(),
-    rootPath: displayValueSchema.optional(),
-    createdAt: displayValueSchema.optional(),
-    retestOfRunID: displayValueSchema.optional(),
-    repairNote: displayValueSchema.optional(),
-    continueAfterFailure: displayValueSchema.optional(),
-    requestedIDs: z.array(z.json()).optional(),
-    filters: z.array(z.json()).optional(),
-  })
-  .passthrough();
-const indexSchema = z
-  .object({ records: z.array(indexEntrySchema).optional() })
-  .passthrough();
-const requestSchema = z
-  .object({
-    materialTitle: displayValueSchema.optional(),
-    materialKind: displayValueSchema.optional(),
-    materialText: displayValueSchema.optional(),
-    selectionTitle: displayValueSchema.optional(),
-    selectionText: displayValueSchema.optional(),
-    workflow: displayValueSchema.optional(),
-    resolvedWorkflow: displayValueSchema.optional(),
-    materialIsTruncated: displayValueSchema.optional(),
-    contextRevision: displayValueSchema.optional(),
-  })
-  .passthrough();
-const validationSchema = z
-  .object({
-    status: displayValueSchema.optional(),
-    validationKind: displayValueSchema.optional(),
-    passedChecks: z.array(z.json()).optional(),
-    issues: z.array(z.json()).optional(),
-    protocolDiagnostics: z.array(z.json()).optional(),
-    toolTrace: z.array(z.json()).optional(),
-  })
-  .passthrough();
-const replySchema = z
-  .object({
-    text: displayValueSchema.optional(),
-    backend: displayValueSchema.optional(),
-    toolTrace: z.array(z.json()).optional(),
-    richAnswer: z.json().optional(),
-  })
-  .passthrough();
-const t1ProgramSchema = z
-  .object({
-    sceneID: displayValueSchema.optional(),
-    family: displayValueSchema.optional(),
-    version: displayValueSchema.optional(),
-    maxHeight: displayValueSchema.optional(),
-    capabilities: z.array(z.json()).optional(),
-    directManipulation: displayValueSchema.optional(),
-    componentNames: z.array(z.json()).optional(),
-  })
-  .passthrough();
-const t2CompositionSchema = z
-  .object({
-    sceneID: displayValueSchema.optional(),
-    family: displayValueSchema.optional(),
-    rootID: displayValueSchema.optional(),
-    roles: z.array(z.json()).optional(),
-    nodeCount: displayValueSchema.optional(),
-    datasetCount: displayValueSchema.optional(),
-    dataRowCount: displayValueSchema.optional(),
-    bindingCount: displayValueSchema.optional(),
-  })
-  .passthrough();
-const recordSchema = z
-  .object({
-    runID: displayValueSchema.optional(),
-    caseID: displayValueSchema.optional(),
-    repetition: displayValueSchema.optional(),
-    sequence: displayValueSchema.optional(),
-    subject: displayValueSchema.optional(),
-    status: displayValueSchema.optional(),
-    elapsedSeconds: displayValueSchema.optional(),
-    failureReason: displayValueSchema.optional(),
-    caseSnapshot: z
-      .object({
-        id: displayValueSchema.optional(),
-        caseKind: displayValueSchema.optional(),
-        subject: displayValueSchema.optional(),
-        question: z.json().optional(),
-        materialTitle: displayValueSchema.optional(),
-        materialKind: displayValueSchema.optional(),
-        materialText: displayValueSchema.optional(),
-        selectionTitle: displayValueSchema.optional(),
-        selectionText: displayValueSchema.optional(),
-        expectedCapabilityFamilies: z.array(z.json()).optional(),
-        userBenefitCriteria: z.array(z.json()).optional(),
-        rejectedOrDegradedBehaviors: z.array(z.json()).optional(),
-      })
-      .passthrough()
-      .optional(),
-    shapeDecision: z
-      .object({
-        expectedShape: displayValueSchema.optional(),
-        actualShape: displayValueSchema.optional(),
-        preferredSurface: displayValueSchema.optional(),
-        directManipulation: displayValueSchema.optional(),
-        t1SceneCount: displayValueSchema.optional(),
-        t2SceneCount: displayValueSchema.optional(),
-        narrativeCharacterCount: displayValueSchema.optional(),
-      })
-      .passthrough()
-      .optional(),
-    expressionPlan: z
-      .object({
-        expressionPlan: z.json().optional(),
-        t1Programs: z.array(t1ProgramSchema).optional(),
-        t2Compositions: z.array(t2CompositionSchema).optional(),
-      })
-      .passthrough()
-      .optional(),
-    sourceBinding: z
-      .object({
-        textSourceLabels: z.array(z.json()).optional(),
-        evidenceLedgerLabels: z.array(z.json()).optional(),
-        evidenceState: displayValueSchema.optional(),
-        sceneEvidenceIDs: z.array(z.json()).optional(),
-        hasExpectedSource: displayValueSchema.optional(),
-      })
-      .passthrough()
-      .optional(),
-    repairAndRetest: z
-      .object({
-        previousRunID: displayValueSchema.optional(),
-        previousStatus: displayValueSchema.optional(),
-        repairNote: displayValueSchema.optional(),
-        isRetest: displayValueSchema.optional(),
-      })
-      .passthrough()
-      .optional(),
-    toolAndProtocolValidation: validationSchema.optional(),
-    modelRawReply: replySchema.optional(),
-  })
-  .passthrough();
-const captureManifestSchema = z
-  .object({
-    status: displayValueSchema.optional(),
-    captureStatus: displayValueSchema.optional(),
-    qualityGate: z
-      .object({
-        status: displayValueSchema.optional(),
-        inputs: z
-          .record(
-            z.string(),
-            z
-              .object({
-                present: z.boolean().optional(),
-                stablePaneFrames: z.boolean().optional(),
-              })
-              .passthrough(),
-          )
-          .optional(),
-        checks: z
-          .array(
-            z
-              .object({
-                id: z.string().optional(),
-                status: displayValueSchema.optional(),
-              })
-              .passthrough(),
-          )
-          .optional(),
-      })
-      .passthrough()
-      .optional(),
-  })
-  .passthrough();
-
-type JsonValue = z.infer<ReturnType<typeof z.json>>;
-type IndexEntry = z.infer<typeof indexEntrySchema>;
-type RunMetadata = z.infer<typeof runMetadataSchema>;
-type EvidenceRecord = z.infer<typeof recordSchema>;
 
 interface ScreenshotAssets {
   overview: string | null;
@@ -324,7 +136,7 @@ interface AttemptRecord {
     originalStatus: string;
     qualityStatus: string;
     replaced: boolean;
-    repairEvidence: z.infer<typeof repairEvidenceSchema> | null;
+    repairEvidence: RepairEvidence | null;
     screenshotManifest: string;
   };
   visibleEvidence: VisibleEvidence;
@@ -347,8 +159,8 @@ interface AttemptRecord {
 }
 
 interface RunData {
-  runMetadata: RunMetadata | null;
-  rawIndex: z.infer<typeof indexSchema> | null;
+  runMetadata: RunDocument | null;
+  rawIndex: IndexDocument | null;
   records: AttemptRecord[];
 }
 
@@ -438,7 +250,7 @@ interface CliOptions {
   source: string;
   force: boolean;
   output: string | null;
-  assetMode: AssetMode | string;
+  assetMode: AssetMode;
   runDir?: string;
   runId?: string;
   help?: boolean;
@@ -468,18 +280,6 @@ const TARGET_BREAKDOWN: Record<string, number> = {
 };
 const TARGET_TOTAL = 56;
 const DATASET_PATH = ".build/rich-answer-evidence";
-
-/** 将未知输入规范化为非空展示文本。 */
-function toString(v: unknown, fallback = "缺失"): string {
-  if (v === null || v === undefined) return fallback;
-  if (typeof v === "string") return v.trim() || fallback;
-  return String(v);
-}
-
-/** 将可空真值转换为中文展示文本。 */
-function boolText(v: unknown): string {
-  return v === undefined || v === null ? "缺失" : v ? "是" : "否";
-}
 
 /** 安全序列化任意 JSON 兼容值。 */
 function safeJsonString(value: unknown, fallback = "缺失"): string {
@@ -569,54 +369,42 @@ function readRawText(filePath: string): ReadResult<string> {
   }
 }
 
-/** 解析命令行参数。 */
-function parseArgs(): CliOptions {
-  const args = process.argv.slice(2);
-  const out: CliOptions = {
-    source: DATASET_PATH,
-    force: false,
-    output: null,
-    assetMode: "copy",
-  };
-
-  for (let index = 0; index < args.length; index += 1) {
-    const arg = args[index];
-    if (arg === "--run-dir") {
-      out.runDir = path.resolve(args[index + 1]!);
-      index += 1;
-      continue;
-    }
-    if (arg === "--run-id") {
-      out.runId = args[index + 1]!;
-      index += 1;
-      continue;
-    }
-    if (arg === "--source") {
-      out.source = args[index + 1]!;
-      index += 1;
-      continue;
-    }
-    if (arg === "--output" || arg === "--out") {
-      out.output = path.resolve(args[index + 1]!);
-      index += 1;
-      continue;
-    }
-    if (arg === "--force") {
-      out.force = true;
-      continue;
-    }
-    if (arg === "--asset-mode") {
-      out.assetMode = args[index + 1]!;
-      index += 1;
-      continue;
-    }
-    if (arg === "--help" || arg === "-h") {
-      out.help = true;
-      continue;
-    }
-    throw new Error(`未知参数: ${arg}`);
+/** 解析并验证验收包生成命令的参数。 */
+export function parseEvidencePackageArgs(
+  args: string[] = process.argv.slice(2),
+): CliOptions {
+  const { values } = parseNodeArgs({
+    args,
+    allowPositionals: false,
+    strict: true,
+    options: {
+      "run-dir": { type: "string" },
+      "run-id": { type: "string" },
+      source: { type: "string" },
+      output: { type: "string" },
+      out: { type: "string" },
+      force: { type: "boolean" },
+      "asset-mode": { type: "string" },
+      help: { type: "boolean", short: "h" },
+    },
+  });
+  const assetMode = values["asset-mode"] ?? "copy";
+  if (
+    assetMode !== "copy" &&
+    assetMode !== "hardlink" &&
+    assetMode !== "symlink"
+  ) {
+    throw new Error(`不支持的 --asset-mode：${assetMode}`);
   }
-  return out;
+  return {
+    source: values.source ?? DATASET_PATH,
+    force: values.force ?? false,
+    output: values.output ?? values.out ?? null,
+    assetMode,
+    runDir: values["run-dir"],
+    runId: values["run-id"],
+    help: values.help,
+  };
 }
 
 /** 构造命令行帮助文本。 */
@@ -718,13 +506,6 @@ function toAssetId(caseID: unknown, repetition: unknown): string {
   return `case_${String(caseID || "unknown").replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]/g, "_")}_r${String(repetition || 0)}`;
 }
 
-/** 将未知值转换为有限数值。 */
-function safeNumber(value: unknown): number | null {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return null;
-  return n;
-}
-
 /** 从截图字段中提取字符串路径。 */
 function screenshotPath(value: unknown): string | null {
   if (typeof value === "string") return value;
@@ -805,8 +586,8 @@ function captureEvidenceSummary(
     status: verified ? "verified" : "failed",
     reason,
     manifestPath: manifestPath || "缺失",
-    qualityStatus: toString(qualityGate?.status, "缺失"),
-    visibleContentStatus: toString(visibleCheck?.status, "缺失"),
+    qualityStatus: evidenceText(qualityGate?.status, "缺失"),
+    visibleContentStatus: evidenceText(visibleCheck?.status, "缺失"),
     missingStages,
     unprovenStages,
   };
@@ -912,7 +693,7 @@ function readRecordFromEntry(
 
   const recordResult = readJSON(
     path.join(caseDir || runRoot, "record.json"),
-    recordSchema,
+    recordDocumentSchema,
   );
   if (!recordResult.ok) {
     report.missingFields.push(
@@ -920,12 +701,12 @@ function readRecordFromEntry(
     );
   }
 
-  const record: EvidenceRecord = recordResult.value ?? {};
-  const prompt = readJSON(path.join(caseDir, "request.json"), requestSchema);
-  const reply = readJSON(path.join(caseDir, "reply.json"), replySchema);
+  const record: RecordDocument = recordResult.value ?? {};
+  const prompt = readJSON(path.join(caseDir, "request.json"), requestDocumentSchema);
+  const reply = readJSON(path.join(caseDir, "reply.json"), replyDocumentSchema);
   const validation = readJSON(
     path.join(caseDir, "validation.json"),
-    validationSchema,
+    protocolSchema,
   );
 
   if (!prompt.ok)
@@ -946,14 +727,14 @@ function readRecordFromEntry(
   const expr = record.expressionPlan ?? {};
   const source = record.sourceBinding ?? {};
   const repair = record.repairAndRetest ?? {};
-  const status = toString(record.status || entry.status, "unknown");
+  const status = evidenceText(record.status || entry.status, "unknown");
 
-  const caseID = toString(
+  const caseID = evidenceText(
     caseSnapshot.id || entry.caseID || record.caseID,
     "unknown-case",
   );
-  const repetition = safeNumber(record.repetition ?? entry.repetition);
-  const sequence = safeNumber(record.sequence ?? entry.sequence);
+  const repetition = evidenceNumber(record.repetition ?? entry.repetition);
+  const sequence = evidenceNumber(record.sequence ?? entry.sequence);
 
   const images = collectImageAssets(
     caseDir,
@@ -968,45 +749,45 @@ function readRecordFromEntry(
   const t2Compositions = expr.t2Compositions ?? [];
 
   return {
-    runID: toString(record.runID || entry.runID),
+    runID: evidenceText(record.runID || entry.runID),
     caseID,
     repetition: repetition || 0,
     sequence: sequence || 0,
     caseKind: normalizeRunKind(
       entry.caseKind || caseSnapshot.caseKind || "unknown",
     ),
-    subject: toString(caseSnapshot.subject || record.subject || "未定义学科"),
+    subject: evidenceText(caseSnapshot.subject || record.subject || "未定义学科"),
     question: asMarkdownSafe(caseSnapshot.question || "未定义题目"),
-    materialTitle: toString(
+    materialTitle: evidenceText(
       caseSnapshot.materialTitle || prompt.value?.materialTitle,
     ),
-    materialKind: toString(
+    materialKind: evidenceText(
       caseSnapshot.materialKind || prompt.value?.materialKind,
     ),
-    materialText: toString(
+    materialText: evidenceText(
       caseSnapshot.materialText || prompt.value?.materialText,
     ),
-    selectionTitle: toString(
+    selectionTitle: evidenceText(
       caseSnapshot.selectionTitle || prompt.value?.selectionTitle,
     ),
-    selectionText: toString(
+    selectionText: evidenceText(
       caseSnapshot.selectionText || prompt.value?.selectionText,
     ),
     status,
-    elapsedSeconds: safeNumber(record.elapsedSeconds),
-    expectedShape: toString(shapeDecision.expectedShape),
-    actualShape: toString(shapeDecision.actualShape),
-    preferredSurface: toString(shapeDecision.preferredSurface, "缺失"),
-    directManipulation: boolText(shapeDecision.directManipulation),
-    t1SceneCount: safeNumber(shapeDecision.t1SceneCount) || t1Programs.length,
+    elapsedSeconds: evidenceNumber(record.elapsedSeconds),
+    expectedShape: evidenceText(shapeDecision.expectedShape),
+    actualShape: evidenceText(shapeDecision.actualShape),
+    preferredSurface: evidenceText(shapeDecision.preferredSurface, "缺失"),
+    directManipulation: evidenceBooleanText(shapeDecision.directManipulation),
+    t1SceneCount: evidenceNumber(shapeDecision.t1SceneCount) || t1Programs.length,
     t2SceneCount:
-      safeNumber(shapeDecision.t2SceneCount) || t2Compositions.length,
-    narrativeCharacterCount: safeNumber(shapeDecision.narrativeCharacterCount),
+      evidenceNumber(shapeDecision.t2SceneCount) || t2Compositions.length,
+    narrativeCharacterCount: evidenceNumber(shapeDecision.narrativeCharacterCount),
     toolAndProtocolValidation: {
-      status: toString(
+      status: evidenceText(
         validation.value?.status || record.toolAndProtocolValidation?.status,
       ),
-      validationKind: toString(
+      validationKind: evidenceText(
         validation.value?.validationKind ||
           record.toolAndProtocolValidation?.validationKind,
       ),
@@ -1030,42 +811,42 @@ function readRecordFromEntry(
     sourceBinding: {
       textSourceLabels: source.textSourceLabels || [],
       evidenceLedgerLabels: source.evidenceLedgerLabels || [],
-      evidenceState: toString(source.evidenceState),
+      evidenceState: evidenceText(source.evidenceState),
       sceneEvidenceIDs: source.sceneEvidenceIDs || [],
       hasExpectedSource: Boolean(source.hasExpectedSource),
     },
     expressionPlan: {
       expressionPlanRaw: safeJsonString(expr.expressionPlan, "缺失"),
       t1Programs: t1Programs.map((item) => ({
-        sceneID: toString(item.sceneID),
-        family: toString(item.family),
-        version: toString(item.version),
-        maxHeight: safeNumber(item.maxHeight),
+        sceneID: evidenceText(item.sceneID),
+        family: evidenceText(item.family),
+        version: evidenceText(item.version),
+        maxHeight: evidenceNumber(item.maxHeight),
         capabilities: item.capabilities || [],
-        directManipulation: boolText(item.directManipulation),
+        directManipulation: evidenceBooleanText(item.directManipulation),
         componentNames: item.componentNames || [],
       })),
       t2Compositions: t2Compositions.map((item) => ({
-        sceneID: toString(item.sceneID),
-        family: toString(item.family),
-        rootID: toString(item.rootID),
+        sceneID: evidenceText(item.sceneID),
+        family: evidenceText(item.family),
+        rootID: evidenceText(item.rootID),
         roles: item.roles || [],
-        nodeCount: safeNumber(item.nodeCount) || 0,
-        datasetCount: safeNumber(item.datasetCount) || 0,
-        dataRowCount: safeNumber(item.dataRowCount) || 0,
-        bindingCount: safeNumber(item.bindingCount) || 0,
+        nodeCount: evidenceNumber(item.nodeCount) || 0,
+        datasetCount: evidenceNumber(item.datasetCount) || 0,
+        dataRowCount: evidenceNumber(item.dataRowCount) || 0,
+        bindingCount: evidenceNumber(item.bindingCount) || 0,
       })),
     },
     promptAndMaterial: {
       requestJSON: safeJsonString(prompt.value, "缺失"),
-      workflow: toString(prompt.value?.workflow),
-      resolvedWorkflow: toString(prompt.value?.resolvedWorkflow),
-      materialIsTruncated: boolText(prompt.value?.materialIsTruncated),
-      contextRevision: toString(prompt.value?.contextRevision),
+      workflow: evidenceText(prompt.value?.workflow),
+      resolvedWorkflow: evidenceText(prompt.value?.resolvedWorkflow),
+      materialIsTruncated: evidenceBooleanText(prompt.value?.materialIsTruncated),
+      contextRevision: evidenceText(prompt.value?.contextRevision),
     },
     modelRawReply: {
-      replyText: toString(reply.value?.text || record.modelRawReply?.text),
-      backend: toString(reply.value?.backend || record.modelRawReply?.backend),
+      replyText: evidenceText(reply.value?.text || record.modelRawReply?.text),
+      backend: evidenceText(reply.value?.backend || record.modelRawReply?.backend),
       toolTrace: (
         reply.value?.toolTrace ||
         record.modelRawReply?.toolTrace ||
@@ -1076,22 +857,22 @@ function readRecordFromEntry(
       ),
       replyJSON: safeJsonString(reply.value, "缺失"),
     },
-    failureReason: toString(record.failureReason || entry.failureReason, "无"),
+    failureReason: evidenceText(record.failureReason || entry.failureReason, "无"),
     repairAndRetest: {
-      previousRunID: toString(repair.previousRunID, "缺失"),
-      previousStatus: toString(repair.previousStatus, "缺失"),
-      repairNote: toString(repair.repairNote),
-      isRetest: boolText(repair.isRetest),
+      previousRunID: evidenceText(repair.previousRunID, "缺失"),
+      previousStatus: evidenceText(repair.previousStatus, "缺失"),
+      repairNote: evidenceText(repair.repairNote),
+      isRetest: evidenceBooleanText(repair.isRetest),
     },
     screenshotEvidence: {
-      originalStatus: toString(
+      originalStatus: evidenceText(
         entry.originalScreenshotStatus || entry.screenshotStatus,
         "缺失",
       ),
-      qualityStatus: toString(entry.qualityStatus, "缺失"),
+      qualityStatus: evidenceText(entry.qualityStatus, "缺失"),
       replaced: Boolean(entry.repairEvidence),
       repairEvidence: entry.repairEvidence || null,
-      screenshotManifest: toString(entry.screenshotManifest, "缺失"),
+      screenshotManifest: evidenceText(entry.screenshotManifest, "缺失"),
     },
     visibleEvidence,
     expectedCapabilityFamilies: caseSnapshot.expectedCapabilityFamilies || [],
@@ -1122,8 +903,8 @@ function collectRecordsFromRunDir(
   runDir: string,
   report: BuildReport,
 ): RunData {
-  const runJSON = readJSON(path.join(runDir, "run.json"), runMetadataSchema);
-  const indexJSON = readJSON(path.join(runDir, "index.json"), indexSchema);
+  const runJSON = readJSON(path.join(runDir, "run.json"), runDocumentSchema);
+  const indexJSON = readJSON(path.join(runDir, "index.json"), indexDocumentSchema);
 
   if (!runJSON.ok)
     report.missingFields.push(
@@ -1337,12 +1118,12 @@ function buildPayload(
   return {
     generatedAt: nowStamp(),
     run: {
-      runID: runID || toString(runMetadata.runID, path.basename(runDir)),
-      rootPath: toString(runMetadata.rootPath, runDir),
-      createdAt: toString(runMetadata.createdAt, "缺失"),
-      repairedFrom: toString(runMetadata.retestOfRunID, "无"),
-      repairNote: toString(runMetadata.repairNote, "无"),
-      continueAfterFailure: toString(runMetadata.continueAfterFailure, "无"),
+      runID: runID || evidenceText(runMetadata.runID, path.basename(runDir)),
+      rootPath: evidenceText(runMetadata.rootPath, runDir),
+      createdAt: evidenceText(runMetadata.createdAt, "缺失"),
+      repairedFrom: evidenceText(runMetadata.retestOfRunID, "无"),
+      repairNote: evidenceText(runMetadata.repairNote, "无"),
+      continueAfterFailure: evidenceText(runMetadata.continueAfterFailure, "无"),
       requestedIDs: runMetadata.requestedIDs ?? [],
       filters: runMetadata.filters ?? [],
       sourceRoot: path.resolve(path.dirname(runDir)),
@@ -2273,7 +2054,7 @@ function evidenceViewerRuntime(): void {
 
 /** 转义服务端 HTML 插值。 */
 function escapeHtml(value: unknown): string {
-  return toString(value, "").replace(
+  return evidenceText(value, "").replace(
     /[&<>"']/g,
     (char) =>
       ({
@@ -2296,7 +2077,7 @@ function dedupeArray(list: unknown[]): unknown[] {
 
 /** 执行证据包生成命令。 */
 function run(): void {
-  const argv = parseArgs();
+  const argv = parseEvidencePackageArgs();
   if (argv.help || process.argv.length <= 2) {
     console.log(usage());
     return;
@@ -2306,9 +2087,9 @@ function run(): void {
     throw new Error("必须提供 --run-dir 或 --run-id");
   }
 
-  const runDir =
-    argv.runDir ||
-    path.resolve(path.resolve(argv.source || DATASET_PATH), argv.runId!);
+  const runDir = argv.runDir
+    ? path.resolve(argv.runDir)
+    : path.resolve(argv.source, argv.runId ?? "");
   const output =
     argv.output ||
     path.join(
@@ -2329,15 +2110,12 @@ function run(): void {
   }
   ensureDir(output);
 
-  if (!new Set(["copy", "hardlink", "symlink"]).has(argv.assetMode)) {
-    throw new Error(`不支持的 --asset-mode：${argv.assetMode}`);
-  }
   const report: BuildReport = {
     missingFields: [],
     outputDir: output,
     copiedFiles: 0,
     linkedFiles: 0,
-    assetMode: argv.assetMode as AssetMode,
+    assetMode: argv.assetMode,
   };
   const runData = collectRecordsFromRunDir(runDir, report);
   if (!Array.isArray(runData.records) || runData.records.length === 0) {
@@ -2346,7 +2124,7 @@ function run(): void {
     );
   }
 
-  const runID = toString(
+  const runID = evidenceText(
     runData.runMetadata?.runID || argv.runId,
     path.basename(runDir),
   );
@@ -2366,4 +2144,9 @@ function run(): void {
   console.log("富回答验收包已生成：\n" + summary.join("\n"));
 }
 
-run();
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+) {
+  run();
+}

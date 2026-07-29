@@ -1,6 +1,7 @@
 import type {
-  BridgePayload,
   EditorBridge,
+  EditorBridgeMessageMap,
+  EditorBridgeMessageName,
   WebKitMessageHandlers,
 } from "../types.js";
 
@@ -18,7 +19,10 @@ export function createBridge(
   let currentDocumentID = initialDocumentID || "";
 
   return {
-    post(name: string, body: BridgePayload = {}) {
+    post<Name extends EditorBridgeMessageName>(
+      name: Name,
+      body: EditorBridgeMessageMap[Name],
+    ) {
       handlers?.[name]?.postMessage({ ...body, documentID: currentDocumentID });
     },
     setDocumentID(next: string) {
@@ -27,7 +31,7 @@ export function createBridge(
     getDocumentID() {
       return currentDocumentID;
     },
-    hasHandler(name: string) {
+    hasHandler(name: EditorBridgeMessageName) {
       return Boolean(handlers?.[name]);
     },
   };

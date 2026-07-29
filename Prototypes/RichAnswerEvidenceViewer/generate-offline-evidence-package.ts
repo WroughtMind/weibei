@@ -2,201 +2,32 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
+import { parseArgs as parseNodeArgs } from "node:util";
 import { z } from "zod/v4";
-import { parseEvidenceJson } from "./evidence-json.js";
-
-const jsonObjectSchema = z.object({}).catchall(z.json());
-const optionalJson = z.json().optional();
-
-const caseSnapshotSchema = z
-  .object({
-    caseID: optionalJson,
-    id: optionalJson,
-    caseId: optionalJson,
-    caseKind: optionalJson,
-    question: optionalJson,
-    subject: optionalJson,
-    materialTitle: optionalJson,
-    materialKind: optionalJson,
-    materialText: optionalJson,
-    selectionTitle: optionalJson,
-    selectionText: optionalJson,
-  })
-  .catchall(z.json());
-
-const shapeDecisionSchema = z
-  .object({
-    caseKind: optionalJson,
-    preferredShape: optionalJson,
-    actualShape: optionalJson,
-    expectedShape: optionalJson,
-    directManipulation: optionalJson,
-  })
-  .catchall(z.json());
-
-const t1ProgramSchema = z
-  .object({
-    sceneID: optionalJson,
-    family: optionalJson,
-    version: optionalJson,
-    maxHeight: optionalJson,
-    directManipulation: optionalJson,
-    componentNames: z.array(z.json()).optional(),
-  })
-  .catchall(z.json());
-
-const t2CompositionSchema = z
-  .object({
-    sceneID: optionalJson,
-    family: optionalJson,
-    rootID: optionalJson,
-    roles: z.array(z.json()).optional(),
-    nodeCount: optionalJson,
-    dataRowCount: optionalJson,
-  })
-  .catchall(z.json());
-
-const expressionPlanSchema = z
-  .object({
-    t1Programs: z.array(t1ProgramSchema).optional(),
-    t2Compositions: z.array(t2CompositionSchema).optional(),
-  })
-  .catchall(z.json());
-
-const sourceBindingSchema = z
-  .object({
-    textSourceLabels: z.array(z.json()).optional(),
-    evidenceLedgerLabels: z.array(z.json()).optional(),
-    sceneEvidenceIDs: z.array(z.json()).optional(),
-    evidenceState: optionalJson,
-    hasExpectedSource: optionalJson,
-  })
-  .catchall(z.json());
-
-const repairSchema = z
-  .object({
-    failureReason: optionalJson,
-    previousRunID: optionalJson,
-    previousStatus: optionalJson,
-    repairNote: optionalJson,
-    isRetest: optionalJson,
-  })
-  .catchall(z.json());
-
-const protocolSchema = z
-  .object({
-    status: optionalJson,
-    validationKind: optionalJson,
-    passedChecks: z.array(z.json()).optional(),
-    issues: z.array(z.json()).optional(),
-    protocolDiagnostics: z.array(z.json()).optional(),
-  })
-  .catchall(z.json());
-
-const indexEntrySchema = z
-  .object({
-    recordPath: z.string().optional(),
-    record_file: z.string().optional(),
-    recordJson: z.string().optional(),
-    record: z.string().optional(),
-    recordPathRelative: z.string().optional(),
-    requestPath: z.string().optional(),
-    request_file: z.string().optional(),
-    requestJson: z.string().optional(),
-    request: z.string().optional(),
-    replyPath: z.string().optional(),
-    reply_file: z.string().optional(),
-    replyJson: z.string().optional(),
-    reply: z.string().optional(),
-    validationPath: z.string().optional(),
-    validation_file: z.string().optional(),
-    validationJson: z.string().optional(),
-    validation: z.string().optional(),
-    caseDir: z.string().optional(),
-    case_id: optionalJson,
-    caseID: optionalJson,
-    caseSnapshot: caseSnapshotSchema.optional(),
-    repetition: optionalJson,
-    round: optionalJson,
-    roundIndex: optionalJson,
-    question: optionalJson,
-    status: optionalJson,
-    elapsedSeconds: optionalJson,
-    subject: optionalJson,
-    materialText: optionalJson,
-    selectionTitle: optionalJson,
-    selectionText: optionalJson,
-    caseKind: optionalJson,
-  })
-  .catchall(z.json());
-
-const indexDocumentSchema = z
-  .object({ records: z.array(indexEntrySchema).optional() })
-  .catchall(z.json());
-
-const recordDocumentSchema = z
-  .object({
-    caseSnapshot: caseSnapshotSchema.optional(),
-    shapeDecision: shapeDecisionSchema.optional(),
-    expressionPlan: expressionPlanSchema.optional(),
-    sourceBinding: sourceBindingSchema.optional(),
-    repairAndRetest: repairSchema.optional(),
-    toolAndProtocolValidation: protocolSchema.optional(),
-    repetition: optionalJson,
-    round: optionalJson,
-    question: optionalJson,
-    status: optionalJson,
-    state: optionalJson,
-    elapsedSeconds: optionalJson,
-    duration: optionalJson,
-    caseKind: optionalJson,
-    subject: optionalJson,
-  })
-  .catchall(z.json());
-
-const requestDocumentSchema = z
-  .object({
-    caseSnapshot: caseSnapshotSchema.optional(),
-    shapeDecision: shapeDecisionSchema.optional(),
-    expressionPlan: expressionPlanSchema.optional(),
-    sourceBinding: sourceBindingSchema.optional(),
-    repairAndRetest: repairSchema.optional(),
-    question: optionalJson,
-    prompt: optionalJson,
-    subject: optionalJson,
-    materialTitle: optionalJson,
-    materialKind: optionalJson,
-    materialText: optionalJson,
-    selectionTitle: optionalJson,
-    selectionText: optionalJson,
-  })
-  .catchall(z.json());
-
-const replyDocumentSchema = z
-  .object({
-    backend: optionalJson,
-    text: optionalJson,
-    richAnswer: optionalJson,
-  })
-  .catchall(z.json());
-
-const runDocumentSchema = z
-  .object({
-    createdAt: optionalJson,
-    runID: optionalJson,
-    rootPath: optionalJson,
-    retestOfRunID: optionalJson,
-  })
-  .catchall(z.json());
-
-type JsonValue = z.infer<ReturnType<typeof z.json>>;
-type IndexEntry = z.infer<typeof indexEntrySchema>;
-type IndexDocument = z.infer<typeof indexDocumentSchema>;
-type RecordDocument = z.infer<typeof recordDocumentSchema>;
-type RequestDocument = z.infer<typeof requestDocumentSchema>;
-type ReplyDocument = z.infer<typeof replyDocumentSchema>;
-type ProtocolDocument = z.infer<typeof protocolSchema>;
-type RunDocument = z.infer<typeof runDocumentSchema>;
+import {
+  evidenceBooleanText,
+  evidenceNumber,
+  evidenceText,
+  firstEvidenceValue,
+  indexDocumentSchema,
+  parseEvidenceJson,
+  protocolSchema,
+  recordDocumentSchema,
+  replyDocumentSchema,
+  requestDocumentSchema,
+  runDocumentSchema,
+} from "./evidence-contract.js";
+import type {
+  IndexDocument,
+  IndexEntry,
+  JsonValue,
+  ProtocolDocument,
+  RecordDocument,
+  ReplyDocument,
+  RequestDocument,
+  RunDocument,
+} from "./evidence-contract.js";
 
 interface ReadResult<T> {
   ok: boolean;
@@ -380,49 +211,31 @@ const TARGET_BREAKDOWN: Record<string, number> = {
 const TARGET_TOTAL = 56;
 const DEFAULT_SOURCE = ".build/rich-answer-evidence";
 
-/** 解析离线验收包生成命令的参数。 */
-function parseArgs(): CliOptions {
-  const args = process.argv.slice(2);
-  const result: CliOptions = {
-    runDir: null,
-    runId: null,
-    source: DEFAULT_SOURCE,
-    output: null,
-    force: false,
+/** 解析并验证离线验收包生成命令的参数。 */
+export function parseOfflineEvidencePackageArgs(
+  args: string[] = process.argv.slice(2),
+): CliOptions {
+  const { values } = parseNodeArgs({
+    args,
+    allowPositionals: false,
+    strict: true,
+    options: {
+      "run-dir": { type: "string" },
+      "run-id": { type: "string" },
+      source: { type: "string" },
+      output: { type: "string" },
+      force: { type: "boolean" },
+      help: { type: "boolean", short: "h" },
+    },
+  });
+  return {
+    runDir: values["run-dir"] ?? null,
+    runId: values["run-id"] ?? null,
+    source: values.source ?? DEFAULT_SOURCE,
+    output: values.output ?? null,
+    force: values.force ?? false,
+    help: values.help,
   };
-
-  for (let i = 0; i < args.length; i += 1) {
-    const arg = args[i];
-    if (arg === "--run-dir") {
-      result.runDir = args[i + 1]!;
-      i += 1;
-      continue;
-    }
-    if (arg === "--run-id") {
-      result.runId = args[i + 1]!;
-      i += 1;
-      continue;
-    }
-    if (arg === "--source") {
-      result.source = args[i + 1] || DEFAULT_SOURCE;
-      i += 1;
-      continue;
-    }
-    if (arg === "--output") {
-      result.output = args[i + 1]!;
-      i += 1;
-      continue;
-    }
-    if (arg === "--force") {
-      result.force = true;
-      continue;
-    }
-    if (arg === "--help" || arg === "-h") {
-      result.help = true;
-    }
-  }
-
-  return result;
 }
 
 /** 构造命令行帮助文本。 */
@@ -441,25 +254,6 @@ function usage(): string {
     "  --output       输出目录（建议：./Prototypes/RichAnswerEvidenceViewer/out）",
     "  --force        输出目录存在时覆盖",
   ].join("\n");
-}
-
-/** 将未知输入规范化为非空展示文本。 */
-function toText(value: unknown, fallback = "缺失"): string {
-  if (value === null || value === undefined) return fallback;
-  if (typeof value === "string") return value.trim() || fallback;
-  return String(value);
-}
-
-/** 将未知输入转换为有限数值。 */
-function toNumber(value: unknown): number | null {
-  const n = Number(value);
-  return Number.isFinite(n) ? n : null;
-}
-
-/** 将可空真值转换为中文展示文本。 */
-function boolText(value: unknown): string {
-  if (value === null || value === undefined) return "缺失";
-  return value ? "是" : "否";
 }
 
 /** 确保目标目录存在。 */
@@ -525,25 +319,9 @@ function resolveIfExists(
   return existsFile(absolute) ? absolute : null;
 }
 
-/** 返回列表中的第一个有效值。 */
-function pickFirst<T>(...values: (T | null | undefined)[]): T | undefined {
-  for (const value of values) {
-    if (value === null || value === undefined) continue;
-    if (typeof value === "string" && !value.trim()) continue;
-    if (Array.isArray(value) && value.length === 0) continue;
-    if (
-      typeof value === "object" &&
-      !Array.isArray(value) &&
-      Object.keys(value).length === 0
-    )
-      continue;
-    return value;
-  }
-}
-
 /** 规范化用例分类。 */
 function normalizeKind(raw: unknown): string {
-  const value = toText(raw, "rich").toLowerCase();
+  const value = evidenceText(raw, "rich").toLowerCase();
   if (
     value.includes("invalid") ||
     value.includes("protocol") ||
@@ -664,7 +442,7 @@ function collectAttempt(
   report: BuildReport,
   copiedAssets: CopiedAssets,
 ): AttemptView {
-  const explicitRecordPath = pickFirst(
+  const explicitRecordPath = firstEvidenceValue(
     entry.recordPath,
     entry.record_file,
     entry.recordJson,
@@ -672,21 +450,21 @@ function collectAttempt(
     entry.recordPathRelative,
   );
 
-  const explicitRequestPath = pickFirst(
+  const explicitRequestPath = firstEvidenceValue(
     entry.requestPath,
     entry.request_file,
     entry.requestJson,
     entry.request,
   );
 
-  const explicitReplyPath = pickFirst(
+  const explicitReplyPath = firstEvidenceValue(
     entry.replyPath,
     entry.reply_file,
     entry.replyJson,
     entry.reply,
   );
 
-  const explicitValidationPath = pickFirst(
+  const explicitValidationPath = firstEvidenceValue(
     entry.validationPath,
     entry.validation_file,
     entry.validationJson,
@@ -697,7 +475,7 @@ function collectAttempt(
     runDir,
     path.dirname(
       explicitRecordPath ||
-        toText(pickFirst(entry.caseDir, entry.case_id, entry.caseID), "."),
+        evidenceText(firstEvidenceValue(entry.caseDir, entry.case_id, entry.caseID), "."),
     ),
   );
 
@@ -791,28 +569,28 @@ function collectAttempt(
   const validation = validationRes.value ?? protocolSchema.parse({});
 
   const caseSnapshot =
-    pickFirst(
+    firstEvidenceValue(
       record.caseSnapshot,
       entry.caseSnapshot,
       request.caseSnapshot,
       {},
     ) || {};
   const shapeDecision =
-    pickFirst(record.shapeDecision, request.shapeDecision, {}) || {};
+    firstEvidenceValue(record.shapeDecision, request.shapeDecision, {}) || {};
   const exprPlan =
-    pickFirst(record.expressionPlan, request.expressionPlan, {}) || {};
+    firstEvidenceValue(record.expressionPlan, request.expressionPlan, {}) || {};
   const sourceBinding =
-    pickFirst(record.sourceBinding, request.sourceBinding, {}) || {};
+    firstEvidenceValue(record.sourceBinding, request.sourceBinding, {}) || {};
   const repair =
-    pickFirst(record.repairAndRetest, request.repairAndRetest, {}) || {};
+    firstEvidenceValue(record.repairAndRetest, request.repairAndRetest, {}) || {};
   const toolProtocol =
-    pickFirst(record.toolAndProtocolValidation, validation, {}) || {};
+    firstEvidenceValue(record.toolAndProtocolValidation, validation, {}) || {};
 
   const t1Programs = exprPlan.t1Programs ?? [];
   const t2Compositions = exprPlan.t2Compositions ?? [];
 
-  const caseID = toText(
-    pickFirst(
+  const caseID = evidenceText(
+    firstEvidenceValue(
       entry.caseID,
       entry.case_id,
       caseSnapshot.caseID,
@@ -832,8 +610,8 @@ function collectAttempt(
   );
 
   const screens = collectScreenshots(caseDir, report, copiedAssets);
-  const question = toText(
-    pickFirst(
+  const question = evidenceText(
+    firstEvidenceValue(
       entry.question,
       caseSnapshot.question,
       request.question,
@@ -844,8 +622,8 @@ function collectAttempt(
     "未定义题目",
   );
 
-  const status = toText(
-    pickFirst(
+  const status = evidenceText(
+    firstEvidenceValue(
       entry.status,
       record.status,
       record.state,
@@ -855,13 +633,13 @@ function collectAttempt(
     "unknown",
   );
 
-  const elapsedSeconds = pickFirst(
+  const elapsedSeconds = firstEvidenceValue(
     record.elapsedSeconds,
     record.duration,
     entry.elapsedSeconds,
     0,
   );
-  const elapsed = toNumber(elapsedSeconds);
+  const elapsed = evidenceNumber(elapsedSeconds);
 
   const missingFields: string[] = [];
   if (!requestRes.ok) missingFields.push("request.json");
@@ -870,14 +648,14 @@ function collectAttempt(
   if (!recordRes.ok) missingFields.push("record.json");
   if (screens.before === null) missingFields.push("before截图");
   if (screens.after === null) missingFields.push("after截图");
-  if (toText(request.selectionText, "") === "缺失")
+  if (evidenceText(request.selectionText, "") === "缺失")
     missingFields.push("selectionText");
 
   return {
     caseID,
     repetition: Number.isFinite(repetition) ? repetition : 0,
     caseKind: normalizeKind(
-      pickFirst(
+      firstEvidenceValue(
         entry.caseKind,
         caseSnapshot.caseKind,
         record.caseKind,
@@ -885,8 +663,8 @@ function collectAttempt(
         "rich",
       ),
     ),
-    subject: toText(
-      pickFirst(
+    subject: evidenceText(
+      firstEvidenceValue(
         entry.subject,
         caseSnapshot.subject,
         request.subject,
@@ -896,24 +674,24 @@ function collectAttempt(
       "未定义学科",
     ),
     question,
-    materialTitle: toText(
-      pickFirst(
+    materialTitle: evidenceText(
+      firstEvidenceValue(
         caseSnapshot.materialTitle,
         request.materialTitle,
         "未定义材料",
       ),
       "未定义材料",
     ),
-    materialKind: toText(
-      pickFirst(
+    materialKind: evidenceText(
+      firstEvidenceValue(
         caseSnapshot.materialKind,
         request.materialKind,
         "未定义材料类型",
       ),
       "未定义材料类型",
     ),
-    materialText: toText(
-      pickFirst(
+    materialText: evidenceText(
+      firstEvidenceValue(
         caseSnapshot.materialText,
         request.materialText,
         entry.materialText,
@@ -921,8 +699,8 @@ function collectAttempt(
       ),
       "未提供",
     ),
-    selectionTitle: toText(
-      pickFirst(
+    selectionTitle: evidenceText(
+      firstEvidenceValue(
         caseSnapshot.selectionTitle,
         request.selectionTitle,
         entry.selectionTitle,
@@ -930,8 +708,8 @@ function collectAttempt(
       ),
       "未定义选区",
     ),
-    selectionText: toText(
-      pickFirst(
+    selectionText: evidenceText(
+      firstEvidenceValue(
         caseSnapshot.selectionText,
         request.selectionText,
         entry.selectionText,
@@ -942,35 +720,35 @@ function collectAttempt(
     status,
     elapsedSeconds: elapsed,
     elapsedDisplay: elapsed === null ? "缺失" : `${elapsed}s`,
-    preferredShape: toText(shapeDecision.preferredShape, "缺失"),
-    actualShape: toText(shapeDecision.actualShape, "缺失"),
-    expectedShape: toText(shapeDecision.expectedShape, "缺失"),
-    directManipulation: boolText(shapeDecision.directManipulation),
+    preferredShape: evidenceText(shapeDecision.preferredShape, "缺失"),
+    actualShape: evidenceText(shapeDecision.actualShape, "缺失"),
+    expectedShape: evidenceText(shapeDecision.expectedShape, "缺失"),
+    directManipulation: evidenceBooleanText(shapeDecision.directManipulation),
     expressionPlan: {
       t1SceneCount: t1Programs.length,
       t2SceneCount: t2Compositions.length,
       t1Programs: t1Programs.map((item) => ({
-        sceneID: toText(item.sceneID, "缺失"),
-        family: toText(item.family, "缺失"),
-        version: toText(item.version, "缺失"),
-        maxHeight: toNumber(item.maxHeight),
-        directManipulation: boolText(item.directManipulation),
+        sceneID: evidenceText(item.sceneID, "缺失"),
+        family: evidenceText(item.family, "缺失"),
+        version: evidenceText(item.version, "缺失"),
+        maxHeight: evidenceNumber(item.maxHeight),
+        directManipulation: evidenceBooleanText(item.directManipulation),
         componentNames: Array.isArray(item.componentNames)
           ? item.componentNames
           : [],
       })),
       t2Compositions: t2Compositions.map((item) => ({
-        sceneID: toText(item.sceneID, "缺失"),
-        family: toText(item.family, "缺失"),
-        rootID: toText(item.rootID, "缺失"),
+        sceneID: evidenceText(item.sceneID, "缺失"),
+        family: evidenceText(item.family, "缺失"),
+        rootID: evidenceText(item.rootID, "缺失"),
         roles: Array.isArray(item.roles) ? item.roles : [],
-        nodeCount: toNumber(item.nodeCount) || 0,
-        dataRowCount: toNumber(item.dataRowCount) || 0,
+        nodeCount: evidenceNumber(item.nodeCount) || 0,
+        dataRowCount: evidenceNumber(item.dataRowCount) || 0,
       })),
     },
     protocol: {
-      status: toText(toolProtocol.status, "缺失"),
-      validationKind: toText(toolProtocol.validationKind, "缺失"),
+      status: evidenceText(toolProtocol.status, "缺失"),
+      validationKind: evidenceText(toolProtocol.validationKind, "缺失"),
       passedChecks: Array.isArray(toolProtocol.passedChecks)
         ? toolProtocol.passedChecks
         : [],
@@ -989,7 +767,7 @@ function collectAttempt(
       sceneEvidenceIDs: Array.isArray(sourceBinding.sceneEvidenceIDs)
         ? sourceBinding.sceneEvidenceIDs
         : [],
-      evidenceState: toText(sourceBinding.evidenceState, "缺失"),
+      evidenceState: evidenceText(sourceBinding.evidenceState, "缺失"),
       hasExpectedSource: sourceBinding.hasExpectedSource === true,
     },
     rawRequest: (() => {
@@ -1000,8 +778,8 @@ function collectAttempt(
       }
     })(),
     rawReply: {
-      backend: toText(reply.backend, "缺失"),
-      text: toText(reply.text, "缺失"),
+      backend: evidenceText(reply.backend, "缺失"),
+      text: evidenceText(reply.text, "缺失"),
       hasRichAnswer: reply.richAnswer ? "有" : "无",
       json: (() => {
         try {
@@ -1018,12 +796,12 @@ function collectAttempt(
         return "缺失";
       }
     })(),
-    failureReason: toText(repair.failureReason, "无"),
+    failureReason: evidenceText(repair.failureReason, "无"),
     repair: {
-      previousRunID: toText(repair.previousRunID, "缺失"),
-      previousStatus: toText(repair.previousStatus, "缺失"),
-      repairNote: toText(repair.repairNote, "缺失"),
-      isRetest: boolText(repair.isRetest),
+      previousRunID: evidenceText(repair.previousRunID, "缺失"),
+      previousStatus: evidenceText(repair.previousStatus, "缺失"),
+      repairNote: evidenceText(repair.repairNote, "缺失"),
+      isRetest: evidenceBooleanText(repair.isRetest),
     },
     beforeImage: screens.before,
     afterImage: screens.after,
@@ -1218,12 +996,12 @@ function buildOverview(
     },
     statusCount,
     subjectCount: subjects.size,
-    runCreatedAt: toText(runMeta.createdAt, "缺失"),
-    runId: toText(
+    runCreatedAt: evidenceText(runMeta.createdAt, "缺失"),
+    runId: evidenceText(
       runMeta.runID,
-      path.basename(toText(runMeta.rootPath, "unknown-run")),
+      path.basename(evidenceText(runMeta.rootPath, "unknown-run")),
     ),
-    retestOfRunID: toText(runMeta.retestOfRunID, "无"),
+    retestOfRunID: evidenceText(runMeta.retestOfRunID, "无"),
     completionState:
       cases.length >= TARGET_TOTAL
         ? "待用户验收（需人工复核）"
@@ -1550,7 +1328,7 @@ function writePackage(outputDir: string, payload: EvidencePayload): void {
 
 /** 执行离线验收包生成命令。 */
 function run(): void {
-  const argv = parseArgs();
+  const argv = parseOfflineEvidencePackageArgs();
   if (argv.help || (!argv.runDir && !argv.runId)) {
     console.log(usage());
     return;
@@ -1558,7 +1336,7 @@ function run(): void {
 
   const runDir = argv.runDir
     ? path.resolve(argv.runDir)
-    : path.resolve(argv.source, argv.runId!);
+    : path.resolve(argv.source, argv.runId ?? "");
   if (!existsDir(runDir)) throw new Error(`run目录不存在：${runDir}`);
 
   const output = argv.output
@@ -1604,4 +1382,9 @@ function run(): void {
   console.log(`completionState: ${overview.completionState}`);
 }
 
-run();
+if (
+  process.argv[1] &&
+  import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+) {
+  run();
+}

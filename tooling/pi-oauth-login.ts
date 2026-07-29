@@ -260,9 +260,9 @@ export function startCallbackServer(
 ): Promise<CallbackServer> {
   const { port, host, pathName, expectedState, codeParam = "code" } = options;
   return new Promise((resolve, reject) => {
-    let settle!: (value: { code: string }) => void;
+    let resolveCode: ((value: { code: string }) => void) | undefined;
     const wait = new Promise<{ code: string }>((waitResolve) => {
-      settle = waitResolve;
+      resolveCode = waitResolve;
     });
     const server = http.createServer((request, response) => {
       try {
@@ -293,7 +293,8 @@ export function startCallbackServer(
         response.end(
           oauthSuccessHtml("You can close this window and return to WeiBei."),
         );
-        settle({ code });
+        if (!resolveCode) throw new Error("OAuth callback server is not ready");
+        resolveCode({ code });
       } catch (error: unknown) {
         response.writeHead(500, { "Content-Type": "text/html; charset=utf-8" });
         response.end(oauthErrorHtml(errorMessage(error)));

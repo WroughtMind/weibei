@@ -33,6 +33,28 @@ interface PendingAttachment {
   documentID: string;
 }
 
+/** Image resolution, attachment, and upload operations. */
+export interface ImageFeature {
+  discardAllAttachments(): number;
+  discardAttachment(id: string): boolean;
+  insertImageFiles(files: File[]): Promise<void>;
+  imageFilesFromItems(
+    items: DataTransferItemList | null | undefined,
+  ): File[];
+  localImageUploader(
+    files: FileList,
+    schema: Schema,
+  ): Promise<ProseMirrorNode[]>;
+  missingImageURL(): string;
+  rejectAttachment(id: string, message?: string): void;
+  refreshMissingPlaceholders(): void;
+  refreshRenderedImages(): void;
+  resolveAttachment(id: string, src: string, alt: string): void;
+  resolveMarkdownURL(src: string): string;
+  scheduleImageResolution(view: EditorView): void;
+  setMarkdownBaseURL(next: string): void;
+}
+
 /**
  * Creates image resolution, native attachment, and upload behavior.
  *
@@ -47,7 +69,7 @@ export function createImageFeature({
   localImageScheme,
   markdownBaseURL,
   replaceSelection,
-}: ImageFeatureDependencies) {
+}: ImageFeatureDependencies): ImageFeature {
   let currentMarkdownBaseURL = markdownBaseURL || "";
   const imageScheme = localImageScheme || "weibeiimage";
   let attachmentRequestID = 0;

@@ -21,14 +21,6 @@ import "prismjs/components/prism-yaml";
 
 import type { EditorLabel, GetEditor } from "../types.js";
 
-type PrismToken =
-  | string
-  | {
-      alias?: string | string[];
-      content: PrismToken | PrismToken[];
-      type: string;
-    };
-
 type AddRangeDecoration = (
   decorations: Decoration[],
   from: number,
@@ -41,6 +33,26 @@ interface CodeRenderingDependencies {
   isEditable: () => boolean;
   getEditor: GetEditor;
   addRangeDecoration?: AddRangeDecoration;
+}
+
+/** Code, Mermaid, Prism, and KaTeX rendering operations. */
+export interface CodeRenderingFeature {
+  annotateMathErrors(): void;
+  decorateCodeBlock(
+    decorations: Decoration[],
+    node: ProseMirrorNode,
+    pos: number,
+  ): void;
+  decorateCodeLanguageEditor(
+    decorations: Decoration[],
+    node: ProseMirrorNode,
+    pos: number,
+  ): void;
+  decorateMermaidBlock(
+    decorations: Decoration[],
+    node: ProseMirrorNode,
+    pos: number,
+  ): boolean;
 }
 
 /**
@@ -57,7 +69,7 @@ export function createCodeRendering({
     if (to <= from) return;
     decorations.push(Decoration.inline(from, to, { class: className }));
   },
-}: CodeRenderingDependencies) {
+}: CodeRenderingDependencies): CodeRenderingFeature {
   let mermaidRenderID = 0;
   const mermaidWidget = (source: string): HTMLDivElement => {
     const container = document.createElement("div");
@@ -140,14 +152,14 @@ export function createCodeRendering({
     return aliases[key] || key;
   };
 
-  const tokenLength = (token: PrismToken): number => {
+  const tokenLength = (token: Prism.TokenStream): number => {
     if (typeof token === "string") return token.length;
-    if (Array.isArray(token.content))
-      return token.content.reduce((sum, child) => sum + tokenLength(child), 0);
-    return String(token.content || "").length;
+    if (Array.isArray(token))
+      return token.reduce((sum, child) => sum + tokenLength(child), 0);
+    return tokenLength(token.content);
   };
 
-  const tokenClass = (token: Exclude<PrismToken, string>): string => {
+  const tokenClass = (token: Prism.Token): string => {
     const aliases = Array.isArray(token.alias)
       ? token.alias
       : token.alias
@@ -160,7 +172,7 @@ export function createCodeRendering({
 
   const addTokenDecorations = (
     decorations: Decoration[],
-    tokens: PrismToken[],
+    tokens: Array<string | Prism.Token>,
     start: number,
   ): void => {
     let cursor = start;
@@ -191,10 +203,7 @@ export function createCodeRendering({
     try {
       addTokenDecorations(
         decorations,
-        Prism.tokenize(
-          node.textContent,
-          Prism.languages[language],
-        ) as PrismToken[],
+        Prism.tokenize(node.textContent, Prism.languages[language]),
         pos + 1,
       );
     } catch {
