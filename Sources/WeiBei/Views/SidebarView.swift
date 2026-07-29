@@ -4,8 +4,7 @@ import WeiBeiCore
 struct SidebarView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @FocusState private var librarySearchFocused: Bool
-    @State private var showsNewCourseSheet = false
-    @State private var newCourseTitle = ""
+    @State private var courseEntryPresentation: CourseProjectEntryPresentation?
     @State private var courseToRename: Course?
     @State private var renameCourseTitle = ""
     @State private var coursePendingDeletion: Course?
@@ -33,12 +32,14 @@ struct SidebarView: View {
                         .help(store.ui("打开课程空间", "Open course space"))
                     }
                     Spacer()
-                    Button { showsNewCourseSheet = true } label: {
+                    Button {
+                        courseEntryPresentation = CourseProjectEntryPresentation(intent: .create)
+                    } label: {
                         Image(systemName: "plus")
                     }
                     .buttonStyle(WeiBeiIconButtonStyle())
-                    .accessibilityLabel(Text(store.ui("新建课程", "Create course")))
-                    .help(store.ui("新建课程", "Create course"))
+                    .accessibilityLabel(Text(store.ui("添加课程", "Add course")))
+                    .help(store.ui("新建或纳入课程", "Create or add a course"))
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
@@ -86,14 +87,14 @@ struct SidebarView: View {
         .onAppear {
             librarySearchFocused = store.focusedPane == .library
         }
-        .sheet(isPresented: $showsNewCourseSheet) {
-            SidebarCourseNameSheet(
-                heading: store.ui("新建课程", "Create Course"),
-                detail: store.ui("课程只负责归拢资料与笔记，不会移动原文件。", "Courses organize materials and notes without moving files."),
-                confirmTitle: store.ui("创建", "Create"),
-                title: $newCourseTitle,
-                cancel: closeNewCourseSheet,
-                confirm: createCourse
+        .sheet(item: $courseEntryPresentation) { presentation in
+            CourseProjectEntrySheet(
+                initialIntent: presentation.intent,
+                cancel: { courseEntryPresentation = nil },
+                openCourse: { courseID in
+                    courseEntryPresentation = nil
+                    store.openCourseSpace(courseID)
+                }
             )
             .environmentObject(store)
         }
@@ -387,18 +388,6 @@ struct SidebarView: View {
         } else {
             store.openCourseMaterial(item.id)
         }
-    }
-
-    private func closeNewCourseSheet() {
-        showsNewCourseSheet = false
-        newCourseTitle = ""
-    }
-
-    private func createCourse() {
-        guard let courseID = store.createCourse(title: newCourseTitle) else { return }
-        store.activateCourse(courseID)
-        closeNewCourseSheet()
-        store.openCourseSpace(courseID)
     }
 
     private func renameCourse(_ course: Course) {

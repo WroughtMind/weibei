@@ -35,6 +35,7 @@ struct CourseProjectManifest: Codable, Equatable {
 
 enum CourseProjectRootError: LocalizedError {
     case emptyTitle
+    case invalidDirectoryName
     case nonFileURL
     case missingLibrary
     case unavailableLibrary
@@ -58,6 +59,8 @@ enum CourseProjectRootError: LocalizedError {
         switch self {
         case .emptyTitle:
             return "课程名称不能为空。"
+        case .invalidDirectoryName:
+            return "这个课程名称无法生成安全的文件夹名，请换一个名称。"
         case .nonFileURL:
             return "课程根目录必须是本地文件夹。"
         case .missingLibrary:

@@ -39,14 +39,6 @@ struct NotebookRenameDraft: Identifiable, Equatable {
     var title: String
 }
 
-struct CourseFolderImportDraft: Identifiable {
-    let id = UUID()
-    var rootURLs: [URL]
-    var markdownFiles: [URL]
-    var notePaths: Set<String>
-    var automaticMaterialCount: Int
-}
-
 struct ThreePaneReorderDrag: Equatable {
     var role: WorkspacePaneRole
     var translation: CGFloat
@@ -331,7 +323,6 @@ final class WorkspaceStore: ObservableObject {
     @Published var courseWorkspacePresented = false
     @Published private(set) var courseWorkspaceDestination: CourseWorkspaceDestination = .hub
     @Published private(set) var courseWorkspaceTargetItemID: String?
-    @Published var courseFolderImportDraft: CourseFolderImportDraft?
     @Published private var backNavigationStack: [NavigationSnapshot] = []
     @Published private var forwardNavigationStack: [NavigationSnapshot] = []
 
@@ -626,17 +617,29 @@ final class WorkspaceStore: ObservableObject {
     }
 
     @discardableResult
-    func createCourse(title rawTitle: String) -> UUID? {
+    func createCourseInLibrary(title rawTitle: String) throws -> UUID {
         let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty else { return nil }
-        let course = Course(
-            title: title,
-            colorIndex: nextCourseColorIndex()
+        guard !title.isEmpty else { throw CourseProjectRootError.emptyTitle }
+        guard let libraryRoot = courseLibraryRootURL else {
+            throw courseLibraryRootPath == nil
+                ? CourseProjectRootError.missingLibrary
+                : CourseProjectRootError.unavailableLibrary
+        }
+        let rawDirectoryName = MarkdownAttachmentStore.safeFileStem(
+            title,
+            fallback: "",
+            limit: 80
         )
-        courses.append(course)
-        activeCourseID = course.id
-        save()
-        return course.id
+        let directoryName = rawDirectoryName.trimmingCharacters(
+            in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "."))
+        )
+        guard !directoryName.isEmpty else {
+            throw CourseProjectRootError.invalidDirectoryName
+        }
+        return try createCourse(
+            title: title,
+            at: libraryRoot.appendingPathComponent(directoryName, isDirectory: true)
+        )
     }
 
     @discardableResult
@@ -2745,7 +2748,6 @@ final class WorkspaceStore: ObservableObject {
         guard courseWorkspacePresented else { return }
         courseWorkspacePresented = false
         courseWorkspaceTargetItemID = nil
-        courseFolderImportDraft = nil
         guard restoringFocus, let courseWorkspaceReturnFocus else {
             self.courseWorkspaceReturnFocus = nil
             return
@@ -4198,78 +4200,6 @@ final class WorkspaceStore: ObservableObject {
         presentImportPanel(linkToActiveNote: false)
     }
 
-    func prepareCourseFolderImportFromPanel() {
-        let panel = NSOpenPanel()
-        panel.title = ui("选择课程文件夹", "Choose a course folder")
-        panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        guard panel.runModal() == .OK else {
-            courseFolderImportDraft = nil
-            return
-        }
-
-        let draft = makeCourseFolderImportDraft(rootURLs: panel.urls)
-        guard !draft.markdownFiles.isEmpty else {
-            importCourseFolder(draft, notePaths: [])
-            courseFolderImportDraft = nil
-            return
-        }
-        courseFolderImportDraft = draft
-    }
-
-    func importCourseFolder(_ draft: CourseFolderImportDraft, notePaths: Set<String>) {
-        _ = importFiles(
-            draft.rootURLs,
-            selectsFirstImportedItem: false,
-            markdownNotePaths: notePaths,
-            reclassifiesExistingMarkdown: true
-        )
-
-        var memberships = courseMembershipIndex
-        var selectedCourseID: UUID?
-        for rootURL in draft.rootURLs {
-            let standardizedRoot = rootURL.standardizedFileURL
-            let itemIDs = Set(importedItems.compactMap { item -> String? in
-                guard let itemURL = item.url?.standardizedFileURL,
-                      Self.isFileURL(itemURL, inside: standardizedRoot) else { return nil }
-                return item.id
-            })
-            guard !itemIDs.isEmpty else { continue }
-            let courseID = ensureCourse(forImportRoot: standardizedRoot)
-            memberships.assign(itemIDs: itemIDs, to: courseID)
-            selectedCourseID = selectedCourseID ?? courseID
-        }
-        courseItemMemberships = memberships.values
-        if let selectedCourseID {
-            activeCourseID = selectedCourseID
-        }
-        save()
-    }
-
-    private func ensureCourse(forImportRoot rootURL: URL) -> UUID {
-        let rootPath = rootURL.standardizedFileURL.path
-        if let course = courses.first(where: { $0.sourceRootPath == rootPath }) {
-            return course.id
-        }
-
-        let course = Course(
-            title: rootURL.lastPathComponent.isEmpty
-                ? ui("未命名课程", "Untitled Course")
-                : rootURL.lastPathComponent,
-            colorIndex: nextCourseColorIndex(),
-            sourceRootPath: rootPath
-        )
-        courses.append(course)
-        return course.id
-    }
-
-    nonisolated private static func isFileURL(_ itemURL: URL, inside rootURL: URL) -> Bool {
-        let rootPath = rootURL.standardizedFileURL.path
-        let itemPath = itemURL.standardizedFileURL.path
-        return itemPath == rootPath || itemPath.hasPrefix(rootPath + "/")
-    }
-
     @discardableResult
     func retryWorkspaceSave() -> Bool {
         save()
@@ -4550,23 +4480,6 @@ final class WorkspaceStore: ObservableObject {
         "imported:\(UUID().uuidString.lowercased())"
     }
 
-    private func makeCourseFolderImportDraft(rootURLs: [URL]) -> CourseFolderImportDraft {
-        let supportedFiles = rootURLs
-            .flatMap(Self.supportedCourseFiles(at:))
-            .reduce(into: [URL]()) { result, url in
-                if !result.contains(where: { $0.standardizedFileURL == url.standardizedFileURL }) {
-                    result.append(url)
-                }
-            }
-        let markdownFiles = supportedFiles.filter(Self.isMarkdownFile)
-        return CourseFolderImportDraft(
-            rootURLs: rootURLs,
-            markdownFiles: markdownFiles,
-            notePaths: Set(markdownFiles.filter(Self.defaultMarkdownIsNotebookNote).map(\.path)),
-            automaticMaterialCount: supportedFiles.count - markdownFiles.count
-        )
-    }
-
     private static func supportedCourseFiles(at url: URL) -> [URL] {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else { return [] }
@@ -4596,12 +4509,6 @@ final class WorkspaceStore: ObservableObject {
 
     private static func isMarkdownFile(_ url: URL) -> Bool {
         ["md", "markdown"].contains(url.pathExtension.lowercased())
-    }
-
-    private static func defaultMarkdownIsNotebookNote(_ url: URL) -> Bool {
-        let description = (url.deletingPathExtension().lastPathComponent + " "
-            + url.deletingLastPathComponent().pathComponents.suffix(3).joined(separator: " ")).lowercased()
-        return ["笔记", "note", "notes", "notebook"].contains { description.contains($0) }
     }
 
     func promptRenameNotebookNote(itemID: String) {
@@ -6668,46 +6575,27 @@ final class WorkspaceStore: ObservableObject {
         try? "# 政策工具笔记\n\n## 摘录\n".write(to: noteBURL, atomically: true, encoding: .utf8)
         try? "# 期末复习笔记\n\n## 待追问\n".write(to: noteCURL, atomically: true, encoding: .utf8)
 
-        let selectionBeforeFolderImport = selectedItemID
-        let folderImportDraft = makeCourseFolderImportDraft(rootURLs: [fixtureDirectory])
-        importCourseFolder(folderImportDraft, notePaths: folderImportDraft.notePaths)
-        let importedFolderItems = importedItems.filter {
-            $0.url?.deletingLastPathComponent().standardizedFileURL.path == fixtureDirectory.standardizedFileURL.path
-        }
-        let importedFolderRoles = Dictionary(uniqueKeysWithValues: importedFolderItems.map {
-            ($0.subtitle, $0.isNotebookNote)
-        })
-        let folderItemCountPassed = importedFolderItems.count == 6
-        let folderMaterialDefaultPassed = (importedFolderRoles[materialBURL.lastPathComponent] ?? true) == false
-        let folderNoteDefaultsPassed = [noteAURL, noteBURL, noteCURL].allSatisfy { url in
-            (importedFolderRoles[url.lastPathComponent] ?? false) == true
-        }
-        let folderCountSummaryPassed = folderImportDraft.automaticMaterialCount
-            + folderImportDraft.markdownFiles.count
-            - folderImportDraft.notePaths.count == 3
-        let initialFolderClassificationPassed = folderItemCountPassed
-            && folderMaterialDefaultPassed
-            && folderNoteDefaultsPassed
-            && folderCountSummaryPassed
-        _ = importFiles(
-            [materialBURL],
+        let selectionBeforeCourseImports = selectedItemID
+        let importedMaterials = importFiles(
+            [materialAURL, materialBURL, materialCURL],
+            selectsFirstImportedItem: false,
+            reclassifiesExistingMarkdown: true
+        )
+        let importedNotes = importFiles(
+            [noteAURL, noteBURL, noteCURL],
             selectsFirstImportedItem: false,
             markdownAsNotes: true,
             markdownOnly: true,
             reclassifiesExistingMarkdown: true
         )
-        let correctedExistingFileToNote = importedItems.first(where: { $0.urlPath == materialBURL.path })?.isNotebookNote == true
-        _ = importFiles(
-            [materialBURL],
-            selectsFirstImportedItem: false,
-            reclassifiesExistingMarkdown: true
-        )
-        let correctedExistingFileBackToMaterial = importedItems.first(where: { $0.urlPath == materialBURL.path })?.isNotebookNote == false
-        let importClassificationPassed = initialFolderClassificationPassed
-            && correctedExistingFileToNote
-            && correctedExistingFileBackToMaterial
-            && selectedItemID == selectionBeforeFolderImport
-        let importSelectionPreserved = selectedItemID == selectionBeforeFolderImport
+        let materialImportPassed = importedMaterials.count == 3
+            && importedMaterials.allSatisfy { !$0.isNotebookNote }
+        let noteImportPassed = importedNotes.count == 3
+            && importedNotes.allSatisfy(\.isNotebookNote)
+        let importSelectionPreserved = selectedItemID == selectionBeforeCourseImports
+        let courseFileImportPassed = materialImportPassed
+            && noteImportPassed
+            && importSelectionPreserved
 
         let materialA = StudyItem(id: "course-material-a", title: "利率基础", subtitle: materialAURL.lastPathComponent, kind: .html, urlPath: materialAURL.path, isSample: false)
         let materialB = StudyItem(id: "course-material-b", title: "货币政策", subtitle: materialBURL.lastPathComponent, kind: .markdown, urlPath: materialBURL.path, isSample: false)
@@ -6858,18 +6746,14 @@ final class WorkspaceStore: ObservableObject {
                         && initialSummary.unlinkedNoteCount == 1
                         && initialSummary.studySessionCount == 1
                         && initialSummary.unresolvedConfusionCount == 1
-                        && importClassificationPassed ? "pass" : "fail",
-                    "importClassificationPassed": importClassificationPassed,
+                        && courseFileImportPassed ? "pass" : "fail",
+                    "courseFileImportPassed": courseFileImportPassed,
                     "invalidNoteCreationPassed": invalidNoteCreationPassed,
-                    "initialFolderClassificationPassed": initialFolderClassificationPassed,
-                    "correctedExistingFileToNote": correctedExistingFileToNote,
-                    "correctedExistingFileBackToMaterial": correctedExistingFileBackToMaterial,
+                    "materialImportPassed": materialImportPassed,
+                    "noteImportPassed": noteImportPassed,
                     "importSelectionPreserved": importSelectionPreserved,
-                    "importedFolderItemCount": importedFolderItems.count,
-                    "importedFolderRoles": importedFolderRoles,
-                    "folderMaterialDefaultPassed": folderMaterialDefaultPassed,
-                    "folderNoteDefaultsPassed": folderNoteDefaultsPassed,
-                    "folderCountSummaryPassed": folderCountSummaryPassed,
+                    "importedMaterialCount": importedMaterials.count,
+                    "importedNoteCount": importedNotes.count,
                     "materialCount": initialSummary.materialCount,
                     "noteCount": initialSummary.noteCount,
                     "explicitLinkCount": initialSummary.explicitLinkCount,
@@ -7024,7 +6908,7 @@ final class WorkspaceStore: ObservableObject {
             && diskSummary?.unlinkedNoteCount == 0
 
         let resultPassed = initialRelations.links.count == 3
-            && importClassificationPassed
+            && courseFileImportPassed
             && invalidNoteCreationPassed
             && continuityPassed
             && materialNavigationPassed
@@ -7035,17 +6919,13 @@ final class WorkspaceStore: ObservableObject {
             payload: [
                 "result": resultPassed ? "pass" : "fail",
                 "continuityPassed": continuityPassed,
-                "importClassificationPassed": importClassificationPassed,
+                "courseFileImportPassed": courseFileImportPassed,
                 "invalidNoteCreationPassed": invalidNoteCreationPassed,
-                "initialFolderClassificationPassed": initialFolderClassificationPassed,
-                "correctedExistingFileToNote": correctedExistingFileToNote,
-                "correctedExistingFileBackToMaterial": correctedExistingFileBackToMaterial,
+                "materialImportPassed": materialImportPassed,
+                "noteImportPassed": noteImportPassed,
                 "importSelectionPreserved": importSelectionPreserved,
-                "importedFolderItemCount": importedFolderItems.count,
-                "importedFolderRoles": importedFolderRoles,
-                "folderMaterialDefaultPassed": folderMaterialDefaultPassed,
-                "folderNoteDefaultsPassed": folderNoteDefaultsPassed,
-                "folderCountSummaryPassed": folderCountSummaryPassed,
+                "importedMaterialCount": importedMaterials.count,
+                "importedNoteCount": importedNotes.count,
                 "materialNavigationPassed": materialNavigationPassed,
                 "noteNavigationPassed": noteNavigationPassed,
                 "persistencePassed": persistencePassed,

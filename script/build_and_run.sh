@@ -615,9 +615,10 @@ verify_course_workspace_flow() {
       and .readingPositionCount == 1
       and .studySessionCount == 1
       and .unresolvedConfusionCount == 1
-      and .importClassificationPassed == true
+      and .courseFileImportPassed == true
       and .invalidNoteCreationPassed == true
-      and .folderCountSummaryPassed == true
+      and .materialImportPassed == true
+      and .noteImportPassed == true
       and .unlinkedMaterialIDs == ["course-material-c"]
       and .unlinkedNoteIDs == ["course-note-c"]
       and .courseWorkspacePresented == true
@@ -629,9 +630,10 @@ verify_course_workspace_flow() {
   elif ! /usr/bin/jq -e '
     .result == "pass"
     and .continuityPassed == true
-    and .importClassificationPassed == true
+    and .courseFileImportPassed == true
     and .invalidNoteCreationPassed == true
-    and .folderCountSummaryPassed == true
+    and .materialImportPassed == true
+    and .noteImportPassed == true
     and .materialNavigationPassed == true
     and .noteNavigationPassed == true
     and .persistencePassed == true

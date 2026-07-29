@@ -4,10 +4,13 @@ import WeiBeiCore
 enum CourseProjectRootSelfCheck {
     @MainActor
     static func run() throws {
+        try courseEntryPresentationResetsIntent()
+        try escapeBridgeDefersToPresentedSurfaces()
         try libraryGrantPersistsAndBalancesSecurityScope()
         try libraryCannotEqualOrSitInsideRegisteredCourse()
         try deniedSecurityScopeKeepsCourseUnavailable()
         try movedLibraryIntoWorkspaceIsRejectedOnRestore()
+        try libraryCreationDerivesSafeNameAndRejectsConflicts()
         try newCourseCreatesAtomicProjectAndManifest()
         try stagedAndWorkspaceFailuresLeaveNoGhostCourse()
         try failedAdoptionRollsBackOnlyItsOwnMetadata()
@@ -19,6 +22,56 @@ enum CourseProjectRootSelfCheck {
         try damagedMetadataIsNotOverwritten()
         try movedLibraryCourseRestoresTheSameIdentity()
         try legacyCourseSnapshotStillDecodes()
+    }
+
+    private static func courseEntryPresentationResetsIntent() throws {
+        var presentation: CourseProjectEntryPresentation? =
+            CourseProjectEntryPresentation(intent: .create)
+        let createPresentation = try require(presentation, "新建课程入口没有展示身份")
+        try check(createPresentation.intent == .create, "新建课程入口意图错误")
+
+        presentation = nil
+        try check(presentation == nil, "课程入口关闭后没有清空展示身份")
+
+        presentation = CourseProjectEntryPresentation(intent: .adopt)
+        let adoptPresentation = try require(presentation, "纳入课程入口没有展示身份")
+        try check(adoptPresentation.intent == .adopt, "关闭后再次打开复用了旧入口意图")
+        try check(adoptPresentation.id != createPresentation.id, "关闭后再次打开复用了旧展示身份")
+    }
+
+    private static func escapeBridgeDefersToPresentedSurfaces() throws {
+        try check(
+            EscapeKeyBridge.Coordinator.shouldHandleEscape(
+                isEnabled: true,
+                hasModalWindow: false,
+                hasActiveSheet: false
+            ),
+            "没有弹窗时 EscapeKeyBridge 未响应"
+        )
+        try check(
+            !EscapeKeyBridge.Coordinator.shouldHandleEscape(
+                isEnabled: true,
+                hasModalWindow: true,
+                hasActiveSheet: false
+            ),
+            "模态窗口出现时 EscapeKeyBridge 仍会关闭底层课程空间"
+        )
+        try check(
+            !EscapeKeyBridge.Coordinator.shouldHandleEscape(
+                isEnabled: true,
+                hasModalWindow: false,
+                hasActiveSheet: true
+            ),
+            "Sheet 出现时 EscapeKeyBridge 仍会关闭底层课程空间"
+        )
+        try check(
+            !EscapeKeyBridge.Coordinator.shouldHandleEscape(
+                isEnabled: false,
+                hasModalWindow: false,
+                hasActiveSheet: false
+            ),
+            "EscapeKeyBridge 忽略了禁用状态"
+        )
     }
 
     @MainActor
@@ -401,6 +454,34 @@ enum CourseProjectRootSelfCheck {
         try check(starts == 2, "重开后没有重新开始资料库授权")
         store = nil
         try check(stops == 2, "重开后的资料库授权没有成对停止")
+    }
+
+    @MainActor
+    private static func libraryCreationDerivesSafeNameAndRejectsConflicts() throws {
+        let fixture = try Fixture(name: "library-create-name")
+        defer { fixture.remove() }
+        let library = try fixture.makeDirectory("课程资料库")
+        let store = makeStore(fixture: fixture)
+        try store.configureCourseLibrary(at: library)
+
+        let courseID = try store.createCourseInLibrary(title: " 货币/金融 ")
+        let expectedRoot = library.appendingPathComponent("货币-金融", isDirectory: true)
+        try check(
+            store.courseRootURL(for: courseID) == expectedRoot.canonicalFileURL,
+            "高层新建没有从课程名派生安全目录"
+        )
+        try check(
+            store.course(withID: courseID)?.title == "货币/金融",
+            "安全目录名错误覆盖了课程显示名称"
+        )
+
+        try expectFailure("安全目录名冲突") {
+            try store.createCourseInLibrary(title: "货币-金融")
+        }
+        try expectFailure("点号目录名") {
+            try store.createCourseInLibrary(title: "...")
+        }
+        try check(store.courses.count == 1, "目录名冲突或非法名称产生了额外课程")
     }
 
     @MainActor
