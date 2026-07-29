@@ -1626,6 +1626,26 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             throw new Error('ArrowDown exited from a middle visual code line\\n' + wrappedAfter);
           }
 
+          const languageInput = document.querySelector('.weibei-code-language-input');
+          const languageStyle = languageInput ? getComputedStyle(languageInput) : null;
+          if (!languageStyle
+              || languageInput.placeholder !== 'text'
+              || languageStyle.borderTopWidth !== '0px'
+              || languageStyle.borderRightWidth !== '0px'
+              || languageStyle.borderBottomWidth !== '0px'
+              || languageStyle.borderLeftWidth !== '0px'
+              || languageStyle.backgroundColor !== 'rgba(0, 0, 0, 0)') {
+            throw new Error('code language input retained a visible border or background');
+          }
+          languageInput.focus();
+          const focusedLanguageStyle = getComputedStyle(languageInput);
+          if (document.activeElement !== languageInput
+              || focusedLanguageStyle.boxShadow !== 'none'
+              || focusedLanguageStyle.outlineStyle !== 'none'
+              || focusedLanguageStyle.caretColor === 'rgba(0, 0, 0, 0)') {
+            throw new Error('focused code language input did not expose only its text caret');
+          }
+
           window.WeiBeiEditor.setEditable(false);
           const readOnlyLanguage = document.querySelector('.weibei-code-language-input');
           if (!readOnlyLanguage?.readOnly

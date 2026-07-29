@@ -86,7 +86,7 @@ export const editorLabels = {
     slashColumns: '列',
     slashInsertTable: '插入表格',
     codeLanguage: '代码语言',
-    codeLanguagePlaceholder: '语言',
+    codeLanguagePlaceholder: 'text',
   },
   en: {
     properties: 'Properties',
@@ -122,7 +122,7 @@ export const editorLabels = {
     slashColumns: 'Columns',
     slashInsertTable: 'Insert table',
     codeLanguage: 'Code language',
-    codeLanguagePlaceholder: 'Language',
+    codeLanguagePlaceholder: 'text',
   },
 };
 /**
