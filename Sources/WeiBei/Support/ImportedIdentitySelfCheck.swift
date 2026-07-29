@@ -4,8 +4,11 @@ import WeiBeiCore
 enum ImportedIdentitySelfCheck {
     @MainActor
     static func run() throws {
+        try storageModelsDecodeLegacySnapshotsAndRoundTrip()
         try legacyPathSnapshotMigratesItsEntireRelationshipGraph()
+        try selectionThreadMigrationWaitsForWorkspaceCommit()
         try duplicateIdentityMigrationPreservesConflictingDrafts()
+        try duplicateIdentityPreservesConflictingStorageMetadata()
         try offlineLegacyPathMigratesWhenItReturns()
         try sameVolumeMoveKeepsIdentityRelationsNavigationAndIndex()
         try temporarilyUnavailableNoteRetainsLatestEdit()
@@ -21,6 +24,147 @@ enum ImportedIdentitySelfCheck {
         try replacedAndCrossVolumeFilesReceiveNewIdentities()
     }
 
+    private static func storageModelsDecodeLegacySnapshotsAndRoundTrip() throws {
+        let legacyExternalData = Data(
+            """
+            {
+              "id":"file:/tmp/legacy.txt",
+              "title":"旧资料",
+              "subtitle":"legacy.txt",
+              "kind":"text",
+              "urlPath":"/tmp/legacy.txt",
+              "isSample":false,
+              "isNotebookNote":false
+            }
+            """.utf8
+        )
+        let legacyExternal = try JSONDecoder().decode(StudyItem.self, from: legacyExternalData)
+        try check(legacyExternal.storage == .legacyExternal, "旧外部资料没有迁移为 legacyExternal")
+        try check(legacyExternal.contentRevision == 1, "旧资料没有获得首版内容修订号")
+        try check(legacyExternal.contentDigest == nil, "旧资料被伪造了内容摘要")
+
+        let legacySampleData = Data(
+            """
+            {
+              "id":"sample",
+              "title":"内置样例",
+              "subtitle":"样例",
+              "kind":"html",
+              "urlPath":null,
+              "isSample":true
+            }
+            """.utf8
+        )
+        let legacySample = try JSONDecoder().decode(StudyItem.self, from: legacySampleData)
+        try check(legacySample.storage == .bundledSample, "旧内置样例被误标成外部资料")
+
+        let ownerCourseID = UUID()
+        let ownedItem = StudyItem(
+            id: "imported:owned",
+            title: "课程文稿",
+            subtitle: "课程文稿.pdf",
+            kind: .pdf,
+            urlPath: "/tmp/课程/文稿/课程文稿.pdf",
+            isSample: false,
+            storage: .courseOwned(ownerCourseID: ownerCourseID),
+            contentRevision: 7,
+            contentDigest: "sha256:owned"
+        )
+        let sharedItem = StudyItem(
+            id: "imported:shared",
+            title: "共享文稿",
+            subtitle: "共享文稿.pdf",
+            kind: .pdf,
+            urlPath: "/tmp/共享文稿/共享文稿.pdf",
+            isSample: false,
+            storage: .shared(sharedRelativePath: "共享文稿/共享文稿.pdf"),
+            contentRevision: 3,
+            contentDigest: "sha256:shared"
+        )
+        for item in [ownedItem, sharedItem, legacyExternal, legacySample] {
+            let decoded = try JSONDecoder().decode(
+                StudyItem.self,
+                from: JSONEncoder().encode(item)
+            )
+            try check(decoded == item, "资料存储归属、修订号或摘要编码往返不一致")
+        }
+
+        struct LegacyMembership: Encodable {
+            var id: UUID
+            var courseID: UUID
+            var itemID: String
+            var createdAt: Date
+        }
+        let legacyMembership = LegacyMembership(
+            id: UUID(),
+            courseID: ownerCourseID,
+            itemID: ownedItem.id,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let decodedLegacyMembership = try JSONDecoder().decode(
+            CourseItemMembership.self,
+            from: JSONEncoder().encode(legacyMembership)
+        )
+        try check(decodedLegacyMembership.courseRelativePath == nil, "旧课程关系被伪造了相对路径")
+        try check(decodedLegacyMembership.entryIdentity == nil, "旧课程关系被伪造了入口身份")
+        try check(decodedLegacyMembership.documentIdentifier == nil, "旧课程关系被伪造了系统文稿身份")
+
+        let entryIdentity = ImportedFileIdentity(
+            volumeID: 12,
+            fileID: 34,
+            birthTimeSeconds: 56,
+            birthTimeNanoseconds: 78
+        )
+        let membership = CourseItemMembership(
+            courseID: ownerCourseID,
+            itemID: sharedItem.id,
+            courseRelativePath: "文稿/共享文稿.pdf",
+            entryIdentity: entryIdentity,
+            documentIdentifier: 9_001
+        )
+        let decodedMembership = try JSONDecoder().decode(
+            CourseItemMembership.self,
+            from: JSONEncoder().encode(membership)
+        )
+        try check(decodedMembership == membership, "课程入口路径和身份编码往返不一致")
+        try check(decodedMembership.entryIdentity == entryIdentity, "系统文稿身份改变了文件入口身份等式")
+
+        let oldestMembershipID = UUID()
+        let partialMemberships = CourseItemMemberships(values: [
+            CourseItemMembership(
+                id: oldestMembershipID,
+                courseID: ownerCourseID,
+                itemID: sharedItem.id,
+                courseRelativePath: "文稿/共享文稿.pdf",
+                createdAt: Date(timeIntervalSince1970: 1)
+            ),
+            CourseItemMembership(
+                courseID: ownerCourseID,
+                itemID: sharedItem.id,
+                entryIdentity: entryIdentity,
+                documentIdentifier: 9_001,
+                createdAt: Date(timeIntervalSince1970: 2)
+            ),
+        ])
+        try check(partialMemberships.values.count == 1, "同一课程入口的互补元数据没有安全合并")
+        try check(partialMemberships.values.first?.id == oldestMembershipID, "互补元数据合并没有保留最早关系身份")
+        try check(partialMemberships.values.first?.courseRelativePath == "文稿/共享文稿.pdf", "互补元数据合并丢失课程路径")
+        try check(partialMemberships.values.first?.entryIdentity == entryIdentity, "互补元数据合并丢失入口身份")
+        try check(partialMemberships.values.first?.documentIdentifier == 9_001, "互补元数据合并丢失系统文稿身份")
+
+        let conflictingMemberships = CourseItemMemberships(values: [
+            membership,
+            CourseItemMembership(
+                courseID: ownerCourseID,
+                itemID: sharedItem.id,
+                courseRelativePath: "文稿/另一个入口.pdf",
+                entryIdentity: entryIdentity,
+                documentIdentifier: 9_001
+            ),
+        ])
+        try check(conflictingMemberships.values.count == 2, "同一课程入口的冲突元数据被静默丢弃")
+    }
+
     @MainActor
     private static func legacyPathSnapshotMigratesItsEntireRelationshipGraph() throws {
         let fixture = try WorkspaceFixture(name: "legacy-graph")
@@ -33,9 +177,22 @@ enum ImportedIdentitySelfCheck {
 
         let legacyMaterialID = "file:\(materialURL.path)"
         let legacyNoteID = "file:\(noteURL.path)"
+        let courseID = UUID()
         let session = StudySession(
             title: "第一讲复习",
-            focusItemIDs: [legacyMaterialID, legacyNoteID]
+            focusItemIDs: [legacyMaterialID, legacyNoteID],
+            materialItemID: legacyMaterialID
+        )
+        let selectionThread = SelectionAskThread(
+            selectionText: "货币乘数",
+            source: .document,
+            ownerTitle: "第一讲",
+            itemID: legacyMaterialID,
+            messageIDs: [UUID(), UUID()]
+        )
+        fixture.selectionAskThreadDefaults.set(
+            try JSONEncoder().encode([selectionThread]),
+            forKey: "weibei.selectionAskThreads.v1"
         )
         let snapshot = PersistedWorkspace(
             importedItems: [
@@ -60,6 +217,16 @@ enum ImportedIdentitySelfCheck {
             notesByItemID: [legacyNoteID: "遗留缓存笔记"],
             selectedItemID: legacyMaterialID,
             activeNotebookItemID: legacyNoteID,
+            courses: [Course(id: courseID, title: "旧课程")],
+            courseItemMemberships: [
+                CourseItemMembership(
+                    courseID: courseID,
+                    itemID: legacyMaterialID,
+                    courseRelativePath: "文稿/第一讲.txt",
+                    documentIdentifier: 4_242
+                ),
+            ],
+            activeCourseID: courseID,
             noteSourceLinks: [
                 NoteSourceLink(noteItemID: legacyNoteID, sourceItemID: legacyMaterialID),
             ],
@@ -77,7 +244,10 @@ enum ImportedIdentitySelfCheck {
         )
         try fixture.write(snapshot)
 
-        let store = WorkspaceStore(workspaceDirectory: fixture.workspaceDirectory)
+        let store = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        )
         let material = try require(
             store.importedItems.first { $0.urlPath == materialURL.path },
             "旧快照迁移后找不到资料"
@@ -100,6 +270,45 @@ enum ImportedIdentitySelfCheck {
         try check(store.linkedSourceIDs(for: note.id) == [material.id], "笔记资料关系没有随身份迁移")
         try check(store.studyLocation(for: material.id)?.itemID == material.id, "阅读位置没有随身份迁移")
         try check(Set(store.activeStudySession?.focusItemIDs ?? []) == Set([material.id, note.id]), "学习会话没有随身份迁移")
+        try check(store.activeStudySession?.materialItemID == material.id, "学习会话主资料没有随身份迁移")
+        try check(store.activeStudySession?.groupingMaterialItemID == material.id, "学习会话分组资料仍指向旧身份")
+        let migratedMembership = try require(
+            store.courseItemMemberships.first { $0.courseID == courseID },
+            "课程资料归属在身份迁移时丢失"
+        )
+        try check(migratedMembership.itemID == material.id, "课程资料归属仍指向旧身份")
+        try check(migratedMembership.courseRelativePath == "文稿/第一讲.txt", "课程入口相对路径在身份迁移时丢失")
+        try check(migratedMembership.documentIdentifier == 4_242, "系统文稿身份在资料 ID 迁移时丢失")
+        try check(store.selectionAskThreads.first?.itemID == material.id, "选区问答线程仍指向旧资料身份")
+        try check(store.selectionAskThreads.first?.messageIDs == selectionThread.messageIDs, "选区问答线程消息关系在资料 ID 迁移时丢失")
+        try check(store.flushPendingWorkspaceSave(), "资料 ID 迁移后工作区无法保存")
+        let migratedSnapshot = try fixture.readSnapshot()
+        let migratedSession = try require(
+            migratedSnapshot.studySessions?.first { $0.id == session.id },
+            "资料 ID 迁移后学习会话没有保存"
+        )
+        try check(migratedSession.materialItemID == material.id, "保存后学习会话主资料仍是旧身份")
+        try check(migratedSession.groupingMaterialItemID == material.id, "保存后学习会话分组资料仍是旧身份")
+        try check(migratedSession.focusItemIDs.contains(legacyMaterialID) == false, "保存后学习会话焦点仍有旧身份")
+        try check(migratedSnapshot.selectionAskThreads?.first?.itemID == material.id, "保存后的同一工作区快照没有包含迁移后的选区问答")
+        try check(migratedSnapshot.selectionAskThreads?.first?.messageIDs == selectionThread.messageIDs, "保存后的选区问答消息关系丢失")
+        try check(
+            fixture.selectionAskThreadDefaults.object(forKey: "weibei.selectionAskThreads.v1") == nil,
+            "工作区快照保存成功后没有清理旧选区问答存储"
+        )
+
+        let reopenedMigratedStore = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        )
+        let reopenedMigratedSession = try require(
+            reopenedMigratedStore.studySessions.first { $0.id == session.id },
+            "重开后找不到迁移的学习会话"
+        )
+        try check(reopenedMigratedSession.materialItemID == material.id, "重开后学习会话主资料迁移丢失")
+        try check(reopenedMigratedSession.groupingMaterialItemID == material.id, "重开后学习会话分组资料迁移丢失")
+        try check(reopenedMigratedStore.selectionAskThreads.first?.itemID == material.id, "重开后选区问答线程身份迁移丢失")
+        try check(reopenedMigratedStore.selectionAskThreads.first?.messageIDs == selectionThread.messageIDs, "重开后选区问答线程消息关系丢失")
 
         let diskTextBeforeConflict = try String(contentsOf: noteURL, encoding: .utf8)
         store.select(itemID: "sample-pdf")
@@ -111,6 +320,14 @@ enum ImportedIdentitySelfCheck {
         try check(persisted.pendingNoteWritesByItemID?[note.id]?.baselineContentDigest == nil, "旧版本草稿没有迁移成未知基线待写状态")
         try check(diskTextAfterConflict == diskTextBeforeConflict, "旧版本草稿在未知基线下覆盖了磁盘正文")
         try check(persisted.studyLocationsByItemID?[legacyMaterialID] == nil, "旧路径身份仍残留在阅读位置")
+        try check(persisted.studySessions?.contains { $0.materialItemID == legacyMaterialID } == false, "后续保存又写回了学习会话旧主资料身份")
+        try check(persisted.studySessions?.contains { $0.focusItemIDs.contains(legacyMaterialID) } == false, "后续保存又写回了学习会话旧焦点身份")
+        try check(persisted.courseItemMemberships?.contains { $0.itemID == legacyMaterialID } == false, "保存后课程归属仍有旧身份")
+        try check(persisted.noteSourceLinks?.contains {
+            $0.noteItemID == legacyMaterialID || $0.sourceItemID == legacyMaterialID
+        } == false, "保存后资料关系仍有旧身份")
+
+        try check(reopenedMigratedStore.selectionAskThreads.first?.itemID == material.id, "重开后的选区问答线程身份后来发生回退")
     }
 
     @MainActor
@@ -176,7 +393,8 @@ enum ImportedIdentitySelfCheck {
 
         let store = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
-            importedFileIdentityResolver: { url in url.path == noteURL.path ? identity : nil }
+            importedFileIdentityResolver: { url in url.path == noteURL.path ? identity : nil },
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         let diskBytesBeforeMigration = try Data(contentsOf: noteURL)
         store.flushPendingNotePersistence()
@@ -200,7 +418,8 @@ enum ImportedIdentitySelfCheck {
         let firstPassIDs = Set(store.importedItems.map(\.id))
         let reopenedStore = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
-            importedFileIdentityResolver: { url in url.path == noteURL.path ? identity : nil }
+            importedFileIdentityResolver: { url in url.path == noteURL.path ? identity : nil },
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         reopenedStore.flushPendingNotePersistence()
         let reopenedSnapshot = try fixture.readSnapshot()
@@ -209,6 +428,398 @@ enum ImportedIdentitySelfCheck {
         try check(reopenedSnapshot.notesByItemID[canonicalID] == "规范项草稿", "同身份冲突迁移第二次启动丢失规范项草稿")
         try check(reopenedSnapshot.notesByItemID[preservedLegacyID] == "旧项不同草稿", "同身份冲突迁移第二次启动丢失旧项草稿")
         try check(diskBytesAfterMigration == diskBytesBeforeMigration, "同身份冲突迁移修改了真实 Markdown 文件")
+    }
+
+    @MainActor
+    private static func selectionThreadMigrationWaitsForWorkspaceCommit() throws {
+        let legacyKey = "weibei.selectionAskThreads.v1"
+        let injectedSaveFailure: (Data, URL) throws -> Void = { _, _ in
+            throw NSError(
+                domain: "WeiBei.ImportedIdentitySelfCheck",
+                code: 75,
+                userInfo: [NSLocalizedDescriptionKey: "injected selection-thread migration save failure"]
+            )
+        }
+
+        do {
+            let fixture = try WorkspaceFixture(name: "selection-thread-commit-order")
+            defer { fixture.remove() }
+
+            let materialURL = fixture.importsDirectory.appendingPathComponent("提交顺序.txt")
+            try Data("提交顺序正文".utf8).write(to: materialURL)
+            let oldID = "file:\(materialURL.path)"
+            let identity = ImportedFileIdentity(
+                volumeID: 52,
+                fileID: 502,
+                birthTimeSeconds: 5_002,
+                birthTimeNanoseconds: 52
+            )
+            let thread = SelectionAskThread(
+                selectionText: "提交顺序",
+                source: .document,
+                ownerTitle: "提交顺序",
+                itemID: oldID,
+                messageIDs: [UUID()]
+            )
+            fixture.selectionAskThreadDefaults.set(
+                try JSONEncoder().encode([thread]),
+                forKey: legacyKey
+            )
+            try fixture.write(
+                PersistedWorkspace(
+                    importedItems: [
+                        StudyItem(
+                            id: oldID,
+                            title: "提交顺序",
+                            subtitle: materialURL.lastPathComponent,
+                            kind: .text,
+                            urlPath: materialURL.path,
+                            isSample: false
+                        ),
+                    ],
+                    selectedItemID: oldID,
+                    noteSourceLinksMigrationVersion: 1
+                )
+            )
+
+            var failedStore: WorkspaceStore? = WorkspaceStore(
+                workspaceDirectory: fixture.workspaceDirectory,
+                importedFileIdentityResolver: { $0.path == materialURL.path ? identity : nil },
+                workspaceSnapshotWriter: injectedSaveFailure,
+                selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+            )
+            let inMemoryNewID = try require(
+                failedStore?.importedItems.first?.id,
+                "保存失败场景没有保留内存资料"
+            )
+            try check(inMemoryNewID != oldID, "保存失败场景没有真实触发资料 ID 迁移")
+            try check(failedStore?.selectionAskThreads.first?.itemID == inMemoryNewID, "内存中的选区问答没有随资料 ID 一起迁移")
+            try check(failedStore?.workspaceSaveError != nil, "资料 ID 迁移保存失败没有暴露错误")
+            let snapshotAfterFailure = try fixture.readSnapshot()
+            try check(snapshotAfterFailure.importedItems.first?.id == oldID, "工作区保存失败却提前写入了新资料 ID")
+            try check(snapshotAfterFailure.selectionAskThreads == nil, "工作区保存失败却提前提交了选区问答字段")
+            let defaultsAfterFailure = try JSONDecoder().decode(
+                [SelectionAskThread].self,
+                from: try require(
+                    fixture.selectionAskThreadDefaults.data(forKey: legacyKey),
+                    "保存失败后选区问答旧值丢失"
+                )
+            )
+            try check(defaultsAfterFailure.first?.itemID == oldID, "工作区保存失败却清理或改写了旧选区问答值")
+            failedStore = nil
+
+            let failedOfflineReopen = WorkspaceStore(
+                workspaceDirectory: fixture.workspaceDirectory,
+                importedFileIdentityResolver: { _ in nil },
+                workspaceSnapshotWriter: injectedSaveFailure,
+                selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+            )
+            try check(failedOfflineReopen.importedItems.first?.id == oldID, "保存失败重开后工作区没有保持旧 ID")
+            try check(failedOfflineReopen.selectionAskThreads.first?.itemID == oldID, "保存失败重开后旧选区问答不可恢复")
+            try check(fixture.selectionAskThreadDefaults.data(forKey: legacyKey) != nil, "保存再次失败却清理了旧选区问答值")
+
+            var committedStore: WorkspaceStore? = WorkspaceStore(
+                workspaceDirectory: fixture.workspaceDirectory,
+                importedFileIdentityResolver: { $0.path == materialURL.path ? identity : nil },
+                workspaceSnapshotWriter: { data, url in
+                    try data.write(to: url, options: [.atomic])
+                },
+                selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+            )
+            let committedID = try require(committedStore?.importedItems.first?.id, "重试后资料丢失")
+            try check(committedID != oldID, "保存重试后资料 ID 没有迁移")
+            let committedSnapshot = try fixture.readSnapshot()
+            try check(committedSnapshot.importedItems.first?.id == committedID, "保存重试后工作区没有提交新资料 ID")
+            try check(committedSnapshot.selectionAskThreads?.first?.itemID == committedID, "资料和选区问答没有写入同一个工作区快照")
+            try check(committedSnapshot.selectionAskThreads?.first?.messageIDs == thread.messageIDs, "保存重试后选区问答消息关系丢失")
+            try check(fixture.selectionAskThreadDefaults.object(forKey: legacyKey) == nil, "工作区保存成功后没有清理旧选区问答值")
+            committedStore = nil
+
+            let reopenedStore = WorkspaceStore(
+                workspaceDirectory: fixture.workspaceDirectory,
+                importedFileIdentityResolver: { _ in nil },
+                selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+            )
+            try check(reopenedStore.importedItems.first?.id == committedID, "保存成功后重开资料身份回退")
+            try check(reopenedStore.selectionAskThreads.first?.itemID == committedID, "保存成功后重开选区问答身份回退")
+            try check(reopenedStore.selectionAskThreads.first?.messageIDs == thread.messageIDs, "保存成功后重开选区问答消息关系丢失")
+        }
+
+        do {
+            let fixture = try WorkspaceFixture(name: "selection-thread-explicit-empty")
+            defer { fixture.remove() }
+            let staleThread = SelectionAskThread(
+                selectionText: "不应复活",
+                source: .document,
+                ownerTitle: "旧线程",
+                itemID: "file:/tmp/stale"
+            )
+            fixture.selectionAskThreadDefaults.set(
+                try JSONEncoder().encode([staleThread]),
+                forKey: legacyKey
+            )
+            try fixture.write(
+                PersistedWorkspace(
+                    noteSourceLinksMigrationVersion: 1,
+                    selectionAskThreads: []
+                )
+            )
+
+            var store: WorkspaceStore? = WorkspaceStore(
+                workspaceDirectory: fixture.workspaceDirectory,
+                selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+            )
+            try check(store?.selectionAskThreads.isEmpty == true, "工作区显式空线程被旧值复活")
+            try check(fixture.selectionAskThreadDefaults.object(forKey: legacyKey) == nil, "显式空线程没有清理无效旧值")
+            store = nil
+
+            fixture.selectionAskThreadDefaults.set(
+                try JSONEncoder().encode([staleThread]),
+                forKey: legacyKey
+            )
+            let reopenedStore = WorkspaceStore(
+                workspaceDirectory: fixture.workspaceDirectory,
+                selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+            )
+            try check(reopenedStore.selectionAskThreads.isEmpty, "重开后显式空线程被后来出现的旧值复活")
+            try check(fixture.selectionAskThreadDefaults.object(forKey: legacyKey) == nil, "重开显式空线程后没有清理无效旧值")
+        }
+
+        for malformedWorkspace in [false, true] {
+            let fixture = try WorkspaceFixture(
+                name: malformedWorkspace
+                    ? "selection-thread-malformed-workspace"
+                    : "selection-thread-missing-workspace"
+            )
+            defer { fixture.remove() }
+            let legacyThread = SelectionAskThread(
+                selectionText: malformedWorkspace ? "损坏快照恢复" : "缺失快照恢复",
+                source: .document,
+                ownerTitle: "旧线程",
+                itemID: "file:/tmp/legacy"
+            )
+            fixture.selectionAskThreadDefaults.set(
+                try JSONEncoder().encode([legacyThread]),
+                forKey: legacyKey
+            )
+            if malformedWorkspace {
+                try Data("{not-json".utf8).write(
+                    to: fixture.workspaceDirectory.appendingPathComponent("workspace.json"),
+                    options: [.atomic]
+                )
+            }
+
+            let store = WorkspaceStore(
+                workspaceDirectory: fixture.workspaceDirectory,
+                selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+            )
+            try check(store.selectionAskThreads.first?.id == legacyThread.id, "工作区缺失或损坏时没有恢复旧选区问答")
+            let migratedSnapshot = try fixture.readSnapshot()
+            try check(migratedSnapshot.selectionAskThreads?.first?.id == legacyThread.id, "恢复的旧选区问答没有写入工作区快照")
+            try check(fixture.selectionAskThreadDefaults.object(forKey: legacyKey) == nil, "恢复成功后没有清理旧选区问答值")
+        }
+    }
+
+    @MainActor
+    private static func duplicateIdentityPreservesConflictingStorageMetadata() throws {
+        let identity = ImportedFileIdentity(
+            volumeID: 51,
+            fileID: 501,
+            birthTimeSeconds: 5_001,
+            birthTimeNanoseconds: 51
+        )
+        let courseID = UUID()
+
+        do {
+            let fixture = try WorkspaceFixture(name: "duplicate-storage-conflict")
+            defer { fixture.remove() }
+            let url = fixture.importsDirectory.appendingPathComponent("存储归属冲突.txt")
+            try Data("相同文件，不同归属".utf8).write(to: url)
+            try fixture.write(
+                PersistedWorkspace(
+                    importedItems: [
+                        StudyItem(
+                            id: "imported:storage-canonical",
+                            title: "课程文稿",
+                            subtitle: url.lastPathComponent,
+                            kind: .text,
+                            urlPath: url.path,
+                            importedFileIdentity: identity,
+                            isSample: false,
+                            storage: .courseOwned(ownerCourseID: courseID),
+                            contentRevision: 2,
+                            contentDigest: "digest:course"
+                        ),
+                        StudyItem(
+                            id: "file:\(url.path)",
+                            title: "旧外部文稿",
+                            subtitle: url.lastPathComponent,
+                            kind: .text,
+                            urlPath: url.path,
+                            importedFileIdentity: identity,
+                            isSample: false,
+                            storage: .legacyExternal,
+                            contentRevision: 1,
+                            contentDigest: nil
+                        ),
+                    ],
+                    noteSourceLinksMigrationVersion: 1
+                )
+            )
+
+            let store = WorkspaceStore(
+                workspaceDirectory: fixture.workspaceDirectory,
+                importedFileIdentityResolver: { $0.path == url.path ? identity : nil },
+                selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+            )
+            try check(store.importedItems.count == 2, "同文件身份但存储归属或内容版本冲突的资料被静默合并")
+            try check(Set(store.importedItems.map(\.storage)) == [
+                .courseOwned(ownerCourseID: courseID),
+                .legacyExternal,
+            ], "存储归属冲突迁移丢失了一方")
+        }
+
+        do {
+            let fixture = try WorkspaceFixture(name: "duplicate-membership-conflict")
+            defer { fixture.remove() }
+            let url = fixture.importsDirectory.appendingPathComponent("课程入口冲突.txt")
+            try Data("相同文件，不同课程入口".utf8).write(to: url)
+            let canonicalID = "imported:membership-canonical"
+            let legacyID = "file:\(url.path)"
+            let canonicalEntryIdentity = ImportedFileIdentity(
+                volumeID: 51,
+                fileID: 601,
+                birthTimeSeconds: 6_001,
+                birthTimeNanoseconds: 61
+            )
+            let legacyEntryIdentity = ImportedFileIdentity(
+                volumeID: 51,
+                fileID: 602,
+                birthTimeSeconds: 6_002,
+                birthTimeNanoseconds: 62
+            )
+            try fixture.write(
+                PersistedWorkspace(
+                    importedItems: [
+                        StudyItem(
+                            id: canonicalID,
+                            title: "入口一",
+                            subtitle: url.lastPathComponent,
+                            kind: .text,
+                            urlPath: url.path,
+                            importedFileIdentity: identity,
+                            isSample: false
+                        ),
+                        StudyItem(
+                            id: legacyID,
+                            title: "入口二",
+                            subtitle: url.lastPathComponent,
+                            kind: .text,
+                            urlPath: url.path,
+                            importedFileIdentity: identity,
+                            isSample: false
+                        ),
+                    ],
+                    courses: [Course(id: courseID, title: "入口冲突课程")],
+                    courseItemMemberships: [
+                        CourseItemMembership(
+                            courseID: courseID,
+                            itemID: canonicalID,
+                            courseRelativePath: "文稿/入口一.txt",
+                            entryIdentity: canonicalEntryIdentity,
+                            documentIdentifier: 6_001
+                        ),
+                        CourseItemMembership(
+                            courseID: courseID,
+                            itemID: legacyID,
+                            courseRelativePath: "文稿/入口二.txt",
+                            entryIdentity: legacyEntryIdentity,
+                            documentIdentifier: 6_002
+                        ),
+                    ],
+                    noteSourceLinksMigrationVersion: 1
+                )
+            )
+
+            let store = WorkspaceStore(
+                workspaceDirectory: fixture.workspaceDirectory,
+                importedFileIdentityResolver: { $0.path == url.path ? identity : nil },
+                selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+            )
+            try check(store.importedItems.count == 2, "同课程入口元数据冲突的资料被静默合并")
+            try check(store.courseItemMemberships.count == 2, "同课程入口元数据冲突时丢失了一条归属")
+            try check(
+                Set(store.courseItemMemberships.compactMap(\.courseRelativePath))
+                    == ["文稿/入口一.txt", "文稿/入口二.txt"],
+                "课程入口路径冲突迁移丢失了一方"
+            )
+            try check(
+                Set(store.courseItemMemberships.compactMap(\.documentIdentifier)) == [6_001, 6_002],
+                "课程入口系统文稿身份冲突迁移丢失了一方"
+            )
+        }
+
+        do {
+            let fixture = try WorkspaceFixture(name: "duplicate-membership-enrichment")
+            defer { fixture.remove() }
+            let url = fixture.importsDirectory.appendingPathComponent("课程入口补全.txt")
+            try Data("相同文件，互补课程入口".utf8).write(to: url)
+            let canonicalID = "imported:membership-enrichment"
+            let legacyID = "file:\(url.path)"
+            let entryIdentity = ImportedFileIdentity(
+                volumeID: 51,
+                fileID: 701,
+                birthTimeSeconds: 7_001,
+                birthTimeNanoseconds: 71
+            )
+            let item = StudyItem(
+                id: canonicalID,
+                title: "入口补全",
+                subtitle: url.lastPathComponent,
+                kind: .text,
+                urlPath: url.path,
+                importedFileIdentity: identity,
+                isSample: false
+            )
+            var legacyItem = item
+            legacyItem.id = legacyID
+            try fixture.write(
+                PersistedWorkspace(
+                    importedItems: [item, legacyItem],
+                    courses: [Course(id: courseID, title: "入口补全课程")],
+                    courseItemMemberships: [
+                        CourseItemMembership(
+                            courseID: courseID,
+                            itemID: canonicalID,
+                            courseRelativePath: "文稿/课程入口补全.txt",
+                            documentIdentifier: 7_001
+                        ),
+                        CourseItemMembership(
+                            courseID: courseID,
+                            itemID: legacyID,
+                            entryIdentity: entryIdentity
+                        ),
+                    ],
+                    noteSourceLinksMigrationVersion: 1
+                )
+            )
+
+            let store = WorkspaceStore(
+                workspaceDirectory: fixture.workspaceDirectory,
+                importedFileIdentityResolver: { $0.path == url.path ? identity : nil },
+                selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+            )
+            try check(store.importedItems.count == 1, "同课程入口互补元数据阻止了安全的资料去重")
+            let mergedMembership = try require(
+                store.courseItemMemberships.first,
+                "资料去重后课程入口关系丢失"
+            )
+            try check(store.courseItemMemberships.count == 1, "资料去重后课程入口关系重复")
+            try check(mergedMembership.itemID == canonicalID, "资料去重后课程入口没有指向规范身份")
+            try check(mergedMembership.courseRelativePath == "文稿/课程入口补全.txt", "资料去重后课程路径没有补全")
+            try check(mergedMembership.entryIdentity == entryIdentity, "资料去重后入口身份没有补全")
+            try check(mergedMembership.documentIdentifier == 7_001, "资料去重后系统文稿身份没有补全")
+        }
     }
 
     @MainActor
@@ -254,7 +865,10 @@ enum ImportedIdentitySelfCheck {
         )
         try fixture.write(snapshot)
 
-        var store: WorkspaceStore? = WorkspaceStore(workspaceDirectory: fixture.workspaceDirectory)
+        var store: WorkspaceStore? = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        )
         try check(store?.importedItems.contains { $0.id == legacyMaterialID } == true, "离线旧资料不应在升级时被删除")
         let migratedNote = try require(
             store?.courseNotebookItems.first { $0.urlPath == noteURL.path },
@@ -273,7 +887,10 @@ enum ImportedIdentitySelfCheck {
         store?.flushPendingNotePersistence()
         store = nil
 
-        store = WorkspaceStore(workspaceDirectory: fixture.workspaceDirectory)
+        store = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        )
         try check(store?.importedItems.contains { $0.id == legacyMaterialID } == false, "重启后仍残留离线旧路径身份")
         try check(store?.linkedSourceIDs(for: migratedNote.id) == [restoredMaterial.id], "重启后恢复资料的笔记关系丢失")
     }
@@ -288,7 +905,10 @@ enum ImportedIdentitySelfCheck {
         try Data("原始索引词：流动性偏好".utf8).write(to: originalURL)
         try Data("# 第二讲笔记\n".utf8).write(to: noteURL)
 
-        var store: WorkspaceStore? = WorkspaceStore(workspaceDirectory: fixture.workspaceDirectory)
+        var store: WorkspaceStore? = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        )
         _ = store?.importFiles(
             [originalURL, noteURL],
             selectsFirstImportedItem: false,
@@ -328,7 +948,10 @@ enum ImportedIdentitySelfCheck {
         try FileManager.default.moveItem(at: originalURL, to: renamedURL)
         store = nil
 
-        store = WorkspaceStore(workspaceDirectory: fixture.workspaceDirectory)
+        store = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        )
         let renamedMaterial = try require(
             store?.courseMaterials.first { $0.id == firstMaterial.id },
             "重启后找不到改名资料"
@@ -368,7 +991,10 @@ enum ImportedIdentitySelfCheck {
         store?.flushPendingNotePersistence()
         store = nil
 
-        store = WorkspaceStore(workspaceDirectory: fixture.workspaceDirectory)
+        store = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        )
         let movedMaterial = try require(
             store?.courseMaterials.first { $0.id == firstMaterial.id },
             "再次重启后找不到移动资料"
@@ -389,10 +1015,16 @@ enum ImportedIdentitySelfCheck {
             store?.courseNotebookItems.first { $0.id == note.id },
             "应用内重命名后找不到原笔记身份"
         )
-        try check(appRenamedNote.urlPath?.hasSuffix("第二讲最终笔记.md") == true, "应用内重命名没有更新笔记路径")
+        try check(
+            appRenamedNote.urlPath?.hasSuffix("第二讲最终笔记.md") == true,
+            "应用内重命名没有更新笔记路径；实际路径=\(appRenamedNote.urlPath ?? "nil")；错误=\(store?.noteFileError ?? "nil")"
+        )
         store?.flushPendingNotePersistence()
         store = nil
-        store = WorkspaceStore(workspaceDirectory: fixture.workspaceDirectory)
+        store = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        )
         try check(store?.courseNotebookItems.first { $0.id == note.id }?.urlPath == appRenamedNote.urlPath, "应用内重命名后重启丢失笔记路径")
         try check(store?.noteText.contains("Finder 移动后继续编辑") == true, "应用内重命名后重启丢失笔记正文")
         try check(store?.linkedSourceIDs(for: note.id) == [firstMaterial.id], "应用内重命名后重启丢失笔记关系")
@@ -401,7 +1033,10 @@ enum ImportedIdentitySelfCheck {
         let finalNoteURL = movedDirectory.appendingPathComponent("第二讲归档笔记.md")
         try FileManager.default.moveItem(at: appRenamedNoteURL, to: finalNoteURL)
         store = nil
-        store = WorkspaceStore(workspaceDirectory: fixture.workspaceDirectory)
+        store = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        )
         try check(store?.courseNotebookItems.first { $0.id == note.id }?.urlPath == finalNoteURL.path, "笔记只移动不编辑并重启后没有恢复新路径")
         try check(store?.noteText.contains("Finder 移动后继续编辑") == true, "笔记只移动不编辑并重启后没有加载真实正文")
     }
@@ -428,7 +1063,8 @@ enum ImportedIdentitySelfCheck {
 
         var store: WorkspaceStore? = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
-            importedFileIdentityResolver: resolver
+            importedFileIdentityResolver: resolver,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         _ = store?.importFiles(
             [noteURL],
@@ -453,7 +1089,8 @@ enum ImportedIdentitySelfCheck {
         identityIsAvailable = true
         store = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
-            importedFileIdentityResolver: resolver
+            importedFileIdentityResolver: resolver,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         try check(store?.noteText == latestEdit, "文件恢复后重启没有优先恢复最新编辑缓存")
         store?.select(itemID: "sample-pdf")
@@ -481,7 +1118,8 @@ enum ImportedIdentitySelfCheck {
 
         store = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
-            importedFileIdentityResolver: resolver
+            importedFileIdentityResolver: resolver,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         try check(store?.noteText == conflictedEdit, "磁盘冲突后没有保留魏碑待写草稿")
         store?.select(itemID: "sample-pdf")
@@ -518,7 +1156,8 @@ enum ImportedIdentitySelfCheck {
 
         var store: WorkspaceStore? = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
-            importedFileIdentityResolver: resolver
+            importedFileIdentityResolver: resolver,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         _ = store?.importFiles(
             [noteURL],
@@ -537,7 +1176,8 @@ enum ImportedIdentitySelfCheck {
         identityIsAvailable = false
         store = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
-            importedFileIdentityResolver: resolver
+            importedFileIdentityResolver: resolver,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         try check(store?.courseNotebookItems.first { $0.id == note.id }?.urlPath == nil, "启动前离线的笔记仍错误保留可写路径")
         store?.updateNote(knownBaselineEdit)
@@ -550,7 +1190,8 @@ enum ImportedIdentitySelfCheck {
         identityIsAvailable = true
         store = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
-            importedFileIdentityResolver: resolver
+            importedFileIdentityResolver: resolver,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         try check(store?.noteText == knownBaselineEdit, "文件恢复后没有恢复启动前离线编辑")
         store?.select(itemID: "sample-pdf")
@@ -566,7 +1207,8 @@ enum ImportedIdentitySelfCheck {
         identityIsAvailable = false
         store = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
-            importedFileIdentityResolver: resolver
+            importedFileIdentityResolver: resolver,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         store?.updateNote(unknownBaselineEdit)
         store?.flushPendingNotePersistence()
@@ -578,7 +1220,8 @@ enum ImportedIdentitySelfCheck {
         identityIsAvailable = true
         store = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
-            importedFileIdentityResolver: resolver
+            importedFileIdentityResolver: resolver,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         try check(store?.noteText == unknownBaselineEdit, "未知基线的离线草稿没有恢复")
         store?.select(itemID: "sample-pdf")
@@ -608,7 +1251,10 @@ enum ImportedIdentitySelfCheck {
         let noteBURL = fixture.importsDirectory.appendingPathComponent("B笔记.md")
         try Data("# A笔记\n\nA 原文".utf8).write(to: noteAURL)
         try Data("# B笔记\n\nB 原文".utf8).write(to: noteBURL)
-        let store = WorkspaceStore(workspaceDirectory: fixture.workspaceDirectory)
+        let store = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        )
         _ = store.importFiles(
             [noteAURL, noteBURL],
             selectsFirstImportedItem: false,
@@ -680,7 +1326,8 @@ enum ImportedIdentitySelfCheck {
                     return observedSwappedIdentity ? swappedIdentity : originalIdentity
                 }
                 return nil
-            }
+            },
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         _ = store.importFiles(
             [noteURL],
@@ -731,7 +1378,8 @@ enum ImportedIdentitySelfCheck {
                     )
                 }
                 try markdown.write(to: url, atomically: true, encoding: .utf8)
-            }
+            },
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         _ = store.importFiles(
             [materialURL, noteURL],
@@ -785,7 +1433,8 @@ enum ImportedIdentitySelfCheck {
                     )
                 }
                 return try String(contentsOf: url, encoding: .utf8)
-            }
+            },
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         _ = store.importFiles(
             [materialURL, noteURL],
@@ -833,7 +1482,8 @@ enum ImportedIdentitySelfCheck {
                 } else {
                     try markdown.write(to: url, atomically: true, encoding: .utf8)
                 }
-            }
+            },
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         _ = store.importFiles(
             [noteURL],
@@ -883,7 +1533,8 @@ enum ImportedIdentitySelfCheck {
                     )
                 }
                 try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
-            }
+            },
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         _ = store.importFiles(
             [noteURL],
@@ -933,7 +1584,8 @@ enum ImportedIdentitySelfCheck {
                     )
                 }
                 try data.write(to: url, options: [.atomic])
-            }
+            },
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         _ = store?.importFiles(
             [materialURL, noteURL],
@@ -963,7 +1615,10 @@ enum ImportedIdentitySelfCheck {
 
         store = nil
         rejectWorkspaceSave = false
-        store = WorkspaceStore(workspaceDirectory: fixture.workspaceDirectory)
+        store = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        )
         let recovered = try require(
             store?.courseNotebookItems.first { $0.id == note.id },
             "重启后找不到需要恢复的笔记身份"
@@ -1024,7 +1679,8 @@ enum ImportedIdentitySelfCheck {
             workspaceDirectory: fixture.workspaceDirectory,
             importedFileIdentityResolver: { url in
                 [firstURL.path, secondURL.path].contains(url.path) ? sharedIdentity : nil
-            }
+            },
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         try check(store?.importedItems.count == 1, "两个同身份旧路径项需要第二次启动才合并")
         let firstLaunchSnapshot = try Data(contentsOf: fixture.workspaceDirectory.appendingPathComponent("workspace.json"))
@@ -1033,7 +1689,8 @@ enum ImportedIdentitySelfCheck {
             workspaceDirectory: fixture.workspaceDirectory,
             importedFileIdentityResolver: { url in
                 [firstURL.path, secondURL.path].contains(url.path) ? sharedIdentity : nil
-            }
+            },
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         let secondLaunchSnapshot = try Data(contentsOf: fixture.workspaceDirectory.appendingPathComponent("workspace.json"))
         try check(store?.importedItems.count == 1, "两个同身份旧路径项重启后再次变化")
@@ -1074,7 +1731,8 @@ enum ImportedIdentitySelfCheck {
         ]
         var store: WorkspaceStore? = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
-            importedFileIdentityResolver: { identities[$0.path] }
+            importedFileIdentityResolver: { identities[$0.path] },
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
 
         let first = try require(
@@ -1091,7 +1749,8 @@ enum ImportedIdentitySelfCheck {
         store = nil
         store = WorkspaceStore(
             workspaceDirectory: fixture.workspaceDirectory,
-            importedFileIdentityResolver: { identities[$0.path] }
+            importedFileIdentityResolver: { identities[$0.path] },
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
         )
         try check(store?.importedItems.first { $0.id == first.id }?.urlPath == nil, "重启时书签错误接受了世代不同的重建文件")
         let replacement = try require(
@@ -1141,6 +1800,8 @@ enum ImportedIdentitySelfCheck {
         let workspaceDirectory: URL
         let importsDirectory: URL
         let indexDirectory: URL
+        let selectionAskThreadDefaults: UserDefaults
+        private let selectionAskThreadDefaultsSuiteName: String
 
         init(name: String) throws {
             root = FileManager.default.temporaryDirectory
@@ -1148,6 +1809,12 @@ enum ImportedIdentitySelfCheck {
             workspaceDirectory = root.appendingPathComponent("Workspace", isDirectory: true)
             importsDirectory = root.appendingPathComponent("Imports", isDirectory: true)
             indexDirectory = root.appendingPathComponent("Index", isDirectory: true)
+            selectionAskThreadDefaultsSuiteName = "weibei.imported-identity-self-check.\(UUID().uuidString)"
+            guard let defaults = UserDefaults(suiteName: selectionAskThreadDefaultsSuiteName) else {
+                throw CheckError.failed("无法建立隔离的选区问答自检存储")
+            }
+            selectionAskThreadDefaults = defaults
+            defaults.removePersistentDomain(forName: selectionAskThreadDefaultsSuiteName)
             try FileManager.default.createDirectory(at: workspaceDirectory, withIntermediateDirectories: true)
             try FileManager.default.createDirectory(at: importsDirectory, withIntermediateDirectories: true)
             try FileManager.default.createDirectory(at: indexDirectory, withIntermediateDirectories: true)
@@ -1165,6 +1832,7 @@ enum ImportedIdentitySelfCheck {
 
         func remove() {
             try? FileManager.default.removeItem(at: root)
+            selectionAskThreadDefaults.removePersistentDomain(forName: selectionAskThreadDefaultsSuiteName)
         }
     }
 }

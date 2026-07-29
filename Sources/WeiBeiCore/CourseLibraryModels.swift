@@ -38,17 +38,29 @@ public struct CourseItemMembership: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var courseID: UUID
     public var itemID: String
+    /// Entry path relative to this course root. Shared documents can have a different entry in each course.
+    public var courseRelativePath: String?
+    /// Identity of the course entry itself (including a future shared-document link), not the document identity.
+    public var entryIdentity: ImportedFileIdentity?
+    /// Volume-scoped filesystem document identifier when supported, independent of file identity.
+    public var documentIdentifier: UInt64?
     public var createdAt: Date
 
     public init(
         id: UUID = UUID(),
         courseID: UUID,
         itemID: String,
+        courseRelativePath: String? = nil,
+        entryIdentity: ImportedFileIdentity? = nil,
+        documentIdentifier: UInt64? = nil,
         createdAt: Date = Date()
     ) {
         self.id = id
         self.courseID = courseID
         self.itemID = itemID
+        self.courseRelativePath = courseRelativePath
+        self.entryIdentity = entryIdentity
+        self.documentIdentifier = documentIdentifier
         self.createdAt = createdAt
     }
 }
@@ -110,15 +122,27 @@ public struct CourseItemMemberships: Sendable {
     }
 
     private static func normalized(_ values: [CourseItemMembership]) -> [CourseItemMembership] {
-        var oldestByPair: [String: CourseItemMembership] = [:]
+        var valuesByPair: [String: [CourseItemMembership]] = [:]
         for value in values {
             let key = "\(value.courseID.uuidString)|\(value.itemID)"
-            if let existing = oldestByPair[key], existing.createdAt <= value.createdAt {
-                continue
-            }
-            oldestByPair[key] = value
+            valuesByPair[key, default: []].append(value)
         }
-        return oldestByPair.values.sorted {
+        return valuesByPair.values.flatMap { group -> [CourseItemMembership] in
+            let sorted = group.sorted {
+                if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
+                return $0.id.uuidString < $1.id.uuidString
+            }
+            guard Set(sorted.compactMap(\.courseRelativePath)).count <= 1,
+                  Set(sorted.compactMap(\.entryIdentity)).count <= 1,
+                  Set(sorted.compactMap(\.documentIdentifier)).count <= 1,
+                  var merged = sorted.first else {
+                return sorted
+            }
+            merged.courseRelativePath = sorted.compactMap(\.courseRelativePath).first
+            merged.entryIdentity = sorted.compactMap(\.entryIdentity).first
+            merged.documentIdentifier = sorted.compactMap(\.documentIdentifier).first
+            return [merged]
+        }.sorted {
             if $0.createdAt != $1.createdAt { return $0.createdAt < $1.createdAt }
             return $0.id.uuidString < $1.id.uuidString
         }

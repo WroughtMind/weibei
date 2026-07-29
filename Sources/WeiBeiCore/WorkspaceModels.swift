@@ -1150,6 +1150,60 @@ public struct ImportedFileIdentity: Codable, Hashable, Sendable {
     }
 }
 
+public enum StudyItemStorage: Codable, Hashable, Sendable {
+    case courseOwned(ownerCourseID: UUID)
+    case shared(sharedRelativePath: String)
+    case legacyExternal
+    case bundledSample
+
+    private enum Kind: String, Codable {
+        case courseOwned
+        case shared
+        case legacyExternal
+        case bundledSample
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case kind
+        case ownerCourseID
+        case sharedRelativePath
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        switch try container.decode(Kind.self, forKey: .kind) {
+        case .courseOwned:
+            self = .courseOwned(
+                ownerCourseID: try container.decode(UUID.self, forKey: .ownerCourseID)
+            )
+        case .shared:
+            self = .shared(
+                sharedRelativePath: try container.decode(String.self, forKey: .sharedRelativePath)
+            )
+        case .legacyExternal:
+            self = .legacyExternal
+        case .bundledSample:
+            self = .bundledSample
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .courseOwned(let ownerCourseID):
+            try container.encode(Kind.courseOwned, forKey: .kind)
+            try container.encode(ownerCourseID, forKey: .ownerCourseID)
+        case .shared(let sharedRelativePath):
+            try container.encode(Kind.shared, forKey: .kind)
+            try container.encode(sharedRelativePath, forKey: .sharedRelativePath)
+        case .legacyExternal:
+            try container.encode(Kind.legacyExternal, forKey: .kind)
+        case .bundledSample:
+            try container.encode(Kind.bundledSample, forKey: .kind)
+        }
+    }
+}
+
 public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
     public var id: String
     public var title: String
@@ -1161,6 +1215,9 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
     public var importedFileLastKnownPath: String?
     public var isSample: Bool
     public var isNotebookNote: Bool
+    public var storage: StudyItemStorage
+    public var contentRevision: UInt64
+    public var contentDigest: String?
 
     public init(
         id: String,
@@ -1172,7 +1229,10 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         importedFileBookmarkData: Data? = nil,
         importedFileLastKnownPath: String? = nil,
         isSample: Bool,
-        isNotebookNote: Bool = false
+        isNotebookNote: Bool = false,
+        storage: StudyItemStorage? = nil,
+        contentRevision: UInt64 = 1,
+        contentDigest: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -1184,6 +1244,9 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         self.importedFileLastKnownPath = importedFileLastKnownPath ?? urlPath
         self.isSample = isSample
         self.isNotebookNote = isNotebookNote
+        self.storage = storage ?? (isSample ? .bundledSample : .legacyExternal)
+        self.contentRevision = contentRevision
+        self.contentDigest = contentDigest
     }
 
     enum CodingKeys: String, CodingKey {
@@ -1197,6 +1260,9 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         case importedFileLastKnownPath
         case isSample
         case isNotebookNote
+        case storage
+        case contentRevision
+        case contentDigest
     }
 
     public init(from decoder: Decoder) throws {
@@ -1211,6 +1277,10 @@ public struct StudyItem: Identifiable, Codable, Hashable, Sendable {
         importedFileLastKnownPath = try container.decodeIfPresent(String.self, forKey: .importedFileLastKnownPath) ?? urlPath
         isSample = try container.decode(Bool.self, forKey: .isSample)
         isNotebookNote = try container.decodeIfPresent(Bool.self, forKey: .isNotebookNote) ?? false
+        storage = try container.decodeIfPresent(StudyItemStorage.self, forKey: .storage)
+            ?? (isSample ? .bundledSample : .legacyExternal)
+        contentRevision = try container.decodeIfPresent(UInt64.self, forKey: .contentRevision) ?? 1
+        contentDigest = try container.decodeIfPresent(String.self, forKey: .contentDigest)
     }
 
     public var url: URL? {
@@ -1347,6 +1417,7 @@ public struct PersistedWorkspace: Codable {
     public var learningMemoryRevision: UInt64?
     public var studySessions: [StudySession]?
     public var activeStudySessionID: UUID?
+    public var selectionAskThreads: [SelectionAskThread]?
     public var modelName: String?
     public var agentProviderID: String?
     public var agentBaseURL: String?
@@ -1384,6 +1455,7 @@ public struct PersistedWorkspace: Codable {
         learningMemoryRevision: UInt64? = nil,
         studySessions: [StudySession]? = nil,
         activeStudySessionID: UUID? = nil,
+        selectionAskThreads: [SelectionAskThread]? = nil,
         modelName: String? = nil,
         agentProviderID: String? = nil,
         agentBaseURL: String? = nil,
@@ -1420,6 +1492,7 @@ public struct PersistedWorkspace: Codable {
         self.learningMemoryRevision = learningMemoryRevision
         self.studySessions = studySessions
         self.activeStudySessionID = activeStudySessionID
+        self.selectionAskThreads = selectionAskThreads
         self.modelName = modelName
         self.agentProviderID = agentProviderID
         self.agentBaseURL = agentBaseURL

@@ -342,6 +342,7 @@ final class WorkspaceStore: ObservableObject {
     private let notebookMarkdownWriter: (String, URL) throws -> Void
     private let notebookFileMover: (URL, URL) throws -> Void
     private let workspaceSnapshotWriter: (Data, URL) throws -> Void
+    private let selectionAskThreadDefaults: UserDefaults
     private let piRuntime: PiAgentRuntime
     private let courseDocumentSearchIndex: CourseDocumentSearchIndex
     private var activeAgentRequestID: UUID?
@@ -358,6 +359,9 @@ final class WorkspaceStore: ObservableObject {
     private var lastSelectionAttachmentDate: Date?
     private var lastSelectionUpdateDate: Date?
     private var pendingSelectionAttachmentTask: Task<Void, Never>?
+    private var needsSelectionAskThreadsWorkspaceMigration = false
+    private var shouldRemoveLegacySelectionAskThreadsAfterSave = false
+    private var loadedSelectionAskThreadsFromWorkspaceSnapshot = false
     private let selectionAttachmentMergeWindow: TimeInterval = 1.8
     private let selectionAttachmentDebounceDelay: UInt64 = 520_000_000
     private var threePaneReorderFrames: [WorkspacePaneRole: CGRect] = [:]
@@ -468,6 +472,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private static let shortcutModifierMask: NSEvent.ModifierFlags = [.command, .option, .control, .shift]
+    private static let legacySelectionAskThreadsDefaultsKey = "weibei.selectionAskThreads.v1"
 
     let sampleItems: [StudyItem] = WorkspaceStore.makeSampleItems()
 
@@ -488,7 +493,8 @@ final class WorkspaceStore: ObservableObject {
         notebookMarkdownReader: @escaping (URL) throws -> String = WorkspaceStore.readNotebookMarkdown,
         notebookMarkdownWriter: @escaping (String, URL) throws -> Void = WorkspaceStore.writeNotebookMarkdown,
         notebookFileMover: @escaping (URL, URL) throws -> Void = WorkspaceStore.moveNotebookFile,
-        workspaceSnapshotWriter: @escaping (Data, URL) throws -> Void = WorkspaceStore.writeWorkspaceSnapshot
+        workspaceSnapshotWriter: @escaping (Data, URL) throws -> Void = WorkspaceStore.writeWorkspaceSnapshot,
+        selectionAskThreadDefaults: UserDefaults = .standard
     ) {
         workspaceDirectory = folder.standardizedFileURL
         storageURL = folder.appendingPathComponent("workspace.json")
@@ -503,6 +509,7 @@ final class WorkspaceStore: ObservableObject {
         self.notebookMarkdownWriter = notebookMarkdownWriter
         self.notebookFileMover = notebookFileMover
         self.workspaceSnapshotWriter = workspaceSnapshotWriter
+        self.selectionAskThreadDefaults = selectionAskThreadDefaults
         piRuntime = PiAgentRuntime(runtimeDirectory: folder.appendingPathComponent("AgentRuntime", isDirectory: true))
         let courseIndexDirectory = folder.appendingPathComponent("CourseIndex", isDirectory: true)
         Self.removeLegacyCourseIndex(in: courseIndexDirectory)
@@ -511,9 +518,9 @@ final class WorkspaceStore: ObservableObject {
         )
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         load()
+        loadLegacySelectionAskThreadsIfWorkspaceFieldMissing()
         let restoredCourseProjectRoots = restoreCourseProjectRoots()
         WeiBeiThemeRuntime.mode = appearanceMode
-        loadSelectionAskThreadsIfNeeded()
         let recoveredPendingNotebookRename = recoverPendingNotebookRenameIfNeeded()
         let resolvedImportedFileBookmarks = resolvePersistedImportedFileBookmarks()
         let migratedImportedItemIdentities = migrateLegacyImportedItemIdentities()
@@ -538,7 +545,8 @@ final class WorkspaceStore: ObservableObject {
                     || migratedStudyLocationTitles
                     || sanitizedNoteSourceLinks
                     || sanitizedCourseLibrary
-                    || restoredCourseProjectRoots {
+                    || restoredCourseProjectRoots
+                    || needsSelectionAskThreadsWorkspaceMigration {
             savedInitializationChanges = save()
         } else {
             savedInitializationChanges = true
@@ -5957,7 +5965,7 @@ final class WorkspaceStore: ObservableObject {
         }) {
             selectionAskThreads[index].updatedAt = Date()
             selectionAskThreads[index].itemID = selectionAskThreads[index].itemID ?? itemID
-            persistSelectionAskThreads()
+            save()
             return selectionAskThreads[index]
         }
         let thread = SelectionAskThread(
@@ -5970,7 +5978,7 @@ final class WorkspaceStore: ObservableObject {
         if selectionAskThreads.count > 80 {
             selectionAskThreads = Array(selectionAskThreads.prefix(80))
         }
-        persistSelectionAskThreads()
+        save()
         return thread
     }
 
@@ -5980,7 +5988,7 @@ final class WorkspaceStore: ObservableObject {
         if !selectionAskThreads[index].messageIDs.contains(messageID) {
             selectionAskThreads[index].messageIDs.append(messageID)
             selectionAskThreads[index].updatedAt = Date()
-            persistSelectionAskThreads()
+            save()
         }
     }
 
@@ -5995,19 +6003,21 @@ final class WorkspaceStore: ObservableObject {
         return selectionAskThreads.first { $0.normalizedText == normalized }
     }
 
-    private func persistSelectionAskThreads() {
-        let key = "weibei.selectionAskThreads.v1"
-        if let data = try? JSONEncoder().encode(selectionAskThreads) {
-            UserDefaults.standard.set(data, forKey: key)
+    private func loadLegacySelectionAskThreadsIfWorkspaceFieldMissing() {
+        guard !loadedSelectionAskThreadsFromWorkspaceSnapshot else { return }
+        needsSelectionAskThreadsWorkspaceMigration = true
+        if let legacyData = selectionAskThreadDefaults.data(
+            forKey: Self.legacySelectionAskThreadsDefaultsKey
+        ), let legacyThreads = try? JSONDecoder().decode(
+            [SelectionAskThread].self,
+            from: legacyData
+        ) {
+            selectionAskThreads = legacyThreads
+        } else {
+            selectionAskThreads = []
         }
-    }
-
-    func loadSelectionAskThreadsIfNeeded() {
-        let key = "weibei.selectionAskThreads.v1"
-        guard selectionAskThreads.isEmpty,
-              let data = UserDefaults.standard.data(forKey: key),
-              let decoded = try? JSONDecoder().decode([SelectionAskThread].self, from: data) else { return }
-        selectionAskThreads = decoded
+        shouldRemoveLegacySelectionAskThreadsAfterSave =
+            selectionAskThreadDefaults.object(forKey: Self.legacySelectionAskThreadsDefaultsKey) != nil
     }
 
     func appendSelectionToNote() {
@@ -8258,12 +8268,32 @@ final class WorkspaceStore: ObservableObject {
         guard oldItem.isNotebookNote == newItem.isNotebookNote,
               oldItem.kind == newItem.kind,
               oldItem.isSample == newItem.isSample,
+              oldItem.storage == newItem.storage,
+              oldItem.contentRevision == newItem.contentRevision,
+              oldItem.contentDigest == newItem.contentDigest,
+              courseMembershipsCanCoalesce(oldID: oldItem.id, newID: newID),
               valuesCanCoalesce(notesByItemID[oldItem.id], notesByItemID[newID]),
               valuesCanCoalesce(pendingNoteWritesByItemID[oldItem.id], pendingNoteWritesByItemID[newID]),
               valuesCanCoalesce(noteBackingContentDigestsByItemID[oldItem.id], noteBackingContentDigestsByItemID[newID]),
               studyLocationsCanCoalesce(oldID: oldItem.id, newID: newID),
               pendingPersistenceCanCoalesce(oldID: oldItem.id, newID: newID) else {
             return false
+        }
+        return true
+    }
+
+    private func courseMembershipsCanCoalesce(oldID: String, newID: String) -> Bool {
+        for oldMembership in courseItemMemberships where oldMembership.itemID == oldID {
+            guard let newMembership = courseItemMemberships.first(where: {
+                $0.itemID == newID && $0.courseID == oldMembership.courseID
+            }) else {
+                continue
+            }
+            guard valuesCanCoalesce(oldMembership.courseRelativePath, newMembership.courseRelativePath),
+                  valuesCanCoalesce(oldMembership.entryIdentity, newMembership.entryIdentity),
+                  valuesCanCoalesce(oldMembership.documentIdentifier, newMembership.documentIdentifier) else {
+                return false
+            }
         }
         return true
     }
@@ -8331,11 +8361,17 @@ final class WorkspaceStore: ObservableObject {
             }
         }
         for index in studySessions.indices {
+            if studySessions[index].materialItemID == oldID {
+                studySessions[index].materialItemID = newID
+            }
             var seen = Set<String>()
             studySessions[index].focusItemIDs = studySessions[index].focusItemIDs.compactMap { itemID in
                 let migratedID = itemID == oldID ? newID : itemID
                 return seen.insert(migratedID).inserted ? migratedID : nil
             }
+        }
+        for index in selectionAskThreads.indices where selectionAskThreads[index].itemID == oldID {
+            selectionAskThreads[index].itemID = newID
         }
 
         if stagedNoteDraft?.itemID == oldID, let value = stagedNoteDraft?.value {
@@ -8730,6 +8766,11 @@ final class WorkspaceStore: ObservableObject {
             return bounded
         }
         activeStudySessionID = snapshot.activeStudySessionID
+        if let persistedSelectionAskThreads = snapshot.selectionAskThreads {
+            loadedSelectionAskThreadsFromWorkspaceSnapshot = true
+            selectionAskThreads = persistedSelectionAskThreads
+            selectionAskThreadDefaults.removeObject(forKey: Self.legacySelectionAskThreadsDefaultsKey)
+        }
         if selectedItem?.isNotebookNote == true {
             activeNotebookItemID = selectedItemID
             selectedItemID = sampleItems.first?.id
@@ -8877,6 +8918,7 @@ final class WorkspaceStore: ObservableObject {
                 learningMemoryRevision: learningMemoryRevision,
                 studySessions: studySessions,
                 activeStudySessionID: activeStudySessionID,
+                selectionAskThreads: selectionAskThreads,
                 modelName: modelName,
                 agentProviderID: agentProviderID.rawValue,
                 agentBaseURL: agentBaseURL.isEmpty ? nil : agentBaseURL,
@@ -8898,6 +8940,14 @@ final class WorkspaceStore: ObservableObject {
                 let data = try JSONEncoder().encode(snapshot)
                 try workspaceSnapshotWriter(data, storageURL)
                 workspaceSaveError = nil
+                needsSelectionAskThreadsWorkspaceMigration = false
+                loadedSelectionAskThreadsFromWorkspaceSnapshot = true
+                if shouldRemoveLegacySelectionAskThreadsAfterSave {
+                    selectionAskThreadDefaults.removeObject(
+                        forKey: Self.legacySelectionAskThreadsDefaultsKey
+                    )
+                    shouldRemoveLegacySelectionAskThreadsAfterSave = false
+                }
                 return true
             } catch {
                 workspaceSaveError = ui(
