@@ -49,6 +49,7 @@ func runPiTerminalRuntimeSelfChecks() async throws {
     try await checkTerminalErrorBypassesSlowProgress(fixture)
     try await checkGenericEventsDoNotDefeatWatchdog(fixture)
     try await checkMeaningfulThinkingKeepsRunAlive(fixture)
+    try await checkRejectedRichAnswerKeepsSafeNarrative(fixture)
     try await checkContextSnapshotLivesUntilProcessShutdown(fixture)
 }
 
@@ -160,6 +161,39 @@ private func checkMeaningfulThinkingKeepsRunAlive(_ fixture: PiTerminalRuntimeFi
         throw PiTerminalRuntimeSelfCheckError.failed(
             "PI meaningful thinking did not keep the run alive (\(outcome))"
         )
+    }
+}
+
+private func checkRejectedRichAnswerKeepsSafeNarrative(
+    _ fixture: PiTerminalRuntimeFixture
+) async throws {
+    let runtime = PiAgentRuntime(
+        executableURL: fixture.executableURL,
+        runtimeDirectory: try fixture.workingDirectory(named: "RichFallbackMode"),
+        runInactivityTimeoutNanoseconds: 2_000_000_000
+    )
+    let request = StudyAgentRequest(
+        purpose: .conversation,
+        question: "请解释测试材料",
+        materialTitle: "测试材料",
+        materialText: "测试正文",
+        noteTitle: "测试笔记",
+        noteText: "",
+        contextRevision: "rich-fallback-test"
+    )
+
+    do {
+        let reply = try await runtime.respond(to: request)
+        await runtime.shutdown()
+        guard reply.text == "[材料：测试材料] 安全正文",
+              reply.richAnswer == nil else {
+            throw PiTerminalRuntimeSelfCheckError.failed(
+                "PI narrative-only admission lost its safe text or attached a rejected rich block"
+            )
+        }
+    } catch {
+        await runtime.shutdown()
+        throw error
     }
 }
 
@@ -326,6 +360,7 @@ static void start_emitter(void) {
     cancel_mode = strstr(cwd, "CancelMode") != NULL;
     int error_mode = strstr(cwd, "ErrorMode") != NULL;
     int thinking_mode = strstr(cwd, "ThinkingMode") != NULL;
+    int rich_fallback_mode = strstr(cwd, "RichFallbackMode") != NULL;
     emitter_pid = fork();
     if (emitter_pid != 0) return;
 
@@ -354,6 +389,14 @@ static void start_emitter(void) {
             usleep(120000);
         }
         printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"[材料：测试材料] 思考完成\"}],\"stopReason\":\"stop\"}]}\n");
+        fflush(stdout);
+        _exit(0);
+    }
+
+    if (rich_fallback_mode) {
+        emit_context("rich-fallback-test");
+        printf("{\"type\":\"tool_execution_end\",\"toolCallId\":\"rich-fallback\",\"toolName\":\"weibei_rich_answer\",\"isError\":false,\"result\":{\"details\":{\"kind\":\"rich_answer\",\"contextRevision\":\"rich-fallback-test\",\"envelope\":{\"schemaVersion\":2,\"contextRevision\":\"rich-fallback-test\",\"narrative\":\"[材料：测试材料] 应保留的正文\",\"expressionPlan\":{\"action\":\"explain\",\"summary\":\"安全降级\",\"families\":[\"textAndAlignment\"],\"preferredSurface\":\"inline\",\"directManipulation\":false},\"scenes\":[{\"id\":\"rejected-scene\",\"title\":\"无效场景\",\"family\":\"textAndAlignment\",\"objects\":[],\"evidenceIDs\":[\"missing-evidence\"]}],\"evidenceLedger\":[],\"fallback\":{\"text\":\"[材料：测试材料] 安全正文\",\"reason\":\"场景被拒绝\"}}}}}\n");
+        printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"模型收尾文字\"}],\"stopReason\":\"stop\"}]}\n");
         fflush(stdout);
         _exit(0);
     }

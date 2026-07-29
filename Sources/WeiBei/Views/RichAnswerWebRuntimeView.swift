@@ -133,34 +133,36 @@ struct RichAnswerWebRuntimeView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            ZStack(alignment: .bottomLeading) {
-                RichAnswerWebViewRepresentable(
-                    entries: entries,
-                    evidenceByID: evidenceByID,
-                    heightLimit: heightLimit,
-                    contentHeight: $contentHeight,
-                    contentOverflowed: $contentOverflowed,
-                    runtimeError: $runtimeError,
-                    verificationAfterRequestID: verificationAfterRequestID,
-                    onOpenEvidence: onOpenEvidence,
-                    onAction: onAction,
-                    assetPreview: assetPreview,
-                    onRuntimeReady: onRuntimeReady
-                )
-
-                if let runtimeError {
-                    Text(runtimeError)
-                        .font(.caption)
-                        .foregroundStyle(WeiBeiTheme.cinnabar)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .background(WeiBeiTheme.paperRaised.opacity(0.96))
-                }
-            }
+            RichAnswerWebViewRepresentable(
+                entries: entries,
+                evidenceByID: evidenceByID,
+                heightLimit: heightLimit,
+                contentHeight: $contentHeight,
+                contentOverflowed: $contentOverflowed,
+                runtimeError: $runtimeError,
+                verificationAfterRequestID: verificationAfterRequestID,
+                onOpenEvidence: onOpenEvidence,
+                onAction: onAction,
+                assetPreview: assetPreview,
+                onRuntimeReady: onRuntimeReady
+            )
             .frame(maxWidth: .infinity, alignment: .leading)
-            .frame(height: renderedHeight)
+            .frame(height: runtimeError == nil ? renderedHeight : 0)
+            .clipped()
+            .accessibilityHidden(runtimeError != nil)
 
-            if contentOverflowed, !expandsOverflow, let onRequestExpansion {
+            if runtimeError != nil {
+                VStack(alignment: .leading, spacing: 3) {
+                    Label("这项富回答无法显示", systemImage: "exclamationmark.triangle")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text("请继续阅读正文，稍后可重试这项视觉。")
+                        .font(.system(size: 10))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                }
+                .accessibilityElement(children: .combine)
+            }
+
+            if runtimeError == nil, contentOverflowed, !expandsOverflow, let onRequestExpansion {
                 Button {
                     onRequestExpansion()
                 } label: {
@@ -361,6 +363,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             withExtension: "html"
         ) else {
             runtimeError = "富回答网页运行时资源缺失。"
+            NSLog("[WeiBei rich answer] %@", runtimeError ?? "unknown runtime resource error")
             return clippingView
         }
 
@@ -500,15 +503,20 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             payloadPreparationError = nil
             guard isReady,
                   hasUsableViewport,
-                  let webView,
-                  let payloads = runtimePayloads() else { return }
+                  let webView else { return }
+            guard let payloads = runtimePayloads() else {
+                if let payloadPreparationError {
+                    reportRuntimeError(payloadPreparationError)
+                }
+                return
+            }
             let jsonPayloads = payloads.compactMap(Self.jsonString)
             guard jsonPayloads.count == payloads.count,
                   let fingerprintData = try? JSONSerialization.data(withJSONObject: ["payloads": payloads], options: [.sortedKeys]),
                   let json = String(data: fingerprintData, encoding: .utf8),
                   sentPayloadFingerprint != json else { return }
             sentPayloadFingerprint = json
-            runtimeError.wrappedValue = payloadPreparationError
+            runtimeError.wrappedValue = nil
             hasRuntimeHeight = false
             notifiedRuntimeReady = false
             heightUpdateWorkItem?.cancel()
@@ -562,7 +570,12 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
                       !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
                 onAction(message)
             case "weibei:error":
-                runtimeError.wrappedValue = body["message"] as? String ?? "富回答程序渲染失败。"
+                let diagnostic = body["message"] as? String ?? "富回答程序渲染失败。"
+                if body["fatal"] as? Bool == false {
+                    NSLog("[WeiBei rich answer] %@", diagnostic)
+                } else {
+                    reportRuntimeError(diagnostic)
+                }
             default:
                 break
             }
@@ -598,7 +611,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             withError error: Error
         ) {
             readinessWorkItem?.cancel()
-            runtimeError.wrappedValue = "富回答运行时加载失败：\(error.localizedDescription)"
+            reportRuntimeError("富回答运行时加载失败：\(error.localizedDescription)")
         }
 
         func webView(
@@ -607,12 +620,12 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             withError error: Error
         ) {
             readinessWorkItem?.cancel()
-            runtimeError.wrappedValue = "富回答运行时无法启动：\(error.localizedDescription)"
+            reportRuntimeError("富回答运行时无法启动：\(error.localizedDescription)")
         }
 
         func failStartup(_ message: String) {
             readinessWorkItem?.cancel()
-            runtimeError.wrappedValue = message
+            reportRuntimeError(message)
         }
 
         func stop() {
@@ -639,8 +652,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             guard !isReady else { return }
             let workItem = DispatchWorkItem { [weak self] in
                 guard let self, !isReady else { return }
-                runtimeError.wrappedValue = "富回答运行时未就绪，已停止等待。"
-                contentHeight.wrappedValue = fallbackContentHeight()
+                reportRuntimeError("富回答运行时未就绪，已停止等待。")
             }
             readinessWorkItem = workItem
             DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: workItem)
@@ -758,9 +770,15 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
         }
 
         private func notifyRuntimeReadyIfNeeded() {
-            guard !notifiedRuntimeReady, isReady, hasRuntimeHeight else { return }
+            guard !notifiedRuntimeReady, isReady, hasRuntimeHeight, runtimeError.wrappedValue == nil else { return }
             notifiedRuntimeReady = true
             onRuntimeReady()
+        }
+
+        private func reportRuntimeError(_ message: String) {
+            NSLog("[WeiBei rich answer] %@", message)
+            runtimeError.wrappedValue = message
+            contentOverflowed.wrappedValue = false
         }
 
         private func fallbackContentHeight() -> CGFloat {
@@ -776,18 +794,29 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
                 return [payload]
             }
             if entries.allSatisfy(\.isRenderPlan) {
-                guard let payload = renderPlansPayload(for: entries) else { return nil }
+                var groupBudget = RichAnswerRenderGroupBudgetAccumulator()
+                guard let payload = renderPlansPayload(
+                    for: entries.enumerated().map { (index: $0.offset, entry: $0.element) },
+                    groupBudget: &groupBudget
+                ) else { return nil }
                 return [payload]
             }
-            let payloads = entries.compactMap { entry -> [String: Any]? in
+            var groupBudget = RichAnswerRenderGroupBudgetAccumulator()
+            let payloads = entries.enumerated().compactMap { index, entry -> [String: Any]? in
                 switch entry.kind {
                 case .program:
                     return programsPayload(for: [entry])
                 case .renderPlan:
-                    return renderPlansPayload(for: [entry])
+                    return renderPlansPayload(
+                        for: [(index: index, entry: entry)],
+                        groupBudget: &groupBudget
+                    )
                 }
             }
-            guard payloads.count == entries.count else { return nil }
+            guard !payloads.isEmpty else {
+                payloadPreparationError = "富回答组没有可发送的合法项目。"
+                return nil
+            }
             return payloads
         }
 
@@ -832,41 +861,140 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             ]
         }
 
-        private func renderPlansPayload(for entries: [RichAnswerWebRuntimeEntry]) -> [String: Any]? {
-            let renderPlans = entries.compactMap(renderPlanPayload)
-            guard !renderPlans.isEmpty, renderPlans.count == entries.count else { return nil }
-            let evidenceItems = entries.flatMap { entry in
-                evidenceContent(for: entry.scene)
+        private struct RenderPlanTransport {
+            let sourceIndex: Int
+            let entry: RichAnswerWebRuntimeEntry
+            let plan: [String: Any]
+            let budgetContext: [String: Any]
+        }
+
+        private enum RenderPlanTransportResult {
+            case ready(RenderPlanTransport)
+            case failed(
+                diagnostic: String,
+                fallbackReason: String,
+                fallbackText: String
+            )
+        }
+
+        private func renderPlansPayload(
+            for indexedEntries: [(index: Int, entry: RichAnswerWebRuntimeEntry)],
+            groupBudget: inout RichAnswerRenderGroupBudgetAccumulator
+        ) -> [String: Any]? {
+            var transports: [RenderPlanTransport] = []
+            var itemFailures: [[String: Any]] = []
+            for indexedEntry in indexedEntries {
+                let index = indexedEntry.index
+                let entry = indexedEntry.entry
+                switch renderPlanTransport(
+                    for: entry,
+                    sourceIndex: index,
+                    groupBudget: &groupBudget
+                ) {
+                case let .ready(transport):
+                    transports.append(transport)
+                case let .failed(diagnostic, fallbackReason, fallbackText):
+                    NSLog("[WeiBei rich answer] %@", diagnostic)
+                    itemFailures.append([
+                        "index": index,
+                        "programID": entry.scene.id,
+                        "title": entry.scene.title,
+                        "fallbackReason": fallbackReason,
+                        "fallbackText": fallbackText,
+                    ])
+                }
             }
-            if renderPlans.count == 1 {
+            guard !transports.isEmpty else {
+                return [
+                    "type": "weibei:setRenderFailures",
+                    "itemFailures": itemFailures,
+                    "heightLimit": Int(heightLimit.rounded()),
+                ]
+            }
+            let evidenceItems = indexedEntries.flatMap { indexedEntry in
+                evidenceContent(for: indexedEntry.entry.scene)
+            }
+            if transports.count == 1 {
                 return [
                     "type": "weibei:setRenderPlan",
-                    "renderPlan": renderPlans[0],
+                    "renderPlan": transports[0].plan,
+                    "budgetContext": transports[0].budgetContext,
+                    "sourceIndex": transports[0].sourceIndex,
+                    "itemFailures": itemFailures,
                     "evidenceContent": evidenceItems,
                     "heightLimit": Int(heightLimit.rounded()),
                 ]
             }
             return [
                 "type": "weibei:setRenderPlans",
-                "renderPlans": renderPlans,
+                "renderPlans": transports.map(\.plan),
+                "budgetContexts": transports.map(\.budgetContext),
+                "sourceIndices": transports.map(\.sourceIndex),
+                "itemFailures": itemFailures,
                 "evidenceContent": evidenceItems,
                 "heightLimit": Int(heightLimit.rounded()),
             ]
         }
 
-        private func renderPlanPayload(for entry: RichAnswerWebRuntimeEntry) -> [String: Any]? {
-            guard case let .renderPlan(renderPlan) = entry.kind,
-                  var plan = Self.foundationJSONObject(from: renderPlan) as? [String: Any] else {
-                return nil
+        private func renderPlanTransport(
+            for entry: RichAnswerWebRuntimeEntry,
+            sourceIndex: Int,
+            groupBudget: inout RichAnswerRenderGroupBudgetAccumulator
+        ) -> RenderPlanTransportResult {
+            guard case let .renderPlan(renderPlan) = entry.kind else {
+                return .failed(
+                    diagnostic: "富回答项目不是渲染计划：\(entry.scene.id)",
+                    fallbackReason: "这项视觉暂不可用",
+                    fallbackText: "请继续阅读正文。"
+                )
             }
-            let errors = bridgeLocalImageAssets(in: &plan, for: entry.scene)
+            guard let logicalPlanData = try? JSONEncoder().encode(renderPlan),
+                  var plan = try? JSONSerialization.jsonObject(with: logicalPlanData) as? [String: Any] else {
+                return .failed(
+                    diagnostic: "渲染计划无法编码：\(entry.scene.id)",
+                    fallbackReason: renderPlan.fallback.reason,
+                    fallbackText: renderPlan.fallback.text
+                )
+            }
+            var trustedAssetBytes: [Int] = []
+            let errors = bridgeLocalImageAssets(
+                in: &plan,
+                for: entry.scene,
+                trustedAssetBytes: &trustedAssetBytes
+            )
             if !errors.isEmpty {
-                payloadPreparationError = errors.joined(separator: "\n")
+                return .failed(
+                    diagnostic: errors.joined(separator: "\n"),
+                    fallbackReason: renderPlan.fallback.reason,
+                    fallbackText: renderPlan.fallback.text
+                )
             }
-            return plan
+            if let issue = groupBudget.admit(
+                logicalPlanBytes: logicalPlanData.count,
+                trustedAssetBytes: trustedAssetBytes
+            ) {
+                return .failed(
+                    diagnostic: "\(issue.diagnosticMessage)：\(entry.scene.id)",
+                    fallbackReason: renderPlan.fallback.reason,
+                    fallbackText: renderPlan.fallback.text
+                )
+            }
+            return .ready(RenderPlanTransport(
+                sourceIndex: sourceIndex,
+                entry: entry,
+                plan: plan,
+                budgetContext: [
+                    "logicalPlanBytes": logicalPlanData.count,
+                    "trustedAssetBytes": trustedAssetBytes,
+                ]
+            ))
         }
 
-        private func bridgeLocalImageAssets(in plan: inout [String: Any], for scene: RichAnswerScene) -> [String] {
+        private func bridgeLocalImageAssets(
+            in plan: inout [String: Any],
+            for scene: RichAnswerScene,
+            trustedAssetBytes: inout [Int]
+        ) -> [String] {
             guard let renderer = plan["renderer"] as? String,
                   renderer == "weibei.image.overlay" || renderer == "weibei.spatial.map",
                   var spec = plan["spec"] as? [String: Any] else { return [] }
@@ -879,20 +1007,23 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
                     at: ["image"],
                     in: &spec,
                     allowedAssetIDs: allowedAssetIDs,
-                    errors: &errors
+                    errors: &errors,
+                    trustedAssetBytes: &trustedAssetBytes
                 )
                 bridgeImageSource(
                     at: ["comparison", "image"],
                     in: &spec,
                     allowedAssetIDs: allowedAssetIDs,
-                    errors: &errors
+                    errors: &errors,
+                    trustedAssetBytes: &trustedAssetBytes
                 )
             } else {
                 bridgeImageSource(
                     at: ["mapAsset"],
                     in: &spec,
                     allowedAssetIDs: allowedAssetIDs,
-                    errors: &errors
+                    errors: &errors,
+                    trustedAssetBytes: &trustedAssetBytes
                 )
             }
 
@@ -914,12 +1045,19 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             at path: [String],
             in spec: inout [String: Any],
             allowedAssetIDs: Set<String>,
-            errors: inout [String]
+            errors: inout [String],
+            trustedAssetBytes: inout [Int]
         ) {
             guard path.count == 1 || path.count == 2 else { return }
             if path.count == 1 {
                 guard var source = spec[path[0]] as? [String: Any] else { return }
-                bridgeImageSourceObject(&source, path: "spec.\(path[0])", allowedAssetIDs: allowedAssetIDs, errors: &errors)
+                bridgeImageSourceObject(
+                    &source,
+                    path: "spec.\(path[0])",
+                    allowedAssetIDs: allowedAssetIDs,
+                    errors: &errors,
+                    trustedAssetBytes: &trustedAssetBytes
+                )
                 spec[path[0]] = source
                 return
             }
@@ -930,7 +1068,8 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
                 &source,
                 path: "spec.\(path[0]).\(path[1])",
                 allowedAssetIDs: allowedAssetIDs,
-                errors: &errors
+                errors: &errors,
+                trustedAssetBytes: &trustedAssetBytes
             )
             parent[path[1]] = source
             spec[path[0]] = parent
@@ -940,7 +1079,8 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             _ source: inout [String: Any],
             path: String,
             allowedAssetIDs: Set<String>,
-            errors: inout [String]
+            errors: inout [String],
+            trustedAssetBytes: inout [Int]
         ) {
             guard source["kind"] as? String == "assetRef",
                   let assetID = (source["source"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -960,6 +1100,8 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             source["source"] = "data:image/\(embeddedRaster.mimeSubtype);base64,\(embeddedRaster.data.base64EncodedString())"
             source["width"] = embeddedRaster.width
             source["height"] = embeddedRaster.height
+            source["_weibeiHostInjected"] = true
+            trustedAssetBytes.append(embeddedRaster.data.count)
         }
 
         private func evidenceBindings(for scene: RichAnswerScene) -> [[String: String]] {
@@ -995,7 +1137,7 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
                 guard let self else { return }
                 if let error {
                     sentPayloadFingerprint = nil
-                    runtimeError.wrappedValue = "富回答内容传递失败：\(error.localizedDescription)"
+                    reportRuntimeError("富回答内容传递失败：\(error.localizedDescription)")
                     return
                 }
                 guard let webView else { return }
@@ -1017,11 +1159,6 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             }
         }
 
-        private static func foundationJSONObject(from renderPlan: RichAnswerRenderPlan) -> Any? {
-            guard let data = try? JSONEncoder().encode(renderPlan) else { return nil }
-            return try? JSONSerialization.jsonObject(with: data)
-        }
-
         private struct EmbeddedRaster {
             let data: Data
             let mimeSubtype: String
@@ -1029,7 +1166,8 @@ private struct RichAnswerWebViewRepresentable: NSViewRepresentable {
             let height: Int
         }
 
-        private static let embeddedRasterMaxBytes = 850_000
+        private static let embeddedRasterMaxBytes =
+            RichAnswerRendererRegistry.formalTrustedAssetMaxBytes
 
         private static func embeddedRaster(from image: NSImage) -> EmbeddedRaster? {
             var proposedRect = NSRect(origin: .zero, size: image.size)

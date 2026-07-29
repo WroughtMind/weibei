@@ -13,8 +13,8 @@ import {
   type Scene3DVector,
 } from "./scene-3d.self-check";
 import {
+  createNarrativeFallbackNode,
   type CompiledRenderPlan,
-  type RendererIssue,
   type RendererLifecycleContext,
   type RichAnswerRenderer,
 } from "../renderer-registry";
@@ -1434,16 +1434,6 @@ function Scene3DMount({
   );
 }
 
-function Scene3DFallback({ issue }: { issue: RendererIssue }) {
-  return (
-    <div className="generation-error" role="alert" data-weibei-renderer-issue={issue.code}>
-      <strong>三维场景已诚实降级</strong>
-      <span>{issue.message}</span>
-      {issue.details?.length ? <small>{issue.details.join("；")}</small> : null}
-    </div>
-  );
-}
-
 export const scene3DRenderer: RichAnswerRenderer = {
   id: SCENE3D_RENDERER,
   version: "0.1.0",
@@ -1455,9 +1445,18 @@ export const scene3DRenderer: RichAnswerRenderer = {
     data: ["scene-tree", "camera", "coordinates", "slices", "layers", "states", "readouts", "point", "polyline", "surface", "wireframe-grid", "molecule", "atom", "bond", "electron-domain", "angle-marker"],
     interactions: ["yaw-slider", "pitch-slider", "distance-slider", "layer-toggle", "slice-slider", "state-segmented", "state-slider", "drag-rotate", "wheel-zoom", "probe-click", "molecule-probe"],
     resources: ["canvas-2d", "deterministic-projection", "local-state-binding", "responsive-transparent-surface"],
-    maxNodes: maxScene3DObjects,
-    maxDataPoints: maxScene3DDataPoints,
-    fallback: ["static_snapshot", "simplified_component", "structured_error"],
+    maxNodes: 24,
+    maxDataPoints: 3_200,
+    maxArtifacts: 0,
+    maxBytes: 256_000,
+    maxWidth: 960,
+    maxHeight: 720,
+    maxAnimationFPS: 30,
+    maxInteractionLatencyMS: 160,
+    allowAnimation: true,
+    allowWebGL: false,
+    allowNetwork: false,
+    fallback: ["narrativeOnly"],
   },
   validate(plan) {
     const parsed = parseScene3DSpec(plan);
@@ -1494,7 +1493,7 @@ export const scene3DRenderer: RichAnswerRenderer = {
   dispose() {
     return undefined;
   },
-  fallback(issue) {
-    return <Scene3DFallback issue={issue} />;
+  fallback(plan, issue) {
+    return createNarrativeFallbackNode(plan, issue);
   },
 };

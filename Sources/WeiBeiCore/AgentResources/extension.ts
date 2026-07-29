@@ -363,13 +363,16 @@ const LIMITS = {
   richAnswerUIBindings: 4,
   richAnswerProgramSource: 10_000,
   richAnswerProgramCapabilities: 8,
-  richAnswerRenderPlanSpecBytes: 16_000,
-  richAnswerRenderPlanDataPoints: 240,
+  richAnswerRenderPlanSpecBytes: 1_500_000,
+  richAnswerRenderPlanDataPoints: 8_000,
+  richAnswerRenderPlanChartDataPoints: 4_000,
+  richAnswerRenderPlanChartSeriesDataPoints: 1_000,
   richAnswerRenderPlanSeries: 8,
   richAnswerRenderPlanBindings: 8,
   richAnswerRenderPlanSourceBindings: 12,
   richAnswerRenderPlanArtifacts: 4,
-  richAnswerRenderPlanNodes: 80,
+  richAnswerRenderPlanNodes: 280,
+  richAnswerTrustedAssetBytes: 850_000,
   richAnswerRenderPlanText: 600,
   richAnswerRenderPlanTarget: 160,
   pythonArtifactInputBytes: 128_000,
@@ -1999,11 +2002,11 @@ const RICH_ANSWER_RENDERER_REGISTRATIONS: readonly RichAnswerRendererRegistratio
       focusEnabled: true,
     },
     budgets: {
-      maxNodes: LIMITS.richAnswerRenderPlanNodes,
+      maxNodes: 80,
       maxSeries: LIMITS.richAnswerRenderPlanSeries,
-      maxDataPoints: LIMITS.richAnswerRenderPlanDataPoints,
+      maxDataPoints: 4_000,
       maxArtifacts: 0,
-      maxBytes: LIMITS.richAnswerRenderPlanSpecBytes,
+      maxBytes: 256_000,
       maxWidth: 960,
       maxHeight: 640,
       maxAnimationFPS: 30,
@@ -2082,9 +2085,9 @@ const RICH_ANSWER_RENDERER_REGISTRATIONS: readonly RichAnswerRendererRegistratio
     budgets: {
       maxNodes: 64,
       maxSeries: 1,
-      maxDataPoints: 1600,
+      maxDataPoints: 1_600,
       maxArtifacts: 0,
-      maxBytes: LIMITS.richAnswerRenderPlanSpecBytes,
+      maxBytes: 256_000,
       maxWidth: 960,
       maxHeight: 640,
       maxAnimationFPS: 30,
@@ -2172,9 +2175,9 @@ const RICH_ANSWER_RENDERER_REGISTRATIONS: readonly RichAnswerRendererRegistratio
     budgets: {
       maxNodes: 260,
       maxSeries: 0,
-      maxDataPoints: 1200,
+      maxDataPoints: 1_200,
       maxArtifacts: 0,
-      maxBytes: LIMITS.richAnswerRenderPlanSpecBytes,
+      maxBytes: 256_000,
       maxWidth: 960,
       maxHeight: 720,
       maxAnimationFPS: 30,
@@ -2268,9 +2271,9 @@ const RICH_ANSWER_RENDERER_REGISTRATIONS: readonly RichAnswerRendererRegistratio
     budgets: {
       maxNodes: 24,
       maxSeries: 0,
-      maxDataPoints: 3200,
+      maxDataPoints: 3_200,
       maxArtifacts: 0,
-      maxBytes: LIMITS.richAnswerRenderPlanSpecBytes,
+      maxBytes: 256_000,
       maxWidth: 960,
       maxHeight: 720,
       maxAnimationFPS: 30,
@@ -2345,7 +2348,7 @@ const RICH_ANSWER_RENDERER_REGISTRATIONS: readonly RichAnswerRendererRegistratio
     budgets: {
       maxNodes: 280,
       maxSeries: 0,
-      maxDataPoints: 8000,
+      maxDataPoints: 8_000,
       maxArtifacts: 2,
       maxBytes: 1_500_000,
       maxWidth: 960,
@@ -2419,7 +2422,7 @@ const RICH_ANSWER_RENDERER_REGISTRATIONS: readonly RichAnswerRendererRegistratio
     budgets: {
       maxNodes: 180,
       maxSeries: 0,
-      maxDataPoints: 1200,
+      maxDataPoints: 1_200,
       maxArtifacts: 2,
       maxBytes: 1_500_000,
       maxWidth: 960,
@@ -2436,6 +2439,16 @@ const RICH_ANSWER_RENDERER_REGISTRATIONS: readonly RichAnswerRendererRegistratio
 const RICH_ANSWER_RENDERER_REGISTRATION_BY_ID = new Map(
   RICH_ANSWER_RENDERER_REGISTRATIONS.map((registration) => [registration.id, registration]),
 );
+
+const RICH_ANSWER_FORMAL_ROUTE_INDEX = [
+  { route: "program", id: "weibei.openui.program", specVersion: "weibei.openui.v1" },
+  { route: "ui", id: "weibei.openui.composition", specVersion: "weibei.openui.v1" },
+  ...RICH_ANSWER_RENDERER_REGISTRATIONS.map((registration) => ({
+    route: "renderPlan",
+    id: registration.id,
+    specVersion: registration.specVersion,
+  })),
+] as const;
 
 function matchingRichAnswerRendererRegistrations(
   knowledgeShapes: readonly string[],
@@ -2670,6 +2683,7 @@ function richAnswerRendererCapabilityDeclarations(
           "骨架只展示字段形状；CURRENT_MATERIAL_ASSET_ID 必须替换为本轮 sourceBindings 中真实可用的当前材料资产 ID，所有示例值都必须换成来源支持的语义与数据。",
         rule: "模型只提交高层 spec、interactionBindings、sourceBindings、fallback 与 qualityBudget；不得提交 raw option、脚本、HTML、SVG path、外链或任意渲染代码。",
       },
+      fallbackModes: ["narrativeOnly"],
       qualityBudgetCeiling: registration.budgets,
     };
   });
@@ -3250,12 +3264,12 @@ const richAnswerRenderPlanChartSeriesSchema = Type.Object(
     name: Type.String({ minLength: 1, maxLength: 80 }),
     values: Type.Array(Type.Number(), {
       minItems: 1,
-      maxItems: LIMITS.richAnswerRenderPlanDataPoints,
+      maxItems: LIMITS.richAnswerRenderPlanChartSeriesDataPoints,
     }),
     xValues: Type.Optional(
       Type.Array(Type.Number(), {
         minItems: 1,
-        maxItems: LIMITS.richAnswerRenderPlanDataPoints,
+        maxItems: LIMITS.richAnswerRenderPlanChartSeriesDataPoints,
       }),
     ),
     chartKind: Type.Optional(
@@ -3276,7 +3290,7 @@ const richAnswerRenderPlanChartSpecSchema = Type.Object(
     ),
     xLabels: Type.Optional(
       Type.Array(Type.String({ minLength: 1, maxLength: 80 }), {
-        maxItems: LIMITS.richAnswerRenderPlanDataPoints,
+        maxItems: LIMITS.richAnswerRenderPlanChartSeriesDataPoints,
       }),
     ),
     xAxisLabel: Type.Optional(Type.String({ minLength: 1, maxLength: 80 })),
@@ -3287,7 +3301,7 @@ const richAnswerRenderPlanChartSpecSchema = Type.Object(
     samples: Type.Optional(
       Type.Array(Type.Number(), {
         minItems: 1,
-        maxItems: LIMITS.richAnswerRenderPlanDataPoints,
+        maxItems: LIMITS.richAnswerRenderPlanChartDataPoints,
       }),
     ),
   },
@@ -3445,7 +3459,7 @@ const richAnswerRenderPlanArtifactRefSchema = Type.Object(
     role: Type.String({ minLength: 1, maxLength: 80 }),
     width: Type.Optional(Type.Integer({ minimum: 1, maximum: 20_000 })),
     height: Type.Optional(Type.Integer({ minimum: 1, maximum: 20_000 })),
-    sizeBytes: Type.Optional(Type.Integer({ minimum: 0, maximum: 2_000_000 })),
+    sizeBytes: Type.Optional(Type.Integer({ minimum: 0, maximum: LIMITS.richAnswerTrustedAssetBytes })),
     checksum: Type.Optional(Type.String({ minLength: 64, maxLength: 64 })),
     summary: Type.Optional(Type.String({ minLength: 1, maxLength: 300 })),
     metadata: Type.Optional(Type.Record(Type.String({ minLength: 1, maxLength: 80 }), Type.Unknown())),
@@ -3454,9 +3468,7 @@ const richAnswerRenderPlanArtifactRefSchema = Type.Object(
 );
 const richAnswerRenderPlanFallbackSchema = Type.Object(
   {
-    mode: Type.Union(
-      ["narrativeOnly", "simplifiedRenderer", "staticSnapshot"].map((value) => Type.Literal(value)),
-    ),
+    mode: Type.Literal("narrativeOnly"),
     reason: Type.String({ minLength: 1, maxLength: 600 }),
     text: Type.String({ minLength: 1, maxLength: LIMITS.richAnswerNarrative }),
     renderer: Type.Optional(Type.String({ minLength: 1, maxLength: 160 })),
@@ -3472,9 +3484,9 @@ const richAnswerRenderPlanQualityBudgetSchema = Type.Object(
     maxArtifacts: Type.Optional(Type.Integer({ minimum: 0, maximum: LIMITS.richAnswerRenderPlanArtifacts })),
     maxBytes: Type.Optional(Type.Integer({ minimum: 1, maximum: LIMITS.richAnswerRenderPlanSpecBytes })),
     maxWidth: Type.Optional(Type.Integer({ minimum: 240, maximum: 960 })),
-    maxHeight: Type.Optional(Type.Integer({ minimum: 160, maximum: 640 })),
+    maxHeight: Type.Optional(Type.Integer({ minimum: 160, maximum: 720 })),
     maxAnimationFPS: Type.Optional(Type.Integer({ minimum: 0, maximum: 30 })),
-    maxInteractionLatencyMS: Type.Optional(Type.Integer({ minimum: 1, maximum: 120 })),
+    maxInteractionLatencyMS: Type.Optional(Type.Integer({ minimum: 1, maximum: 160 })),
     allowAnimation: Type.Boolean(),
     allowWebGL: Type.Boolean(),
     allowNetwork: Type.Boolean(),
@@ -3951,13 +3963,28 @@ interface RichAnswerRenderPlanSourceBindingParam {
 
 interface RichAnswerRenderPlanArtifactRefParam {
   id: string;
-  kind: "generated" | "source" | "snapshot";
-  label: string;
-  sourceBindingID?: string;
+  kind: string;
+  mimeType: string;
+  role: string;
+  width?: number;
+  height?: number;
+  sizeBytes?: number;
+  checksum?: string;
+  summary?: string;
+  metadata?: Record<string, unknown>;
 }
 
+const richAnswerRenderPlanArtifactRefContractCheck = {
+  id: "asset-id",
+  kind: "source-image",
+  mimeType: "image/png",
+  role: "primary",
+  sizeBytes: 1,
+} satisfies RichAnswerRenderPlanArtifactRefParam;
+void richAnswerRenderPlanArtifactRefContractCheck;
+
 interface RichAnswerRenderPlanFallbackParam {
-  mode: "narrativeOnly" | "simplifiedRenderer" | "staticSnapshot";
+  mode: "narrativeOnly";
   reason: string;
   text: string;
   renderer?: string;
@@ -4225,8 +4252,6 @@ const RICH_ANSWER_RENDER_SOURCE_BINDING_ROLES = new Set([
 ]);
 const RICH_ANSWER_RENDER_FALLBACK_MODES = new Set([
   "narrativeOnly",
-  "simplifiedRenderer",
-  "staticSnapshot",
 ]);
 const RICH_ANSWER_CHART_KIND_SET = new Set<string>(RICH_ANSWER_CHART_KINDS);
 const RICH_ANSWER_MATH_UNARY_OPERATIONS = new Set([
@@ -4344,7 +4369,10 @@ function richAnswerRenderPlanIntegerInRange(
   minimum: number,
   maximum: number,
 ): value is number {
-  return Number.isInteger(value) && value >= minimum && value <= maximum;
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= minimum &&
+    value <= maximum;
 }
 
 function validateRichAnswerChartSpec(
@@ -4424,7 +4452,14 @@ function validateRichAnswerChartSpec(
     if (chartKind === "bar" && rawSeries.chartKind !== undefined && rawSeries.chartKind !== "bar") {
       issue(`富回答场景 ${scene.id} 的 bar 图不能包含非 bar series`);
     }
-    if (chartKind === "mixed" && rawSeries.chartKind !== undefined && !["line", "bar"].includes(rawSeries.chartKind)) {
+    if (
+      chartKind === "mixed" &&
+      rawSeries.chartKind !== undefined &&
+      (
+        typeof rawSeries.chartKind !== "string" ||
+        !["line", "bar"].includes(rawSeries.chartKind)
+      )
+    ) {
       issue(`富回答场景 ${scene.id} 的 mixed 图每个 series.chartKind 必须是 line 或 bar`);
     }
     const values = richAnswerRenderPlanNumberArray(rawSeries.values);
@@ -4908,7 +4943,7 @@ function normalizeRichAnswerScene3DSpec(
     spec.controls = controls;
   }
 
-  plan.spec = spec as RichAnswerRenderPlanSpecParam;
+  plan.spec = spec as unknown as RichAnswerRenderPlanSpecParam;
   return normalizations;
 }
 
@@ -4931,7 +4966,7 @@ function richAnswerValidateCoordinate2D(
   path: string,
   issue: (message: string) => void,
   normalized = false,
-): value is Record<string, unknown> {
+): value is { x: number; y: number } {
   if (!richAnswerValidateNestedFields(scene, value, ["x", "y"], path, issue)) return false;
   if (!richAnswerRenderPlanFiniteNumber(value.x) || !richAnswerRenderPlanFiniteNumber(value.y)) {
     issue(`富回答场景 ${scene.id} 的 ${path}.x/y 必须是有限数字`);
@@ -5037,6 +5072,28 @@ function richAnswerValidateRasterSource(
       issue(`富回答场景 ${scene.id} 的 ${path}.${dimension} 必须是至少 16 的整数`);
     }
   }
+}
+
+function richAnswerRenderPlanAssetRefIDs(
+  value: unknown,
+  result = new Set<string>(),
+): Set<string> {
+  if (Array.isArray(value)) {
+    for (const item of value) richAnswerRenderPlanAssetRefIDs(item, result);
+    return result;
+  }
+  if (!isRecord(value)) return result;
+  if (
+    value.kind === "assetRef"
+    && typeof value.source === "string"
+    && value.source.trim().length > 0
+  ) {
+    result.add(value.source.trim());
+  }
+  for (const child of Object.values(value)) {
+    richAnswerRenderPlanAssetRefIDs(child, result);
+  }
+  return result;
 }
 
 function validateRichAnswerImageOverlaySpec(
@@ -5153,11 +5210,20 @@ function validateRichAnswerImageOverlaySpec(
           issue,
         )) {
           const box = rawFeature.box;
-          if (
-            ![box.x, box.y, box.width, box.height].every(richAnswerRenderPlanFiniteNumber) ||
-            box.x < 0 || box.y < 0 || box.width <= 0 || box.height <= 0 ||
-            box.x + box.width > 1 || box.y + box.height > 1
-          ) issue(`富回答场景 ${scene.id} 的 ${featurePath}.box 必须是 0–1 内的正面积矩形`);
+          if (![box.x, box.y, box.width, box.height].every(richAnswerRenderPlanFiniteNumber)) {
+            issue(`富回答场景 ${scene.id} 的 ${featurePath}.box 必须是 0–1 内的正面积矩形`);
+          } else {
+            const x = box.x as number;
+            const y = box.y as number;
+            const width = box.width as number;
+            const height = box.height as number;
+            if (
+              x < 0 || y < 0 || width <= 0 || height <= 0 ||
+              x + width > 1 || y + height > 1
+            ) {
+              issue(`富回答场景 ${scene.id} 的 ${featurePath}.box 必须是 0–1 内的正面积矩形`);
+            }
+          }
         }
         visibleFeatureCount += 2;
       } else {
@@ -5554,11 +5620,21 @@ function validateRichAnswerGeometry2DSpec(
       issue(`富回答场景 ${scene.id} 的 ${controlPath}.value 必须是有限数字或短状态值`);
     }
     if (presentation === "slider") {
-      if (
-        ![rawControl.value, rawControl.minimum, rawControl.maximum, rawControl.step].every(richAnswerRenderPlanFiniteNumber) ||
-        rawControl.minimum >= rawControl.maximum || rawControl.step <= 0 ||
-        rawControl.value < rawControl.minimum || rawControl.value > rawControl.maximum
-      ) issue(`富回答场景 ${scene.id} 的 ${controlPath} 滑杆范围或初值无效`);
+      if (![rawControl.value, rawControl.minimum, rawControl.maximum, rawControl.step]
+        .every(richAnswerRenderPlanFiniteNumber)) {
+        issue(`富回答场景 ${scene.id} 的 ${controlPath} 滑杆范围或初值无效`);
+      } else {
+        const value = rawControl.value as number;
+        const minimum = rawControl.minimum as number;
+        const maximum = rawControl.maximum as number;
+        const step = rawControl.step as number;
+        if (
+          minimum >= maximum || step <= 0 ||
+          value < minimum || value > maximum
+        ) {
+          issue(`富回答场景 ${scene.id} 的 ${controlPath} 滑杆范围或初值无效`);
+        }
+      }
     }
     const bindings = Array.isArray(rawControl.bindings) ? rawControl.bindings : [];
     if (!Array.isArray(rawControl.bindings)) issue(`富回答场景 ${scene.id} 的 ${controlPath}.bindings 必须是数组`);
@@ -5996,6 +6072,7 @@ function validateRichAnswerRenderPlan(
   scene: RichAnswerSceneParam,
   allowedEvidenceIDs: ReadonlySet<string>,
   allowedAssetIDs: ReadonlySet<string>,
+  verifiedAssetBytes: ReadonlyMap<string, number>,
   catalogRendererSelection: ReadonlySet<string> | undefined,
 ): number {
   const plan = scene.renderPlan;
@@ -6194,6 +6271,7 @@ function validateRichAnswerRenderPlan(
     issue(`富回答场景 ${scene.id} 的 artifactRefs 必须是数组`);
   }
   const artifactIDs = new Set<string>();
+  let artifactByteTotal = 0;
   for (const [artifactIndex, artifact] of artifactRefs.entries()) {
     if (!isRecord(artifact)) {
       issue(`富回答场景 ${scene.id} 的 artifactRefs[${artifactIndex}] 必须是对象`);
@@ -6230,10 +6308,64 @@ function validateRichAnswerRenderPlan(
     ) {
       issue(`富回答场景 ${scene.id} 的 artifactRefs[${artifactIndex}].checksum 必须是 64 位 sha256`);
     }
+    if (
+      artifact.sizeBytes !== undefined &&
+      !richAnswerRenderPlanIntegerInRange(
+        artifact.sizeBytes,
+        0,
+        LIMITS.richAnswerTrustedAssetBytes,
+      )
+    ) {
+      issue(
+        `富回答场景 ${scene.id} 的 artifactRefs[${artifactIndex}].sizeBytes 超过单项 ${LIMITS.richAnswerTrustedAssetBytes} 字节上限`,
+      );
+    } else if (typeof artifact.sizeBytes === "number") {
+      artifactByteTotal += artifact.sizeBytes;
+    }
+  }
+  const referencedAssetIDs = richAnswerRenderPlanAssetRefIDs(spec);
+  for (const assetID of [...referencedAssetIDs].sort()) {
+    const matchingArtifacts = artifactRefs.filter((artifact) =>
+      isRecord(artifact) && artifact.id === assetID
+    );
+    if (matchingArtifacts.length !== 1) {
+      issue(
+        `富回答场景 ${scene.id} 的 assetRef ${assetID} 必须恰好对应一个同 ID 的 artifactRef`,
+      );
+      continue;
+    }
+    if (!richAnswerRenderPlanIntegerInRange(
+      matchingArtifacts[0].sizeBytes,
+      0,
+      LIMITS.richAnswerTrustedAssetBytes,
+    )) {
+      issue(
+        `富回答场景 ${scene.id} 的 assetRef ${assetID} 对应 artifactRef 必须填写权威 sizeBytes`,
+      );
+      continue;
+    }
+    const verifiedBytes = verifiedAssetBytes.get(assetID);
+    if (verifiedBytes === undefined) {
+      issue(
+        `富回答场景 ${scene.id} 的 assetRef ${assetID} 必须先通过 ${VISUAL_ASSET_TOOL} 真实读取`,
+      );
+    } else if (matchingArtifacts[0].sizeBytes !== verifiedBytes) {
+      issue(
+        `富回答场景 ${scene.id} 的 assetRef ${assetID} sizeBytes 必须等于本轮真实读取值 ${verifiedBytes}`,
+      );
+    }
   }
   if (registration !== undefined && artifactRefs.length > registration.budgets.maxArtifacts) {
     issue(
       `富回答场景 ${scene.id} 的 artifactRefs 超出预算：${artifactRefs.length}/${registration.budgets.maxArtifacts}`,
+    );
+  }
+  if (
+    registration !== undefined &&
+    artifactByteTotal > registration.budgets.maxArtifacts * LIMITS.richAnswerTrustedAssetBytes
+  ) {
+    issue(
+      `富回答场景 ${scene.id} 的 artifactRefs 总字节数超出预算：${artifactByteTotal}/${registration.budgets.maxArtifacts * LIMITS.richAnswerTrustedAssetBytes}`,
     );
   }
 
@@ -8394,6 +8526,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
   let richAnswerCatalogRendererSelection: Set<string> | undefined;
   let activeAnswerFormPolicy: AnswerFormPolicy = "automatic";
   const searchedCourseItemIDs = new Set<string>();
+  const verifiedVisualAssetBytes = new Map<string, number>();
 
   pi.registerTool({
     name: CONTEXT_TOOL,
@@ -8411,6 +8544,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       richAnswerCatalogRevision = undefined;
       richAnswerCatalogSelection = undefined;
       richAnswerCatalogRendererSelection = undefined;
+      verifiedVisualAssetBytes.clear();
       activeAnswerFormPolicy = snapshot.answerFormPolicy;
 
       const details: ContextToolDetails = {
@@ -8515,6 +8649,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         sha256,
         byteCount: data.byteLength,
       };
+      verifiedVisualAssetBytes.set(asset.id, data.byteLength);
       return {
         content: [
           {
@@ -9072,6 +9207,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           interactions: RICH_ANSWER_INTERACTION_ACTIONS,
           rule: "交互只能落到 program 状态、renderPlan interactionBindings 或 ui binding；不得提交 HTML/JS 回调、外部事件或自造 action 类型。",
         },
+        formalRouteIndex: RICH_ANSWER_FORMAL_ROUTE_INDEX,
         routeRecommendation,
         candidateComparison: {
           notRanked: true,
@@ -9541,16 +9677,18 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           });
         }
         try {
-          operationCount += scene.program !== undefined
+          const sceneOperationCount = scene.program !== undefined
             ? validateRichAnswerProgram(scene, richAnswerCatalogSelection)
             : scene.renderPlan !== undefined
               ? validateRichAnswerRenderPlan(
                 scene,
                 allowedEvidenceIDs,
                 allowedAssetIDs,
+                verifiedVisualAssetBytes,
                 richAnswerCatalogRendererSelection,
               )
               : validateRichAnswerUI(scene, allowedEvidenceIDs, allowedAssetIDs);
+          operationCount += sceneOperationCount;
         } catch (error) {
           if (error instanceof RichAnswerFaultError) throw error;
           const sceneLayer = scene.program !== undefined
@@ -9610,7 +9748,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         content: [
           {
             type: "text",
-            text: "完整 narrative 与生成式视觉体验已通过魏碑的来源、内联位置、program/renderPlan/ui、状态、预算和资源边界校验，并会作为同一篇回答显示。请勿另写或改写第二份正文，只需简短结束本轮。",
+            text: "完整 narrative 与生成式视觉体验已通过魏碑的来源、内联位置、program/renderPlan/ui、状态和单项资源边界校验；宿主会继续按整组预算逐场景收敛，并把安全正文作为同一篇回答显示。请勿另写或改写第二份正文，只需简短结束本轮。",
           },
         ],
         details,
@@ -9915,6 +10053,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     richAnswerCatalogSelection = undefined;
     richAnswerCatalogRendererSelection = undefined;
     searchedCourseItemIDs.clear();
+    verifiedVisualAssetBytes.clear();
 
     let purpose = "unavailable";
     let revision = "unavailable";

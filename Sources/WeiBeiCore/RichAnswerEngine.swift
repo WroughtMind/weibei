@@ -800,6 +800,7 @@ public struct RichAnswerEnvironment: Codable, Hashable, Sendable {
     public var allowedSourceLabels: Set<String>
     public var allowedEvidenceTags: Set<String>
     public var allowedAssetIDs: Set<String>
+    public var verifiedAssetBytes: [String: Int]
     public var resourceBudget: RichAnswerResourceBudget
 
     public init(
@@ -807,12 +808,14 @@ public struct RichAnswerEnvironment: Codable, Hashable, Sendable {
         allowedSourceLabels: Set<String>,
         allowedEvidenceTags: Set<String> = [],
         allowedAssetIDs: Set<String> = [],
+        verifiedAssetBytes: [String: Int] = [:],
         resourceBudget: RichAnswerResourceBudget = RichAnswerResourceBudget()
     ) {
         self.contextRevision = contextRevision
         self.allowedSourceLabels = allowedSourceLabels
         self.allowedEvidenceTags = allowedEvidenceTags
         self.allowedAssetIDs = allowedAssetIDs
+        self.verifiedAssetBytes = verifiedAssetBytes
         self.resourceBudget = resourceBudget
     }
 }
@@ -1158,6 +1161,11 @@ public struct RichAnswerPresentation: Codable, Hashable, Sendable {
                 renderPlan.spec.fields = renderPlan.spec.fields.mapValues {
                     $0.resolvingAssetReferences(using: aliases)
                 }
+                renderPlan.artifactRefs = renderPlan.artifactRefs.map { artifact in
+                    var resolvedArtifact = artifact
+                    resolvedArtifact.id = aliases[artifact.id] ?? artifact.id
+                    return resolvedArtifact
+                }
                 resolvedScene.renderPlan = renderPlan
             }
             return resolvedScene
@@ -1267,18 +1275,8 @@ public enum RichAnswerEngine {
             diagnostics: &diagnostics
         )
 
-        let scenes = sceneResult.validScenes
-        let evidenceLedger = referencedEvidenceLedger(
-            from: scenes,
-            evidenceByID: evidenceResult.validEvidenceByID
-        )
-        let directUIRoles: Set<RichAnswerUIRole> = [.slider, .toggle, .scrubber, .select, .probe, .sequence]
-        let hasDirectOperations = scenes.contains { scene in
-            !scene.operations.isEmpty
-                || scene.program?.directManipulation == true
-                || scene.ui?.nodes.contains(where: { directUIRoles.contains($0.role) }) == true
-                || scene.renderPlan?.interactionBindings.isEmpty == false
-        }
+        let semanticallyValidScenes = sceneResult.validScenes
+        let hasDirectOperations = hasDirectOperations(in: semanticallyValidScenes)
         guard envelope.expressionPlan.directManipulation == hasDirectOperations else {
             diagnostics.append(
                 RichAnswerDiagnostic(
@@ -1288,10 +1286,14 @@ public enum RichAnswerEngine {
             )
             return narrativeFallback(envelope: envelope, diagnostics: diagnostics)
         }
-        let mode: RichAnswerPresentationMode = scenes.isEmpty ? .narrativeOnly : .rich
+        let evidenceLedger = referencedEvidenceLedger(
+            from: semanticallyValidScenes,
+            evidenceByID: evidenceResult.validEvidenceByID
+        )
+        let mode: RichAnswerPresentationMode = semanticallyValidScenes.isEmpty ? .narrativeOnly : .rich
         let flow = contentFlow(
             narrative: envelope.narrative,
-            scenes: scenes,
+            scenes: semanticallyValidScenes,
             diagnostics: &diagnostics
         )
         guard mode != .rich || !flow.narrative.isEmpty else {
@@ -1303,24 +1305,27 @@ public enum RichAnswerEngine {
             )
             return narrativeFallback(envelope: envelope, diagnostics: diagnostics)
         }
-        let narrative = scenes.isEmpty && !diagnostics.isEmpty ? envelope.fallback.text : flow.narrative
+        let narrative = semanticallyValidScenes.isEmpty && !diagnostics.isEmpty
+            ? envelope.fallback.text
+            : flow.narrative
 
-        return RichAnswerPresentation(
+        let semanticPresentation = RichAnswerPresentation(
             mode: mode,
             narrative: narrative,
             parts: mode == .rich ? flow.parts : nil,
             expressionPlan: envelope.expressionPlan,
-            scenes: scenes,
+            scenes: semanticallyValidScenes,
             evidenceLedger: evidenceLedger,
             fallback: envelope.fallback,
             diagnostics: diagnostics,
             evidenceState: evidenceState(
-                hasScenes: !scenes.isEmpty,
+                hasScenes: !semanticallyValidScenes.isEmpty,
                 diagnostics: diagnostics,
                 invalidEvidenceWasSeen: evidenceResult.invalidEvidenceWasSeen,
                 hasTruncatedEvidence: evidenceLedger.contains(where: \.isTruncated)
             )
         )
+        return admit(presentation: semanticPresentation)
     }
 
     public static func prepare(
@@ -1358,6 +1363,334 @@ public enum RichAnswerEngine {
             fallback: envelope.fallback,
             diagnostics: diagnostics,
             evidenceState: .missing
+        )
+    }
+
+    private struct WholeCallRenderPlanAdmission {
+        var scenes: [RichAnswerScene]
+        var rejectedSceneFallbacks: [String: String]
+    }
+
+    private struct PersistedSceneAdmission {
+        var scenes: [RichAnswerScene]
+        var rejectedSceneFallbacks: [String: String]
+    }
+
+    private static func hasDirectOperations(in scenes: [RichAnswerScene]) -> Bool {
+        let directUIRoles: Set<RichAnswerUIRole> = [
+            .slider,
+            .toggle,
+            .scrubber,
+            .select,
+            .probe,
+            .sequence,
+        ]
+        return scenes.contains { scene in
+            !scene.operations.isEmpty
+                || scene.program?.directManipulation == true
+                || scene.ui?.nodes.contains(where: { directUIRoles.contains($0.role) }) == true
+                || scene.renderPlan?.interactionBindings.isEmpty == false
+        }
+    }
+
+    public static func admit(
+        presentation: RichAnswerPresentation
+    ) -> RichAnswerPresentation {
+        var diagnostics = presentation.diagnostics
+        let replayAdmission = validatePersistedScenes(
+            presentation,
+            diagnostics: &diagnostics
+        )
+        let semanticScenes = replayAdmission.scenes
+        let renderPlanAdmission = admitWholeCallRenderPlans(
+            semanticScenes,
+            diagnostics: &diagnostics
+        )
+        let admittedScenes = renderPlanAdmission.scenes
+        let rejectedSceneFallbacks = replayAdmission.rejectedSceneFallbacks.merging(
+            renderPlanAdmission.rejectedSceneFallbacks
+        ) { _, renderPlanFallback in
+            renderPlanFallback
+        }
+        let admittedSceneIDs = Set(admittedScenes.map(\.id))
+        let persistedSceneIDs = Set(presentation.scenes.map(\.id))
+        var consumedSceneIDs: Set<String> = []
+        var admittedParts: [RichAnswerPart] = []
+
+        for part in presentation.resolvedParts {
+            switch part.kind {
+            case .narrative:
+                if let text = part.text?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !text.isEmpty {
+                    admittedParts.append(.narrative(text))
+                }
+            case .scene:
+                guard let sceneID = part.sceneID,
+                      persistedSceneIDs.contains(sceneID),
+                      consumedSceneIDs.insert(sceneID).inserted else {
+                    continue
+                }
+                appendAdmittedPart(
+                    sceneID: sceneID,
+                    admittedSceneIDs: admittedSceneIDs,
+                    rejectedSceneFallbacks: rejectedSceneFallbacks,
+                    globalFallback: presentation.fallback?.text,
+                    to: &admittedParts
+                )
+            }
+        }
+        for scene in presentation.scenes where consumedSceneIDs.insert(scene.id).inserted {
+            appendAdmittedPart(
+                sceneID: scene.id,
+                admittedSceneIDs: admittedSceneIDs,
+                rejectedSceneFallbacks: rejectedSceneFallbacks,
+                globalFallback: presentation.fallback?.text,
+                to: &admittedParts
+            )
+        }
+
+        let admittedNarrative = admittedParts.compactMap { part -> String? in
+            guard part.kind == .narrative else { return nil }
+            return part.text
+        }.joined(separator: "\n\n")
+        let safeNarrative = admittedNarrative.trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty
+            ? presentation.narrative
+            : admittedNarrative
+        var expressionPlan = presentation.expressionPlan
+        expressionPlan?.directManipulation = hasDirectOperations(in: admittedScenes)
+        let evidenceByID = presentation.evidenceLedger.reduce(
+            into: [String: RichAnswerEvidence]()
+        ) { result, evidence in
+            result[evidence.id] = evidence
+        }
+        let evidenceLedger = referencedEvidenceLedger(
+            from: admittedScenes,
+            evidenceByID: evidenceByID
+        )
+        let mode: RichAnswerPresentationMode = admittedScenes.isEmpty ? .narrativeOnly : .rich
+
+        let recomputedEvidenceState = evidenceState(
+            hasScenes: !admittedScenes.isEmpty,
+            diagnostics: diagnostics,
+            invalidEvidenceWasSeen: presentation.evidenceState == .partial,
+            hasTruncatedEvidence: evidenceLedger.contains(where: \.isTruncated)
+        )
+        let admittedEvidenceState: RichAnswerEvidenceState
+        switch presentation.evidenceState {
+        case .missing:
+            admittedEvidenceState = .missing
+        case .partial:
+            admittedEvidenceState = admittedScenes.isEmpty ? .missing : .partial
+        case .complete:
+            admittedEvidenceState = recomputedEvidenceState
+        }
+
+        return RichAnswerPresentation(
+            mode: mode,
+            narrative: safeNarrative,
+            parts: mode == .rich ? admittedParts : nil,
+            expressionPlan: expressionPlan,
+            scenes: admittedScenes,
+            evidenceLedger: evidenceLedger,
+            fallback: presentation.fallback,
+            diagnostics: diagnostics,
+            evidenceState: admittedEvidenceState
+        )
+    }
+
+    private static func validatePersistedScenes(
+        _ presentation: RichAnswerPresentation,
+        diagnostics: inout [RichAnswerDiagnostic]
+    ) -> PersistedSceneAdmission {
+        guard !presentation.scenes.isEmpty else {
+            return PersistedSceneAdmission(scenes: [], rejectedSceneFallbacks: [:])
+        }
+        let scenesRequiringReplayValidation = presentation.scenes.filter {
+            $0.program != nil || $0.ui != nil
+        }
+        guard !scenesRequiringReplayValidation.isEmpty else {
+            return PersistedSceneAdmission(
+                scenes: presentation.scenes,
+                rejectedSceneFallbacks: [:]
+            )
+        }
+        guard let expressionPlan = presentation.expressionPlan else {
+            for scene in scenesRequiringReplayValidation {
+                diagnostics.append(
+                    RichAnswerDiagnostic(
+                        code: .unsupportedField,
+                        sceneID: scene.id,
+                        message: "persisted rich-answer scene is missing its expression plan"
+                    )
+                )
+            }
+            return mergedPersistedSceneAdmission(
+                originalScenes: presentation.scenes,
+                validatedReplayScenes: []
+            )
+        }
+        if let planIssue = validateExpressionPlanIntentBudget(expressionPlan) {
+            for scene in scenesRequiringReplayValidation {
+                diagnostics.append(
+                    RichAnswerDiagnostic(
+                        code: planIssue.code,
+                        sceneID: scene.id,
+                        message: planIssue.message
+                    )
+                )
+            }
+            return mergedPersistedSceneAdmission(
+                originalScenes: presentation.scenes,
+                validatedReplayScenes: []
+            )
+        }
+
+        let replayEvidenceIDs = Set(
+            scenesRequiringReplayValidation.flatMap(\.allEvidenceIDs)
+        )
+        let replayEvidenceLedger = presentation.evidenceLedger.filter {
+            replayEvidenceIDs.contains($0.id)
+        }
+        let allowedSourceLabels = Set(replayEvidenceLedger.map(\.sourceLabel))
+        let allowedEvidenceTags = replayEvidenceLedger.reduce(
+            into: Set<String>()
+        ) { result, evidence in
+            result.formUnion(evidence.tags)
+        }
+        let allowedAssetIDs = Set(replayEvidenceLedger.flatMap(\.assetIDs))
+        let replayEnvironment = RichAnswerEnvironment(
+            contextRevision: "persisted-rich-answer-replay",
+            allowedSourceLabels: allowedSourceLabels,
+            allowedEvidenceTags: allowedEvidenceTags,
+            allowedAssetIDs: allowedAssetIDs
+        )
+        let evidenceResult = validateEvidenceLedger(
+            replayEvidenceLedger,
+            environment: replayEnvironment,
+            diagnostics: &diagnostics
+        )
+        let sceneResult = validateScenes(
+            scenesRequiringReplayValidation,
+            expressionPlan: expressionPlan,
+            evidenceByID: evidenceResult.validEvidenceByID,
+            environment: replayEnvironment,
+            diagnostics: &diagnostics
+        )
+        return mergedPersistedSceneAdmission(
+            originalScenes: presentation.scenes,
+            validatedReplayScenes: sceneResult.validScenes
+        )
+    }
+
+    private static func mergedPersistedSceneAdmission(
+        originalScenes: [RichAnswerScene],
+        validatedReplayScenes: [RichAnswerScene]
+    ) -> PersistedSceneAdmission {
+        var remainingValidatedScenes = validatedReplayScenes
+        var admittedScenes: [RichAnswerScene] = []
+        var rejectedScenes: [RichAnswerScene] = []
+        for scene in originalScenes {
+            guard scene.program != nil || scene.ui != nil else {
+                admittedScenes.append(scene)
+                continue
+            }
+            guard let index = remainingValidatedScenes.firstIndex(of: scene) else {
+                rejectedScenes.append(scene)
+                continue
+            }
+            admittedScenes.append(scene)
+            remainingValidatedScenes.remove(at: index)
+        }
+        return PersistedSceneAdmission(
+            scenes: admittedScenes,
+            rejectedSceneFallbacks: persistedSceneFallbacks(in: rejectedScenes)
+        )
+    }
+
+    private static func persistedSceneFallbacks(
+        in scenes: [RichAnswerScene]
+    ) -> [String: String] {
+        scenes.reduce(into: [String: String]()) { result, scene in
+            guard let fallback = scene.renderPlan?.fallback.text else { return }
+            result[scene.id] = fallback
+        }
+    }
+
+    private static func appendAdmittedPart(
+        sceneID: String,
+        admittedSceneIDs: Set<String>,
+        rejectedSceneFallbacks: [String: String],
+        globalFallback: String?,
+        to parts: inout [RichAnswerPart]
+    ) {
+        if admittedSceneIDs.contains(sceneID) {
+            parts.append(.scene(sceneID))
+            return
+        }
+        let localFallback = rejectedSceneFallbacks[sceneID]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let fallback = localFallback?.isEmpty == false
+            ? localFallback
+            : globalFallback?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let fallback, !fallback.isEmpty {
+            parts.append(.narrative(fallback))
+        }
+    }
+
+    private static func admitWholeCallRenderPlans(
+        _ scenes: [RichAnswerScene],
+        diagnostics: inout [RichAnswerDiagnostic]
+    ) -> WholeCallRenderPlanAdmission {
+        let rendererRegistry = RichAnswerRendererRegistry.defaultRegistry()
+        var groupBudget = RichAnswerRenderGroupBudgetAccumulator()
+        var admittedScenes: [RichAnswerScene] = []
+        var rejectedSceneFallbacks: [String: String] = [:]
+
+        for scene in scenes {
+            guard let submittedRenderPlan = scene.renderPlan else {
+                admittedScenes.append(scene)
+                continue
+            }
+            let negotiation = rendererRegistry.negotiate(plan: submittedRenderPlan)
+            guard negotiation.status == .accepted,
+                  let renderPlan = negotiation.plan else {
+                rejectedSceneFallbacks[scene.id] = submittedRenderPlan.fallback.text
+                let message = negotiation.mismatch?.issues.first?.message
+                    ?? "renderPlan capability negotiation failed"
+                diagnostics.append(
+                    RichAnswerDiagnostic(
+                        code: .invalidParameter,
+                        sceneID: scene.id,
+                        message: "renderPlan capability negotiation failed: \(message)"
+                    )
+                )
+                continue
+            }
+            let logicalPlanBytes = (try? JSONEncoder().encode(renderPlan).count) ?? Int.max
+            let trustedAssetBytes = renderPlan.referencedAssetBytes
+            guard let issue = groupBudget.admit(
+                logicalPlanBytes: logicalPlanBytes,
+                trustedAssetBytes: trustedAssetBytes
+            ) else {
+                var admittedScene = scene
+                admittedScene.renderPlan = renderPlan
+                admittedScenes.append(admittedScene)
+                continue
+            }
+            rejectedSceneFallbacks[scene.id] = renderPlan.fallback.text
+            diagnostics.append(
+                RichAnswerDiagnostic(
+                    code: .budgetExceeded,
+                    sceneID: scene.id,
+                    message: "\(issue.diagnosticMessage)：\(scene.id)"
+                )
+            )
+        }
+
+        return WholeCallRenderPlanAdmission(
+            scenes: admittedScenes,
+            rejectedSceneFallbacks: rejectedSceneFallbacks
         )
     }
 
@@ -1762,7 +2095,8 @@ public enum RichAnswerEngine {
             return validateRenderPlan(
                 renderPlan,
                 scene: scene,
-                evidenceByID: evidenceByID
+                evidenceByID: evidenceByID,
+                environment: environment
             )
         }
 
@@ -1776,7 +2110,8 @@ public enum RichAnswerEngine {
     private static func validateRenderPlan(
         _ plan: RichAnswerRenderPlan,
         scene: RichAnswerScene,
-        evidenceByID: [String: RichAnswerEvidence]
+        evidenceByID: [String: RichAnswerEvidence],
+        environment: RichAnswerEnvironment
     ) -> RichAnswerDiagnostic? {
         let negotiation = RichAnswerRendererRegistry.defaultRegistry().negotiate(plan: plan)
         guard negotiation.status == .accepted else {
@@ -1786,6 +2121,23 @@ public enum RichAnswerEngine {
                 sceneID: scene.id,
                 message: "renderPlan capability negotiation failed: \(message)"
             )
+        }
+        for assetID in plan.referencedAssetIDs.sorted() {
+            guard let verifiedBytes = environment.verifiedAssetBytes[assetID] else {
+                return RichAnswerDiagnostic(
+                    code: .unauthorizedAsset,
+                    sceneID: scene.id,
+                    message: "renderPlan assetRef was not read through the current trusted visual-asset tool: \(assetID)"
+                )
+            }
+            guard let artifact = plan.artifactRefs.first(where: { $0.id == assetID }),
+                  artifact.sizeBytes == verifiedBytes else {
+                return RichAnswerDiagnostic(
+                    code: .invalidParameter,
+                    sceneID: scene.id,
+                    message: "renderPlan artifactRef.sizeBytes does not match the current trusted visual-asset read: \(assetID)"
+                )
+            }
         }
 
         let sceneEvidenceIDs = Set(scene.evidenceIDs)

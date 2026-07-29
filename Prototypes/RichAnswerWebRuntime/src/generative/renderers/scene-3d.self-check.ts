@@ -588,7 +588,7 @@ const baseScene3DPlan: RenderPlan = {
   sourceBindings: [{ sourceID: "self-check", range: "scene-3d" }],
   artifactRefs: [],
   fallback: {
-    mode: "simplifiedRenderer",
+    mode: "narrativeOnly",
     reason: "当前环境不能渲染受控三维场景。",
     text: "退回为坐标与对象清单。",
     preservesSourceBinding: true,

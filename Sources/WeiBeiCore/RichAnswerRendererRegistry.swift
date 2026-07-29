@@ -151,6 +151,80 @@ public enum RichAnswerRendererRegistryError: Error, Equatable {
     case missingPreferredSpecVersion(String)
 }
 
+public enum RichAnswerRenderGroupBudgetIssue: String, Equatable, Sendable {
+    case logicalPlanBytes
+    case trustedAssetCount
+    case trustedAssetBytes
+    case trustedAssetTotalBytes
+
+    public var diagnosticMessage: String {
+        switch self {
+        case .logicalPlanBytes:
+            return "富回答组的原始渲染规格总字节数超过正式入口上限"
+        case .trustedAssetCount:
+            return "富回答组的受信本地素材数量超过正式入口上限"
+        case .trustedAssetBytes:
+            return "富回答组包含超过单项上限的受信本地素材"
+        case .trustedAssetTotalBytes:
+            return "富回答组的受信本地素材总字节数超过正式入口上限"
+        }
+    }
+}
+
+public struct RichAnswerRenderGroupBudgetAccumulator: Equatable, Sendable {
+    public private(set) var logicalPlanBytes = 0
+    public private(set) var trustedAssetCount = 0
+    public private(set) var trustedAssetTotalBytes = 0
+
+    public init() {}
+
+    public mutating func admit(
+        logicalPlanBytes itemLogicalPlanBytes: Int,
+        trustedAssetBytes itemTrustedAssetBytes: [Int]
+    ) -> RichAnswerRenderGroupBudgetIssue? {
+        guard let maxLogicalPlanBytes = RichAnswerRendererRegistry
+            .formalRenderPlanAdmissionEnvelope.maxBytes,
+              let maxTrustedAssets = RichAnswerRendererRegistry
+            .formalRenderPlanAdmissionEnvelope.maxArtifacts else {
+            return .logicalPlanBytes
+        }
+        let maxTrustedAssetBytes = RichAnswerRendererRegistry.formalTrustedAssetMaxBytes
+        let maxTrustedAssetTotalBytes = maxTrustedAssets * maxTrustedAssetBytes
+
+        guard itemLogicalPlanBytes > 0,
+              itemLogicalPlanBytes <= maxLogicalPlanBytes,
+              logicalPlanBytes <= maxLogicalPlanBytes - itemLogicalPlanBytes else {
+            return .logicalPlanBytes
+        }
+        guard !itemTrustedAssetBytes.contains(where: {
+            $0 < 0 || $0 > maxTrustedAssetBytes
+        }) else {
+            return .trustedAssetBytes
+        }
+        guard itemTrustedAssetBytes.count <= maxTrustedAssets,
+              trustedAssetCount <= maxTrustedAssets - itemTrustedAssetBytes.count else {
+            return .trustedAssetCount
+        }
+
+        var itemTrustedAssetTotalBytes = 0
+        for bytes in itemTrustedAssetBytes {
+            guard bytes <= maxTrustedAssetTotalBytes - itemTrustedAssetTotalBytes else {
+                return .trustedAssetTotalBytes
+            }
+            itemTrustedAssetTotalBytes += bytes
+        }
+        guard itemTrustedAssetTotalBytes <= maxTrustedAssetTotalBytes,
+              trustedAssetTotalBytes <= maxTrustedAssetTotalBytes - itemTrustedAssetTotalBytes else {
+            return .trustedAssetTotalBytes
+        }
+
+        logicalPlanBytes += itemLogicalPlanBytes
+        trustedAssetCount += itemTrustedAssetBytes.count
+        trustedAssetTotalBytes += itemTrustedAssetTotalBytes
+        return nil
+    }
+}
+
 public struct RichAnswerRendererRegistration: Sendable {
     public var declaration: RichAnswerRendererCapabilityDeclaration
     public var validateSpec: @Sendable (RichAnswerRenderPlan) -> [RichAnswerCapabilityMismatchIssue]
@@ -173,6 +247,50 @@ public struct RichAnswerRendererRegistry: Sendable {
     public static let scene3DRenderer = "weibei.scene-3d"
     public static let spatialMapRenderer = "weibei.spatial.map"
     public static let imageOverlayRenderer = "weibei.image.overlay"
+
+    /// The two direct scene routes plus the six registered render-plan routes.
+    /// `program` and `ui` keep their dedicated transports; they are not Web render plans.
+    public static let formalRouteIDs = [
+        openUIProgramRenderer,
+        openUICompositionRenderer,
+        standardChartRenderer,
+        mathFunctionRenderer,
+        geometry2DRenderer,
+        scene3DRenderer,
+        spatialMapRenderer,
+        imageOverlayRenderer,
+    ]
+
+    public static let formalRenderPlanRendererIDs = [
+        standardChartRenderer,
+        mathFunctionRenderer,
+        geometry2DRenderer,
+        scene3DRenderer,
+        spatialMapRenderer,
+        imageOverlayRenderer,
+    ]
+
+    public static let formalFallbackModes: Set<RichAnswerRenderFallbackMode> = [
+        .narrativeOnly,
+    ]
+
+    public static let formalTrustedAssetMaxBytes = 850_000
+
+    /// Admission envelope for the protocol. Renderer declarations below remain
+    /// authoritative and may impose a lower, type-specific ceiling.
+    public static let formalRenderPlanAdmissionEnvelope = RichAnswerRenderQualityBudget(
+        maxNodes: 280,
+        maxDataPoints: 8_000,
+        maxArtifacts: 4,
+        maxBytes: 1_500_000,
+        maxWidth: 960,
+        maxHeight: 720,
+        maxAnimationFPS: 30,
+        maxInteractionLatencyMS: 160,
+        allowAnimation: true,
+        allowWebGL: false,
+        allowNetwork: false
+    )
 
     private var registrationsByRenderer: [String: RichAnswerRendererRegistration]
 
@@ -292,16 +410,42 @@ public struct RichAnswerRendererRegistry: Sendable {
         plan: RichAnswerRenderPlan,
         intent: RichAnswerRendererCapabilityRequest? = nil
     ) -> RichAnswerRenderNegotiationResult {
-        guard let registration = registrationsByRenderer[plan.renderer] else {
+        let originalLogicalPlanBytes = (try? JSONEncoder().encode(plan).count) ?? .max
+        var normalizedPlan = plan
+        if !Self.formalFallbackModes.contains(normalizedPlan.fallback.mode) {
+            normalizedPlan.fallback.mode = .narrativeOnly
+            normalizedPlan.fallback.renderer = nil
+            normalizedPlan.fallback.artifactID = nil
+        }
+
+        guard Self.formalRenderPlanRendererIDs.contains(normalizedPlan.renderer) else {
             return .capabilityMismatch(
-                renderer: plan.renderer,
-                specVersion: plan.specVersion,
+                renderer: normalizedPlan.renderer,
+                specVersion: normalizedPlan.specVersion,
                 issues: [
                     RichAnswerCapabilityMismatchIssue(
                         code: .unknownRenderer,
-                        renderer: plan.renderer,
+                        renderer: normalizedPlan.renderer,
                         field: "renderer",
-                        requested: [plan.renderer],
+                        requested: [normalizedPlan.renderer],
+                        supported: Self.formalRenderPlanRendererIDs,
+                        message: "renderPlan 只能使用正式 Web 渲染器",
+                        repairHint: "program 和 ui 保留各自的直达传输；renderPlan 请改用正式 Web 渲染器。"
+                    ),
+                ]
+            )
+        }
+
+        guard let registration = registrationsByRenderer[normalizedPlan.renderer] else {
+            return .capabilityMismatch(
+                renderer: normalizedPlan.renderer,
+                specVersion: normalizedPlan.specVersion,
+                issues: [
+                    RichAnswerCapabilityMismatchIssue(
+                        code: .unknownRenderer,
+                        renderer: normalizedPlan.renderer,
+                        field: "renderer",
+                        requested: [normalizedPlan.renderer],
                         supported: declarations.map(\.renderer),
                         message: "renderPlan 选择的渲染器尚未注册",
                         repairHint: "让模型根据注册表返回的能力清单重新规划，而不是直接降级成纯文本。"
@@ -310,30 +454,161 @@ public struct RichAnswerRendererRegistry: Sendable {
             )
         }
 
-        let request = (intent ?? RichAnswerRendererCapabilityRequest())
-            .merging(plan.derivedCapabilityRequest)
+        var normalizedIntent = intent ?? RichAnswerRendererCapabilityRequest()
+        if !normalizedIntent.fallbackModes.isSubset(of: Self.formalFallbackModes) {
+            normalizedIntent.fallbackModes = normalizedIntent.fallbackModes
+                .intersection(Self.formalFallbackModes)
+                .union([.narrativeOnly])
+        }
+        let request = normalizedIntent.merging(normalizedPlan.derivedCapabilityRequest)
         var issues = requestIssues(for: request, declaration: registration.declaration)
-        if plan.sourceBindings.isEmpty {
+        if normalizedPlan.sourceBindings.isEmpty {
             issues.append(
                 RichAnswerCapabilityMismatchIssue(
                     code: .missingSourceBinding,
-                    renderer: plan.renderer,
+                    renderer: normalizedPlan.renderer,
                     field: "sourceBindings",
                     message: "renderPlan 没有绑定任何来源或证据",
                     repairHint: "为视觉参数、数据、结论或降级内容绑定本轮 evidenceID。"
                 )
             )
         }
-        issues.append(contentsOf: registration.declaration.specContract.validate(plan.spec, renderer: plan.renderer))
-        issues.append(contentsOf: registration.validateSpec(plan))
+        issues.append(contentsOf: resourceBudgetIssues(
+            normalizedPlan,
+            declaration: registration.declaration,
+            logicalPlanBytes: originalLogicalPlanBytes
+        ))
+        issues.append(contentsOf: registration.declaration.specContract.validate(
+            normalizedPlan.spec,
+            renderer: normalizedPlan.renderer
+        ))
+        issues.append(contentsOf: registration.validateSpec(normalizedPlan))
 
         return issues.isEmpty
-            ? .accepted(declaration: registration.declaration, plan: plan)
+            ? .accepted(declaration: registration.declaration, plan: normalizedPlan)
             : .capabilityMismatch(
-                renderer: plan.renderer,
-                specVersion: plan.specVersion,
+                renderer: normalizedPlan.renderer,
+                specVersion: normalizedPlan.specVersion,
                 issues: issues
             )
+    }
+
+    private func resourceBudgetIssues(
+        _ plan: RichAnswerRenderPlan,
+        declaration: RichAnswerRendererCapabilityDeclaration,
+        logicalPlanBytes: Int
+    ) -> [RichAnswerCapabilityMismatchIssue] {
+        var issues: [RichAnswerCapabilityMismatchIssue] = []
+        func append(_ field: String, actual: Int, limit: Int, message: String) {
+            issues.append(
+                RichAnswerCapabilityMismatchIssue(
+                    code: .budgetExceeded,
+                    renderer: plan.renderer,
+                    field: field,
+                    requested: [String(actual)],
+                    supported: ["<=\(limit)"],
+                    message: message,
+                    repairHint: "减少该富回答项目的规格或本地资产后重新提交。"
+                )
+            )
+        }
+
+        let artifactCount = plan.artifactRefs.count
+        if let limit = declaration.limits.maxArtifacts, artifactCount > limit {
+            append(
+                "artifactRefs",
+                actual: artifactCount,
+                limit: limit,
+                message: "renderPlan 的实际产物数量超过渲染器上限"
+            )
+        }
+        if let declared = plan.qualityBudget.maxArtifacts, artifactCount > declared {
+            append(
+                "qualityBudget.maxArtifacts",
+                actual: artifactCount,
+                limit: declared,
+                message: "qualityBudget.maxArtifacts 没有覆盖实际产物数量"
+            )
+        }
+
+        let artifactBytes = plan.artifactRefs.compactMap(\.sizeBytes)
+        for assetID in plan.referencedAssetIDs.sorted() {
+            let matchingArtifacts = plan.artifactRefs.filter { $0.id == assetID }
+            guard matchingArtifacts.count == 1 else {
+                issues.append(
+                    RichAnswerCapabilityMismatchIssue(
+                        code: .unsupportedArtifact,
+                        renderer: plan.renderer,
+                        field: "artifactRefs",
+                        requested: [assetID],
+                        supported: ["exactly one matching artifactRef"],
+                        message: "spec 中的 assetRef 必须恰好对应一个同 ID 的 artifactRef",
+                        repairHint: "为该本地资产补充唯一 artifactRef，并写入权威 sizeBytes。"
+                    )
+                )
+                continue
+            }
+            if matchingArtifacts[0].sizeBytes == nil {
+                issues.append(
+                    RichAnswerCapabilityMismatchIssue(
+                        code: .unsupportedArtifact,
+                        renderer: plan.renderer,
+                        field: "artifactRefs.sizeBytes",
+                        requested: [assetID],
+                        supported: ["authoritative non-negative byte count"],
+                        message: "spec 中 assetRef 对应的 artifactRef 缺少权威 sizeBytes",
+                        repairHint: "读取本地资产实际字节数并写入对应 artifactRef.sizeBytes。"
+                    )
+                )
+            }
+        }
+        for (index, artifact) in plan.artifactRefs.enumerated() {
+            guard let bytes = artifact.sizeBytes,
+                  bytes < 0 || bytes > Self.formalTrustedAssetMaxBytes else { continue }
+            append(
+                "artifactRefs[\(index)].sizeBytes",
+                actual: bytes,
+                limit: Self.formalTrustedAssetMaxBytes,
+                message: "本地产物超过单项受信字节上限"
+            )
+        }
+        if let countLimit = declaration.limits.maxArtifacts {
+            let totalLimit = countLimit * Self.formalTrustedAssetMaxBytes
+            var totalBytes = 0
+            for bytes in artifactBytes where bytes > 0 {
+                if bytes > totalLimit || totalBytes > totalLimit - bytes {
+                    totalBytes = totalLimit + 1
+                    break
+                }
+                totalBytes += bytes
+            }
+            if totalBytes > totalLimit {
+                append(
+                    "artifactRefs.sizeBytes",
+                    actual: totalBytes,
+                    limit: totalLimit,
+                    message: "本地产物总字节数超过渲染器上限"
+                )
+            }
+        }
+
+        if let limit = declaration.limits.maxBytes, logicalPlanBytes > limit {
+            append(
+                "renderPlan",
+                actual: logicalPlanBytes,
+                limit: limit,
+                message: "renderPlan 的实际原始规格字节数超过渲染器上限"
+            )
+        }
+        if let declared = plan.qualityBudget.maxBytes, logicalPlanBytes > declared {
+            append(
+                "qualityBudget.maxBytes",
+                actual: logicalPlanBytes,
+                limit: declared,
+                message: "qualityBudget.maxBytes 没有覆盖实际原始规格字节数"
+            )
+        }
+        return issues
     }
 
     public static func compatibilityAdapters() -> RichAnswerRendererRegistry {
@@ -364,7 +639,7 @@ public struct RichAnswerRendererRegistry: Sendable {
         RichAnswerRendererCapabilityDeclaration(
             renderer: openUIProgramRenderer,
             displayName: "魏碑 OpenUI 深组件适配器",
-            purpose: "承接现有 T1 深组件程序，把旧的高质量联动组件挂到 renderPlan 协商层之后。",
+            purpose: "承接现有 T1 深组件程序，保留 program 直达路线，不作为 Web renderPlan。",
             specVersions: ["weibei.openui.v1"],
             preferredSpecVersion: "weibei.openui.v1",
             capabilities: RichAnswerRendererCapabilitySet(
@@ -384,7 +659,7 @@ public struct RichAnswerRendererRegistry: Sendable {
                 allowWebGL: false,
                 allowNetwork: false
             ),
-            fallbackModes: [.narrativeOnly, .simplifiedRenderer, .staticSnapshot],
+            fallbackModes: formalFallbackModes,
             lifecycle: RichAnswerRendererLifecycle(
                 createsRuntime: true,
                 supportsStreamingPatch: true,
@@ -408,7 +683,7 @@ public struct RichAnswerRendererRegistry: Sendable {
         RichAnswerRendererCapabilityDeclaration(
             renderer: openUICompositionRenderer,
             displayName: "魏碑 OpenUI 原语树适配器",
-            purpose: "把现有 T2 组合原语作为过渡适配对象保留，不继续扩成低级点线树总线。",
+            purpose: "承接现有 T2 组合原语，保留 ui 直达路线，不作为 Web renderPlan，也不继续扩成低级点线树总线。",
             specVersions: ["weibei.openui.v1"],
             preferredSpecVersion: "weibei.openui.v1",
             capabilities: RichAnswerRendererCapabilitySet(
@@ -428,7 +703,7 @@ public struct RichAnswerRendererRegistry: Sendable {
                 allowWebGL: false,
                 allowNetwork: false
             ),
-            fallbackModes: [.narrativeOnly, .simplifiedRenderer, .staticSnapshot],
+            fallbackModes: formalFallbackModes,
             lifecycle: RichAnswerRendererLifecycle(
                 createsRuntime: true,
                 supportsStreamingPatch: false,
@@ -461,10 +736,11 @@ public struct RichAnswerRendererRegistry: Sendable {
                 resources: [.canvas2D, .dom, .webKitBridge]
             ),
             limits: RichAnswerRenderQualityBudget(
-                maxNodes: 24,
-                maxDataPoints: 1_024,
+                maxNodes: 80,
+                maxDataPoints: 4_000,
                 maxArtifacts: 0,
                 maxBytes: 256_000,
+                maxWidth: 960,
                 maxHeight: 640,
                 maxAnimationFPS: 30,
                 maxInteractionLatencyMS: 120,
@@ -472,7 +748,7 @@ public struct RichAnswerRendererRegistry: Sendable {
                 allowWebGL: false,
                 allowNetwork: false
             ),
-            fallbackModes: [.narrativeOnly, .simplifiedRenderer, .staticSnapshot],
+            fallbackModes: formalFallbackModes,
             lifecycle: RichAnswerRendererLifecycle(
                 createsRuntime: true,
                 supportsStreamingPatch: false,
@@ -494,7 +770,7 @@ public struct RichAnswerRendererRegistry: Sendable {
                 allowAdditionalRootFields: false,
                 maxDepth: 6,
                 maxObjectFields: 64,
-                maxArrayItems: 512,
+                maxArrayItems: 4_000,
                 maxStringLength: 1_200
             ),
             compatibilityAdapter: "standard_echarts_chart"
@@ -518,6 +794,7 @@ public struct RichAnswerRendererRegistry: Sendable {
                 maxDataPoints: 1_600,
                 maxArtifacts: 0,
                 maxBytes: 256_000,
+                maxWidth: 960,
                 maxHeight: 640,
                 maxAnimationFPS: 30,
                 maxInteractionLatencyMS: 120,
@@ -525,7 +802,7 @@ public struct RichAnswerRendererRegistry: Sendable {
                 allowWebGL: false,
                 allowNetwork: false
             ),
-            fallbackModes: [.narrativeOnly, .simplifiedRenderer, .staticSnapshot],
+            fallbackModes: formalFallbackModes,
             lifecycle: RichAnswerRendererLifecycle(
                 createsRuntime: true,
                 supportsStreamingPatch: false,
@@ -568,6 +845,7 @@ public struct RichAnswerRendererRegistry: Sendable {
                 maxDataPoints: 1_200,
                 maxArtifacts: 0,
                 maxBytes: 256_000,
+                maxWidth: 960,
                 maxHeight: 720,
                 maxAnimationFPS: 30,
                 maxInteractionLatencyMS: 120,
@@ -575,7 +853,7 @@ public struct RichAnswerRendererRegistry: Sendable {
                 allowWebGL: false,
                 allowNetwork: false
             ),
-            fallbackModes: [.narrativeOnly, .simplifiedRenderer, .staticSnapshot],
+            fallbackModes: formalFallbackModes,
             lifecycle: RichAnswerRendererLifecycle(createsRuntime: true),
             specContract: RichAnswerRenderSpecContract(
                 requiredRootFields: ["coordinateSpace", "points"],
@@ -607,6 +885,7 @@ public struct RichAnswerRendererRegistry: Sendable {
                 maxDataPoints: 3_200,
                 maxArtifacts: 0,
                 maxBytes: 256_000,
+                maxWidth: 960,
                 maxHeight: 720,
                 maxAnimationFPS: 30,
                 maxInteractionLatencyMS: 160,
@@ -614,7 +893,7 @@ public struct RichAnswerRendererRegistry: Sendable {
                 allowWebGL: false,
                 allowNetwork: false
             ),
-            fallbackModes: [.narrativeOnly, .simplifiedRenderer, .staticSnapshot],
+            fallbackModes: formalFallbackModes,
             lifecycle: RichAnswerRendererLifecycle(createsRuntime: true),
             specContract: RichAnswerRenderSpecContract(
                 requiredRootFields: ["camera", "title"],
@@ -647,6 +926,7 @@ public struct RichAnswerRendererRegistry: Sendable {
                 maxDataPoints: 8_000,
                 maxArtifacts: 2,
                 maxBytes: 1_500_000,
+                maxWidth: 960,
                 maxHeight: 720,
                 maxAnimationFPS: 30,
                 maxInteractionLatencyMS: 140,
@@ -654,7 +934,7 @@ public struct RichAnswerRendererRegistry: Sendable {
                 allowWebGL: false,
                 allowNetwork: false
             ),
-            fallbackModes: [.artifactPreview, .narrativeOnly, .simplifiedRenderer, .staticSnapshot],
+            fallbackModes: formalFallbackModes,
             lifecycle: RichAnswerRendererLifecycle(createsRuntime: true),
             specContract: RichAnswerRenderSpecContract(
                 requiredRootFields: ["coordinateMode", "features"],
@@ -687,6 +967,7 @@ public struct RichAnswerRendererRegistry: Sendable {
                 maxDataPoints: 1_200,
                 maxArtifacts: 2,
                 maxBytes: 1_500_000,
+                maxWidth: 960,
                 maxHeight: 720,
                 maxAnimationFPS: 30,
                 maxInteractionLatencyMS: 140,
@@ -694,7 +975,7 @@ public struct RichAnswerRendererRegistry: Sendable {
                 allowWebGL: false,
                 allowNetwork: false
             ),
-            fallbackModes: [.artifactPreview, .narrativeOnly, .simplifiedRenderer, .staticSnapshot],
+            fallbackModes: formalFallbackModes,
             lifecycle: RichAnswerRendererLifecycle(createsRuntime: true),
             specContract: RichAnswerRenderSpecContract(
                 requiredRootFields: ["image", "layers"],

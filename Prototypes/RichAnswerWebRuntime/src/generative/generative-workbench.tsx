@@ -1,10 +1,22 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import {
+  Component,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ErrorInfo,
+  type ReactNode,
+} from "react";
 import { Renderer } from "@openuidev/react-lang";
 import type { ActionEvent, OpenUIError } from "@openuidev/react-lang";
 import { weiBeiGenerativeLibrary } from "./library";
 import { generatedPrograms, programForID } from "./programs";
 import {
   RendererRegistry,
+  formalRenderGroupResourceLimits,
+  measureRenderPlanResourceUsage,
   parseRenderPlan,
   parseRenderPlans,
   type CompiledRenderPlan,
@@ -12,11 +24,15 @@ import {
   type RendererIssue,
   type RendererLifecycleContext,
 } from "./renderer-registry";
+import {
+  admitRenderGroupItems,
+  mergeIndexedRenderGroupItems,
+  runtimeFailureIsFatal,
+} from "./render-group";
 import { standardEChartsRenderer } from "./renderers/echarts-chart";
 import { geometry2DRenderer } from "./renderers/geometry-2d";
 import { imageOverlayRenderer } from "./renderers/image-overlay";
 import { mathFunctionRenderer } from "./renderers/math-function";
-import { openUIDomRenderer } from "./renderers/openui-dom";
 import { scene3DRenderer } from "./renderers/scene-3d";
 import { spatialMapRenderer } from "./renderers/spatial-map";
 import {
@@ -25,13 +41,13 @@ import {
   isEmbeddedRuntime,
   postRuntimeMessage,
   setHostEvidenceContent,
+  type RenderPlanBudgetContext,
   type RichAnswerProgram,
   type WeiBeiHostMessage,
 } from "./protocol";
 import "./workbench.css";
 
 const renderRegistry = new RendererRegistry()
-  .register(openUIDomRenderer)
   .register(standardEChartsRenderer)
   .register(mathFunctionRenderer)
   .register(geometry2DRenderer)
@@ -93,8 +109,19 @@ function ProgramRenderer({ program, showNotice }: ProgramRendererProps) {
       type: "weibei:error",
       programID: program.id,
       message: errors.map((error) => error.message).join("；"),
+      fatal: runtimeFailureIsFatal("program-entry"),
     });
   }, [errors, program.id]);
+
+  useEffect(() => {
+    if (!guardError) return;
+    postRuntimeMessage({
+      type: "weibei:error",
+      programID: program.id,
+      message: guardError,
+      fatal: runtimeFailureIsFatal("program-entry"),
+    });
+  }, [guardError, program.id]);
 
   function handleStateUpdate(state: Record<string, unknown>) {
     setRuntimeState(state);
@@ -106,29 +133,32 @@ function ProgramRenderer({ program, showNotice }: ProgramRendererProps) {
     postRuntimeMessage({ type: "weibei:action", programID: program.id, action });
   }
 
+  const failure = guardError ?? errors.map((error) => error.message).join("；");
+  if (failure) {
+    return (
+      <div className="generation-fallback" role="status" data-weibei-renderer-issue="validation_error">
+        <strong>这项富回答无法显示</strong>
+        <span>请继续阅读正文。</span>
+      </div>
+    );
+  }
+
   return (
     <section className="generation-answer__program" aria-label={program.title}>
       <div className="generation-answer__status">
         <span>{parseReady && !errors.length && !guardError ? "程序已通过验证" : "正在校验界面程序"}</span>
         <i>{program.budget.graphics === "canvas" ? "Canvas 图形内核" : "HTML 交互内核"}</i>
       </div>
-      {guardError ? (
-        <p className="generation-error">{guardError}</p>
-      ) : (
-        <Renderer
-          response={program.source}
-          library={weiBeiGenerativeLibrary}
-          isStreaming={false}
-          initialState={runtimeState}
-          onStateUpdate={handleStateUpdate}
-          onAction={handleAction}
-          onError={setErrors}
-          onParseResult={(result) => setParseReady(Boolean(result && result.meta.unresolved.length === 0))}
-        />
-      )}
-      {errors.length ? (
-        <p className="generation-error">协议渲染失败：{errors.map((error) => error.message).join("；")}</p>
-      ) : null}
+      <Renderer
+        response={program.source}
+        library={weiBeiGenerativeLibrary}
+        isStreaming={false}
+        initialState={runtimeState}
+        onStateUpdate={handleStateUpdate}
+        onAction={handleAction}
+        onError={setErrors}
+        onParseResult={(result) => setParseReady(Boolean(result && result.meta.unresolved.length === 0))}
+      />
     </section>
   );
 }
@@ -144,10 +174,78 @@ type RenderEntry = {
   plan?: RenderPlan;
   compiled?: CompiledRenderPlan;
   issue?: RendererIssue;
+  fallbackReason?: string;
+  fallbackText?: string;
+  budgetContext?: RenderPlanBudgetContext;
+  index: number;
 };
 
-function programEntry(program: RichAnswerProgram): RenderEntry {
-  return { key: `program:${program.id}:${program.source}`, program };
+function programEntry(program: RichAnswerProgram, index = 0): RenderEntry {
+  return { key: `program:${index}:${program.id}:${program.source}`, program, index };
+}
+
+function itemFailureEntry(
+  index: number,
+  fallbackReason = "这项视觉暂不可用",
+  fallbackText = "请继续阅读正文。",
+  programID = `rich-item-${index + 1}`,
+  title = `富回答第 ${index + 1} 项`,
+): RenderEntry {
+  return {
+    key: `failure:${index}:${programID}:${fallbackReason}:${fallbackText}`,
+    index,
+    program: {
+      version: "weibei.openui.v1",
+      id: programID,
+      title,
+      question: title,
+      mode: "declarative",
+      source: "",
+      initialState: {},
+      capabilities: ["failure-isolation"],
+      evidenceBindings: [],
+      budget: {
+        maxHeight: 160,
+        maxNodes: 1,
+        maxSeries: 1,
+        graphics: "dom",
+      },
+    },
+    fallbackReason,
+    fallbackText,
+  };
+}
+
+function hostItemFailureEntries(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 6).flatMap((candidate, fallbackIndex) => {
+    if (!candidate || typeof candidate !== "object") return [];
+    const failure = candidate as Record<string, unknown>;
+    const fallbackReason = typeof failure.fallbackReason === "string"
+      ? failure.fallbackReason.trim()
+      : "";
+    const fallbackText = typeof failure.fallbackText === "string"
+      ? failure.fallbackText.trim()
+      : "";
+    if (!fallbackReason || !fallbackText) return [];
+    const index = typeof failure.index === "number" && Number.isSafeInteger(failure.index) && failure.index >= 0
+      ? failure.index
+      : fallbackIndex;
+    const programID = typeof failure.programID === "string" && failure.programID.trim()
+      ? failure.programID.trim()
+      : `rich-item-${index + 1}`;
+    const title = typeof failure.title === "string" && failure.title.trim()
+      ? failure.title.trim()
+      : `富回答第 ${index + 1} 项`;
+    return [itemFailureEntry(index, fallbackReason, fallbackText, programID, title)];
+  });
+}
+
+function mergeRenderEntries(...collections: RenderEntry[][]) {
+  return mergeIndexedRenderGroupItems(
+    ...collections.map((entries) =>
+      entries.map((entry) => ({ index: entry.index, value: entry }))),
+  );
 }
 
 function programForRenderPlan(plan: RenderPlan, index: number): RichAnswerProgram {
@@ -213,36 +311,121 @@ function stringField(record: Record<string, unknown>, key: string) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function lifecycleContext(program: RichAnswerProgram, showNotice: (message: string) => void): RendererLifecycleContext {
+function lifecycleContext(
+  program: RichAnswerProgram,
+  showNotice: (message: string) => void,
+  budgetContext?: RenderPlanBudgetContext,
+): RendererLifecycleContext {
   return {
     program,
+    budgetContext,
     showNotice,
     postMessage: postRuntimeMessage,
   };
 }
 
-function compileRenderPlans(plans: RenderPlan[], showNotice: (message: string) => void): RenderEntry[] {
-  return plans.slice(0, 6).map((plan, index) => {
+function compileRenderPlans(
+  plans: RenderPlan[],
+  showNotice: (message: string) => void,
+  budgetContexts: Array<RenderPlanBudgetContext | undefined> = [],
+  sourceIndices: number[] = plans.map((_, index) => index),
+): RenderEntry[] {
+  const entries: RenderEntry[] = [];
+  const diagnostics: Array<{ programID: string; message: string }> = [];
+  const candidates = plans.slice(0, 6).map((plan, planIndex) => {
+    const index = sourceIndices[planIndex] ?? planIndex;
     const program = programForRenderPlan(plan, index);
-    const context = lifecycleContext(program, showNotice);
-    const compiled = renderRegistry.compile(plan, context);
-    if (!compiled.ok) {
-      postRuntimeMessage({ type: "weibei:error", programID: program.id, message: compiled.issue.message });
-      return {
-        key: `plan:${index}:${plan.renderer}:${plan.specVersion}:compile:${compiled.issue.message}`,
+    const budgetContext = budgetContexts[planIndex];
+    const measured = measureRenderPlanResourceUsage(plan, budgetContext);
+    if (!measured.ok) {
+      diagnostics.push({ programID: program.id, message: measured.issue.message });
+      entries.push({
+        key: `plan:${index}:${plan.renderer}:${plan.specVersion}:fallback:${measured.issue.code}`,
+        index,
         program,
         plan,
-        issue: compiled.issue,
-      };
+        issue: measured.issue,
+        budgetContext,
+      });
+      return null;
     }
-
     return {
-      key: `plan:${index}:${plan.renderer}:${plan.specVersion}:${JSON.stringify(plan.spec)}`,
-      program,
-      plan,
-      compiled: compiled.compiled,
+      index,
+      value: { plan, program, budgetContext },
+      usage: measured.usage,
     };
+  }).filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null);
+  const admission = admitRenderGroupItems(candidates, formalRenderGroupResourceLimits);
+  admission.rejected.forEach(({ index, value, reason }) => {
+    const issue = {
+      code: "capability_mismatch" as const,
+      renderer: value.plan.renderer,
+      message: `富回答组资源边界拒绝第 ${index + 1} 项：${reason}。`,
+    };
+    diagnostics.push({ programID: value.program.id, message: issue.message });
+    entries.push({
+      key: `plan:${index}:${value.plan.renderer}:${value.plan.specVersion}:fallback:group-${reason}`,
+      index,
+      program: value.program,
+      plan: value.plan,
+      issue,
+      budgetContext: value.budgetContext,
+    });
   });
+  admission.accepted.forEach(({ index, value }) => {
+    const { plan, program, budgetContext } = value;
+    const context = lifecycleContext(program, showNotice, budgetContext);
+    try {
+      const compiled = renderRegistry.compile(plan, context);
+      if (!compiled.ok) {
+        diagnostics.push({ programID: program.id, message: compiled.issue.message });
+        entries.push({
+          key: `plan:${index}:${plan.renderer}:${plan.specVersion}:fallback:${compiled.issue.message}`,
+          index,
+          program,
+          plan,
+          issue: compiled.issue,
+          budgetContext,
+        });
+        return;
+      }
+
+      entries.push({
+        key: `plan:${index}:${plan.renderer}:${plan.specVersion}:${JSON.stringify(plan.spec)}`,
+        index,
+        program,
+        plan,
+        compiled: compiled.compiled,
+        budgetContext,
+      });
+    } catch (error) {
+      const issue = {
+        code: "compile_error" as const,
+        renderer: plan.renderer,
+        message: error instanceof Error ? error.message : "渲染计划编译失败。",
+      };
+      diagnostics.push({
+        programID: program.id,
+        message: issue.message,
+      });
+      entries.push({
+        key: `plan:${index}:${plan.renderer}:${plan.specVersion}:fallback:${issue.message}`,
+        index,
+        program,
+        plan,
+        issue,
+        budgetContext,
+      });
+    }
+  });
+  diagnostics.forEach((diagnostic) => {
+    postRuntimeMessage({
+      type: "weibei:error",
+      ...diagnostic,
+      fatal: runtimeFailureIsFatal("renderer-entry"),
+    });
+  });
+  return entries.sort((left, right) => left.index - right.index);
 }
 
 function RenderPlanRenderer({
@@ -253,7 +436,10 @@ function RenderPlanRenderer({
   showNotice: (message: string) => void;
 }) {
   const previousRef = useRef<CompiledRenderPlan | null>(null);
-  const context = useMemo(() => lifecycleContext(entry.program, showNotice), [entry.program, showNotice]);
+  const context = useMemo(
+    () => lifecycleContext(entry.program, showNotice, entry.budgetContext),
+    [entry.budgetContext, entry.program, showNotice],
+  );
   const compiled = entry.compiled;
 
   useEffect(() => {
@@ -273,18 +459,42 @@ function RenderPlanFallback({
   entry: RenderEntry;
   showNotice: (message: string) => void;
 }) {
-  const context = useMemo(() => lifecycleContext(entry.program, showNotice), [entry.program, showNotice]);
-  if (!entry.issue) return null;
-  if (entry.plan?.fallback.text) {
+  const context = useMemo(
+    () => lifecycleContext(entry.program, showNotice, entry.budgetContext),
+    [entry.budgetContext, entry.program, showNotice],
+  );
+  if (!entry.plan || !entry.issue) return null;
+  return <>{renderRegistry.fallback(entry.plan, entry.issue, context)}</>;
+}
+
+class RichEntryErrorBoundary extends Component<
+  { children: ReactNode; programID: string },
+  { message: string | null }
+> {
+  state = { message: null as string | null };
+
+  static getDerivedStateFromError(error: unknown) {
+    return { message: error instanceof Error ? error.message : "富回答渲染失败。" };
+  }
+
+  componentDidCatch(error: unknown, _info: ErrorInfo) {
+    postRuntimeMessage({
+      type: "weibei:error",
+      programID: this.props.programID,
+      message: error instanceof Error ? error.message : "富回答渲染失败。",
+      fatal: runtimeFailureIsFatal("entry-error-boundary"),
+    });
+  }
+
+  render() {
+    if (!this.state.message) return this.props.children;
     return (
-      <div className="generation-error" role="alert" data-weibei-renderer-issue={entry.issue.code}>
-        <strong>{entry.plan.fallback.reason}</strong>
-        <span>{entry.plan.fallback.text}</span>
-        <small>{entry.issue.message}</small>
+      <div className="generation-fallback" role="status" data-weibei-renderer-issue="compile_error">
+        <strong>这项富回答无法显示</strong>
+        <span>请继续阅读正文。</span>
       </div>
     );
   }
-  return <>{renderRegistry.fallback(entry.issue, context)}</>;
 }
 
 function normalizedHeightLimit(value: unknown, fallback: number) {
@@ -306,7 +516,8 @@ export function GenerativeWorkbench() {
   const renderSetRef = useRef(renderSet);
   const embedded = isEmbeddedRuntime();
   const waitingForHost = renderSet.entries.length === 0;
-  const hasOpenRuntimeEntries = renderSet.entries.some((entry) => entry.compiled || entry.issue);
+  const hasOpenRuntimeEntries = renderSet.entries.some((entry) =>
+    entry.compiled || entry.issue || entry.fallbackReason);
   const program = hasOpenRuntimeEntries ? null : (renderSet.entries[0]?.program ?? null);
   renderSetRef.current = renderSet;
 
@@ -329,7 +540,13 @@ export function GenerativeWorkbench() {
       if (event.data?.type === "weibei:setProgram") {
         const result = parseHostProgram(event.data.program);
         if (!result.success) {
-          postRuntimeMessage({ type: "weibei:error", message: result.error.issues[0]?.message ?? "界面程序不符合协议。" });
+          setHostEvidenceContent([]);
+          setRenderSet({ entries: [itemFailureEntry(0)], heightLimit: 160 });
+          postRuntimeMessage({
+            type: "weibei:error",
+            message: result.error.issues[0]?.message ?? "界面程序不符合协议。",
+            fatal: runtimeFailureIsFatal("program-entry"),
+          });
           return;
         }
         setHostEvidenceContent(result.data.evidenceContent ?? []);
@@ -342,27 +559,73 @@ export function GenerativeWorkbench() {
       if (event.data?.type === "weibei:setPrograms") {
         const result = parseHostPrograms(event.data.programs);
         if (!result.success) {
-          postRuntimeMessage({ type: "weibei:error", message: result.error.issues[0]?.message ?? "界面程序组不符合协议。" });
+          setHostEvidenceContent([]);
+          const parseIssues = "issues" in result
+            ? result.issues
+            : result.error.issues.map((issue, index) => ({ index, message: issue.message }));
+          const failures = parseIssues.map((issue) => itemFailureEntry(issue.index));
+          setRenderSet({ entries: failures, heightLimit: 160 });
+          postRuntimeMessage({
+            type: "weibei:error",
+            message: result.error.issues[0]?.message ?? "界面程序组不符合协议。",
+            fatal: runtimeFailureIsFatal("program-entry"),
+          });
           return;
         }
+        result.issues.forEach((issue) => {
+          postRuntimeMessage({
+            type: "weibei:error",
+            programID: `program-${issue.index + 1}`,
+            message: issue.message,
+            fatal: runtimeFailureIsFatal("program-entry"),
+          });
+        });
         setHostEvidenceContent(result.data.flatMap((candidate) => candidate.evidenceContent ?? []));
         const fallbackHeight = Math.min(720, result.data.reduce((sum, candidate) => sum + candidate.budget.maxHeight, 0));
         setRenderSet({
-          entries: result.data.map(programEntry),
+          entries: mergeRenderEntries(
+            result.data.map((candidate, index) => programEntry(candidate, result.indices[index])),
+            result.issues.map((issue) => itemFailureEntry(issue.index)),
+          ),
           heightLimit: normalizedHeightLimit(event.data.heightLimit, fallbackHeight),
+        });
+        return;
+      }
+      if (event.data?.type === "weibei:setRenderFailures") {
+        const failures = hostItemFailureEntries(event.data.itemFailures);
+        setHostEvidenceContent([]);
+        setRenderSet({
+          entries: failures,
+          heightLimit: normalizedHeightLimit(event.data.heightLimit, Math.max(160, failures.length * 160)),
         });
         return;
       }
       if (event.data?.type === "weibei:setRenderPlan") {
         const result = parseRenderPlan(event.data.renderPlan ?? event.data.plan);
         if (!result.success) {
-          postRuntimeMessage({ type: "weibei:error", message: result.error.issues[0]?.message ?? "渲染计划不符合协议。" });
+          setHostEvidenceContent([]);
+          const failures = hostItemFailureEntries(event.data.itemFailures);
+          setRenderSet({
+            entries: failures.length ? failures : [itemFailureEntry(event.data.sourceIndex ?? 0)],
+            heightLimit: 160,
+          });
+          postRuntimeMessage({
+            type: "weibei:error",
+            message: result.error.issues[0]?.message ?? "渲染计划不符合协议。",
+            fatal: runtimeFailureIsFatal("renderer-entry"),
+          });
           return;
         }
         setHostEvidenceContent(event.data.evidenceContent ?? []);
-        const entries = compileRenderPlans([result.data], showNotice);
+        const sourceIndex = event.data.sourceIndex ?? 0;
+        const entries = compileRenderPlans(
+          [result.data],
+          showNotice,
+          [event.data.budgetContext],
+          [sourceIndex],
+        );
         setRenderSet({
-          entries,
+          entries: mergeRenderEntries(entries, hostItemFailureEntries(event.data.itemFailures)),
           heightLimit: normalizedHeightLimit(event.data.heightLimit, result.data.qualityBudget.maxHeight ?? 360),
         });
         return;
@@ -370,17 +633,53 @@ export function GenerativeWorkbench() {
       if (event.data?.type !== "weibei:setRenderPlans") return;
       const result = parseRenderPlans(event.data.renderPlans ?? event.data.plans);
       if (!result.success) {
-        postRuntimeMessage({ type: "weibei:error", message: result.error.issues[0]?.message ?? "渲染计划组不符合协议。" });
+        setHostEvidenceContent([]);
+        const sourceIndices = event.data.sourceIndices ?? [];
+        const parseIssues = "issues" in result
+          ? result.issues
+          : result.error.issues.map((issue, index) => ({ index, message: issue.message }));
+        const parserFailures = parseIssues.map((issue) =>
+          itemFailureEntry(sourceIndices[issue.index] ?? issue.index));
+        const entries = mergeRenderEntries(
+          parserFailures,
+          hostItemFailureEntries(event.data.itemFailures),
+        );
+        setRenderSet({ entries, heightLimit: Math.max(160, entries.length * 160) });
+        postRuntimeMessage({
+          type: "weibei:error",
+          message: result.error.issues[0]?.message ?? "渲染计划组不符合协议。",
+          fatal: runtimeFailureIsFatal("renderer-entry"),
+        });
         return;
       }
+      const sourceIndices = event.data.sourceIndices ?? [];
+      result.issues.forEach((issue) => {
+        postRuntimeMessage({
+          type: "weibei:error",
+          programID: `render-plan-${(sourceIndices[issue.index] ?? issue.index) + 1}`,
+          message: issue.message,
+          fatal: runtimeFailureIsFatal("renderer-entry"),
+        });
+      });
       setHostEvidenceContent(event.data.evidenceContent ?? []);
-      const entries = compileRenderPlans(result.data, showNotice);
+      const budgetContexts = event.data.budgetContexts;
+      const entries = compileRenderPlans(
+        result.data,
+        showNotice,
+        result.indices.map((index) => budgetContexts?.[index]),
+        result.indices.map((index) => sourceIndices[index] ?? index),
+      );
       const fallbackHeight = Math.min(
         1600,
         result.data.reduce((sum, candidate) => sum + (candidate.qualityBudget.maxHeight ?? 360), 0),
       );
       setRenderSet({
-        entries,
+        entries: mergeRenderEntries(
+          entries,
+          result.issues.map((issue) =>
+            itemFailureEntry(sourceIndices[issue.index] ?? issue.index)),
+          hostItemFailureEntries(event.data.itemFailures),
+        ),
         heightLimit: normalizedHeightLimit(event.data.heightLimit, fallbackHeight),
       });
     };
@@ -471,23 +770,37 @@ export function GenerativeWorkbench() {
           className={`generation-answer${hasOpenRuntimeEntries ? " is-open-runtime" : ""}`}
           aria-label={renderSet.entries.map((entry) => entry.program.title).join("；")}
         >
-          {renderSet.entries.map((entry) => (
-            entry.compiled || entry.issue ? (
-              <section key={entry.key} className="generation-answer__program" aria-label={entry.program.title}>
-                {entry.compiled ? (
-                  <RenderPlanRenderer entry={entry} showNotice={showNotice} />
-                ) : entry.issue ? (
-                  <RenderPlanFallback entry={entry} showNotice={showNotice} />
-                ) : null}
+          {renderSet.entries.map((entry) => {
+            const content = entry.fallbackReason && entry.fallbackText ? (
+              <section className="generation-answer__program" aria-label={entry.program.title}>
+                <div className="generation-fallback" role="status" data-weibei-renderer-issue="validation_error">
+                  <strong>{entry.fallbackReason}</strong>
+                  <span>{entry.fallbackText}</span>
+                </div>
+              </section>
+            ) : entry.compiled ? (
+              <section className="generation-answer__program" aria-label={entry.program.title}>
+                <RenderPlanRenderer entry={entry} showNotice={showNotice} />
+              </section>
+            ) : entry.issue ? (
+              <section className="generation-answer__program" aria-label={entry.program.title}>
+                <RenderPlanFallback entry={entry} showNotice={showNotice} />
               </section>
             ) : (
               <ProgramRenderer
-                key={entry.key}
                 program={entry.program}
                 showNotice={showNotice}
               />
-            )
-          ))}
+            );
+            return (
+              <RichEntryErrorBoundary
+                key={entry.key}
+                programID={entry.program.id}
+              >
+                {content}
+              </RichEntryErrorBoundary>
+            );
+          })}
         </section>
       ) : null}
 

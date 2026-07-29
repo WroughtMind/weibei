@@ -3,6 +3,7 @@ import * as echarts from "echarts";
 import type { ECharts, EChartsOption } from "echarts";
 import { z } from "zod/v4";
 import {
+  createNarrativeFallbackNode,
   createRendererIssue,
   type CompiledRenderPlan,
   type RenderPlan,
@@ -594,7 +595,7 @@ function ChartMount({
         aria-label={compiled.title}
         style={{ height: `min(${surfaceHeight}px, max(220px, 56vw))` }}
       />
-      {renderIssue ? <ChartFallback issue={renderIssue} /> : null}
+      {renderIssue ? createNarrativeFallbackNode(compiled.plan, renderIssue) : null}
       {compiled.spec.focusEnabled ? (
         <figcaption className={`weibei-chart__readout${focus ? " is-active" : ""}`}>
           {focus ? (
@@ -612,20 +613,6 @@ function ChartMount({
   );
 }
 
-function ChartFallback({
-  issue,
-}: {
-  issue: ReturnType<typeof createRendererIssue>;
-}) {
-  return (
-    <div className="generation-error" role="alert" data-weibei-renderer-issue={issue.code}>
-      <strong>标准图表未渲染</strong>
-      <span>{issue.message}</span>
-      {issue.details?.length ? <small>{issue.details.join("；")}</small> : null}
-    </div>
-  );
-}
-
 export const standardEChartsRenderer: RichAnswerRenderer = {
   id: CHART_RENDERER,
   version: "0.1.0",
@@ -637,9 +624,18 @@ export const standardEChartsRenderer: RichAnswerRenderer = {
     data: ["categorical-series", "numeric-pairs", "histogram-samples", "bounded-inline-data"],
     interactions: ["focus-readout", "state-update", "responsive-resize"],
     resources: ["local-echarts"],
-    maxNodes: 1,
-    maxDataPoints: maxTrustedDataPoints,
-    fallback: ["structured_error", "simplified_component"],
+    maxNodes: 80,
+    maxDataPoints: 4_000,
+    maxArtifacts: 0,
+    maxBytes: 256_000,
+    maxWidth: 960,
+    maxHeight: 640,
+    maxAnimationFPS: 30,
+    maxInteractionLatencyMS: 120,
+    allowAnimation: true,
+    allowWebGL: false,
+    allowNetwork: false,
+    fallback: ["narrativeOnly"],
   },
   validate(plan) {
     const parsed = parseChartSpec(plan);
@@ -670,7 +666,7 @@ export const standardEChartsRenderer: RichAnswerRenderer = {
   dispose() {
     return undefined;
   },
-  fallback(issue) {
-    return <ChartFallback issue={issue} />;
+  fallback(plan, issue) {
+    return createNarrativeFallbackNode(plan, issue);
   },
 };

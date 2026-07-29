@@ -8,6 +8,10 @@ func runRichAnswerProtocolSelfCheck() throws {
     try checkNarrativeAndScenesFormOneInlineFlow()
     try checkOpenUIProgramRejectsUnsafeVariants()
     try checkGeneratedUITreeRenders()
+    try checkFormalRichAnswerRouteContract()
+    try checkPersistedRichAnswerReplayAdmission()
+    try checkWholeCallRenderPlanBudgetIsolation()
+    try checkTrustedAssetAdmissionAndPersistence()
     try checkGeneratedUISequencePrimitiveRenders()
     try checkGeneratedUITreeRejectsUnboundEvidenceAndFalseFamily()
     try checkGeneratedUITreeRejectsMalformedProtocol()
@@ -42,6 +46,1064 @@ func runRichAnswerProtocolSelfCheck() throws {
     )
 }
 
+private func checkPersistedRichAnswerReplayAdmission() throws {
+    let programPresentation = RichAnswerEngine.prepare(
+        envelope: openUIProgramEnvelope(),
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-openui",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+    let uiPresentation = RichAnswerEngine.prepare(
+        envelope: generatedUIEnvelope(),
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-ui",
+            allowedSourceLabels: ["[材料：函数样例]"]
+        )
+    )
+    guard let validProgramScene = programPresentation.scenes.first,
+          let validUIScene = uiPresentation.scenes.first else {
+        throw RichAnswerProtocolCheckError.failed("persisted replay fixtures must begin as valid scenes")
+    }
+    let evidenceLedger = programPresentation.evidenceLedger + uiPresentation.evidenceLedger
+    let expressionPlan = RichAnswerExpressionPlan(
+        action: .manipulate,
+        summary: "重放时逐项复核程序与界面场景",
+        families: [.quantityAndCoordinates],
+        preferredSurface: .inline,
+        directManipulation: true
+    )
+
+    func replay(
+        invalidScene: RichAnswerScene,
+        survivingScene: RichAnswerScene
+    ) throws -> RichAnswerPresentation {
+        let persisted = RichAnswerPresentation(
+            mode: .rich,
+            narrative: "开头正文。\n\n结尾正文。",
+            parts: [
+                .narrative("开头正文。"),
+                .scene(invalidScene.id),
+                .scene(survivingScene.id),
+                .narrative("结尾正文。"),
+            ],
+            expressionPlan: expressionPlan,
+            scenes: [invalidScene, survivingScene],
+            evidenceLedger: evidenceLedger,
+            fallback: RichAnswerFallback(
+                text: "该交互不可安全重放，保留文字说明。",
+                reason: "历史交互未通过重放验收"
+            ),
+            evidenceState: .complete
+        )
+        let initialized = AgentMessage(
+            role: .assistant,
+            text: persisted.narrative,
+            source: nil,
+            backend: .pi,
+            richAnswer: persisted
+        )
+        guard let admitted = initialized.richAnswer else {
+            throw RichAnswerProtocolCheckError.failed("AgentMessage initializer must retain safe rich-answer siblings")
+        }
+        let rawMessage = AgentMessage(
+            role: .assistant,
+            text: persisted.narrative,
+            source: nil,
+            backend: .pi
+        )
+        var rawMessageObject = try richAnswerJSONObject(from: JSONEncoder().encode(rawMessage))
+        rawMessageObject["richAnswer"] = try JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(persisted)
+        )
+        let reopened = try JSONDecoder().decode(
+            AgentMessage.self,
+            from: JSONSerialization.data(withJSONObject: rawMessageObject)
+        )
+        let replayed = try JSONDecoder().decode(
+            AgentMessage.self,
+            from: JSONEncoder().encode(reopened)
+        )
+        try richAnswerRequire(
+            reopened.richAnswer == admitted && replayed.richAnswer == admitted,
+            "AgentMessage init and raw historical decode share one idempotent replay admission"
+        )
+        return admitted
+    }
+
+    var wrongVersionProgram = validProgramScene
+    wrongVersionProgram.id = "replay-invalid-program-version"
+    wrongVersionProgram.program?.version = "weibei.openui.v0"
+    let versionAdmission = try replay(
+        invalidScene: wrongVersionProgram,
+        survivingScene: validUIScene
+    )
+    try richAnswerRequire(
+        versionAdmission.scenes.map(\.id) == [validUIScene.id]
+            && versionAdmission.resolvedParts == [
+                .narrative("开头正文。"),
+                .narrative("该交互不可安全重放，保留文字说明。"),
+                .scene(validUIScene.id),
+                .narrative("结尾正文。"),
+            ]
+            && versionAdmission.diagnostics.contains(where: {
+                $0.sceneID == wrongVersionProgram.id && $0.code == .unsupportedSchema
+            }),
+        "an obsolete persisted program is locally replaced while its safe UI sibling and surrounding prose survive"
+    )
+
+    var unsafeProgram = validProgramScene
+    unsafeProgram.id = "replay-unsafe-program"
+    unsafeProgram.program?.source += "\n<script>run()</script>"
+    let unsafeProgramAdmission = try replay(
+        invalidScene: unsafeProgram,
+        survivingScene: validUIScene
+    )
+    try richAnswerRequire(
+        unsafeProgramAdmission.scenes.map(\.id) == [validUIScene.id]
+            && unsafeProgramAdmission.diagnostics.contains(where: {
+                $0.sceneID == unsafeProgram.id && $0.code == .unauthorizedAsset
+            }),
+        "persisted program replay reuses the executable-fragment safety gate"
+    )
+
+    var brokenUI = validUIScene
+    brokenUI.id = "replay-broken-ui-tree"
+    brokenUI.ui?.rootID = "missing-root"
+    let brokenUIAdmission = try replay(
+        invalidScene: brokenUI,
+        survivingScene: validProgramScene
+    )
+    try richAnswerRequire(
+        brokenUIAdmission.scenes.map(\.id) == [validProgramScene.id]
+            && brokenUIAdmission.diagnostics.contains(where: {
+                $0.sceneID == brokenUI.id && $0.code == .brokenReference
+            }),
+        "persisted UI replay reuses the tree and internal-reference validator"
+    )
+
+    var mixedRoute = validUIScene
+    mixedRoute.id = "replay-mixed-route"
+    mixedRoute.program = validProgramScene.program
+    let mixedRouteAdmission = try replay(
+        invalidScene: mixedRoute,
+        survivingScene: validProgramScene
+    )
+    try richAnswerRequire(
+        mixedRouteAdmission.scenes.map(\.id) == [validProgramScene.id]
+            && mixedRouteAdmission.diagnostics.contains(where: {
+                $0.sceneID == mixedRoute.id && $0.code == .unsupportedField
+            }),
+        "persisted replay keeps program, ui, and renderPlan routes mutually exclusive"
+    )
+}
+
+private func checkFormalRichAnswerRouteContract() throws {
+    let registry = RichAnswerRendererRegistry.defaultRegistry()
+    let expectedVersions = [
+        RichAnswerRendererRegistry.openUIProgramRenderer: "weibei.openui.v1",
+        RichAnswerRendererRegistry.openUICompositionRenderer: "weibei.openui.v1",
+        RichAnswerRendererRegistry.standardChartRenderer: "weibei.chart.v1",
+        RichAnswerRendererRegistry.mathFunctionRenderer: "weibei.math-function.v1",
+        RichAnswerRendererRegistry.geometry2DRenderer: "weibei.geometry-2d.v1",
+        RichAnswerRendererRegistry.scene3DRenderer: "weibei.scene-3d.v1",
+        RichAnswerRendererRegistry.spatialMapRenderer: "weibei.spatial.map.v1",
+        RichAnswerRendererRegistry.imageOverlayRenderer: "weibei.image-overlay.v1",
+    ]
+    try richAnswerRequire(
+        Set(RichAnswerRendererRegistry.formalRouteIDs) == Set(expectedVersions.keys)
+            && RichAnswerRendererRegistry.formalRouteIDs.count == 8,
+        "formal rich-answer contract has exactly program, ui, and six render-plan routes"
+    )
+    for (renderer, version) in expectedVersions {
+        try richAnswerRequire(
+            registry.declaration(for: renderer)?.preferredSpecVersion == version,
+            "\(renderer) keeps the canonical spec version \(version)"
+        )
+    }
+    for renderer in [
+        RichAnswerRendererRegistry.openUIProgramRenderer,
+        RichAnswerRendererRegistry.openUICompositionRenderer,
+    ] {
+        let version = expectedVersions[renderer]!
+        let directSelection = registry.select(
+            RichAnswerRendererCapabilityRequest(
+                preferredRenderer: renderer,
+                preferredSpecVersion: version
+            )
+        )
+        let forgedRenderPlan = RichAnswerRenderPlan(
+            renderer: renderer,
+            specVersion: version,
+            spec: RichAnswerRenderSpec(),
+            sourceBindings: [
+                RichAnswerRenderSourceBinding(
+                    id: "source",
+                    evidenceID: "evidence",
+                    target: "direct-route",
+                    role: "basis"
+                ),
+            ],
+            fallback: RichAnswerRenderFallback(
+                mode: .narrativeOnly,
+                reason: "直达路线不能伪装成 Web renderPlan",
+                text: "保留普通正文。"
+            )
+        )
+        let forgedNegotiation = registry.negotiate(plan: forgedRenderPlan)
+        try richAnswerRequire(
+            directSelection.status == .accepted
+                && forgedNegotiation.status == .capabilityMismatch
+                && forgedNegotiation.mismatch?.issues.first?.code == .unknownRenderer
+                && forgedNegotiation.mismatch?.issues.first?.supported
+                    == RichAnswerRendererRegistry.formalRenderPlanRendererIDs,
+            "\(renderer) remains a direct route but cannot cross the host boundary as a render plan"
+        )
+    }
+
+    let specs: [(String, String, RichAnswerRenderSpec)] = [
+        (
+            RichAnswerRendererRegistry.standardChartRenderer,
+            "weibei.chart.v1",
+            RichAnswerRenderSpec(fields: [
+                "chartKind": .string("line"),
+                "series": .array([.object([
+                    "name": .string("趋势"),
+                    "values": .array([.number(1), .number(2)]),
+                ])]),
+                "title": .string("趋势"),
+                "xLabels": .array([.string("一"), .string("二")]),
+            ])
+        ),
+        (
+            RichAnswerRendererRegistry.mathFunctionRenderer,
+            "weibei.math-function.v1",
+            RichAnswerRenderSpec(fields: [
+                "domain": .object(["minimum": .number(-1), "maximum": .number(1)]),
+                "expression": .object([
+                    "rootNodeID": .string("x"),
+                    "nodes": .array([.object(["id": .string("x"), "kind": .string("variable")])]),
+                ]),
+                "title": .string("函数"),
+                "variable": .string("x"),
+            ])
+        ),
+        (
+            RichAnswerRendererRegistry.geometry2DRenderer,
+            "weibei.geometry-2d.v1",
+            RichAnswerRenderSpec(fields: [
+                "coordinateSpace": .object([
+                    "xMin": .number(0), "xMax": .number(1),
+                    "yMin": .number(0), "yMax": .number(1),
+                ]),
+                "points": .array([.object([
+                    "id": .string("A"),
+                    "label": .string("A"),
+                    "x": .number(0),
+                    "y": .number(0),
+                ])]),
+            ])
+        ),
+        (
+            RichAnswerRendererRegistry.scene3DRenderer,
+            "weibei.scene-3d.v1",
+            RichAnswerRenderSpec(fields: [
+                "camera": .object([
+                    "yaw": .number(35),
+                    "pitch": .number(20),
+                    "distance": .number(4),
+                    "lookAt": .array([.number(0), .number(0), .number(0)]),
+                    "fov": .number(58),
+                ]),
+                "objects": .array([.object([
+                    "id": .string("origin"),
+                    "kind": .string("point"),
+                    "position": .array([.number(0), .number(0), .number(0)]),
+                    "label": .string("原点"),
+                ])]),
+                "title": .string("空间结构"),
+            ])
+        ),
+        (
+            RichAnswerRendererRegistry.spatialMapRenderer,
+            "weibei.spatial.map.v1",
+            RichAnswerRenderSpec(fields: [
+                "coordinateMode": .string("schematic"),
+                "features": .array([.object([
+                    "id": .string("origin"),
+                    "kind": .string("point"),
+                    "x": .number(0.5),
+                    "y": .number(0.5),
+                    "label": .string("原点"),
+                ])]),
+            ])
+        ),
+        (
+            RichAnswerRendererRegistry.imageOverlayRenderer,
+            "weibei.image-overlay.v1",
+            RichAnswerRenderSpec(fields: [
+                "image": .object(["kind": .string("assetRef"), "source": .string("asset-1")]),
+                "layers": .array([]),
+                "annotations": .array([.object([
+                    "id": .string("focus"),
+                    "point": .object(["x": .number(0.5), "y": .number(0.5)]),
+                    "text": .string("观察点"),
+                ])]),
+            ])
+        ),
+    ]
+
+    for (renderer, version, spec) in specs {
+        let plan = RichAnswerRenderPlan(
+            renderer: renderer,
+            specVersion: version,
+            spec: spec,
+            sourceBindings: [
+                RichAnswerRenderSourceBinding(
+                    id: "source",
+                    evidenceID: "evidence",
+                    target: "spec",
+                    role: "basis"
+                ),
+            ],
+            artifactRefs: renderer == RichAnswerRendererRegistry.imageOverlayRenderer
+                ? [
+                    RichAnswerRenderArtifactRef(
+                        id: "asset-1",
+                        kind: "source-image",
+                        mimeType: "image/png",
+                        role: "primary",
+                        sizeBytes: 1
+                    ),
+                ]
+                : [],
+            fallback: RichAnswerRenderFallback(
+                mode: .narrativeOnly,
+                reason: "视觉不可用",
+                text: "保留普通正文。"
+            ),
+            qualityBudget: RichAnswerRenderQualityBudget(
+                maxNodes: 24,
+                maxDataPoints: 120,
+                maxArtifacts: renderer == RichAnswerRendererRegistry.imageOverlayRenderer ? 1 : 0,
+                maxBytes: 12_000,
+                maxWidth: 960,
+                maxHeight: 640,
+                maxAnimationFPS: 30,
+                maxInteractionLatencyMS: 120,
+                allowAnimation: true,
+                allowWebGL: false,
+                allowNetwork: false
+            )
+        )
+        try richAnswerRequire(
+            registry.negotiate(plan: plan).status == .accepted,
+            "\(renderer) accepts its canonical render-plan route"
+        )
+        let encoded = try JSONEncoder().encode(plan)
+        let reopened = try JSONDecoder().decode(RichAnswerRenderPlan.self, from: encoded)
+        try richAnswerRequire(
+            reopened == plan && !String(decoding: encoded, as: UTF8.self).contains("runtimeState"),
+            "\(renderer) persists its rich definition while runtime interaction state resets on reopen"
+        )
+    }
+
+    let formalBudget = RichAnswerRendererRegistry.formalRenderPlanAdmissionEnvelope
+    let expectedRendererBudgets: [String: RichAnswerRenderQualityBudget] = [
+        RichAnswerRendererRegistry.standardChartRenderer: RichAnswerRenderQualityBudget(
+            maxNodes: 80, maxDataPoints: 4_000, maxArtifacts: 0, maxBytes: 256_000,
+            maxWidth: 960, maxHeight: 640, maxAnimationFPS: 30, maxInteractionLatencyMS: 120,
+            allowAnimation: true, allowWebGL: false, allowNetwork: false
+        ),
+        RichAnswerRendererRegistry.mathFunctionRenderer: RichAnswerRenderQualityBudget(
+            maxNodes: 64, maxDataPoints: 1_600, maxArtifacts: 0, maxBytes: 256_000,
+            maxWidth: 960, maxHeight: 640, maxAnimationFPS: 30, maxInteractionLatencyMS: 120,
+            allowAnimation: true, allowWebGL: false, allowNetwork: false
+        ),
+        RichAnswerRendererRegistry.geometry2DRenderer: RichAnswerRenderQualityBudget(
+            maxNodes: 260, maxDataPoints: 1_200, maxArtifacts: 0, maxBytes: 256_000,
+            maxWidth: 960, maxHeight: 720, maxAnimationFPS: 30, maxInteractionLatencyMS: 120,
+            allowAnimation: true, allowWebGL: false, allowNetwork: false
+        ),
+        RichAnswerRendererRegistry.scene3DRenderer: RichAnswerRenderQualityBudget(
+            maxNodes: 24, maxDataPoints: 3_200, maxArtifacts: 0, maxBytes: 256_000,
+            maxWidth: 960, maxHeight: 720, maxAnimationFPS: 30, maxInteractionLatencyMS: 160,
+            allowAnimation: true, allowWebGL: false, allowNetwork: false
+        ),
+        RichAnswerRendererRegistry.spatialMapRenderer: RichAnswerRenderQualityBudget(
+            maxNodes: 280, maxDataPoints: 8_000, maxArtifacts: 2, maxBytes: 1_500_000,
+            maxWidth: 960, maxHeight: 720, maxAnimationFPS: 30, maxInteractionLatencyMS: 140,
+            allowAnimation: true, allowWebGL: false, allowNetwork: false
+        ),
+        RichAnswerRendererRegistry.imageOverlayRenderer: RichAnswerRenderQualityBudget(
+            maxNodes: 180, maxDataPoints: 1_200, maxArtifacts: 2, maxBytes: 1_500_000,
+            maxWidth: 960, maxHeight: 720, maxAnimationFPS: 30, maxInteractionLatencyMS: 140,
+            allowAnimation: true, allowWebGL: false, allowNetwork: false
+        ),
+    ]
+    for renderer in RichAnswerRendererRegistry.formalRenderPlanRendererIDs {
+        guard let declaration = registry.declaration(for: renderer) else {
+            throw RichAnswerProtocolCheckError.failed("missing declaration for \(renderer)")
+        }
+        try richAnswerRequire(
+            declaration.limits == expectedRendererBudgets[renderer]
+                && declaration.limits.maxNodes.map { $0 <= formalBudget.maxNodes! } == true
+                && declaration.limits.maxDataPoints.map { $0 <= formalBudget.maxDataPoints! } == true
+                && declaration.limits.maxArtifacts.map { $0 <= formalBudget.maxArtifacts! } == true
+                && declaration.limits.maxBytes.map { $0 <= formalBudget.maxBytes! } == true
+                && declaration.limits.maxWidth.map { $0 <= formalBudget.maxWidth! } == true
+                && declaration.limits.maxHeight.map { $0 <= formalBudget.maxHeight! } == true
+                && declaration.limits.maxAnimationFPS.map { $0 <= formalBudget.maxAnimationFPS! } == true
+                && declaration.limits.maxInteractionLatencyMS.map { $0 <= formalBudget.maxInteractionLatencyMS! } == true
+                && declaration.fallbackModes == RichAnswerRendererRegistry.formalFallbackModes,
+            "\(renderer) preserves its own capability inside the shared admission envelope and fallback contract"
+        )
+    }
+    try richAnswerRequire(
+        RichAnswerRendererRegistry.formalFallbackModes == [.narrativeOnly]
+            && RichAnswerRendererRegistry.formalTrustedAssetMaxBytes == 850_000,
+        "the formal directory advertises only the implemented narrative fallback and the shared 850 KB trusted-asset ceiling"
+    )
+    var logicalGroupBudget = RichAnswerRenderGroupBudgetAccumulator()
+    try richAnswerRequire(
+        logicalGroupBudget.admit(logicalPlanBytes: 800_000, trustedAssetBytes: []) == nil
+            && logicalGroupBudget.admit(logicalPlanBytes: 800_000, trustedAssetBytes: [])
+                == .logicalPlanBytes
+            && logicalGroupBudget.admit(logicalPlanBytes: 100_000, trustedAssetBytes: []) == nil
+            && logicalGroupBudget.logicalPlanBytes == 900_000,
+        "the shared group boundary rejects only the individually legal item that would cross 1.5 MB and still admits a later small sibling"
+    )
+    var assetGroupBudget = RichAnswerRenderGroupBudgetAccumulator()
+    let trustedAssetMaxBytes = RichAnswerRendererRegistry.formalTrustedAssetMaxBytes
+    try richAnswerRequire(
+        assetGroupBudget.admit(
+            logicalPlanBytes: 1,
+            trustedAssetBytes: [trustedAssetMaxBytes, trustedAssetMaxBytes]
+        ) == nil
+            && assetGroupBudget.admit(
+                logicalPlanBytes: 1,
+                trustedAssetBytes: [trustedAssetMaxBytes, trustedAssetMaxBytes]
+            ) == nil
+            && assetGroupBudget.admit(logicalPlanBytes: 1, trustedAssetBytes: [1])
+                == .trustedAssetCount
+            && assetGroupBudget.trustedAssetCount
+                == RichAnswerRendererRegistry.formalRenderPlanAdmissionEnvelope.maxArtifacts
+            && assetGroupBudget.trustedAssetTotalBytes
+                == RichAnswerRendererRegistry.formalRenderPlanAdmissionEnvelope.maxArtifacts!
+                    * trustedAssetMaxBytes,
+        "the shared group boundary admits exactly four legal trusted assets and rejects only the fifth"
+    )
+    let bundledExtension = try String(
+        contentsOf: PiAgentResources.bundled().extensionURL,
+        encoding: .utf8
+    )
+    let trustedAssetPattern = #"richAnswerTrustedAssetBytes:\s*([0-9_]+)"#
+    let trustedAssetMatch = try NSRegularExpression(pattern: trustedAssetPattern).firstMatch(
+        in: bundledExtension,
+        range: NSRange(bundledExtension.startIndex..., in: bundledExtension)
+    )
+    let extensionTrustedAssetBytes: Int? = trustedAssetMatch
+        .flatMap { Range($0.range(at: 1), in: bundledExtension) }
+        .flatMap { Int(bundledExtension[$0].replacingOccurrences(of: "_", with: "")) }
+    try richAnswerRequire(
+        extensionTrustedAssetBytes == RichAnswerRendererRegistry.formalTrustedAssetMaxBytes
+            && bundledExtension.contains(#"mode: Type.Literal("narrativeOnly")"#),
+        "the bundled Agent extension and Swift registry expose the same trusted-asset ceiling and implemented fallback"
+    )
+
+    let validArtifacts = [
+        RichAnswerRenderArtifactRef(
+            id: "image-a",
+            kind: "source-image",
+            mimeType: "image/png",
+            role: "primary",
+            sizeBytes: 850_000
+        ),
+        RichAnswerRenderArtifactRef(
+            id: "image-b",
+            kind: "source-image",
+            mimeType: "image/png",
+            role: "comparison",
+            sizeBytes: 850_000
+        ),
+    ]
+    let legacyArtifactPreviewPlan = RichAnswerRenderPlan(
+        renderer: RichAnswerRendererRegistry.imageOverlayRenderer,
+        specVersion: "weibei.image-overlay.v1",
+        spec: RichAnswerRenderSpec(fields: [
+            "image": .object(["kind": .string("assetRef"), "source": .string("image-a")]),
+            "layers": .array([]),
+        ]),
+        sourceBindings: [
+            RichAnswerRenderSourceBinding(
+                id: "source",
+                evidenceID: "evidence",
+                target: "image",
+                role: "basis"
+            ),
+        ],
+        artifactRefs: validArtifacts,
+        fallback: RichAnswerRenderFallback(
+            mode: .artifactPreview,
+            reason: "旧数据兼容",
+            text: "保留普通正文。",
+            artifactID: "image-a"
+        ),
+        qualityBudget: RichAnswerRenderQualityBudget(
+            maxNodes: 24,
+            maxDataPoints: 120,
+            maxArtifacts: 2,
+            maxBytes: 32_000,
+            maxWidth: 960,
+            maxHeight: 720,
+            maxAnimationFPS: 30,
+            maxInteractionLatencyMS: 140,
+            allowAnimation: true,
+            allowWebGL: false,
+            allowNetwork: false
+        )
+    )
+    let reopenedLegacyPlan = try JSONDecoder().decode(
+        RichAnswerRenderPlan.self,
+        from: JSONEncoder().encode(legacyArtifactPreviewPlan)
+    )
+    let normalizedLegacyPlan = registry.negotiate(
+        plan: reopenedLegacyPlan,
+        intent: reopenedLegacyPlan.derivedCapabilityRequest
+    )
+    try richAnswerRequire(
+        normalizedLegacyPlan.status == .accepted
+            && normalizedLegacyPlan.plan?.fallback.mode == .narrativeOnly
+            && normalizedLegacyPlan.plan?.fallback.artifactID == nil,
+        "artifactPreview remains decodable for old data and maps to the implemented narrative fallback"
+    )
+
+    var oversizedArtifactPlan = legacyArtifactPreviewPlan
+    oversizedArtifactPlan.artifactRefs[0].sizeBytes = 850_001
+    let oversizedArtifact = registry.negotiate(plan: oversizedArtifactPlan)
+    try richAnswerRequire(
+        oversizedArtifact.status == .capabilityMismatch
+            && oversizedArtifact.mismatch?.issues.contains(where: {
+                $0.field == "artifactRefs[0].sizeBytes" && $0.code == .budgetExceeded
+            }) == true,
+        "the Swift registry rejects a trusted artifact above 850 KB"
+    )
+
+    var tooManyArtifactsPlan = legacyArtifactPreviewPlan
+    tooManyArtifactsPlan.artifactRefs.append(
+        RichAnswerRenderArtifactRef(
+            id: "image-c",
+            kind: "source-image",
+            mimeType: "image/png",
+            role: "extra",
+            sizeBytes: 1
+        )
+    )
+    tooManyArtifactsPlan.qualityBudget.maxArtifacts = 3
+    let tooManyArtifacts = registry.negotiate(plan: tooManyArtifactsPlan)
+    try richAnswerRequire(
+        tooManyArtifacts.status == .capabilityMismatch
+            && tooManyArtifacts.mismatch?.issues.contains(where: {
+                $0.field == "artifactRefs" && $0.code == .budgetExceeded
+            }) == true,
+        "the Swift registry enforces the actual artifact count instead of only comparing declared constants"
+    )
+
+    var undersizedByteBudgetPlan = legacyArtifactPreviewPlan
+    undersizedByteBudgetPlan.qualityBudget.maxBytes = 1
+    let undersizedByteBudget = registry.negotiate(plan: undersizedByteBudgetPlan)
+    try richAnswerRequire(
+        undersizedByteBudget.status == .capabilityMismatch
+            && undersizedByteBudget.mismatch?.issues.contains(where: {
+                $0.field == "qualityBudget.maxBytes" && $0.code == .budgetExceeded
+            }) == true,
+        "the Swift registry measures the original plan bytes instead of trusting only the declared byte ceiling"
+    )
+}
+
+private func checkWholeCallRenderPlanBudgetIsolation() throws {
+    func plan(
+        sceneID: String,
+        fallbackText: String,
+        largePayloadCharacter: Character? = nil,
+        directManipulation: Bool = false
+    ) -> RichAnswerRenderPlan {
+        var feature: [String: RichAnswerRenderSpecValue] = [
+            "id": .string(sceneID),
+            "kind": .string("point"),
+            "x": .number(0.5),
+            "y": .number(0.5),
+        ]
+        if let largePayloadCharacter {
+            let chunk = String(repeating: largePayloadCharacter, count: 110_000)
+            for index in 1...7 {
+                feature["chunk\(index)"] = .string(chunk)
+            }
+        }
+        return RichAnswerRenderPlan(
+            renderer: RichAnswerRendererRegistry.spatialMapRenderer,
+            specVersion: "weibei.spatial.map.v1",
+            spec: RichAnswerRenderSpec(fields: [
+                "coordinateMode": .string("schematic"),
+                "features": .array([.object(feature)]),
+            ]),
+            interactionBindings: directManipulation
+                ? [
+                    RichAnswerRenderInteractionBinding(
+                        id: "toggle-\(sceneID)",
+                        kind: .toggle,
+                        target: "features"
+                    ),
+                ]
+                : [],
+            sourceBindings: [
+                RichAnswerRenderSourceBinding(
+                    id: "source-\(sceneID)",
+                    evidenceID: "evidence-\(sceneID)",
+                    target: "spec.features",
+                    role: "basis"
+                ),
+            ],
+            fallback: RichAnswerRenderFallback(
+                mode: .narrativeOnly,
+                reason: "空间视觉暂不可用",
+                text: fallbackText
+            ),
+            qualityBudget: RichAnswerRenderQualityBudget(
+                maxNodes: 280,
+                maxDataPoints: 8_000,
+                maxArtifacts: 0,
+                maxBytes: 1_500_000,
+                maxWidth: 960,
+                maxHeight: 720,
+                maxAnimationFPS: 30,
+                maxInteractionLatencyMS: 140,
+                allowAnimation: true,
+                allowWebGL: false,
+                allowNetwork: false
+            )
+        )
+    }
+
+    let planA = plan(
+        sceneID: "scene-a",
+        fallbackText: "A 项安全兜底",
+        largePayloadCharacter: "A"
+    )
+    let planB = plan(
+        sceneID: "scene-b",
+        fallbackText: "中间项安全兜底",
+        largePayloadCharacter: "B",
+        directManipulation: true
+    )
+    let planC = plan(sceneID: "scene-c", fallbackText: "C 项安全兜底")
+    let planBytes = try [planA, planB, planC].map { try JSONEncoder().encode($0).count }
+    let wholeCallLimit = RichAnswerRendererRegistry.formalRenderPlanAdmissionEnvelope.maxBytes!
+    try richAnswerRequire(
+        planBytes[0] < wholeCallLimit
+            && planBytes[1] < wholeCallLimit
+            && planBytes[0] + planBytes[1] > wholeCallLimit
+            && planBytes[0] + planBytes[2] < wholeCallLimit,
+        "the whole-call regression uses individually legal A/B plans, rejects middle B cumulatively, and still admits small C: bytes=\(planBytes)"
+    )
+
+    func scene(_ id: String, plan: RichAnswerRenderPlan) -> RichAnswerScene {
+        RichAnswerScene(
+            id: id,
+            title: id.uppercased(),
+            family: .timeAndSpace,
+            objects: [],
+            evidenceIDs: ["evidence-\(id)"],
+            renderPlan: plan
+        )
+    }
+    let envelope = RichAnswerEnvelope(
+        contextRevision: "revision-group-budget",
+        narrative: """
+        开头正文。
+        <!-- weibei-scene:scene-a -->
+        <!-- weibei-scene:scene-b -->
+        <!-- weibei-scene:scene-c -->
+        结尾正文。
+        """,
+        expressionPlan: RichAnswerExpressionPlan(
+            action: .manipulate,
+            summary: "按原顺序呈现三个空间场景",
+            families: [.timeAndSpace],
+            preferredSurface: .inline,
+            directManipulation: true
+        ),
+        scenes: [
+            scene("scene-a", plan: planA),
+            scene("scene-b", plan: planB),
+            scene("scene-c", plan: planC),
+        ],
+        evidenceLedger: ["scene-a", "scene-b", "scene-c"].map { id in
+            RichAnswerEvidence(
+                id: "evidence-\(id)",
+                sourceLabel: "[材料：\(id)]",
+                excerpt: "\(id) 的原文依据"
+            )
+        },
+        fallback: RichAnswerFallback(
+            text: "整组富回答不可用，保留正文。",
+            reason: "整组协议被拒绝"
+        )
+    )
+    let presentation = RichAnswerEngine.prepare(
+        envelope: envelope,
+        environment: RichAnswerEnvironment(
+            contextRevision: "revision-group-budget",
+            allowedSourceLabels: ["[材料：scene-a]", "[材料：scene-b]", "[材料：scene-c]"]
+        )
+    )
+
+    try richAnswerRequire(
+        presentation.mode == .rich
+            && presentation.scenes.map(\.id) == ["scene-a", "scene-c"]
+            && presentation.expressionPlan?.directManipulation == false,
+        "a rejected direct-manipulation scene does not collapse the presentation or leave a stale interaction claim"
+    )
+    try richAnswerRequire(
+        presentation.resolvedParts == [
+            .narrative("开头正文。"),
+            .scene("scene-a"),
+            .narrative("中间项安全兜底"),
+            .scene("scene-c"),
+            .narrative("结尾正文。"),
+        ],
+        "whole-call overage replaces only middle B at its marker and preserves A/fallback/C order"
+    )
+    try richAnswerRequire(
+        presentation.evidenceLedger.map(\.id) == ["evidence-scene-a", "evidence-scene-c"]
+            && presentation.evidenceState == .complete
+            && presentation.diagnostics.contains(where: {
+                $0.code == .budgetExceeded && $0.sceneID == "scene-b"
+            }),
+        "whole-call admission recomputes evidence from admitted scenes and records the rejected middle scene"
+    )
+
+    let unadmittedPresentation = RichAnswerPresentation(
+        mode: .rich,
+        narrative: "开头正文。\n\n结尾正文。",
+        parts: [
+            .narrative("开头正文。"),
+            .scene("scene-a"),
+            .scene("scene-b"),
+            .scene("scene-c"),
+            .narrative("结尾正文。"),
+        ],
+        expressionPlan: envelope.expressionPlan,
+        scenes: envelope.scenes,
+        evidenceLedger: envelope.evidenceLedger,
+        fallback: envelope.fallback,
+        evidenceState: .complete
+    )
+    let message = AgentMessage(
+        role: .assistant,
+        text: "开头正文。\n\n中间项安全兜底\n\n结尾正文。",
+        source: nil,
+        backend: .pi
+    )
+    var messageObject = try richAnswerJSONObject(from: JSONEncoder().encode(message))
+    messageObject["richAnswer"] = try JSONSerialization.jsonObject(
+        with: JSONEncoder().encode(unadmittedPresentation)
+    )
+    let reopenedMessage = try JSONDecoder().decode(
+        AgentMessage.self,
+        from: JSONSerialization.data(withJSONObject: messageObject)
+    )
+    let replayedMessage = try JSONDecoder().decode(
+        AgentMessage.self,
+        from: JSONEncoder().encode(reopenedMessage)
+    )
+    try richAnswerRequire(
+        reopenedMessage.richAnswer == presentation
+            && replayedMessage.richAnswer == presentation,
+        "AgentMessage reopen and replay apply the same idempotent presentation admission as a new reply"
+    )
+
+    var historicalRenderPlans = unadmittedPresentation
+    historicalRenderPlans.expressionPlan = nil
+    let historicalRenderPlanMessage = AgentMessage(
+        role: .assistant,
+        text: historicalRenderPlans.narrative,
+        source: nil,
+        backend: .pi,
+        richAnswer: historicalRenderPlans
+    )
+    try richAnswerRequire(
+        historicalRenderPlanMessage.richAnswer?.scenes.map(\.id) == ["scene-a", "scene-c"]
+            && historicalRenderPlanMessage.richAnswer?.resolvedParts == presentation.resolvedParts,
+        "historical renderPlan scenes without the later optional expressionPlan still use registry and group admission"
+    )
+
+    let historicalLegacyScene = RichAnswerScene(
+        id: "historical-legacy-scene",
+        title: "旧版知识对象",
+        family: .textAndAlignment,
+        objects: [
+            RichAnswerObject(
+                id: "historical-legacy-object",
+                kind: .text,
+                label: "旧版正文对象",
+                text: "旧版场景仍可阅读",
+                evidenceIDs: ["historical-legacy-evidence"]
+            ),
+        ],
+        evidenceIDs: ["historical-legacy-evidence"]
+    )
+    let historicalLegacyPresentation = RichAnswerPresentation(
+        mode: .rich,
+        narrative: "旧版正文。",
+        parts: [
+            .narrative("旧版正文。"),
+            .scene(historicalLegacyScene.id),
+        ],
+        scenes: [historicalLegacyScene],
+        evidenceLedger: [
+            RichAnswerEvidence(
+                id: "historical-legacy-evidence",
+                sourceLabel: "[材料：旧版资料]",
+                excerpt: "旧版场景仍可阅读"
+            ),
+        ],
+        fallback: RichAnswerFallback(
+            text: "保留旧版正文。",
+            reason: "旧版场景不可用"
+        ),
+        evidenceState: .complete
+    )
+    let historicalLegacyMessage = AgentMessage(
+        role: .assistant,
+        text: historicalLegacyPresentation.narrative,
+        source: nil,
+        backend: .pi,
+        richAnswer: historicalLegacyPresentation
+    )
+    try richAnswerRequire(
+        historicalLegacyMessage.richAnswer?.scenes == [historicalLegacyScene]
+            && historicalLegacyMessage.richAnswer?.resolvedParts
+                == historicalLegacyPresentation.resolvedParts,
+        "historical legacy scenes without expressionPlan are not deleted by program and UI replay validation"
+    )
+
+    var missingEvidencePresentation = presentation
+    missingEvidencePresentation.evidenceState = .missing
+    let missingEvidenceMessage = AgentMessage(
+        role: .assistant,
+        text: missingEvidencePresentation.narrative,
+        source: nil,
+        backend: .pi,
+        richAnswer: missingEvidencePresentation
+    )
+    try richAnswerRequire(
+        missingEvidenceMessage.richAnswer?.evidenceState == .missing,
+        "presentation admission never upgrades a historical missing evidence state"
+    )
+}
+
+private func checkTrustedAssetAdmissionAndPersistence() throws {
+    let contextRevision = "revision-trusted-assets"
+    let assetIDs = (1...5).map { "context-image-\($0)" }
+    let assetByteCount = RichAnswerRendererRegistry.formalTrustedAssetMaxBytes
+
+    func plan(assetID: String, sceneID: String) -> RichAnswerRenderPlan {
+        RichAnswerRenderPlan(
+            renderer: RichAnswerRendererRegistry.imageOverlayRenderer,
+            specVersion: "weibei.image-overlay.v1",
+            spec: RichAnswerRenderSpec(fields: [
+                "image": .object([
+                    "kind": .string("assetRef"),
+                    "source": .string(assetID),
+                ]),
+                "layers": .array([]),
+            ]),
+            sourceBindings: [
+                RichAnswerRenderSourceBinding(
+                    id: "source-\(sceneID)",
+                    evidenceID: "evidence-\(sceneID)",
+                    target: "spec.image",
+                    role: "basis"
+                ),
+            ],
+            artifactRefs: [
+                RichAnswerRenderArtifactRef(
+                    id: assetID,
+                    kind: "source-image",
+                    mimeType: "image/png",
+                    role: "primary",
+                    sizeBytes: assetByteCount
+                ),
+            ],
+            fallback: RichAnswerRenderFallback(
+                mode: .narrativeOnly,
+                reason: "图像暂不可用",
+                text: "\(sceneID) 安全正文"
+            ),
+            qualityBudget: RichAnswerRenderQualityBudget(
+                maxNodes: 32,
+                maxDataPoints: 16,
+                maxArtifacts: 1,
+                maxBytes: 64_000,
+                maxWidth: 960,
+                maxHeight: 720,
+                maxAnimationFPS: 30,
+                maxInteractionLatencyMS: 140,
+                allowAnimation: true,
+                allowWebGL: false,
+                allowNetwork: false
+            )
+        )
+    }
+
+    let scenes = assetIDs.enumerated().map { offset, assetID in
+        let sceneID = "asset-scene-\(offset + 1)"
+        return RichAnswerScene(
+            id: sceneID,
+            title: "素材 \(offset + 1)",
+            family: .imageAndOverlay,
+            objects: [],
+            evidenceIDs: ["evidence-\(sceneID)"],
+            renderPlan: plan(assetID: assetID, sceneID: sceneID)
+        )
+    }
+    let evidence = assetIDs.enumerated().map { offset, assetID in
+        let sceneID = "asset-scene-\(offset + 1)"
+        return RichAnswerEvidence(
+            id: "evidence-\(sceneID)",
+            sourceLabel: "[材料：素材\(offset + 1)]",
+            excerpt: "素材 \(offset + 1) 的真实来源",
+            assetIDs: [assetID]
+        )
+    }
+    let envelope = RichAnswerEnvelope(
+        contextRevision: contextRevision,
+        narrative: (
+            ["五个素材说明正文。"]
+                + (1...5).map { "<!-- weibei-scene:asset-scene-\($0) -->" }
+        ).joined(separator: "\n"),
+        expressionPlan: RichAnswerExpressionPlan(
+            action: .compare,
+            summary: "按顺序展示五个已读取素材",
+            families: [.imageAndOverlay],
+            preferredSurface: .inline,
+            directManipulation: false
+        ),
+        scenes: scenes,
+        evidenceLedger: evidence,
+        fallback: RichAnswerFallback(
+            text: "保留素材说明正文。",
+            reason: "素材视觉不可用"
+        )
+    )
+    let verifiedAssetBytes = Dictionary(
+        uniqueKeysWithValues: assetIDs.map { ($0, assetByteCount) }
+    )
+    let environment = RichAnswerEnvironment(
+        contextRevision: contextRevision,
+        allowedSourceLabels: Set(evidence.map(\.sourceLabel)),
+        allowedAssetIDs: Set(assetIDs),
+        verifiedAssetBytes: verifiedAssetBytes
+    )
+    let admitted = RichAnswerEngine.prepare(
+        envelope: envelope,
+        environment: environment
+    )
+    let admissionDiagnostics = admitted.diagnostics.map {
+        "\($0.code.rawValue):\($0.sceneID ?? "-"):\($0.message)"
+    }
+    try richAnswerRequire(
+        admitted.mode == .rich
+            && admitted.scenes.map(\.id) == [
+                "asset-scene-1",
+                "asset-scene-2",
+                "asset-scene-3",
+                "asset-scene-4",
+            ]
+            && admitted.diagnostics.contains(where: {
+                $0.code == .budgetExceeded && $0.sceneID == "asset-scene-5"
+            }),
+        "four verified 850 KB assetRefs are admitted across scenes and only the fifth is locally rejected; mode=\(admitted.mode.rawValue) scenes=\(admitted.scenes.map(\.id)) diagnostics=\(admissionDiagnostics)"
+    )
+
+    var mismatchedBytes = verifiedAssetBytes
+    mismatchedBytes[assetIDs[0]] = assetByteCount - 1
+    let mismatched = RichAnswerEngine.prepare(
+        envelope: RichAnswerEnvelope(
+            contextRevision: contextRevision,
+            narrative: "<!-- weibei-scene:asset-scene-1 -->",
+            expressionPlan: envelope.expressionPlan,
+            scenes: [scenes[0]],
+            evidenceLedger: [evidence[0]],
+            fallback: envelope.fallback
+        ),
+        environment: RichAnswerEnvironment(
+            contextRevision: contextRevision,
+            allowedSourceLabels: [evidence[0].sourceLabel],
+            allowedAssetIDs: [assetIDs[0]],
+            verifiedAssetBytes: mismatchedBytes
+        )
+    )
+    try richAnswerRequire(
+        mismatched.mode == .narrativeOnly
+            && mismatched.diagnostics.contains(where: { $0.code == .invalidParameter }),
+        "a model-declared artifact size is rejected when it differs from the current visual-asset read"
+    )
+
+    let unread = RichAnswerEngine.prepare(
+        envelope: RichAnswerEnvelope(
+            contextRevision: contextRevision,
+            narrative: "<!-- weibei-scene:asset-scene-1 -->",
+            expressionPlan: envelope.expressionPlan,
+            scenes: [scenes[0]],
+            evidenceLedger: [evidence[0]],
+            fallback: envelope.fallback
+        ),
+        environment: RichAnswerEnvironment(
+            contextRevision: contextRevision,
+            allowedSourceLabels: [evidence[0].sourceLabel],
+            allowedAssetIDs: [assetIDs[0]]
+        )
+    )
+    try richAnswerRequire(
+        unread.mode == .narrativeOnly
+            && unread.diagnostics.contains(where: { $0.code == .unauthorizedAsset }),
+        "an allowed but unread assetRef is not admitted as trusted local material"
+    )
+
+    let aliases = Dictionary(
+        uniqueKeysWithValues: assetIDs.prefix(4).map { ($0, "persistent-\($0)") }
+    )
+    let resolved = admitted.resolvingAssetIDs(using: aliases)
+    let resolvedMessage = AgentMessage(
+        role: .assistant,
+        text: resolved.narrative,
+        source: nil,
+        backend: .pi,
+        richAnswer: resolved
+    )
+    let reopened = try JSONDecoder().decode(
+        AgentMessage.self,
+        from: JSONEncoder().encode(resolvedMessage)
+    )
+    try richAnswerRequire(
+        reopened.richAnswer?.mode == .rich
+            && reopened.richAnswer?.scenes.count == 4
+            && reopened.richAnswer?.scenes.allSatisfy({ scene in
+                guard let renderPlan = scene.renderPlan,
+                      let originalAssetID = assetIDs.first(where: {
+                          aliases[$0] == renderPlan.artifactRefs.first?.id
+                      }) else {
+                    return false
+                }
+                return renderPlan.referencedAssetIDs == Set([aliases[originalAssetID]!])
+                    && renderPlan.referencedAssetBytes == [assetByteCount]
+            }) == true,
+        "context asset IDs resolve in both spec and artifactRefs, then survive AgentMessage init and reopen with the same budget"
+    )
+}
+
 private func checkRichAnswerInlineMathDisplayNormalization() throws {
     let source = #"小角度近似：\(T=2\pi\sqrt{L/g}\)，摆长加倍时周期乘以 \(\sqrt2\)，且 \(a\le b\)。回归：\(y_i=\hat y_i+\hat u_i\)，\(\sum \hat u_i=0\)。"#
     let display = RichAnswerDisplayText.normalizedInlineMath(source)
@@ -50,7 +1112,7 @@ private func checkRichAnswerInlineMathDisplayNormalization() throws {
             && display.contains("√2")
             && display.contains("a≤b")
             && display.contains("∑")
-            && display.contains("\u{0302}")
+            && display.unicodeScalars.contains("\u{0302}")
             && !display.contains(#"\sqrt"#)
             && !display.contains(#"\("#)
             && !display.contains(#"\hat"#)
@@ -65,7 +1127,7 @@ private func checkRichAnswerInlineMathDisplayNormalization() throws {
             && olsDisplay.contains("Covₙ(x,û)=0")
             && olsDisplay.contains("(x̄,ȳ)")
             && olsDisplay.contains("û̄=0")
-            && olsDisplay.contains("Σᵢ ûᵢ=0")
+            && olsDisplay.contains("∑ᵢ ûᵢ=0")
             && !olsDisplay.contains(#"\hat"#)
             && !olsDisplay.contains(#"\bar"#),
         "OLS rich-answer math displays hats, bars, sums, and subscripts without raw LaTeX: \(olsDisplay)"
@@ -2229,6 +3291,15 @@ private func checkAssetAliasesResolveBeforePersistence() throws {
                         role: "artifact"
                     ),
                 ],
+                artifactRefs: [
+                    RichAnswerRenderArtifactRef(
+                        id: "course-item-1",
+                        kind: "source-image",
+                        mimeType: "image/png",
+                        role: "primary",
+                        sizeBytes: 1_024
+                    ),
+                ],
                 fallback: RichAnswerRenderFallback(
                     mode: .narrativeOnly,
                     reason: "图像叠层不可用",
@@ -2243,7 +3314,8 @@ private func checkAssetAliasesResolveBeforePersistence() throws {
         environment: RichAnswerEnvironment(
             contextRevision: "revision-7",
             allowedSourceLabels: ["[材料：样例]"],
-            allowedAssetIDs: ["course-item-1"]
+            allowedAssetIDs: ["course-item-1"],
+            verifiedAssetBytes: ["course-item-1": 1_024]
         )
     ).resolvingAssetIDs(using: ["course-item-1": "persistent-material-id"])
 
@@ -2255,6 +3327,8 @@ private func checkAssetAliasesResolveBeforePersistence() throws {
                 "kind": .string("assetRef"),
                 "source": .string("persistent-material-id"),
             ])
+            && presentation.scenes[0].renderPlan?.artifactRefs.first?.id
+                == "persistent-material-id"
             && presentation.evidenceLedger[0].assetIDs == ["persistent-material-id"],
         "request-local asset aliases resolve across legacy, UI, renderPlan, and evidence before persistence"
     )
