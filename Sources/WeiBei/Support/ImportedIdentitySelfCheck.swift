@@ -196,23 +196,46 @@ enum ImportedIdentitySelfCheck {
             reopened.studySessions == store.studySessions,
             "重开工作区后旧 Chat 迁移结果发生二次漂移"
         )
-        reopened.activateStudySession(uniqueSession.id)
-        reopened.createStudySession()
-        let inheritedCourseSessionID = reopened.activeStudySessionID
+        try check(
+            reopened.activateStudySession(
+                uniqueSession.id,
+                expectedCourseID: courseA.id,
+                expectedScopeNeedsReview: false
+            ),
+            "无法按固定课程激活旧 Chat"
+        )
+        let courseSessionID = reopened.createStudySession(courseID: courseA.id)?.id
         try check(
             reopened.activeStudySession?.courseID == courseA.id
                 && reopened.activeStudySession?.scopeNeedsReview == false,
-            "新 Chat 没有继承当前 Chat 的固定课程"
+            "显式新建课程 Chat 没有固定到指定课程"
         )
-        reopened.activateStudySession(sharedSession.id)
-        reopened.createStudySession()
+        try check(
+            reopened.activateStudySession(
+                sharedSession.id,
+                expectedCourseID: nil,
+                expectedScopeNeedsReview: true
+            ),
+            "无法按待归类作用域激活旧 Chat"
+        )
+        try check(
+            reopened.classifyStudySession(sharedSession.id, as: courseB.id)
+                && reopened.activeStudySession?.courseID == courseB.id
+                && reopened.activeStudySession?.scopeNeedsReview == false,
+            "待归类 Chat 无法一次性归入用户选择的课程"
+        )
+        try check(
+            !reopened.classifyStudySession(sharedSession.id, as: nil),
+            "已经固定作用域的 Chat 仍可被普通操作重新归类"
+        )
+        reopened.createStudySession(courseID: nil)
         try check(
             reopened.activeStudySession?.courseID == nil
                 && reopened.activeStudySession?.scopeNeedsReview == false,
-            "从待归类 Chat 新建对话时传播了歧义状态"
+            "显式新建全局 Chat 时传播了待归类状态"
         )
         reopened.deleteCourse(courseA.id)
-        for sessionID in [uniqueSession.id, inheritedCourseSessionID].compactMap({ $0 }) {
+        for sessionID in [uniqueSession.id, courseSessionID].compactMap({ $0 }) {
             let retained = try require(
                 reopened.studySessions.first { $0.id == sessionID },
                 "删除课程时误删了所属 Chat"

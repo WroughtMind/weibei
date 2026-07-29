@@ -81,7 +81,11 @@ struct CourseRecordsView: View {
                                     selected: session.id == selectedSessionID
                                 ) {
                                     selectedSessionID = session.id
-                                    store.continueCourseSession(session.id)
+                                    store.continueCourseSession(
+                                        session.id,
+                                        expectedCourseID: session.courseID,
+                                        expectedScopeNeedsReview: session.scopeNeedsReview == true
+                                    )
                                 }
                                 CourseHairline()
                             }

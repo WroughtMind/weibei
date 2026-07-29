@@ -387,7 +387,11 @@ struct CourseHubView: View {
                             actionTitle: store.ui("继续对话", "Continue chat")
                         ) {
                             selectedSessionID = session.id
-                            store.continueCourseSession(session.id)
+                            store.continueCourseSession(
+                                session.id,
+                                expectedCourseID: courseID,
+                                expectedScopeNeedsReview: false
+                            )
                         }
                     }
                 }
@@ -527,7 +531,11 @@ struct CourseHubView: View {
                             prominence: linked ? .linked : (dimmed ? .dimmed : .normal)
                         ) {
                             selectedSessionID = session.id
-                            store.continueCourseSession(session.id)
+                            store.continueCourseSession(
+                                session.id,
+                                expectedCourseID: courseID,
+                                expectedScopeNeedsReview: false
+                            )
                         }
                         if session.id != sessions.prefix(8).last?.id {
                             CourseHairline().padding(.leading, 40)

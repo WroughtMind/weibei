@@ -2081,6 +2081,14 @@ struct AgentPaneView: View {
                         .transition(WeiBeiTransition.floating)
                 }
 
+                if let notice = store.agentContextScopeNotice {
+                    Label(notice, systemImage: "rectangle.on.rectangle.slash")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(WeiBeiTheme.secondaryInk)
+                        .lineLimit(wide ? 2 : 3)
+                        .accessibilityIdentifier("agent-course-scope-notice")
+                }
+
                 AgentComposerField(
                     prompt: agentPrompt,
                     focused: $draftFocused,
@@ -2210,14 +2218,15 @@ struct AgentPaneView: View {
         store.askAgent()
     }
 
-    /// Compact catalog for immersive hover tab + pane header — material / practice history.
+    /// Compact catalog for immersive hover tab + pane header.
     private var agentSessionCatalogMenu: some View {
         Menu {
             sessionCatalogContent
         } label: {
             Label {
-                Text(store.ui("目录", "Catalog"))
+                Text(store.activeStudySessionScopeTitle)
                     .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
             } icon: {
                 Image(systemName: "list.bullet.rectangle")
             }
@@ -2226,7 +2235,7 @@ struct AgentPaneView: View {
         .menuStyle(.borderlessButton)
         .fixedSize()
         .accessibilityLabel(Text(store.ui("对话目录", "Conversation catalog")))
-        .help(store.ui("按资料或实践切换历史会话", "Switch history by material or practice"))
+        .help(store.ui("按全局或课程切换对话", "Switch Chats by global or course scope"))
     }
 
     private var sessionMenu: some View {
@@ -2237,42 +2246,83 @@ struct AgentPaneView: View {
         }
         .buttonStyle(WeiBeiIconButtonStyle(size: 24))
         .accessibilityLabel(Text(store.ui("学习会话", "Study Sessions")))
-        .help(store.ui("按资料查看、新建或切换对话", "Browse by material, create, or switch conversations"))
+        .help(store.ui("按全局或课程新建、切换对话", "Create or switch global and course Chats"))
     }
 
     @ViewBuilder
     private var sessionCatalogContent: some View {
-        Button {
-            store.createStudySession()
-        } label: {
-            Label(store.ui("新对话", "New Conversation"), systemImage: "plus")
+        if let courseID = store.activeStudySession?.courseID,
+           store.activeStudySession?.scopeNeedsReview == false,
+           let course = store.course(withID: courseID) {
+            Button {
+                store.createStudySession(courseID: courseID)
+            } label: {
+                Label(
+                    store.ui("新建“\(course.title)”对话", "New \"\(course.title)\" Chat"),
+                    systemImage: "plus.bubble"
+                )
+            }
         }
 
         Button {
-            store.setShowAllStudySessions(!store.showAllStudySessions)
+            store.createStudySession(courseID: nil)
         } label: {
-            Label(
-                store.showAllStudySessions
-                    ? store.ui("仅当前资料", "Current Material Only")
-                    : store.ui("全部资料 / 实践", "All Materials / Practice"),
-                systemImage: store.showAllStudySessions ? "folder" : "books.vertical"
-            )
+            Label(store.ui("新建全局对话", "New Global Chat"), systemImage: "globe")
         }
 
         Divider()
 
-        if store.showAllStudySessions {
-            ForEach(Array(store.studySessionsGroupedByMaterial.enumerated()), id: \.offset) { _, group in
-                Section(group.title) {
-                    ForEach(group.sessions.prefix(12)) { session in
+        if !store.globalStudySessions.isEmpty {
+            Section(store.ui("全局", "Global")) {
+                ForEach(store.globalStudySessions.prefix(12)) { session in
+                    sessionMenuButton(session)
+                }
+            }
+        }
+
+        ForEach(store.courses) { course in
+            let sessions = store.studySessions(in: course.id)
+            if !sessions.isEmpty {
+                Section(course.title) {
+                    ForEach(sessions.prefix(12)) { session in
                         sessionMenuButton(session)
                     }
                 }
             }
-        } else {
-            Section(store.ui("与当前资料相关", "Related to Current Material")) {
-                ForEach(store.studySessionsForMenu.prefix(16)) { session in
-                    sessionMenuButton(session)
+        }
+
+        if !store.unclassifiedStudySessions.isEmpty {
+            Section(store.ui("待归类", "Needs Course")) {
+                ForEach(store.unclassifiedStudySessions.prefix(12)) { session in
+                    Menu(session.title) {
+                        Button {
+                            store.activateStudySession(
+                                session.id,
+                                expectedCourseID: nil,
+                                expectedScopeNeedsReview: true
+                            )
+                        } label: {
+                            Label(store.ui("打开并查看", "Open and Review"), systemImage: "eye")
+                        }
+
+                        Divider()
+
+                        Button {
+                            store.classifyStudySession(session.id, as: nil)
+                        } label: {
+                            Label(store.ui("归为全局对话", "Classify as Global"), systemImage: "globe")
+                        }
+
+                        if !store.courses.isEmpty {
+                            Section(store.ui("归入课程", "Classify into Course")) {
+                                ForEach(store.courses) { course in
+                                    Button(course.title) {
+                                        store.classifyStudySession(session.id, as: course.id)
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -2332,7 +2382,11 @@ struct AgentPaneView: View {
     @ViewBuilder
     private func sessionMenuButton(_ session: StudySession) -> some View {
         Button {
-            store.activateStudySession(session.id)
+            store.activateStudySession(
+                session.id,
+                expectedCourseID: session.courseID,
+                expectedScopeNeedsReview: session.scopeNeedsReview == true
+            )
         } label: {
             if session.id == store.activeStudySessionID {
                 Label(session.title, systemImage: "checkmark")
