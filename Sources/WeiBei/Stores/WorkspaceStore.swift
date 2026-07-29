@@ -488,6 +488,7 @@ final class WorkspaceStore: ObservableObject {
     private var workspaceSaveGeneration: UInt64 = 0
     private let workspaceSaveDebounceNanoseconds: UInt64 = 280_000_000
     private var noteSourceLinksMigrationVersion = 0
+    private var studySessionScopeMigrationVersion = 0
     private var noteSourceRelationIndex = NoteSourceRelationIndex(links: [])
     private var courseMembershipIndex = CourseItemMemberships()
     private var courseWorkspaceReturnFocus: PaneFocus?
@@ -808,6 +809,7 @@ final class WorkspaceStore: ObservableObject {
         let migratedStudyLocationTitles = refreshStudyLocationReferenceTitles()
         let sanitizedNoteSourceLinks = sanitizeNoteSourceLinks()
         let sanitizedCourseLibrary = sanitizeCourseLibrary()
+        let migratedStudySessionScopes = migrateLegacyStudySessionScopes()
         courseDocumentSearchIndex.synchronize(allItems)
         ensureActiveStudySession()
         let savedInitializationChanges: Bool
@@ -821,6 +823,7 @@ final class WorkspaceStore: ObservableObject {
                     || migratedStudyLocationTitles
                     || sanitizedNoteSourceLinks
                     || sanitizedCourseLibrary
+                    || migratedStudySessionScopes
                     || restoredCourseProjectRoots
                     || needsSelectionAskThreadsWorkspaceMigration {
             savedInitializationChanges = save()
@@ -6141,6 +6144,10 @@ final class WorkspaceStore: ObservableObject {
         resolvedCourseRootURLs.removeValue(forKey: courseID)
         courseRootUnavailableReasons.removeValue(forKey: courseID)
         courses.removeAll { $0.id == courseID }
+        for index in studySessions.indices where studySessions[index].courseID == courseID {
+            studySessions[index].courseID = nil
+            studySessions[index].scopeNeedsReview = true
+        }
         var memberships = courseMembershipIndex
         memberships.removeCourse(courseID)
         courseItemMemberships = memberships.values
@@ -6496,53 +6503,36 @@ final class WorkspaceStore: ObservableObject {
         orderedStudySessions.filter { !$0.messages.isEmpty }
     }
 
-    /// Sessions that touch any material/note belonging to the course (no session.courseID yet).
+    /// Non-empty Chats whose fixed scope is this course.
     func sessionsTouchingCourse(_ courseID: UUID) -> [StudySession] {
-        let itemIDs = Set(courseMembershipIndex.itemIDs(in: courseID))
-        guard !itemIDs.isEmpty else { return [] }
-        return orderedStudySessions.filter { session in
-            guard !session.messages.isEmpty else { return false }
-            if let materialID = session.materialItemID, itemIDs.contains(materialID) {
-                return true
-            }
-            if let groupingID = session.groupingMaterialItemID, itemIDs.contains(groupingID) {
-                return true
-            }
-            return session.focusItemIDs.contains(where: itemIDs.contains)
+        orderedStudySessions.filter {
+            !$0.messages.isEmpty
+                && $0.courseID == courseID
+                && $0.scopeNeedsReview == false
         }
     }
 
     /// Sessions that reference a specific material (and optionally other focus items).
     func sessionsTouchingMaterial(_ materialID: String, in courseID: UUID? = nil) -> [StudySession] {
-        let allowed: Set<String>? = courseID.map { Set(courseMembershipIndex.itemIDs(in: $0)) }
         return orderedStudySessions.filter { session in
             guard !session.messages.isEmpty else { return false }
+            if let courseID {
+                guard session.courseID == courseID,
+                      session.scopeNeedsReview == false else { return false }
+            }
             let touches = session.materialItemID == materialID
                 || session.groupingMaterialItemID == materialID
                 || session.focusItemIDs.contains(materialID)
-            guard touches else { return false }
-            if let allowed {
-                let sessionItems = Set(session.focusItemIDs + [session.materialItemID, session.groupingMaterialItemID].compactMap { $0 })
-                return !sessionItems.isDisjoint(with: allowed)
-            }
-            return true
+            return touches
         }
     }
 
-    /// Best-effort course ownership for a session via materials/focus items (no session.courseID yet).
+    /// Exact persisted Chat scope; reading focus and the active course never reclassify it.
     func primaryCourseID(for session: StudySession) -> UUID? {
-        let touched = Set(
-            session.focusItemIDs
-                + [session.materialItemID, session.groupingMaterialItemID].compactMap { $0 }
-        )
-        guard !touched.isEmpty else { return nil }
-        let matched = courses.filter { course in
-            !Set(courseMembershipIndex.itemIDs(in: course.id)).isDisjoint(with: touched)
-        }
-        if let activeCourseID, matched.contains(where: { $0.id == activeCourseID }) {
-            return activeCourseID
-        }
-        return matched.first?.id
+        guard session.scopeNeedsReview == false,
+              let courseID = session.courseID,
+              courses.contains(where: { $0.id == courseID }) else { return nil }
+        return courseID
     }
 
     var activeCourseMemories: [LearningMemoryEntry] {
@@ -6713,9 +6703,13 @@ final class WorkspaceStore: ObservableObject {
     func createStudySession() {
         cancelAgentRequest()
         syncActiveStudySession()
+        let inheritedCourseID = activeStudySession.flatMap {
+            $0.scopeNeedsReview == false ? $0.courseID : nil
+        }
         let materialID = selectedMaterialItem?.id
         let session = StudySession(
             title: ui("新学习会话", "New Study Session"),
+            courseID: inheritedCourseID,
             focusItemIDs: [materialID].compactMap { $0 },
             materialItemID: materialID
         )
@@ -10559,6 +10553,87 @@ final class WorkspaceStore: ObservableObject {
             || activeCourseID != previousActiveCourseID
     }
 
+    @discardableResult
+    private func migrateLegacyStudySessionScopes() -> Bool {
+        guard studySessionScopeMigrationVersion < 1 else {
+            return sanitizeStudySessionScopes()
+        }
+
+        let validCourseIDs = Set(courses.map(\.id))
+        for index in studySessions.indices
+        where studySessions[index].scopeNeedsReview == nil {
+            let referencedItemIDs = Set(
+                studySessions[index].focusItemIDs
+                    + [
+                        studySessions[index].materialItemID,
+                        studySessions[index].groupingMaterialItemID,
+                    ].compactMap { $0 }
+            )
+            let isBlank = studySessions[index].messages.isEmpty
+                && studySessions[index].summary
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .isEmpty
+                && referencedItemIDs.isEmpty
+
+            if isBlank {
+                studySessions[index].courseID = nil
+                studySessions[index].scopeNeedsReview = false
+                continue
+            }
+
+            var resolvedCourseID: UUID?
+            var isAmbiguous = referencedItemIDs.isEmpty
+            for itemID in referencedItemIDs {
+                let itemCourseIDs = Set(
+                    courseMembershipIndex.courseIDs(for: itemID)
+                ).intersection(validCourseIDs)
+                guard itemCourseIDs.count == 1,
+                      let itemCourseID = itemCourseIDs.first else {
+                    isAmbiguous = true
+                    break
+                }
+                if let resolvedCourseID,
+                   resolvedCourseID != itemCourseID {
+                    isAmbiguous = true
+                    break
+                }
+                resolvedCourseID = itemCourseID
+            }
+
+            if !isAmbiguous, let resolvedCourseID {
+                studySessions[index].courseID = resolvedCourseID
+                studySessions[index].scopeNeedsReview = false
+            } else {
+                studySessions[index].courseID = nil
+                studySessions[index].scopeNeedsReview = true
+            }
+        }
+        studySessionScopeMigrationVersion = 1
+        _ = sanitizeStudySessionScopes()
+        return true
+    }
+
+    @discardableResult
+    private func sanitizeStudySessionScopes() -> Bool {
+        let validCourseIDs = Set(courses.map(\.id))
+        var changed = false
+        for index in studySessions.indices {
+            let hasInvalidCourse = studySessions[index].courseID.map {
+                !validCourseIDs.contains($0)
+            } ?? false
+            if hasInvalidCourse || studySessions[index].scopeNeedsReview == nil {
+                studySessions[index].courseID = nil
+                studySessions[index].scopeNeedsReview = true
+                changed = true
+            } else if studySessions[index].scopeNeedsReview == true,
+                      studySessions[index].courseID != nil {
+                studySessions[index].courseID = nil
+                changed = true
+            }
+        }
+        return changed
+    }
+
     private func nextCourseColorIndex() -> Int {
         let used = Set(courses.map(\.colorIndex))
         return (0..<8).first(where: { !used.contains($0) }) ?? (courses.count % 8)
@@ -11731,6 +11806,7 @@ final class WorkspaceStore: ObservableObject {
                 AgentMessage(role: .assistant, text: "实际利率会扣除通货膨胀的影响。", source: materialA.title, backend: .pi),
             ],
             summary: "比较名义利率与实际利率，并联系货币政策工具。",
+            courseID: courseA.id,
             focusItemIDs: [materialA.id, materialB.id, noteA.id],
             flow: StudyFlowState(phase: .note, suggestedNext: ["把利率公式整理到复习笔记", "用一道例题检验区别"]),
             updatedAt: Date().addingTimeInterval(-900)
@@ -15241,6 +15317,7 @@ final class WorkspaceStore: ObservableObject {
             }
             return bounded
         }
+        studySessionScopeMigrationVersion = snapshot.studySessionScopeMigrationVersion ?? 0
         activeStudySessionID = snapshot.activeStudySessionID
         if let persistedSelectionAskThreads = snapshot.selectionAskThreads {
             loadedSelectionAskThreadsFromWorkspaceSnapshot = true
@@ -15393,6 +15470,7 @@ final class WorkspaceStore: ObservableObject {
                 learningMemoryEntries: learningMemoryEntries,
                 learningMemoryRevision: learningMemoryRevision,
                 studySessions: studySessions,
+                studySessionScopeMigrationVersion: studySessionScopeMigrationVersion,
                 activeStudySessionID: activeStudySessionID,
                 selectionAskThreads: selectionAskThreads,
                 modelName: modelName,

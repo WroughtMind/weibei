@@ -137,6 +137,10 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
     public var title: String
     public var messages: [AgentMessage]
     public var summary: String
+    /// Fixed Chat scope. `nil` means the global workspace, never the active course.
+    public var courseID: UUID?
+    /// `nil` exists only in pre-scope snapshots awaiting one-time migration.
+    public var scopeNeedsReview: Bool?
     public var focusItemIDs: [String]
     /// Preferred material for grouping (scheme A). Optional for older workspaces.
     public var materialItemID: String?
@@ -149,6 +153,8 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
         title: String,
         messages: [AgentMessage] = [],
         summary: String = "",
+        courseID: UUID? = nil,
+        scopeNeedsReview: Bool = false,
         focusItemIDs: [String] = [],
         materialItemID: String? = nil,
         flow: StudyFlowState = StudyFlowState(),
@@ -159,6 +165,8 @@ public struct StudySession: Identifiable, Codable, Hashable, Sendable {
         self.title = title
         self.messages = messages
         self.summary = summary
+        self.courseID = courseID
+        self.scopeNeedsReview = scopeNeedsReview
         self.focusItemIDs = focusItemIDs
         self.materialItemID = materialItemID
         self.flow = flow

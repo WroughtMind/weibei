@@ -10,6 +10,7 @@ enum ImportedIdentitySelfCheck {
         try duplicateIdentityMigrationPreservesConflictingDrafts()
         try duplicateIdentityPreservesConflictingStorageMetadata()
         try offlineLegacyPathMigratesWhenItReturns()
+        try legacyChatScopesMigrateOnceAndPersist()
         try sameVolumeMoveKeepsIdentityRelationsNavigationAndIndex()
         try temporarilyUnavailableNoteRetainsLatestEdit()
         try offlineLaunchNoteRetainsEditWhenFileReturns()
@@ -22,6 +23,197 @@ enum ImportedIdentitySelfCheck {
         try failedWorkspaceSaveRecoversRenameOnRestart()
         try duplicateLegacyIdentityMigratesInOneLaunch()
         try replacedAndCrossVolumeFilesReceiveNewIdentities()
+    }
+
+    @MainActor
+    private static func legacyChatScopesMigrateOnceAndPersist() throws {
+        let fixture = try WorkspaceFixture(name: "legacy-chat-scope")
+        defer { fixture.remove() }
+
+        let courseA = Course(id: UUID(), title: "课程 A")
+        let courseB = Course(id: UUID(), title: "课程 B")
+        let uniqueItem = StudyItem(
+            id: "legacy-chat-unique",
+            title: "课程 A 文稿",
+            subtitle: "a.txt",
+            kind: .text,
+            urlPath: nil,
+            isSample: false
+        )
+        let sharedItem = StudyItem(
+            id: "legacy-chat-shared",
+            title: "共享文稿",
+            subtitle: "shared.txt",
+            kind: .text,
+            urlPath: nil,
+            isSample: false
+        )
+        let orphanItem = StudyItem(
+            id: "legacy-chat-orphan",
+            title: "未归类文稿",
+            subtitle: "orphan.txt",
+            kind: .text,
+            urlPath: nil,
+            isSample: false
+        )
+        let createdAt = Date(timeIntervalSince1970: 1_700_000_000)
+        let updatedAt = Date(timeIntervalSince1970: 1_700_000_100)
+        let uniqueSession = StudySession(
+            id: UUID(),
+            title: "只属于课程 A",
+            messages: [
+                AgentMessage(
+                    role: .user,
+                    text: "解释课程 A",
+                    source: nil,
+                    createdAt: createdAt
+                )
+            ],
+            focusItemIDs: [uniqueItem.id],
+            materialItemID: uniqueItem.id,
+            createdAt: createdAt,
+            updatedAt: updatedAt
+        )
+        let sharedSession = StudySession(
+            id: UUID(),
+            title: "共享文稿对话",
+            messages: [AgentMessage(role: .user, text: "这份共享文稿讲什么", source: nil)],
+            focusItemIDs: [sharedItem.id],
+            materialItemID: sharedItem.id
+        )
+        let orphanSession = StudySession(
+            id: UUID(),
+            title: "没有课程证据",
+            messages: [AgentMessage(role: .user, text: "继续", source: nil)],
+            focusItemIDs: [orphanItem.id],
+            materialItemID: orphanItem.id
+        )
+        let blankSession = StudySession(id: UUID(), title: "新学习会话")
+        let snapshot = PersistedWorkspace(
+            importedItems: [uniqueItem, sharedItem, orphanItem],
+            selectedItemID: uniqueItem.id,
+            courses: [courseA, courseB],
+            courseItemMemberships: [
+                CourseItemMembership(courseID: courseA.id, itemID: uniqueItem.id),
+                CourseItemMembership(courseID: courseA.id, itemID: sharedItem.id),
+                CourseItemMembership(courseID: courseB.id, itemID: sharedItem.id),
+            ],
+            activeCourseID: courseB.id,
+            studySessions: [uniqueSession, sharedSession, orphanSession, blankSession],
+            activeStudySessionID: uniqueSession.id
+        )
+        let encoded = try JSONEncoder().encode(snapshot)
+        var legacyObject = try require(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any],
+            "无法建立旧 Chat 迁移样本"
+        )
+        var legacySessions = try require(
+            legacyObject["studySessions"] as? [[String: Any]],
+            "旧 Chat 迁移样本缺少会话"
+        )
+        for index in legacySessions.indices {
+            legacySessions[index].removeValue(forKey: "courseID")
+            legacySessions[index].removeValue(forKey: "scopeNeedsReview")
+        }
+        legacyObject["studySessions"] = legacySessions
+        legacyObject.removeValue(forKey: "studySessionScopeMigrationVersion")
+        try JSONSerialization.data(withJSONObject: legacyObject)
+            .write(
+                to: fixture.workspaceDirectory.appendingPathComponent("workspace.json"),
+                options: [.atomic]
+            )
+
+        let store = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        )
+        let migratedUnique = try require(
+            store.studySessions.first { $0.id == uniqueSession.id },
+            "唯一课程旧 Chat 在迁移时丢失"
+        )
+        let migratedShared = try require(
+            store.studySessions.first { $0.id == sharedSession.id },
+            "共享文稿旧 Chat 在迁移时丢失"
+        )
+        let migratedOrphan = try require(
+            store.studySessions.first { $0.id == orphanSession.id },
+            "无归属旧 Chat 在迁移时丢失"
+        )
+        let migratedBlank = try require(
+            store.studySessions.first { $0.id == blankSession.id },
+            "空白旧 Chat 在迁移时丢失"
+        )
+        try check(
+            migratedUnique.courseID == courseA.id
+                && migratedUnique.scopeNeedsReview == false,
+            "唯一课程旧 Chat 没有迁入唯一课程"
+        )
+        try check(
+            migratedShared.courseID == nil
+                && migratedShared.scopeNeedsReview == true,
+            "共享文稿旧 Chat 被活动课程猜测归属"
+        )
+        try check(
+            migratedOrphan.courseID == nil
+                && migratedOrphan.scopeNeedsReview == true,
+            "无归属旧 Chat 没有进入待归类"
+        )
+        try check(
+            migratedBlank.courseID == nil
+                && migratedBlank.scopeNeedsReview == false,
+            "无内容空白旧 Chat 不应要求用户归类"
+        )
+        try check(migratedUnique.title == uniqueSession.title, "旧 Chat 迁移改变了标题")
+        try check(migratedUnique.messages == uniqueSession.messages, "旧 Chat 迁移改变了消息")
+        try check(migratedUnique.createdAt == createdAt, "旧 Chat 迁移改变了创建时间")
+        try check(migratedUnique.updatedAt == updatedAt, "旧 Chat 迁移改变了更新时间")
+        try check(
+            store.sessionsTouchingCourse(courseA.id).map(\.id) == [uniqueSession.id]
+                && store.sessionsTouchingCourse(courseB.id).isEmpty
+                && store.primaryCourseID(for: migratedShared) == nil,
+            "课程记录仍靠接触文稿或活动课程猜 Chat 归属"
+        )
+        try check(store.flushPendingWorkspaceSave(), "旧 Chat 迁移结果无法保存")
+        let migratedSnapshot = try fixture.readSnapshot()
+        try check(
+            migratedSnapshot.studySessionScopeMigrationVersion == 1,
+            "旧 Chat 迁移没有写入可重复识别的版本"
+        )
+
+        let reopened = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        )
+        try check(
+            reopened.studySessions == store.studySessions,
+            "重开工作区后旧 Chat 迁移结果发生二次漂移"
+        )
+        reopened.activateStudySession(uniqueSession.id)
+        reopened.createStudySession()
+        let inheritedCourseSessionID = reopened.activeStudySessionID
+        try check(
+            reopened.activeStudySession?.courseID == courseA.id
+                && reopened.activeStudySession?.scopeNeedsReview == false,
+            "新 Chat 没有继承当前 Chat 的固定课程"
+        )
+        reopened.activateStudySession(sharedSession.id)
+        reopened.createStudySession()
+        try check(
+            reopened.activeStudySession?.courseID == nil
+                && reopened.activeStudySession?.scopeNeedsReview == false,
+            "从待归类 Chat 新建对话时传播了歧义状态"
+        )
+        reopened.deleteCourse(courseA.id)
+        for sessionID in [uniqueSession.id, inheritedCourseSessionID].compactMap({ $0 }) {
+            let retained = try require(
+                reopened.studySessions.first { $0.id == sessionID },
+                "删除课程时误删了所属 Chat"
+            )
+            try check(
+                retained.courseID == nil && retained.scopeNeedsReview == true,
+                "删除课程后所属 Chat 没有安全保留为待归类"
+            )
+        }
     }
 
     private static func storageModelsDecodeLegacySnapshotsAndRoundTrip() throws {

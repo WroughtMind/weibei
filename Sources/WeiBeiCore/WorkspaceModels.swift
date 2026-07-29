@@ -1437,6 +1437,7 @@ public struct PersistedWorkspace: Codable {
     public var learningMemoryEntries: [LearningMemoryEntry]?
     public var learningMemoryRevision: UInt64?
     public var studySessions: [StudySession]?
+    public var studySessionScopeMigrationVersion: Int?
     public var activeStudySessionID: UUID?
     public var selectionAskThreads: [SelectionAskThread]?
     public var modelName: String?
@@ -1475,6 +1476,7 @@ public struct PersistedWorkspace: Codable {
         learningMemoryEntries: [LearningMemoryEntry]? = nil,
         learningMemoryRevision: UInt64? = nil,
         studySessions: [StudySession]? = nil,
+        studySessionScopeMigrationVersion: Int? = nil,
         activeStudySessionID: UUID? = nil,
         selectionAskThreads: [SelectionAskThread]? = nil,
         modelName: String? = nil,
@@ -1512,6 +1514,7 @@ public struct PersistedWorkspace: Codable {
         self.learningMemoryEntries = learningMemoryEntries
         self.learningMemoryRevision = learningMemoryRevision
         self.studySessions = studySessions
+        self.studySessionScopeMigrationVersion = studySessionScopeMigrationVersion
         self.activeStudySessionID = activeStudySessionID
         self.selectionAskThreads = selectionAskThreads
         self.modelName = modelName

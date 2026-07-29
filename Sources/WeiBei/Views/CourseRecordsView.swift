@@ -74,8 +74,8 @@ struct CourseRecordsView: View {
                                     icon: "bubble.left.and.text.bubble.right",
                                     title: session.title,
                                     detail: store.ui(
-                                        "\(session.messages.count) 条消息 · \(coursePhaseLabel(session.flow.phase, store: store))",
-                                        "\(session.messages.count) messages · \(coursePhaseLabel(session.flow.phase, store: store))"
+                                        "\(session.scopeNeedsReview == true ? "待归类 · " : "")\(session.messages.count) 条消息 · \(coursePhaseLabel(session.flow.phase, store: store))",
+                                        "\(session.scopeNeedsReview == true ? "Needs course · " : "")\(session.messages.count) messages · \(coursePhaseLabel(session.flow.phase, store: store))"
                                     ),
                                     status: courseRelativeDate(session.updatedAt, language: store.interfaceLanguage),
                                     selected: session.id == selectedSessionID
