@@ -54,6 +54,17 @@ make verify
   swift run WeiBeiDevTool verify --scenario rich-answer-openui-extended-inline
   ```
 
+### readiness 与 completion 协议
+
+八个已迁移场景通过两个原子 JSON 文件与 Runner 同步：
+
+- `window-ready.json`：应用主窗口首次布局后发布 PID、CoreGraphics window number、bounds 和时间戳；Runner 最多等待 15 秒，并用 PID 与窗口号复核 layer、可见性和最小尺寸。
+- `scenario-complete.json`：应用完成全部 evidence 写入后最后发布，包含 schema version、场景 ID、状态和安全相对 evidence 路径。
+
+Runner 将 completion 视为提交屏障而不是成功证明；屏障出现后仍使用共享 Codable 契约独立验证 `workspace.json`、typed report 和 pane `summary.json`。成功只保留 readiness、completion、声明 evidence、pane summary 与 `validation.json`；失败保留 workspace、逐帧 trace、stdout、stderr、截图和全部协议文件。
+
+新增真实窗口场景必须原子发布 readiness/completion，完成所有异步采样和文件 flush 后才能发布 completion。禁止增加长 sleep、恢复旧文本报告 fallback、轮询边写边读的 evidence，或通过匹配 Swift 源码字符串证明行为。
+
 ## 人工设计验收
 
 以下内容保持为设计审查，不使用源码、snapshot 或像素常量伪装成行为测试：

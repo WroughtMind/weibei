@@ -145,6 +145,11 @@ packages a temporary app and runs only `offline-learning-flow`. Select a
 different real-window scenario explicitly, or opt into the complete offline
 suite:
 
+For migrated real-window scenarios, the app atomically publishes window
+readiness, the runner verifies the PID and CoreGraphics window number, and
+typed evidence is validated only after the scenario completion barrier. Window
+startup has a fixed 15-second limit and never restarts the app automatically.
+
 ```bash
 swift run WeiBeiDevTool verify --scenario pane-toggle-continuity-flow
 swift run WeiBeiDevTool verify --scenario rich-answer-openui-extended-inline

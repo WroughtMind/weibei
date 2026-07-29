@@ -75,6 +75,7 @@ let package = Package(
         ),
         .target(
             name: "WeiBeiDevCore",
+            dependencies: ["WeiBeiCore"],
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("CoreGraphics"),

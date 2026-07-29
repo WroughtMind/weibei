@@ -1,4 +1,5 @@
 import Foundation
+import WeiBeiCore
 
 /// 一个场景对应的日志、截图与隔离工作区路径。
 public struct VerificationScenarioArtifacts: Equatable, Sendable {
@@ -7,6 +8,10 @@ public struct VerificationScenarioArtifacts: Equatable, Sendable {
     public let stdoutURL: URL
     public let stderrURL: URL
     public let captureURL: URL
+    public let windowReadyURL: URL
+    public let completionURL: URL
+    public let evidenceDirectoryURL: URL
+    public let validationURL: URL
 
     /// 创建场景 artifacts 路径集合。
     public init(
@@ -14,13 +19,21 @@ public struct VerificationScenarioArtifacts: Equatable, Sendable {
         workspaceURL: URL,
         stdoutURL: URL,
         stderrURL: URL,
-        captureURL: URL
+        captureURL: URL,
+        windowReadyURL: URL,
+        completionURL: URL,
+        evidenceDirectoryURL: URL,
+        validationURL: URL
     ) {
         self.directoryURL = directoryURL
         self.workspaceURL = workspaceURL
         self.stdoutURL = stdoutURL
         self.stderrURL = stderrURL
         self.captureURL = captureURL
+        self.windowReadyURL = windowReadyURL
+        self.completionURL = completionURL
+        self.evidenceDirectoryURL = evidenceDirectoryURL
+        self.validationURL = validationURL
     }
 }
 
@@ -66,18 +79,63 @@ public final class VerificationArtifactStore {
             workspaceURL: workspace,
             stdoutURL: directory.appendingPathComponent("app-stdout.log"),
             stderrURL: directory.appendingPathComponent("app-stderr.log"),
-            captureURL: directory.appendingPathComponent("window.png")
+            captureURL: directory.appendingPathComponent("window.png"),
+            windowReadyURL: directory.appendingPathComponent("window-ready.json"),
+            completionURL: directory.appendingPathComponent("scenario-complete.json"),
+            evidenceDirectoryURL: directory.appendingPathComponent("evidence", isDirectory: true),
+            validationURL: directory.appendingPathComponent("validation.json")
         )
     }
 
-    /// 成功时删除可重新生成的 workspace；失败时完整保留以供诊断。
-    public func finishScenario(_ artifacts: VerificationScenarioArtifacts, succeeded: Bool) throws {
-        guard succeeded, fileManager.fileExists(atPath: artifacts.workspaceURL.path) else {
+    /// 成功时只保留协议与声明证据；失败时完整保留现场。
+    public func finishScenario(
+        _ artifacts: VerificationScenarioArtifacts,
+        succeeded: Bool,
+        retainedEvidence: [String] = []
+    ) throws {
+        guard succeeded else {
             return
         }
         do {
-            try fileManager.removeItem(at: artifacts.workspaceURL)
+            do {
+                try VerificationContractIO.validateEvidencePaths(retainedEvidence)
+            } catch {
+                throw VerificationError(code: "scenario_evidence_invalid", message: error.localizedDescription)
+            }
+            try fileManager.createDirectory(
+                at: artifacts.evidenceDirectoryURL,
+                withIntermediateDirectories: true
+            )
+            for relativePath in retainedEvidence {
+                let source = artifacts.directoryURL.appendingPathComponent(relativePath)
+                guard fileManager.fileExists(atPath: source.path) else {
+                    throw VerificationError(
+                        code: "scenario_evidence_missing",
+                        message: "Declared evidence is missing: \(relativePath)"
+                    )
+                }
+                let destination = artifacts.evidenceDirectoryURL.appendingPathComponent(relativePath)
+                try fileManager.createDirectory(
+                    at: destination.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                if fileManager.fileExists(atPath: destination.path) {
+                    try fileManager.removeItem(at: destination)
+                }
+                try fileManager.copyItem(at: source, to: destination)
+            }
+            for disposable in [
+                artifacts.workspaceURL,
+                artifacts.stdoutURL,
+                artifacts.stderrURL,
+                artifacts.captureURL,
+            ] where fileManager.fileExists(atPath: disposable.path) {
+                try fileManager.removeItem(at: disposable)
+            }
         } catch {
+            if let verificationError = error as? VerificationError {
+                throw verificationError
+            }
             throw VerificationError(code: "artifact_cleanup_failed", message: error.localizedDescription)
         }
     }

@@ -99,6 +99,20 @@ public struct VerificationScenario: Equatable, Codable, Sendable {
         self.resultContract = resultContract
         self.isDefault = isDefault
     }
+
+    /// 指定本轮迁移到 readiness/completion 文件协议的真实窗口场景。
+    public var usesCompletionProtocol: Bool {
+        [
+            VerificationScenarioID.offlineLearningFlow,
+            .immersiveConversationFlow,
+            .emptyWorkspaceInspirationOff,
+            .emptyWorkspaceOpenDoc,
+            .linkedSourcesFlow,
+            .paneToggleContinuityFlow,
+            .paneLayoutStabilityFlow,
+            .paneReorderWidthFlow,
+        ].contains(id)
+    }
 }
 
 /// 提供 CLI 与验证工作流共享的场景注册表。

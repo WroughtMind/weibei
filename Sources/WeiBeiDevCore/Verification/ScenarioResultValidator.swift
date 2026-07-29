@@ -1,4 +1,5 @@
 import Foundation
+import WeiBeiCore
 
 /// 验证应用场景写入隔离工作区的行为结果。
 public protocol VerificationScenarioResultValidating: Sendable {
@@ -31,6 +32,10 @@ public struct FileVerificationScenarioResultValidator: VerificationScenarioResul
         if scenario.resultContract == .visualOnly {
             return
         }
+        if scenario.usesCompletionProtocol {
+            try validateCompletedScenario(scenario, artifacts: artifacts)
+            return
+        }
         let attempts = max(1, Int(ceil(scenario.timeoutSeconds / pollingIntervalSeconds)))
         for attempt in 0..<attempts {
             if resultIsValid(scenario: scenario, workspaceURL: artifacts.workspaceURL) {
@@ -49,6 +54,69 @@ public struct FileVerificationScenarioResultValidator: VerificationScenarioResul
         )
     }
 
+    /// completion 发布后读取一次稳定快照，并使用类型化契约独立验证。
+    private func validateCompletedScenario(
+        _ scenario: VerificationScenario,
+        artifacts: VerificationScenarioArtifacts
+    ) throws {
+        let isValid: Bool
+        switch scenario.resultContract {
+        case .offlineLearning:
+            isValid = validateOfflineLearning(workspaceURL: artifacts.workspaceURL)
+        case .emptyWorkspace:
+            isValid = validateEmptyWorkspace(scenarioID: scenario.id, workspaceURL: artifacts.workspaceURL)
+        case .linkedSources:
+            isValid = try validateTypedLinkedSources(workspaceURL: artifacts.workspaceURL)
+        case .paneToggleContinuity:
+            let report: PaneToggleContinuityVerificationReport = try decodeRequired(
+                artifacts.workspaceURL.appendingPathComponent("pane-toggle-continuity-report.json")
+            )
+            let summaryPassed = try validatePaneSummary(
+                workspaceURL: artifacts.workspaceURL,
+                minimumTransitions: 480
+            )
+            isValid = report.passed
+                && report.caseCount == 6
+                && report.notesCyclesPerCase == 20
+                && report.readerCyclesPerCase == 20
+                && report.cases.count == 6
+                && report.cases.allSatisfy(\.passed)
+                && summaryPassed
+        case .paneLayoutStability:
+            isValid = try validateTypedPaneLayout(workspaceURL: artifacts.workspaceURL)
+        case .paneReorderWidth:
+            let report: PaneReorderWidthVerificationReport = try decodeRequired(
+                artifacts.workspaceURL.appendingPathComponent("pane-reorder-width-report.json")
+            )
+            let summaryPassed = try validatePaneSummary(
+                workspaceURL: artifacts.workspaceURL,
+                minimumTransitions: 4
+            )
+            isValid = report.passed
+                && report.reorderedOrder.last == "reader"
+                && report.persistedOrder == report.reorderedOrder
+                && report.expansionConsumed
+                && report.nativeLifecycleStable
+                && report.expandedAgentWidth >= report.minimumReadableWidth
+                && report.reorderedAgentWidth >= report.minimumReadableWidth
+                && abs(report.restoredAgentWidth - report.reorderedAgentWidth) <= report.widthTolerance
+                && report.notePreserved
+                && report.agentDraftPreserved
+                && report.conversationPreserved
+                && !report.studyLocationChanged
+                && report.agentRevisionDelta == 0
+                && summaryPassed
+        default:
+            isValid = resultIsValid(scenario: scenario, workspaceURL: artifacts.workspaceURL)
+        }
+        guard isValid else {
+            throw VerificationError(
+                code: "scenario_evidence_failed",
+                message: "Scenario \(scenario.id.rawValue) evidence declared failing behavior."
+            )
+        }
+    }
+
     /// Dispatches a scenario to its declared filesystem result contract.
     private func resultIsValid(scenario: VerificationScenario, workspaceURL: URL) -> Bool {
         switch scenario.resultContract {
@@ -63,13 +131,11 @@ public struct FileVerificationScenarioResultValidator: VerificationScenarioResul
         case .courseWorkspaceWorkflow:
             return validateCourseWorkflow(workspaceURL: workspaceURL)
         case .paneToggleContinuity:
-            return textReportPassed(workspaceURL.appendingPathComponent("pane-toggle-continuity-report.txt"))
-                && validatePaneSummary(workspaceURL: workspaceURL, minimumTransitions: 480)
+            return false
         case .paneLayoutStability:
-            return validatePaneLayout(workspaceURL: workspaceURL)
+            return false
         case .paneReorderWidth:
-            return textReportPassed(workspaceURL.appendingPathComponent("pane-reorder-width-report.txt"))
-                && validatePaneSummary(workspaceURL: workspaceURL, minimumTransitions: 4)
+            return false
         case .readerScrollPersistence:
             return textReportPassed(workspaceURL.appendingPathComponent("reader-scroll-persistence-report.txt"))
         case .piLearning:
@@ -158,16 +224,20 @@ public struct FileVerificationScenarioResultValidator: VerificationScenarioResul
 
     /// Confirms linked sources retain stable imported notebook identity.
     private func validateLinkedSources(workspaceURL: URL) -> Bool {
-        guard let workspace = text(at: workspaceURL.appendingPathComponent("workspace.json")) else {
-            return false
-        }
-        return workspace.contains("\"noteSourceLinks\"")
-            && workspace.contains("\"sourceItemID\":\"sample-html\"")
-            && workspace.contains("\"sourceItemID\":\"sample-pdf\"")
-            && workspace.contains("\"selectedItemID\":\"sample-pdf\"")
-            && workspace.contains("\"showLibrary\":false")
-            && workspace.contains("\"activeNotebookItemID\":\"imported:")
-            && !workspace.contains("\"activeNotebookItemID\":\"file:")
+        (try? validateTypedLinkedSources(workspaceURL: workspaceURL)) == true
+    }
+
+    /// 使用 Codable 报告验证 linked sources 的 UI 状态和稳定 notebook identity。
+    private func validateTypedLinkedSources(workspaceURL: URL) throws -> Bool {
+        let report: LinkedSourcesVerificationReport = try decodeRequired(
+            workspaceURL.appendingPathComponent("linked-sources-report.json")
+        )
+        return report.importedNotebookID.hasPrefix("imported:")
+            && Set(report.sourceItemIDs) == ["sample-html", "sample-pdf"]
+            && report.selectedItemID == "sample-pdf"
+            && report.linkedSourcesPresented
+            && !report.showLibrary
+            && report.noteRenderMode == "source"
     }
 
     /// Validates the course overview's counts, links, and navigation state.
@@ -217,22 +287,39 @@ public struct FileVerificationScenarioResultValidator: VerificationScenarioResul
     }
 
     /// Checks pane trace ownership and transition invariants.
-    private func validatePaneSummary(workspaceURL: URL, minimumTransitions: Int) -> Bool {
-        guard let summary = jsonObject(
-            at: workspaceURL.appendingPathComponent("pane-trace/summary.json")
-        ) else {
-            return false
-        }
-        return (integer(summary["transitions"]) ?? -1) >= minimumTransitions
-            && integer(summary["ownershipFailures"]) == 0
-            && integer(summary["blankVisibleFailures"]) == 0
-            && integer(summary["identityFailures"]) == 0
-            && (summary["roleIdentities"] as? [Any])?.count == 3
+    private func validatePaneSummary(workspaceURL: URL, minimumTransitions: Int) throws -> Bool {
+        let summary: PaneContinuitySummary = try decodeRequired(
+            workspaceURL.appendingPathComponent("pane-trace/summary.json")
+        )
+        return summary.transitions >= minimumTransitions
+            && summary.ownershipFailures == 0
+            && summary.blankVisibleFailures == 0
+            && summary.identityFailures == 0
+            && Set(summary.roleIdentities.keys) == ["reader", "agent", "notes"]
     }
 
     /// Validates long-running pane layout identity across every transition.
-    private func validatePaneLayout(workspaceURL: URL) -> Bool {
-        guard textReportPassed(workspaceURL.appendingPathComponent("pane-layout-stability-report.txt")) else {
+    private func validateTypedPaneLayout(workspaceURL: URL) throws -> Bool {
+        let report: PaneLayoutStabilityVerificationReport = try decodeRequired(
+            workspaceURL.appendingPathComponent("pane-layout-stability-report.json")
+        )
+        guard report.passed,
+              report.transitions == 8,
+              report.readerVisible,
+              !report.agentVisible,
+              report.notesVisible,
+              report.notePreserved,
+              report.agentDraftPreserved,
+              report.conversationPreserved,
+              report.paneOrderPreserved,
+              report.agentRevisionDelta == 0,
+              !report.studyLocationChanged,
+              report.htmlLocationCalls == 0,
+              report.webReaderMakeCount == 0,
+              report.webReaderDismantleCount == 0,
+              report.noteEditorMakeCount == 0,
+              report.noteEditorDismantleCount == 0,
+              try validatePaneSummary(workspaceURL: workspaceURL, minimumTransitions: 8) else {
             return false
         }
         let traceDirectory = workspaceURL.appendingPathComponent("pane-trace")
@@ -246,18 +333,33 @@ public struct FileVerificationScenarioResultValidator: VerificationScenarioResul
         let traces = files.compactMap(jsonObject(at:))
         guard traces.count == files.count,
               Set(traces.compactMap { string($0["recorderID"]) }).count == 1,
-              Set(traces.compactMap { string($0["transition"]) }).count >= 8,
+              Set(traces.compactMap { integer($0["transition"]) }).count >= 8,
               traces.allSatisfy({
                   bool($0["stableOwnership"]) == true && bool($0["noBlankVisibleSlots"]) == true
               }) else {
             return false
         }
-        let grouped = Dictionary(grouping: traces) { string($0["transition"]) ?? "" }
+        let grouped = Dictionary(grouping: traces) { integer($0["transition"]) ?? -1 }
         guard grouped.values.allSatisfy({ $0.count >= 15 }) else {
             return false
         }
         return ["reader", "agent", "notes"].allSatisfy { role in
             roleIdentityIsStable(role, traces: traces)
+        }
+    }
+
+    /// 解码必需的类型化 evidence，并区分缺失与损坏。
+    private func decodeRequired<T: Decodable>(_ url: URL) throws -> T {
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            throw VerificationError(code: "scenario_evidence_missing", message: "Missing evidence: \(url.lastPathComponent)")
+        }
+        do {
+            return try JSONDecoder().decode(T.self, from: Data(contentsOf: url))
+        } catch {
+            throw VerificationError(
+                code: "scenario_evidence_invalid",
+                message: "Invalid evidence \(url.lastPathComponent): \(error.localizedDescription)"
+            )
         }
     }
 

@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import XCTest
 @testable import WeiBeiDevCore
+import WeiBeiCore
 
 final class VerificationTests: XCTestCase {
     /// Rejects run identifiers that could resolve to the artifact root or its parent.
@@ -126,7 +127,7 @@ final class VerificationTests: XCTestCase {
         XCTAssertTrue(!registry.allScenarios(includeLivePI: false).contains(online))
     }
 
-    /// 成功场景删除隔离 workspace，同时报告和 latest 链接持久保留。
+    /// 成功场景只保留协议文件与声明证据，并删除完整 workspace 和诊断产物。
     func testArtifactStoreCleansSuccessfulWorkspaceAndUpdatesLatest() throws {
         let root = try makeTemporaryDirectory()
         let store = try VerificationArtifactStore(rootURL: root, runID: "known-run")
@@ -134,12 +135,34 @@ final class VerificationTests: XCTestCase {
             VerificationScenarioRegistry().scenario(named: "offline-learning-flow")
         )
         let artifacts = try store.prepareScenario(scenario)
-        try Data("temporary".utf8).write(to: artifacts.workspaceURL.appendingPathComponent("state.txt"))
+        let reportURL = artifacts.workspaceURL.appendingPathComponent("report.json")
+        try Data("{}".utf8).write(to: reportURL)
+        try Data("readiness".utf8).write(to: artifacts.windowReadyURL)
+        try Data("completion".utf8).write(to: artifacts.completionURL)
+        try Data("validation".utf8).write(to: artifacts.validationURL)
+        try Data("stdout".utf8).write(to: artifacts.stdoutURL)
+        try Data("stderr".utf8).write(to: artifacts.stderrURL)
+        try Data("capture".utf8).write(to: artifacts.captureURL)
 
-        try store.finishScenario(artifacts, succeeded: true)
+        try store.finishScenario(
+            artifacts,
+            succeeded: true,
+            retainedEvidence: ["workspace/report.json"]
+        )
         try store.completeRun(reportData: Data("{}".utf8))
 
         XCTAssertTrue(!FileManager.default.fileExists(atPath: artifacts.workspaceURL.path))
+        XCTAssertTrue(!FileManager.default.fileExists(atPath: artifacts.stdoutURL.path))
+        XCTAssertTrue(!FileManager.default.fileExists(atPath: artifacts.stderrURL.path))
+        XCTAssertTrue(!FileManager.default.fileExists(atPath: artifacts.captureURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: artifacts.windowReadyURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: artifacts.completionURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: artifacts.validationURL.path))
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: artifacts.evidenceDirectoryURL.appendingPathComponent("workspace/report.json").path
+            )
+        )
         XCTAssertTrue(FileManager.default.fileExists(atPath: store.runURL.appendingPathComponent("report.json").path))
         XCTAssertTrue(
             try FileManager.default.destinationOfSymbolicLink(
@@ -148,7 +171,7 @@ final class VerificationTests: XCTestCase {
         )
     }
 
-    /// 失败场景保留完整 workspace 以供复现。
+    /// 失败场景保留 workspace、日志、截图和协议文件以供复现。
     func testArtifactStoreRetainsFailedWorkspace() throws {
         let root = try makeTemporaryDirectory()
         let store = try VerificationArtifactStore(rootURL: root, runID: "failed-run")
@@ -157,10 +180,18 @@ final class VerificationTests: XCTestCase {
         )
         let artifacts = try store.prepareScenario(scenario)
         try Data("diagnostic".utf8).write(to: artifacts.workspaceURL.appendingPathComponent("state.txt"))
+        try Data("stdout".utf8).write(to: artifacts.stdoutURL)
+        try Data("stderr".utf8).write(to: artifacts.stderrURL)
+        try Data("capture".utf8).write(to: artifacts.captureURL)
+        try Data("readiness".utf8).write(to: artifacts.windowReadyURL)
 
         try store.finishScenario(artifacts, succeeded: false)
 
         XCTAssertTrue(FileManager.default.fileExists(atPath: artifacts.workspaceURL.appendingPathComponent("state.txt").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: artifacts.stdoutURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: artifacts.stderrURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: artifacts.captureURL.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: artifacts.windowReadyURL.path))
     }
 
     /// AppKit 像素检查接受非黑且不透明的窗口图片。
@@ -190,6 +221,274 @@ final class VerificationTests: XCTestCase {
         }
     }
 
+    /// readiness 缺失时返回稳定超时错误，不通过重启应用兜底。
+    func testWindowReadinessMissingUsesStableTimeout() throws {
+        let root = try makeTemporaryDirectory()
+        let waiter = VerificationWindowWaiter(
+            locator: FakeWindowLocator(),
+            waiter: ImmediateWaiter(),
+            pollingIntervalSeconds: 1
+        )
+
+        XCTAssertThrowsError(
+            try waiter.waitForReadiness(
+                at: root.appendingPathComponent("window-ready.json"),
+                artifactRoot: root,
+                app: FakeRunningApp(),
+                timeoutSeconds: 2
+            )
+        ) { error in
+            XCTAssertEqual((error as? VerificationError)?.code, "window_ready_timeout")
+        }
+    }
+
+    /// readiness 延迟出现时在同一次启动内继续，不重启应用。
+    func testWindowReadinessMayAppearAfterPollingStarts() throws {
+        let root = try makeTemporaryDirectory()
+        let readinessURL = root.appendingPathComponent("window-ready.json")
+        let waiter = ReadinessPublishingWaiter(root: root, readinessURL: readinessURL)
+
+        let readiness = try VerificationWindowWaiter(
+            locator: FakeWindowLocator(),
+            waiter: waiter,
+            pollingIntervalSeconds: 1
+        ).waitForReadiness(
+            at: readinessURL,
+            artifactRoot: root,
+            app: FakeRunningApp(),
+            timeoutSeconds: 2
+        )
+
+        XCTAssertEqual(readiness.processIdentifier, 4242)
+        XCTAssertEqual(waiter.publishCount, 1)
+    }
+
+    /// 应用在 readiness 前退出时立即报告 app_exited_early。
+    func testWindowReadinessDetectsEarlyExit() throws {
+        let root = try makeTemporaryDirectory()
+
+        XCTAssertThrowsError(
+            try VerificationWindowWaiter(waiter: ImmediateWaiter()).waitForReadiness(
+                at: root.appendingPathComponent("window-ready.json"),
+                artifactRoot: root,
+                app: FakeRunningApp(isRunning: false)
+            )
+        ) { error in
+            XCTAssertEqual((error as? VerificationError)?.code, "app_exited_early")
+        }
+    }
+
+    /// owner name 不参与成功判定，PID 与 window number 正确即可。
+    func testWindowVerificationIgnoresLocalizedOwnerName() throws {
+        let readiness = VerificationWindowReadyEnvelope(
+            processIdentifier: 4242,
+            windowNumber: 7,
+            bounds: CGRect(x: 0, y: 0, width: 800, height: 600)
+        )
+
+        let window = try VerificationWindowWaiter(
+            locator: FakeWindowLocator(),
+            waiter: ImmediateWaiter()
+        ).waitForWindow(readiness: readiness, app: FakeRunningApp(), timeoutSeconds: 1)
+
+        XCTAssertEqual(window.ownerName, "Different localized owner")
+        XCTAssertEqual(window.id, 7)
+    }
+
+    /// readiness 的 PID 必须与 Runner 实际启动的 PID 一致。
+    func testWindowReadinessRejectsWrongProcessIdentifier() throws {
+        let root = try makeTemporaryDirectory()
+        let readinessURL = root.appendingPathComponent("window-ready.json")
+        try VerificationContractIO.publish(
+            VerificationWindowReadyEnvelope(
+                processIdentifier: 9999,
+                windowNumber: 7,
+                bounds: CGRect(x: 0, y: 0, width: 800, height: 600)
+            ),
+            to: readinessURL,
+            within: root
+        )
+
+        XCTAssertThrowsError(
+            try VerificationWindowWaiter(
+                locator: FakeWindowLocator(),
+                waiter: ImmediateWaiter()
+            ).waitForReadiness(
+                at: readinessURL,
+                artifactRoot: root,
+                app: FakeRunningApp(),
+                timeoutSeconds: 1
+            )
+        ) { error in
+            XCTAssertEqual((error as? VerificationError)?.code, "window_ready_timeout")
+        }
+    }
+
+    /// CoreGraphics 找不到 readiness 声明的窗口号时返回稳定可见性错误。
+    func testWindowVerificationRejectsUnknownWindowNumber() {
+        let readiness = VerificationWindowReadyEnvelope(
+            processIdentifier: 4242,
+            windowNumber: 404,
+            bounds: CGRect(x: 0, y: 0, width: 800, height: 600)
+        )
+
+        XCTAssertThrowsError(
+            try VerificationWindowWaiter(
+                locator: MissingWindowLocator(),
+                waiter: ImmediateWaiter(),
+                pollingIntervalSeconds: 1
+            ).waitForWindow(readiness: readiness, app: FakeRunningApp(), timeoutSeconds: 1)
+        ) { error in
+            XCTAssertEqual((error as? VerificationError)?.code, "window_visibility_timeout")
+        }
+    }
+
+    /// CoreGraphics 字典必须同时声明 layer 0 和 onscreen。
+    func testWindowDictionaryRejectsWrongLayerAndHiddenWindow() {
+        let bounds: [String: Any] = [
+            "X": 0,
+            "Y": 0,
+            "Width": 800,
+            "Height": 600,
+        ]
+        let base: [String: Any] = [
+            kCGWindowOwnerPID as String: NSNumber(value: 4242),
+            kCGWindowNumber as String: NSNumber(value: 7),
+            kCGWindowBounds as String: bounds,
+        ]
+        var hidden = base
+        hidden[kCGWindowLayer as String] = NSNumber(value: 0)
+        hidden[kCGWindowIsOnscreen as String] = NSNumber(value: false)
+        var wrongLayer = base
+        wrongLayer[kCGWindowLayer as String] = NSNumber(value: 1)
+        wrongLayer[kCGWindowIsOnscreen as String] = NSNumber(value: true)
+
+        XCTAssertNil(CoreGraphicsVerificationWindowLocator.window(from: hidden))
+        XCTAssertNil(CoreGraphicsVerificationWindowLocator.window(from: wrongLayer))
+    }
+
+    /// readiness 中过小 bounds 不能绕过真实窗口尺寸约束。
+    func testWindowVerificationRejectsInvalidBounds() {
+        let readiness = VerificationWindowReadyEnvelope(
+            processIdentifier: 4242,
+            windowNumber: 7,
+            bounds: CGRect(x: 0, y: 0, width: 200, height: 100)
+        )
+
+        XCTAssertThrowsError(
+            try VerificationWindowWaiter(
+                locator: FakeWindowLocator(),
+                waiter: ImmediateWaiter()
+            ).waitForWindow(readiness: readiness, app: FakeRunningApp(), timeoutSeconds: 1)
+        ) { error in
+            XCTAssertEqual((error as? VerificationError)?.code, "window_visibility_timeout")
+        }
+    }
+
+    /// completion 缺失时先超时，不能提前进入 evidence 校验。
+    func testCompletionMissingUsesStableTimeout() throws {
+        let artifacts = try makeArtifacts()
+        let scenario = try XCTUnwrap(
+            VerificationScenarioRegistry().scenario(named: "offline-learning-flow")
+        )
+
+        XCTAssertThrowsError(
+            try VerificationRunner().waitForCompletion(
+                scenario: scenario,
+                artifacts: artifacts,
+                app: FakeRunningApp(),
+                waiter: ImmediateWaiter(),
+                pollingIntervalSeconds: scenario.timeoutSeconds
+            )
+        ) { error in
+            XCTAssertEqual((error as? VerificationError)?.code, "scenario_completion_timeout")
+        }
+    }
+
+    /// completion schema 和场景 ID 任一不匹配都使用稳定协议错误。
+    func testCompletionRejectsSchemaAndScenarioMismatch() throws {
+        let scenario = try XCTUnwrap(
+            VerificationScenarioRegistry().scenario(named: "offline-learning-flow")
+        )
+        for completion in [
+            VerificationScenarioCompletionEnvelope(
+                schemaVersion: 999,
+                scenarioID: scenario.id.rawValue,
+                status: .passed,
+                evidence: []
+            ),
+            VerificationScenarioCompletionEnvelope(
+                scenarioID: "linked-sources-flow",
+                status: .passed,
+                evidence: []
+            ),
+        ] {
+            let artifacts = try makeArtifacts()
+            try VerificationContractIO.publish(
+                completion,
+                to: artifacts.completionURL,
+                within: artifacts.directoryURL
+            )
+
+            XCTAssertThrowsError(
+                try VerificationRunner().waitForCompletion(
+                    scenario: scenario,
+                    artifacts: artifacts,
+                    app: FakeRunningApp(),
+                    waiter: ImmediateWaiter()
+                )
+            ) { error in
+                XCTAssertEqual((error as? VerificationError)?.code, "scenario_completion_invalid")
+            }
+        }
+    }
+
+    /// 应用显式声明失败时 Runner 保留应用给出的稳定原因。
+    func testCompletionPropagatesDeclaredFailure() throws {
+        let artifacts = try makeArtifacts()
+        let scenario = try XCTUnwrap(
+            VerificationScenarioRegistry().scenario(named: "offline-learning-flow")
+        )
+        try VerificationContractIO.publish(
+            VerificationScenarioCompletionEnvelope(
+                scenarioID: scenario.id.rawValue,
+                status: .failed,
+                evidence: [],
+                errorMessage: "fixture declared failure"
+            ),
+            to: artifacts.completionURL,
+            within: artifacts.directoryURL
+        )
+
+        XCTAssertThrowsError(
+            try VerificationRunner().waitForCompletion(
+                scenario: scenario,
+                artifacts: artifacts,
+                app: FakeRunningApp(),
+                waiter: ImmediateWaiter()
+            )
+        ) { error in
+            XCTAssertEqual((error as? VerificationError)?.code, "scenario_declared_failed")
+            XCTAssertEqual((error as? VerificationError)?.message, "fixture declared failure")
+        }
+    }
+
+    /// completion 声明的 evidence 不存在时不能进入成功清理。
+    func testDeclaredEvidenceMustExist() throws {
+        let artifacts = try makeArtifacts()
+        let completion = VerificationScenarioCompletionEnvelope(
+            scenarioID: "offline-learning-flow",
+            status: .passed,
+            evidence: ["workspace/missing.json"]
+        )
+
+        XCTAssertThrowsError(
+            try VerificationRunner().validateDeclaredEvidence(completion, artifacts: artifacts)
+        ) { error in
+            XCTAssertEqual((error as? VerificationError)?.code, "scenario_evidence_missing")
+        }
+    }
+
     /// 文件验证器检查离线学习场景真正写入了可确认的整理建议。
     func testFileValidatorChecksOfflineLearningContract() throws {
         let artifacts = try makeArtifacts()
@@ -208,6 +507,258 @@ final class VerificationTests: XCTestCase {
             waiter: ImmediateWaiter(),
             pollingIntervalSeconds: 10
         ).validate(scenario: scenario, artifacts: artifacts)
+    }
+
+    /// linked-sources 使用共享 Codable 报告，不再搜索 JSON 字符串。
+    func testFileValidatorChecksTypedLinkedSourcesReport() throws {
+        let artifacts = try makeArtifacts()
+        let scenario = try XCTUnwrap(
+            VerificationScenarioRegistry().scenario(named: "linked-sources-flow")
+        )
+        let report = LinkedSourcesVerificationReport(
+            importedNotebookID: "imported:notebook",
+            sourceItemIDs: ["sample-pdf", "sample-html"],
+            selectedItemID: "sample-pdf",
+            linkedSourcesPresented: true,
+            showLibrary: false,
+            noteRenderMode: "source"
+        )
+        try JSONEncoder().encode(report).write(
+            to: artifacts.workspaceURL.appendingPathComponent("linked-sources-report.json")
+        )
+
+        XCTAssertNoThrow(
+            try FileVerificationScenarioResultValidator(
+                waiter: ImmediateWaiter(),
+                pollingIntervalSeconds: 10
+            ).validate(scenario: scenario, artifacts: artifacts)
+        )
+    }
+
+    /// pane summary 的 role identity 必须准确包含 reader、agent 和 notes。
+    func testFileValidatorRejectsIncompletePaneIdentityDictionary() throws {
+        let artifacts = try makeArtifacts()
+        let scenario = try XCTUnwrap(
+            VerificationScenarioRegistry().scenario(named: "pane-reorder-width-flow")
+        )
+        let report = PaneReorderWidthVerificationReport(
+            passed: true,
+            baselineOrder: ["reader", "agent", "notes"],
+            reorderedOrder: ["agent", "notes", "reader"],
+            persistedOrder: ["agent", "notes", "reader"],
+            expansionConsumed: true,
+            nativeLifecycleStable: true,
+            expandedAgentWidth: 400,
+            reorderedAgentWidth: 400,
+            restoredAgentWidth: 400,
+            minimumReadableWidth: 320,
+            widthTolerance: 48,
+            notePreserved: true,
+            agentDraftPreserved: true,
+            conversationPreserved: true,
+            studyLocationChanged: false,
+            agentRevisionDelta: 0
+        )
+        let traceDirectory = artifacts.workspaceURL.appendingPathComponent("pane-trace")
+        try FileManager.default.createDirectory(at: traceDirectory, withIntermediateDirectories: true)
+        try JSONEncoder().encode(report).write(
+            to: artifacts.workspaceURL.appendingPathComponent("pane-reorder-width-report.json")
+        )
+        let identity = PaneContinuityRoleIdentity(
+            hostID: "host",
+            parentID: "parent",
+            contentHostID: "content",
+            contentParentID: "content-parent"
+        )
+        let summary = PaneContinuitySummary(
+            recorderID: "recorder",
+            samples: 4,
+            transitions: 4,
+            ownershipFailures: 0,
+            blankVisibleFailures: 0,
+            identityFailures: 0,
+            roleIdentities: ["reader": identity, "agent": identity]
+        )
+        try JSONEncoder().encode(summary).write(to: traceDirectory.appendingPathComponent("summary.json"))
+
+        XCTAssertThrowsError(
+            try FileVerificationScenarioResultValidator(
+                waiter: ImmediateWaiter(),
+                pollingIntervalSeconds: 10
+            ).validate(scenario: scenario, artifacts: artifacts)
+        ) { error in
+            XCTAssertEqual((error as? VerificationError)?.code, "scenario_evidence_failed")
+        }
+    }
+
+    /// pane summary 的 transition、ownership、blank slot 和 identity 失败均不可被 passed 报告绕过。
+    func testFileValidatorRejectsPaneSummaryFailures() throws {
+        let scenario = try XCTUnwrap(
+            VerificationScenarioRegistry().scenario(named: "pane-reorder-width-flow")
+        )
+        let identity = PaneContinuityRoleIdentity(
+            hostID: "host",
+            parentID: "parent",
+            contentHostID: "content",
+            contentParentID: "content-parent"
+        )
+        let failures = [
+            PaneContinuitySummary(
+                recorderID: "recorder",
+                samples: 4,
+                transitions: 3,
+                ownershipFailures: 0,
+                blankVisibleFailures: 0,
+                identityFailures: 0,
+                roleIdentities: ["reader": identity, "agent": identity, "notes": identity]
+            ),
+            PaneContinuitySummary(
+                recorderID: "recorder",
+                samples: 4,
+                transitions: 4,
+                ownershipFailures: 1,
+                blankVisibleFailures: 0,
+                identityFailures: 0,
+                roleIdentities: ["reader": identity, "agent": identity, "notes": identity]
+            ),
+            PaneContinuitySummary(
+                recorderID: "recorder",
+                samples: 4,
+                transitions: 4,
+                ownershipFailures: 0,
+                blankVisibleFailures: 1,
+                identityFailures: 0,
+                roleIdentities: ["reader": identity, "agent": identity, "notes": identity]
+            ),
+            PaneContinuitySummary(
+                recorderID: "recorder",
+                samples: 4,
+                transitions: 4,
+                ownershipFailures: 0,
+                blankVisibleFailures: 0,
+                identityFailures: 1,
+                roleIdentities: ["reader": identity, "agent": identity, "notes": identity]
+            ),
+        ]
+
+        for summary in failures {
+            let artifacts = try makeArtifacts(scenarioNamed: scenario.id.rawValue)
+            let traceDirectory = artifacts.workspaceURL.appendingPathComponent("pane-trace")
+            try FileManager.default.createDirectory(at: traceDirectory, withIntermediateDirectories: true)
+            let report = PaneReorderWidthVerificationReport(
+                passed: true,
+                baselineOrder: ["reader", "agent", "notes"],
+                reorderedOrder: ["agent", "notes", "reader"],
+                persistedOrder: ["agent", "notes", "reader"],
+                expansionConsumed: true,
+                nativeLifecycleStable: true,
+                expandedAgentWidth: 400,
+                reorderedAgentWidth: 400,
+                restoredAgentWidth: 400,
+                minimumReadableWidth: 320,
+                widthTolerance: 48,
+                notePreserved: true,
+                agentDraftPreserved: true,
+                conversationPreserved: true,
+                studyLocationChanged: false,
+                agentRevisionDelta: 0
+            )
+            try JSONEncoder().encode(report).write(
+                to: artifacts.workspaceURL.appendingPathComponent("pane-reorder-width-report.json")
+            )
+            try JSONEncoder().encode(summary).write(
+                to: traceDirectory.appendingPathComponent("summary.json")
+            )
+
+            XCTAssertThrowsError(
+                try FileVerificationScenarioResultValidator().validate(
+                    scenario: scenario,
+                    artifacts: artifacts
+                )
+            ) { error in
+                XCTAssertEqual((error as? VerificationError)?.code, "scenario_evidence_failed")
+            }
+        }
+    }
+
+    /// pane layout trace 的 transition 是 JSON 数字，数值分组应接受完整 fixture。
+    func testPaneLayoutValidatorAcceptsNumericTransitions() throws {
+        let artifacts = try makeArtifacts(scenarioNamed: "pane-layout-stability-flow")
+        let scenario = try XCTUnwrap(
+            VerificationScenarioRegistry().scenario(named: "pane-layout-stability-flow")
+        )
+        let traceDirectory = artifacts.workspaceURL.appendingPathComponent("pane-trace")
+        try FileManager.default.createDirectory(at: traceDirectory, withIntermediateDirectories: true)
+        let identity = PaneContinuityRoleIdentity(
+            hostID: "host",
+            parentID: "parent",
+            contentHostID: "content",
+            contentParentID: "content-parent"
+        )
+        let summary = PaneContinuitySummary(
+            recorderID: "recorder",
+            samples: 120,
+            transitions: 8,
+            ownershipFailures: 0,
+            blankVisibleFailures: 0,
+            identityFailures: 0,
+            roleIdentities: ["reader": identity, "agent": identity, "notes": identity]
+        )
+        let report = PaneLayoutStabilityVerificationReport(
+            passed: true,
+            transitions: 8,
+            readerVisible: true,
+            agentVisible: false,
+            notesVisible: true,
+            notePreserved: true,
+            agentDraftPreserved: true,
+            conversationPreserved: true,
+            paneOrderPreserved: true,
+            agentRevisionDelta: 0,
+            studyLocationChanged: false,
+            htmlLocationCalls: 0,
+            webReaderMakeCount: 0,
+            webReaderDismantleCount: 0,
+            noteEditorMakeCount: 0,
+            noteEditorDismantleCount: 0
+        )
+        try JSONEncoder().encode(summary).write(to: traceDirectory.appendingPathComponent("summary.json"))
+        try JSONEncoder().encode(report).write(
+            to: artifacts.workspaceURL.appendingPathComponent("pane-layout-stability-report.json")
+        )
+        let roles = ["reader", "agent", "notes"].map { role in
+            [
+                "role": role,
+                "hostID": "host",
+                "parentID": "parent",
+                "contentHostID": "content",
+                "contentParentID": "content-parent",
+            ]
+        }
+        for transition in 1...8 {
+            for frame in 1...15 {
+                let payload: [String: Any] = [
+                    "recorderID": "recorder",
+                    "transition": transition,
+                    "stableOwnership": true,
+                    "noBlankVisibleSlots": true,
+                    "roles": roles,
+                ]
+                let data = try JSONSerialization.data(withJSONObject: payload)
+                try data.write(
+                    to: traceDirectory.appendingPathComponent(
+                        "container-recorder-transition-\(transition)-frame-\(frame).json"
+                    )
+                )
+            }
+        }
+
+        XCTAssertNoThrow(
+            try FileVerificationScenarioResultValidator().validate(
+                scenario: scenario,
+                artifacts: artifacts
+            )
+        )
     }
 
     /// 默认运行在单场景失败后继续，并为失败保留 workspace。
@@ -358,10 +909,12 @@ final class VerificationTests: XCTestCase {
     }
 
     /// 创建离线学习场景的隔离 artifacts。
-    private func makeArtifacts() throws -> VerificationScenarioArtifacts {
+    private func makeArtifacts(
+        scenarioNamed name: String = "offline-learning-flow"
+    ) throws -> VerificationScenarioArtifacts {
         let root = try makeTemporaryDirectory()
         let scenario = try XCTUnwrap(
-            VerificationScenarioRegistry().scenario(named: "offline-learning-flow")
+            VerificationScenarioRegistry().scenario(named: name)
         )
         return try VerificationArtifactStore(rootURL: root).prepareScenario(scenario)
     }
@@ -412,9 +965,41 @@ private struct ImmediateWaiter: VerificationWaiting {
     func wait(seconds: TimeInterval) {}
 }
 
+private final class ReadinessPublishingWaiter: VerificationWaiting, @unchecked Sendable {
+    private let root: URL
+    private let readinessURL: URL
+    private(set) var publishCount = 0
+
+    /// 创建会在首次轮询时发布 readiness 的确定性 waiter。
+    init(root: URL, readinessURL: URL) {
+        self.root = root
+        self.readinessURL = readinessURL
+    }
+
+    /// 首次等待时模拟应用稍后原子发布 readiness。
+    func wait(seconds: TimeInterval) {
+        guard publishCount == 0 else { return }
+        publishCount += 1
+        try! VerificationContractIO.publish(
+            VerificationWindowReadyEnvelope(
+                processIdentifier: 4242,
+                windowNumber: 7,
+                bounds: CGRect(x: 0, y: 0, width: 800, height: 600)
+            ),
+            to: readinessURL,
+            within: root
+        )
+    }
+}
+
 private final class FakeRunningApp: VerificationRunningApp, @unchecked Sendable {
     let processIdentifier: pid_t = 4242
-    let isRunning = true
+    let isRunning: Bool
+
+    /// 创建可模拟提前退出的运行句柄。
+    init(isRunning: Bool = true) {
+        self.isRunning = isRunning
+    }
 }
 
 private final class FakeAppManager: VerificationAppManaging, @unchecked Sendable {
@@ -433,6 +1018,33 @@ private final class FakeAppManager: VerificationAppManaging, @unchecked Sendable
         if let launchError {
             throw launchError
         }
+        let environment = configuration.environment
+        if let artifactPath = environment["WEIBEI_VERIFY_ARTIFACT_DIR"],
+           let readinessPath = environment["WEIBEI_VERIFY_WINDOW_READY_PATH"] {
+            try VerificationContractIO.publish(
+                VerificationWindowReadyEnvelope(
+                    processIdentifier: 4242,
+                    windowNumber: 7,
+                    bounds: CGRect(x: 0, y: 0, width: 800, height: 600)
+                ),
+                to: URL(fileURLWithPath: readinessPath),
+                within: URL(fileURLWithPath: artifactPath, isDirectory: true)
+            )
+        }
+        if let artifactPath = environment["WEIBEI_VERIFY_ARTIFACT_DIR"],
+           let completionPath = environment["WEIBEI_VERIFY_COMPLETION_PATH"],
+           let scenarioID = environment["WEIBEI_VERIFY_SCENARIO"],
+           VerificationScenarioRegistry().scenario(named: scenarioID)?.usesCompletionProtocol == true {
+            try VerificationContractIO.publish(
+                VerificationScenarioCompletionEnvelope(
+                    scenarioID: scenarioID,
+                    status: .passed,
+                    evidence: []
+                ),
+                to: URL(fileURLWithPath: completionPath),
+                within: URL(fileURLWithPath: artifactPath, isDirectory: true)
+            )
+        }
         return FakeRunningApp()
     }
 
@@ -445,16 +1057,27 @@ private final class FakeAppManager: VerificationAppManaging, @unchecked Sendable
 private struct FakeWindowLocator: VerificationWindowLocating {
     /// Returns a window belonging to the requested PID.
     func findWindow(
-        ownerName: String,
+        windowID: CGWindowID,
         processIdentifier: pid_t,
         minimumSize: CGSize
     ) -> VerificationWindow? {
         VerificationWindow(
-            id: 7,
+            id: windowID,
             processIdentifier: processIdentifier,
-            ownerName: ownerName,
+            ownerName: "Different localized owner",
             bounds: CGRect(origin: .zero, size: minimumSize)
         )
+    }
+}
+
+private struct MissingWindowLocator: VerificationWindowLocating {
+    /// 模拟 readiness 声明的窗口号不在 CoreGraphics 列表中。
+    func findWindow(
+        windowID: CGWindowID,
+        processIdentifier: pid_t,
+        minimumSize: CGSize
+    ) -> VerificationWindow? {
+        nil
     }
 }
 

@@ -366,6 +366,8 @@ final class WorkspaceStore: ObservableObject {
     private var quietInsightSignature = ""
     private var isRestoringNavigation = false
     private var didRunVerificationScenario = false
+    private var verificationFailureMessage: String?
+    private var didPublishVerificationCompletion = false
     private var lastSelectionAttachmentDate: Date?
     private var lastSelectionUpdateDate: Date?
     private var pendingSelectionAttachmentTask: Task<Void, Never>?
@@ -5131,16 +5133,16 @@ final class WorkspaceStore: ObservableObject {
 
     func runVerificationScenarioIfNeeded() async {
         guard !didRunVerificationScenario else { return }
-        guard Self.environmentValue("WEIBEI_SUPPRESS_ACTIVATION") == "1" else { return }
         let richAnswerReplayPath = Self.environmentValue("WEIBEI_VERIFY_RICH_ANSWER_REPLAY")
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let scenario = Self.environmentValue("WEIBEI_VERIFY_SCENARIO")
+        guard !scenario.isEmpty || !richAnswerReplayPath.isEmpty else { return }
         if !richAnswerReplayPath.isEmpty {
             didRunVerificationScenario = true
             recordVerificationStage("recognized:rich-answer-replay")
             configureRichAnswerReplayVerification(path: richAnswerReplayPath)
             return
         }
-        let scenario = Self.environmentValue("WEIBEI_VERIFY_SCENARIO")
         let agentVerificationFlow = AgentVerificationScenarioPolicy.flow(for: scenario)
         let emptyWorkspaceScenarios: Set<String> = [
             "empty-workspace-light-wide",
@@ -5175,6 +5177,9 @@ final class WorkspaceStore: ObservableObject {
         recordVerificationStage("recognized:\(scenario)")
         if emptyWorkspaceScenarios.contains(scenario) {
             configureEmptyWorkspaceVerificationScenario(scenario)
+            if scenario == "empty-workspace-inspiration-off" || scenario == "empty-workspace-open-doc" {
+                recordVerificationStage("completed")
+            }
             return
         }
         if scenario == "loading-indicator-samples" {
@@ -5270,6 +5275,26 @@ final class WorkspaceStore: ObservableObject {
                 noteRenderMode = .source
             }
             save()
+            if scenario == "linked-sources-flow" {
+                do {
+                    let report = LinkedSourcesVerificationReport(
+                        importedNotebookID: activeNotebookItemID ?? "",
+                        sourceItemIDs: linkedSourceIDsForActiveNote.sorted(),
+                        selectedItemID: selectedItemID,
+                        linkedSourcesPresented: linkedSourcesPresented,
+                        showLibrary: showLibrary,
+                        noteRenderMode: noteRenderMode.rawValue
+                    )
+                    try writeVerificationReport(report, named: "linked-sources-report.json")
+                    recordVerificationStage("completed")
+                } catch {
+                    publishVerificationCompletion(
+                        status: .failed,
+                        evidence: [],
+                        errorMessage: error.localizedDescription
+                    )
+                }
+            }
             return
         }
         if agentVerificationFlow?.waitsForReaderContext == true {
@@ -6072,7 +6097,7 @@ final class WorkspaceStore: ObservableObject {
             ("sample-md", false),
             ("sample-md", true),
         ]
-        var caseReports: [String] = []
+        var caseReports: [PaneToggleContinuityCaseReport] = []
         var allPassed = true
 
         for verificationCase in cases {
@@ -6144,42 +6169,53 @@ final class WorkspaceStore: ObservableObject {
                 && showNotes
             allPassed = allPassed && casePassed
             let caseName = "\(verificationCase.itemID)-agent-\(verificationCase.agentVisible ? "on" : "off")"
-            let locationReasons = PaneToggleContinuityVerifier.htmlLocationReasons
-                .sorted { $0.key < $1.key }
-                .map { "\($0.key):\($0.value)" }
-                .joined(separator: ",")
-            caseReports.append([
-                "case=\(caseName)",
-                "case_result=\(casePassed ? "pass" : "fail")",
-                "agent_revision_delta=\(revisionDelta)",
-                "study_location_changed=\(studyLocationChanged)",
-                "html_location_calls=\(PaneToggleContinuityVerifier.htmlLocationCallCount)",
-                "html_location_commits=\(PaneToggleContinuityVerifier.htmlLocationCommitCount)",
-                "html_location_reasons=\(locationReasons)",
-                "web_reader_make=\(PaneToggleContinuityVerifier.webReaderMakeCount)",
-                "web_reader_dismantle=\(PaneToggleContinuityVerifier.webReaderDismantleCount)",
-                "pdf_reader_make=\(PaneToggleContinuityVerifier.pdfReaderMakeCount)",
-                "pdf_reader_dismantle=\(PaneToggleContinuityVerifier.pdfReaderDismantleCount)",
-                "markdown_editor_make=\(PaneToggleContinuityVerifier.noteEditorMakeCount)",
-                "markdown_editor_dismantle=\(PaneToggleContinuityVerifier.noteEditorDismantleCount)",
-                "note_preserved=\(noteText == noteMarker)",
-                "conversation_preserved=\(messages == baselineMessages)",
-                "pane_order_preserved=\(normalizedThreePaneOrder == baselineOrder)",
-            ].joined(separator: " "))
+            caseReports.append(
+                PaneToggleContinuityCaseReport(
+                    name: caseName,
+                    passed: casePassed,
+                    agentRevisionDelta: revisionDelta,
+                    studyLocationChanged: studyLocationChanged,
+                    htmlLocationCalls: PaneToggleContinuityVerifier.htmlLocationCallCount,
+                    htmlLocationCommits: PaneToggleContinuityVerifier.htmlLocationCommitCount,
+                    htmlLocationReasons: PaneToggleContinuityVerifier.htmlLocationReasons,
+                    webReaderMakeCount: PaneToggleContinuityVerifier.webReaderMakeCount,
+                    webReaderDismantleCount: PaneToggleContinuityVerifier.webReaderDismantleCount,
+                    pdfReaderMakeCount: PaneToggleContinuityVerifier.pdfReaderMakeCount,
+                    pdfReaderDismantleCount: PaneToggleContinuityVerifier.pdfReaderDismantleCount,
+                    noteEditorMakeCount: PaneToggleContinuityVerifier.noteEditorMakeCount,
+                    noteEditorDismantleCount: PaneToggleContinuityVerifier.noteEditorDismantleCount,
+                    notePreserved: noteText == noteMarker,
+                    conversationPreserved: messages == baselineMessages,
+                    paneOrderPreserved: normalizedThreePaneOrder == baselineOrder
+                )
+            )
             PaneToggleContinuityVerifier.endMeasurement()
         }
 
-        let report = ([
-            "result=\(allPassed ? "pass" : "fail")",
-            "cases=\(cases.count)",
-            "notes_cycles_per_case=20",
-            "reader_cycles_per_case=20",
-        ] + caseReports).joined(separator: "\n") + "\n"
-        let reportURL = storageURL.deletingLastPathComponent()
-            .appendingPathComponent("pane-toggle-continuity-report.txt")
-        try? report.write(to: reportURL, atomically: true, encoding: .utf8)
-        recordVerificationStage("pane-toggle-result:\(allPassed ? "pass" : "fail")")
-        recordVerificationStage("completed")
+        do {
+            try await PaneContinuityRecorder.finishConfigured()
+            try writeVerificationReport(
+                PaneToggleContinuityVerificationReport(
+                    passed: allPassed,
+                    caseCount: cases.count,
+                    notesCyclesPerCase: 20,
+                    readerCyclesPerCase: 20,
+                    cases: caseReports
+                ),
+                named: "pane-toggle-continuity-report.json"
+            )
+            if !allPassed {
+                verificationFailureMessage = "pane toggle continuity assertions failed"
+            }
+            recordVerificationStage("pane-toggle-result:\(allPassed ? "pass" : "fail")")
+            recordVerificationStage("completed")
+        } catch {
+            publishVerificationCompletion(
+                status: .failed,
+                evidence: [],
+                errorMessage: error.localizedDescription
+            )
+        }
     }
 
     private func runPaneLayoutStabilityVerification() async {
@@ -6245,30 +6281,42 @@ final class WorkspaceStore: ObservableObject {
             && PaneToggleContinuityVerifier.webReaderDismantleCount == 0
             && PaneToggleContinuityVerifier.noteEditorMakeCount == 0
             && PaneToggleContinuityVerifier.noteEditorDismantleCount == 0
-        let report = [
-            "result=\(passed ? "pass" : "fail")",
-            "transitions=8",
-            "reader_visible=\(showReader)",
-            "agent_visible=\(showAgent)",
-            "notes_visible=\(showNotes)",
-            "agent_revision_delta=\(revisionDelta)",
-            "study_location_changed=\(finalLocation != baselineLocation)",
-            "html_location_calls=\(PaneToggleContinuityVerifier.htmlLocationCallCount)",
-            "web_reader_make=\(PaneToggleContinuityVerifier.webReaderMakeCount)",
-            "web_reader_dismantle=\(PaneToggleContinuityVerifier.webReaderDismantleCount)",
-            "note_editor_make=\(PaneToggleContinuityVerifier.noteEditorMakeCount)",
-            "note_editor_dismantle=\(PaneToggleContinuityVerifier.noteEditorDismantleCount)",
-            "note_preserved=\(noteText == noteMarker)",
-            "agent_draft_preserved=\(agentDraft == draftMarker)",
-            "conversation_preserved=\(messages == [messageMarker])",
-            "pane_order_preserved=\(normalizedThreePaneOrder == baselineOrder)",
-        ].joined(separator: "\n") + "\n"
         PaneToggleContinuityVerifier.endMeasurement()
-        let reportURL = storageURL.deletingLastPathComponent()
-            .appendingPathComponent("pane-layout-stability-report.txt")
-        try? report.write(to: reportURL, atomically: true, encoding: .utf8)
-        recordVerificationStage("pane-layout-result:\(passed ? "pass" : "fail")")
-        recordVerificationStage("completed")
+        do {
+            try await PaneContinuityRecorder.finishConfigured()
+            try writeVerificationReport(
+                PaneLayoutStabilityVerificationReport(
+                    passed: passed,
+                    transitions: 8,
+                    readerVisible: showReader,
+                    agentVisible: showAgent,
+                    notesVisible: showNotes,
+                    notePreserved: noteText == noteMarker,
+                    agentDraftPreserved: agentDraft == draftMarker,
+                    conversationPreserved: messages == [messageMarker],
+                    paneOrderPreserved: normalizedThreePaneOrder == baselineOrder,
+                    agentRevisionDelta: revisionDelta,
+                    studyLocationChanged: finalLocation != baselineLocation,
+                    htmlLocationCalls: PaneToggleContinuityVerifier.htmlLocationCallCount,
+                    webReaderMakeCount: PaneToggleContinuityVerifier.webReaderMakeCount,
+                    webReaderDismantleCount: PaneToggleContinuityVerifier.webReaderDismantleCount,
+                    noteEditorMakeCount: PaneToggleContinuityVerifier.noteEditorMakeCount,
+                    noteEditorDismantleCount: PaneToggleContinuityVerifier.noteEditorDismantleCount
+                ),
+                named: "pane-layout-stability-report.json"
+            )
+            if !passed {
+                verificationFailureMessage = "pane layout stability assertions failed"
+            }
+            recordVerificationStage("pane-layout-result:\(passed ? "pass" : "fail")")
+            recordVerificationStage("completed")
+        } catch {
+            publishVerificationCompletion(
+                status: .failed,
+                evidence: [],
+                errorMessage: error.localizedDescription
+            )
+        }
     }
 
     private func runPaneReorderWidthVerification() async {
@@ -6305,7 +6353,6 @@ final class WorkspaceStore: ObservableObject {
         let baselineRevision = agentContextRevision
         let itemID = selectedMaterialItem?.id
         let baselineLocation = itemID.flatMap { studyLocationsByItemID[$0] }
-        let baselineAgentWidth = threePaneReorderFrames[.agent]?.width ?? 0
         PaneToggleContinuityVerifier.beginMeasurement()
         recordVerificationStage("pane-reorder-width-context-prepared")
 
@@ -6356,30 +6403,42 @@ final class WorkspaceStore: ObservableObject {
             && agentContextRevision == baselineRevision
             && lifecycleStable
 
-        let report = [
-            "result=\(passed ? "pass" : "fail")",
-            "baseline_order=\(baselineOrder.map(\.rawValue).joined(separator: ","))",
-            "reordered_order=\(reorderedOrder.map(\.rawValue).joined(separator: ","))",
-            "persisted_order=\(persistedOrder.map(\.rawValue).joined(separator: ","))",
-            "baseline_agent_width=\(baselineAgentWidth)",
-            "expanded_agent_width=\(expandedAgentWidth)",
-            "reordered_agent_width=\(reorderedAgentWidth)",
-            "restored_agent_width=\(restoredAgentWidth)",
-            "width_tolerance=\(widthTolerance)",
-            "expansion_consumed=\(paneExpansionRequest == nil)",
-            "note_preserved=\(noteText == noteMarker)",
-            "agent_draft_preserved=\(agentDraft == draftMarker)",
-            "conversation_preserved=\(messages == [messageMarker])",
-            "study_location_changed=\(finalLocation != baselineLocation)",
-            "agent_revision_delta=\(agentContextRevision &- baselineRevision)",
-            "native_lifecycle_stable=\(lifecycleStable)",
-        ].joined(separator: "\n") + "\n"
         PaneToggleContinuityVerifier.endMeasurement()
-        let reportURL = storageURL.deletingLastPathComponent()
-            .appendingPathComponent("pane-reorder-width-report.txt")
-        try? report.write(to: reportURL, atomically: true, encoding: .utf8)
-        recordVerificationStage("pane-reorder-width-result:\(passed ? "pass" : "fail")")
-        recordVerificationStage("completed")
+        do {
+            try await PaneContinuityRecorder.finishConfigured()
+            try writeVerificationReport(
+                PaneReorderWidthVerificationReport(
+                    passed: passed,
+                    baselineOrder: baselineOrder.map(\.rawValue),
+                    reorderedOrder: reorderedOrder.map(\.rawValue),
+                    persistedOrder: persistedOrder.map(\.rawValue),
+                    expansionConsumed: paneExpansionRequest == nil,
+                    nativeLifecycleStable: lifecycleStable,
+                    expandedAgentWidth: expandedAgentWidth,
+                    reorderedAgentWidth: reorderedAgentWidth,
+                    restoredAgentWidth: restoredAgentWidth,
+                    minimumReadableWidth: ContentRailMetrics.readableWidth,
+                    widthTolerance: widthTolerance,
+                    notePreserved: noteText == noteMarker,
+                    agentDraftPreserved: agentDraft == draftMarker,
+                    conversationPreserved: messages == [messageMarker],
+                    studyLocationChanged: finalLocation != baselineLocation,
+                    agentRevisionDelta: agentContextRevision &- baselineRevision
+                ),
+                named: "pane-reorder-width-report.json"
+            )
+            if !passed {
+                verificationFailureMessage = "pane reorder and width assertions failed"
+            }
+            recordVerificationStage("pane-reorder-width-result:\(passed ? "pass" : "fail")")
+            recordVerificationStage("completed")
+        } catch {
+            publishVerificationCompletion(
+                status: .failed,
+                evidence: [],
+                errorMessage: error.localizedDescription
+            )
+        }
     }
 
     private func runReaderScrollPersistenceVerification() async {
@@ -6467,10 +6526,96 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func recordVerificationStage(_ stage: String) {
-        guard Self.environmentValue("WEIBEI_SUPPRESS_ACTIVATION") == "1" else { return }
+        guard !Self.environmentValue("WEIBEI_VERIFY_SCENARIO").isEmpty
+            || !Self.environmentValue("WEIBEI_VERIFY_RICH_ANSWER_REPLAY").isEmpty else { return }
         let url = storageURL.deletingLastPathComponent().appendingPathComponent("verification-state.txt")
         let previous = (try? String(contentsOf: url, encoding: .utf8)) ?? ""
         try? "\(previous)\(stage)\n".write(to: url, atomically: true, encoding: .utf8)
+        if stage.hasPrefix("failure:") {
+            verificationFailureMessage = String(stage.dropFirst("failure:".count))
+        }
+        if stage == "completed" {
+            if Self.environmentValue("WEIBEI_VERIFY_SCENARIO") != "linked-sources-flow" {
+                save()
+            }
+            let status: VerificationScenarioStatus = verificationFailureMessage == nil ? .passed : .failed
+            publishVerificationCompletion(
+                status: status,
+                evidence: verificationEvidencePaths(),
+                errorMessage: verificationFailureMessage
+            )
+        }
+    }
+
+    /// 将类型化报告写入隔离 workspace，并让编码或 IO 错误向场景传播。
+    private func writeVerificationReport<T: Encodable>(_ report: T, named name: String) throws {
+        let artifactPath = Self.environmentValue("WEIBEI_VERIFY_ARTIFACT_DIR")
+        guard !artifactPath.isEmpty else {
+            throw CocoaError(.fileNoSuchFile)
+        }
+        try VerificationContractIO.publish(
+            report,
+            to: storageURL.deletingLastPathComponent().appendingPathComponent(name),
+            within: URL(fileURLWithPath: artifactPath, isDirectory: true)
+        )
+    }
+
+    /// 在全部 evidence 稳定后原子发布一次场景完成屏障。
+    private func publishVerificationCompletion(
+        status: VerificationScenarioStatus,
+        evidence: [String],
+        errorMessage: String?
+    ) {
+        guard !didPublishVerificationCompletion else { return }
+        let scenario = Self.environmentValue("WEIBEI_VERIFY_SCENARIO")
+        let artifactPath = Self.environmentValue("WEIBEI_VERIFY_ARTIFACT_DIR")
+        let completionPath = Self.environmentValue("WEIBEI_VERIFY_COMPLETION_PATH")
+        guard !scenario.isEmpty, !artifactPath.isEmpty, !completionPath.isEmpty else { return }
+        do {
+            let completion = VerificationScenarioCompletionEnvelope(
+                scenarioID: scenario,
+                status: status,
+                evidence: evidence,
+                errorMessage: errorMessage
+            )
+            try completion.validate(expectedScenarioID: scenario)
+            try VerificationContractIO.publish(
+                completion,
+                to: URL(fileURLWithPath: completionPath),
+                within: URL(fileURLWithPath: artifactPath, isDirectory: true)
+            )
+            didPublishVerificationCompletion = true
+        } catch {
+            fputs("WeiBei verification completion failed: \(error.localizedDescription)\n", stderr)
+        }
+    }
+
+    /// 返回当前迁移场景由 Runner 独立验证并在成功时保留的安全相对路径。
+    private func verificationEvidencePaths() -> [String] {
+        switch Self.environmentValue("WEIBEI_VERIFY_SCENARIO") {
+        case "offline-learning-flow", "immersive-conversation-flow",
+             "empty-workspace-inspiration-off", "empty-workspace-open-doc":
+            return ["workspace/workspace.json"]
+        case "linked-sources-flow":
+            return ["workspace/workspace.json", "workspace/linked-sources-report.json"]
+        case "pane-toggle-continuity-flow":
+            return [
+                "workspace/pane-toggle-continuity-report.json",
+                "workspace/pane-trace/summary.json",
+            ]
+        case "pane-layout-stability-flow":
+            return [
+                "workspace/pane-layout-stability-report.json",
+                "workspace/pane-trace/summary.json",
+            ]
+        case "pane-reorder-width-flow":
+            return [
+                "workspace/pane-reorder-width-report.json",
+                "workspace/pane-trace/summary.json",
+            ]
+        default:
+            return []
+        }
     }
 
     private func configureEmptyWorkspaceVerificationScenario(_ scenario: String) {
@@ -6785,7 +6930,6 @@ final class WorkspaceStore: ObservableObject {
         }
         let verificationScenario = Self.environmentValue("WEIBEI_VERIFY_SCENARIO")
         let isExplicitOfflineVerification = Self.environmentValue("WEIBEI_FORCE_OFFLINE_AGENT") == "1"
-            && Self.environmentValue("WEIBEI_SUPPRESS_ACTIVATION") == "1"
             && ["offline-learning-flow", "immersive-conversation-flow"].contains(verificationScenario)
         if isExplicitOfflineVerification {
             return try await OfflineStudyAgentRuntime().respond(to: request)

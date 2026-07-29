@@ -353,6 +353,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
     private static var scheduledVerificationCaptures: Set<String> = []
     private static var scheduledVerificationCaptureChannels: Set<String> = []
     private static var processedVerificationCaptureRequests: Set<String> = []
+    private static var publishedVerificationReadiness: Set<String> = []
     private static let webViewSnapshotTimeoutSeconds: TimeInterval = 4
 
     var appearanceMode: WeiBeiAppearanceMode
@@ -394,14 +395,44 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         window.isMovableByWindowBackground = true
         window.ignoresMouseEvents = ProcessInfo.processInfo.environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1"
         applyVerificationWindowSize(to: window)
+        publishVerificationWindowReadiness(window)
         captureVerificationWindowIfRequested(window)
         listenForVerificationCaptureRequestsIfRequested(window)
     }
 
+    /// 首次布局完成后原子发布 PID、窗口号和 bounds，供 Runner 独立复核。
+    private func publishVerificationWindowReadiness(_ window: NSWindow) {
+        let environment = ProcessInfo.processInfo.environment
+        guard let artifactPath = environment["WEIBEI_VERIFY_ARTIFACT_DIR"],
+              let readinessPath = environment["WEIBEI_VERIFY_WINDOW_READY_PATH"],
+              !artifactPath.isEmpty,
+              !readinessPath.isEmpty,
+              Self.publishedVerificationReadiness.insert(readinessPath).inserted else {
+            return
+        }
+        DispatchQueue.main.async {
+            window.contentView?.layoutSubtreeIfNeeded()
+            let readiness = VerificationWindowReadyEnvelope(
+                processIdentifier: ProcessInfo.processInfo.processIdentifier,
+                windowNumber: UInt32(window.windowNumber),
+                bounds: window.frame
+            )
+            do {
+                try VerificationContractIO.publish(
+                    readiness,
+                    to: URL(fileURLWithPath: readinessPath),
+                    within: URL(fileURLWithPath: artifactPath, isDirectory: true)
+                )
+            } catch {
+                fputs("WeiBei verification readiness failed: \(error.localizedDescription)\n", stderr)
+            }
+        }
+    }
+
     private func applyVerificationWindowSize(to window: NSWindow) {
         let environment = ProcessInfo.processInfo.environment
-        guard environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1",
-              let rawSize = environment["WEIBEI_VERIFY_WINDOW_SIZE"] else { return }
+        guard let rawSize = environment["WEIBEI_VERIFY_WINDOW_SIZE"],
+              environment["WEIBEI_VERIFY_SCENARIO"]?.isEmpty == false else { return }
         let parts = rawSize.lowercased().split(separator: "x", maxSplits: 1)
         guard parts.count == 2,
               let width = Double(parts[0]),
@@ -418,27 +449,44 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
 
     private func captureVerificationWindowIfRequested(_ window: NSWindow) {
         let environment = ProcessInfo.processInfo.environment
-        guard environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1",
-              let capturePath = environment["WEIBEI_VERIFY_CAPTURE_PATH"],
+        guard let capturePath = environment["WEIBEI_VERIFY_CAPTURE_PATH"],
               !capturePath.isEmpty,
+              environment["WEIBEI_VERIFY_SCENARIO"]?.isEmpty == false,
               Self.scheduledVerificationCaptures.insert(capturePath).inserted else { return }
 
         let scenario = environment["WEIBEI_VERIFY_SCENARIO"] ?? ""
         if [
+            "offline-learning-flow",
+            "immersive-conversation-flow",
+            "empty-workspace-inspiration-off",
+            "empty-workspace-open-doc",
+            "linked-sources-flow",
+            "pane-layout-stability-flow",
+            "pane-toggle-continuity-flow",
+            "pane-reorder-width-flow",
+        ].contains(scenario),
+           let completionPath = environment["WEIBEI_VERIFY_COMPLETION_PATH"] {
+            Self.waitForVerificationCompletion(
+                in: window,
+                capturePath: capturePath,
+                completionURL: URL(fileURLWithPath: completionPath),
+                remainingAttempts: scenario == "pane-toggle-continuity-flow" ? 1_800 : 600
+            )
+            return
+        }
+        if [
             "pi-learning-flow",
             "pi-course-memory-flow",
-            "pane-toggle-continuity-flow",
             "reader-scroll-persistence-flow",
             "course-workspace-overview-flow",
             "course-workspace-workflow-flow",
         ].contains(scenario),
            let workspaceDirectory = environment["WEIBEI_WORKSPACE_DIR"] {
-            let stateURL = URL(fileURLWithPath: workspaceDirectory)
-                .appendingPathComponent("verification-state.txt")
-            Self.waitForVerificationCompletion(
+            Self.waitForLegacyVerificationCompletion(
                 in: window,
                 capturePath: capturePath,
-                stateURL: stateURL,
+                stateURL: URL(fileURLWithPath: workspaceDirectory)
+                    .appendingPathComponent("verification-state.txt"),
                 remainingAttempts: scenario == "pane-toggle-continuity-flow" ? 1_800 : 600
             )
             return
@@ -507,8 +555,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
 
     private func listenForVerificationCaptureRequestsIfRequested(_ window: NSWindow) {
         let environment = ProcessInfo.processInfo.environment
-        guard environment["WEIBEI_SUPPRESS_ACTIVATION"] == "1",
-              let rawChannelPath = environment["WEIBEI_VERIFY_CAPTURE_REQUEST_DIR"],
+        guard let rawChannelPath = environment["WEIBEI_VERIFY_CAPTURE_REQUEST_DIR"],
               !rawChannelPath.isEmpty,
               let rawOutputPath = environment["WEIBEI_VERIFY_CAPTURE_OUTPUT_DIR"],
               !rawOutputPath.isEmpty else { return }
@@ -836,6 +883,30 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
     private static func waitForVerificationCompletion(
         in window: NSWindow,
         capturePath: String,
+        completionURL: URL,
+        remainingAttempts: Int
+    ) {
+        if FileManager.default.fileExists(atPath: completionURL.path) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                capture(window, to: capturePath)
+            }
+            return
+        }
+        guard remainingAttempts > 0 else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            waitForVerificationCompletion(
+                in: window,
+                capturePath: capturePath,
+                completionURL: completionURL,
+                remainingAttempts: remainingAttempts - 1
+            )
+        }
+    }
+
+    /// 未迁移场景继续读取旧状态文件，避免扩大本次八场景协议范围。
+    private static func waitForLegacyVerificationCompletion(
+        in window: NSWindow,
+        capturePath: String,
         stateURL: URL,
         remainingAttempts: Int
     ) {
@@ -848,7 +919,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
         }
         guard remainingAttempts > 0 else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-            waitForVerificationCompletion(
+            waitForLegacyVerificationCompletion(
                 in: window,
                 capturePath: capturePath,
                 stateURL: stateURL,
