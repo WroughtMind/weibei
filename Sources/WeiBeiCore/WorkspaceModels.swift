@@ -905,7 +905,7 @@ public struct NoteEditorCommand: Identifiable, Hashable {
     }
 }
 
-public enum SelectionSource: String, Codable, Hashable {
+public enum SelectionSource: String, Codable, Hashable, Sendable {
     case document
     case note
 }
