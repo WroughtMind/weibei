@@ -332,8 +332,6 @@ final class WorkspaceStore: ObservableObject {
     @Published private(set) var learningMemoryRevision: UInt64 = 0
     @Published private(set) var studySessions: [StudySession] = []
     @Published private(set) var activeStudySessionID: UUID?
-    /// When true, session picker lists every session; otherwise groups by material with a View All entry.
-    @Published var showAllStudySessions = false
     /// Drawer open flag lives on `libraryDrawer` so toggles only refresh drawer chrome.
     let libraryDrawer = LibraryDrawerState()
     var showLibrary: Bool {
@@ -6649,37 +6647,20 @@ final class WorkspaceStore: ObservableObject {
         studySessions.sorted { $0.updatedAt > $1.updatedAt }
     }
 
-    /// Sessions for the session menu: either all, or material-grouped with current material first.
-    var studySessionsForMenu: [StudySession] {
-        if showAllStudySessions {
-            return orderedStudySessions
+    var globalStudySessions: [StudySession] {
+        orderedStudySessions.filter {
+            $0.courseID == nil && $0.scopeNeedsReview == false
         }
-        if let materialID = selectedMaterialItem?.id {
-            let matching = orderedStudySessions.filter { $0.groupingMaterialItemID == materialID }
-            if !matching.isEmpty { return matching }
-        }
-        return orderedStudySessions
     }
 
-    /// Grouped history for the expanded "view all" picker: material title → sessions.
-    var studySessionsGroupedByMaterial: [(materialID: String?, title: String, sessions: [StudySession])] {
-        var groups: [String?: [StudySession]] = [:]
-        for session in orderedStudySessions {
-            groups[session.groupingMaterialItemID, default: []].append(session)
+    func studySessions(in courseID: UUID) -> [StudySession] {
+        orderedStudySessions.filter {
+            $0.courseID == courseID && $0.scopeNeedsReview == false
         }
-        return groups.keys.sorted { lhs, rhs in
-            let leftDate = groups[lhs]?.first?.updatedAt ?? .distantPast
-            let rightDate = groups[rhs]?.first?.updatedAt ?? .distantPast
-            return leftDate > rightDate
-        }.map { materialID in
-            let title: String
-            if let materialID, let item = allItems.first(where: { $0.id == materialID }) {
-                title = displayTitle(for: item)
-            } else {
-                title = ui("未关联资料", "Unlinked")
-            }
-            return (materialID, title, groups[materialID] ?? [])
-        }
+    }
+
+    var unclassifiedStudySessions: [StudySession] {
+        orderedStudySessions.filter { $0.scopeNeedsReview == true }
     }
 
     var orderedLearningMemoryEntries: [LearningMemoryEntry] {
@@ -6700,6 +6681,42 @@ final class WorkspaceStore: ObservableObject {
         activeStudySession?.title ?? ui("新学习会话", "New Study Session")
     }
 
+    var activeStudySessionScopeTitle: String {
+        guard let session = activeStudySession else {
+            return ui("对话", "Chat")
+        }
+        if session.scopeNeedsReview == true {
+            return ui("待归类", "Needs Course")
+        }
+        guard let courseID = session.courseID else {
+            return ui("全局", "Global")
+        }
+        return course(withID: courseID)?.title ?? ui("待归类", "Needs Course")
+    }
+
+    var canUseSelectedMaterialInActiveChat: Bool {
+        guard let itemID = selectedMaterialItem?.id,
+              let session = activeStudySession,
+              session.scopeNeedsReview == false else {
+            return selectedMaterialItem == nil
+        }
+        guard let courseID = session.courseID else { return true }
+        return courseMembershipIndex.courseIDs(for: itemID).contains(courseID)
+    }
+
+    var agentContextScopeNotice: String? {
+        guard let item = selectedMaterialItem,
+              !canUseSelectedMaterialInActiveChat,
+              let courseID = activeStudySession?.courseID,
+              let course = course(withID: courseID) else {
+            return nil
+        }
+        return ui(
+            "“\(displayTitle(for: item))”不属于“\(course.title)”，不会发送给当前对话。",
+            "\"\(displayTitle(for: item))\" is outside \"\(course.title)\" and will not be sent to this Chat."
+        )
+    }
+
     var lastStudyLocation: StudyLocation? {
         studyLocationsByItemID.values.max { $0.lastStudiedAt < $1.lastStudiedAt }
     }
@@ -6715,16 +6732,25 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    func createStudySession() {
+    @discardableResult
+    func createStudySession(courseID: UUID?) -> StudySession? {
+        guard courseID == nil || courses.contains(where: { $0.id == courseID }) else {
+            return nil
+        }
         cancelAgentRequest(restoreDraft: false)
         syncActiveStudySession()
-        let inheritedCourseID = activeStudySession.flatMap {
-            $0.scopeNeedsReview == false ? $0.courseID : nil
+        let selectedMaterialID = selectedMaterialItem?.id
+        let materialID = selectedMaterialID.flatMap { itemID in
+            guard let courseID else { return itemID }
+            return courseMembershipIndex.courseIDs(for: itemID).contains(courseID)
+                ? itemID
+                : nil
         }
-        let materialID = selectedMaterialItem?.id
         let session = StudySession(
-            title: ui("新学习会话", "New Study Session"),
-            courseID: inheritedCourseID,
+            title: courseID == nil
+                ? ui("新全局对话", "New Global Chat")
+                : ui("新课程对话", "New Course Chat"),
+            courseID: courseID,
             focusItemIDs: [materialID].compactMap { $0 },
             materialItemID: materialID
         )
@@ -6735,15 +6761,21 @@ final class WorkspaceStore: ObservableObject {
         lastAgentReplyContextRevision = nil
         invalidateAgentContext()
         save()
+        return session
     }
 
-    func setShowAllStudySessions(_ enabled: Bool) {
-        showAllStudySessions = enabled
-    }
-
-    func activateStudySession(_ id: UUID) {
-        guard id != activeStudySessionID,
-              let session = studySessions.first(where: { $0.id == id }) else { return }
+    @discardableResult
+    func activateStudySession(
+        _ id: UUID,
+        expectedCourseID: UUID?,
+        expectedScopeNeedsReview: Bool
+    ) -> Bool {
+        guard let session = studySessions.first(where: { $0.id == id }),
+              session.courseID == expectedCourseID,
+              session.scopeNeedsReview == expectedScopeNeedsReview else {
+            return false
+        }
+        guard id != activeStudySessionID else { return true }
         cancelAgentRequest(restoreDraft: false)
         syncActiveStudySession()
         activeStudySessionID = id
@@ -6752,6 +6784,33 @@ final class WorkspaceStore: ObservableObject {
         lastAgentReplyContextRevision = nil
         invalidateAgentContext()
         save()
+        return true
+    }
+
+    @discardableResult
+    func classifyStudySession(_ id: UUID, as courseID: UUID?) -> Bool {
+        guard courseID == nil || courses.contains(where: { $0.id == courseID }),
+              let index = studySessions.firstIndex(where: {
+                  $0.id == id && $0.scopeNeedsReview == true
+              }) else {
+            return false
+        }
+        var session = studySessions[index]
+        session.courseID = courseID
+        session.scopeNeedsReview = false
+        session.focusItemIDs = session.focusItemIDs.filter {
+            itemID($0, belongsTo: session)
+        }
+        if let materialItemID = session.materialItemID,
+           !itemID(materialItemID, belongsTo: session) {
+            session.materialItemID = nil
+        }
+        studySessions[index] = session
+        if activeStudySessionID == id {
+            invalidateAgentContext()
+        }
+        save()
+        return true
     }
 
     func deleteStudySession(_ id: UUID) {
@@ -6918,11 +6977,26 @@ final class WorkspaceStore: ObservableObject {
            studySessions[index].messages.filter({ $0.role == .user }).count == 1 {
             studySessions[index].title = Self.sessionTitle(from: titleSeed)
         }
+        if studySessions[index].scopeNeedsReview == false {
+            var session = studySessions[index]
+            session.focusItemIDs = session.focusItemIDs.filter {
+                itemID($0, belongsTo: session)
+            }
+            if let materialItemID = session.materialItemID,
+               !itemID(materialItemID, belongsTo: session) {
+                session.materialItemID = nil
+            }
+            studySessions[index] = session
+        }
         if studySessions[index].materialItemID == nil,
-           let materialID = selectedMaterialItem?.id {
+           let materialID = selectedMaterialItem?.id,
+           itemID(materialID, belongsTo: studySessions[index]) {
             studySessions[index].materialItemID = materialID
         }
-        for itemID in [selectedItemID, activeNoteItemID].compactMap({ $0 }) {
+        let scopedFocusItemIDs = [selectedItemID, activeNoteItemID]
+            .compactMap { $0 }
+            .filter { itemID($0, belongsTo: studySessions[index]) }
+        for itemID in scopedFocusItemIDs {
             if !studySessions[index].focusItemIDs.contains(itemID) {
                 studySessions[index].focusItemIDs.append(itemID)
             }
@@ -6930,6 +7004,12 @@ final class WorkspaceStore: ObservableObject {
         if studySessions[index].focusItemIDs.count > 24 {
             studySessions[index].focusItemIDs.removeFirst(studySessions[index].focusItemIDs.count - 24)
         }
+    }
+
+    private func itemID(_ itemID: String, belongsTo session: StudySession) -> Bool {
+        guard session.scopeNeedsReview == false else { return false }
+        guard let courseID = session.courseID else { return true }
+        return courseMembershipIndex.courseIDs(for: itemID).contains(courseID)
     }
 
     private static func sessionTitle(from text: String) -> String {
@@ -7112,52 +7192,59 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var agentSelectionTitle: String? {
-        if !selectionAttachments.isEmpty {
-            if selectionAttachments.count == 1 {
-                return selectionAttachments[0].ownerTitle
-            }
-            return ui("\(selectionAttachments.count) 个已选文本片段", "\(selectionAttachments.count) selected text fragments")
-        }
-        // Live selection (before/without 「问」 attachment) still counts as ask context.
-        let live = selectionContext?.text.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        guard !live.isEmpty else { return nil }
-        return selectionContext?.ownerTitle
+        agentSelectionTitle(from: currentAgentSelections())
     }
 
     var agentSelectionText: String? {
-        if !selectionAttachments.isEmpty {
-            return selectionAttachments.enumerated().map { index, selection in
-                ui(
-                    """
-                    片段 \(index + 1)（来源：\(selection.ownerTitle)）：
-                    \(selection.text)
-                    """,
-                    """
-                    Fragment \(index + 1) (source: \(selection.ownerTitle)):
-                    \(selection.text)
-                    """
-                )
-            }.joined(separator: "\n\n")
-        }
-        guard let selectionContext else { return nil }
-        let live = selectionContext.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !live.isEmpty else { return nil }
-        return ui(
-            """
-            选区（来源：\(selectionContext.ownerTitle)）：
-            \(live)
-            """,
-            """
-            Selection (source: \(selectionContext.ownerTitle)):
-            \(live)
-            """
-        )
+        agentSelectionText(from: currentAgentSelections())
     }
 
-    private var agentSelectionSources: [AgentReplySource] {
+    private func currentAgentSelections(
+        allowedItemIDs: Set<String>? = nil
+    ) -> [SelectionContext] {
         let selections = selectionAttachments.isEmpty
             ? [selectionContext].compactMap { $0 }
             : selectionAttachments
+        return selections.filter { selection in
+            guard !selection.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return false
+            }
+            guard let allowedItemIDs else { return true }
+            guard let itemID = selection.itemID else { return false }
+            return allowedItemIDs.contains(itemID)
+        }
+    }
+
+    private func agentSelectionTitle(from selections: [SelectionContext]) -> String? {
+        guard !selections.isEmpty else { return nil }
+        if selections.count == 1 {
+            return selections[0].ownerTitle
+        }
+        return ui(
+            "\(selections.count) 个已选文本片段",
+            "\(selections.count) selected text fragments"
+        )
+    }
+
+    private func agentSelectionText(from selections: [SelectionContext]) -> String? {
+        guard !selections.isEmpty else { return nil }
+        return selections.enumerated().map { index, selection in
+            ui(
+                """
+                片段 \(index + 1)（来源：\(selection.ownerTitle)）：
+                \(selection.text)
+                """,
+                """
+                Fragment \(index + 1) (source: \(selection.ownerTitle)):
+                \(selection.text)
+                """
+            )
+        }.joined(separator: "\n\n")
+    }
+
+    private func agentSelectionSources(
+        from selections: [SelectionContext]
+    ) -> [AgentReplySource] {
         return selections.compactMap { selection in
             let excerpt = selection.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !excerpt.isEmpty else { return nil }
@@ -7446,15 +7533,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func selectMeasured(itemID: String?) {
-        let destinationSessionID = itemID.flatMap { selectedID in
-            orderedStudySessions.first(where: {
-                $0.groupingMaterialItemID == selectedID
-            })?.id
-        }
-        invalidateAgentContext(
-            restoreAgentDraft: destinationSessionID == nil
-                || destinationSessionID == activeStudySessionID
-        )
+        invalidateAgentContext()
         persistCurrentNote()
         notebookCreationDraft = nil
         notebookRenameDraft = nil
@@ -7491,11 +7570,6 @@ final class WorkspaceStore: ObservableObject {
         if itemChanged {
             readerLocationTitle = selectedMaterialItem.map(displayTitle)
             restoreCurrentStudyLocation()
-            // Scheme A: hang current conversation, switch to the material's latest session
-            // without wiping history. Messages stay on the StudySession record.
-            if let materialID = selectedMaterialItem?.id {
-                activateLatestStudySession(forMaterialID: materialID)
-            }
         } else if readerLocationTitle == nil {
             readerLocationTitle = selectedMaterialItem.map(displayTitle)
         }
@@ -7508,32 +7582,6 @@ final class WorkspaceStore: ObservableObject {
         clearGeneratedQuietInsight()
         refreshQuietInsightIfNeeded()
         save()
-    }
-
-    /// Activate the most recently updated session for a material, or keep the current empty one.
-    private func activateLatestStudySession(forMaterialID materialID: String) {
-        syncActiveStudySession()
-        if let active = activeStudySession,
-           active.groupingMaterialItemID == materialID {
-            return
-        }
-        if let match = orderedStudySessions.first(where: { $0.groupingMaterialItemID == materialID }) {
-            invalidateAgentContext(restoreAgentDraft: false)
-            activeStudySessionID = match.id
-            messages = match.messages
-            restoreAgentReplyState(from: match)
-            lastAgentReplyContextRevision = nil
-            return
-        }
-        // No session for this material yet: keep current session and re-tag it if empty.
-        if let activeStudySessionID,
-           let index = studySessions.firstIndex(where: { $0.id == activeStudySessionID }),
-           studySessions[index].messages.isEmpty {
-            studySessions[index].materialItemID = materialID
-            if !studySessions[index].focusItemIDs.contains(materialID) {
-                studySessions[index].focusItemIDs.insert(materialID, at: 0)
-            }
-        }
     }
 
     private func alignActiveCourse(with itemID: String) {
@@ -7868,9 +7916,19 @@ final class WorkspaceStore: ObservableObject {
         select(itemID: itemID)
     }
 
-    func continueCourseSession(_ sessionID: UUID) {
-        guard studySessions.contains(where: { $0.id == sessionID && !$0.messages.isEmpty }) else { return }
-        activateStudySession(sessionID)
+    func continueCourseSession(
+        _ sessionID: UUID,
+        expectedCourseID: UUID?,
+        expectedScopeNeedsReview: Bool
+    ) {
+        guard studySessions.contains(where: {
+            $0.id == sessionID && !$0.messages.isEmpty
+        }),
+        activateStudySession(
+            sessionID,
+            expectedCourseID: expectedCourseID,
+            expectedScopeNeedsReview: expectedScopeNeedsReview
+        ) else { return }
         dismissCourseWorkspace(restoringFocus: false)
         showLibrary = false
         setLayout(.immersiveConversation)
@@ -10786,8 +10844,29 @@ final class WorkspaceStore: ObservableObject {
         return changed
     }
 
-    private func makeCourseContext(query: String) async throws -> CourseContextBuildResult {
-        let candidates = allItems.map { item in
+    private func makeCourseContext(
+        query: String,
+        courseID: UUID?
+    ) async throws -> CourseContextBuildResult {
+        let scopedItems = courseID.map { courseItems(in: $0) } ?? allItems
+        let scopedItemIDs = Set(scopedItems.map(\.id))
+        let candidates = scopedItems.map { item in
+            let baseSubtitle = displaySubtitle(for: item)
+            let subtitle: String
+            if courseID == nil {
+                let membershipIDs = Set(courseMembershipIndex.courseIDs(for: item.id))
+                let courseTitles = courses
+                    .filter { membershipIDs.contains($0.id) }
+                    .map(\.title)
+                subtitle = courseTitles.isEmpty
+                    ? ui("未归入课程 · \(baseSubtitle)", "Not in a course · \(baseSubtitle)")
+                    : ui(
+                        "课程：\(courseTitles.joined(separator: "、")) · \(baseSubtitle)",
+                        "Courses: \(courseTitles.joined(separator: ", ")) · \(baseSubtitle)"
+                    )
+            } else {
+                subtitle = baseSubtitle
+            }
             let embeddedText: String?
             if item.isNotebookNote {
                 embeddedText = noteMarkdownText(for: item)
@@ -10802,16 +10881,25 @@ final class WorkspaceStore: ObservableObject {
             return CourseIndexCandidate(
                 item: item,
                 title: displayTitle(for: item),
-                subtitle: displaySubtitle(for: item),
+                subtitle: subtitle,
                 embeddedText: embeddedText,
                 fallbackText: fallbackText
             )
         }
-        let title = ui("当前课程", "Current Course")
-        let links = noteSourceLinks
-        let currentMaterialID = selectedMaterialItem?.id
-        let currentMaterialItem = selectedMaterialItem
-        let currentNoteID = activeNoteItem?.isNotebookNote == true ? activeNoteItem?.id : nil
+        let title = courseID
+            .flatMap { course(withID: $0)?.title }
+            ?? ui("全部课程", "All Courses")
+        let links = noteSourceLinks.filter {
+            scopedItemIDs.contains($0.noteItemID)
+                && scopedItemIDs.contains($0.sourceItemID)
+        }
+        let currentMaterialItem = selectedMaterialItem.flatMap {
+            scopedItemIDs.contains($0.id) ? $0 : nil
+        }
+        let currentMaterialID = currentMaterialItem?.id
+        let currentNoteID = activeNoteItem.flatMap {
+            $0.isNotebookNote && scopedItemIDs.contains($0.id) ? $0.id : nil
+        }
         let searchIndex = courseDocumentSearchIndex
         let indexingTask = Task.detached(priority: .userInitiated) {
             let indexedByItemID = searchIndex.lookup(
@@ -10894,7 +10982,9 @@ final class WorkspaceStore: ObservableObject {
                 title: session.title,
                 summary: sessionContinuitySummary(for: session),
                 phase: session.flow.phase.rawValue,
-                focusItemIDs: session.focusItemIDs,
+                focusItemIDs: session.focusItemIDs.filter {
+                    itemID($0, belongsTo: session)
+                },
                 turnCount: session.messages.count
             )
         }
@@ -11408,6 +11498,7 @@ final class WorkspaceStore: ObservableObject {
             || scenario == "course-workspace-overview-flow"
             || scenario == "course-workspace-workflow-flow"
             || scenario == "course-index-navigation-flow"
+            || scenario == "course-chat-scope-flow"
             || scenario == "chat-reply-persistence-flow"
             || scenario == "loading-indicator-samples"
             || emptyWorkspaceScenarios.contains(scenario) else { return }
@@ -11468,7 +11559,8 @@ final class WorkspaceStore: ObservableObject {
         }
         if scenario == "course-workspace-overview-flow"
             || scenario == "course-workspace-workflow-flow"
-            || scenario == "course-index-navigation-flow" {
+            || scenario == "course-index-navigation-flow"
+            || scenario == "course-chat-scope-flow" {
             await runCourseWorkspaceVerification(scenario)
             return
         }
@@ -12044,6 +12136,115 @@ final class WorkspaceStore: ObservableObject {
         agentSurface = .hidden
         courseDocumentSearchIndex.synchronize(allItems)
         save()
+
+        if scenario == "course-chat-scope-flow" {
+            let courseBSession = StudySession(
+                title: "经济思想史复习",
+                courseID: courseB.id,
+                focusItemIDs: [materialC.id, noteC.id],
+                materialItemID: materialC.id
+            )
+            studySessions.append(courseBSession)
+            let courseAChatID = activeSession.id
+            if let courseAIndex = studySessions.firstIndex(where: { $0.id == courseAChatID }) {
+                studySessions[courseAIndex].focusItemIDs.append(materialC.id)
+                studySessions[courseAIndex].materialItemID = materialC.id
+            }
+            layout = .immersiveConversation
+            showLibrary = false
+            showReader = false
+            showAgent = true
+            showNotes = false
+            agentSurface = .hidden
+            select(itemID: materialC.id)
+            selectionContext = SelectionContext(
+                text: "只属于课程 B 的选区",
+                source: .document,
+                ownerTitle: materialC.title,
+                itemID: materialC.id
+            )
+            let courseAAllowedIDs = Set(courseItems(in: courseA.id).map(\.id))
+            let selectionIsolated = currentAgentSelections(
+                allowedItemIDs: courseAAllowedIDs
+            ).isEmpty
+            let focusIsolated = activeStudySessionID == courseAChatID
+                && activeStudySession?.courseID == courseA.id
+                && activeStudySession?.focusItemIDs.contains(materialC.id) == false
+                && activeStudySession?.materialItemID != materialC.id
+                && !canUseSelectedMaterialInActiveChat
+                && agentContextScopeNotice != nil
+            let wrongScopeRejected = !activateStudySession(
+                courseBSession.id,
+                expectedCourseID: courseA.id,
+                expectedScopeNeedsReview: false
+            )
+                && activeStudySessionID == courseAChatID
+            let courseAContext = try? await makeCourseContext(
+                query: "利率与政策",
+                courseID: courseA.id
+            )
+            let globalContext = try? await makeCourseContext(
+                query: "利率与政策",
+                courseID: nil
+            )
+            let courseACatalogIDs = Set(courseAContext?.context.catalog.map(\.id) ?? [])
+            let globalCatalogIDs = Set(globalContext?.context.catalog.map(\.id) ?? [])
+            let globalCatalog = globalContext?.context.catalog ?? []
+            let globalCourseIdentityPassed = globalCatalog.first {
+                $0.id == materialA.id
+            }?.subtitle.contains(courseA.title) == true
+                && globalCatalog.first {
+                    $0.id == materialB.id
+                }?.subtitle.contains(courseA.title) == true
+                && globalCatalog.first {
+                    $0.id == materialB.id
+                }?.subtitle.contains(courseB.title) == true
+            let courseContextIsolated = courseACatalogIDs == courseAAllowedIDs
+                && !courseACatalogIDs.contains(materialC.id)
+                && !courseACatalogIDs.contains(noteC.id)
+                && courseAContext?.selectedMaterialText == nil
+                && globalCatalogIDs.isSuperset(of: Set([materialA.id, materialC.id, noteA.id, noteC.id]))
+            let explicitCourseChat = createStudySession(courseID: courseA.id)
+            let explicitCourseCreationPassed = explicitCourseChat?.courseID == courseA.id
+                && explicitCourseChat?.scopeNeedsReview == false
+                && explicitCourseChat?.materialItemID == nil
+            let explicitGlobalChat = createStudySession(courseID: nil)
+            let explicitGlobalCreationPassed = explicitGlobalChat?.courseID == nil
+                && explicitGlobalChat?.scopeNeedsReview == false
+            let restoredCourseChat = activateStudySession(
+                courseAChatID,
+                expectedCourseID: courseA.id,
+                expectedScopeNeedsReview: false
+            )
+            let resultPassed = focusIsolated
+                && selectionIsolated
+                && wrongScopeRejected
+                && courseContextIsolated
+                && globalCourseIdentityPassed
+                && explicitCourseCreationPassed
+                && explicitGlobalCreationPassed
+                && restoredCourseChat
+            writeCourseWorkspaceVerificationReport(
+                name: "course-chat-scope-report.json",
+                payload: [
+                    "result": resultPassed ? "pass" : "fail",
+                    "focusIsolated": focusIsolated,
+                    "selectionIsolated": selectionIsolated,
+                    "wrongScopeRejected": wrongScopeRejected,
+                    "courseContextIsolated": courseContextIsolated,
+                    "globalCourseIdentityPassed": globalCourseIdentityPassed,
+                    "explicitCourseCreationPassed": explicitCourseCreationPassed,
+                    "explicitGlobalCreationPassed": explicitGlobalCreationPassed,
+                    "restoredCourseChat": restoredCourseChat,
+                    "activeScopeTitle": activeStudySessionScopeTitle,
+                    "courseACatalogIDs": courseACatalogIDs.sorted(),
+                    "globalCatalogIDs": globalCatalogIDs.sorted(),
+                ]
+            )
+            save()
+            recordVerificationStage("completed")
+            return
+        }
 
         if scenario == "course-index-navigation-flow" {
             let unassignedURL = fixtureURL("跨课程阅读清单", extension: "txt")
@@ -12869,7 +13070,11 @@ final class WorkspaceStore: ObservableObject {
         switching.activeAgentReplyChatID = chatID
         switching.isAskingAgent = true
         switching.agentDraft = ""
-        switching.activateStudySession(switchedChatID)
+        switching.activateStudySession(
+            switchedChatID,
+            expectedCourseID: nil,
+            expectedScopeNeedsReview: false
+        )
         let interruptedOrigin = switching.studySessions
             .first(where: { $0.id == chatID })?
             .messages
@@ -13127,8 +13332,11 @@ final class WorkspaceStore: ObservableObject {
         await agentRequestTask?.value
     }
 
-    private func currentVisualAssetsForAgent() -> [StudyAgentVisualAsset] {
+    private func currentVisualAssetsForAgent(
+        allowedItemIDs: Set<String>?
+    ) -> [StudyAgentVisualAsset] {
         guard let item = selectedMaterialItem,
+              allowedItemIDs?.contains(item.id) ?? true,
               !item.isNotebookNote,
               let path = item.urlPath ?? item.importedFileLastKnownPath else {
             return []
@@ -13174,23 +13382,46 @@ final class WorkspaceStore: ObservableObject {
            !selectionContext.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             addSelectionAttachment(selectionContext)
         }
-        let sentSelectionTitle = agentSelectionTitle
-        let sentSelectionText = agentSelectionText
-        let sentSelectionSources = agentSelectionSources
-        let shouldClearSentDocumentSelection = sentSelectionText != nil && selectionContext?.source == .document
+        let allowedItemIDs = target.courseID.map {
+            Set(courseItems(in: $0).map(\.id))
+        }
+        let sentSelections = currentAgentSelections(allowedItemIDs: allowedItemIDs)
+        let sentSelectionTitle = agentSelectionTitle(from: sentSelections)
+        let sentSelectionText = agentSelectionText(from: sentSelections)
+        let sentSelectionSources = agentSelectionSources(from: sentSelections)
+        let sentSelectionIDs = Set(sentSelections.map(\.id))
+        let shouldClearSentDocumentSelection = sentSelections.contains {
+            $0.id == selectionContext?.id && $0.source == .document
+        }
         let recentMessages = Array(messages.suffix(20))
-        let sourceTitle = agentMessageSourceTitle
+        let sentMaterialItem: StudyItem? = selectedMaterialItem.flatMap { item in
+            guard allowedItemIDs?.contains(item.id) ?? true else { return nil }
+            return item
+        }
+        let sentNoteItem: StudyItem? = activeNoteItem.flatMap { item in
+            guard allowedItemIDs?.contains(item.id) ?? true else { return nil }
+            return item
+        }
+        let sourceTitle = sentMaterialItem != nil
+            ? currentSourceReferenceTitle
+            : sentNoteItem.map(displayTitle)
         let requestID = UUID()
         let requestWorkspaceRevision = agentContextRevision
         let requestMemoryRevision = learningMemoryRevision
-        let sentMaterialTitle = currentSourceReferenceTitle
-        let sentMaterialText = selectedContextText
-        let sentMaterialItemID = selectedMaterialItem?.id
-        let sentNoteTitle = agentNoteTitle
-        let sentNoteText = noteText
-        let sentNoteItemID = activeNoteItemID
+        let sentMaterialTitle = sentMaterialItem == nil
+            ? ui("未选择材料", "No material selected")
+            : currentSourceReferenceTitle
+        let sentMaterialText = sentMaterialItem == nil ? "" : selectedContextText
+        let sentMaterialItemID = sentMaterialItem?.id
+        let sentNoteTitle = sentNoteItem == nil
+            ? ui("当前笔记", "Current Note")
+            : agentNoteTitle
+        let sentNoteText = sentNoteItem == nil ? "" : noteText
+        let sentNoteItemID = sentNoteItem?.id
         let sentLearningContext = makeLearningContext()
-        let sentVisualAssets = currentVisualAssetsForAgent()
+        let sentVisualAssets = currentVisualAssetsForAgent(
+            allowedItemIDs: allowedItemIDs
+        )
         let sentLanguage = interfaceLanguage
         let courseQuery = [question, sentSelectionText ?? "", String(sentNoteText.prefix(2_000))]
             .joined(separator: "\n\n")
@@ -13262,12 +13493,14 @@ final class WorkspaceStore: ObservableObject {
             lastAgentFailureKind = nil
             latestAgentNoteProposal = nil
             latestAgentLearningUpdate = nil
-            if !selectionAttachments.isEmpty {
+            if !sentSelectionIDs.isEmpty {
                 withAnimation(WeiBeiMotion.panel) {
                     cancelPendingSelectionAttachment()
-                    selectionAttachments = []
-                    lastSelectionAttachmentDate = nil
-                    lastSelectionUpdateDate = nil
+                    selectionAttachments.removeAll { sentSelectionIDs.contains($0.id) }
+                    if selectionAttachments.isEmpty {
+                        lastSelectionAttachmentDate = nil
+                        lastSelectionUpdateDate = nil
+                    }
                 }
             }
             // Keep the floating selection agent open while answering — do not dismiss it mid-stream.
@@ -13289,7 +13522,10 @@ final class WorkspaceStore: ObservableObject {
                 pinnedFloatingAgent = true
             }
 
-            let courseBuild = try await makeCourseContext(query: courseQuery)
+            let courseBuild = try await makeCourseContext(
+                query: courseQuery,
+                courseID: target.courseID
+            )
             guard activeAgentRequestID == requestID,
                   requestWorkspaceRevision == agentContextRevision,
                   requestMemoryRevision == learningMemoryRevision else {

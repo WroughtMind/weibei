@@ -12,6 +12,7 @@ struct CourseRecordsView: View {
     private struct SessionGroup: Identifiable {
         let id: String
         let course: Course?
+        let title: String
         let sessions: [StudySession]
     }
 
@@ -26,29 +27,44 @@ struct CourseRecordsView: View {
     }
 
     private var groups: [SessionGroup] {
-        var buckets: [String: (course: Course?, sessions: [StudySession])] = [:]
-        for session in filteredSessions {
-            if let courseID = store.primaryCourseID(for: session),
-               let course = store.courses.first(where: { $0.id == courseID }) {
-                let key = courseID.uuidString
-                var entry = buckets[key] ?? (course, [])
-                entry.sessions.append(session)
-                buckets[key] = entry
-            } else {
-                var entry = buckets["unassigned"] ?? (nil, [])
-                entry.sessions.append(session)
-                buckets["unassigned"] = entry
+        let globalSessions = filteredSessions.filter {
+            $0.courseID == nil && $0.scopeNeedsReview == false
+        }
+        let pendingSessions = filteredSessions.filter { $0.scopeNeedsReview == true }
+        var result: [SessionGroup] = []
+        if !globalSessions.isEmpty {
+            result.append(
+                SessionGroup(
+                    id: "global",
+                    course: nil,
+                    title: store.ui("全局", "Global"),
+                    sessions: globalSessions
+                )
+            )
+        }
+        result += store.courses.compactMap { course in
+            let sessions = filteredSessions.filter {
+                $0.courseID == course.id && $0.scopeNeedsReview == false
             }
+            guard !sessions.isEmpty else { return nil }
+            return SessionGroup(
+                id: course.id.uuidString,
+                course: course,
+                title: course.title,
+                sessions: sessions
+            )
         }
-
-        let orderedCourseGroups = store.courses.compactMap { course -> SessionGroup? in
-            guard let entry = buckets[course.id.uuidString], !entry.sessions.isEmpty else { return nil }
-            return SessionGroup(id: course.id.uuidString, course: course, sessions: entry.sessions)
+        if !pendingSessions.isEmpty {
+            result.append(
+                SessionGroup(
+                    id: "pending",
+                    course: nil,
+                    title: store.ui("待归类", "Needs Course"),
+                    sessions: pendingSessions
+                )
+            )
         }
-        let unassigned = buckets["unassigned"].map {
-            SessionGroup(id: "unassigned", course: nil, sessions: $0.sessions)
-        }
-        return orderedCourseGroups + (unassigned.map { [$0] } ?? [])
+        return result
     }
 
     var body: some View {
@@ -81,7 +97,11 @@ struct CourseRecordsView: View {
                                     selected: session.id == selectedSessionID
                                 ) {
                                     selectedSessionID = session.id
-                                    store.continueCourseSession(session.id)
+                                    store.continueCourseSession(
+                                        session.id,
+                                        expectedCourseID: session.courseID,
+                                        expectedScopeNeedsReview: session.scopeNeedsReview == true
+                                    )
                                 }
                                 CourseHairline()
                             }
@@ -115,12 +135,11 @@ struct CourseRecordsView: View {
 
     private func groupHeader(_ group: SessionGroup) -> some View {
         let accent = group.course.map { courseWorkspaceAccent(colorIndex: $0.colorIndex) } ?? WeiBeiTheme.tertiaryInk
-        let title = group.course?.title ?? store.ui("未归属课程", "Unassigned")
         return HStack(spacing: 8) {
             Capsule()
                 .fill(accent)
                 .frame(width: 8, height: 8)
-            Text(title)
+            Text(group.title)
                 .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 13, weight: .semibold))
                 .foregroundStyle(WeiBeiTheme.ink)
             Text(store.ui("\(group.sessions.count) 段", "\(group.sessions.count)"))
