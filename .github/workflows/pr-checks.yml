@@ -3,7 +3,6 @@ name: 魏碑合并请求检查
 on:
   pull_request:
     branches:
-      - develop
       - main
   push:
     branches:
