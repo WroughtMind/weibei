@@ -59,7 +59,6 @@ struct CourseWorkspaceView: View {
                     searchFocused: $searchFocused,
                     isCompact: geometry.size.width < 900,
                     dismiss: store.dismissCourseWorkspace,
-                    importCourseFolder: store.prepareCourseFolderImportFromPanel,
                     importMaterials: store.importCourseMaterialsFromPanel,
                     importNotes: store.importCourseNotesFromPanel,
                     createNote: promptForNewNote
@@ -77,7 +76,7 @@ struct CourseWorkspaceView: View {
             .foregroundStyle(WeiBeiTheme.ink)
             .background {
                 EscapeKeyBridge(
-                    isEnabled: !showsNewNotePrompt && store.courseFolderImportDraft == nil
+                    isEnabled: !showsNewNotePrompt
                 ) {
                     store.dismissCourseWorkspace()
                 }
@@ -101,19 +100,6 @@ struct CourseWorkspaceView: View {
             )
             .environmentObject(store)
         }
-        .sheet(item: $store.courseFolderImportDraft) { draft in
-            CourseFolderImportSheet(
-                draft: draft,
-                cancel: { store.courseFolderImportDraft = nil },
-                confirm: { notePaths in
-                    store.importCourseFolder(draft, notePaths: notePaths)
-                    if store.workspaceSaveError == nil {
-                        store.courseFolderImportDraft = nil
-                    }
-                }
-            )
-            .environmentObject(store)
-        }
     }
 
     @ViewBuilder
@@ -129,7 +115,6 @@ struct CourseWorkspaceView: View {
                 openRelations: {
                     withAnimation(WeiBeiMotion.panel) { page = .relations }
                 },
-                importCourseFolder: store.prepareCourseFolderImportFromPanel,
                 importMaterials: store.importCourseMaterialsFromPanel,
                 importNotes: store.importCourseNotesFromPanel,
                 createNote: promptForNewNote
@@ -159,13 +144,23 @@ struct CourseWorkspaceView: View {
     }
 
     private func createNewNote() {
-        guard let noteID = store.createCourseNotebookNote(title: newNoteTitle) else {
-            newNoteError = store.noteFileError ?? store.ui("无法新建笔记。", "Could not create the note.")
+        guard let courseID = store.activeCourseID else {
+            newNoteError = store.ui("无法新建笔记。", "Could not create the note.")
             return
         }
-        selectedNoteID = noteID
-        page = .hub
-        showsNewNotePrompt = false
+        Task { @MainActor in
+            guard let noteID = await store.createCourseNotebookNote(
+                courseID: courseID,
+                title: newNoteTitle
+            ) else {
+                newNoteError = store.noteFileError
+                    ?? store.ui("无法新建笔记。", "Could not create the note.")
+                return
+            }
+            selectedNoteID = noteID
+            page = .hub
+            showsNewNotePrompt = false
+        }
     }
 
     private func prepareInitialRoute() {
@@ -211,7 +206,7 @@ private struct CourseNewNoteSheet: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text(store.ui("新建课程笔记", "New course note"))
                     .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 20, weight: .semibold))
-                Text(store.ui("新笔记会进入当前课程的笔记栏，并保存到本地笔记目录。", "The note will appear in the current course and save locally."))
+                Text(store.ui("新笔记会写入当前课程文件夹里的“笔记”目录。", "The note will be written to the Notes folder inside this course."))
                     .font(.system(size: 12))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
             }
@@ -240,158 +235,6 @@ private struct CourseNewNoteSheet: View {
     }
 }
 
-private struct CourseFolderImportSheet: View {
-    @EnvironmentObject private var store: WorkspaceStore
-    let draft: CourseFolderImportDraft
-    let cancel: () -> Void
-    let confirm: (Set<String>) -> Void
-    @State private var notePaths: Set<String>
-
-    init(
-        draft: CourseFolderImportDraft,
-        cancel: @escaping () -> Void,
-        confirm: @escaping (Set<String>) -> Void
-    ) {
-        self.draft = draft
-        self.cancel = cancel
-        self.confirm = confirm
-        _notePaths = State(initialValue: draft.notePaths)
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 18) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(store.ui("确认 Markdown 的角色", "Classify Markdown files"))
-                        .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 20, weight: .semibold))
-                    Text(store.ui(
-                        "其他文件已经按资料处理。这里只需确认 Markdown 是课程资料还是笔记。",
-                        "Other files are already materials. Only classify each Markdown file as material or note."
-                    ))
-                        .font(.system(size: 12))
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                }
-                Spacer()
-                Menu(store.ui("批量设置", "Set all")) {
-                    Button(store.ui("全部作为资料", "All as materials")) { notePaths.removeAll() }
-                    Button(store.ui("全部作为笔记", "All as notes")) {
-                        notePaths = Set(draft.markdownFiles.map(\.path))
-                    }
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-            }
-            .padding(22)
-
-            CourseHairline()
-
-            ScrollView {
-                LazyVStack(spacing: 0) {
-                    ForEach(draft.markdownFiles, id: \.path) { url in
-                        HStack(spacing: 14) {
-                            Image(systemName: "doc.richtext")
-                                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                                .frame(width: 20)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text(url.deletingPathExtension().lastPathComponent)
-                                    .font(.system(size: 13, weight: .medium))
-                                    .lineLimit(1)
-                                Text(relativeFolderLabel(for: url))
-                                    .font(.system(size: 10.5))
-                                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                            }
-                            .help(url.path)
-                            Spacer()
-                            Picker("", selection: roleBinding(for: url)) {
-                                Text(store.ui("资料", "Material")).tag(false)
-                                Text(store.ui("笔记", "Note")).tag(true)
-                            }
-                            .labelsHidden()
-                            .pickerStyle(.segmented)
-                            .tint(WeiBeiTheme.cinnabar)
-                            .frame(width: 150)
-                            .accessibilityLabel(Text(store.ui(
-                                "\(url.deletingPathExtension().lastPathComponent) 的角色",
-                                "Role for \(url.deletingPathExtension().lastPathComponent)"
-                            )))
-                        }
-                        .padding(.horizontal, 22)
-                        .frame(minHeight: 58)
-                        CourseHairline()
-                    }
-                }
-            }
-
-            HStack {
-                if let error = store.workspaceSaveError {
-                    Text(error)
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(WeiBeiTheme.cinnabar)
-                        .lineLimit(2)
-                    Button(store.ui("重试保存", "Retry save")) {
-                        if store.retryWorkspaceSave() {
-                            store.courseFolderImportDraft = nil
-                        }
-                    }
-                        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                } else {
-                    let materialCount = draft.automaticMaterialCount + draft.markdownFiles.count - notePaths.count
-                    Text(store.ui(
-                        "\(materialCount) 份资料 · \(notePaths.count) 份笔记",
-                        "\(materialCount) materials · \(notePaths.count) notes"
-                    ))
-                        .font(.system(size: 11.5, weight: .medium))
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                }
-                Spacer()
-                Button(store.ui("取消", "Cancel"), action: cancel)
-                    .keyboardShortcut(.cancelAction)
-                Button(store.ui("添加到课程", "Add to course")) { confirm(notePaths) }
-                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                    .keyboardShortcut(.defaultAction)
-            }
-            .padding(.horizontal, 22)
-            .frame(height: 54)
-        }
-        .frame(width: 680, height: sheetHeight)
-        .background(WeiBeiTheme.paper)
-    }
-
-    private var sheetHeight: CGFloat {
-        min(560, max(360, CGFloat(220 + draft.markdownFiles.count * 58)))
-    }
-
-    private func relativeFolderLabel(for url: URL) -> String {
-        let folder = url.deletingLastPathComponent().standardizedFileURL
-        guard let root = draft.rootURLs.first?.standardizedFileURL else {
-            return folder.lastPathComponent
-        }
-        if folder == root {
-            return store.ui("课程根目录", "Course root")
-        }
-        let rootPrefix = root.path.hasSuffix("/") ? root.path : root.path + "/"
-        if folder.path.hasPrefix(rootPrefix) {
-            return String(folder.path.dropFirst(rootPrefix.count))
-        }
-        return folder.lastPathComponent
-    }
-
-    private func roleBinding(for url: URL) -> Binding<Bool> {
-        Binding(
-            get: { notePaths.contains(url.path) },
-            set: { isNote in
-                if isNote {
-                    notePaths.insert(url.path)
-                } else {
-                    notePaths.remove(url.path)
-                }
-            }
-        )
-    }
-}
-
 struct CourseWorkspaceHeader: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Binding var page: CourseWorkspacePage
@@ -399,7 +242,6 @@ struct CourseWorkspaceHeader: View {
     var searchFocused: FocusState<Bool>.Binding
     let isCompact: Bool
     let dismiss: () -> Void
-    let importCourseFolder: () -> Void
     let importMaterials: () -> Void
     let importNotes: () -> Void
     let createNote: () -> Void
@@ -480,9 +322,6 @@ struct CourseWorkspaceHeader: View {
             .frame(width: isCompact ? 160 : 220)
 
             Menu {
-                Button(action: importCourseFolder) {
-                    Label(store.ui("导入课程文件夹", "Import course folder"), systemImage: "folder.badge.plus")
-                }
                 Button(action: importMaterials) {
                     Label(store.ui("导入资料", "Import materials"), systemImage: "doc.badge.plus")
                 }
@@ -504,7 +343,7 @@ struct CourseWorkspaceHeader: View {
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
-            .help(store.ui("添加课程文件夹、资料或笔记", "Add course folders, materials, or notes"))
+            .help(store.ui("添加文稿或笔记", "Add materials or notes"))
         }
         .padding(.horizontal, 16)
         .frame(height: 52)

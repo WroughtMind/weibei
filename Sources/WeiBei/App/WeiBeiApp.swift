@@ -5,10 +5,11 @@ import WebKit
 import WeiBeiCore
 
 private let runsImportedIdentitySelfCheck = ProcessInfo.processInfo.arguments.contains("--self-check-imported-identity")
+private let runsCourseProjectRootSelfCheck = ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root")
 private let importedIdentitySelfCheckBootstrapDirectory = FileManager.default.temporaryDirectory
     .appendingPathComponent("weibei-imported-identity-bootstrap-\(ProcessInfo.processInfo.processIdentifier)", isDirectory: true)
 
-@MainActor private let sharedWorkspaceStore = runsImportedIdentitySelfCheck
+@MainActor private let sharedWorkspaceStore = (runsImportedIdentitySelfCheck || runsCourseProjectRootSelfCheck)
     ? WorkspaceStore(workspaceDirectory: importedIdentitySelfCheckBootstrapDirectory)
     : WorkspaceStore()
 
@@ -71,6 +72,17 @@ struct WeiBeiApp: App {
     @StateObject private var store = sharedWorkspaceStore
 
     init() {
+        if runsCourseProjectRootSelfCheck {
+            defer { try? FileManager.default.removeItem(at: importedIdentitySelfCheckBootstrapDirectory) }
+            do {
+                try CourseProjectRootSelfCheck.run()
+                print("WeiBei course project root self-checks passed")
+                exit(EXIT_SUCCESS)
+            } catch {
+                fputs("WeiBei course project root self-check failed: \(error.localizedDescription)\n", stderr)
+                exit(EXIT_FAILURE)
+            }
+        }
         if runsImportedIdentitySelfCheck {
             defer { try? FileManager.default.removeItem(at: importedIdentitySelfCheckBootstrapDirectory) }
             do {

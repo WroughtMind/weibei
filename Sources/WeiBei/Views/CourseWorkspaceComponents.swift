@@ -1,6 +1,397 @@
+import AppKit
 import Foundation
 import SwiftUI
 import WeiBeiCore
+
+enum CourseProjectEntryIntent: Equatable {
+    case create
+    case adopt
+}
+
+struct CourseProjectEntryPresentation: Identifiable, Equatable {
+    let id = UUID()
+    let intent: CourseProjectEntryIntent
+}
+
+struct CourseProjectEntrySheet: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let cancel: () -> Void
+    let openCourse: (UUID) -> Void
+
+    @State private var intent: CourseProjectEntryIntent
+    @State private var title = ""
+    @State private var selectedFolder: URL?
+    @State private var configuredLibraryThisTime = false
+    @State private var isWorking = false
+    @State private var errorMessage: String?
+    @FocusState private var titleFocused: Bool
+
+    init(
+        initialIntent: CourseProjectEntryIntent = .create,
+        cancel: @escaping () -> Void,
+        openCourse: @escaping (UUID) -> Void
+    ) {
+        _intent = State(initialValue: initialIntent)
+        self.cancel = cancel
+        self.openCourse = openCourse
+    }
+
+    private var needsLibrary: Bool {
+        intent == .create
+            && store.courseLibraryRootURL == nil
+            && !configuredLibraryThisTime
+    }
+
+    private var libraryNeedsReauthorization: Bool {
+        needsLibrary && store.courseLibraryRootPath != nil
+    }
+
+    private var cleanedTitle: String {
+        title.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(heading)
+                    .font(WeiBeiTypography.brandFont(
+                        language: store.interfaceLanguage,
+                        size: 21,
+                        weight: .semibold
+                    ))
+                Text(detail)
+                    .font(.system(size: 12))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if needsLibrary {
+                libraryPicker
+            } else if intent == .adopt {
+                adoptionPicker
+            } else {
+                courseTitleField
+                if let libraryPath = store.courseLibraryRootURL?.path {
+                    pathLine(
+                        label: store.ui("魏碑资料库", "WeiBei Library"),
+                        path: libraryPath
+                    )
+                }
+            }
+
+            if let errorMessage {
+                Label(errorMessage, systemImage: "exclamationmark.triangle")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel(Text(store.ui(
+                        "错误：\(errorMessage)",
+                        "Error: \(errorMessage)"
+                    )))
+            }
+
+            actionBar
+        }
+        .padding(22)
+        .frame(width: 460)
+        .background(WeiBeiTheme.paper)
+        .foregroundStyle(WeiBeiTheme.ink)
+        .interactiveDismissDisabled(isWorking)
+        .onAppear(perform: updateFocus)
+        .onChange(of: intent) { _, _ in updateFocus() }
+        .onChange(of: selectedFolder) { _, _ in updateFocus() }
+    }
+
+    private var heading: String {
+        if needsLibrary {
+            return libraryNeedsReauthorization
+                ? store.ui("重新授权魏碑资料库", "Reconnect WeiBei Library")
+                : store.ui("选择魏碑资料库", "Choose WeiBei Library")
+        }
+        switch intent {
+        case .create:
+            return store.ui("新建课程", "Create Course")
+        case .adopt:
+            return store.ui("纳入已有课程文件夹", "Add Existing Course Folder")
+        }
+    }
+
+    private var detail: String {
+        if needsLibrary {
+            if libraryNeedsReauthorization {
+                return store.ui(
+                    "魏碑记得原资料库，但当前无法访问。请重新选择同一资料库；为避免课程误绑到别处，选择不同文件夹会被拒绝。",
+                    "WeiBei remembers the library but cannot access it. Re-select the same library; a different folder will be rejected to protect course identity."
+                )
+            }
+            return store.ui(
+                "先选择一个本地文件夹作为魏碑资料库。之后每门新课程都会在其中拥有自己的真实文件夹。",
+                "Choose a local WeiBei Library. Each new course will get its own real folder inside it."
+            )
+        }
+        switch intent {
+        case .create:
+            return store.ui(
+                "魏碑会为这门课创建文稿、笔记和本地课程状态，课程 Agent 只在这个项目范围内工作。",
+                "WeiBei will create materials, notes, and local course state for this course."
+            )
+        case .adopt:
+            return store.ui(
+                "原地登记一个已有文件夹为课程；不会复制、移动或重排其中的可见内容。",
+                "Register an existing folder in place without copying, moving, or rearranging its visible contents."
+            )
+        }
+    }
+
+    private var libraryPicker: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if libraryNeedsReauthorization {
+                if let path = store.courseLibraryRootPath {
+                    pathLine(
+                        label: store.ui("原魏碑资料库", "Original WeiBei Library"),
+                        path: path
+                    )
+                }
+                Label(
+                    store.courseLibraryUnavailableReason
+                        ?? store.ui("当前无法访问这个资料库。", "This library is currently unavailable."),
+                    systemImage: "exclamationmark.triangle"
+                )
+                .font(.system(size: 12))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .fixedSize(horizontal: false, vertical: true)
+            } else {
+                Label(
+                    store.ui("建议选择或新建一个名为“魏碑”的总文件夹。", "Choose or create a top-level WeiBei folder."),
+                    systemImage: "folder"
+                )
+                .font(.system(size: 12))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+            }
+
+            Button(
+                libraryNeedsReauthorization
+                    ? store.ui("重新选择同一资料库…", "Re-select the Same Library…")
+                    : store.ui("选择魏碑资料库…", "Choose WeiBei Library…"),
+                action: chooseLibrary
+            )
+                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                .keyboardShortcut(.defaultAction)
+                .disabled(isWorking)
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(WeiBeiTheme.paperRaised.opacity(0.34), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    @ViewBuilder
+    private var adoptionPicker: some View {
+        if let selectedFolder {
+            pathLine(
+                label: store.ui("课程文件夹", "Course folder"),
+                path: selectedFolder.path
+            )
+            courseTitleField
+        } else {
+            Button(store.ui("选择课程文件夹…", "Choose Course Folder…"), action: chooseAdoptionFolder)
+                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                .keyboardShortcut(.defaultAction)
+                .disabled(isWorking)
+        }
+    }
+
+    private var courseTitleField: some View {
+        TextField(store.ui("课程名", "Course title"), text: $title)
+            .textFieldStyle(.plain)
+            .focused($titleFocused)
+            .font(.system(size: 13))
+            .foregroundColor(WeiBeiTheme.ink)
+            .weibeiInputSurface(active: titleFocused, height: 32)
+            .onSubmit(submitCurrentIntent)
+            .disabled(isWorking)
+            .accessibilityLabel(Text(store.ui("课程名称", "Course title")))
+    }
+
+    private func pathLine(label: String, path: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.tertiaryInk)
+            Text(path)
+                .font(.system(size: 11.5))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .help(path)
+                .accessibilityLabel(Text("\(label)：\(path)"))
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(WeiBeiTheme.paperRaised.opacity(0.30), in: RoundedRectangle(cornerRadius: 9))
+    }
+
+    @ViewBuilder
+    private var actionBar: some View {
+        HStack(spacing: 8) {
+            if needsLibrary || intent == .create {
+                Button(store.ui("纳入已有文件夹", "Add Existing Folder")) {
+                    intent = .adopt
+                    selectedFolder = nil
+                    title = ""
+                    errorMessage = nil
+                }
+                .buttonStyle(WeiBeiTextActionButtonStyle())
+                .disabled(isWorking)
+            } else {
+                Button(store.ui("返回新建课程", "Back to Create")) {
+                    intent = .create
+                    selectedFolder = nil
+                    title = ""
+                    errorMessage = nil
+                }
+                .buttonStyle(WeiBeiTextActionButtonStyle())
+                .disabled(isWorking)
+            }
+
+            Spacer()
+
+            if isWorking {
+                ProgressView()
+                    .controlSize(.small)
+                    .accessibilityLabel(Text(store.ui("正在处理课程", "Working on course")))
+            }
+
+            Button(store.ui("取消", "Cancel"), action: cancel)
+                .buttonStyle(WeiBeiTextActionButtonStyle())
+                .keyboardShortcut(.cancelAction)
+                .disabled(isWorking)
+
+            if !needsLibrary, intent == .create {
+                Button(store.ui("创建", "Create"), action: createCourse)
+                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(cleanedTitle.isEmpty || isWorking)
+            } else if intent == .adopt, selectedFolder != nil {
+                Button(store.ui("重新选择", "Choose Again"), action: chooseAdoptionFolder)
+                    .buttonStyle(WeiBeiTextActionButtonStyle())
+                    .disabled(isWorking)
+                Button(store.ui("纳入课程", "Add Course"), action: adoptCourse)
+                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(cleanedTitle.isEmpty || isWorking)
+            }
+        }
+    }
+
+    private func chooseLibrary() {
+        let panel = NSOpenPanel()
+        panel.title = libraryNeedsReauthorization
+            ? store.ui("重新选择同一魏碑资料库", "Re-select the Same WeiBei Library")
+            : store.ui("选择魏碑资料库", "Choose WeiBei Library")
+        panel.message = libraryNeedsReauthorization
+            ? store.ui(
+                "请选择原来的魏碑资料库。若选择不同文件夹，魏碑会拒绝改绑。",
+                "Choose the original WeiBei Library. WeiBei will reject a different folder."
+            )
+            : store.ui(
+                "选择或新建一个总文件夹；每门课程会在其中建立独立项目目录。",
+                "Choose or create a parent folder for independent course projects."
+            )
+        panel.prompt = libraryNeedsReauthorization
+            ? store.ui("重新授权", "Reconnect")
+            : store.ui("设为魏碑资料库", "Use as WeiBei Library")
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        perform {
+            try store.configureCourseLibrary(at: url)
+            configuredLibraryThisTime = true
+            updateFocus()
+        }
+    }
+
+    private func chooseAdoptionFolder() {
+        let panel = NSOpenPanel()
+        panel.title = store.ui("选择课程文件夹", "Choose Course Folder")
+        panel.message = store.ui(
+            "魏碑会原地纳入这个文件夹，不移动其中的可见内容。",
+            "WeiBei will register this folder in place without moving visible contents."
+        )
+        panel.prompt = store.ui("选择", "Choose")
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        intent = .adopt
+        selectedFolder = url.standardizedFileURL
+        title = url.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
+        errorMessage = nil
+    }
+
+    private func submitCurrentIntent() {
+        guard !cleanedTitle.isEmpty else { return }
+        switch intent {
+        case .create:
+            guard !needsLibrary else { return }
+            createCourse()
+        case .adopt:
+            guard selectedFolder != nil else { return }
+            adoptCourse()
+        }
+    }
+
+    private func createCourse() {
+        perform {
+            let courseID = try store.createCourseInLibrary(title: cleanedTitle)
+            openCourse(courseID)
+        }
+    }
+
+    private func adoptCourse() {
+        guard let selectedFolder else { return }
+        perform {
+            let courseID = try store.adoptCourseFolder(
+                at: selectedFolder,
+                title: cleanedTitle
+            )
+            openCourse(courseID)
+        }
+    }
+
+    private func perform(_ action: @escaping () throws -> Void) {
+        guard !isWorking else { return }
+        isWorking = true
+        errorMessage = nil
+        Task { @MainActor in
+            await Task.yield()
+            do {
+                try action()
+            } catch {
+                errorMessage = error.localizedDescription
+                announceError(error.localizedDescription)
+            }
+            isWorking = false
+        }
+    }
+
+    private func announceError(_ message: String) {
+        NSAccessibility.post(
+            element: NSApplication.shared,
+            notification: .announcementRequested,
+            userInfo: [
+                .announcement: store.ui("错误：\(message)", "Error: \(message)"),
+                .priority: NSAccessibilityPriorityLevel.high.rawValue,
+            ]
+        )
+    }
+
+    private func updateFocus() {
+        titleFocused = !needsLibrary
+            && (intent == .create || selectedFolder != nil)
+    }
+}
 
 struct CourseRelationDetailHeader: View {
     @EnvironmentObject private var store: WorkspaceStore

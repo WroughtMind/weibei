@@ -13,15 +13,13 @@ struct CourseHubView: View {
     @Binding var selectedSessionID: UUID?
     let isCompact: Bool
     let openRelations: () -> Void
-    let importCourseFolder: () -> Void
     let importMaterials: () -> Void
     let importNotes: () -> Void
     let createNote: () -> Void
 
     @State private var isMaterialDropTargeted = false
     @State private var isNoteDropTargeted = false
-    @State private var showsNewCourseSheet = false
-    @State private var newCourseTitle = ""
+    @State private var courseEntryPresentation: CourseProjectEntryPresentation?
 
     private var courseID: UUID? { store.activeCourseID }
 
@@ -88,14 +86,14 @@ struct CourseHubView: View {
                 selectedMaterialID = ids.first
             }
         }
-        .sheet(isPresented: $showsNewCourseSheet) {
-            CourseHubNewCourseSheet(
-                title: $newCourseTitle,
-                cancel: {
-                    showsNewCourseSheet = false
-                    newCourseTitle = ""
-                },
-                confirm: createCourseFromHub
+        .sheet(item: $courseEntryPresentation) { presentation in
+            CourseProjectEntrySheet(
+                initialIntent: presentation.intent,
+                cancel: { courseEntryPresentation = nil },
+                openCourse: { courseID in
+                    courseEntryPresentation = nil
+                    store.openCourseSpace(courseID)
+                }
             )
             .environmentObject(store)
         }
@@ -122,21 +120,22 @@ struct CourseHubView: View {
                         Text(store.ui("还没有课程", "No courses yet"))
                             .font(.system(size: 14, weight: .semibold))
                         Text(store.ui(
-                            "课程用来归拢文稿与笔记，不会移动原文件。",
-                            "Courses organize materials and notes without moving files."
+                            "每门课程都有自己的本地项目文件夹，里面可以放多份文稿与笔记。",
+                            "Each course has a local project folder for its materials and notes."
                         ))
                         .font(.system(size: 12))
                         .foregroundStyle(WeiBeiTheme.secondaryInk)
 
                         HStack(spacing: 10) {
                             Button(store.ui("新建课程", "Create course")) {
-                                newCourseTitle = ""
-                                showsNewCourseSheet = true
+                                courseEntryPresentation = CourseProjectEntryPresentation(intent: .create)
                             }
                             .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
 
-                            Button(store.ui("导入文件夹", "Import folder"), action: importCourseFolder)
-                                .buttonStyle(WeiBeiTextActionButtonStyle())
+                            Button(store.ui("纳入已有文件夹", "Add existing folder")) {
+                                courseEntryPresentation = CourseProjectEntryPresentation(intent: .adopt)
+                            }
+                            .buttonStyle(WeiBeiTextActionButtonStyle())
                         }
                     }
                     .padding(18)
@@ -196,13 +195,14 @@ struct CourseHubView: View {
 
                     HStack(spacing: 10) {
                         Button(store.ui("新建课程", "Create course")) {
-                            newCourseTitle = ""
-                            showsNewCourseSheet = true
+                            courseEntryPresentation = CourseProjectEntryPresentation(intent: .create)
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
 
-                        Button(store.ui("导入文件夹", "Import folder"), action: importCourseFolder)
-                            .buttonStyle(WeiBeiTextActionButtonStyle())
+                        Button(store.ui("纳入已有文件夹", "Add existing folder")) {
+                            courseEntryPresentation = CourseProjectEntryPresentation(intent: .adopt)
+                        }
+                        .buttonStyle(WeiBeiTextActionButtonStyle())
 
                         // Keep menu label for header parity / self-check; top bar still has 选择课程.
                         Text(store.ui("也可使用顶栏选择课程", "Or pick a course from the title bar"))
@@ -226,6 +226,12 @@ struct CourseHubView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
                 courseSummaryHeader
+                if let courseID,
+                   let reason = store.courseRootUnavailableReason(
+                    for: courseID
+                   ) {
+                    unavailableCourseRootBanner(reason: reason)
+                }
                 continueSection
                 materialsSection
                 sessionsSection
@@ -243,6 +249,43 @@ struct CourseHubView: View {
         .onDrop(of: [.fileURL], isTargeted: $isMaterialDropTargeted) { providers in
             handleDrop(providers, asNotes: false)
         }
+    }
+
+    private func unavailableCourseRootBanner(reason: String) -> some View {
+        HStack(alignment: .center, spacing: 12) {
+            Image(systemName: "folder.badge.questionmark")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(WeiBeiTheme.cinnabar)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(store.ui(
+                    "课程文件夹暂时不可用",
+                    "Course folder unavailable"
+                ))
+                .font(.system(size: 12.5, weight: .semibold))
+                Text(reason)
+                    .font(.system(size: 11))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .lineLimit(2)
+            }
+
+            Spacer(minLength: 8)
+
+            Button(store.ui(
+                "重新连接…",
+                "Reconnect…"
+            )) {
+                courseEntryPresentation = CourseProjectEntryPresentation(
+                    intent: .adopt
+                )
+            }
+            .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+        }
+        .padding(14)
+        .background(
+            WeiBeiTheme.cinnabarSoft.opacity(0.22),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
     }
 
     private var courseSummaryHeader: some View {
@@ -277,24 +320,54 @@ struct CourseHubView: View {
 
                 VStack(alignment: .leading, spacing: 0) {
                     if let reading {
+                        let isAvailable = store.courseMaterialIsAvailable(
+                            reading.0.id
+                        )
                         CourseHubContinueRow(
                             icon: reading.0.kind.systemImage,
                             title: store.displayTitle(for: reading.0),
-                            detail: "\(courseLocationLabel(reading.1, store: store)) · \(courseRelativeDate(reading.1.lastStudiedAt, language: store.interfaceLanguage))",
-                            actionTitle: store.ui("继续阅读", "Continue reading")
+                            detail: isAvailable
+                                ? "\(courseLocationLabel(reading.1, store: store)) · \(courseRelativeDate(reading.1.lastStudiedAt, language: store.interfaceLanguage))"
+                                : store.ui(
+                                    "文稿暂不可用 · 原学习位置已保留",
+                                    "Material unavailable · Reading position preserved"
+                                ),
+                            actionTitle: isAvailable
+                                ? store.ui("继续阅读", "Continue reading")
+                                : store.ui("找回文稿…", "Find Material…")
                         ) {
                             selectedMaterialID = reading.0.id
-                            store.openCourseMaterial(reading.0.id)
+                            if isAvailable {
+                                store.openCourseMaterial(reading.0.id)
+                            } else {
+                                store.revealCourseFolder(
+                                    containing: reading.0.id
+                                )
+                            }
                         }
                     } else if materials.count == 1, let only = materials.first {
+                        let isAvailable = store.courseMaterialIsAvailable(
+                            only.id
+                        )
                         CourseHubContinueRow(
                             icon: only.kind.systemImage,
                             title: store.displayTitle(for: only),
-                            detail: only.kind.label(language: store.interfaceLanguage),
-                            actionTitle: store.ui("打开文稿", "Open material")
+                            detail: isAvailable
+                                ? only.kind.label(language: store.interfaceLanguage)
+                                : store.ui(
+                                    "文稿暂不可用 · 请放回课程文件夹",
+                                    "Material unavailable · Put it back in the course folder"
+                                ),
+                            actionTitle: isAvailable
+                                ? store.ui("打开文稿", "Open material")
+                                : store.ui("找回文稿…", "Find Material…")
                         ) {
                             selectedMaterialID = only.id
-                            store.openCourseMaterial(only.id)
+                            if isAvailable {
+                                store.openCourseMaterial(only.id)
+                            } else {
+                                store.revealCourseFolder(containing: only.id)
+                            }
                         }
                     }
 
@@ -343,8 +416,6 @@ struct CourseHubView: View {
                     HStack(spacing: 8) {
                         Button(store.ui("导入文稿", "Import materials"), action: importMaterials)
                             .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                        Button(store.ui("导入文件夹", "Import folder"), action: importCourseFolder)
-                            .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
                 }
                 .padding(16)
@@ -374,23 +445,48 @@ struct CourseHubView: View {
             } else {
                 VStack(spacing: 0) {
                     ForEach(materials) { item in
+                        let isAvailable = store.courseMaterialIsAvailable(
+                            item.id
+                        )
                         CourseHubListRow(
                             icon: item.kind.systemImage,
                             title: store.displayTitle(for: item),
-                            detail: item.kind.label(language: store.interfaceLanguage),
+                            detail: isAvailable
+                                ? item.kind.label(language: store.interfaceLanguage)
+                                : store.ui(
+                                    "暂不可用 · 文件已不在课程目录",
+                                    "Unavailable · File is no longer in the course folder"
+                                ),
                             selected: item.id == selectedMaterialID,
-                            prominence: .normal
+                            prominence: .normal,
+                            statusTitle: isAvailable
+                                ? nil
+                                : store.ui("找回…", "Find…")
                         ) {
-                            if selectedMaterialID == item.id {
+                            if !isAvailable {
+                                selectedMaterialID = item.id
+                                store.revealCourseFolder(containing: item.id)
+                            } else if selectedMaterialID == item.id {
                                 store.openCourseMaterial(item.id)
                             } else {
                                 selectedMaterialID = item.id
                             }
                         }
                         .contextMenu {
-                            Button(store.ui("打开文稿", "Open material")) {
-                                selectedMaterialID = item.id
-                                store.openCourseMaterial(item.id)
+                            if isAvailable {
+                                Button(store.ui("打开文稿", "Open material")) {
+                                    selectedMaterialID = item.id
+                                    store.openCourseMaterial(item.id)
+                                }
+                            } else {
+                                Button(store.ui(
+                                    "在访达中打开课程文件夹",
+                                    "Show Course Folder in Finder"
+                                )) {
+                                    store.revealCourseFolder(
+                                        containing: item.id
+                                    )
+                                }
                             }
                         }
                         if item.id != materials.last?.id {
@@ -518,8 +614,6 @@ struct CourseHubView: View {
 
     private var secondaryActions: some View {
         HStack(spacing: 8) {
-            Button(store.ui("导入文件夹", "Import folder"), action: importCourseFolder)
-                .buttonStyle(WeiBeiTextActionButtonStyle())
             Button(store.ui("导入文稿", "Import materials"), action: importMaterials)
                 .buttonStyle(WeiBeiTextActionButtonStyle(active: materials.isEmpty))
             Button(store.ui("管理关系", "Relations"), action: openRelations)
@@ -549,13 +643,6 @@ struct CourseHubView: View {
         }
     }
 
-    private func createCourseFromHub() {
-        guard let id = store.createCourse(title: newCourseTitle) else { return }
-        store.activateCourse(id)
-        showsNewCourseSheet = false
-        newCourseTitle = ""
-    }
-
     private func filteredItems(_ items: [StudyItem]) -> [StudyItem] {
         let cleaned = search.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return items }
@@ -567,6 +654,7 @@ struct CourseHubView: View {
 
     private func handleDrop(_ providers: [NSItemProvider], asNotes: Bool) -> Bool {
         var urls: [URL] = []
+        let urlsLock = NSLock()
         let group = DispatchGroup()
         for provider in providers {
             group.enter()
@@ -574,21 +662,26 @@ struct CourseHubView: View {
                 defer { group.leave() }
                 if let data = item as? Data,
                    let url = URL(dataRepresentation: data, relativeTo: nil) {
+                    urlsLock.lock()
                     urls.append(url)
+                    urlsLock.unlock()
                 } else if let url = item as? URL {
+                    urlsLock.lock()
                     urls.append(url)
+                    urlsLock.unlock()
                 }
             }
         }
         group.notify(queue: .main) {
             guard !urls.isEmpty else { return }
-            let imported = store.importCourseFilesFromURLs(urls, asNotes: asNotes)
-            if asNotes {
-                if selectedNoteID == nil {
-                    selectedNoteID = imported.first(where: \.isNotebookNote)?.id
+            store.importCourseFilesFromURLs(urls, asNotes: asNotes) { imported in
+                if asNotes {
+                    if selectedNoteID == nil {
+                        selectedNoteID = imported.first(where: \.isNotebookNote)?.id
+                    }
+                } else if selectedMaterialID == nil {
+                    selectedMaterialID = imported.first(where: { !$0.isNotebookNote })?.id
                 }
-            } else if selectedMaterialID == nil {
-                selectedMaterialID = imported.first(where: { !$0.isNotebookNote })?.id
             }
         }
         return true
@@ -638,6 +731,7 @@ private struct CourseHubListRow: View {
     let detail: String
     let selected: Bool
     var prominence: CourseHubRowProminence = .normal
+    var statusTitle: String? = nil
     let action: () -> Void
     @State private var hovering = false
 
@@ -661,6 +755,12 @@ private struct CourseHubListRow: View {
                 }
 
                 Spacer(minLength: 8)
+
+                if let statusTitle {
+                    Text(statusTitle)
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(WeiBeiTheme.cinnabar)
+                }
             }
             .padding(.horizontal, 12)
             .frame(minHeight: 48)
@@ -695,51 +795,5 @@ private struct CourseHubListRow: View {
         if prominence == .linked { return WeiBeiTheme.cinnabarSoft.opacity(0.28) }
         if hovering { return WeiBeiTheme.paperInset.opacity(0.18) }
         return .clear
-    }
-}
-
-private struct CourseHubNewCourseSheet: View {
-    @EnvironmentObject private var store: WorkspaceStore
-    @Binding var title: String
-    let cancel: () -> Void
-    let confirm: () -> Void
-    @FocusState private var titleFocused: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 5) {
-                Text(store.ui("新建课程", "Create Course"))
-                    .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 21, weight: .semibold))
-                Text(store.ui(
-                    "课程只负责归拢资料与笔记，不会移动原文件。",
-                    "Courses organize materials and notes without moving files."
-                ))
-                .font(.system(size: 12))
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-            }
-
-            TextField(store.ui("课程名", "Course title"), text: $title)
-                .textFieldStyle(.plain)
-                .focused($titleFocused)
-                .font(.system(size: 13))
-                .foregroundColor(WeiBeiTheme.ink)
-                .weibeiInputSurface(active: titleFocused, height: 32)
-                .onSubmit(confirm)
-
-            HStack {
-                Spacer()
-                Button(store.ui("取消", "Cancel"), action: cancel)
-                    .buttonStyle(WeiBeiTextActionButtonStyle())
-                    .keyboardShortcut(.cancelAction)
-                Button(store.ui("创建", "Create"), action: confirm)
-                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-        }
-        .padding(22)
-        .frame(width: 420)
-        .background(WeiBeiTheme.paper)
-        .onAppear { titleFocused = true }
     }
 }

@@ -3260,13 +3260,29 @@ struct EscapeKeyBridge: NSViewRepresentable {
         func installMonitor() {
             guard monitor == nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                let relevantWindows = [event.window, NSApp.keyWindow, NSApp.mainWindow]
+                    .compactMap { $0 }
+                let hasActiveSheet = relevantWindows.contains {
+                    $0.sheetParent != nil || $0.attachedSheet != nil
+                }
                 guard event.keyCode == 53,
-                      self?.isEnabled == true,
-                      NSApp.modalWindow == nil,
-                      event.window?.attachedSheet == nil else { return event }
-                self?.onEscape()
+                      let self,
+                      Self.shouldHandleEscape(
+                          isEnabled: self.isEnabled,
+                          hasModalWindow: NSApp.modalWindow != nil,
+                          hasActiveSheet: hasActiveSheet
+                      ) else { return event }
+                self.onEscape()
                 return nil
             }
+        }
+
+        static func shouldHandleEscape(
+            isEnabled: Bool,
+            hasModalWindow: Bool,
+            hasActiveSheet: Bool
+        ) -> Bool {
+            isEnabled && !hasModalWindow && !hasActiveSheet
         }
 
         func removeMonitor() {
