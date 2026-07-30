@@ -538,6 +538,7 @@ final class WorkspaceStore: ObservableObject {
     private var lastCourseNoteReadRanOnMainThread: Bool?
     private var lastCourseNoteWriteRanOnMainThread: Bool?
     private var lastCourseHomeSearchRanOnMainThread: Bool?
+    private var lastPortableAdoptionReadRanOnMainThread: Bool?
     private let workspaceDirectory: URL
     private let storageURL: URL
     private let notebookRenameJournalURL: URL
@@ -1567,6 +1568,7 @@ final class WorkspaceStore: ObservableObject {
         let manifestURL = metadataURL.appendingPathComponent("course.json")
         var createdMetadata = false
         var createdMetadataFingerprint: TransactionDirectoryFingerprint?
+        var adoptionSnapshot: CoursePortableAdoptionSnapshot?
         let courseID: UUID
         if FileManager.default.fileExists(atPath: metadataURL.path) {
             let metadataValues = try? metadataURL.resourceValues(forKeys: [
@@ -1582,13 +1584,26 @@ final class WorkspaceStore: ObservableObject {
                     metadataURL,
                     metadataURL.resolvingSymlinksInPath()
                   ),
-                  let manifest = try? CourseProjectManifest.read(from: manifestURL),
-                  manifest.schemaVersion == CourseProjectManifest.currentSchemaVersion,
                   importedFileIdentityResolver(canonicalRoot) == identity else {
                 if let externalScopeURL { courseSecurityScopeStopper(externalScopeURL) }
                 throw CourseProjectRootError.metadataConflict
             }
-            courseID = manifest.courseID
+            do {
+                let snapshot = try waitForCourseFileOperation {
+                    try await self.courseProjectFileWorker
+                        .adoptionSnapshot(
+                            at: canonicalRoot,
+                            expectedRootIdentity: identity
+                        )
+                }
+                adoptionSnapshot = snapshot
+                courseID = snapshot.manifest.courseID
+            } catch {
+                if let externalScopeURL {
+                    courseSecurityScopeStopper(externalScopeURL)
+                }
+                throw CourseProjectRootError.metadataConflict
+            }
             guard !courses.contains(where: { $0.id == courseID }) else {
                 if let externalScopeURL { courseSecurityScopeStopper(externalScopeURL) }
                 throw CourseProjectRootError.manifestMismatch
@@ -1688,15 +1703,13 @@ final class WorkspaceStore: ObservableObject {
             activeCourseSecurityScopes["course:\(course.id.uuidString)"] = externalScopeURL
         }
         do {
-            let stateURL = metadataURL.appendingPathComponent(
-                "course-state.json",
-                isDirectory: false
-            )
-            if FileManager.default.fileExists(atPath: stateURL.path) {
-                let state = try readCoursePortableState(
-                    at: stateURL,
-                    expectedCourseID: courseID
-                )
+            if let portableStateData = adoptionSnapshot?.portableStateData {
+                let state = try JSONDecoder()
+                    .decode(
+                        CoursePortableState.self,
+                        from: portableStateData
+                    )
+                    .validated(expectedCourseID: courseID)
                 try applyCoursePortableState(state, courseID: courseID)
                 coursePortableStateRevisions[courseID] = state.revision
                 coursePortableStateDigests[courseID] =
@@ -1746,6 +1759,97 @@ final class WorkspaceStore: ObservableObject {
                 )
             }
             throw error
+        }
+        try courseProjectMutationHook(
+            .afterAdoptionWorkspaceSaveBeforeManifestNormalization
+        )
+        if let adoptionSnapshot,
+           adoptionSnapshot.manifest.portableExport != nil {
+            do {
+                let confirmedSnapshot =
+                    try waitForCourseFileOperation {
+                        try await self.courseProjectFileWorker
+                            .adoptionSnapshot(
+                                at: canonicalRoot,
+                                expectedRootIdentity: identity
+                            )
+                    }
+                guard confirmedSnapshot.metadataIdentity
+                        == adoptionSnapshot.metadataIdentity,
+                      confirmedSnapshot.manifestData
+                        == adoptionSnapshot.manifestData,
+                      confirmedSnapshot.portableStateData
+                        == adoptionSnapshot.portableStateData,
+                      confirmedSnapshot.completionData
+                        == adoptionSnapshot.completionData,
+                      confirmedSnapshot.manifest.portableExport != nil else {
+                    throw CourseProjectRootError.manifestMismatch
+                }
+                let normalizedData = try CourseProjectManifest(
+                    courseID: courseID
+                ).encoded()
+                try waitForCourseFileOperation {
+                    try await self.courseProjectFileWorker
+                        .normalizePortableCourseManifest(
+                            with: normalizedData,
+                            at: manifestURL,
+                            expectedDirectoryIdentity:
+                                confirmedSnapshot.metadataIdentity,
+                            expectedPreviousData:
+                                confirmedSnapshot.manifestData
+                        )
+                }
+            } catch {
+                let isolatedNoteItemIDs =
+                    importedItems.compactMap { item -> String? in
+                        guard item.isNotebookNote,
+                              case .courseOwned(
+                                  let ownerCourseID
+                              ) = item.storage,
+                              ownerCourseID == course.id else {
+                            return nil
+                        }
+                        return item.id
+                    }
+                for itemID in isolatedNoteItemIDs {
+                    courseNoteLoadGenerationByItemID[
+                        itemID,
+                        default: 0
+                    ] &+= 1
+                    courseNoteLoadTasksByItemID
+                        .removeValue(forKey: itemID)?
+                        .cancel()
+                    courseNoteWriteTasksByItemID
+                        .removeValue(forKey: itemID)?
+                        .cancel()
+                    courseNoteWritesInFlight.remove(itemID)
+                }
+                resolvedCourseRootURLs.removeValue(
+                    forKey: course.id
+                )
+                courseRootUnavailableReasons[course.id] =
+                    error.localizedDescription
+                let scopeKey =
+                    "course:\(course.id.uuidString)"
+                if let scopedURL =
+                    activeCourseSecurityScopes.removeValue(
+                        forKey: scopeKey
+                    ) {
+                    let stopScope = courseSecurityScopeStopper
+                    if !cancelAgentRequestIfRunning(
+                        in: course.id,
+                        completion: {
+                            stopScope(scopedURL)
+                        }
+                    ) {
+                        stopScope(scopedURL)
+                    }
+                } else {
+                    cancelAgentRequestIfRunning(in: course.id)
+                }
+                invalidateAgentContext()
+                throw error
+            }
         }
         do {
             try persistCoursePortableStates(courseIDs: [course.id])
@@ -1895,6 +1999,201 @@ final class WorkspaceStore: ObservableObject {
 
     func courseRootUnavailableReason(for courseID: UUID) -> String? {
         courseRootUnavailableReasons[courseID]
+    }
+
+    @discardableResult
+    func exportPortableCourseCopy(
+        courseID: UUID,
+        to targetRoot: URL
+    ) async throws -> URL {
+        try await exportPortableCourseCopy(
+            courseID: courseID,
+            to: targetRoot,
+            stageHook: { _ in }
+        ).root
+    }
+
+    @discardableResult
+    func exportPortableCourseCopyForSelfCheck(
+        courseID: UUID,
+        to targetRoot: URL,
+        stageHook: @escaping @Sendable (
+            CoursePortableExportStage
+        ) throws -> Void = { _ in }
+    ) throws -> CoursePortableExportResult {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        return try waitForCourseFileOperation {
+            try await self.exportPortableCourseCopy(
+                courseID: courseID,
+                to: targetRoot,
+                stageHook: stageHook
+            )
+        }
+    }
+
+    private func exportPortableCourseCopy(
+        courseID: UUID,
+        to targetRoot: URL,
+        stageHook: @escaping @Sendable (
+            CoursePortableExportStage
+        ) throws -> Void
+    ) async throws -> CoursePortableExportResult {
+        guard let course = course(withID: courseID),
+              let rawRoot = courseRootURL(for: courseID),
+              let sourceRoot = try? CourseProjectPathPolicy.existingDirectory(
+                  rawRoot
+              ),
+              let sourceRootIdentity = importedFileIdentityResolver(
+                  sourceRoot
+              ),
+              course.sourceRootIdentity == sourceRootIdentity else {
+            throw CourseProjectRootError.unavailableLibrary
+        }
+        let courseSessionIDs = Set(
+            studySessions.lazy.filter {
+                $0.courseID == courseID
+            }.map(\.id)
+        )
+        guard !studySessions.contains(where: {
+            $0.courseID == courseID
+                && $0.messages.contains {
+                    $0.role == .assistant
+                        && $0.completionState == .generating
+                }
+        }),
+        !(isAskingAgent
+            && activeAgentReplyChatID.map(
+                courseSessionIDs.contains
+            ) == true) else {
+            throw CoursePortableExportError.unstableCourseState
+        }
+        var state = try makeCoursePortableState(
+            courseID: courseID,
+            revision: coursePortableStateRevisions[courseID] ?? 0,
+            savedAt: Date()
+        )
+        var itemsByID: [String: StudyItem] = [:]
+        for item in importedItems {
+            guard itemsByID.updateValue(item, forKey: item.id) == nil else {
+                throw CoursePortableStateError.duplicateItemID
+            }
+        }
+        var membershipsByItemID: [String: CourseItemMembership] = [:]
+        for membership in courseItemMemberships
+            where membership.courseID == courseID {
+            guard membershipsByItemID.updateValue(
+                membership,
+                forKey: membership.itemID
+            ) == nil else {
+                throw CoursePortableStateError.duplicateItemID
+            }
+        }
+        var sharedMaterials: [CoursePortableExportSharedMaterial] = []
+        for index in state.items.indices {
+            guard case let .sharedReference(
+                sharedRelativePath,
+                expectedContentDigest
+            ) = state.items[index].storage else {
+                continue
+            }
+            guard let expectedContentDigest,
+                  let item = itemsByID[state.items[index].itemID],
+                  let membership =
+                    membershipsByItemID[state.items[index].itemID],
+                  membership.courseRelativePath
+                    == state.items[index].courseRelativePath,
+                  case let .shared(itemSharedRelativePath) = item.storage,
+                  itemSharedRelativePath == sharedRelativePath,
+                  item.contentDigest == expectedContentDigest,
+                  let sharedURL = item.url,
+                  let libraryRoot = courseLibraryRootURL,
+                  let expectedSharedURL =
+                    CourseProjectPathPolicy.resolvedRelativePath(
+                        sharedRelativePath,
+                        inside: libraryRoot
+                    ),
+                  CourseProjectPathPolicy.isSame(
+                      expectedSharedURL,
+                      sharedURL
+                  ),
+                  CourseProjectPathPolicy.isSame(
+                      expectedSharedURL.deletingLastPathComponent(),
+                      libraryRoot.appendingPathComponent(
+                          "共享文稿",
+                          isDirectory: true
+                      )
+                      .resolvingSymlinksInPath()
+                      .standardizedFileURL
+                  ),
+                  let linkURL = rawCourseItemURL(
+                      relativePath: state.items[index].courseRelativePath,
+                      inside: sourceRoot
+                  ),
+                  let linkIdentity =
+                    CourseProjectFileWorker.identity(at: linkURL),
+                  CourseProjectFileWorker.isSymbolicLink(at: linkURL),
+                  CourseProjectFileWorker.symbolicLink(
+                      at: linkURL,
+                      pointsTo: sharedURL
+                  ) else {
+                throw CoursePortableStateError.invalidItemStorage
+            }
+            let sourceInfo = try await courseProjectFileWorker
+                .validatedRegularSource(sharedURL)
+            guard item.importedFileIdentity == sourceInfo.identity else {
+                throw CoursePortableStateError.stateConflict
+            }
+            let sourceSnapshot = try await courseProjectFileWorker
+                .stableSnapshot(
+                    at: sourceInfo.url,
+                    expectedIdentity: sourceInfo.identity
+                )
+            guard sourceSnapshot.sha256 == expectedContentDigest else {
+                throw CoursePortableStateError.stateConflict
+            }
+            sharedMaterials.append(
+                CoursePortableExportSharedMaterial(
+                    itemID: item.id,
+                    courseRelativePath:
+                        state.items[index].courseRelativePath,
+                    sharedRelativePath: sharedRelativePath,
+                    linkIdentity: linkIdentity,
+                    sourceURL: sourceInfo.url,
+                    sourceIdentity: sourceInfo.identity,
+                    sourceSnapshot: sourceSnapshot
+                )
+            )
+            state.items[index].storage = .courseOwned
+        }
+        state = try state.validated(expectedCourseID: courseID)
+        let sharedDirectory = sharedMaterials.isEmpty
+            ? nil
+            : courseLibraryRootURL?.appendingPathComponent(
+                "共享文稿",
+                isDirectory: true
+            )
+        if !sharedMaterials.isEmpty, sharedDirectory == nil {
+            throw CourseProjectRootError.unavailableLibrary
+        }
+        return try await courseProjectFileWorker.exportPortableCourse(
+            CoursePortableExportRequest(
+                courseID: courseID,
+                sourceRoot: sourceRoot,
+                sourceRootIdentity: sourceRootIdentity,
+                sharedDirectory: sharedDirectory,
+                targetRoot: targetRoot,
+                portableStateData: try encodedCoursePortableState(state),
+                requiredRegularRelativePaths: Set(
+                    state.items.map(\.courseRelativePath)
+                ),
+                sharedMaterials: sharedMaterials
+            ),
+            stageHook: stageHook
+        )
     }
 
     @discardableResult
@@ -2602,6 +2901,42 @@ final class WorkspaceStore: ObservableObject {
             try await self.courseProjectFileWorker.snapshotWithThreadEvidence(at: url)
         }
         return evidence.snapshot.byteCount > 0 && !evidence.ranOnMainThread
+    }
+
+    func portableAdoptionReadRunsOffMainForSelfCheck() -> Bool {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        return lastPortableAdoptionReadRanOnMainThread == false
+    }
+
+    func isolatedCourseNoteOpenDoesNotReadForSelfCheck(
+        itemID: String,
+        courseID: UUID
+    ) -> Bool {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        courseNoteLoadGenerationByItemID[
+            itemID,
+            default: 0
+        ] &+= 1
+        courseNoteLoadTasksByItemID
+            .removeValue(forKey: itemID)?
+            .cancel()
+        loadedCourseNoteTextByItemID.removeValue(
+            forKey: itemID
+        )
+        lastCourseNoteReadRanOnMainThread = nil
+        openCourseNote(itemID, in: courseID)
+        return activeNotebookItemID == itemID
+            && courseNoteLoadTasksByItemID[itemID] == nil
+            && loadedCourseNoteTextByItemID[itemID] == nil
+            && lastCourseNoteReadRanOnMainThread == nil
     }
 
     func courseMarkdownRoundTripRunsOffMainForSelfCheck(
@@ -6534,12 +6869,56 @@ final class WorkspaceStore: ObservableObject {
             mustBeInsideLibrary: mustBeInsideLibrary,
             excludingCourseID: course.id
         )
-        let manifest = try CourseProjectManifest.read(
-            from: root.appendingPathComponent(".weibei/course.json")
+        guard let expectedIdentity = course.sourceRootIdentity,
+              importedFileIdentityResolver(root) == expectedIdentity else {
+            throw CourseProjectRootError.manifestMismatch
+        }
+        let manifestURL = root.appendingPathComponent(
+            ".weibei/course.json"
+        )
+        let manifestData = try CourseProjectFileWorker
+            .readBoundedRegularFile(
+                at: manifestURL,
+                maximumByteCount: 1_048_576
+            )
+        let manifest = try JSONDecoder().decode(
+            CourseProjectManifest.self,
+            from: manifestData
         )
         guard manifest.courseID == course.id,
-              manifest.schemaVersion == CourseProjectManifest.currentSchemaVersion else {
+              manifest.schemaVersion
+                == CourseProjectManifest.currentSchemaVersion else {
             throw CourseProjectRootError.manifestMismatch
+        }
+        if manifest.portableExport != nil {
+            let evidence = try waitForCourseFileOperation {
+                try await self.courseProjectFileWorker
+                    .adoptionSnapshotWithThreadEvidence(
+                        at: root,
+                        expectedRootIdentity: expectedIdentity
+                    )
+            }
+            lastPortableAdoptionReadRanOnMainThread =
+                evidence.ranOnMainThread
+            let snapshot = evidence.snapshot
+            guard snapshot.manifest.courseID == course.id,
+                  snapshot.manifest.portableExport != nil,
+                  snapshot.manifestData == manifestData else {
+                throw CourseProjectRootError.manifestMismatch
+            }
+            try waitForCourseFileOperation {
+                try await self.courseProjectFileWorker
+                    .normalizePortableCourseManifest(
+                        with: CourseProjectManifest(
+                            courseID: course.id
+                        ).encoded(),
+                        at: manifestURL,
+                        expectedDirectoryIdentity:
+                            snapshot.metadataIdentity,
+                        expectedPreviousData:
+                            snapshot.manifestData
+                    )
+            }
         }
     }
 
@@ -8037,15 +8416,44 @@ final class WorkspaceStore: ObservableObject {
         if let loaded = loadedCourseNoteTextByItemID[item.id] {
             return loaded
         }
-        guard item.editsBackingMarkdownFile,
-              let url = item.url,
-              let identity = item.importedFileIdentity else {
+        guard item.editsBackingMarkdownFile else {
             return cleanLegacyPlaceholder(notesByItemID[item.id] ?? defaultNote(for: item))
+        }
+        let url: URL
+        let identity: ImportedFileIdentity
+        let courseAccess: VerifiedCourseOwnedNoteAccess?
+        if case .courseOwned = item.storage {
+            guard let access = verifiedCourseOwnedNoteAccess(item) else {
+                throw CourseOwnedFileError.verificationFailed
+            }
+            url = access.url
+            identity = access.fileIdentity
+            courseAccess = access
+        } else {
+            guard let itemURL = item.url,
+                  let itemIdentity = item.importedFileIdentity else {
+                return cleanLegacyPlaceholder(
+                    notesByItemID[item.id] ?? defaultNote(for: item)
+                )
+            }
+            url = itemURL
+            identity = itemIdentity
+            courseAccess = nil
         }
         let result = try await courseProjectFileWorker.readMarkdown(
             at: url,
             expectedIdentity: identity
         )
+        if let courseAccess {
+            guard let currentItem = importedItems.first(where: {
+                $0.id == item.id
+            }),
+            let currentAccess =
+                verifiedCourseOwnedNoteAccess(currentItem),
+            currentAccess.matches(courseAccess) else {
+                throw CourseOwnedFileError.verificationFailed
+            }
+        }
         return cleanLegacyPlaceholder(result.markdown)
     }
 
@@ -13301,6 +13709,115 @@ final class WorkspaceStore: ObservableObject {
         return message.id
     }
 
+    func updatePortableCourseLearningForSelfCheck(
+        courseID: UUID,
+        materialItemID: String,
+        noteItemID: String,
+        memoryText: String,
+        noteText: String,
+        pageIndex: Int
+    ) throws {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        guard let item = importedItems.first(where: {
+            $0.id == materialItemID
+        }),
+        let session = studySessions.first(where: {
+            $0.courseID == courseID && $0.scopeNeedsReview == false
+        }),
+        let memoryIndex = learningMemoryStates.firstIndex(where: {
+            $0.scope == .course(courseID)
+        }) else {
+            throw AgentConversationTargetError(
+                message: "接管后的课程学习状态不完整"
+            )
+        }
+        let now = Date()
+        learningMemoryStates[memoryIndex].revision &+= 1
+        learningMemoryStates[memoryIndex].entries.append(
+            LearningMemoryEntry(
+                kind: .progress,
+                text: memoryText,
+                evidence: "接管后继续学习",
+                origin: .agentInference,
+                sessionID: session.id,
+                createdAt: now,
+                updatedAt: now
+            )
+        )
+        let location = StudyLocation(
+            itemID: materialItemID,
+            itemTitle: item.title,
+            locationID: "post-adoption-location",
+            locationTitle: "接管后阅读位置",
+            pageIndex: pageIndex,
+            lastStudiedAt: now,
+            visitCount: 3
+        )
+        studyLocationsByCourseID[courseID.uuidString, default: [:]][
+            materialItemID
+        ] = location
+        courseResumePoints.removeAll { $0.courseID == courseID }
+        courseResumePoints.append(
+            CourseResumePoint(
+                courseID: courseID,
+                materialLocation: location,
+                chatID: session.id,
+                noteItemID: noteItemID,
+                savedAt: now
+            )
+        )
+        notesByItemID[noteItemID] = noteText
+        loadedCourseNoteTextByItemID[noteItemID] = noteText
+        pendingNoteWritesByItemID[noteItemID] = PendingNoteWriteState(
+            baselineContentDigest: importedItems.first {
+                $0.id == noteItemID
+            }?.contentDigest
+        )
+    }
+
+    func portableCourseLearningMatchesForSelfCheck(
+        courseID: UUID,
+        materialItemID: String,
+        noteItemID: String,
+        messageText: String,
+        memoryText: String,
+        noteText: String,
+        pageIndex: Int
+    ) -> Bool {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        let hasMessage = studySessions.contains {
+            $0.courseID == courseID
+                && $0.messages.contains { $0.text == messageText }
+        }
+        let hasMemory = learningMemoryStates.first {
+            $0.scope == .course(courseID)
+        }?.entries.contains {
+            $0.text == memoryText
+        } == true
+        let location = studyLocationsByCourseID[
+            courseID.uuidString
+        ]?[materialItemID]
+        let resume = courseResumePoints.first {
+            $0.courseID == courseID
+        }
+        return hasMessage
+            && hasMemory
+            && location?.pageIndex == pageIndex
+            && resume?.materialLocation?.pageIndex == pageIndex
+            && resume?.noteItemID == noteItemID
+            && pendingPortableNoteDraftForSelfCheck(
+                itemID: noteItemID
+            ) == noteText
+    }
+
     func removePortableCourseMessageForSelfCheck(
         courseID: UUID,
         messageID: UUID
@@ -13318,6 +13835,30 @@ final class WorkspaceStore: ObservableObject {
         studySessions[sessionIndex].messages.removeAll {
             $0.id == messageID
         }
+        if activeStudySessionID == studySessions[sessionIndex].id {
+            messages = studySessions[sessionIndex].messages
+        }
+    }
+
+    func setCourseReplyGeneratingForSelfCheck(
+        courseID: UUID,
+        generating: Bool
+    ) throws {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        guard let sessionIndex = studySessions.firstIndex(where: {
+            $0.courseID == courseID && $0.scopeNeedsReview == false
+        }),
+        let messageIndex = studySessions[sessionIndex].messages.lastIndex(
+            where: { $0.role == .assistant }
+        ) else {
+            throw CoursePortableStateError.invalidChatScope
+        }
+        studySessions[sessionIndex].messages[messageIndex].completionState =
+            generating ? .generating : .completed
         if activeStudySessionID == studySessions[sessionIndex].id {
             messages = studySessions[sessionIndex].messages
         }
@@ -20116,6 +20657,70 @@ final class WorkspaceStore: ObservableObject {
         return matches[0]
     }
 
+    private struct VerifiedCourseOwnedNoteAccess {
+        var courseID: UUID
+        var root: URL
+        var rootIdentity: ImportedFileIdentity
+        var url: URL
+        var fileIdentity: ImportedFileIdentity
+        var membershipIndex: Int
+
+        func matches(_ other: Self) -> Bool {
+            courseID == other.courseID
+                && rootIdentity == other.rootIdentity
+                && fileIdentity == other.fileIdentity
+                && CourseProjectPathPolicy.isSame(root, other.root)
+                && CourseProjectPathPolicy.isSame(url, other.url)
+        }
+    }
+
+    private func verifiedCourseOwnedNoteAccess(
+        _ item: StudyItem
+    ) -> VerifiedCourseOwnedNoteAccess? {
+        guard item.isNotebookNote,
+              case .courseOwned(let courseID) = item.storage,
+              courseRootUnavailableReasons[courseID] == nil,
+              let course = course(withID: courseID),
+              let expectedRootIdentity = course.sourceRootIdentity,
+              let root = courseRootURL(for: courseID),
+              importedFileIdentityResolver(root)
+                == expectedRootIdentity,
+              let membershipIndex =
+                uniqueCourseOwnedMembershipIndex(
+                    itemID: item.id,
+                    courseID: courseID
+                ),
+              let relativePath =
+                courseItemMemberships[membershipIndex]
+                    .courseRelativePath,
+              let resolvedURL = safeCourseOwnedFileURL(
+                relativePath: relativePath,
+                role: .note,
+                inside: root
+              ),
+              let itemURL = item.url,
+              CourseProjectPathPolicy.isSame(
+                resolvedURL,
+                itemURL
+              ),
+              let fileIdentity = item.importedFileIdentity,
+              importedFileIdentityResolver(resolvedURL)
+                == fileIdentity,
+              courseItemMemberships[membershipIndex]
+                .entryIdentity.map({ $0 == fileIdentity })
+                ?? true else {
+            return nil
+        }
+        return VerifiedCourseOwnedNoteAccess(
+            courseID: courseID,
+            root: root,
+            rootIdentity: expectedRootIdentity,
+            url: resolvedURL,
+            fileIdentity: fileIdentity,
+            membershipIndex: membershipIndex
+        )
+    }
+
     private func safeCourseOwnedFileURL(
         relativePath: String,
         role: CourseOwnedFileRole,
@@ -20629,12 +21234,13 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func scheduleCourseNoteLoad(_ item: StudyItem) {
-        guard item.isNotebookNote,
-              case .courseOwned = item.storage,
-              let url = item.url,
-              let identity = item.importedFileIdentity else {
+        guard let access = verifiedCourseOwnedNoteAccess(
+            item
+        ) else {
             return
         }
+        let url = access.url
+        let identity = access.fileIdentity
         let itemID = item.id
         guard courseNoteLoadTasksByItemID[itemID] == nil else { return }
         let generation = (courseNoteLoadGenerationByItemID[itemID] ?? 0) &+ 1
@@ -20654,9 +21260,13 @@ final class WorkspaceStore: ObservableObject {
                 )
                 guard courseNoteLoadGenerationByItemID[itemID] == generation,
                       let currentIndex = importedItems.firstIndex(where: {
-                        $0.id == itemID
+                          $0.id == itemID
                       }),
-                      case .courseOwned = importedItems[currentIndex].storage else {
+                      let currentAccess =
+                        verifiedCourseOwnedNoteAccess(
+                            importedItems[currentIndex]
+                        ),
+                      currentAccess.matches(access) else {
                     return
                 }
                 lastCourseNoteReadRanOnMainThread = result.ranOnMainThread
@@ -20680,12 +21290,16 @@ final class WorkspaceStore: ObservableObject {
                     result.metadata.url.path
                 noteBackingContentDigestsByItemID[itemID] =
                     result.snapshot.sha256
-                if let membershipIndex = courseItemMemberships.firstIndex(
-                    where: { $0.itemID == itemID }
+                if courseItemMemberships.indices.contains(
+                    currentAccess.membershipIndex
                 ) {
-                    courseItemMemberships[membershipIndex].entryIdentity =
+                    courseItemMemberships[
+                        currentAccess.membershipIndex
+                    ].entryIdentity =
                         result.metadata.identity
-                    courseItemMemberships[membershipIndex].documentIdentifier =
+                    courseItemMemberships[
+                        currentAccess.membershipIndex
+                    ].documentIdentifier =
                         result.documentIdentifier
                 }
                 if let pendingWrite = pendingNoteWritesByItemID[itemID] {
