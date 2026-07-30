@@ -986,22 +986,34 @@ enum CourseProjectRootSelfCheck {
                 reopened.course(withID: courseID)?.title
                     == courseBeforeProposal.title
                     && reopened.courseRootURL(for: courseID)
-                        == successfulCandidate.canonicalFileURL
-                    && reopened.importedItems.first {
-                        $0.id == material.id
-                    }?.url == reboundMaterialURL?.canonicalFileURL
-                    && reopened.studySessions.contains {
-                        $0.id == learningFixture.sessionID
-                    }
-                    && reopened.learningMemoryStates.first {
-                        $0.scope == .course(courseID)
-                    }?.entries.contains {
-                        $0.id == learningFixture.memoryID
-                    } == true
-                    && reopened.pendingPortableNoteDraftForSelfCheck(
-                        itemID: noteID
-                    ) == learningFixture.draft,
-                "重开后没有恢复重绑课程根、资料身份或学习状态"
+                        == successfulCandidate.canonicalFileURL,
+                "重开后没有恢复重绑课程根"
+            )
+            try check(
+                reopened.importedItems.first {
+                    $0.id == material.id
+                }?.url == reboundMaterialURL?.canonicalFileURL,
+                "重开后没有恢复重绑资料身份"
+            )
+            try check(
+                reopened.studySessions.contains {
+                    $0.id == learningFixture.sessionID
+                },
+                "重开后没有恢复重绑课程 Chat"
+            )
+            try check(
+                reopened.learningMemoryStates.first {
+                    $0.scope == .course(courseID)
+                }?.entries.contains {
+                    $0.id == learningFixture.memoryID
+                } == true,
+                "重开后没有恢复重绑课程学习记忆"
+            )
+            try check(
+                reopened.pendingPortableNoteDraftForSelfCheck(
+                    itemID: noteID
+                ) == learningFixture.draft,
+                "重开后没有恢复重绑课程笔记草稿"
             )
 
             let staleCourseCandidate = exportParent.appendingPathComponent(
