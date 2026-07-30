@@ -350,7 +350,15 @@ final class WorkspaceStore: ObservableObject {
     @Published var showDailyInspiration = true
     @Published var commandPalettePresented = false
     @Published var librarySearch = ""
-    @Published var readerSearch = ""
+    @Published private(set) var readerSourceHighlight = ""
+    @Published private(set) var readerSourceHighlightPageIndex: Int?
+    @Published var readerSearch = "" {
+        didSet {
+            guard readerSearch != oldValue else { return }
+            readerSourceHighlight = ""
+            readerSourceHighlightPageIndex = nil
+        }
+    }
     @Published var showReaderSearch = false
     @Published var readerLocationID: String?
     @Published var readerLocationTitle: String?
@@ -7232,6 +7240,10 @@ final class WorkspaceStore: ObservableObject {
         readerLocationTitle ?? selectedMaterialItem.map(displayTitle) ?? activeNoteItem.map(displayTitle) ?? ui("当前笔记", "Current note")
     }
 
+    var effectiveReaderSearch: String {
+        readerSourceHighlight.isEmpty ? readerSearch : readerSourceHighlight
+    }
+
     var currentSourceReferenceTitle: String {
         guard let item = selectedMaterialItem else {
             return activeNoteItem.map(displayTitle) ?? ui("当前笔记", "Current note")
@@ -7340,12 +7352,18 @@ final class WorkspaceStore: ObservableObject {
         return selections.compactMap { selection in
             let excerpt = selection.text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !excerpt.isEmpty else { return nil }
+            let reference = SourceReferenceTitle.parse(selection.ownerTitle)
             return AgentReplySource(
                 itemID: selection.itemID,
                 kind: .selection,
-                title: selection.ownerTitle,
+                title: reference.title,
                 label: "[选区：\(selection.ownerTitle)]",
-                excerpt: String(excerpt.prefix(400))
+                excerpt: String(excerpt.prefix(400)),
+                pageIndex: reference.pageIndex,
+                sectionTitle: reference.sectionTitle,
+                sectionLocationID: reference.sectionLocationID,
+                sectionOrdinal: reference.sectionOrdinal,
+                courseItemOrdinal: reference.courseItemOrdinal
             )
         }
     }
@@ -7675,6 +7693,8 @@ final class WorkspaceStore: ObservableObject {
             clearUnpinnedFloatingSelection(keepContext: false)
             selectionAttachments = []
             lastSelectionAttachmentDate = nil
+            readerSourceHighlight = ""
+            readerSourceHighlightPageIndex = nil
             readerPageIndex = 0
             readerLocationID = nil
             requestReaderPDFPage(nil, recordsLocation: false)
@@ -8463,6 +8483,8 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func revealReaderSearch() {
+        readerSourceHighlight = ""
+        readerSourceHighlightPageIndex = nil
         guard hasSelectedMaterial else {
             clearReaderSearchIfNeeded()
             return
@@ -8639,6 +8661,77 @@ final class WorkspaceStore: ObservableObject {
         )
         focus(.reader)
         return true
+    }
+
+    func canOpenAgentReplySource(_ source: AgentReplySource) -> Bool {
+        agentReplySourceItem(source) != nil
+    }
+
+    @discardableResult
+    func openAgentReplySource(_ source: AgentReplySource) -> Bool {
+        guard let item = agentReplySourceItem(source) else { return false }
+        let chatID = activeStudySessionID
+        if let courseID = source.courseID {
+            activateCourse(courseID)
+        }
+        if item.isNotebookNote {
+            dismissCourseWorkspace(restoringFocus: false)
+            select(itemID: item.id)
+            revealDocumentPane(.agent, clearSelection: false)
+            revealDocumentPane(.notes, clearSelection: false)
+            focus(.notes)
+            return activeStudySessionID == chatID
+        }
+
+        let opened: Bool
+        if item.isSample {
+            dismissCourseWorkspace(restoringFocus: false)
+            select(itemID: item.id)
+            opened = true
+        } else {
+            opened = openCourseMaterial(item.id)
+        }
+        guard opened else { return false }
+
+        requestReaderPDFPage(
+            item.kind == .pdf ? source.pageIndex : nil,
+            recordsLocation: item.kind == .pdf && source.pageIndex != nil
+        )
+        let htmlTargetID = item.kind == .html
+            ? source.sectionLocationID
+                ?? source.sectionOrdinal.map { "html-heading-\(max($0 - 1, 0))" }
+            : nil
+        requestReaderHTMLLocation(
+            id: htmlTargetID,
+            title: item.kind == .html ? source.sectionTitle : nil
+        )
+        readerSourceHighlight = source.highlightQuery
+        readerSourceHighlightPageIndex = item.kind == .pdf ? source.pageIndex : nil
+        revealDocumentPane(.agent, clearSelection: false)
+        revealDocumentPane(.reader, clearSelection: false)
+        focus(.reader)
+        return activeStudySessionID == chatID
+    }
+
+    private func agentReplySourceItem(_ source: AgentReplySource) -> StudyItem? {
+        guard let itemID = source.itemID,
+              let item = allItems.first(where: { $0.id == itemID }) else {
+            return nil
+        }
+        if let courseID = source.courseID {
+            guard courses.contains(where: { $0.id == courseID }),
+                  courseMembershipIndex.courseIDs(for: itemID).contains(courseID) else {
+                return nil
+            }
+        }
+        if item.isSample || item.urlPath == nil {
+            return item
+        }
+        guard let url = item.url,
+              FileManager.default.isReadableFile(atPath: url.path) else {
+            return nil
+        }
+        return item
     }
 
     /// Open a material/note citation from chat tags when the label is only a human title.
@@ -12275,6 +12368,7 @@ final class WorkspaceStore: ObservableObject {
             || scenario == "course-index-navigation-flow"
             || scenario == "course-chat-scope-flow"
             || scenario == "chat-reply-persistence-flow"
+            || scenario == "chat-source-navigation-flow"
             || scenario == "loading-indicator-samples"
             || emptyWorkspaceScenarios.contains(scenario) else { return }
         didRunVerificationScenario = true
@@ -12314,6 +12408,10 @@ final class WorkspaceStore: ObservableObject {
         }
         if scenario == "chat-reply-persistence-flow" {
             runChatReplyPersistenceVerification()
+            return
+        }
+        if scenario == "chat-source-navigation-flow" {
+            runChatSourceNavigationVerification()
             return
         }
         if scenario == "content-rail-dormant-preview" || scenario == "content-rail-activation-preview" {
@@ -13951,6 +14049,118 @@ final class WorkspaceStore: ObservableObject {
         recordVerificationStage("completed")
     }
 
+    private func runChatSourceNavigationVerification() {
+        let chatID = UUID()
+        let courseID = UUID(uuidString: "33333333-3333-3333-3333-333333333333")!
+        let otherCourseID = UUID(uuidString: "44444444-4444-4444-4444-444444444444")!
+        courses = [
+            Course(id: courseID, title: "来源标签验收课", colorIndex: 0),
+            Course(id: otherCourseID, title: "其他课程", colorIndex: 1),
+        ]
+        var memberships = CourseItemMemberships()
+        memberships.assign(itemIDs: ["sample-pdf", "sample-html", "sample-md"], to: courseID)
+        courseItemMemberships = memberships.values
+        activeCourseID = courseID
+        let sources = [
+            AgentReplySource(
+                itemID: "sample-pdf",
+                courseID: courseID,
+                kind: .material,
+                title: "Mishkin 教材样例",
+                label: "[材料：Mishkin 教材样例]",
+                excerpt: "利率是资金使用价格的表达。",
+                pageIndex: 0
+            ),
+            AgentReplySource(
+                itemID: "sample-html",
+                courseID: courseID,
+                kind: .material,
+                title: "货币金融学课程 HTML",
+                label: "[材料：货币金融学课程 HTML]",
+                excerpt: "实际利率需要扣除通货膨胀。",
+                sectionTitle: "实际利率"
+            ),
+            AgentReplySource(
+                itemID: "sample-md",
+                courseID: courseID,
+                kind: .material,
+                title: "课堂笔记样例",
+                label: "[材料：课堂笔记样例]",
+                excerpt: "名义利率和实际利率需要分开理解。"
+            ),
+        ]
+        let reply = AgentMessage(
+            role: .assistant,
+            text: "利率是资金使用价格的表达。[材料：Mishkin 教材样例]\n\n它需要结合通胀与课堂笔记理解。[材料：货币金融学课程 HTML][材料：课堂笔记样例]",
+            source: "Mishkin 教材样例",
+            backend: .pi,
+            sources: sources,
+            origin: AgentReplyOrigin(
+                requestID: UUID(),
+                chatID: chatID,
+                courseID: courseID
+            )
+        )
+        let session = StudySession(
+            id: chatID,
+            title: "来源标签验收",
+            messages: [
+                AgentMessage(role: .user, text: "什么是利率？", source: nil),
+                reply,
+            ],
+            courseID: courseID
+        )
+        studySessions = [session]
+        activeStudySessionID = chatID
+        messages = session.messages
+        layout = .immersiveConversation
+        showLibrary = false
+        showReader = false
+        showAgent = true
+        showNotes = false
+        agentSurface = .hidden
+
+        let crossCourseSource = AgentReplySource(
+            itemID: "sample-pdf",
+            courseID: otherCourseID,
+            kind: .material,
+            title: "同名但不属于该课的资料",
+            label: "[材料：同名但不属于该课的资料]",
+            excerpt: "不应打开。"
+        )
+        let missingSource = AgentReplySource(
+            itemID: "missing-material",
+            courseID: courseID,
+            kind: .material,
+            title: "已失效资料",
+            label: "[材料：已失效资料]",
+            excerpt: "不应打开。"
+        )
+        let rejectsInvalidSources = !canOpenAgentReplySource(crossCourseSource)
+            && !openAgentReplySource(crossCourseSource)
+            && !canOpenAgentReplySource(missingSource)
+            && !openAgentReplySource(missingSource)
+        let opened = openAgentReplySource(sources[0])
+        let passed = rejectsInvalidSources
+            && opened
+            && activeStudySessionID == chatID
+            && selectedItemID == "sample-pdf"
+            && showReader
+            && showAgent
+            && readerSourceHighlight == sources[0].highlightQuery
+            && readerSourceHighlightPageIndex == 0
+            && messages.last?.sources == sources
+        recordVerificationStage("chat-source-navigation:\(passed)")
+        if passed {
+            let markerURL = storageURL.deletingLastPathComponent()
+                .appendingPathComponent("chat-source-navigation-verified.txt")
+            try? "Structured source tags kept Chat visible and opened the exact page\n"
+                .write(to: markerURL, atomically: true, encoding: .utf8)
+        }
+        save()
+        recordVerificationStage("completed")
+    }
+
     private func configureEmptyWorkspaceVerificationScenario(_ scenario: String) {
         layout = .documentAgentNotes
         showLibrary = false
@@ -14514,9 +14724,7 @@ final class WorkspaceStore: ObservableObject {
             } ?? []
             let sources = reply.sources.map { source in
                 var persisted = source
-                if persisted.courseID == nil {
-                    persisted.courseID = target.courseID
-                }
+                persisted.courseID = target.courseID ?? persisted.courseID
                 return persisted
             }
             if let messageID = replyMessageID {

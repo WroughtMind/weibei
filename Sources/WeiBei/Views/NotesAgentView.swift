@@ -3290,6 +3290,17 @@ private struct AgentBubble: View {
 
     private var regularMessageContent: some View {
         let citationParse = AgentCitationParser.parse(message.text)
+        let availableSources = message.sources.filter {
+            store.canOpenAgentReplySource($0)
+        }
+        let legacyCitations = citationParse.citations.filter { citation in
+            switch citation.kind {
+            case .material, .note, .selection:
+                return message.sources.isEmpty
+            case .learningRecord, .learningMemory, .session:
+                return true
+            }
+        }
         return VStack(alignment: .leading, spacing: 8) {
             messageMetadata
 
@@ -3303,6 +3314,20 @@ private struct AgentBubble: View {
                richAnswer.mode == .rich,
                !richAnswer.scenes.isEmpty {
                 richAnswerFlow(richAnswer)
+                if !availableSources.isEmpty {
+                    AgentReplySourceTagRow(sources: availableSources) { source in
+                        activateSource(source)
+                    }
+                }
+            } else if !availableSources.isEmpty {
+                AgentReplySourceTextFlow(
+                    text: message.text,
+                    sources: availableSources,
+                    isFailureMessage: isFailureMessage,
+                    messageID: message.id
+                ) { source in
+                    activateSource(source)
+                }
             } else {
                 // Hang-proof agent chat: finalized turns use KaTeX with frozen height;
                 // failures stay native text (no WebView). Never height→scroll.
@@ -3314,8 +3339,8 @@ private struct AgentBubble: View {
                 )
             }
 
-            if !citationParse.citations.isEmpty {
-                AgentCitationTagRow(citations: citationParse.citations) { citation in
+            if !legacyCitations.isEmpty {
+                AgentCitationTagRow(citations: legacyCitations) { citation in
                     activateCitation(citation)
                 }
             }
@@ -3397,13 +3422,21 @@ private struct AgentBubble: View {
         }
     }
 
+    private func activateSource(_ source: AgentReplySource) {
+        withAnimation(WeiBeiMotion.panel) {
+            _ = store.openAgentReplySource(source)
+        }
+    }
+
     @ViewBuilder
     private func richAnswerFlow(_ presentation: RichAnswerPresentation) -> some View {
         ForEach(Array(presentation.resolvedParts.enumerated()), id: \.offset) { index, part in
             switch part.kind {
             case .narrative:
                 if let text = part.text, !text.isEmpty {
-                    RichAnswerNarrativeText(text: text)
+                    RichAnswerNarrativeText(
+                        text: AgentCitationParser.parse(text).displayText
+                    )
                         .frame(
                             maxWidth: AgentChatLayoutMetrics.isWide(layout: store.layout)
                                 ? AgentChatLayoutMetrics.wideMaxWidth
@@ -3577,6 +3610,13 @@ private struct AgentBubble: View {
     }
 
     private func openRichAnswerEvidence(_ evidence: RichAnswerEvidence) {
+        if let source = message.sources.first(where: {
+            $0.label == evidence.sourceLabel
+                && store.canOpenAgentReplySource($0)
+        }) {
+            _ = store.openAgentReplySource(source)
+            return
+        }
         var label = evidence.sourceLabel.trimmingCharacters(in: .whitespacesAndNewlines)
         if label.hasPrefix("["), label.hasSuffix("]"), label.count > 2 {
             label = String(label.dropFirst().dropLast())
@@ -3853,6 +3893,248 @@ private enum AgentCitationParser {
         case "学习记忆": return .learningMemory
         case "会话": return .session
         default: return nil
+        }
+    }
+}
+
+private struct AgentReplySourceTagRow: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let sources: [AgentReplySource]
+    var onActivate: (AgentReplySource) -> Void
+    @State private var showsMore = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let first = sources.first {
+                AgentReplySourceTag(source: first) {
+                    onActivate(first)
+                }
+            }
+            if sources.count > 1 {
+                Button("+\(sources.count - 1)") {
+                    showsMore.toggle()
+                }
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .padding(.horizontal, 8)
+                .frame(height: 22)
+                .background(
+                    WeiBeiTheme.paperInset.opacity(0.48),
+                    in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(WeiBeiTheme.hairline.opacity(0.42), lineWidth: 1)
+                }
+                .buttonStyle(.plain)
+                .help(store.ui("查看另外 \(sources.count - 1) 个来源", "View \(sources.count - 1) more sources"))
+                .popover(isPresented: $showsMore, arrowEdge: .bottom) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(sources.dropFirst())) { source in
+                                Button {
+                                    showsMore = false
+                                    onActivate(source)
+                                } label: {
+                                    AgentReplySourceDetail(source: source)
+                                }
+                                .buttonStyle(.plain)
+                                if source.id != sources.last?.id {
+                                    Rectangle()
+                                        .fill(WeiBeiTheme.hairline.opacity(0.42))
+                                        .frame(height: 1)
+                                }
+                            }
+                        }
+                    }
+                    .frame(width: 340, height: min(CGFloat(sources.count - 1) * 86, 360))
+                    .padding(.vertical, 6)
+                }
+                .accessibilityLabel(
+                    Text(store.ui("展开另外 \(sources.count - 1) 个来源", "Expand \(sources.count - 1) more sources"))
+                )
+            }
+        }
+        .padding(.top, 2)
+    }
+}
+
+private struct AgentReplySourceTextFlow: View {
+    let text: String
+    let sources: [AgentReplySource]
+    let isFailureMessage: Bool
+    let messageID: UUID
+    var onActivate: (AgentReplySource) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach(Array(parts.enumerated()), id: \.offset) { index, part in
+                if !part.text.isEmpty {
+                    AgentMessageMarkdownText(
+                        text: part.text,
+                        rendersRichMarkdown: true,
+                        usesFinalizedKaTeX: !isFailureMessage,
+                        messageID: index == 0 ? messageID : nil
+                    )
+                }
+                if !part.sources.isEmpty {
+                    AgentReplySourceTagRow(sources: part.sources, onActivate: onActivate)
+                }
+            }
+        }
+    }
+
+    private var parts: [(text: String, sources: [AgentReplySource])] {
+        var result: [(text: String, sources: [AgentReplySource])] = []
+        var remaining = text[...]
+
+        while let match = earliestSource(in: remaining) {
+            let preceding = String(remaining[..<match.range.lowerBound])
+            var matchedSources = [match.source]
+            remaining = remaining[match.range.upperBound...]
+
+            while let next = earliestSource(in: remaining),
+                  remaining[..<next.range.lowerBound]
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .isEmpty {
+                matchedSources.append(next.source)
+                remaining = remaining[next.range.upperBound...]
+            }
+            result.append((
+                AgentCitationParser.parse(preceding).displayText,
+                matchedSources
+            ))
+        }
+
+        let tail = AgentCitationParser.parse(String(remaining)).displayText
+        if !tail.isEmpty || result.isEmpty {
+            result.append((tail, []))
+        }
+        return result
+    }
+
+    private func earliestSource(
+        in text: Substring
+    ) -> (source: AgentReplySource, range: Range<Substring.Index>)? {
+        sources.compactMap { source in
+            text.range(of: source.label).map { (source, $0) }
+        }
+        .min { $0.1.lowerBound < $1.1.lowerBound }
+    }
+}
+
+private struct AgentReplySourceTag: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let source: AgentReplySource
+    var action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: source.kind.sourceSystemImage)
+                    .font(.system(size: 9, weight: .semibold))
+                Text(label)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(hovering ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .background(
+                WeiBeiTheme.paperInset.opacity(hovering ? 0.58 : 0.40),
+                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(
+                        hovering
+                            ? WeiBeiTheme.cinnabar.opacity(0.28)
+                            : WeiBeiTheme.hairline.opacity(0.40),
+                        lineWidth: 1
+                    )
+            }
+        }
+        .buttonStyle(.plain)
+        .help(detailText)
+        .onHover { hovering in
+            withAnimation(WeiBeiMotion.hover) {
+                self.hovering = hovering
+            }
+        }
+        .accessibilityLabel(Text(store.ui("打开原文：\(label)", "Open source: \(label)")))
+    }
+
+    private var label: String {
+        let title = source.title.count > 18
+            ? String(source.title.prefix(16)) + "…"
+            : source.title
+        guard let position = source.positionLabel(language: store.interfaceLanguage) else {
+            return title
+        }
+        return "\(title) · \(position)"
+    }
+
+    private var detailText: String {
+        [
+            source.title,
+            source.positionLabel(language: store.interfaceLanguage),
+            source.excerpt.trimmingCharacters(in: .whitespacesAndNewlines),
+        ]
+        .compactMap { value in
+            guard let value, !value.isEmpty else { return nil }
+            return value
+        }
+        .joined(separator: "\n")
+    }
+}
+
+private struct AgentReplySourceDetail: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let source: AgentReplySource
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: source.kind.sourceSystemImage)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.82))
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(source.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(WeiBeiTheme.ink)
+                        .lineLimit(1)
+                    if let position = source.positionLabel(language: store.interfaceLanguage) {
+                        Text(position)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(WeiBeiTheme.secondaryInk)
+                            .lineLimit(1)
+                    }
+                }
+                Text(source.excerpt)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 4)
+            Image(systemName: "arrow.up.right")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.tertiaryInk)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+    }
+}
+
+private extension AgentReplySourceKind {
+    var sourceSystemImage: String {
+        switch self {
+        case .material: return "doc.text"
+        case .note: return "note.text"
+        case .selection: return "text.quote"
         }
     }
 }

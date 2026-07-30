@@ -1386,6 +1386,43 @@ public struct AgentReplySource: Identifiable, Codable, Hashable, Sendable {
         self.sectionOrdinal = sectionOrdinal
         self.courseItemOrdinal = courseItemOrdinal
     }
+
+    public func positionLabel(language: WeiBeiInterfaceLanguage) -> String? {
+        if let pageIndex {
+            return language.text("第 \(pageIndex + 1) 页", "Page \(pageIndex + 1)")
+        }
+        if let sectionTitle, !sectionTitle.isEmpty {
+            return sectionTitle
+        }
+        if let sectionOrdinal {
+            return language.text("第 \(sectionOrdinal) 节", "Section \(sectionOrdinal)")
+        }
+        return nil
+    }
+
+    public var highlightQuery: String {
+        let lines = excerpt.components(separatedBy: .newlines).compactMap { rawLine -> String? in
+            var line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty,
+                  line.range(
+                    of: #"^[【\[]?.*第\s*\d+\s*页"#,
+                    options: .regularExpression
+                  ) == nil else {
+                return nil
+            }
+            line = line.replacingOccurrences(
+                of: #"^(?:#{1,6}|[-*+>])\s+"#,
+                with: "",
+                options: .regularExpression
+            )
+            line = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            return line.count >= 4 ? line : nil
+        }
+        guard let line = lines.first(where: { $0.count >= 8 }) ?? lines.first else {
+            return ""
+        }
+        return String(line.prefix(120))
+    }
 }
 
 public enum AgentReplyActionKind: String, Codable, Hashable, Sendable {

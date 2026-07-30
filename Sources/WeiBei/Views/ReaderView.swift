@@ -814,7 +814,8 @@ struct ReaderView: View {
                     PDFReaderRepresentable(
                         url: url,
                         browseMode: pdfBrowseMode,
-                        searchQuery: store.readerSearch,
+                        searchQuery: store.effectiveReaderSearch,
+                        searchTargetPageIndex: store.readerSourceHighlightPageIndex,
                         appearanceMode: store.appearanceMode,
                         adaptsDocumentColors: store.adaptImportedDocumentColors,
                         pageIndex: $pdfPageIndex,
@@ -849,7 +850,7 @@ struct ReaderView: View {
                 if let url = item.url {
                     WebReaderRepresentable(
                         url: url,
-                        searchQuery: store.readerSearch,
+                        searchQuery: store.effectiveReaderSearch,
                         appearanceMode: store.appearanceMode,
                         adaptsDocumentColors: store.adaptImportedDocumentColors,
                         contentRailTarget: htmlContentRailTarget,
@@ -868,7 +869,7 @@ struct ReaderView: View {
                 } else {
                     WebReaderRepresentable(
                         html: store.sampleHTML(for: item),
-                        searchQuery: store.readerSearch,
+                        searchQuery: store.effectiveReaderSearch,
                         appearanceMode: store.appearanceMode,
                         adaptsDocumentColors: true,
                         contentRailTarget: htmlContentRailTarget,
@@ -897,11 +898,11 @@ struct ReaderView: View {
                 }
             case .text:
                 if let url = item.url, let text = try? String(contentsOf: url, encoding: .utf8) {
-                    PlainTextReaderView(text: text, searchQuery: store.readerSearch, appearanceMode: store.appearanceMode) { text, anchor in
+                    PlainTextReaderView(text: text, searchQuery: store.effectiveReaderSearch, appearanceMode: store.appearanceMode) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
                     }
                 } else {
-                    PlainTextReaderView(text: store.sampleText(for: item), searchQuery: store.readerSearch, appearanceMode: store.appearanceMode) { text, anchor in
+                    PlainTextReaderView(text: store.sampleText(for: item), searchQuery: store.effectiveReaderSearch, appearanceMode: store.appearanceMode) { text, anchor in
                         store.updateSelection(text, source: .document, anchor: anchor)
                     }
                 }
@@ -917,7 +918,7 @@ struct ReaderView: View {
         MarkdownDocumentReaderView(
             markdown: markdown,
             markdownBaseURL: markdownBaseURL,
-            searchQuery: store.readerSearch,
+            searchQuery: store.effectiveReaderSearch,
             appearanceMode: store.appearanceMode,
             interfaceLanguage: store.interfaceLanguage,
             selectionAskMarks: selectionAskMarksJSON(for: store.selectedMaterialItem?.id ?? ""),
@@ -1088,6 +1089,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
     var url: URL
     var browseMode: PDFBrowseMode
     var searchQuery: String
+    var searchTargetPageIndex: Int?
     var appearanceMode: WeiBeiAppearanceMode
     var adaptsDocumentColors: Bool
     @Binding var pageIndex: Int
@@ -1182,7 +1184,11 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             }
         }
 
-        context.coordinator.applySearch(searchQuery, in: view)
+        context.coordinator.applySearch(
+            searchQuery,
+            targetPageIndex: searchTargetPageIndex,
+            in: view
+        )
         context.coordinator.applyAskUnderlines(askUnderlineMarks.isEmpty
             ? underlineSnippets.map { (id: "", text: $0) }
             : askUnderlineMarks, in: view)
@@ -1222,6 +1228,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
         private var pendingOCRPageIndexes: Set<Int> = []
         private var ocrHighlightedLinesByPageIndex: [Int: Set<Int>] = [:]
         private var lastSearchQuery = ""
+        private var lastSearchTargetPageIndex: Int?
         private var loadGeneration = 0
         private var userNavigationDeadline = Date.distantPast
         private(set) var loadedURL: URL?
@@ -1260,6 +1267,7 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             nativeTextPageIndexes = []
             clearOCROverlays(in: view)
             lastSearchQuery = ""
+            lastSearchTargetPageIndex = nil
             lastAppliedAskUnderlineMarks = []
             askUnderlineHits = []
             hoveredAskThreadID = nil
@@ -1280,7 +1288,12 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                     self.configureOCROverlays(for: document, generation: generation, in: view)
                     self.ensureOCRForCurrentPage(in: view)
                     if !self.lastSearchQuery.isEmpty {
-                        self.applySearch(self.lastSearchQuery, in: view, force: true)
+                        self.applySearch(
+                            self.lastSearchQuery,
+                            targetPageIndex: self.lastSearchTargetPageIndex,
+                            in: view,
+                            force: true
+                        )
                     }
                     WeiBeiQuietScrollers.flashRecursively(in: view, repeatCount: 2)
                 }
@@ -1332,7 +1345,12 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                     if self.lastSearchQuery.isEmpty {
                         view.layoutDocumentView()
                     } else {
-                        self.applySearch(self.lastSearchQuery, in: view, force: true)
+                        self.applySearch(
+                            self.lastSearchQuery,
+                            targetPageIndex: self.lastSearchTargetPageIndex,
+                            in: view,
+                            force: true
+                        )
                     }
                 }
             }
@@ -1396,7 +1414,12 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                     if self.lastSearchQuery.isEmpty {
                         view.layoutDocumentView()
                     } else {
-                        self.applySearch(self.lastSearchQuery, in: view, force: true)
+                        self.applySearch(
+                            self.lastSearchQuery,
+                            targetPageIndex: self.lastSearchTargetPageIndex,
+                            in: view,
+                            force: true
+                        )
                     }
                 }
             }
@@ -1519,10 +1542,20 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             return index == NSNotFound ? nil : index
         }
 
-        func applySearch(_ query: String, in view: PDFView, force: Bool = false) {
+        func applySearch(
+            _ query: String,
+            targetPageIndex: Int?,
+            in view: PDFView,
+            force: Bool = false
+        ) {
             let query = ReaderSearch.cleaned(query)
-            guard force || query != lastSearchQuery else { return }
+            guard force
+                    || query != lastSearchQuery
+                    || targetPageIndex != lastSearchTargetPageIndex else {
+                return
+            }
             lastSearchQuery = query
+            lastSearchTargetPageIndex = targetPageIndex
 
             guard !query.isEmpty else {
                 view.highlightedSelections = nil
@@ -1531,13 +1564,28 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
                 return
             }
 
-            let matches = view.document?.findString(query, withOptions: [.caseInsensitive, .diacriticInsensitive]) ?? []
+            let allMatches = view.document?.findString(
+                query,
+                withOptions: [.caseInsensitive, .diacriticInsensitive]
+            ) ?? []
+            let matches = targetPageIndex.map { targetPageIndex in
+                allMatches.filter { selection in
+                    selection.pages.contains { page in
+                        guard let document = view.document else { return false }
+                        return document.index(for: page) == targetPageIndex
+                    }
+                }
+            } ?? allMatches
             view.highlightedSelections = matches
             if let first = matches.first {
                 setOCRHighlightedLines([:], in: view)
                 view.go(to: first)
             } else {
-                applyOCRSearch(query, in: view)
+                applyOCRSearch(
+                    query,
+                    targetPageIndex: targetPageIndex,
+                    in: view
+                )
             }
         }
 
@@ -1659,11 +1707,17 @@ private struct PDFReaderRepresentable: NSViewRepresentable {
             }
         }
 
-        private func applyOCRSearch(_ query: String, in view: PDFView) {
+        private func applyOCRSearch(
+            _ query: String,
+            targetPageIndex: Int?,
+            in view: PDFView
+        ) {
             var highlightedLines: [Int: Set<Int>] = [:]
             var firstPageIndex: Int?
 
-            for page in ocrPagesByPageIndex.values.sorted(by: { $0.pageIndex < $1.pageIndex }) {
+            for page in ocrPagesByPageIndex.values
+                .filter({ targetPageIndex == nil || $0.pageIndex == targetPageIndex })
+                .sorted(by: { $0.pageIndex < $1.pageIndex }) {
                 for (lineIndex, line) in page.lines.enumerated() {
                     guard line.text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) != nil else { continue }
                     highlightedLines[page.pageIndex, default: []].insert(lineIndex)
