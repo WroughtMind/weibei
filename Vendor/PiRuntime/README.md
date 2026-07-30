@@ -12,8 +12,8 @@ files needed by WeiBei RPC mode.
 WeiBei-specific behavior is deliberately outside the upstream CLI surface:
 
 - Swift owns current material, selection, notes, cancellation, fallback, and write-back.
-- `AgentResources/extension.ts` owns the two allowlisted tools and guard hooks.
-- `AgentResources/skills/` owns the three study workflows.
+- `AgentResources/extension.ts` owns the allowlisted course, memory, note, and rich-answer tools.
+- `AgentResources/skills/` contains only the on-demand rich-answer guidance.
 - Pi runs without built-in tools, sessions, global extensions, or global skills.
 
 To maintain a deeper Pi fork, publish a standalone artifact from the fork, update

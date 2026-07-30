@@ -108,6 +108,126 @@ try {
       isTruncated: false,
     },
   };
+  const contextFile = join(temporaryRoot, "context.json");
+  const hookEnvelope = {
+    schemaVersion: 2,
+    requestID: "request-a",
+    contextRevision: "revision-a",
+    answerFormPolicy: "automatic",
+    purpose: "conversation",
+    language: "chinese",
+    question: "解释当前材料",
+    material: {
+      title: "第一讲",
+      text: "ORIGINAL_EXTENSION_CONTENT",
+      isTruncated: false,
+    },
+    note: { title: "当前笔记", text: "", isTruncated: false },
+    selection: {
+      title: "第一讲选区",
+      text: "ORIGINAL_EXTENSION_CONTENT",
+      isTruncated: false,
+    },
+    recentMessages: [],
+    course: {
+      title: "课程甲",
+      catalog: [{
+        id: "material-1",
+        title: "第一讲",
+        subtitle: "",
+        kind: "text",
+        role: "material",
+        isCurrentMaterial: true,
+        isCurrentNote: false,
+        linkedItemIDs: [],
+        tags: [],
+      }],
+      items: [{
+        id: "material-1",
+        title: "第一讲",
+        subtitle: "",
+        kind: "text",
+        role: "material",
+        isCurrentMaterial: true,
+        isCurrentNote: false,
+        linkedItemIDs: [],
+        headings: [],
+        tags: [],
+        searchText: "ORIGINAL_EXTENSION_CONTENT",
+        isTruncated: false,
+      }],
+      relations: [],
+      isTruncated: false,
+    },
+    project: { ...snapshot.project, items: [item] },
+    learning: { memoryRevision: 0, memories: [] },
+  };
+  await writeFile(contextFile, JSON.stringify(hookEnvelope));
+  process.env.WEIBEI_AGENT_CONTEXT_FILE = contextFile;
+  const eventHandlers = new Map();
+  extension.default({
+    registerTool() {},
+    on(name, handler) {
+      eventHandlers.set(name, handler);
+    },
+  });
+  const beforeAgentStart = requireValue(
+    eventHandlers.get("before_agent_start"),
+    "真实扩展没有注册 before_agent_start",
+  );
+  const beforeResult = await beforeAgentStart({ systemPrompt: "base" });
+  requireValue(
+      beforeResult.message?.customType === "weibei-current-focus" &&
+      beforeResult.message?.display === false &&
+      beforeResult.message?.content.includes("ORIGINAL_EXTENSION_CONTENT") &&
+      beforeResult.systemPrompt.includes("直接回答用户的问题"),
+    "当前材料、选区和笔记没有作为隐藏本轮焦点自然交给 Pi",
+  );
+  const contextHook = requireValue(
+    eventHandlers.get("context"),
+    "真实扩展没有注册 context 过滤器",
+  );
+  const filteredContext = await contextHook({
+    messages: [
+      { role: "custom", customType: "weibei-current-focus", content: "old", display: false },
+      { role: "user", content: "继续" },
+      beforeResult.message,
+    ],
+  });
+  requireValue(
+    filteredContext.messages.length === 2 &&
+      filteredContext.messages.at(-1)?.content === beforeResult.message.content,
+    "后续回合仍把旧焦点和当前焦点一起交给 Pi",
+  );
+  const emptyFocusEnvelope = {
+    ...hookEnvelope,
+    contextRevision: "context-empty",
+    material: undefined,
+    note: { title: "当前笔记", text: "", isTruncated: false },
+    selection: undefined,
+    focus: undefined,
+  };
+  await writeFile(contextFile, JSON.stringify(emptyFocusEnvelope));
+  const clearedContext = await contextHook({
+    messages: [
+      { role: "custom", customType: "weibei-current-focus", content: beforeResult.message.content, display: false },
+      { role: "user", content: "现在没有打开资料" },
+    ],
+  });
+  requireValue(
+    clearedContext.messages.length === 1 &&
+      clearedContext.messages[0]?.role === "user",
+    "本轮没有焦点时仍把上一轮焦点交给 Pi",
+  );
+  await writeFile(contextFile, "{broken");
+  let brokenContextRejected = false;
+  try {
+    await contextHook({ messages: [] });
+  } catch {
+    brokenContextRejected = true;
+  }
+  requireValue(brokenContextRejected, "回合中的损坏上下文快照被静默忽略");
+  await writeFile(contextFile, JSON.stringify(hookEnvelope));
 
   const normalRead = await extension.readApprovedProjectFile(snapshot, item);
   requireValue(

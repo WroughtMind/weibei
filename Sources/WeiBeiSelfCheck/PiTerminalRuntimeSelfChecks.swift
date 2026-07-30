@@ -25,17 +25,17 @@ private enum PiTerminalRuntimeSelfCheckError: LocalizedError {
 }
 
 private actor PiProgressProbe {
-    private var reachedReadingContext = false
+    private var reachedPreparing = false
 
     func record(_ event: StudyAgentProgress) {
-        if event == .readingContext {
-            reachedReadingContext = true
+        if event == .preparing {
+            reachedPreparing = true
         }
     }
 
-    func waitForReadingContext() async -> Bool {
+    func waitForPreparing() async -> Bool {
         for _ in 0..<250 {
-            if reachedReadingContext { return true }
+            if reachedPreparing { return true }
             try? await Task.sleep(nanoseconds: 20_000_000)
         }
         return false
@@ -53,6 +53,7 @@ func runPiTerminalRuntimeSelfChecks() async throws {
     try await checkMeaningfulThinkingKeepsRunAlive(fixture)
     try await checkRejectedRichAnswerKeepsSafeNarrative(fixture)
     try await checkRejectedActionKeepsOrdinaryAnswer(fixture)
+    try await checkAutomaticFocusSourceAttachesWithoutContextTool(fixture)
     try await checkContextSnapshotLivesUntilProcessShutdown(fixture)
     try await checkConversationBindingLaunchContract(fixture)
     try await checkHostCourseToolBridge(fixture)
@@ -193,9 +194,10 @@ private func checkHostCourseToolBridge(
         progress: nil
     )
     await runtime.shutdown()
-    guard reply.text == "宿主课程工具桥可用。" else {
+    guard reply.text == "宿主课程工具桥可用。",
+          reply.sources.isEmpty else {
         throw PiTerminalRuntimeSelfCheckError.failed(
-            "PI host tool bridge did not return an isolated response (\(reply.text))"
+            "PI host tool bridge returned an invalid reply or attached an uncited source"
         )
     }
     guard !FileManager.default.fileExists(atPath: staleResponseDirectory.path) else {
@@ -217,7 +219,7 @@ private func checkUserStopReturnsImmediately(_ fixture: PiTerminalRuntimeFixture
             await probe.record(event)
         }
     }
-    guard await probe.waitForReadingContext() else {
+    guard await probe.waitForPreparing() else {
         await runtime.shutdown()
         throw PiTerminalRuntimeSelfCheckError.failed("PI cancellation fixture never reached the active run")
     }
@@ -269,7 +271,7 @@ private func checkCancelledTurnCannotAffectImmediateNextChat(
             return error.localizedDescription
         }
     }
-    guard await probe.waitForReadingContext() else {
+    guard await probe.waitForPreparing() else {
         await runtime.shutdown()
         throw PiTerminalRuntimeSelfCheckError.failed(
             "PI immediate-switch fixture never reached the first active turn"
@@ -280,7 +282,6 @@ private func checkCancelledTurnCannotAffectImmediateNextChat(
     let firstOutcome = await firstRun.value
     let secondRequest = StudyAgentRequest(
         purpose: .conversation,
-        workflow: .studyCompanion,
         question: "在第二个 Chat 直接回答",
         materialTitle: "",
         materialText: "",
@@ -427,7 +428,6 @@ private func checkRejectedActionKeepsOrdinaryAnswer(
     )
     let request = StudyAgentRequest(
         purpose: .conversation,
-        workflow: .studyCompanion,
         question: "直接回答这个普通问题",
         materialTitle: "",
         materialText: "",
@@ -451,6 +451,81 @@ private func checkRejectedActionKeepsOrdinaryAnswer(
     } catch {
         await runtime.shutdown()
         throw error
+    }
+}
+
+private func checkAutomaticFocusSourceAttachesWithoutContextTool(
+    _ fixture: PiTerminalRuntimeFixture
+) async throws {
+    let runtime = PiAgentRuntime(
+        executableURL: fixture.executableURL,
+        runtimeDirectory: try fixture.workingDirectory(named: "FocusAnswerRuntime"),
+        runInactivityTimeoutNanoseconds: 2_000_000_000
+    )
+    let request = StudyAgentRequest(
+        purpose: .conversation,
+        question: "解释当前材料",
+        materialTitle: "测试材料",
+        materialText: "利率是资金的价格。",
+        noteTitle: "",
+        noteText: "",
+        selectionTitle: "2 个已选文本片段",
+        selectionText: "片段 1：名义利率。\n片段 2：实际利率。",
+        selectionSources: [
+            AgentReplySource(
+                itemID: "persistent-material",
+                kind: .selection,
+                title: "测试材料",
+                label: "[选区：测试材料]",
+                excerpt: "名义利率。"
+            ),
+            AgentReplySource(
+                itemID: "persistent-note",
+                kind: .selection,
+                title: "测试笔记",
+                label: "[选区：测试笔记]",
+                excerpt: "实际利率。"
+            ),
+        ],
+        courseContext: StudyAgentCourseContext(
+            title: "测试课程",
+            catalog: [
+                StudyAgentCourseCatalogItem(
+                    id: "persistent-material",
+                    title: "测试材料",
+                    subtitle: "测试文稿",
+                    kind: "markdown",
+                    role: "material",
+                    isCurrentMaterial: true
+                ),
+            ]
+        ),
+        projectScope: StudyAgentProjectScope(
+            kind: .course,
+            chatID: "focus-chat",
+            courseID: UUID().uuidString.lowercased()
+        ),
+        contextRevision: "focus-answer-test"
+    )
+
+    let reply = try await runtime.respond(
+        to: request,
+        sessionID: UUID(),
+        workingDirectory: try fixture.workingDirectory(named: "FocusAnswerMode"),
+        progress: nil
+    )
+    await runtime.shutdown()
+
+    guard reply.text == "[材料：测试材料] [选区：2 个已选文本片段] 当前焦点可直接回答。",
+          reply.sources.count == 3,
+          reply.sources.contains(where: {
+              $0.label == "[材料：测试材料]" && $0.itemID == "persistent-material"
+          }),
+          reply.sources.contains(where: { $0.label == "[选区：测试材料]" }),
+          reply.sources.contains(where: { $0.label == "[选区：测试笔记]" }) else {
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "PI did not attach the cited automatic-focus source without a context tool call"
+        )
     }
 }
 
@@ -596,6 +671,10 @@ private func checkConversationBindingLaunchContract(
           trace.components(
               separatedBy: "arg=--model\narg=\(AgentModelListService.codexDefaultModel)\n"
           ).count - 1 == 4,
+          trace.contains("prompt-message=第 1 问\n"),
+          trace.contains("prompt-message=第 2 问\n"),
+          trace.contains("prompt-message=切换 Chat\n"),
+          !trace.contains("prompt-message=/skill:"),
           !trace.contains("arg=--no-session\n"),
           !trace.contains("command=new_session\n"),
           trace.components(separatedBy: "command=prompt\n").count - 1 == 4,
@@ -1033,6 +1112,7 @@ static void start_emitter(void) {
     int thinking_mode = strstr(cwd, "ThinkingMode") != NULL;
     int rich_fallback_mode = strstr(cwd, "RichFallbackMode") != NULL;
     int direct_answer_mode = strstr(cwd, "DirectAnswerMode") != NULL;
+    int focus_answer_mode = strstr(cwd, "FocusAnswerMode") != NULL;
     int bridge_mode = strstr(cwd, "BridgeProject") != NULL;
     emitter_pid = fork();
     if (emitter_pid != 0) return;
@@ -1093,6 +1173,12 @@ static void start_emitter(void) {
         _exit(0);
     }
 
+    if (focus_answer_mode) {
+        printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"[材料：测试材料] [选区：2 个已选文本片段] 当前焦点可直接回答。\"}],\"stopReason\":\"stop\"}]}\n");
+        fflush(stdout);
+        _exit(0);
+    }
+
     if (bridge_mode) {
         char *context = NULL;
         char revision[128] = "";
@@ -1129,7 +1215,7 @@ static void start_emitter(void) {
             }
             usleep(20000);
         }
-        printf("{\"type\":\"tool_execution_end\",\"toolCallId\":\"bridge-search\",\"toolName\":\"weibei_course_search\",\"isError\":false,\"result\":{\"details\":{\"kind\":\"course_search\",\"contextRevision\":\"%s\",\"results\":[],\"evidenceLabels\":[],\"jumpEvidence\":{}}}}\n", revision);
+        printf("{\"type\":\"tool_execution_end\",\"toolCallId\":\"bridge-search\",\"toolName\":\"weibei_course_search\",\"isError\":false,\"result\":{\"details\":{\"kind\":\"course_search\",\"contextRevision\":\"%s\",\"results\":[{\"id\":\"persistent-material\",\"title\":\"利率的含义\",\"role\":\"material\",\"searchText\":\"利率是资金的价格。\"}],\"evidenceLabels\":[\"[材料：利率的含义]\"],\"jumpEvidence\":{}}}}\n", revision);
         printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"%s\"}],\"stopReason\":\"stop\"}]}\n", ready ? "宿主课程工具桥可用。" : "宿主课程工具桥缺失。");
         fflush(stdout);
         _exit(0);
@@ -1237,8 +1323,12 @@ int main(int argc, char **argv) {
             );
             respond(id, type, state);
         } else if (strcmp(type, "get_commands") == 0) {
-            respond(id, type, "{\"commands\":[{\"name\":\"skill:weibei-study-companion\"},{\"name\":\"skill:weibei-course-wayfinding\"},{\"name\":\"skill:weibei-close-reading\"},{\"name\":\"skill:weibei-note-making\"},{\"name\":\"skill:weibei-recall-practice\"},{\"name\":\"skill:rich-answer-director\"},{\"name\":\"skill:professional-visualization\"},{\"name\":\"skill:deep-interaction-components\"},{\"name\":\"skill:generative-composition\"},{\"name\":\"skill:weibei-interactive-study\"}]}");
+            respond(id, type, "{\"commands\":[{\"name\":\"skill:rich-answer-director\"},{\"name\":\"skill:professional-visualization\"},{\"name\":\"skill:deep-interaction-components\"},{\"name\":\"skill:generative-composition\"}]}");
         } else if (strcmp(type, "prompt") == 0) {
+            char prompt_message[1024];
+            if (json_value(line, "message", prompt_message, sizeof(prompt_message))) {
+                trace_line("prompt-message", prompt_message);
+            }
             respond(id, type, "{}");
             if (session_mode) {
                 session_turn += 1;
