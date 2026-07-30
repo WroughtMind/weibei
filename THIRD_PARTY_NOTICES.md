@@ -1,7 +1,7 @@
 # Third-party notices
 
 WeiBei includes and builds upon third-party open-source software. Those
-components remain under their original licenses; the project's AGPL license
+components remain under their original licenses; the project's MIT License
 does not replace them.
 
 ## Pi coding agent

@@ -1,47 +1,58 @@
 # WeiBei licensing guide
 
-WeiBei uses a mixed licensing model so the software can remain open source
-without giving away the project's identity or misrepresenting third-party
-material.
+WeiBei uses a mixed licensing model: the software and custom English fonts are
+open source, while the project's identity and third-party material keep their
+own terms.
 
 ## Software
 
 Unless a file or directory says otherwise, source code and developer
-documentation authored for WeiBei are licensed under the GNU Affero General
-Public License version 3 only (`AGPL-3.0-only`). The complete license text is in
-[`LICENSE`](LICENSE).
+documentation authored for WeiBei are licensed under the MIT License. The
+complete license text is in [`LICENSE`](LICENSE).
 
-The AGPL permits commercial use. If you distribute a modified version, you must
-provide its corresponding source under the AGPL. If your modified version
-supports remote network interaction, it must offer those remote users the
-corresponding source as required by section 13.
+MIT permits use, modification, distribution, sublicensing, and commercial use,
+including as part of proprietary software, provided the copyright and license
+notice are preserved. It does not require modified versions or hosted services
+to publish their source code.
 
-The copyright holder may also offer separate commercial terms. A commercial
-license does not revoke or weaken rights already granted under the AGPL.
+## WeiBei custom fonts
+
+`WeiBeiStele` and `WeiBeiSteleMono` are licensed under the SIL Open Font License
+1.1 (`OFL-1.1`). This applies to the matching font files in:
+
+- `Sources/WeiBei/Resources/Fonts/`;
+- `DesignSystem/assets/fonts/`;
+- `website/assets/fonts/`.
+
+The full license travels with each distribution copy as `OFL.txt` or
+`OFL-WeiBei.txt`. `WeiBeiStele` and `WeiBeiSteleMono` are Reserved Font Names:
+modified versions must use different names unless the copyright holder gives
+written permission.
+
+The complete glyph sources and build pipeline are maintained in
+[`taekchef/weibei-english-font`](https://github.com/taekchef/weibei-english-font).
 
 ## Brand and project media
 
-The following are not licensed under the AGPL:
+The MIT and OFL licenses do not grant permission to use the following material
+to suggest that a fork or modified product is the official WeiBei project:
 
 - the WeiBei / 魏碑 names, logos, product identity, and trade dress;
-- `Sources/WeiBei/Resources/Fonts/`;
 - `Docs/brand/`;
 - `DesignReferences/`;
 - WeiBei-authored brand media under `website/assets/brand/`;
 - WeiBei-authored screenshots under `website/assets/screens/`;
-- `website/assets/fonts/WeiBeiStele.ttf` and
-  `website/assets/fonts/WeiBeiSteleMono.ttf`;
 - WeiBei-authored screenshots, videos, and release evidence under
   `Docs/release-evidence/`;
 - `Attachments/pasted-image.png` and `Attachments/pasted-image-2.png`.
 
-Copyright in those materials is reserved. You may keep the font files and
-project media while cloning, forking, building, and privately evaluating this
-repository. You may not redistribute those files, use them to brand another
-product, or offer them as standalone assets without prior permission. Remove or
-replace them before distributing a fork.
+Copyright in those project media remains reserved. You may keep them while
+cloning, building, and privately evaluating the repository. Remove or replace
+them before publicly distributing a fork unless you have separate permission.
 
-See [`TRADEMARKS.md`](TRADEMARKS.md) for the project identity policy.
+The open font license still permits normal use, embedding, modification, and
+redistribution of the font files. It does not grant endorsement or trademark
+rights. See [`TRADEMARKS.md`](TRADEMARKS.md) for the project identity policy.
 
 ## Third-party software
 
@@ -54,15 +65,14 @@ Third-party components keep their original licenses:
 - Noto Sans CJK and Noto Serif CJK web fonts under `website/assets/fonts/` are
   licensed under the SIL Open Font License 1.1 included in that directory.
 - Apple system frameworks are used under the terms supplied by Apple and are
-  not part of this repository's AGPL grant.
+  not part of this repository's MIT grant.
 
 See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for the distribution
 notice and source locations.
 
 ## Reference and verification material
 
-Third-party and public-domain reference assets are not relicensed under the
-AGPL:
+Third-party and public-domain reference assets are not relicensed under MIT:
 
 - `Attachments/RichAnswerVerificationAssets/` is governed by its
   `manifest.json` and `ATTRIBUTION.md`.
@@ -75,8 +85,13 @@ Preserve all required attribution and usage restrictions when using those
 materials. A repository-wide license never overrides an upstream copyright,
 public-domain statement, or attribution requirement.
 
-## No private course content
+## User content and official services
 
 WeiBei does not license or claim ownership of course files, notes, credentials,
 or other content imported by a user. Those files remain under the control and
 rights of their respective owners.
+
+The MIT and OFL licenses apply to distributed software and font files. They do
+not require the project to provide hosted accounts, synchronization, storage,
+model usage, subscriptions, domains, signing certificates, or other official
+services free of charge.

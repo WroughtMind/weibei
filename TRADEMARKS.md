@@ -1,8 +1,9 @@
 # WeiBei name and brand
 
-The AGPL license for WeiBei's source code does not grant permission to use the
-WeiBei / 魏碑 names, logos, icons, custom fonts, or visual identity to suggest
-that a modified version is the official project.
+The MIT License for WeiBei's source code and the SIL Open Font License for its
+custom fonts do not grant permission to use the WeiBei / 魏碑 names, logos,
+icons, or visual identity to suggest that a modified version is the official
+project.
 
 You may make truthful, nominative references such as "a fork of WeiBei" and may
 retain notices that are legally required. A publicly distributed modified

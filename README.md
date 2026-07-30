@@ -8,9 +8,10 @@ WeiBei is a source-grounded macOS study workspace for reading course materials, 
 
 It is submitted to the **Education** track of OpenAI Build Week 2026.
 
-WeiBei's source code is open source under `AGPL-3.0-only`. Brand assets, custom
-fonts, project media, and third-party reference material have separate terms;
-see [Licensing](#licensing).
+WeiBei's source code is open source under the MIT License. Its custom English
+fonts are open under the SIL Open Font License 1.1. Brand assets, project media,
+and third-party reference material have separate terms; see
+[Licensing](#licensing).
 
 ## Why I built it
 
@@ -140,19 +141,20 @@ Live-provider checks require valid local credentials and are not silently replac
 ## Licensing
 
 WeiBei-authored source code and developer documentation are licensed under the
-[GNU Affero General Public License version 3 only](LICENSE).
+[MIT License](LICENSE).
 
-The WeiBei / 魏碑 names, visual identity, custom fonts, project screenshots, and
-release media are not licensed under the AGPL. Third-party software and
+`WeiBeiStele` and `WeiBeiSteleMono` are licensed under the
+[SIL Open Font License 1.1](Sources/WeiBei/Resources/Fonts/OFL.txt). Modified
+fonts must use different names unless the project gives written permission to
+retain the reserved font names.
+
+The WeiBei / 魏碑 names, logos, visual identity, project screenshots, and
+release media are not licensed under MIT or OFL. Third-party software and
 reference assets retain their original terms. Read
 [`LICENSING.md`](LICENSING.md) before redistributing a fork or packaged app.
 
-Separate commercial licensing may be available for organizations that cannot
-use AGPL-covered code under the AGPL. Open a GitHub issue to discuss the use
-case.
-
-Contributions are welcome under [`CONTRIBUTING.md`](CONTRIBUTING.md) and the
-[`CLA.md`](CLA.md). Security issues should follow [`SECURITY.md`](SECURITY.md).
+Contributions are welcome under [`CONTRIBUTING.md`](CONTRIBUTING.md). Security
+issues should follow [`SECURITY.md`](SECURITY.md).
 
 ## Technology
 
