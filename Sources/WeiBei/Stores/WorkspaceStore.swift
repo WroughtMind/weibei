@@ -15773,6 +15773,10 @@ final class WorkspaceStore: ObservableObject {
                     .first(where: { $0.id == memoryID })
             }?.text == "用户修正：目前只会做最基础的费雪方程题"
 
+        activeStudySessionID = courseASecondChatID
+        messages = studySessions.first(where: {
+            $0.id == courseASecondChatID
+        })?.messages ?? []
         let resolveQuestion = "我已经能清楚解释费雪方程了"
         let resolveRevision = learningMemoryRevision(in: .course(courseAID))
         let resolutionMessageID = UUID()
