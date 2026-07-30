@@ -72,6 +72,41 @@ struct CourseHomeSearchResult: Identifiable, Sendable {
     let matchedText: String?
 }
 
+enum CourseProjectRebindImpact: Equatable {
+    case unchanged
+    case useNewerCandidate
+}
+
+struct CourseProjectRebindProposal {
+    let courseID: UUID
+    let courseTitle: String
+    let candidateRoot: URL
+    let candidateRootIdentity: ImportedFileIdentity
+    let expectedCourse: Course
+    let expectedLocalPayloadDigest: String
+    let snapshot: CoursePortableAdoptionSnapshot
+    let impact: CourseProjectRebindImpact
+}
+
+enum CourseFolderAdoptionOutcome {
+    case opened(UUID)
+    case requiresRebind(CourseProjectRebindProposal)
+}
+
+private enum CourseProjectRebindError: LocalizedError {
+    case originalRootStillAvailable
+    case proposalChanged
+
+    var errorDescription: String? {
+        switch self {
+        case .originalRootStillAvailable:
+            return "原课程文件夹仍然可以安全访问；魏碑不会把同一门课程静默改绑到另一处。"
+        case .proposalChanged:
+            return "课程或所选文件夹在确认前发生了变化，请重新选择后再试。"
+        }
+    }
+}
+
 private struct AgentReplySourceFileSnapshot: Sendable {
     let source: AgentReplySource
     let itemID: String
@@ -1513,6 +1548,21 @@ final class WorkspaceStore: ObservableObject {
 
     @discardableResult
     func adoptCourseFolder(at rootURL: URL, title rawTitle: String) throws -> UUID {
+        switch try adoptCourseFolderOrProposeRebind(
+            at: rootURL,
+            title: rawTitle
+        ) {
+        case .opened(let courseID):
+            return courseID
+        case .requiresRebind:
+            throw CourseProjectRootError.manifestMismatch
+        }
+    }
+
+    func adoptCourseFolderOrProposeRebind(
+        at rootURL: URL,
+        title rawTitle: String
+    ) throws -> CourseFolderAdoptionOutcome {
         let title = rawTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !title.isEmpty else { throw CourseProjectRootError.emptyTitle }
         let canonicalRoot = try CourseProjectPathPolicy.existingDirectory(rootURL)
@@ -1520,17 +1570,14 @@ final class WorkspaceStore: ObservableObject {
             throw CourseProjectRootError.rootIdentityUnavailable
         }
         if let existing = existingCourse(at: canonicalRoot, identity: identity) {
-            return try refreshAdoptedCourse(
-                existing,
-                at: canonicalRoot,
-                identity: identity
+            return .opened(
+                try refreshAdoptedCourse(
+                    existing,
+                    at: canonicalRoot,
+                    identity: identity
+                )
             )
         }
-        try validateCourseProjectRoot(
-            canonicalRoot,
-            identity: identity,
-            mustBeInsideLibrary: false
-        )
 
         let libraryRelativePath = courseLibraryRootURL.flatMap {
             CourseProjectPathPolicy.relativePath(of: canonicalRoot, inside: $0)
@@ -1604,11 +1651,45 @@ final class WorkspaceStore: ObservableObject {
                 }
                 throw CourseProjectRootError.metadataConflict
             }
-            guard !courses.contains(where: { $0.id == courseID }) else {
-                if let externalScopeURL { courseSecurityScopeStopper(externalScopeURL) }
-                throw CourseProjectRootError.manifestMismatch
+            if let existing = courses.first(where: { $0.id == courseID }) {
+                do {
+                    try validateCourseProjectRoot(
+                        canonicalRoot,
+                        identity: identity,
+                        mustBeInsideLibrary: false,
+                        excludingCourseID: existing.id
+                    )
+                    guard let adoptionSnapshot else {
+                        throw CourseProjectRootError.manifestMismatch
+                    }
+                    let proposal = try makeCourseProjectRebindProposal(
+                        existing: existing,
+                        candidateRoot: canonicalRoot,
+                        candidateRootIdentity: identity,
+                        snapshot: adoptionSnapshot
+                    )
+                    if let externalScopeURL {
+                        courseSecurityScopeStopper(externalScopeURL)
+                    }
+                    return .requiresRebind(proposal)
+                } catch {
+                    if let externalScopeURL {
+                        courseSecurityScopeStopper(externalScopeURL)
+                    }
+                    throw error
+                }
             }
+            try validateCourseProjectRoot(
+                canonicalRoot,
+                identity: identity,
+                mustBeInsideLibrary: false
+            )
         } else {
+            try validateCourseProjectRoot(
+                canonicalRoot,
+                identity: identity,
+                mustBeInsideLibrary: false
+            )
             courseID = UUID()
             let stagedMetadataURL = canonicalRoot.appendingPathComponent(
                 ".weibei-adopt-staging-\(courseID.uuidString.lowercased())",
@@ -1864,7 +1945,7 @@ final class WorkspaceStore: ObservableObject {
                 await self?.reconcileCourseFilesNow(courseID: course.id)
             }
         }
-        return course.id
+        return .opened(course.id)
     }
 
     @discardableResult
@@ -1991,6 +2072,493 @@ final class WorkspaceStore: ObservableObject {
             }
         }
         return existing.id
+    }
+
+    private func makeCourseProjectRebindProposal(
+        existing: Course,
+        candidateRoot: URL,
+        candidateRootIdentity: ImportedFileIdentity,
+        snapshot: CoursePortableAdoptionSnapshot
+    ) throws -> CourseProjectRebindProposal {
+        guard !registeredCourseRootIsAvailable(existing) else {
+            throw CourseProjectRebindError.originalRootStillAvailable
+        }
+        let evaluation = try evaluatedCourseRebindState(
+            existing: existing,
+            snapshot: snapshot
+        )
+        return CourseProjectRebindProposal(
+            courseID: existing.id,
+            courseTitle: existing.title,
+            candidateRoot: candidateRoot,
+            candidateRootIdentity: candidateRootIdentity,
+            expectedCourse: existing,
+            expectedLocalPayloadDigest: evaluation.localPayloadDigest,
+            snapshot: snapshot,
+            impact: evaluation.impact
+        )
+    }
+
+    private func evaluatedCourseRebindState(
+        existing: Course,
+        snapshot: CoursePortableAdoptionSnapshot
+    ) throws -> (
+        state: CoursePortableState,
+        statePayloadDigest: String,
+        localPayloadDigest: String,
+        impact: CourseProjectRebindImpact
+    ) {
+        guard snapshot.manifest.courseID == existing.id,
+              let portableStateData = snapshot.portableStateData else {
+            throw CourseProjectRootError.manifestMismatch
+        }
+        let state = try JSONDecoder()
+            .decode(CoursePortableState.self, from: portableStateData)
+            .validated(expectedCourseID: existing.id)
+        let localState = try makeCoursePortableState(
+            courseID: existing.id,
+            revision: coursePortableStateRevisions[existing.id] ?? 0,
+            savedAt: Date(timeIntervalSince1970: 0)
+        )
+        let localPayloadDigest = try coursePortableStatePayloadDigest(
+            localState
+        )
+        let comparableLocalState = try localStateByMaterializingSharedItems(
+            localState,
+            using: snapshot.manifest
+        )
+        let comparableLocalDigest = try coursePortableStatePayloadDigest(
+            comparableLocalState
+        )
+        let statePayloadDigest = try coursePortableStatePayloadDigest(state)
+        if statePayloadDigest == comparableLocalDigest {
+            return (
+                state,
+                statePayloadDigest,
+                localPayloadDigest,
+                .unchanged
+            )
+        }
+
+        let knownRevision = coursePortableStateRevisions[existing.id]
+        let knownDigest = coursePortableStateDigests[existing.id]
+        let localIsClean = knownDigest == localPayloadDigest
+            && !dirtyPortableCourseIDs.contains(existing.id)
+            && !blockedPortableCourseIDs.contains(existing.id)
+            && !oversizedPortableCourseIDs.contains(existing.id)
+        guard localIsClean,
+              let knownRevision,
+              state.revision > knownRevision else {
+            throw CoursePortableStateError.stateConflict
+        }
+        return (
+            state,
+            statePayloadDigest,
+            localPayloadDigest,
+            .useNewerCandidate
+        )
+    }
+
+    private func localStateByMaterializingSharedItems(
+        _ rawState: CoursePortableState,
+        using manifest: CourseProjectManifest
+    ) throws -> CoursePortableState {
+        guard let portableExport = manifest.portableExport else {
+            return rawState
+        }
+        var state = rawState
+        for provenance in portableExport.materializedSharedItems {
+            guard let index = state.items.firstIndex(where: {
+                $0.itemID == provenance.itemID
+                    && $0.courseRelativePath
+                        == provenance.courseRelativePath
+            }) else {
+                throw CoursePortableStateError.stateConflict
+            }
+            guard case let .sharedReference(
+                sharedRelativePath,
+                expectedContentDigest
+            ) = state.items[index].storage,
+            sharedRelativePath == provenance.sharedRelativePath,
+            expectedContentDigest == provenance.sourceContentDigest,
+            state.items[index].contentDigest
+                == provenance.sourceContentDigest else {
+                throw CoursePortableStateError.stateConflict
+            }
+            state.items[index].storage = .courseOwned
+        }
+        return try state.validated(expectedCourseID: rawState.courseID)
+    }
+
+    private func registeredCourseRootIsAvailable(_ course: Course) -> Bool {
+        guard let expectedIdentity = course.sourceRootIdentity else {
+            return false
+        }
+        func matches(_ rawURL: URL) -> Bool {
+            guard let root = try? CourseProjectPathPolicy.existingDirectory(
+                rawURL
+            ),
+            importedFileIdentityResolver(root) == expectedIdentity,
+            let snapshot = try? waitForCourseFileOperation({
+                try await self.courseProjectFileWorker.adoptionSnapshot(
+                    at: root,
+                    expectedRootIdentity: expectedIdentity
+                )
+            }) else {
+                return false
+            }
+            return snapshot.manifest.courseID == course.id
+        }
+
+        var candidates: [URL] = []
+        if let resolved = resolvedCourseRootURLs[course.id] {
+            candidates.append(resolved)
+        }
+        if let path = course.sourceRootPath {
+            candidates.append(URL(fileURLWithPath: path, isDirectory: true))
+        }
+        if let relativePath = course.sourceRootRelativePath,
+           let libraryRoot = courseLibraryRootURL {
+            if let expected = CourseProjectPathPolicy.resolvedRelativePath(
+                relativePath,
+                inside: libraryRoot
+            ) {
+                candidates.append(expected)
+            }
+            if let moved = findDirectory(
+                with: expectedIdentity,
+                inside: libraryRoot
+            ) {
+                candidates.append(moved)
+            }
+        }
+        var checkedPaths = Set<String>()
+        for candidate in candidates {
+            guard checkedPaths.insert(
+                candidate.standardizedFileURL.path
+            ).inserted else {
+                continue
+            }
+            if matches(candidate) {
+                return true
+            }
+        }
+
+        guard let bookmark = course.sourceRootBookmarkData,
+              let resolution = courseRootBookmarkResolver(bookmark),
+              courseSecurityScopeStarter(resolution.url) else {
+            return false
+        }
+        defer { courseSecurityScopeStopper(resolution.url) }
+        return matches(resolution.url)
+    }
+
+    @discardableResult
+    func confirmCourseProjectRebind(
+        _ proposal: CourseProjectRebindProposal
+    ) throws -> UUID {
+        guard let courseIndex = courses.firstIndex(where: {
+            $0.id == proposal.courseID
+        }),
+        courses[courseIndex] == proposal.expectedCourse else {
+            throw CourseProjectRebindError.proposalChanged
+        }
+        let existing = courses[courseIndex]
+        guard !registeredCourseRootIsAvailable(existing) else {
+            throw CourseProjectRebindError.originalRootStillAvailable
+        }
+
+        let canonicalRoot = try CourseProjectPathPolicy.existingDirectory(
+            proposal.candidateRoot
+        )
+        guard importedFileIdentityResolver(canonicalRoot)
+                == proposal.candidateRootIdentity else {
+            throw CourseProjectRebindError.proposalChanged
+        }
+        try validateCourseProjectRoot(
+            canonicalRoot,
+            identity: proposal.candidateRootIdentity,
+            mustBeInsideLibrary: false,
+            excludingCourseID: proposal.courseID
+        )
+
+        let libraryRelativePath = courseLibraryRootURL.flatMap {
+            CourseProjectPathPolicy.relativePath(
+                of: canonicalRoot,
+                inside: $0
+            )
+        }
+        var refreshedBookmark: Data?
+        var resolvedRoot = canonicalRoot
+        var newScopeURL: URL?
+        if libraryRelativePath == nil {
+            guard let bookmark = courseRootBookmarkMaker(canonicalRoot) else {
+                throw CourseProjectRootError.bookmarkUnavailable
+            }
+            guard let resolution = courseRootBookmarkResolver(bookmark) else {
+                throw CourseProjectRootError.bookmarkResolutionFailed
+            }
+            guard courseSecurityScopeStarter(resolution.url) else {
+                throw CourseProjectRootError.securityScopeDenied
+            }
+            do {
+                resolvedRoot = try CourseProjectPathPolicy.existingDirectory(
+                    resolution.url
+                )
+                guard importedFileIdentityResolver(resolvedRoot)
+                        == proposal.candidateRootIdentity else {
+                    throw CourseProjectRebindError.proposalChanged
+                }
+            } catch {
+                courseSecurityScopeStopper(resolution.url)
+                throw error
+            }
+            refreshedBookmark = bookmark
+            newScopeURL = resolution.url
+        }
+
+        var shouldStopNewScopeOnFailure = newScopeURL != nil
+        let confirmedSnapshot: CoursePortableAdoptionSnapshot
+        do {
+            confirmedSnapshot = try waitForCourseFileOperation {
+                try await self.courseProjectFileWorker.adoptionSnapshot(
+                    at: resolvedRoot,
+                    expectedRootIdentity:
+                        proposal.candidateRootIdentity
+                )
+            }
+            guard confirmedSnapshot.metadataIdentity
+                    == proposal.snapshot.metadataIdentity,
+                  confirmedSnapshot.manifestData
+                    == proposal.snapshot.manifestData,
+                  confirmedSnapshot.portableStateData
+                    == proposal.snapshot.portableStateData,
+                  confirmedSnapshot.completionData
+                    == proposal.snapshot.completionData else {
+                throw CourseProjectRebindError.proposalChanged
+            }
+            let evaluation = try evaluatedCourseRebindState(
+                existing: existing,
+                snapshot: confirmedSnapshot
+            )
+            guard evaluation.localPayloadDigest
+                    == proposal.expectedLocalPayloadDigest,
+                  evaluation.impact == proposal.impact else {
+                throw CourseProjectRebindError.proposalChanged
+            }
+
+            let scopeKey = "course:\(proposal.courseID.uuidString)"
+            let previousCourses = courses
+            let previousImportedItems = importedItems
+            let previousMemberships = courseItemMemberships
+            let previousNoteSourceLinks = noteSourceLinks
+            let previousStudyLocations = studyLocationsByCourseID
+            let previousResumePoints = courseResumePoints
+            let previousLearningMemoryStates = learningMemoryStates
+            let previousStudySessions = studySessions
+            let previousActiveStudySessionID = activeStudySessionID
+            let previousMessages = messages
+            let previousNotesByItemID = notesByItemID
+            let previousPendingNoteWrites = pendingNoteWritesByItemID
+            let previousNoteBackingDigests =
+                noteBackingContentDigestsByItemID
+            let previousPortableRevisions =
+                coursePortableStateRevisions
+            let previousPortableDigests = coursePortableStateDigests
+            let previousDirtyPortableCourses = dirtyPortableCourseIDs
+            let previousBlockedPortableCourses =
+                blockedPortableCourseIDs
+            let previousOversizedPortableCourses =
+                oversizedPortableCourseIDs
+            let previousPortableBootstrap =
+                needsPortableCourseStateBootstrap
+            let previousResolvedRoot =
+                resolvedCourseRootURLs[proposal.courseID]
+            let previousUnavailableReason =
+                courseRootUnavailableReasons[proposal.courseID]
+            let previousScope = activeCourseSecurityScopes[scopeKey]
+
+            var reboundCourse = existing
+            reboundCourse.sourceRootPath =
+                libraryRelativePath == nil ? resolvedRoot.path : nil
+            reboundCourse.sourceRootRelativePath = libraryRelativePath
+            reboundCourse.sourceRootIdentity =
+                proposal.candidateRootIdentity
+            reboundCourse.sourceRootBookmarkData = refreshedBookmark
+            courses[courseIndex] = reboundCourse
+            resolvedCourseRootURLs[proposal.courseID] = resolvedRoot
+            courseRootUnavailableReasons.removeValue(
+                forKey: proposal.courseID
+            )
+            if let newScopeURL {
+                activeCourseSecurityScopes[scopeKey] = newScopeURL
+            } else {
+                activeCourseSecurityScopes.removeValue(forKey: scopeKey)
+            }
+
+            do {
+                try applyCoursePortableState(
+                    evaluation.state,
+                    courseID: proposal.courseID
+                )
+                coursePortableStateRevisions[proposal.courseID] =
+                    evaluation.state.revision
+                coursePortableStateDigests[proposal.courseID] =
+                    evaluation.statePayloadDigest
+                dirtyPortableCourseIDs.remove(proposal.courseID)
+                blockedPortableCourseIDs.remove(proposal.courseID)
+                oversizedPortableCourseIDs.remove(proposal.courseID)
+                needsPortableCourseStateBootstrap =
+                    !dirtyPortableCourseIDs.isEmpty
+                guard performSaveNow(
+                    skippingPortableCourseIDs: [proposal.courseID]
+                ) else {
+                    throw CourseProjectRootError.workspaceSaveFailed
+                }
+            } catch {
+                courses = previousCourses
+                importedItems = previousImportedItems
+                courseItemMemberships = previousMemberships
+                noteSourceLinks = previousNoteSourceLinks
+                studyLocationsByCourseID = previousStudyLocations
+                courseResumePoints = previousResumePoints
+                learningMemoryStates = previousLearningMemoryStates
+                studySessions = previousStudySessions
+                activeStudySessionID = previousActiveStudySessionID
+                messages = previousMessages
+                notesByItemID = previousNotesByItemID
+                pendingNoteWritesByItemID =
+                    previousPendingNoteWrites
+                noteBackingContentDigestsByItemID =
+                    previousNoteBackingDigests
+                coursePortableStateRevisions =
+                    previousPortableRevisions
+                coursePortableStateDigests = previousPortableDigests
+                dirtyPortableCourseIDs =
+                    previousDirtyPortableCourses
+                blockedPortableCourseIDs =
+                    previousBlockedPortableCourses
+                oversizedPortableCourseIDs =
+                    previousOversizedPortableCourses
+                needsPortableCourseStateBootstrap =
+                    previousPortableBootstrap
+                if let previousResolvedRoot {
+                    resolvedCourseRootURLs[proposal.courseID] =
+                        previousResolvedRoot
+                } else {
+                    resolvedCourseRootURLs.removeValue(
+                        forKey: proposal.courseID
+                    )
+                }
+                if let previousUnavailableReason {
+                    courseRootUnavailableReasons[proposal.courseID] =
+                        previousUnavailableReason
+                } else {
+                    courseRootUnavailableReasons.removeValue(
+                        forKey: proposal.courseID
+                    )
+                }
+                if let previousScope {
+                    activeCourseSecurityScopes[scopeKey] = previousScope
+                } else {
+                    activeCourseSecurityScopes.removeValue(
+                        forKey: scopeKey
+                    )
+                }
+                if let newScopeURL {
+                    courseSecurityScopeStopper(newScopeURL)
+                    shouldStopNewScopeOnFailure = false
+                }
+                throw error
+            }
+
+            try courseProjectMutationHook(
+                .afterAdoptionWorkspaceSaveBeforeManifestNormalization
+            )
+            if confirmedSnapshot.manifest.portableExport != nil {
+                do {
+                    let finalSnapshot =
+                        try waitForCourseFileOperation {
+                            try await self.courseProjectFileWorker
+                                .adoptionSnapshot(
+                                    at: resolvedRoot,
+                                    expectedRootIdentity:
+                                        proposal.candidateRootIdentity
+                                )
+                        }
+                    guard finalSnapshot.metadataIdentity
+                            == confirmedSnapshot.metadataIdentity,
+                          finalSnapshot.manifestData
+                            == confirmedSnapshot.manifestData,
+                          finalSnapshot.portableStateData
+                            == confirmedSnapshot.portableStateData,
+                          finalSnapshot.completionData
+                            == confirmedSnapshot.completionData,
+                          finalSnapshot.manifest.portableExport != nil else {
+                        throw CourseProjectRebindError.proposalChanged
+                    }
+                    try waitForCourseFileOperation {
+                        try await self.courseProjectFileWorker
+                            .normalizePortableCourseManifest(
+                                with: CourseProjectManifest(
+                                    courseID: proposal.courseID
+                                ).encoded(),
+                                at: resolvedRoot.appendingPathComponent(
+                                    ".weibei/course.json"
+                                ),
+                                expectedDirectoryIdentity:
+                                    finalSnapshot.metadataIdentity,
+                                expectedPreviousData:
+                                    finalSnapshot.manifestData
+                            )
+                    }
+                } catch {
+                    resolvedCourseRootURLs.removeValue(
+                        forKey: proposal.courseID
+                    )
+                    courseRootUnavailableReasons[proposal.courseID] =
+                        error.localizedDescription
+                    if let scopedURL =
+                        activeCourseSecurityScopes.removeValue(
+                            forKey: scopeKey
+                        ) {
+                        courseSecurityScopeStopper(scopedURL)
+                        shouldStopNewScopeOnFailure = false
+                    }
+                    if let previousScope,
+                       previousScope != newScopeURL {
+                        courseSecurityScopeStopper(previousScope)
+                    }
+                    cancelAgentRequestIfRunning(in: proposal.courseID)
+                    invalidateAgentContext()
+                    throw error
+                }
+            }
+
+            if let previousScope,
+               previousScope != newScopeURL {
+                courseSecurityScopeStopper(previousScope)
+            }
+            courseDocumentSearchIndex.synchronize(allItems)
+            invalidateAgentContext()
+            if !ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            ) {
+                Task { @MainActor [weak self] in
+                    await self?.reconcileCourseFilesNow(
+                        courseID: proposal.courseID
+                    )
+                }
+            }
+            shouldStopNewScopeOnFailure = false
+            return proposal.courseID
+        } catch {
+            if shouldStopNewScopeOnFailure,
+               let newScopeURL {
+                courseSecurityScopeStopper(newScopeURL)
+            }
+            throw error
+        }
     }
 
     func courseRootURL(for courseID: UUID) -> URL? {
@@ -23249,14 +23817,16 @@ final class WorkspaceStore: ObservableObject {
     }
 
     @discardableResult
-    private func performSaveNow() -> Bool {
+    private func performSaveNow(
+        skippingPortableCourseIDs: Set<UUID> = []
+    ) -> Bool {
         WeiBeiPerf.measure("workspace.save") {
             let portableCommit: CoursePortableStateCommit
             do {
                 portableCommit = try persistCoursePortableStates(
                     courseIDs: persistedWorkspaceCourseIDs.intersection(
                         Set(courses.map(\.id))
-                    )
+                    ).subtracting(skippingPortableCourseIDs)
                 )
             } catch {
                 workspaceSaveError = ui(

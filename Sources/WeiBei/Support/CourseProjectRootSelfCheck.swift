@@ -26,6 +26,7 @@ enum CourseProjectRootSelfCheck {
         try adoptingExistingFolderPreservesVisibleContentsAndIsIdempotent()
         try repeatedAdoptionRefreshesTrackingAndOwnership()
         try failedReadoptionRestoresPreviousCourseAndScope()
+        try courseRebindRequiresConfirmationAndIsTransactional()
         try damagedMetadataIsNotOverwritten()
         try movedLibraryCourseRestoresTheSameIdentity()
         try courseOwnedMaterialMovesOnlyAfterCommitAndRejectsConflicts()
@@ -729,6 +730,255 @@ enum CourseProjectRootSelfCheck {
         )
         try check(starts == 2, "重复接管没有取得新 scope")
         try check(stops == 1, "保存失败没有只释放新 scope")
+    }
+
+    @MainActor
+    private static func courseRebindRequiresConfirmationAndIsTransactional()
+        throws {
+        do {
+            let fixture = try Fixture(name: "explicit-course-rebind")
+            defer { fixture.remove() }
+            let library = try fixture.makeDirectory("课程资料库")
+            let exportParent = try fixture.makeDirectory("课程副本")
+            let offlineParent = try fixture.makeDirectory("失联原件")
+            let store = makeStore(fixture: fixture)
+            try store.configureCourseLibrary(at: library)
+            let courseID = try store.createCourseInLibrary(title: "重绑课程")
+            let originalRoot = try require(
+                store.courseRootURL(for: courseID),
+                "重绑样本没有原课程根"
+            )
+            try Data("VISIBLE_REBIND_SENTINEL".utf8).write(
+                to: originalRoot.appendingPathComponent("课程说明.txt")
+            )
+            try check(
+                store.flushPendingWorkspaceSave(),
+                "重绑样本没有保存工作区"
+            )
+
+            let liveRootCandidate = exportParent.appendingPathComponent(
+                "旧根仍在副本",
+                isDirectory: true
+            )
+            let changedCandidate = exportParent.appendingPathComponent(
+                "确认前变化副本",
+                isDirectory: true
+            )
+            let successfulCandidate = exportParent.appendingPathComponent(
+                "可重绑副本",
+                isDirectory: true
+            )
+            for candidate in [
+                liveRootCandidate,
+                changedCandidate,
+                successfulCandidate,
+            ] {
+                _ = try store.exportPortableCourseCopyForSelfCheck(
+                    courseID: courseID,
+                    to: candidate
+                )
+            }
+            let liveCandidateManifest = try Data(
+                contentsOf: liveRootCandidate.appendingPathComponent(
+                    ".weibei/course.json"
+                )
+            )
+            try expectFailure("旧根仍可用时异根改绑") {
+                _ = try store.adoptCourseFolderOrProposeRebind(
+                    at: liveRootCandidate,
+                    title: "不得改绑"
+                )
+            }
+            try check(
+                Data(
+                    contentsOf: liveRootCandidate.appendingPathComponent(
+                        ".weibei/course.json"
+                    )
+                ) == liveCandidateManifest,
+                "拒绝异根改绑时消费了候选封印"
+            )
+
+            let offlineOriginal = offlineParent.appendingPathComponent(
+                "原课程",
+                isDirectory: true
+            )
+            try FileManager.default.moveItem(
+                at: originalRoot,
+                to: offlineOriginal
+            )
+            let workspaceURL = fixture.workspaceDirectory
+                .appendingPathComponent("workspace.json")
+            let workspaceBeforeProposal = try Data(contentsOf: workspaceURL)
+            let courseBeforeProposal = try require(
+                store.course(withID: courseID),
+                "生成重绑提案前课程丢失"
+            )
+
+            func proposal(
+                for candidate: URL
+            ) throws -> CourseProjectRebindProposal {
+                switch try store.adoptCourseFolderOrProposeRebind(
+                    at: candidate,
+                    title: "不会覆盖课程名"
+                ) {
+                case .opened:
+                    throw CheckError.failed("失联课程被静默改绑")
+                case .requiresRebind(let proposal):
+                    return proposal
+                }
+            }
+
+            _ = try proposal(for: successfulCandidate)
+            try check(
+                Data(contentsOf: workspaceURL) == workspaceBeforeProposal
+                    && store.course(withID: courseID)
+                        == courseBeforeProposal,
+                "生成或取消重绑提案改动了课程状态"
+            )
+
+            let changedProposal = try proposal(for: changedCandidate)
+            try Data("CHANGED_AFTER_PROPOSAL".utf8).write(
+                to: changedCandidate.appendingPathComponent(
+                    "课程说明.txt"
+                )
+            )
+            try expectFailure("提案后候选变化") {
+                _ = try store.confirmCourseProjectRebind(
+                    changedProposal
+                )
+            }
+            try check(
+                Data(contentsOf: workspaceURL) == workspaceBeforeProposal,
+                "候选变化失败后改动了工作区"
+            )
+
+            let reappearingProposal = try proposal(
+                for: successfulCandidate
+            )
+            try FileManager.default.moveItem(
+                at: offlineOriginal,
+                to: originalRoot
+            )
+            try expectFailure("确认前旧根恢复") {
+                _ = try store.confirmCourseProjectRebind(
+                    reappearingProposal
+                )
+            }
+            try FileManager.default.moveItem(
+                at: originalRoot,
+                to: offlineOriginal
+            )
+
+            let successfulProposal = try proposal(
+                for: successfulCandidate
+            )
+            let reboundID = try store.confirmCourseProjectRebind(
+                successfulProposal
+            )
+            let reboundManifest = try CourseProjectManifest.read(
+                from: successfulCandidate.appendingPathComponent(
+                    ".weibei/course.json"
+                )
+            )
+            try check(
+                reboundID == courseID
+                    && store.course(withID: courseID)?.title
+                        == courseBeforeProposal.title
+                    && store.courseRootURL(for: courseID)
+                        == successfulCandidate.canonicalFileURL
+                    && reboundManifest.courseID == courseID
+                    && reboundManifest.portableExport == nil,
+                "确认重绑没有保留课程身份、课程名或安全消费封印"
+            )
+
+            let reopened = makeStore(fixture: fixture)
+            try check(
+                reopened.course(withID: courseID)?.title
+                    == courseBeforeProposal.title
+                    && reopened.courseRootURL(for: courseID)
+                        == successfulCandidate.canonicalFileURL,
+                "重开后没有恢复重绑课程根"
+            )
+        }
+
+        do {
+            let fixture = try Fixture(name: "course-rebind-save-failure")
+            defer { fixture.remove() }
+            let library = try fixture.makeDirectory("课程资料库")
+            let exportParent = try fixture.makeDirectory("课程副本")
+            let offlineParent = try fixture.makeDirectory("失联原件")
+            var failWorkspaceWrite = false
+            var scopeStops = 0
+            let store = makeStore(
+                fixture: fixture,
+                stopAccessing: { _ in scopeStops += 1 },
+                workspaceWriter: { data, url in
+                    if failWorkspaceWrite {
+                        throw CheckError.injectedFailure
+                    }
+                    try data.write(to: url, options: [.atomic])
+                }
+            )
+            try store.configureCourseLibrary(at: library)
+            let courseID = try store.createCourseInLibrary(
+                title: "保存失败课程"
+            )
+            let originalRoot = try require(
+                store.courseRootURL(for: courseID),
+                "保存失败样本没有原课程根"
+            )
+            let candidate = exportParent.appendingPathComponent(
+                "候选副本",
+                isDirectory: true
+            )
+            _ = try store.exportPortableCourseCopyForSelfCheck(
+                courseID: courseID,
+                to: candidate
+            )
+            let candidateManifest = try Data(
+                contentsOf: candidate.appendingPathComponent(
+                    ".weibei/course.json"
+                )
+            )
+            let previousCourse = try require(
+                store.course(withID: courseID),
+                "保存失败前课程丢失"
+            )
+            let previousRoot = store.courseRootURL(for: courseID)
+            try FileManager.default.moveItem(
+                at: originalRoot,
+                to: offlineParent.appendingPathComponent(
+                    "原课程",
+                    isDirectory: true
+                )
+            )
+            let proposal: CourseProjectRebindProposal
+            switch try store.adoptCourseFolderOrProposeRebind(
+                at: candidate,
+                title: "保存失败"
+            ) {
+            case .opened:
+                throw CheckError.failed("保存失败样本被静默改绑")
+            case .requiresRebind(let value):
+                proposal = value
+            }
+            let stopsBeforeConfirmation = scopeStops
+            failWorkspaceWrite = true
+            try expectFailure("重绑工作区保存失败") {
+                _ = try store.confirmCourseProjectRebind(proposal)
+            }
+            try check(
+                store.course(withID: courseID) == previousCourse
+                    && store.courseRootURL(for: courseID) == previousRoot
+                    && Data(
+                        contentsOf: candidate.appendingPathComponent(
+                            ".weibei/course.json"
+                        )
+                    ) == candidateManifest
+                    && scopeStops == stopsBeforeConfirmation + 1,
+                "重绑保存失败没有恢复课程、保留封印或只释放新授权"
+            )
+        }
     }
 
     @MainActor

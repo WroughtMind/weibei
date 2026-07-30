@@ -24,6 +24,7 @@ struct CourseProjectEntrySheet: View {
     @State private var configuredLibraryThisTime = false
     @State private var isWorking = false
     @State private var errorMessage: String?
+    @State private var rebindProposal: CourseProjectRebindProposal?
     @FocusState private var titleFocused: Bool
 
     init(
@@ -103,6 +104,12 @@ struct CourseProjectEntrySheet: View {
     }
 
     private var heading: String {
+        if rebindProposal != nil {
+            return store.ui(
+                "重新绑定这门课程？",
+                "Reconnect This Course?"
+            )
+        }
         if needsLibrary {
             return libraryNeedsReauthorization
                 ? store.ui("重新授权魏碑资料库", "Reconnect WeiBei Library")
@@ -117,6 +124,20 @@ struct CourseProjectEntrySheet: View {
     }
 
     private var detail: String {
+        if let rebindProposal {
+            switch rebindProposal.impact {
+            case .unchanged:
+                return store.ui(
+                    "魏碑认出了同一门课程，原文件夹当前无法访问。确认后只把课程连接到所选文件夹；课程 ID、对话、学习记忆、关系和阅读位置都会保留。",
+                    "WeiBei recognized the same course, and its original folder is unavailable. Confirm to reconnect it while preserving its identity and learning state."
+                )
+            case .useNewerCandidate:
+                return store.ui(
+                    "魏碑认出了同一门课程，所选文件夹带有更新的课程状态。确认后会采用其中更新的对话、学习记忆、关系和阅读位置。",
+                    "WeiBei recognized the same course with newer portable state. Confirm to use the newer chats, memory, links, and reading position from this folder."
+                )
+            }
+        }
         if needsLibrary {
             if libraryNeedsReauthorization {
                 return store.ui(
@@ -186,7 +207,25 @@ struct CourseProjectEntrySheet: View {
 
     @ViewBuilder
     private var adoptionPicker: some View {
-        if let selectedFolder {
+        if let rebindProposal {
+            pathLine(
+                label: store.ui(
+                    "新的课程文件夹",
+                    "New course folder"
+                ),
+                path: rebindProposal.candidateRoot.path
+            )
+            Label(
+                store.ui(
+                    "只有确认后才会改绑；取消不会修改课程或文件夹。",
+                    "Nothing changes until you confirm. Cancel leaves the course and folder untouched."
+                ),
+                systemImage: "arrow.triangle.2.circlepath"
+            )
+            .font(.system(size: 12))
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .fixedSize(horizontal: false, vertical: true)
+        } else if let selectedFolder {
             pathLine(
                 label: store.ui("课程文件夹", "Course folder"),
                 path: selectedFolder.path
@@ -233,12 +272,21 @@ struct CourseProjectEntrySheet: View {
     @ViewBuilder
     private var actionBar: some View {
         HStack(spacing: 8) {
-            if needsLibrary || intent == .create {
+            if rebindProposal != nil {
+                Button(store.ui("重新选择", "Choose Again")) {
+                    rebindProposal = nil
+                    selectedFolder = nil
+                    errorMessage = nil
+                }
+                .buttonStyle(WeiBeiTextActionButtonStyle())
+                .disabled(isWorking)
+            } else if needsLibrary || intent == .create {
                 Button(store.ui("纳入已有文件夹", "Add Existing Folder")) {
                     intent = .adopt
                     selectedFolder = nil
                     title = ""
                     errorMessage = nil
+                    rebindProposal = nil
                 }
                 .buttonStyle(WeiBeiTextActionButtonStyle())
                 .disabled(isWorking)
@@ -248,6 +296,7 @@ struct CourseProjectEntrySheet: View {
                     selectedFolder = nil
                     title = ""
                     errorMessage = nil
+                    rebindProposal = nil
                 }
                 .buttonStyle(WeiBeiTextActionButtonStyle())
                 .disabled(isWorking)
@@ -266,7 +315,20 @@ struct CourseProjectEntrySheet: View {
                 .keyboardShortcut(.cancelAction)
                 .disabled(isWorking)
 
-            if !needsLibrary, intent == .create {
+            if rebindProposal != nil {
+                Button(
+                    store.ui(
+                        "确认重新绑定",
+                        "Confirm Reconnect"
+                    ),
+                    action: confirmRebind
+                )
+                .buttonStyle(
+                    WeiBeiTextActionButtonStyle(active: true)
+                )
+                .keyboardShortcut(.defaultAction)
+                .disabled(isWorking)
+            } else if !needsLibrary, intent == .create {
                 Button(store.ui("创建", "Create"), action: createCourse)
                     .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                     .keyboardShortcut(.defaultAction)
@@ -328,9 +390,14 @@ struct CourseProjectEntrySheet: View {
         selectedFolder = url.standardizedFileURL
         title = url.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
         errorMessage = nil
+        rebindProposal = nil
     }
 
     private func submitCurrentIntent() {
+        if rebindProposal != nil {
+            confirmRebind()
+            return
+        }
         guard !cleanedTitle.isEmpty else { return }
         switch intent {
         case .create:
@@ -352,10 +419,27 @@ struct CourseProjectEntrySheet: View {
     private func adoptCourse() {
         guard let selectedFolder else { return }
         perform {
-            let courseID = try store.adoptCourseFolder(
+            let outcome = try store.adoptCourseFolderOrProposeRebind(
                 at: selectedFolder,
                 title: cleanedTitle
             )
+            switch outcome {
+            case .opened(let courseID):
+                openCourse(courseID)
+            case .requiresRebind(let proposal):
+                rebindProposal = proposal
+                title = proposal.courseTitle
+            }
+        }
+    }
+
+    private func confirmRebind() {
+        guard let rebindProposal else { return }
+        perform {
+            let courseID = try store.confirmCourseProjectRebind(
+                rebindProposal
+            )
+            self.rebindProposal = nil
             openCourse(courseID)
         }
     }
