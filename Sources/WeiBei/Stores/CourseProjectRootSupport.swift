@@ -363,15 +363,15 @@ actor CourseProjectFileWorker {
         )
         defer { Darwin.close(directoryDescriptor) }
         let name = url.lastPathComponent
-        let currentData = try readRegularFile(
-            named: name,
-            relativeTo: directoryDescriptor,
-            maximumByteCount: portableStateMaximumByteCount
-        )
-        if currentData == previousData {
-            return
-        }
         guard let previousData else {
+            let currentData = try readRegularFile(
+                named: name,
+                relativeTo: directoryDescriptor,
+                maximumByteCount: portableStateMaximumByteCount
+            )
+            if currentData == nil {
+                return
+            }
             try removePortableStateIfMatching(
                 attemptedData,
                 named: name,
@@ -383,7 +383,43 @@ actor CourseProjectFileWorker {
             }
             return
         }
-        if let currentData, currentData != attemptedData {
+
+        let currentData: Data?
+        let currentStateWasUnreadable: Bool
+        do {
+            currentData = try readRegularFile(
+                named: name,
+                relativeTo: directoryDescriptor,
+                maximumByteCount: portableStateMaximumByteCount
+            )
+            currentStateWasUnreadable = false
+        } catch {
+            currentData = nil
+            currentStateWasUnreadable = true
+        }
+        if !currentStateWasUnreadable, currentData == previousData {
+            return
+        }
+        if !currentStateWasUnreadable, currentData == attemptedData {
+            try compareAndSwapPortableStateData(
+                previousData,
+                expectedPreviousData: attemptedData,
+                named: name,
+                relativeTo: directoryDescriptor,
+                beforeCommit: {}
+            )
+        } else {
+            let candidateName =
+                "course-state-conflict-\(UUID().uuidString.lowercased()).json"
+            try writeExclusiveData(
+                attemptedData,
+                named: candidateName,
+                relativeTo: directoryDescriptor
+            )
+            guard Darwin.fsync(directoryDescriptor) == 0,
+                  identity(at: directory) == expectedDirectoryIdentity else {
+                throw CourseProjectFileWorkerError.verificationFailed
+            }
             let quarantine =
                 "course-state-rejected-\(UUID().uuidString.lowercased()).json"
             let moved = name.withCString { sourceName in
@@ -397,19 +433,21 @@ actor CourseProjectFileWorker {
                     )
                 }
             }
-            guard moved == 0 else {
+            if moved != 0, errno != ENOENT {
                 throw CourseProjectFileWorkerError.verificationFailed
             }
+            guard Darwin.fsync(directoryDescriptor) == 0,
+                  identity(at: directory) == expectedDirectoryIdentity else {
+                throw CourseProjectFileWorkerError.verificationFailed
+            }
+            try compareAndSwapPortableStateData(
+                previousData,
+                expectedPreviousData: nil,
+                named: name,
+                relativeTo: directoryDescriptor,
+                beforeCommit: {}
+            )
         }
-        try compareAndSwapPortableStateData(
-            previousData,
-            expectedPreviousData: currentData == attemptedData
-                ? attemptedData
-                : nil,
-            named: name,
-            relativeTo: directoryDescriptor,
-            beforeCommit: {}
-        )
         guard Darwin.fsync(directoryDescriptor) == 0,
               identity(at: directory) == expectedDirectoryIdentity else {
             throw CourseProjectFileWorkerError.verificationFailed

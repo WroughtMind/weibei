@@ -1616,6 +1616,173 @@ enum CourseProjectRootSelfCheck {
         }
         try sharedStateData.write(to: stateURL, options: [.atomic])
 
+        let existingRollbackWorkspace = try fixture.makeDirectory(
+            "已有状态回滚并发工作区"
+        )
+        var injectExistingRollbackFailure = false
+        let existingRollbackStore = makeStore(
+            fixture: fixture,
+            workspaceDirectory: existingRollbackWorkspace,
+            workspaceWriter: { data, url in
+                guard injectExistingRollbackFailure else {
+                    try data.write(to: url, options: [.atomic])
+                    return
+                }
+                injectExistingRollbackFailure = false
+                let handle = try FileHandle(forWritingTo: stateURL)
+                try handle.truncate(atOffset: 0)
+                try handle.write(contentsOf: externalStateData)
+                try handle.synchronize()
+                try handle.close()
+                throw CheckError.injectedFailure
+            }
+        )
+        _ = try existingRollbackStore.adoptCourseFolder(
+            at: courseARoot,
+            title: "已有状态回滚并发"
+        )
+        injectExistingRollbackFailure = true
+        existingRollbackStore.renameCourse(
+            courseA,
+            title: "已有状态回滚的本机候选"
+        )
+        let existingRollbackArtifacts = try FileManager.default
+            .contentsOfDirectory(
+                at: stateURL.deletingLastPathComponent(),
+                includingPropertiesForKeys: nil
+            )
+        let existingRollbackRejected =
+            try existingRollbackArtifacts.contains { url in
+                guard url.lastPathComponent.hasPrefix(
+                    "course-state-rejected-"
+                ),
+                url.pathExtension == "json" else {
+                    return false
+                }
+                return try Data(contentsOf: url) == externalStateData
+            }
+        let existingRollbackCandidate =
+            try existingRollbackArtifacts.contains { url in
+                guard url.lastPathComponent.hasPrefix(
+                    "course-state-conflict-"
+                ),
+                url.pathExtension == "json" else {
+                    return false
+                }
+                let conflictState = try JSONDecoder().decode(
+                    CoursePortableState.self,
+                    from: Data(contentsOf: url)
+                )
+                return conflictState.metadata.title
+                    == "已有状态回滚的本机候选"
+            }
+        try check(
+            Data(contentsOf: stateURL) == sharedStateData
+                && existingRollbackStore.workspaceSaveError != nil
+                && existingRollbackRejected
+                && existingRollbackCandidate,
+            "已有课程状态回滚遇到外部原地改写时没有同时保住旧状态、外部版本与本机候选"
+        )
+        for url in existingRollbackArtifacts
+        where url.lastPathComponent.hasPrefix(
+            "course-state-rejected-"
+        )
+            || url.lastPathComponent.hasPrefix(
+                "course-state-conflict-"
+            ) {
+            try FileManager.default.removeItem(at: url)
+        }
+
+        let unreadableRollbackTarget = imports.appendingPathComponent(
+            "回滚不可读外部目标.json"
+        )
+        let unreadableRollbackTargetData = Data(
+            "回滚时 Finder 外部入口必须保留".utf8
+        )
+        try unreadableRollbackTargetData.write(
+            to: unreadableRollbackTarget
+        )
+        let unreadableRollbackWorkspace = try fixture.makeDirectory(
+            "已有状态不可读回滚工作区"
+        )
+        var injectUnreadableRollbackFailure = false
+        let unreadableRollbackStore = makeStore(
+            fixture: fixture,
+            workspaceDirectory: unreadableRollbackWorkspace,
+            workspaceWriter: { data, url in
+                guard injectUnreadableRollbackFailure else {
+                    try data.write(to: url, options: [.atomic])
+                    return
+                }
+                injectUnreadableRollbackFailure = false
+                try FileManager.default.removeItem(at: stateURL)
+                try FileManager.default.createSymbolicLink(
+                    at: stateURL,
+                    withDestinationURL: unreadableRollbackTarget
+                )
+                throw CheckError.injectedFailure
+            }
+        )
+        _ = try unreadableRollbackStore.adoptCourseFolder(
+            at: courseARoot,
+            title: "已有状态不可读回滚"
+        )
+        injectUnreadableRollbackFailure = true
+        unreadableRollbackStore.renameCourse(
+            courseA,
+            title: "不可读回滚的本机候选"
+        )
+        let unreadableRollbackArtifacts = try FileManager.default
+            .contentsOfDirectory(
+                at: stateURL.deletingLastPathComponent(),
+                includingPropertiesForKeys: nil
+            )
+        let unreadableRollbackRejected =
+            try unreadableRollbackArtifacts.contains { url in
+                guard url.lastPathComponent.hasPrefix(
+                    "course-state-rejected-"
+                ),
+                url.pathExtension == "json",
+                CourseProjectFileWorker.isSymbolicLink(at: url) else {
+                    return false
+                }
+                return try Data(contentsOf: url)
+                    == unreadableRollbackTargetData
+            }
+        let unreadableRollbackCandidate =
+            try unreadableRollbackArtifacts.contains { url in
+                guard url.lastPathComponent.hasPrefix(
+                    "course-state-conflict-"
+                ),
+                url.pathExtension == "json" else {
+                    return false
+                }
+                let conflictState = try JSONDecoder().decode(
+                    CoursePortableState.self,
+                    from: Data(contentsOf: url)
+                )
+                return conflictState.metadata.title
+                    == "不可读回滚的本机候选"
+            }
+        try check(
+            Data(contentsOf: stateURL) == sharedStateData
+                && unreadableRollbackStore.workspaceSaveError != nil
+                && unreadableRollbackRejected
+                && unreadableRollbackCandidate
+                && Data(contentsOf: unreadableRollbackTarget)
+                    == unreadableRollbackTargetData,
+            "已有课程状态回滚遇到不可读外部入口时没有同时保住旧状态、外部入口与本机候选"
+        )
+        for url in unreadableRollbackArtifacts
+        where url.lastPathComponent.hasPrefix(
+            "course-state-rejected-"
+        )
+            || url.lastPathComponent.hasPrefix(
+                "course-state-conflict-"
+            ) {
+            try FileManager.default.removeItem(at: url)
+        }
+
         let oversizedOriginalData = try Data(contentsOf: stateURL)
         let oversizedHandle = try FileHandle(forWritingTo: stateURL)
         try oversizedHandle.truncate(atOffset: 33 * 1_024 * 1_024)
