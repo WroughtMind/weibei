@@ -552,7 +552,13 @@ final class WorkspaceStore: ObservableObject {
     private let courseFileSourceRemover: @Sendable (URL) throws -> Void
     private let workspaceSnapshotWriter: (Data, URL) throws -> Void
     private let coursePortableStateWriter:
-        (Data, URL, ImportedFileIdentity) throws -> Void
+        (
+            Data,
+            URL,
+            ImportedFileIdentity,
+            Data?,
+            () throws -> Void
+        ) throws -> Void
     private let selectionAskThreadDefaults: UserDefaults
     private let piRuntime: PiAgentRuntime
     private let courseDocumentSearchIndex: CourseDocumentSearchIndex
@@ -934,7 +940,9 @@ final class WorkspaceStore: ObservableObject {
         coursePortableStateWriter: @escaping (
             Data,
             URL,
-            ImportedFileIdentity
+            ImportedFileIdentity,
+            Data?,
+            () throws -> Void
         ) throws -> Void = CourseProjectFileWorker.writePortableState,
         selectionAskThreadDefaults: UserDefaults = .standard
     ) {
@@ -11413,20 +11421,17 @@ final class WorkspaceStore: ObservableObject {
             var coordinatedDigest: String?
             var coordinationError: NSError?
             var operationError: Error?
-            let coordinator = NSFileCoordinator(filePresenter: nil)
-            coordinator.coordinate(
-                writingItemAt: newURL,
-                options: .forReplacing,
-                error: &coordinationError
-            ) { coordinatedURL in
+            let writeAndVerify: (URL) -> Void = { coordinatedURL in
                 do {
-                    guard importedFileIdentityResolver(coordinatedURL) == movedIdentity,
+                    guard self.importedFileIdentityResolver(
+                        coordinatedURL
+                    ) == movedIdentity,
                           Self.noteContentDigest(at: coordinatedURL) == originalContentDigest else {
                         throw NSError(
                             domain: "WeiBei.ImportedFileIdentity",
                             code: 2,
                             userInfo: [
-                                NSLocalizedDescriptionKey: ui(
+                                NSLocalizedDescriptionKey: self.ui(
                                     "写入前检测到文件被外部修改，操作已中止。",
                                     "The file changed externally before writing, so the operation was stopped."
                                 ),
@@ -11434,11 +11439,16 @@ final class WorkspaceStore: ObservableObject {
                         )
                     }
                     if willRewriteMarkdown {
-                        try notebookMarkdownWriter(retitledMarkdown, coordinatedURL)
+                        try self.notebookMarkdownWriter(
+                            retitledMarkdown,
+                            coordinatedURL
+                        )
                     }
-                    let identityBeforeRead = importedFileIdentityResolver(coordinatedURL)
+                    let identityBeforeRead =
+                        self.importedFileIdentityResolver(coordinatedURL)
                     let outputData = try Data(contentsOf: coordinatedURL)
-                    let identityAfterRead = importedFileIdentityResolver(coordinatedURL)
+                    let identityAfterRead =
+                        self.importedFileIdentityResolver(coordinatedURL)
                     let outputDigest = Self.noteContentDigest(outputData)
                     guard identityBeforeRead == identityAfterRead,
                           outputDigest == expectedOutputDigest else {
@@ -11446,19 +11456,20 @@ final class WorkspaceStore: ObservableObject {
                             domain: "WeiBei.ImportedFileIdentity",
                             code: 3,
                             userInfo: [
-                                NSLocalizedDescriptionKey: ui(
+                                NSLocalizedDescriptionKey: self.ui(
                                     "写入后文件内容或身份不一致，操作已中止。",
                                     "The file contents or identity did not match after writing, so the operation was stopped."
                                 ),
                             ]
                         )
                     }
-                    if !oldID.hasPrefix("file:"), identityAfterRead == nil {
+                    if !oldID.hasPrefix("file:"),
+                       identityAfterRead == nil {
                         throw NSError(
                             domain: "WeiBei.ImportedFileIdentity",
                             code: 4,
                             userInfo: [
-                                NSLocalizedDescriptionKey: ui(
+                                NSLocalizedDescriptionKey: self.ui(
                                     "写入标题后无法确认文件身份，操作已中止。",
                                     "The file identity could not be confirmed after writing the title, so the operation was stopped."
                                 ),
@@ -11472,8 +11483,37 @@ final class WorkspaceStore: ObservableObject {
                     operationError = error
                 }
             }
-            if let coordinationError { throw coordinationError }
+            let coordinator = NSFileCoordinator(filePresenter: nil)
+            coordinator.coordinate(
+                writingItemAt: newURL,
+                options: .forReplacing,
+                error: &coordinationError
+            ) {
+                writeAndVerify($0)
+            }
             if let operationError { throw operationError }
+            if let coordinationError {
+                // Some local filesystems return fileWriteUnknown before
+                // entering the accessor. Fall back only after proving the
+                // coordinator performed no write; the same generation checks
+                // and the final commit guard still apply.
+                guard coordinationError.domain == NSCocoaErrorDomain,
+                      coordinationError.code
+                        == CocoaError.Code.fileWriteUnknown.rawValue else {
+                    throw coordinationError
+                }
+                if !verifiedApplicationOutput {
+                    writeAndVerify(newURL)
+                    if let operationError { throw operationError }
+                    guard verifiedApplicationOutput else {
+                        throw coordinationError
+                    }
+                }
+            }
+            // NSFileCoordinator can report a late fileWriteUnknown even after
+            // its accessor completed and verified the exact output generation.
+            // In that case the identity/digest guard below remains the commit
+            // authority instead of rolling a successful rename back.
             guard let finalContentDigest = coordinatedDigest,
                   importedFileIdentityResolver(newURL) == coordinatedIdentity,
                   Self.noteContentDigest(at: newURL) == finalContentDigest else {
@@ -19166,31 +19206,43 @@ final class WorkspaceStore: ObservableObject {
             return resolveCourseOwnedFile(at: index, ownerCourseID: ownerCourseID)
         }
         if case .shared(let sharedRelativePath) = importedItems[index].storage {
-            guard let expectedDigest = importedItems[index].contentDigest,
-                  let resolved = try? resolvedSharedPortableFile(
-                      relativePath: sharedRelativePath,
-                      expectedDigest: expectedDigest,
-                      expectedKind: importedItems[index].kind
-                  ),
-                  importedItems[index].importedFileIdentity.map({
-                      $0 == resolved.identity
-                  }) ?? true else {
-                return markCourseOwnedItemUnavailable(at: index)
+            let components = sharedRelativePath.split(
+                separator: "/",
+                omittingEmptySubsequences: false
+            )
+            let usesPortableSharedLocation =
+                components.count == 2 && components[0] == "共享文稿"
+            if usesPortableSharedLocation {
+                guard let expectedDigest = importedItems[index].contentDigest,
+                      let resolved = try? resolvedSharedPortableFile(
+                          relativePath: sharedRelativePath,
+                          expectedDigest: expectedDigest,
+                          expectedKind: importedItems[index].kind
+                      ),
+                      importedItems[index].importedFileIdentity.map({
+                          $0 == resolved.identity
+                      }) ?? true else {
+                    return markCourseOwnedItemUnavailable(at: index)
+                }
+                let candidate = resolved.url
+                let identity = resolved.identity
+                var changed = false
+                if importedItems[index].urlPath != candidate.path
+                    || importedItems[index].importedFileLastKnownPath != candidate.path
+                    || importedItems[index].importedFileIdentity != identity
+                    || importedItems[index].importedFileBookmarkData != nil {
+                    importedItems[index].urlPath = candidate.path
+                    importedItems[index].importedFileLastKnownPath = candidate.path
+                    importedItems[index].importedFileIdentity = identity
+                    importedItems[index].importedFileBookmarkData = nil
+                    changed = true
+                }
+                return (candidate, changed)
             }
-            let candidate = resolved.url
-            let identity = resolved.identity
-            var changed = false
-            if importedItems[index].urlPath != candidate.path
-                || importedItems[index].importedFileLastKnownPath != candidate.path
-                || importedItems[index].importedFileIdentity != identity
-                || importedItems[index].importedFileBookmarkData != nil {
-                importedItems[index].urlPath = candidate.path
-                importedItems[index].importedFileLastKnownPath = candidate.path
-                importedItems[index].importedFileIdentity = identity
-                importedItems[index].importedFileBookmarkData = nil
-                changed = true
-            }
-            return (candidate, changed)
+            // Older workspaces used `.shared` for ordinary external files
+            // before the strict `共享文稿/<file>` contract existed. Keep those
+            // records on the legacy identity/bookmark recovery path until the
+            // user explicitly migrates them into a real course project.
         }
         guard let storedIdentity = importedItems[index].importedFileIdentity else {
             guard let currentURL = importedItems[index].url,
@@ -21527,10 +21579,37 @@ final class WorkspaceStore: ObservableObject {
                 let diskDigest = try coursePortableStatePayloadDigest(state)
                 let knownRevision = coursePortableStateRevisions[courseID]
                 let knownDigest = coursePortableStateDigests[courseID]
+                if knownRevision == nil || knownDigest == nil {
+                    let canEstablishLegacyBaseline =
+                        knownRevision == nil
+                        && knownDigest == nil
+                        && !dirtyPortableCourseIDs.contains(courseID)
+                        && cachedDigest == diskDigest
+                    guard canEstablishLegacyBaseline else {
+                        dirtyPortableCourseIDs.insert(courseID)
+                        blockedPortableCourseIDs.insert(courseID)
+                        needsPortableCourseStateBootstrap = true
+                        workspaceSaveError = ui(
+                            "“\(course(withID: courseID)?.title ?? "课程")”的本机内容与课程文件夹首次建立可携带基线时不一致，魏碑已保留两边并停止自动覆盖。",
+                            "The local course content did not match the course folder while establishing its first portable baseline. WeiBei preserved both sides and stopped automatic overwrites."
+                        )
+                        changed = true
+                        continue
+                    }
+                    // Existing legacy workspaces are the local source of truth
+                    // on first upgrade. An equal payload can establish the
+                    // baseline without replaying the disk snapshot over local
+                    // chats, memories, drafts, or shared canonical items.
+                    coursePortableStateRevisions[courseID] = state.revision
+                    coursePortableStateDigests[courseID] = diskDigest
+                    changed = true
+                    continue
+                }
+                guard let knownRevision, let knownDigest else {
+                    throw CoursePortableStateError.stateConflict
+                }
                 if dirtyPortableCourseIDs.contains(courseID) {
-                    guard let knownRevision,
-                          let knownDigest,
-                          state.revision == knownRevision,
+                    guard state.revision == knownRevision,
                           knownDigest == diskDigest else {
                         blockedPortableCourseIDs.insert(courseID)
                         workspaceSaveError = ui(
@@ -21544,15 +21623,12 @@ final class WorkspaceStore: ObservableObject {
                     needsPortableCourseStateBootstrap = true
                     continue
                 }
-                if let knownRevision {
-                    guard state.revision >= knownRevision else {
-                        throw CoursePortableStateError.stateConflict
-                    }
-                    if state.revision == knownRevision,
-                       let knownDigest,
-                       knownDigest != diskDigest {
-                        throw CoursePortableStateError.stateConflict
-                    }
+                guard state.revision >= knownRevision else {
+                    throw CoursePortableStateError.stateConflict
+                }
+                if state.revision == knownRevision,
+                   knownDigest != diskDigest {
+                    throw CoursePortableStateError.stateConflict
                 }
                 try applyCoursePortableState(state, courseID: courseID)
                 coursePortableStateRevisions[courseID] = state.revision
@@ -21774,12 +21850,14 @@ final class WorkspaceStore: ObservableObject {
             let storage: StudyItemStorage
             let itemURL: URL?
             let itemIdentity: ImportedFileIdentity?
+            let preservedExistingShared: StudyItem?
             let existing = importedItems.first {
                 $0.id == portable.itemID
             }
             switch portable.storage {
             case .courseOwned:
                 storage = .courseOwned(ownerCourseID: courseID)
+                preservedExistingShared = nil
                 itemIdentity = try validatedPortableCourseOwnedFile(
                     at: candidate,
                     portable: portable
@@ -21793,44 +21871,81 @@ final class WorkspaceStore: ObservableObject {
                     throw CoursePortableStateError.invalidItemStorage
                 }
                 storage = .shared(sharedRelativePath: sharedRelativePath)
-                if let existing {
+                let existingBelongsToKnownCourse = existing.map {
+                    previousItemIDs.contains($0.id)
+                        || otherCourseItemIDs.contains($0.id)
+                } ?? false
+                let existingIsCurrentCanonical: Bool
+                if existingBelongsToKnownCourse,
+                   let existing,
+                   let existingURL = existing.url,
+                   let existingIdentity = existing.importedFileIdentity,
+                   let existingDigest = existing.contentDigest,
+                   let currentCanonical =
+                    try? resolvedSharedPortableFile(
+                        relativePath: sharedRelativePath,
+                        expectedDigest: existingDigest,
+                        expectedKind: existing.kind
+                   ),
+                   CourseProjectPathPolicy.isSame(
+                       currentCanonical.url,
+                       existingURL
+                   ),
+                   currentCanonical.identity == existingIdentity {
+                    existingIsCurrentCanonical = true
+                } else {
+                    existingIsCurrentCanonical = false
+                }
+                if let existing, existingIsCurrentCanonical {
                     guard case let .shared(existingSharedPath) =
                             existing.storage,
                           existingSharedPath == sharedRelativePath else {
                         throw CoursePortableStateError.crossCourseReference
                     }
+                    // A shared item is one canonical workspace record used by
+                    // every course. A single course's older portable snapshot
+                    // may restore its membership, but it must not downgrade the
+                    // canonical file URL, identity, bookmark, digest, or file
+                    // metadata already verified by the workspace.
+                    preservedExistingShared = existing
+                    itemURL = existing.url
+                    itemIdentity = existing.importedFileIdentity
+                } else {
+                    preservedExistingShared = nil
+                    let resolved = try resolvedSharedPortableFile(
+                        relativePath: sharedRelativePath,
+                        expectedDigest: expectedContentDigest,
+                        expectedKind: portable.kind
+                    )
+                    itemURL = resolved?.url
+                    itemIdentity = resolved?.identity
                 }
-                let resolved = try resolvedSharedPortableFile(
-                    relativePath: sharedRelativePath,
-                    expectedDigest: expectedContentDigest,
-                    expectedKind: portable.kind
-                )
-                itemURL = resolved?.url
-                itemIdentity = resolved?.identity
             }
             if let existing,
             !previousItemIDs.contains(existing.id),
             existing.storage != storage {
                 throw CoursePortableStateError.crossCourseReference
             }
-            restoredItemsByID[portable.itemID] = StudyItem(
-                id: portable.itemID,
-                title: portable.title,
-                subtitle: candidate.lastPathComponent,
-                kind: portable.kind,
-                urlPath: itemURL?.path,
-                importedFileIdentity: itemIdentity,
-                importedFileBookmarkData: nil,
-                importedFileLastKnownPath: itemURL?.path,
-                isSample: false,
-                isNotebookNote: portable.isNotebookNote,
-                storage: storage,
-                contentRevision: portable.contentRevision,
-                contentDigest: portable.contentDigest,
-                fileByteCount: portable.fileByteCount,
-                fileModificationTimeNanoseconds:
-                    portable.fileModificationTimeNanoseconds
-            )
+            restoredItemsByID[portable.itemID] =
+                preservedExistingShared
+                ?? StudyItem(
+                    id: portable.itemID,
+                    title: portable.title,
+                    subtitle: candidate.lastPathComponent,
+                    kind: portable.kind,
+                    urlPath: itemURL?.path,
+                    importedFileIdentity: itemIdentity,
+                    importedFileBookmarkData: nil,
+                    importedFileLastKnownPath: itemURL?.path,
+                    isSample: false,
+                    isNotebookNote: portable.isNotebookNote,
+                    storage: storage,
+                    contentRevision: portable.contentRevision,
+                    contentDigest: portable.contentDigest,
+                    fileByteCount: portable.fileByteCount,
+                    fileModificationTimeNanoseconds:
+                        portable.fileModificationTimeNanoseconds
+                )
             let previousMembership = previousMemberships.first {
                 $0.itemID == portable.itemID
                     && $0.courseRelativePath
@@ -21842,7 +21957,7 @@ final class WorkspaceStore: ObservableObject {
                     itemID: portable.itemID,
                     courseRelativePath: portable.courseRelativePath,
                     entryIdentity: previousMembership?.entryIdentity
-                        ?? itemIdentity,
+                        ?? CourseProjectFileWorker.identity(at: candidate),
                     documentIdentifier:
                         previousMembership?.documentIdentifier,
                     createdAt: portable.membershipCreatedAt
@@ -21936,23 +22051,49 @@ final class WorkspaceStore: ObservableObject {
         let previousBlocked = blockedPortableCourseIDs
         let previousNeedsBootstrap = needsPortableCourseStateBootstrap
         var committedWrites: [CoursePortableStateWriteRecord] = []
+        var conflictedCourseID: UUID?
         do {
             for courseID in courses.map(\.id)
             where courseIDs.contains(courseID) {
                 let currentRevision =
                     coursePortableStateRevisions[courseID] ?? 0
-                let candidate = try makeCoursePortableState(
-                    courseID: courseID,
-                    revision: currentRevision,
-                    savedAt: Date(timeIntervalSince1970: 0)
-                )
+                let knownRevision =
+                    coursePortableStateRevisions[courseID]
+                let knownDigest = coursePortableStateDigests[courseID]
+                let stateURL = coursePortableStateURL(for: courseID)
+                let hasPortableHistory =
+                    knownRevision != nil
+                    || knownDigest != nil
+                    || dirtyPortableCourseIDs.contains(courseID)
+                    || blockedPortableCourseIDs.contains(courseID)
+                guard stateURL != nil || hasPortableHistory else {
+                    // Legacy courses without a real project root remain valid
+                    // workspace-only records until the user explicitly moves
+                    // their files into a course folder.
+                    continue
+                }
+                let candidate: CoursePortableState
+                do {
+                    candidate = try makeCoursePortableState(
+                        courseID: courseID,
+                        revision: currentRevision,
+                        savedAt: Date(timeIntervalSince1970: 0)
+                    )
+                } catch {
+                    guard stateURL == nil, hasPortableHistory else {
+                        throw error
+                    }
+                    // A previously portable course may be temporarily offline.
+                    // Preserve its workspace snapshot and conflict state instead
+                    // of letting an unavailable root block every workspace save.
+                    dirtyPortableCourseIDs.insert(courseID)
+                    blockedPortableCourseIDs.insert(courseID)
+                    continue
+                }
                 let payloadDigest = try coursePortableStatePayloadDigest(
                     candidate
                 )
-                let knownDigest = coursePortableStateDigests[courseID]
-                guard let stateURL = coursePortableStateURL(
-                    for: courseID
-                ) else {
+                guard let stateURL else {
                     if knownDigest != payloadDigest {
                         dirtyPortableCourseIDs.insert(courseID)
                     }
@@ -22008,7 +22149,13 @@ final class WorkspaceStore: ObservableObject {
                     try coursePortableStateWriter(
                         committedData,
                         stateURL,
-                        directoryIdentity
+                        directoryIdentity,
+                        previousData,
+                        {
+                            try courseProjectMutationHook(
+                                .beforeCoursePortableStateCASPlacement
+                            )
+                        }
                     )
                     let verified = try readCoursePortableState(
                         at: stateURL,
@@ -22020,6 +22167,9 @@ final class WorkspaceStore: ObservableObject {
                         throw CoursePortableStateError
                             .writeVerificationFailed
                     }
+                } catch CourseProjectFileWorkerError.contentConflict {
+                    conflictedCourseID = courseID
+                    throw CoursePortableStateError.stateConflict
                 } catch {
                     try restorePortableStateFile(
                         at: stateURL,
@@ -22062,6 +22212,11 @@ final class WorkspaceStore: ObservableObject {
             dirtyPortableCourseIDs = previousDirty
             blockedPortableCourseIDs = previousBlocked
             needsPortableCourseStateBootstrap = previousNeedsBootstrap
+            if let conflictedCourseID {
+                dirtyPortableCourseIDs.insert(conflictedCourseID)
+                blockedPortableCourseIDs.insert(conflictedCourseID)
+                needsPortableCourseStateBootstrap = true
+            }
             if rollbackFailed {
                 throw CoursePortableStateError.stateConflict
             }

@@ -996,6 +996,44 @@ enum CourseProjectRootSelfCheck {
         try expectFailure("跨作用域学习记忆校验") {
             _ = try unsafeMemoryState.validated(expectedCourseID: courseA)
         }
+        var crossCourseMemoryEntryState = state
+        crossCourseMemoryEntryState.learningMemoryState?.entries[0]
+            .sessionID = UUID()
+        try expectFailure("学习记忆 entry 跨课 Chat 校验") {
+            _ = try crossCourseMemoryEntryState.validated(
+                expectedCourseID: courseA
+            )
+        }
+        var crossCourseMemoryRevisionState = state
+        if let memory = crossCourseMemoryRevisionState
+            .learningMemoryState?.entries.first {
+            crossCourseMemoryRevisionState.learningMemoryState?
+                .entries[0].revisions = [
+                    LearningMemoryRevisionRecord(
+                        revision: 1,
+                        kind: memory.kind,
+                        text: memory.text,
+                        evidence: memory.evidence,
+                        origin: memory.origin,
+                        status: memory.status,
+                        sessionID: UUID(),
+                        actor: .agent
+                    ),
+                ]
+        }
+        try expectFailure("学习记忆 revision 跨课 Chat 校验") {
+            _ = try crossCourseMemoryRevisionState.validated(
+                expectedCourseID: courseA
+            )
+        }
+        var hiddenInternalPathState = state
+        hiddenInternalPathState.items[0].courseRelativePath =
+            ".weibei/秘密.txt"
+        try expectFailure("课程内部隐藏路径校验") {
+            _ = try hiddenInternalPathState.validated(
+                expectedCourseID: courseA
+            )
+        }
         var duplicateRelationState = state
         if let relation = duplicateRelationState.noteSourceLinks.first {
             duplicateRelationState.noteSourceLinks.append(relation)
@@ -1059,6 +1097,49 @@ enum CourseProjectRootSelfCheck {
                 && !serialized.contains("toolTrace")
                 && !serialized.contains(foreignMaterial.id),
             "课程状态泄露本机绝对路径、内部日志或另一门课程 ID"
+        )
+
+        let baselineWorkspace = try fixture.makeDirectory(
+            "首次基线冲突工作区"
+        )
+        var baselineSnapshot = try JSONDecoder().decode(
+            PersistedWorkspace.self,
+            from: Data(
+                contentsOf: fixture.workspaceDirectory
+                    .appendingPathComponent("workspace.json")
+            )
+        )
+        baselineSnapshot.coursePortableStateRevisions = nil
+        baselineSnapshot.coursePortableStateDigests = nil
+        baselineSnapshot.dirtyPortableCourseIDs = nil
+        let localOnlyMessageID = UUID()
+        if let sessionIndex = baselineSnapshot.studySessions?
+            .firstIndex(where: { $0.id == fixtureState.sessionID }) {
+            baselineSnapshot.studySessions?[sessionIndex].messages.append(
+                AgentMessage(
+                    id: localOnlyMessageID,
+                    role: .user,
+                    text: "本机旧工作区独有的 Chat 内容",
+                    source: nil
+                )
+            )
+        }
+        try JSONEncoder().encode(baselineSnapshot).write(
+            to: baselineWorkspace.appendingPathComponent("workspace.json"),
+            options: [.atomic]
+        )
+        let baselineDiskState = try Data(contentsOf: stateURL)
+        let baselineConflictStore = makeStore(
+            fixture: fixture,
+            workspaceDirectory: baselineWorkspace
+        )
+        try check(
+            baselineConflictStore.studySessions
+                .first { $0.id == fixtureState.sessionID }?
+                .messages.contains { $0.id == localOnlyMessageID } == true
+                && baselineConflictStore.workspaceSaveError != nil
+                && Data(contentsOf: stateURL) == baselineDiskState,
+            "已有旧工作区首次建立 baseline 时用磁盘状态覆盖了本机 Chat"
         )
 
         let reopenedWorkspace = try fixture.makeDirectory("另一台设备工作区")
@@ -1125,6 +1206,82 @@ enum CourseProjectRootSelfCheck {
         let expectedSharedDigest else {
             throw CheckError.failed("课程状态没有保存共享资料合同")
         }
+        let sharedURL = library.appendingPathComponent(sharedRelativePath)
+        let originalSharedData = try Data(contentsOf: sharedURL)
+        let canonicalSharedData = Data(
+            "共享 canonical item 的本机较新内容".utf8
+        )
+        try canonicalSharedData.write(to: sharedURL, options: [.atomic])
+        let canonicalSharedSnapshot =
+            try CourseProjectFileWorker.snapshotFile(at: sharedURL)
+        let canonicalSharedIdentity = try require(
+            CourseProjectFileWorker.identity(at: sharedURL),
+            "无法核验较新的共享 canonical item"
+        )
+        let canonicalWorkspace = try fixture.makeDirectory(
+            "共享 canonical 保留工作区"
+        )
+        var canonicalWorkspaceSnapshot = try JSONDecoder().decode(
+            PersistedWorkspace.self,
+            from: Data(
+                contentsOf: fixture.workspaceDirectory
+                    .appendingPathComponent("workspace.json")
+            )
+        )
+        let canonicalItemIndex = try require(
+            canonicalWorkspaceSnapshot.importedItems.firstIndex {
+                $0.id == material.id
+            },
+            "工作区缺少共享 canonical item"
+        )
+        canonicalWorkspaceSnapshot.importedItems[canonicalItemIndex]
+            .urlPath = sharedURL.path
+        canonicalWorkspaceSnapshot.importedItems[canonicalItemIndex]
+            .importedFileLastKnownPath = sharedURL.path
+        canonicalWorkspaceSnapshot.importedItems[canonicalItemIndex]
+            .importedFileIdentity = canonicalSharedIdentity
+        canonicalWorkspaceSnapshot.importedItems[canonicalItemIndex]
+            .contentRevision &+= 1
+        canonicalWorkspaceSnapshot.importedItems[canonicalItemIndex]
+            .contentDigest = canonicalSharedSnapshot.sha256
+        canonicalWorkspaceSnapshot.importedItems[canonicalItemIndex]
+            .fileByteCount = canonicalSharedSnapshot.byteCount
+        let canonicalMetadataSentinel: Int64 = 9_876_543_210
+        canonicalWorkspaceSnapshot.importedItems[canonicalItemIndex]
+            .fileModificationTimeNanoseconds = canonicalMetadataSentinel
+        canonicalWorkspaceSnapshot.coursePortableStateRevisions?[
+            courseA.uuidString.lowercased()
+        ] = sharedState.revision > 0 ? sharedState.revision - 1 : 0
+        canonicalWorkspaceSnapshot.coursePortableStateDigests?[
+            courseA.uuidString.lowercased()
+        ] = String(repeating: "0", count: 64)
+        try JSONEncoder().encode(canonicalWorkspaceSnapshot).write(
+            to: canonicalWorkspace.appendingPathComponent("workspace.json"),
+            options: [.atomic]
+        )
+        let canonicalStore = makeStore(
+            fixture: fixture,
+            workspaceDirectory: canonicalWorkspace
+        )
+        let preservedCanonical = try require(
+            canonicalStore.importedItems.first { $0.id == material.id },
+            "共享 canonical item 在课程恢复时丢失"
+        )
+        try check(
+            preservedCanonical.urlPath == sharedURL.path
+                && preservedCanonical.importedFileIdentity
+                    == canonicalSharedIdentity
+                && preservedCanonical.contentDigest
+                    == canonicalSharedSnapshot.sha256
+                && preservedCanonical.fileByteCount
+                    == canonicalSharedSnapshot.byteCount
+                && preservedCanonical.fileModificationTimeNanoseconds
+                    == canonicalMetadataSentinel,
+            "课程 A 的旧摘要覆盖了共享 canonical item 的真实文件状态"
+        )
+        try originalSharedData.write(to: sharedURL, options: [.atomic])
+        try sharedStateData.write(to: stateURL, options: [.atomic])
+
         var crossCourseSharedState = sharedState
         let sharedIndex = try require(
             crossCourseSharedState.items.firstIndex {
@@ -1153,8 +1310,6 @@ enum CourseProjectRootSelfCheck {
             _ = try fakePDFNote.validated(expectedCourseID: courseA)
         }
 
-        let sharedURL = library.appendingPathComponent(sharedRelativePath)
-        let originalSharedData = try Data(contentsOf: sharedURL)
         try Data("同名但内容已经被换掉".utf8).write(
             to: sharedURL,
             options: [.atomic]
@@ -1262,13 +1417,127 @@ enum CourseProjectRootSelfCheck {
         try FileManager.default.removeItem(at: unsafeEntryURL)
         try sharedStateData.write(to: stateURL, options: [.atomic])
 
+        var externalState = sharedState
+        externalState.revision &+= 1
+        externalState.savedAt = Date()
+        externalState.metadata.title = "Finder 外部更新"
+        externalState.metadata.updatedAt = externalState.savedAt
+        let externalStateData = try JSONEncoder().encode(externalState)
+        let casWorkspace = try fixture.makeDirectory("状态 CAS 竞态工作区")
+        var injectExternalState = false
+        let casStore = makeStore(
+            fixture: fixture,
+            workspaceDirectory: casWorkspace,
+            mutationHook: { stage in
+                guard injectExternalState,
+                      stage == .beforeCoursePortableStateCASPlacement else {
+                    return
+                }
+                injectExternalState = false
+                try externalStateData.write(
+                    to: stateURL,
+                    options: [.atomic]
+                )
+            }
+        )
+        _ = try casStore.adoptCourseFolder(
+            at: courseARoot,
+            title: "状态 CAS 竞态"
+        )
+        injectExternalState = true
+        casStore.renameCourse(courseA, title: "本机待保存更新")
+        let conflictStateURLs = try FileManager.default
+            .contentsOfDirectory(
+                at: stateURL.deletingLastPathComponent(),
+                includingPropertiesForKeys: nil
+            )
+            .filter {
+                $0.lastPathComponent.hasPrefix("course-state-conflict-")
+                    && $0.pathExtension == "json"
+            }
+        let preservedLocalConflict = try conflictStateURLs.contains { url in
+            let conflictState = try JSONDecoder().decode(
+                CoursePortableState.self,
+                from: Data(contentsOf: url)
+            )
+            return conflictState.metadata.title == "本机待保存更新"
+        }
+        try check(
+            Data(contentsOf: stateURL) == externalStateData
+                && casStore.course(withID: courseA)?.title
+                    == "本机待保存更新"
+                && casStore.workspaceSaveError != nil
+                && preservedLocalConflict,
+            "外部状态在原子替换前变化时没有同时保住外部版本与本机待保存版本"
+        )
+        for conflictURL in conflictStateURLs {
+            try FileManager.default.removeItem(at: conflictURL)
+        }
+        try sharedStateData.write(to: stateURL, options: [.atomic])
+
+        let oversizedOriginalData = try Data(contentsOf: stateURL)
+        let oversizedHandle = try FileHandle(forWritingTo: stateURL)
+        try oversizedHandle.truncate(atOffset: 33 * 1_024 * 1_024)
+        try oversizedHandle.synchronize()
+        try oversizedHandle.close()
+        let oversizedIdentity = try require(
+            CourseProjectFileWorker.identity(at: stateURL),
+            "无法记录超大课程状态文件身份"
+        )
+        let oversizedSize = try require(
+            stateURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+            "无法记录超大课程状态文件大小"
+        )
+        let oversizedReadHandle = try FileHandle(forReadingFrom: stateURL)
+        let oversizedPrefix = try require(
+            oversizedReadHandle.read(upToCount: 128),
+            "无法读取超大课程状态文件前缀"
+        )
+        try oversizedReadHandle.close()
+        let oversizedWorkspace = try fixture.makeDirectory(
+            "超大状态拒读工作区"
+        )
+        let oversizedProbe = makeStore(
+            fixture: fixture,
+            workspaceDirectory: oversizedWorkspace
+        )
+        try oversizedProbe.configureCourseLibrary(at: library)
+        try expectFailure("33MB 课程状态有界拒读") {
+            _ = try oversizedProbe.adoptCourseFolder(
+                at: courseARoot,
+                title: "超大状态拒读"
+            )
+        }
+        let oversizedVerifyHandle = try FileHandle(forReadingFrom: stateURL)
+        let oversizedPrefixAfterRead = try require(
+            oversizedVerifyHandle.read(upToCount: 128),
+            "无法复核超大课程状态文件前缀"
+        )
+        try oversizedVerifyHandle.close()
+        try check(
+            CourseProjectFileWorker.identity(at: stateURL)
+                == oversizedIdentity
+                && stateURL.resourceValues(
+                    forKeys: [.fileSizeKey]
+                ).fileSize == oversizedSize
+                && oversizedSize == 33 * 1_024 * 1_024
+                && oversizedPrefixAfterRead == oversizedPrefix,
+            "拒读 33MB 课程状态时改动了原文件"
+        )
+        try oversizedOriginalData.write(to: stateURL, options: [.atomic])
+
         let beforeFailedWrite = try Data(contentsOf: stateURL)
         let failedWriteWorkspace = try fixture.makeDirectory("写入失败工作区")
         var portableWriteCount = 0
         let failingStore = makeStore(
             fixture: fixture,
             workspaceDirectory: failedWriteWorkspace,
-            portableStateWriter: { data, url, directoryIdentity in
+            portableStateWriter: {
+                data,
+                url,
+                directoryIdentity,
+                expectedPreviousData,
+                beforeCommit in
                 portableWriteCount += 1
                 if portableWriteCount > 0 {
                     throw CheckError.injectedFailure
@@ -1276,7 +1545,9 @@ enum CourseProjectRootSelfCheck {
                 try CourseProjectFileWorker.writePortableState(
                     data,
                     to: url,
-                    expectedDirectoryIdentity: directoryIdentity
+                    expectedDirectoryIdentity: directoryIdentity,
+                    expectedPreviousData: expectedPreviousData,
+                    beforeCommit: beforeCommit
                 )
             }
         )
@@ -1307,7 +1578,12 @@ enum CourseProjectRootSelfCheck {
         var directoryRaceStore: WorkspaceStore? = makeStore(
             fixture: fixture,
             workspaceDirectory: directoryRaceWorkspace,
-            portableStateWriter: { data, url, directoryIdentity in
+            portableStateWriter: {
+                data,
+                url,
+                directoryIdentity,
+                expectedPreviousData,
+                beforeCommit in
                 if injectDirectoryRace && !didSwapMetadataDirectory {
                     try FileManager.default.moveItem(
                         at: metadataDirectory,
@@ -1322,7 +1598,9 @@ enum CourseProjectRootSelfCheck {
                 try CourseProjectFileWorker.writePortableState(
                     data,
                     to: url,
-                    expectedDirectoryIdentity: directoryIdentity
+                    expectedDirectoryIdentity: directoryIdentity,
+                    expectedPreviousData: expectedPreviousData,
+                    beforeCommit: beforeCommit
                 )
             }
         )
@@ -5062,12 +5340,16 @@ enum CourseProjectRootSelfCheck {
         portableStateWriter: @escaping (
             Data,
             URL,
-            ImportedFileIdentity
+            ImportedFileIdentity,
+            Data?,
+            () throws -> Void
         ) throws -> Void = {
             try CourseProjectFileWorker.writePortableState(
                 $0,
                 to: $1,
-                expectedDirectoryIdentity: $2
+                expectedDirectoryIdentity: $2,
+                expectedPreviousData: $3,
+                beforeCommit: $4
             )
         }
     ) -> WorkspaceStore {

@@ -295,6 +295,7 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
         }
 
         var chatIDs = Set<UUID>()
+        var messageIDsByChatID: [UUID: Set<UUID>] = [:]
         let memoryIDs = Set(learningMemoryState?.entries.map(\.id) ?? [])
         for session in studySessions {
             guard session.courseID == courseID,
@@ -306,6 +307,11 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
             guard chatIDs.insert(session.id).inserted else {
                 throw CoursePortableStateError.duplicateChatID
             }
+            let chatMessageIDs = Set(session.messages.map(\.id))
+            guard chatMessageIDs.count == session.messages.count else {
+                throw CoursePortableStateError.invalidChatScope
+            }
+            messageIDsByChatID[session.id] = chatMessageIDs
             for message in session.messages {
                 guard message.toolTrace.isEmpty else {
                     throw CoursePortableStateError.crossCourseReference
@@ -377,6 +383,34 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
                     == learningMemoryState.entries.count else {
                 throw CoursePortableStateError.invalidLearningMemoryScope
             }
+            func hasValidChatReference(
+                sessionID: UUID?,
+                messageID: UUID?
+            ) -> Bool {
+                guard let sessionID else {
+                    return messageID == nil
+                }
+                guard let chatMessageIDs =
+                        messageIDsByChatID[sessionID] else {
+                    return false
+                }
+                return messageID.map(chatMessageIDs.contains) ?? true
+            }
+            for entry in learningMemoryState.entries {
+                guard hasValidChatReference(
+                    sessionID: entry.sessionID,
+                    messageID: entry.messageID
+                ),
+                (entry.revisions ?? []).allSatisfy({
+                    hasValidChatReference(
+                        sessionID: $0.sessionID,
+                        messageID: $0.messageID
+                    )
+                }) else {
+                    throw CoursePortableStateError
+                        .invalidLearningMemoryScope
+                }
+            }
         }
 
         for (itemID, location) in studyLocationsByItemID {
@@ -414,7 +448,17 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
             omittingEmptySubsequences: false
         )
         return !components.isEmpty
-            && components.allSatisfy { !$0.isEmpty && $0 != "." && $0 != ".." }
+            && components.allSatisfy { component in
+                guard !component.isEmpty,
+                      component != ".",
+                      component != ".." else {
+                    return false
+                }
+                let normalized = String(component)
+                    .precomposedStringWithCanonicalMapping
+                    .lowercased()
+                return !normalized.hasPrefix(".weibei")
+            }
     }
 
     private static func hasValidRoleAndKind(

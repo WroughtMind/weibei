@@ -1228,6 +1228,12 @@ enum ImportedIdentitySelfCheck {
         try check(store.selectionAskThreads.first?.messageIDs == selectionThread.messageIDs, "选区问答线程消息关系在资料 ID 迁移时丢失")
         try check(store.flushPendingWorkspaceSave(), "资料 ID 迁移后工作区无法保存")
         let migratedSnapshot = try fixture.readSnapshot()
+        try check(
+            migratedSnapshot.coursePortableStateRevisions?.isEmpty == true
+                && migratedSnapshot.coursePortableStateDigests?.isEmpty == true
+                && migratedSnapshot.dirtyPortableCourseIDs?.isEmpty == true,
+            "没有真实课程根的旧课程被错误升级成可携带课程状态"
+        )
         let migratedSession = try require(
             migratedSnapshot.studySessions?.first { $0.id == session.id },
             "资料 ID 迁移后学习会话没有保存"
