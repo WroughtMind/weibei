@@ -7195,7 +7195,8 @@ final class WorkspaceStore: ObservableObject {
         guard let snapshot = agentReplyAction(messageID: messageID, actionID: actionID),
               snapshot.action.state == .executed
                 || (snapshot.action.state == .failed
-                    && snapshot.action.resultContentDigest != nil) else {
+                    && (snapshot.action.resultContentDigest != nil
+                        || snapshot.action.createdRelationID != nil)) else {
             return
         }
         switch snapshot.action.kind {
