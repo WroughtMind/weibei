@@ -22,6 +22,8 @@ struct CourseHubView: View {
     @State private var isMaterialDropTargeted = false
     @State private var isNoteDropTargeted = false
     @State private var courseEntryPresentation: CourseProjectEntryPresentation?
+    @State private var courseQuestion = ""
+    @FocusState private var courseQuestionFocused: Bool
 
     private var courseID: UUID? { store.courseWorkspaceCourseID }
 
@@ -62,6 +64,19 @@ struct CourseHubView: View {
             return nil
         }
         return (item, nil)
+    }
+
+    private var continueConversation: StudySession? {
+        guard let courseID,
+              let chatID = store.courseResumePoint(for: courseID)?.chatID else {
+            return nil
+        }
+        return sessions.first { session in
+            session.id == chatID
+                && session.courseID == courseID
+                && session.scopeNeedsReview == false
+                && !session.messages.isEmpty
+        }
     }
 
     private var recentEntries: [CourseHomeEntry] {
@@ -133,9 +148,13 @@ struct CourseHubView: View {
         .onAppear(perform: ensureMaterialSelection)
         .onChange(of: courseID) { _, _ in
             showsAllContent = false
+            courseQuestion = ""
             selectedMaterialID = materials.first?.id
             selectedNoteID = nil
             selectedSessionID = nil
+        }
+        .onDisappear {
+            courseQuestion = ""
         }
         .onChange(of: materials.map(\.id)) { _, ids in
             if selectedMaterialID == nil
@@ -286,6 +305,7 @@ struct CourseHubView: View {
                 }
 
                 continueReadingSection
+                courseQuestionSection
                 courseContentSection
             }
             .frame(maxWidth: isCompact ? .infinity : 1_000, alignment: .leading)
@@ -326,7 +346,15 @@ struct CourseHubView: View {
                         ? (reading.location == nil
                             ? store.ui("打开文稿", "Open material")
                             : store.ui("继续阅读", "Continue reading"))
-                        : store.ui("找回文稿…", "Find material…")
+                        : store.ui("找回文稿…", "Find material…"),
+                    secondaryActionTitle: continueConversation.map { _ in
+                        store.ui("继续对话", "Continue Chat")
+                    },
+                    secondaryAction: continueConversation.map { _ in
+                        {
+                            _ = store.resumeCourseConversation(courseID)
+                        }
+                    }
                 ) {
                     selectedMaterialID = reading.item.id
                     if available {
@@ -340,6 +368,18 @@ struct CourseHubView: View {
                             in: courseID
                         )
                     }
+                }
+            } else if let courseID, let conversation = continueConversation {
+                CourseHubContinueCard(
+                    icon: "bubble.left.and.text.bubble.right",
+                    title: conversation.title,
+                    detail: store.ui(
+                        "\(conversation.messages.count) 条消息 · \(courseRelativeDate(conversation.updatedAt, language: store.interfaceLanguage))",
+                        "\(conversation.messages.count) messages · \(courseRelativeDate(conversation.updatedAt, language: store.interfaceLanguage))"
+                    ),
+                    actionTitle: store.ui("继续对话", "Continue Chat")
+                ) {
+                    _ = store.resumeCourseConversation(courseID)
                 }
             } else {
                 CourseHubStartReadingRow(
@@ -357,6 +397,96 @@ struct CourseHubView: View {
                 )
             }
         }
+    }
+
+    private var courseQuestionSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(store.ui("问这门课", "Ask this course"))
+                .font(WeiBeiTypography.brandFont(
+                    language: store.interfaceLanguage,
+                    size: 21,
+                    weight: .semibold
+                ))
+                .foregroundStyle(WeiBeiTheme.ink)
+
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "bubble.left.and.text.bubble.right")
+                    .font(.system(size: 15, weight: .regular))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .frame(width: 24)
+
+                TextField(
+                    "",
+                    text: $courseQuestion,
+                    prompt: Text(store.ui(
+                        "关于这门课，你想继续弄懂什么？",
+                        "What would you like to understand about this course?"
+                    ))
+                    .foregroundStyle(WeiBeiTheme.placeholderInk),
+                    axis: .vertical
+                )
+                .textFieldStyle(.plain)
+                .font(.system(size: 14))
+                .foregroundStyle(WeiBeiTheme.ink)
+                .lineLimit(1...4)
+                .focused($courseQuestionFocused)
+                .onSubmit(submitCourseQuestion)
+                .accessibilityIdentifier("course-home-question")
+
+                Button(action: submitCourseQuestion) {
+                    Image(systemName: "arrow.up")
+                }
+                .buttonStyle(WeiBeiIconButtonStyle(
+                    size: 32,
+                    prominence: canSubmitCourseQuestion ? .primary : .neutral
+                ))
+                .disabled(!canSubmitCourseQuestion)
+                .accessibilityLabel(Text(store.ui("发送课程问题", "Send course question")))
+            }
+            .padding(.horizontal, 16)
+            .frame(minHeight: 78)
+            .background(
+                WeiBeiTheme.paperRaised.opacity(
+                    courseQuestionFocused ? 0.72 : 0.48
+                ),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .stroke(
+                        courseQuestionFocused
+                            ? WeiBeiTheme.cinnabar.opacity(0.28)
+                            : WeiBeiTheme.hairline.opacity(0.72),
+                        lineWidth: 1
+                    )
+            }
+
+            Text(store.ui(
+                "提交后将打开一条课程对话，基于这门课与你继续交流。",
+                "Submitting opens a course Chat grounded in this course."
+            ))
+            .font(.system(size: 10.5))
+            .foregroundStyle(WeiBeiTheme.tertiaryInk)
+        }
+    }
+
+    private var canSubmitCourseQuestion: Bool {
+        !store.isStoppingAgent
+            && !courseQuestion.trimmingCharacters(
+                in: .whitespacesAndNewlines
+            ).isEmpty
+    }
+
+    private func submitCourseQuestion() {
+        guard canSubmitCourseQuestion,
+              let courseID,
+              store.submitCourseHomeQuestion(
+                courseQuestion,
+                in: courseID
+              ) != nil else {
+            return
+        }
+        courseQuestion = ""
     }
 
     private var courseContentSection: some View {
@@ -804,6 +934,8 @@ private struct CourseHubContinueCard: View {
     let title: String
     let detail: String
     let actionTitle: String
+    var secondaryActionTitle: String? = nil
+    var secondaryAction: (() -> Void)? = nil
     let action: () -> Void
 
     var body: some View {
@@ -826,9 +958,17 @@ private struct CourseHubContinueCard: View {
 
             Spacer(minLength: 18)
 
-            Button(actionTitle, action: action)
-                .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
-                .fixedSize()
+            HStack(spacing: 10) {
+                Button(actionTitle, action: action)
+                    .buttonStyle(CourseHubContinueActionButtonStyle(primary: true))
+                    .fixedSize()
+
+                if let secondaryActionTitle, let secondaryAction {
+                    Button(secondaryActionTitle, action: secondaryAction)
+                        .buttonStyle(CourseHubContinueActionButtonStyle(primary: false))
+                        .fixedSize()
+                }
+            }
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 22)
@@ -841,6 +981,38 @@ private struct CourseHubContinueCard: View {
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .stroke(WeiBeiTheme.cinnabar.opacity(0.12), lineWidth: 1)
         }
+    }
+}
+
+private struct CourseHubContinueActionButtonStyle: ButtonStyle {
+    let primary: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(primary ? Color.white : WeiBeiTheme.cinnabar)
+            .padding(.horizontal, 20)
+            .frame(minWidth: 132, minHeight: 42)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(
+                        primary
+                            ? WeiBeiTheme.cinnabar.opacity(
+                                configuration.isPressed ? 0.82 : 0.94
+                            )
+                            : WeiBeiTheme.paperRaised.opacity(
+                                configuration.isPressed ? 0.74 : 0.42
+                            )
+                    )
+            )
+            .overlay {
+                if !primary {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .stroke(WeiBeiTheme.cinnabar.opacity(0.72), lineWidth: 1)
+                }
+            }
+            .scaleEffect(configuration.isPressed ? 0.985 : 1)
+            .animation(WeiBeiMotion.press, value: configuration.isPressed)
     }
 }
 

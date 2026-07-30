@@ -3033,7 +3033,7 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
         textView.font = .monospacedSystemFont(ofSize: 15, weight: .regular)
         textView.backgroundColor = .clear
         applyTheme(to: textView)
-        applyAttributedText(to: textView)
+        applyAttributedText(to: textView, coordinator: context.coordinator)
         textView.delegate = context.coordinator
         textView.textContainerInset = NSSize(width: 18, height: 18)
         textView.autoresizingMask = [.width]
@@ -3046,11 +3046,14 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         applyTheme(to: textView)
-        applyAttributedText(to: textView)
+        applyAttributedText(to: textView, coordinator: context.coordinator)
         context.coordinator.applySearch(searchQuery, in: textView)
     }
 
-    private func applyAttributedText(to textView: NSTextView) {
+    private func applyAttributedText(
+        to textView: NSTextView,
+        coordinator: Coordinator
+    ) {
         let ink = WeiBeiNativePalette.ink(for: appearanceMode)
         let attributed = NSMutableAttributedString(
             string: text,
@@ -3079,12 +3082,13 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
                 search = NSRange(location: next, length: max(0, attributed.length - next))
             }
         }
-        if textView.attributedString().string != attributed.string
-            || textView.attributedString().length != attributed.length {
+        guard !textView.attributedString().isEqual(to: attributed) else { return }
+        coordinator.withoutSelectionReports {
+            let selectedRange = textView.selectedRange()
             textView.textStorage?.setAttributedString(attributed)
-        } else {
-            // Refresh underline attributes without resetting caret when possible.
-            textView.textStorage?.setAttributedString(attributed)
+            if NSMaxRange(selectedRange) <= attributed.length {
+                textView.setSelectedRange(selectedRange)
+            }
         }
     }
 
@@ -3104,6 +3108,12 @@ private struct SelectablePlainTextReader: NSViewRepresentable {
 
         init(onSelectionChange: @escaping (String, CGPoint?) -> Void) {
             self.onSelectionChange = onSelectionChange
+        }
+
+        func withoutSelectionReports(_ update: () -> Void) {
+            suppressSelectionReport = true
+            defer { suppressSelectionReport = false }
+            update()
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {

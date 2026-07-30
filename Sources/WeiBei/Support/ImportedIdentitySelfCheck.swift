@@ -334,16 +334,34 @@ enum ImportedIdentitySelfCheck {
                 && reopened.courseResumePoint(for: courseA.id)?.noteItemID == note.id,
             "继续阅读后滚动时丢掉了原课程 Chat 或笔记"
         )
+        reopened.activateCourse(courseB.id)
+        try check(
+            reopened.openCourseMaterial(otherMaterial.id, in: courseB.id),
+            "无法准备继续对话前的课程 B 文稿现场"
+        )
+        reopened.updateReaderHTMLLocation(
+            id: "section-b-current",
+            title: "B 当前阅读",
+            reason: "scroll"
+        )
+        reopened.openCourseNote(otherNote.id, in: courseB.id)
+        let materialBeforeConversation = reopened.selectedMaterialItem?.id
+        let locationBeforeConversation = reopened.readerLocationID
+        let noteBeforeConversation = reopened.activeNotebookItemID
+        reopened.presentCourseWorkspace(.hub, courseID: courseA.id)
         try check(
             reopened.resumeCourseConversation(courseA.id)
                 && reopened.activeStudySessionID == chatA2.id
-                && reopened.readerLocationID == "section-a-resumed"
-                && reopened.activeNotebookItemID == note.id
+                && reopened.selectedMaterialItem?.id == materialBeforeConversation
+                && reopened.readerLocationID == locationBeforeConversation
+                && reopened.activeNotebookItemID == noteBeforeConversation
                 && reopened.layout.isDocumentThreePane
                 && reopened.focusedPane == .agent
+                && reopened.showReader
                 && reopened.showAgent
+                && reopened.showNotes
                 && reopened.studySessions.count == sessionCountBeforeReading,
-            "继续对话没有恢复精确 Chat 和同一学习现场"
+            "继续对话没有恢复精确 Chat，或覆盖了当前文稿、阅读位置和笔记现场"
         )
         try check(
             reopened.activateStudySession(
