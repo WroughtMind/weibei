@@ -1678,6 +1678,7 @@ struct AgentPaneView: View {
     @FocusState private var draftFocused: Bool
     @State private var activeAgentRailID: String?
     @State private var agentFollowsLatest = true
+    @State private var globalMemoryPanelPresented = false
     /// Live pane width from a background probe. 0 until first real measurement.
     @State private var measuredPaneWidth: CGFloat = 0
 
@@ -1903,6 +1904,10 @@ struct AgentPaneView: View {
         }
         .task(id: replySources) {
             await store.validateAgentReplySources(replySources)
+        }
+        .sheet(isPresented: $globalMemoryPanelPresented) {
+            GlobalLearningMemorySheet()
+                .environmentObject(store)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("stable-document-slot-agent")
@@ -2335,47 +2340,11 @@ struct AgentPaneView: View {
             }
         }
 
-        if !store.orderedLearningMemoryEntries.isEmpty {
-            Divider()
-            Menu {
-                ForEach(Array(store.orderedLearningMemoryEntries.prefix(20))) { memory in
-                    if memory.status == .resolved {
-                        Button {
-                            store.restoreLearningMemory(memory.id)
-                        } label: {
-                            Label(
-                                "\(store.learningMemoryKindLabel(memory.kind))：\(String(memory.text.prefix(64)))",
-                                systemImage: "arrow.uturn.backward"
-                            )
-                        }
-                    } else if memory.kind == .goal || memory.kind == .confusion || memory.kind == .nextStep {
-                        Button {
-                            store.resolveLearningMemory(memory.id)
-                        } label: {
-                            Label(
-                                "\(store.learningMemoryKindLabel(memory.kind))：\(String(memory.text.prefix(64)))",
-                                systemImage: "checkmark.circle"
-                            )
-                        }
-                    } else {
-                        Label(
-                            "\(store.learningMemoryKindLabel(memory.kind))：\(String(memory.text.prefix(64)))",
-                            systemImage: "brain.head.profile"
-                        )
-                    }
-                }
-            } label: {
-                Label(store.ui("学习记忆", "Learning Memory"), systemImage: "brain.head.profile")
-            }
-        }
-
-        if store.hasCurrentSessionInferredMemory {
-            Divider()
-            Button(role: .destructive) {
-                store.clearCurrentSessionInferredMemory()
-            } label: {
-                Label(store.ui("清除本会话推断记忆", "Clear Inferred Memory"), systemImage: "brain.head.profile")
-            }
+        Divider()
+        Button {
+            globalMemoryPanelPresented = true
+        } label: {
+            Label(store.ui("全局记忆", "Global Memory"), systemImage: "brain.head.profile")
         }
 
         if let activeID = store.activeStudySessionID, store.studySessions.count > 1 {
@@ -3506,7 +3475,11 @@ private struct AgentBubble: View {
             }
 
             ForEach(Array(update.resolutions.prefix(4).enumerated()), id: \.offset) { _, resolution in
-                let isResolved = store.isLearningMemoryResolved(resolution.memoryID)
+                let memoryScope = store.learningMemoryScope(courseID: message.origin?.courseID)
+                let isResolved = store.isLearningMemoryResolved(
+                    resolution.memoryID,
+                    in: memoryScope
+                )
                 HStack(alignment: .top, spacing: 6) {
                     Text(store.ui("建议结案：\(resolution.text)", "Suggested resolution: \(resolution.text)"))
                         .font(.caption)
@@ -3515,9 +3488,15 @@ private struct AgentBubble: View {
                     Spacer(minLength: 4)
                     Button {
                         if isResolved {
-                            store.restoreLearningMemoryResolution(resolution)
+                            store.restoreLearningMemoryResolution(
+                                resolution,
+                                in: memoryScope
+                            )
                         } else {
-                            store.confirmLearningMemoryResolution(resolution)
+                            store.confirmLearningMemoryResolution(
+                                resolution,
+                                in: memoryScope
+                            )
                         }
                     } label: {
                         Image(systemName: isResolved ? "arrow.uturn.backward" : "checkmark.circle")
@@ -3547,12 +3526,16 @@ private struct AgentBubble: View {
         switch kind {
         case .goal:
             return store.ui("目标", "Goal")
+        case .progress:
+            return store.ui("学习进度", "Progress")
         case .understood:
             return store.ui("已理解", "Understood")
         case .confusion:
             return store.ui("困惑", "Confusion")
         case .nextStep:
             return store.ui("下一步", "Next Step")
+        case .summary:
+            return store.ui("学习小结", "Summary")
         case .preference:
             return store.ui("偏好", "Preference")
         }

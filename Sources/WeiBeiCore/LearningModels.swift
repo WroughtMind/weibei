@@ -49,9 +49,11 @@ public struct StudyLocation: Codable, Hashable, Sendable {
 
 public enum LearningMemoryKind: String, Codable, CaseIterable, Hashable, Sendable {
     case goal
+    case progress
     case understood
     case confusion
     case nextStep
+    case summary
     case preference
 }
 
@@ -66,6 +68,65 @@ public enum LearningMemoryStatus: String, Codable, Hashable, Sendable {
     case resolved
 }
 
+public enum LearningMemoryScope: Codable, Hashable, Sendable {
+    case global
+    case course(UUID)
+
+    public var courseID: UUID? {
+        guard case let .course(courseID) = self else { return nil }
+        return courseID
+    }
+}
+
+public enum LearningMemoryRevisionActor: String, Codable, Hashable, Sendable {
+    case user
+    case agent
+    case migration
+}
+
+public struct LearningMemoryRevisionRecord: Identifiable, Codable, Hashable, Sendable {
+    public var id: UUID
+    public var revision: UInt64
+    public var kind: LearningMemoryKind
+    public var text: String
+    public var evidence: String
+    public var origin: LearningMemoryOrigin
+    public var status: LearningMemoryStatus
+    public var sessionID: UUID?
+    public var messageID: UUID?
+    public var resolutionEvidence: String?
+    public var actor: LearningMemoryRevisionActor
+    public var recordedAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        revision: UInt64,
+        kind: LearningMemoryKind,
+        text: String,
+        evidence: String,
+        origin: LearningMemoryOrigin,
+        status: LearningMemoryStatus,
+        sessionID: UUID? = nil,
+        messageID: UUID? = nil,
+        resolutionEvidence: String? = nil,
+        actor: LearningMemoryRevisionActor,
+        recordedAt: Date = Date()
+    ) {
+        self.id = id
+        self.revision = revision
+        self.kind = kind
+        self.text = text
+        self.evidence = evidence
+        self.origin = origin
+        self.status = status
+        self.sessionID = sessionID
+        self.messageID = messageID
+        self.resolutionEvidence = resolutionEvidence
+        self.actor = actor
+        self.recordedAt = recordedAt
+    }
+}
+
 public struct LearningMemoryEntry: Identifiable, Codable, Hashable, Sendable {
     public var id: UUID
     public var kind: LearningMemoryKind
@@ -74,10 +135,13 @@ public struct LearningMemoryEntry: Identifiable, Codable, Hashable, Sendable {
     public var origin: LearningMemoryOrigin
     public var status: LearningMemoryStatus
     public var sessionID: UUID?
+    public var messageID: UUID?
     public var resolvedAt: Date?
     public var resolutionEvidence: String?
     public var createdAt: Date
     public var updatedAt: Date
+    /// Missing only on legacy snapshots before scoped memory migration.
+    public var revisions: [LearningMemoryRevisionRecord]?
 
     public init(
         id: UUID = UUID(),
@@ -87,10 +151,12 @@ public struct LearningMemoryEntry: Identifiable, Codable, Hashable, Sendable {
         origin: LearningMemoryOrigin,
         status: LearningMemoryStatus = .active,
         sessionID: UUID? = nil,
+        messageID: UUID? = nil,
         resolvedAt: Date? = nil,
         resolutionEvidence: String? = nil,
         createdAt: Date = Date(),
-        updatedAt: Date = Date()
+        updatedAt: Date = Date(),
+        revisions: [LearningMemoryRevisionRecord]? = nil
     ) {
         self.id = id
         self.kind = kind
@@ -99,10 +165,28 @@ public struct LearningMemoryEntry: Identifiable, Codable, Hashable, Sendable {
         self.origin = origin
         self.status = status
         self.sessionID = sessionID
+        self.messageID = messageID
         self.resolvedAt = resolvedAt
         self.resolutionEvidence = resolutionEvidence
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+        self.revisions = revisions
+    }
+}
+
+public struct ScopedLearningMemoryState: Codable, Hashable, Sendable {
+    public var scope: LearningMemoryScope
+    public var revision: UInt64
+    public var entries: [LearningMemoryEntry]
+
+    public init(
+        scope: LearningMemoryScope,
+        revision: UInt64 = 0,
+        entries: [LearningMemoryEntry] = []
+    ) {
+        self.scope = scope
+        self.revision = revision
+        self.entries = entries
     }
 }
 

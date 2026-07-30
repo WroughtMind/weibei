@@ -817,6 +817,13 @@ expect(runScript.contains("verify_learning_flow_persistence()")
     && runScript.contains("把可确认依据写入笔记")
     && runScript.contains("! /usr/bin/grep -q \"## 离线草稿\"")
     && runScript.contains("! /usr/bin/grep -q \"## 可确认\""), "verify mode checks that the offline learning flow persists only the note-ready agent suggestion into the note workspace")
+expect(runScript.contains("verify_learning_memory_scopes()")
+    && runScript.contains("learning-memory-scopes-report.txt")
+    && runScript.contains("scopes_isolated=true")
+    && runScript.contains("independent_revisions=true")
+    && runScript.contains("user_history=true")
+    && runScript.contains("stable_ids=true")
+    && runScript.contains("legacy_fields_removed=true"), "verify mode checks scoped learning-memory isolation, revisions, history, stable identity, and new-only persistence")
 expect(runScript.contains("pi-agent-verified.txt")
     && runScript.contains("packaged PI did not complete the in-app learning flow")
     && runScript.contains("'\"agentProviderID\":\"openai-codex\"'")
@@ -831,7 +838,7 @@ expect(runScript.contains("pi-agent-verified.txt")
     && workspaceStoreSource.contains("secondReply?.text.localizedCaseInsensitiveContains(continuityToken) == true"), "verify mode proves the packaged app uses its selected PI provider/model and continues the same Chat across two real turns")
 expect(runScript.contains("pi-course-memory-verified.txt")
     && runScript.contains("packaged PI did not persist the course-memory learning flow")
-    && runScript.contains("'\"learningMemoryEntries\"'")
+    && runScript.contains("'\"learningMemoryStates\"'")
     && runScript.contains("'\"studyLocationsByItemID\"'")
     && runScript.contains("'\"studySessions\"'")
     && workspaceStoreSource.contains("scenario == \"pi-course-memory-flow\"")
@@ -2952,7 +2959,8 @@ expect(appSource.contains("environment[\"WEIBEI_VERIFY_CAPTURE_PATH\"]")
     && !appSource.contains("operation: .copy"), "isolated verification capture preserves the opaque window underneath transparent WebView snapshots")
 expect(appSource.contains("let scenario = environment[\"WEIBEI_VERIFY_SCENARIO\"] ?? \"\"")
     && appSource.contains("\"course-workspace-overview-flow\"")
-    && appSource.contains("\"course-workspace-workflow-flow\""), "course workspace verification scenarios opt into completion-aware capture")
+    && appSource.contains("\"course-workspace-workflow-flow\"")
+    && appSource.contains("\"learning-memory-scopes-flow\""), "course workspace verification scenarios opt into completion-aware capture")
 expect(appSource.contains("remainingAttempts: scenario == \"pane-toggle-continuity-flow\" ? 1_800 : 600")
     && appSource.contains("waitForVerificationCompletion")
     && appSource.contains("stages.split(separator: \"\\n\").contains(\"completed\")")
@@ -3297,8 +3305,8 @@ expect(courseWorkspaceSource.contains("case hub")
     && courseWorkspaceSource.contains("关系台")
     && courseWorkspaceSource.contains("资料与笔记")
     && courseWorkspaceSource.contains("资料关系台")
-    && courseWorkspaceSource.contains("同色标签表示同一课程")
-    && courseWorkspaceSource.contains("$0.courseID == course.id && $0.scopeNeedsReview == false")
+    && courseWorkspaceSource.contains("store.sessionsTouchingCourse(courseID)")
+    && courseWorkspaceSource.contains("本课记忆")
     && courseWorkspaceSource.contains("CourseHubColumnEmptyState")
     && courseWorkspaceSource.contains("courseTitleDisplayFont")
     && courseWorkspaceSource.contains("frame(height: 44, alignment: .center)")
@@ -3534,11 +3542,12 @@ expect(workspaceStoreSource.contains("private func sessionContinuitySummary(for 
 expect(workspaceStoreSource.contains("let itemTitle = sourceReferenceBaseTitle(for: item)")
     && workspaceStoreSource.contains("itemTitle: itemTitle")
     && workspaceStoreSource.contains("private func refreshStudyLocationReferenceTitles() -> Bool")
-    && workspaceStoreSource.contains("learningMemoryEntries[index].origin = .userStatement\n                    learningMemoryEntries[index].sessionID = sessionID")
-    && workspaceStoreSource.contains("$0.sessionID == activeStudySessionID")
-    && workspaceStoreSource.contains("learningMemoryEntries[index].origin == .userStatement")
+    && workspaceStoreSource.contains("memoryEntries[index].origin = .userStatement")
+    && workspaceStoreSource.contains("memoryEntries[index].sessionID = target.sessionID")
+    && workspaceStoreSource.contains("memoryEntries[index].messageID = messageID")
+    && workspaceStoreSource.contains("memoryEntries[index].origin == .userStatement")
     && workspaceStoreSource.contains("proposed.origin != .userStatement")
-    && !workspaceStoreSource.contains("learningMemoryEntries[index].sessionID = sessionID\n                learningMemoryEntries[index].updatedAt"), "learning locations preserve duplicate-file identity and inferred memories keep their originating Chat provenance")
+    && workspaceStoreSource.contains("learningMemoryScope(courseID: target.courseID)"), "learning locations preserve duplicate-file identity and learning memories stay owned by the originating Chat scope")
 expect(workspaceStoreSource.contains("@Published var readerTargetPageIndex")
     && workspaceStoreSource.contains("@Published var readerTargetLocationTitle")
     && workspaceStoreSource.contains("func openSourceReference")
@@ -3904,7 +3913,7 @@ if let requestStart = workspaceStoreSource.range(of: "private func performAgentR
         && requestSource.contains("clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)")
         && requestSource.contains("let userMessage = AgentMessage(role: .user, text: question, source: sourceTitle)")
         && requestSource.contains("guard flushPendingWorkspaceSave() else")
-        && requestSource.contains("let sentLearningContext = makeLearningContext()")
+        && requestSource.contains("let sentLearningContext = makeLearningContext(target: target)")
         && requestSource.contains("let courseBuild = try await makeCourseContext(")
         && requestSource.contains("courseID: target.courseID")
         && requestSource.contains("materialText: courseBuild.selectedMaterialText ?? \"\"")
@@ -3917,7 +3926,8 @@ if let requestStart = workspaceStoreSource.range(of: "private func performAgentR
         && requestSource.contains("replyMessageID: assistantMessage.id")
         && requestSource.contains("applyLearningUpdate(")
         && requestSource.contains("expectedUserQuestion: request.question")
-        && requestSource.contains("sessionID: target.sessionID")
+        && requestSource.contains("target: target")
+        && requestSource.contains("messageID: assistantMessage.id")
         && !requestSource.contains("requestWorkspaceRevision == agentContextRevision")
         && !requestSource.contains("requestMemoryRevision == learningMemoryRevision")
         && requestSource.contains("guard activeAgentRequestID == request.id else { return }")
@@ -3969,8 +3979,8 @@ expect(workspaceStoreSource.contains("@Published private(set) var studySessions"
     "agent conversations persist an exact course scope, migrate old Chats once, and expose ambiguous records")
 expect(workspaceStoreSource.contains("noteSourceLinks: noteSourceLinks")
     && workspaceStoreSource.contains("studyLocationsByItemID: studyLocationsByItemID")
-    && workspaceStoreSource.contains("learningMemoryEntries: learningMemoryEntries")
-    && workspaceStoreSource.contains("learningMemoryRevision: learningMemoryRevision")
+    && workspaceStoreSource.contains("learningMemoryStates: learningMemoryStates")
+    && workspaceStoreSource.contains("learningMemoryScopeMigrationVersion: learningMemoryScopeMigrationVersion")
     && workspaceStoreSource.contains("studySessions: studySessions")
     && workspaceStoreSource.contains("studySessionScopeMigrationVersion: studySessionScopeMigrationVersion")
     && workspaceStoreSource.contains("activeStudySessionID: activeStudySessionID"), "course links, progress, memory, and sessions are saved with the workspace")
@@ -3979,10 +3989,10 @@ expect(workspaceStoreSource.contains("acceptedUpdate.resolutions = update.resolu
     && workspaceStoreSource.contains("StudyAgentCurrentTurnEvidence.matches")
     && !workspaceStoreSource.contains("private static func currentTurnEvidenceMatches")
     && workspaceStoreSource.contains("func restoreLearningMemory(")
-    && workspaceStoreSource.contains("resolutionEvidence = \"[用户：界面确认]\"")
+    && workspaceStoreSource.contains("resolutionEvidence: \"[用户：界面确认]\"")
     && notesAgentSource.contains("建议结案：")
-    && notesAgentSource.contains("store.confirmLearningMemoryResolution(resolution)")
-    && notesAgentSource.contains("store.restoreLearningMemoryResolution(resolution)"), "PI can only propose memory resolution; user confirmation persists it and the UI can undo it")
+    && notesAgentSource.contains("store.confirmLearningMemoryResolution(")
+    && notesAgentSource.contains("store.restoreLearningMemoryResolution("), "PI can only propose memory resolution; user confirmation persists it and the UI can undo it")
 expect(workspaceStoreSource.contains("} else {\n            restoreCurrentStudyLocation()\n            recordCurrentStudyLocation(incrementVisit: false)\n        }")
     && workspaceStoreSource.contains("private func restoreCurrentStudyLocation()")
     && workspaceStoreSource.contains("readerPageIndex = max(location.pageIndex ?? 0, 0)")
@@ -4278,9 +4288,12 @@ expect(notesAgentSource.contains("func weibeiPaneHeaderChrome(appearanceMode: We
     && notesAgentSource.contains("store.unclassifiedStudySessions")
     && notesAgentSource.contains("store.classifyStudySession(session.id, as: nil)")
     && notesAgentSource.contains("store.classifyStudySession(session.id, as: course.id)")
-    && courseWorkspaceSource.contains("id: \"global\"")
-    && courseWorkspaceSource.contains("id: \"pending\"")
-    && notesAgentSource.contains("store.clearCurrentSessionInferredMemory()")
+    && courseWorkspaceSource.contains("store.sessionsTouchingCourse(courseID)")
+    && courseWorkspaceSource.contains("LearningMemoryListSection(")
+    && courseWorkspaceSource.contains("本课记忆")
+    && notesAgentSource.contains("GlobalLearningMemorySheet()")
+    && notesAgentSource.contains("全局记忆")
+    && !notesAgentSource.contains("store.clearCurrentSessionInferredMemory()")
     && !agentPaneHeaderSource.contains("agentToolButton(")
     && !notesAgentSource.contains("private func agentToolButton")
     && notesAgentSource.contains("AgentReplyActionCard(")
@@ -5210,6 +5223,34 @@ let persisted = PersistedWorkspace(
     activeCourseID: courseB.id,
     noteSourceLinks: [oldestLink],
     noteSourceLinksMigrationVersion: 1,
+    learningMemoryStates: [
+        ScopedLearningMemoryState(
+            scope: .course(courseA.id),
+            revision: 1,
+            entries: [
+                LearningMemoryEntry(
+                    kind: .confusion,
+                    text: "利率与贴现率仍会混淆",
+                    evidence: "用户在课程 Chat 中提出",
+                    origin: .userStatement,
+                    sessionID: firstCourseSessionID,
+                    revisions: [
+                        LearningMemoryRevisionRecord(
+                            revision: 1,
+                            kind: .confusion,
+                            text: "利率与贴现率仍会混淆",
+                            evidence: "用户在课程 Chat 中提出",
+                            origin: .userStatement,
+                            status: .active,
+                            sessionID: firstCourseSessionID,
+                            actor: .user
+                        )
+                    ]
+                )
+            ]
+        )
+    ],
+    learningMemoryScopeMigrationVersion: 1,
     threePaneOrder: [.agent, .reader, .notes],
     noteRenderMode: .preview,
     showLibrary: false,
@@ -5240,6 +5281,10 @@ expect(restored.adaptImportedDocumentColors == false
 expect(restored.noteRenderMode == .preview, "legacy preview note mode remains decodable for old workspace snapshots")
 expect(restored.threePaneOrder == [.agent, .reader, .notes], "custom three-pane order persists")
 expect(restored.noteSourceLinks == [oldestLink] && restored.noteSourceLinksMigrationVersion == 1, "note-source relations and one-time migration state persist together")
+expect(restored.learningMemoryStates?.first?.scope == .course(courseA.id)
+    && restored.learningMemoryStates?.first?.revision == 1
+    && restored.learningMemoryStates?.first?.entries.first?.revisions?.first?.actor == .user
+    && restored.learningMemoryScopeMigrationVersion == 1, "scoped learning memories preserve their independent revision history")
 expect(workspaceStoreSource.contains("if let noteRenderMode = snapshot.noteRenderMode {\n            self.noteRenderMode = noteRenderMode.visibleMode\n        }")
     && workspaceStoreSource.contains("noteRenderMode = snapshot.noteRenderMode.visibleMode")
     && workspaceStoreSource.contains("let nextMode = mode.visibleMode")

@@ -160,7 +160,33 @@ try {
       isTruncated: false,
     },
     project: { ...snapshot.project, items: [item] },
-    learning: { memoryRevision: 0, memories: [] },
+    learning: {
+      memoryRevision: 2,
+      memories: [
+        {
+          id: "memory-progress",
+          kind: "progress",
+          text: "已读完第一讲",
+          evidence: "当前 Chat",
+          origin: "agentInference",
+          status: "active",
+          sessionID: "chat-a",
+          createdAt: 1,
+          updatedAt: 1,
+        },
+        {
+          id: "memory-summary",
+          kind: "summary",
+          text: "正在建立课程框架",
+          evidence: "当前 Chat",
+          origin: "agentInference",
+          status: "active",
+          sessionID: "chat-a",
+          createdAt: 2,
+          updatedAt: 2,
+        },
+      ],
+    },
   };
   await writeFile(contextFile, JSON.stringify(hookEnvelope));
   process.env.WEIBEI_AGENT_CONTEXT_FILE = contextFile;

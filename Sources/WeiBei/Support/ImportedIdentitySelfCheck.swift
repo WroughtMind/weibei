@@ -11,6 +11,8 @@ enum ImportedIdentitySelfCheck {
         try duplicateIdentityPreservesConflictingStorageMetadata()
         try offlineLegacyPathMigratesWhenItReturns()
         try legacyChatScopesMigrateOnceAndPersist()
+        try failedLearningMemoryMigrationKeepsLegacySnapshotRecoverable()
+        try learningMemoryEditsRejectTruncationAndRetrySave()
         try sameVolumeMoveKeepsIdentityRelationsNavigationAndIndex()
         try temporarilyUnavailableNoteRetainsLatestEdit()
         try offlineLaunchNoteRetainsEditWhenFileReturns()
@@ -23,6 +25,148 @@ enum ImportedIdentitySelfCheck {
         try failedWorkspaceSaveRecoversRenameOnRestart()
         try duplicateLegacyIdentityMigratesInOneLaunch()
         try replacedAndCrossVolumeFilesReceiveNewIdentities()
+    }
+
+    @MainActor
+    private static func failedLearningMemoryMigrationKeepsLegacySnapshotRecoverable() throws {
+        let fixture = try WorkspaceFixture(name: "learning-memory-migration-failure")
+        defer { fixture.remove() }
+
+        let course = Course(id: UUID(), title: "迁移恢复课程")
+        let session = StudySession(
+            id: UUID(),
+            title: "迁移恢复 Chat",
+            courseID: course.id,
+            scopeNeedsReview: false
+        )
+        let memory = LearningMemoryEntry(
+            kind: .confusion,
+            text: "迁移失败后仍要保留",
+            evidence: "旧工作区",
+            origin: .agentInference,
+            sessionID: session.id
+        )
+        try fixture.write(
+            PersistedWorkspace(
+                courses: [course],
+                learningMemoryEntries: [memory],
+                learningMemoryRevision: 3,
+                studySessions: [session],
+                studySessionScopeMigrationVersion: 1,
+                activeStudySessionID: session.id
+            )
+        )
+
+        let failedStore = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            workspaceSnapshotWriter: { _, _ in
+                throw CheckError.failed("预期中的迁移保存失败")
+            },
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        )
+        try check(
+            failedStore.learningMemoryEntries(in: .course(course.id)).map(\.id) == [memory.id],
+            "保存失败时内存中的旧记忆无法继续使用"
+        )
+        let unchangedSnapshot = try fixture.readSnapshot()
+        try check(
+            unchangedSnapshot.learningMemoryEntries?.map(\.id) == [memory.id]
+                && unchangedSnapshot.learningMemoryStates == nil
+                && unchangedSnapshot.learningMemoryScopeMigrationVersion == nil,
+            "迁移保存失败破坏了旧工作区快照"
+        )
+
+        let recoveredStore = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        )
+        try check(
+            recoveredStore.flushPendingWorkspaceSave()
+                && recoveredStore.learningMemoryEntries(in: .course(course.id)).map(\.id) == [memory.id]
+                && recoveredStore.learningMemoryRevision(in: .course(course.id)) == 1,
+            "保存恢复后旧记忆无法安全重试迁移"
+        )
+    }
+
+    @MainActor
+    private static func learningMemoryEditsRejectTruncationAndRetrySave() throws {
+        let fixture = try WorkspaceFixture(name: "learning-memory-edit-save")
+        defer { fixture.remove() }
+
+        let memory = LearningMemoryEntry(
+            kind: .confusion,
+            text: "旧内容",
+            evidence: "旧工作区",
+            origin: .agentInference
+        )
+        try fixture.write(
+            PersistedWorkspace(
+                learningMemoryStates: [
+                    ScopedLearningMemoryState(
+                        scope: .global,
+                        revision: 1,
+                        entries: [memory]
+                    ),
+                ],
+                learningMemoryScopeMigrationVersion: 1
+            )
+        )
+
+        var shouldFail = true
+        let store = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            workspaceSnapshotWriter: { data, url in
+                if shouldFail {
+                    throw CheckError.failed("预期中的学习记忆保存失败")
+                }
+                try data.write(to: url, options: [.atomic])
+            },
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        )
+        let overlong = String(repeating: "字", count: 501)
+        try check(
+            !store.updateLearningMemory(
+                memory.id,
+                in: .global,
+                kind: .progress,
+                text: overlong
+            )
+                && store.learningMemoryEntries(in: .global).first?.text == memory.text,
+            "用户学习记忆超过 500 字时被静默截断"
+        )
+
+        let editedText = "已完成第一轮复习"
+        try check(
+            !store.updateLearningMemory(
+                memory.id,
+                in: .global,
+                kind: .progress,
+                text: editedText
+            )
+                && store.workspaceSaveError != nil,
+            "学习记忆写盘失败却返回成功"
+        )
+        let snapshotAfterFailure = try fixture.readSnapshot()
+        try check(
+            snapshotAfterFailure.learningMemoryStates?.first?.entries.first?.text == memory.text,
+            "学习记忆保存失败破坏了旧快照"
+        )
+
+        shouldFail = false
+        try check(
+            store.updateLearningMemory(
+                memory.id,
+                in: .global,
+                kind: .progress,
+                text: editedText
+            ),
+            "同内容重试没有重新写入学习记忆"
+        )
+        let snapshotAfterRetry = try fixture.readSnapshot()
+        try check(
+            snapshotAfterRetry.learningMemoryStates?.first?.entries.first?.text == editedText,
+            "学习记忆重试成功后没有落盘"
+        )
     }
 
     @MainActor
@@ -44,6 +188,14 @@ enum ImportedIdentitySelfCheck {
             id: "legacy-chat-shared",
             title: "共享文稿",
             subtitle: "shared.txt",
+            kind: .text,
+            urlPath: nil,
+            isSample: false
+        )
+        let uniqueCourseBItem = StudyItem(
+            id: "legacy-chat-unique-b",
+            title: "课程 B 文稿",
+            subtitle: "b.txt",
             kind: .text,
             urlPath: nil,
             isSample: false
@@ -81,6 +233,13 @@ enum ImportedIdentitySelfCheck {
             focusItemIDs: [sharedItem.id],
             materialItemID: sharedItem.id
         )
+        let courseBSession = StudySession(
+            id: UUID(),
+            title: "只属于课程 B",
+            messages: [AgentMessage(role: .user, text: "解释课程 B", source: nil)],
+            focusItemIDs: [uniqueCourseBItem.id],
+            materialItemID: uniqueCourseBItem.id
+        )
         let orphanSession = StudySession(
             id: UUID(),
             title: "没有课程证据",
@@ -89,25 +248,59 @@ enum ImportedIdentitySelfCheck {
             materialItemID: orphanItem.id
         )
         let blankSession = StudySession(id: UUID(), title: "新学习会话")
-        let sharedLearningMemory = LearningMemoryEntry(
+        let courseLearningMemory = LearningMemoryEntry(
             kind: .nextStep,
             text: "继续完成课程 A 的复习",
             evidence: "当前 Chat 中的学习建议",
             origin: .agentInference,
             sessionID: uniqueSession.id
         )
+        let ambiguousLearningMemory = LearningMemoryEntry(
+            kind: .confusion,
+            text: "共享文稿属于哪门课还不明确",
+            evidence: "共享文稿 Chat",
+            origin: .userStatement,
+            sessionID: sharedSession.id
+        )
+        let orphanLearningMemory = LearningMemoryEntry(
+            kind: .goal,
+            text: "先保留无法归类的学习目标",
+            evidence: "旧 Chat 已经不存在",
+            origin: .agentInference,
+            sessionID: UUID()
+        )
+        let courseBLearningMemory = LearningMemoryEntry(
+            kind: .understood,
+            text: "已经理解课程 B 的第一章",
+            evidence: "课程 B Chat",
+            origin: .agentInference,
+            sessionID: courseBSession.id
+        )
         let snapshot = PersistedWorkspace(
-            importedItems: [uniqueItem, sharedItem, orphanItem],
+            importedItems: [uniqueItem, sharedItem, uniqueCourseBItem, orphanItem],
             selectedItemID: uniqueItem.id,
             courses: [courseA, courseB],
             courseItemMemberships: [
                 CourseItemMembership(courseID: courseA.id, itemID: uniqueItem.id),
                 CourseItemMembership(courseID: courseA.id, itemID: sharedItem.id),
                 CourseItemMembership(courseID: courseB.id, itemID: sharedItem.id),
+                CourseItemMembership(courseID: courseB.id, itemID: uniqueCourseBItem.id),
             ],
             activeCourseID: courseB.id,
-            learningMemoryEntries: [sharedLearningMemory],
-            studySessions: [uniqueSession, sharedSession, orphanSession, blankSession],
+            learningMemoryEntries: [
+                courseLearningMemory,
+                courseBLearningMemory,
+                ambiguousLearningMemory,
+                orphanLearningMemory,
+            ],
+            learningMemoryRevision: 7,
+            studySessions: [
+                uniqueSession,
+                courseBSession,
+                sharedSession,
+                orphanSession,
+                blankSession,
+            ],
             activeStudySessionID: uniqueSession.id
         )
         let encoded = try JSONEncoder().encode(snapshot)
@@ -177,15 +370,44 @@ enum ImportedIdentitySelfCheck {
         try check(migratedUnique.updatedAt == updatedAt, "旧 Chat 迁移改变了更新时间")
         try check(
             store.sessionsTouchingCourse(courseA.id).map(\.id) == [uniqueSession.id]
-                && store.sessionsTouchingCourse(courseB.id).isEmpty
+                && store.sessionsTouchingCourse(courseB.id).map(\.id) == [courseBSession.id]
                 && store.primaryCourseID(for: migratedShared) == nil,
             "课程记录仍靠接触文稿或活动课程猜 Chat 归属"
+        )
+        let courseMemories = store.learningMemoryEntries(in: .course(courseA.id))
+        let courseBMemories = store.learningMemoryEntries(in: .course(courseB.id))
+        let globalMemories = store.learningMemoryEntries(in: .global)
+        try check(
+            courseMemories.map(\.id) == [courseLearningMemory.id],
+            "唯一课程旧记忆没有迁入来源 Chat 的课程"
+        )
+        try check(
+            courseBMemories.map(\.id) == [courseBLearningMemory.id],
+            "课程 B 旧记忆没有保持独立作用域"
+        )
+        try check(
+            Set(globalMemories.map(\.id)) == Set([
+                ambiguousLearningMemory.id,
+                orphanLearningMemory.id,
+            ]),
+            "共享、待归类或孤儿旧记忆没有保留为全局记忆"
+        )
+        try check(
+            Set((courseMemories + courseBMemories + globalMemories).map(\.id)).count == 4
+                && (courseMemories + courseBMemories + globalMemories).allSatisfy {
+                    $0.revisions?.first?.actor == .migration
+                },
+            "旧记忆迁移复制了稳定 ID，或没有留下迁移历史"
         )
         try check(store.flushPendingWorkspaceSave(), "旧 Chat 迁移结果无法保存")
         let migratedSnapshot = try fixture.readSnapshot()
         try check(
-            migratedSnapshot.studySessionScopeMigrationVersion == 1,
-            "旧 Chat 迁移没有写入可重复识别的版本"
+            migratedSnapshot.studySessionScopeMigrationVersion == 1
+                && migratedSnapshot.learningMemoryScopeMigrationVersion == 1
+                && migratedSnapshot.learningMemoryStates?.count == 3
+                && migratedSnapshot.learningMemoryEntries == nil
+                && migratedSnapshot.learningMemoryRevision == nil,
+            "旧 Chat 或旧记忆迁移没有写入可重复识别的新格式"
         )
 
         let reopened = WorkspaceStore(
@@ -195,6 +417,36 @@ enum ImportedIdentitySelfCheck {
         try check(
             reopened.studySessions == store.studySessions,
             "重开工作区后旧 Chat 迁移结果发生二次漂移"
+        )
+        try check(
+            reopened.learningMemoryStates == store.learningMemoryStates,
+            "重开工作区后旧记忆迁移发生重复或作用域漂移"
+        )
+        let globalRevisionBeforeCourseEdit = reopened.learningMemoryRevision(in: .global)
+        let courseBRevisionBeforeCourseEdit = reopened.learningMemoryRevision(in: .course(courseB.id))
+        let courseRevisionBeforeEdit = reopened.learningMemoryRevision(in: .course(courseA.id))
+        try check(
+            reopened.updateLearningMemory(
+                courseLearningMemory.id,
+                in: .course(courseA.id),
+                kind: .understood,
+                text: "已经完成课程 A 的第一轮复习"
+            ),
+            "用户无法修改课程记忆"
+        )
+        let editedCourseMemory = try require(
+            reopened.learningMemoryEntries(in: .course(courseA.id))
+                .first { $0.id == courseLearningMemory.id },
+            "用户修改课程记忆后稳定 ID 丢失"
+        )
+        try check(
+            editedCourseMemory.kind == .understood
+                && editedCourseMemory.text == "已经完成课程 A 的第一轮复习"
+                && editedCourseMemory.revisions?.last?.actor == .user
+                && reopened.learningMemoryRevision(in: .course(courseA.id)) == courseRevisionBeforeEdit + 1
+                && reopened.learningMemoryRevision(in: .course(courseB.id)) == courseBRevisionBeforeCourseEdit
+                && reopened.learningMemoryRevision(in: .global) == globalRevisionBeforeCourseEdit,
+            "用户修改没有追加历史，或错误推进了其他作用域修订号"
         )
         try check(
             reopened.activateStudySession(
@@ -247,7 +499,8 @@ enum ImportedIdentitySelfCheck {
         }
         reopened.deleteStudySession(uniqueSession.id)
         try check(
-            reopened.learningMemoryEntries.contains { $0.id == sharedLearningMemory.id },
+            reopened.learningMemoryEntries(in: .course(courseA.id))
+                .contains { $0.id == courseLearningMemory.id },
             "删除 Chat 时误删了课程共享的学习记忆"
         )
     }
