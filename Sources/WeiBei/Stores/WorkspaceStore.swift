@@ -23426,8 +23426,9 @@ final class WorkspaceStore: ObservableObject {
                     courseID: courseID,
                     itemID: portable.itemID,
                     courseRelativePath: portable.courseRelativePath,
-                    entryIdentity: previousMembership?.entryIdentity
-                        ?? CourseProjectFileWorker.identity(at: candidate),
+                    entryIdentity:
+                        CourseProjectFileWorker.identity(at: candidate)
+                            ?? previousMembership?.entryIdentity,
                     documentIdentifier:
                         previousMembership?.documentIdentifier,
                     createdAt: portable.membershipCreatedAt

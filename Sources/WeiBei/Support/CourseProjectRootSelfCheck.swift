@@ -961,6 +961,8 @@ enum CourseProjectRootSelfCheck {
                         == reboundMaterialURL.flatMap {
                             CourseProjectFileWorker.identity(at: $0)
                         }
+                    && reboundMembership.entryIdentity
+                        == reboundMaterial.importedFileIdentity
                     && store.studySessions.contains {
                         $0.id == learningFixture.sessionID
                     }
