@@ -891,8 +891,10 @@ verify_chat_action_cards() {
         && /usr/bin/grep -q '^note_undone=true$' "$report_file" \
         && /usr/bin/grep -q '^relation_created=true$' "$report_file" \
         && /usr/bin/grep -q '^relation_undone=true$' "$report_file" \
+        && /usr/bin/grep -q '^relation_conflict_isolated=true$' "$report_file" \
         && /usr/bin/grep -q '^conflict_isolated=true$' "$report_file" \
         && /usr/bin/grep -q '^retry_succeeded=true$' "$report_file" \
+        && /usr/bin/grep -q '^retry_conflict_safe=true$' "$report_file" \
         && /usr/bin/grep -q '^body_preserved=true$' "$report_file" \
         && /usr/bin/grep -q '^rich_answer_preserved=true$' "$report_file" \
         && /usr/bin/grep -q '^reopened=true$' "$report_file" \

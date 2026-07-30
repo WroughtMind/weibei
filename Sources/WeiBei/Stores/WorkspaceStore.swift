@@ -499,6 +499,7 @@ final class WorkspaceStore: ObservableObject {
     private var courseNoteLoadTasksByItemID: [String: Task<Void, Never>] = [:]
     private var courseNoteLoadGenerationByItemID: [String: UInt64] = [:]
     private var courseNoteWritesInFlight = Set<String>()
+    private var courseNoteWriteTasksByItemID: [String: Task<Void, Never>] = [:]
     private var lastCourseNoteReadRanOnMainThread: Bool?
     private var lastCourseNoteWriteRanOnMainThread: Bool?
     private let workspaceDirectory: URL
@@ -962,6 +963,7 @@ final class WorkspaceStore: ObservableObject {
     deinit {
         courseReconciliationTask?.cancel()
         courseNoteLoadTasksByItemID.values.forEach { $0.cancel() }
+        courseNoteWriteTasksByItemID.values.forEach { $0.cancel() }
         for url in activeCourseSecurityScopes.values {
             courseSecurityScopeStopper(url)
         }
@@ -7089,30 +7091,6 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
-    private var lastPendingNoteAction: AgentReplyAction? {
-        lastUsableAgentAnswer?.actions.last {
-            $0.kind == .writeNote && $0.state == .pending
-        }
-    }
-
-    private func setLastPendingNoteActionState(
-        _ state: AgentReplyActionState,
-        failureMessage: String? = nil
-    ) {
-        guard let answer = lastUsableAgentAnswer,
-              let action = lastPendingNoteAction,
-              let chatID = answer.origin?.chatID ?? activeStudySessionID else { return }
-        _ = updateAgentMessage(answer.id, in: chatID) {
-            guard let index = $0.actions.firstIndex(where: { $0.id == action.id }) else { return }
-            $0.actions[index].state = state
-            $0.actions[index].failureMessage = failureMessage
-            $0.actions[index].updatedAt = Date()
-        }
-        if state != .pending {
-            latestAgentNoteProposal = nil
-        }
-    }
-
     private var agentReplyActionIDsInFlight = Set<UUID>()
 
     private func agentReplyAction(
@@ -7174,7 +7152,18 @@ final class WorkspaceStore: ObservableObject {
             $0.state = .cancelled
             $0.failureMessage = nil
         }
-        _ = flushPendingWorkspaceSave()
+        guard flushPendingWorkspaceSave() else {
+            failAgentReplyAction(
+                messageID: messageID,
+                actionID: actionID,
+                chatID: snapshot.chatID,
+                message: workspaceSaveError ?? ui(
+                    "取消状态没有成功保存，可以重试。",
+                    "The cancellation was not saved. You can retry."
+                )
+            )
+            return
+        }
     }
 
     func confirmAgentReplyAction(
@@ -7249,6 +7238,19 @@ final class WorkspaceStore: ObservableObject {
             if action.resultContentDigest == currentDigest {
                 result = current
             } else {
+                if action.resultContentDigest != nil,
+                   action.baselineContentDigest != currentDigest {
+                    failAgentReplyAction(
+                        messageID: messageID,
+                        actionID: action.id,
+                        chatID: snapshot.chatID,
+                        message: ui(
+                            "笔记在这次动作后又发生了变化。魏碑没有重复写入；请先核对当前内容。",
+                            "The note changed after this action. WeiBei did not write it again."
+                        )
+                    )
+                    return
+                }
                 guard action.state == .failed
                     || action.baselineContentDigest == nil
                     || action.baselineContentDigest == currentDigest else {
@@ -7301,7 +7303,18 @@ final class WorkspaceStore: ObservableObject {
                 $0.state = .executed
                 $0.failureMessage = nil
             }
-            _ = flushPendingWorkspaceSave()
+            guard flushPendingWorkspaceSave() else {
+                failAgentReplyAction(
+                    messageID: messageID,
+                    actionID: action.id,
+                    chatID: snapshot.chatID,
+                    message: workspaceSaveError ?? ui(
+                        "笔记已写入，但动作状态没有成功保存；可以安全重试。",
+                        "The note was written, but the action status was not saved."
+                    )
+                )
+                return
+            }
         } catch {
             failAgentReplyAction(
                 messageID: messageID,
@@ -7331,7 +7344,31 @@ final class WorkspaceStore: ObservableObject {
         }
         do {
             let current = try await agentActionNoteMarkdown(target)
-            guard Self.noteContentDigest(Data(current.utf8)) == resultDigest,
+            let currentDigest = Self.noteContentDigest(Data(current.utf8))
+            if currentDigest == action.baselineContentDigest {
+                updateAgentReplyAction(
+                    messageID: messageID,
+                    actionID: action.id,
+                    chatID: snapshot.chatID
+                ) {
+                    $0.state = .cancelled
+                    $0.failureMessage = nil
+                }
+                guard flushPendingWorkspaceSave() else {
+                    failAgentReplyAction(
+                        messageID: messageID,
+                        actionID: action.id,
+                        chatID: snapshot.chatID,
+                        message: workspaceSaveError ?? ui(
+                            "笔记已恢复，但撤销状态没有成功保存；可以安全重试。",
+                            "The note was restored, but the undo status was not saved."
+                        )
+                    )
+                    return
+                }
+                return
+            }
+            guard currentDigest == resultDigest,
                   let restored = removingAgentNoteProposal(
                       proposal,
                       from: current,
@@ -7361,7 +7398,18 @@ final class WorkspaceStore: ObservableObject {
                 $0.state = .cancelled
                 $0.failureMessage = nil
             }
-            _ = flushPendingWorkspaceSave()
+            guard flushPendingWorkspaceSave() else {
+                failAgentReplyAction(
+                    messageID: messageID,
+                    actionID: action.id,
+                    chatID: snapshot.chatID,
+                    message: workspaceSaveError ?? ui(
+                        "笔记已恢复，但撤销状态没有成功保存；可以安全重试。",
+                        "The note was restored, but the undo status was not saved."
+                    )
+                )
+                return
+            }
         } catch {
             failAgentReplyAction(
                 messageID: messageID,
@@ -7404,19 +7452,42 @@ final class WorkspaceStore: ObservableObject {
             )
             return
         }
-        if noteSourceLinks.contains(where: {
+        if let existing = noteSourceLinks.first(where: {
             $0.noteItemID == note.id && $0.sourceItemID == source.id
         }) {
+            guard existing.id == action.createdRelationID else {
+                failAgentReplyAction(
+                    messageID: messageID,
+                    actionID: action.id,
+                    chatID: snapshot.chatID,
+                    message: ui(
+                        "这份笔记和文稿已经有关联，魏碑没有重复建立。",
+                        "This note and material are already related."
+                    )
+                )
+                return
+            }
             updateAgentReplyAction(
                 messageID: messageID,
                 actionID: action.id,
                 chatID: snapshot.chatID
             ) {
                 $0.state = .executed
-                $0.createdRelationID = nil
+                $0.createdRelationID = existing.id
                 $0.failureMessage = nil
             }
-            _ = flushPendingWorkspaceSave()
+            guard flushPendingWorkspaceSave() else {
+                failAgentReplyAction(
+                    messageID: messageID,
+                    actionID: action.id,
+                    chatID: snapshot.chatID,
+                    message: workspaceSaveError ?? ui(
+                        "关系状态没有成功保存，可以重试。",
+                        "The relation status was not saved. You can retry."
+                    )
+                )
+                return
+            }
             return
         }
 
@@ -7437,6 +7508,13 @@ final class WorkspaceStore: ObservableObject {
         }
         guard flushPendingWorkspaceSave() else {
             noteSourceLinks.removeAll { $0.id == relation.id }
+            updateAgentReplyAction(
+                messageID: messageID,
+                actionID: action.id,
+                chatID: snapshot.chatID
+            ) {
+                $0.createdRelationID = nil
+            }
             failAgentReplyAction(
                 messageID: messageID,
                 actionID: action.id,
@@ -7582,9 +7660,8 @@ final class WorkspaceStore: ObservableObject {
         updateNote(markdown, for: target.id)
         flushPendingNotePersistence()
         if case .courseOwned = target.storage {
-            for _ in 0..<200 {
-                if !courseNoteWritesInFlight.contains(target.id) { break }
-                try? await Task.sleep(nanoseconds: 25_000_000)
+            while let task = courseNoteWriteTasksByItemID[target.id] {
+                await task.value
             }
         }
         let notePersisted: Bool
@@ -7971,12 +8048,6 @@ final class WorkspaceStore: ObservableObject {
 
     var canApplyAgentAnswer: Bool {
         lastUsableAgentAnswer != nil
-    }
-
-    var agentWriteActionTitle: String {
-        lastPendingNoteAction == nil
-            ? ui("写入回答", "Write Answer")
-            : ui("写入建议", "Write Proposal")
     }
 
     var lastUsableAgentAnswerID: UUID? {
@@ -12915,7 +12986,6 @@ final class WorkspaceStore: ObservableObject {
         guard let content = lastAgentAnswerContentForCurrentNote() else { return }
         let block = "\n\n\(noteBlockForAgentAnswer(content))"
         updateNote(noteText + block)
-        setLastPendingNoteActionState(.executed)
         focus(.notes)
     }
 
@@ -14791,6 +14861,13 @@ final class WorkspaceStore: ObservableObject {
             contextRevision: "action-verification",
             baselineContentDigest: Self.noteContentDigest(Data(originalNote.utf8))
         )
+        let relationConflictAction = AgentReplyAction(
+            id: UUID(uuidString: "55555555-5555-5555-5555-555555555563")!,
+            kind: .createRelation,
+            targetItemID: note.id,
+            sourceItemID: material.id,
+            contextRevision: "action-verification"
+        )
         let reply = AgentMessage(
             id: UUID(uuidString: "55555555-5555-5555-5555-555555555561")!,
             role: .assistant,
@@ -14807,6 +14884,7 @@ final class WorkspaceStore: ObservableObject {
                 conflictAction,
                 pendingAction,
                 retryAction,
+                relationConflictAction,
             ],
             origin: AgentReplyOrigin(
                 requestID: UUID(),
@@ -14841,15 +14919,6 @@ final class WorkspaceStore: ObservableObject {
             $0.id == writeAction.id
         })?.state
         let writtenDiskDigest = Self.noteContentDigest(at: noteURL)
-        let writtenLoadedDigest = loadedCourseNoteTextByItemID[note.id].map {
-            Self.noteContentDigest(Data($0.utf8))
-        }
-        let writtenNoteTextDigest = Self.noteContentDigest(Data(noteText.utf8))
-        let writtenFailure = messages.first?.actions.first(where: {
-            $0.id == writeAction.id
-        })?.failureMessage
-        let writtenNoteFileError = noteFileError
-        let writtenWorkspaceSaveError = workspaceSaveError
         let written = writtenState == .executed
             && writtenDiskDigest == messages.first?.actions.first(where: {
                 $0.id == writeAction.id
@@ -14873,6 +14942,22 @@ final class WorkspaceStore: ObservableObject {
         let relationUndone = !noteSourceLinks.contains {
             $0.noteItemID == note.id && $0.sourceItemID == material.id
         }
+        let preexistingRelation = NoteSourceLink(
+            noteItemID: note.id,
+            sourceItemID: material.id
+        )
+        noteSourceLinks.append(preexistingRelation)
+        _ = flushPendingWorkspaceSave()
+        await confirmAgentReplyAction(
+            messageID: reply.id,
+            actionID: relationConflictAction.id
+        )
+        let relationConflictIsolated = messages.first?.actions.first(where: {
+            $0.id == relationConflictAction.id
+        })?.state == .failed
+            && noteSourceLinks.contains(where: { $0.id == preexistingRelation.id })
+        noteSourceLinks.removeAll { $0.id == preexistingRelation.id }
+        _ = flushPendingWorkspaceSave()
 
         let changedNote = "# 利率复习笔记\n\n用户刚刚补充了新内容。\n"
         let currentNote = allItems.first(where: { $0.id == note.id }) ?? note
@@ -14888,6 +14973,7 @@ final class WorkspaceStore: ObservableObject {
         let conflictIsolated = messages.first?.actions.first(where: {
             $0.id == conflictAction.id
         })?.state == .failed
+            && changedNoteSaved
             && (try? String(contentsOf: noteURL, encoding: .utf8)) == changedNote
             && messages.first?.text == reply.text
             && messages.first?.richAnswer != nil
@@ -14904,7 +14990,23 @@ final class WorkspaceStore: ObservableObject {
             })?.state == .executed
             && (try? String(contentsOf: noteURL, encoding: .utf8))?
                 .contains("用户确认后追加到变化后的笔记") == true
+        let retryWrittenText = (try? String(contentsOf: noteURL, encoding: .utf8)) ?? ""
+        let postWriteEdit = "\(retryWrittenText)\n\n用户随后补充的内容。\n"
+        let retryTarget = allItems.first(where: { $0.id == note.id }) ?? note
+        _ = await persistAgentActionNote(
+            postWriteEdit,
+            target: retryTarget,
+            resultDigest: Self.noteContentDigest(Data(postWriteEdit.utf8))
+        )
         await undoAgentReplyAction(messageID: reply.id, actionID: retryAction.id)
+        await confirmAgentReplyAction(messageID: reply.id, actionID: retryAction.id)
+        let retryConflictSafe = messages.first?.actions.first(where: {
+            $0.id == retryAction.id
+        })?.state == .failed
+            && (try? String(contentsOf: noteURL, encoding: .utf8)) == postWriteEdit
+            && postWriteEdit.components(
+                separatedBy: "用户确认后追加到变化后的笔记"
+            ).count == 2
 
         let restoredTarget = allItems.first(where: { $0.id == note.id }) ?? note
         _ = await persistAgentActionNote(
@@ -14932,14 +15034,17 @@ final class WorkspaceStore: ObservableObject {
             && reopenedStates[relationAction.id] == .cancelled
             && reopenedStates[conflictAction.id] == .failed
             && reopenedStates[pendingAction.id] == .pending
-            && reopenedStates[retryAction.id] == .cancelled
+            && reopenedStates[retryAction.id] == .failed
+            && reopenedStates[relationConflictAction.id] == .failed
 
         let passed = written
             && noteUndone
             && related
             && relationUndone
+            && relationConflictIsolated
             && conflictIsolated
             && retrySucceeded
+            && retryConflictSafe
             && reopenedStable
         let report = """
         result=\(passed ? "pass" : "fail")
@@ -14947,22 +15052,14 @@ final class WorkspaceStore: ObservableObject {
         note_undone=\(noteUndone)
         relation_created=\(related)
         relation_undone=\(relationUndone)
+        relation_conflict_isolated=\(relationConflictIsolated)
         conflict_isolated=\(conflictIsolated)
         retry_succeeded=\(retrySucceeded)
+        retry_conflict_safe=\(retryConflictSafe)
         body_preserved=\(messages.first?.text == reply.text)
         rich_answer_preserved=\(messages.first?.richAnswer != nil)
         reopened=\(reopenedStable)
         pending_card=\(reopenedStates[pendingAction.id] == .pending)
-        written_state=\(writtenState?.rawValue ?? "missing")
-        written_disk_digest=\(writtenDiskDigest ?? "missing")
-        written_loaded_digest=\(writtenLoadedDigest ?? "missing")
-        written_note_text_digest=\(writtenNoteTextDigest)
-        written_failure=\(writtenFailure ?? "missing")
-        written_note_file_error=\(writtenNoteFileError ?? "missing")
-        written_workspace_error=\(writtenWorkspaceSaveError ?? "missing")
-        undo_state=\(undoState?.rawValue ?? "missing")
-        undo_disk_digest=\(undoDiskDigest ?? "missing")
-        changed_note_saved=\(changedNoteSaved)
         """
         let reportURL = storageURL.deletingLastPathComponent()
             .appendingPathComponent("chat-action-cards-report.txt")
@@ -15316,17 +15413,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func lastAgentAnswerContentForCurrentNote() -> String? {
-        guard let answer = lastUsableAgentAnswer else { return nil }
-        guard let action = lastPendingNoteAction else { return answer.text }
-        if let targetItemID = action.targetItemID,
-           targetItemID != activeNoteItemID {
-            workspaceSaveError = ui(
-                "这条写入建议属于另一份笔记。请先打开原笔记再写入。",
-                "This proposal belongs to another note. Open that note before writing it."
-            )
-            return nil
-        }
-        return action.proposedMarkdown ?? answer.text
+        lastUsableAgentAnswer?.text
     }
 
     private func noteBlockForAgentAnswer(_ answer: String) -> String {
@@ -15818,7 +15905,8 @@ final class WorkspaceStore: ObservableObject {
                 lastAgentReplyContextRevision = requestWorkspaceRevision
             }
             var actions: [AgentReplyAction] = []
-            if let proposal = reply.noteProposal {
+            if let proposal = reply.noteProposal,
+               let sentNoteItemID {
                 actions.append(
                     AgentReplyAction(
                         kind: .writeNote,
@@ -18356,7 +18444,7 @@ final class WorkspaceStore: ObservableObject {
         courseNoteLoadTasksByItemID[itemID] = nil
         courseNoteWritesInFlight.insert(itemID)
         let expectedDigest = pendingWrite.baselineContentDigest
-        Task { @MainActor [weak self] in
+        let task = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
                 let transaction = try await beginCourseMarkdownWrite(
@@ -18372,7 +18460,6 @@ final class WorkspaceStore: ObservableObject {
                 let previousLoadedNotes = loadedCourseNoteTextByItemID
                 let previousNotes = notesByItemID
                 let previousPendingWrites = pendingNoteWritesByItemID
-                courseNoteWritesInFlight.remove(itemID)
                 lastCourseNoteWriteRanOnMainThread = result.ranOnMainThread
                 applyCourseMarkdownWriteResult(
                     result,
@@ -18404,11 +18491,14 @@ final class WorkspaceStore: ObservableObject {
                     throw CourseOwnedFileError.workspaceSaveFailed
                 }
                 await finishCourseMarkdownWrite(transaction)
+                courseNoteWritesInFlight.remove(itemID)
+                courseNoteWriteTasksByItemID[itemID] = nil
                 if pendingNoteWritesByItemID[itemID] != nil {
                     startCourseOwnedNoteWriteIfNeeded(itemID: itemID)
                 }
             } catch CourseProjectFileWorkerError.contentConflict {
                 courseNoteWritesInFlight.remove(itemID)
+                courseNoteWriteTasksByItemID[itemID] = nil
                 noteFileError = ui(
                     "检测到笔记冲突：没有覆盖外部文件，魏碑草稿也已保留。请对照两份内容后再处理。",
                     "A note conflict was detected. The external file was not overwritten, and the WeiBei draft was retained for review."
@@ -18417,6 +18507,7 @@ final class WorkspaceStore: ObservableObject {
                 save()
             } catch {
                 courseNoteWritesInFlight.remove(itemID)
+                courseNoteWriteTasksByItemID[itemID] = nil
                 noteFileError = ui(
                     "无法写回原 Markdown：\(url.lastPathComponent)",
                     "Could not write original Markdown: \(url.lastPathComponent)"
@@ -18424,6 +18515,7 @@ final class WorkspaceStore: ObservableObject {
                 save()
             }
         }
+        courseNoteWriteTasksByItemID[itemID] = task
     }
 
     private func applyCourseMarkdownWriteResult(

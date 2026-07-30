@@ -3870,7 +3870,10 @@ private struct AgentReplyActionCard: View {
             }
         }
         .padding(12)
-        .frame(maxWidth: 600, alignment: .leading)
+        .frame(
+            maxWidth: action.state == .pending || action.state == .failed ? 600 : nil,
+            alignment: .leading
+        )
         .background {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(WeiBeiTheme.paperRaised.opacity(0.82))
@@ -3906,20 +3909,21 @@ private struct AgentReplyActionCard: View {
             Text(store.ui("建议建立关系：", "Suggested relation:"))
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(WeiBeiTheme.ink)
-            HStack(spacing: 8) {
-                actionItemLabel(
-                    store.agentReplyActionTargetTitle(action)
-                        ?? store.ui("笔记已不存在", "Missing note"),
-                    systemImage: "note.text"
-                )
-                Image(systemName: "arrow.left.and.right")
-                    .font(.caption)
-                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
-                actionItemLabel(
-                    store.agentReplyActionSourceTitle(action)
-                        ?? store.ui("文稿已不存在", "Missing material"),
-                    systemImage: "doc.text"
-                )
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    relationNoteLabel
+                    Image(systemName: "arrow.left.and.right")
+                        .font(.caption)
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                    relationSourceLabel
+                }
+                VStack(alignment: .leading, spacing: 6) {
+                    relationNoteLabel
+                    Image(systemName: "arrow.up.and.down")
+                        .font(.caption)
+                        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                    relationSourceLabel
+                }
             }
         }
 
@@ -3945,9 +3949,11 @@ private struct AgentReplyActionCard: View {
 
     @ViewBuilder
     private var actionButtons: some View {
-        Button(action.kind == .writeNote
-            ? store.ui("写入笔记", "Write Note")
-            : store.ui("建立关系", "Create Relation")) {
+        Button(action.state == .failed
+            ? store.ui("重试", "Retry")
+            : action.kind == .writeNote
+                ? store.ui("写入笔记", "Write Note")
+                : store.ui("建立关系", "Create Relation")) {
             performConfirmation()
         }
         .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
@@ -3976,12 +3982,19 @@ private struct AgentReplyActionCard: View {
         HStack(spacing: 8) {
             Label(
                 action.kind == .writeNote
-                    ? store.ui("已写入笔记", "Written to note")
-                    : store.ui("已建立关系", "Relation created"),
+                    ? store.ui(
+                        "已写入 · \(actionIdentityTitle)",
+                        "Written · \(actionIdentityTitle)"
+                    )
+                    : store.ui(
+                        "已建立关系 · \(actionIdentityTitle)",
+                        "Relation created · \(actionIdentityTitle)"
+                    ),
                 systemImage: "checkmark.circle"
             )
             .font(.caption)
             .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .lineLimit(1)
 
             Spacer(minLength: 8)
 
@@ -3998,12 +4011,47 @@ private struct AgentReplyActionCard: View {
     private var cancelledContent: some View {
         Label(
             action.resultContentDigest != nil || action.createdRelationID != nil
-                ? store.ui("已撤销", "Undone")
-                : store.ui("已取消", "Cancelled"),
+                ? store.ui(
+                    "已撤销\(action.kind == .writeNote ? "写入" : "关系") · \(actionIdentityTitle)",
+                    "Undone \(action.kind == .writeNote ? "write" : "relation") · \(actionIdentityTitle)"
+                )
+                : store.ui(
+                    "已取消\(action.kind == .writeNote ? "写入" : "关系") · \(actionIdentityTitle)",
+                    "Cancelled \(action.kind == .writeNote ? "write" : "relation") · \(actionIdentityTitle)"
+                ),
             systemImage: "minus.circle"
         )
         .font(.caption)
         .foregroundStyle(WeiBeiTheme.tertiaryInk)
+        .lineLimit(1)
+    }
+
+    private var relationNoteLabel: some View {
+        actionItemLabel(
+            store.agentReplyActionTargetTitle(action)
+                ?? store.ui("笔记已不存在", "Missing note"),
+            systemImage: "note.text"
+        )
+    }
+
+    private var relationSourceLabel: some View {
+        actionItemLabel(
+            store.agentReplyActionSourceTitle(action)
+                ?? store.ui("文稿已不存在", "Missing material"),
+            systemImage: "doc.text"
+        )
+    }
+
+    private var actionIdentityTitle: String {
+        if action.kind == .writeNote {
+            return store.agentReplyActionTargetTitle(action)
+                ?? store.ui("目标笔记", "target note")
+        }
+        let note = store.agentReplyActionTargetTitle(action)
+            ?? store.ui("笔记", "note")
+        let source = store.agentReplyActionSourceTitle(action)
+            ?? store.ui("文稿", "material")
+        return "\(note) ↔ \(source)"
     }
 
     private func actionItemLabel(_ title: String, systemImage: String) -> some View {
