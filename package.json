@@ -2,7 +2,7 @@
   "name": "weibei",
   "version": "0.1.0",
   "private": true,
-  "license": "AGPL-3.0-only",
+  "license": "MIT",
   "repository": "https://github.com/weibei-app/weibei",
   "scripts": {
     "build:editor": "esbuild Sources/WeiBei/WebEditor/src/editor.js --bundle --format=iife --outfile=Sources/WeiBei/Resources/Editor/editor.js --minify --loader:.woff=file --loader:.woff2=file --loader:.ttf=file --asset-names=fonts/[name]"

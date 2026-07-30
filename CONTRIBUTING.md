@@ -21,16 +21,9 @@ Thank you for helping improve WeiBei.
 
 ## Contribution license
 
-Contributions are accepted under the Contributor License Agreement in
-[`CLA.md`](CLA.md). Add this exact statement to your first pull request:
-
-> I have read and agree to the WeiBei Contributor License Agreement.
-
-This keeps the public project under `AGPL-3.0-only` while allowing the
-maintainer to offer separate commercial terms without taking ownership of a
-contributor's work.
-
-Pull requests that do not include this agreement will not be merged.
+Unless stated otherwise, contributions are accepted under the MIT License used
+by this repository. By submitting a contribution, you confirm that you have the
+right to provide it under those terms.
 
 ## Product principles
 

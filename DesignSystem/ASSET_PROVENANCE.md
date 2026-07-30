@@ -9,12 +9,15 @@
 
 ## 字体
 
-`assets/fonts/WeiBeiStele.ttf` 与 `WeiBeiSteleMono.ttf` 直接同步自项目 GitHub 仓库，是 WeiBei 的自有品牌资产。它们用于生成本设计包中的英文品牌字样。字体不因随代码仓库出现而自动开放第三方再分发；对外发布 press kit 时由项目所有者明确许可范围。
+`assets/fonts/WeiBeiStele.ttf` 与 `WeiBeiSteleMono.ttf` 直接同步自项目字体工程，
+是 WeiBei 的自有英文字体，并按 SIL Open Font License 1.1 开放。它们可以使用、
+嵌入、修改和再分发；修改版不得继续使用保留字体名 `WeiBeiStele` 或
+`WeiBeiSteleMono`，除非得到书面许可。完整条款见同目录 `OFL.txt`。
 
 字体文件 SHA-256：
 
-- `WeiBeiStele.ttf`：`51977deb083107d0659685cef038922928d7ff1571a3524c7dc1030e7fcddeb8`
-- `WeiBeiSteleMono.ttf`：`8547691d939e8cf631a5540e834b0c7686d3acaa0775bf7b57c7f6919a06d3b3`
+- `WeiBeiStele.ttf`：`5ae600f7a1a367c637d3bfbce482107216c3c4361e3b5a6ca054926cb1f24c87`
+- `WeiBeiSteleMono.ttf`：`a7697bf6e2816d804cfbddf0f4822a37c738f4a29732f32d3730d6bf6339fbce`
 
 ## 商标与发布
 

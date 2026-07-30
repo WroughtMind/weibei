@@ -2,7 +2,7 @@
   "name": "weibei-rich-answer-web-runtime-throwaway",
   "version": "0.0.1",
   "private": true,
-  "license": "AGPL-3.0-only",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
