@@ -285,6 +285,14 @@ private struct LearningMemoryEditSheet: View {
                         .stroke(WeiBeiTheme.hairline, lineWidth: 1)
                 }
 
+            Text(store.ui(
+                "\(text.count) / 500 字",
+                "\(text.count) / 500 characters"
+            ))
+            .font(.system(size: 10.5))
+            .foregroundStyle(text.count > 500 ? WeiBeiTheme.cinnabar : WeiBeiTheme.tertiaryInk)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+
             HStack {
                 Spacer()
                 Button(store.ui("取消", "Cancel")) {
@@ -296,7 +304,10 @@ private struct LearningMemoryEditSheet: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(
+                    text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        || text.trimmingCharacters(in: .whitespacesAndNewlines).count > 500
+                )
             }
         }
         .padding(22)
@@ -314,6 +325,18 @@ struct GlobalLearningMemorySheet: View {
                 Text(store.ui("全局记忆", "Global Memory"))
                     .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 19, weight: .semibold))
                 Spacer()
+                if let saveError = store.workspaceSaveError {
+                    Button(action: { _ = store.retryWorkspaceSave() }) {
+                        Label(
+                            store.ui("保存失败，点此重试", "Save failed, retry"),
+                            systemImage: "exclamationmark.triangle"
+                        )
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(WeiBeiTheme.cinnabar)
+                    }
+                    .buttonStyle(.plain)
+                    .help(saveError)
+                }
                 Button(store.ui("完成", "Done")) {
                     dismiss()
                 }

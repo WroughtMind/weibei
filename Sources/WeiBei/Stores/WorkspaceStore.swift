@@ -12921,6 +12921,7 @@ final class WorkspaceStore: ObservableObject {
     ) -> Bool {
         let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty,
+              text.count <= 500,
               let stateIndex = learningMemoryStateIndex(for: scope, createIfMissing: false),
               let entryIndex = learningMemoryStates[stateIndex].entries.firstIndex(where: {
                   $0.id == memoryID
@@ -12928,12 +12929,13 @@ final class WorkspaceStore: ObservableObject {
             return false
         }
         var entry = learningMemoryStates[stateIndex].entries[entryIndex]
-        let boundedText = String(text.prefix(500))
-        guard entry.kind != kind || entry.text != boundedText else { return true }
+        guard entry.kind != kind || entry.text != text else {
+            return workspaceSaveError == nil || retryWorkspaceSave()
+        }
         let now = Date()
         let revision = learningMemoryStates[stateIndex].revision &+ 1
         entry.kind = kind
-        entry.text = boundedText
+        entry.text = text
         entry.evidence = "[用户：界面修改]"
         entry.origin = .userStatement
         entry.sessionID = nil

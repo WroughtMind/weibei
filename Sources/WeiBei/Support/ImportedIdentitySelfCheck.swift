@@ -12,6 +12,7 @@ enum ImportedIdentitySelfCheck {
         try offlineLegacyPathMigratesWhenItReturns()
         try legacyChatScopesMigrateOnceAndPersist()
         try failedLearningMemoryMigrationKeepsLegacySnapshotRecoverable()
+        try learningMemoryEditsRejectTruncationAndRetrySave()
         try sameVolumeMoveKeepsIdentityRelationsNavigationAndIndex()
         try temporarilyUnavailableNoteRetainsLatestEdit()
         try offlineLaunchNoteRetainsEditWhenFileReturns()
@@ -84,6 +85,87 @@ enum ImportedIdentitySelfCheck {
                 && recoveredStore.learningMemoryEntries(in: .course(course.id)).map(\.id) == [memory.id]
                 && recoveredStore.learningMemoryRevision(in: .course(course.id)) == 1,
             "保存恢复后旧记忆无法安全重试迁移"
+        )
+    }
+
+    @MainActor
+    private static func learningMemoryEditsRejectTruncationAndRetrySave() throws {
+        let fixture = try WorkspaceFixture(name: "learning-memory-edit-save")
+        defer { fixture.remove() }
+
+        let memory = LearningMemoryEntry(
+            kind: .confusion,
+            text: "旧内容",
+            evidence: "旧工作区",
+            origin: .agentInference
+        )
+        try fixture.write(
+            PersistedWorkspace(
+                learningMemoryStates: [
+                    ScopedLearningMemoryState(
+                        scope: .global,
+                        revision: 1,
+                        entries: [memory]
+                    ),
+                ],
+                learningMemoryScopeMigrationVersion: 1
+            )
+        )
+
+        var shouldFail = true
+        let store = WorkspaceStore(
+            workspaceDirectory: fixture.workspaceDirectory,
+            workspaceSnapshotWriter: { data, url in
+                if shouldFail {
+                    throw CheckError.failed("预期中的学习记忆保存失败")
+                }
+                try data.write(to: url, options: [.atomic])
+            },
+            selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+        )
+        let overlong = String(repeating: "字", count: 501)
+        try check(
+            !store.updateLearningMemory(
+                memory.id,
+                in: .global,
+                kind: .progress,
+                text: overlong
+            )
+                && store.learningMemoryEntries(in: .global).first?.text == memory.text,
+            "用户学习记忆超过 500 字时被静默截断"
+        )
+
+        let editedText = "已完成第一轮复习"
+        try check(
+            !store.updateLearningMemory(
+                memory.id,
+                in: .global,
+                kind: .progress,
+                text: editedText
+            )
+                && store.workspaceSaveError != nil,
+            "学习记忆写盘失败却返回成功"
+        )
+        let snapshotAfterFailure = try fixture.readSnapshot()
+        try check(
+            snapshotAfterFailure.learningMemoryStates?.first?.entries.first?.text == memory.text,
+            "学习记忆保存失败破坏了旧快照"
+        )
+
+        shouldFail = false
+        try check(
+            store.updateLearningMemory(
+                memory.id,
+                in: .global,
+                kind: .progress,
+                text: editedText
+            ),
+            "同内容重试没有重新写入学习记忆"
+        )
+        let snapshotAfterRetry = try fixture.readSnapshot()
+        try check(
+            snapshotAfterRetry.learningMemoryStates?.first?.entries.first?.text == editedText,
+            "学习记忆重试成功后没有落盘"
         )
     }
 

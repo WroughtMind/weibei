@@ -502,7 +502,14 @@ interface FocusSnapshot {
   actionSource: string;
 }
 
-type LearningMemoryKind = "goal" | "understood" | "confusion" | "nextStep" | "preference";
+type LearningMemoryKind =
+  | "goal"
+  | "progress"
+  | "understood"
+  | "confusion"
+  | "nextStep"
+  | "summary"
+  | "preference";
 type LearningMemoryOrigin = "userStatement" | "agentInference" | "observed";
 
 interface LearningMemoryEntrySnapshot {
@@ -1311,9 +1318,11 @@ function readLearning(value: unknown): LearningSnapshot {
   }
   const allowedKinds = new Set<LearningMemoryKind>([
     "goal",
+    "progress",
     "understood",
     "confusion",
     "nextStep",
+    "summary",
     "preference",
   ]);
   const allowedOrigins = new Set<LearningMemoryOrigin>([
@@ -10715,9 +10724,15 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           Type.Object(
             {
               kind: Type.Union(
-                ["goal", "understood", "confusion", "nextStep", "preference"].map((value) =>
-                  Type.Literal(value),
-                ),
+                [
+                  "goal",
+                  "progress",
+                  "understood",
+                  "confusion",
+                  "nextStep",
+                  "summary",
+                  "preference",
+                ].map((value) => Type.Literal(value)),
               ),
               text: Type.String({ minLength: 1, maxLength: LIMITS.learningText }),
               evidence: Type.String({ minLength: 1, maxLength: LIMITS.learningEvidence }),
