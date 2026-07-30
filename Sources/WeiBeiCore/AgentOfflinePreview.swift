@@ -88,10 +88,6 @@ public enum AgentOfflinePreview {
 
             ## 可确认
             \(evidence)
-
-            ## 建议写入
-            - 把可确认依据写入笔记，并保留来源。
-            - 设置密钥后再生成解释、例题或复习卡片。
             """,
             """
             ## Offline Draft
@@ -104,10 +100,6 @@ public enum AgentOfflinePreview {
 
             ## Confirmed
             \(evidence)
-
-            ## Suggested Note
-            - Write the confirmed evidence into the note and keep the source attached.
-            - Configure a key before asking for a full explanation, practice question, or review card.
             """
         )
     }

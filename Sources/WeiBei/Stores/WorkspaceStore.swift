@@ -11996,7 +11996,7 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private static func resolutionEvidenceMatches(_ evidence: String, question: String) -> Bool {
-        StudyAgentResolutionEvidence.matches(evidence, question: question)
+        StudyAgentCurrentTurnEvidence.matches(evidence, question: question)
     }
 
     func askToOrganizeNote() {
@@ -12309,7 +12309,7 @@ final class WorkspaceStore: ObservableObject {
             showNotes = false
             agentSurface = .hidden
             isAskingAgent = true
-            agentActivityText = ui("正在读取上下文", "Reading context")
+            agentActivityText = ui("正在思考", "Thinking")
             agentStreamingText = ""
             messages = []
             showLoadingIndicatorSamples = false
@@ -14477,7 +14477,7 @@ final class WorkspaceStore: ObservableObject {
                 language: sentLanguage,
                 contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())"
             )
-            agentActivityText = ui("正在读取上下文", "Reading context")
+            agentActivityText = ui("正在思考", "Thinking")
             if isGeneratingQuietInsight {
                 await piRuntime.cancel()
             }
@@ -14882,9 +14882,9 @@ final class WorkspaceStore: ObservableObject {
               activeAgentReplyChatID == chatID else { return }
         let updatesVisibleChat = activeStudySessionID == chatID
         switch progress {
-        case .readingContext:
+        case .preparing:
             if updatesVisibleChat {
-                agentActivityText = ui("正在读取上下文", "Reading context")
+                agentActivityText = ui("正在思考", "Thinking")
             }
         case let .usingTool(name):
             guard updatesVisibleChat else { return }

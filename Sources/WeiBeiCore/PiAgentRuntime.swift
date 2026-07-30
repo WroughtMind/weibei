@@ -28,13 +28,6 @@ public struct PiAgentProviderConfiguration: Equatable, Sendable {
 }
 
 public struct PiAgentResources: Sendable {
-    public static let requiredSkillNames = [
-        "weibei-study-companion",
-        "weibei-course-wayfinding",
-        "weibei-close-reading",
-        "weibei-note-making",
-        "weibei-recall-practice",
-    ]
     public static let requiredRichAnswerSkillNames = [
         "rich-answer-director",
         "professional-visualization",
@@ -42,7 +35,7 @@ public struct PiAgentResources: Sendable {
         "generative-composition",
     ]
     public static var allRequiredSkillNames: [String] {
-        requiredSkillNames + requiredRichAnswerSkillNames
+        requiredRichAnswerSkillNames
     }
 
     public var rootURL: URL
@@ -67,11 +60,6 @@ public struct PiAgentResources: Sendable {
             .appendingPathComponent("rich_answer_worker.py")
         let skillsURL = rootURL.appendingPathComponent("skills", isDirectory: true)
         let systemURL = rootURL.appendingPathComponent("system.md")
-        let hasRequiredSkills = requiredSkillNames.allSatisfy { skillName in
-            FileManager.default.fileExists(
-                atPath: skillsURL.appendingPathComponent(skillName).appendingPathComponent("SKILL.md").path
-            )
-        }
         let hasRequiredRichAnswerSkills = requiredRichAnswerSkillNames.allSatisfy { skillName in
             FileManager.default.fileExists(
                 atPath: skillsURL
@@ -83,7 +71,6 @@ public struct PiAgentResources: Sendable {
         }
         guard FileManager.default.fileExists(atPath: extensionURL.path),
               FileManager.default.fileExists(atPath: pythonArtifactWorkerURL.path),
-              hasRequiredSkills,
               hasRequiredRichAnswerSkills,
               let systemPrompt = try? String(contentsOf: systemURL, encoding: .utf8),
               !systemPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -387,7 +374,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var contextRevision: String
         var memoryRevision: UInt64
         var userQuestion: String
-        var workflow: StudyAgentWorkflow
         var answerFormPolicy: StudyAgentAnswerFormPolicy
         var resolvableMemoryIDs: Set<String>
         var allowedSourceLabels: Set<String>
@@ -401,8 +387,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var allowedNoteSourceLabels: Set<String>
         var contextSources: [AgentReplySource]
         var sources: [AgentReplySource] = []
-        var didReadContext = false
-        var answeredBeforeContext = false
         var streamedText = ""
         var proposal: StudyAgentNoteProposal?
         var richAnswer: RichAnswerPresentation?
@@ -562,7 +546,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             contextRevision: request.contextRevision,
             memoryRevision: request.learningContext.memoryRevision,
             userQuestion: request.question,
-            workflow: request.resolvedWorkflow,
             answerFormPolicy: request.answerFormPolicy,
             resolvableMemoryIDs: Set(request.learningContext.memories.compactMap { memory in
                 guard memory.status == .active,
@@ -587,7 +570,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             nextDynamicAssetOrdinal: context.course.catalog.count + 1,
             progressDelivery: progressDelivery
         )
-        progressDelivery?.yield(.readingContext)
+        progressDelivery?.yield(.preparing)
         startingRunID = nil
         refreshRunWatchdog()
         do {
@@ -985,20 +968,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     }
 
     private func piPrompt(for request: StudyAgentRequest) -> String {
-        let skillName: String
-        switch request.resolvedWorkflow {
-        case .automatic, .studyCompanion:
-            skillName = "weibei-study-companion"
-        case .courseWayfinding:
-            skillName = "weibei-course-wayfinding"
-        case .closeReading:
-            skillName = "weibei-close-reading"
-        case .noteMaking:
-            skillName = "weibei-note-making"
-        case .recallPractice:
-            skillName = "weibei-recall-practice"
-        }
-        return "/skill:\(skillName) \(request.question)"
+        request.question
     }
 
     private func currentSourceLabels(in context: StudyAgentContextEnvelope) -> Set<String> {
@@ -1201,7 +1171,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     }
 
     private func resolutionEvidenceMatches(_ evidence: String, question: String) -> Bool {
-        StudyAgentResolutionEvidence.matches(evidence, question: question)
+        StudyAgentCurrentTurnEvidence.matches(evidence, question: question)
     }
 
     private func recordRejectedAction(
@@ -1857,9 +1827,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
         case let .textDelta(delta):
             guard var run = activeRun else { return }
-            if !run.didReadContext {
-                run.answeredBeforeContext = true
-            }
             run.streamedText += delta
             activeRun = run
             refreshRunWatchdog()
@@ -1909,7 +1876,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 refreshRunWatchdog()
                 return
             }
-            run.didReadContext = true
             appendSources(run.contextSources, to: &run)
             activeRun = run
             trace("context read revision matched")
@@ -1993,16 +1959,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         case let .richAnswer(_, data):
             guard var run = activeRun else { return }
             trace("rich answer received bytes=\(data.count)")
-            guard run.workflow != .noteMaking else {
-                recordRejectedAction(
-                    "weibei_rich_answer",
-                    reason: "PI proposed a rich answer inside the note-making workflow",
-                    run: &run
-                )
-                activeRun = run
-                refreshRunWatchdog()
-                return
-            }
             if run.answerFormPolicy == .textOnly {
                 trace("rich answer rejected by text-only answer-form policy")
                 run.toolTrace.append("weibei_rich_answer:host_rejected=text_only_policy")
@@ -2043,16 +1999,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
         case let .noteProposal(_, proposal):
             guard var run = activeRun else { return }
-            guard run.workflow == .noteMaking else {
-                recordRejectedAction(
-                    "weibei_note_proposal",
-                    reason: "PI proposed a note outside the note-making workflow",
-                    run: &run
-                )
-                activeRun = run
-                refreshRunWatchdog()
-                return
-            }
             guard proposal.contextRevision == run.contextRevision else {
                 recordRejectedAction(
                     "weibei_note_proposal",
@@ -2121,7 +2067,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             refreshRunWatchdog()
 
         case let .agentEnded(text, stopReason, modelError, provider, model):
-            guard let run = activeRun else { return }
+            guard var run = activeRun else { return }
             var replyTrace = run.toolTrace
             if let provider = provider?.trimmingCharacters(in: .whitespacesAndNewlines), !provider.isEmpty {
                 replyTrace.append("provider=\(provider)")
@@ -2138,6 +2084,16 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             } else {
                 finalText = modelClosureText
             }
+            let citesCurrentSelection = run.allowedSourceLabels.contains {
+                $0.hasPrefix("[选区：") && finalText.contains($0)
+            }
+            appendSources(
+                run.contextSources.filter {
+                    finalText.contains($0.label)
+                        || ($0.kind == .selection && citesCurrentSelection)
+                },
+                to: &run
+            )
             trace(
                 "agent ended stop=\(stopReason ?? "unknown") closureChars=\(modelClosureText.count) "
                     + "finalChars=\(finalText.count) rich=\(run.richAnswer?.mode == .rich)"
@@ -2159,22 +2115,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                     ?? run.lastError
                     ?? "PI 模型请求失败，但运行时没有返回错误详情"
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed(detail)))
-            } else if finalText.isEmpty, let proposal = run.proposal {
-                finishRun(
-                    id: run.id,
-                    with: .success(
-                        StudyAgentReply(
-                            text: proposal.markdown,
-                            backend: .pi,
-                            richAnswer: run.richAnswer,
-                            sources: run.sources,
-                            noteProposal: proposal,
-                            learningUpdate: run.learningUpdate,
-                            loadedSkills: run.loadedSkills,
-                            toolTrace: replyTrace
-                        )
-                    )
-                )
             } else if finalText.isEmpty {
                 finishRun(id: run.id, with: .failure(PiAgentRuntimeError.agentFailed(run.lastError ?? "PI returned no readable text")))
             } else {

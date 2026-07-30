@@ -1765,8 +1765,6 @@ private struct RichAnswerEvidenceCaseSnapshot: Codable {
 private struct RichAnswerEvidencePromptSnapshot: Codable {
     var requestID: String
     var purpose: String
-    var workflow: String
-    var resolvedWorkflow: String
     var answerFormPolicy: String?
     var question: String
     var materialTitle: String
@@ -1783,8 +1781,6 @@ private struct RichAnswerEvidencePromptSnapshot: Codable {
     init(_ request: StudyAgentRequest) {
         requestID = request.id.uuidString
         purpose = request.purpose.rawValue
-        workflow = request.workflow.rawValue
-        resolvedWorkflow = request.resolvedWorkflow.rawValue
         answerFormPolicy = request.answerFormPolicy.rawValue
         question = request.question
         materialTitle = request.materialTitle

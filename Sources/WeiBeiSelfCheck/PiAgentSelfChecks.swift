@@ -420,97 +420,32 @@ private func checkStudyAgentContext() throws {
         language: .chinese,
         contextRevision: "revision-9"
     )
-    try piRequire(request.resolvedWorkflow == .recallPractice, "study-agent automatic routing selects recall practice")
-    let noteRequest = StudyAgentRequest(
-        purpose: .conversation,
-        question: "整理成笔记",
-        materialTitle: "材料",
-        materialText: "正文",
-        noteTitle: "笔记",
-        noteText: "",
-        contextRevision: "revision-10"
-    )
-    try piRequire(noteRequest.resolvedWorkflow == .noteMaking, "study-agent automatic routing selects note making")
-    let wayfindingRequest = StudyAgentRequest(
-        purpose: .conversation,
-        question: "这个概念和课程里哪本书相关？",
-        materialTitle: "材料",
-        materialText: "正文",
-        noteTitle: "笔记",
-        noteText: "",
-        contextRevision: "revision-wayfinding"
-    )
-    try piRequire(wayfindingRequest.resolvedWorkflow == .courseWayfinding, "study-agent automatic routing selects course wayfinding")
-    let companionRequest = StudyAgentRequest(
-        purpose: .conversation,
-        question: "我上次学到哪了？",
-        materialTitle: "材料",
-        materialText: "正文",
-        noteTitle: "笔记",
-        noteText: "",
-        contextRevision: "revision-companion"
-    )
-    try piRequire(companionRequest.resolvedWorkflow == .studyCompanion, "study-agent automatic routing selects the study companion")
     try piRequire(
         StudyAgentCurrentTurnEvidence.matches(
             "[用户：本轮]我还不懂名义利率和实际利率的区别",
             question: "上次学到哪？我还不懂名义利率和实际利率的区别，请记住。"
         )
             && StudyAgentCurrentTurnEvidence.matches(
-                "[用户：本轮]I like reasoning from first principles",
-                question: "I do not like rote memorization, I like reasoning from first principles."
-            )
-            && !StudyAgentCurrentTurnEvidence.matches(
-                "[用户：本轮]喜欢死记硬背",
-                question: "我不喜欢死记硬背"
-            )
-            && !StudyAgentCurrentTurnEvidence.matches(
-                "[用户：本轮]喜欢死记硬背",
-                question: "我不太喜欢死记硬背"
-            )
-            && !StudyAgentCurrentTurnEvidence.matches(
-                "[用户：本轮]like rote memorization",
-                question: "I do not like rote memorization"
-            ),
-        "current-turn memory evidence requires a bounded verbatim clause and cannot omit leading negation"
-    )
-    try piRequire(
-        !StudyAgentResolutionEvidence.matches(
-            "[用户：本轮]我还不能够区分名义利率和实际利率",
-            question: "我还不能够区分名义利率和实际利率"
-        )
-            && !StudyAgentResolutionEvidence.matches(
-                "[用户：本轮]I am not yet able to distinguish nominal and real rates",
-                question: "I am not yet able to distinguish nominal and real rates"
-            )
-            && !StudyAgentResolutionEvidence.matches(
-                "[用户：本轮]这个答案不正确",
-                question: "这个答案不正确"
-            )
-            && !StudyAgentResolutionEvidence.matches(
-                "[用户：本轮]This answer is not correct",
-                question: "This answer is not correct"
-            )
-            && StudyAgentResolutionEvidence.matches(
                 "[用户：本轮]我已经能够区分名义利率和实际利率了",
                 question: "我已经能够区分名义利率和实际利率了"
+            )
+            && StudyAgentCurrentTurnEvidence.matches(
+                "[用户：本轮]利率",
+                question: "实际利率；利率，"
+            )
+            && !StudyAgentCurrentTurnEvidence.matches(
+                "[用户：本轮]我掌握了全部内容",
+                question: "我还不懂名义利率和实际利率的区别"
+            )
+            && !StudyAgentCurrentTurnEvidence.matches(
+                "[用户：本轮]利率",
+                question: "实际利率"
             ),
-        "learning-memory resolution rejects negated mastery phrases before accepting explicit mastery"
+        "current-turn memory evidence validates only an exact bounded quote, not its meaning"
     )
-    let quietRequest = StudyAgentRequest(
-        purpose: .quietInsight,
-        question: "出题",
-        materialTitle: "材料",
-        materialText: "正文",
-        noteTitle: "笔记",
-        noteText: "",
-        contextRevision: "revision-11"
-    )
-    try piRequire(quietRequest.resolvedWorkflow == .closeReading, "quiet insight stays on close reading")
 
     let envelope = StudyAgentContextEnvelope(request: request)
     try piRequire(envelope.schemaVersion == 2 && envelope.contextRevision == "revision-9", "study-agent context carries schema and revision")
-    try piRequire(envelope.workflow == StudyAgentWorkflow.recallPractice.rawValue, "study-agent context carries resolved workflow")
     try piRequire(envelope.answerFormPolicy == StudyAgentAnswerFormPolicy.textOnly.rawValue, "study-agent context carries structured answer-form policy")
     try piRequire(envelope.material?.text.count == 18_000 && envelope.note.text.count == 6_000 && envelope.selection?.text.count == 2_000, "study-agent context applies source limits")
     try piRequire(envelope.material?.title.count == 300 && envelope.note.title.count == 300 && envelope.selection?.title.count == 300, "study-agent context bounds source labels consistently")
@@ -741,18 +676,6 @@ private func checkStudyAgentContext() throws {
             && messageWithMalformedSidecar.richAnswer == nil,
         "a malformed rich-answer sidecar is discarded without losing the durable conversation message"
     )
-    try piRequire(
-        StudyAgentRichAnswerRequest.isExplicit("请用可调的富回答解释这个函数")
-            && StudyAgentRichAnswerRequest.isExplicit("请用图示解释这段关系")
-            && StudyAgentRichAnswerRequest.isExplicit("请基于材料做个实验")
-            && StudyAgentRichAnswerRequest.isExplicit("Show this as an interactive timeline")
-            && StudyAgentRichAnswerRequest.isExplicit("Explain this with a diagram")
-            && StudyAgentRichAnswerRequest.isExplicit("Run an experiment from the source")
-            && !StudyAgentRichAnswerRequest.isExplicit("自行选择最合适的回答形态；只有交互显著提高理解时才生成富回答")
-            && !StudyAgentRichAnswerRequest.isExplicit("直接解释这段材料"),
-        "explicit rich-answer requests are detected without forcing ordinary questions into rich mode"
-    )
-
     let sessionID = UUID()
     let persisted = PersistedWorkspace(
         noteSourceLinks: [NoteSourceLink(noteItemID: "inflation-note", sourceItemID: "rates")],
@@ -832,7 +755,7 @@ private func checkStudyAgentContext() throws {
 
 private func checkBundledAgentResources() throws {
     let resources = try PiAgentResources.bundled()
-    try piRequire(resources.systemPrompt.contains("魏碑拥有材料、选区、笔记"), "PI system contract is bundled")
+    try piRequire(resources.systemPrompt.contains("魏碑负责材料、选区、笔记"), "PI system contract is bundled")
     try piRequire(resources.systemPrompt.contains("课程地图") && resources.systemPrompt.contains("学习记忆与会话"), "PI system contract separates course evidence from learning memory")
     let extensionSource = try String(contentsOf: resources.extensionURL, encoding: .utf8)
     try piRequire(extensionSource.contains("before_agent_start") && extensionSource.contains("tool_call") && extensionSource.contains("pi.on(\"context\""), "PI extension bundles source, permission, and stale-context hooks")
@@ -889,11 +812,9 @@ private func checkBundledAgentResources() throws {
             && extensionSource.contains("章节标识")
             && extensionSource.contains("章节序号")
             && extensionSource.contains("resolutionEvidenceMatches")
-            && extensionSource.contains("unresolvedTerms")
-            && extensionSource.contains("不能够")
-            && extensionSource.contains("not yet")
-            && extensionSource.contains("不正确")
-            && extensionSource.contains("immediateNegation")
+            && extensionSource.contains("return currentTurnEvidenceMatches(snapshot, evidence)")
+            && !extensionSource.contains("const unresolvedTerms")
+            && !extensionSource.contains("immediateNegation")
             && extensionSource.contains("html-section-")
             && extensionSource.contains("用户陈述型记忆必须直接依据本轮用户原话"),
         "PI extension keeps a paged full catalog, stable file and section jumps, compact context output, strict ids, and read-backed memory evidence"
@@ -956,9 +877,9 @@ private func checkBundledAgentResources() throws {
             && extensionSource.contains("label 必须共享同一 bindingID，不能图形隐藏后留下孤立标签")
             && extensionSource.contains("避免图形隐藏后留下孤立标签")
             && extensionSource.contains("单个问题默认只提交一个最有帮助的 scene")
-            && extensionSource.contains("本轮用户明确指定富回答或互动形态")
-            && extensionSource.contains("图示|函数图")
-            && extensionSource.contains("simulation|experiment")
+            && extensionSource.contains("本轮 answerFormPolicy=automatic")
+            && extensionSource.contains("不要用关键词路由")
+            && !extensionSource.contains("explicitRichAnswerRequested")
             && extensionSource.contains("answerFormPolicy")
             && extensionSource.contains("activeAnswerFormPolicy === \"textOnly\"")
             && extensionSource.contains("richAnswerGrounding")
@@ -989,20 +910,38 @@ private func checkBundledAgentResources() throws {
             && resources.systemPrompt.contains("weibei-scene:场景ID"),
         "PI rich answers stay source-grounded and cannot escape into arbitrary web payloads"
     )
+    try piRequire(
+        resources.systemPrompt.contains("寒暄、创作、常识和不依赖课程资料的问题直接回答")
+            && resources.systemPrompt.contains("不要把每轮对话强行套进固定学习模式")
+            && !resources.systemPrompt.contains("每轮必须先调用 `weibei_context`")
+            && !extensionSource.contains("requiredContextRevision")
+            && !extensionSource.contains("lastReadContextRevision")
+            && extensionSource.contains("普通问题无需先调用")
+            && extensionSource.contains("不要为走流程而调用工具")
+            && extensionSource.contains("customType: \"weibei-current-focus\"")
+            && extensionSource.contains("display: false")
+            && extensionSource.contains("latestCurrentFocusIndex")
+            && !extensionSource.contains("explicitRichAnswerRequested"),
+        "PI answers first and reads current course context only when the question needs it"
+    )
 
-    for skillName in PiAgentResources.requiredSkillNames {
-        let skillURL = resources.skillsURL.appendingPathComponent(skillName).appendingPathComponent("SKILL.md")
-        let source = try String(contentsOf: skillURL, encoding: .utf8)
-        try piRequire(source.contains("name: \(skillName)") && source.contains("description:"), "PI skill \(skillName) has valid frontmatter")
-        if source.contains("weibei_rich_answer") {
-            try piRequire(
-                source.contains("allowed-tools:")
-                    && source.contains("weibei_ui_catalog")
-                    && source.contains("weibei_compute_artifact")
-                    && source.contains("weibei_visual_asset"),
-                "PI skill \(skillName) authorizes the catalog, current-material visual inspection, and optional controlled computation before rich answers"
-            )
-        }
+    for retiredSkillName in [
+        "weibei-study-companion",
+        "weibei-course-wayfinding",
+        "weibei-close-reading",
+        "weibei-note-making",
+        "weibei-recall-practice",
+        "weibei-interactive-study",
+    ] {
+        try piRequire(
+            !FileManager.default.fileExists(
+                atPath: resources.skillsURL
+                    .appendingPathComponent(retiredSkillName)
+                    .appendingPathComponent("SKILL.md")
+                    .path
+            ),
+            "old forced learning skill \(retiredSkillName) is not shipped"
+        )
     }
 
     for skillName in PiAgentResources.requiredRichAnswerSkillNames {
@@ -1035,7 +974,8 @@ private func checkBundledAgentResources() throws {
         .appendingPathComponent("Sources/WeiBeiCore/PiAgentRuntime.swift")
     let runtimeSource = try String(contentsOf: runtimeSourceURL, encoding: .utf8)
     try piRequire(
-        runtimeSource.contains("answeredBeforeContext")
+        !runtimeSource.contains("answeredBeforeContext")
+            && !runtimeSource.contains("didReadContext")
             && runtimeSource.contains("allowedSourceLabels")
             && runtimeSource.contains("allowedNoteSourceLabels")
             && runtimeSource.contains("allowedAssetIDs")
@@ -1053,7 +993,6 @@ private func checkBundledAgentResources() throws {
             && !runtimeSource.contains("PiAgentRejectedReplyError")
             && !runtimeSource.contains("else if run.workflow == .noteMaking, run.proposal == nil")
             && runtimeSource.contains("resolutionEvidenceMatches")
-            && runtimeSource.contains("StudyAgentResolutionEvidence.matches")
             && runtimeSource.contains("StudyAgentCurrentTurnEvidence.matches")
             && !runtimeSource.contains("allowsLearningOnlyAnswer")
             && !runtimeSource.contains("allowsSourcelessLimitation")
@@ -1062,6 +1001,11 @@ private func checkBundledAgentResources() throws {
             && runtimeSource.contains("private static func allowedToolNames")
             && runtimeSource.contains("\"read\"")
             && runtimeSource.contains("allRequiredSkillNames")
+            && runtimeSource.contains("private func piPrompt(for request: StudyAgentRequest)")
+            && runtimeSource.contains("request.question")
+            && !runtimeSource.contains("return \"/skill:")
+            && !runtimeSource.contains("run.workflow")
+            && !runtimeSource.contains("proposal.markdown,\n                            backend: .pi")
             && runtimeSource.contains("skill-read:")
             && runtimeSource.contains("\"weibei_ui_catalog\"")
             && runtimeSource.contains("\"weibei_compute_artifact\"")

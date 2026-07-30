@@ -5,89 +5,10 @@ public enum StudyAgentPurpose: String, Codable, Sendable {
     case quietInsight
 }
 
-public enum StudyAgentWorkflow: String, Codable, Sendable {
-    case automatic
-    case studyCompanion
-    case courseWayfinding
-    case closeReading
-    case noteMaking
-    case recallPractice
-}
-
 public enum StudyAgentAnswerFormPolicy: String, Codable, Equatable, Sendable {
     case automatic
     case textOnly
     case partialRichAllowed
-}
-
-public enum StudyAgentRichAnswerRequest {
-    public static func isExplicit(_ question: String) -> Bool {
-        let normalized = question.lowercased()
-        let choiceTerms = [
-            "自行选择最合适的回答形态", "自行选择回答形态", "选择最合适的回答形态",
-            "只有交互或可视关系", "不要为了展示能力硬做", "无需富回答", "不需要富回答", "不要富回答",
-            "choose the best answer format", "choose the most suitable answer format",
-            "only generate a rich answer when", "do not force a rich answer", "no rich answer needed",
-        ]
-        guard !choiceTerms.contains(where: normalized.contains) else { return false }
-
-        let requestTerms = [
-            "用富回答", "用可调的富回答", "给我富回答", "生成富回答", "做成富回答", "以富回答", "富回答形式",
-            "做成可调", "给个可调", "做成可交互", "给个可交互", "做个交互", "做个互动",
-            "用图示", "画个函数图", "画出函数图", "做个关系图", "做个时间线", "时间线展示",
-            "做个图像叠层", "做个模拟", "做个实验", "实验演示", "演示这个实验",
-            "use a rich answer", "give me a rich answer", "generate a rich answer", "rich answer format",
-            "make it interactive", "show an interactive", "interactive timeline", "with a diagram", "draw a function graph", "show a relationship graph",
-            "show a timeline", "show an image overlay", "run a simulation", "show an experiment",
-            "run an experiment",
-        ]
-        return requestTerms.contains(where: normalized.contains)
-    }
-}
-
-public enum StudyAgentResolutionEvidence {
-    public static func matches(_ evidence: String, question: String) -> Bool {
-        guard StudyAgentCurrentTurnEvidence.matches(evidence, question: question),
-              let statement = statement(in: evidence) else { return false }
-        let value = statement.lowercased()
-        let unresolvedTerms = [
-            "不懂", "不理解", "不会", "没懂", "仍然困惑", "还是困惑", "不知道", "不能区分", "不能够",
-            "还不能", "尚不能", "无法", "没法", "尚未", "还没", "并不", "不太", "不确定",
-            "不正确", "并非正确", "答错", "错误", "不对",
-            "don't understand", "do not understand", "can't", "cannot", "still confused", "not sure",
-            "not able", "unable", "not yet", "have not", "haven't", "incorrect", "not correct", "wrong answer", "is wrong",
-        ]
-        guard !unresolvedTerms.contains(where: value.contains) else { return false }
-        let questionTerms = ["什么", "为什么", "怎么", "为何", "吗", "？", "?", "what", "why", "how"]
-        guard !questionTerms.contains(where: value.contains) else { return false }
-        let masteryTerms = [
-            "懂了", "明白了", "会了", "掌握了", "可以区分", "能够区分", "能解释", "答对", "正确",
-            "解决了", "不再困惑", "understand now", "got it", "can distinguish", "can explain", "correct",
-        ]
-        if masteryTerms.contains(where: value.contains) { return true }
-        let answerMarkers = [
-            "是", "指", "因为", "所以", "而", "但是", "扣除", "等于", "相比", "表示", "反映", "意味着", "即", "=",
-            " is ", " means", "because", "therefore", "while", "equals", "represents", "reflects", "differs",
-        ]
-        guard answerMarkers.contains(where: value.contains) else { return false }
-        let meaningfulCount = statement.unicodeScalars.filter {
-            CharacterSet.alphanumerics.contains($0)
-                || (0x4E00...0x9FFF).contains(Int($0.value))
-        }.count
-        return meaningfulCount >= 12
-    }
-
-    private static func statement(in evidence: String) -> String? {
-        let prefixes = ["[用户：本轮]", "[会话：当前]"]
-        guard let prefix = prefixes.first(where: { evidence.hasPrefix($0) }) else { return nil }
-        let quoteCharacters = CharacterSet(charactersIn: "\"'“”‘’")
-        let value = String(evidence.dropFirst(prefix.count))
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: quoteCharacters)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
-    }
-
 }
 
 public enum StudyAgentCurrentTurnEvidence {
@@ -99,10 +20,7 @@ public enum StudyAgentCurrentTurnEvidence {
         var searchStart = question.startIndex
         while searchStart < question.endIndex,
               let range = question.range(of: statement, range: searchStart..<question.endIndex) {
-            if hasClauseBoundaries(range, in: question),
-               !omitsLeadingNegation(range, in: question) {
-                return true
-            }
+            if hasClauseBoundaries(range, in: question) { return true }
             searchStart = range.upperBound
         }
         return false
@@ -116,27 +34,6 @@ public enum StudyAgentCurrentTurnEvidence {
             || question[range.upperBound].isWhitespace
             || question[range.upperBound].isPunctuation
         return startsAtBoundary && endsAtBoundary
-    }
-
-    private static func omitsLeadingNegation(
-        _ range: Range<String.Index>,
-        in question: String
-    ) -> Bool {
-        guard range.lowerBound > question.startIndex else { return false }
-        let prefix = String(question[..<range.lowerBound]).lowercased()
-        let immediate = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
-        if ["不", "没", "未", "无", "别", "勿"].contains(where: immediate.hasSuffix) {
-            return true
-        }
-        let clause = prefix
-            .components(separatedBy: CharacterSet(charactersIn: "，,。！？；;:：.!?"))
-            .last ?? prefix
-        let negativePhrases = [
-            "不想", "不喜欢", "不太", "不能", "不会", "不要", "不愿", "没有", "没法", "尚未", "还没", "并不", "并非",
-            " not ", " never ", " no ", " without ", "cannot", "can't", "don't", "doesn't", "didn't",
-        ]
-        let paddedClause = " \(clause) "
-        return negativePhrases.contains(where: paddedClause.contains)
     }
 
     private static func statement(in evidence: String) -> String? {
@@ -511,7 +408,6 @@ public struct StudyAgentLearningContext: Codable, Equatable, Sendable {
 public struct StudyAgentRequest: Sendable {
     public var id: UUID
     public var purpose: StudyAgentPurpose
-    public var workflow: StudyAgentWorkflow
     public var answerFormPolicy: StudyAgentAnswerFormPolicy
     public var question: String
     public var materialTitle: String
@@ -534,7 +430,6 @@ public struct StudyAgentRequest: Sendable {
     public init(
         id: UUID = UUID(),
         purpose: StudyAgentPurpose,
-        workflow: StudyAgentWorkflow = .automatic,
         answerFormPolicy: StudyAgentAnswerFormPolicy = .automatic,
         question: String,
         materialTitle: String,
@@ -556,7 +451,6 @@ public struct StudyAgentRequest: Sendable {
     ) {
         self.id = id
         self.purpose = purpose
-        self.workflow = workflow
         self.answerFormPolicy = answerFormPolicy
         self.question = question
         self.materialTitle = materialTitle
@@ -575,26 +469,6 @@ public struct StudyAgentRequest: Sendable {
         self.learningContext = learningContext
         self.language = language
         self.contextRevision = contextRevision
-    }
-
-    public var resolvedWorkflow: StudyAgentWorkflow {
-        guard workflow == .automatic else { return workflow }
-        if purpose == .quietInsight { return .closeReading }
-
-        let value = question.lowercased()
-        let resumeTerms = ["上次", "继续学", "学到哪", "学习进度", "resume", "last time", "continue learning"]
-        if resumeTerms.contains(where: value.contains) { return .studyCompanion }
-
-        let wayfindingTerms = ["关联", "相关", "哪本", "哪份", "哪个文件", "跳转", "去哪里", "先学", "前置", "related", "connect", "which file", "where should", "prerequisite"]
-        if wayfindingTerms.contains(where: value.contains) { return .courseWayfinding }
-
-        let recallTerms = ["出题", "测验", "复习题", "自测", "quiz", "test me", "questions"]
-        if recallTerms.contains(where: value.contains) { return .recallPractice }
-
-        let noteTerms = ["整理", "写入", "笔记", "润色", "摘录", "要点", "outline", "organize", "note", "rewrite"]
-        if noteTerms.contains(where: value.contains) { return .noteMaking }
-
-        return .studyCompanion
     }
 
 }
@@ -730,7 +604,7 @@ public struct StudyAgentReply: Equatable, Sendable {
 }
 
 public enum StudyAgentProgress: Equatable, Sendable {
-    case readingContext
+    case preparing
     case usingTool(String)
     case text(String)
 }
@@ -905,7 +779,7 @@ public struct OfflineStudyAgentRuntime: StudyAgentRuntime {
     public init() {}
 
     public func respond(to request: StudyAgentRequest, progress: StudyAgentProgressHandler?) async throws -> StudyAgentReply {
-        await progress?(.readingContext)
+        await progress?(.preparing)
         let text = AgentOfflinePreview.render(
             AgentOfflinePreviewInput(
                 language: request.language,
@@ -955,7 +829,6 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
     public var requestID: String
     public var contextRevision: String
     public var purpose: String
-    public var workflow: String
     public var answerFormPolicy: String
     public var language: String
     public var question: String
@@ -974,7 +847,6 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
         requestID = request.id.uuidString.lowercased()
         contextRevision = request.contextRevision
         purpose = request.purpose.rawValue
-        workflow = request.resolvedWorkflow.rawValue
         answerFormPolicy = request.answerFormPolicy.rawValue
         language = request.language.rawValue
         question = String(request.question.prefix(4_000))
