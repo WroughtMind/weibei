@@ -296,20 +296,33 @@ public enum PiAgentDiagnosticSanitizer {
 
 public actor PiAgentRuntime: StudyAgentRuntime {
     private static let processReadinessTimeoutSeconds: UInt64 = 12
-    private static let allowedToolNames = [
+    private static let sharedToolNames = [
         "weibei_context",
         "weibei_course_map",
         "weibei_course_search",
+        "weibei_course_read",
         "weibei_visual_asset",
         "weibei_learning_memory",
         "weibei_learning_update",
-        // The extension blocks every path except registered skills bundled with WeiBei.
+        // Global Chat keeps read only for registered Skills; project paths remain unavailable.
         "read",
         "weibei_note_proposal",
         "weibei_ui_catalog",
         "weibei_compute_artifact",
         "weibei_rich_answer",
     ]
+    private static let courseProjectToolNames = ["ls", "find", "grep"]
+    private static let hostToolNames: Set<String> = [
+        "weibei_course_search",
+        "weibei_course_read",
+        "grep",
+    ]
+
+    private static func allowedToolNames(
+        for scope: StudyAgentScopeKind
+    ) -> [String] {
+        sharedToolNames + (scope == .course ? courseProjectToolNames : [])
+    }
 
     private struct ProgressDelivery: Sendable {
         let continuation: AsyncStream<StudyAgentProgress>.Continuation
@@ -342,10 +355,22 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var timeoutTask: Task<Void, Never>
     }
 
+    private struct HostToolResponseEnvelope: Encodable {
+        var schemaVersion = 1
+        var requestID: String
+        var contextRevision: String
+        var toolCallID: String
+        var toolName: String
+        var success: Bool
+        var payload: StudyAgentHostToolResult?
+        var error: String?
+    }
+
     private struct ProcessBinding: Equatable {
         var sessionID: UUID
         var workingDirectory: URL
         var sessionDirectory: URL
+        var scope: StudyAgentScopeKind
     }
 
     private struct PiSessionState {
@@ -385,6 +410,10 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var learningUpdate: StudyAgentLearningUpdate?
         var loadedSkills: [StudyAgentLoadedSkill] = []
         var toolTrace: [String] = []
+        var allowedToolNames: Set<String>
+        var hostToolHandler: StudyAgentHostToolHandler?
+        var hostToolCallIDs: Set<String> = []
+        var nextDynamicAssetOrdinal: Int
         var lastError: String?
         var progressDelivery: ProgressDelivery?
         var continuation: CheckedContinuation<StudyAgentReply, Error>?
@@ -405,6 +434,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     private var processGeneration: UInt64 = 0
     private var pendingCommands: [String: PendingCommand] = [:]
     private var activeRun: ActiveRun?
+    private var hostToolTasks: [String: Task<Void, Never>] = [:]
     private var startingRunID: UUID?
     private var cancelledStartingRunIDs: Set<UUID> = []
     private var stderrBuffer = ""
@@ -440,7 +470,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         _ = try await ensureProcess(
             binding: try makeProcessBinding(
                 sessionID: fallbackSessionID,
-                workingDirectory: runtimeDirectory
+                workingDirectory: runtimeDirectory,
+                scope: .global
             )
         )
         return process?.executableURL?.path ?? "pi"
@@ -459,8 +490,20 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         to request: StudyAgentRequest,
         sessionID: UUID,
         workingDirectory: URL,
+        hostToolHandler: StudyAgentHostToolHandler? = nil,
         progress: StudyAgentProgressHandler?
     ) async throws -> StudyAgentReply {
+        var request = request
+        if request.projectScope.chatID
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty {
+            request.projectScope.chatID = sessionID.uuidString.lowercased()
+        }
+        if request.focus?.chatID
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .isEmpty == true {
+            request.focus?.chatID = request.projectScope.chatID
+        }
         guard activeRun == nil, startingRunID == nil else { throw PiAgentRuntimeError.busy }
         startingRunID = request.id
         defer {
@@ -473,7 +516,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         idleShutdownTask = nil
         let binding = try makeProcessBinding(
             sessionID: sessionID,
-            workingDirectory: workingDirectory
+            workingDirectory: workingDirectory,
+            scope: request.projectScope.kind
         )
         var startupState: PiSessionState?
         var needsHistoryRecovery = false
@@ -508,6 +552,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         }
         let context = StudyAgentContextEnvelope(request: contextRequest)
         try writeContext(context)
+        try prepareHostToolResponseDirectory(for: request.id)
         let progressDelivery = progress.map(ProgressDelivery.init(handler:))
 
         let currentJumpEvidence = currentJumpEvidence(in: context)
@@ -537,6 +582,9 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             lastLocationSourceLabel: context.learning.lastLocation.map { "[材料：\($0.itemTitle)]" },
             allowedNoteSourceLabels: currentSourceLabels,
             contextSources: currentReplySources(request: request, context: context),
+            allowedToolNames: Set(Self.allowedToolNames(for: binding.scope)),
+            hostToolHandler: hostToolHandler,
+            nextDynamicAssetOrdinal: context.course.catalog.count + 1,
             progressDelivery: progressDelivery
         )
         progressDelivery?.yield(.readingContext)
@@ -611,7 +659,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private func makeProcessBinding(
         sessionID: UUID,
-        workingDirectory: URL
+        workingDirectory: URL,
+        scope: StudyAgentScopeKind
     ) throws -> ProcessBinding {
         let resolvedWorkingDirectory = workingDirectory
             .standardizedFileURL
@@ -629,7 +678,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         return ProcessBinding(
             sessionID: sessionID,
             workingDirectory: resolvedWorkingDirectory,
-            sessionDirectory: sessionDirectory
+            sessionDirectory: sessionDirectory,
+            scope: scope
         )
     }
 
@@ -779,6 +829,102 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             .appendingPathComponent(sessionID.uuidString.lowercased(), isDirectory: true)
     }
 
+    private var hostToolResponseRoot: URL {
+        runtimeDirectory.appendingPathComponent("ToolResponses", isDirectory: true)
+    }
+
+    private func hostToolResponseDirectory(for requestID: UUID) -> URL {
+        hostToolResponseRoot.appendingPathComponent(
+            requestID.uuidString.lowercased(),
+            isDirectory: true
+        )
+    }
+
+    private func prepareHostToolResponseDirectory(for requestID: UUID) throws {
+        let fileManager = FileManager.default
+        var rootStat = Darwin.stat()
+        let rootExists = hostToolResponseRoot.withUnsafeFileSystemRepresentation { path in
+            path.map { Darwin.lstat($0, &rootStat) == 0 } ?? false
+        }
+        if rootExists {
+            guard (rootStat.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR) else {
+                throw PiAgentRuntimeError.protocolFailure(
+                    "课程工具响应目录不是安全的本地目录"
+                )
+            }
+        } else {
+            guard errno == ENOENT else {
+                throw PiAgentRuntimeError.protocolFailure(
+                    "无法检查课程工具响应目录"
+                )
+            }
+            try fileManager.createDirectory(
+                at: hostToolResponseRoot,
+                withIntermediateDirectories: false
+            )
+            guard hostToolResponseRoot.withUnsafeFileSystemRepresentation({ path in
+                path.map { Darwin.lstat($0, &rootStat) == 0 } ?? false
+            }),
+            (rootStat.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR) else {
+                throw PiAgentRuntimeError.protocolFailure(
+                    "课程工具响应目录创建后身份异常"
+                )
+            }
+        }
+        let canonicalRuntimeDirectory = runtimeDirectory
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+        let canonicalResponseRoot = hostToolResponseRoot
+            .resolvingSymlinksInPath()
+            .standardizedFileURL
+        guard canonicalResponseRoot.deletingLastPathComponent()
+                == canonicalRuntimeDirectory else {
+            throw PiAgentRuntimeError.protocolFailure(
+                "课程工具响应目录离开了运行时目录"
+            )
+        }
+        let rootDevice = rootStat.st_dev
+        let rootFileID = rootStat.st_ino
+        try? fileManager.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: hostToolResponseRoot.path
+        )
+        let staleDirectories = try fileManager.contentsOfDirectory(
+            at: hostToolResponseRoot,
+            includingPropertiesForKeys: nil
+        )
+        for staleDirectory in staleDirectories
+        where UUID(uuidString: staleDirectory.lastPathComponent) != nil {
+            var currentRootStat = Darwin.stat()
+            guard staleDirectory.deletingLastPathComponent().standardizedFileURL
+                    == hostToolResponseRoot.standardizedFileURL,
+                  hostToolResponseRoot.withUnsafeFileSystemRepresentation({ path in
+                      path.map { Darwin.lstat($0, &currentRootStat) == 0 } ?? false
+                  }),
+                  currentRootStat.st_dev == rootDevice,
+                  currentRootStat.st_ino == rootFileID,
+                  (currentRootStat.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR) else {
+                throw PiAgentRuntimeError.protocolFailure(
+                    "课程工具响应目录在清理期间发生了变化"
+                )
+            }
+            try fileManager.removeItem(at: staleDirectory)
+        }
+        let directory = hostToolResponseDirectory(for: requestID)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: false)
+        try? fileManager.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: directory.path
+        )
+    }
+
+    private func removeHostToolResponseDirectory(for requestID: UUID) {
+        let directory = hostToolResponseDirectory(for: requestID)
+        guard directory.deletingLastPathComponent().standardizedFileURL
+                == hostToolResponseRoot.standardizedFileURL else { return }
+        try? FileManager.default.removeItem(at: directory)
+    }
+
     private func sessionDirectoryHasContents(_ sessionDirectory: URL) -> Bool {
         guard let contents = try? FileManager.default.contentsOfDirectory(
             at: sessionDirectory,
@@ -814,7 +960,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             "--session-id", binding.sessionID.uuidString.lowercased(),
             "--session-dir", binding.sessionDirectory.path,
             "--no-builtin-tools",
-            "--tools", Self.allowedToolNames.joined(separator: ","),
+            "--tools", Self.allowedToolNames(for: binding.scope).joined(separator: ","),
             "--no-extensions",
             "--extension", resources.extensionURL.path,
             "--no-skills",
@@ -1069,6 +1215,258 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         run.lastError = diagnostic
     }
 
+    private func startHostToolCall(
+        id: String,
+        name: String,
+        argumentsJSON: Data?
+    ) {
+        guard var run = activeRun,
+              !id.isEmpty,
+              id.utf8.count <= 256,
+              !id.contains("\0"),
+              !run.hostToolCallIDs.contains(id) else { return }
+        run.hostToolCallIDs.insert(id)
+        activeRun = run
+        let request: StudyAgentHostToolRequest
+        do {
+            request = try hostToolRequest(
+                name: name,
+                argumentsJSON: argumentsJSON,
+                run: run
+            )
+        } catch {
+            writeHostToolResponse(
+                requestID: run.id,
+                contextRevision: run.contextRevision,
+                toolCallID: id,
+                toolName: name,
+                payload: nil,
+                error: error.localizedDescription
+            )
+            return
+        }
+        guard let handler = run.hostToolHandler else {
+            writeHostToolResponse(
+                requestID: run.id,
+                contextRevision: run.contextRevision,
+                toolCallID: id,
+                toolName: name,
+                payload: nil,
+                error: "当前 Chat 没有可用的课程查询宿主"
+            )
+            return
+        }
+
+        let generation = processGeneration
+        let runID = run.id
+        let contextRevision = run.contextRevision
+        let task = Task { [weak self] in
+            do {
+                let result = try await handler(request)
+                await self?.completeHostToolCall(
+                    id: id,
+                    name: name,
+                    runID: runID,
+                    contextRevision: contextRevision,
+                    generation: generation,
+                    result: result,
+                    error: nil
+                )
+            } catch {
+                await self?.completeHostToolCall(
+                    id: id,
+                    name: name,
+                    runID: runID,
+                    contextRevision: contextRevision,
+                    generation: generation,
+                    result: nil,
+                    error: error.localizedDescription
+                )
+            }
+        }
+        hostToolTasks[id] = task
+    }
+
+    private func hostToolRequest(
+        name: String,
+        argumentsJSON: Data?,
+        run: ActiveRun
+    ) throws -> StudyAgentHostToolRequest {
+        guard let argumentsJSON,
+              let arguments = try JSONSerialization.jsonObject(with: argumentsJSON)
+                as? [String: Any] else {
+            throw PiAgentRuntimeError.protocolFailure("课程工具参数不是 JSON 对象")
+        }
+        func string(
+            _ key: String,
+            required: Bool,
+            maximum: Int
+        ) throws -> String? {
+            guard let raw = arguments[key] else {
+                if required {
+                    throw PiAgentRuntimeError.protocolFailure("课程工具缺少参数 \(key)")
+                }
+                return nil
+            }
+            guard let value = raw as? String else {
+                throw PiAgentRuntimeError.protocolFailure("课程工具参数 \(key) 类型无效")
+            }
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard trimmed.utf8.count <= maximum, !trimmed.contains("\0") else {
+                throw PiAgentRuntimeError.protocolFailure("课程工具参数 \(key) 超出边界")
+            }
+            if required && trimmed.isEmpty {
+                throw PiAgentRuntimeError.protocolFailure("课程工具参数 \(key) 不能为空")
+            }
+            return trimmed
+        }
+        func limit(maximum: Int) throws -> Int {
+            guard let raw = arguments["limit"] else { return min(5, maximum) }
+            guard !(raw is Bool), let number = raw as? NSNumber else {
+                throw PiAgentRuntimeError.protocolFailure("课程工具 limit 类型无效")
+            }
+            let value = number.intValue
+            guard number.doubleValue == Double(value), (1...maximum).contains(value) else {
+                throw PiAgentRuntimeError.protocolFailure("课程工具 limit 超出边界")
+            }
+            return value
+        }
+
+        switch name {
+        case "weibei_course_search", "grep":
+            return .courseSearch(
+                query: try string("query", required: true, maximum: 500) ?? "",
+                limit: try limit(maximum: 8)
+            )
+        case "weibei_course_read":
+            guard let contextItemID = try string(
+                "itemID",
+                required: true,
+                maximum: 256
+            ), let persistentItemID = run.persistentAssetIDsByContextID[contextItemID] else {
+                throw PiAgentRuntimeError.protocolFailure("课程工具资料 ID 不属于本轮上下文")
+            }
+            return .courseRead(
+                itemID: persistentItemID,
+                query: try string("query", required: false, maximum: 500) ?? "",
+                location: try string("location", required: false, maximum: 300),
+                limit: try limit(maximum: 8)
+            )
+        default:
+            throw PiAgentRuntimeError.protocolFailure("不支持的课程宿主工具 \(name)")
+        }
+    }
+
+    private func completeHostToolCall(
+        id: String,
+        name: String,
+        runID: UUID,
+        contextRevision: String,
+        generation: UInt64,
+        result: StudyAgentHostToolResult?,
+        error: String?
+    ) {
+        defer { hostToolTasks.removeValue(forKey: id) }
+        guard generation == processGeneration,
+              var run = activeRun,
+              run.id == runID,
+              run.contextRevision == contextRevision,
+              run.completed == nil,
+              run.hostToolCallIDs.contains(id) else { return }
+        let mappedResult = result.map { result in
+            StudyAgentHostToolResult(
+                query: String(result.query.prefix(500)),
+                items: result.items.prefix(8).map { hostItem in
+                    var item = hostItem.item
+                    item.id = contextAssetID(for: item.id, run: &run)
+                    item.linkedItemIDs = item.linkedItemIDs.prefix(24).map {
+                        contextAssetID(for: $0, run: &run)
+                    }
+                    return StudyAgentHostToolItem(
+                        item: item,
+                        relativePath: hostItem.relativePath.map { String($0.prefix(4_096)) },
+                        courseIDs: hostItem.courseIDs.prefix(32).map { String($0.prefix(128)) },
+                        courseTitles: hostItem.courseTitles.prefix(32).map { String($0.prefix(300)) }
+                    )
+                }
+            )
+        }
+        activeRun = run
+        writeHostToolResponse(
+            requestID: runID,
+            contextRevision: contextRevision,
+            toolCallID: id,
+            toolName: name,
+            payload: mappedResult,
+            error: error
+        )
+    }
+
+    private func contextAssetID(
+        for persistentID: String,
+        run: inout ActiveRun
+    ) -> String {
+        if let existing = run.persistentAssetIDsByContextID.first(where: {
+            $0.value == persistentID
+        })?.key {
+            return existing
+        }
+        var candidate: String
+        repeat {
+            candidate = "course-item-\(run.nextDynamicAssetOrdinal)"
+            run.nextDynamicAssetOrdinal += 1
+        } while run.persistentAssetIDsByContextID[candidate] != nil
+        run.persistentAssetIDsByContextID[candidate] = persistentID
+        return candidate
+    }
+
+    private func writeHostToolResponse(
+        requestID: UUID,
+        contextRevision: String,
+        toolCallID: String,
+        toolName: String,
+        payload: StudyAgentHostToolResult?,
+        error: String?
+    ) {
+        let envelope = HostToolResponseEnvelope(
+            requestID: requestID.uuidString.lowercased(),
+            contextRevision: contextRevision,
+            toolCallID: toolCallID,
+            toolName: toolName,
+            success: payload != nil && error == nil,
+            payload: payload,
+            error: error.map { boundedDiagnostic($0, limit: 1_000) }
+        )
+        do {
+            var data = try JSONEncoder().encode(envelope)
+            if data.count > 256_000 {
+                data = try JSONEncoder().encode(
+                    HostToolResponseEnvelope(
+                        requestID: requestID.uuidString.lowercased(),
+                        contextRevision: contextRevision,
+                        toolCallID: toolCallID,
+                        toolName: toolName,
+                        success: false,
+                        payload: nil,
+                        error: "课程工具返回内容超过上限"
+                    )
+                )
+            }
+            let digest = SHA256.hash(data: Data(toolCallID.utf8))
+                .map { String(format: "%02x", $0) }
+                .joined()
+            let destination = hostToolResponseDirectory(for: requestID)
+                .appendingPathComponent("\(digest).json")
+            try data.write(to: destination, options: [.atomic])
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: destination.path
+            )
+        } catch {
+            trace("could not write host tool response: \(error.localizedDescription)")
+        }
+    }
+
     private func launchEnvironment(
         executableURL: URL,
         contextURL: URL,
@@ -1088,6 +1486,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             "PI_CODING_AGENT_DIR": piConfigurationURL.path,
             "PI_CODING_AGENT_SESSION_DIR": sessionDirectory.path,
             "WEIBEI_AGENT_CONTEXT_FILE": contextURL.path,
+            "WEIBEI_AGENT_TOOL_RESPONSE_DIR": hostToolResponseRoot.path,
             "WEIBEI_AGENT_RUNTIME": "1",
             "GIT_TERMINAL_PROMPT": "0",
             "NO_COLOR": "1",
@@ -1475,17 +1874,25 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             activeRun = run
             refreshRunWatchdog()
 
-        case let .toolStarted(_, name):
+        case let .toolStarted(id, name, argumentsJSON):
             guard var run = activeRun else { return }
             trace("tool started name=\(name)")
             run.toolTrace.append(name)
-            activeRun = run
-            guard Set(Self.allowedToolNames).contains(name) else {
+            guard run.allowedToolNames.contains(name) else {
+                activeRun = run
                 finishRun(
                     id: run.id,
                     with: .failure(PiAgentRuntimeError.agentFailed("PI attempted an unavailable tool: \(name)"))
                 )
                 return
+            }
+            activeRun = run
+            if Self.hostToolNames.contains(name) {
+                startHostToolCall(
+                    id: id,
+                    name: name,
+                    argumentsJSON: argumentsJSON
+                )
             }
             refreshRunWatchdog()
             run.progressDelivery?.yield(.usingTool(name))
@@ -1794,6 +2201,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private func finishRun(id: UUID, with result: Result<StudyAgentReply, Error>) {
         guard var run = activeRun, run.id == id, run.completed == nil else { return }
+        finishHostToolRun(requestID: id)
         run.watchdogTask?.cancel()
         run.watchdogTask = nil
         run.progressDelivery?.finish()
@@ -1832,10 +2240,17 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private func discardRun(id: UUID) {
         guard let run = activeRun, run.id == id else { return }
+        finishHostToolRun(requestID: id)
         run.watchdogTask?.cancel()
         run.progressDelivery?.finish()
         activeRun = nil
         scheduleIdleShutdown()
+    }
+
+    private func finishHostToolRun(requestID: UUID) {
+        hostToolTasks.values.forEach { $0.cancel() }
+        hostToolTasks.removeAll()
+        removeHostToolResponseDirectory(for: requestID)
     }
 
     private func clearContextSnapshot() {

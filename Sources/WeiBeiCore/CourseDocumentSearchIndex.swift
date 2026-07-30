@@ -18,10 +18,12 @@ private final class CourseIndexCancellationProbe {
 public struct CourseDocumentIndexResult: Sendable {
     public var text: String?
     public var isTruncated: Bool
+    public var rank: Double?
 
-    public init(text: String?, isTruncated: Bool) {
+    public init(text: String?, isTruncated: Bool, rank: Double? = nil) {
         self.text = text
         self.isTruncated = isTruncated
+        self.rank = rank
     }
 }
 
@@ -55,10 +57,76 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
     private struct RankedChunk {
         var sortOrder: Int
         var text: String
+        var rank: Double
+    }
+
+    private struct TextSection {
+        var location: String
+        var heading: String?
+        var text: String
+    }
+
+    private final class VerifiedRegularFile {
+        let descriptor: Int32
+        let metadata: FileMetadata
+
+        init?(item: StudyItem) {
+            guard let url = item.url else { return nil }
+            let descriptor = url.withUnsafeFileSystemRepresentation { path -> Int32 in
+                guard let path else { return -1 }
+                return Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
+            }
+            guard descriptor >= 0 else { return nil }
+            var fileStat = Darwin.stat()
+            guard Darwin.fstat(descriptor, &fileStat) == 0,
+                  (fileStat.st_mode & S_IFMT) == S_IFREG else {
+                Darwin.close(descriptor)
+                return nil
+            }
+            let identity = ImportedFileIdentity(
+                volumeID: UInt64(fileStat.st_dev),
+                fileID: UInt64(fileStat.st_ino),
+                birthTimeSeconds: Int64(fileStat.st_birthtimespec.tv_sec),
+                birthTimeNanoseconds: Int64(fileStat.st_birthtimespec.tv_nsec)
+            )
+            if let expectedIdentity = item.importedFileIdentity {
+                guard identity == expectedIdentity else {
+                    Darwin.close(descriptor)
+                    return nil
+                }
+            } else {
+                switch item.storage {
+                case .courseOwned, .shared:
+                    Darwin.close(descriptor)
+                    return nil
+                case .legacyExternal, .bundledSample:
+                    break
+                }
+            }
+            self.descriptor = descriptor
+            self.metadata = FileMetadata(fileStat)
+        }
+
+        deinit {
+            Darwin.close(descriptor)
+        }
+
+        func readData(afterOpen: (() -> Void)?) -> Data? {
+            afterOpen?()
+            guard Darwin.lseek(descriptor, 0, SEEK_SET) >= 0 else { return nil }
+            let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: false)
+            guard let data = try? handle.readToEnd(),
+                  metadata.isStillCurrent(descriptor),
+                  UInt64(data.count) == metadata.size else {
+                return nil
+            }
+            return data
+        }
     }
 
     private let databaseURL: URL
     private let nativePDFTextLoader: CourseNativePDFTextLoader
+    private let verifiedFileDidOpen: (@Sendable () -> Void)?
     private let indexingQueue = DispatchQueue(
         label: "com.changfenhuang.weibei.course-index",
         qos: .utility
@@ -81,6 +149,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
 
     public init(
         databaseURL: URL,
+        verifiedFileDidOpen: (@Sendable () -> Void)? = nil,
         nativePDFTextLoader: @escaping CourseNativePDFTextLoader = { url, pageIndexes, maximumCharacters, timeout in
             BoundedPDFTextExtractor.pages(
                 from: url,
@@ -91,6 +160,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         }
     ) {
         self.databaseURL = databaseURL
+        self.verifiedFileDidOpen = verifiedFileDidOpen
         self.nativePDFTextLoader = nativePDFTextLoader
         try? FileManager.default.createDirectory(
             at: databaseURL.deletingLastPathComponent(),
@@ -210,6 +280,18 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         }
     }
 
+    public func verifiedSnapshot(
+        of item: StudyItem,
+        maximumBytes: UInt64
+    ) -> URL? {
+        guard let file = VerifiedRegularFile(item: item),
+              file.metadata.size > 0,
+              file.metadata.size <= maximumBytes else {
+            return nil
+        }
+        return temporarySnapshot(of: file)
+    }
+
     public func lookup(
         items: [StudyItem],
         query: String,
@@ -274,7 +356,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                        ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY rank) AS row_number
                    FROM matches
                )
-               SELECT item_id, sort_order, text
+               SELECT item_id, sort_order, text, rank
                FROM ranked
                WHERE row_number <= 12
                ORDER BY rank
@@ -308,7 +390,8 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                 chunks.append(
                     RankedChunk(
                         sortOrder: Int(sqlite3_column_int64(statement, 1)),
-                        text: text
+                        text: text,
+                        rank: sqlite3_column_double(statement, 3)
                     )
                 )
                 rankedByStorageID[storageID] = chunks
@@ -332,9 +415,94 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                 isTruncated: state?.isComplete != true
                     || state?.hasPartialExtraction == true
                     || (state?.chunkCount ?? 0) > chunks.count
-                    || joined.count > characterLimit
+                    || joined.count > characterLimit,
+                rank: chunks.map(\.rank).min()
             )
         }
+    }
+
+    public func read(
+        item: StudyItem,
+        query: String,
+        location: String?,
+        maximumCharacters: Int = 24_000
+    ) -> CourseDocumentIndexResult {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedLocation = location?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedQuery.isEmpty, trimmedLocation?.isEmpty ?? true {
+            return lookup(
+                items: [item],
+                query: trimmedQuery,
+                maximumCharactersPerItem: maximumCharacters
+            )[item.id] ?? CourseDocumentIndexResult(text: nil, isTruncated: false)
+        }
+
+        refreshChangedItemsForLookup([item])
+        guard !Task.isCancelled,
+              let scheduled = Self.scheduledItem(item),
+              let database = openDatabase() else {
+            return CourseDocumentIndexResult(text: nil, isTruncated: false)
+        }
+        defer { sqlite3_close(database) }
+        schedulingLock.lock()
+        let expectedSignature = expectedSignaturesByStorageID[scheduled.storageID]
+        schedulingLock.unlock()
+        guard expectedSignature == scheduled.signature,
+              Self.fileSignature(for: item) == scheduled.signature,
+              let state = fileState(for: scheduled.storageID, in: database),
+              state.signature == scheduled.signature else {
+            return CourseDocumentIndexResult(text: nil, isTruncated: false)
+        }
+
+        let hasLocation = !(trimmedLocation ?? "").isEmpty
+        let sql = hasLocation
+            ? """
+              SELECT location, text
+              FROM chunks
+              WHERE item_id = ? AND (location = ? OR instr(location, ?) > 0)
+              ORDER BY sort_order
+              LIMIT 24
+              """
+            : """
+              SELECT location, text
+              FROM chunks
+              WHERE item_id = ?
+              ORDER BY sort_order
+              LIMIT 24
+              """
+        guard let statement = prepare(sql, in: database) else {
+            return CourseDocumentIndexResult(text: nil, isTruncated: false)
+        }
+        defer { sqlite3_finalize(statement) }
+        bind(scheduled.storageID, at: 1, in: statement)
+        if hasLocation, let trimmedLocation {
+            bind(trimmedLocation, at: 2, in: statement)
+            bind(trimmedLocation, at: 3, in: statement)
+        }
+
+        let characterLimit = max(maximumCharacters, 1)
+        var chunks: [String] = []
+        var characterCount = 0
+        while !Task.isCancelled, sqlite3_step(statement) == SQLITE_ROW {
+            guard let text = columnText(statement, at: 1), !text.isEmpty else { continue }
+            let location = columnText(statement, at: 0) ?? ""
+            let chunk = location.isEmpty || text.hasPrefix(location)
+                ? text
+                : "\(location)\n\(text)"
+            let remaining = characterLimit - characterCount
+            guard remaining > 0 else { break }
+            let clipped = String(chunk.prefix(remaining))
+            chunks.append(clipped)
+            characterCount += clipped.count + 2
+        }
+        let joined = chunks.joined(separator: "\n\n")
+        return CourseDocumentIndexResult(
+            text: joined.isEmpty ? nil : joined,
+            isTruncated: state.isComplete != true
+                || state.hasPartialExtraction
+                || state.chunkCount > chunks.count
+                || characterCount >= characterLimit
+        )
     }
 
     private struct ScheduledItem {
@@ -469,8 +637,7 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         guard let itemLock = acquireItemIndexLock(for: storageID) else { return false }
         defer { itemLock.unlock() }
         guard isExpected(signature: signature, for: storageID),
-              let database = openDatabase(),
-              let url = item.url else { return false }
+              let database = openDatabase() else { return false }
         defer { sqlite3_close(database) }
         if let state = fileState(for: storageID, in: database),
            state.signature == signature,
@@ -486,10 +653,17 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
 
         switch item.kind {
         case .pdf:
+            guard let file = VerifiedRegularFile(item: item),
+                  "v6#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
+                    == signature,
+                  let snapshotURL = temporarySnapshot(of: file) else {
+                return false
+            }
+            defer { try? FileManager.default.removeItem(at: snapshotURL) }
             return indexPDFTextLayer(
                 item: item,
                 storageID: storageID,
-                url: url,
+                url: snapshotURL,
                 signature: signature,
                 maximumPages: maximumNativePDFPages,
                 maximumSeconds: maximumNativePDFSeconds,
@@ -524,31 +698,31 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         signature: String,
         in database: OpaquePointer
     ) {
-        guard let text = Self.text(for: item) else { return }
+        guard let sections = textSections(for: item, expectedSignature: signature) else { return }
         var indexedAllChunks = true
         var indexedChunkCount = 0
         _ = withWriteTransaction(in: database) {
             guard isExpected(signature: signature, for: storageID) else { return false }
             guard deleteIndexedContent(for: storageID, in: database) else { return false }
-            var start = text.startIndex
-            while start < text.endIndex {
-                guard !Task.isCancelled else { return false }
-                guard isExpected(signature: signature, for: storageID) else { return false }
-                guard hasDatabaseCapacity() else {
-                    indexedAllChunks = false
-                    break
+            for section in sections {
+                for body in Self.chunked(section.text, maximumCharacters: 2_000) {
+                    guard !Task.isCancelled else { return false }
+                    guard isExpected(signature: signature, for: storageID) else { return false }
+                    guard hasDatabaseCapacity() else {
+                        indexedAllChunks = false
+                        break
+                    }
+                    let chunk = section.heading.map { "# \($0)\n\(body)" } ?? body
+                    guard insertChunk(
+                        itemID: storageID,
+                        sortOrder: indexedChunkCount,
+                        location: section.location,
+                        text: chunk,
+                        in: database
+                    ) else { return false }
+                    indexedChunkCount += 1
                 }
-                let end = text.index(start, offsetBy: 2_000, limitedBy: text.endIndex) ?? text.endIndex
-                let chunk = String(text[start..<end])
-                guard insertChunk(
-                    itemID: storageID,
-                    sortOrder: indexedChunkCount,
-                    location: "",
-                    text: chunk,
-                    in: database
-                ) else { return false }
-                indexedChunkCount += 1
-                start = end
+                if !indexedAllChunks { break }
             }
             guard isExpected(signature: signature, for: storageID) else { return false }
             return replaceFileRecord(
@@ -686,11 +860,15 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         defer { itemLock.unlock() }
         guard isExpected(signature: signature, for: storageID),
               Self.fileSignature(for: item) == signature,
-              let database = openDatabase(),
-              let url = item.url,
-              let document = PDFDocument(url: url),
-              fileState(for: storageID, in: database)?.signature == signature else { return }
+              let file = VerifiedRegularFile(item: item),
+              "v6#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
+                == signature,
+              let snapshotURL = temporarySnapshot(of: file) else { return }
+        defer { try? FileManager.default.removeItem(at: snapshotURL) }
+        guard let database = openDatabase() else { return }
         defer { sqlite3_close(database) }
+        guard let document = PDFDocument(url: snapshotURL),
+              fileState(for: storageID, in: database)?.signature == signature else { return }
         let pageCount = max(document.pageCount, 0)
         var processedPages = processedPageIndexes(for: storageID, in: database)
         let nativeAttemptedPages = nativeAttemptedPageIndexes(for: storageID, in: database)
@@ -1184,34 +1362,88 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
     private struct FileMetadata {
         var modified: TimeInterval
         var size: UInt64
+
+        init(_ fileStat: Darwin.stat) {
+            modified = TimeInterval(fileStat.st_mtimespec.tv_sec)
+                + TimeInterval(fileStat.st_mtimespec.tv_nsec) / 1_000_000_000
+            size = UInt64(max(fileStat.st_size, 0))
+        }
+
+        func isStillCurrent(_ descriptor: Int32) -> Bool {
+            var fileStat = Darwin.stat()
+            guard Darwin.fstat(descriptor, &fileStat) == 0 else { return false }
+            let current = FileMetadata(fileStat)
+            return current.modified == modified && current.size == size
+        }
     }
 
-    private static func fileMetadata(for url: URL) -> FileMetadata? {
-        let resolvedURL = url.resolvingSymlinksInPath()
-        guard let values = try? resolvedURL.resourceValues(forKeys: [
-            .contentModificationDateKey,
-            .fileSizeKey,
-            .isRegularFileKey,
-        ]), values.isRegularFile == true else { return nil }
-        return FileMetadata(
-            modified: values.contentModificationDate?.timeIntervalSince1970 ?? 0,
-            size: UInt64(max(values.fileSize ?? 0, 0))
+    private func temporarySnapshot(of file: VerifiedRegularFile) -> URL? {
+        let directory = databaseURL.deletingLastPathComponent()
+            .appendingPathComponent("ReadSnapshots", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: directory.path
+            )
+        } catch {
+            return nil
+        }
+        var template = Array(
+            directory.appendingPathComponent("snapshot-XXXXXX").path.utf8CString
         )
+        let outputDescriptor = template.withUnsafeMutableBufferPointer { buffer in
+            Darwin.mkstemp(buffer.baseAddress)
+        }
+        guard outputDescriptor >= 0 else { return nil }
+        let path = String(cString: template)
+        let url = URL(fileURLWithPath: path)
+        var succeeded = false
+        defer {
+            Darwin.close(outputDescriptor)
+            if !succeeded {
+                try? FileManager.default.removeItem(at: url)
+            }
+        }
+        guard Darwin.fchmod(outputDescriptor, 0o600) == 0,
+              Darwin.lseek(file.descriptor, 0, SEEK_SET) >= 0 else {
+            return nil
+        }
+        verifiedFileDidOpen?()
+        guard fcopyfile(
+            file.descriptor,
+            outputDescriptor,
+            nil,
+            copyfile_flags_t(COPYFILE_DATA)
+        ) == 0,
+              file.metadata.isStillCurrent(file.descriptor) else {
+            return nil
+        }
+        var outputStat = Darwin.stat()
+        guard Darwin.fstat(outputDescriptor, &outputStat) == 0,
+              UInt64(max(outputStat.st_size, 0)) == file.metadata.size else {
+            return nil
+        }
+        succeeded = true
+        return url
     }
 
     private static func fileSignature(for item: StudyItem) -> String? {
-        guard let url = item.url, let metadata = fileMetadata(for: url) else { return nil }
-        return "v5#\(item.kind.rawValue)#\(metadata.modified)#\(metadata.size)"
+        guard let metadata = VerifiedRegularFile(item: item)?.metadata else { return nil }
+        return "v6#\(item.kind.rawValue)#\(metadata.modified)#\(metadata.size)"
     }
 
     private static func scheduledItem(_ item: StudyItem) -> ScheduledItem? {
-        guard let url = item.url,
-              let metadata = fileMetadata(for: url) else { return nil }
+        guard item.url != nil,
+              let metadata = VerifiedRegularFile(item: item)?.metadata else { return nil }
         guard item.kind == .pdf || metadata.size <= maximumTextSourceBytes else { return nil }
         return ScheduledItem(
             item: item,
             storageID: storageID(for: item.id),
-            signature: "v5#\(item.kind.rawValue)#\(metadata.modified)#\(metadata.size)"
+            signature: "v6#\(item.kind.rawValue)#\(metadata.modified)#\(metadata.size)"
         )
     }
 
@@ -1220,46 +1452,61 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
-    private static func text(for item: StudyItem) -> String? {
-        guard let url = item.url else { return nil }
+    private func textSections(
+        for item: StudyItem,
+        expectedSignature: String
+    ) -> [TextSection]? {
+        guard let file = VerifiedRegularFile(item: item),
+              "v6#\(item.kind.rawValue)#\(file.metadata.modified)#\(file.metadata.size)"
+                == expectedSignature,
+              let data = file.readData(afterOpen: verifiedFileDidOpen) else {
+            return nil
+        }
         switch item.kind {
         case .html:
-            guard let data = try? Data(contentsOf: url) else { return nil }
-            let headings = htmlHeadings(in: data)
-            if let attributed = try? NSAttributedString(
-                data: data,
-                options: [
-                    .documentType: NSAttributedString.DocumentType.html,
-                    .characterEncoding: String.Encoding.utf8.rawValue,
-                ],
-                documentAttributes: nil
-            ) {
-                let headingText = headings.map { "# \($0)" }.joined(separator: "\n")
-                return headingText.isEmpty ? attributed.string : "\(headingText)\n\n\(attributed.string)"
+            return Self.htmlSections(in: data)
+        case .markdown:
+            return String(data: data, encoding: .utf8).map(Self.markdownSections)
+        case .text:
+            return String(data: data, encoding: .utf8).map {
+                [TextSection(location: "", heading: nil, text: $0)]
             }
-            return String(data: data, encoding: .utf8)
-        case .markdown, .text:
-            return try? String(contentsOf: url, encoding: .utf8)
         case .pdf:
             return nil
         }
     }
 
-    private static func htmlHeadings(in data: Data) -> [String] {
+    private static func htmlSections(in data: Data) -> [TextSection] {
         guard let html = String(data: data, encoding: .utf8),
               let regex = try? NSRegularExpression(
                   pattern: #"<h([1-4])\b[^>]*>(.*?)</h\1\s*>"#,
                   options: [.caseInsensitive, .dotMatchesLineSeparators]
               ) else { return [] }
         let range = NSRange(html.startIndex..<html.endIndex, in: html)
-        var headings: [String] = []
-        var locationIDCounts: [String: Int] = [:]
         let matches = regex.matches(in: html, range: range)
+        guard !matches.isEmpty else {
+            let text = htmlPlainText(html)
+            return text.isEmpty ? [] : [TextSection(location: "", heading: nil, text: text)]
+        }
+        var sections: [TextSection] = []
+        if let first = matches.first, first.range.location > 0,
+           let preambleRange = Range(
+               NSRange(location: 0, length: first.range.location),
+               in: html
+           ) {
+            let preamble = htmlPlainText(String(html[preambleRange]))
+            if !preamble.isEmpty {
+                sections.append(
+                    TextSection(location: "", heading: nil, text: preamble)
+                )
+            }
+        }
+        var locationIDCounts: [String: Int] = [:]
         for (index, match) in matches.enumerated() {
             guard match.numberOfRanges > 2,
                   let matchRange = Range(match.range(at: 2), in: html) else { continue }
-            let text = htmlPlainText(String(html[matchRange]))
-            if !text.isEmpty {
+            let title = htmlPlainText(String(html[matchRange]))
+            if !title.isEmpty {
                 let bodyStart = NSMaxRange(match.range)
                 let bodyEnd = index + 1 < matches.count ? matches[index + 1].range.location : range.length
                 let body: String
@@ -1269,14 +1516,62 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
                 } else {
                     body = ""
                 }
-                let baseLocationID = htmlSectionLocationID(title: text, body: body)
+                let baseLocationID = htmlSectionLocationID(title: title, body: body)
                 let count = locationIDCounts[baseLocationID, default: 0] + 1
                 locationIDCounts[baseLocationID] = count
                 let locationID = count == 1 ? baseLocationID : "\(baseLocationID)-dup-\(count)"
-                headings.append("[\(locationID)][html-heading-\(index)] \(text.prefix(300))")
+                let heading = "[\(locationID)][html-heading-\(index)] \(title.prefix(300))"
+                sections.append(
+                    TextSection(
+                        location: "\(locationID) html-heading-\(index) \(title.prefix(300))",
+                        heading: heading,
+                        text: body.isEmpty ? title : body
+                    )
+                )
             }
         }
-        return headings
+        return sections
+    }
+
+    private static func markdownSections(in text: String) -> [TextSection] {
+        let lines = text.components(separatedBy: .newlines)
+        var sections: [TextSection] = []
+        var body: [String] = []
+        var heading: String?
+        var location = ""
+        var ordinal = 0
+        func appendSection() {
+            let sectionText = body.joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !sectionText.isEmpty || heading != nil else { return }
+            sections.append(
+                TextSection(
+                    location: location,
+                    heading: heading,
+                    text: sectionText
+                )
+            )
+        }
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if let range = trimmed.range(
+                of: #"^#{1,6}\s+(.+?)\s*#*$"#,
+                options: .regularExpression
+            ) {
+                appendSection()
+                body.removeAll(keepingCapacity: true)
+                let rawHeading = String(trimmed[range])
+                let title = rawHeading
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "# "))
+                heading = String(title.prefix(300))
+                location = "markdown-heading-\(ordinal) \(title.prefix(300))"
+                ordinal += 1
+            } else {
+                body.append(line)
+            }
+        }
+        appendSection()
+        return sections
     }
 
     private static func htmlPlainText(_ fragment: String) -> String {
@@ -1342,6 +1637,39 @@ public final class CourseDocumentSearchIndex: @unchecked Sendable {
         return terms.filter { term in
             seen.insert(term).inserted
         }
+    }
+
+    public static func text(_ text: String, matchesAnyTermIn query: String) -> Bool {
+        searchTerms(in: query).contains { text.localizedCaseInsensitiveContains($0) }
+    }
+
+    public static func readMarkdown(
+        _ markdown: String,
+        query: String,
+        location: String?,
+        maximumCharacters: Int = 24_000
+    ) -> CourseDocumentIndexResult {
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedLocation = location?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let sections = markdownSections(in: markdown).filter { section in
+            if !trimmedLocation.isEmpty {
+                return section.location == trimmedLocation
+                    || section.location.localizedCaseInsensitiveContains(trimmedLocation)
+            }
+            guard !trimmedQuery.isEmpty else { return true }
+            return text(
+                [section.heading, section.text].compactMap { $0 }.joined(separator: "\n"),
+                matchesAnyTermIn: trimmedQuery
+            )
+        }
+        let joined = sections.map { section in
+            section.heading.map { "# \($0)\n\(section.text)" } ?? section.text
+        }.joined(separator: "\n\n")
+        let limit = max(maximumCharacters, 1)
+        return CourseDocumentIndexResult(
+            text: joined.isEmpty ? nil : String(joined.prefix(limit)),
+            isTruncated: joined.count > limit
+        )
     }
 
     private static func appendChineseTerms(from run: String, to terms: inout [String]) {

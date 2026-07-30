@@ -462,6 +462,8 @@ final class WorkspaceStore: ObservableObject {
     private var activeAgentReplyMessageID: UUID?
     private var activeAgentReplyChatID: UUID?
     private var agentRequestTask: Task<Void, Never>?
+    private var capturesAgentRequestForSelfCheck = false
+    private var selfCheckCapturedAgentRequest: StudyAgentRequest?
     private var agentStopTask: Task<Void, Never>?
     private var pendingAgentSwitchTargetID: UUID?
     private var agentDraftsBySessionID: [UUID: String] = [:]
@@ -547,14 +549,47 @@ final class WorkspaceStore: ObservableObject {
         var item: StudyItem
         var title: String
         var subtitle: String
-        var embeddedText: String?
-        var fallbackText: String
+        var memoryText: String?
+        var grants: [AgentFileGrant]
     }
 
     private struct CourseContextBuildResult: Sendable {
         var context: StudyAgentCourseContext
         var selectedMaterialText: String?
         var selectedMaterialIsTruncated: Bool
+        var selectedNoteText: String?
+    }
+
+    private struct AgentHostToolSource: Sendable {
+        var item: StudyItem
+        var projectItem: StudyAgentProjectItem
+        var title: String
+        var subtitle: String
+        var kind: String
+        var role: String
+        var memoryText: String?
+        var relativePath: String?
+        var courseIDs: [String]
+        var courseTitles: [String]
+        var grants: [AgentFileGrant]
+    }
+
+    private struct AgentFileGrant: Sendable {
+        var courseID: UUID
+        var courseTitle: String
+        var rootURL: URL
+        var rootIdentity: ImportedFileIdentity
+        var entryURL: URL
+        var entryIdentity: ImportedFileIdentity
+        var targetURL: URL
+        var targetIdentity: ImportedFileIdentity
+        var relativePath: String
+        var isShared: Bool
+    }
+
+    private struct AgentProjectAccessSnapshot: Sendable {
+        var scope: StudyAgentProjectScope
+        var sources: [AgentHostToolSource]
     }
 
     private struct AgentConversationTarget: Sendable {
@@ -7597,6 +7632,14 @@ final class WorkspaceStore: ObservableObject {
         return ""
     }
 
+    private func loadedAgentNoteText(for item: StudyItem) -> String? {
+        guard item.isNotebookNote else { return nil }
+        if item.id == activeNoteItemID {
+            return noteText
+        }
+        return notesByItemID[item.id] ?? loadedCourseNoteTextByItemID[item.id]
+    }
+
     func select(itemID: String?) {
         WeiBeiPerf.measure("workspace.select") {
             selectMeasured(itemID: itemID)
@@ -10916,46 +10959,22 @@ final class WorkspaceStore: ObservableObject {
 
     private func makeCourseContext(
         query: String,
-        courseID: UUID?
+        courseID: UUID?,
+        access: AgentProjectAccessSnapshot
     ) async throws -> CourseContextBuildResult {
-        let scopedItems = courseID.map { courseItems(in: $0) } ?? allItems
-        let scopedItemIDs = Set(scopedItems.map(\.id))
-        let candidates = scopedItems.map { item in
-            let baseSubtitle = displaySubtitle(for: item)
-            let subtitle: String
-            if courseID == nil {
-                let membershipIDs = Set(courseMembershipIndex.courseIDs(for: item.id))
-                let courseTitles = courses
-                    .filter { membershipIDs.contains($0.id) }
-                    .map(\.title)
-                subtitle = courseTitles.isEmpty
-                    ? ui("未归入课程 · \(baseSubtitle)", "Not in a course · \(baseSubtitle)")
-                    : ui(
-                        "课程：\(courseTitles.joined(separator: "、")) · \(baseSubtitle)",
-                        "Courses: \(courseTitles.joined(separator: ", ")) · \(baseSubtitle)"
-                    )
-            } else {
-                subtitle = baseSubtitle
+        let candidates = access.sources.compactMap { source -> CourseIndexCandidate? in
+            guard source.grants.contains(where: Self.agentFileGrantIsValid) else {
+                return nil
             }
-            let embeddedText: String?
-            if item.isNotebookNote {
-                embeddedText = noteMarkdownText(for: item)
-            } else if item.id == selectedItemID {
-                embeddedText = selectedContextText
-            } else {
-                embeddedText = nil
-            }
-            let fallbackText = item.id == "sample-md"
-                ? notesByItemID[item.id] ?? defaultNote(for: item)
-                : sampleText(for: item)
             return CourseIndexCandidate(
-                item: item,
-                title: displayTitle(for: item),
-                subtitle: subtitle,
-                embeddedText: embeddedText,
-                fallbackText: fallbackText
+                item: source.item,
+                title: source.title,
+                subtitle: source.subtitle,
+                memoryText: source.memoryText,
+                grants: source.grants
             )
         }
+        let scopedItemIDs = Set(candidates.map(\.item.id))
         let title = courseID
             .flatMap { course(withID: $0)?.title }
             ?? ui("全部课程", "All Courses")
@@ -10973,32 +10992,46 @@ final class WorkspaceStore: ObservableObject {
         let searchIndex = courseDocumentSearchIndex
         let indexingTask = Task.detached(priority: .userInitiated) {
             let indexedByItemID = searchIndex.lookup(
-                items: candidates.map(\.item),
+                items: candidates.compactMap {
+                    $0.memoryText == nil ? $0.item : nil
+                },
                 query: query
             )
+            let selectedMaterialIndex = currentMaterialItem.map {
+                searchIndex.read(item: $0, query: "", location: nil)
+            }
+            let selectedNoteIndex = currentNoteID
+                .flatMap { noteID in
+                    candidates.first { $0.item.id == noteID }
+                }
+                .flatMap { candidate -> CourseDocumentIndexResult? in
+                    guard candidate.memoryText == nil else { return nil }
+                    return searchIndex.read(
+                        item: candidate.item,
+                        query: "",
+                        location: nil
+                    )
+                }
             var sources: [CourseKnowledgeSource] = []
             sources.reserveCapacity(candidates.count)
             for candidate in candidates {
                 try Task.checkCancellation()
-                let indexed = indexedByItemID[candidate.item.id]
-                let sampleIndexedText = candidate.item.isSample
-                    ? DocumentTextExtractor.indexText(for: candidate.item, query: query)
-                    : nil
-                let selectedIndexedText = candidate.item.id == currentMaterialID ? indexed?.text : nil
-                var text = selectedIndexedText
-                    ?? candidate.embeddedText
-                    ?? indexed?.text
-                    ?? sampleIndexedText
-                    ?? candidate.fallbackText
-                // Freshly switched / unindexed materials often miss FTS + cache.
-                // Extract off the main actor so the agent still sees the current file.
-                if candidate.item.id == currentMaterialID,
-                   text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                   let item = currentMaterialItem {
-                    text = DocumentTextExtractor.text(for: item) ?? candidate.fallbackText
+                guard candidate.grants.contains(where: Self.agentFileGrantIsValid) else {
+                    continue
                 }
-                let isTruncated = indexed?.isTruncated
-                    ?? (candidate.item.url != nil && !candidate.item.isSample)
+                let indexed = indexedByItemID[candidate.item.id]
+                let focusedIndex = candidate.item.id == currentMaterialID
+                    ? selectedMaterialIndex
+                    : candidate.item.id == currentNoteID
+                        ? selectedNoteIndex
+                        : nil
+                let text = candidate.memoryText
+                    ?? focusedIndex?.text
+                    ?? indexed?.text
+                    ?? ""
+                let isTruncated = focusedIndex?.isTruncated
+                    ?? indexed?.isTruncated
+                    ?? false
                 sources.append(
                     CourseKnowledgeSource(
                         id: candidate.item.id,
@@ -11011,12 +11044,12 @@ final class WorkspaceStore: ObservableObject {
                     )
                 )
             }
-            let selectedIndex = currentMaterialID.flatMap { indexedByItemID[$0] }
             let selectedSourceText = currentMaterialID.flatMap { id in
                 sources.first(where: { $0.id == id })?.text
             }
             let resolvedSelectedText: String? = {
-                if let text = selectedIndex?.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if let text = selectedMaterialIndex?.text,
+                   !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     return text
                 }
                 if let text = selectedSourceText, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -11034,8 +11067,11 @@ final class WorkspaceStore: ObservableObject {
                     currentNoteID: currentNoteID
                 ),
                 selectedMaterialText: resolvedSelectedText,
-                selectedMaterialIsTruncated: selectedIndex?.isTruncated
-                    ?? ((selectedSourceText?.count ?? 0) > 24_000)
+                selectedMaterialIsTruncated: selectedMaterialIndex?.isTruncated
+                    ?? ((selectedSourceText?.count ?? 0) > 24_000),
+                selectedNoteText: currentNoteID.flatMap { id in
+                    sources.first(where: { $0.id == id })?.text
+                }
             )
         }
         return try await withTaskCancellationHandler {
@@ -11043,6 +11079,676 @@ final class WorkspaceStore: ObservableObject {
         } onCancel: {
             indexingTask.cancel()
         }
+    }
+
+    private func makeAgentProjectAccessSnapshot(
+        target: AgentConversationTarget
+    ) -> AgentProjectAccessSnapshot {
+        let scopedItems = target.courseID.map { courseItems(in: $0) } ?? allItems
+        let coursesByID = Dictionary(uniqueKeysWithValues: courses.map { ($0.id, $0.title) })
+        let requestedCourseIDs: (StudyItem) -> [UUID] = { item in
+            target.courseID.map { [$0] }
+                ?? self.courseMembershipIndex.courseIDs(for: item.id)
+        }
+        let sources = scopedItems.compactMap { item -> AgentHostToolSource? in
+            let grants = requestedCourseIDs(item).compactMap { courseID in
+                self.makeAgentFileGrant(
+                    item: item,
+                    courseID: courseID,
+                    courseTitle: coursesByID[courseID] ?? "",
+                    target: target
+                )
+            }
+            guard let primaryGrant = grants.first else { return nil }
+            let isCourseScope = target.courseID != nil
+            let courseIDs = grants.map { $0.courseID.uuidString.lowercased() }
+            let courseTitles = grants.map(\.courseTitle)
+            let baseSubtitle = displaySubtitle(for: item)
+            let subtitle = isCourseScope
+                ? baseSubtitle
+                : ui(
+                    "课程：\(courseTitles.joined(separator: "、")) · \(baseSubtitle)",
+                    "Courses: \(courseTitles.joined(separator: ", ")) · \(baseSubtitle)"
+                )
+            let projectItem = StudyAgentProjectItem(
+                itemID: item.id,
+                title: displayTitle(for: item),
+                kind: item.kind.rawValue,
+                role: item.isNotebookNote ? "note" : "material",
+                relativePath: isCourseScope ? primaryGrant.relativePath : "",
+                resolvedPath: isCourseScope ? primaryGrant.targetURL.path : "",
+                entryIdentity: isCourseScope
+                    ? StudyAgentFileIdentity(primaryGrant.entryIdentity)
+                    : nil,
+                targetIdentity: isCourseScope
+                    ? StudyAgentFileIdentity(primaryGrant.targetIdentity)
+                    : nil,
+                isShared: isCourseScope && primaryGrant.isShared,
+                courseIDs: courseIDs,
+                courseTitles: courseTitles
+            )
+            return AgentHostToolSource(
+                item: item,
+                projectItem: projectItem,
+                title: displayTitle(for: item),
+                subtitle: subtitle,
+                kind: item.kind.rawValue,
+                role: item.isNotebookNote ? "note" : "material",
+                memoryText: loadedAgentNoteText(for: item),
+                relativePath: isCourseScope ? primaryGrant.relativePath : nil,
+                courseIDs: courseIDs,
+                courseTitles: courseTitles,
+                grants: grants
+            )
+        }
+        let maximumItems = 500
+        let projectItems = sources.prefix(maximumItems).map(\.projectItem)
+        let selectedCourse = target.courseID.flatMap { courseID in
+            self.course(withID: courseID)
+        }
+        return AgentProjectAccessSnapshot(
+            scope: StudyAgentProjectScope(
+                kind: target.courseID == nil ? .global : .course,
+                chatID: target.sessionID.uuidString.lowercased(),
+                courseID: target.courseID?.uuidString.lowercased(),
+                courseTitle: selectedCourse?.title,
+                rootPath: target.courseID == nil ? nil : target.workingDirectory.path,
+                rootIdentity: target.courseRootIdentity.map(StudyAgentFileIdentity.init),
+                items: projectItems,
+                isTruncated: sources.count > projectItems.count
+            ),
+            sources: sources
+        )
+    }
+
+    private func makeAgentFileGrant(
+        item: StudyItem,
+        courseID: UUID,
+        courseTitle: String,
+        target: AgentConversationTarget
+    ) -> AgentFileGrant? {
+        let rootURL: URL
+        let rootIdentity: ImportedFileIdentity
+        if target.courseID == courseID,
+           let expectedIdentity = target.courseRootIdentity {
+            rootURL = target.workingDirectory
+            rootIdentity = expectedIdentity
+        } else {
+            guard let course = course(withID: courseID),
+                  let expectedIdentity = course.sourceRootIdentity,
+                  let rawRoot = courseRootURL(for: courseID),
+                  let resolvedRoot = try? CourseProjectPathPolicy.existingDirectory(rawRoot),
+                  CourseProjectFileWorker.identity(at: resolvedRoot) == expectedIdentity else {
+                return nil
+            }
+            rootURL = resolvedRoot
+            rootIdentity = expectedIdentity
+        }
+        guard CourseProjectFileWorker.identity(at: rootURL) == rootIdentity,
+              let membership = courseItemMemberships.first(where: {
+                  $0.courseID == courseID && $0.itemID == item.id
+              }),
+              let relativePath = membership.courseRelativePath,
+              Self.isVisibleAgentProjectPath(relativePath),
+              let targetURL = item.url?.standardizedFileURL,
+              let entryIdentity = membership.entryIdentity,
+              let targetIdentity = item.importedFileIdentity else {
+            return nil
+        }
+        let entryURL = relativePath.split(separator: "/", omittingEmptySubsequences: true)
+            .map(String.init)
+            .reduce(rootURL) { $0.appendingPathComponent($1) }
+            .standardizedFileURL
+        guard CourseProjectFileWorker.identity(at: entryURL) == entryIdentity,
+              CourseProjectFileWorker.identity(at: targetURL) == targetIdentity,
+              CourseProjectPathPolicy.isSame(
+                  targetURL,
+                  targetURL.resolvingSymlinksInPath().standardizedFileURL
+              ) else {
+            return nil
+        }
+        let isShared: Bool
+        switch item.storage {
+        case .courseOwned(let ownerCourseID):
+            isShared = false
+            guard ownerCourseID == courseID,
+                  CourseProjectPathPolicy.isSame(entryURL, targetURL),
+                  CourseProjectPathPolicy.contains(
+                      rootURL,
+                      targetURL,
+                      includingRoot: false
+                  ) else {
+                return nil
+            }
+        case .shared:
+            isShared = true
+            guard CourseProjectFileWorker.symbolicLink(
+                at: entryURL,
+                pointsTo: targetURL
+            ) else {
+                return nil
+            }
+        case .legacyExternal, .bundledSample:
+            return nil
+        }
+        return AgentFileGrant(
+            courseID: courseID,
+            courseTitle: courseTitle,
+            rootURL: rootURL,
+            rootIdentity: rootIdentity,
+            entryURL: entryURL,
+            entryIdentity: entryIdentity,
+            targetURL: targetURL,
+            targetIdentity: targetIdentity,
+            relativePath: relativePath,
+            isShared: isShared
+        )
+    }
+
+    private static func isVisibleAgentProjectPath(_ path: String) -> Bool {
+        guard !path.hasPrefix("/"), !path.contains("\0") else { return false }
+        let components = path.split(separator: "/", omittingEmptySubsequences: false)
+        return !components.isEmpty && components.allSatisfy {
+            !$0.isEmpty && $0 != "." && $0 != ".." && !$0.hasPrefix(".")
+        }
+    }
+
+    func injectLegacyCourseMembershipForAgentSelfCheck(
+        itemID: String,
+        courseID: UUID
+    ) {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        courseItemMemberships.append(
+            CourseItemMembership(courseID: courseID, itemID: itemID)
+        )
+    }
+
+    func installCourseVisualForAgentSelfCheck(
+        courseID: UUID,
+        data: Data
+    ) throws -> StudyItem {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        guard let root = courseRootURL(for: courseID) else {
+            throw AgentConversationTargetError(message: "课程根目录不可用")
+        }
+        let relativePath = "文稿/课程图像.png"
+        let target = root.appendingPathComponent(relativePath)
+        try data.write(to: target, options: [.atomic])
+        guard let identity = CourseProjectFileWorker.identity(at: target) else {
+            throw AgentConversationTargetError(message: "无法核验课程图像")
+        }
+        let item = StudyItem(
+            id: "agent-visual:\(UUID().uuidString.lowercased())",
+            title: "课程图像",
+            subtitle: target.lastPathComponent,
+            kind: .text,
+            urlPath: target.path,
+            importedFileIdentity: identity,
+            importedFileLastKnownPath: target.path,
+            isSample: false,
+            storage: .courseOwned(ownerCourseID: courseID)
+        )
+        importedItems.append(item)
+        courseItemMemberships.append(
+            CourseItemMembership(
+                courseID: courseID,
+                itemID: item.id,
+                courseRelativePath: relativePath,
+                entryIdentity: identity
+            )
+        )
+        courseDocumentSearchIndex.synchronize(allItems)
+        return item
+    }
+
+    func installLegacyVisualForAgentSelfCheck(
+        at url: URL,
+        courseID: UUID
+    ) throws -> StudyItem {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        guard let identity = CourseProjectFileWorker.identity(at: url) else {
+            throw AgentConversationTargetError(message: "无法核验旧外部图像")
+        }
+        let item = StudyItem(
+            id: "agent-legacy-visual:\(UUID().uuidString.lowercased())",
+            title: url.deletingPathExtension().lastPathComponent,
+            subtitle: url.lastPathComponent,
+            kind: .text,
+            urlPath: url.path,
+            importedFileIdentity: identity,
+            importedFileLastKnownPath: url.path,
+            isSample: false,
+            storage: .legacyExternal
+        )
+        importedItems.append(item)
+        courseItemMemberships.append(
+            CourseItemMembership(courseID: courseID, itemID: item.id)
+        )
+        return item
+    }
+
+    func setAgentNoteFixtureForSelfCheck(
+        itemID: String,
+        memoryText: String,
+        diskText: String? = nil
+    ) throws {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        guard let index = importedItems.firstIndex(where: {
+            $0.id == itemID && $0.isNotebookNote
+        }), let url = importedItems[index].url else {
+            throw AgentConversationTargetError(message: "课程笔记样本不存在")
+        }
+        cancelPendingNotePersistence(for: itemID)
+        pendingNotePersistenceByItemID.removeValue(forKey: itemID)
+        if let diskText {
+            try Data(diskText.utf8).write(to: url, options: [.atomic])
+            guard let identity = CourseProjectFileWorker.identity(at: url) else {
+                throw AgentConversationTargetError(message: "无法核验课程笔记样本")
+            }
+            importedItems[index].importedFileIdentity = identity
+            importedItems[index].contentDigest = Self.noteContentDigest(Data(diskText.utf8))
+            for membershipIndex in courseItemMemberships.indices
+            where courseItemMemberships[membershipIndex].itemID == itemID {
+                courseItemMemberships[membershipIndex].entryIdentity = identity
+            }
+        }
+        courseNoteLoadTasksByItemID.removeValue(forKey: itemID)?.cancel()
+        notesByItemID.removeValue(forKey: itemID)
+        loadedCourseNoteTextByItemID[itemID] = memoryText
+        activeNotebookItemID = itemID
+        noteText = memoryText
+        courseDocumentSearchIndex.synchronize(allItems)
+    }
+
+    func removeCourseMembershipForAgentSelfCheck(
+        itemID: String,
+        courseID: UUID
+    ) {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        courseItemMemberships.removeAll {
+            $0.courseID == courseID && $0.itemID == itemID
+        }
+    }
+
+    func agentProjectScopeForSelfCheck(
+        courseID: UUID?
+    ) throws -> StudyAgentProjectScope {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        return makeAgentProjectAccessSnapshot(
+            target: try agentConversationTargetForSelfCheck(courseID: courseID)
+        ).scope
+    }
+
+    func agentHostSearchForSelfCheck(
+        courseID: UUID?,
+        query: String,
+        beforeSearch: (() throws -> Void)? = nil
+    ) throws -> StudyAgentHostToolResult {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        let target = try agentConversationTargetForSelfCheck(courseID: courseID)
+        let access = makeAgentProjectAccessSnapshot(target: target)
+        let handler = makeAgentHostToolHandler(target: target, access: access)
+        try beforeSearch?()
+        return try waitForCourseFileOperation {
+            try await handler(.courseSearch(query: query, limit: 8))
+        }
+    }
+
+    func agentHostReadForSelfCheck(
+        courseID: UUID?,
+        itemID: String,
+        query: String = "",
+        location: String? = nil
+    ) throws -> StudyAgentHostToolResult {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        let target = try agentConversationTargetForSelfCheck(courseID: courseID)
+        let access = makeAgentProjectAccessSnapshot(target: target)
+        let handler = makeAgentHostToolHandler(target: target, access: access)
+        return try waitForCourseFileOperation {
+            try await handler(
+                .courseRead(
+                    itemID: itemID,
+                    query: query,
+                    location: location,
+                    limit: 24_000
+                )
+            )
+        }
+    }
+
+    func agentCourseContextForSelfCheck(
+        courseID: UUID?,
+        query: String
+    ) throws -> StudyAgentCourseContext {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        let target = try agentConversationTargetForSelfCheck(courseID: courseID)
+        let access = makeAgentProjectAccessSnapshot(target: target)
+        return try waitForCourseFileOperation {
+            try await self.makeCourseContext(
+                query: query,
+                courseID: courseID,
+                access: access
+            ).context
+        }
+    }
+
+    func capturedAgentRequestForSelfCheck(
+        courseID: UUID,
+        materialItemID: String,
+        noteItemID: String,
+        selectionItemID: String
+    ) throws -> StudyAgentRequest {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        guard let session = createStudySession(courseID: courseID) else {
+            throw AgentConversationTargetError(message: "无法创建课程自检 Chat")
+        }
+        selectedItemID = materialItemID
+        activeNotebookItemID = noteItemID
+        noteText = "LEGACY_NOTE_REQUEST_SECRET"
+        selectionAttachments = []
+        selectionContext = SelectionContext(
+            text: "LEGACY_SELECTION_REQUEST_SECRET",
+            source: .document,
+            ownerTitle: "旧外部选区",
+            itemID: selectionItemID
+        )
+        agentDraft = "检查课程授权后的最终请求"
+        agentDraftsBySessionID[session.id] = agentDraft
+        selfCheckCapturedAgentRequest = nil
+        capturesAgentRequestForSelfCheck = true
+        defer { capturesAgentRequestForSelfCheck = false }
+        let target = try agentConversationTargetForSelfCheck(courseID: courseID)
+        let scopedTarget = AgentConversationTarget(
+            sessionID: session.id,
+            workingDirectory: target.workingDirectory,
+            courseID: target.courseID,
+            courseRootIdentity: target.courseRootIdentity
+        )
+        try waitForCourseFileOperation {
+            await self.performAgentRequest(target: scopedTarget)
+        }
+        guard let selfCheckCapturedAgentRequest else {
+            throw AgentConversationTargetError(message: "没有捕获最终课程 Agent 请求")
+        }
+        return selfCheckCapturedAgentRequest
+    }
+
+    private func agentConversationTargetForSelfCheck(
+        courseID: UUID?
+    ) throws -> AgentConversationTarget {
+        if let courseID,
+           let course = course(withID: courseID),
+           let rootIdentity = course.sourceRootIdentity,
+           let root = courseRootURL(for: courseID),
+           let resolvedRoot = try? CourseProjectPathPolicy.existingDirectory(root),
+           CourseProjectFileWorker.identity(at: resolvedRoot) == rootIdentity {
+            return AgentConversationTarget(
+                sessionID: UUID(),
+                workingDirectory: resolvedRoot,
+                courseID: courseID,
+                courseRootIdentity: rootIdentity
+            )
+        }
+        guard courseID == nil else {
+            throw AgentConversationTargetError(message: "课程根目录不可用")
+        }
+        let directory = workspaceDirectory
+            .appendingPathComponent("AgentRuntime/GlobalWorkspace", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        return AgentConversationTarget(
+            sessionID: UUID(),
+            workingDirectory: directory,
+            courseID: nil,
+            courseRootIdentity: nil
+        )
+    }
+
+    private func makeAgentHostToolHandler(
+        target: AgentConversationTarget,
+        access: AgentProjectAccessSnapshot
+    ) -> StudyAgentHostToolHandler {
+        let sources = access.sources
+        let scopedIDs = Set(sources.map(\.item.id))
+        let courseTitlesByID = Dictionary(uniqueKeysWithValues: courses.map { ($0.id, $0.title) })
+        let links = noteSourceLinks.filter {
+            scopedIDs.contains($0.noteItemID) && scopedIDs.contains($0.sourceItemID)
+        }
+        let title = target.courseID
+            .flatMap { courseTitlesByID[$0] }
+            ?? ui("全部课程", "All Courses")
+        let searchIndex = courseDocumentSearchIndex
+        let expectedRootIdentity = target.courseRootIdentity
+        let workingDirectory = target.workingDirectory
+
+        return { request in
+            if let expectedRootIdentity,
+               CourseProjectFileWorker.identity(at: workingDirectory) != expectedRootIdentity {
+                throw AgentConversationTargetError(message: "课程根目录在查询期间发生了变化")
+            }
+            let task = Task.detached(priority: .userInitiated) {
+                try Self.executeAgentHostTool(
+                    request,
+                    title: title,
+                    sources: sources,
+                    links: links,
+                    searchIndex: searchIndex
+                )
+            }
+            let result = try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
+            if let expectedRootIdentity,
+               CourseProjectFileWorker.identity(at: workingDirectory) != expectedRootIdentity {
+                throw AgentConversationTargetError(message: "课程根目录在查询期间发生了变化")
+            }
+            return result
+        }
+    }
+
+    nonisolated private static func executeAgentHostTool(
+        _ request: StudyAgentHostToolRequest,
+        title: String,
+        sources: [AgentHostToolSource],
+        links: [NoteSourceLink],
+        searchIndex: CourseDocumentSearchIndex
+    ) throws -> StudyAgentHostToolResult {
+        try Task.checkCancellation()
+        switch request {
+        case let .courseSearch(query, limit):
+            let approvedSources = sources.compactMap { source -> (
+                source: AgentHostToolSource,
+                grant: AgentFileGrant
+            )? in
+                guard let grant = source.grants.first(where: {
+                    agentFileGrantIsValid($0)
+                }) else {
+                    return nil
+                }
+                return (source, grant)
+            }
+            let indexed = searchIndex.lookup(
+                items: approvedSources.compactMap {
+                    $0.source.memoryText == nil ? $0.source.item : nil
+                },
+                query: query
+            )
+            let matched = approvedSources.compactMap { approved -> (
+                source: AgentHostToolSource,
+                grant: AgentFileGrant,
+                result: CourseDocumentIndexResult,
+                titleMatched: Bool
+            )? in
+                let source = approved.source
+                let titleMatched = source.title.localizedCaseInsensitiveContains(query)
+                    || source.subtitle.localizedCaseInsensitiveContains(query)
+                    || (
+                        source.title.count >= 2
+                            && query.localizedCaseInsensitiveContains(source.title)
+                    )
+                let indexedResult = indexed[source.item.id]
+                let result: CourseDocumentIndexResult
+                if let memoryText = source.memoryText {
+                    result = CourseDocumentSearchIndex.readMarkdown(
+                        memoryText,
+                        query: titleMatched ? "" : query,
+                        location: nil
+                    )
+                } else if titleMatched {
+                    result = searchIndex.read(
+                        item: source.item,
+                        query: "",
+                        location: nil
+                    )
+                } else {
+                    result = indexedResult ?? CourseDocumentIndexResult(
+                        text: nil,
+                        isTruncated: false,
+                        rank: nil
+                    )
+                }
+                guard let text = result.text,
+                      !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      agentFileGrantIsValid(approved.grant) else {
+                    return nil
+                }
+                return (
+                    source,
+                    approved.grant,
+                    CourseDocumentIndexResult(
+                        text: text,
+                        isTruncated: result.isTruncated,
+                        rank: result.rank
+                    ),
+                    titleMatched
+                )
+            }.sorted { left, right in
+                if left.titleMatched != right.titleMatched {
+                    return left.titleMatched
+                }
+                return (left.result.rank ?? .greatestFiniteMagnitude)
+                    < (right.result.rank ?? .greatestFiniteMagnitude)
+            }
+            let knowledgeSources = matched.prefix(max(limit * 4, limit)).map { match in
+                CourseKnowledgeSource(
+                    id: match.source.item.id,
+                    title: match.source.title,
+                    subtitle: match.source.subtitle,
+                    kind: match.source.kind,
+                    role: match.source.role,
+                    text: match.result.text ?? "",
+                    isTruncated: match.result.isTruncated
+                )
+            }
+            let context = CourseKnowledgeIndex.build(
+                title: title,
+                sources: knowledgeSources,
+                links: links,
+                query: query,
+                currentMaterialID: nil,
+                currentNoteID: nil
+            )
+            let sourceByID = Dictionary(
+                uniqueKeysWithValues: matched.map { ($0.source.item.id, $0.source) }
+            )
+            return StudyAgentHostToolResult(
+                query: query,
+                items: context.items.prefix(limit).compactMap { item in
+                    guard let source = sourceByID[item.id] else { return nil }
+                    return StudyAgentHostToolItem(
+                        item: item,
+                        relativePath: source.relativePath,
+                        courseIDs: source.courseIDs,
+                        courseTitles: source.courseTitles
+                    )
+                }
+            )
+
+        case let .courseRead(itemID, query, location, _):
+            guard let source = sources.first(where: { $0.item.id == itemID }),
+                  let grant = source.grants.first(where: {
+                      agentFileGrantIsValid($0)
+                  }) else {
+                throw AgentConversationTargetError(message: "这份资料不属于当前 Chat 的查询范围")
+            }
+            let indexed: CourseDocumentIndexResult
+            if let memoryText = source.memoryText {
+                indexed = CourseDocumentSearchIndex.readMarkdown(
+                    memoryText,
+                    query: query,
+                    location: location
+                )
+            } else {
+                indexed = searchIndex.read(
+                    item: source.item,
+                    query: query,
+                    location: location
+                )
+            }
+            guard let text = indexed.text,
+                  agentFileGrantIsValid(grant) else {
+                throw AgentConversationTargetError(message: "这份资料在读取期间发生了变化")
+            }
+            let context = CourseKnowledgeIndex.build(
+                title: title,
+                sources: [
+                    CourseKnowledgeSource(
+                        id: source.item.id,
+                        title: source.title,
+                        subtitle: source.subtitle,
+                        kind: source.kind,
+                        role: source.role,
+                        text: text,
+                        isTruncated: indexed.isTruncated
+                    ),
+                ],
+                links: links,
+                query: [query, location].compactMap { $0 }.joined(separator: " "),
+                currentMaterialID: nil,
+                currentNoteID: nil
+            )
+            return StudyAgentHostToolResult(
+                query: query,
+                items: context.items.map {
+                    StudyAgentHostToolItem(
+                        item: $0,
+                        relativePath: source.relativePath,
+                        courseIDs: source.courseIDs,
+                        courseTitles: source.courseTitles
+                    )
+                }
+            )
+        }
+    }
+
+    nonisolated private static func agentFileGrantIsValid(
+        _ grant: AgentFileGrant
+    ) -> Bool {
+        guard CourseProjectFileWorker.identity(at: grant.rootURL) == grant.rootIdentity,
+              CourseProjectFileWorker.identity(at: grant.entryURL) == grant.entryIdentity,
+              CourseProjectFileWorker.identity(at: grant.targetURL) == grant.targetIdentity,
+              CourseProjectPathPolicy.isSame(
+                  grant.targetURL,
+                  grant.targetURL.resolvingSymlinksInPath().standardizedFileURL
+              ) else {
+            return false
+        }
+        if grant.isShared {
+            return CourseProjectFileWorker.symbolicLink(
+                at: grant.entryURL,
+                pointsTo: grant.targetURL
+            )
+        }
+        return CourseProjectPathPolicy.isSame(grant.entryURL, grant.targetURL)
+            && CourseProjectPathPolicy.contains(
+                grant.rootURL,
+                grant.targetURL,
+                includingRoot: false
+            )
     }
 
     private func makeLearningContext() -> StudyAgentLearningContext {
@@ -12253,31 +12959,6 @@ final class WorkspaceStore: ObservableObject {
                 expectedScopeNeedsReview: false
             )
                 && activeStudySessionID == courseAChatID
-            let courseAContext = try? await makeCourseContext(
-                query: "利率与政策",
-                courseID: courseA.id
-            )
-            let globalContext = try? await makeCourseContext(
-                query: "利率与政策",
-                courseID: nil
-            )
-            let courseACatalogIDs = Set(courseAContext?.context.catalog.map(\.id) ?? [])
-            let globalCatalogIDs = Set(globalContext?.context.catalog.map(\.id) ?? [])
-            let globalCatalog = globalContext?.context.catalog ?? []
-            let globalCourseIdentityPassed = globalCatalog.first {
-                $0.id == materialA.id
-            }?.subtitle.contains(courseA.title) == true
-                && globalCatalog.first {
-                    $0.id == materialB.id
-                }?.subtitle.contains(courseA.title) == true
-                && globalCatalog.first {
-                    $0.id == materialB.id
-                }?.subtitle.contains(courseB.title) == true
-            let courseContextIsolated = courseACatalogIDs == courseAAllowedIDs
-                && !courseACatalogIDs.contains(materialC.id)
-                && !courseACatalogIDs.contains(noteC.id)
-                && courseAContext?.selectedMaterialText == nil
-                && globalCatalogIDs.isSuperset(of: Set([materialA.id, materialC.id, noteA.id, noteC.id]))
             let explicitCourseChat = createStudySession(courseID: courseA.id)
             let explicitCourseCreationPassed = explicitCourseChat?.courseID == courseA.id
                 && explicitCourseChat?.scopeNeedsReview == false
@@ -12293,8 +12974,6 @@ final class WorkspaceStore: ObservableObject {
             let resultPassed = focusIsolated
                 && selectionIsolated
                 && wrongScopeRejected
-                && courseContextIsolated
-                && globalCourseIdentityPassed
                 && explicitCourseCreationPassed
                 && explicitGlobalCreationPassed
                 && restoredCourseChat
@@ -12305,14 +12984,10 @@ final class WorkspaceStore: ObservableObject {
                     "focusIsolated": focusIsolated,
                     "selectionIsolated": selectionIsolated,
                     "wrongScopeRejected": wrongScopeRejected,
-                    "courseContextIsolated": courseContextIsolated,
-                    "globalCourseIdentityPassed": globalCourseIdentityPassed,
                     "explicitCourseCreationPassed": explicitCourseCreationPassed,
                     "explicitGlobalCreationPassed": explicitGlobalCreationPassed,
                     "restoredCourseChat": restoredCourseChat,
                     "activeScopeTitle": activeStudySessionScopeTitle,
-                    "courseACatalogIDs": courseACatalogIDs.sorted(),
-                    "globalCatalogIDs": globalCatalogIDs.sorted(),
                 ]
             )
             save()
@@ -13541,16 +14216,16 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func currentVisualAssetsForAgent(
-        allowedItemIDs: Set<String>?
-    ) -> [StudyAgentVisualAsset] {
+        access: AgentProjectAccessSnapshot
+    ) async -> [StudyAgentVisualAsset] {
         guard let item = selectedMaterialItem,
-              allowedItemIDs?.contains(item.id) ?? true,
               !item.isNotebookNote,
-              let path = item.urlPath ?? item.importedFileLastKnownPath else {
+              let source = access.sources.first(where: { $0.item.id == item.id }),
+              let grant = source.grants.first(where: Self.agentFileGrantIsValid) else {
             return []
         }
         let mediaType: String
-        switch URL(fileURLWithPath: path).pathExtension.lowercased() {
+        switch grant.targetURL.pathExtension.lowercased() {
         case "jpg", "jpeg":
             mediaType = "image/jpeg"
         case "png":
@@ -13560,8 +14235,31 @@ final class WorkspaceStore: ObservableObject {
         default:
             return []
         }
-        guard FileManager.default.isReadableFile(atPath: path) else { return [] }
-        return [StudyAgentVisualAsset(id: item.id, filePath: path, mediaType: mediaType)]
+        let searchIndex = courseDocumentSearchIndex
+        let snapshot = await Task.detached(priority: .userInitiated) {
+            searchIndex.verifiedSnapshot(of: source.item, maximumBytes: 6_000_000)
+        }.value
+        guard let snapshot, Self.agentFileGrantIsValid(grant) else {
+            if let snapshot {
+                try? FileManager.default.removeItem(at: snapshot)
+            }
+            return []
+        }
+        return [
+            StudyAgentVisualAsset(
+                id: item.id,
+                filePath: snapshot.path,
+                mediaType: mediaType
+            ),
+        ]
+    }
+
+    private static func removeAgentVisualSnapshots(
+        _ assets: [StudyAgentVisualAsset]
+    ) {
+        assets.forEach {
+            try? FileManager.default.removeItem(atPath: $0.filePath)
+        }
     }
 
     private func performAgentRequest(target: AgentConversationTarget) async {
@@ -13590,9 +14288,8 @@ final class WorkspaceStore: ObservableObject {
            !selectionContext.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             addSelectionAttachment(selectionContext)
         }
-        let allowedItemIDs = target.courseID.map {
-            Set(courseItems(in: $0).map(\.id))
-        }
+        let projectAccess = makeAgentProjectAccessSnapshot(target: target)
+        let allowedItemIDs = Set(projectAccess.sources.map(\.item.id))
         let sentSelections = currentAgentSelections(allowedItemIDs: allowedItemIDs)
         let sentSelectionTitle = agentSelectionTitle(from: sentSelections)
         let sentSelectionText = agentSelectionText(from: sentSelections)
@@ -13603,11 +14300,11 @@ final class WorkspaceStore: ObservableObject {
         }
         let recentMessages = Array(messages.suffix(20))
         let sentMaterialItem: StudyItem? = selectedMaterialItem.flatMap { item in
-            guard allowedItemIDs?.contains(item.id) ?? true else { return nil }
+            guard allowedItemIDs.contains(item.id) else { return nil }
             return item
         }
         let sentNoteItem: StudyItem? = activeNoteItem.flatMap { item in
-            guard allowedItemIDs?.contains(item.id) ?? true else { return nil }
+            guard allowedItemIDs.contains(item.id) else { return nil }
             return item
         }
         let sourceTitle = sentMaterialItem != nil
@@ -13619,17 +14316,17 @@ final class WorkspaceStore: ObservableObject {
         let sentMaterialTitle = sentMaterialItem == nil
             ? ui("未选择材料", "No material selected")
             : currentSourceReferenceTitle
-        let sentMaterialText = sentMaterialItem == nil ? "" : selectedContextText
         let sentMaterialItemID = sentMaterialItem?.id
         let sentNoteTitle = sentNoteItem == nil
             ? ui("当前笔记", "Current Note")
             : agentNoteTitle
-        let sentNoteText = sentNoteItem == nil ? "" : noteText
+        let sentNoteText = sentNoteItem.flatMap { note in
+            projectAccess.sources.first(where: { $0.item.id == note.id })?.memoryText
+        } ?? ""
         let sentNoteItemID = sentNoteItem?.id
         let sentLearningContext = makeLearningContext()
-        let sentVisualAssets = currentVisualAssetsForAgent(
-            allowedItemIDs: allowedItemIDs
-        )
+        let sentVisualAssets = await currentVisualAssetsForAgent(access: projectAccess)
+        defer { Self.removeAgentVisualSnapshots(sentVisualAssets) }
         let sentLanguage = interfaceLanguage
         let courseQuery = [question, sentSelectionText ?? "", String(sentNoteText.prefix(2_000))]
             .joined(separator: "\n\n")
@@ -13735,24 +14432,46 @@ final class WorkspaceStore: ObservableObject {
 
             let courseBuild = try await makeCourseContext(
                 query: courseQuery,
-                courseID: target.courseID
+                courseID: target.courseID,
+                access: projectAccess
             )
             guard activeAgentRequestID == requestID else { return }
             try validateAgentConversationTarget(target, mustBeActive: false)
+            let resolvedSentNoteText = courseBuild.selectedNoteText ?? ""
+            let hostToolHandler = makeAgentHostToolHandler(
+                target: target,
+                access: projectAccess
+            )
+            let sourceReference = SourceReferenceTitle.parse(sentMaterialTitle)
             let request = StudyAgentRequest(
                 id: requestID,
                 purpose: .conversation,
                 question: question,
                 materialTitle: sentMaterialTitle,
-                materialText: courseBuild.selectedMaterialText ?? sentMaterialText,
+                materialText: courseBuild.selectedMaterialText ?? "",
                 materialIsTruncated: courseBuild.selectedMaterialIsTruncated,
                 noteTitle: sentNoteTitle,
-                noteText: sentNoteText,
+                noteText: resolvedSentNoteText,
                 selectionTitle: sentSelectionTitle,
                 selectionText: sentSelectionText,
                 selectionSources: sentSelectionSources,
                 recentMessages: recentMessages,
                 courseContext: courseBuild.context,
+                projectScope: projectAccess.scope,
+                focus: StudyAgentFocus(
+                    chatID: target.sessionID.uuidString.lowercased(),
+                    courseID: target.courseID?.uuidString.lowercased(),
+                    materialItemID: sentMaterialItemID,
+                    materialTitle: sentMaterialItem.map(displayTitle),
+                    pageIndex: sourceReference.pageIndex,
+                    sectionTitle: sourceReference.sectionTitle,
+                    sectionLocationID: sourceReference.sectionLocationID,
+                    sectionOrdinal: sourceReference.sectionOrdinal,
+                    selectionText: sentSelectionText,
+                    actionSource: sentSelectionText == nil
+                        ? (sentMaterialItem == nil ? "chat" : "reader")
+                        : "selection"
+                ),
                 visualAssets: sentVisualAssets,
                 learningContext: sentLearningContext,
                 language: sentLanguage,
@@ -13765,7 +14484,8 @@ final class WorkspaceStore: ObservableObject {
             let reply = try await executeStudyAgentRequest(
                 request,
                 target: target,
-                replyMessageID: assistantMessage.id
+                replyMessageID: assistantMessage.id,
+                hostToolHandler: hostToolHandler
             )
             guard activeAgentRequestID == request.id else { return }
             try validateAgentConversationTarget(target, mustBeActive: false)
@@ -13791,7 +14511,9 @@ final class WorkspaceStore: ObservableObject {
                         proposedMarkdown: $0.markdown,
                         evidence: $0.evidence,
                         contextRevision: $0.contextRevision,
-                        baselineContentDigest: Self.noteContentDigest(Data(sentNoteText.utf8))
+                        baselineContentDigest: Self.noteContentDigest(
+                            Data(resolvedSentNoteText.utf8)
+                        )
                     ),
                 ]
             } ?? []
@@ -14001,8 +14723,17 @@ final class WorkspaceStore: ObservableObject {
     private func executeStudyAgentRequest(
         _ request: StudyAgentRequest,
         target: AgentConversationTarget,
-        replyMessageID: UUID
+        replyMessageID: UUID,
+        hostToolHandler: @escaping StudyAgentHostToolHandler
     ) async throws -> StudyAgentReply {
+        if capturesAgentRequestForSelfCheck,
+           ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root") {
+            selfCheckCapturedAgentRequest = request
+            return StudyAgentReply(
+                text: "课程请求授权自检完成",
+                backend: .pi
+            )
+        }
         let isExplicitOfflineVerification = Self.environmentValue("WEIBEI_FORCE_OFFLINE_AGENT") == "1"
             && Self.environmentValue("WEIBEI_SUPPRESS_ACTIVATION") == "1"
             && Self.environmentValue("WEIBEI_VERIFY_SCENARIO") == "offline-learning-flow"
@@ -14046,12 +14777,12 @@ final class WorkspaceStore: ObservableObject {
                 baseURL: agentBaseURL,
                 model: resolvedModelName
             )
-
             do {
                 return try await piRuntime.respond(
                     to: request,
                     sessionID: target.sessionID,
-                    workingDirectory: target.workingDirectory
+                    workingDirectory: target.workingDirectory,
+                    hostToolHandler: hostToolHandler
                 ) { [weak self] progress in
                     await self?.applyAgentProgress(
                         progress,
@@ -14160,7 +14891,8 @@ final class WorkspaceStore: ObservableObject {
             switch name {
             case "weibei_context":
                 agentActivityText = ui("正在核对材料与笔记", "Checking material and notes")
-            case "weibei_course_map", "weibei_course_search":
+            case "weibei_course_map", "weibei_course_search", "weibei_course_read",
+                 "ls", "find", "grep", "read":
                 agentActivityText = ui("正在查找课程关联", "Finding course connections")
             case "weibei_learning_memory":
                 agentActivityText = ui("正在回顾学习记忆", "Reviewing learning memory")

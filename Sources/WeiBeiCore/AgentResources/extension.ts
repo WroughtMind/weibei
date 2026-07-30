@@ -1,22 +1,28 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { realpathSync } from "node:fs";
-import { open, readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { constants, realpathSync } from "node:fs";
+import { lstat, open, readFile, realpath, unlink } from "node:fs/promises";
+import { isAbsolute, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "@earendil-works/pi-ai";
 
 const CONTEXT_FILE_ENV = "WEIBEI_AGENT_CONTEXT_FILE";
+const TOOL_RESPONSE_DIR_ENV = "WEIBEI_AGENT_TOOL_RESPONSE_DIR";
 const CONTEXT_TOOL = "weibei_context";
 const COURSE_MAP_TOOL = "weibei_course_map";
 const COURSE_SEARCH_TOOL = "weibei_course_search";
+const COURSE_READ_TOOL = "weibei_course_read";
 const VISUAL_ASSET_TOOL = "weibei_visual_asset";
 const LEARNING_MEMORY_TOOL = "weibei_learning_memory";
 const LEARNING_UPDATE_TOOL = "weibei_learning_update";
 const NOTE_PROPOSAL_TOOL = "weibei_note_proposal";
 const READ_TOOL = "read";
+const LS_TOOL = "ls";
+const FIND_TOOL = "find";
+const GREP_TOOL = "grep";
 const RICH_ANSWER_CATALOG_TOOL = "weibei_ui_catalog";
 const COMPUTE_ARTIFACT_TOOL = "weibei_compute_artifact";
 const RICH_ANSWER_TOOL = "weibei_rich_answer";
@@ -36,11 +42,15 @@ const ALLOWED_TOOLS = new Set([
   CONTEXT_TOOL,
   COURSE_MAP_TOOL,
   COURSE_SEARCH_TOOL,
+  COURSE_READ_TOOL,
   VISUAL_ASSET_TOOL,
   LEARNING_MEMORY_TOOL,
   LEARNING_UPDATE_TOOL,
   NOTE_PROPOSAL_TOOL,
   READ_TOOL,
+  LS_TOOL,
+  FIND_TOOL,
+  GREP_TOOL,
   RICH_ANSWER_CATALOG_TOOL,
   COMPUTE_ARTIFACT_TOOL,
   RICH_ANSWER_TOOL,
@@ -344,6 +354,13 @@ const LIMITS = {
   courseHeadings: 12,
   courseTags: 16,
   courseLinkedItems: 24,
+  projectItems: 500,
+  projectPath: 4_096,
+  projectListItems: 200,
+  projectSearchItems: 8,
+  projectSearchBytes: 256_000,
+  projectReadBytes: 256_000,
+  projectReadLines: 400,
   learningMemories: 48,
   learningText: 500,
   learningEvidence: 400,
@@ -415,6 +432,9 @@ interface CourseItemSnapshot extends CourseCatalogItemSnapshot {
   headings: string[];
   searchText: string;
   isTruncated: boolean;
+  relativePath?: string;
+  courseIDs?: string[];
+  courseTitles?: string[];
 }
 
 interface CourseRelationSnapshot {
@@ -433,6 +453,51 @@ interface CourseSnapshot {
   items: CourseItemSnapshot[];
   relations: CourseRelationSnapshot[];
   isTruncated: boolean;
+}
+
+interface FileIdentitySnapshot {
+  volumeID: string;
+  fileID: string;
+  birthTimeSeconds: string;
+  birthTimeNanoseconds: string;
+}
+
+interface ProjectItemSnapshot {
+  itemID: string;
+  title: string;
+  kind: string;
+  role: "material" | "note";
+  relativePath: string;
+  resolvedPath: string;
+  entryIdentity?: FileIdentitySnapshot;
+  targetIdentity?: FileIdentitySnapshot;
+  isShared: boolean;
+  courseIDs: string[];
+  courseTitles: string[];
+}
+
+interface ProjectSnapshot {
+  kind: "course" | "global";
+  chatID: string;
+  courseID?: string;
+  courseTitle?: string;
+  rootPath?: string;
+  rootIdentity?: FileIdentitySnapshot;
+  items: ProjectItemSnapshot[];
+  isTruncated: boolean;
+}
+
+interface FocusSnapshot {
+  chatID: string;
+  courseID?: string;
+  materialItemID?: string;
+  materialTitle?: string;
+  pageIndex?: number;
+  sectionTitle?: string;
+  sectionLocationID?: string;
+  sectionOrdinal?: number;
+  selectionText?: string;
+  actionSource: string;
 }
 
 type LearningMemoryKind = "goal" | "understood" | "confusion" | "nextStep" | "preference";
@@ -490,6 +555,8 @@ interface ContextSnapshotV2 {
   selection?: SourceSnapshot;
   recentMessages: RecentMessageSnapshot[];
   course: CourseSnapshot;
+  project: ProjectSnapshot;
+  focus?: FocusSnapshot;
   learning: LearningSnapshot;
 }
 
@@ -531,6 +598,17 @@ interface CourseMapToolDetails {
 interface CourseSearchToolDetails {
   kind: "course_search";
   contextRevision: string;
+  query: string;
+  results: CourseItemSnapshot[];
+  evidenceLabels: string[];
+  jumpReferences: string[];
+  jumpEvidence: Record<string, string>;
+}
+
+interface CourseReadToolDetails {
+  kind: "course_read";
+  contextRevision: string;
+  itemID: string;
   query: string;
   results: CourseItemSnapshot[];
   evidenceLabels: string[];
@@ -1052,6 +1130,173 @@ function readCourse(value: unknown): CourseSnapshot {
   };
 }
 
+function readFileIdentity(value: unknown, field: string): FileIdentitySnapshot {
+  const identity = requireRecord(value, field);
+  const readPart = (key: keyof FileIdentitySnapshot): string => {
+    const part = requireString(identity[key], `${field}.${key}`);
+    if (!/^-?\d+$/u.test(part) || part.length > 32) {
+      throw new Error(`${field}.${key} 不是有效的文件身份`);
+    }
+    return part;
+  };
+  return {
+    volumeID: readPart("volumeID"),
+    fileID: readPart("fileID"),
+    birthTimeSeconds: readPart("birthTimeSeconds"),
+    birthTimeNanoseconds: readPart("birthTimeNanoseconds"),
+  };
+}
+
+function safeProjectRelativePath(value: string): boolean {
+  if (!value || isAbsolute(value) || value.includes("\0")) return false;
+  const components = value.split("/");
+  return components.every(
+    (component) =>
+      component.length > 0 &&
+      component !== "." &&
+      component !== ".." &&
+      !component.startsWith("."),
+  );
+}
+
+function readProject(value: unknown, catalogIDs: Set<string>): ProjectSnapshot {
+  const project = requireRecord(value, "project");
+  const kind = requireString(project.kind, "project.kind");
+  if (kind !== "course" && kind !== "global") {
+    throw new Error("project.kind 必须是 course 或 global");
+  }
+  if (!Array.isArray(project.items)) {
+    throw new Error("project.items 必须是数组");
+  }
+  const optionalString = (
+    raw: unknown,
+    field: string,
+    limit: number,
+  ): string | undefined => {
+    if (raw === undefined || raw === null) return undefined;
+    return truncate(requireString(raw, field), limit);
+  };
+  const courseID = optionalString(project.courseID, "project.courseID", 128);
+  const rootPath = optionalString(project.rootPath, "project.rootPath", LIMITS.projectPath);
+  const rootIdentity =
+    project.rootIdentity === undefined || project.rootIdentity === null
+      ? undefined
+      : readFileIdentity(project.rootIdentity, "project.rootIdentity");
+  if (
+    kind === "course" &&
+    (!courseID || !rootPath || !isAbsolute(rootPath) || !rootIdentity)
+  ) {
+    throw new Error("课程项目缺少固定的课程 ID、真实根目录或根身份");
+  }
+  const items = project.items.slice(0, LIMITS.projectItems).map((entry, index) => {
+    const field = `project.items[${index}]`;
+    const item = requireRecord(entry, field);
+    const itemID = requireIdentifier(item.itemID, `${field}.itemID`);
+    if (!catalogIDs.has(itemID)) {
+      throw new Error(`${field}.itemID 不在本轮课程目录中`);
+    }
+    const role = requireString(item.role, `${field}.role`);
+    if (role !== "material" && role !== "note") {
+      throw new Error(`${field}.role 无效`);
+    }
+    const relativePath = truncate(
+      requireString(item.relativePath, `${field}.relativePath`),
+      LIMITS.projectPath,
+    );
+    const resolvedPath = truncate(
+      requireString(item.resolvedPath, `${field}.resolvedPath`),
+      LIMITS.projectPath,
+    );
+    const entryIdentity =
+      item.entryIdentity === undefined || item.entryIdentity === null
+        ? undefined
+        : readFileIdentity(item.entryIdentity, `${field}.entryIdentity`);
+    const targetIdentity =
+      item.targetIdentity === undefined || item.targetIdentity === null
+        ? undefined
+        : readFileIdentity(item.targetIdentity, `${field}.targetIdentity`);
+    if (
+      (relativePath || resolvedPath || entryIdentity || targetIdentity) &&
+      (
+        kind !== "course" ||
+        !safeProjectRelativePath(relativePath) ||
+        !isAbsolute(resolvedPath) ||
+        !entryIdentity ||
+        !targetIdentity
+      )
+    ) {
+      throw new Error(`${field} 的课程文件授权不完整`);
+    }
+    return {
+      itemID,
+      title: truncate(requireString(item.title, `${field}.title`), LIMITS.title),
+      kind: requireIdentifier(item.kind, `${field}.kind`),
+      role,
+      relativePath,
+      resolvedPath,
+      entryIdentity,
+      targetIdentity,
+      isShared: requireBoolean(item.isShared, `${field}.isShared`),
+      courseIDs: readStringArray(item.courseIDs, `${field}.courseIDs`, 32, 128),
+      courseTitles: readStringArray(item.courseTitles, `${field}.courseTitles`, 32, LIMITS.title),
+    } satisfies ProjectItemSnapshot;
+  });
+  return {
+    kind,
+    chatID: requireIdentifier(project.chatID, "project.chatID"),
+    courseID,
+    courseTitle: optionalString(project.courseTitle, "project.courseTitle", LIMITS.title),
+    rootPath,
+    rootIdentity,
+    items,
+    isTruncated:
+      requireBoolean(project.isTruncated, "project.isTruncated") ||
+      project.items.length > items.length,
+  };
+}
+
+function readFocus(
+  value: unknown,
+  project: ProjectSnapshot,
+  catalogIDs: Set<string>,
+): FocusSnapshot | undefined {
+  if (value === undefined || value === null) return undefined;
+  const focus = requireRecord(value, "focus");
+  const optional = (raw: unknown, field: string, limit: number): string | undefined =>
+    raw === undefined || raw === null
+      ? undefined
+      : truncate(requireString(raw, field), limit);
+  const materialItemID = optional(focus.materialItemID, "focus.materialItemID", LIMITS.identifier);
+  if (materialItemID !== undefined && !catalogIDs.has(materialItemID)) {
+    throw new Error("focus.materialItemID 不在本轮课程目录中");
+  }
+  const chatID = requireIdentifier(focus.chatID, "focus.chatID");
+  const courseID = optional(focus.courseID, "focus.courseID", 128);
+  if (chatID !== project.chatID || courseID !== project.courseID) {
+    throw new Error("当前焦点与项目作用域不一致");
+  }
+  const optionalInteger = (raw: unknown, field: string): number | undefined =>
+    raw === undefined || raw === null
+      ? undefined
+      : Math.max(0, Math.trunc(requireNumber(raw, field)));
+  return {
+    chatID,
+    courseID,
+    materialItemID,
+    materialTitle: optional(focus.materialTitle, "focus.materialTitle", LIMITS.title),
+    pageIndex: optionalInteger(focus.pageIndex, "focus.pageIndex"),
+    sectionTitle: optional(focus.sectionTitle, "focus.sectionTitle", LIMITS.title),
+    sectionLocationID: optional(
+      focus.sectionLocationID,
+      "focus.sectionLocationID",
+      LIMITS.title,
+    ),
+    sectionOrdinal: optionalInteger(focus.sectionOrdinal, "focus.sectionOrdinal"),
+    selectionText: optional(focus.selectionText, "focus.selectionText", LIMITS.selectionText),
+    actionSource: requireIdentifier(focus.actionSource, "focus.actionSource"),
+  };
+}
+
 function readLearning(value: unknown): LearningSnapshot {
   const learning = requireRecord(value, "learning");
   if (!Array.isArray(learning.memories)) {
@@ -1188,6 +1433,9 @@ async function readContextEnvelope(): Promise<Record<string, unknown>> {
 
 async function readCurrentSnapshot(): Promise<ContextSnapshotV2> {
   const envelope = await readContextEnvelope();
+  const course = readCourse(envelope.course);
+  const catalogIDs = new Set(course.catalog.map((item) => item.id));
+  const project = readProject(envelope.project, catalogIDs);
 
   return {
     schemaVersion: 2,
@@ -1202,7 +1450,9 @@ async function readCurrentSnapshot(): Promise<ContextSnapshotV2> {
     note: readSource(envelope.note, "note", LIMITS.noteText),
     selection: readOptionalSource(envelope.selection, "selection", LIMITS.selectionText),
     recentMessages: readRecentMessages(envelope.recentMessages),
-    course: readCourse(envelope.course),
+    course,
+    project,
+    focus: readFocus(envelope.focus, project, catalogIDs),
     learning: readLearning(envelope.learning),
   };
 }
@@ -1449,36 +1699,344 @@ function currentTurnEvidenceStatement(evidence: string): string | undefined {
   return statement || undefined;
 }
 
-function courseSearchTerms(query: string): string[] {
-  const lower = query.toLowerCase();
-  const terms: string[] = lower.match(/[\p{L}\p{N}_-]{2,}/gu) ?? [];
-  const chineseRuns: string[] = lower.match(/[\u4e00-\u9fff]{2,}/g) ?? [];
-  for (const run of chineseRuns) {
-    if (run.length <= 20) terms.push(run);
-    for (let index = 0; index < run.length - 1; index += 1) {
-      terms.push(run.slice(index, index + 2));
-    }
+function readHostCourseItem(
+  value: unknown,
+  field: string,
+  snapshot: ContextSnapshotV2,
+): CourseItemSnapshot {
+  const wrapper = requireRecord(value, field);
+  const item = requireRecord(wrapper.item, `${field}.item`);
+  const role = requireString(item.role, `${field}.item.role`);
+  if (role !== "material" && role !== "note") {
+    throw new Error(`${field}.item.role 无效`);
   }
-  return Array.from(new Set(terms)).sort((left, right) => right.length - left.length);
+  const courseIDs = readStringArray(
+    wrapper.courseIDs,
+    `${field}.courseIDs`,
+    32,
+    128,
+  );
+  if (
+    snapshot.project.kind === "course" &&
+    snapshot.project.courseID &&
+    !courseIDs.includes(snapshot.project.courseID)
+  ) {
+    throw new Error(`${field} 不属于当前课程`);
+  }
+  const relativePath =
+    wrapper.relativePath === undefined || wrapper.relativePath === null
+      ? undefined
+      : truncate(
+          requireString(wrapper.relativePath, `${field}.relativePath`),
+          LIMITS.projectPath,
+        );
+  if (relativePath !== undefined && !safeProjectRelativePath(relativePath)) {
+    throw new Error(`${field}.relativePath 越出课程项目`);
+  }
+  return {
+    id: requireIdentifier(item.id, `${field}.item.id`),
+    title: truncate(requireString(item.title, `${field}.item.title`), LIMITS.title),
+    subtitle: truncate(requireString(item.subtitle, `${field}.item.subtitle`), LIMITS.title),
+    kind: requireIdentifier(item.kind, `${field}.item.kind`),
+    role,
+    isCurrentMaterial: requireBoolean(
+      item.isCurrentMaterial,
+      `${field}.item.isCurrentMaterial`,
+    ),
+    isCurrentNote: requireBoolean(item.isCurrentNote, `${field}.item.isCurrentNote`),
+    linkedItemIDs: readStringArray(
+      item.linkedItemIDs,
+      `${field}.item.linkedItemIDs`,
+      LIMITS.courseLinkedItems,
+      LIMITS.identifier,
+    ),
+    headings: readStringArray(
+      item.headings,
+      `${field}.item.headings`,
+      LIMITS.courseHeadings,
+      LIMITS.title,
+    ),
+    tags: readStringArray(
+      item.tags,
+      `${field}.item.tags`,
+      LIMITS.courseTags,
+      LIMITS.title,
+    ),
+    searchText: truncate(
+      requireString(item.searchText, `${field}.item.searchText`),
+      LIMITS.courseSearchText * 2,
+    ),
+    isTruncated: requireBoolean(item.isTruncated, `${field}.item.isTruncated`),
+    relativePath,
+    courseIDs,
+    courseTitles: readStringArray(
+      wrapper.courseTitles,
+      `${field}.courseTitles`,
+      32,
+      LIMITS.title,
+    ),
+  };
 }
 
-function searchCourse(course: CourseSnapshot, query: string, limit: number): CourseItemSnapshot[] {
-  const terms = courseSearchTerms(query);
-  return course.items
-    .map((item, index) => {
-      const title = `${item.title} ${item.subtitle} ${item.headings.join(" ")} ${item.tags.join(" ")}`.toLowerCase();
-      const body = item.searchText.toLowerCase();
-      const score = terms.reduce((total, term) => {
-        const titleMatches = title.split(term).length - 1;
-        const bodyMatches = Math.min(body.split(term).length - 1, 8);
-        return total + titleMatches * 8 + bodyMatches;
-      }, item.isCurrentMaterial || item.isCurrentNote ? 1 : 0);
-      return { item, index, score };
-    })
-    .filter((entry) => entry.score > 0 || terms.length === 0)
-    .sort((left, right) => right.score - left.score || left.index - right.index)
-    .slice(0, limit)
-    .map((entry) => entry.item);
+async function queryCourseIndex(
+  snapshot: ContextSnapshotV2,
+  toolCallID: string,
+  toolName: string,
+  signal?: AbortSignal,
+): Promise<CourseItemSnapshot[]> {
+  const root = process.env[TOOL_RESPONSE_DIR_ENV]?.trim();
+  if (!root || !isAbsolute(root)) {
+    throw new Error(`缺少环境变量 ${TOOL_RESPONSE_DIR_ENV}`);
+  }
+  const canonicalRoot = await realpath(root);
+  if (canonicalRoot !== resolve(root)) {
+    throw new Error("课程工具响应根目录发生了变化");
+  }
+  const digest = createHash("sha256").update(toolCallID, "utf8").digest("hex");
+  const requestDirectory = resolve(canonicalRoot, snapshot.requestID);
+  const canonicalRequestDirectory = await realpath(requestDirectory);
+  if (
+    canonicalRequestDirectory !== requestDirectory ||
+    !canonicalRequestDirectory.startsWith(`${canonicalRoot}/`)
+  ) {
+    throw new Error("课程工具本轮响应目录发生了变化");
+  }
+  const responsePath = resolve(requestDirectory, `${digest}.json`);
+  if (
+    requestDirectory !== `${canonicalRoot}/${snapshot.requestID}` ||
+    responsePath !== `${requestDirectory}/${digest}.json`
+  ) {
+    throw new Error("课程工具响应路径无效");
+  }
+
+  const startedAt = Date.now();
+  let data: Buffer | undefined;
+  while (Date.now() - startedAt < 12_000) {
+    if (signal?.aborted) throw new Error("课程工具查询已取消");
+    try {
+      data = await readFile(responsePath);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      await delay(40, undefined, signal ? { signal } : undefined);
+    }
+  }
+  if (!data) throw new Error("课程工具查询超时");
+  void unlink(responsePath).catch(() => {});
+  if (data.byteLength > LIMITS.projectSearchBytes) {
+    throw new Error("课程工具返回内容超过上限");
+  }
+  const envelope = requireRecord(
+    JSON.parse(data.toString("utf8")) as unknown,
+    "hostToolResponse",
+  );
+  if (
+    envelope.schemaVersion !== 1 ||
+    requireIdentifier(envelope.requestID, "hostToolResponse.requestID") !== snapshot.requestID ||
+    requireIdentifier(
+      envelope.contextRevision,
+      "hostToolResponse.contextRevision",
+    ) !== snapshot.contextRevision ||
+    requireString(envelope.toolCallID, "hostToolResponse.toolCallID") !== toolCallID ||
+    requireIdentifier(envelope.toolName, "hostToolResponse.toolName") !== toolName
+  ) {
+    throw new Error("课程工具响应不属于本轮调用");
+  }
+  if (!requireBoolean(envelope.success, "hostToolResponse.success")) {
+    throw new Error(
+      truncate(
+        requireString(envelope.error, "hostToolResponse.error"),
+        1_000,
+      ),
+    );
+  }
+  const payload = requireRecord(envelope.payload, "hostToolResponse.payload");
+  if (!Array.isArray(payload.items)) {
+    throw new Error("课程工具响应 items 必须是数组");
+  }
+  return payload.items
+    .slice(0, LIMITS.projectSearchItems)
+    .map((item, index) =>
+      readHostCourseItem(item, `hostToolResponse.payload.items[${index}]`, snapshot)
+    );
+}
+
+function rememberHostCourseItems(
+  knownItemIDs: Set<string>,
+  results: CourseItemSnapshot[],
+): void {
+  results.forEach((item) => {
+    knownItemIDs.add(item.id);
+    item.linkedItemIDs.forEach((linkedID) => knownItemIDs.add(linkedID));
+  });
+}
+
+function identityFromStats(stats: Record<string, unknown>): FileIdentitySnapshot | undefined {
+  const dev = stats.dev;
+  const ino = stats.ino;
+  const birthtimeNs = stats.birthtimeNs;
+  if (
+    typeof dev !== "bigint" ||
+    typeof ino !== "bigint" ||
+    typeof birthtimeNs !== "bigint"
+  ) {
+    return undefined;
+  }
+  const billion = 1_000_000_000n;
+  return {
+    volumeID: dev.toString(),
+    fileID: ino.toString(),
+    birthTimeSeconds: (birthtimeNs / billion).toString(),
+    birthTimeNanoseconds: (birthtimeNs % billion).toString(),
+  };
+}
+
+function sameIdentity(
+  stats: Record<string, unknown>,
+  expected: FileIdentitySnapshot | undefined,
+): boolean {
+  const actual = identityFromStats(stats);
+  return expected !== undefined &&
+    actual !== undefined &&
+    actual.volumeID === expected.volumeID &&
+    actual.fileID === expected.fileID &&
+    actual.birthTimeSeconds === expected.birthTimeSeconds &&
+    actual.birthTimeNanoseconds === expected.birthTimeNanoseconds;
+}
+
+function stableFileStats(
+  before: Record<string, unknown>,
+  after: Record<string, unknown>,
+): boolean {
+  return before.dev === after.dev &&
+    before.ino === after.ino &&
+    before.birthtimeNs === after.birthtimeNs &&
+    before.size === after.size &&
+    before.mtimeNs === after.mtimeNs;
+}
+
+export async function readApprovedProjectFile(
+  snapshot: ContextSnapshotV2,
+  item: ProjectItemSnapshot,
+  afterOpen?: () => void | Promise<void>,
+): Promise<{ data: Buffer; truncated: boolean }> {
+  if (
+    snapshot.project.kind !== "course" ||
+    !snapshot.project.rootPath ||
+    !snapshot.project.rootIdentity ||
+    !item.relativePath ||
+    !item.resolvedPath ||
+    !item.entryIdentity ||
+    !item.targetIdentity
+  ) {
+    throw new Error("这个资料没有本轮课程文件读取授权");
+  }
+  const rootPath = snapshot.project.rootPath;
+  const canonicalRoot = await realpath(rootPath);
+  if (canonicalRoot !== rootPath) {
+    throw new Error("课程根目录在本轮发生了变化");
+  }
+  const rootStats = await lstat(rootPath, { bigint: true });
+  if (!sameIdentity(rootStats as unknown as Record<string, unknown>, snapshot.project.rootIdentity)) {
+    throw new Error("课程根目录身份与本轮授权不一致");
+  }
+  const entryPath = resolve(rootPath, item.relativePath);
+  if (
+    entryPath === rootPath ||
+    !entryPath.startsWith(`${rootPath}/`) ||
+    !safeProjectRelativePath(item.relativePath)
+  ) {
+    throw new Error("课程文件路径越出了本轮课程根目录");
+  }
+  const entryStats = await lstat(entryPath, { bigint: true });
+  if (
+    !sameIdentity(entryStats as unknown as Record<string, unknown>, item.entryIdentity) ||
+    (item.isShared ? !entryStats.isSymbolicLink() : entryStats.isSymbolicLink())
+  ) {
+    throw new Error("课程文件入口身份与本轮授权不一致");
+  }
+  if (item.isShared) {
+    const linkedTarget = await realpath(entryPath);
+    const approvedTarget = await realpath(item.resolvedPath);
+    if (linkedTarget !== approvedTarget) {
+      throw new Error("共享文稿链接已发生变化");
+    }
+  } else if (await realpath(entryPath) !== item.resolvedPath) {
+    throw new Error("课程文件真实路径已发生变化");
+  }
+
+  const targetPath = item.isShared ? item.resolvedPath : entryPath;
+  const file = await open(
+    targetPath,
+    constants.O_RDONLY | constants.O_NOFOLLOW,
+  );
+  try {
+    const before = await file.stat({ bigint: true });
+    if (
+      !before.isFile() ||
+      !sameIdentity(before as unknown as Record<string, unknown>, item.targetIdentity)
+    ) {
+      throw new Error("课程文件身份与本轮授权不一致");
+    }
+    await afterOpen?.();
+    const byteCount = Number(
+      before.size > BigInt(LIMITS.projectReadBytes)
+        ? BigInt(LIMITS.projectReadBytes)
+        : before.size,
+    );
+    const data = Buffer.alloc(byteCount);
+    const readResult = await file.read(data, 0, byteCount, 0);
+    const after = await file.stat({ bigint: true });
+    if (
+      readResult.bytesRead !== byteCount ||
+      !stableFileStats(
+        before as unknown as Record<string, unknown>,
+        after as unknown as Record<string, unknown>,
+      )
+    ) {
+      throw new Error("课程文件在读取期间发生变化");
+    }
+    const result = data.subarray(0, readResult.bytesRead);
+    if (result.includes(0)) {
+      throw new Error("这个课程文件不是可直接读取的文本；请改用课程读取工具");
+    }
+    return {
+      data: result,
+      truncated: before.size > BigInt(LIMITS.projectReadBytes),
+    };
+  } finally {
+    await file.close();
+  }
+}
+
+export function projectItemForPath(
+  snapshot: ContextSnapshotV2,
+  requestedPath: string,
+): ProjectItemSnapshot | undefined {
+  if (!safeProjectRelativePath(requestedPath)) return undefined;
+  return snapshot.project.items.find(
+    (item) => item.relativePath === requestedPath,
+  );
+}
+
+function globPattern(pattern: string): RegExp {
+  let source = "^";
+  for (let index = 0; index < pattern.length; index += 1) {
+    const character = pattern[index];
+    if (character === "*") {
+      if (pattern[index + 1] === "*") {
+        source += ".*";
+        index += 1;
+      } else {
+        source += "[^/]*";
+      }
+    } else if (character === "?") {
+      source += "[^/]";
+    } else {
+      source += character.replace(/[\\^$.*+?()[\]{}|]/gu, "\\$&");
+    }
+  }
+  return new RegExp(`${source}$`, "iu");
 }
 
 function courseJumpReference(
@@ -1531,6 +2089,62 @@ function coursePage(rawHeading: string): number | undefined {
   if (!match) return undefined;
   const page = Number(match[1]);
   return Number.isInteger(page) && page > 0 ? page : undefined;
+}
+
+function presentCourseResults(
+  snapshot: ContextSnapshotV2,
+  results: CourseItemSnapshot[],
+): {
+  presentedResults: Array<CourseItemSnapshot & {
+    evidenceLabel?: string;
+    jumpReference?: string;
+    sectionJumpReferences: string[];
+    pageJumpReferences: string[];
+  }>;
+  evidenceLabels: string[];
+  jumpReferences: string[];
+  jumpEvidence: Record<string, string>;
+} {
+  const presentedResults = results.map((item) => {
+    const hasEvidence = item.searchText.trim().length > 0;
+    const sectionJumpReferences =
+      hasEvidence && item.kind === "html"
+        ? item.headings
+            .slice(0, 5)
+            .map((heading) => courseJumpReference(snapshot.course, item, heading))
+        : [];
+    const pageJumpReferences =
+      hasEvidence && item.kind === "pdf"
+        ? item.headings
+            .filter((heading) => coursePage(heading) !== undefined)
+            .slice(0, 5)
+            .map((heading) => courseJumpReference(snapshot.course, item, heading))
+        : [];
+    return {
+      ...item,
+      headings: item.headings.map((heading) => courseHeading(heading).title),
+      evidenceLabel: hasEvidence ? courseEvidenceLabel(snapshot.course, item) : undefined,
+      jumpReference: hasEvidence ? courseJumpReference(snapshot.course, item) : undefined,
+      sectionJumpReferences,
+      pageJumpReferences,
+    };
+  });
+  const evidenceLabels = presentedResults.flatMap((item) =>
+    item.evidenceLabel ? [item.evidenceLabel] : [],
+  );
+  const jumpEvidence = Object.fromEntries(
+    presentedResults.flatMap((item) => {
+      if (!item.evidenceLabel || !item.jumpReference) return [];
+      return [item.jumpReference, ...item.sectionJumpReferences, ...item.pageJumpReferences]
+        .map((jumpReference) => [jumpReference, item.evidenceLabel] as const);
+    }),
+  );
+  return {
+    presentedResults,
+    evidenceLabels,
+    jumpReferences: Object.keys(jumpEvidence),
+    jumpEvidence,
+  };
 }
 
 function learningLocationJumpReference(snapshot: ContextSnapshotV2): string | undefined {
@@ -8526,7 +9140,266 @@ export default function weibeiExtension(pi: ExtensionAPI) {
   let richAnswerCatalogRendererSelection: Set<string> | undefined;
   let activeAnswerFormPolicy: AnswerFormPolicy = "automatic";
   const searchedCourseItemIDs = new Set<string>();
+  const hostCourseItemIDs = new Set<string>();
   const verifiedVisualAssetBytes = new Map<string, number>();
+
+  pi.registerTool({
+    name: LS_TOOL,
+    label: "列出课程项目目录",
+    description:
+      "只列出当前课程真实项目中由魏碑核验过的文稿和笔记；隐藏状态、事务文件和课程外路径不会出现。",
+    promptSnippet: "按需查看当前课程项目的文件和目录",
+    parameters: Type.Object(
+      {
+        path: Type.Optional(Type.String({ maxLength: 4_096 })),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: LIMITS.projectListItems })),
+      },
+      { additionalProperties: false },
+    ),
+    executionMode: "sequential",
+    async execute(_toolCallID, params) {
+      const snapshot = await readCurrentSnapshot();
+      if (snapshot.project.kind !== "course") {
+        throw new Error("全局 Chat 不开放课程项目文件工具");
+      }
+      const rawPath = (params.path ?? ".").trim();
+      const directory = rawPath === "." ? "" : rawPath.replace(/\/+$/u, "");
+      if (directory && !safeProjectRelativePath(directory)) {
+        throw new Error("目录必须是当前课程项目内的相对路径");
+      }
+      const prefix = directory ? `${directory}/` : "";
+      const children = new Map<string, "directory" | "file">();
+      for (const item of snapshot.project.items) {
+        if (!item.relativePath.startsWith(prefix)) continue;
+        const remainder = item.relativePath.slice(prefix.length);
+        if (!remainder) continue;
+        const [first, ...rest] = remainder.split("/");
+        children.set(first, rest.length > 0 ? "directory" : "file");
+      }
+      const limit = params.limit ?? 100;
+      const entries = [...children.entries()]
+        .sort(([left], [right]) => left.localeCompare(right))
+        .slice(0, limit)
+        .map(([name, kind]) => ({ name, kind }));
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            path: directory || ".",
+            entries,
+            hasMore: children.size > entries.length,
+            scopeTruncated: snapshot.project.isTruncated,
+          }, null, 2),
+        }],
+        details: {
+          kind: "project_ls",
+          contextRevision: snapshot.contextRevision,
+          path: directory,
+          entries,
+        },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: FIND_TOOL,
+    label: "查找课程项目文件",
+    description:
+      "用相对路径通配符查找当前课程真实项目中已核验的文稿和笔记；不会跟随任意符号链接。",
+    promptSnippet: "按文件名或课程内相对路径找文稿和笔记",
+    parameters: Type.Object(
+      {
+        pattern: Type.String({ minLength: 1, maxLength: 500 }),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: LIMITS.projectListItems })),
+      },
+      { additionalProperties: false },
+    ),
+    executionMode: "sequential",
+    async execute(_toolCallID, params) {
+      const snapshot = await readCurrentSnapshot();
+      if (snapshot.project.kind !== "course") {
+        throw new Error("全局 Chat 不开放课程项目文件工具");
+      }
+      const pattern = params.pattern.trim();
+      if (isAbsolute(pattern) || pattern.includes("\0") || pattern.split("/").includes("..")) {
+        throw new Error("查找模式必须限定在当前课程项目内");
+      }
+      const matcher = globPattern(pattern);
+      const limit = params.limit ?? 100;
+      const matches = snapshot.project.items
+        .filter((item) => item.relativePath && matcher.test(item.relativePath))
+        .slice(0, limit)
+        .map((item) => ({
+          path: item.relativePath,
+          itemID: item.itemID,
+          title: item.title,
+          role: item.role,
+        }));
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            matches,
+            hasMore: snapshot.project.items.filter(
+              (item) => item.relativePath && matcher.test(item.relativePath),
+            ).length > matches.length,
+            scopeTruncated: snapshot.project.isTruncated,
+          }, null, 2),
+        }],
+        details: {
+          kind: "project_find",
+          contextRevision: snapshot.contextRevision,
+          matches,
+        },
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: GREP_TOOL,
+    label: "搜索课程项目正文",
+    description:
+      "用你自己提出的搜索词查询当前课程完整索引；可连续换词搜索，PDF 页和 HTML 章节位置会保留。",
+    promptSnippet: "在当前课程项目正文中按需搜索",
+    parameters: Type.Object(
+      {
+        query: Type.String({ minLength: 1, maxLength: 500 }),
+        pattern: Type.Optional(Type.String({ maxLength: 500 })),
+        limit: Type.Optional(
+          Type.Integer({ minimum: 1, maximum: LIMITS.projectSearchItems }),
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    executionMode: "sequential",
+    async execute(toolCallID, params, signal) {
+      const snapshot = await readCurrentSnapshot();
+      if (snapshot.project.kind !== "course") {
+        throw new Error("全局 Chat 不开放课程项目文件工具");
+      }
+      const query = params.query.trim();
+      let results = await queryCourseIndex(snapshot, toolCallID, GREP_TOOL, signal);
+      if (params.pattern?.trim()) {
+        const pattern = params.pattern.trim();
+        if (isAbsolute(pattern) || pattern.split("/").includes("..")) {
+          throw new Error("搜索文件模式必须限定在当前课程项目内");
+        }
+        const matcher = globPattern(pattern);
+        results = results.filter((item) => item.relativePath && matcher.test(item.relativePath));
+      }
+      rememberHostCourseItems(hostCourseItemIDs, results);
+      results.forEach((item) => searchedCourseItemIDs.add(item.id));
+      const presented = presentCourseResults(snapshot, results);
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify(presented.presentedResults, null, 2),
+        }],
+        details: {
+          kind: "course_search",
+          contextRevision: snapshot.contextRevision,
+          query,
+          results,
+          evidenceLabels: presented.evidenceLabels,
+          jumpReferences: presented.jumpReferences,
+          jumpEvidence: presented.jumpEvidence,
+        } satisfies CourseSearchToolDetails,
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: READ_TOOL,
+    label: "读取课程项目文件",
+    description:
+      "读取当前课程真实项目中的已核验文本文件，或读取随 App 打包的必要 Skill。只接受课程内相对路径；PDF 和按页读取请用课程读取工具。",
+    promptSnippet: "读取课程项目中的真实文本文件",
+    parameters: Type.Object(
+      {
+        path: Type.String({ minLength: 1, maxLength: 4_096 }),
+        offset: Type.Optional(Type.Integer({ minimum: 1 })),
+        limit: Type.Optional(
+          Type.Integer({ minimum: 1, maximum: LIMITS.projectReadLines }),
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    executionMode: "sequential",
+    async execute(_toolCallID, params) {
+      const normalizedSkillPath = canonicalReadPath(params.path);
+      const skill = normalizedSkillPath
+        ? RICH_ANSWER_SKILL_BY_PATH.get(normalizedSkillPath)
+        : undefined;
+      if (skill && normalizedSkillPath) {
+        const content = await readFile(normalizedSkillPath, "utf8");
+        return {
+          content: [{ type: "text", text: content }],
+          details: { kind: "skill_read_pending" },
+        };
+      }
+
+      const snapshot = await readCurrentSnapshot();
+      if (snapshot.project.kind !== "course") {
+        throw new Error("全局 Chat 不能读取课程项目文件");
+      }
+      const item = projectItemForPath(snapshot, params.path);
+      if (!item) {
+        throw new Error("该路径不是本轮当前课程中已核验的文稿或笔记");
+      }
+      if (item.kind === "pdf") {
+        throw new Error(`PDF 请调用 ${COURSE_READ_TOOL}，并使用资料 ID ${item.itemID}`);
+      }
+      const readResult = await readApprovedProjectFile(snapshot, item);
+      const lines = readResult.data.toString("utf8").split(/\r?\n/u);
+      const offset = params.offset ?? 1;
+      const limit = params.limit ?? 200;
+      const selected = lines.slice(offset - 1, offset - 1 + limit);
+      const text = selected
+        .map((line, index) => `${offset + index}: ${line}`)
+        .join("\n");
+      const isTruncated =
+        readResult.truncated || offset - 1 + selected.length < lines.length;
+      const catalogItem = snapshot.course.catalog.find(
+        (candidate) => candidate.id === item.itemID,
+      );
+      if (!catalogItem) {
+        throw new Error("课程文件不在本轮课程目录中");
+      }
+      const result = {
+        ...catalogItem,
+        headings: [],
+        searchText: text,
+        isTruncated,
+        relativePath: item.relativePath,
+        courseIDs: item.courseIDs,
+        courseTitles: item.courseTitles,
+      } as CourseItemSnapshot;
+      const presented = presentCourseResults(snapshot, [result]);
+      searchedCourseItemIDs.add(item.itemID);
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            path: item.relativePath,
+            offset,
+            lines: selected.length,
+            isTruncated,
+            text,
+          }, null, 2),
+        }],
+        details: {
+          kind: "course_read",
+          contextRevision: snapshot.contextRevision,
+          itemID: item.itemID,
+          query: item.relativePath,
+          results: [result],
+          evidenceLabels: presented.evidenceLabels,
+          jumpReferences: presented.jumpReferences,
+          jumpEvidence: presented.jumpEvidence,
+        } satisfies CourseReadToolDetails,
+      };
+    },
+  });
 
   pi.registerTool({
     name: CONTEXT_TOOL,
@@ -8545,6 +9418,8 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       richAnswerCatalogSelection = undefined;
       richAnswerCatalogRendererSelection = undefined;
       verifiedVisualAssetBytes.clear();
+      hostCourseItemIDs.clear();
+      snapshot.project.items.forEach((item) => hostCourseItemIDs.add(item.itemID));
       activeAnswerFormPolicy = snapshot.answerFormPolicy;
 
       const details: ContextToolDetails = {
@@ -8577,6 +9452,18 @@ export default function weibeiExtension(pi: ExtensionAPI) {
                   relationCount: snapshot.course.relations.length,
                   isTruncated: snapshot.course.isTruncated,
                 },
+                project: {
+                  kind: snapshot.project.kind,
+                  chatID: snapshot.project.chatID,
+                  courseID: snapshot.project.courseID,
+                  courseTitle: snapshot.project.courseTitle,
+                  approvedFileCount: snapshot.project.items.filter(
+                    (item) => item.relativePath.length > 0,
+                  ).length,
+                  searchableItemCount: snapshot.project.items.length,
+                  isTruncated: snapshot.project.isTruncated,
+                },
+                focus: snapshot.focus,
                 learning: {
                   revision: snapshot.learning.memoryRevision,
                   hasLastLocation: snapshot.learning.lastLocation !== undefined,
@@ -8683,7 +9570,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       { additionalProperties: false },
     ),
     executionMode: "sequential",
-    async execute(_toolCallId, params) {
+    async execute(_toolCallID, params) {
       const snapshot = await readCurrentSnapshot();
       if (lastReadContextRevision !== snapshot.contextRevision) {
         throw new Error(`必须先调用 ${CONTEXT_TOOL} 读取本轮当前上下文`);
@@ -8746,71 +9633,102 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       { additionalProperties: false },
     ),
     executionMode: "sequential",
-    async execute(_toolCallId, params) {
+    async execute(toolCallID, params, signal) {
       const snapshot = await readCurrentSnapshot();
       if (lastReadContextRevision !== snapshot.contextRevision) {
         throw new Error(`必须先调用 ${CONTEXT_TOOL} 读取本轮当前上下文`);
       }
       const query = params.query.trim();
-      const results = searchCourse(snapshot.course, query, params.limit ?? 5);
+      const results = await queryCourseIndex(
+        snapshot,
+        toolCallID,
+        COURSE_SEARCH_TOOL,
+        signal,
+      );
+      rememberHostCourseItems(hostCourseItemIDs, results);
       results
         .filter((item) => item.searchText.trim().length > 0)
         .forEach((item) => searchedCourseItemIDs.add(item.id));
-      const presentedResults = results.map((item) => {
-        const hasEvidence = item.searchText.trim().length > 0;
-        const sectionJumpReferences =
-          hasEvidence && item.kind === "html"
-            ? item.headings
-                .slice(0, 5)
-                .map((heading) => courseJumpReference(snapshot.course, item, heading))
-            : [];
-        const pageJumpReferences =
-          hasEvidence && item.kind === "pdf"
-            ? item.headings
-                .filter((heading) => coursePage(heading) !== undefined)
-                .slice(0, 5)
-                .map((heading) => courseJumpReference(snapshot.course, item, heading))
-            : [];
-        return {
-          ...item,
-          headings: item.headings.map((heading) => courseHeading(heading).title),
-          evidenceLabel: hasEvidence ? courseEvidenceLabel(snapshot.course, item) : undefined,
-          jumpReference: hasEvidence ? courseJumpReference(snapshot.course, item) : undefined,
-          sectionJumpReferences,
-          pageJumpReferences,
-        };
-      });
-      const evidenceLabels = presentedResults.flatMap((item) =>
-        item.evidenceLabel ? [item.evidenceLabel] : [],
-      );
-      const jumpEvidence = Object.fromEntries(
-        presentedResults.flatMap((item) => {
-          if (!item.evidenceLabel || !item.jumpReference) return [];
-          return [item.jumpReference, ...item.sectionJumpReferences, ...item.pageJumpReferences]
-            .map((jumpReference) => [jumpReference, item.evidenceLabel] as const);
-        }),
-      );
-      const jumpReferences = Object.keys(jumpEvidence);
+      const presented = presentCourseResults(snapshot, results);
       const details: CourseSearchToolDetails = {
         kind: "course_search",
         contextRevision: snapshot.contextRevision,
         query,
         results,
-        evidenceLabels,
-        jumpReferences,
-        jumpEvidence,
+        evidenceLabels: presented.evidenceLabels,
+        jumpReferences: presented.jumpReferences,
+        jumpEvidence: presented.jumpEvidence,
       };
       return {
         content: [
           {
             type: "text",
             text: JSON.stringify(
-              presentedResults,
+              presented.presentedResults,
               null,
               2,
             ),
           },
         ],
+        details,
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: COURSE_READ_TOOL,
+    label: "读取课程资料正文",
+    description:
+      "按课程搜索返回的稳定资料 ID 读取真实索引正文；可指定新的搜索词或精确页/章节位置。课程 Chat 只读本课，全局 Chat 可读搜索结果但会保留课程身份。",
+    promptSnippet: "按资料 ID 和页或章节继续读取真实正文",
+    parameters: Type.Object(
+      {
+        itemID: Type.String({ minLength: 1, maxLength: LIMITS.identifier }),
+        query: Type.Optional(Type.String({ maxLength: 500 })),
+        location: Type.Optional(Type.String({ maxLength: LIMITS.title })),
+        limit: Type.Optional(
+          Type.Integer({ minimum: 1, maximum: LIMITS.projectSearchItems }),
+        ),
+      },
+      { additionalProperties: false },
+    ),
+    executionMode: "sequential",
+    async execute(toolCallID, params, signal) {
+      const snapshot = await readCurrentSnapshot();
+      if (lastReadContextRevision !== snapshot.contextRevision) {
+        throw new Error(`必须先调用 ${CONTEXT_TOOL} 读取本轮当前上下文`);
+      }
+      if (
+        !snapshot.project.items.some((item) => item.itemID === params.itemID) &&
+        !hostCourseItemIDs.has(params.itemID)
+      ) {
+        throw new Error("该资料 ID 不属于本轮查询作用域");
+      }
+      const query = params.query?.trim() ?? "";
+      const results = await queryCourseIndex(
+        snapshot,
+        toolCallID,
+        COURSE_READ_TOOL,
+        signal,
+      );
+      rememberHostCourseItems(hostCourseItemIDs, results);
+      results.forEach((item) => searchedCourseItemIDs.add(item.id));
+      const presented = presentCourseResults(snapshot, results);
+      const details: CourseReadToolDetails = {
+        kind: "course_read",
+        contextRevision: snapshot.contextRevision,
+        itemID: params.itemID,
+        query,
+        results,
+        evidenceLabels: presented.evidenceLabels,
+        jumpReferences: presented.jumpReferences,
+        jumpEvidence: presented.jumpEvidence,
+      };
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify(presented.presentedResults, null, 2),
+        }],
         details,
       };
     },
@@ -10053,6 +10971,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     richAnswerCatalogSelection = undefined;
     richAnswerCatalogRendererSelection = undefined;
     searchedCourseItemIDs.clear();
+    hostCourseItemIDs.clear();
     verifiedVisualAssetBytes.clear();
 
     let purpose = "unavailable";
@@ -10060,12 +10979,22 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     let answerFormPolicy: AnswerFormPolicy = "automatic";
     let readableSourceLabels: string[] = [];
     let explicitRichAnswerRequested = false;
+    let projectSummary = "{}";
+    let focusSummary = "null";
     try {
       const snapshot = await readCurrentSnapshot();
       purpose = snapshot.purpose;
       revision = snapshot.contextRevision;
       answerFormPolicy = snapshot.answerFormPolicy;
       readableSourceLabels = evidenceLabels(snapshot);
+      projectSummary = JSON.stringify({
+        kind: snapshot.project.kind,
+        chatID: snapshot.project.chatID,
+        courseID: snapshot.project.courseID,
+        courseTitle: snapshot.project.courseTitle,
+      });
+      focusSummary = JSON.stringify(snapshot.focus ?? null);
+      snapshot.project.items.forEach((item) => hostCourseItemIDs.add(item.itemID));
       explicitRichAnswerRequested =
         answerFormPolicy === "automatic" &&
         snapshot.workflow !== "noteMaking" &&
@@ -10098,6 +11027,8 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       `purpose: ${JSON.stringify(purpose)}`,
       `contextRevision: ${JSON.stringify(revision)}`,
       `answerFormPolicy: ${JSON.stringify(answerFormPolicy)}`,
+      `projectScope: ${projectSummary}`,
+      `currentFocus: ${focusSummary}`,
       "本轮第一次工具调用必须是 weibei_context。调用成功前不得回答事实问题，也不得提出富回答或笔记建议。",
       "当前材料、笔记和选区是本轮直接证据；课程关联需要读课程地图或搜索；学习历史需要读学习记忆。",
       "学习记忆只能说明用户的学习状态，不能作为课程事实证据。",
@@ -10116,19 +11047,8 @@ export default function weibeiExtension(pi: ExtensionAPI) {
     if (!ALLOWED_TOOLS.has(event.toolName)) {
       return {
         block: true,
-        reason: `魏碑 Agent 只允许读取随 App 打包的 Skill，并调用受控的上下文、课程、记忆、富回答与笔记建议工具`,
+        reason: "魏碑 Agent 只允许当前作用域开放的只读课程能力、受控写入提案和富回答能力",
       };
-    }
-
-    if (event.toolName === READ_TOOL) {
-      const requestedPath = (event.input as { path?: unknown }).path;
-      const normalizedPath = canonicalReadPath(requestedPath);
-      if (!normalizedPath || !RICH_ANSWER_SKILL_BY_PATH.has(normalizedPath)) {
-        return {
-          block: true,
-          reason: "魏碑只允许 Pi 原生 read 读取随 App 打包的富回答 Skill，不能读取其它文件。",
-        };
-      }
     }
 
     if (

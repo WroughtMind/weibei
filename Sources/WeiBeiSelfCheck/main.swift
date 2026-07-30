@@ -1,5 +1,6 @@
 import AppKit
 import CoreText
+import Darwin
 import Foundation
 import PDFKit
 import Security
@@ -10,6 +11,48 @@ func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() {
         fputs("self-check failed: \(message)\n", stderr)
         exit(1)
+    }
+}
+
+func importedIdentity(at url: URL) -> ImportedFileIdentity? {
+    var fileStat = Darwin.stat()
+    guard url.withUnsafeFileSystemRepresentation({ path in
+        guard let path else { return false }
+        return Darwin.lstat(path, &fileStat) == 0
+    }) else { return nil }
+    return ImportedFileIdentity(
+        volumeID: UInt64(fileStat.st_dev),
+        fileID: UInt64(fileStat.st_ino),
+        birthTimeSeconds: Int64(fileStat.st_birthtimespec.tv_sec),
+        birthTimeNanoseconds: Int64(fileStat.st_birthtimespec.tv_nsec)
+    )
+}
+
+final class OneShotFileReplacement: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didRun = false
+    private let url: URL
+
+    init(url: URL) {
+        self.url = url
+    }
+
+    func run() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !didRun else { return }
+        didRun = true
+        let backup = url.deletingLastPathComponent()
+            .appendingPathComponent("verified-read-backup-\(UUID().uuidString)")
+        do {
+            try FileManager.default.moveItem(at: url, to: backup)
+            try Data("MALICIOUS_DURING_READ".utf8).write(to: url)
+            try FileManager.default.removeItem(at: url)
+            try FileManager.default.moveItem(at: backup, to: url)
+        } catch {
+            try? FileManager.default.removeItem(at: url)
+            try? FileManager.default.moveItem(at: backup, to: url)
+        }
     }
 }
 
@@ -962,10 +1005,11 @@ expect(courseDocumentIndexSource.contains("CREATE VIRTUAL TABLE IF NOT EXISTS ch
     && courseDocumentIndexSource.contains("private let indexingQueue")
     && courseDocumentIndexSource.contains("private let metadataQueue")
     && courseDocumentIndexSource.contains("metadataQueue.async { [weak self] in")
-    && courseDocumentIndexSource.contains("let resolvedURL = url.resolvingSymlinksInPath()")
-    && courseDocumentIndexSource.contains("resolvedURL.resourceValues")
-    && courseDocumentIndexSource.contains("return \"v5#\\(item.kind.rawValue)#\\(metadata.modified)#\\(metadata.size)\"")
-    && courseDocumentIndexSource.contains("let metadata = fileMetadata(for: url)")
+    && courseDocumentIndexSource.contains("Darwin.open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW)")
+    && courseDocumentIndexSource.contains("file.metadata.isStillCurrent(file.descriptor)")
+    && courseDocumentIndexSource.contains("fcopyfile(")
+    && courseDocumentIndexSource.contains("return \"v6#\\(item.kind.rawValue)#\\(metadata.modified)#\\(metadata.size)\"")
+    && courseDocumentIndexSource.contains("VerifiedRegularFile(item: item)?.metadata")
     && courseDocumentIndexSource.contains("private let ocrQueue")
     && courseDocumentIndexSource.contains("indexPDFTextLayer")
     && courseDocumentIndexSource.contains("finishPDFOCR")
@@ -1217,6 +1261,65 @@ let courseIndexRoot = FileManager.default.temporaryDirectory
     .appendingPathComponent("weibei-course-index-check-\(UUID().uuidString)", isDirectory: true)
 try? FileManager.default.createDirectory(at: courseIndexRoot, withIntermediateDirectories: true)
 defer { try? FileManager.default.removeItem(at: courseIndexRoot) }
+let verifiedReadURL = courseIndexRoot.appendingPathComponent("verified-read.md")
+try? "# 原文\n\nORIGINAL_VERIFIED_CONTENT".write(
+    to: verifiedReadURL,
+    atomically: true,
+    encoding: .utf8
+)
+let verifiedReadItem = StudyItem(
+    id: "verified-read",
+    title: "Verified read",
+    subtitle: verifiedReadURL.lastPathComponent,
+    kind: .markdown,
+    urlPath: verifiedReadURL.path,
+    importedFileIdentity: importedIdentity(at: verifiedReadURL),
+    isSample: false,
+    storage: .courseOwned(ownerCourseID: UUID())
+)
+let verifiedReadReplacement = OneShotFileReplacement(url: verifiedReadURL)
+let verifiedReadIndex = CourseDocumentSearchIndex(
+    databaseURL: courseIndexRoot.appendingPathComponent("verified-read.sqlite3"),
+    verifiedFileDidOpen: { verifiedReadReplacement.run() }
+)
+let verifiedReadResult = verifiedReadIndex.lookup(
+    items: [verifiedReadItem],
+    query: "ORIGINAL_VERIFIED_CONTENT MALICIOUS_DURING_READ"
+)[verifiedReadItem.id]
+expect(
+    verifiedReadResult?.text?.contains("ORIGINAL_VERIFIED_CONTENT") == true
+        && verifiedReadResult?.text?.contains("MALICIOUS_DURING_READ") == false,
+    "course index reads the verified open file when its path is replaced and restored mid-read"
+)
+let visualSnapshotURL = courseIndexRoot.appendingPathComponent("verified-visual.png")
+try? Data("ORIGINAL_VISUAL_BYTES".utf8).write(to: visualSnapshotURL)
+let visualSnapshotItem = StudyItem(
+    id: "verified-visual",
+    title: "Verified visual",
+    subtitle: visualSnapshotURL.lastPathComponent,
+    kind: .text,
+    urlPath: visualSnapshotURL.path,
+    importedFileIdentity: importedIdentity(at: visualSnapshotURL),
+    isSample: false,
+    storage: .courseOwned(ownerCourseID: UUID())
+)
+let visualReplacement = OneShotFileReplacement(url: visualSnapshotURL)
+let visualSnapshotIndex = CourseDocumentSearchIndex(
+    databaseURL: courseIndexRoot.appendingPathComponent("verified-visual.sqlite3"),
+    verifiedFileDidOpen: { visualReplacement.run() }
+)
+let visualSnapshot = visualSnapshotIndex.verifiedSnapshot(
+    of: visualSnapshotItem,
+    maximumBytes: 6_000_000
+)
+let visualSnapshotData = visualSnapshot.flatMap { try? Data(contentsOf: $0) }
+expect(
+    visualSnapshotData == Data("ORIGINAL_VISUAL_BYTES".utf8),
+    "visual attachments copy the verified open file instead of following a replaced path"
+)
+if let visualSnapshot {
+    try? FileManager.default.removeItem(at: visualSnapshot)
+}
 let mixedPDFURL = courseIndexRoot.appendingPathComponent("mixed-late-ocr.pdf")
 makeMixedLateOCRPDF(at: mixedPDFURL)
 let mixedPDFItem = StudyItem(
@@ -1229,7 +1332,11 @@ let mixedPDFItem = StudyItem(
 )
 let markdownIndexURL = courseIndexRoot.appendingPathComponent("late-section.md")
 let lateMarkdownToken = "PERSISTENT_LATE_INDEX_TOKEN"
-try? (String(repeating: "ordinary material\n\n", count: 1_500) + lateMarkdownToken)
+try? (
+    String(repeating: "ordinary material\n\n", count: 1_500)
+        + "## Deep section\n"
+        + lateMarkdownToken
+)
     .write(to: markdownIndexURL, atomically: true, encoding: .utf8)
 let markdownIndexItem = StudyItem(
     id: "file:\(markdownIndexURL.path)",
@@ -1319,6 +1426,35 @@ expect(
         && nativePDFIndexResult?.text?.contains("第 1 页（OCR）") != true,
     "persistent course index executes the bounded worker and preserves a real native PDF text-layer result"
 )
+let nativePDFPageRead = courseIndex.read(
+    item: mixedPDFItem,
+    query: "",
+    location: "第 1 页"
+)
+expect(
+    nativePDFPageRead.text?.contains("Native text layer content for page 1") == true,
+    "course host read resolves an exact indexed PDF page without exposing the SQLite schema"
+)
+let markdownSectionRead = courseIndex.read(
+    item: markdownIndexItem,
+    query: "",
+    location: "Deep section"
+)
+expect(
+    markdownSectionRead.text?.contains(lateMarkdownToken) == true
+        && markdownSectionRead.text?.contains("ordinary material") != true,
+    "course host read resolves an exact indexed Markdown section by its visible title"
+)
+let htmlSectionRead = courseIndex.read(
+    item: stableHTMLItem,
+    query: "",
+    location: "html-heading-0"
+)
+expect(
+    htmlSectionRead.text?.contains("ORIGINAL_ALPHA_SECTION") == true
+        && htmlSectionRead.text?.contains("ORIGINAL_BETA_SECTION") != true,
+    "course host read resolves an exact indexed HTML section by its stable reader location"
+)
 let indexedPDFCourseContext = CourseKnowledgeIndex.build(
     title: "Indexed PDF",
     sources: [
@@ -1375,7 +1511,7 @@ let stableHTMLWithInsertedDuplicate = """
 try? stableHTMLWithInsertedDuplicate.write(to: stableHTMLURL, atomically: true, encoding: .utf8)
 let refreshedStableHTML = courseIndex.lookup(
     items: [stableHTMLItem],
-    query: "ORIGINAL_ALPHA_SECTION ORIGINAL_BETA_SECTION"
+    query: "NEW_INSERTED_SECTION ORIGINAL_ALPHA_SECTION ORIGINAL_BETA_SECTION"
 )[stableHTMLItem.id]
 let refreshedStableSectionIDs = stableHTMLSectionIDs(in: refreshedStableHTML?.text ?? "")
 expect(
@@ -3232,11 +3368,11 @@ expect(readerViewSource.contains("var isEnabled = true")
     && courseWorkspaceSource.contains("isEnabled: !showsNewNotePrompt")
     && !courseWorkspaceSource.contains("courseFolderImportDraft"), "escape dismisses only the active course surface and leaves sheets or file panels in control")
 expect(workspaceStoreSource.contains("DocumentTextExtractor.cachedText(for: item)")
-    && workspaceStoreSource.contains("Task.detached(priority: .userInitiated)")
-    && workspaceStoreSource.contains("DocumentTextExtractor.indexText(for: candidate.item, query: query)")
-    && workspaceStoreSource.contains("DocumentTextExtractor.text(for: item)")
-    && workspaceStoreSource.contains("candidate.item.id == currentMaterialID")
-    && !workspaceStoreSource.contains("if let text = DocumentTextExtractor.text(for: item)"), "main-actor workspace reads cached document text; cold current-material extract runs inside the detached course-context task")
+    && workspaceStoreSource.contains("let indexingTask = Task.detached(priority: .userInitiated)")
+    && workspaceStoreSource.contains("let indexedByItemID = searchIndex.lookup(")
+    && workspaceStoreSource.contains("searchIndex.read(item: $0, query: \"\", location: nil)")
+    && !workspaceStoreSource.contains("DocumentTextExtractor.indexText(for: candidate.item")
+    && !workspaceStoreSource.contains("if let text = DocumentTextExtractor.text(for: item)"), "main-actor workspace reads only cached document text; cold current-material reads use the verified course index inside the detached task")
 expect(workspaceStoreSource.contains("@Published var showDailyInspiration = true")
     && workspaceStoreSource.contains("func setDailyInspirationEnabled(_ enabled: Bool)")
     && workspaceStoreSource.contains("showDailyInspiration = snapshot.showDailyInspiration ?? true")
@@ -3719,7 +3855,9 @@ if let requestStart = workspaceStoreSource.range(of: "private func performAgentR
         && requestSource.contains("agentDraft = \"\"")
         && requestSource.contains("flushStagedNoteDraftForAgentContext()")
         && requestSource.contains("selectionAttachments.removeAll")
-        && requestSource.contains("let allowedItemIDs = target.courseID.map")
+        && requestSource.contains("let projectAccess = makeAgentProjectAccessSnapshot(target: target)")
+        && requestSource.contains("let allowedItemIDs = Set(projectAccess.sources.map(\\.item.id))")
+        && requestSource.contains("currentAgentSelections(allowedItemIDs: allowedItemIDs)")
         && requestSource.contains("let shouldClearSentDocumentSelection = sentSelections.contains")
         && requestSource.contains("clearUnpinnedFloatingSelection(keepContext: false, invalidatesAgentContext: false)")
         && requestSource.contains("let userMessage = AgentMessage(role: .user, text: question, source: sourceTitle)")
@@ -3727,7 +3865,9 @@ if let requestStart = workspaceStoreSource.range(of: "private func performAgentR
         && requestSource.contains("let sentLearningContext = makeLearningContext()")
         && requestSource.contains("let courseBuild = try await makeCourseContext(")
         && requestSource.contains("courseID: target.courseID")
+        && requestSource.contains("materialText: courseBuild.selectedMaterialText ?? \"\"")
         && requestSource.contains("materialIsTruncated: courseBuild.selectedMaterialIsTruncated")
+        && requestSource.contains("noteText: resolvedSentNoteText")
         && requestSource.contains("courseContext: courseBuild.context")
         && requestSource.contains("learningContext: sentLearningContext")
         && requestSource.contains("let reply = try await executeStudyAgentRequest(")
@@ -3806,8 +3946,9 @@ expect(workspaceStoreSource.contains("} else {\n            restoreCurrentStudyL
     && workspaceStoreSource.contains("readerPageIndex = max(location.pageIndex ?? 0, 0)")
     && workspaceStoreSource.contains("requestReaderPDFPage(location.pageIndex, recordsLocation: false)"), "saved heading and PDF page are restored before startup records the current study location")
 expect(workspaceStoreSource.contains("private func makeCourseContext(")
-    && workspaceStoreSource.contains("let scopedItems = courseID.map { courseItems(in: $0) } ?? allItems")
-    && workspaceStoreSource.contains("let membershipIDs = Set(courseMembershipIndex.courseIDs(for: item.id))")
+    && workspaceStoreSource.contains("access: AgentProjectAccessSnapshot")
+    && workspaceStoreSource.contains("let candidates = access.sources.compactMap")
+    && workspaceStoreSource.contains("source.grants.contains(where: Self.agentFileGrantIsValid)")
     && workspaceStoreSource.contains("\"课程：\\(courseTitles.joined(separator: \"、\"))")
     && workspaceStoreSource.contains("scopedItemIDs.contains($0.noteItemID)")
     && workspaceStoreSource.contains("scopedItemIDs.contains($0.sourceItemID)")
@@ -3816,8 +3957,8 @@ expect(workspaceStoreSource.contains("private func makeCourseContext(")
     && workspaceStoreSource.contains("course-search-v3.sqlite3")
     && workspaceStoreSource.contains("removeLegacyCourseIndex")
     && workspaceStoreSource.contains("let indexedByItemID = searchIndex.lookup(")
-    && workspaceStoreSource.contains("candidate.item.isSample")
-    && workspaceStoreSource.contains("Task.detached(priority: .userInitiated)")
+    && workspaceStoreSource.contains("$0.memoryText == nil ? $0.item : nil")
+    && workspaceStoreSource.contains("let indexingTask = Task.detached(priority: .userInitiated)")
     && workspaceStoreSource.contains("withTaskCancellationHandler")
     && workspaceStoreSource.contains("migrateNoteSourceLinksFromMarkdown()"), "agent queries the persistent course index in the background and migrates durable note-source links")
 if let selectStart = workspaceStoreSource.range(of: "func select(itemID: String?)")?.lowerBound,
@@ -5037,6 +5178,10 @@ let middleBlockInsert = MarkdownBlockInsertion.insert(
     replacing: NSRange(location: ("前文" as NSString).length, length: 0)
 )
 expect(middleBlockInsert.text == "前文\n\n![pasted](Attachments/pasted.png)\n\n后文", "block markdown insertion separates both sides")
+expect(
+    CourseDocumentSearchIndex.text("久期衡量利率风险，凸性修正非线性", matchesAnyTermIn: "久期 凸性"),
+    "multi-term course search matches freshly written note text before indexing"
+)
 try? FileManager.default.removeItem(at: attachmentRoot)
 
 print("WeiBei self-check passed")
