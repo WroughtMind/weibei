@@ -287,6 +287,118 @@ actor CourseProjectFileWorker {
         try data.write(to: url, options: [.atomic])
     }
 
+    nonisolated static func writePortableState(
+        _ data: Data,
+        to url: URL,
+        expectedDirectoryIdentity: ImportedFileIdentity
+    ) throws {
+        guard url.lastPathComponent == "course-state.json" else {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        let directory = url.deletingLastPathComponent()
+        let directoryDescriptor = try openDirectory(
+            directory,
+            expectedIdentity: expectedDirectoryIdentity
+        )
+        defer { Darwin.close(directoryDescriptor) }
+        try replacePortableStateData(
+            data,
+            named: url.lastPathComponent,
+            relativeTo: directoryDescriptor
+        )
+        guard Darwin.fsync(directoryDescriptor) == 0,
+              identity(at: directory) == expectedDirectoryIdentity else {
+            throw CourseProjectFileWorkerError.verificationFailed
+        }
+    }
+
+    nonisolated static func readPortableState(
+        at url: URL,
+        expectedDirectoryIdentity: ImportedFileIdentity
+    ) throws -> Data {
+        guard url.lastPathComponent == "course-state.json" else {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        let directory = url.deletingLastPathComponent()
+        let directoryDescriptor = try openDirectory(
+            directory,
+            expectedIdentity: expectedDirectoryIdentity
+        )
+        defer { Darwin.close(directoryDescriptor) }
+        guard let data = try readRegularFile(
+            named: url.lastPathComponent,
+            relativeTo: directoryDescriptor
+        ),
+        identity(at: directory) == expectedDirectoryIdentity else {
+            throw CourseProjectFileWorkerError.verificationFailed
+        }
+        return data
+    }
+
+    nonisolated static func restorePortableState(
+        at url: URL,
+        previousData: Data?,
+        attemptedData: Data,
+        expectedDirectoryIdentity: ImportedFileIdentity
+    ) throws {
+        guard url.lastPathComponent == "course-state.json" else {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        let directory = url.deletingLastPathComponent()
+        let directoryDescriptor = try openDirectory(
+            directory,
+            expectedIdentity: expectedDirectoryIdentity
+        )
+        defer { Darwin.close(directoryDescriptor) }
+        let name = url.lastPathComponent
+        let currentData = try readRegularFile(
+            named: name,
+            relativeTo: directoryDescriptor
+        )
+        if currentData == previousData {
+            return
+        }
+        if let currentData, currentData != attemptedData {
+            let quarantine =
+                "course-state-rejected-\(UUID().uuidString.lowercased()).json"
+            let moved = name.withCString { sourceName in
+                quarantine.withCString { destinationName in
+                    Darwin.renameatx_np(
+                        directoryDescriptor,
+                        sourceName,
+                        directoryDescriptor,
+                        destinationName,
+                        UInt32(RENAME_EXCL)
+                    )
+                }
+            }
+            guard moved == 0 else {
+                throw CourseProjectFileWorkerError.verificationFailed
+            }
+        }
+        if let previousData {
+            try replacePortableStateData(
+                previousData,
+                named: name,
+                relativeTo: directoryDescriptor
+            )
+        } else if try readRegularFile(
+            named: name,
+            relativeTo: directoryDescriptor
+        ) != nil {
+            let removed = name.withCString {
+                Darwin.unlinkat(directoryDescriptor, $0, 0)
+            }
+            guard removed == 0 else {
+                throw CourseProjectFileWorkerError.verificationFailed
+            }
+        }
+        guard Darwin.fsync(directoryDescriptor) == 0,
+              identity(at: directory) == expectedDirectoryIdentity else {
+            throw CourseProjectFileWorkerError.verificationFailed
+        }
+    }
+
     func placeWithoutReplacement(
         from source: URL,
         to destination: URL,
@@ -1240,6 +1352,141 @@ actor CourseProjectFileWorker {
             throw CourseProjectFileWorkerError.unsafePath
         }
         return descriptor
+    }
+
+    nonisolated private static func replacePortableStateData(
+        _ data: Data,
+        named name: String,
+        relativeTo directoryDescriptor: Int32
+    ) throws {
+        if let existing = entryStat(
+            named: name,
+            relativeTo: directoryDescriptor
+        ), (existing.st_mode & mode_t(S_IFMT)) != mode_t(S_IFREG) {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        let temporaryName =
+            ".course-state-\(UUID().uuidString.lowercased()).tmp"
+        let descriptor = temporaryName.withCString {
+            Darwin.openat(
+                directoryDescriptor,
+                $0,
+                O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+                S_IRUSR | S_IWUSR
+            )
+        }
+        guard descriptor >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        var shouldRemoveTemporary = true
+        defer {
+            Darwin.close(descriptor)
+            if shouldRemoveTemporary {
+                temporaryName.withCString {
+                    _ = Darwin.unlinkat(directoryDescriptor, $0, 0)
+                }
+            }
+        }
+        try data.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else { return }
+            var offset = 0
+            while offset < rawBuffer.count {
+                let written = Darwin.write(
+                    descriptor,
+                    baseAddress.advanced(by: offset),
+                    rawBuffer.count - offset
+                )
+                guard written > 0 else {
+                    throw POSIXError(
+                        POSIXErrorCode(rawValue: errno) ?? .EIO
+                    )
+                }
+                offset += written
+            }
+        }
+        guard Darwin.fsync(descriptor) == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        let renamed = temporaryName.withCString { sourceName in
+            name.withCString { destinationName in
+                Darwin.renameat(
+                    directoryDescriptor,
+                    sourceName,
+                    directoryDescriptor,
+                    destinationName
+                )
+            }
+        }
+        guard renamed == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        shouldRemoveTemporary = false
+    }
+
+    nonisolated private static func readRegularFile(
+        named name: String,
+        relativeTo directoryDescriptor: Int32
+    ) throws -> Data? {
+        let descriptor = name.withCString {
+            Darwin.openat(
+                directoryDescriptor,
+                $0,
+                O_RDONLY | O_CLOEXEC | O_NOFOLLOW
+            )
+        }
+        if descriptor < 0 {
+            if errno == ENOENT {
+                return nil
+            }
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        defer { Darwin.close(descriptor) }
+        var fileStat = Darwin.stat()
+        guard Darwin.fstat(descriptor, &fileStat) == 0,
+              (fileStat.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) else {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        var data = Data()
+        if fileStat.st_size > 0, fileStat.st_size <= Int64(Int.max) {
+            data.reserveCapacity(Int(fileStat.st_size))
+        }
+        var buffer = [UInt8](repeating: 0, count: 64 * 1024)
+        while true {
+            let count = buffer.withUnsafeMutableBytes {
+                Darwin.read(
+                    descriptor,
+                    $0.baseAddress,
+                    $0.count
+                )
+            }
+            guard count >= 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            if count == 0 {
+                break
+            }
+            data.append(buffer, count: count)
+        }
+        return data
+    }
+
+    nonisolated private static func entryStat(
+        named name: String,
+        relativeTo directoryDescriptor: Int32
+    ) -> Darwin.stat? {
+        var fileStat = Darwin.stat()
+        let result = name.withCString {
+            Darwin.fstatat(
+                directoryDescriptor,
+                $0,
+                &fileStat,
+                AT_SYMLINK_NOFOLLOW
+            )
+        }
+        if result == 0 {
+            return fileStat
+        }
+        return nil
     }
 
     nonisolated private static func identity(

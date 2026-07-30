@@ -79,6 +79,22 @@ private struct AgentReplySourceFileSnapshot: Sendable {
     let expectedIdentity: ImportedFileIdentity?
 }
 
+private struct CoursePortableStateWriteRecord {
+    let url: URL
+    let previousData: Data?
+    let committedData: Data
+    let expectedDirectoryIdentity: ImportedFileIdentity
+}
+
+private struct CoursePortableStateCommit {
+    let writes: [CoursePortableStateWriteRecord]
+    let previousRevisions: [UUID: UInt64]
+    let previousDigests: [UUID: String]
+    let previousDirtyCourseIDs: Set<UUID>
+    let previousBlockedCourseIDs: Set<UUID>
+    let previousNeedsBootstrap: Bool
+}
+
 @MainActor
 enum ChatSourceNavigationVerifier {
     private(set) static var markdownMatches = Set<String>()
@@ -535,6 +551,8 @@ final class WorkspaceStore: ObservableObject {
     private let notebookFileMover: (URL, URL) throws -> Void
     private let courseFileSourceRemover: @Sendable (URL) throws -> Void
     private let workspaceSnapshotWriter: (Data, URL) throws -> Void
+    private let coursePortableStateWriter:
+        (Data, URL, ImportedFileIdentity) throws -> Void
     private let selectionAskThreadDefaults: UserDefaults
     private let piRuntime: PiAgentRuntime
     private let courseDocumentSearchIndex: CourseDocumentSearchIndex
@@ -553,6 +571,12 @@ final class WorkspaceStore: ObservableObject {
     private var quietInsightTask: Task<Void, Never>?
     private var quietInsightTaskID: UUID?
     private var agentContextRevision: UInt64 = 0
+    private var coursePortableStateRevisions: [UUID: UInt64] = [:]
+    private var coursePortableStateDigests: [UUID: String] = [:]
+    private var dirtyPortableCourseIDs = Set<UUID>()
+    private var blockedPortableCourseIDs = Set<UUID>()
+    private var persistedWorkspaceCourseIDs = Set<UUID>()
+    private var needsPortableCourseStateBootstrap = false
     @Published private var validatedAgentReplySourceIDs = Set<UUID>()
     private var lastAgentReplyContextRevision: UInt64?
     private var latestAgentLearningUpdateQuestion: String?
@@ -907,6 +931,11 @@ final class WorkspaceStore: ObservableObject {
             try FileManager.default.removeItem(at: $0)
         },
         workspaceSnapshotWriter: @escaping (Data, URL) throws -> Void = WorkspaceStore.writeWorkspaceSnapshot,
+        coursePortableStateWriter: @escaping (
+            Data,
+            URL,
+            ImportedFileIdentity
+        ) throws -> Void = CourseProjectFileWorker.writePortableState,
         selectionAskThreadDefaults: UserDefaults = .standard
     ) {
         workspaceDirectory = folder.standardizedFileURL
@@ -923,6 +952,7 @@ final class WorkspaceStore: ObservableObject {
         self.notebookFileMover = notebookFileMover
         self.courseFileSourceRemover = courseFileSourceRemover
         self.workspaceSnapshotWriter = workspaceSnapshotWriter
+        self.coursePortableStateWriter = coursePortableStateWriter
         self.selectionAskThreadDefaults = selectionAskThreadDefaults
         piRuntime = PiAgentRuntime(runtimeDirectory: folder.appendingPathComponent("AgentRuntime", isDirectory: true))
         let courseIndexDirectory = folder.appendingPathComponent("CourseIndex", isDirectory: true)
@@ -934,6 +964,7 @@ final class WorkspaceStore: ObservableObject {
         load()
         loadLegacySelectionAskThreadsIfWorkspaceFieldMissing()
         let restoredCourseProjectRoots = restoreCourseProjectRoots()
+        let restoredPortableCourseStates = restorePortableCourseStates()
         if ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root") {
             recoverPendingCourseFileTransactions()
         }
@@ -969,6 +1000,8 @@ final class WorkspaceStore: ObservableObject {
                     || migratedLearningMemoryScopes
                     || sanitizedCourseResumePoints
                     || restoredCourseProjectRoots
+                    || restoredPortableCourseStates
+                    || needsPortableCourseStateBootstrap
                     || recoveredInterruptedAgentReply
                     || needsSelectionAskThreadsWorkspaceMigration {
             savedInitializationChanges = save()
@@ -1341,6 +1374,14 @@ final class WorkspaceStore: ObservableObject {
             guard performSaveNow() else {
                 throw CourseProjectRootError.workspaceSaveFailed
             }
+            do {
+                try persistCoursePortableStates(courseIDs: [course.id])
+            } catch {
+                workspaceSaveError = ui(
+                    "课程已创建，但可携带状态尚未写入：\(error.localizedDescription)",
+                    "The course was created, but its portable state has not been written yet: \(error.localizedDescription)"
+                )
+            }
             return course.id
         } catch {
             courses = previousCourses
@@ -1595,6 +1636,25 @@ final class WorkspaceStore: ObservableObject {
 
         let previousCourses = courses
         let previousActiveCourseID = activeCourseID
+        let previousImportedItems = importedItems
+        let previousMemberships = courseItemMemberships
+        let previousNoteSourceLinks = noteSourceLinks
+        let previousCourseStudyLocations = studyLocationsByCourseID
+        let previousCourseResumePoints = courseResumePoints
+        let previousLearningMemoryStates = learningMemoryStates
+        let previousStudySessions = studySessions
+        let previousActiveStudySessionID = activeStudySessionID
+        let previousMessages = messages
+        let previousNotesByItemID = notesByItemID
+        let previousPendingNoteWrites = pendingNoteWritesByItemID
+        let previousNoteBackingDigests =
+            noteBackingContentDigestsByItemID
+        let previousPortableRevisions = coursePortableStateRevisions
+        let previousPortableDigests = coursePortableStateDigests
+        let previousDirtyPortableCourses = dirtyPortableCourseIDs
+        let previousBlockedPortableCourses = blockedPortableCourseIDs
+        let previousPortableBootstrap =
+            needsPortableCourseStateBootstrap
         guard importedFileIdentityResolver(canonicalRoot) == identity else {
             if let externalScopeURL { courseSecurityScopeStopper(externalScopeURL) }
             throw CourseProjectRootError.rootIdentityUnavailable
@@ -1615,9 +1675,48 @@ final class WorkspaceStore: ObservableObject {
         if let externalScopeURL {
             activeCourseSecurityScopes["course:\(course.id.uuidString)"] = externalScopeURL
         }
-        guard performSaveNow() else {
+        do {
+            let stateURL = metadataURL.appendingPathComponent(
+                "course-state.json",
+                isDirectory: false
+            )
+            if FileManager.default.fileExists(atPath: stateURL.path) {
+                let state = try readCoursePortableState(
+                    at: stateURL,
+                    expectedCourseID: courseID
+                )
+                try applyCoursePortableState(state, courseID: courseID)
+                coursePortableStateRevisions[courseID] = state.revision
+                coursePortableStateDigests[courseID] =
+                    try coursePortableStatePayloadDigest(state)
+            } else {
+                needsPortableCourseStateBootstrap = true
+            }
+            guard performSaveNow() else {
+                throw CourseProjectRootError.workspaceSaveFailed
+            }
+        } catch {
             courses = previousCourses
             activeCourseID = previousActiveCourseID
+            importedItems = previousImportedItems
+            courseItemMemberships = previousMemberships
+            noteSourceLinks = previousNoteSourceLinks
+            studyLocationsByCourseID = previousCourseStudyLocations
+            courseResumePoints = previousCourseResumePoints
+            learningMemoryStates = previousLearningMemoryStates
+            studySessions = previousStudySessions
+            activeStudySessionID = previousActiveStudySessionID
+            messages = previousMessages
+            notesByItemID = previousNotesByItemID
+            pendingNoteWritesByItemID = previousPendingNoteWrites
+            noteBackingContentDigestsByItemID =
+                previousNoteBackingDigests
+            coursePortableStateRevisions = previousPortableRevisions
+            coursePortableStateDigests = previousPortableDigests
+            dirtyPortableCourseIDs = previousDirtyPortableCourses
+            blockedPortableCourseIDs = previousBlockedPortableCourses
+            needsPortableCourseStateBootstrap =
+                previousPortableBootstrap
             resolvedCourseRootURLs.removeValue(forKey: course.id)
             courseRootUnavailableReasons.removeValue(forKey: course.id)
             if let externalScopeURL {
@@ -1632,7 +1731,15 @@ final class WorkspaceStore: ObservableObject {
                     expected: createdMetadataFingerprint
                 )
             }
-            throw CourseProjectRootError.workspaceSaveFailed
+            throw error
+        }
+        do {
+            try persistCoursePortableStates(courseIDs: [course.id])
+        } catch {
+            workspaceSaveError = ui(
+                "课程已登记，但可携带状态尚未写入：\(error.localizedDescription)",
+                "The course was registered, but its portable state has not been written yet: \(error.localizedDescription)"
+            )
         }
         if !ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root") {
             Task { @MainActor [weak self] in
@@ -12863,6 +12970,250 @@ final class WorkspaceStore: ObservableObject {
         courseDocumentSearchIndex.synchronize(allItems)
     }
 
+    func installPortableCourseStateFixtureForSelfCheck(
+        courseID: UUID,
+        materialItemID: String,
+        noteItemID: String,
+        foreignCourseID: UUID,
+        foreignItemID: String
+    ) throws -> (
+        sessionID: UUID,
+        memoryID: UUID,
+        draft: String,
+        firstMessageID: UUID,
+        firstRichNarrative: String
+    ) {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        guard item(materialItemID, belongsTo: courseID),
+              item(noteItemID, belongsTo: courseID),
+              item(foreignItemID, belongsTo: foreignCourseID) else {
+            throw AgentConversationTargetError(message: "可携带状态测试资料不完整")
+        }
+        let sessionID = UUID()
+        let memoryID = UUID()
+        let foreignMemoryID = UUID()
+        let draft = "# 可携带笔记\n\n尚未写回的课程草稿。"
+        let now = Date()
+        learningMemoryStates.removeAll {
+            $0.scope == .course(courseID)
+                || $0.scope == .course(foreignCourseID)
+                || $0.scope == .global
+        }
+        learningMemoryStates = [
+            ScopedLearningMemoryState(
+                scope: .course(courseID),
+                revision: 1,
+                entries: [
+                    LearningMemoryEntry(
+                        id: memoryID,
+                        kind: .progress,
+                        text: "已完成课程可携带状态测试。",
+                        evidence: "课程 Chat",
+                        origin: .agentInference,
+                        sessionID: sessionID,
+                        createdAt: now,
+                        updatedAt: now
+                    ),
+                ]
+            ),
+            ScopedLearningMemoryState(
+                scope: .course(foreignCourseID),
+                revision: 1,
+                entries: [
+                    LearningMemoryEntry(
+                        id: foreignMemoryID,
+                        kind: .confusion,
+                        text: "另一门课程的记忆。",
+                        evidence: "另一门课程",
+                        origin: .userStatement,
+                        createdAt: now,
+                        updatedAt: now
+                    ),
+                ]
+            ),
+            ScopedLearningMemoryState(
+                scope: .global,
+                revision: 1,
+                entries: [
+                    LearningMemoryEntry(
+                        kind: .preference,
+                        text: "全局偏好。",
+                        evidence: "全局 Chat",
+                        origin: .userStatement,
+                        createdAt: now,
+                        updatedAt: now
+                    ),
+                ]
+            ),
+        ]
+        let validSource = AgentReplySource(
+            itemID: materialItemID,
+            courseID: courseID,
+            kind: .material,
+            title: "本课程资料",
+            label: "本课程资料",
+            excerpt: "课程内证据"
+        )
+        let foreignSourceWithoutCourseID = AgentReplySource(
+            itemID: foreignItemID,
+            kind: .material,
+            title: "另一门课程资料",
+            label: "另一门课程资料",
+            excerpt: "不应进入可携带状态"
+        )
+        let validAction = AgentReplyAction(
+            kind: .createRelation,
+            targetItemID: noteItemID,
+            sourceItemID: materialItemID
+        )
+        let firstMessageID = UUID()
+        let firstRichNarrative =
+            "最早一条课程回复的富回答附件必须长期保留。"
+        let firstReply = AgentMessage(
+            id: firstMessageID,
+            role: .assistant,
+            text: "最早一条课程回答。",
+            source: "课程 Chat",
+            backend: .pi,
+            richAnswer: RichAnswerPresentation(
+                mode: .narrativeOnly,
+                narrative: firstRichNarrative
+            ),
+            actions: [
+                AgentReplyAction(
+                    kind: .writeNote,
+                    targetItemID: noteItemID,
+                    proposedMarkdown: "最早一条动作附件"
+                ),
+            ],
+            origin: AgentReplyOrigin(
+                requestID: UUID(),
+                chatID: sessionID,
+                courseID: courseID
+            ),
+            createdAt: now
+        )
+        let foreignActionWithoutCourseID = AgentReplyAction(
+            kind: .writeNote,
+            targetItemID: foreignItemID,
+            proposedMarkdown: "不应进入可携带状态"
+        )
+        let reply = AgentMessage(
+            role: .assistant,
+            text: "课程回答正文必须保留。",
+            source: "课程 Chat",
+            backend: .pi,
+            sources: [validSource, foreignSourceWithoutCourseID],
+            actions: [validAction, foreignActionWithoutCourseID],
+            memoryUpdate: AgentReplyMemoryUpdate(
+                memoryIDs: [memoryID, foreignMemoryID],
+                summary: "只允许本课程记忆"
+            ),
+            origin: AgentReplyOrigin(
+                requestID: UUID(),
+                chatID: sessionID,
+                courseID: courseID
+            ),
+            toolTrace: ["内部工具日志不得携带"],
+            createdAt: now
+        )
+        var longHistory = [firstReply]
+        for index in 1..<500 {
+            longHistory.append(
+                AgentMessage(
+                    role: .user,
+                    text: "课程历史消息 \(index)",
+                    source: "课程 Chat",
+                    createdAt: now.addingTimeInterval(Double(index))
+                )
+            )
+        }
+        longHistory.append(reply)
+        let courseSession = StudySession(
+            id: sessionID,
+            title: "可携带课程 Chat",
+            messages: longHistory,
+            summary: "验证课程状态投影。",
+            courseID: courseID,
+            focusItemIDs: [materialItemID, foreignItemID],
+            materialItemID: materialItemID,
+            createdAt: now,
+            updatedAt: now
+        )
+        let foreignSession = StudySession(
+            title: "另一门课程 Chat",
+            courseID: foreignCourseID,
+            focusItemIDs: [foreignItemID],
+            materialItemID: foreignItemID,
+            createdAt: now,
+            updatedAt: now
+        )
+        studySessions = [
+            courseSession,
+            foreignSession,
+            StudySession(
+                title: "全局 Chat",
+                courseID: nil,
+                createdAt: now,
+                updatedAt: now
+            ),
+        ]
+        activeStudySessionID = sessionID
+        messages = courseSession.messages
+        noteSourceLinks = [
+            NoteSourceLink(
+                noteItemID: noteItemID,
+                sourceItemID: materialItemID,
+                createdAt: now
+            ),
+            NoteSourceLink(
+                noteItemID: noteItemID,
+                sourceItemID: foreignItemID,
+                createdAt: now
+            ),
+        ]
+        let location = StudyLocation(
+            itemID: materialItemID,
+            itemTitle: "本课程资料",
+            locationID: "portable-location",
+            locationTitle: "可携带位置",
+            lastStudiedAt: now,
+            visitCount: 2
+        )
+        studyLocationsByCourseID[courseID.uuidString] = [
+            materialItemID: location,
+        ]
+        courseResumePoints.removeAll { $0.courseID == courseID }
+        courseResumePoints.append(
+            CourseResumePoint(
+                courseID: courseID,
+                materialLocation: location,
+                chatID: sessionID,
+                noteItemID: noteItemID,
+                savedAt: now
+            )
+        )
+        notesByItemID[noteItemID] = draft
+        pendingNoteWritesByItemID[noteItemID] = PendingNoteWriteState(
+            baselineContentDigest: importedItems.first {
+                $0.id == noteItemID
+            }?.contentDigest
+        )
+        return (
+            sessionID,
+            memoryID,
+            draft,
+            firstMessageID,
+            firstRichNarrative
+        )
+    }
+
+    func pendingPortableNoteDraftForSelfCheck(itemID: String) -> String? {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
+        guard pendingNoteWritesByItemID[itemID] != nil else { return nil }
+        return notesByItemID[itemID]
+    }
+
     func removeCourseMembershipForAgentSelfCheck(
         itemID: String,
         courseID: UUID
@@ -13004,7 +13355,12 @@ final class WorkspaceStore: ObservableObject {
             await self.performAgentRequest(target: scopedTarget)
         }
         guard let selfCheckCapturedAgentRequest else {
-            throw AgentConversationTargetError(message: "没有捕获最终课程 Agent 请求")
+            throw AgentConversationTargetError(
+                message: "没有捕获最终课程 Agent 请求："
+                    + (workspaceSaveError
+                        ?? messages.last?.text
+                        ?? "没有可见失败原因")
+            )
         }
         return selfCheckCapturedAgentRequest
     }
@@ -18810,15 +19166,19 @@ final class WorkspaceStore: ObservableObject {
             return resolveCourseOwnedFile(at: index, ownerCourseID: ownerCourseID)
         }
         if case .shared(let sharedRelativePath) = importedItems[index].storage {
-            guard let libraryRoot = courseLibraryRootURL,
-                  let candidate = CourseProjectPathPolicy.resolvedRelativePath(
-                    sharedRelativePath,
-                    inside: libraryRoot
+            guard let expectedDigest = importedItems[index].contentDigest,
+                  let resolved = try? resolvedSharedPortableFile(
+                      relativePath: sharedRelativePath,
+                      expectedDigest: expectedDigest,
+                      expectedKind: importedItems[index].kind
                   ),
-                  let identity = importedFileIdentityResolver(candidate),
-                  importedItems[index].importedFileIdentity.map({ $0 == identity }) ?? true else {
+                  importedItems[index].importedFileIdentity.map({
+                      $0 == resolved.identity
+                  }) ?? true else {
                 return markCourseOwnedItemUnavailable(at: index)
             }
+            let candidate = resolved.url
+            let identity = resolved.identity
             var changed = false
             if importedItems[index].urlPath != candidate.path
                 || importedItems[index].importedFileLastKnownPath != candidate.path
@@ -20862,6 +21222,905 @@ final class WorkspaceStore: ObservableObject {
         notesByItemID[noteItemID] = markdown
     }
 
+    private func coursePortableStateURL(for courseID: UUID) -> URL? {
+        guard let root = courseRootURL(for: courseID),
+              let metadata = try? CourseProjectPathPolicy.existingDirectory(
+                root.appendingPathComponent(".weibei", isDirectory: true)
+              ),
+              CourseProjectPathPolicy.contains(root, metadata, includingRoot: false),
+              CourseProjectPathPolicy.isSame(
+                metadata,
+                metadata.resolvingSymlinksInPath()
+              ) else {
+            return nil
+        }
+        return metadata.appendingPathComponent(
+            "course-state.json",
+            isDirectory: false
+        )
+    }
+
+    private func makeCoursePortableState(
+        courseID: UUID,
+        revision: UInt64,
+        savedAt: Date
+    ) throws -> CoursePortableState {
+        guard let course = course(withID: courseID) else {
+            throw CoursePortableStateError.courseIdentityMismatch
+        }
+        let memberships = courseItemMemberships
+            .filter { $0.courseID == courseID }
+            .sorted {
+                ($0.courseRelativePath ?? "").localizedStandardCompare(
+                    $1.courseRelativePath ?? ""
+                ) == .orderedAscending
+            }
+        var portableItems: [CoursePortableItem] = []
+        for membership in memberships {
+            guard let relativePath = membership.courseRelativePath else {
+                throw CoursePortableStateError.missingCourseItem
+            }
+            guard let item = importedItems.first(where: {
+                $0.id == membership.itemID
+            }) else {
+                throw CoursePortableStateError.missingCourseItem
+            }
+            let storage: CoursePortableItemStorage
+            switch item.storage {
+            case .courseOwned(let ownerCourseID) where ownerCourseID == courseID:
+                storage = .courseOwned
+            case let .shared(sharedRelativePath):
+                storage = .sharedReference(
+                    sharedRelativePath: sharedRelativePath,
+                    expectedContentDigest: item.contentDigest
+                )
+            default:
+                throw CoursePortableStateError.invalidItemStorage
+            }
+            portableItems.append(
+                CoursePortableItem(
+                    itemID: item.id,
+                    title: item.title,
+                    kind: item.kind,
+                    isNotebookNote: item.isNotebookNote,
+                    courseRelativePath: relativePath,
+                    storage: storage,
+                    contentRevision: item.contentRevision,
+                    contentDigest: item.contentDigest,
+                    fileByteCount: item.fileByteCount,
+                    fileModificationTimeNanoseconds:
+                        item.fileModificationTimeNanoseconds,
+                    membershipCreatedAt: membership.createdAt
+                )
+            )
+        }
+
+        let portableItemIDs = Set(portableItems.map(\.itemID))
+        let noteItemIDs = Set(
+            portableItems.lazy.filter(\.isNotebookNote).map(\.itemID)
+        )
+        let materialItemIDs = portableItemIDs.subtracting(noteItemIDs)
+        let memoryState = learningMemoryStates.first {
+            $0.scope == .course(courseID)
+        }
+        let memoryIDs = Set(memoryState?.entries.map(\.id) ?? [])
+        let relations = noteSourceLinks.filter {
+            noteItemIDs.contains($0.noteItemID)
+                && materialItemIDs.contains($0.sourceItemID)
+        }
+        .sorted {
+            $0.createdAt == $1.createdAt
+                ? $0.id.uuidString < $1.id.uuidString
+                : $0.createdAt < $1.createdAt
+        }
+        let relationIDs = Set(relations.map(\.id))
+        var relationsByID: [UUID: NoteSourceLink] = [:]
+        for relation in relations {
+            relationsByID[relation.id] = relation
+        }
+        let sessions = studySessions.compactMap { current -> StudySession? in
+            guard current.courseID == courseID,
+                  current.scopeNeedsReview == false else {
+                return nil
+            }
+            var portable = current
+            portable.focusItemIDs = portable.focusItemIDs.filter(
+                portableItemIDs.contains
+            )
+            if let materialItemID = portable.materialItemID,
+               !materialItemIDs.contains(materialItemID) {
+                portable.materialItemID = nil
+            }
+            for index in portable.messages.indices {
+                portable.messages[index].toolTrace = []
+                portable.messages[index].sources = portable.messages[index].sources
+                    .filter { source in
+                        guard let itemID = source.itemID else {
+                            return source.courseID.map {
+                                $0 == courseID
+                            } ?? true
+                        }
+                        guard portableItemIDs.contains(itemID),
+                              source.courseID.map({
+                                  $0 == courseID
+                              }) ?? true else {
+                            return false
+                        }
+                        switch source.kind {
+                        case .material:
+                            return materialItemIDs.contains(itemID)
+                        case .note:
+                            return noteItemIDs.contains(itemID)
+                        case .selection:
+                            return true
+                        }
+                    }
+                portable.messages[index].actions = portable.messages[index].actions
+                    .filter { action in
+                        guard action.targetItemID.map(
+                            portableItemIDs.contains
+                        ) ?? true,
+                        action.sourceItemID.map(
+                            portableItemIDs.contains
+                        ) ?? true else {
+                            return false
+                        }
+                        switch action.kind {
+                        case .writeNote:
+                            let hasValidTarget = action.targetItemID.map(
+                                noteItemIDs.contains
+                            ) ?? true
+                            return hasValidTarget
+                                && action.createdRelationID == nil
+                        case .createRelation:
+                            let hasValidTarget = action.targetItemID.map(
+                                noteItemIDs.contains
+                            ) ?? true
+                            let hasValidSource = action.sourceItemID.map(
+                                    materialItemIDs.contains
+                                ) ?? true
+                            let hasValidCreatedRelation =
+                                action.createdRelationID.map { relationID in
+                                    guard relationIDs.contains(relationID),
+                                          let relation =
+                                            relationsByID[relationID],
+                                          let targetItemID =
+                                            action.targetItemID,
+                                          let sourceItemID =
+                                            action.sourceItemID else {
+                                        return false
+                                    }
+                                    return relation.noteItemID
+                                        == targetItemID
+                                        && relation.sourceItemID
+                                            == sourceItemID
+                                } ?? true
+                            return hasValidTarget
+                                && hasValidSource
+                                && hasValidCreatedRelation
+                        }
+                    }
+                if var memoryUpdate =
+                    portable.messages[index].memoryUpdate {
+                    memoryUpdate.memoryIDs = memoryUpdate.memoryIDs.filter(
+                        memoryIDs.contains
+                    )
+                    portable.messages[index].memoryUpdate =
+                        memoryUpdate.memoryIDs.isEmpty ? nil : memoryUpdate
+                }
+                if let origin = portable.messages[index].origin,
+                   origin.courseID != courseID
+                    || origin.chatID != portable.id {
+                    portable.messages[index].origin = nil
+                }
+            }
+            return portable
+        }
+        .sorted { $0.createdAt < $1.createdAt }
+        var locations: [String: StudyLocation] = [:]
+        for itemID in materialItemIDs.sorted() {
+            if let location = studyLocation(for: itemID, in: courseID) {
+                var scoped = location
+                scoped.itemID = itemID
+                locations[itemID] = scoped
+            }
+        }
+        let drafts = noteItemIDs.sorted().compactMap {
+            itemID -> CoursePortableNoteDraft? in
+            guard let pending = pendingNoteWritesByItemID[itemID],
+                  let markdown = notesByItemID[itemID] else {
+                return nil
+            }
+            return CoursePortableNoteDraft(
+                itemID: itemID,
+                markdown: markdown,
+                baselineContentDigest: pending.baselineContentDigest
+            )
+        }
+        return try CoursePortableState(
+            courseID: courseID,
+            revision: revision,
+            savedAt: savedAt,
+            metadata: CoursePortableMetadata(
+                title: course.title,
+                colorIndex: course.colorIndex,
+                createdAt: course.createdAt,
+                updatedAt: course.updatedAt
+            ),
+            items: portableItems,
+            studySessions: sessions,
+            learningMemoryState: memoryState,
+            noteSourceLinks: relations,
+            studyLocationsByItemID: locations,
+            resumePoint: courseResumePoint(for: courseID),
+            pendingNoteDrafts: drafts
+        ).validated(expectedCourseID: courseID)
+    }
+
+    private func encodedCoursePortableState(
+        _ state: CoursePortableState
+    ) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(state)
+    }
+
+    private func coursePortableStatePayloadDigest(
+        _ state: CoursePortableState
+    ) throws -> String {
+        var normalized = state
+        normalized.revision = 0
+        normalized.savedAt = Date(timeIntervalSince1970: 0)
+        return Self.noteContentDigest(
+            try encodedCoursePortableState(normalized)
+        )
+    }
+
+    private func readCoursePortableState(
+        at url: URL,
+        expectedCourseID: UUID
+    ) throws -> CoursePortableState {
+        guard let directoryIdentity = CourseProjectFileWorker.identity(
+            at: url.deletingLastPathComponent()
+        ) else {
+            throw CoursePortableStateError.unsafeRelativePath
+        }
+        let data = try CourseProjectFileWorker.readPortableState(
+            at: url,
+            expectedDirectoryIdentity: directoryIdentity
+        )
+        return try JSONDecoder()
+            .decode(CoursePortableState.self, from: data)
+            .validated(expectedCourseID: expectedCourseID)
+    }
+
+    @discardableResult
+    private func restorePortableCourseStates() -> Bool {
+        var changed = false
+        for courseID in courses.map(\.id) {
+            let cachedState = try? makeCoursePortableState(
+                courseID: courseID,
+                revision: coursePortableStateRevisions[courseID] ?? 0,
+                savedAt: Date(timeIntervalSince1970: 0)
+            )
+            let cachedDigest = cachedState.flatMap {
+                try? coursePortableStatePayloadDigest($0)
+            }
+            guard let stateURL = coursePortableStateURL(for: courseID) else {
+                if cachedDigest != coursePortableStateDigests[courseID] {
+                    dirtyPortableCourseIDs.insert(courseID)
+                }
+                continue
+            }
+            guard FileManager.default.fileExists(atPath: stateURL.path) else {
+                needsPortableCourseStateBootstrap = true
+                if coursePortableStateDigests[courseID] != nil {
+                    dirtyPortableCourseIDs.insert(courseID)
+                }
+                continue
+            }
+            do {
+                let state = try readCoursePortableState(
+                    at: stateURL,
+                    expectedCourseID: courseID
+                )
+                let diskDigest = try coursePortableStatePayloadDigest(state)
+                let knownRevision = coursePortableStateRevisions[courseID]
+                let knownDigest = coursePortableStateDigests[courseID]
+                if dirtyPortableCourseIDs.contains(courseID) {
+                    guard let knownRevision,
+                          let knownDigest,
+                          state.revision == knownRevision,
+                          knownDigest == diskDigest else {
+                        blockedPortableCourseIDs.insert(courseID)
+                        workspaceSaveError = ui(
+                            "“\(course(withID: courseID)?.title ?? "课程")”在文件夹与本机缓存中都发生了变化，魏碑已停止自动覆盖。",
+                            "This course changed both in its folder and in the local cache. Automatic overwrite was stopped."
+                        )
+                        continue
+                    }
+                    coursePortableStateRevisions[courseID] =
+                        max(knownRevision, state.revision)
+                    needsPortableCourseStateBootstrap = true
+                    continue
+                }
+                if let knownRevision {
+                    guard state.revision >= knownRevision else {
+                        throw CoursePortableStateError.stateConflict
+                    }
+                    if state.revision == knownRevision,
+                       let knownDigest,
+                       knownDigest != diskDigest {
+                        throw CoursePortableStateError.stateConflict
+                    }
+                }
+                try applyCoursePortableState(state, courseID: courseID)
+                coursePortableStateRevisions[courseID] = state.revision
+                coursePortableStateDigests[courseID] = diskDigest
+                changed = true
+            } catch {
+                blockedPortableCourseIDs.insert(courseID)
+                workspaceSaveError = ui(
+                    "“\(course(withID: courseID)?.title ?? "课程")”的可携带状态无法安全读取，原文件已保留且不会被自动覆盖：\(error.localizedDescription)",
+                    "The portable state for this course could not be read safely. The original file was preserved and will not be overwritten automatically: \(error.localizedDescription)"
+                )
+            }
+        }
+        return changed
+    }
+
+    private func rawCourseItemURL(
+        relativePath: String,
+        inside root: URL
+    ) -> URL? {
+        let components = relativePath.split(
+            separator: "/",
+            omittingEmptySubsequences: false
+        )
+        guard !components.isEmpty,
+              components.allSatisfy({
+                  !$0.isEmpty && $0 != "." && $0 != ".."
+              }) else {
+            return nil
+        }
+        let canonicalRoot = root.resolvingSymlinksInPath().standardizedFileURL
+        let parent = components.dropLast().reduce(canonicalRoot) {
+            $0.appendingPathComponent(String($1), isDirectory: true)
+        }
+        let resolvedParent = parent.resolvingSymlinksInPath().standardizedFileURL
+        guard CourseProjectPathPolicy.contains(
+            canonicalRoot,
+            resolvedParent,
+            includingRoot: true
+        ) else {
+            return nil
+        }
+        let candidate = resolvedParent.appendingPathComponent(
+            String(components.last!),
+            isDirectory: false
+        ).standardizedFileURL
+        guard CourseProjectPathPolicy.contains(
+            canonicalRoot,
+            candidate,
+            includingRoot: false
+        ) else {
+            return nil
+        }
+        return candidate
+    }
+
+    private func validatedPortableCourseOwnedFile(
+        at candidate: URL,
+        portable: CoursePortableItem
+    ) throws -> ImportedFileIdentity? {
+        switch CourseProjectFileWorker.entryPresence(at: candidate) {
+        case .absent:
+            return nil
+        case .inaccessible:
+            throw CoursePortableStateError.unsafeRelativePath
+        case .present:
+            break
+        }
+        let values = try candidate.resourceValues(forKeys: [
+            .isRegularFileKey,
+            .isDirectoryKey,
+            .isSymbolicLinkKey,
+            .isAliasFileKey,
+        ])
+        guard values.isRegularFile == true,
+              values.isDirectory != true,
+              values.isSymbolicLink != true,
+              values.isAliasFile != true,
+              !CourseProjectFileWorker.isSymbolicLink(at: candidate),
+              CourseProjectPathPolicy.isSame(
+                  candidate,
+                  candidate.resolvingSymlinksInPath()
+              ),
+              StudyItemKind.detect(from: candidate) == portable.kind,
+              let identity = importedFileIdentityResolver(candidate),
+              importedFileIdentityResolver(candidate) == identity else {
+            throw CoursePortableStateError.invalidItemStorage
+        }
+        return identity
+    }
+
+    private func resolvedSharedPortableFile(
+        relativePath: String,
+        expectedDigest: String,
+        expectedKind: StudyItemKind
+    ) throws -> (url: URL, identity: ImportedFileIdentity)? {
+        guard let libraryRoot = courseLibraryRootURL else {
+            return nil
+        }
+        let components = relativePath.split(
+            separator: "/",
+            omittingEmptySubsequences: false
+        )
+        guard components.count == 2,
+              components[0] == "共享文稿",
+              let candidate = CourseProjectPathPolicy.resolvedRelativePath(
+                  relativePath,
+                  inside: libraryRoot
+              ),
+              CourseProjectPathPolicy.isSame(
+                  candidate.deletingLastPathComponent(),
+                  libraryRoot.appendingPathComponent(
+                      "共享文稿",
+                      isDirectory: true
+                  )
+                  .resolvingSymlinksInPath()
+                  .standardizedFileURL
+              ) else {
+            throw CoursePortableStateError.crossCourseReference
+        }
+        switch CourseProjectFileWorker.entryPresence(at: candidate) {
+        case .absent:
+            return nil
+        case .inaccessible:
+            throw CoursePortableStateError.crossCourseReference
+        case .present:
+            break
+        }
+        let values = try candidate.resourceValues(forKeys: [
+            .isRegularFileKey,
+            .isDirectoryKey,
+            .isSymbolicLinkKey,
+            .isAliasFileKey,
+        ])
+        guard values.isRegularFile == true,
+              values.isDirectory != true,
+              values.isSymbolicLink != true,
+              values.isAliasFile != true,
+              !CourseProjectFileWorker.isSymbolicLink(at: candidate),
+              CourseProjectPathPolicy.isSame(
+                  candidate,
+                  candidate.resolvingSymlinksInPath()
+              ),
+              StudyItemKind.detect(from: candidate) == expectedKind,
+              let identity = importedFileIdentityResolver(candidate) else {
+            throw CoursePortableStateError.crossCourseReference
+        }
+        let snapshot = try CourseProjectFileWorker.snapshotFile(
+            at: candidate
+        )
+        guard snapshot.sha256 == expectedDigest,
+              importedFileIdentityResolver(candidate) == identity else {
+            return nil
+        }
+        return (candidate, identity)
+    }
+
+    private func applyCoursePortableState(
+        _ rawState: CoursePortableState,
+        courseID: UUID
+    ) throws {
+        let state = try rawState.validated(expectedCourseID: courseID)
+        guard let courseIndex = courses.firstIndex(where: {
+            $0.id == courseID
+        }),
+        let root = courseRootURL(for: courseID) else {
+            throw CoursePortableStateError.courseIdentityMismatch
+        }
+
+        let previousMemberships = courseItemMemberships.filter {
+            $0.courseID == courseID
+        }
+        let previousItemIDs = Set(previousMemberships.map(\.itemID))
+        let previousNoteIDs = Set(
+            importedItems.lazy.filter {
+                previousItemIDs.contains($0.id) && $0.isNotebookNote
+            }.map(\.id)
+        )
+        let otherCourseItemIDs = Set(
+            courseItemMemberships.lazy.filter {
+                $0.courseID != courseID
+            }.map(\.itemID)
+        )
+        let otherChatIDs = Set(
+            studySessions.lazy.filter {
+                $0.courseID != courseID || $0.scopeNeedsReview != false
+            }.map(\.id)
+        )
+        guard otherChatIDs.isDisjoint(
+            with: Set(state.studySessions.map(\.id))
+        ) else {
+            throw CoursePortableStateError.duplicateChatID
+        }
+        let previousRelationIDs = Set(
+            noteSourceLinks.lazy.filter {
+                previousNoteIDs.contains($0.noteItemID)
+            }.map(\.id)
+        )
+        let retainedRelationIDs = Set(
+            noteSourceLinks.lazy.filter {
+                !previousRelationIDs.contains($0.id)
+            }.map(\.id)
+        )
+        guard retainedRelationIDs.isDisjoint(
+            with: Set(state.noteSourceLinks.map(\.id))
+        ) else {
+            throw CoursePortableStateError.invalidRelation
+        }
+
+        var restoredItemsByID: [String: StudyItem] = [:]
+        var restoredMemberships: [CourseItemMembership] = []
+        for portable in state.items {
+            guard let candidate = rawCourseItemURL(
+                relativePath: portable.courseRelativePath,
+                inside: root
+            ) else {
+                throw CoursePortableStateError.unsafeRelativePath
+            }
+            let storage: StudyItemStorage
+            let itemURL: URL?
+            let itemIdentity: ImportedFileIdentity?
+            let existing = importedItems.first {
+                $0.id == portable.itemID
+            }
+            switch portable.storage {
+            case .courseOwned:
+                storage = .courseOwned(ownerCourseID: courseID)
+                itemIdentity = try validatedPortableCourseOwnedFile(
+                    at: candidate,
+                    portable: portable
+                )
+                itemURL = itemIdentity == nil ? nil : candidate
+            case let .sharedReference(
+                sharedRelativePath,
+                expectedContentDigest
+            ):
+                guard let expectedContentDigest else {
+                    throw CoursePortableStateError.invalidItemStorage
+                }
+                storage = .shared(sharedRelativePath: sharedRelativePath)
+                if let existing {
+                    guard case let .shared(existingSharedPath) =
+                            existing.storage,
+                          existingSharedPath == sharedRelativePath else {
+                        throw CoursePortableStateError.crossCourseReference
+                    }
+                }
+                let resolved = try resolvedSharedPortableFile(
+                    relativePath: sharedRelativePath,
+                    expectedDigest: expectedContentDigest,
+                    expectedKind: portable.kind
+                )
+                itemURL = resolved?.url
+                itemIdentity = resolved?.identity
+            }
+            if let existing,
+            !previousItemIDs.contains(existing.id),
+            existing.storage != storage {
+                throw CoursePortableStateError.crossCourseReference
+            }
+            restoredItemsByID[portable.itemID] = StudyItem(
+                id: portable.itemID,
+                title: portable.title,
+                subtitle: candidate.lastPathComponent,
+                kind: portable.kind,
+                urlPath: itemURL?.path,
+                importedFileIdentity: itemIdentity,
+                importedFileBookmarkData: nil,
+                importedFileLastKnownPath: itemURL?.path,
+                isSample: false,
+                isNotebookNote: portable.isNotebookNote,
+                storage: storage,
+                contentRevision: portable.contentRevision,
+                contentDigest: portable.contentDigest,
+                fileByteCount: portable.fileByteCount,
+                fileModificationTimeNanoseconds:
+                    portable.fileModificationTimeNanoseconds
+            )
+            let previousMembership = previousMemberships.first {
+                $0.itemID == portable.itemID
+                    && $0.courseRelativePath
+                        == portable.courseRelativePath
+            }
+            restoredMemberships.append(
+                CourseItemMembership(
+                    courseID: courseID,
+                    itemID: portable.itemID,
+                    courseRelativePath: portable.courseRelativePath,
+                    entryIdentity: previousMembership?.entryIdentity
+                        ?? itemIdentity,
+                    documentIdentifier:
+                        previousMembership?.documentIdentifier,
+                    createdAt: portable.membershipCreatedAt
+                )
+            )
+        }
+
+        importedItems.removeAll { item in
+            previousItemIDs.contains(item.id)
+                && !otherCourseItemIDs.contains(item.id)
+        }
+        for item in restoredItemsByID.values.sorted(by: {
+            $0.id < $1.id
+        }) {
+            if let existingIndex = importedItems.firstIndex(where: {
+                $0.id == item.id
+            }) {
+                importedItems[existingIndex] = item
+            } else {
+                importedItems.append(item)
+            }
+        }
+        courseItemMemberships.removeAll { $0.courseID == courseID }
+        courseItemMemberships.append(contentsOf: restoredMemberships)
+
+        var restoredCourse = courses[courseIndex]
+        restoredCourse.title = state.metadata.title
+        restoredCourse.colorIndex = state.metadata.colorIndex
+        restoredCourse.createdAt = state.metadata.createdAt
+        restoredCourse.updatedAt = state.metadata.updatedAt
+        courses[courseIndex] = restoredCourse
+
+        studySessions.removeAll {
+            $0.courseID == courseID && $0.scopeNeedsReview == false
+        }
+        studySessions.append(contentsOf: state.studySessions)
+        if let activeStudySessionID,
+           let active = studySessions.first(where: {
+               $0.id == activeStudySessionID
+           }) {
+            messages = active.messages
+        }
+
+        learningMemoryStates.removeAll {
+            $0.scope == .course(courseID)
+        }
+        if let memoryState = state.learningMemoryState {
+            learningMemoryStates.append(memoryState)
+        }
+
+        noteSourceLinks.removeAll {
+            previousNoteIDs.contains($0.noteItemID)
+        }
+        noteSourceLinks.append(contentsOf: state.noteSourceLinks)
+        studyLocationsByCourseID[courseID.uuidString] =
+            state.studyLocationsByItemID
+        courseResumePoints.removeAll { $0.courseID == courseID }
+        if let resumePoint = state.resumePoint {
+            courseResumePoints.append(resumePoint)
+        }
+
+        let restoredNoteIDs = Set(
+            state.items.lazy.filter(\.isNotebookNote).map(\.itemID)
+        )
+        for itemID in previousNoteIDs.union(restoredNoteIDs) {
+            notesByItemID.removeValue(forKey: itemID)
+            pendingNoteWritesByItemID.removeValue(forKey: itemID)
+            noteBackingContentDigestsByItemID.removeValue(forKey: itemID)
+        }
+        for item in state.items where item.isNotebookNote {
+            noteBackingContentDigestsByItemID[item.itemID] =
+                item.contentDigest
+        }
+        for draft in state.pendingNoteDrafts {
+            notesByItemID[draft.itemID] = draft.markdown
+            pendingNoteWritesByItemID[draft.itemID] =
+                PendingNoteWriteState(
+                    baselineContentDigest: draft.baselineContentDigest
+                )
+        }
+    }
+
+    @discardableResult
+    private func persistCoursePortableStates(
+        courseIDs requestedCourseIDs: Set<UUID>? = nil
+    ) throws -> CoursePortableStateCommit {
+        let courseIDs = requestedCourseIDs ?? Set(courses.map(\.id))
+        let previousRevisions = coursePortableStateRevisions
+        let previousDigests = coursePortableStateDigests
+        let previousDirty = dirtyPortableCourseIDs
+        let previousBlocked = blockedPortableCourseIDs
+        let previousNeedsBootstrap = needsPortableCourseStateBootstrap
+        var committedWrites: [CoursePortableStateWriteRecord] = []
+        do {
+            for courseID in courses.map(\.id)
+            where courseIDs.contains(courseID) {
+                let currentRevision =
+                    coursePortableStateRevisions[courseID] ?? 0
+                let candidate = try makeCoursePortableState(
+                    courseID: courseID,
+                    revision: currentRevision,
+                    savedAt: Date(timeIntervalSince1970: 0)
+                )
+                let payloadDigest = try coursePortableStatePayloadDigest(
+                    candidate
+                )
+                let knownDigest = coursePortableStateDigests[courseID]
+                guard let stateURL = coursePortableStateURL(
+                    for: courseID
+                ) else {
+                    if knownDigest != payloadDigest {
+                        dirtyPortableCourseIDs.insert(courseID)
+                    }
+                    continue
+                }
+                let stateExists = FileManager.default.fileExists(
+                    atPath: stateURL.path
+                )
+                guard let directoryIdentity =
+                        CourseProjectFileWorker.identity(
+                            at: stateURL.deletingLastPathComponent()
+                        ) else {
+                    throw CoursePortableStateError.unsafeRelativePath
+                }
+                if blockedPortableCourseIDs.contains(courseID) {
+                    if knownDigest != payloadDigest {
+                        dirtyPortableCourseIDs.insert(courseID)
+                    }
+                    continue
+                }
+                if knownDigest == payloadDigest, stateExists {
+                    dirtyPortableCourseIDs.remove(courseID)
+                    continue
+                }
+                if stateExists {
+                    guard let knownDigest,
+                          let diskState = try? readCoursePortableState(
+                              at: stateURL,
+                              expectedCourseID: courseID
+                          ),
+                          diskState.revision == currentRevision,
+                          (try? coursePortableStatePayloadDigest(
+                              diskState
+                          )) == knownDigest else {
+                        dirtyPortableCourseIDs.insert(courseID)
+                        blockedPortableCourseIDs.insert(courseID)
+                        continue
+                    }
+                }
+                var committed = candidate
+                committed.revision = currentRevision &+ 1
+                committed.savedAt = Date()
+                let committedData = try encodedCoursePortableState(
+                    committed
+                )
+                let previousData = stateExists
+                    ? try CourseProjectFileWorker.readPortableState(
+                        at: stateURL,
+                        expectedDirectoryIdentity: directoryIdentity
+                    )
+                    : nil
+                do {
+                    try coursePortableStateWriter(
+                        committedData,
+                        stateURL,
+                        directoryIdentity
+                    )
+                    let verified = try readCoursePortableState(
+                        at: stateURL,
+                        expectedCourseID: courseID
+                    )
+                    guard verified.revision == committed.revision,
+                          try coursePortableStatePayloadDigest(verified)
+                            == payloadDigest else {
+                        throw CoursePortableStateError
+                            .writeVerificationFailed
+                    }
+                } catch {
+                    try restorePortableStateFile(
+                        at: stateURL,
+                        previousData: previousData,
+                        attemptedData: committedData,
+                        expectedDirectoryIdentity: directoryIdentity
+                    )
+                    throw error
+                }
+                committedWrites.append(
+                    CoursePortableStateWriteRecord(
+                        url: stateURL,
+                        previousData: previousData,
+                        committedData: committedData,
+                        expectedDirectoryIdentity: directoryIdentity
+                    )
+                )
+                coursePortableStateRevisions[courseID] =
+                    committed.revision
+                coursePortableStateDigests[courseID] = payloadDigest
+                dirtyPortableCourseIDs.remove(courseID)
+            }
+        } catch {
+            var rollbackFailed = false
+            for write in committedWrites.reversed() {
+                do {
+                    try restorePortableStateFile(
+                        at: write.url,
+                        previousData: write.previousData,
+                        attemptedData: write.committedData,
+                        expectedDirectoryIdentity:
+                            write.expectedDirectoryIdentity
+                    )
+                } catch {
+                    rollbackFailed = true
+                }
+            }
+            coursePortableStateRevisions = previousRevisions
+            coursePortableStateDigests = previousDigests
+            dirtyPortableCourseIDs = previousDirty
+            blockedPortableCourseIDs = previousBlocked
+            needsPortableCourseStateBootstrap = previousNeedsBootstrap
+            if rollbackFailed {
+                throw CoursePortableStateError.stateConflict
+            }
+            throw error
+        }
+        needsPortableCourseStateBootstrap =
+            !dirtyPortableCourseIDs.isEmpty
+        return CoursePortableStateCommit(
+            writes: committedWrites,
+            previousRevisions: previousRevisions,
+            previousDigests: previousDigests,
+            previousDirtyCourseIDs: previousDirty,
+            previousBlockedCourseIDs: previousBlocked,
+            previousNeedsBootstrap: previousNeedsBootstrap
+        )
+    }
+
+    private func rollbackCoursePortableStateCommit(
+        _ commit: CoursePortableStateCommit
+    ) throws {
+        var rollbackFailed = false
+        for write in commit.writes.reversed() {
+            do {
+                try restorePortableStateFile(
+                    at: write.url,
+                    previousData: write.previousData,
+                    attemptedData: write.committedData,
+                    expectedDirectoryIdentity:
+                        write.expectedDirectoryIdentity
+                )
+            } catch {
+                rollbackFailed = true
+            }
+        }
+        coursePortableStateRevisions = commit.previousRevisions
+        coursePortableStateDigests = commit.previousDigests
+        dirtyPortableCourseIDs = commit.previousDirtyCourseIDs
+        blockedPortableCourseIDs = commit.previousBlockedCourseIDs
+        needsPortableCourseStateBootstrap =
+            commit.previousNeedsBootstrap
+        if rollbackFailed {
+            throw CoursePortableStateError.stateConflict
+        }
+    }
+
+    private func restorePortableStateFile(
+        at url: URL,
+        previousData: Data?,
+        attemptedData: Data,
+        expectedDirectoryIdentity: ImportedFileIdentity
+    ) throws {
+        try CourseProjectFileWorker.restorePortableState(
+            at: url,
+            previousData: previousData,
+            attemptedData: attemptedData,
+            expectedDirectoryIdentity: expectedDirectoryIdentity
+        )
+    }
+
     private func load() {
         guard let data = try? Data(contentsOf: storageURL),
               let snapshot = try? JSONDecoder().decode(PersistedWorkspace.self, from: data) else {
@@ -20884,6 +22143,22 @@ final class WorkspaceStore: ObservableObject {
         selectedItemID = snapshot.selectedItemID
         activeNotebookItemID = snapshot.activeNotebookItemID
         courses = snapshot.courses ?? []
+        persistedWorkspaceCourseIDs = Set(courses.map(\.id))
+        coursePortableStateRevisions = Dictionary(
+            uniqueKeysWithValues: (snapshot.coursePortableStateRevisions ?? [:])
+                .compactMap { key, value in
+                    UUID(uuidString: key).map { ($0, value) }
+                }
+        )
+        coursePortableStateDigests = Dictionary(
+            uniqueKeysWithValues: (snapshot.coursePortableStateDigests ?? [:])
+                .compactMap { key, value in
+                    UUID(uuidString: key).map { ($0, value) }
+                }
+        )
+        dirtyPortableCourseIDs = Set(
+            snapshot.dirtyPortableCourseIDs ?? []
+        )
         courseItemMemberships = CourseItemMemberships(
             values: snapshot.courseItemMemberships ?? []
         ).values
@@ -20903,9 +22178,6 @@ final class WorkspaceStore: ObservableObject {
         legacyLearningMemoryRevision = snapshot.learningMemoryRevision ?? 0
         studySessions = (snapshot.studySessions ?? []).map { session in
             var bounded = session
-            if bounded.messages.count > 500 {
-                bounded.messages = Array(bounded.messages.suffix(500))
-            }
             for index in bounded.messages.indices
             where bounded.messages[index].completionState == .generating {
                 recoveredInterruptedAgentReply = true
@@ -21053,6 +22325,20 @@ final class WorkspaceStore: ObservableObject {
     @discardableResult
     private func performSaveNow() -> Bool {
         WeiBeiPerf.measure("workspace.save") {
+            let portableCommit: CoursePortableStateCommit
+            do {
+                portableCommit = try persistCoursePortableStates(
+                    courseIDs: persistedWorkspaceCourseIDs.intersection(
+                        Set(courses.map(\.id))
+                    )
+                )
+            } catch {
+                workspaceSaveError = ui(
+                    "课程可携带状态没有成功保存：\(error.localizedDescription)",
+                    "Portable course state was not saved: \(error.localizedDescription)"
+                )
+                return false
+            }
             let persistedCourseResumePoints = sanitizedCourseResumePoints()
             let snapshot = PersistedWorkspace(
                 importedItems: importedItems,
@@ -21072,6 +22358,19 @@ final class WorkspaceStore: ObservableObject {
                 studyLocationsByItemID: studyLocationsByItemID,
                 studyLocationsByCourseID: studyLocationsByCourseID,
                 courseResumePoints: persistedCourseResumePoints,
+                coursePortableStateRevisions: Dictionary(
+                    uniqueKeysWithValues: coursePortableStateRevisions.map {
+                        ($0.key.uuidString.lowercased(), $0.value)
+                    }
+                ),
+                coursePortableStateDigests: Dictionary(
+                    uniqueKeysWithValues: coursePortableStateDigests.map {
+                        ($0.key.uuidString.lowercased(), $0.value)
+                    }
+                ),
+                dirtyPortableCourseIDs: dirtyPortableCourseIDs.sorted {
+                    $0.uuidString < $1.uuidString
+                },
                 learningMemoryStates: learningMemoryStates,
                 learningMemoryScopeMigrationVersion: learningMemoryScopeMigrationVersion,
                 studySessions: studySessions,
@@ -21098,8 +22397,16 @@ final class WorkspaceStore: ObservableObject {
             do {
                 let data = try JSONEncoder().encode(snapshot)
                 try workspaceSnapshotWriter(data, storageURL)
+                persistedWorkspaceCourseIDs = Set(courses.map(\.id))
                 courseResumePoints = persistedCourseResumePoints
-                workspaceSaveError = nil
+                if blockedPortableCourseIDs.isEmpty {
+                    workspaceSaveError = nil
+                } else {
+                    workspaceSaveError = ui(
+                        "有课程状态存在冲突或损坏，原文件与本机缓存均已保留；魏碑不会自动覆盖。",
+                        "A course state is conflicted or damaged. Both the original file and local cache were preserved, and WeiBei will not overwrite either automatically."
+                    )
+                }
                 needsSelectionAskThreadsWorkspaceMigration = false
                 loadedSelectionAskThreadsFromWorkspaceSnapshot = true
                 if shouldRemoveLegacySelectionAskThreadsAfterSave {
@@ -21110,10 +22417,18 @@ final class WorkspaceStore: ObservableObject {
                 }
                 return true
             } catch {
-                workspaceSaveError = ui(
-                    "课程更改尚未写入磁盘：\(error.localizedDescription)",
-                    "Course changes were not saved to disk: \(error.localizedDescription)"
-                )
+                do {
+                    try rollbackCoursePortableStateCommit(portableCommit)
+                    workspaceSaveError = ui(
+                        "课程更改尚未写入磁盘：\(error.localizedDescription)",
+                        "Course changes were not saved to disk: \(error.localizedDescription)"
+                    )
+                } catch {
+                    workspaceSaveError = ui(
+                        "课程状态提交失败且检测到并发变更，魏碑已停止覆盖并保留现场。",
+                        "The course state commit failed during a concurrent change. WeiBei stopped overwriting and preserved the files for recovery."
+                    )
+                }
                 return false
             }
         }

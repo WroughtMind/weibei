@@ -1849,6 +1849,9 @@ public struct PersistedWorkspace: Codable {
     public var studyLocationsByItemID: [String: StudyLocation]?
     public var studyLocationsByCourseID: [String: [String: StudyLocation]]?
     public var courseResumePoints: [CourseResumePoint]?
+    public var coursePortableStateRevisions: [String: UInt64]?
+    public var coursePortableStateDigests: [String: String]?
+    public var dirtyPortableCourseIDs: [UUID]?
     public var learningMemoryStates: [ScopedLearningMemoryState]?
     public var learningMemoryScopeMigrationVersion: Int?
     /// Legacy flat memory fields. Decode-only after scoped memory migration.
@@ -1893,6 +1896,9 @@ public struct PersistedWorkspace: Codable {
         studyLocationsByItemID: [String: StudyLocation]? = nil,
         studyLocationsByCourseID: [String: [String: StudyLocation]]? = nil,
         courseResumePoints: [CourseResumePoint]? = nil,
+        coursePortableStateRevisions: [String: UInt64]? = nil,
+        coursePortableStateDigests: [String: String]? = nil,
+        dirtyPortableCourseIDs: [UUID]? = nil,
         learningMemoryStates: [ScopedLearningMemoryState]? = nil,
         learningMemoryScopeMigrationVersion: Int? = nil,
         learningMemoryEntries: [LearningMemoryEntry]? = nil,
@@ -1935,6 +1941,9 @@ public struct PersistedWorkspace: Codable {
         self.studyLocationsByItemID = studyLocationsByItemID
         self.studyLocationsByCourseID = studyLocationsByCourseID
         self.courseResumePoints = courseResumePoints
+        self.coursePortableStateRevisions = coursePortableStateRevisions
+        self.coursePortableStateDigests = coursePortableStateDigests
+        self.dirtyPortableCourseIDs = dirtyPortableCourseIDs
         self.learningMemoryStates = learningMemoryStates
         self.learningMemoryScopeMigrationVersion = learningMemoryScopeMigrationVersion
         self.learningMemoryEntries = learningMemoryEntries
