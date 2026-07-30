@@ -2658,9 +2658,15 @@ enum CourseProjectRootSelfCheck {
             let tamperedAdoptionWorkspace = try fixture.makeDirectory(
                 "\(postSaveTamper.name)工作区"
             )
+            let stoppedExternalScopes = LockedBox<[URL]>([])
             let tamperedAdoptionStore = makeStore(
                 fixture: fixture,
                 workspaceDirectory: tamperedAdoptionWorkspace,
+                stopAccessing: { url in
+                    var stopped = stoppedExternalScopes.get()
+                    stopped.append(url.canonicalFileURL)
+                    stoppedExternalScopes.set(stopped)
+                },
                 mutationHook: { stage in
                     guard stage
                             == .afterAdoptionWorkspaceSaveBeforeManifestNormalization else {
@@ -2690,8 +2696,19 @@ enum CourseProjectRootSelfCheck {
                 )
             )
             try check(
-                retainedManifest.portableExport != nil,
-                "\(postSaveTamper.name)后仍错误消费了导出封印"
+                retainedManifest.portableExport != nil
+                    && tamperedAdoptionStore
+                        .course(withID: courseA) != nil
+                    && tamperedAdoptionStore
+                        .courseRootURL(for: courseA) == nil
+                    && tamperedAdoptionStore
+                        .courseRootUnavailableReason(
+                            for: courseA
+                        ) != nil
+                    && stoppedExternalScopes.get().contains(
+                        tamperedAdoptionRoot.canonicalFileURL
+                    ),
+                "\(postSaveTamper.name)后错误消费封印，或没有隔离危险课程根并释放外部授权"
             )
         }
 

@@ -1765,37 +1765,66 @@ final class WorkspaceStore: ObservableObject {
         )
         if let adoptionSnapshot,
            adoptionSnapshot.manifest.portableExport != nil {
-            let confirmedSnapshot = try waitForCourseFileOperation {
-                try await self.courseProjectFileWorker
-                    .adoptionSnapshot(
-                        at: canonicalRoot,
-                        expectedRootIdentity: identity
-                    )
-            }
-            guard confirmedSnapshot.metadataIdentity
-                    == adoptionSnapshot.metadataIdentity,
-                  confirmedSnapshot.manifestData
-                    == adoptionSnapshot.manifestData,
-                  confirmedSnapshot.portableStateData
-                    == adoptionSnapshot.portableStateData,
-                  confirmedSnapshot.completionData
-                    == adoptionSnapshot.completionData,
-                  confirmedSnapshot.manifest.portableExport != nil else {
-                throw CourseProjectRootError.manifestMismatch
-            }
-            let normalizedData = try CourseProjectManifest(
-                courseID: courseID
-            ).encoded()
-            try waitForCourseFileOperation {
-                try await self.courseProjectFileWorker
-                    .normalizePortableCourseManifest(
-                        with: normalizedData,
-                        at: manifestURL,
-                        expectedDirectoryIdentity:
-                            confirmedSnapshot.metadataIdentity,
-                        expectedPreviousData:
-                            confirmedSnapshot.manifestData
-                    )
+            do {
+                let confirmedSnapshot =
+                    try waitForCourseFileOperation {
+                        try await self.courseProjectFileWorker
+                            .adoptionSnapshot(
+                                at: canonicalRoot,
+                                expectedRootIdentity: identity
+                            )
+                    }
+                guard confirmedSnapshot.metadataIdentity
+                        == adoptionSnapshot.metadataIdentity,
+                      confirmedSnapshot.manifestData
+                        == adoptionSnapshot.manifestData,
+                      confirmedSnapshot.portableStateData
+                        == adoptionSnapshot.portableStateData,
+                      confirmedSnapshot.completionData
+                        == adoptionSnapshot.completionData,
+                      confirmedSnapshot.manifest.portableExport != nil else {
+                    throw CourseProjectRootError.manifestMismatch
+                }
+                let normalizedData = try CourseProjectManifest(
+                    courseID: courseID
+                ).encoded()
+                try waitForCourseFileOperation {
+                    try await self.courseProjectFileWorker
+                        .normalizePortableCourseManifest(
+                            with: normalizedData,
+                            at: manifestURL,
+                            expectedDirectoryIdentity:
+                                confirmedSnapshot.metadataIdentity,
+                            expectedPreviousData:
+                                confirmedSnapshot.manifestData
+                        )
+                }
+            } catch {
+                resolvedCourseRootURLs.removeValue(
+                    forKey: course.id
+                )
+                courseRootUnavailableReasons[course.id] =
+                    error.localizedDescription
+                let scopeKey =
+                    "course:\(course.id.uuidString)"
+                if let scopedURL =
+                    activeCourseSecurityScopes.removeValue(
+                        forKey: scopeKey
+                    ) {
+                    let stopScope = courseSecurityScopeStopper
+                    if !cancelAgentRequestIfRunning(
+                        in: course.id,
+                        completion: {
+                            stopScope(scopedURL)
+                        }
+                    ) {
+                        stopScope(scopedURL)
+                    }
+                } else {
+                    cancelAgentRequestIfRunning(in: course.id)
+                }
+                invalidateAgentContext()
+                throw error
             }
         }
         do {
