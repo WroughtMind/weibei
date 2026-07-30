@@ -3329,8 +3329,15 @@ expect(courseWorkspaceSource.contains("case hub")
     && courseHubSource.contains("store.resumeCourseConversation(courseID)")
     && courseHubSource.contains("secondaryActionTitle")
     && courseHubSource.contains("store.studyLocation(for: item.id, in: courseID)")
-    && !courseHubSource.contains("学习小结")
-    && !courseHubSource.contains("下一步"), "B2b course home follows the approved quiet mother layout and routes new or resumed course Chats without inventing summary content")
+    && courseHubSource.contains("CourseHomeLearningHighlights")
+    && courseHubSource.contains("学习小结")
+    && courseHubSource.contains("产生实质学习变化后生成")
+    && courseHubSource.contains("下一步")
+    && courseHubSource.contains("尚无学习建议")
+    && courseHubSource.contains("CourseHubMemoryLine")
+    && courseWorkspaceSource.contains("openRecords")
+    && courseHubSource.contains("expectedCourseID: courseID"),
+    "B2c course home reads current-course learning highlights, keeps honest empty states, and exposes only real destinations")
 expect(courseWorkspaceSource.contains("CourseRelationPaperView(")
     && courseWorkspaceSource.contains("CourseImmersiveDrawerView")
     && (courseWorkspaceSource.contains("static let width: CGFloat = 292")
@@ -3445,8 +3452,9 @@ expect(runScript.contains(".newCourseQuestionPassed == true")
     && runScript.contains(".draftedEmptyNotReused == true")
     && runScript.contains(".staleEmptyNotReused == true")
     && runScript.contains(".exactConversationResumePassed == true")
-    && runScript.contains(".invalidResumePreserved == true"),
-    "course-home real-App verification blocks on exact new-Chat, fresh-empty reuse, draft preservation, and resume-point routing")
+    && runScript.contains(".invalidResumePreserved == true")
+    && runScript.contains(".learningHighlightsPassed == true"),
+    "course-home real-App verification blocks on exact Chat routing and current-course learning highlights")
 expect(workspaceStoreSource.contains("let selectedItems = importedItems.filter { importedIDSet.contains($0.id) }")
     && workspaceStoreSource.contains("selectedItems.first(where: { !$0.isNotebookNote })"),
     "importFiles returns imported notes to note callers while only auto-selecting a material in the reader")
@@ -5250,6 +5258,93 @@ expect(courseSummary.materialCount == 3
     && courseSummary.unlinkedNoteCount == 1
     && courseSummary.studySessionCount == 1
     && courseSummary.unresolvedConfusionCount == 2, "course workspace summary reports only durable facts from the imported course")
+
+let courseHomeHighlightCourseID = UUID(uuidString: "10000000-0000-0000-0000-000000000010")!
+let courseHomeHighlightSessionID = UUID(uuidString: "10000000-0000-0000-0000-000000000011")!
+let courseHomeHighlightSession = StudySession(
+    id: courseHomeHighlightSessionID,
+    title: "课程学习",
+    messages: [AgentMessage(role: .user, text: "继续学习", source: "课程")],
+    courseID: courseHomeHighlightCourseID,
+    flow: StudyFlowState(suggestedNext: ["复习第二章"]),
+    updatedAt: Date(timeIntervalSince1970: 200)
+)
+let courseHomeHighlights = CourseHomeLearningHighlights(
+    courseID: courseHomeHighlightCourseID,
+    learningMemoryEntries: [
+        LearningMemoryEntry(
+            kind: .understood,
+            text: "较新的已掌握内容",
+            evidence: "学习表现",
+            origin: .agentInference,
+            createdAt: Date(timeIntervalSince1970: 300),
+            updatedAt: Date(timeIntervalSince1970: 300)
+        ),
+        LearningMemoryEntry(
+            kind: .summary,
+            text: "真实课程小结",
+            evidence: "课程学习",
+            origin: .agentInference,
+            createdAt: Date(timeIntervalSince1970: 100),
+            updatedAt: Date(timeIntervalSince1970: 100)
+        ),
+        LearningMemoryEntry(
+            kind: .summary,
+            text: "已解决的旧小结",
+            evidence: "课程学习",
+            origin: .agentInference,
+            status: .resolved,
+            createdAt: Date(timeIntervalSince1970: 400),
+            updatedAt: Date(timeIntervalSince1970: 400)
+        ),
+        LearningMemoryEntry(
+            kind: .nextStep,
+            text: "完成课程例题",
+            evidence: "课程学习",
+            origin: .agentInference,
+            sessionID: courseHomeHighlightSessionID,
+            createdAt: Date(timeIntervalSince1970: 150),
+            updatedAt: Date(timeIntervalSince1970: 150)
+        ),
+    ],
+    studySessions: [courseHomeHighlightSession]
+)
+expect(courseHomeHighlights.summary?.text == "真实课程小结"
+    && courseHomeHighlights.nextStepText == "完成课程例题"
+    && courseHomeHighlights.nextStepSessionID == courseHomeHighlightSessionID,
+    "course home prefers a real active summary and keeps only an exact same-course Chat action")
+let courseHomeFallbackHighlights = CourseHomeLearningHighlights(
+    courseID: courseHomeHighlightCourseID,
+    learningMemoryEntries: [
+        LearningMemoryEntry(
+            kind: .progress,
+            text: "只是一条进度",
+            evidence: "课程学习",
+            origin: .agentInference
+        )
+    ],
+    studySessions: [courseHomeHighlightSession]
+)
+expect(courseHomeFallbackHighlights.summary == nil
+    && courseHomeFallbackHighlights.nextStepText == "复习第二章"
+    && courseHomeFallbackHighlights.nextStepSessionID == courseHomeHighlightSessionID,
+    "course home falls back to a real same-course session suggestion without treating progress as a summary")
+let emptyCourseHomeHighlights = CourseHomeLearningHighlights(
+    courseID: courseHomeHighlightCourseID,
+    learningMemoryEntries: [],
+    studySessions: [
+        StudySession(
+            title: "另一门课",
+            messages: [AgentMessage(role: .user, text: "不能串课", source: "另一门课")],
+            courseID: UUID(uuidString: "10000000-0000-0000-0000-000000000012"),
+            flow: StudyFlowState(suggestedNext: ["不应显示"])
+        ),
+    ]
+)
+expect(emptyCourseHomeHighlights.summary == nil
+    && emptyCourseHomeHighlights.nextStepText == nil
+    && emptyCourseHomeHighlights.nextStepSessionID == nil,
+    "course home empty states do not borrow memory or suggestions from another course")
 
 let courseA = Course(
     id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,

@@ -123,6 +123,9 @@ struct CourseWorkspaceView: View {
                 openRelations: {
                     withAnimation(WeiBeiMotion.panel) { page = .relations }
                 },
+                openRecords: {
+                    withAnimation(WeiBeiMotion.panel) { page = .records }
+                },
                 importMaterials: {
                     store.importCourseMaterialsFromPanel(
                         courseID: store.courseWorkspaceCourseID
