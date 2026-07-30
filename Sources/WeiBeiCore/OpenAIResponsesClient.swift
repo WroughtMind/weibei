@@ -127,19 +127,10 @@ public struct OpenAIResponsesClient: Sendable {
             let sourceText = source?.isEmpty == false ? language.text("（来源：\(source!)）", " (source: \(source!))") : ""
             return "\(role)\(sourceText)\(colon)\(String(message.text.prefix(1_200)))"
         }.joined(separator: "\n")
-        let sourceRule = language.text(
-            "回答末尾用“来源依据”列出真正用到的材料标题、选区来源或笔记标题；没有用到的来源不要列。",
-            "At the end, add a 'Sources used' section listing only the material titles, selection sources, or note titles you actually used. Do not list unused sources."
+        let instructions = language.text(
+            "你是魏碑里的学习助手。先直接回答用户；普通问题可以使用通用知识。回答实际依赖当前材料、笔记或选区时，以其内容为准，在相关句子后就近标注真实标题，并明确区分课程原文与通用解释。只有用户要求核对课程特有内容而当前资料不足时，才说明尚未确认。回答用中文，结论先行。",
+            "You are the study assistant inside WeiBei. Answer the user directly; general questions may use general knowledge. When an answer actually relies on the current material, note, or selection, use that content as the source, cite its real title next to the relevant sentence, and distinguish course content from general explanation. Only say something is unconfirmed when the user asks to verify course-specific content and the available material is insufficient. Answer in English and lead with the conclusion."
         )
-        let instructions = hasMaterial
-            ? language.text(
-                "你是魏碑里的学习助手。只根据当前材料、当前笔记和当前选区回答；没有证据就说未在材料或笔记中确认。回答用中文，先给结论。\(sourceRule)",
-                "You are the study assistant inside WeiBei. Answer only from the current material, current note, and current selection. If evidence is missing, say it is not confirmed in the material or note. Answer in English and lead with the conclusion. \(sourceRule)"
-            )
-            : language.text(
-                "你是魏碑里的学习助手。只根据当前笔记和当前选区回答；没有证据就说未在笔记或选区中确认。回答用中文，先给结论。\(sourceRule)",
-                "You are the study assistant inside WeiBei. Answer only from the current note and current selection. If evidence is missing, say it is not confirmed in the note or selection. Answer in English and lead with the conclusion. \(sourceRule)"
-            )
         let input = """
         \(materialBlock)
 
@@ -199,7 +190,7 @@ public struct OpenAIResponsesClient: Sendable {
 
 extension OpenAIResponsesClient: StudyAgentRuntime {
     public func respond(to request: StudyAgentRequest, progress: StudyAgentProgressHandler?) async throws -> StudyAgentReply {
-        await progress?(.readingContext)
+        await progress?(.preparing)
         let text = try await ask(request: request)
         return StudyAgentReply(text: text, backend: .openAI)
     }

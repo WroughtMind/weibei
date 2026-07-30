@@ -4250,7 +4250,7 @@ private struct AgentThinkingIndicator: View {
     private static var pathHeight: CGFloat { textLineHeight + pathOuterInset * 2 }
 
     private var statusText: String {
-        store.agentActivityText ?? store.ui("正在读取上下文", "Reading context")
+        store.agentActivityText ?? store.ui("正在思考", "Thinking")
     }
 
     var body: some View {

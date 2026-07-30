@@ -11819,7 +11819,10 @@ final class WorkspaceStore: ObservableObject {
             let evidence = proposed.evidence.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty, !evidence.isEmpty else { continue }
             if (evidence.hasPrefix("[用户：本轮]") || evidence.hasPrefix("[会话：当前]")),
-               !Self.currentTurnEvidenceMatches(evidence, question: expectedUserQuestion) {
+               !StudyAgentCurrentTurnEvidence.matches(
+                   evidence,
+                   question: expectedUserQuestion
+               ) {
                 continue
             }
             if proposed.origin == .userStatement,
@@ -11899,7 +11902,7 @@ final class WorkspaceStore: ObservableObject {
         if changed { learningMemoryRevision &+= 1 }
         var acceptedUpdate = update
         acceptedUpdate.resolutions = update.resolutions.prefix(12).filter { resolution in
-            guard Self.resolutionEvidenceMatches(
+            guard StudyAgentCurrentTurnEvidence.matches(
                 resolution.evidence.trimmingCharacters(in: .whitespacesAndNewlines),
                 question: expectedUserQuestion
             ),
@@ -11934,7 +11937,7 @@ final class WorkspaceStore: ObservableObject {
     func confirmLearningMemoryResolution(_ resolution: StudyAgentMemoryResolution) {
         guard latestAgentLearningUpdate?.resolutions.contains(resolution) == true,
               let question = latestAgentLearningUpdateQuestion,
-              Self.resolutionEvidenceMatches(resolution.evidence, question: question),
+              StudyAgentCurrentTurnEvidence.matches(resolution.evidence, question: question),
               let memoryID = UUID(uuidString: resolution.memoryID),
               let index = learningMemoryEntries.firstIndex(where: {
                   $0.id == memoryID
@@ -11989,14 +11992,6 @@ final class WorkspaceStore: ObservableObject {
             .lowercased()
             .split(whereSeparator: { $0.isWhitespace || $0.isPunctuation })
             .joined()
-    }
-
-    private static func currentTurnEvidenceMatches(_ evidence: String, question: String) -> Bool {
-        StudyAgentCurrentTurnEvidence.matches(evidence, question: question)
-    }
-
-    private static func resolutionEvidenceMatches(_ evidence: String, question: String) -> Bool {
-        StudyAgentResolutionEvidence.matches(evidence, question: question)
     }
 
     func askToOrganizeNote() {
@@ -12309,7 +12304,7 @@ final class WorkspaceStore: ObservableObject {
             showNotes = false
             agentSurface = .hidden
             isAskingAgent = true
-            agentActivityText = ui("正在读取上下文", "Reading context")
+            agentActivityText = ui("正在思考", "Thinking")
             agentStreamingText = ""
             messages = []
             showLoadingIndicatorSamples = false
@@ -14477,7 +14472,7 @@ final class WorkspaceStore: ObservableObject {
                 language: sentLanguage,
                 contextRevision: "\(requestWorkspaceRevision):\(requestID.uuidString.lowercased())"
             )
-            agentActivityText = ui("正在读取上下文", "Reading context")
+            agentActivityText = ui("正在思考", "Thinking")
             if isGeneratingQuietInsight {
                 await piRuntime.cancel()
             }
@@ -14882,9 +14877,9 @@ final class WorkspaceStore: ObservableObject {
               activeAgentReplyChatID == chatID else { return }
         let updatesVisibleChat = activeStudySessionID == chatID
         switch progress {
-        case .readingContext:
+        case .preparing:
             if updatesVisibleChat {
-                agentActivityText = ui("正在读取上下文", "Reading context")
+                agentActivityText = ui("正在思考", "Thinking")
             }
         case let .usingTool(name):
             guard updatesVisibleChat else { return }

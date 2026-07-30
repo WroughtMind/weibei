@@ -596,8 +596,7 @@ expect(offlineChinesePreview.contains("## 离线草稿")
     && offlineChinesePreview.contains("- 选区依据：利率是资金使用价格的表达。")
     && offlineChinesePreview.contains("- 资料依据：利率是资金使用价格的表达。金融市场通过利率配置资源。")
     && offlineChinesePreview.contains("- 笔记线索：## 摘录 来源：Mishkin 教材样例")
-    && offlineChinesePreview.contains("## 建议写入")
-    && offlineChinesePreview.contains("- 把可确认依据写入笔记，并保留来源。")
+    && !offlineChinesePreview.contains("## 建议写入")
     && !offlineChinesePreview.contains("| 上下文 | 内容 |")
     && !offlineChinesePreview.contains("> 资料摘录："), "offline agent draft stays compact, source-grounded, and note-ready without API key")
 
@@ -621,12 +620,20 @@ expect(offlineEnglishPreview.contains("## Offline Draft")
     && offlineEnglishPreview.contains("**Context**: Material: None · Note: Current note · Selection: None")
     && offlineEnglishPreview.contains("## Confirmed")
     && offlineEnglishPreview.contains("- Note state: the current note is empty.")
-    && offlineEnglishPreview.contains("## Suggested Note")
-    && offlineEnglishPreview.contains("- Write the confirmed evidence into the note and keep the source attached.")
+    && !offlineEnglishPreview.contains("## Suggested Note")
     && !offlineEnglishPreview.contains("| Context | Content |")
     && !offlineEnglishPreview.contains("> Note excerpt:"), "offline agent draft renders compact English empty-context state as Markdown")
 expect(AgentOfflinePreview.preview("A\nB\tC", limit: 20) == "A B C", "offline agent preview normalizes whitespace")
-let offlineSuggestedNoteBlock = AgentOfflinePreview.suggestedNoteBlock(from: offlineChinesePreview, language: .chinese) ?? ""
+let offlineSuggestedNoteBlock = AgentOfflinePreview.suggestedNoteBlock(
+    from: """
+    ## 离线草稿
+    旧版本内容
+
+    ## 建议写入
+    - 把可确认依据写入笔记，并保留来源。
+    """,
+    language: .chinese
+) ?? ""
 expect(offlineSuggestedNoteBlock.contains("## 整理建议")
     && offlineSuggestedNoteBlock.contains("把可确认依据写入笔记，并保留来源。")
     && !offlineSuggestedNoteBlock.contains("## 离线草稿")
@@ -1579,7 +1586,9 @@ expect(groundedPrompt.input.contains("当前材料：Mishkin 教材样例"), "ag
 expect(groundedPrompt.input.contains("当前笔记：利率笔记"), "agent prompt includes note title")
 expect(groundedPrompt.input.contains("当前选区（来源：Mishkin 教材样例，第 1 页选区）："), "agent prompt includes selection source")
 expect(groundedPrompt.input.contains("用户（来源：利率笔记）：上一问"), "agent prompt keeps recent message source")
-expect(groundedPrompt.instructions.contains("来源依据") && groundedPrompt.instructions.contains("没有用到的来源不要列"), "agent prompt requires grounded source evidence")
+expect(groundedPrompt.instructions.contains("普通问题可以使用通用知识")
+    && groundedPrompt.instructions.contains("就近标注真实标题")
+    && !groundedPrompt.instructions.contains("回答末尾用“来源依据”"), "agent prompt answers ordinary questions and cites only material actually used")
 expect(groundedPrompt.instructions.contains("学习助手") && !groundedPrompt.instructions.contains("学习 Agent"), "agent prompt speaks as a study assistant instead of internal agent copy")
 let multiSelectionPrompt = OpenAIResponsesClient.composePrompt(
     question: "比较这些片段",
@@ -1655,7 +1664,9 @@ expect(
         && englishPrompt.input.contains("Current selection (source: Current note):")
         && englishPrompt.input.contains("Assistant (source: Current note): Earlier answer")
         && englishPrompt.instructions.contains("Answer in English")
-        && englishPrompt.instructions.contains("Sources used")
+        && englishPrompt.instructions.contains("general questions may use general knowledge")
+        && englishPrompt.instructions.contains("cite its real title next to the relevant sentence")
+        && !englishPrompt.instructions.contains("At the end, add a 'Sources used' section")
         && !englishPrompt.input.contains("当前笔记"),
     "agent prompt has a complete English note-only mode"
 )
@@ -3934,8 +3945,8 @@ expect(workspaceStoreSource.contains("noteSourceLinks: noteSourceLinks")
     && workspaceStoreSource.contains("activeStudySessionID: activeStudySessionID"), "course links, progress, memory, and sessions are saved with the workspace")
 expect(workspaceStoreSource.contains("acceptedUpdate.resolutions = update.resolutions.prefix(12).filter")
     && workspaceStoreSource.contains("func confirmLearningMemoryResolution")
-    && workspaceStoreSource.contains("private static func resolutionEvidenceMatches")
-    && workspaceStoreSource.contains("StudyAgentResolutionEvidence.matches")
+    && workspaceStoreSource.contains("StudyAgentCurrentTurnEvidence.matches")
+    && !workspaceStoreSource.contains("private static func currentTurnEvidenceMatches")
     && workspaceStoreSource.contains("func restoreLearningMemory(")
     && workspaceStoreSource.contains("resolutionEvidence = \"[用户：界面确认]\"")
     && notesAgentSource.contains("建议结案：")

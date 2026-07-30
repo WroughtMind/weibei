@@ -218,7 +218,6 @@ struct WeiBeiPiCheckMain {
 
     private static func checkNoteMaking(_ runtime: PiAgentRuntime) async throws -> UUID {
         let liveRequest = request(
-            workflow: .noteMaking,
             question: "请把当前选区整理成一个带来源的 Markdown 核心要点，并提交待确认的笔记建议。",
             revision: "pi-check-note"
         )
@@ -238,7 +237,6 @@ struct WeiBeiPiCheckMain {
     private static func checkCloseReading(_ runtime: PiAgentRuntime) async throws {
         let reply = try await runtime.respond(
             to: request(
-                workflow: .closeReading,
                 question: "只根据当前内容解释为什么利率可称为资金价格，并标明来源。",
                 revision: "pi-check-reading"
             )
@@ -656,7 +654,6 @@ struct WeiBeiPiCheckMain {
     private static func checkStudyCompanion(_ runtime: PiAgentRuntime) async throws {
         let reply = try await runtime.respond(
             to: request(
-                workflow: .studyCompanion,
                 question: "我上次学到哪了？请告诉我位置和下一步。",
                 revision: "pi-check-companion"
             )
@@ -671,7 +668,6 @@ struct WeiBeiPiCheckMain {
     private static func checkCourseWayfinding(_ runtime: PiAgentRuntime) async throws {
         let reply = try await runtime.respond(
             to: request(
-                workflow: .courseWayfinding,
                 question: "利率和通货膨胀在课程里有哪份相关材料？说明关联，并原样给出工具返回的最精确 PDF 页码跳转。",
                 revision: "pi-check-wayfinding"
             )
@@ -687,7 +683,6 @@ struct WeiBeiPiCheckMain {
     private static func checkRecallPractice(_ runtime: PiAgentRuntime) async throws {
         let reply = try await runtime.respond(
             to: request(
-                workflow: .recallPractice,
                 question: "只根据当前内容出 2 道复习题，并给出带来源的答案。",
                 revision: "pi-check-recall"
             )
@@ -701,13 +696,11 @@ struct WeiBeiPiCheckMain {
     }
 
     private static func request(
-        workflow: StudyAgentWorkflow,
         question: String,
         revision: String
     ) -> StudyAgentRequest {
         StudyAgentRequest(
             purpose: .conversation,
-            workflow: workflow,
             question: question,
             materialTitle: "利率课程",
             materialText: "利率是资金使用价格的表达。名义利率以货币单位表示，实际利率扣除了通货膨胀后的购买力变化。在课程的近似计算中：实际利率 = 名义利率 - 通货膨胀率。",
@@ -1099,8 +1092,7 @@ struct WeiBeiPiCheckMain {
         let noteID = "note-\(checkCase.id)"
         return StudyAgentRequest(
             purpose: .conversation,
-            workflow: .closeReading,
-            question: "这是自动验收题。不要直接凭上下文回答；第一步必须读取魏碑提供的当前材料或选区来源。如果无法读取来源，只说明无法读取来源，不要生成富回答。完成本轮来源读取后，先检索本轮相关生成式 UI 能力，再生成一个紧凑、真正可操作、来源绑定的视觉体验块；本题明确要求 expressionPlan.preferredSurface 和 scene.placement 均为 inline，使它成为正文的自然一部分。请自主比较注册专业渲染计划、成熟深组件程序和受控长尾组合三条表达出口，以本题学习价值选择最合适的路线；不要把组件名、程序源码或 UI JSON 写进正文，不要穷举节点，也不要写成第二篇完整文章。\(checkCase.question)",
+            question: "这是自动验收题。回答依赖魏碑提供的当前材料或选区，请实际读取来源；如果无法读取，只说明无法读取来源，不要生成富回答。读取本轮来源后，检索本轮相关生成式 UI 能力，再生成一个紧凑、真正可操作、来源绑定的视觉体验块；本题明确要求 expressionPlan.preferredSurface 和 scene.placement 均为 inline，使它成为正文的自然一部分。请自主比较注册专业渲染计划、成熟深组件程序和受控长尾组合三条表达出口，以本题学习价值选择最合适的路线；不要把组件名、程序源码或 UI JSON 写进正文，不要穷举节点，也不要写成第二篇完整文章。\(checkCase.question)",
             materialTitle: checkCase.materialTitle,
             materialText: checkCase.materialText,
             noteTitle: "\(checkCase.discipline)验收笔记",
@@ -1179,9 +1171,8 @@ struct WeiBeiPiCheckMain {
         let hasMaterial = !checkCase.materialText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         return StudyAgentRequest(
             purpose: .conversation,
-            workflow: .closeReading,
             answerFormPolicy: checkCase.allowsPartialRichAnswer ? .partialRichAllowed : .textOnly,
-            question: "这是回答失败与诚实降级验收题。第一步必须读取魏碑当前上下文和可用来源。不得用常识、示例数据或假执行补齐缺口；来源、安全或协议条件不满足时，保留简短可读正文并诚实说明限制。\(checkCase.question)",
+            question: "这是回答失败与诚实降级验收题。答案依赖本题材料，请实际读取魏碑当前上下文和可用来源。不得用常识、示例数据或假执行补齐缺口；来源、安全或协议条件不满足时，保留简短可读正文并诚实说明限制。\(checkCase.question)",
             materialTitle: checkCase.materialTitle,
             materialText: checkCase.materialText,
             materialIsTruncated: checkCase.materialIsTruncated,
@@ -1233,8 +1224,7 @@ struct WeiBeiPiCheckMain {
         let noteID = "note-\(checkCase.id)"
         return StudyAgentRequest(
             purpose: .conversation,
-            workflow: .closeReading,
-            question: "这是回答形态选择验收题。第一步必须读取魏碑当前材料或选区，然后自行选择最合适的回答形态；只有交互或可视关系能显著提高理解时才生成富回答，不要为了展示能力硬做 UI。\(checkCase.question)",
+            question: "这是回答形态选择验收题。答案依赖本题材料，请实际读取魏碑当前材料或选区，然后自行选择最合适的回答形态；只有交互或可视关系能显著提高理解时才生成富回答，不要为了展示能力硬做 UI。\(checkCase.question)",
             materialTitle: checkCase.materialTitle,
             materialText: checkCase.materialText,
             noteTitle: "\(checkCase.subject)验收笔记",
