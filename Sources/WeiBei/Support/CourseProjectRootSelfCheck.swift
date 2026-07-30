@@ -1086,6 +1086,10 @@ enum CourseProjectRootSelfCheck {
                     == "提案后课程已变化",
                 "过期提案覆盖了确认前的课程变化"
             )
+        } catch {
+            throw CheckError.failed(
+                "显式重绑主流程：\(error.localizedDescription)"
+            )
         }
 
         do {
@@ -1164,6 +1168,76 @@ enum CourseProjectRootSelfCheck {
                     ) == candidateManifest
                     && scopeStops == stopsBeforeConfirmation + 1,
                 "重绑保存失败没有恢复课程、保留封印或只释放新授权"
+            )
+        } catch {
+            throw CheckError.failed(
+                "重绑保存失败回滚：\(error.localizedDescription)"
+            )
+        }
+
+        do {
+            let fixture = try Fixture(name: "course-rebind-same-path-scope")
+            defer { fixture.remove() }
+            let library = try fixture.makeDirectory("课程资料库")
+            let externalRoot = try fixture.makeDirectory("外部课程")
+            let exportParent = try fixture.makeDirectory("课程副本")
+            let offlineParent = try fixture.makeDirectory("失联原件")
+            var scopeStarts = 0
+            var scopeStops = 0
+            let store = makeStore(
+                fixture: fixture,
+                startAccessing: { _ in
+                    scopeStarts += 1
+                    return true
+                },
+                stopAccessing: { _ in scopeStops += 1 }
+            )
+            try store.configureCourseLibrary(at: library)
+            let courseID = try store.adoptCourseFolder(
+                at: externalRoot,
+                title: "同路径外部课程"
+            )
+            let candidateStaging = exportParent.appendingPathComponent(
+                "候选副本",
+                isDirectory: true
+            )
+            _ = try store.exportPortableCourseCopyForSelfCheck(
+                courseID: courseID,
+                to: candidateStaging
+            )
+            try FileManager.default.moveItem(
+                at: externalRoot,
+                to: offlineParent.appendingPathComponent(
+                    "旧 inode",
+                    isDirectory: true
+                )
+            )
+            try FileManager.default.moveItem(
+                at: candidateStaging,
+                to: externalRoot
+            )
+            let proposal: CourseProjectRebindProposal
+            switch try store.adoptCourseFolderOrProposeRebind(
+                at: externalRoot,
+                title: "同路径新 inode"
+            ) {
+            case .opened:
+                throw CheckError.failed("同路径新 inode 被静默接管")
+            case .requiresRebind(let value):
+                proposal = value
+            }
+            let stopsBeforeConfirmation = scopeStops
+            _ = try store.confirmCourseProjectRebind(proposal)
+            try check(
+                store.courseRootURL(for: courseID)
+                    == externalRoot.canonicalFileURL
+                    && scopeStops == stopsBeforeConfirmation + 1
+                    && scopeStarts - scopeStops == 2,
+                "同路径新 inode 重绑没有逐次配对安全授权"
+            )
+        } catch {
+            throw CheckError.failed(
+                "同路径新 inode 授权：\(error.localizedDescription)"
             )
         }
 
@@ -1246,6 +1320,10 @@ enum CourseProjectRootSelfCheck {
                     ) == sealedManifest,
                 "重入删除后重复停止授权、复活课程或消费候选封印"
             )
+        } catch {
+            throw CheckError.failed(
+                "重绑期间删除课程：\(error.localizedDescription)"
+            )
         }
 
         do {
@@ -1321,6 +1399,10 @@ enum CourseProjectRootSelfCheck {
                     && store.courseRootURL(for: courseID)
                         == candidate.canonicalFileURL,
                 "确认后没有采用候选文件夹中的较新状态"
+            )
+        } catch {
+            throw CheckError.failed(
+                "采用较新候选：\(error.localizedDescription)"
             )
         }
 
@@ -1441,6 +1523,10 @@ enum CourseProjectRootSelfCheck {
                         )
                     ) == sealedManifest,
                 "拒绝实体化冲突时破坏了另一门课程或候选封印"
+            )
+        } catch {
+            throw CheckError.failed(
+                "跨课程共享资料：\(error.localizedDescription)"
             )
         }
     }

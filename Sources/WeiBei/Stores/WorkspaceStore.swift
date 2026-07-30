@@ -2089,7 +2089,7 @@ final class WorkspaceStore: ObservableObject {
         guard !courseHasUnstableState(existing.id) else {
             throw CoursePortableExportError.unstableCourseState
         }
-        guard !registeredCourseRootIsAvailable(existing) else {
+        guard !(try registeredCourseRootIsAvailable(existing)) else {
             throw CourseProjectRebindError.originalRootStillAvailable
         }
         guard course(withID: existing.id) == existing,
@@ -2283,7 +2283,9 @@ final class WorkspaceStore: ObservableObject {
         return try state.validated(expectedCourseID: rawState.courseID)
     }
 
-    private func registeredCourseRootIsAvailable(_ course: Course) -> Bool {
+    private func registeredCourseRootIsAvailable(
+        _ course: Course
+    ) throws -> Bool {
         guard let expectedIdentity = course.sourceRootIdentity else {
             return false
         }
@@ -2316,23 +2318,32 @@ final class WorkspaceStore: ObservableObject {
         }
         if let relativePath = course.sourceRootRelativePath,
            let libraryRoot = courseLibraryRootURL {
+            let expectedLibraryPath = courseLibraryRootPath
+            let expectedLibraryIdentity = courseLibraryRootIdentity
+            let expectedLibraryBookmark = courseLibraryRootBookmarkData
             if let expected = CourseProjectPathPolicy.resolvedRelativePath(
                 relativePath,
                 inside: libraryRoot
             ) {
                 candidates.append(expected)
             }
-            if let search = try? waitForCourseFileOperation({
+            let search = try waitForCourseFileOperation {
                 await self.courseProjectFileWorker.findDirectory(
                     with: expectedIdentity,
                     inside: libraryRoot
                 )
-            }) {
-                lastCourseRebindRootSearchRanOnMainThread =
-                    search.ranOnMainThread
-                if let moved = search.url {
-                    candidates.append(moved)
-                }
+            }
+            guard courseLibraryRootURL == libraryRoot,
+                  courseLibraryRootPath == expectedLibraryPath,
+                  courseLibraryRootIdentity == expectedLibraryIdentity,
+                  courseLibraryRootBookmarkData
+                    == expectedLibraryBookmark else {
+                throw CourseProjectRebindError.proposalChanged
+            }
+            lastCourseRebindRootSearchRanOnMainThread =
+                search.ranOnMainThread
+            if let moved = search.url {
+                candidates.append(moved)
             }
         }
         var checkedPaths = Set<String>()
@@ -2411,7 +2422,7 @@ final class WorkspaceStore: ObservableObject {
                 activeCourseRebindTokens.removeValue(forKey: existing.id)
             }
         }
-        guard !registeredCourseRootIsAvailable(existing) else {
+        guard !(try registeredCourseRootIsAvailable(existing)) else {
             throw CourseProjectRebindError.originalRootStillAvailable
         }
 
@@ -2488,7 +2499,7 @@ final class WorkspaceStore: ObservableObject {
                   !courseHasUnstableState(currentCourse.id) else {
                 throw CourseProjectRebindError.proposalChanged
             }
-            guard !registeredCourseRootIsAvailable(currentCourse) else {
+            guard !(try registeredCourseRootIsAvailable(currentCourse)) else {
                 throw CourseProjectRebindError.originalRootStillAvailable
             }
             guard course(matching: proposal) == currentCourse,
@@ -2549,8 +2560,7 @@ final class WorkspaceStore: ObservableObject {
 
             func stopPreviousScopeIfNeeded() {
                 guard !didStopPreviousScope,
-                      let previousScope,
-                      previousScope != newScopeURL else {
+                      let previousScope else {
                     return
                 }
                 didStopPreviousScope = true
