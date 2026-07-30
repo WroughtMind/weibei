@@ -7113,6 +7113,491 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    private var agentReplyActionIDsInFlight = Set<UUID>()
+
+    private func agentReplyAction(
+        messageID: UUID,
+        actionID: UUID
+    ) -> (chatID: UUID, courseID: UUID?, action: AgentReplyAction)? {
+        for session in studySessions {
+            guard let message = session.messages.first(where: {
+                $0.id == messageID && $0.role == .assistant
+            }), let action = message.actions.first(where: { $0.id == actionID }) else {
+                continue
+            }
+            guard message.origin?.chatID == nil || message.origin?.chatID == session.id,
+                  message.origin?.courseID == nil || message.origin?.courseID == session.courseID else {
+                return nil
+            }
+            return (session.id, session.courseID, action)
+        }
+        return nil
+    }
+
+    private func updateAgentReplyAction(
+        messageID: UUID,
+        actionID: UUID,
+        chatID: UUID,
+        _ update: (inout AgentReplyAction) -> Void
+    ) {
+        _ = updateAgentMessage(messageID, in: chatID) {
+            guard let index = $0.actions.firstIndex(where: { $0.id == actionID }) else { return }
+            update(&$0.actions[index])
+            $0.actions[index].updatedAt = Date()
+        }
+    }
+
+    func agentReplyActionTargetTitle(_ action: AgentReplyAction) -> String? {
+        action.targetItemID
+            .flatMap { itemID in allItems.first(where: { $0.id == itemID }) }
+            .map(displayTitle)
+    }
+
+    func agentReplyActionSourceTitle(_ action: AgentReplyAction) -> String? {
+        action.sourceItemID
+            .flatMap { itemID in allItems.first(where: { $0.id == itemID }) }
+            .map(displayTitle)
+    }
+
+    func cancelAgentReplyAction(messageID: UUID, actionID: UUID) {
+        guard let snapshot = agentReplyAction(messageID: messageID, actionID: actionID),
+              snapshot.action.state == .pending
+                || (snapshot.action.state == .failed
+                    && snapshot.action.resultContentDigest == nil) else {
+            return
+        }
+        updateAgentReplyAction(
+            messageID: messageID,
+            actionID: actionID,
+            chatID: snapshot.chatID
+        ) {
+            $0.state = .cancelled
+            $0.failureMessage = nil
+        }
+        _ = flushPendingWorkspaceSave()
+    }
+
+    func confirmAgentReplyAction(
+        messageID: UUID,
+        actionID: UUID,
+        proposedMarkdown: String? = nil
+    ) async {
+        guard agentReplyActionIDsInFlight.insert(actionID).inserted else { return }
+        defer { agentReplyActionIDsInFlight.remove(actionID) }
+        guard let snapshot = agentReplyAction(messageID: messageID, actionID: actionID),
+              snapshot.action.state == .pending || snapshot.action.state == .failed else {
+            return
+        }
+        switch snapshot.action.kind {
+        case .writeNote:
+            await confirmAgentNoteAction(
+                messageID: messageID,
+                snapshot: snapshot,
+                proposedMarkdown: proposedMarkdown
+            )
+        case .createRelation:
+            confirmAgentRelationAction(messageID: messageID, snapshot: snapshot)
+        }
+    }
+
+    func undoAgentReplyAction(messageID: UUID, actionID: UUID) async {
+        guard agentReplyActionIDsInFlight.insert(actionID).inserted else { return }
+        defer { agentReplyActionIDsInFlight.remove(actionID) }
+        guard let snapshot = agentReplyAction(messageID: messageID, actionID: actionID),
+              snapshot.action.state == .executed
+                || (snapshot.action.state == .failed
+                    && snapshot.action.resultContentDigest != nil) else {
+            return
+        }
+        switch snapshot.action.kind {
+        case .writeNote:
+            await undoAgentNoteAction(messageID: messageID, snapshot: snapshot)
+        case .createRelation:
+            undoAgentRelationAction(messageID: messageID, snapshot: snapshot)
+        }
+    }
+
+    private func confirmAgentNoteAction(
+        messageID: UUID,
+        snapshot: (chatID: UUID, courseID: UUID?, action: AgentReplyAction),
+        proposedMarkdown: String?
+    ) async {
+        var action = snapshot.action
+        let proposal = (proposedMarkdown ?? action.proposedMarkdown ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !proposal.isEmpty,
+              let targetItemID = action.targetItemID,
+              let target = allItems.first(where: {
+                  $0.id == targetItemID && $0.isNotebookNote
+              }),
+              item(targetItemID, belongsTo: snapshot.courseID) else {
+            failAgentReplyAction(
+                messageID: messageID,
+                actionID: action.id,
+                chatID: snapshot.chatID,
+                message: ui(
+                    "目标笔记已不存在或不属于这条 Chat 的课程。",
+                    "The target note is missing or outside this Chat's course."
+                )
+            )
+            return
+        }
+        do {
+            let current = try await agentActionNoteMarkdown(target)
+            let currentDigest = Self.noteContentDigest(Data(current.utf8))
+            let result: String
+            if action.resultContentDigest == currentDigest {
+                result = current
+            } else {
+                guard action.state == .failed
+                    || action.baselineContentDigest == nil
+                    || action.baselineContentDigest == currentDigest else {
+                    failAgentReplyAction(
+                        messageID: messageID,
+                        actionID: action.id,
+                        chatID: snapshot.chatID,
+                        message: ui(
+                            "这份笔记在建议生成后已经变化。魏碑没有覆盖它；请核对后重试。",
+                            "This note changed after the proposal was created. WeiBei did not overwrite it."
+                        )
+                    )
+                    return
+                }
+                action.baselineContentDigest = currentDigest
+                result = appendingAgentNoteProposal(proposal, to: current)
+                action.resultContentDigest = Self.noteContentDigest(Data(result.utf8))
+            }
+            updateAgentReplyAction(
+                messageID: messageID,
+                actionID: action.id,
+                chatID: snapshot.chatID
+            ) {
+                $0.proposedMarkdown = proposal
+                $0.baselineContentDigest = action.baselineContentDigest
+                $0.resultContentDigest = action.resultContentDigest
+                $0.failureMessage = nil
+            }
+            guard await persistAgentActionNote(
+                result,
+                target: target,
+                resultDigest: action.resultContentDigest
+            ) else {
+                failAgentReplyAction(
+                    messageID: messageID,
+                    actionID: action.id,
+                    chatID: snapshot.chatID,
+                    message: noteFileError ?? workspaceSaveError ?? ui(
+                        "笔记没有成功写入，建议内容已保留，可以重试。",
+                        "The note was not written. The proposal was kept for retry."
+                    )
+                )
+                return
+            }
+            updateAgentReplyAction(
+                messageID: messageID,
+                actionID: action.id,
+                chatID: snapshot.chatID
+            ) {
+                $0.state = .executed
+                $0.failureMessage = nil
+            }
+            _ = flushPendingWorkspaceSave()
+        } catch {
+            failAgentReplyAction(
+                messageID: messageID,
+                actionID: action.id,
+                chatID: snapshot.chatID,
+                message: ui(
+                    "无法读取目标笔记：\(error.localizedDescription)",
+                    "Could not read the target note: \(error.localizedDescription)"
+                )
+            )
+        }
+    }
+
+    private func undoAgentNoteAction(
+        messageID: UUID,
+        snapshot: (chatID: UUID, courseID: UUID?, action: AgentReplyAction)
+    ) async {
+        let action = snapshot.action
+        guard let targetItemID = action.targetItemID,
+              let target = allItems.first(where: {
+                  $0.id == targetItemID && $0.isNotebookNote
+              }),
+              item(targetItemID, belongsTo: snapshot.courseID),
+              let resultDigest = action.resultContentDigest,
+              let proposal = action.proposedMarkdown else {
+            return
+        }
+        do {
+            let current = try await agentActionNoteMarkdown(target)
+            guard Self.noteContentDigest(Data(current.utf8)) == resultDigest,
+                  let restored = removingAgentNoteProposal(
+                      proposal,
+                      from: current,
+                      baselineDigest: action.baselineContentDigest
+                  ),
+                  await persistAgentActionNote(
+                    restored,
+                    target: target,
+                    resultDigest: Self.noteContentDigest(Data(restored.utf8))
+                  ) else {
+                failAgentReplyAction(
+                    messageID: messageID,
+                    actionID: action.id,
+                    chatID: snapshot.chatID,
+                    message: ui(
+                        "笔记在写入后又发生了变化，魏碑没有自动撤销。",
+                        "The note changed after the write, so WeiBei did not undo it automatically."
+                    )
+                )
+                return
+            }
+            updateAgentReplyAction(
+                messageID: messageID,
+                actionID: action.id,
+                chatID: snapshot.chatID
+            ) {
+                $0.state = .cancelled
+                $0.failureMessage = nil
+            }
+            _ = flushPendingWorkspaceSave()
+        } catch {
+            failAgentReplyAction(
+                messageID: messageID,
+                actionID: action.id,
+                chatID: snapshot.chatID,
+                message: ui(
+                    "撤销时无法读取目标笔记：\(error.localizedDescription)",
+                    "Could not read the note while undoing: \(error.localizedDescription)"
+                )
+            )
+        }
+    }
+
+    private func confirmAgentRelationAction(
+        messageID: UUID,
+        snapshot: (chatID: UUID, courseID: UUID?, action: AgentReplyAction)
+    ) {
+        let action = snapshot.action
+        guard let noteItemID = action.targetItemID,
+              let sourceItemID = action.sourceItemID,
+              let note = allItems.first(where: {
+                  $0.id == noteItemID && $0.isNotebookNote
+              }),
+              let source = allItems.first(where: {
+                  $0.id == sourceItemID && !$0.isNotebookNote
+              }),
+              relationItemsBelongToActionScope(
+                  noteItemID: note.id,
+                  sourceItemID: source.id,
+                  courseID: snapshot.courseID
+              ) else {
+            failAgentReplyAction(
+                messageID: messageID,
+                actionID: action.id,
+                chatID: snapshot.chatID,
+                message: ui(
+                    "要关联的笔记或文稿已不存在，或不属于同一课程。",
+                    "The note or material is missing or no longer belongs to the same course."
+                )
+            )
+            return
+        }
+        if noteSourceLinks.contains(where: {
+            $0.noteItemID == note.id && $0.sourceItemID == source.id
+        }) {
+            updateAgentReplyAction(
+                messageID: messageID,
+                actionID: action.id,
+                chatID: snapshot.chatID
+            ) {
+                $0.state = .executed
+                $0.createdRelationID = nil
+                $0.failureMessage = nil
+            }
+            _ = flushPendingWorkspaceSave()
+            return
+        }
+
+        let relation = NoteSourceLink(
+            id: action.id,
+            noteItemID: note.id,
+            sourceItemID: source.id
+        )
+        noteSourceLinks.append(relation)
+        updateAgentReplyAction(
+            messageID: messageID,
+            actionID: action.id,
+            chatID: snapshot.chatID
+        ) {
+            $0.state = .executed
+            $0.createdRelationID = relation.id
+            $0.failureMessage = nil
+        }
+        guard flushPendingWorkspaceSave() else {
+            noteSourceLinks.removeAll { $0.id == relation.id }
+            failAgentReplyAction(
+                messageID: messageID,
+                actionID: action.id,
+                chatID: snapshot.chatID,
+                message: workspaceSaveError ?? ui(
+                    "关系没有成功保存，可以重试。",
+                    "The relation was not saved. You can retry."
+                )
+            )
+            return
+        }
+        invalidateAgentContext()
+    }
+
+    private func undoAgentRelationAction(
+        messageID: UUID,
+        snapshot: (chatID: UUID, courseID: UUID?, action: AgentReplyAction)
+    ) {
+        let action = snapshot.action
+        guard let relationID = action.createdRelationID,
+              let relation = noteSourceLinks.first(where: { $0.id == relationID }) else {
+            return
+        }
+        noteSourceLinks.removeAll { $0.id == relationID }
+        updateAgentReplyAction(
+            messageID: messageID,
+            actionID: action.id,
+            chatID: snapshot.chatID
+        ) {
+            $0.state = .cancelled
+            $0.failureMessage = nil
+        }
+        guard flushPendingWorkspaceSave() else {
+            noteSourceLinks.append(relation)
+            failAgentReplyAction(
+                messageID: messageID,
+                actionID: action.id,
+                chatID: snapshot.chatID,
+                message: workspaceSaveError ?? ui(
+                    "关系没有成功撤销，可以重试。",
+                    "The relation was not undone. You can retry."
+                )
+            )
+            return
+        }
+        invalidateAgentContext()
+    }
+
+    private func failAgentReplyAction(
+        messageID: UUID,
+        actionID: UUID,
+        chatID: UUID,
+        message: String
+    ) {
+        updateAgentReplyAction(
+            messageID: messageID,
+            actionID: actionID,
+            chatID: chatID
+        ) {
+            $0.state = .failed
+            $0.failureMessage = message
+        }
+        _ = flushPendingWorkspaceSave()
+    }
+
+    private func item(_ itemID: String, belongsTo courseID: UUID?) -> Bool {
+        guard allItems.contains(where: { $0.id == itemID }) else { return false }
+        guard let courseID else { return true }
+        return courseMembershipIndex.courseIDs(for: itemID).contains(courseID)
+    }
+
+    private func relationItemsBelongToActionScope(
+        noteItemID: String,
+        sourceItemID: String,
+        courseID: UUID?
+    ) -> Bool {
+        let noteCourses = Set(courseMembershipIndex.courseIDs(for: noteItemID))
+        let sourceCourses = Set(courseMembershipIndex.courseIDs(for: sourceItemID))
+        if let courseID {
+            return noteCourses.contains(courseID) && sourceCourses.contains(courseID)
+        }
+        return !noteCourses.intersection(sourceCourses).isEmpty
+    }
+
+    private func agentActionNoteMarkdown(_ item: StudyItem) async throws -> String {
+        if !item.editsBackingMarkdownFile, let pending = notesByItemID[item.id] {
+            return cleanLegacyPlaceholder(pending)
+        }
+        if activeNoteItemID == item.id {
+            return noteText
+        }
+        if let pending = notesByItemID[item.id] {
+            return cleanLegacyPlaceholder(pending)
+        }
+        if let loaded = loadedCourseNoteTextByItemID[item.id] {
+            return loaded
+        }
+        guard item.editsBackingMarkdownFile,
+              let url = item.url,
+              let identity = item.importedFileIdentity else {
+            return cleanLegacyPlaceholder(notesByItemID[item.id] ?? defaultNote(for: item))
+        }
+        let result = try await courseProjectFileWorker.readMarkdown(
+            at: url,
+            expectedIdentity: identity
+        )
+        return cleanLegacyPlaceholder(result.markdown)
+    }
+
+    private func appendingAgentNoteProposal(
+        _ proposal: String,
+        to current: String
+    ) -> String {
+        let block = noteBlockForAgentAnswer(proposal)
+        guard !current.isEmpty else { return block }
+        return current + (current.hasSuffix("\n") ? "\n" : "\n\n") + block
+    }
+
+    private func removingAgentNoteProposal(
+        _ proposal: String,
+        from current: String,
+        baselineDigest: String?
+    ) -> String? {
+        let block = noteBlockForAgentAnswer(proposal)
+        let suffixes = ["\n\n\(block)", "\n\(block)", block]
+        let candidates = suffixes.compactMap { suffix -> String? in
+            current.hasSuffix(suffix) ? String(current.dropLast(suffix.count)) : nil
+        }
+        if let baselineDigest,
+           let exact = candidates.first(where: {
+               Self.noteContentDigest(Data($0.utf8)) == baselineDigest
+           }) {
+            return exact
+        }
+        return candidates.first
+    }
+
+    private func persistAgentActionNote(
+        _ markdown: String,
+        target: StudyItem,
+        resultDigest: String?
+    ) async -> Bool {
+        updateNote(markdown, for: target.id)
+        flushPendingNotePersistence()
+        if case .courseOwned = target.storage {
+            for _ in 0..<200 {
+                if !courseNoteWritesInFlight.contains(target.id) { break }
+                try? await Task.sleep(nanoseconds: 25_000_000)
+            }
+        }
+        let notePersisted: Bool
+        if target.editsBackingMarkdownFile {
+            notePersisted = pendingNoteWritesByItemID[target.id] == nil
+                && resultDigest != nil
+                && noteBackingContentDigestsByItemID[target.id] == resultDigest
+        } else {
+            notePersisted = notesByItemID[target.id] == markdown
+        }
+        return notePersisted && flushPendingWorkspaceSave()
+    }
+
     private func syncActiveStudySession(titleSeed: String? = nil) {
         guard let activeStudySessionID,
               let index = studySessions.firstIndex(where: { $0.id == activeStudySessionID }) else { return }
@@ -12478,6 +12963,7 @@ final class WorkspaceStore: ObservableObject {
             || scenario == "course-chat-scope-flow"
             || scenario == "chat-reply-persistence-flow"
             || scenario == "chat-source-navigation-flow"
+            || scenario == "chat-action-cards-flow"
             || scenario == "loading-indicator-samples"
             || emptyWorkspaceScenarios.contains(scenario) else { return }
         didRunVerificationScenario = true
@@ -12522,6 +13008,12 @@ final class WorkspaceStore: ObservableObject {
         if scenario == "chat-source-navigation-flow" {
             Task {
                 await runChatSourceNavigationVerification()
+            }
+            return
+        }
+        if scenario == "chat-action-cards-flow" {
+            Task {
+                await runChatActionCardVerification()
             }
             return
         }
@@ -14160,6 +14652,325 @@ final class WorkspaceStore: ObservableObject {
         recordVerificationStage("completed")
     }
 
+    private func runChatActionCardVerification() async {
+        let courseID = UUID(uuidString: "55555555-5555-5555-5555-555555555555")!
+        let chatID = UUID(uuidString: "55555555-5555-5555-5555-555555555556")!
+        let originalNote = "# 利率复习笔记\n\n## 已有内容\n"
+        let fixtureRoot = workspaceDirectory
+            .appendingPathComponent("ActionCardCourse", isDirectory: true)
+        let metadataDirectory = fixtureRoot
+            .appendingPathComponent(".weibei", isDirectory: true)
+        let noteDirectory = fixtureRoot.appendingPathComponent("笔记", isDirectory: true)
+        let materialDirectory = fixtureRoot.appendingPathComponent("文稿", isDirectory: true)
+        let noteURL = noteDirectory.appendingPathComponent("利率复习笔记.md")
+        let materialURL = materialDirectory.appendingPathComponent("利率的含义.md")
+        try? FileManager.default.createDirectory(
+            at: noteDirectory,
+            withIntermediateDirectories: true
+        )
+        try? FileManager.default.createDirectory(
+            at: metadataDirectory,
+            withIntermediateDirectories: true
+        )
+        try? FileManager.default.createDirectory(
+            at: materialDirectory,
+            withIntermediateDirectories: true
+        )
+        try? originalNote.write(to: noteURL, atomically: true, encoding: .utf8)
+        try? "# 利率的含义\n\n实际利率需要扣除通胀影响。\n".write(
+            to: materialURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        guard let rootIdentity = CourseProjectFileWorker.identity(at: fixtureRoot),
+              let noteIdentity = CourseProjectFileWorker.identity(at: noteURL),
+              let materialIdentity = CourseProjectFileWorker.identity(at: materialURL) else {
+            recordVerificationStage("chat-action-cards:fixture-fail")
+            recordVerificationStage("completed")
+            return
+        }
+        let note = StudyItem(
+            id: "action-note",
+            title: "利率复习笔记",
+            subtitle: "利率复习笔记.md",
+            kind: .markdown,
+            urlPath: noteURL.path,
+            importedFileIdentity: noteIdentity,
+            importedFileLastKnownPath: noteURL.path,
+            isSample: false,
+            isNotebookNote: true,
+            storage: .courseOwned(ownerCourseID: courseID),
+            contentDigest: Self.noteContentDigest(Data(originalNote.utf8))
+        )
+        let material = StudyItem(
+            id: "action-material",
+            title: "利率的含义",
+            subtitle: "利率的含义.md",
+            kind: .markdown,
+            urlPath: materialURL.path,
+            importedFileIdentity: materialIdentity,
+            importedFileLastKnownPath: materialURL.path,
+            isSample: false,
+            storage: .courseOwned(ownerCourseID: courseID)
+        )
+        importedItems = [note, material]
+        courses = [
+            Course(
+                id: courseID,
+                title: "货币金融学",
+                colorIndex: 0,
+                sourceRootPath: fixtureRoot.path,
+                sourceRootIdentity: rootIdentity
+            ),
+        ]
+        resolvedCourseRootURLs[courseID] = fixtureRoot
+        courseItemMemberships = [
+            CourseItemMembership(
+                courseID: courseID,
+                itemID: note.id,
+                courseRelativePath: "笔记/\(noteURL.lastPathComponent)",
+                entryIdentity: noteIdentity
+            ),
+            CourseItemMembership(
+                courseID: courseID,
+                itemID: material.id,
+                courseRelativePath: "文稿/\(materialURL.lastPathComponent)",
+                entryIdentity: materialIdentity
+            ),
+        ]
+        activeCourseID = courseID
+        activeNotebookItemID = note.id
+        selectedItemID = material.id
+        noteBackingContentDigestsByItemID[note.id] =
+            Self.noteContentDigest(Data(originalNote.utf8))
+        noteText = originalNote
+
+        let writeAction = AgentReplyAction(
+            id: UUID(uuidString: "55555555-5555-5555-5555-555555555557")!,
+            kind: .writeNote,
+            targetItemID: note.id,
+            sourceItemID: material.id,
+            proposedMarkdown: "## 实际利率\n实际利率约等于名义利率减去通胀率。",
+            evidence: ["[材料：利率的含义]"],
+            contextRevision: "action-verification",
+            baselineContentDigest: Self.noteContentDigest(Data(originalNote.utf8))
+        )
+        let relationAction = AgentReplyAction(
+            id: UUID(uuidString: "55555555-5555-5555-5555-555555555558")!,
+            kind: .createRelation,
+            targetItemID: note.id,
+            sourceItemID: material.id,
+            contextRevision: "action-verification"
+        )
+        let conflictAction = AgentReplyAction(
+            id: UUID(uuidString: "55555555-5555-5555-5555-555555555559")!,
+            kind: .writeNote,
+            targetItemID: note.id,
+            sourceItemID: material.id,
+            proposedMarkdown: "## 冲突建议\n这段不应覆盖后来的用户编辑。",
+            evidence: ["[材料：利率的含义]"],
+            contextRevision: "action-verification",
+            baselineContentDigest: Self.noteContentDigest(Data(originalNote.utf8))
+        )
+        let pendingAction = AgentReplyAction(
+            id: UUID(uuidString: "55555555-5555-5555-5555-555555555560")!,
+            kind: .writeNote,
+            targetItemID: note.id,
+            sourceItemID: material.id,
+            proposedMarkdown: "## 待确认建议\n这张卡片用于真实窗口验收。",
+            evidence: ["[材料：利率的含义]"],
+            contextRevision: "action-verification",
+            baselineContentDigest: Self.noteContentDigest(Data(originalNote.utf8))
+        )
+        let retryAction = AgentReplyAction(
+            id: UUID(uuidString: "55555555-5555-5555-5555-555555555562")!,
+            kind: .writeNote,
+            targetItemID: note.id,
+            sourceItemID: material.id,
+            proposedMarkdown: "## 重试建议\n用户确认后追加到变化后的笔记。",
+            contextRevision: "action-verification",
+            baselineContentDigest: Self.noteContentDigest(Data(originalNote.utf8))
+        )
+        let reply = AgentMessage(
+            id: UUID(uuidString: "55555555-5555-5555-5555-555555555561")!,
+            role: .assistant,
+            text: "正文始终保留：实际利率需要扣除通胀影响。",
+            source: material.title,
+            backend: .offline,
+            richAnswer: RichAnswerPresentation(
+                mode: .narrativeOnly,
+                narrative: "正文始终保留：实际利率需要扣除通胀影响。"
+            ),
+            actions: [
+                writeAction,
+                relationAction,
+                conflictAction,
+                pendingAction,
+                retryAction,
+            ],
+            origin: AgentReplyOrigin(
+                requestID: UUID(),
+                chatID: chatID,
+                courseID: courseID
+            )
+        )
+        let session = StudySession(
+            id: chatID,
+            title: "动作卡片验收",
+            messages: [reply],
+            courseID: courseID,
+            focusItemIDs: [material.id, note.id],
+            materialItemID: material.id
+        )
+        studySessions = [session]
+        activeStudySessionID = chatID
+        messages = [reply]
+        layout = .immersiveConversation
+        showLibrary = false
+        showReader = false
+        showAgent = true
+        showNotes = false
+        agentSurface = .hidden
+
+        await confirmAgentReplyAction(
+            messageID: reply.id,
+            actionID: writeAction.id,
+            proposedMarkdown: "## 实际利率\n实际利率约等于名义利率减去预期通胀率。"
+        )
+        let writtenState = messages.first?.actions.first(where: {
+            $0.id == writeAction.id
+        })?.state
+        let writtenDiskDigest = Self.noteContentDigest(at: noteURL)
+        let writtenLoadedDigest = loadedCourseNoteTextByItemID[note.id].map {
+            Self.noteContentDigest(Data($0.utf8))
+        }
+        let writtenNoteTextDigest = Self.noteContentDigest(Data(noteText.utf8))
+        let writtenFailure = messages.first?.actions.first(where: {
+            $0.id == writeAction.id
+        })?.failureMessage
+        let writtenNoteFileError = noteFileError
+        let writtenWorkspaceSaveError = workspaceSaveError
+        let written = writtenState == .executed
+            && writtenDiskDigest == messages.first?.actions.first(where: {
+                $0.id == writeAction.id
+            })?.resultContentDigest
+        await undoAgentReplyAction(messageID: reply.id, actionID: writeAction.id)
+        let undoState = messages.first?.actions.first(where: {
+            $0.id == writeAction.id
+        })?.state
+        let undoDiskDigest = Self.noteContentDigest(at: noteURL)
+        let noteUndone = undoState == .cancelled
+            && undoDiskDigest == Self.noteContentDigest(Data(originalNote.utf8))
+
+        await confirmAgentReplyAction(
+            messageID: reply.id,
+            actionID: relationAction.id
+        )
+        let related = noteSourceLinks.contains {
+            $0.noteItemID == note.id && $0.sourceItemID == material.id
+        }
+        await undoAgentReplyAction(messageID: reply.id, actionID: relationAction.id)
+        let relationUndone = !noteSourceLinks.contains {
+            $0.noteItemID == note.id && $0.sourceItemID == material.id
+        }
+
+        let changedNote = "# 利率复习笔记\n\n用户刚刚补充了新内容。\n"
+        let currentNote = allItems.first(where: { $0.id == note.id }) ?? note
+        let changedNoteSaved = await persistAgentActionNote(
+            changedNote,
+            target: currentNote,
+            resultDigest: Self.noteContentDigest(Data(changedNote.utf8))
+        )
+        await confirmAgentReplyAction(
+            messageID: reply.id,
+            actionID: conflictAction.id
+        )
+        let conflictIsolated = messages.first?.actions.first(where: {
+            $0.id == conflictAction.id
+        })?.state == .failed
+            && (try? String(contentsOf: noteURL, encoding: .utf8)) == changedNote
+            && messages.first?.text == reply.text
+            && messages.first?.richAnswer != nil
+
+        await confirmAgentReplyAction(messageID: reply.id, actionID: retryAction.id)
+        let retryFailedSafely = messages.first?.actions.first(where: {
+            $0.id == retryAction.id
+        })?.state == .failed
+            && (try? String(contentsOf: noteURL, encoding: .utf8)) == changedNote
+        await confirmAgentReplyAction(messageID: reply.id, actionID: retryAction.id)
+        let retrySucceeded = retryFailedSafely
+            && messages.first?.actions.first(where: {
+                $0.id == retryAction.id
+            })?.state == .executed
+            && (try? String(contentsOf: noteURL, encoding: .utf8))?
+                .contains("用户确认后追加到变化后的笔记") == true
+        await undoAgentReplyAction(messageID: reply.id, actionID: retryAction.id)
+
+        let restoredTarget = allItems.first(where: { $0.id == note.id }) ?? note
+        _ = await persistAgentActionNote(
+            originalNote,
+            target: restoredTarget,
+            resultDigest: Self.noteContentDigest(Data(originalNote.utf8))
+        )
+        _ = flushPendingWorkspaceSave()
+        let reopened = WorkspaceStore(
+            workspaceDirectory: workspaceDirectory,
+            selectionAskThreadDefaults: selectionAskThreadDefaults
+        )
+        let reopenedReply = reopened.studySessions
+            .first(where: { $0.id == chatID })?
+            .messages
+            .first(where: { $0.id == reply.id })
+        let reopenedStates = Dictionary(
+            uniqueKeysWithValues: (reopenedReply?.actions ?? []).map {
+                ($0.id, $0.state)
+            }
+        )
+        let reopenedStable = reopenedReply?.text == reply.text
+            && reopenedReply?.richAnswer != nil
+            && reopenedStates[writeAction.id] == .cancelled
+            && reopenedStates[relationAction.id] == .cancelled
+            && reopenedStates[conflictAction.id] == .failed
+            && reopenedStates[pendingAction.id] == .pending
+            && reopenedStates[retryAction.id] == .cancelled
+
+        let passed = written
+            && noteUndone
+            && related
+            && relationUndone
+            && conflictIsolated
+            && retrySucceeded
+            && reopenedStable
+        let report = """
+        result=\(passed ? "pass" : "fail")
+        note_written=\(written)
+        note_undone=\(noteUndone)
+        relation_created=\(related)
+        relation_undone=\(relationUndone)
+        conflict_isolated=\(conflictIsolated)
+        retry_succeeded=\(retrySucceeded)
+        body_preserved=\(messages.first?.text == reply.text)
+        rich_answer_preserved=\(messages.first?.richAnswer != nil)
+        reopened=\(reopenedStable)
+        pending_card=\(reopenedStates[pendingAction.id] == .pending)
+        written_state=\(writtenState?.rawValue ?? "missing")
+        written_disk_digest=\(writtenDiskDigest ?? "missing")
+        written_loaded_digest=\(writtenLoadedDigest ?? "missing")
+        written_note_text_digest=\(writtenNoteTextDigest)
+        written_failure=\(writtenFailure ?? "missing")
+        written_note_file_error=\(writtenNoteFileError ?? "missing")
+        written_workspace_error=\(writtenWorkspaceSaveError ?? "missing")
+        undo_state=\(undoState?.rawValue ?? "missing")
+        undo_disk_digest=\(undoDiskDigest ?? "missing")
+        changed_note_saved=\(changedNoteSaved)
+        """
+        let reportURL = storageURL.deletingLastPathComponent()
+            .appendingPathComponent("chat-action-cards-report.txt")
+        try? "\(report)\n".write(to: reportURL, atomically: true, encoding: .utf8)
+        recordVerificationStage("chat-action-cards:\(passed ? "pass" : "fail")")
+        recordVerificationStage("completed")
+    }
+
     private func runChatSourceNavigationVerification() async {
         let chatID = UUID()
         let courseID = UUID(uuidString: "33333333-3333-3333-3333-333333333333")!
@@ -15006,21 +15817,32 @@ final class WorkspaceStore: ObservableObject {
             if activeStudySessionID == target.sessionID {
                 lastAgentReplyContextRevision = requestWorkspaceRevision
             }
-            let actions = reply.noteProposal.map {
-                [
+            var actions: [AgentReplyAction] = []
+            if let proposal = reply.noteProposal {
+                actions.append(
                     AgentReplyAction(
                         kind: .writeNote,
                         targetItemID: sentNoteItemID,
                         sourceItemID: sentMaterialItemID,
-                        proposedMarkdown: $0.markdown,
-                        evidence: $0.evidence,
-                        contextRevision: $0.contextRevision,
+                        proposedMarkdown: proposal.markdown,
+                        evidence: proposal.evidence,
+                        contextRevision: proposal.contextRevision,
                         baselineContentDigest: Self.noteContentDigest(
                             Data(resolvedSentNoteText.utf8)
                         )
-                    ),
-                ]
-            } ?? []
+                    )
+                )
+            }
+            if let proposal = reply.relationProposal {
+                actions.append(
+                    AgentReplyAction(
+                        kind: .createRelation,
+                        targetItemID: proposal.noteItemID,
+                        sourceItemID: proposal.sourceItemID,
+                        contextRevision: proposal.contextRevision
+                    )
+                )
+            }
             let sources = reply.sources.map { source in
                 var persisted = source
                 persisted.courseID = target.courseID ?? persisted.courseID
@@ -17529,6 +18351,9 @@ final class WorkspaceStore: ObservableObject {
               item.importedFileIdentity != nil else {
             return
         }
+        courseNoteLoadGenerationByItemID[itemID, default: 0] &+= 1
+        courseNoteLoadTasksByItemID[itemID]?.cancel()
+        courseNoteLoadTasksByItemID[itemID] = nil
         courseNoteWritesInFlight.insert(itemID)
         let expectedDigest = pendingWrite.baselineContentDigest
         Task { @MainActor [weak self] in

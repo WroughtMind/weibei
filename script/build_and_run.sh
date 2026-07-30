@@ -878,6 +878,40 @@ verify_chat_reply_persistence() {
   return 1
 }
 
+verify_chat_action_cards() {
+  if [[ "$VERIFY_SCENARIO" != "chat-action-cards-flow" ]]; then
+    return 0
+  fi
+
+  local report_file="$VERIFY_DATA_DIR/chat-action-cards-report.txt"
+  for _ in {1..60}; do
+    if [[ -f "$report_file" ]]; then
+      if /usr/bin/grep -q '^result=pass$' "$report_file" \
+        && /usr/bin/grep -q '^note_written=true$' "$report_file" \
+        && /usr/bin/grep -q '^note_undone=true$' "$report_file" \
+        && /usr/bin/grep -q '^relation_created=true$' "$report_file" \
+        && /usr/bin/grep -q '^relation_undone=true$' "$report_file" \
+        && /usr/bin/grep -q '^conflict_isolated=true$' "$report_file" \
+        && /usr/bin/grep -q '^retry_succeeded=true$' "$report_file" \
+        && /usr/bin/grep -q '^body_preserved=true$' "$report_file" \
+        && /usr/bin/grep -q '^rich_answer_preserved=true$' "$report_file" \
+        && /usr/bin/grep -q '^reopened=true$' "$report_file" \
+        && /usr/bin/grep -q '^pending_card=true$' "$report_file"; then
+        return 0
+      fi
+      echo "verify failed: Chat action cards did not survive their full lifecycle." >&2
+      cat "$report_file" >&2
+      return 1
+    fi
+    sleep 0.2
+  done
+
+  echo "verify failed: Chat action card report was not produced." >&2
+  [[ -f "$VERIFY_DATA_DIR/verification-state.txt" ]] && cat "$VERIFY_DATA_DIR/verification-state.txt" >&2
+  [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
+  return 1
+}
+
 finish_verify_window() {
   verify_learning_flow_persistence
   verify_empty_workspace_state
@@ -888,6 +922,7 @@ finish_verify_window() {
   verify_pane_reorder_width
   verify_reader_scroll_persistence
   verify_chat_reply_persistence
+  verify_chat_action_cards
   if [[ "$RUN_VISUAL_VERIFY" == true ]]; then
     visual_verify_window
   fi

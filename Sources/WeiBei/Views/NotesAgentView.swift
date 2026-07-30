@@ -3354,6 +3354,15 @@ private struct AgentBubble: View {
                 }
             }
 
+            if !message.actions.isEmpty {
+                ForEach(message.actions) { action in
+                    AgentReplyActionCard(
+                        messageID: message.id,
+                        action: action
+                    )
+                }
+            }
+
             if message.completionState == .interrupted && !isFailureMessage {
                 HStack(spacing: 6) {
                     Text(store.ui("回答已中断，已保留现有内容", "Response interrupted; existing content was kept"))
@@ -3394,20 +3403,6 @@ private struct AgentBubble: View {
                    !update.entries.isEmpty || !update.resolutions.isEmpty || !update.suggestedNext.isEmpty {
                     learningUpdateContent(update)
                 }
-                if let proposal = store.latestAgentNoteProposal, !proposal.evidence.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(store.ui("依据", "Evidence"))
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        ForEach(Array(proposal.evidence.enumerated()), id: \.offset) { _, evidence in
-                            Text("• \(evidence)")
-                                .font(.caption)
-                                .foregroundStyle(WeiBeiTheme.secondaryInk)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
                 HStack(spacing: 6) {
                     if store.selectionContext != nil {
                         Button(store.ui("摘录", "Excerpt")) {
@@ -3415,10 +3410,6 @@ private struct AgentBubble: View {
                         }
                         .buttonStyle(WeiBeiTextActionButtonStyle())
                     }
-                    Button(store.agentWriteActionTitle) {
-                        store.applyLastAgentAnswerToNote()
-                    }
-                    .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
                     if store.canReplaceNoteSelection {
                         Button(store.ui("替换", "Replace")) {
                             store.replaceSelectionWithLastAgentAnswer()
@@ -3846,6 +3837,243 @@ private struct AgentCitation: Identifiable, Equatable {
     var displayTitle: String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? kind.rawValue : trimmed
+    }
+}
+
+private struct AgentReplyActionCard: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let messageID: UUID
+    let action: AgentReplyAction
+    private let headingPrefix: String
+    @State private var title: String
+    @State private var bodyText: String
+    @State private var isWorking = false
+
+    init(messageID: UUID, action: AgentReplyAction) {
+        self.messageID = messageID
+        self.action = action
+        let draft = Self.noteDraft(from: action.proposedMarkdown ?? "")
+        headingPrefix = draft.headingPrefix
+        _title = State(initialValue: draft.title)
+        _bodyText = State(initialValue: draft.body)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            switch action.state {
+            case .pending, .failed:
+                editableContent
+            case .executed:
+                completedContent
+            case .cancelled:
+                cancelledContent
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: 600, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(WeiBeiTheme.paperRaised.opacity(0.82))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(WeiBeiTheme.hairline.opacity(0.58), lineWidth: 1)
+        }
+    }
+
+    @ViewBuilder
+    private var editableContent: some View {
+        if action.kind == .writeNote {
+            Text(store.ui("建议写入内容：", "Suggested note content:"))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.ink)
+
+            if let target = store.agentReplyActionTargetTitle(action) {
+                Label(target, systemImage: "note.text")
+                    .font(.caption)
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+            }
+
+            TextField(store.ui("笔记小标题", "Note heading"), text: $title)
+                .textFieldStyle(.plain)
+                .weibeiInputSurface(height: 32)
+
+            TextEditor(text: $bodyText)
+                .font(.system(size: 12.5))
+                .scrollContentBackground(.hidden)
+                .weibeiInputSurface(height: 104, horizontalPadding: 6)
+        } else {
+            Text(store.ui("建议建立关系：", "Suggested relation:"))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.ink)
+            HStack(spacing: 8) {
+                actionItemLabel(
+                    store.agentReplyActionTargetTitle(action)
+                        ?? store.ui("笔记已不存在", "Missing note"),
+                    systemImage: "note.text"
+                )
+                Image(systemName: "arrow.left.and.right")
+                    .font(.caption)
+                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                actionItemLabel(
+                    store.agentReplyActionSourceTitle(action)
+                        ?? store.ui("文稿已不存在", "Missing material"),
+                    systemImage: "doc.text"
+                )
+            }
+        }
+
+        if let failure = action.failureMessage, !failure.isEmpty {
+            Label(failure, systemImage: "exclamationmark.triangle")
+                .font(.caption)
+                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+
+        if !action.evidence.isEmpty {
+            Text(action.evidence.joined(separator: " · "))
+                .font(.caption2)
+                .foregroundStyle(WeiBeiTheme.tertiaryInk)
+                .lineLimit(2)
+        }
+
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 6) { actionButtons }
+            VStack(alignment: .leading, spacing: 6) { actionButtons }
+        }
+    }
+
+    @ViewBuilder
+    private var actionButtons: some View {
+        Button(action.kind == .writeNote
+            ? store.ui("写入笔记", "Write Note")
+            : store.ui("建立关系", "Create Relation")) {
+            performConfirmation()
+        }
+        .buttonStyle(WeiBeiTextActionButtonStyle(active: true))
+        .disabled(isWorking)
+
+        if action.state == .failed,
+           action.resultContentDigest != nil || action.createdRelationID != nil {
+            Button(store.ui("撤销", "Undo")) {
+                performUndo()
+            }
+            .buttonStyle(WeiBeiTextActionButtonStyle())
+            .disabled(isWorking)
+        } else {
+            Button(store.ui("取消", "Cancel")) {
+                store.cancelAgentReplyAction(
+                    messageID: messageID,
+                    actionID: action.id
+                )
+            }
+            .buttonStyle(WeiBeiTextActionButtonStyle())
+            .disabled(isWorking)
+        }
+    }
+
+    private var completedContent: some View {
+        HStack(spacing: 8) {
+            Label(
+                action.kind == .writeNote
+                    ? store.ui("已写入笔记", "Written to note")
+                    : store.ui("已建立关系", "Relation created"),
+                systemImage: "checkmark.circle"
+            )
+            .font(.caption)
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
+
+            Spacer(minLength: 8)
+
+            if action.kind == .writeNote || action.createdRelationID != nil {
+                Button(store.ui("撤销", "Undo")) {
+                    performUndo()
+                }
+                .buttonStyle(WeiBeiTextActionButtonStyle())
+                .disabled(isWorking)
+            }
+        }
+    }
+
+    private var cancelledContent: some View {
+        Label(
+            action.resultContentDigest != nil || action.createdRelationID != nil
+                ? store.ui("已撤销", "Undone")
+                : store.ui("已取消", "Cancelled"),
+            systemImage: "minus.circle"
+        )
+        .font(.caption)
+        .foregroundStyle(WeiBeiTheme.tertiaryInk)
+    }
+
+    private func actionItemLabel(_ title: String, systemImage: String) -> some View {
+        Label(title, systemImage: systemImage)
+            .font(.caption)
+            .foregroundStyle(WeiBeiTheme.secondaryInk)
+            .lineLimit(1)
+            .padding(.horizontal, 8)
+            .frame(height: 28)
+            .background(WeiBeiTheme.paperInset.opacity(0.34))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func performConfirmation() {
+        isWorking = true
+        Task {
+            await store.confirmAgentReplyAction(
+                messageID: messageID,
+                actionID: action.id,
+                proposedMarkdown: action.kind == .writeNote ? composedMarkdown : nil
+            )
+            isWorking = false
+        }
+    }
+
+    private func performUndo() {
+        isWorking = true
+        Task {
+            await store.undoAgentReplyAction(
+                messageID: messageID,
+                actionID: action.id
+            )
+            isWorking = false
+        }
+    }
+
+    private var composedMarkdown: String {
+        let body = bodyText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return body }
+        guard !body.isEmpty else { return "\(headingPrefix) \(title)" }
+        return "\(headingPrefix) \(title)\n\n\(body)"
+    }
+
+    private static func noteDraft(
+        from markdown: String
+    ) -> (headingPrefix: String, title: String, body: String) {
+        var lines = markdown.components(separatedBy: .newlines)
+        if let index = lines.firstIndex(where: {
+            $0.trimmingCharacters(in: .whitespaces).hasPrefix("#")
+        }) {
+            let line = lines[index].trimmingCharacters(in: .whitespaces)
+            let prefix = String(line.prefix(while: { $0 == "#" }))
+            let title = line.dropFirst(prefix.count)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !title.isEmpty {
+                lines.remove(at: index)
+                return (
+                    prefix.isEmpty ? "##" : prefix,
+                    title,
+                    lines.joined(separator: "\n")
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+            }
+        }
+        return (
+            "##",
+            "整理建议",
+            markdown.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
     }
 }
 

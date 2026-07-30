@@ -244,6 +244,33 @@ private func checkRPCDecoding() throws {
         "PI note proposals preserve Markdown, evidence, and revision"
     )
 
+    let relationProposalData = try JSONSerialization.data(withJSONObject: [
+        "type": "tool_execution_end",
+        "toolCallId": "tool-relation",
+        "toolName": "weibei_relation_proposal",
+        "isError": false,
+        "result": [
+            "details": [
+                "kind": "relation_proposal",
+                "noteItemID": "course-item-1",
+                "sourceItemID": "course-item-2",
+                "contextRevision": "revision-7",
+            ],
+        ],
+    ])
+    let relationProposal = try PiRPCMessageDecoder.decode(relationProposalData)
+    try piRequire(
+        relationProposal == .relationProposal(
+            id: "tool-relation",
+            StudyAgentRelationProposal(
+                noteItemID: "course-item-1",
+                sourceItemID: "course-item-2",
+                contextRevision: "revision-7"
+            )
+        ),
+        "PI relation proposals preserve both targets and revision"
+    )
+
     let learningData = try JSONSerialization.data(withJSONObject: [
         "type": "tool_execution_end",
         "toolCallId": "tool-memory",
@@ -770,6 +797,7 @@ private func checkBundledAgentResources() throws {
             "weibei_learning_memory",
             "weibei_learning_update",
             "weibei_note_proposal",
+            "weibei_relation_proposal",
             "weibei_ui_catalog",
             "weibei_compute_artifact",
             "weibei_visual_asset",
@@ -989,6 +1017,7 @@ private func checkBundledAgentResources() throws {
             && runtimeSource.contains("canonicalJumpReference")
             && runtimeSource.contains("contextRevision == run.contextRevision")
             && runtimeSource.contains("learningUpdateValidationError")
+            && runtimeSource.contains("relationProposalValidationError")
             && runtimeSource.contains("private func recordRejectedAction")
             && runtimeSource.contains("run.streamedText += delta")
             && !runtimeSource.contains("guard run.didReadContext else")
