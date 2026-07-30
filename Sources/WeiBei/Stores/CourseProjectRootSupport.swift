@@ -156,6 +156,7 @@ struct CoursePortableAdoptionSnapshot: Sendable {
     var manifest: CourseProjectManifest
     var manifestData: Data
     var portableStateData: Data?
+    var completionData: Data?
 }
 
 enum CoursePortableExportError: LocalizedError {
@@ -252,11 +253,16 @@ actor CourseProjectFileWorker {
             throw CourseProjectFileWorkerError.verificationFailed
         }
         var exportCommitted = false
+        var metadataDescriptor: Int32?
         defer {
-            if !exportCommitted {
+            if !exportCommitted, let metadataDescriptor {
                 try? Self.markPortableExportAbandoned(
-                    relativeTo: stagingDescriptor
+                    relativeTo: metadataDescriptor,
+                    rootDescriptor: stagingDescriptor
                 )
+            }
+            if let metadataDescriptor {
+                Darwin.close(metadataDescriptor)
             }
         }
 
@@ -312,15 +318,15 @@ actor CourseProjectFileWorker {
             named: ".weibei",
             relativeTo: stagingDescriptor
         )
-        let metadataDescriptor = try Self.openDirectory(
+        let openedMetadataDescriptor = try Self.openDirectory(
             named: ".weibei",
             relativeTo: stagingDescriptor
         )
-        defer { Darwin.close(metadataDescriptor) }
+        metadataDescriptor = openedMetadataDescriptor
         try Self.writeExclusiveData(
             request.portableStateData,
             named: "course-state.json",
-            relativeTo: metadataDescriptor
+            relativeTo: openedMetadataDescriptor
         )
         let stateSnapshot = Self.snapshot(
             of: request.portableStateData
@@ -350,7 +356,7 @@ actor CourseProjectFileWorker {
         try Self.writeExclusiveData(
             manifestData,
             named: "course.json",
-            relativeTo: metadataDescriptor
+            relativeTo: openedMetadataDescriptor
         )
         let manifestSnapshot = Self.snapshot(of: manifestData)
         try stageHook(.afterManifest)
@@ -364,9 +370,9 @@ actor CourseProjectFileWorker {
         try Self.writeExclusiveData(
             completion.encoded(),
             named: CourseProjectManifest.portableExportCompletionFileName,
-            relativeTo: metadataDescriptor
+            relativeTo: openedMetadataDescriptor
         )
-        guard Darwin.fsync(metadataDescriptor) == 0,
+        guard Darwin.fsync(openedMetadataDescriptor) == 0,
               Darwin.fsync(stagingDescriptor) == 0 else {
             throw CourseProjectFileWorkerError.verificationFailed
         }
@@ -447,6 +453,37 @@ actor CourseProjectFileWorker {
         try Self.portableAdoptionSnapshot(
             at: rootURL,
             expectedRootIdentity: expectedRootIdentity
+        )
+    }
+
+    func adoptionSnapshotWithThreadEvidence(
+        at rootURL: URL,
+        expectedRootIdentity: ImportedFileIdentity
+    ) throws -> (
+        snapshot: CoursePortableAdoptionSnapshot,
+        ranOnMainThread: Bool
+    ) {
+        let ranOnMainThread = Thread.isMainThread
+        return (
+            try Self.portableAdoptionSnapshot(
+                at: rootURL,
+                expectedRootIdentity: expectedRootIdentity
+            ),
+            ranOnMainThread
+        )
+    }
+
+    func normalizePortableCourseManifest(
+        with data: Data,
+        at url: URL,
+        expectedDirectoryIdentity: ImportedFileIdentity,
+        expectedPreviousData: Data
+    ) throws {
+        try Self.replaceCourseManifest(
+            with: data,
+            at: url,
+            expectedDirectoryIdentity: expectedDirectoryIdentity,
+            expectedPreviousData: expectedPreviousData
         )
     }
 
@@ -2255,18 +2292,9 @@ actor CourseProjectFileWorker {
     }
 
     nonisolated private static func markPortableExportAbandoned(
-        relativeTo rootDescriptor: Int32
+        relativeTo metadataDescriptor: Int32,
+        rootDescriptor: Int32
     ) throws {
-        let metadataDescriptor: Int32
-        do {
-            metadataDescriptor = try openDirectory(
-                named: ".weibei",
-                relativeTo: rootDescriptor
-            )
-        } catch {
-            return
-        }
-        defer { Darwin.close(metadataDescriptor) }
         let name = CourseProjectManifest
             .portableExportAbandonedFileName
         if entryStat(
@@ -2375,14 +2403,8 @@ actor CourseProjectFileWorker {
         guard destinationDescriptor >= 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
-        var completed = false
         defer {
             Darwin.close(destinationDescriptor)
-            if !completed {
-                name.withCString {
-                    _ = Darwin.unlinkat(parentDescriptor, $0, 0)
-                }
-            }
         }
         var hasher = SHA256()
         var byteCount: UInt64 = 0
@@ -2433,7 +2455,6 @@ actor CourseProjectFileWorker {
               destinationStat.st_size == Int64(byteCount) else {
             throw CourseProjectFileWorkerError.verificationFailed
         }
-        completed = true
         return CourseFileSnapshot(
             byteCount: byteCount,
             sha256: hasher.finalize()
@@ -2777,9 +2798,10 @@ actor CourseProjectFileWorker {
             relativeTo: metadataDescriptor,
             maximumByteCount: portableStateMaximumByteCount
         )
+        var completionData: Data?
         if let portableExport = manifest.portableExport {
             guard let portableStateData,
-                  let completionData = try readRegularFile(
+                  let sealedCompletionData = try readRegularFile(
                       named:
                         CourseProjectManifest
                             .portableExportCompletionFileName,
@@ -2788,6 +2810,7 @@ actor CourseProjectFileWorker {
                   ) else {
                 throw CourseProjectRootError.manifestMismatch
             }
+            completionData = sealedCompletionData
             let visibleTreeSHA256 = try treeSnapshot(
                 relativeTo: rootDescriptor,
                 includeHidden: false
@@ -2797,7 +2820,7 @@ actor CourseProjectFileWorker {
                 manifest: manifest,
                 manifestData: manifestData,
                 stateData: portableStateData,
-                completionData: completionData,
+                completionData: sealedCompletionData,
                 visibleTreeSHA256: visibleTreeSHA256
             )
         }
@@ -2811,7 +2834,8 @@ actor CourseProjectFileWorker {
             metadataIdentity: metadataIdentity,
             manifest: manifest,
             manifestData: manifestData,
-            portableStateData: portableStateData
+            portableStateData: portableStateData,
+            completionData: completionData
         )
     }
 
@@ -3177,14 +3201,8 @@ actor CourseProjectFileWorker {
                 POSIXErrorCode(rawValue: errno) ?? .EIO
             )
         }
-        var completed = false
         defer {
             Darwin.close(descriptor)
-            if !completed {
-                name.withCString {
-                    _ = Darwin.unlinkat(directoryDescriptor, $0, 0)
-                }
-            }
         }
         try data.withUnsafeBytes { rawBuffer in
             guard let baseAddress = rawBuffer.baseAddress else {
@@ -3210,7 +3228,6 @@ actor CourseProjectFileWorker {
                 POSIXErrorCode(rawValue: errno) ?? .EIO
             )
         }
-        completed = true
     }
 
     nonisolated private static func readRegularFile(

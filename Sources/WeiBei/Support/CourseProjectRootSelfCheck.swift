@@ -2444,6 +2444,94 @@ enum CourseProjectRootSelfCheck {
             target: linkedMetadataTarget
         )
 
+        let externalRealMetadataDirectory = try fixture.makeDirectory(
+            "外部真实元数据诱饵"
+        )
+        let externalRealMetadataSentinel =
+            externalRealMetadataDirectory.appendingPathComponent(
+                "外部内容.txt"
+            )
+        let externalRealMetadataData = Data(
+            "EXTERNAL_METADATA_DIRECTORY".utf8
+        )
+        try externalRealMetadataData.write(
+            to: externalRealMetadataSentinel
+        )
+        let replacedMetadataTarget = exportParent.appendingPathComponent(
+            "暂存元数据换真实目录",
+            isDirectory: true
+        )
+        let replacedMetadataStagingBefore = try stagingNames()
+        try expectFailure("暂存元数据目录换成外部真实目录") {
+            _ = try store.exportPortableCourseCopyForSelfCheck(
+                courseID: courseA,
+                to: replacedMetadataTarget,
+                stageHook: { current in
+                    guard current == .afterPortableState else {
+                        return
+                    }
+                    let created = try Set(
+                        exportParent.portableExportStagingChildren()
+                    ).subtracting(replacedMetadataStagingBefore)
+                    guard created.count == 1,
+                          let stagingName = created.first else {
+                        throw CheckError.failed(
+                            "无法唯一定位元数据真实目录替换暂存"
+                        )
+                    }
+                    let stagingRoot = exportParent
+                        .appendingPathComponent(
+                            stagingName,
+                            isDirectory: true
+                        )
+                    let metadata = stagingRoot.appendingPathComponent(
+                        ".weibei",
+                        isDirectory: true
+                    )
+                    let isolated = stagingRoot.appendingPathComponent(
+                        ".weibei-original",
+                        isDirectory: true
+                    )
+                    try FileManager.default.moveItem(
+                        at: metadata,
+                        to: isolated
+                    )
+                    try FileManager.default.moveItem(
+                        at: externalRealMetadataDirectory,
+                        to: metadata
+                    )
+                }
+            )
+        }
+        let replacedMetadataStaging = try currentStagingRoot(
+            since: replacedMetadataStagingBefore
+        )
+        let replacementMetadata = replacedMetadataStaging
+            .appendingPathComponent(".weibei", isDirectory: true)
+        let isolatedMetadata = replacedMetadataStaging
+            .appendingPathComponent(".weibei-original", isDirectory: true)
+        try check(
+            Data(
+                contentsOf: replacementMetadata.appendingPathComponent(
+                    "外部内容.txt"
+                )
+            ) == externalRealMetadataData
+                && !replacementMetadata
+                    .appendingPathComponent("course.json").exists
+                && !replacementMetadata.appendingPathComponent(
+                    CourseProjectManifest
+                        .portableExportAbandonedFileName
+                ).exists
+                && isolatedMetadata.appendingPathComponent(
+                    CourseProjectManifest
+                        .portableExportAbandonedFileName
+                ).exists,
+            "暂存元数据被真实目录替换后写入了外部目录，或没有通过原描述符封存失败"
+        )
+        try FileManager.default.removeItem(
+            at: replacedMetadataStaging
+        )
+
         let lateTamperTarget = exportParent.appendingPathComponent(
             "落位前篡改",
             isDirectory: true
@@ -2547,6 +2635,66 @@ enum CourseProjectRootSelfCheck {
             "接管后修改的 Chat、记忆、阅读位置或笔记没有在重开后恢复"
         )
 
+        for postSaveTamper in [
+            (
+                name: "接管保存后状态篡改",
+                relativePath: ".weibei/course-state.json",
+                data: Data("TAMPERED_STATE_AFTER_SAVE".utf8)
+            ),
+            (
+                name: "接管保存后可见内容篡改",
+                relativePath: "附录/计算练习/练习数据.csv",
+                data: Data("TAMPERED_VISIBLE_AFTER_SAVE".utf8)
+            ),
+        ] {
+            let tamperedAdoptionRoot = exportParent.appendingPathComponent(
+                postSaveTamper.name,
+                isDirectory: true
+            )
+            _ = try store.exportPortableCourseCopyForSelfCheck(
+                courseID: courseA,
+                to: tamperedAdoptionRoot
+            )
+            let tamperedAdoptionWorkspace = try fixture.makeDirectory(
+                "\(postSaveTamper.name)工作区"
+            )
+            let tamperedAdoptionStore = makeStore(
+                fixture: fixture,
+                workspaceDirectory: tamperedAdoptionWorkspace,
+                mutationHook: { stage in
+                    guard stage
+                            == .afterAdoptionWorkspaceSaveBeforeManifestNormalization else {
+                        return
+                    }
+                    try postSaveTamper.data.write(
+                        to: tamperedAdoptionRoot.appendingPathComponent(
+                            postSaveTamper.relativePath
+                        )
+                    )
+                }
+            )
+            try tamperedAdoptionStore.configureCourseLibrary(at: library)
+            try expectFailure(postSaveTamper.name) {
+                _ = try tamperedAdoptionStore.adoptCourseFolder(
+                    at: tamperedAdoptionRoot,
+                    title: postSaveTamper.name
+                )
+            }
+            let retainedManifest = try JSONDecoder().decode(
+                CourseProjectManifest.self,
+                from: Data(
+                    contentsOf: tamperedAdoptionRoot
+                        .appendingPathComponent(
+                            ".weibei/course.json"
+                        )
+                )
+            )
+            try check(
+                retainedManifest.portableExport != nil,
+                "\(postSaveTamper.name)后仍错误消费了导出封印"
+            )
+        }
+
         let crashExportRoot = exportParent.appendingPathComponent(
             "接管崩溃恢复副本",
             isDirectory: true
@@ -2598,8 +2746,10 @@ enum CourseProjectRootSelfCheck {
             recoveredCrashStore.course(withID: courseA) != nil
                 && recoveredCrashStore.courseRootURL(for: courseA)
                     == crashExportRoot.canonicalFileURL
+                && recoveredCrashStore
+                    .portableAdoptionReadRunsOffMainForSelfCheck()
                 && recoveredCrashManifest.portableExport == nil,
-            "重启没有按已登记课程身份收口未消费的导出封印"
+            "重启没有在后台按已登记课程身份收口未消费的导出封印"
         )
 
         let interruptedTarget = exportParent.appendingPathComponent(

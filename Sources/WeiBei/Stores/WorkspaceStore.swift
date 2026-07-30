@@ -538,6 +538,7 @@ final class WorkspaceStore: ObservableObject {
     private var lastCourseNoteReadRanOnMainThread: Bool?
     private var lastCourseNoteWriteRanOnMainThread: Bool?
     private var lastCourseHomeSearchRanOnMainThread: Bool?
+    private var lastPortableAdoptionReadRanOnMainThread: Bool?
     private let workspaceDirectory: URL
     private let storageURL: URL
     private let notebookRenameJournalURL: URL
@@ -1764,17 +1765,38 @@ final class WorkspaceStore: ObservableObject {
         )
         if let adoptionSnapshot,
            adoptionSnapshot.manifest.portableExport != nil {
+            let confirmedSnapshot = try waitForCourseFileOperation {
+                try await self.courseProjectFileWorker
+                    .adoptionSnapshot(
+                        at: canonicalRoot,
+                        expectedRootIdentity: identity
+                    )
+            }
+            guard confirmedSnapshot.metadataIdentity
+                    == adoptionSnapshot.metadataIdentity,
+                  confirmedSnapshot.manifestData
+                    == adoptionSnapshot.manifestData,
+                  confirmedSnapshot.portableStateData
+                    == adoptionSnapshot.portableStateData,
+                  confirmedSnapshot.completionData
+                    == adoptionSnapshot.completionData,
+                  confirmedSnapshot.manifest.portableExport != nil else {
+                throw CourseProjectRootError.manifestMismatch
+            }
             let normalizedData = try CourseProjectManifest(
                 courseID: courseID
             ).encoded()
-            try CourseProjectFileWorker.replaceCourseManifest(
-                with: normalizedData,
-                at: manifestURL,
-                expectedDirectoryIdentity:
-                    adoptionSnapshot.metadataIdentity,
-                expectedPreviousData:
-                    adoptionSnapshot.manifestData
-            )
+            try waitForCourseFileOperation {
+                try await self.courseProjectFileWorker
+                    .normalizePortableCourseManifest(
+                        with: normalizedData,
+                        at: manifestURL,
+                        expectedDirectoryIdentity:
+                            confirmedSnapshot.metadataIdentity,
+                        expectedPreviousData:
+                            confirmedSnapshot.manifestData
+                    )
+            }
         }
         do {
             try persistCoursePortableStates(courseIDs: [course.id])
@@ -2826,6 +2848,15 @@ final class WorkspaceStore: ObservableObject {
             try await self.courseProjectFileWorker.snapshotWithThreadEvidence(at: url)
         }
         return evidence.snapshot.byteCount > 0 && !evidence.ranOnMainThread
+    }
+
+    func portableAdoptionReadRunsOffMainForSelfCheck() -> Bool {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        return lastPortableAdoptionReadRanOnMainThread == false
     }
 
     func courseMarkdownRoundTripRunsOffMainForSelfCheck(
@@ -6765,8 +6796,14 @@ final class WorkspaceStore: ObservableObject {
         let manifestURL = root.appendingPathComponent(
             ".weibei/course.json"
         )
-        let manifest = try CourseProjectManifest.read(
-            from: manifestURL
+        let manifestData = try CourseProjectFileWorker
+            .readBoundedRegularFile(
+                at: manifestURL,
+                maximumByteCount: 1_048_576
+            )
+        let manifest = try JSONDecoder().decode(
+            CourseProjectManifest.self,
+            from: manifestData
         )
         guard manifest.courseID == course.id,
               manifest.schemaVersion
@@ -6774,23 +6811,34 @@ final class WorkspaceStore: ObservableObject {
             throw CourseProjectRootError.manifestMismatch
         }
         if manifest.portableExport != nil {
-            let snapshot = try CourseProjectFileWorker
-                .portableAdoptionSnapshot(
-                    at: root,
-                    expectedRootIdentity: expectedIdentity
-                )
+            let evidence = try waitForCourseFileOperation {
+                try await self.courseProjectFileWorker
+                    .adoptionSnapshotWithThreadEvidence(
+                        at: root,
+                        expectedRootIdentity: expectedIdentity
+                    )
+            }
+            lastPortableAdoptionReadRanOnMainThread =
+                evidence.ranOnMainThread
+            let snapshot = evidence.snapshot
             guard snapshot.manifest.courseID == course.id,
-                  snapshot.manifest.portableExport != nil else {
+                  snapshot.manifest.portableExport != nil,
+                  snapshot.manifestData == manifestData else {
                 throw CourseProjectRootError.manifestMismatch
             }
-            try CourseProjectFileWorker.replaceCourseManifest(
-                with: CourseProjectManifest(
-                    courseID: course.id
-                ).encoded(),
-                at: manifestURL,
-                expectedDirectoryIdentity: snapshot.metadataIdentity,
-                expectedPreviousData: snapshot.manifestData
-            )
+            try waitForCourseFileOperation {
+                try await self.courseProjectFileWorker
+                    .normalizePortableCourseManifest(
+                        with: CourseProjectManifest(
+                            courseID: course.id
+                        ).encoded(),
+                        at: manifestURL,
+                        expectedDirectoryIdentity:
+                            snapshot.metadataIdentity,
+                        expectedPreviousData:
+                            snapshot.manifestData
+                    )
+            }
         }
     }
 
