@@ -23426,6 +23426,31 @@ final class WorkspaceStore: ObservableObject {
         return (candidate, identity)
     }
 
+    private func validatedPortableSharedLink(
+        at candidate: URL,
+        sharedURL: URL?
+    ) throws -> ImportedFileIdentity? {
+        switch CourseProjectFileWorker.entryPresence(at: candidate) {
+        case .absent:
+            return nil
+        case .inaccessible:
+            throw CoursePortableStateError.invalidItemStorage
+        case .present:
+            break
+        }
+        guard let sharedURL,
+              CourseProjectFileWorker.isSymbolicLink(at: candidate),
+              let identity = importedFileIdentityResolver(candidate),
+              CourseProjectFileWorker.symbolicLink(
+                  at: candidate,
+                  pointsTo: sharedURL
+              ),
+              importedFileIdentityResolver(candidate) == identity else {
+            throw CoursePortableStateError.invalidItemStorage
+        }
+        return identity
+    }
+
     private func applyCoursePortableState(
         _ rawState: CoursePortableState,
         courseID: UUID
@@ -23567,14 +23592,11 @@ final class WorkspaceStore: ObservableObject {
                     itemURL = resolved?.url
                     itemIdentity = resolved?.identity
                 }
-                let candidateIdentity =
-                    try validatedPortableCourseOwnedFile(
-                        at: candidate,
-                        portable: portable
-                    )
-                membershipIdentity = candidateIdentity?.identity
-                membershipDocumentIdentifier =
-                    candidateIdentity?.documentIdentifier
+                membershipIdentity = try validatedPortableSharedLink(
+                    at: candidate,
+                    sharedURL: itemURL
+                )
+                membershipDocumentIdentifier = nil
             }
             if let existing,
             !previousItemIDs.contains(existing.id),
