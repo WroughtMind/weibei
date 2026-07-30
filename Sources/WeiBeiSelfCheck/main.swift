@@ -5345,6 +5345,55 @@ expect(emptyCourseHomeHighlights.summary == nil
     && emptyCourseHomeHighlights.nextStepText == nil
     && emptyCourseHomeHighlights.nextStepSessionID == nil,
     "course home empty states do not borrow memory or suggestions from another course")
+let invalidCourseHomeSessions = [
+    StudySession(
+        title: "跨课来源",
+        messages: [AgentMessage(role: .user, text: "不能跳转", source: "另一门课")],
+        courseID: UUID(uuidString: "10000000-0000-0000-0000-000000000012")
+    ),
+    StudySession(
+        title: "待归类来源",
+        messages: [AgentMessage(role: .user, text: "不能跳转", source: "待归类")],
+        courseID: courseHomeHighlightCourseID,
+        scopeNeedsReview: true
+    ),
+    StudySession(
+        title: "空对话来源",
+        courseID: courseHomeHighlightCourseID
+    ),
+]
+for invalidSession in invalidCourseHomeSessions {
+    let invalidTargetHighlights = CourseHomeLearningHighlights(
+        courseID: courseHomeHighlightCourseID,
+        learningMemoryEntries: [
+            LearningMemoryEntry(
+                kind: .summary,
+                text: "已解决的小结",
+                evidence: "课程学习",
+                origin: .agentInference,
+                status: .resolved
+            ),
+            LearningMemoryEntry(
+                kind: .understood,
+                text: "  \n ",
+                evidence: "课程学习",
+                origin: .agentInference
+            ),
+            LearningMemoryEntry(
+                kind: .nextStep,
+                text: "保留这条真实文字",
+                evidence: "课程学习",
+                origin: .agentInference,
+                sessionID: invalidSession.id
+            ),
+        ],
+        studySessions: invalidCourseHomeSessions
+    )
+    expect(invalidTargetHighlights.summary == nil
+        && invalidTargetHighlights.nextStepText == "保留这条真实文字"
+        && invalidTargetHighlights.nextStepSessionID == nil,
+        "course home keeps a real next-step text but removes actions for cross-course, unclassified, and empty Chats")
+}
 
 let courseA = Course(
     id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
