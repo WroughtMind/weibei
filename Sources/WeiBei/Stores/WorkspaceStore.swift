@@ -16859,6 +16859,7 @@ final class WorkspaceStore: ObservableObject {
             } == true
             && replyTagPersisted
 
+        select(itemID: nil)
         layout = .immersiveConversation
         showLibrary = false
         showReader = false

@@ -3777,12 +3777,14 @@ private struct AgentReplyMemoryUpdateTag: View {
                             .fixedSize(horizontal: false, vertical: true)
                     } else {
                         ForEach(memories) { memory in
+                            let revision = memory.revisions?
+                                .last { $0.messageID == message.id }
                             HStack(alignment: .firstTextBaseline, spacing: 7) {
-                                Text(store.learningMemoryKindLabel(memory.kind))
+                                Text(store.learningMemoryKindLabel(revision?.kind ?? memory.kind))
                                     .font(.system(size: 10.5, weight: .semibold))
                                     .foregroundStyle(WeiBeiTheme.cinnabar)
                                     .fixedSize()
-                                Text(memory.text)
+                                Text(revision?.text ?? memory.text)
                                     .font(.caption)
                                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                                     .lineLimit(2)
