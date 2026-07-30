@@ -1549,6 +1549,8 @@ public struct AgentReplyAction: Identifiable, Codable, Hashable, Sendable {
     public var evidence: [String]
     public var contextRevision: String?
     public var baselineContentDigest: String?
+    public var resultContentDigest: String?
+    public var createdRelationID: UUID?
     public var failureMessage: String?
     public var createdAt: Date
     public var updatedAt: Date
@@ -1563,6 +1565,8 @@ public struct AgentReplyAction: Identifiable, Codable, Hashable, Sendable {
         evidence: [String] = [],
         contextRevision: String? = nil,
         baselineContentDigest: String? = nil,
+        resultContentDigest: String? = nil,
+        createdRelationID: UUID? = nil,
         failureMessage: String? = nil,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
@@ -1576,6 +1580,8 @@ public struct AgentReplyAction: Identifiable, Codable, Hashable, Sendable {
         self.evidence = evidence
         self.contextRevision = contextRevision
         self.baselineContentDigest = baselineContentDigest
+        self.resultContentDigest = resultContentDigest
+        self.createdRelationID = createdRelationID
         self.failureMessage = failureMessage
         self.createdAt = createdAt
         self.updatedAt = updatedAt

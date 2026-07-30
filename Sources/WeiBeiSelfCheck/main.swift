@@ -4985,6 +4985,8 @@ let replyAction = AgentReplyAction(
     evidence: ["[材料：利率]"],
     contextRevision: "revision-1",
     baselineContentDigest: "digest",
+    resultContentDigest: "written-digest",
+    createdRelationID: UUID(uuidString: "30000000-0000-0000-0000-000000000008"),
     createdAt: Date(timeIntervalSince1970: 10),
     updatedAt: Date(timeIntervalSince1970: 11)
 )
