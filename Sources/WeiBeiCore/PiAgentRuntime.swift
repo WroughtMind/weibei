@@ -294,6 +294,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         // Global Chat keeps read only for registered Skills; project paths remain unavailable.
         "read",
         "weibei_note_proposal",
+        "weibei_relation_proposal",
         "weibei_ui_catalog",
         "weibei_compute_artifact",
         "weibei_rich_answer",
@@ -389,12 +390,16 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var sources: [AgentReplySource] = []
         var streamedText = ""
         var proposal: StudyAgentNoteProposal?
+        var relationProposal: StudyAgentRelationProposal?
         var richAnswer: RichAnswerPresentation?
         var safeRichAnswerNarrative: String?
         var learningUpdate: StudyAgentLearningUpdate?
         var loadedSkills: [StudyAgentLoadedSkill] = []
         var toolTrace: [String] = []
         var allowedToolNames: Set<String>
+        var allowsRelationProposal: Bool
+        var courseCatalogRolesByContextID: [String: String]
+        var existingCourseRelations: Set<StudyAgentCourseRelation>
         var hostToolHandler: StudyAgentHostToolHandler?
         var hostToolCallIDs: Set<String> = []
         var nextDynamicAssetOrdinal: Int
@@ -566,6 +571,11 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             allowedNoteSourceLabels: currentSourceLabels,
             contextSources: currentReplySources(request: request, context: context),
             allowedToolNames: Set(Self.allowedToolNames(for: binding.scope)),
+            allowsRelationProposal: binding.scope == .course,
+            courseCatalogRolesByContextID: context.course.catalog.reduce(into: [:]) {
+                $0[$1.id] = $1.role
+            },
+            existingCourseRelations: Set(context.course.relations),
             hostToolHandler: hostToolHandler,
             nextDynamicAssetOrdinal: context.course.catalog.count + 1,
             progressDelivery: progressDelivery
@@ -1168,6 +1178,41 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 )
         }) else {
             return "PI resolved learning memory without current-turn evidence"
+        }
+        return nil
+    }
+
+    private func relationProposalValidationError(
+        _ proposal: StudyAgentRelationProposal,
+        run: ActiveRun
+    ) -> String? {
+        guard run.allowsRelationProposal else {
+            return "PI proposed a relation outside a course Chat"
+        }
+        guard proposal.contextRevision == run.contextRevision else {
+            return "PI proposed a relation for a stale context"
+        }
+        guard run.courseCatalogRolesByContextID[proposal.noteItemID] == "note",
+              run.courseCatalogRolesByContextID[proposal.sourceItemID] == "material" else {
+            return "PI proposed relation targets outside the current course catalog roles"
+        }
+        guard proposal.noteItemID != proposal.sourceItemID else {
+            return "PI proposed a relation with identical targets"
+        }
+        guard !run.existingCourseRelations.contains(
+            StudyAgentCourseRelation(
+                noteItemID: proposal.noteItemID,
+                sourceItemID: proposal.sourceItemID
+            )
+        ) else {
+            return "PI proposed a relation that already exists"
+        }
+        guard run.relationProposal == nil else {
+            return "PI proposed more than one relation in a reply"
+        }
+        guard run.persistentAssetIDsByContextID[proposal.noteItemID] != nil,
+              run.persistentAssetIDsByContextID[proposal.sourceItemID] != nil else {
+            return "PI proposed relation targets without persistent course identities"
         }
         return nil
     }
@@ -2023,6 +2068,26 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             activeRun = run
             refreshRunWatchdog()
 
+        case let .relationProposal(_, proposal):
+            guard var run = activeRun else { return }
+            if let validationError = relationProposalValidationError(proposal, run: run) {
+                recordRejectedAction(
+                    "weibei_relation_proposal",
+                    reason: validationError,
+                    run: &run
+                )
+                activeRun = run
+                refreshRunWatchdog()
+                return
+            }
+            run.relationProposal = StudyAgentRelationProposal(
+                noteItemID: run.persistentAssetIDsByContextID[proposal.noteItemID]!,
+                sourceItemID: run.persistentAssetIDsByContextID[proposal.sourceItemID]!,
+                contextRevision: proposal.contextRevision
+            )
+            activeRun = run
+            refreshRunWatchdog()
+
         case let .learningUpdate(_, update):
             guard var run = activeRun else { return }
             guard update.contextRevision == run.contextRevision,
@@ -2101,6 +2166,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 richAnswer: run.richAnswer,
                 sources: run.sources,
                 noteProposal: run.proposal,
+                relationProposal: run.relationProposal,
                 learningUpdate: run.learningUpdate,
                 loadedSkills: run.loadedSkills,
                 toolTrace: replyTrace

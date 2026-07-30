@@ -137,7 +137,7 @@ public struct StudyAgentCourseItem: Codable, Equatable, Sendable {
     }
 }
 
-public struct StudyAgentCourseRelation: Codable, Equatable, Sendable {
+public struct StudyAgentCourseRelation: Codable, Equatable, Hashable, Sendable {
     public var noteItemID: String
     public var sourceItemID: String
 
@@ -476,6 +476,18 @@ public struct StudyAgentNoteProposal: Codable, Equatable, Sendable {
     }
 }
 
+public struct StudyAgentRelationProposal: Codable, Equatable, Sendable {
+    public var noteItemID: String
+    public var sourceItemID: String
+    public var contextRevision: String
+
+    public init(noteItemID: String, sourceItemID: String, contextRevision: String) {
+        self.noteItemID = noteItemID
+        self.sourceItemID = sourceItemID
+        self.contextRevision = contextRevision
+    }
+}
+
 public struct StudyAgentMemoryUpdateEntry: Codable, Equatable, Sendable {
     public var kind: LearningMemoryKind
     public var text: String
@@ -569,6 +581,7 @@ public struct StudyAgentReply: Equatable, Sendable {
     public var richAnswer: RichAnswerPresentation?
     public var sources: [AgentReplySource]
     public var noteProposal: StudyAgentNoteProposal?
+    public var relationProposal: StudyAgentRelationProposal?
     public var learningUpdate: StudyAgentLearningUpdate?
     public var loadedSkills: [StudyAgentLoadedSkill]
     public var toolTrace: [String]
@@ -579,6 +592,7 @@ public struct StudyAgentReply: Equatable, Sendable {
         richAnswer: RichAnswerPresentation? = nil,
         sources: [AgentReplySource] = [],
         noteProposal: StudyAgentNoteProposal? = nil,
+        relationProposal: StudyAgentRelationProposal? = nil,
         learningUpdate: StudyAgentLearningUpdate? = nil,
         loadedSkills: [StudyAgentLoadedSkill] = [],
         toolTrace: [String] = []
@@ -588,6 +602,7 @@ public struct StudyAgentReply: Equatable, Sendable {
         self.richAnswer = richAnswer
         self.sources = sources
         self.noteProposal = noteProposal
+        self.relationProposal = relationProposal
         self.learningUpdate = learningUpdate
         self.loadedSkills = loadedSkills
         self.toolTrace = toolTrace

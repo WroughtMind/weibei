@@ -110,6 +110,7 @@ public enum PiRPCIncomingMessage: Equatable, Sendable {
     )
     case richAnswer(id: String, data: Data)
     case noteProposal(id: String, StudyAgentNoteProposal)
+    case relationProposal(id: String, StudyAgentRelationProposal)
     case learningUpdate(id: String, StudyAgentLearningUpdate)
     case toolFailed(id: String, name: String, message: String)
     case agentEnded(text: String, stopReason: String?, error: String?, provider: String?, model: String?)
@@ -393,6 +394,21 @@ public enum PiRPCMessageDecoder {
                     StudyAgentNoteProposal(
                         markdown: markdown,
                         evidence: details["evidence"] as? [String] ?? [],
+                        contextRevision: revision
+                    )
+                )
+            }
+            if name == "weibei_relation_proposal",
+               let details = result?["details"] as? [String: Any],
+               details["kind"] as? String == "relation_proposal",
+               let noteItemID = details["noteItemID"] as? String,
+               let sourceItemID = details["sourceItemID"] as? String,
+               let revision = details["contextRevision"] as? String {
+                return .relationProposal(
+                    id: object["toolCallId"] as? String ?? "",
+                    StudyAgentRelationProposal(
+                        noteItemID: noteItemID,
+                        sourceItemID: sourceItemID,
                         contextRevision: revision
                     )
                 )

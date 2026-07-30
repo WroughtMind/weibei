@@ -53,6 +53,7 @@ func runPiTerminalRuntimeSelfChecks() async throws {
     try await checkMeaningfulThinkingKeepsRunAlive(fixture)
     try await checkRejectedRichAnswerKeepsSafeNarrative(fixture)
     try await checkRejectedActionKeepsOrdinaryAnswer(fixture)
+    try await checkRelationProposalUsesCurrentCourseCatalog(fixture)
     try await checkAutomaticFocusSourceAttachesWithoutContextTool(fixture)
     try await checkContextSnapshotLivesUntilProcessShutdown(fixture)
     try await checkConversationBindingLaunchContract(fixture)
@@ -451,6 +452,84 @@ private func checkRejectedActionKeepsOrdinaryAnswer(
     } catch {
         await runtime.shutdown()
         throw error
+    }
+}
+
+private func checkRelationProposalUsesCurrentCourseCatalog(
+    _ fixture: PiTerminalRuntimeFixture
+) async throws {
+    let runtime = PiAgentRuntime(
+        executableURL: fixture.executableURL,
+        runtimeDirectory: try fixture.workingDirectory(named: "RelationProposalRuntime"),
+        runInactivityTimeoutNanoseconds: 2_000_000_000
+    )
+    let request = StudyAgentRequest(
+        purpose: .conversation,
+        question: "建议把这份笔记关联到另一份材料",
+        materialTitle: "",
+        materialText: "",
+        noteTitle: "",
+        noteText: "",
+        courseContext: StudyAgentCourseContext(
+            title: "测试课程",
+            catalog: [
+                StudyAgentCourseCatalogItem(
+                    id: "persistent-note",
+                    title: "利率笔记",
+                    subtitle: "测试笔记",
+                    kind: "markdown",
+                    role: "note"
+                ),
+                StudyAgentCourseCatalogItem(
+                    id: "persistent-material-a",
+                    title: "利率材料",
+                    subtitle: "测试文稿",
+                    kind: "markdown",
+                    role: "material"
+                ),
+                StudyAgentCourseCatalogItem(
+                    id: "persistent-material-b",
+                    title: "费雪方程",
+                    subtitle: "测试文稿",
+                    kind: "markdown",
+                    role: "material"
+                ),
+            ],
+            relations: [
+                StudyAgentCourseRelation(
+                    noteItemID: "persistent-note",
+                    sourceItemID: "persistent-material-a"
+                ),
+            ]
+        ),
+        projectScope: StudyAgentProjectScope(
+            kind: .course,
+            chatID: "relation-proposal-chat",
+            courseID: UUID().uuidString.lowercased()
+        ),
+        contextRevision: "relation-proposal-test"
+    )
+
+    let reply = try await runtime.respond(
+        to: request,
+        sessionID: UUID(),
+        workingDirectory: try fixture.workingDirectory(named: "RelationProposalMode"),
+        progress: nil
+    )
+    await runtime.shutdown()
+
+    guard reply.text == "关系建议不影响正文。",
+          reply.relationProposal == StudyAgentRelationProposal(
+              noteItemID: "persistent-note",
+              sourceItemID: "persistent-material-b",
+              contextRevision: "relation-proposal-test"
+          ),
+          reply.toolTrace.filter({
+              $0.hasPrefix("weibei_relation_proposal:host_rejected=")
+          }).count == 2 else {
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "PI relation proposal escaped the current course catalog or swallowed the answer"
+        )
     }
 }
 
@@ -1112,6 +1191,7 @@ static void start_emitter(void) {
     int thinking_mode = strstr(cwd, "ThinkingMode") != NULL;
     int rich_fallback_mode = strstr(cwd, "RichFallbackMode") != NULL;
     int direct_answer_mode = strstr(cwd, "DirectAnswerMode") != NULL;
+    int relation_proposal_mode = strstr(cwd, "RelationProposalMode") != NULL;
     int focus_answer_mode = strstr(cwd, "FocusAnswerMode") != NULL;
     int bridge_mode = strstr(cwd, "BridgeProject") != NULL;
     emitter_pid = fork();
@@ -1169,6 +1249,15 @@ static void start_emitter(void) {
             "{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"%s\"}],\"stopReason\":\"stop\"}]}\n",
             has_chat_id ? "普通回答没有来源也能显示。" : "默认全局 Chat 身份缺失。"
         );
+        fflush(stdout);
+        _exit(0);
+    }
+
+    if (relation_proposal_mode) {
+        printf("{\"type\":\"tool_execution_end\",\"toolCallId\":\"existing-relation\",\"toolName\":\"weibei_relation_proposal\",\"isError\":false,\"result\":{\"details\":{\"kind\":\"relation_proposal\",\"noteItemID\":\"course-item-1\",\"sourceItemID\":\"course-item-2\",\"contextRevision\":\"relation-proposal-test\"}}}\n");
+        printf("{\"type\":\"tool_execution_end\",\"toolCallId\":\"swapped-relation\",\"toolName\":\"weibei_relation_proposal\",\"isError\":false,\"result\":{\"details\":{\"kind\":\"relation_proposal\",\"noteItemID\":\"course-item-2\",\"sourceItemID\":\"course-item-1\",\"contextRevision\":\"relation-proposal-test\"}}}\n");
+        printf("{\"type\":\"tool_execution_end\",\"toolCallId\":\"valid-relation\",\"toolName\":\"weibei_relation_proposal\",\"isError\":false,\"result\":{\"details\":{\"kind\":\"relation_proposal\",\"noteItemID\":\"course-item-1\",\"sourceItemID\":\"course-item-3\",\"contextRevision\":\"relation-proposal-test\"}}}\n");
+        printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"关系建议不影响正文。\"}],\"stopReason\":\"stop\"}]}\n");
         fflush(stdout);
         _exit(0);
     }

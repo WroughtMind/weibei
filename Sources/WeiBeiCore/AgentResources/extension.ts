@@ -19,6 +19,7 @@ const VISUAL_ASSET_TOOL = "weibei_visual_asset";
 const LEARNING_MEMORY_TOOL = "weibei_learning_memory";
 const LEARNING_UPDATE_TOOL = "weibei_learning_update";
 const NOTE_PROPOSAL_TOOL = "weibei_note_proposal";
+const RELATION_PROPOSAL_TOOL = "weibei_relation_proposal";
 const READ_TOOL = "read";
 const LS_TOOL = "ls";
 const FIND_TOOL = "find";
@@ -47,6 +48,7 @@ const ALLOWED_TOOLS = new Set([
   LEARNING_MEMORY_TOOL,
   LEARNING_UPDATE_TOOL,
   NOTE_PROPOSAL_TOOL,
+  RELATION_PROPOSAL_TOOL,
   READ_TOOL,
   LS_TOOL,
   FIND_TOOL,
@@ -648,6 +650,13 @@ interface NoteProposalDetails {
   kind: "note_proposal";
   markdown: string;
   evidence: string[];
+  contextRevision: string;
+}
+
+interface RelationProposalDetails {
+  kind: "relation_proposal";
+  noteItemID: string;
+  sourceItemID: string;
   contextRevision: string;
 }
 
@@ -10910,6 +10919,83 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           {
             type: "text",
             text: "笔记建议格式与上下文修订号已校验；这仍是待确认建议，尚未写回任何笔记。",
+          },
+        ],
+        details,
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: RELATION_PROPOSAL_TOOL,
+    label: "提出关系建议",
+    description:
+      "向魏碑返回一份当前课程内笔记与材料的待确认关联。它不会建立关系，也不接受关系类型。",
+    promptSnippet: "提交当前课程内尚未建立的笔记与材料关联建议",
+    parameters: Type.Object(
+      {
+        noteItemID: Type.String({
+          minLength: 1,
+          maxLength: LIMITS.identifier,
+          description: "当前课程 catalog 中 role 为 note 的条目 ID",
+        }),
+        sourceItemID: Type.String({
+          minLength: 1,
+          maxLength: LIMITS.identifier,
+          description: "当前课程 catalog 中 role 为 material 的条目 ID",
+        }),
+        contextRevision: Type.String({
+          minLength: 1,
+          maxLength: LIMITS.identifier,
+          description: "本轮自动焦点消息或 weibei_context 返回的 contextRevision",
+        }),
+      },
+      { additionalProperties: false },
+    ),
+    executionMode: "sequential",
+    async execute(_toolCallId, params) {
+      const current = await readCurrentSnapshot();
+      if (current.project.kind !== "course" || !current.project.courseID) {
+        throw new Error("只有课程 Chat 可以提出关系建议");
+      }
+      if (params.contextRevision !== current.contextRevision) {
+        throw new Error(
+          `关系建议的 contextRevision 不匹配；当前修订号为 ${current.contextRevision}，请重新读取上下文`,
+        );
+      }
+      const catalogByID = new Map(
+        current.course.catalog.map((item) => [item.id, item] as const),
+      );
+      const note = catalogByID.get(params.noteItemID);
+      const source = catalogByID.get(params.sourceItemID);
+      if (note?.role !== "note" || source?.role !== "material") {
+        throw new Error("关系建议必须选择当前课程中的一份笔记和一份材料");
+      }
+      if (note.id === source.id) {
+        throw new Error("关系建议的笔记和材料不能是同一个条目");
+      }
+      if (
+        current.course.relations.some(
+          (relation) =>
+            relation.noteItemID === note.id && relation.sourceItemID === source.id,
+        ) ||
+        note.linkedItemIDs.includes(source.id) ||
+        source.linkedItemIDs.includes(note.id)
+      ) {
+        throw new Error("这份笔记与材料已经建立关系");
+      }
+
+      const details: RelationProposalDetails = {
+        kind: "relation_proposal",
+        noteItemID: note.id,
+        sourceItemID: source.id,
+        contextRevision: current.contextRevision,
+      };
+      return {
+        content: [
+          {
+            type: "text",
+            text: "关系建议已校验并交给魏碑；这仍是待确认建议，尚未建立关系。",
           },
         ],
         details,

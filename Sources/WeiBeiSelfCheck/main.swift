@@ -4037,10 +4037,11 @@ expect(workspaceStoreSource.contains("private func noteBlockForAgentAnswer")
     && workspaceStoreSource.contains("guard !text.hasPrefix(\"#\") else { return text }")
     && workspaceStoreSource.contains("return \"## \\(ui(\"整理建议\", \"Organization suggestion\"))\\n\\(text)\"")
     && workspaceStoreSource.contains("private func lastAgentAnswerContentForCurrentNote()")
-    && workspaceStoreSource.contains("return action.proposedMarkdown ?? answer.text")
-    && workspaceStoreSource.contains("targetItemID != activeNoteItemID")
+    && workspaceStoreSource.contains("lastUsableAgentAnswer?.text")
+    && workspaceStoreSource.contains("if let proposal = reply.noteProposal,")
+    && workspaceStoreSource.contains("let sentNoteItemID")
     && workspaceStoreSource.contains("markdown: \"\\n\\(noteBlockForAgentAnswer(content))\"")
-    && !workspaceStoreSource.contains("## Agent 整理建议"), "agent note writeback prefers a revision-matched PI proposal before falling back to a reader-facing answer section")
+    && !workspaceStoreSource.contains("## Agent 整理建议"), "manual answer writeback stays separate from fixed-target PI proposal cards")
 expect(workspaceStoreSource.contains("func createBlankNotebookNote()")
     && workspaceStoreSource.contains("func createNotebookNoteFromCurrentMaterial()")
     && workspaceStoreSource.contains("func promptCreateBlankNotebookNote()")
@@ -4282,7 +4283,8 @@ expect(notesAgentSource.contains("func weibeiPaneHeaderChrome(appearanceMode: We
     && notesAgentSource.contains("store.clearCurrentSessionInferredMemory()")
     && !agentPaneHeaderSource.contains("agentToolButton(")
     && !notesAgentSource.contains("private func agentToolButton")
-    && notesAgentSource.contains("Button(store.agentWriteActionTitle)")
+    && notesAgentSource.contains("AgentReplyActionCard(")
+    && notesAgentSource.contains("建议写入内容：")
     && notesAgentSource.contains("Button(store.ui(\"替换\", \"Replace\"")
     && !notesAgentSource.contains(".labelStyle(.titleAndIcon)\n        }\n        .buttonStyle(WeiBeiTextActionButtonStyle())")
     && notePaneHeaderSource.contains(".background(WeiBeiTheme.paper)")
@@ -4985,6 +4987,8 @@ let replyAction = AgentReplyAction(
     evidence: ["[材料：利率]"],
     contextRevision: "revision-1",
     baselineContentDigest: "digest",
+    resultContentDigest: "written-digest",
+    createdRelationID: UUID(uuidString: "30000000-0000-0000-0000-000000000008"),
     createdAt: Date(timeIntervalSince1970: 10),
     updatedAt: Date(timeIntervalSince1970: 11)
 )
