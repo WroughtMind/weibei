@@ -13,6 +13,7 @@ enum RichAnswerVerificationFixture {
         case image = "rich-answer-image"
         case comparison = "rich-answer-comparison"
         case calculation = "rich-answer-calculation"
+        case constraint = "rich-answer-constraint"
         case pendulum = "rich-answer-pendulum"
         case sequence = "rich-answer-sequence"
 
@@ -33,9 +34,11 @@ enum RichAnswerVerificationFixture {
             case .image:
                 return "在样例版面上覆盖三分线、视觉重心和留白区域。"
             case .comparison:
-                return "画出斜面、物块和受力方向，让我拖动物块观察位置变化。"
+                return "比较物块在斜面低位、中位和高位时的受力方向，让我拖动位置核对哪些方向改变、哪些不变。"
             case .calculation:
                 return "让我调异常值，看均值怎样被拉动。"
+            case .constraint:
+                return "把 60 分钟复习时间分给概念和练习；让我调整概念时间，同时保证两项总和始终是 60 分钟。"
             case .pendulum:
                 return "这是一条通用原语验收题：当前目录没有预制单摆组件，请组合通用原语画出摆长 L 与周期 T 的关系，让我拖动摆长看曲线、探针和读数联动。"
             case .sequence:
@@ -60,9 +63,11 @@ enum RichAnswerVerificationFixture {
             case .image:
                 return "图像、比例线、区域和开关共同组成叠层，不是固定艺术模板。"
             case .comparison:
-                return "物块沿斜面移动，重力与支持力跟随当前位置更新。"
+                return "低位、中位和高位放在同一套受力基准里比较：位置改变，重力仍竖直向下，支持力仍垂直斜面。"
             case .calculation:
                 return "实体柱形与均值读数共用同一异常值参数。"
+            case .constraint:
+                return "概念时间与练习时间由同一个分配参数联动，两项始终满足总计 60 分钟。"
             case .pendulum:
                 return "小角度近似下，周期按摆长的平方根增长；下面的曲线、探针和读数完全由通用原语组合。"
             case .sequence:
@@ -87,9 +92,11 @@ enum RichAnswerVerificationFixture {
             case .image:
                 return "艺术设计：原图、比例线和观察区域叠层"
             case .comparison:
-                return "物理实验：斜面、物块和受力矢量联动"
+                return "物理比较：低、中、高三个位置共用同一受力方向基准"
             case .calculation:
                 return "统计实验：柱形分布与均值同步变化"
+            case .constraint:
+                return "约束计算：两项分配联动且总和固定为 60 分钟"
             case .pendulum:
                 return "长尾验收：通用路径、探针、滑杆与读数组合单摆关系"
             case .sequence:
@@ -127,6 +134,7 @@ enum RichAnswerVerificationFixture {
 
     static func presentation(for scenario: String) -> RichAnswerPresentation {
         ensureVerificationAssets()
+        ensureFixtureContracts()
         if scenario == openUIProgramScenario {
             return openUIProgramPresentation
         }
@@ -135,7 +143,7 @@ enum RichAnswerVerificationFixture {
         }
         let examples = scenario == galleryScenario ? Example.allCases : [example(for: scenario)]
         let scenes = examples.map(scene)
-        return RichAnswerEngine.prepare(
+        let presentation = RichAnswerEngine.prepare(
             envelope: RichAnswerEnvelope(
                 schemaVersion: 2,
                 contextRevision: contextRevision,
@@ -169,6 +177,17 @@ enum RichAnswerVerificationFixture {
                 resourceBudget: RichAnswerResourceBudget(maxScenes: 12)
             )
         )
+        let truthfulFixtureExamples: Set<Example> = [.text, .comparison, .constraint]
+        let requiredSceneIDs = Set(
+            examples
+                .filter(truthfulFixtureExamples.contains)
+                .map { scene($0).id }
+        )
+        precondition(
+            Set(presentation.scenes.map(\.id)).isSuperset(of: requiredSceneIDs),
+            "本轮修正的富回答验证素材未全部通过协议验收"
+        )
+        return presentation
     }
 
     static func assetPreview(for assetID: String) -> NSImage? {
@@ -195,6 +214,55 @@ enum RichAnswerVerificationFixture {
 
     private static func ensureVerificationAssets() {
         _ = verificationAssetSelfCheck
+    }
+
+    private static let fixtureContractSelfCheck: Void = {
+        let examples = Example.allCases.map { ($0, scene($0)) }
+        precondition(
+            Set(examples.map { $0.1.family }) == Set(RichAnswerCapabilityFamily.allCases),
+            "富回答验证素材必须覆盖八个能力家族"
+        )
+
+        let textScene = scene(.text)
+        let textToggleBinding = textScene.ui?.nodes.first(where: { $0.id == "lit-alignment-toggle" })?.bindingID
+        precondition(
+            textToggleBinding != nil
+                && textScene.ui?.nodes.contains(where: {
+                    $0.role == .region && $0.bindingID == textToggleBinding
+                }) == true
+                && textScene.ui?.nodes.contains(where: {
+                    $0.role == .metric && $0.bindingID == textToggleBinding && $0.datasetID != nil
+                }) == true,
+            "文字对齐素材的控件必须真实改变画布标记"
+        )
+
+        let comparisonScene = scene(.comparison)
+        precondition(
+            comparisonScene.family == .comparisonAndEvaluation
+                && comparisonScene.ui?.nodes.contains(where: { $0.id == "physics-position-comparison" }) == true,
+            "比较素材必须展示可核对的并列状态"
+        )
+
+        let constraintScene = scene(.constraint)
+        let conceptRows = constraintScene.ui?.datasets.first(where: { $0.id == "allocation-concept" })?.rows ?? []
+        let practiceRows = constraintScene.ui?.datasets.first(where: { $0.id == "allocation-practice" })?.rows ?? []
+        let satisfiesFixedTotal = conceptRows.allSatisfy { concept in
+            practiceRows.contains { practice in
+                practice.value == concept.value
+                    && abs((concept.result ?? 0) + (practice.result ?? 0) - 60) < 0.001
+            }
+        }
+        precondition(
+            constraintScene.family == .calculationAndConstraints
+                && !conceptRows.isEmpty
+                && conceptRows.count == practiceRows.count
+                && satisfiesFixedTotal,
+            "约束计算素材必须在每个可选状态保持两项总和为 60"
+        )
+    }()
+
+    private static func ensureFixtureContracts() {
+        _ = fixtureContractSelfCheck
     }
 
     private static let openUIProgramPresentation = RichAnswerEngine.prepare(
@@ -417,6 +485,8 @@ enum RichAnswerVerificationFixture {
             return physicsScene
         case .calculation:
             return statisticsScene
+        case .constraint:
+            return allocationConstraintScene
         case .pendulum:
             return pendulumScene
         case .sequence:
@@ -472,6 +542,11 @@ enum RichAnswerVerificationFixture {
             excerpt: "固定四个观测值后，提高第五个观测值会明显拉高均值。"
         ),
         RichAnswerEvidence(
+            id: "allocation-source",
+            sourceLabel: "[验收材料：复习时间分配]",
+            excerpt: "本次复习总时长固定为 60 分钟；概念理解时间与练习时间之和必须始终等于 60 分钟。"
+        ),
+        RichAnswerEvidence(
             id: "finance-source",
             sourceLabel: "[验收材料：现金流传导]",
             excerpt: "一期自由现金流现值 = 基准收入 × 收入增长倍数 × 现金流率 ÷ 折现倍数。"
@@ -494,7 +569,7 @@ enum RichAnswerVerificationFixture {
         family: .textAndAlignment,
         evidenceID: "literature-source",
         nodes: [
-            RichAnswerUINode(id: "lit-root", role: .vstack, children: ["lit-head", "lit-columns", "lit-source"], spacing: .loose),
+            RichAnswerUINode(id: "lit-root", role: .vstack, children: ["lit-head", "lit-columns", "lit-alignment-canvas", "lit-alignment-controls", "lit-source"], spacing: .loose),
             RichAnswerUINode(id: "lit-head", role: .text, label: "文学 · 原文批注", text: "不是把解释堆在原文下面，而是让原句与观察依据互相对照。", evidenceIDs: ["literature-source"], tone: .accent, emphasis: .strong),
             RichAnswerUINode(id: "lit-columns", role: .hstack, children: ["lit-quote-panel", "lit-notes"], spacing: .loose),
             RichAnswerUINode(id: "lit-quote-panel", role: .panel, children: ["lit-quote"], size: .large),
@@ -503,8 +578,22 @@ enum RichAnswerVerificationFixture {
             RichAnswerUINode(id: "lit-note-a", role: .text, label: "垂直", text: "“孤烟直”把视线向上拉。", evidenceIDs: ["literature-source"], tone: .accent),
             RichAnswerUINode(id: "lit-note-b", role: .text, label: "水平", text: "“长河”展开辽阔的横向尺度。", evidenceIDs: ["literature-source"], tone: .muted),
             RichAnswerUINode(id: "lit-note-c", role: .text, label: "圆形", text: "“落日圆”成为稳定的视觉焦点。", evidenceIDs: ["literature-source"]),
+            RichAnswerUINode(id: "lit-alignment-canvas", role: .canvas, children: ["lit-vertical-region", "lit-horizontal-region", "lit-circle-region"], label: "意象空间对齐", size: .compact),
+            RichAnswerUINode(id: "lit-vertical-region", role: .region, label: "孤烟 · 垂直", bindingID: "lit-alignment", evidenceIDs: ["literature-source"], region: RichAnswerRegion(x: 0.18, y: 0.12, width: 0.12, height: 0.72), tone: .accent),
+            RichAnswerUINode(id: "lit-horizontal-region", role: .region, label: "长河 · 水平", bindingID: "lit-alignment", evidenceIDs: ["literature-source"], region: RichAnswerRegion(x: 0.08, y: 0.68, width: 0.78, height: 0.12), tone: .muted),
+            RichAnswerUINode(id: "lit-circle-region", role: .region, label: "落日 · 圆形焦点", bindingID: "lit-alignment", evidenceIDs: ["literature-source"], region: RichAnswerRegion(x: 0.68, y: 0.18, width: 0.18, height: 0.22), tone: .positive),
+            RichAnswerUINode(id: "lit-alignment-controls", role: .hstack, children: ["lit-alignment-toggle", "lit-alignment-count"], spacing: .regular),
+            RichAnswerUINode(id: "lit-alignment-toggle", role: .toggle, label: "显示意象空间标记", bindingID: "lit-alignment"),
+            RichAnswerUINode(id: "lit-alignment-count", role: .metric, label: "当前显示标记", unit: "个", datasetID: "lit-alignment-state", bindingID: "lit-alignment", evidenceIDs: ["literature-source"], tone: .accent, emphasis: .strong),
             RichAnswerUINode(id: "lit-source", role: .evidence, evidenceIDs: ["literature-source"]),
-        ]
+        ],
+        datasets: [
+            RichAnswerUIDataset(id: "lit-alignment-state", rows: [
+                RichAnswerUIDataRow(id: "lit-alignment-hidden", x: 0, y: 0, value: 0, result: 0, label: "隐藏标记", evidenceIDs: ["literature-source"]),
+                RichAnswerUIDataRow(id: "lit-alignment-visible", x: 1, y: 1, value: 1, result: 3, label: "显示三个标记", evidenceIDs: ["literature-source"]),
+            ]),
+        ],
+        bindings: [RichAnswerUIBinding(id: "lit-alignment", label: "意象空间标记", minimum: 0, maximum: 1, step: 1, initialValue: 1)]
     )
 
     private static let mathematicsScene = generatedScene(
@@ -695,12 +784,12 @@ enum RichAnswerVerificationFixture {
 
     private static let physicsScene = generatedScene(
         id: "physics-incline",
-        title: "物理 · 斜面受力实验",
-        family: .timeAndSpace,
+        title: "物理 · 斜面位置受力比较",
+        family: .comparisonAndEvaluation,
         evidenceID: "physics-source",
         nodes: [
             RichAnswerUINode(id: "physics-root", role: .vstack, children: ["physics-head", "physics-layout", "physics-slider", "physics-source"], spacing: .regular),
-            RichAnswerUINode(id: "physics-head", role: .text, label: "物理 · 物块在斜面上", text: "拖动物块，比较物体位置、重力方向与斜面支持力。", evidenceIDs: ["physics-source"], tone: .accent, emphasis: .strong),
+            RichAnswerUINode(id: "physics-head", role: .text, label: "物理 · 低位、中位与高位", text: "拖动物块比较三个位置：位置改变，但两种力的方向基准不变。", evidenceIDs: ["physics-source"], tone: .accent, emphasis: .strong),
             RichAnswerUINode(id: "physics-layout", role: .hstack, children: ["physics-canvas", "physics-side"], spacing: .loose),
             RichAnswerUINode(id: "physics-canvas", role: .canvas, children: ["physics-plane", "physics-block", "physics-gravity", "physics-normal", "physics-labels"], size: .large),
             RichAnswerUINode(id: "physics-plane", role: .area, datasetID: "physics-plane-shape", evidenceIDs: ["physics-source"], fill: .soft, tone: .muted),
@@ -708,10 +797,13 @@ enum RichAnswerVerificationFixture {
             RichAnswerUINode(id: "physics-gravity", role: .vector, datasetID: "physics-gravity-vectors", bindingID: "physics-position", evidenceIDs: ["physics-source"], tone: .accent, emphasis: .strong),
             RichAnswerUINode(id: "physics-normal", role: .vector, datasetID: "physics-normal-vectors", bindingID: "physics-position", evidenceIDs: ["physics-source"], tone: .positive, emphasis: .strong),
             RichAnswerUINode(id: "physics-labels", role: .label, datasetID: "physics-force-labels", evidenceIDs: ["physics-source"], tone: .ink),
-            RichAnswerUINode(id: "physics-side", role: .vstack, children: ["physics-position-value", "physics-gravity-note", "physics-normal-note"], spacing: .loose),
+            RichAnswerUINode(id: "physics-side", role: .vstack, children: ["physics-position-value", "physics-position-comparison", "physics-gravity-note", "physics-normal-note"], spacing: .loose),
             RichAnswerUINode(id: "physics-position-value", role: .metric, label: "沿斜面位置", unit: "m", datasetID: "physics-block-positions", bindingID: "physics-position", evidenceIDs: ["physics-source"], tone: .accent, emphasis: .strong),
-            RichAnswerUINode(id: "physics-gravity-note", role: .text, label: "重力 g", text: "无论物块在哪里，方向始终竖直向下。", evidenceIDs: ["physics-source"], tone: .accent),
-            RichAnswerUINode(id: "physics-normal-note", role: .text, label: "支持力 N", text: "方向始终垂直于斜面。", evidenceIDs: ["physics-source"], tone: .positive),
+            RichAnswerUINode(id: "physics-position-comparison", role: .hstack, children: ["physics-low-state", "physics-high-state"], spacing: .regular),
+            RichAnswerUINode(id: "physics-low-state", role: .text, label: "低位 0 m", text: "g ↓；N ⟂ 斜面", evidenceIDs: ["physics-source"], tone: .muted),
+            RichAnswerUINode(id: "physics-high-state", role: .text, label: "高位 10 m", text: "g ↓；N ⟂ 斜面", evidenceIDs: ["physics-source"], tone: .accent),
+            RichAnswerUINode(id: "physics-gravity-note", role: .text, label: "比较结论 · 重力 g", text: "低位、中位和高位都竖直向下。", evidenceIDs: ["physics-source"], tone: .accent),
+            RichAnswerUINode(id: "physics-normal-note", role: .text, label: "比较结论 · 支持力 N", text: "低位、中位和高位都垂直于斜面。", evidenceIDs: ["physics-source"], tone: .positive),
             RichAnswerUINode(id: "physics-slider", role: .slider, label: "沿斜面拖动物块", bindingID: "physics-position"),
             RichAnswerUINode(id: "physics-source", role: .evidence, evidenceIDs: ["physics-source"]),
         ],
@@ -768,6 +860,53 @@ enum RichAnswerVerificationFixture {
             RichAnswerUIDataRow(id: "stats-x20", x: 0.90, y: 0.80, value: 20, result: 6.4, label: "x=20", evidenceIDs: ["statistics-source"]),
         ])],
         bindings: [RichAnswerUIBinding(id: "stats-outlier", label: "异常值", minimum: 4, maximum: 20, step: 1, initialValue: 12)]
+    )
+
+    private static let allocationConstraintScene = generatedScene(
+        id: "study-time-allocation",
+        title: "学习计划 · 固定总时长分配",
+        family: .calculationAndConstraints,
+        evidenceID: "allocation-source",
+        nodes: [
+            RichAnswerUINode(id: "allocation-root", role: .vstack, children: ["allocation-head", "allocation-metrics", "allocation-canvas", "allocation-slider", "allocation-source"], spacing: .regular),
+            RichAnswerUINode(id: "allocation-head", role: .text, label: "约束 · 总计 60 分钟", text: "调整概念理解时间，练习时间自动补足；两项之和始终保持 60 分钟。", evidenceIDs: ["allocation-source"], tone: .accent, emphasis: .strong),
+            RichAnswerUINode(id: "allocation-metrics", role: .hstack, children: ["allocation-concept-metric", "allocation-practice-metric", "allocation-total"], spacing: .loose),
+            RichAnswerUINode(id: "allocation-concept-metric", role: .metric, label: "概念理解", unit: "分钟", datasetID: "allocation-concept", bindingID: "allocation-concept-time", evidenceIDs: ["allocation-source"], tone: .accent, emphasis: .strong),
+            RichAnswerUINode(id: "allocation-practice-metric", role: .metric, label: "练习", unit: "分钟", datasetID: "allocation-practice", bindingID: "allocation-concept-time", evidenceIDs: ["allocation-source"], tone: .positive, emphasis: .strong),
+            RichAnswerUINode(id: "allocation-total", role: .text, label: "硬约束", text: "概念理解 + 练习 = 60 分钟", evidenceIDs: ["allocation-source"], emphasis: .strong),
+            RichAnswerUINode(id: "allocation-canvas", role: .canvas, children: ["allocation-concept-bar", "allocation-practice-bar"], label: "时间分配", yAxis: RichAnswerAxis(label: "分钟", minimum: 0, maximum: 60, unit: "分钟"), size: .compact),
+            RichAnswerUINode(id: "allocation-concept-bar", role: .bar, label: "概念理解", datasetID: "allocation-concept", bindingID: "allocation-concept-time", evidenceIDs: ["allocation-source"], fill: .solid, tone: .accent, emphasis: .strong),
+            RichAnswerUINode(id: "allocation-practice-bar", role: .bar, label: "练习", datasetID: "allocation-practice", bindingID: "allocation-concept-time", evidenceIDs: ["allocation-source"], fill: .solid, tone: .positive, emphasis: .strong),
+            RichAnswerUINode(id: "allocation-slider", role: .slider, label: "概念理解时间", bindingID: "allocation-concept-time"),
+            RichAnswerUINode(id: "allocation-source", role: .evidence, evidenceIDs: ["allocation-source"]),
+        ],
+        datasets: [
+            RichAnswerUIDataset(id: "allocation-concept", rows: [
+                RichAnswerUIDataRow(id: "allocation-concept-10", x: 0.30, y: 10.0 / 60.0, value: 10, result: 10, label: "概念 10 分钟", evidenceIDs: ["allocation-source"]),
+                RichAnswerUIDataRow(id: "allocation-concept-20", x: 0.30, y: 20.0 / 60.0, value: 20, result: 20, label: "概念 20 分钟", evidenceIDs: ["allocation-source"]),
+                RichAnswerUIDataRow(id: "allocation-concept-30", x: 0.30, y: 30.0 / 60.0, value: 30, result: 30, label: "概念 30 分钟", evidenceIDs: ["allocation-source"]),
+                RichAnswerUIDataRow(id: "allocation-concept-40", x: 0.30, y: 40.0 / 60.0, value: 40, result: 40, label: "概念 40 分钟", evidenceIDs: ["allocation-source"]),
+                RichAnswerUIDataRow(id: "allocation-concept-50", x: 0.30, y: 50.0 / 60.0, value: 50, result: 50, label: "概念 50 分钟", evidenceIDs: ["allocation-source"]),
+            ]),
+            RichAnswerUIDataset(id: "allocation-practice", rows: [
+                RichAnswerUIDataRow(id: "allocation-practice-10", x: 0.70, y: 50.0 / 60.0, value: 10, result: 50, label: "练习 50 分钟", evidenceIDs: ["allocation-source"]),
+                RichAnswerUIDataRow(id: "allocation-practice-20", x: 0.70, y: 40.0 / 60.0, value: 20, result: 40, label: "练习 40 分钟", evidenceIDs: ["allocation-source"]),
+                RichAnswerUIDataRow(id: "allocation-practice-30", x: 0.70, y: 30.0 / 60.0, value: 30, result: 30, label: "练习 30 分钟", evidenceIDs: ["allocation-source"]),
+                RichAnswerUIDataRow(id: "allocation-practice-40", x: 0.70, y: 20.0 / 60.0, value: 40, result: 20, label: "练习 20 分钟", evidenceIDs: ["allocation-source"]),
+                RichAnswerUIDataRow(id: "allocation-practice-50", x: 0.70, y: 10.0 / 60.0, value: 50, result: 10, label: "练习 10 分钟", evidenceIDs: ["allocation-source"]),
+            ]),
+        ],
+        bindings: [
+            RichAnswerUIBinding(
+                id: "allocation-concept-time",
+                label: "概念理解时间",
+                minimum: 10,
+                maximum: 50,
+                step: 10,
+                initialValue: 30,
+                unit: "分钟"
+            ),
+        ]
     )
 
     private static let pendulumScene = generatedScene(

@@ -45,6 +45,19 @@ struct WeiBeiPiCheckMain {
             exit(1)
         }
 
+        if CommandLine.arguments.contains("--rich-answer-support-coverage") {
+            do {
+                try runRichAnswerProtocolSelfCheck()
+                let checklist = RichAnswerSupportCoverageChecklist.make()
+                print("富回答支持覆盖清单（仅表示协议合同和压力样本映射，不代表真实窗口全量验收）")
+                checklist.outputLines.forEach { print($0) }
+            } catch {
+                fputs("rich-answer support coverage failed: \(error.localizedDescription)\n", stderr)
+                exit(1)
+            }
+            return
+        }
+
         if CommandLine.arguments.contains("--rich-answer-protocol") {
             do {
                 try await RichAnswerPythonArtifactSelfCheck.runExecutorChecks()
