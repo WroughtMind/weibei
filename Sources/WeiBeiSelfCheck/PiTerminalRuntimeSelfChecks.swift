@@ -55,10 +55,154 @@ func runPiTerminalRuntimeSelfChecks() async throws {
     try await checkRejectedActionKeepsOrdinaryAnswer(fixture)
     try await checkContextSnapshotLivesUntilProcessShutdown(fixture)
     try await checkConversationBindingLaunchContract(fixture)
+    try await checkHostCourseToolBridge(fixture)
+    try await checkHostCourseToolBridgeRejectsSymlinkRoot(fixture)
     try await checkMissingSessionRecoversVisibleHistory(fixture)
     try await checkWrongSessionStateRebuildsOnlyRequestedChat(fixture)
     try await checkUnreadableStoredSessionRebuildsOnce(fixture)
     try await checkStandardProxyEnvironmentIsForwarded(fixture)
+}
+
+private func checkHostCourseToolBridgeRejectsSymlinkRoot(
+    _ fixture: PiTerminalRuntimeFixture
+) async throws {
+    let runtimeDirectory = try fixture.workingDirectory(named: "SymlinkBridgeRuntime")
+    let outsideDirectory = try fixture.workingDirectory(named: "OutsideBridgeResponses")
+    let protectedDirectory = outsideDirectory
+        .appendingPathComponent(UUID().uuidString.lowercased(), isDirectory: true)
+    try FileManager.default.createDirectory(
+        at: protectedDirectory,
+        withIntermediateDirectories: true
+    )
+    let protectedFile = protectedDirectory.appendingPathComponent("keep.txt")
+    try Data("must survive".utf8).write(to: protectedFile)
+    try FileManager.default.createSymbolicLink(
+        at: runtimeDirectory.appendingPathComponent("ToolResponses", isDirectory: true),
+        withDestinationURL: outsideDirectory
+    )
+    let runtime = PiAgentRuntime(
+        executableURL: fixture.executableURL,
+        runtimeDirectory: runtimeDirectory,
+        runInactivityTimeoutNanoseconds: 2_000_000_000
+    )
+    do {
+        _ = try await runtime.respond(
+            to: StudyAgentRequest(
+                purpose: .conversation,
+                question: "不应发送",
+                materialTitle: "",
+                materialText: "",
+                noteTitle: "",
+                noteText: "",
+                projectScope: StudyAgentProjectScope(
+                    kind: .course,
+                    chatID: "symlink-bridge-chat",
+                    courseID: UUID().uuidString.lowercased()
+                ),
+                contextRevision: "symlink-bridge-test"
+            ),
+            sessionID: UUID(),
+            workingDirectory: try fixture.workingDirectory(named: "SymlinkBridgeProject"),
+            hostToolHandler: nil,
+            progress: nil
+        )
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "PI host tool bridge accepted a symbolic-link response root"
+        )
+    } catch let error as PiTerminalRuntimeSelfCheckError {
+        throw error
+    } catch {
+        guard FileManager.default.fileExists(atPath: protectedFile.path) else {
+            throw PiTerminalRuntimeSelfCheckError.failed(
+                "PI host tool bridge deleted content through a symbolic-link response root"
+            )
+        }
+    }
+    await runtime.shutdown()
+}
+
+private func checkHostCourseToolBridge(
+    _ fixture: PiTerminalRuntimeFixture
+) async throws {
+    let runtimeDirectory = try fixture.workingDirectory(named: "BridgeRuntime")
+    let staleResponseDirectory = runtimeDirectory
+        .appendingPathComponent("ToolResponses", isDirectory: true)
+        .appendingPathComponent(UUID().uuidString.lowercased(), isDirectory: true)
+    try FileManager.default.createDirectory(
+        at: staleResponseDirectory,
+        withIntermediateDirectories: true
+    )
+    try Data("stale course response".utf8).write(
+        to: staleResponseDirectory.appendingPathComponent("response.json")
+    )
+    let runtime = PiAgentRuntime(
+        executableURL: fixture.executableURL,
+        runtimeDirectory: runtimeDirectory,
+        runInactivityTimeoutNanoseconds: 2_000_000_000
+    )
+    let request = StudyAgentRequest(
+        purpose: .conversation,
+        question: "查找利率",
+        materialTitle: "",
+        materialText: "",
+        noteTitle: "",
+        noteText: "",
+        courseContext: StudyAgentCourseContext(
+            title: "测试课程",
+            catalog: [
+                StudyAgentCourseCatalogItem(
+                    id: "persistent-material",
+                    title: "利率的含义",
+                    subtitle: "测试文稿",
+                    kind: "markdown",
+                    role: "material"
+                ),
+            ]
+        ),
+        projectScope: StudyAgentProjectScope(
+            kind: .course,
+            chatID: "bridge-chat",
+            courseID: UUID().uuidString.lowercased()
+        ),
+        contextRevision: "bridge-test"
+    )
+    let reply = try await runtime.respond(
+        to: request,
+        sessionID: UUID(),
+        workingDirectory: try fixture.workingDirectory(named: "BridgeProject"),
+        hostToolHandler: { toolRequest in
+            guard toolRequest == .courseSearch(query: "利率", limit: 3) else {
+                throw PiTerminalRuntimeSelfCheckError.failed("PI host bridge received invalid arguments")
+            }
+            return StudyAgentHostToolResult(
+                query: "利率",
+                items: [
+                    StudyAgentHostToolItem(
+                        item: StudyAgentCourseItem(
+                            id: "persistent-material",
+                            title: "利率的含义",
+                            subtitle: "测试文稿",
+                            kind: "markdown",
+                            role: "material",
+                            searchText: "利率是资金的价格。"
+                        )
+                    ),
+                ]
+            )
+        },
+        progress: nil
+    )
+    await runtime.shutdown()
+    guard reply.text == "宿主课程工具桥可用。" else {
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "PI host tool bridge did not return an isolated response (\(reply.text))"
+        )
+    }
+    guard !FileManager.default.fileExists(atPath: staleResponseDirectory.path) else {
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "PI host tool bridge kept a response directory left by a crashed run"
+        )
+    }
 }
 
 private func checkUserStopReturnsImmediately(_ fixture: PiTerminalRuntimeFixture) async throws {
@@ -889,6 +1033,7 @@ static void start_emitter(void) {
     int thinking_mode = strstr(cwd, "ThinkingMode") != NULL;
     int rich_fallback_mode = strstr(cwd, "RichFallbackMode") != NULL;
     int direct_answer_mode = strstr(cwd, "DirectAnswerMode") != NULL;
+    int bridge_mode = strstr(cwd, "BridgeProject") != NULL;
     emitter_pid = fork();
     if (emitter_pid != 0) return;
 
@@ -930,9 +1075,62 @@ static void start_emitter(void) {
     }
 
     if (direct_answer_mode) {
+        char *context = NULL;
+        int has_chat_id = read_context(&context)
+            && strstr(context, "\"chatID\":\"") != NULL
+            && strstr(context, "\"chatID\":\"\"") == NULL;
+        free(context);
         printf("{\"type\":\"tool_execution_end\",\"toolCallId\":\"invalid-note\",\"toolName\":\"weibei_note_proposal\",\"isError\":false,\"result\":{\"details\":{\"kind\":\"note_proposal\",\"markdown\":\"不应写入\",\"evidence\":[],\"contextRevision\":\"stale-revision\"}}}\n");
-        printf("{\"type\":\"message_update\",\"assistantMessageEvent\":{\"type\":\"text_delta\",\"delta\":\"普通回答没有来源也能显示。\"}}\n");
-        printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"普通回答没有来源也能显示。\"}],\"stopReason\":\"stop\"}]}\n");
+        printf(
+            "{\"type\":\"message_update\",\"assistantMessageEvent\":{\"type\":\"text_delta\",\"delta\":\"%s\"}}\n",
+            has_chat_id ? "普通回答没有来源也能显示。" : "默认全局 Chat 身份缺失。"
+        );
+        printf(
+            "{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"%s\"}],\"stopReason\":\"stop\"}]}\n",
+            has_chat_id ? "普通回答没有来源也能显示。" : "默认全局 Chat 身份缺失。"
+        );
+        fflush(stdout);
+        _exit(0);
+    }
+
+    if (bridge_mode) {
+        char *context = NULL;
+        char revision[128] = "";
+        char request_id[128] = "";
+        if (read_context(&context)) {
+            json_value(context, "contextRevision", revision, sizeof(revision));
+            json_value(context, "requestID", request_id, sizeof(request_id));
+            free(context);
+        }
+        emit_context(revision);
+        printf("{\"type\":\"tool_execution_start\",\"toolCallId\":\"bridge-search\",\"toolName\":\"weibei_course_search\",\"args\":{\"query\":\"利率\",\"limit\":3}}\n");
+        fflush(stdout);
+        const char *response_root = getenv("WEIBEI_AGENT_TOOL_RESPONSE_DIR");
+        char response_path[PATH_MAX];
+        snprintf(
+            response_path,
+            sizeof(response_path),
+            "%s/%s/1fdef2b47c9435b713031024ad45758e11d78563def9d62dd9d1157bd89776f1.json",
+            response_root == NULL ? "" : response_root,
+            request_id
+        );
+        int ready = 0;
+        for (int index = 0; index < 250; index++) {
+            FILE *response = fopen(response_path, "r");
+            if (response != NULL) {
+                char buffer[8192] = "";
+                size_t length = fread(buffer, 1, sizeof(buffer) - 1, response);
+                fclose(response);
+                buffer[length] = '\0';
+                ready = strstr(buffer, "\"success\":true") != NULL
+                    && strstr(buffer, "\"toolCallID\":\"bridge-search\"") != NULL
+                    && strstr(buffer, "\"id\":\"course-item-1\"") != NULL;
+                break;
+            }
+            usleep(20000);
+        }
+        printf("{\"type\":\"tool_execution_end\",\"toolCallId\":\"bridge-search\",\"toolName\":\"weibei_course_search\",\"isError\":false,\"result\":{\"details\":{\"kind\":\"course_search\",\"contextRevision\":\"%s\",\"results\":[],\"evidenceLabels\":[],\"jumpEvidence\":{}}}}\n", revision);
+        printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"%s\"}],\"stopReason\":\"stop\"}]}\n", ready ? "宿主课程工具桥可用。" : "宿主课程工具桥缺失。");
         fflush(stdout);
         _exit(0);
     }

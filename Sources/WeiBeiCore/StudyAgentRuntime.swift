@@ -283,6 +283,173 @@ public struct StudyAgentCourseContext: Codable, Equatable, Sendable {
     public static let empty = StudyAgentCourseContext(title: "Course")
 }
 
+public enum StudyAgentScopeKind: String, Codable, Equatable, Sendable {
+    case course
+    case global
+}
+
+public struct StudyAgentFileIdentity: Codable, Equatable, Sendable {
+    public var volumeID: String
+    public var fileID: String
+    public var birthTimeSeconds: String
+    public var birthTimeNanoseconds: String
+
+    public init(_ identity: ImportedFileIdentity) {
+        volumeID = String(identity.volumeID)
+        fileID = String(identity.fileID)
+        birthTimeSeconds = String(identity.birthTimeSeconds)
+        birthTimeNanoseconds = String(identity.birthTimeNanoseconds)
+    }
+}
+
+public struct StudyAgentProjectItem: Codable, Equatable, Sendable {
+    public var itemID: String
+    public var title: String
+    public var kind: String
+    public var role: String
+    public var relativePath: String
+    public var resolvedPath: String
+    public var entryIdentity: StudyAgentFileIdentity?
+    public var targetIdentity: StudyAgentFileIdentity?
+    public var isShared: Bool
+    public var courseIDs: [String]
+    public var courseTitles: [String]
+
+    public init(
+        itemID: String,
+        title: String,
+        kind: String,
+        role: String,
+        relativePath: String,
+        resolvedPath: String,
+        entryIdentity: StudyAgentFileIdentity?,
+        targetIdentity: StudyAgentFileIdentity?,
+        isShared: Bool,
+        courseIDs: [String] = [],
+        courseTitles: [String] = []
+    ) {
+        self.itemID = itemID
+        self.title = title
+        self.kind = kind
+        self.role = role
+        self.relativePath = relativePath
+        self.resolvedPath = resolvedPath
+        self.entryIdentity = entryIdentity
+        self.targetIdentity = targetIdentity
+        self.isShared = isShared
+        self.courseIDs = courseIDs
+        self.courseTitles = courseTitles
+    }
+}
+
+public struct StudyAgentProjectScope: Codable, Equatable, Sendable {
+    public var kind: StudyAgentScopeKind
+    public var chatID: String
+    public var courseID: String?
+    public var courseTitle: String?
+    public var rootPath: String?
+    public var rootIdentity: StudyAgentFileIdentity?
+    public var items: [StudyAgentProjectItem]
+    public var isTruncated: Bool
+
+    public init(
+        kind: StudyAgentScopeKind,
+        chatID: String,
+        courseID: String? = nil,
+        courseTitle: String? = nil,
+        rootPath: String? = nil,
+        rootIdentity: StudyAgentFileIdentity? = nil,
+        items: [StudyAgentProjectItem] = [],
+        isTruncated: Bool = false
+    ) {
+        self.kind = kind
+        self.chatID = chatID
+        self.courseID = courseID
+        self.courseTitle = courseTitle
+        self.rootPath = rootPath
+        self.rootIdentity = rootIdentity
+        self.items = items
+        self.isTruncated = isTruncated
+    }
+
+    public static let empty = StudyAgentProjectScope(kind: .global, chatID: "")
+}
+
+public struct StudyAgentFocus: Codable, Equatable, Sendable {
+    public var chatID: String
+    public var courseID: String?
+    public var materialItemID: String?
+    public var materialTitle: String?
+    public var pageIndex: Int?
+    public var sectionTitle: String?
+    public var sectionLocationID: String?
+    public var sectionOrdinal: Int?
+    public var selectionText: String?
+    public var actionSource: String
+
+    public init(
+        chatID: String,
+        courseID: String?,
+        materialItemID: String?,
+        materialTitle: String?,
+        pageIndex: Int?,
+        sectionTitle: String?,
+        sectionLocationID: String?,
+        sectionOrdinal: Int?,
+        selectionText: String?,
+        actionSource: String
+    ) {
+        self.chatID = chatID
+        self.courseID = courseID
+        self.materialItemID = materialItemID
+        self.materialTitle = materialTitle
+        self.pageIndex = pageIndex
+        self.sectionTitle = sectionTitle
+        self.sectionLocationID = sectionLocationID
+        self.sectionOrdinal = sectionOrdinal
+        self.selectionText = selectionText
+        self.actionSource = actionSource
+    }
+}
+
+public enum StudyAgentHostToolRequest: Equatable, Sendable {
+    case courseSearch(query: String, limit: Int)
+    case courseRead(itemID: String, query: String, location: String?, limit: Int)
+}
+
+public struct StudyAgentHostToolItem: Codable, Equatable, Sendable {
+    public var item: StudyAgentCourseItem
+    public var relativePath: String?
+    public var courseIDs: [String]
+    public var courseTitles: [String]
+
+    public init(
+        item: StudyAgentCourseItem,
+        relativePath: String? = nil,
+        courseIDs: [String] = [],
+        courseTitles: [String] = []
+    ) {
+        self.item = item
+        self.relativePath = relativePath
+        self.courseIDs = courseIDs
+        self.courseTitles = courseTitles
+    }
+}
+
+public struct StudyAgentHostToolResult: Codable, Equatable, Sendable {
+    public var query: String
+    public var items: [StudyAgentHostToolItem]
+
+    public init(query: String, items: [StudyAgentHostToolItem]) {
+        self.query = query
+        self.items = items
+    }
+}
+
+public typealias StudyAgentHostToolHandler = @Sendable (
+    StudyAgentHostToolRequest
+) async throws -> StudyAgentHostToolResult
+
 public struct StudyAgentVisualAsset: Codable, Equatable, Sendable {
     public var id: String
     public var filePath: String
@@ -357,6 +524,8 @@ public struct StudyAgentRequest: Sendable {
     public var selectionSources: [AgentReplySource]
     public var recentMessages: [AgentMessage]
     public var courseContext: StudyAgentCourseContext
+    public var projectScope: StudyAgentProjectScope
+    public var focus: StudyAgentFocus?
     public var visualAssets: [StudyAgentVisualAsset]
     public var learningContext: StudyAgentLearningContext
     public var language: WeiBeiInterfaceLanguage
@@ -378,6 +547,8 @@ public struct StudyAgentRequest: Sendable {
         selectionSources: [AgentReplySource] = [],
         recentMessages: [AgentMessage] = [],
         courseContext: StudyAgentCourseContext = .empty,
+        projectScope: StudyAgentProjectScope = .empty,
+        focus: StudyAgentFocus? = nil,
         visualAssets: [StudyAgentVisualAsset] = [],
         learningContext: StudyAgentLearningContext = .empty,
         language: WeiBeiInterfaceLanguage = .chinese,
@@ -398,6 +569,8 @@ public struct StudyAgentRequest: Sendable {
         self.selectionSources = selectionSources
         self.recentMessages = recentMessages
         self.courseContext = courseContext
+        self.projectScope = projectScope
+        self.focus = focus
         self.visualAssets = visualAssets
         self.learningContext = learningContext
         self.language = language
@@ -791,6 +964,8 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
     public var selection: Source?
     public var recentMessages: [Message]
     public var course: StudyAgentCourseContext
+    public var project: StudyAgentProjectScope
+    public var focus: StudyAgentFocus?
     public var visualAssets: [StudyAgentVisualAsset]
     public var learning: StudyAgentLearningContext
 
@@ -838,6 +1013,24 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
         }
         let boundedCourse = Self.boundedCourseContext(request.courseContext)
         course = boundedCourse.context
+        project = Self.boundedProjectScope(
+            request.projectScope,
+            itemIDMap: boundedCourse.itemIDMap
+        )
+        focus = request.focus.map { focus in
+            StudyAgentFocus(
+                chatID: String(focus.chatID.prefix(128)),
+                courseID: focus.courseID.map { String($0.prefix(128)) },
+                materialItemID: focus.materialItemID.flatMap { boundedCourse.itemIDMap[$0] },
+                materialTitle: focus.materialTitle.map { String($0.prefix(300)) },
+                pageIndex: focus.pageIndex,
+                sectionTitle: focus.sectionTitle.map { String($0.prefix(300)) },
+                sectionLocationID: focus.sectionLocationID.map { String($0.prefix(300)) },
+                sectionOrdinal: focus.sectionOrdinal,
+                selectionText: focus.selectionText.map { String($0.prefix(2_000)) },
+                actionSource: String(focus.actionSource.prefix(64))
+            )
+        }
         let currentMaterialIDs = Set(course.catalog.lazy.filter(\.isCurrentMaterial).map(\.id))
         visualAssets = request.visualAssets.prefix(4).compactMap { asset in
             guard let boundedID = boundedCourse.itemIDMap[asset.id],
@@ -856,6 +1049,39 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
             )
         }
         learning = Self.boundedLearningContext(request.learningContext, itemIDMap: boundedCourse.itemIDMap)
+    }
+
+    private static func boundedProjectScope(
+        _ scope: StudyAgentProjectScope,
+        itemIDMap: [String: String]
+    ) -> StudyAgentProjectScope {
+        let maximumItems = 500
+        let items = scope.items.prefix(maximumItems).compactMap { item -> StudyAgentProjectItem? in
+            guard let itemID = itemIDMap[item.itemID] else { return nil }
+            return StudyAgentProjectItem(
+                itemID: itemID,
+                title: String(item.title.prefix(300)),
+                kind: String(item.kind.prefix(64)),
+                role: String(item.role.prefix(64)),
+                relativePath: String(item.relativePath.prefix(4_096)),
+                resolvedPath: String(item.resolvedPath.prefix(4_096)),
+                entryIdentity: item.entryIdentity,
+                targetIdentity: item.targetIdentity,
+                isShared: item.isShared,
+                courseIDs: item.courseIDs.prefix(32).map { String($0.prefix(128)) },
+                courseTitles: item.courseTitles.prefix(32).map { String($0.prefix(300)) }
+            )
+        }
+        return StudyAgentProjectScope(
+            kind: scope.kind,
+            chatID: String(scope.chatID.prefix(128)),
+            courseID: scope.courseID.map { String($0.prefix(128)) },
+            courseTitle: scope.courseTitle.map { String($0.prefix(300)) },
+            rootPath: scope.rootPath.map { String($0.prefix(4_096)) },
+            rootIdentity: scope.rootIdentity,
+            items: items,
+            isTruncated: scope.isTruncated || scope.items.count > items.count
+        )
     }
 
     private static func boundedCourseContext(

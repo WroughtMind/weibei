@@ -35,7 +35,7 @@ private func piRequire(_ condition: @autoclosure () throws -> Bool, _ message: S
 private func checkJSONLFraming() throws {
     let delta = "中文跨字节\u{2028}仍在同一条 JSON 记录"
     let first = #"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","delta":"中文跨字节 仍在同一条 JSON 记录"}}"#
-    let second = #"{"type":"tool_execution_start","toolCallId":"tool-1","toolName":"weibei_context"}"#
+    let second = #"{"type":"tool_execution_start","toolCallId":"tool-1","toolName":"weibei_course_search","args":{"query":"利率","limit":3}}"#
     var framer = PiJSONLFramer()
     var records: [Data] = []
     for byte in Data("\(first)\r\n\(second)\n".utf8) {
@@ -44,7 +44,18 @@ private func checkJSONLFraming() throws {
     _ = try framer.finish()
     try piRequire(records.count == 2, "PI JSONL keeps CRLF compatibility and emits two records")
     try piRequire(PiRPCMessageDecoder.decode(records[0]) == .textDelta(delta), "PI JSONL preserves split UTF-8 and U+2028")
-    try piRequire(PiRPCMessageDecoder.decode(records[1]) == .toolStarted(id: "tool-1", name: "weibei_context"), "PI JSONL preserves tool ids")
+    guard case let .toolStarted(id, name, argumentsJSON) = try PiRPCMessageDecoder.decode(records[1]),
+          let argumentsJSON,
+          let arguments = try JSONSerialization.jsonObject(with: argumentsJSON) as? [String: Any] else {
+        throw PiAgentSelfCheckError.failed("PI JSONL lost host tool arguments")
+    }
+    try piRequire(
+        id == "tool-1"
+            && name == "weibei_course_search"
+            && arguments["query"] as? String == "利率"
+            && (arguments["limit"] as? NSNumber)?.intValue == 3,
+        "PI JSONL preserves bounded host tool ids and arguments"
+    )
 
     var incomplete = PiJSONLFramer()
     _ = try incomplete.append(Data("{\"type\":\"event\"}".utf8))
@@ -1012,9 +1023,12 @@ private func checkBundledAgentResources() throws {
             && extensionSource.contains("canonicalReadPath")
             && extensionSource.contains("realpathSync")
             && extensionSource.contains("kind: \"weibei_skill_read\"")
-            && extensionSource.contains("只允许 Pi 原生 read 读取随 App 打包的富回答 Skill")
+            && extensionSource.contains("readApprovedProjectFile")
+            && extensionSource.contains("constants.O_NOFOLLOW")
+            && extensionSource.contains("WEIBEI_AGENT_TOOL_RESPONSE_DIR")
+            && !extensionSource.contains("/usr/bin/sqlite3")
             && !extensionSource.contains("weibei_skill_load"),
-        "PI uses native progressive skill reads while denying every non-bundled path"
+        "PI reads only bundled Skills or host-approved course files and keeps search behind the host bridge"
     )
 
     let runtimeSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
@@ -1045,15 +1059,15 @@ private func checkBundledAgentResources() throws {
             && !runtimeSource.contains("allowsSourcelessLimitation")
             && !runtimeSource.contains("StudyAgentSourceLimitation.isHonest")
             && runtimeSource.contains("text_only_policy")
-            && runtimeSource.contains("private static let allowedToolNames")
+            && runtimeSource.contains("private static func allowedToolNames")
             && runtimeSource.contains("\"read\"")
             && runtimeSource.contains("allRequiredSkillNames")
             && runtimeSource.contains("skill-read:")
             && runtimeSource.contains("\"weibei_ui_catalog\"")
             && runtimeSource.contains("\"weibei_compute_artifact\"")
             && runtimeSource.contains("\"weibei_visual_asset\"")
-            && runtimeSource.contains("Self.allowedToolNames.joined(separator: \",\")")
-            && runtimeSource.contains("Set(Self.allowedToolNames).contains(name)")
+            && runtimeSource.contains("Self.allowedToolNames(for: binding.scope).joined(separator: \",\")")
+            && runtimeSource.contains("run.allowedToolNames.contains(name)")
             && runtimeSource.contains("verifiedAssetBytesByContextID")
             && runtimeSource.contains("run.verifiedAssetBytesByContextID[assetID] = byteCount")
             && runtimeSource.contains("verifiedAssetBytes: run.verifiedAssetBytesByContextID")

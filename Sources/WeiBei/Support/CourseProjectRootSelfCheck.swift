@@ -8,6 +8,7 @@ enum CourseProjectRootSelfCheck {
         try escapeBridgeDefersToPresentedSurfaces()
         try libraryGrantPersistsAndBalancesSecurityScope()
         try unavailableCourseRootBlocksChatWithoutClearingDraft()
+        try agentProjectSearchUsesVerifiedCourseGrants()
         try libraryCannotEqualOrSitInsideRegisteredCourse()
         try deniedSecurityScopeKeepsCourseUnavailable()
         try movedLibraryIntoWorkspaceIsRejectedOnRestore()
@@ -58,6 +59,299 @@ enum CourseProjectRootSelfCheck {
         try sharedRemovalCrashRecoversCommittedMembership()
         try sharedLinkRecoveryIsIdempotent()
         try legacyCourseSnapshotStillDecodes()
+    }
+
+    @MainActor
+    private static func agentProjectSearchUsesVerifiedCourseGrants() throws {
+        let fixture = try Fixture(name: "agent-project-grants")
+        defer { fixture.remove() }
+        let library = try fixture.makeDirectory("课程资料库")
+        let imports = try fixture.makeDirectory("待导入")
+        let store = makeStore(fixture: fixture)
+        try store.configureCourseLibrary(at: library)
+        let courseA = try store.createCourseInLibrary(title: "课程甲")
+        let courseB = try store.createCourseInLibrary(title: "课程乙")
+
+        let legacyURL = imports.appendingPathComponent("旧外部.txt")
+        try Data("LEGACY_AGENT_SECRET".utf8).write(to: legacyURL)
+        let legacyItem = try require(
+            store.importFiles([legacyURL], selectsFirstImportedItem: false).first,
+            "没有建立旧外部资料样本"
+        )
+        store.injectLegacyCourseMembershipForAgentSelfCheck(
+            itemID: legacyItem.id,
+            courseID: courseA
+        )
+        let legacyCourseScope = try store.agentProjectScopeForSelfCheck(courseID: courseA)
+        let legacyCourseSearch = try store.agentHostSearchForSelfCheck(
+            courseID: courseA,
+            query: "LEGACY_AGENT_SECRET"
+        )
+        let legacyGlobalSearch = try store.agentHostSearchForSelfCheck(
+            courseID: nil,
+            query: "LEGACY_AGENT_SECRET"
+        )
+        let legacyCourseContext = try store.agentCourseContextForSelfCheck(
+            courseID: courseA,
+            query: "LEGACY_AGENT_SECRET"
+        )
+        try check(
+            !legacyCourseScope.items.contains(where: { $0.itemID == legacyItem.id })
+                && !legacyCourseSearch.items.contains(where: { $0.item.id == legacyItem.id })
+                && !legacyGlobalSearch.items.contains(where: { $0.item.id == legacyItem.id })
+                && !legacyCourseContext.catalog.contains(where: { $0.id == legacyItem.id })
+                && !legacyCourseContext.items.contains(where: { $0.id == legacyItem.id }),
+            "课程上下文或搜索读取了未迁入课程项目的旧外部资料"
+        )
+        store.removeCourseMembershipForAgentSelfCheck(
+            itemID: legacyItem.id,
+            courseID: courseA
+        )
+
+        let ownedURL = imports.appendingPathComponent("课程自有.txt")
+        try Data("OWNED_AGENT_TOKEN".utf8).write(to: ownedURL)
+        let ownedItem = try store.importFileIntoCourseForSelfCheck(
+            ownedURL,
+            courseID: courseA,
+            role: .material
+        ).item
+        let ownedSearch = try store.agentHostSearchForSelfCheck(
+            courseID: courseA,
+            query: "OWNED_AGENT_TOKEN"
+        )
+        try check(
+            ownedSearch.items.contains(where: { $0.item.id == ownedItem.id }),
+            "课程 Agent 搜索没有读取已核验的课程自有资料"
+        )
+
+        let noteID = try require(
+            store.createCourseNotebookNoteForSelfCheck(
+                courseID: courseA,
+                title: "实时学习笔记"
+            ),
+            "没有建立课程笔记样本"
+        )
+        let liveNote = "# 实时学习笔记\n\n## 风险理解\n\n久期衡量利率风险，凸性修正非线性。"
+        try store.setAgentNoteFixtureForSelfCheck(
+            itemID: noteID,
+            memoryText: liveNote,
+            diskText: liveNote
+        )
+        let liveNoteSearch = try store.agentHostSearchForSelfCheck(
+            courseID: courseA,
+            query: "久期 凸性"
+        )
+        let liveNoteRead = try store.agentHostReadForSelfCheck(
+            courseID: courseA,
+            itemID: noteID
+        )
+        try check(
+            liveNoteSearch.items.first(where: { $0.item.id == noteID })?
+                .item.searchText.contains("凸性修正非线性") == true
+                && liveNoteRead.items.first(where: { $0.item.id == noteID })?
+                    .item.searchText.contains("凸性修正非线性") == true,
+            "课程 Agent 没有优先读取尚未落盘的最新笔记正文"
+        )
+
+        try store.setAgentNoteFixtureForSelfCheck(
+            itemID: noteID,
+            memoryText: ""
+        )
+        let emptyNoteDiskText = try String(
+            contentsOf: try require(
+                store.importedItems.first(where: { $0.id == noteID })?.url,
+                "空笔记样本缺少磁盘路径"
+            ),
+            encoding: .utf8
+        )
+        let emptyLiveNoteSearch = try store.agentHostSearchForSelfCheck(
+            courseID: courseA,
+            query: "凸性修正非线性"
+        )
+        let emptyLiveNoteRead = try? store.agentHostReadForSelfCheck(
+            courseID: courseA,
+            itemID: noteID
+        )
+        try check(
+            emptyNoteDiskText.contains("凸性修正非线性")
+                && !emptyLiveNoteSearch.items.contains(where: { $0.item.id == noteID })
+                && emptyLiveNoteRead?.items.first(where: { $0.item.id == noteID })?
+                    .item.searchText.contains("凸性修正非线性") != true,
+            "已加载的空笔记错误回退到了磁盘旧正文"
+        )
+
+        let unopenedNoteURL = imports.appendingPathComponent("未打开笔记.md")
+        try Data("# 未打开笔记\n\nUNOPENED_NOTE_TOKEN\n".utf8).write(to: unopenedNoteURL)
+        let unopenedNote = try store.importFileIntoCourseForSelfCheck(
+            unopenedNoteURL,
+            courseID: courseA,
+            role: .note
+        ).item
+        let unopenedNoteSearch = try store.agentHostSearchForSelfCheck(
+            courseID: courseA,
+            query: "UNOPENED_NOTE_TOKEN"
+        )
+        let unopenedNoteRead = try store.agentHostReadForSelfCheck(
+            courseID: courseA,
+            itemID: unopenedNote.id
+        )
+        try check(
+            unopenedNoteSearch.items.first(where: { $0.item.id == unopenedNote.id })?
+                .item.searchText.contains("UNOPENED_NOTE_TOKEN") == true
+                && unopenedNoteRead.items.first(where: { $0.item.id == unopenedNote.id })?
+                    .item.searchText.contains("UNOPENED_NOTE_TOKEN") == true,
+            "课程 Agent 无法搜索或读取从未打开过的课程笔记"
+        )
+
+        let requestLegacyMaterialURL = imports.appendingPathComponent("请求外部图像.png")
+        let requestLegacyNoteURL = imports.appendingPathComponent("请求外部笔记.md")
+        try Data([
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+            0x4C, 0x45, 0x47, 0x41, 0x43, 0x59,
+        ]).write(to: requestLegacyMaterialURL)
+        try Data("LEGACY_NOTE_REQUEST_SECRET".utf8).write(to: requestLegacyNoteURL)
+        let requestLegacyMaterial = try store.installLegacyVisualForAgentSelfCheck(
+            at: requestLegacyMaterialURL,
+            courseID: courseA
+        )
+        _ = store.importFiles(
+            [requestLegacyNoteURL],
+            selectsFirstImportedItem: false,
+            markdownAsNotes: true,
+            markdownOnly: true
+        )
+        let requestLegacyNote = try require(
+            store.importedItems.first(where: {
+                $0.url?.standardizedFileURL == requestLegacyNoteURL.standardizedFileURL
+                    && $0.isNotebookNote
+            }),
+            "没有建立最终请求的旧外部笔记样本"
+        )
+        store.injectLegacyCourseMembershipForAgentSelfCheck(
+            itemID: requestLegacyNote.id,
+            courseID: courseA
+        )
+        let deniedRequest = try store.capturedAgentRequestForSelfCheck(
+            courseID: courseA,
+            materialItemID: requestLegacyMaterial.id,
+            noteItemID: requestLegacyNote.id,
+            selectionItemID: requestLegacyMaterial.id
+        )
+        try check(
+            deniedRequest.materialText.isEmpty
+                && deniedRequest.noteText.isEmpty
+                && deniedRequest.selectionText == nil
+                && deniedRequest.visualAssets.isEmpty
+                && deniedRequest.focus?.materialItemID == nil
+                && !deniedRequest.projectScope.items.contains(where: {
+                    $0.itemID == requestLegacyMaterial.id
+                        || $0.itemID == requestLegacyNote.id
+                })
+                && !deniedRequest.courseContext.catalog.contains(where: {
+                    $0.id == requestLegacyMaterial.id || $0.id == requestLegacyNote.id
+                }),
+            "最终发给 Pi 的请求仍包含未通过课程授权的材料、笔记、选区或视觉附件"
+        )
+        store.removeCourseMembershipForAgentSelfCheck(
+            itemID: requestLegacyMaterial.id,
+            courseID: courseA
+        )
+        store.removeCourseMembershipForAgentSelfCheck(
+            itemID: requestLegacyNote.id,
+            courseID: courseA
+        )
+
+        let visualItem = try store.installCourseVisualForAgentSelfCheck(
+            courseID: courseA,
+            data: Data([
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+            0x56, 0x49, 0x53, 0x55, 0x41, 0x4C,
+            ])
+        )
+        let visualRequest = try store.capturedAgentRequestForSelfCheck(
+            courseID: courseA,
+            materialItemID: visualItem.id,
+            noteItemID: noteID,
+            selectionItemID: visualItem.id
+        )
+        let visualAsset = visualRequest.visualAssets.first
+        try check(
+            visualRequest.visualAssets.count == 1
+                && visualAsset?.id == visualItem.id
+                && visualAsset?.filePath != visualItem.url?.path
+                && visualAsset.map {
+                    !FileManager.default.fileExists(atPath: $0.filePath)
+                } == true,
+            "最终发给 Pi 的视觉附件没有使用已核验的本轮临时快照"
+        )
+
+        let replacedOwnedSearch = try store.agentHostSearchForSelfCheck(
+            courseID: courseA,
+            query: "REPLACED_AGENT_TOKEN",
+            beforeSearch: {
+                let target = try require(ownedItem.url, "课程自有资料没有目标路径")
+                try FileManager.default.removeItem(at: target)
+                try Data("REPLACED_AGENT_TOKEN".utf8).write(to: target)
+            }
+        )
+        try check(
+            !replacedOwnedSearch.items.contains(where: { $0.item.id == ownedItem.id }),
+            "课程 Agent 搜索读取了授权后被换 inode 的文件"
+        )
+
+        let sharedSourceURL = imports.appendingPathComponent("共享资料.txt")
+        try Data("SHARED_AGENT_TOKEN".utf8).write(to: sharedSourceURL)
+        let sharedItem = try store.importFileIntoCourseForSelfCheck(
+            sharedSourceURL,
+            courseID: courseA,
+            role: .material
+        ).item
+        try store.shareCourseOwnedItemForSelfCheck(
+            itemID: sharedItem.id,
+            withCourseID: courseB
+        )
+        let sharedSearch = try store.agentHostSearchForSelfCheck(
+            courseID: courseB,
+            query: "SHARED_AGENT_TOKEN"
+        )
+        let sharedResult = try require(
+            sharedSearch.items.first(where: { $0.item.id == sharedItem.id }),
+            "课程 Agent 搜索没有读取合法共享资料"
+        )
+        try check(
+            sharedResult.courseIDs == [courseB.uuidString.lowercased()],
+            "课程乙 Chat 把共享资料错误归到了另一门课程"
+        )
+        let courseBRoot = try require(store.courseRootURL(for: courseB), "课程乙根目录丢失")
+        let courseBMembership = try require(
+            store.courseItemMemberships.first {
+                $0.courseID == courseB && $0.itemID == sharedItem.id
+            },
+            "共享资料缺少课程乙入口"
+        )
+        let sharedEntry = try require(
+            courseBMembership.courseRelativePath.map {
+                courseBRoot.appendingPathComponent($0)
+            },
+            "共享资料缺少课程乙相对路径"
+        )
+        let unrelatedURL = imports.appendingPathComponent("无关目标.txt")
+        try Data("UNRELATED_AGENT_TOKEN".utf8).write(to: unrelatedURL)
+        let driftedSharedSearch = try store.agentHostSearchForSelfCheck(
+            courseID: courseB,
+            query: "UNRELATED_AGENT_TOKEN",
+            beforeSearch: {
+                try FileManager.default.removeItem(at: sharedEntry)
+                try FileManager.default.createSymbolicLink(
+                    at: sharedEntry,
+                    withDestinationURL: unrelatedURL
+                )
+            }
+        )
+        try check(
+            !driftedSharedSearch.items.contains(where: { $0.item.id == sharedItem.id }),
+            "课程 Agent 搜索跟随了授权后被改向的共享链接"
+        )
     }
 
     @MainActor

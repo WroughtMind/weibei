@@ -84,7 +84,7 @@ public enum PiRPCIncomingMessage: Equatable, Sendable {
     case textDelta(String)
     case runActivity(PiRPCRunActivity)
     case assistantError(String)
-    case toolStarted(id: String, name: String)
+    case toolStarted(id: String, name: String, argumentsJSON: Data?)
     case contextRead(id: String, contextRevision: String)
     case courseSourcesRead(
         id: String,
@@ -183,7 +183,15 @@ public enum PiRPCMessageDecoder {
             guard let name = object["toolName"] as? String else {
                 throw PiRPCProtocolError.invalidEnvelope
             }
-            return .toolStarted(id: object["toolCallId"] as? String ?? "", name: name)
+            let argumentsJSON = jsonData(object["args"])
+            guard argumentsJSON?.count ?? 0 <= 16_384 else {
+                throw PiRPCProtocolError.invalidEnvelope
+            }
+            return .toolStarted(
+                id: object["toolCallId"] as? String ?? "",
+                name: name,
+                argumentsJSON: argumentsJSON
+            )
 
         case "tool_execution_end":
             let name = object["toolName"] as? String ?? "unknown"
@@ -205,8 +213,9 @@ public enum PiRPCMessageDecoder {
                     contextRevision: revision
                 )
             }
-            if name == "weibei_course_search",
+            if ["weibei_course_search", "weibei_course_read", "grep", "read"].contains(name),
                let details = result?["details"] as? [String: Any],
+               ["course_search", "course_read"].contains(details["kind"] as? String ?? ""),
                let contextRevision = details["contextRevision"] as? String {
                 let entries = (details["catalog"] as? [[String: Any]])
                     ?? (details["results"] as? [[String: Any]])
@@ -242,6 +251,9 @@ public enum PiRPCMessageDecoder {
                     let parsed = SourceReferenceTitle.parse(reference ?? title)
                     return AgentReplySource(
                         itemID: itemID,
+                        courseID: (entry["courseIDs"] as? [String])?
+                            .first
+                            .flatMap(UUID.init(uuidString:)),
                         kind: role == "note" ? .note : .material,
                         title: parsed.title.isEmpty ? title : parsed.title,
                         label: label,
