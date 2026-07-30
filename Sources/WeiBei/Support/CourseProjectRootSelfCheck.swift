@@ -4,6 +4,18 @@ import WeiBeiCore
 enum CourseProjectRootSelfCheck {
     @MainActor
     static func run() throws {
+        func step(
+            _ name: String,
+            _ operation: () throws -> Void
+        ) throws {
+            do {
+                try operation()
+            } catch {
+                throw CheckError.failed(
+                    "\(name)：\(error.localizedDescription)"
+                )
+            }
+        }
         try courseEntryPresentationResetsIntent()
         try escapeBridgeDefersToPresentedSurfaces()
         try libraryGrantPersistsAndBalancesSecurityScope()
@@ -13,10 +25,18 @@ enum CourseProjectRootSelfCheck {
         try deniedSecurityScopeKeepsCourseUnavailable()
         try movedLibraryIntoWorkspaceIsRejectedOnRestore()
         try libraryCreationDerivesSafeNameAndRejectsConflicts()
-        try newCourseCreatesAtomicProjectAndManifest()
-        try portableCourseStateIsScopedAtomicAndRestorable()
-        try portableCourseExportCopiesWholeTreeAndFailsClosed()
-        try portableCourseStatePreservesOfflineAndCorruptChanges()
+        try step("新建课程原子落盘") {
+            try newCourseCreatesAtomicProjectAndManifest()
+        }
+        try step("课程可携带状态恢复") {
+            try portableCourseStateIsScopedAtomicAndRestorable()
+        }
+        try step("课程可携带副本导出") {
+            try portableCourseExportCopiesWholeTreeAndFailsClosed()
+        }
+        try step("离线与损坏状态保留") {
+            try portableCourseStatePreservesOfflineAndCorruptChanges()
+        }
         try stagedAndWorkspaceFailuresLeaveNoGhostCourse()
         try failedAdoptionRollsBackOnlyItsOwnMetadata()
         try foreignWritesPreventRollbackDeletion()
