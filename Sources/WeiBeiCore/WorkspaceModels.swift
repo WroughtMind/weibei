@@ -1596,6 +1596,19 @@ public struct AgentReplyMemoryUpdate: Codable, Hashable, Sendable {
         self.memoryIDs = memoryIDs
         self.summary = summary
     }
+
+    public func revisions(
+        for messageID: UUID,
+        in memories: [LearningMemoryEntry]
+    ) -> [LearningMemoryRevisionRecord]? {
+        let matches = memoryIDs.compactMap { memoryID in
+            memories
+                .first { $0.id == memoryID }?
+                .revisions?
+                .last { $0.messageID == messageID }
+        }
+        return matches.count == memoryIDs.count ? matches : nil
+    }
 }
 
 public struct AgentReplyOrigin: Codable, Hashable, Sendable {

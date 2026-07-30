@@ -4366,6 +4366,24 @@ expect(notesAgentSource.contains("func weibeiPaneHeaderChrome(appearanceMode: We
     && !notesAgentSource.contains(".labelStyle(.titleAndIcon)\n        }\n        .buttonStyle(WeiBeiTextActionButtonStyle())")
     && notePaneHeaderSource.contains(".background(WeiBeiTheme.paper)")
     && !notePaneHeaderSource.contains("mode.id != NoteRenderMode.visibleCases.last?.id"), "note pane creation and agent header stay custom, light, and context-only")
+expect(notesAgentSource.contains("AgentReplyMemoryUpdateTag(")
+    && notesAgentSource.contains("message.memoryUpdate")
+    && notesAgentSource.contains("已更新学习记忆 · \\(update.memoryIDs.count) 项")
+    && notesAgentSource.contains(".animation(reduceMotion ? nil : WeiBeiMotion.reveal, value: message.memoryUpdate)")
+    && notesAgentSource.contains("withAnimation(reduceMotion ? nil : WeiBeiMotion.micro)")
+    && notesAgentSource.contains(".accessibilityValue(Text(store.ui(")
+    && notesAgentSource.contains("expanded ? \"已展开\" : \"已收起\"")
+    && notesAgentSource.contains("store.presentCourseWorkspace(.sessions, courseID: courseID)")
+    && notesAgentSource.contains("openGlobalMemory()")
+    && notesAgentSource.contains("update.revisions(")
+    && workspaceModelsSource.contains("matches.count == memoryIDs.count ? matches : nil")
+    && notesAgentSource.contains("agent-memory-update-view-all")
+    && !notesAgentSource.contains("本轮记住")
+    && courseWorkspaceSource.contains("没有匹配的学习记忆。")
+    && courseWorkspaceSource.contains("搜索全局记忆")
+    && courseWorkspaceSource.contains("search: search")
+    && workspaceStoreSource.contains("reply_tag_persisted=\\(replyTagPersisted)")
+    && runScript.contains("^reply_tag_persisted=true$"), "persisted memory updates render as one scoped expandable tag with searchable course and global destinations")
 expect(noteModeControlSource.contains("NoteRenderMode.visibleCases")
     && notePaneHeaderSource.contains("@State private var hoveredNoteMode: NoteRenderMode?")
     && noteModeControlSource.contains("HStack(spacing: 3)")
@@ -5095,6 +5113,52 @@ let persistentReply = AgentMessage(
 let persistentReplyData = try! JSONEncoder().encode(persistentReply)
 let reopenedPersistentReply = try! JSONDecoder().decode(AgentMessage.self, from: persistentReplyData)
 expect(reopenedPersistentReply == persistentReply, "reply body, sources, actions, memory update, origin, and interruption state survive JSON reopen")
+
+let replyMemoryID = persistentReply.memoryUpdate!.memoryIDs[0]
+let replyRevision = LearningMemoryRevisionRecord(
+    revision: 1,
+    kind: .understood,
+    text: "回答当时已经理解利率",
+    evidence: "本轮学习",
+    origin: .agentInference,
+    status: .active,
+    sessionID: persistentReply.origin?.chatID,
+    messageID: persistentReply.id,
+    actor: .agent,
+    recordedAt: Date(timeIntervalSince1970: 12)
+)
+let laterRevision = LearningMemoryRevisionRecord(
+    revision: 2,
+    kind: .progress,
+    text: "后来只掌握了一部分",
+    evidence: "用户修订",
+    origin: .userStatement,
+    status: .active,
+    sessionID: persistentReply.origin?.chatID,
+    actor: .user,
+    recordedAt: Date(timeIntervalSince1970: 13)
+)
+let editedReplyMemory = LearningMemoryEntry(
+    id: replyMemoryID,
+    kind: .progress,
+    text: laterRevision.text,
+    evidence: laterRevision.evidence,
+    origin: laterRevision.origin,
+    sessionID: persistentReply.origin?.chatID,
+    revisions: [replyRevision, laterRevision]
+)
+expect(persistentReply.memoryUpdate?.revisions(
+    for: persistentReply.id,
+    in: [editedReplyMemory]
+)?.map(\.text) == [replyRevision.text]
+    && persistentReply.memoryUpdate?.revisions(
+        for: UUID(),
+        in: [editedReplyMemory]
+    ) == nil
+    && persistentReply.memoryUpdate?.revisions(
+        for: persistentReply.id,
+        in: []
+    ) == nil, "memory update tags show the exact reply revision and fall back to the persisted summary when history is missing")
 
 let legacyReply = AgentMessage(role: .assistant, text: "旧回复", source: nil)
 let reopenedLegacyReply = try! JSONDecoder().decode(

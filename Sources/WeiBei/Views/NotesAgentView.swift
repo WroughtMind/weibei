@@ -1953,7 +1953,12 @@ struct AgentPaneView: View {
             canvasWide: needsWideCanvas,
             alignment: isUser ? .trailing : .leading
         ) {
-            AgentBubble(message: message)
+            AgentBubble(
+                message: message,
+                openGlobalMemory: {
+                    globalMemoryPanelPresented = true
+                }
+            )
         }
         .id(message.id)
         .transition(WeiBeiTransition.message)
@@ -3177,7 +3182,9 @@ private struct SelectionFloatChrome: ViewModifier {
 
 private struct AgentBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var message: AgentMessage
+    var openGlobalMemory: () -> Void
     @State private var hovering = false
 
     var body: some View {
@@ -3332,6 +3339,16 @@ private struct AgentBubble: View {
                 }
             }
 
+            if let memoryUpdate = message.memoryUpdate,
+               !memoryUpdate.memoryIDs.isEmpty {
+                AgentReplyMemoryUpdateTag(
+                    message: message,
+                    update: memoryUpdate,
+                    openGlobalMemory: openGlobalMemory
+                )
+                .transition(WeiBeiTransition.floating)
+            }
+
             if message.completionState == .interrupted && !isFailureMessage {
                 HStack(spacing: 6) {
                     Text(store.ui("回答已中断，已保留现有内容", "Response interrupted; existing content was kept"))
@@ -3368,10 +3385,6 @@ private struct AgentBubble: View {
                 }
                 .padding(.top, 2)
             } else if message.id == store.lastUsableAgentAnswerID {
-                if let update = store.latestAgentLearningUpdate,
-                   !update.entries.isEmpty || !update.resolutions.isEmpty || !update.suggestedNext.isEmpty {
-                    learningUpdateContent(update)
-                }
                 HStack(spacing: 6) {
                     if store.selectionContext != nil {
                         Button(store.ui("摘录", "Excerpt")) {
@@ -3389,6 +3402,7 @@ private struct AgentBubble: View {
                 .padding(.top, 2)
             }
         }
+        .animation(reduceMotion ? nil : WeiBeiMotion.reveal, value: message.memoryUpdate)
     }
 
     private func activateSource(_ source: AgentReplySource) {
@@ -3459,86 +3473,6 @@ private struct AgentBubble: View {
         guard !trimmed.isEmpty else { return }
         store.agentDraft = trimmed
         store.submitAgentDraft()
-    }
-
-    private func learningUpdateContent(_ update: StudyAgentLearningUpdate) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Label(store.ui("本轮记住", "Remembered This Turn"), systemImage: "brain.head.profile")
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(WeiBeiTheme.secondaryInk)
-
-            ForEach(Array(update.entries.prefix(4).enumerated()), id: \.offset) { _, entry in
-                Text("\(memoryKindLabel(entry.kind))：\(entry.text)")
-                    .font(.caption)
-                    .foregroundStyle(WeiBeiTheme.secondaryInk)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            ForEach(Array(update.resolutions.prefix(4).enumerated()), id: \.offset) { _, resolution in
-                let memoryScope = store.learningMemoryScope(courseID: message.origin?.courseID)
-                let isResolved = store.isLearningMemoryResolved(
-                    resolution.memoryID,
-                    in: memoryScope
-                )
-                HStack(alignment: .top, spacing: 6) {
-                    Text(store.ui("建议结案：\(resolution.text)", "Suggested resolution: \(resolution.text)"))
-                        .font(.caption)
-                        .foregroundStyle(WeiBeiTheme.secondaryInk)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Spacer(minLength: 4)
-                    Button {
-                        if isResolved {
-                            store.restoreLearningMemoryResolution(
-                                resolution,
-                                in: memoryScope
-                            )
-                        } else {
-                            store.confirmLearningMemoryResolution(
-                                resolution,
-                                in: memoryScope
-                            )
-                        }
-                    } label: {
-                        Image(systemName: isResolved ? "arrow.uturn.backward" : "checkmark.circle")
-                    }
-                    .buttonStyle(WeiBeiIconButtonStyle(active: isResolved, size: 22))
-                    .help(store.ui(isResolved ? "撤销结案" : "确认结案", isResolved ? "Undo resolution" : "Confirm resolution"))
-                }
-            }
-
-            ForEach(Array(update.suggestedNext.prefix(3).enumerated()), id: \.offset) { _, next in
-                Text("→ \(next)")
-                    .font(.caption)
-                    .foregroundStyle(WeiBeiTheme.link)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .padding(.leading, 9)
-        .padding(.vertical, 5)
-        .overlay(alignment: .leading) {
-            Rectangle()
-                .fill(WeiBeiTheme.hairline.opacity(0.72))
-                .frame(width: 1)
-        }
-    }
-
-    private func memoryKindLabel(_ kind: LearningMemoryKind) -> String {
-        switch kind {
-        case .goal:
-            return store.ui("目标", "Goal")
-        case .progress:
-            return store.ui("学习进度", "Progress")
-        case .understood:
-            return store.ui("已理解", "Understood")
-        case .confusion:
-            return store.ui("困惑", "Confusion")
-        case .nextStep:
-            return store.ui("下一步", "Next Step")
-        case .summary:
-            return store.ui("学习小结", "Summary")
-        case .preference:
-            return store.ui("偏好", "Preference")
-        }
     }
 
     private var messageMetadata: some View {
@@ -3774,6 +3708,117 @@ private struct RichAnswerNarrativeText: View {
 
         let kind: Kind
         let text: String
+    }
+}
+
+private struct AgentReplyMemoryUpdateTag: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let message: AgentMessage
+    let update: AgentReplyMemoryUpdate
+    let openGlobalMemory: () -> Void
+    @State private var expanded = false
+
+    private var scope: LearningMemoryScope? {
+        guard let origin = message.origin else { return nil }
+        return origin.courseID.map(LearningMemoryScope.course) ?? .global
+    }
+
+    private var revisions: [LearningMemoryRevisionRecord]? {
+        guard let scope else { return nil }
+        return update.revisions(
+            for: message.id,
+            in: store.learningMemoryEntries(in: scope)
+        )
+    }
+
+    private var canOpenAll: Bool {
+        guard let origin = message.origin else { return false }
+        guard let courseID = origin.courseID else { return true }
+        return store.course(withID: courseID) != nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                withAnimation(reduceMotion ? nil : WeiBeiMotion.micro) {
+                    expanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "brain.head.profile")
+                        .accessibilityHidden(true)
+                    Text(store.ui(
+                        "已更新学习记忆 · \(update.memoryIDs.count) 项",
+                        "Learning memory updated · \(update.memoryIDs.count)"
+                    ))
+                    Image(systemName: expanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .accessibilityHidden(true)
+                }
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .padding(.horizontal, 9)
+                .frame(height: 25)
+                .background {
+                    Capsule()
+                        .fill(WeiBeiTheme.cinnabarSoft.opacity(0.34))
+                }
+                .overlay {
+                    Capsule()
+                        .strokeBorder(WeiBeiTheme.cinnabar.opacity(0.22), lineWidth: 1)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityValue(Text(store.ui(
+                expanded ? "已展开" : "已收起",
+                expanded ? "Expanded" : "Collapsed"
+            )))
+            .accessibilityIdentifier("agent-memory-update-tag")
+
+            if expanded {
+                VStack(alignment: .leading, spacing: 7) {
+                    if let revisions {
+                        ForEach(revisions) { revision in
+                            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                                Text(store.learningMemoryKindLabel(revision.kind))
+                                    .font(.system(size: 10.5, weight: .semibold))
+                                    .foregroundStyle(WeiBeiTheme.cinnabar)
+                                    .fixedSize()
+                                Text(revision.text)
+                                    .font(.caption)
+                                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                                    .lineLimit(2)
+                            }
+                        }
+                    } else {
+                        Text(update.summary)
+                            .font(.caption)
+                            .foregroundStyle(WeiBeiTheme.secondaryInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    if canOpenAll {
+                        Button(store.ui("查看全部", "View all")) {
+                            if let courseID = message.origin?.courseID {
+                                store.presentCourseWorkspace(.sessions, courseID: courseID)
+                            } else {
+                                openGlobalMemory()
+                            }
+                        }
+                        .buttonStyle(WeiBeiTextActionButtonStyle())
+                        .accessibilityIdentifier("agent-memory-update-view-all")
+                    }
+                }
+                .padding(.leading, 9)
+                .overlay(alignment: .leading) {
+                    Rectangle()
+                        .fill(WeiBeiTheme.cinnabar.opacity(0.28))
+                        .frame(width: 1)
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
     }
 }
 

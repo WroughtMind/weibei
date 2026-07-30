@@ -16794,10 +16794,42 @@ final class WorkspaceStore: ObservableObject {
             })
         } == true
 
+        let tagMemoryIDs = [courseAMemoryID] + (createdMemoryID.map { [$0] } ?? [])
+        let tagReply = AgentMessage(
+            role: .assistant,
+            text: "你已经能区分两类利率，也开始独立完成费雪方程练习。",
+            source: nil,
+            backend: .pi,
+            memoryUpdate: AgentReplyMemoryUpdate(
+                memoryIDs: tagMemoryIDs,
+                summary: "已能区分名义利率与实际利率；能独立完成基础费雪方程题"
+            ),
+            origin: AgentReplyOrigin(
+                requestID: UUID(),
+                chatID: courseAChatID,
+                courseID: courseAID
+            )
+        )
+        if let index = studySessions.firstIndex(where: { $0.id == courseAChatID }) {
+            studySessions[index].messages = [
+                AgentMessage(role: .user, text: "总结一下我这轮真正学会了什么？", source: nil),
+                tagReply,
+            ]
+        }
+        activeCourseID = courseAID
+        activeStudySessionID = courseAChatID
+        messages = studySessions.first(where: { $0.id == courseAChatID })?.messages ?? []
+
         let saved = flushPendingWorkspaceSave()
         let snapshot = (try? Data(contentsOf: storageURL)).flatMap {
             try? JSONDecoder().decode(PersistedWorkspace.self, from: $0)
         }
+        let persistedTagReply = snapshot?.studySessions?
+            .first(where: { $0.id == courseAChatID })?
+            .messages
+            .last
+        let replyTagPersisted = persistedTagReply?.memoryUpdate?.memoryIDs == tagMemoryIDs
+            && persistedTagReply?.origin?.courseID == courseAID
         let persistedCourseA = snapshot?.learningMemoryStates?
             .first { $0.scope == .course(courseAID) }?
             .entries
@@ -16825,13 +16857,15 @@ final class WorkspaceStore: ObservableObject {
                     .entries
                     .contains(where: { $0.id == memoryID }) ?? false
             } == true
+            && replyTagPersisted
 
-        layout = .documentAgentNotes
+        select(itemID: nil)
+        layout = .immersiveConversation
         showLibrary = false
         showReader = false
         showAgent = true
         showNotes = false
-        presentCourseWorkspace(.sessions, courseID: courseAID)
+        courseWorkspacePresented = false
 
         let passed = scopesIsolated
             && fixedTargetPassed
@@ -16867,6 +16901,7 @@ final class WorkspaceStore: ObservableObject {
         stable_ids=\(persistedCourseA?.id == courseAMemoryID)
         legacy_fields_removed=\(snapshot?.learningMemoryEntries == nil && snapshot?.learningMemoryRevision == nil)
         persisted=\(persistencePassed)
+        reply_tag_persisted=\(replyTagPersisted)
         """
         let reportURL = storageURL.deletingLastPathComponent()
             .appendingPathComponent("learning-memory-scopes-report.txt")
