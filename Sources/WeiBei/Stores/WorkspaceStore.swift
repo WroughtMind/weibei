@@ -23611,18 +23611,21 @@ final class WorkspaceStore: ObservableObject {
                             ).standardizedFileURL
                         }
                 )
-                let sharedLinkTarget = recordedLibraryRoot.flatMap {
-                    CourseProjectPathPolicy.resolvedRelativePath(
-                        sharedRelativePath,
-                        inside: $0
-                    )
-                }
-                membershipIdentity = try sharedLinkTarget.map {
-                    try validatedPortableSharedLink(
+                if let recordedLibraryRoot {
+                    guard let sharedLinkTarget = CourseProjectPathPolicy
+                        .resolvedRelativePath(
+                            sharedRelativePath,
+                            inside: recordedLibraryRoot
+                        ) else {
+                        throw CoursePortableStateError.invalidItemStorage
+                    }
+                    membershipIdentity = try validatedPortableSharedLink(
                         at: candidate,
-                        sharedURL: $0
+                        sharedURL: sharedLinkTarget
                     )
-                } ?? nil
+                } else {
+                    membershipIdentity = nil
+                }
                 membershipDocumentIdentifier = nil
             }
             if let existing,
