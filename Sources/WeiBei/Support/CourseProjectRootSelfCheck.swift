@@ -2635,6 +2635,96 @@ enum CourseProjectRootSelfCheck {
             "接管后修改的 Chat、记忆、阅读位置或笔记没有在重开后恢复"
         )
 
+        let cleanupFailureRoot = exportParent.appendingPathComponent(
+            "封印清理残留",
+            isDirectory: true
+        )
+        _ = try store.exportPortableCourseCopyForSelfCheck(
+            courseID: courseA,
+            to: cleanupFailureRoot
+        )
+        let cleanupFailureRootIdentity = try require(
+            CourseProjectFileWorker.identity(
+                at: cleanupFailureRoot
+            ),
+            "清理残留样本缺少根身份"
+        )
+        let cleanupFailureSnapshot =
+            try CourseProjectFileWorker.portableAdoptionSnapshot(
+                at: cleanupFailureRoot,
+                expectedRootIdentity:
+                    cleanupFailureRootIdentity
+            )
+        let cleanupFailureMetadata = cleanupFailureRoot
+            .appendingPathComponent(".weibei", isDirectory: true)
+        var obstructedCleanupNames = Set<String>()
+        try CourseProjectFileWorker.replaceCourseManifest(
+            with: CourseProjectManifest(
+                courseID: courseA
+            ).encoded(),
+            at: cleanupFailureMetadata.appendingPathComponent(
+                "course.json"
+            ),
+            expectedDirectoryIdentity:
+                cleanupFailureSnapshot.metadataIdentity,
+            expectedPreviousData:
+                cleanupFailureSnapshot.manifestData,
+            afterCommitBeforeCleanup: {
+                guard let names = try? FileManager.default
+                    .contentsOfDirectory(
+                        atPath: cleanupFailureMetadata.path
+                    ) else {
+                    return
+                }
+                for name in names
+                where name.hasPrefix(".course-manifest-")
+                    && name.hasSuffix(".tmp") {
+                    let cleanupEntry =
+                        cleanupFailureMetadata
+                            .appendingPathComponent(name)
+                    let retainedEntry =
+                        cleanupFailureMetadata
+                            .appendingPathComponent(
+                                "\(name).retained"
+                            )
+                    do {
+                        try FileManager.default.moveItem(
+                            at: cleanupEntry,
+                            to: retainedEntry
+                        )
+                        try FileManager.default.createDirectory(
+                            at: cleanupEntry,
+                            withIntermediateDirectories: false
+                        )
+                        obstructedCleanupNames.insert(name)
+                    } catch {
+                        return
+                    }
+                }
+            }
+        )
+        let cleanupFailureManifest =
+            try CourseProjectManifest.read(
+                from: cleanupFailureMetadata.appendingPathComponent(
+                    "course.json"
+                )
+            )
+        let retainedCleanupDirectories =
+            try FileManager.default.contentsOfDirectory(
+                at: cleanupFailureMetadata,
+                includingPropertiesForKeys: [.isDirectoryKey]
+            ).filter {
+                obstructedCleanupNames.contains(
+                    $0.lastPathComponent
+                ) && $0.isDirectory
+            }
+        try check(
+            cleanupFailureManifest.portableExport == nil
+                && obstructedCleanupNames.count == 2
+                && retainedCleanupDirectories.count == 2,
+            "封印已可靠规范化后，清理残留仍错误报失败或普通 manifest 不可读"
+        )
+
         for postSaveTamper in [
             (
                 name: "接管保存后状态篡改",
@@ -2705,10 +2795,15 @@ enum CourseProjectRootSelfCheck {
                         .courseRootUnavailableReason(
                             for: courseA
                         ) != nil
+                    && tamperedAdoptionStore
+                        .isolatedCourseNoteOpenDoesNotReadForSelfCheck(
+                            itemID: noteID,
+                            courseID: courseA
+                        )
                     && stoppedExternalScopes.get().contains(
                         tamperedAdoptionRoot.canonicalFileURL
                     ),
-                "\(postSaveTamper.name)后错误消费封印，或没有隔离危险课程根并释放外部授权"
+                "\(postSaveTamper.name)后错误消费封印，或危险课程根仍可读取笔记/没有释放外部授权"
             )
         }
 

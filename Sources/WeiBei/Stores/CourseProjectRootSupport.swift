@@ -2728,7 +2728,8 @@ actor CourseProjectFileWorker {
         with data: Data,
         at url: URL,
         expectedDirectoryIdentity: ImportedFileIdentity,
-        expectedPreviousData: Data
+        expectedPreviousData: Data,
+        afterCommitBeforeCleanup: () -> Void = {}
     ) throws {
         guard url.lastPathComponent == "course.json",
               data.count <= 1_048_576 else {
@@ -2747,12 +2748,16 @@ actor CourseProjectFileWorker {
             relativeTo: directoryDescriptor,
             maximumByteCount: 1_048_576,
             temporaryBaseName: "course-manifest",
-            beforeCommit: {}
+            beforeCommit: {
+                guard identity(at: directory)
+                        == expectedDirectoryIdentity else {
+                    throw CourseProjectFileWorkerError
+                        .verificationFailed
+                }
+            },
+            afterCommitBeforeCleanup:
+                afterCommitBeforeCleanup
         )
-        guard Darwin.fsync(directoryDescriptor) == 0,
-              identity(at: directory) == expectedDirectoryIdentity else {
-            throw CourseProjectFileWorkerError.verificationFailed
-        }
     }
 
     nonisolated private static func validatedPortableAdoptionSnapshot(
@@ -2846,7 +2851,8 @@ actor CourseProjectFileWorker {
         relativeTo directoryDescriptor: Int32,
         maximumByteCount: Int = portableStateMaximumByteCount,
         temporaryBaseName: String = "course-state",
-        beforeCommit: () throws -> Void
+        beforeCommit: () throws -> Void,
+        afterCommitBeforeCleanup: () -> Void = {}
     ) throws {
         guard data.count <= maximumByteCount,
               isSafeEntryName(temporaryBaseName) else {
@@ -3041,13 +3047,35 @@ actor CourseProjectFileWorker {
                 try rollBackSwapAndPreserveCandidate()
                 throw CourseProjectFileWorkerError.contentConflict
             }
-            let removedDisplaced = temporaryName.withCString {
-                Darwin.unlinkat(directoryDescriptor, $0, 0)
+            let committedData: Data?
+            do {
+                committedData = try readRegularFile(
+                    named: name,
+                    relativeTo: directoryDescriptor,
+                    maximumByteCount: maximumByteCount
+                )
+            } catch {
+                try rollBackSwapAndPreserveCandidate()
+                throw CourseProjectFileWorkerError.contentConflict
             }
-            guard removedDisplaced == 0 else {
+            guard committedData == data else {
+                try rollBackSwapAndPreserveCandidate()
+                throw CourseProjectFileWorkerError.contentConflict
+            }
+            guard Darwin.fsync(directoryDescriptor) == 0 else {
+                try rollBackSwapAndPreserveCandidate()
                 throw CourseProjectFileWorkerError.verificationFailed
             }
             shouldRemoveTemporary = false
+            shouldRemoveCandidateBackup = false
+            afterCommitBeforeCleanup()
+            temporaryName.withCString {
+                _ = Darwin.unlinkat(directoryDescriptor, $0, 0)
+            }
+            candidateBackupName.withCString {
+                _ = Darwin.unlinkat(directoryDescriptor, $0, 0)
+            }
+            return
         }
         let finalData: Data?
         do {

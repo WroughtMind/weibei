@@ -1800,6 +1800,30 @@ final class WorkspaceStore: ObservableObject {
                         )
                 }
             } catch {
+                let isolatedNoteItemIDs =
+                    importedItems.compactMap { item -> String? in
+                        guard item.isNotebookNote,
+                              case .courseOwned(
+                                  let ownerCourseID
+                              ) = item.storage,
+                              ownerCourseID == course.id else {
+                            return nil
+                        }
+                        return item.id
+                    }
+                for itemID in isolatedNoteItemIDs {
+                    courseNoteLoadGenerationByItemID[
+                        itemID,
+                        default: 0
+                    ] &+= 1
+                    courseNoteLoadTasksByItemID
+                        .removeValue(forKey: itemID)?
+                        .cancel()
+                    courseNoteWriteTasksByItemID
+                        .removeValue(forKey: itemID)?
+                        .cancel()
+                    courseNoteWritesInFlight.remove(itemID)
+                }
                 resolvedCourseRootURLs.removeValue(
                     forKey: course.id
                 )
@@ -2886,6 +2910,33 @@ final class WorkspaceStore: ObservableObject {
             )
         )
         return lastPortableAdoptionReadRanOnMainThread == false
+    }
+
+    func isolatedCourseNoteOpenDoesNotReadForSelfCheck(
+        itemID: String,
+        courseID: UUID
+    ) -> Bool {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        courseNoteLoadGenerationByItemID[
+            itemID,
+            default: 0
+        ] &+= 1
+        courseNoteLoadTasksByItemID
+            .removeValue(forKey: itemID)?
+            .cancel()
+        loadedCourseNoteTextByItemID.removeValue(
+            forKey: itemID
+        )
+        lastCourseNoteReadRanOnMainThread = nil
+        openCourseNote(itemID, in: courseID)
+        return activeNotebookItemID == itemID
+            && courseNoteLoadTasksByItemID[itemID] == nil
+            && loadedCourseNoteTextByItemID[itemID] == nil
+            && lastCourseNoteReadRanOnMainThread == nil
     }
 
     func courseMarkdownRoundTripRunsOffMainForSelfCheck(
@@ -8365,15 +8416,44 @@ final class WorkspaceStore: ObservableObject {
         if let loaded = loadedCourseNoteTextByItemID[item.id] {
             return loaded
         }
-        guard item.editsBackingMarkdownFile,
-              let url = item.url,
-              let identity = item.importedFileIdentity else {
+        guard item.editsBackingMarkdownFile else {
             return cleanLegacyPlaceholder(notesByItemID[item.id] ?? defaultNote(for: item))
+        }
+        let url: URL
+        let identity: ImportedFileIdentity
+        let courseAccess: VerifiedCourseOwnedNoteAccess?
+        if case .courseOwned = item.storage {
+            guard let access = verifiedCourseOwnedNoteAccess(item) else {
+                throw CourseOwnedFileError.verificationFailed
+            }
+            url = access.url
+            identity = access.fileIdentity
+            courseAccess = access
+        } else {
+            guard let itemURL = item.url,
+                  let itemIdentity = item.importedFileIdentity else {
+                return cleanLegacyPlaceholder(
+                    notesByItemID[item.id] ?? defaultNote(for: item)
+                )
+            }
+            url = itemURL
+            identity = itemIdentity
+            courseAccess = nil
         }
         let result = try await courseProjectFileWorker.readMarkdown(
             at: url,
             expectedIdentity: identity
         )
+        if let courseAccess {
+            guard let currentItem = importedItems.first(where: {
+                $0.id == item.id
+            }),
+            let currentAccess =
+                verifiedCourseOwnedNoteAccess(currentItem),
+            currentAccess.matches(courseAccess) else {
+                throw CourseOwnedFileError.verificationFailed
+            }
+        }
         return cleanLegacyPlaceholder(result.markdown)
     }
 
@@ -20577,6 +20657,70 @@ final class WorkspaceStore: ObservableObject {
         return matches[0]
     }
 
+    private struct VerifiedCourseOwnedNoteAccess {
+        var courseID: UUID
+        var root: URL
+        var rootIdentity: ImportedFileIdentity
+        var url: URL
+        var fileIdentity: ImportedFileIdentity
+        var membershipIndex: Int
+
+        func matches(_ other: Self) -> Bool {
+            courseID == other.courseID
+                && rootIdentity == other.rootIdentity
+                && fileIdentity == other.fileIdentity
+                && CourseProjectPathPolicy.isSame(root, other.root)
+                && CourseProjectPathPolicy.isSame(url, other.url)
+        }
+    }
+
+    private func verifiedCourseOwnedNoteAccess(
+        _ item: StudyItem
+    ) -> VerifiedCourseOwnedNoteAccess? {
+        guard item.isNotebookNote,
+              case .courseOwned(let courseID) = item.storage,
+              courseRootUnavailableReasons[courseID] == nil,
+              let course = course(withID: courseID),
+              let expectedRootIdentity = course.sourceRootIdentity,
+              let root = courseRootURL(for: courseID),
+              importedFileIdentityResolver(root)
+                == expectedRootIdentity,
+              let membershipIndex =
+                uniqueCourseOwnedMembershipIndex(
+                    itemID: item.id,
+                    courseID: courseID
+                ),
+              let relativePath =
+                courseItemMemberships[membershipIndex]
+                    .courseRelativePath,
+              let resolvedURL = safeCourseOwnedFileURL(
+                relativePath: relativePath,
+                role: .note,
+                inside: root
+              ),
+              let itemURL = item.url,
+              CourseProjectPathPolicy.isSame(
+                resolvedURL,
+                itemURL
+              ),
+              let fileIdentity = item.importedFileIdentity,
+              importedFileIdentityResolver(resolvedURL)
+                == fileIdentity,
+              courseItemMemberships[membershipIndex]
+                .entryIdentity.map({ $0 == fileIdentity })
+                ?? true else {
+            return nil
+        }
+        return VerifiedCourseOwnedNoteAccess(
+            courseID: courseID,
+            root: root,
+            rootIdentity: expectedRootIdentity,
+            url: resolvedURL,
+            fileIdentity: fileIdentity,
+            membershipIndex: membershipIndex
+        )
+    }
+
     private func safeCourseOwnedFileURL(
         relativePath: String,
         role: CourseOwnedFileRole,
@@ -21090,12 +21234,13 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func scheduleCourseNoteLoad(_ item: StudyItem) {
-        guard item.isNotebookNote,
-              case .courseOwned = item.storage,
-              let url = item.url,
-              let identity = item.importedFileIdentity else {
+        guard let access = verifiedCourseOwnedNoteAccess(
+            item
+        ) else {
             return
         }
+        let url = access.url
+        let identity = access.fileIdentity
         let itemID = item.id
         guard courseNoteLoadTasksByItemID[itemID] == nil else { return }
         let generation = (courseNoteLoadGenerationByItemID[itemID] ?? 0) &+ 1
@@ -21115,9 +21260,13 @@ final class WorkspaceStore: ObservableObject {
                 )
                 guard courseNoteLoadGenerationByItemID[itemID] == generation,
                       let currentIndex = importedItems.firstIndex(where: {
-                        $0.id == itemID
+                          $0.id == itemID
                       }),
-                      case .courseOwned = importedItems[currentIndex].storage else {
+                      let currentAccess =
+                        verifiedCourseOwnedNoteAccess(
+                            importedItems[currentIndex]
+                        ),
+                      currentAccess.matches(access) else {
                     return
                 }
                 lastCourseNoteReadRanOnMainThread = result.ranOnMainThread
@@ -21141,12 +21290,16 @@ final class WorkspaceStore: ObservableObject {
                     result.metadata.url.path
                 noteBackingContentDigestsByItemID[itemID] =
                     result.snapshot.sha256
-                if let membershipIndex = courseItemMemberships.firstIndex(
-                    where: { $0.itemID == itemID }
+                if courseItemMemberships.indices.contains(
+                    currentAccess.membershipIndex
                 ) {
-                    courseItemMemberships[membershipIndex].entryIdentity =
+                    courseItemMemberships[
+                        currentAccess.membershipIndex
+                    ].entryIdentity =
                         result.metadata.identity
-                    courseItemMemberships[membershipIndex].documentIdentifier =
+                    courseItemMemberships[
+                        currentAccess.membershipIndex
+                    ].documentIdentifier =
                         result.documentIdentifier
                 }
                 if let pendingWrite = pendingNoteWritesByItemID[itemID] {
