@@ -86,14 +86,14 @@ struct CommandPaletteView: View {
         }
         if canControlAgent {
             items.append(PaletteCommand(title: store.sendAgentActionTitle, shortcut: "⌘↩") {
-                store.isAskingAgent ? store.cancelAgentRequest() : store.askAgent()
+                store.submitAgentDraft()
             })
         }
         return items
     }
 
     private var canControlAgent: Bool {
-        store.isAskingAgent || !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        store.isAgentRunningInActiveChat || !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func markdownInsertCommand(title: String, markdown: String) -> PaletteCommand {

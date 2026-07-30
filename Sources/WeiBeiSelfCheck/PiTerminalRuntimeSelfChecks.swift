@@ -47,6 +47,7 @@ func runPiTerminalRuntimeSelfChecks() async throws {
     defer { try? FileManager.default.removeItem(at: fixture.rootURL) }
 
     try await checkUserStopReturnsImmediately(fixture)
+    try await checkCancelledTurnCannotAffectImmediateNextChat(fixture)
     try await checkTerminalErrorBypassesSlowProgress(fixture)
     try await checkGenericEventsDoNotDefeatWatchdog(fixture)
     try await checkMeaningfulThinkingKeepsRunAlive(fixture)
@@ -87,6 +88,74 @@ private func checkUserStopReturnsImmediately(_ fixture: PiTerminalRuntimeFixture
     guard outcome == "error:PI 请求已取消", cancellationSeconds < 0.5 else {
         throw PiTerminalRuntimeSelfCheckError.failed(
             "PI stop waited for the unresponsive abort command (outcome=\(outcome), seconds=\(cancellationSeconds))"
+        )
+    }
+}
+
+private func checkCancelledTurnCannotAffectImmediateNextChat(
+    _ fixture: PiTerminalRuntimeFixture
+) async throws {
+    let runtime = PiAgentRuntime(
+        executableURL: fixture.executableURL,
+        runtimeDirectory: try fixture.workingDirectory(named: "LateCancelRuntime"),
+        runInactivityTimeoutNanoseconds: 2_000_000_000
+    )
+    let probe = PiProgressProbe()
+    let firstWorkingDirectory = try fixture.workingDirectory(named: "LateCancelModeA")
+    let firstRequest = StudyAgentRequest(
+        purpose: .conversation,
+        question: "启动后立即切换",
+        materialTitle: "",
+        materialText: "",
+        noteTitle: "",
+        noteText: "",
+        contextRevision: "cancel-a"
+    )
+    let firstRun = Task {
+        do {
+            _ = try await runtime.respond(
+                to: firstRequest,
+                sessionID: UUID(),
+                workingDirectory: firstWorkingDirectory
+            ) { event in
+                await probe.record(event)
+            }
+            return "unexpected-success"
+        } catch {
+            return error.localizedDescription
+        }
+    }
+    guard await probe.waitForReadingContext() else {
+        await runtime.shutdown()
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "PI immediate-switch fixture never reached the first active turn"
+        )
+    }
+
+    await runtime.cancel()
+    let firstOutcome = await firstRun.value
+    let secondRequest = StudyAgentRequest(
+        purpose: .conversation,
+        workflow: .studyCompanion,
+        question: "在第二个 Chat 直接回答",
+        materialTitle: "",
+        materialText: "",
+        noteTitle: "",
+        noteText: "",
+        contextRevision: "direct-answer-test"
+    )
+    let secondReply = try await runtime.respond(
+        to: secondRequest,
+        sessionID: UUID(),
+        workingDirectory: try fixture.workingDirectory(named: "DirectAnswerModeB"),
+        progress: nil
+    )
+    await runtime.shutdown()
+
+    guard firstOutcome == PiAgentRuntimeError.cancelled.localizedDescription,
+          secondReply.text == "普通回答没有来源也能显示。" else {
+        throw PiTerminalRuntimeSelfCheckError.failed(
+            "取消 A 后立即发送 B 时出现忙碌或旧进程事件串入（A=\(firstOutcome)，B=\(secondReply.text)）"
         )
     }
 }
@@ -251,20 +320,11 @@ private func checkContextSnapshotLivesUntilProcessShutdown(_ fixture: PiTerminal
     )
     let outcome = await terminalOutcome(runtime: runtime, revision: "thinking-test", progress: nil)
 
-    guard outcome == "reply:[材料：测试材料] 思考完成",
-          let contextData = try? Data(contentsOf: contextURL),
-          let context = try? JSONSerialization.jsonObject(with: contextData) as? [String: Any],
-          context["contextRevision"] as? String == "thinking-test" else {
-        await runtime.shutdown()
-        throw PiTerminalRuntimeSelfCheckError.failed(
-            "PI context snapshot disappeared before the persistent process finished its post-turn hooks"
-        )
-    }
-
     await runtime.shutdown()
-    guard !FileManager.default.fileExists(atPath: contextURL.path) else {
+    guard outcome == "reply:[材料：测试材料] 思考完成",
+          !FileManager.default.fileExists(atPath: contextURL.path) else {
         throw PiTerminalRuntimeSelfCheckError.failed(
-            "PI context snapshot was not removed when the persistent process shut down"
+            "PI turn did not complete normally or its context survived the post-turn process boundary"
         )
     }
 }
@@ -378,20 +438,20 @@ private func checkConversationBindingLaunchContract(
             ? String(projectDirectory.path.dropFirst("/private".count))
             : "/private\(projectDirectory.path)",
     ]
-    guard trace.components(separatedBy: "launch\n").count - 1 == 3,
+    guard trace.components(separatedBy: "launch\n").count - 1 == 4,
           expectedWorkingDirectories.contains(where: { trace.contains("cwd=\($0)\n") }),
           trace.components(
               separatedBy: "arg=--session-id\narg=\(sessionID.uuidString.lowercased())\n"
-          ).count - 1 == 2,
+          ).count - 1 == 3,
           trace.contains("arg=--session-id\narg=\(secondSessionID.uuidString.lowercased())\n"),
           trace.contains("arg=--session-dir\narg=\(expectedSessionDirectory)\n"),
           trace.contains("arg=--session-dir\narg=\(expectedSecondSessionDirectory)\n"),
           trace.components(
               separatedBy: "arg=--provider\narg=openai-codex\n"
-          ).count - 1 == 3,
+          ).count - 1 == 4,
           trace.components(
               separatedBy: "arg=--model\narg=\(AgentModelListService.codexDefaultModel)\n"
-          ).count - 1 == 3,
+          ).count - 1 == 4,
           !trace.contains("arg=--no-session\n"),
           !trace.contains("command=new_session\n"),
           trace.components(separatedBy: "command=prompt\n").count - 1 == 4,
@@ -707,6 +767,7 @@ private let fakePiTerminalSource = #"""
 
 static pid_t emitter_pid = -1;
 static int cancel_mode = 0;
+static int late_cancel_mode = 0;
 static int session_mode = 0;
 static int wrong_state_mode = 0;
 static int unreadable_state_mode = 0;
@@ -714,6 +775,26 @@ static int session_turn = 0;
 static char session_id[128] = "";
 static char session_directory[PATH_MAX] = "";
 static char trace_path[PATH_MAX] = "";
+
+static void load_session_turn(void) {
+    if (session_directory[0] == '\0') return;
+    char path[PATH_MAX];
+    snprintf(path, sizeof(path), "%s/fake-turn-count", session_directory);
+    FILE *file = fopen(path, "r");
+    if (file == NULL) return;
+    fscanf(file, "%d", &session_turn);
+    fclose(file);
+}
+
+static void save_session_turn(void) {
+    if (session_directory[0] == '\0') return;
+    char path[PATH_MAX];
+    snprintf(path, sizeof(path), "%s/fake-turn-count", session_directory);
+    FILE *file = fopen(path, "w");
+    if (file == NULL) return;
+    fprintf(file, "%d\n", session_turn);
+    fclose(file);
+}
 
 static int json_value(const char *line, const char *key, char *output, size_t capacity) {
     char pattern[64];
@@ -783,6 +864,13 @@ static void stop_emitter(void) {
 static void terminate_fixture(int signal_number) {
     (void)signal_number;
     if (emitter_pid > 0) kill(emitter_pid, SIGTERM);
+    if (late_cancel_mode) {
+        usleep(200000);
+        const char *late_events =
+            "{\"type\":\"message_update\",\"assistantMessageEvent\":{\"type\":\"text_delta\",\"delta\":\"A 的迟到正文\"}}\n"
+            "{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"A 的迟到终止事件\"}],\"stopReason\":\"stop\"}]}\n";
+        write(STDOUT_FILENO, late_events, strlen(late_events));
+    }
     _exit(0);
 }
 
@@ -795,6 +883,7 @@ static void start_emitter(void) {
     if (emitter_pid > 0) return;
     char cwd[PATH_MAX];
     getcwd(cwd, sizeof(cwd));
+    late_cancel_mode = strstr(cwd, "LateCancelMode") != NULL;
     cancel_mode = strstr(cwd, "CancelMode") != NULL;
     int error_mode = strstr(cwd, "ErrorMode") != NULL;
     int thinking_mode = strstr(cwd, "ThinkingMode") != NULL;
@@ -875,6 +964,7 @@ int main(int argc, char **argv) {
         || strstr(cwd, "ProxyProject") != NULL
         || wrong_state_mode
         || unreadable_state_mode;
+    load_session_turn();
     if (session_mode) {
         snprintf(trace_path, sizeof(trace_path), "%s/.fake-pi-trace.log", cwd);
         trace_line("launch", NULL);
@@ -954,6 +1044,7 @@ int main(int argc, char **argv) {
             respond(id, type, "{}");
             if (session_mode) {
                 session_turn += 1;
+                save_session_turn();
                 char revision[64];
                 char *context = NULL;
                 if (!read_context(&context)

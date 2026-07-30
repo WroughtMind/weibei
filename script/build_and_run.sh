@@ -853,6 +853,10 @@ verify_chat_reply_persistence() {
         && /usr/bin/grep -q '^stream_backend=pi$' "$report_file" \
         && /usr/bin/grep -q '^stream_recovered=true$' "$report_file" \
         && /usr/bin/grep -q '^switch_isolated=true$' "$report_file" \
+        && /usr/bin/grep -q '^confirmation_presented=true$' "$report_file" \
+        && /usr/bin/grep -q '^drafts_isolated=true$' "$report_file" \
+        && /usr/bin/grep -q '^terminal_merge=true$' "$report_file" \
+        && /usr/bin/grep -q '^late_events_rejected=true$' "$report_file" \
         && /usr/bin/grep -q '^state=interrupted$' "$report_file" \
         && /usr/bin/grep -q '^sources=1$' "$report_file" \
         && /usr/bin/grep -q '^source_id=material:rates$' "$report_file" \
