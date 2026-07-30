@@ -641,6 +641,7 @@ interface LearningUpdateDetails {
   suggestedPhase?: string;
   suggestedNext: string[];
   entries: Array<{
+    memoryID?: string;
     kind: LearningMemoryKind;
     text: string;
     evidence: string;
@@ -10699,10 +10700,10 @@ export default function weibeiExtension(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: LEARNING_UPDATE_TOOL,
-    label: "提出学习状态更新",
+    label: "更新学习状态",
     description:
-      "向魏碑提交带依据的学习记忆和会话状态建议。它不能修改材料或笔记。",
-    promptSnippet: "仅在出现可长期复用的目标、理解、困惑或下一步时提交更新",
+      "向魏碑提交带依据的学习记忆和会话状态更新。省略 memoryID 会新建记忆；携带当前作用域内活动记忆的稳定 ID 会更新原记忆。它不能修改材料或笔记。",
+    promptSnippet: "仅在出现可长期复用且有实质变化的目标、理解、困惑或下一步时更新",
     parameters: Type.Object(
       {
         contextRevision: Type.String({ minLength: 1, maxLength: LIMITS.identifier }),
@@ -10723,6 +10724,9 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         entries: Type.Array(
           Type.Object(
             {
+              memoryID: Type.Optional(
+                Type.String({ minLength: 1, maxLength: LIMITS.identifier }),
+              ),
               kind: Type.Union(
                 [
                   "goal",
@@ -10774,11 +10778,15 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         throw new Error("学习状态建议的上下文或记忆修订号不匹配");
       }
       const entries = params.entries.map((entry) => ({
+        memoryID: entry.memoryID?.trim().toLowerCase(),
         kind: entry.kind as LearningMemoryKind,
         text: entry.text.trim(),
         evidence: entry.evidence.trim(),
         origin: entry.origin as "userStatement" | "agentInference",
       }));
+      if (entries.some((entry) => entry.memoryID !== undefined && !entry.memoryID)) {
+        throw new Error("学习记忆 ID 不能为空");
+      }
       const allowedEvidencePrefixes = [
         "[用户：本轮]",
         "[会话：当前]",
@@ -10819,17 +10827,32 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         .map((item) => item.trim())
         .filter((item) => item.length > 0);
       const sessionSummary = params.sessionSummary?.trim();
-      const activeMemoryByID = new Map(
+      const allActiveMemoryByID = new Map(
+        current.learning.memories
+          .filter((memory) => memory.status === "active")
+          .map((memory) => [memory.id.trim().toLowerCase(), memory] as const),
+      );
+      const updateTargetIDs = entries.flatMap((entry) =>
+        entry.memoryID ? [entry.memoryID] : []
+      );
+      if (new Set(updateTargetIDs).size !== updateTargetIDs.length) {
+        throw new Error("同一次学习状态更新不能重复修改同一条记忆");
+      }
+      if (updateTargetIDs.some((memoryID) => !allActiveMemoryByID.has(memoryID))) {
+        throw new Error("只能更新当前作用域内仍处于活跃状态的学习记忆");
+      }
+      const resolvableMemoryByID = new Map(
         current.learning.memories
           .filter(
             (memory) =>
               memory.status === "active" &&
               ["goal", "confusion", "nextStep"].includes(memory.kind),
           )
-          .map((memory) => [memory.id, memory] as const),
+          .map((memory) => [memory.id.trim().toLowerCase(), memory] as const),
       );
       const resolutions = (params.resolutions ?? []).map((resolution) => {
-        const memory = activeMemoryByID.get(resolution.memoryID);
+        const memoryID = resolution.memoryID.trim().toLowerCase();
+        const memory = resolvableMemoryByID.get(memoryID);
         const evidence = resolution.evidence.trim();
         if (!memory) {
           throw new Error("只能结案当前学习记忆中仍处于活跃状态的项目");
@@ -10843,6 +10866,12 @@ export default function weibeiExtension(pi: ExtensionAPI) {
           evidence,
         };
       });
+      const resolutionTargetIDs = resolutions.map((resolution) =>
+        resolution.memoryID.trim().toLowerCase()
+      );
+      if (new Set(resolutionTargetIDs).size !== resolutionTargetIDs.length) {
+        throw new Error("同一次学习状态更新不能重复结案同一条记忆");
+      }
       if (
         !sessionSummary &&
         !params.suggestedPhase &&
@@ -10866,7 +10895,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         content: [
           {
             type: "text",
-            text: "学习状态建议已校验并交给魏碑；这不会修改课程材料或用户笔记。",
+            text: "学习状态更新已校验并交给魏碑；魏碑只会保存当前作用域中的实际变化，不会修改课程材料或用户笔记。",
           },
         ],
         details,

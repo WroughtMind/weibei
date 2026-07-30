@@ -286,10 +286,17 @@ private func checkRPCDecoding() throws {
                 "suggestedNext": ["用一道题区分名义利率与实际利率"],
                 "entries": [
                     [
+                        "memoryID": "00000000-0000-0000-0000-000000000003",
                         "kind": "confusion",
                         "text": "还不熟悉费雪方程",
                         "evidence": "[用户：本轮] 用户明确说不熟悉",
                         "origin": "userStatement",
+                    ],
+                    [
+                        "kind": "nextStep",
+                        "text": "练习一道费雪方程题",
+                        "evidence": "[会话：当前] 用户要求安排一道练习",
+                        "origin": "agentInference",
                     ],
                 ],
                 "resolutions": [
@@ -314,10 +321,17 @@ private func checkRPCDecoding() throws {
                 suggestedNext: ["用一道题区分名义利率与实际利率"],
                 entries: [
                     StudyAgentMemoryUpdateEntry(
+                        memoryID: "00000000-0000-0000-0000-000000000003",
                         kind: .confusion,
                         text: "还不熟悉费雪方程",
                         evidence: "[用户：本轮] 用户明确说不熟悉",
                         origin: .userStatement
+                    ),
+                    StudyAgentMemoryUpdateEntry(
+                        kind: .nextStep,
+                        text: "练习一道费雪方程题",
+                        evidence: "[会话：当前] 用户要求安排一道练习",
+                        origin: .agentInference
                     ),
                 ],
                 resolutions: [
@@ -330,6 +344,70 @@ private func checkRPCDecoding() throws {
             )
         ),
         "PI learning updates preserve context, memory revision, evidence, and flow"
+    )
+    let partiallyMalformedLearningData = try JSONSerialization.data(withJSONObject: [
+        "type": "tool_execution_end",
+        "toolCallId": "tool-memory-malformed",
+        "toolName": "weibei_learning_update",
+        "isError": false,
+        "result": [
+            "details": [
+                "kind": "learning_update",
+                "contextRevision": "revision-7",
+                "memoryRevision": 4,
+                "suggestedNext": [],
+                "entries": [
+                    [
+                        "kind": "progress",
+                        "text": "完成第一节",
+                        "evidence": "[用户：本轮] 完成第一节",
+                        "origin": "userStatement",
+                    ],
+                    [
+                        "kind": "confusion",
+                        "text": "这条缺少 origin，不能被静默吞掉",
+                        "evidence": "[用户：本轮] 仍然困惑",
+                    ],
+                ],
+                "resolutions": [],
+            ],
+        ],
+    ])
+    try piRequire(
+        try PiRPCMessageDecoder.decode(partiallyMalformedLearningData)
+            == .event("tool_execution_end"),
+        "PI rejects an entire learning update instead of silently dropping malformed entries"
+    )
+    let partiallyMalformedResolutionData = try JSONSerialization.data(withJSONObject: [
+        "type": "tool_execution_end",
+        "toolCallId": "tool-resolution-malformed",
+        "toolName": "weibei_learning_update",
+        "isError": false,
+        "result": [
+            "details": [
+                "kind": "learning_update",
+                "contextRevision": "revision-7",
+                "memoryRevision": 4,
+                "suggestedNext": [],
+                "entries": [],
+                "resolutions": [
+                    [
+                        "memoryID": "00000000-0000-0000-0000-000000000004",
+                        "text": "已经解决",
+                        "evidence": "[用户：本轮] 已经解决",
+                    ],
+                    [
+                        "memoryID": "00000000-0000-0000-0000-000000000005",
+                        "text": "这条缺少 evidence，不能被静默吞掉",
+                    ],
+                ],
+            ],
+        ],
+    ])
+    try piRequire(
+        try PiRPCMessageDecoder.decode(partiallyMalformedResolutionData)
+            == .event("tool_execution_end"),
+        "PI rejects an entire learning update instead of silently dropping malformed resolutions"
     )
 
     let ended = try PiRPCMessageDecoder.decode(Data(#"{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"第一轮"}],"stopReason":"toolUse","provider":"openai","model":"older-model"},{"role":"assistant","content":[{"type":"text","text":"最终回答"}],"stopReason":"stop","provider":"openai","model":"gpt-test"}]}"#.utf8))
@@ -401,12 +479,15 @@ private func checkStudyAgentContext() throws {
             searchText: String(repeating: "课", count: 2_500)
         )
     }
+    let resolvedMemoryID = UUID(uuidString: "00000000-0000-0000-0000-000000000099")!
     let learningMemories = (0..<60).map { index in
         LearningMemoryEntry(
+            id: index == 59 ? resolvedMemoryID : UUID(),
             kind: index.isMultiple(of: 2) ? .confusion : .nextStep,
             text: "memory-\(index)" + String(repeating: "学", count: 520),
             evidence: "[用户：本轮] evidence-\(index)" + String(repeating: "据", count: 420),
             origin: .userStatement,
+            status: index == 59 ? .resolved : .active,
             updatedAt: Date(timeIntervalSinceReferenceDate: TimeInterval(index))
         )
     }
@@ -492,7 +573,14 @@ private func checkStudyAgentContext() throws {
         "study-agent context replaces workspace item ids with request-local opaque ids"
     )
     try piRequire(envelope.course.items.allSatisfy { $0.searchText.count <= 2_400 && $0.headings.count <= 12 && $0.tags.count <= 16 && $0.linkedItemIDs.count <= 24 }, "study-agent context bounds course search metadata")
-    try piRequire(envelope.learning.memoryRevision == 7 && envelope.learning.memories.count == 48, "study-agent context carries a bounded learning-memory revision")
+    try piRequire(
+        envelope.learning.memoryRevision == 7
+            && envelope.learning.memories.count == 48
+            && envelope.learning.memories.contains(where: {
+                $0.id == resolvedMemoryID && $0.status == .resolved
+            }),
+        "study-agent context carries a bounded memory revision and recent resolved history"
+    )
     try piRequire(envelope.learning.memories.allSatisfy { $0.text.count <= 500 && $0.evidence.count <= 400 }, "study-agent context bounds durable learning memory")
     try piRequire(
         envelope.learning.lastLocation?.itemTitle.count == 300
@@ -844,6 +932,9 @@ private func checkBundledAgentResources() throws {
             && extensionSource.contains("章节序号")
             && extensionSource.contains("resolutionEvidenceMatches")
             && extensionSource.contains("return currentTurnEvidenceMatches(snapshot, evidence)")
+            && extensionSource.contains("memoryID: Type.Optional")
+            && extensionSource.contains("allActiveMemoryByID")
+            && extensionSource.contains("只能更新当前作用域内仍处于活跃状态的学习记忆")
             && !extensionSource.contains("const unresolvedTerms")
             && !extensionSource.contains("immediateNegation")
             && extensionSource.contains("html-section-")
@@ -1012,6 +1103,8 @@ private func checkBundledAgentResources() throws {
             && runtimeSource.contains("allowedAssetIDs")
             && runtimeSource.contains("RichAnswerEngine.prepare")
             && runtimeSource.contains("memoryRevision")
+            && runtimeSource.contains("updatableMemoryIDs")
+            && runtimeSource.contains("outside the current active scope")
             && runtimeSource.contains("courseSourcesRead")
             && runtimeSource.contains("registerJumpEvidence")
             && runtimeSource.contains("canonicalJumpReference")

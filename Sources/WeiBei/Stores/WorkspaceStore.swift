@@ -13024,91 +13024,189 @@ final class WorkspaceStore: ObservableObject {
         guard let update,
               update.contextRevision == expectedContextRevision,
               update.memoryRevision == expectedMemoryRevision,
-              learningMemoryRevision(in: scope) == expectedMemoryRevision else { return nil }
+              learningMemoryRevision(in: scope) == expectedMemoryRevision,
+              update.entries.count <= 12,
+              update.resolutions.count <= 12 else { return nil }
 
         var memoryEntries = learningMemoryEntries(in: scope)
         let nextMemoryRevision = expectedMemoryRevision &+ 1
+        var validatedEntries: [(
+            proposal: StudyAgentMemoryUpdateEntry,
+            memoryID: UUID?,
+            text: String,
+            evidence: String,
+            origin: LearningMemoryOrigin
+        )] = []
+        var entryTargetIDs: Set<UUID> = []
+        for proposal in update.entries {
+            let text = proposal.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            let evidence = proposal.evidence.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty, !evidence.isEmpty else { return nil }
+            if evidence.hasPrefix("[用户：本轮]") || evidence.hasPrefix("[会话：当前]") {
+                guard StudyAgentCurrentTurnEvidence.matches(
+                    evidence,
+                    question: expectedUserQuestion
+                ) else { return nil }
+            }
+            if proposal.origin == .userStatement {
+                guard evidence.hasPrefix("[用户：本轮]") else { return nil }
+            }
+            let memoryID: UUID?
+            if let rawMemoryID = proposal.memoryID {
+                guard let parsedMemoryID = UUID(uuidString: rawMemoryID),
+                      entryTargetIDs.insert(parsedMemoryID).inserted,
+                      memoryEntries.contains(where: {
+                          $0.id == parsedMemoryID && $0.status == .active
+                      }) else {
+                    return nil
+                }
+                memoryID = parsedMemoryID
+            } else {
+                memoryID = nil
+            }
+            validatedEntries.append(
+                (
+                    proposal,
+                    memoryID,
+                    String(text.prefix(500)),
+                    String(evidence.prefix(400)),
+                    proposal.origin == .observed ? .agentInference : proposal.origin
+                )
+            )
+        }
+
+        var validatedResolutions: [(
+            proposal: StudyAgentMemoryResolution,
+            memoryID: UUID,
+            evidence: String
+        )] = []
+        var resolutionTargetIDs: Set<UUID> = []
+        for proposal in update.resolutions {
+            let evidence = proposal.evidence.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard StudyAgentCurrentTurnEvidence.matches(
+                evidence,
+                question: expectedUserQuestion
+            ),
+            let memoryID = UUID(uuidString: proposal.memoryID),
+            resolutionTargetIDs.insert(memoryID).inserted,
+            let memory = memoryEntries.first(where: {
+                $0.id == memoryID && $0.status == .active
+            }),
+            memory.kind == .goal || memory.kind == .confusion || memory.kind == .nextStep else {
+                return nil
+            }
+            validatedResolutions.append(
+                (
+                    proposal,
+                    memoryID,
+                    String(evidence.prefix(400))
+                )
+            )
+        }
+
         var sessionChanged = false
-        var memoryChanged = false
         var changedMemoryIDs: [UUID] = []
+        var acceptedEntries: [StudyAgentMemoryUpdateEntry] = []
         let now = Date()
-        for proposed in update.entries.prefix(12) {
-            let text = proposed.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            let evidence = proposed.evidence.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !text.isEmpty, !evidence.isEmpty else { continue }
-            if (evidence.hasPrefix("[用户：本轮]") || evidence.hasPrefix("[会话：当前]")),
-               !StudyAgentCurrentTurnEvidence.matches(
-                   evidence,
-                   question: expectedUserQuestion
-               ) {
-                continue
-            }
-            if proposed.origin == .userStatement,
-               !evidence.hasPrefix("[用户：本轮]") {
-                continue
-            }
-            let normalized = Self.normalizedMemoryText(text)
-            if let index = memoryEntries.firstIndex(where: {
-                $0.kind == proposed.kind
-                    && $0.status == .active
-                    && Self.normalizedMemoryText($0.text) == normalized
-                    && (
-                        $0.origin == .userStatement
-                            || proposed.origin == .userStatement
-                            || $0.sessionID == target.sessionID
-                    )
-            }) {
-                if memoryEntries[index].origin == .userStatement,
-                   proposed.origin != .userStatement {
+        for validated in validatedEntries {
+            if let memoryID = validated.memoryID,
+               let index = memoryEntries.firstIndex(where: { $0.id == memoryID }) {
+                let origin = memoryEntries[index].origin == .userStatement
+                    ? .userStatement
+                    : validated.origin
+                guard memoryEntries[index].kind != validated.proposal.kind
+                        || memoryEntries[index].text != validated.text
+                        || memoryEntries[index].evidence != validated.evidence
+                        || memoryEntries[index].origin != origin else {
                     continue
                 }
-                memoryEntries[index].text = String(text.prefix(500))
-                memoryEntries[index].evidence = String(evidence.prefix(400))
-                if proposed.origin == .userStatement {
-                    memoryEntries[index].origin = .userStatement
-                }
+                memoryEntries[index].kind = validated.proposal.kind
+                memoryEntries[index].text = validated.text
+                memoryEntries[index].evidence = validated.evidence
+                memoryEntries[index].origin = origin
                 memoryEntries[index].sessionID = target.sessionID
                 memoryEntries[index].messageID = messageID
                 memoryEntries[index].updatedAt = now
-                Self.appendLearningMemoryRevision(
-                    to: &memoryEntries[index],
-                    revision: nextMemoryRevision,
-                    actor: .agent,
-                    recordedAt: now
+                changedMemoryIDs.append(memoryID)
+                acceptedEntries.append(
+                    StudyAgentMemoryUpdateEntry(
+                        memoryID: memoryID.uuidString.lowercased(),
+                        kind: memoryEntries[index].kind,
+                        text: memoryEntries[index].text,
+                        evidence: memoryEntries[index].evidence,
+                        origin: memoryEntries[index].origin
+                    )
                 )
-                changedMemoryIDs.append(memoryEntries[index].id)
-                memoryChanged = true
             } else {
-                var entry = LearningMemoryEntry(
-                    kind: proposed.kind,
-                    text: String(text.prefix(500)),
-                    evidence: String(evidence.prefix(400)),
-                    origin: proposed.origin == .observed ? .agentInference : proposed.origin,
+                let normalized = Self.normalizedMemoryText(validated.text)
+                guard !memoryEntries.contains(where: {
+                    $0.kind == validated.proposal.kind
+                        && $0.status == .active
+                        && Self.normalizedMemoryText($0.text) == normalized
+                }) else {
+                    continue
+                }
+                let entry = LearningMemoryEntry(
+                    kind: validated.proposal.kind,
+                    text: validated.text,
+                    evidence: validated.evidence,
+                    origin: validated.origin,
                     sessionID: target.sessionID,
                     messageID: messageID,
                     createdAt: now,
                     updatedAt: now
                 )
-                Self.appendLearningMemoryRevision(
-                    to: &entry,
-                    revision: nextMemoryRevision,
-                    actor: .agent,
-                    recordedAt: now
-                )
                 memoryEntries.append(entry)
                 changedMemoryIDs.append(entry.id)
-                memoryChanged = true
+                acceptedEntries.append(
+                    StudyAgentMemoryUpdateEntry(
+                        memoryID: entry.id.uuidString.lowercased(),
+                        kind: entry.kind,
+                        text: entry.text,
+                        evidence: entry.evidence,
+                        origin: entry.origin
+                    )
+                )
             }
+        }
+
+        for validated in validatedResolutions {
+            guard let index = memoryEntries.firstIndex(where: {
+                $0.id == validated.memoryID
+            }) else { continue }
+            memoryEntries[index].status = .resolved
+            memoryEntries[index].resolvedAt = now
+            memoryEntries[index].resolutionEvidence = validated.evidence
+            memoryEntries[index].sessionID = target.sessionID
+            memoryEntries[index].messageID = messageID
+            memoryEntries[index].updatedAt = now
+            if !changedMemoryIDs.contains(validated.memoryID) {
+                changedMemoryIDs.append(validated.memoryID)
+            }
+        }
+
+        for memoryID in changedMemoryIDs {
+            guard let index = memoryEntries.firstIndex(where: {
+                $0.id == memoryID
+            }) else { continue }
+            Self.appendLearningMemoryRevision(
+                to: &memoryEntries[index],
+                revision: nextMemoryRevision,
+                actor: .agent,
+                recordedAt: now
+            )
         }
 
         if let index = studySessions.firstIndex(where: { $0.id == target.sessionID }) {
             if let summary = update.sessionSummary?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !summary.isEmpty {
+               !summary.isEmpty,
+               studySessions[index].summary != String(summary.prefix(2_000)) {
                 studySessions[index].summary = String(summary.prefix(2_000))
                 sessionChanged = true
             }
             if !studySessions[index].flow.pinnedByUser,
-               let phase = update.suggestedPhase {
+               let phase = update.suggestedPhase,
+               studySessions[index].flow.phase != phase {
                 studySessions[index].flow.phase = phase
                 sessionChanged = true
             }
@@ -13117,7 +13215,7 @@ final class WorkspaceStore: ObservableObject {
                 .filter { !$0.isEmpty }
                 .prefix(3)
                 .map { String($0.prefix(300)) }
-            if !next.isEmpty {
+            if !next.isEmpty, studySessions[index].flow.suggestedNext != next {
                 studySessions[index].flow.suggestedNext = next
                 sessionChanged = true
             }
@@ -13126,24 +13224,17 @@ final class WorkspaceStore: ObservableObject {
             }
         }
 
+        let memoryChanged = !changedMemoryIDs.isEmpty
         if memoryChanged,
            let stateIndex = learningMemoryStateIndex(for: scope, createIfMissing: true) {
             learningMemoryStates[stateIndex].entries = memoryEntries
             learningMemoryStates[stateIndex].revision = nextMemoryRevision
         }
         var acceptedUpdate = update
-        acceptedUpdate.resolutions = update.resolutions.prefix(12).filter { resolution in
-            guard StudyAgentCurrentTurnEvidence.matches(
-                resolution.evidence.trimmingCharacters(in: .whitespacesAndNewlines),
-                question: expectedUserQuestion
-            ),
-            let memoryID = UUID(uuidString: resolution.memoryID),
-            let memory = memoryEntries.first(where: { $0.id == memoryID }) else {
-                return false
-            }
-            return memory.status == .active
-                && (memory.kind == .goal || memory.kind == .confusion || memory.kind == .nextStep)
-        }
+        acceptedUpdate.entries = acceptedEntries
+        // A5b applies valid resolutions immediately; the persisted reply attachment
+        // records the changed IDs, so the legacy confirmation strip must not ask again.
+        acceptedUpdate.resolutions = []
         if activeStudySessionID == target.sessionID {
             latestAgentLearningUpdate = acceptedUpdate
             latestAgentLearningUpdateQuestion = expectedUserQuestion
@@ -15418,9 +15509,11 @@ final class WorkspaceStore: ObservableObject {
         let courseAChatID = UUID(uuidString: "66666666-6666-6666-6666-666666666663")!
         let courseBChatID = UUID(uuidString: "66666666-6666-6666-6666-666666666664")!
         let globalChatID = UUID(uuidString: "66666666-6666-6666-6666-666666666665")!
+        let courseASecondChatID = UUID(uuidString: "66666666-6666-6666-6666-666666666669")!
         let courseAMemoryID = UUID(uuidString: "66666666-6666-6666-6666-666666666666")!
         let courseBMemoryID = UUID(uuidString: "66666666-6666-6666-6666-666666666667")!
         let globalMemoryID = UUID(uuidString: "66666666-6666-6666-6666-666666666668")!
+        let courseAConfusionID = UUID(uuidString: "66666666-6666-6666-6666-666666666660")!
         let now = Date()
 
         func initialEntry(
@@ -15468,6 +15561,12 @@ final class WorkspaceStore: ObservableObject {
                 messages: [AgentMessage(role: .user, text: "安排本周学习", source: nil)],
                 courseID: nil
             ),
+            StudySession(
+                id: courseASecondChatID,
+                title: "利率练习",
+                messages: [AgentMessage(role: .user, text: "继续练习利率", source: nil)],
+                courseID: courseAID
+            ),
         ]
         activeStudySessionID = courseAChatID
         messages = studySessions[0].messages
@@ -15492,6 +15591,12 @@ final class WorkspaceStore: ObservableObject {
                         id: courseAMemoryID,
                         kind: .confusion,
                         text: "仍需区分名义利率和实际利率",
+                        sessionID: courseAChatID
+                    ),
+                    initialEntry(
+                        id: courseAConfusionID,
+                        kind: .confusion,
+                        text: "还不会解释费雪方程",
                         sessionID: courseAChatID
                     ),
                 ]
@@ -15535,6 +15640,230 @@ final class WorkspaceStore: ObservableObject {
             && learningMemoryRevision(in: .course(courseBID)) == courseBRevisionBefore
             && learningMemoryEntries(in: .course(courseBID)).map(\.id) == [courseBMemoryID]
 
+        func target(_ sessionID: UUID, courseID: UUID?) -> AgentConversationTarget {
+            AgentConversationTarget(
+                sessionID: sessionID,
+                workingDirectory: workspaceDirectory,
+                courseID: courseID,
+                courseRootIdentity: nil
+            )
+        }
+
+        activeCourseID = courseBID
+        activeStudySessionID = courseBChatID
+        messages = studySessions.first(where: { $0.id == courseBChatID })?.messages ?? []
+        let createQuestion = "我开始会用费雪方程计算实际利率了"
+        let createRevision = learningMemoryRevision(in: .course(courseAID))
+        let createAttachment = applyLearningUpdate(
+            StudyAgentLearningUpdate(
+                contextRevision: "a5b-create",
+                memoryRevision: createRevision,
+                entries: [
+                    StudyAgentMemoryUpdateEntry(
+                        kind: .progress,
+                        text: "开始会用费雪方程计算实际利率",
+                        evidence: "[用户：本轮] \(createQuestion)",
+                        origin: .userStatement
+                    ),
+                ]
+            ),
+            expectedContextRevision: "a5b-create",
+            expectedMemoryRevision: createRevision,
+            expectedUserQuestion: createQuestion,
+            target: target(courseAChatID, courseID: courseAID),
+            messageID: UUID()
+        )
+        let createdMemoryID = createAttachment?.memoryIDs.first
+        let fixedTargetPassed = createdMemoryID != nil
+            && activeCourseID == courseBID
+            && activeStudySessionID == courseBChatID
+            && learningMemoryRevision(in: .course(courseBID)) == courseBRevisionBefore
+
+        let noOpRevision = learningMemoryRevision(in: .course(courseAID))
+        let noOpAttachment = createdMemoryID.flatMap { memoryID in
+            applyLearningUpdate(
+                StudyAgentLearningUpdate(
+                    contextRevision: "a5b-no-op",
+                    memoryRevision: noOpRevision,
+                    entries: [
+                        StudyAgentMemoryUpdateEntry(
+                            memoryID: memoryID.uuidString.lowercased(),
+                            kind: .progress,
+                            text: "开始会用费雪方程计算实际利率",
+                            evidence: "[用户：本轮] \(createQuestion)",
+                            origin: .userStatement
+                        ),
+                    ]
+                ),
+                expectedContextRevision: "a5b-no-op",
+                expectedMemoryRevision: noOpRevision,
+                expectedUserQuestion: createQuestion,
+                target: target(courseASecondChatID, courseID: courseAID),
+                messageID: UUID()
+            )
+        }
+        let noOpPassed = noOpAttachment == nil
+            && learningMemoryRevision(in: .course(courseAID)) == noOpRevision
+
+        let updateQuestion = "我现在已经会用费雪方程了"
+        let updateRevision = learningMemoryRevision(in: .course(courseAID))
+        let updateAttachment = createdMemoryID.flatMap { memoryID in
+            applyLearningUpdate(
+                StudyAgentLearningUpdate(
+                    contextRevision: "a5b-update",
+                    memoryRevision: updateRevision,
+                    entries: [
+                        StudyAgentMemoryUpdateEntry(
+                            memoryID: memoryID.uuidString.lowercased(),
+                            kind: .understood,
+                            text: "已经会用费雪方程计算实际利率",
+                            evidence: "[用户：本轮] \(updateQuestion)",
+                            origin: .userStatement
+                        ),
+                    ]
+                ),
+                expectedContextRevision: "a5b-update",
+                expectedMemoryRevision: updateRevision,
+                expectedUserQuestion: updateQuestion,
+                target: target(courseASecondChatID, courseID: courseAID),
+                messageID: UUID()
+            )
+        }
+        let crossChatUpdatePassed = createdMemoryID.flatMap { memoryID in
+            learningMemoryEntries(in: .course(courseAID))
+                .first(where: { $0.id == memoryID })
+        }?.text == "已经会用费雪方程计算实际利率"
+            && updateAttachment?.memoryIDs == createdMemoryID.map { [$0] }
+
+        let staleRevision = learningMemoryRevision(in: .course(courseAID))
+        let userCorrectionPassed = createdMemoryID.map { memoryID in
+            updateLearningMemory(
+                memoryID,
+                in: .course(courseAID),
+                kind: .progress,
+                text: "用户修正：目前只会做最基础的费雪方程题"
+            )
+        } == true
+        let staleQuestion = "我现在已经完全掌握费雪方程了"
+        let staleAttachment = createdMemoryID.flatMap { memoryID in
+            applyLearningUpdate(
+                StudyAgentLearningUpdate(
+                    contextRevision: "a5b-stale",
+                    memoryRevision: staleRevision,
+                    entries: [
+                        StudyAgentMemoryUpdateEntry(
+                            memoryID: memoryID.uuidString.lowercased(),
+                            kind: .understood,
+                            text: "已经完全掌握费雪方程",
+                            evidence: "[用户：本轮] \(staleQuestion)",
+                            origin: .userStatement
+                        ),
+                    ]
+                ),
+                expectedContextRevision: "a5b-stale",
+                expectedMemoryRevision: staleRevision,
+                expectedUserQuestion: staleQuestion,
+                target: target(courseASecondChatID, courseID: courseAID),
+                messageID: UUID()
+            )
+        }
+        let staleRejected = staleAttachment == nil
+            && createdMemoryID.flatMap { memoryID in
+                learningMemoryEntries(in: .course(courseAID))
+                    .first(where: { $0.id == memoryID })
+            }?.text == "用户修正：目前只会做最基础的费雪方程题"
+
+        let resolveQuestion = "我已经能清楚解释费雪方程了"
+        let resolveRevision = learningMemoryRevision(in: .course(courseAID))
+        let resolutionMessageID = UUID()
+        let resolutionAttachment = applyLearningUpdate(
+            StudyAgentLearningUpdate(
+                contextRevision: "a5b-resolve",
+                memoryRevision: resolveRevision,
+                resolutions: [
+                    StudyAgentMemoryResolution(
+                        memoryID: courseAConfusionID.uuidString.lowercased(),
+                        text: "已经能解释费雪方程",
+                        evidence: "[会话：当前] \(resolveQuestion)"
+                    ),
+                ]
+            ),
+            expectedContextRevision: "a5b-resolve",
+            expectedMemoryRevision: resolveRevision,
+            expectedUserQuestion: resolveQuestion,
+            target: target(courseASecondChatID, courseID: courseAID),
+            messageID: resolutionMessageID
+        )
+        let resolvedMemory = learningMemoryEntries(in: .course(courseAID))
+            .first(where: { $0.id == courseAConfusionID })
+        let automaticResolutionPassed = resolutionAttachment?.memoryIDs == [courseAConfusionID]
+            && resolvedMemory?.status == .resolved
+            && resolvedMemory?.messageID == resolutionMessageID
+            && resolvedMemory?.revisions?.last?.actor == .agent
+            && latestAgentLearningUpdate?.resolutions.isEmpty == true
+
+        let invalidRevision = learningMemoryRevision(in: .course(courseAID))
+        let invalidAttachment = applyLearningUpdate(
+            StudyAgentLearningUpdate(
+                contextRevision: "a5b-invalid",
+                memoryRevision: invalidRevision,
+                entries: [
+                    StudyAgentMemoryUpdateEntry(
+                        memoryID: globalMemoryID.uuidString.lowercased(),
+                        kind: .goal,
+                        text: "不能越界修改全局记忆",
+                        evidence: "[用户：本轮] 不要跨作用域修改记忆",
+                        origin: .userStatement
+                    ),
+                ]
+            ),
+            expectedContextRevision: "a5b-invalid",
+            expectedMemoryRevision: invalidRevision,
+            expectedUserQuestion: "不要跨作用域修改记忆",
+            target: target(courseASecondChatID, courseID: courseAID),
+            messageID: UUID()
+        )
+        let invalidTargetRejected = invalidAttachment == nil
+            && learningMemoryRevision(in: .course(courseAID)) == invalidRevision
+
+        activeCourseID = courseAID
+        activeStudySessionID = courseAChatID
+        let globalQuestion = "请记住我每周日做一次全局复盘"
+        let globalUpdateRevision = learningMemoryRevision(in: .global)
+        let globalAttachment = applyLearningUpdate(
+            StudyAgentLearningUpdate(
+                contextRevision: "a5b-global",
+                memoryRevision: globalUpdateRevision,
+                entries: [
+                    StudyAgentMemoryUpdateEntry(
+                        kind: .preference,
+                        text: "每周日做一次全局复盘",
+                        evidence: "[用户：本轮] \(globalQuestion)",
+                        origin: .userStatement
+                    ),
+                ]
+            ),
+            expectedContextRevision: "a5b-global",
+            expectedMemoryRevision: globalUpdateRevision,
+            expectedUserQuestion: globalQuestion,
+            target: target(globalChatID, courseID: nil),
+            messageID: UUID()
+        )
+        let globalMemoryCreated = globalAttachment?.memoryIDs.first
+        let globalScopePassed = globalMemoryCreated.map { memoryID in
+            learningMemoryEntries(in: .global).contains(where: {
+                $0.id == memoryID
+            })
+        } == true
+            && learningMemoryRevision(in: .course(courseBID)) == courseBRevisionBefore
+
+        deleteStudySession(courseASecondChatID)
+        let survivesChatDeletion = createdMemoryID.map { memoryID in
+            learningMemoryEntries(in: .course(courseAID)).contains(where: {
+                $0.id == memoryID
+            })
+        } == true
+
         let saved = flushPendingWorkspaceSave()
         let snapshot = (try? Data(contentsOf: storageURL)).flatMap {
             try? JSONDecoder().decode(PersistedWorkspace.self, from: $0)
@@ -15549,6 +15878,23 @@ final class WorkspaceStore: ObservableObject {
             && snapshot?.learningMemoryRevision == nil
             && persistedCourseA?.text == courseAEntry?.text
             && persistedCourseA?.revisions?.last?.actor == .user
+            && createdMemoryID.map { memoryID in
+                snapshot?.learningMemoryStates?
+                    .first(where: { $0.scope == .course(courseAID) })?
+                    .entries
+                    .contains(where: { $0.id == memoryID }) ?? false
+            } == true
+            && snapshot?.learningMemoryStates?
+                .first(where: { $0.scope == .course(courseAID) })?
+                .entries
+                .first(where: { $0.id == courseAConfusionID })?
+                .status == .resolved
+            && globalMemoryCreated.map { memoryID in
+                snapshot?.learningMemoryStates?
+                    .first(where: { $0.scope == .global })?
+                    .entries
+                    .contains(where: { $0.id == memoryID }) ?? false
+            } == true
 
         layout = .documentAgentNotes
         showLibrary = false
@@ -15557,10 +15903,29 @@ final class WorkspaceStore: ObservableObject {
         showNotes = false
         presentCourseWorkspace(.sessions, courseID: courseAID)
 
-        let passed = scopesIsolated && persistencePassed
+        let passed = scopesIsolated
+            && fixedTargetPassed
+            && noOpPassed
+            && crossChatUpdatePassed
+            && userCorrectionPassed
+            && staleRejected
+            && automaticResolutionPassed
+            && invalidTargetRejected
+            && globalScopePassed
+            && survivesChatDeletion
+            && persistencePassed
         let report = """
         result=\(passed ? "pass" : "fail")
         scopes_isolated=\(scopesIsolated)
+        fixed_target=\(fixedTargetPassed)
+        no_op_stable=\(noOpPassed)
+        cross_chat_update=\(crossChatUpdatePassed)
+        user_correction=\(userCorrectionPassed)
+        stale_rejected=\(staleRejected)
+        automatic_resolution=\(automaticResolutionPassed)
+        invalid_target_rejected=\(invalidTargetRejected)
+        global_scope=\(globalScopePassed)
+        survives_chat_deletion=\(survivesChatDeletion)
         independent_revisions=\(learningMemoryRevision(in: .course(courseBID)) == courseBRevisionBefore)
         user_history=\(courseAEntry?.revisions?.last?.actor == .user)
         stable_ids=\(persistedCourseA?.id == courseAMemoryID)
