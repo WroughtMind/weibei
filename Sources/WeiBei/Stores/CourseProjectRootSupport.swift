@@ -107,15 +107,27 @@ enum CoursePortableExportStage: Equatable, Sendable {
     case beforeAtomicPlacement
 }
 
-private enum PortableExportOwnedEntryKind: Equatable {
+private enum PortableExportTreeEntryKind: String, Codable, Equatable {
     case directory
     case regularFile
 }
 
-private struct PortableExportOwnedEntry: Equatable {
+private struct PortableExportTreeEntry: Equatable {
     var identity: ImportedFileIdentity
-    var kind: PortableExportOwnedEntryKind
+    var kind: PortableExportTreeEntryKind
     var snapshot: CourseFileSnapshot?
+}
+
+private struct PortableExportTreeSnapshot: Equatable {
+    var entries: [String: PortableExportTreeEntry]
+    var visibleTreeSHA256: String
+}
+
+private struct PortableExportDigestEntry: Codable {
+    var path: String
+    var kind: PortableExportTreeEntryKind
+    var byteCount: UInt64?
+    var sha256: String?
 }
 
 private enum PortableExportSourceEntryKind: Equatable {
@@ -137,6 +149,13 @@ enum CourseProjectFileWorkerError: Error {
     case targetExists
     case contentConflict
     case verificationFailed
+}
+
+struct CoursePortableAdoptionSnapshot: Sendable {
+    var metadataIdentity: ImportedFileIdentity
+    var manifest: CourseProjectManifest
+    var manifestData: Data
+    var portableStateData: Data?
 }
 
 enum CoursePortableExportError: LocalizedError {
@@ -207,25 +226,36 @@ actor CourseProjectFileWorker {
             }
         }
 
+        let stagingName =
+            ".weibei-course-export-\(UUID().uuidString.lowercased())"
         let stagingRoot = targetParent.appendingPathComponent(
-            ".weibei-course-export-\(UUID().uuidString.lowercased())",
+            stagingName,
             isDirectory: true
         )
-        try fileManager.createDirectory(
-            at: stagingRoot,
-            withIntermediateDirectories: false
+        let targetParentDescriptor = try Self.openDirectory(
+            targetParent,
+            expectedIdentity: targetParentIdentity
         )
-        guard let stagingIdentity = Self.identity(at: stagingRoot) else {
+        defer { Darwin.close(targetParentDescriptor) }
+        try Self.createDirectory(
+            named: stagingName,
+            relativeTo: targetParentDescriptor
+        )
+        let stagingDescriptor = try Self.openDirectory(
+            named: stagingName,
+            relativeTo: targetParentDescriptor
+        )
+        defer { Darwin.close(stagingDescriptor) }
+        guard let stagingIdentity = Self.identity(
+            ofOpenDescriptor: stagingDescriptor
+        ) else {
             throw CourseProjectFileWorkerError.verificationFailed
         }
-        var ownedEntries: [String: PortableExportOwnedEntry] = [:]
-        var placed = false
+        var exportCommitted = false
         defer {
-            if !placed {
-                removeOwnedPortableExportStaging(
-                    stagingRoot,
-                    expectedRootIdentity: stagingIdentity,
-                    ownedEntries: ownedEntries
+            if !exportCommitted {
+                try? Self.markPortableExportAbandoned(
+                    relativeTo: stagingDescriptor
                 )
             }
         }
@@ -248,12 +278,10 @@ actor CourseProjectFileWorker {
             from: sourceRoot,
             sourceRoot: sourceRoot,
             sourceRootIdentity: request.sourceRootIdentity,
-            to: stagingRoot,
-            stagingRoot: stagingRoot,
+            stagingDescriptor: stagingDescriptor,
             sharedByCoursePath: sharedByCoursePath,
             materializedSharedPaths: &materializedSharedPaths,
-            sourceEntries: &sourceEntries,
-            ownedEntries: &ownedEntries
+            sourceEntries: &sourceEntries
         )
         guard materializedSharedPaths == Set(sharedByCoursePath.keys) else {
             throw CourseProjectFileWorkerError.verificationFailed
@@ -267,53 +295,36 @@ actor CourseProjectFileWorker {
             throw CourseProjectFileWorkerError.contentConflict
         }
         for relativePath in request.requiredRegularRelativePaths {
-            let exportedURL = try portableExportURL(
-                relativePath: relativePath,
-                inside: stagingRoot
-            )
-            let values = try exportedURL.resourceValues(forKeys: [
-                .isRegularFileKey,
-                .isSymbolicLinkKey,
-                .isAliasFileKey,
-            ])
-            guard values.isRegularFile == true,
-                  values.isSymbolicLink != true,
-                  values.isAliasFile != true,
-                  !Self.isSymbolicLink(at: exportedURL) else {
+            guard try Self.regularFileSnapshot(
+                atRelativePath: relativePath,
+                rootDescriptor: stagingDescriptor
+            ) != nil else {
                 throw CourseProjectFileWorkerError.verificationFailed
             }
         }
+        let visibleTreeSHA256 = try Self.treeSnapshot(
+            relativeTo: stagingDescriptor,
+            includeHidden: false
+        ).visibleTreeSHA256
         try stageHook(.afterVisibleTree)
 
-        let metadataDirectory = stagingRoot.appendingPathComponent(
-            ".weibei",
-            isDirectory: true
+        try Self.createDirectory(
+            named: ".weibei",
+            relativeTo: stagingDescriptor
         )
-        try fileManager.createDirectory(
-            at: metadataDirectory,
-            withIntermediateDirectories: false
+        let metadataDescriptor = try Self.openDirectory(
+            named: ".weibei",
+            relativeTo: stagingDescriptor
         )
-        try recordPortableExportOwnedEntry(
-            at: metadataDirectory,
-            relativeTo: stagingRoot,
-            kind: .directory,
-            in: &ownedEntries
+        defer { Darwin.close(metadataDescriptor) }
+        try Self.writeExclusiveData(
+            request.portableStateData,
+            named: "course-state.json",
+            relativeTo: metadataDescriptor
         )
-        let stateURL = metadataDirectory.appendingPathComponent(
-            "course-state.json"
+        let stateSnapshot = Self.snapshot(
+            of: request.portableStateData
         )
-        try request.portableStateData.write(
-            to: stateURL,
-            options: [.withoutOverwriting]
-        )
-        try synchronizeFile(at: stateURL)
-        try recordPortableExportOwnedEntry(
-            at: stateURL,
-            relativeTo: stagingRoot,
-            kind: .regularFile,
-            in: &ownedEntries
-        )
-        let stateSnapshot = try Self.snapshotFile(at: stateURL)
         try stageHook(.afterPortableState)
 
         let provenance = request.sharedMaterials.map {
@@ -331,49 +342,45 @@ actor CourseProjectFileWorker {
             courseID: request.courseID,
             portableExport: CourseProjectPortableExportMetadata(
                 portableStateSHA256: stateSnapshot.sha256,
+                visibleTreeSHA256: visibleTreeSHA256,
                 materializedSharedItems: provenance
             )
         )
-        let manifestURL = metadataDirectory.appendingPathComponent(
-            "course.json"
-        )
         let manifestData = try manifest.encoded()
-        try manifestData.write(
-            to: manifestURL,
-            options: [.withoutOverwriting]
+        try Self.writeExclusiveData(
+            manifestData,
+            named: "course.json",
+            relativeTo: metadataDescriptor
         )
-        try synchronizeFile(at: manifestURL)
-        try recordPortableExportOwnedEntry(
-            at: manifestURL,
-            relativeTo: stagingRoot,
-            kind: .regularFile,
-            in: &ownedEntries
-        )
-        let manifestSnapshot = try Self.snapshotFile(at: manifestURL)
+        let manifestSnapshot = Self.snapshot(of: manifestData)
         try stageHook(.afterManifest)
 
         let completion = CourseProjectPortableExportCompletion(
             courseID: request.courseID,
             manifestSHA256: manifestSnapshot.sha256,
-            portableStateSHA256: stateSnapshot.sha256
+            portableStateSHA256: stateSnapshot.sha256,
+            visibleTreeSHA256: visibleTreeSHA256
         )
-        let completionURL = metadataDirectory.appendingPathComponent(
-            CourseProjectManifest.portableExportCompletionFileName
+        try Self.writeExclusiveData(
+            completion.encoded(),
+            named: CourseProjectManifest.portableExportCompletionFileName,
+            relativeTo: metadataDescriptor
         )
-        try completion.encoded().write(
-            to: completionURL,
-            options: [.withoutOverwriting]
+        guard Darwin.fsync(metadataDescriptor) == 0,
+              Darwin.fsync(stagingDescriptor) == 0 else {
+            throw CourseProjectFileWorkerError.verificationFailed
+        }
+        let sealedSnapshot = try Self.validatedPortableAdoptionSnapshot(
+            rootDescriptor: stagingDescriptor,
+            expectedRootIdentity: stagingIdentity
         )
-        try synchronizeFile(at: completionURL)
-        try recordPortableExportOwnedEntry(
-            at: completionURL,
-            relativeTo: stagingRoot,
-            kind: .regularFile,
-            in: &ownedEntries
+        guard sealedSnapshot.manifestData == manifestData else {
+            throw CourseProjectFileWorkerError.verificationFailed
+        }
+        let stagedTree = try Self.treeSnapshot(
+            relativeTo: stagingDescriptor,
+            includeHidden: true
         )
-        _ = try CourseProjectManifest.read(from: manifestURL)
-        try synchronizeDirectory(at: metadataDirectory)
-        try synchronizeDirectory(at: stagingRoot)
         try stageHook(.afterCompletionMarker)
         try stageHook(.beforeAtomicPlacement)
 
@@ -384,7 +391,11 @@ actor CourseProjectFileWorker {
                   sharedByCoursePath: sharedByCoursePath
               ) == sourceEntries,
               Self.identity(at: targetParent) == targetParentIdentity,
-              Self.identity(at: stagingRoot) == stagingIdentity else {
+              Self.identity(at: stagingRoot) == stagingIdentity,
+              try Self.treeSnapshot(
+                  relativeTo: stagingDescriptor,
+                  includeHidden: true
+              ) == stagedTree else {
             throw CourseProjectFileWorkerError.verificationFailed
         }
         _ = try Self.renameWithoutReplacementAnchored(
@@ -394,15 +405,25 @@ actor CourseProjectFileWorker {
             expectedDestinationDirectoryIdentity: targetParentIdentity,
             beforeRename: {}
         )
-        placed = true
         guard Self.identity(at: targetRoot) == stagingIdentity else {
             throw CourseProjectFileWorkerError.verificationFailed
         }
-        _ = try CourseProjectManifest.read(
-            from: targetRoot.appendingPathComponent(
-                ".weibei/course.json"
-            )
+        let placedDescriptor = try Self.openDirectory(
+            targetRoot,
+            expectedIdentity: stagingIdentity
         )
+        defer { Darwin.close(placedDescriptor) }
+        guard try Self.treeSnapshot(
+            relativeTo: placedDescriptor,
+            includeHidden: true
+        ) == stagedTree else {
+            throw CourseProjectFileWorkerError.verificationFailed
+        }
+        _ = try Self.validatedPortableAdoptionSnapshot(
+            rootDescriptor: placedDescriptor,
+            expectedRootIdentity: stagingIdentity
+        )
+        exportCommitted = true
         return CoursePortableExportResult(
             root: targetRoot,
             ranOnMainThread: ranOnMainThread
@@ -417,6 +438,16 @@ actor CourseProjectFileWorker {
         at url: URL
     ) throws -> (snapshot: CourseFileSnapshot, ranOnMainThread: Bool) {
         (try Self.snapshotFile(at: url), Thread.isMainThread)
+    }
+
+    func adoptionSnapshot(
+        at rootURL: URL,
+        expectedRootIdentity: ImportedFileIdentity
+    ) throws -> CoursePortableAdoptionSnapshot {
+        try Self.portableAdoptionSnapshot(
+            at: rootURL,
+            expectedRootIdentity: expectedRootIdentity
+        )
     }
 
     nonisolated static func snapshotFile(at url: URL) throws -> CourseFileSnapshot {
@@ -1536,21 +1567,14 @@ actor CourseProjectFileWorker {
         from sourceDirectory: URL,
         sourceRoot: URL,
         sourceRootIdentity: ImportedFileIdentity,
-        to destinationDirectory: URL,
-        stagingRoot: URL,
+        stagingDescriptor: Int32,
         sharedByCoursePath: [String: CoursePortableExportSharedMaterial],
         materializedSharedPaths: inout Set<String>,
-        sourceEntries: inout [String: PortableExportSourceEntry],
-        ownedEntries: inout [String: PortableExportOwnedEntry]
+        sourceEntries: inout [String: PortableExportSourceEntry]
     ) throws {
         guard Self.identity(at: sourceRoot) == sourceRootIdentity,
               let sourceDirectoryIdentity = Self.identity(at: sourceDirectory),
-              !Self.isSymbolicLink(at: sourceDirectory),
-              CourseProjectPathPolicy.contains(
-                stagingRoot,
-                destinationDirectory,
-                includingRoot: true
-              ) else {
+              !Self.isSymbolicLink(at: sourceDirectory) else {
             throw CourseProjectFileWorkerError.verificationFailed
         }
         let entries = try fileManager.contentsOfDirectory(
@@ -1576,10 +1600,6 @@ actor CourseProjectFileWorker {
             ) else {
                 throw CourseProjectFileWorkerError.unsafePath
             }
-            let destinationURL = try portableExportURL(
-                relativePath: relativePath,
-                inside: stagingRoot
-            )
             let values = try sourceURL.resourceValues(forKeys: [
                 .isRegularFileKey,
                 .isDirectoryKey,
@@ -1614,10 +1634,8 @@ actor CourseProjectFileWorker {
                         from: shared.sourceURL,
                         expectedIdentity: shared.sourceIdentity,
                         expectedSnapshot: shared.sourceSnapshot,
-                        to: destinationURL,
                         relativePath: relativePath,
-                        stagingRoot: stagingRoot,
-                        ownedEntries: &ownedEntries
+                        stagingDescriptor: stagingDescriptor
                     )
                 } catch {
                     throw CoursePortableExportError.invalidSourceEntry(
@@ -1648,27 +1666,19 @@ actor CourseProjectFileWorker {
                       ) == nil else {
                     throw CourseProjectFileWorkerError.verificationFailed
                 }
-                try fileManager.createDirectory(
-                    at: destinationURL,
-                    withIntermediateDirectories: false
-                )
-                try recordPortableExportOwnedEntry(
-                    at: destinationURL,
-                    relativeTo: stagingRoot,
-                    kind: .directory,
-                    in: &ownedEntries
+                try Self.createDirectory(
+                    atRelativePath: relativePath,
+                    rootDescriptor: stagingDescriptor
                 )
                 do {
                     try copyVisibleCourseTree(
                         from: sourceURL,
                         sourceRoot: sourceRoot,
                         sourceRootIdentity: sourceRootIdentity,
-                        to: destinationURL,
-                        stagingRoot: stagingRoot,
+                        stagingDescriptor: stagingDescriptor,
                         sharedByCoursePath: sharedByCoursePath,
                         materializedSharedPaths: &materializedSharedPaths,
-                        sourceEntries: &sourceEntries,
-                        ownedEntries: &ownedEntries
+                        sourceEntries: &sourceEntries
                     )
                 } catch {
                     throw CoursePortableExportError.invalidSourceEntry(
@@ -1696,10 +1706,8 @@ actor CourseProjectFileWorker {
                         from: sourceURL,
                         expectedIdentity: sourceIdentity,
                         expectedSnapshot: sourceSnapshot,
-                        to: destinationURL,
                         relativePath: relativePath,
-                        stagingRoot: stagingRoot,
-                        ownedEntries: &ownedEntries
+                        stagingDescriptor: stagingDescriptor
                     )
                 } catch {
                     throw CoursePortableExportError.invalidSourceEntry(
@@ -1721,10 +1729,8 @@ actor CourseProjectFileWorker {
         from sourceURL: URL,
         expectedIdentity: ImportedFileIdentity,
         expectedSnapshot: CourseFileSnapshot,
-        to destinationURL: URL,
         relativePath: String,
-        stagingRoot: URL,
-        ownedEntries: inout [String: PortableExportOwnedEntry]
+        stagingDescriptor: Int32
     ) throws {
         let sourceInfo = try validatedRegularSource(sourceURL)
         guard sourceInfo.identity == expectedIdentity,
@@ -1735,31 +1741,21 @@ actor CourseProjectFileWorker {
               ) == expectedSnapshot else {
             throw CourseProjectFileWorkerError.verificationFailed
         }
-        _ = try copyAndVerify(
+        let copiedSnapshot = try Self.copyRegularFile(
             from: sourceInfo.url,
-            generatedData: nil,
-            to: destinationURL,
-            expectedSnapshot: expectedSnapshot
+            expectedIdentity: expectedIdentity,
+            toRelativePath: relativePath,
+            rootDescriptor: stagingDescriptor
         )
-        try recordPortableExportOwnedEntry(
-            at: destinationURL,
-            relativeTo: stagingRoot,
-            kind: .regularFile,
-            in: &ownedEntries
-        )
-        try synchronizeFile(at: destinationURL)
+        guard copiedSnapshot == expectedSnapshot else {
+            throw CourseProjectFileWorkerError.verificationFailed
+        }
         guard try stableSnapshot(
             at: sourceInfo.url,
             expectedIdentity: expectedIdentity,
             expectedSnapshot: expectedSnapshot
         ) == expectedSnapshot else {
             throw CourseProjectFileWorkerError.verificationFailed
-        }
-        guard strictPortableExportRelativePath(
-            of: destinationURL,
-            inside: stagingRoot
-        ) == relativePath else {
-            throw CourseProjectFileWorkerError.unsafePath
         }
     }
 
@@ -1904,28 +1900,6 @@ actor CourseProjectFileWorker {
         }
     }
 
-    private func portableExportURL(
-        relativePath: String,
-        inside root: URL
-    ) throws -> URL {
-        let components = relativePath.split(
-            separator: "/",
-            omittingEmptySubsequences: false
-        ).map(String.init)
-        guard !components.isEmpty,
-              components.allSatisfy({
-                  !$0.isEmpty
-                      && $0 != "."
-                      && $0 != ".."
-                      && !$0.hasPrefix(".")
-              }) else {
-            throw CourseProjectFileWorkerError.unsafePath
-        }
-        return components.reduce(root) {
-            $0.appendingPathComponent($1)
-        }.standardizedFileURL
-    }
-
     private func strictPortableExportRelativePath(
         of child: URL,
         inside root: URL
@@ -1947,208 +1921,6 @@ actor CourseProjectFileWorker {
             return nil
         }
         return components.joined(separator: "/")
-    }
-
-    private func portableExportOwnedURL(
-        relativePath: String,
-        inside root: URL
-    ) throws -> URL {
-        let components = relativePath.split(
-            separator: "/",
-            omittingEmptySubsequences: false
-        ).map(String.init)
-        guard !components.isEmpty,
-              components.allSatisfy({
-                  !$0.isEmpty && $0 != "." && $0 != ".."
-              }),
-              components.enumerated().allSatisfy({
-                  !$0.element.hasPrefix(".")
-                      || ($0.offset == 0 && $0.element == ".weibei")
-              }) else {
-            throw CourseProjectFileWorkerError.unsafePath
-        }
-        return components.reduce(root) {
-            $0.appendingPathComponent($1)
-        }.standardizedFileURL
-    }
-
-    private func portableExportOwnedRelativePath(
-        of child: URL,
-        inside root: URL
-    ) -> String? {
-        let rootComponents = root.standardizedFileURL.pathComponents
-        let childComponents = child.standardizedFileURL.pathComponents
-        guard childComponents.count > rootComponents.count,
-              Array(childComponents.prefix(rootComponents.count))
-                == rootComponents else {
-            return nil
-        }
-        let components = childComponents.dropFirst(rootComponents.count)
-        guard components.allSatisfy({
-            !$0.isEmpty && $0 != "." && $0 != ".."
-        }),
-        components.enumerated().allSatisfy({
-            !$0.element.hasPrefix(".")
-                || ($0.offset == 0 && $0.element == ".weibei")
-        }) else {
-            return nil
-        }
-        return components.joined(separator: "/")
-    }
-
-    private func recordPortableExportOwnedEntry(
-        at url: URL,
-        relativeTo root: URL,
-        kind: PortableExportOwnedEntryKind,
-        in ownedEntries: inout [String: PortableExportOwnedEntry]
-    ) throws {
-        guard let relativePath = portableExportOwnedRelativePath(
-            of: url,
-            inside: root
-        ),
-        ownedEntries[relativePath] == nil,
-        let identity = Self.identity(at: url) else {
-            throw CourseProjectFileWorkerError.verificationFailed
-        }
-        ownedEntries[relativePath] = PortableExportOwnedEntry(
-            identity: identity,
-            kind: kind,
-            snapshot: kind == .regularFile
-                ? try Self.snapshotFile(at: url)
-                : nil
-        )
-    }
-
-    private func removeOwnedPortableExportStaging(
-        _ root: URL,
-        expectedRootIdentity: ImportedFileIdentity,
-        ownedEntries: [String: PortableExportOwnedEntry]
-    ) {
-        guard Self.identity(at: root) == expectedRootIdentity,
-              let currentEntries = portableExportOwnedEntries(at: root),
-              currentEntries == ownedEntries else {
-            return
-        }
-        let files = ownedEntries.filter {
-            $0.value.kind == .regularFile
-        }.sorted {
-            $0.key.split(separator: "/").count
-                > $1.key.split(separator: "/").count
-        }
-        for (relativePath, expected) in files {
-            guard let url = try? portableExportOwnedURL(
-                relativePath: relativePath,
-                inside: root
-            ),
-            Self.identity(at: url) == expected.identity,
-            (try? Self.snapshotFile(at: url)) == expected.snapshot,
-            Darwin.unlink(url.path) == 0 else {
-                return
-            }
-        }
-        let directories = ownedEntries.filter {
-            $0.value.kind == .directory
-        }.sorted {
-            $0.key.split(separator: "/").count
-                > $1.key.split(separator: "/").count
-        }
-        for (relativePath, expected) in directories {
-            guard let url = try? portableExportOwnedURL(
-                relativePath: relativePath,
-                inside: root
-            ),
-            Self.identity(at: url) == expected.identity,
-            Darwin.rmdir(url.path) == 0 else {
-                return
-            }
-        }
-        guard Self.identity(at: root) == expectedRootIdentity else { return }
-        _ = Darwin.rmdir(root.path)
-    }
-
-    private func portableExportOwnedEntries(
-        at root: URL
-    ) -> [String: PortableExportOwnedEntry]? {
-        var encounteredError = false
-        guard let enumerator = fileManager.enumerator(
-            at: root,
-            includingPropertiesForKeys: [
-                .isDirectoryKey,
-                .isRegularFileKey,
-                .isSymbolicLinkKey,
-            ],
-            options: [],
-            errorHandler: { _, _ in
-                encounteredError = true
-                return false
-            }
-        ) else {
-            return nil
-        }
-        var result: [String: PortableExportOwnedEntry] = [:]
-        for case let url as URL in enumerator {
-            guard let relativePath = portableExportOwnedRelativePath(
-                of: url,
-                inside: root
-            ),
-            let identity = Self.identity(at: url),
-            let values = try? url.resourceValues(forKeys: [
-                .isDirectoryKey,
-                .isRegularFileKey,
-                .isSymbolicLinkKey,
-            ]),
-            values.isSymbolicLink != true,
-            !Self.isSymbolicLink(at: url) else {
-                return nil
-            }
-            if values.isDirectory == true {
-                result[relativePath] = PortableExportOwnedEntry(
-                    identity: identity,
-                    kind: .directory,
-                    snapshot: nil
-                )
-            } else if values.isRegularFile == true {
-                guard let snapshot = try? Self.snapshotFile(at: url) else {
-                    return nil
-                }
-                result[relativePath] = PortableExportOwnedEntry(
-                    identity: identity,
-                    kind: .regularFile,
-                    snapshot: snapshot
-                )
-            } else {
-                return nil
-            }
-        }
-        return encounteredError ? nil : result
-    }
-
-    private func synchronizeFile(at url: URL) throws {
-        let descriptor = Darwin.open(
-            url.path,
-            O_RDONLY | O_CLOEXEC | O_NOFOLLOW
-        )
-        guard descriptor >= 0 else {
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-        }
-        defer { Darwin.close(descriptor) }
-        guard Darwin.fsync(descriptor) == 0 else {
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-        }
-    }
-
-    private func synchronizeDirectory(at url: URL) throws {
-        let descriptor = Darwin.open(
-            url.path,
-            O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
-        )
-        guard descriptor >= 0 else {
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-        }
-        defer { Darwin.close(descriptor) }
-        guard Darwin.fsync(descriptor) == 0 else {
-            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
-        }
     }
 
     func ensureRealDirectory(_ rawDirectory: URL, inside parent: URL) throws -> URL {
@@ -2378,20 +2150,688 @@ actor CourseProjectFileWorker {
         return descriptor
     }
 
+    nonisolated private static func openDirectory(
+        named name: String,
+        relativeTo directoryDescriptor: Int32
+    ) throws -> Int32 {
+        guard isSafeEntryName(name) else {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        let descriptor = name.withCString {
+            Darwin.openat(
+                directoryDescriptor,
+                $0,
+                O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
+            )
+        }
+        guard descriptor >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        var fileStat = Darwin.stat()
+        guard Darwin.fstat(descriptor, &fileStat) == 0,
+              (fileStat.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR) else {
+            Darwin.close(descriptor)
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        return descriptor
+    }
+
+    nonisolated private static func openDirectory(
+        atRelativePath relativePath: String,
+        rootDescriptor: Int32
+    ) throws -> Int32 {
+        let components = try safeRelativePathComponents(
+            relativePath,
+            allowEmpty: true
+        )
+        let duplicated = Darwin.dup(rootDescriptor)
+        guard duplicated >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        var current = duplicated
+        do {
+            for component in components {
+                let next = try openDirectory(
+                    named: component,
+                    relativeTo: current
+                )
+                Darwin.close(current)
+                current = next
+            }
+            return current
+        } catch {
+            Darwin.close(current)
+            throw error
+        }
+    }
+
+    nonisolated private static func createDirectory(
+        named name: String,
+        relativeTo directoryDescriptor: Int32
+    ) throws {
+        guard isSafeEntryName(name) else {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        let result = name.withCString {
+            Darwin.mkdirat(
+                directoryDescriptor,
+                $0,
+                S_IRWXU
+            )
+        }
+        guard result == 0 else {
+            if errno == EEXIST {
+                throw CourseProjectFileWorkerError.targetExists
+            }
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        guard let fileStat = entryStat(
+            named: name,
+            relativeTo: directoryDescriptor
+        ),
+        (fileStat.st_mode & mode_t(S_IFMT)) == mode_t(S_IFDIR) else {
+            throw CourseProjectFileWorkerError.verificationFailed
+        }
+    }
+
+    nonisolated private static func createDirectory(
+        atRelativePath relativePath: String,
+        rootDescriptor: Int32
+    ) throws {
+        let components = try safeRelativePathComponents(relativePath)
+        guard let name = components.last else {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        let parentPath = components.dropLast().joined(separator: "/")
+        let parentDescriptor = try openDirectory(
+            atRelativePath: parentPath,
+            rootDescriptor: rootDescriptor
+        )
+        defer { Darwin.close(parentDescriptor) }
+        try createDirectory(
+            named: name,
+            relativeTo: parentDescriptor
+        )
+    }
+
+    nonisolated private static func markPortableExportAbandoned(
+        relativeTo rootDescriptor: Int32
+    ) throws {
+        let metadataDescriptor: Int32
+        do {
+            metadataDescriptor = try openDirectory(
+                named: ".weibei",
+                relativeTo: rootDescriptor
+            )
+        } catch {
+            return
+        }
+        defer { Darwin.close(metadataDescriptor) }
+        let name = CourseProjectManifest
+            .portableExportAbandonedFileName
+        if entryStat(
+            named: name,
+            relativeTo: metadataDescriptor
+        ) == nil {
+            try writeExclusiveData(
+                Data(#"{"schemaVersion":1}"#.utf8),
+                named: name,
+                relativeTo: metadataDescriptor
+            )
+        }
+        guard Darwin.fsync(metadataDescriptor) == 0,
+              Darwin.fsync(rootDescriptor) == 0 else {
+            throw CourseProjectFileWorkerError.verificationFailed
+        }
+    }
+
+    nonisolated private static func safeRelativePathComponents(
+        _ relativePath: String,
+        allowEmpty: Bool = false
+    ) throws -> [String] {
+        if allowEmpty, relativePath.isEmpty {
+            return []
+        }
+        let components = relativePath.split(
+            separator: "/",
+            omittingEmptySubsequences: false
+        ).map(String.init)
+        guard !components.isEmpty,
+              components.allSatisfy(isSafeEntryName) else {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        return components
+    }
+
+    nonisolated private static func isSafeEntryName(_ name: String) -> Bool {
+        !name.isEmpty
+            && name != "."
+            && name != ".."
+            && !name.contains("/")
+            && !name.contains("\0")
+    }
+
+    nonisolated private static func identity(
+        ofOpenDescriptor descriptor: Int32
+    ) -> ImportedFileIdentity? {
+        var fileStat = Darwin.stat()
+        guard Darwin.fstat(descriptor, &fileStat) == 0 else {
+            return nil
+        }
+        return identity(from: fileStat)
+    }
+
+    nonisolated private static func snapshot(
+        of data: Data
+    ) -> CourseFileSnapshot {
+        CourseFileSnapshot(
+            byteCount: UInt64(data.count),
+            sha256: SHA256.hash(data: data)
+                .map { String(format: "%02x", $0) }
+                .joined()
+        )
+    }
+
+    nonisolated private static func copyRegularFile(
+        from sourceURL: URL,
+        expectedIdentity: ImportedFileIdentity,
+        toRelativePath relativePath: String,
+        rootDescriptor: Int32
+    ) throws -> CourseFileSnapshot {
+        let components = try safeRelativePathComponents(relativePath)
+        guard let name = components.last else {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        let parentDescriptor = try openDirectory(
+            atRelativePath: components.dropLast().joined(separator: "/"),
+            rootDescriptor: rootDescriptor
+        )
+        defer { Darwin.close(parentDescriptor) }
+        let sourceDescriptor = sourceURL.withUnsafeFileSystemRepresentation {
+            guard let path = $0 else { return Int32(-1) }
+            return Darwin.open(
+                path,
+                O_RDONLY | O_CLOEXEC | O_NOFOLLOW
+            )
+        }
+        guard sourceDescriptor >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        defer { Darwin.close(sourceDescriptor) }
+        var sourceStat = Darwin.stat()
+        guard Darwin.fstat(sourceDescriptor, &sourceStat) == 0,
+              (sourceStat.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG),
+              identity(from: sourceStat) == expectedIdentity else {
+            throw CourseProjectFileWorkerError.verificationFailed
+        }
+        let destinationDescriptor = name.withCString {
+            Darwin.openat(
+                parentDescriptor,
+                $0,
+                O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+                S_IRUSR | S_IWUSR
+            )
+        }
+        guard destinationDescriptor >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        var completed = false
+        defer {
+            Darwin.close(destinationDescriptor)
+            if !completed {
+                name.withCString {
+                    _ = Darwin.unlinkat(parentDescriptor, $0, 0)
+                }
+            }
+        }
+        var hasher = SHA256()
+        var byteCount: UInt64 = 0
+        var buffer = [UInt8](repeating: 0, count: 1_048_576)
+        while true {
+            let count = buffer.withUnsafeMutableBytes {
+                Darwin.read(
+                    sourceDescriptor,
+                    $0.baseAddress,
+                    $0.count
+                )
+            }
+            guard count >= 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            if count == 0 {
+                break
+            }
+            try buffer.withUnsafeBytes { rawBuffer in
+                guard let baseAddress = rawBuffer.baseAddress else { return }
+                var offset = 0
+                while offset < count {
+                    let written = Darwin.write(
+                        destinationDescriptor,
+                        baseAddress.advanced(by: offset),
+                        count - offset
+                    )
+                    guard written > 0 else {
+                        throw POSIXError(
+                            POSIXErrorCode(rawValue: errno) ?? .EIO
+                        )
+                    }
+                    offset += written
+                }
+            }
+            hasher.update(data: Data(buffer.prefix(count)))
+            byteCount += UInt64(count)
+        }
+        var finalSourceStat = Darwin.stat()
+        var destinationStat = Darwin.stat()
+        guard Darwin.fsync(destinationDescriptor) == 0,
+              Darwin.fstat(sourceDescriptor, &finalSourceStat) == 0,
+              identity(from: finalSourceStat) == expectedIdentity,
+              sourceStat.st_size == finalSourceStat.st_size,
+              Darwin.fstat(destinationDescriptor, &destinationStat) == 0,
+              (destinationStat.st_mode & mode_t(S_IFMT))
+                == mode_t(S_IFREG),
+              destinationStat.st_size == Int64(byteCount) else {
+            throw CourseProjectFileWorkerError.verificationFailed
+        }
+        completed = true
+        return CourseFileSnapshot(
+            byteCount: byteCount,
+            sha256: hasher.finalize()
+                .map { String(format: "%02x", $0) }
+                .joined()
+        )
+    }
+
+    nonisolated private static func regularFileSnapshot(
+        atRelativePath relativePath: String,
+        rootDescriptor: Int32
+    ) throws -> CourseFileSnapshot? {
+        let components = try safeRelativePathComponents(relativePath)
+        guard let name = components.last else {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        let parentDescriptor = try openDirectory(
+            atRelativePath: components.dropLast().joined(separator: "/"),
+            rootDescriptor: rootDescriptor
+        )
+        defer { Darwin.close(parentDescriptor) }
+        return try regularFileSnapshot(
+            named: name,
+            relativeTo: parentDescriptor
+        )
+    }
+
+    nonisolated private static func regularFileSnapshot(
+        named name: String,
+        relativeTo directoryDescriptor: Int32
+    ) throws -> CourseFileSnapshot? {
+        guard isSafeEntryName(name) else {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        let descriptor = name.withCString {
+            Darwin.openat(
+                directoryDescriptor,
+                $0,
+                O_RDONLY | O_CLOEXEC | O_NOFOLLOW
+            )
+        }
+        if descriptor < 0 {
+            if errno == ENOENT {
+                return nil
+            }
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        defer { Darwin.close(descriptor) }
+        var initialStat = Darwin.stat()
+        guard Darwin.fstat(descriptor, &initialStat) == 0,
+              (initialStat.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) else {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        let initialIdentity = identity(from: initialStat)
+        var hasher = SHA256()
+        var byteCount: UInt64 = 0
+        var buffer = [UInt8](repeating: 0, count: 1_048_576)
+        while true {
+            let count = buffer.withUnsafeMutableBytes {
+                Darwin.read(
+                    descriptor,
+                    $0.baseAddress,
+                    $0.count
+                )
+            }
+            guard count >= 0 else {
+                throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+            }
+            if count == 0 {
+                break
+            }
+            hasher.update(data: Data(buffer.prefix(count)))
+            byteCount += UInt64(count)
+        }
+        var finalStat = Darwin.stat()
+        guard Darwin.fstat(descriptor, &finalStat) == 0,
+              identity(from: finalStat) == initialIdentity,
+              initialStat.st_size == finalStat.st_size,
+              finalStat.st_size == Int64(byteCount) else {
+            throw CourseProjectFileWorkerError.contentConflict
+        }
+        return CourseFileSnapshot(
+            byteCount: byteCount,
+            sha256: hasher.finalize()
+                .map { String(format: "%02x", $0) }
+                .joined()
+        )
+    }
+
+    nonisolated private static func directoryEntryNames(
+        relativeTo directoryDescriptor: Int32
+    ) throws -> [String] {
+        let scanDescriptor = Darwin.openat(
+            directoryDescriptor,
+            ".",
+            O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
+        )
+        guard scanDescriptor >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        guard let directory = Darwin.fdopendir(scanDescriptor) else {
+            Darwin.close(scanDescriptor)
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        defer { Darwin.closedir(directory) }
+        var names: [String] = []
+        errno = 0
+        while let entry = Darwin.readdir(directory) {
+            let name = withUnsafePointer(to: &entry.pointee.d_name) {
+                $0.withMemoryRebound(
+                    to: CChar.self,
+                    capacity: Int(MAXNAMLEN) + 1
+                ) {
+                    String(cString: $0)
+                }
+            }
+            guard name != ".", name != "..", isSafeEntryName(name) else {
+                continue
+            }
+            names.append(name)
+        }
+        guard errno == 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        return names.sorted()
+    }
+
+    nonisolated private static func treeSnapshot(
+        relativeTo rootDescriptor: Int32,
+        includeHidden: Bool
+    ) throws -> PortableExportTreeSnapshot {
+        var entries: [String: PortableExportTreeEntry] = [:]
+        try appendTreeEntries(
+            relativeTo: rootDescriptor,
+            parentRelativePath: "",
+            includeHidden: includeHidden,
+            entries: &entries
+        )
+        let digestEntries = entries.keys.sorted().compactMap {
+            path -> PortableExportDigestEntry? in
+            guard path.split(separator: "/").allSatisfy({
+                !$0.hasPrefix(".")
+            }),
+            let entry = entries[path] else {
+                return nil
+            }
+            return PortableExportDigestEntry(
+                path: path,
+                kind: entry.kind,
+                byteCount: entry.snapshot?.byteCount,
+                sha256: entry.snapshot?.sha256
+            )
+        }
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let digestData = try encoder.encode(digestEntries)
+        return PortableExportTreeSnapshot(
+            entries: entries,
+            visibleTreeSHA256: snapshot(of: digestData).sha256
+        )
+    }
+
+    nonisolated private static func appendTreeEntries(
+        relativeTo directoryDescriptor: Int32,
+        parentRelativePath: String,
+        includeHidden: Bool,
+        entries: inout [String: PortableExportTreeEntry]
+    ) throws {
+        for name in try directoryEntryNames(
+            relativeTo: directoryDescriptor
+        ) {
+            if !includeHidden, name.hasPrefix(".") {
+                continue
+            }
+            guard let fileStat = entryStat(
+                named: name,
+                relativeTo: directoryDescriptor
+            ) else {
+                throw CourseProjectFileWorkerError.contentConflict
+            }
+            let relativePath = parentRelativePath.isEmpty
+                ? name
+                : "\(parentRelativePath)/\(name)"
+            let mode = fileStat.st_mode & mode_t(S_IFMT)
+            if mode == mode_t(S_IFDIR) {
+                let childDescriptor = try openDirectory(
+                    named: name,
+                    relativeTo: directoryDescriptor
+                )
+                guard identity(
+                    ofOpenDescriptor: childDescriptor
+                ) == identity(from: fileStat) else {
+                    Darwin.close(childDescriptor)
+                    throw CourseProjectFileWorkerError.contentConflict
+                }
+                let entry = PortableExportTreeEntry(
+                    identity: identity(from: fileStat),
+                    kind: .directory,
+                    snapshot: nil
+                )
+                guard entries.updateValue(
+                    entry,
+                    forKey: relativePath
+                ) == nil else {
+                    throw CourseProjectFileWorkerError.verificationFailed
+                }
+                do {
+                    try appendTreeEntries(
+                        relativeTo: childDescriptor,
+                        parentRelativePath: relativePath,
+                        includeHidden: includeHidden,
+                        entries: &entries
+                    )
+                    Darwin.close(childDescriptor)
+                } catch {
+                    Darwin.close(childDescriptor)
+                    throw error
+                }
+                guard let currentStat = entryStat(
+                    named: name,
+                    relativeTo: directoryDescriptor
+                ),
+                identity(from: currentStat) == identity(from: fileStat) else {
+                    throw CourseProjectFileWorkerError.contentConflict
+                }
+            } else if mode == mode_t(S_IFREG) {
+                guard let snapshot = try regularFileSnapshot(
+                    named: name,
+                    relativeTo: directoryDescriptor
+                ),
+                let currentStat = entryStat(
+                    named: name,
+                    relativeTo: directoryDescriptor
+                ),
+                identity(from: currentStat) == identity(from: fileStat) else {
+                    throw CourseProjectFileWorkerError.contentConflict
+                }
+                let entry = PortableExportTreeEntry(
+                    identity: identity(from: fileStat),
+                    kind: .regularFile,
+                    snapshot: snapshot
+                )
+                guard entries.updateValue(
+                    entry,
+                    forKey: relativePath
+                ) == nil else {
+                    throw CourseProjectFileWorkerError.verificationFailed
+                }
+            } else {
+                throw CourseProjectFileWorkerError.unsafePath
+            }
+        }
+    }
+
+    nonisolated static func portableAdoptionSnapshot(
+        at rootURL: URL,
+        expectedRootIdentity: ImportedFileIdentity
+    ) throws -> CoursePortableAdoptionSnapshot {
+        let rootDescriptor = try openDirectory(
+            rootURL,
+            expectedIdentity: expectedRootIdentity
+        )
+        defer { Darwin.close(rootDescriptor) }
+        return try validatedPortableAdoptionSnapshot(
+            rootDescriptor: rootDescriptor,
+            expectedRootIdentity: expectedRootIdentity
+        )
+    }
+
+    nonisolated static func replaceCourseManifest(
+        with data: Data,
+        at url: URL,
+        expectedDirectoryIdentity: ImportedFileIdentity,
+        expectedPreviousData: Data
+    ) throws {
+        guard url.lastPathComponent == "course.json",
+              data.count <= 1_048_576 else {
+            throw CourseProjectFileWorkerError.unsafePath
+        }
+        let directory = url.deletingLastPathComponent()
+        let directoryDescriptor = try openDirectory(
+            directory,
+            expectedIdentity: expectedDirectoryIdentity
+        )
+        defer { Darwin.close(directoryDescriptor) }
+        try compareAndSwapPortableStateData(
+            data,
+            expectedPreviousData: expectedPreviousData,
+            named: "course.json",
+            relativeTo: directoryDescriptor,
+            maximumByteCount: 1_048_576,
+            temporaryBaseName: "course-manifest",
+            beforeCommit: {}
+        )
+        guard Darwin.fsync(directoryDescriptor) == 0,
+              identity(at: directory) == expectedDirectoryIdentity else {
+            throw CourseProjectFileWorkerError.verificationFailed
+        }
+    }
+
+    nonisolated private static func validatedPortableAdoptionSnapshot(
+        rootDescriptor: Int32,
+        expectedRootIdentity: ImportedFileIdentity
+    ) throws -> CoursePortableAdoptionSnapshot {
+        guard identity(ofOpenDescriptor: rootDescriptor)
+                == expectedRootIdentity else {
+            throw CourseProjectFileWorkerError.verificationFailed
+        }
+        let metadataDescriptor = try openDirectory(
+            named: ".weibei",
+            relativeTo: rootDescriptor
+        )
+        defer { Darwin.close(metadataDescriptor) }
+        guard entryStat(
+            named: CourseProjectManifest
+                .portableExportAbandonedFileName,
+            relativeTo: metadataDescriptor
+        ) == nil else {
+            throw CourseProjectRootError.manifestMismatch
+        }
+        guard let metadataIdentity = identity(
+            ofOpenDescriptor: metadataDescriptor
+        ),
+        let manifestData = try readRegularFile(
+            named: "course.json",
+            relativeTo: metadataDescriptor,
+            maximumByteCount: 1_048_576
+        ) else {
+            throw CourseProjectRootError.manifestMismatch
+        }
+        let manifest = try JSONDecoder().decode(
+            CourseProjectManifest.self,
+            from: manifestData
+        )
+        guard manifest.schemaVersion
+                == CourseProjectManifest.currentSchemaVersion else {
+            throw CourseProjectRootError.manifestMismatch
+        }
+        let portableStateData = try readRegularFile(
+            named: "course-state.json",
+            relativeTo: metadataDescriptor,
+            maximumByteCount: portableStateMaximumByteCount
+        )
+        if let portableExport = manifest.portableExport {
+            guard let portableStateData,
+                  let completionData = try readRegularFile(
+                      named:
+                        CourseProjectManifest
+                            .portableExportCompletionFileName,
+                      relativeTo: metadataDescriptor,
+                      maximumByteCount: 1_048_576
+                  ) else {
+                throw CourseProjectRootError.manifestMismatch
+            }
+            let visibleTreeSHA256 = try treeSnapshot(
+                relativeTo: rootDescriptor,
+                includeHidden: false
+            ).visibleTreeSHA256
+            try CourseProjectManifest.validatePortableExport(
+                portableExport,
+                manifest: manifest,
+                manifestData: manifestData,
+                stateData: portableStateData,
+                completionData: completionData,
+                visibleTreeSHA256: visibleTreeSHA256
+            )
+        }
+        guard identity(ofOpenDescriptor: rootDescriptor)
+                == expectedRootIdentity,
+              identity(ofOpenDescriptor: metadataDescriptor)
+                == metadataIdentity else {
+            throw CourseProjectFileWorkerError.contentConflict
+        }
+        return CoursePortableAdoptionSnapshot(
+            metadataIdentity: metadataIdentity,
+            manifest: manifest,
+            manifestData: manifestData,
+            portableStateData: portableStateData
+        )
+    }
+
     nonisolated private static func compareAndSwapPortableStateData(
         _ data: Data,
         expectedPreviousData: Data?,
         named name: String,
         relativeTo directoryDescriptor: Int32,
+        maximumByteCount: Int = portableStateMaximumByteCount,
+        temporaryBaseName: String = "course-state",
         beforeCommit: () throws -> Void
     ) throws {
-        guard data.count <= portableStateMaximumByteCount else {
+        guard data.count <= maximumByteCount,
+              isSafeEntryName(temporaryBaseName) else {
             throw CourseProjectFileWorkerError.fileTooLarge
         }
         let operationID = UUID().uuidString.lowercased()
-        let temporaryName = ".course-state-\(operationID).tmp"
+        let temporaryName = ".\(temporaryBaseName)-\(operationID).tmp"
         let candidateBackupName =
-            ".course-state-candidate-\(operationID).tmp"
+            ".\(temporaryBaseName)-candidate-\(operationID).tmp"
         let descriptor = temporaryName.withCString {
             Darwin.openat(
                 directoryDescriptor,
@@ -2428,7 +2868,8 @@ actor CourseProjectFileWorker {
                 shouldRemoveCandidateBackup = false
             }
             let conflictName =
-                "course-state-conflict-\(UUID().uuidString.lowercased()).json"
+                "\(temporaryBaseName)-conflict-"
+                + "\(UUID().uuidString.lowercased()).json"
             let preserved = candidateName.withCString { sourceName in
                 conflictName.withCString { destinationName in
                     Darwin.renameatx_np(
@@ -2490,7 +2931,7 @@ actor CourseProjectFileWorker {
             currentData = try readRegularFile(
                 named: name,
                 relativeTo: directoryDescriptor,
-                maximumByteCount: portableStateMaximumByteCount
+                maximumByteCount: maximumByteCount
             )
         } catch {
             try preserveCandidate(
@@ -2566,7 +3007,7 @@ actor CourseProjectFileWorker {
                 displacedData = try readRegularFile(
                     named: temporaryName,
                     relativeTo: directoryDescriptor,
-                    maximumByteCount: portableStateMaximumByteCount
+                    maximumByteCount: maximumByteCount
                 )
             } catch {
                 try rollBackSwapAndPreserveCandidate()
@@ -2589,7 +3030,7 @@ actor CourseProjectFileWorker {
             finalData = try readRegularFile(
                 named: name,
                 relativeTo: directoryDescriptor,
-                maximumByteCount: portableStateMaximumByteCount
+                maximumByteCount: maximumByteCount
             )
         } catch {
             try preserveCandidate(
@@ -2796,6 +3237,7 @@ actor CourseProjectFileWorker {
               (fileStat.st_mode & mode_t(S_IFMT)) == mode_t(S_IFREG) else {
             throw CourseProjectFileWorkerError.unsafePath
         }
+        let initialIdentity = identity(from: fileStat)
         guard fileStat.st_size >= 0,
               fileStat.st_size <= Int64(maximumByteCount) else {
             throw CourseProjectFileWorkerError.fileTooLarge
@@ -2823,6 +3265,13 @@ actor CourseProjectFileWorker {
             guard data.count <= maximumByteCount else {
                 throw CourseProjectFileWorkerError.fileTooLarge
             }
+        }
+        var finalStat = Darwin.stat()
+        guard Darwin.fstat(descriptor, &finalStat) == 0,
+              identity(from: finalStat) == initialIdentity,
+              finalStat.st_size == fileStat.st_size,
+              finalStat.st_size == Int64(data.count) else {
+            throw CourseProjectFileWorkerError.contentConflict
         }
         return data
     }
@@ -2969,6 +3418,7 @@ enum CourseProjectMutationStage: String, CaseIterable {
     case beforeCourseFileWorkspaceSave
     case beforeCourseFileSourceRemoval
     case beforeCoursePortableStateCASPlacement
+    case afterAdoptionWorkspaceSaveBeforeManifestNormalization
 }
 
 struct CourseProjectSimulatedCrash: Error {}
@@ -2982,41 +3432,47 @@ struct CourseProjectSharedMaterialProvenance: Codable, Equatable, Sendable {
 }
 
 struct CourseProjectPortableExportMetadata: Codable, Equatable, Sendable {
-    static let currentSchemaVersion = 1
+    static let currentSchemaVersion = 2
 
     var schemaVersion: Int
     var portableStateSHA256: String
+    var visibleTreeSHA256: String
     var materializedSharedItems: [CourseProjectSharedMaterialProvenance]
 
     init(
         schemaVersion: Int = currentSchemaVersion,
         portableStateSHA256: String,
+        visibleTreeSHA256: String,
         materializedSharedItems: [CourseProjectSharedMaterialProvenance]
     ) {
         self.schemaVersion = schemaVersion
         self.portableStateSHA256 = portableStateSHA256
+        self.visibleTreeSHA256 = visibleTreeSHA256
         self.materializedSharedItems = materializedSharedItems
     }
 }
 
-private struct CourseProjectPortableExportCompletion: Codable, Equatable {
-    static let currentSchemaVersion = 1
+struct CourseProjectPortableExportCompletion: Codable, Equatable {
+    static let currentSchemaVersion = 2
 
     var schemaVersion: Int
     var courseID: UUID
     var manifestSHA256: String
     var portableStateSHA256: String
+    var visibleTreeSHA256: String
 
     init(
         schemaVersion: Int = currentSchemaVersion,
         courseID: UUID,
         manifestSHA256: String,
-        portableStateSHA256: String
+        portableStateSHA256: String,
+        visibleTreeSHA256: String
     ) {
         self.schemaVersion = schemaVersion
         self.courseID = courseID
         self.manifestSHA256 = manifestSHA256
         self.portableStateSHA256 = portableStateSHA256
+        self.visibleTreeSHA256 = visibleTreeSHA256
     }
 
     func encoded() throws -> Data {
@@ -3029,6 +3485,7 @@ private struct CourseProjectPortableExportCompletion: Codable, Equatable {
 struct CourseProjectManifest: Codable, Equatable {
     static let currentSchemaVersion = 1
     static let portableExportCompletionFileName = "export-complete.json"
+    static let portableExportAbandonedFileName = "export-abandoned.json"
 
     var courseID: UUID
     var schemaVersion: Int
@@ -3060,13 +3517,23 @@ struct CourseProjectManifest: Codable, Equatable {
         guard manifest.schemaVersion == currentSchemaVersion else {
             throw CourseProjectRootError.manifestMismatch
         }
-        if let portableExport = manifest.portableExport {
-            try validatePortableExport(
-                portableExport,
-                manifest: manifest,
-                manifestData: manifestData,
-                metadataDirectory: url.deletingLastPathComponent()
-            )
+        if manifest.portableExport != nil {
+            let metadataDirectory = url.deletingLastPathComponent()
+            let root = metadataDirectory.deletingLastPathComponent()
+            guard metadataDirectory.lastPathComponent == ".weibei",
+                  let rootIdentity =
+                    CourseProjectFileWorker.identity(at: root) else {
+                throw CourseProjectRootError.manifestMismatch
+            }
+            let snapshot = try CourseProjectFileWorker
+                .portableAdoptionSnapshot(
+                    at: root,
+                    expectedRootIdentity: rootIdentity
+                )
+            guard snapshot.manifestData == manifestData else {
+                throw CourseProjectRootError.manifestMismatch
+            }
+            return snapshot.manifest
         }
         return manifest
     }
@@ -3077,15 +3544,18 @@ struct CourseProjectManifest: Codable, Equatable {
         return try encoder.encode(self)
     }
 
-    private static func validatePortableExport(
+    static func validatePortableExport(
         _ portableExport: CourseProjectPortableExportMetadata,
         manifest: CourseProjectManifest,
         manifestData: Data,
-        metadataDirectory: URL
+        stateData: Data,
+        completionData: Data,
+        visibleTreeSHA256: String
     ) throws {
         guard portableExport.schemaVersion
                 == CourseProjectPortableExportMetadata.currentSchemaVersion,
               isSHA256(portableExport.portableStateSHA256),
+              isSHA256(portableExport.visibleTreeSHA256),
               Set(portableExport.materializedSharedItems.map(\.itemID)).count
                 == portableExport.materializedSharedItems.count,
               Set(
@@ -3101,23 +3571,6 @@ struct CourseProjectManifest: Codable, Equatable {
               }) else {
             throw CourseProjectRootError.manifestMismatch
         }
-        let stateURL = metadataDirectory.appendingPathComponent(
-            "course-state.json"
-        )
-        let completionURL = metadataDirectory.appendingPathComponent(
-            portableExportCompletionFileName
-        )
-        let stateData = try CourseProjectFileWorker
-            .readBoundedRegularFile(
-                at: stateURL,
-                maximumByteCount:
-                    CourseProjectFileWorker.portableStateMaximumByteCount
-            )
-        let completionData = try CourseProjectFileWorker
-            .readBoundedRegularFile(
-                at: completionURL,
-                maximumByteCount: 1_048_576
-            )
         let completion = try JSONDecoder().decode(
             CourseProjectPortableExportCompletion.self,
             from: completionData
@@ -3128,7 +3581,10 @@ struct CourseProjectManifest: Codable, Equatable {
               completion.manifestSHA256 == sha256(manifestData),
               completion.portableStateSHA256 == sha256(stateData),
               completion.portableStateSHA256
-                == portableExport.portableStateSHA256 else {
+                == portableExport.portableStateSHA256,
+              completion.visibleTreeSHA256 == visibleTreeSHA256,
+              completion.visibleTreeSHA256
+                == portableExport.visibleTreeSHA256 else {
             throw CourseProjectRootError.manifestMismatch
         }
     }

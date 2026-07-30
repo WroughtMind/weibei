@@ -2130,6 +2130,42 @@ enum CourseProjectRootSelfCheck {
         let library = try fixture.makeDirectory("课程资料库")
         let imports = try fixture.makeDirectory("待导入")
         let exportParent = try fixture.makeDirectory("导出位置")
+        func stagingNames() throws -> Set<String> {
+            Set(try exportParent.portableExportStagingChildren())
+        }
+        func currentStagingRoot(
+            since previous: Set<String>
+        ) throws -> URL {
+            let created = try stagingNames().subtracting(previous)
+            guard created.count == 1, let name = created.first else {
+                throw CheckError.failed("无法唯一定位本次隐藏导出暂存")
+            }
+            return exportParent.appendingPathComponent(
+                name,
+                isDirectory: true
+            )
+        }
+        func verifyAndRemoveRetainedStaging(
+            since previous: Set<String>,
+            target: URL,
+            expectTargetAbsent: Bool = true
+        ) throws {
+            let stagingRoot = try currentStagingRoot(since: previous)
+            let manifestURL = stagingRoot.appendingPathComponent(
+                ".weibei/course.json"
+            )
+            try check(
+                (!expectTargetAbsent || !target.exists)
+                    && stagingRoot.lastPathComponent.hasPrefix(
+                        ".weibei-course-export-"
+                    )
+                    && (try? CourseProjectManifest.read(
+                        from: manifestURL
+                    )) == nil,
+                "失败导出留下了可见目标或可冒充成功的暂存"
+            )
+            try FileManager.default.removeItem(at: stagingRoot)
+        }
         let store = makeStore(fixture: fixture)
         try store.configureCourseLibrary(at: library)
         let courseA = try store.createCourseInLibrary(title: "导出课程")
@@ -2321,47 +2357,294 @@ enum CourseProjectRootSelfCheck {
             "可携带导出没有复制完整可见目录、实体化共享资料，或改动了源课程"
         )
 
-        for (index, stage) in [
-            CoursePortableExportStage.afterManifest,
-            .beforeAtomicPlacement,
-        ].enumerated() {
-            let interruptedTarget = exportParent.appendingPathComponent(
-                "中断导出-\(index)",
-                isDirectory: true
+        let tamperedTreeRoot = exportParent.appendingPathComponent(
+            "可见树篡改",
+            isDirectory: true
+        )
+        _ = try store.exportPortableCourseCopyForSelfCheck(
+            courseID: courseA,
+            to: tamperedTreeRoot
+        )
+        try Data("TAMPERED_VISIBLE_TREE".utf8).write(
+            to: tamperedTreeRoot.appendingPathComponent(
+                "附录/计算练习/练习数据.csv"
             )
-            try expectFailure("导出阶段 \(stage) 中断") {
-                _ = try store.exportPortableCourseCopyForSelfCheck(
-                    courseID: courseA,
-                    to: interruptedTarget,
-                    stageHook: { current in
-                        if current == stage {
-                            throw CheckError.injectedFailure
-                        }
-                    }
-                )
-            }
-            try check(
-                !interruptedTarget.exists
-                    && (try exportParent
-                        .portableExportStagingChildren().isEmpty),
-                "导出中断留下了可见目标或冒充成功的 staging"
+        )
+        let tamperedTreeWorkspace = try fixture.makeDirectory(
+            "可见树篡改工作区"
+        )
+        let tamperedTreeStore = makeStore(
+            fixture: fixture,
+            workspaceDirectory: tamperedTreeWorkspace
+        )
+        try tamperedTreeStore.configureCourseLibrary(at: library)
+        try expectFailure("首次接管前可见树篡改") {
+            _ = try tamperedTreeStore.adoptCourseFolder(
+                at: tamperedTreeRoot,
+                title: "不得接管的篡改导出"
             )
         }
+
+        let externalMetadataDirectory = try fixture.makeDirectory(
+            "外部元数据诱饵"
+        )
+        let linkedMetadataTarget = exportParent.appendingPathComponent(
+            "暂存元数据换链",
+            isDirectory: true
+        )
+        let linkedMetadataStagingBefore = try stagingNames()
+        try expectFailure("暂存元数据目录换链") {
+            _ = try store.exportPortableCourseCopyForSelfCheck(
+                courseID: courseA,
+                to: linkedMetadataTarget,
+                stageHook: { current in
+                    guard current == .afterPortableState else {
+                        return
+                    }
+                    let created = try Set(
+                        exportParent.portableExportStagingChildren()
+                    ).subtracting(linkedMetadataStagingBefore)
+                    guard created.count == 1,
+                          let stagingName = created.first else {
+                        throw CheckError.failed(
+                            "无法唯一定位元数据换链暂存"
+                        )
+                    }
+                    let stagingRoot = exportParent
+                        .appendingPathComponent(
+                            stagingName,
+                            isDirectory: true
+                        )
+                    let metadata = stagingRoot.appendingPathComponent(
+                        ".weibei",
+                        isDirectory: true
+                    )
+                    let isolated = stagingRoot.appendingPathComponent(
+                        ".weibei-original",
+                        isDirectory: true
+                    )
+                    try FileManager.default.moveItem(
+                        at: metadata,
+                        to: isolated
+                    )
+                    try FileManager.default.createSymbolicLink(
+                        at: metadata,
+                        withDestinationURL: externalMetadataDirectory
+                    )
+                }
+            )
+        }
+        try check(
+            !externalMetadataDirectory
+                .appendingPathComponent("course.json").exists,
+            "暂存元数据目录被换成链接后发生了越界写入"
+        )
+        try verifyAndRemoveRetainedStaging(
+            since: linkedMetadataStagingBefore,
+            target: linkedMetadataTarget
+        )
+
+        let lateTamperTarget = exportParent.appendingPathComponent(
+            "落位前篡改",
+            isDirectory: true
+        )
+        let lateTamperStagingBefore = try stagingNames()
+        try expectFailure("原子落位前暂存树篡改") {
+            _ = try store.exportPortableCourseCopyForSelfCheck(
+                courseID: courseA,
+                to: lateTamperTarget,
+                stageHook: { current in
+                    guard current == .beforeAtomicPlacement else {
+                        return
+                    }
+                    let created = try Set(
+                        exportParent.portableExportStagingChildren()
+                    ).subtracting(lateTamperStagingBefore)
+                    guard created.count == 1,
+                          let stagingName = created.first else {
+                        throw CheckError.failed(
+                            "无法唯一定位落位前篡改暂存"
+                        )
+                    }
+                    let stagingRoot = exportParent
+                        .appendingPathComponent(
+                            stagingName,
+                            isDirectory: true
+                        )
+                    try Data("LATE_STAGING_TAMPER".utf8).write(
+                        to: stagingRoot.appendingPathComponent(
+                            "附录/计算练习/练习数据.csv"
+                        )
+                    )
+                }
+            )
+        }
+        try check(
+            !lateTamperTarget.exists,
+            "原子落位前暂存树被篡改后仍生成了目标"
+        )
+        try verifyAndRemoveRetainedStaging(
+            since: lateTamperStagingBefore,
+            target: lateTamperTarget
+        )
+
+        let adoptedWorkspace = try fixture.makeDirectory(
+            "导出接管工作区"
+        )
+        let adoptedStore = makeStore(
+            fixture: fixture,
+            workspaceDirectory: adoptedWorkspace
+        )
+        try adoptedStore.configureCourseLibrary(at: library)
+        let adoptedCourseID = try adoptedStore.adoptCourseFolder(
+            at: exportRoot,
+            title: "已接管导出课程"
+        )
+        let normalizedManifest = try CourseProjectManifest.read(
+            from: exportRoot.appendingPathComponent(
+                ".weibei/course.json"
+            )
+        )
+        try check(
+            adoptedCourseID == courseA
+                && normalizedManifest.portableExport == nil,
+            "首次接管没有消费导出封印并规范化为普通课程 manifest"
+        )
+        let postAdoptionMessage = "接管后继续追问利率分类。"
+        let postAdoptionMemory = "已经在接管后的课程里继续学习。"
+        let postAdoptionNote = "# 接管后笔记\n\n继续整理利率分类。"
+        _ = try adoptedStore.appendPortableCourseMessageForSelfCheck(
+            courseID: courseA,
+            text: postAdoptionMessage
+        )
+        try adoptedStore.updatePortableCourseLearningForSelfCheck(
+            courseID: courseA,
+            materialItemID: sharedItem.id,
+            noteItemID: noteID,
+            memoryText: postAdoptionMemory,
+            noteText: postAdoptionNote,
+            pageIndex: 27
+        )
+        try check(
+            adoptedStore.flushPendingWorkspaceSave(),
+            "接管后课程状态没有保存"
+        )
+        let reopenedAdoptedStore = makeStore(
+            fixture: fixture,
+            workspaceDirectory: adoptedWorkspace
+        )
+        try check(
+            reopenedAdoptedStore
+                .portableCourseLearningMatchesForSelfCheck(
+                    courseID: courseA,
+                    materialItemID: sharedItem.id,
+                    noteItemID: noteID,
+                    messageText: postAdoptionMessage,
+                    memoryText: postAdoptionMemory,
+                    noteText: postAdoptionNote,
+                    pageIndex: 27
+                ),
+            "接管后修改的 Chat、记忆、阅读位置或笔记没有在重开后恢复"
+        )
+
+        let crashExportRoot = exportParent.appendingPathComponent(
+            "接管崩溃恢复副本",
+            isDirectory: true
+        )
+        _ = try store.exportPortableCourseCopyForSelfCheck(
+            courseID: courseA,
+            to: crashExportRoot
+        )
+        let crashWorkspace = try fixture.makeDirectory(
+            "接管崩溃工作区"
+        )
+        var crashStore: WorkspaceStore? = makeStore(
+            fixture: fixture,
+            workspaceDirectory: crashWorkspace,
+            mutationHook: { stage in
+                if stage
+                    == .afterAdoptionWorkspaceSaveBeforeManifestNormalization {
+                    throw CourseProjectSimulatedCrash()
+                }
+            }
+        )
+        try crashStore?.configureCourseLibrary(at: library)
+        try expectFailure("接管保存后消费封印前崩溃") {
+            _ = try crashStore?.adoptCourseFolder(
+                at: crashExportRoot,
+                title: "等待恢复的导出课程"
+            )
+        }
+        let sealedAfterCrash = try CourseProjectManifest.read(
+            from: crashExportRoot.appendingPathComponent(
+                ".weibei/course.json"
+            )
+        )
+        try check(
+            sealedAfterCrash.portableExport != nil,
+            "workspace 保存前后崩溃窗口暴露了普通 manifest"
+        )
+        crashStore = nil
+        let recoveredCrashStore = makeStore(
+            fixture: fixture,
+            workspaceDirectory: crashWorkspace
+        )
+        let recoveredCrashManifest = try CourseProjectManifest.read(
+            from: crashExportRoot.appendingPathComponent(
+                ".weibei/course.json"
+            )
+        )
+        try check(
+            recoveredCrashStore.course(withID: courseA) != nil
+                && recoveredCrashStore.courseRootURL(for: courseA)
+                    == crashExportRoot.canonicalFileURL
+                && recoveredCrashManifest.portableExport == nil,
+            "重启没有按已登记课程身份收口未消费的导出封印"
+        )
+
+        let interruptedTarget = exportParent.appendingPathComponent(
+            "中断导出",
+            isDirectory: true
+        )
+        let interruptedStagingBefore = try stagingNames()
+        try expectFailure("导出写清单后中断") {
+            _ = try store.exportPortableCourseCopyForSelfCheck(
+                courseID: courseA,
+                to: interruptedTarget,
+                stageHook: { current in
+                    if current == .afterManifest {
+                        throw CheckError.injectedFailure
+                    }
+                }
+            )
+        }
+        try verifyAndRemoveRetainedStaging(
+            since: interruptedStagingBefore,
+            target: interruptedTarget
+        )
 
         let rewrittenCleanupTarget = exportParent.appendingPathComponent(
             "清理保护",
             isDirectory: true
         )
         let externallyRewrittenData = Data("EXTERNAL_REWRITE".utf8)
+        let rewrittenStagingBefore = try stagingNames()
         try expectFailure("导出 staging 被外部原地改写") {
             _ = try store.exportPortableCourseCopyForSelfCheck(
                 courseID: courseA,
                 to: rewrittenCleanupTarget,
                 stageHook: { current in
-                    guard current == .afterManifest,
-                          let stagingName = try exportParent
-                            .portableExportStagingChildren().first else {
+                    guard current == .afterManifest else {
                         return
+                    }
+                    let created = try Set(
+                        exportParent.portableExportStagingChildren()
+                    ).subtracting(rewrittenStagingBefore)
+                    guard created.count == 1,
+                          let stagingName = created.first else {
+                        throw CheckError.failed(
+                            "无法唯一定位外部改写暂存"
+                        )
                     }
                     let stagingManifest = exportParent
                         .appendingPathComponent(
@@ -2374,13 +2657,8 @@ enum CourseProjectRootSelfCheck {
                 }
             )
         }
-        let preservedStagingName = try require(
-            exportParent.portableExportStagingChildren().first,
-            "外部改写后的 staging 被误删"
-        )
-        let preservedStaging = exportParent.appendingPathComponent(
-            preservedStagingName,
-            isDirectory: true
+        let preservedStaging = try currentStagingRoot(
+            since: rewrittenStagingBefore
         )
         try check(
             !rewrittenCleanupTarget.exists
@@ -2398,6 +2676,7 @@ enum CourseProjectRootSelfCheck {
             isDirectory: true
         )
         let raceSentinel = raceTarget.appendingPathComponent("外部内容.txt")
+        let raceStagingBefore = try stagingNames()
         try expectFailure("导出目标竞态") {
             _ = try store.exportPortableCourseCopyForSelfCheck(
                 courseID: courseA,
@@ -2416,10 +2695,13 @@ enum CourseProjectRootSelfCheck {
         }
         try check(
             Data(contentsOf: raceSentinel)
-                == Data("EXTERNAL_TARGET".utf8)
-                && (try exportParent
-                    .portableExportStagingChildren().isEmpty),
-            "导出目标竞态覆盖了外部目录或没有清理本次 staging"
+                == Data("EXTERNAL_TARGET".utf8),
+            "导出目标竞态覆盖了外部目录"
+        )
+        try verifyAndRemoveRetainedStaging(
+            since: raceStagingBefore,
+            target: raceTarget,
+            expectTargetAbsent: false
         )
 
         let mutationTarget = exportParent.appendingPathComponent(
@@ -2429,6 +2711,7 @@ enum CourseProjectRootSelfCheck {
         let lateSourceFile = sourceRoot.appendingPathComponent(
             "附录/复制期间新增.txt"
         )
+        let mutationStagingBefore = try stagingNames()
         try expectFailure("导出期间源目录变化") {
             _ = try store.exportPortableCourseCopyForSelfCheck(
                 courseID: courseA,
@@ -2441,10 +2724,12 @@ enum CourseProjectRootSelfCheck {
         }
         try check(
             !mutationTarget.exists
-                && lateSourceFile.exists
-                && (try exportParent
-                    .portableExportStagingChildren().isEmpty),
+                && lateSourceFile.exists,
             "源目录在复制期间变化后仍提交了不完整导出"
+        )
+        try verifyAndRemoveRetainedStaging(
+            since: mutationStagingBefore,
+            target: mutationTarget
         )
         try FileManager.default.removeItem(at: lateSourceFile)
 
@@ -2502,20 +2787,28 @@ enum CourseProjectRootSelfCheck {
             "含普通外链",
             isDirectory: true
         )
+        let unsafeStagingBefore = try stagingNames()
         try expectFailure("普通符号链接导出") {
             _ = try store.exportPortableCourseCopyForSelfCheck(
                 courseID: courseA,
                 to: unsafeTarget
             )
         }
-        try check(
-            !unsafeTarget.exists
-                && (try exportParent
-                    .portableExportStagingChildren().isEmpty),
-            "普通符号链接被跟随或失败 staging 没有安全清理"
+        try verifyAndRemoveRetainedStaging(
+            since: unsafeStagingBefore,
+            target: unsafeTarget
         )
+        try FileManager.default.removeItem(at: unsafeLink)
 
-        let completionURL = exportRoot.appendingPathComponent(
+        let completionTamperRoot = exportParent.appendingPathComponent(
+            "完成标记篡改",
+            isDirectory: true
+        )
+        _ = try store.exportPortableCourseCopyForSelfCheck(
+            courseID: courseA,
+            to: completionTamperRoot
+        )
+        let completionURL = completionTamperRoot.appendingPathComponent(
             ".weibei/\(CourseProjectManifest.portableExportCompletionFileName)"
         )
         try Data("TAMPERED".utf8).write(
@@ -2524,7 +2817,7 @@ enum CourseProjectRootSelfCheck {
         )
         try expectFailure("损坏导出完成标记") {
             _ = try CourseProjectManifest.read(
-                from: exportRoot.appendingPathComponent(
+                from: completionTamperRoot.appendingPathComponent(
                     ".weibei/course.json"
                 )
             )

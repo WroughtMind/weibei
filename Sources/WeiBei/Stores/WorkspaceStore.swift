@@ -1567,6 +1567,7 @@ final class WorkspaceStore: ObservableObject {
         let manifestURL = metadataURL.appendingPathComponent("course.json")
         var createdMetadata = false
         var createdMetadataFingerprint: TransactionDirectoryFingerprint?
+        var adoptionSnapshot: CoursePortableAdoptionSnapshot?
         let courseID: UUID
         if FileManager.default.fileExists(atPath: metadataURL.path) {
             let metadataValues = try? metadataURL.resourceValues(forKeys: [
@@ -1582,13 +1583,26 @@ final class WorkspaceStore: ObservableObject {
                     metadataURL,
                     metadataURL.resolvingSymlinksInPath()
                   ),
-                  let manifest = try? CourseProjectManifest.read(from: manifestURL),
-                  manifest.schemaVersion == CourseProjectManifest.currentSchemaVersion,
                   importedFileIdentityResolver(canonicalRoot) == identity else {
                 if let externalScopeURL { courseSecurityScopeStopper(externalScopeURL) }
                 throw CourseProjectRootError.metadataConflict
             }
-            courseID = manifest.courseID
+            do {
+                let snapshot = try waitForCourseFileOperation {
+                    try await self.courseProjectFileWorker
+                        .adoptionSnapshot(
+                            at: canonicalRoot,
+                            expectedRootIdentity: identity
+                        )
+                }
+                adoptionSnapshot = snapshot
+                courseID = snapshot.manifest.courseID
+            } catch {
+                if let externalScopeURL {
+                    courseSecurityScopeStopper(externalScopeURL)
+                }
+                throw CourseProjectRootError.metadataConflict
+            }
             guard !courses.contains(where: { $0.id == courseID }) else {
                 if let externalScopeURL { courseSecurityScopeStopper(externalScopeURL) }
                 throw CourseProjectRootError.manifestMismatch
@@ -1688,15 +1702,13 @@ final class WorkspaceStore: ObservableObject {
             activeCourseSecurityScopes["course:\(course.id.uuidString)"] = externalScopeURL
         }
         do {
-            let stateURL = metadataURL.appendingPathComponent(
-                "course-state.json",
-                isDirectory: false
-            )
-            if FileManager.default.fileExists(atPath: stateURL.path) {
-                let state = try readCoursePortableState(
-                    at: stateURL,
-                    expectedCourseID: courseID
-                )
+            if let portableStateData = adoptionSnapshot?.portableStateData {
+                let state = try JSONDecoder()
+                    .decode(
+                        CoursePortableState.self,
+                        from: portableStateData
+                    )
+                    .validated(expectedCourseID: courseID)
                 try applyCoursePortableState(state, courseID: courseID)
                 coursePortableStateRevisions[courseID] = state.revision
                 coursePortableStateDigests[courseID] =
@@ -1746,6 +1758,23 @@ final class WorkspaceStore: ObservableObject {
                 )
             }
             throw error
+        }
+        try courseProjectMutationHook(
+            .afterAdoptionWorkspaceSaveBeforeManifestNormalization
+        )
+        if let adoptionSnapshot,
+           adoptionSnapshot.manifest.portableExport != nil {
+            let normalizedData = try CourseProjectManifest(
+                courseID: courseID
+            ).encoded()
+            try CourseProjectFileWorker.replaceCourseManifest(
+                with: normalizedData,
+                at: manifestURL,
+                expectedDirectoryIdentity:
+                    adoptionSnapshot.metadataIdentity,
+                expectedPreviousData:
+                    adoptionSnapshot.manifestData
+            )
         }
         do {
             try persistCoursePortableStates(courseIDs: [course.id])
@@ -6729,12 +6758,39 @@ final class WorkspaceStore: ObservableObject {
             mustBeInsideLibrary: mustBeInsideLibrary,
             excludingCourseID: course.id
         )
+        guard let expectedIdentity = course.sourceRootIdentity,
+              importedFileIdentityResolver(root) == expectedIdentity else {
+            throw CourseProjectRootError.manifestMismatch
+        }
+        let manifestURL = root.appendingPathComponent(
+            ".weibei/course.json"
+        )
         let manifest = try CourseProjectManifest.read(
-            from: root.appendingPathComponent(".weibei/course.json")
+            from: manifestURL
         )
         guard manifest.courseID == course.id,
-              manifest.schemaVersion == CourseProjectManifest.currentSchemaVersion else {
+              manifest.schemaVersion
+                == CourseProjectManifest.currentSchemaVersion else {
             throw CourseProjectRootError.manifestMismatch
+        }
+        if manifest.portableExport != nil {
+            let snapshot = try CourseProjectFileWorker
+                .portableAdoptionSnapshot(
+                    at: root,
+                    expectedRootIdentity: expectedIdentity
+                )
+            guard snapshot.manifest.courseID == course.id,
+                  snapshot.manifest.portableExport != nil else {
+                throw CourseProjectRootError.manifestMismatch
+            }
+            try CourseProjectFileWorker.replaceCourseManifest(
+                with: CourseProjectManifest(
+                    courseID: course.id
+                ).encoded(),
+                at: manifestURL,
+                expectedDirectoryIdentity: snapshot.metadataIdentity,
+                expectedPreviousData: snapshot.manifestData
+            )
         }
     }
 
@@ -13494,6 +13550,115 @@ final class WorkspaceStore: ObservableObject {
             messages = studySessions[sessionIndex].messages
         }
         return message.id
+    }
+
+    func updatePortableCourseLearningForSelfCheck(
+        courseID: UUID,
+        materialItemID: String,
+        noteItemID: String,
+        memoryText: String,
+        noteText: String,
+        pageIndex: Int
+    ) throws {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        guard let item = importedItems.first(where: {
+            $0.id == materialItemID
+        }),
+        let session = studySessions.first(where: {
+            $0.courseID == courseID && $0.scopeNeedsReview == false
+        }),
+        let memoryIndex = learningMemoryStates.firstIndex(where: {
+            $0.scope == .course(courseID)
+        }) else {
+            throw AgentConversationTargetError(
+                message: "接管后的课程学习状态不完整"
+            )
+        }
+        let now = Date()
+        learningMemoryStates[memoryIndex].revision &+= 1
+        learningMemoryStates[memoryIndex].entries.append(
+            LearningMemoryEntry(
+                kind: .progress,
+                text: memoryText,
+                evidence: "接管后继续学习",
+                origin: .agentInference,
+                sessionID: session.id,
+                createdAt: now,
+                updatedAt: now
+            )
+        )
+        let location = StudyLocation(
+            itemID: materialItemID,
+            itemTitle: item.title,
+            locationID: "post-adoption-location",
+            locationTitle: "接管后阅读位置",
+            pageIndex: pageIndex,
+            lastStudiedAt: now,
+            visitCount: 3
+        )
+        studyLocationsByCourseID[courseID.uuidString, default: [:]][
+            materialItemID
+        ] = location
+        courseResumePoints.removeAll { $0.courseID == courseID }
+        courseResumePoints.append(
+            CourseResumePoint(
+                courseID: courseID,
+                materialLocation: location,
+                chatID: session.id,
+                noteItemID: noteItemID,
+                savedAt: now
+            )
+        )
+        notesByItemID[noteItemID] = noteText
+        loadedCourseNoteTextByItemID[noteItemID] = noteText
+        pendingNoteWritesByItemID[noteItemID] = PendingNoteWriteState(
+            baselineContentDigest: importedItems.first {
+                $0.id == noteItemID
+            }?.contentDigest
+        )
+    }
+
+    func portableCourseLearningMatchesForSelfCheck(
+        courseID: UUID,
+        materialItemID: String,
+        noteItemID: String,
+        messageText: String,
+        memoryText: String,
+        noteText: String,
+        pageIndex: Int
+    ) -> Bool {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        let hasMessage = studySessions.contains {
+            $0.courseID == courseID
+                && $0.messages.contains { $0.text == messageText }
+        }
+        let hasMemory = learningMemoryStates.first {
+            $0.scope == .course(courseID)
+        }?.entries.contains {
+            $0.text == memoryText
+        } == true
+        let location = studyLocationsByCourseID[
+            courseID.uuidString
+        ]?[materialItemID]
+        let resume = courseResumePoints.first {
+            $0.courseID == courseID
+        }
+        return hasMessage
+            && hasMemory
+            && location?.pageIndex == pageIndex
+            && resume?.materialLocation?.pageIndex == pageIndex
+            && resume?.noteItemID == noteItemID
+            && pendingPortableNoteDraftForSelfCheck(
+                itemID: noteItemID
+            ) == noteText
     }
 
     func removePortableCourseMessageForSelfCheck(
