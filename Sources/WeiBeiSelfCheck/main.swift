@@ -5210,6 +5210,34 @@ let persisted = PersistedWorkspace(
     activeCourseID: courseB.id,
     noteSourceLinks: [oldestLink],
     noteSourceLinksMigrationVersion: 1,
+    learningMemoryStates: [
+        ScopedLearningMemoryState(
+            scope: .course(courseA.id),
+            revision: 1,
+            entries: [
+                LearningMemoryEntry(
+                    kind: .confusion,
+                    text: "利率与贴现率仍会混淆",
+                    evidence: "用户在课程 Chat 中提出",
+                    origin: .userStatement,
+                    sessionID: firstCourseSessionID,
+                    revisions: [
+                        LearningMemoryRevisionRecord(
+                            revision: 1,
+                            kind: .confusion,
+                            text: "利率与贴现率仍会混淆",
+                            evidence: "用户在课程 Chat 中提出",
+                            origin: .userStatement,
+                            status: .active,
+                            sessionID: firstCourseSessionID,
+                            actor: .user
+                        )
+                    ]
+                )
+            ]
+        )
+    ],
+    learningMemoryScopeMigrationVersion: 1,
     threePaneOrder: [.agent, .reader, .notes],
     noteRenderMode: .preview,
     showLibrary: false,
@@ -5240,6 +5268,10 @@ expect(restored.adaptImportedDocumentColors == false
 expect(restored.noteRenderMode == .preview, "legacy preview note mode remains decodable for old workspace snapshots")
 expect(restored.threePaneOrder == [.agent, .reader, .notes], "custom three-pane order persists")
 expect(restored.noteSourceLinks == [oldestLink] && restored.noteSourceLinksMigrationVersion == 1, "note-source relations and one-time migration state persist together")
+expect(restored.learningMemoryStates?.first?.scope == .course(courseA.id)
+    && restored.learningMemoryStates?.first?.revision == 1
+    && restored.learningMemoryStates?.first?.entries.first?.revisions?.first?.actor == .user
+    && restored.learningMemoryScopeMigrationVersion == 1, "scoped learning memories preserve their independent revision history")
 expect(workspaceStoreSource.contains("if let noteRenderMode = snapshot.noteRenderMode {\n            self.noteRenderMode = noteRenderMode.visibleMode\n        }")
     && workspaceStoreSource.contains("noteRenderMode = snapshot.noteRenderMode.visibleMode")
     && workspaceStoreSource.contains("let nextMode = mode.visibleMode")
