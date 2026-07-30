@@ -417,39 +417,90 @@ public enum PiRPCMessageDecoder {
                let details = result?["details"] as? [String: Any],
                details["kind"] as? String == "learning_update",
                let revision = details["contextRevision"] as? String,
-               let memoryRevision = details["memoryRevision"] as? NSNumber {
-                let entries = (details["entries"] as? [[String: Any]] ?? []).compactMap { entry -> StudyAgentMemoryUpdateEntry? in
-                    guard let kindRaw = entry["kind"] as? String,
+               let memoryRevision = details["memoryRevision"] as? NSNumber,
+               memoryRevision.int64Value >= 0,
+               let rawEntries = details["entries"] as? [Any],
+               let rawResolutions = details["resolutions"] as? [Any],
+               let suggestedNext = details["suggestedNext"] as? [String] {
+                let sessionSummary: String?
+                if let rawSessionSummary = details["sessionSummary"] {
+                    guard let value = rawSessionSummary as? String else {
+                        return .event(type)
+                    }
+                    sessionSummary = value
+                } else {
+                    sessionSummary = nil
+                }
+
+                let suggestedPhase: StudyPhase?
+                if let rawSuggestedPhase = details["suggestedPhase"] {
+                    guard let value = rawSuggestedPhase as? String,
+                          let phase = StudyPhase(rawValue: value) else {
+                        return .event(type)
+                    }
+                    suggestedPhase = phase
+                } else {
+                    suggestedPhase = nil
+                }
+
+                var entries: [StudyAgentMemoryUpdateEntry] = []
+                entries.reserveCapacity(rawEntries.count)
+                for rawEntry in rawEntries {
+                    guard let entry = rawEntry as? [String: Any],
+                          let kindRaw = entry["kind"] as? String,
                           let kind = LearningMemoryKind(rawValue: kindRaw),
                           let text = entry["text"] as? String,
                           let evidence = entry["evidence"] as? String,
                           let originRaw = entry["origin"] as? String,
-                          let origin = LearningMemoryOrigin(rawValue: originRaw) else { return nil }
-                    return StudyAgentMemoryUpdateEntry(
-                        kind: kind,
-                        text: text,
-                        evidence: evidence,
-                        origin: origin
+                          let origin = LearningMemoryOrigin(rawValue: originRaw) else {
+                        return .event(type)
+                    }
+                    let memoryID: String?
+                    if let rawMemoryID = entry["memoryID"] {
+                        guard let value = rawMemoryID as? String else {
+                            return .event(type)
+                        }
+                        memoryID = value
+                    } else {
+                        memoryID = nil
+                    }
+                    entries.append(
+                        StudyAgentMemoryUpdateEntry(
+                            memoryID: memoryID,
+                            kind: kind,
+                            text: text,
+                            evidence: evidence,
+                            origin: origin
+                        )
                     )
                 }
-                let resolutions = (details["resolutions"] as? [[String: Any]] ?? []).compactMap { resolution -> StudyAgentMemoryResolution? in
-                    guard let memoryID = resolution["memoryID"] as? String,
+
+                var resolutions: [StudyAgentMemoryResolution] = []
+                resolutions.reserveCapacity(rawResolutions.count)
+                for rawResolution in rawResolutions {
+                    guard let resolution = rawResolution as? [String: Any],
+                          let memoryID = resolution["memoryID"] as? String,
                           let text = resolution["text"] as? String,
-                          let evidence = resolution["evidence"] as? String else { return nil }
-                    return StudyAgentMemoryResolution(
-                        memoryID: memoryID,
-                        text: text,
-                        evidence: evidence
+                          let evidence = resolution["evidence"] as? String else {
+                        return .event(type)
+                    }
+                    resolutions.append(
+                        StudyAgentMemoryResolution(
+                            memoryID: memoryID,
+                            text: text,
+                            evidence: evidence
+                        )
                     )
                 }
+
                 return .learningUpdate(
                     id: object["toolCallId"] as? String ?? "",
                     StudyAgentLearningUpdate(
                         contextRevision: revision,
                         memoryRevision: memoryRevision.uint64Value,
-                        sessionSummary: details["sessionSummary"] as? String,
-                        suggestedPhase: (details["suggestedPhase"] as? String).flatMap(StudyPhase.init(rawValue:)),
-                        suggestedNext: details["suggestedNext"] as? [String] ?? [],
+                        sessionSummary: sessionSummary,
+                        suggestedPhase: suggestedPhase,
+                        suggestedNext: suggestedNext,
                         entries: entries,
                         resolutions: resolutions
                     )

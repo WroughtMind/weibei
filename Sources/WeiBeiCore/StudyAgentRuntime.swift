@@ -489,17 +489,22 @@ public struct StudyAgentRelationProposal: Codable, Equatable, Sendable {
 }
 
 public struct StudyAgentMemoryUpdateEntry: Codable, Equatable, Sendable {
+    /// Missing only when PI is proposing a new memory. Existing memories must
+    /// be updated through the stable id returned by the current scope read.
+    public var memoryID: String?
     public var kind: LearningMemoryKind
     public var text: String
     public var evidence: String
     public var origin: LearningMemoryOrigin
 
     public init(
+        memoryID: String? = nil,
         kind: LearningMemoryKind,
         text: String,
         evidence: String,
         origin: LearningMemoryOrigin
     ) {
+        self.memoryID = memoryID
         self.kind = kind
         self.text = text
         self.evidence = evidence
@@ -1030,10 +1035,23 @@ public struct StudyAgentContextEnvelope: Codable, Equatable, Sendable {
         _ context: StudyAgentLearningContext,
         itemIDMap: [String: String]
     ) -> StudyAgentLearningContext {
-        let memories = context.memories
-            .filter { $0.status == .active }
+        let orderedMemories = context.memories.sorted {
+            $0.updatedAt > $1.updatedAt
+        }
+        let recentResolved = Array(
+            orderedMemories
+                .lazy
+                .filter { $0.status == .resolved }
+                .prefix(8)
+        )
+        let recentActive = Array(
+            orderedMemories
+                .lazy
+                .filter { $0.status == .active }
+                .prefix(max(48 - recentResolved.count, 0))
+        )
+        let memories = (recentActive + recentResolved)
             .sorted { $0.updatedAt > $1.updatedAt }
-            .prefix(48)
             .map { memory in
                 LearningMemoryEntry(
                     id: memory.id,

@@ -376,6 +376,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         var memoryRevision: UInt64
         var userQuestion: String
         var answerFormPolicy: StudyAgentAnswerFormPolicy
+        var updatableMemoryIDs: Set<String>
         var resolvableMemoryIDs: Set<String>
         var allowedSourceLabels: Set<String>
         var allowedAssetIDs: Set<String>
@@ -552,6 +553,10 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             memoryRevision: request.learningContext.memoryRevision,
             userQuestion: request.question,
             answerFormPolicy: request.answerFormPolicy,
+            updatableMemoryIDs: Set(request.learningContext.memories.compactMap { memory in
+                guard memory.status == .active else { return nil }
+                return memory.id.uuidString.lowercased()
+            }),
             resolvableMemoryIDs: Set(request.learningContext.memories.compactMap { memory in
                 guard memory.status == .active,
                       memory.kind == .goal || memory.kind == .confusion || memory.kind == .nextStep else {
@@ -1149,6 +1154,15 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         guard !run.allowedLearningLabels.isEmpty else {
             return "PI proposed a learning-memory update before reading learning memory"
         }
+        let targetMemoryIDs = update.entries.compactMap {
+            $0.memoryID?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }
+        guard Set(targetMemoryIDs).count == targetMemoryIDs.count else {
+            return "PI proposed duplicate learning-memory update targets"
+        }
+        guard targetMemoryIDs.allSatisfy(run.updatableMemoryIDs.contains) else {
+            return "PI proposed a learning-memory update outside the current active scope"
+        }
         for entry in update.entries {
             let evidenceIsCurrentTurn = entry.evidence.hasPrefix("[用户：本轮]")
                 || entry.evidence.hasPrefix("[会话：当前]")
@@ -1170,8 +1184,14 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 return "PI marked a memory as a user statement without direct user evidence"
             }
         }
-        guard update.resolutions.allSatisfy({ resolution in
-            run.resolvableMemoryIDs.contains(resolution.memoryID.lowercased())
+        let resolutionMemoryIDs = update.resolutions.map {
+            $0.memoryID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }
+        guard Set(resolutionMemoryIDs).count == resolutionMemoryIDs.count else {
+            return "PI proposed duplicate learning-memory resolutions"
+        }
+        guard zip(update.resolutions, resolutionMemoryIDs).allSatisfy({ resolution, memoryID in
+            run.resolvableMemoryIDs.contains(memoryID)
                 && StudyAgentCurrentTurnEvidence.matches(
                     resolution.evidence,
                     question: run.userQuestion
