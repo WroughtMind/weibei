@@ -480,15 +480,19 @@ private func checkStudyAgentContext() throws {
         )
     }
     let resolvedMemoryID = UUID(uuidString: "00000000-0000-0000-0000-000000000099")!
-    let learningMemories = (0..<60).map { index in
-        LearningMemoryEntry(
-            id: index == 59 ? resolvedMemoryID : UUID(),
-            kind: index.isMultiple(of: 2) ? .confusion : .nextStep,
-            text: "memory-\(index)" + String(repeating: "学", count: 520),
-            evidence: "[用户：本轮] evidence-\(index)" + String(repeating: "据", count: 420),
-            origin: .userStatement,
-            status: index == 59 ? .resolved : .active,
-            updatedAt: Date(timeIntervalSinceReferenceDate: TimeInterval(index))
+    var learningMemories: [LearningMemoryEntry] = []
+    learningMemories.reserveCapacity(60)
+    for index in 0..<60 {
+        learningMemories.append(
+            LearningMemoryEntry(
+                id: index == 59 ? resolvedMemoryID : UUID(),
+                kind: index.isMultiple(of: 2) ? .confusion : .nextStep,
+                text: "memory-\(index)" + String(repeating: "学", count: 520),
+                evidence: "[用户：本轮] evidence-\(index)" + String(repeating: "据", count: 420),
+                origin: .userStatement,
+                status: index == 59 ? .resolved : .active,
+                updatedAt: Date(timeIntervalSinceReferenceDate: TimeInterval(index))
+            )
         )
     }
     let request = StudyAgentRequest(
@@ -573,12 +577,13 @@ private func checkStudyAgentContext() throws {
         "study-agent context replaces workspace item ids with request-local opaque ids"
     )
     try piRequire(envelope.course.items.allSatisfy { $0.searchText.count <= 2_400 && $0.headings.count <= 12 && $0.tags.count <= 16 && $0.linkedItemIDs.count <= 24 }, "study-agent context bounds course search metadata")
+    let retainsRecentResolvedMemory = envelope.learning.memories.contains {
+        $0.id == resolvedMemoryID && $0.status == LearningMemoryStatus.resolved
+    }
     try piRequire(
         envelope.learning.memoryRevision == 7
             && envelope.learning.memories.count == 48
-            && envelope.learning.memories.contains(where: {
-                $0.id == resolvedMemoryID && $0.status == .resolved
-            }),
+            && retainsRecentResolvedMemory,
         "study-agent context carries a bounded memory revision and recent resolved history"
     )
     try piRequire(envelope.learning.memories.allSatisfy { $0.text.count <= 500 && $0.evidence.count <= 400 }, "study-agent context bounds durable learning memory")
