@@ -326,10 +326,10 @@ struct WeiBeiPiCheckMain {
                                 "backend-pi",
                                 "source-bound",
                                 "catalog-before-rich-answer",
-                                "professional-judgment-contract",
+                                "capability-family-requirement",
                                 "inline-placement",
                                 "expression-plan",
-                                "renderer-requirement",
+                                "route-requirement",
                                 "thinking-level=\(runConfiguration.thinkingLevel ?? "inherited")",
                                 latencyCheck(elapsedSeconds, threshold: 150),
                             ],
@@ -1291,7 +1291,19 @@ struct WeiBeiPiCheckMain {
         let hasValidT1 = presentation.scenes.contains { validT1Scene($0, in: presentation, for: checkCase) }
         let hasValidT2 = presentation.scenes.contains { validT2Scene($0, for: checkCase) }
         let hasValidRenderPlan = presentation.scenes.contains { validRenderPlanScene($0) }
-        guard hasValidT1 || hasValidT2 || hasValidRenderPlan else {
+        let availability = RichAnswerRouteAvailability(
+            hasValidProgram: hasValidT1,
+            hasValidComposition: hasValidT2,
+            hasValidRenderPlan: hasValidRenderPlan
+        )
+        guard RichAnswerObjectiveAcceptance.routeMatches(
+                  checkCase.rendererRequirement,
+                  availability: availability
+              ),
+              RichAnswerObjectiveAcceptance.familyMatches(
+                  presentation,
+                  expectedFamilies: checkCase.pressureCase.expectedCapabilityFamilies
+              ) else {
             throw richAnswerFailure(reply, checkCase: checkCase)
         }
         return presentation
@@ -1742,15 +1754,15 @@ struct WeiBeiPiCheckMain {
         let professionalJudgment = presentation.map {
             professionalJudgmentValidation(reply: reply, presentation: $0, for: checkCase)
         }
-        let preferredRendererMatches: Bool
-        switch checkCase.rendererRequirement {
-        case .either:
-            preferredRendererMatches = hasValidT1 || hasValidT2 || hasValidRenderPlan
-        case .t1:
-            preferredRendererMatches = hasValidT1 || hasValidRenderPlan
-        case .t2:
-            preferredRendererMatches = hasValidT2 || hasValidRenderPlan
-        }
+        let availability = RichAnswerRouteAvailability(
+            hasValidProgram: hasValidT1,
+            hasValidComposition: hasValidT2,
+            hasValidRenderPlan: hasValidRenderPlan
+        )
+        let preferredRendererMatches = RichAnswerObjectiveAcceptance.routeMatches(
+            checkCase.rendererRequirement,
+            availability: availability
+        )
         let rendererMatches = hasValidT1 || hasValidT2 || hasValidRenderPlan
         let familyMatches = presentation.map { richAnswerFamilyMatches($0, for: checkCase) } ?? false
         let interleaved = presentation.map {
@@ -1800,137 +1812,10 @@ struct WeiBeiPiCheckMain {
         _ presentation: RichAnswerPresentation,
         for checkCase: RichAnswerLiveSuccessCase
     ) -> Bool {
-        let expectedFamilies = checkCase.pressureCase.expectedCapabilityFamilies
-        if let planFamilies = presentation.expressionPlan?.families,
-           !planFamilies.isDisjoint(with: expectedFamilies) {
-            return true
-        }
-        return presentation.scenes.contains {
-            richAnswerFamilyMatches(presentation, scene: $0, for: checkCase)
-        }
-    }
-
-    private static func richAnswerFamilyMatches(
-        _ presentation: RichAnswerPresentation,
-        scene: RichAnswerScene,
-        for checkCase: RichAnswerLiveSuccessCase
-    ) -> Bool {
-        let expectedFamilies = checkCase.pressureCase.expectedCapabilityFamilies
-        if expectedFamilies.contains(scene.family) { return true }
-        if let planFamilies = presentation.expressionPlan?.families,
-           !planFamilies.isDisjoint(with: expectedFamilies) {
-            return true
-        }
-        if let program = scene.program,
-           !inferredT1Families(
-               componentNames: t1ComponentNames(in: program.source),
-               capabilities: program.capabilities
-           ).isDisjoint(with: expectedFamilies) {
-            return true
-        }
-        if let ui = scene.ui,
-           !inferredT2Families(ui: ui).isDisjoint(with: expectedFamilies) {
-            return true
-        }
-        return false
-    }
-
-    private static func inferredT1Families(
-        componentNames: Set<String>,
-        capabilities: [String]
-    ) -> Set<RichAnswerCapabilityFamily> {
-        var families: Set<RichAnswerCapabilityFamily> = []
-        let capabilityText = capabilities.joined(separator: " ").lowercased()
-        if !componentNames.isDisjoint(with: [
-            "FunctionPlot",
-            "LinkedDataChart",
-            "DistributionBrush",
-            "MetricStrip",
-            "ParameterReadout",
-        ]) || capabilityText.contains("plot") || capabilityText.contains("chart") {
-            families.insert(.quantityAndCoordinates)
-        }
-        if !componentNames.isDisjoint(with: [
-            "ProcessStepper",
-            "QuadraticMechanism",
-            "ExecutionTrack",
-            "BalanceExperiment",
-            "CausalTrack",
-            "LearningStage",
-        ]) || capabilityText.contains("step") || capabilityText.contains("state") || capabilityText.contains("track") {
-            families.insert(.processAndState)
-        }
-        if !componentNames.isDisjoint(with: [
-            "ArgumentReader",
-            "ArgumentUnit",
-            "EvidenceSnippet",
-            "CausalTrack",
-            "DependencyFlow",
-            "DependencyNode",
-            "ComparisonTable",
-        ]) || capabilityText.contains("evidence") || capabilityText.contains("causal") {
-            families.insert(.relationAndEvidence)
-        }
-        if !componentNames.isDisjoint(with: [
-            "LayeredSpatialView",
-            "SpatialPath",
-            "SpatialPoint",
-            "SpatialRegion",
-            "CausalTrack",
-        ]) || capabilityText.contains("spatial") || capabilityText.contains("map") {
-            families.insert(.timeAndSpace)
-        }
-        if !componentNames.isDisjoint(with: ["ImageOverlay", "ObservationLens", "SpatialRegion"]) {
-            families.insert(.imageAndOverlay)
-        }
-        if !componentNames.isDisjoint(with: ["ComparisonTable", "ComparisonRow", "ValuePicker"]) {
-            families.insert(.comparisonAndEvaluation)
-        }
-        if !componentNames.isDisjoint(with: ["BalanceExperiment", "DependencyFlow", "MetricStrip"]) {
-            families.insert(.calculationAndConstraints)
-        }
-        if !componentNames.isDisjoint(with: ["ArgumentReader", "ArgumentUnit"]) {
-            families.insert(.textAndAlignment)
-        }
-        return families
-    }
-
-    private static func inferredT2Families(ui: RichAnswerUIComposition) -> Set<RichAnswerCapabilityFamily> {
-        let roles = Set(ui.nodes.map(\.role))
-        var families: Set<RichAnswerCapabilityFamily> = []
-        let controlRoles: Set<RichAnswerUIRole> = [.slider, .toggle, .scrubber, .select, .probe]
-        let quantitativeRoles: Set<RichAnswerUIRole> = [.axis, .line, .path, .point, .area, .bar, .dotMatrix, .metric]
-        if !roles.isDisjoint(with: quantitativeRoles), !ui.datasets.isEmpty {
-            families.insert(.quantityAndCoordinates)
-        }
-        if !roles.isDisjoint(with: [.sequence, .scrubber, .toggle, .select, .probe]) {
-            families.insert(.processAndState)
-        }
-        if roles.contains(.evidence)
-            || (!roles.isDisjoint(with: [.path, .line, .vector, .point]) && roles.contains(.label)) {
-            families.insert(.relationAndEvidence)
-        }
-        if roles.contains(.canvas),
-           !roles.isDisjoint(with: [.path, .point, .region, .vector, .shape, .area, .image, .sequence]) {
-            families.insert(.timeAndSpace)
-        }
-        if roles.contains(.image) {
-            families.insert(.imageAndOverlay)
-        }
-        if !roles.isDisjoint(with: [.grid, .hstack, .vstack]),
-           !roles.isDisjoint(with: [.metric, .bar, .dotMatrix, .text, .label]) {
-            families.insert(.comparisonAndEvaluation)
-        }
-        if !ui.bindings.isEmpty,
-           !roles.isDisjoint(with: controlRoles),
-           !roles.isDisjoint(with: [.metric, .axis, .line, .path, .bar, .shape, .area]) {
-            families.insert(.calculationAndConstraints)
-        }
-        if !roles.isDisjoint(with: [.text, .label, .evidence]),
-           !roles.isDisjoint(with: controlRoles) {
-            families.insert(.textAndAlignment)
-        }
-        return families
+        RichAnswerObjectiveAcceptance.familyMatches(
+            presentation,
+            expectedFamilies: checkCase.pressureCase.expectedCapabilityFamilies
+        )
     }
 
     private static func t1ComponentNames(in source: String) -> Set<String> {

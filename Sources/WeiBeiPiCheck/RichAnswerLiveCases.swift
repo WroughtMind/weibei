@@ -8,6 +8,37 @@ enum RichAnswerLiveRendererRequirement {
     case t2
 }
 
+struct RichAnswerRouteAvailability {
+    let hasValidProgram: Bool
+    let hasValidComposition: Bool
+    let hasValidRenderPlan: Bool
+}
+
+enum RichAnswerObjectiveAcceptance {
+    static func familyMatches(
+        _ presentation: RichAnswerPresentation,
+        expectedFamilies: Set<RichAnswerCapabilityFamily>
+    ) -> Bool {
+        presentation.scenes.contains { expectedFamilies.contains($0.family) }
+    }
+
+    static func routeMatches(
+        _ requirement: RichAnswerLiveRendererRequirement,
+        availability: RichAnswerRouteAvailability
+    ) -> Bool {
+        switch requirement {
+        case .either:
+            availability.hasValidProgram
+                || availability.hasValidComposition
+                || availability.hasValidRenderPlan
+        case .t1:
+            availability.hasValidProgram || availability.hasValidRenderPlan
+        case .t2:
+            availability.hasValidComposition || availability.hasValidRenderPlan
+        }
+    }
+}
+
 struct RichAnswerProfessionalFactObligation {
     let id: String
     let description: String

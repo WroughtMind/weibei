@@ -9,6 +9,7 @@ func runRichAnswerProtocolSelfCheck() throws {
     try checkOpenUIProgramRejectsUnsafeVariants()
     try checkGeneratedUITreeRenders()
     try checkFormalRichAnswerRouteContract()
+    try checkObjectiveRichAnswerRequirements()
     try checkPersistedRichAnswerReplayAdmission()
     try checkWholeCallRenderPlanBudgetIsolation()
     try checkTrustedAssetAdmissionAndPersistence()
@@ -43,6 +44,77 @@ func runRichAnswerProtocolSelfCheck() throws {
         RichAnswerPressureCases.learningQuestions.count == 40
             && RichAnswerPressureCases.faultInjectionCases.count == 10,
         "the pressure matrix keeps forty learning cases and ten controlled failures"
+    )
+}
+
+private func checkObjectiveRichAnswerRequirements() throws {
+    let mismatchedScene = RichAnswerScene(
+        id: "objective-family-mismatch",
+        title: "错误家族声明不能冒充通过",
+        family: .timeAndSpace,
+        objects: []
+    )
+    let mismatchedPresentation = RichAnswerPresentation(
+        mode: .rich,
+        narrative: "安全正文。",
+        expressionPlan: RichAnswerExpressionPlan(
+            action: .compare,
+            summary: "计划声称这是比较题",
+            families: [.comparisonAndEvaluation],
+            preferredSurface: .inline,
+            directManipulation: true
+        ),
+        scenes: [mismatchedScene]
+    )
+    try richAnswerRequire(
+        !RichAnswerObjectiveAcceptance.familyMatches(
+            mismatchedPresentation,
+            expectedFamilies: [.comparisonAndEvaluation]
+        ),
+        "an expression-plan family claim cannot hide a mismatched admitted scene"
+    )
+
+    var matchedScene = mismatchedScene
+    matchedScene.family = .comparisonAndEvaluation
+    var matchedPresentation = mismatchedPresentation
+    matchedPresentation.scenes = [matchedScene]
+    try richAnswerRequire(
+        RichAnswerObjectiveAcceptance.familyMatches(
+            matchedPresentation,
+            expectedFamilies: [.comparisonAndEvaluation]
+        ),
+        "an admitted scene with an expected family satisfies the objective family requirement"
+    )
+
+    let programOnly = RichAnswerRouteAvailability(
+        hasValidProgram: true,
+        hasValidComposition: false,
+        hasValidRenderPlan: false
+    )
+    let compositionOnly = RichAnswerRouteAvailability(
+        hasValidProgram: false,
+        hasValidComposition: true,
+        hasValidRenderPlan: false
+    )
+    let registeredRendererOnly = RichAnswerRouteAvailability(
+        hasValidProgram: false,
+        hasValidComposition: false,
+        hasValidRenderPlan: true
+    )
+    try richAnswerRequire(
+        RichAnswerObjectiveAcceptance.routeMatches(.t1, availability: programOnly)
+            && !RichAnswerObjectiveAcceptance.routeMatches(.t1, availability: compositionOnly),
+        "the program requirement accepts a valid program and rejects a composition-only reply"
+    )
+    try richAnswerRequire(
+        RichAnswerObjectiveAcceptance.routeMatches(.t2, availability: compositionOnly)
+            && !RichAnswerObjectiveAcceptance.routeMatches(.t2, availability: programOnly),
+        "the composition requirement accepts a valid composition and rejects a program-only reply"
+    )
+    try richAnswerRequire(
+        RichAnswerObjectiveAcceptance.routeMatches(.t1, availability: registeredRendererOnly)
+            && RichAnswerObjectiveAcceptance.routeMatches(.t2, availability: registeredRendererOnly),
+        "a registered professional render plan remains an allowed objective upgrade for either direct route"
     )
 }
 
