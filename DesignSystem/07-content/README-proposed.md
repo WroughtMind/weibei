@@ -74,6 +74,6 @@ export WEIBEI_OPENAI_MODEL="gpt-5.1"
 
 魏碑还在开发中，界面、快捷键、课程索引和数据结构都可能继续调整。拿它记真实课程内容时，请自己备份重要笔记。
 
-项目源代码采用 `AGPL-3.0-only`。`WeiBeiStele` 与 `WeiBeiSteleMono`
-是项目自有品牌字体，不在 AGPL 授权范围内；复制、构建和再分发边界以
-仓库根目录的 `LICENSING.md` 为准。
+项目源代码采用 MIT License。`WeiBeiStele` 与 `WeiBeiSteleMono`
+采用 SIL Open Font License 1.1；品牌名称、Logo 和项目媒体仍按
+仓库根目录的 `LICENSING.md` 与 `TRADEMARKS.md` 管理。

@@ -161,13 +161,13 @@
     },
     {
       "path": "assets/fonts/WeiBeiStele.ttf",
-      "bytes": 16720,
-      "sha256": "51977deb083107d0659685cef038922928d7ff1571a3524c7dc1030e7fcddeb8"
+      "bytes": 17380,
+      "sha256": "5ae600f7a1a367c637d3bfbce482107216c3c4361e3b5a6ca054926cb1f24c87"
     },
     {
       "path": "assets/fonts/WeiBeiSteleMono.ttf",
-      "bytes": 16380,
-      "sha256": "8547691d939e8cf631a5540e834b0c7686d3acaa0775bf7b57c7f6919a06d3b3"
+      "bytes": 17040,
+      "sha256": "a7697bf6e2816d804cfbddf0f4822a37c738f4a29732f32d3730d6bf6339fbce"
     },
     {
       "path": "assets/fonts/previews/weibei-font-specimen.png",
