@@ -12,6 +12,7 @@ struct CourseHubView: View {
     @Binding var selectedSessionID: UUID?
     let isCompact: Bool
     let openRelations: () -> Void
+    let openRecords: () -> Void
     let importMaterials: () -> Void
     let importNotes: () -> Void
     let createNote: () -> Void
@@ -41,6 +42,17 @@ struct CourseHubView: View {
         guard let courseID else { return [] }
         return store.sessionsTouchingCourse(courseID)
             .sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    private var learningHighlights: CourseHomeLearningHighlights? {
+        guard let courseID else { return nil }
+        return CourseHomeLearningHighlights(
+            courseID: courseID,
+            learningMemoryEntries: store.orderedLearningMemoryEntries(
+                in: .course(courseID)
+            ),
+            studySessions: sessions
+        )
     }
 
     private var cleanedSearch: String {
@@ -523,9 +535,59 @@ struct CourseHubView: View {
                 searchContent
             }
 
+            if cleanedSearch.isEmpty {
+                CourseHairline()
+                courseLearningOverview
+            }
+
             CourseHairline()
 
             courseContentFooter
+        }
+    }
+
+    private var courseLearningOverview: some View {
+        let summary = learningHighlights?.summary
+        let nextStepText = learningHighlights?.nextStepText
+        let nextStepSessionID = learningHighlights?.nextStepSessionID
+        let nextStepAction: (() -> Void)? = {
+            guard let courseID, let nextStepSessionID else { return nil }
+            return {
+                selectedSessionID = nextStepSessionID
+                store.continueCourseSession(
+                    nextStepSessionID,
+                    expectedCourseID: courseID,
+                    expectedScopeNeedsReview: false
+                )
+            }
+        }()
+
+        return VStack(spacing: 0) {
+            CourseHubMemoryLine(
+                icon: "bookmark",
+                title: store.ui("学习小结", "Learning summary"),
+                text: summary?.text ?? store.ui(
+                    "产生实质学习变化后生成",
+                    "Generated after meaningful learning progress"
+                ),
+                isPlaceholder: summary == nil,
+                accessibilityIdentifier: "course-home-learning-summary",
+                action: summary == nil ? nil : openRecords
+            )
+
+            CourseHairline().padding(.leading, 42)
+
+            CourseHubMemoryLine(
+                icon: "flag",
+                title: store.ui("下一步", "Next step"),
+                text: nextStepText ?? store.ui(
+                    "尚无学习建议",
+                    "No learning suggestion yet"
+                ),
+                isPlaceholder: nextStepText == nil,
+                accessibilityIdentifier: "course-home-next-step",
+                action: nextStepAction
+            )
         }
     }
 
@@ -1116,5 +1178,67 @@ private struct CourseHubContentRow: View {
         .onHover { hovering = $0 }
         .animation(WeiBeiMotion.hover, value: hovering)
         .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+private struct CourseHubMemoryLine: View {
+    let icon: String
+    let title: String
+    let text: String
+    let isPlaceholder: Bool
+    let accessibilityIdentifier: String
+    let action: (() -> Void)?
+
+    @State private var hovering = false
+
+    var body: some View {
+        Group {
+            if let action {
+                Button(action: action) {
+                    content
+                }
+                .buttonStyle(.plain)
+                .onHover { hovering = $0 }
+                .animation(WeiBeiMotion.hover, value: hovering)
+            } else {
+                content
+            }
+        }
+        .accessibilityIdentifier(accessibilityIdentifier)
+    }
+
+    private var content: some View {
+        HStack(spacing: 14) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .regular))
+                .foregroundStyle(WeiBeiTheme.cinnabar)
+                .frame(width: 24)
+
+            Text(title)
+                .font(.system(size: 13.5, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.ink)
+                .frame(width: 104, alignment: .leading)
+
+            Text(text)
+                .font(.system(size: 11.5))
+                .foregroundStyle(
+                    isPlaceholder
+                        ? WeiBeiTheme.tertiaryInk
+                        : WeiBeiTheme.secondaryInk
+                )
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if action != nil {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(WeiBeiTheme.tertiaryInk)
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(minHeight: 62)
+        .contentShape(Rectangle())
+        .background(hovering ? WeiBeiTheme.paperInset.opacity(0.16) : .clear)
+        .accessibilityElement(children: .combine)
     }
 }
