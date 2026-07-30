@@ -1834,6 +1834,7 @@ public struct PersistedWorkspace: Codable {
     public var noteSourceLinks: [NoteSourceLink]?
     public var noteSourceLinksMigrationVersion: Int?
     public var studyLocationsByItemID: [String: StudyLocation]?
+    public var courseResumePoints: [CourseResumePoint]?
     public var learningMemoryStates: [ScopedLearningMemoryState]?
     public var learningMemoryScopeMigrationVersion: Int?
     /// Legacy flat memory fields. Decode-only after scoped memory migration.
@@ -1876,6 +1877,7 @@ public struct PersistedWorkspace: Codable {
         noteSourceLinks: [NoteSourceLink]? = nil,
         noteSourceLinksMigrationVersion: Int? = nil,
         studyLocationsByItemID: [String: StudyLocation]? = nil,
+        courseResumePoints: [CourseResumePoint]? = nil,
         learningMemoryStates: [ScopedLearningMemoryState]? = nil,
         learningMemoryScopeMigrationVersion: Int? = nil,
         learningMemoryEntries: [LearningMemoryEntry]? = nil,
@@ -1916,6 +1918,7 @@ public struct PersistedWorkspace: Codable {
         self.noteSourceLinks = noteSourceLinks
         self.noteSourceLinksMigrationVersion = noteSourceLinksMigrationVersion
         self.studyLocationsByItemID = studyLocationsByItemID
+        self.courseResumePoints = courseResumePoints
         self.learningMemoryStates = learningMemoryStates
         self.learningMemoryScopeMigrationVersion = learningMemoryScopeMigrationVersion
         self.learningMemoryEntries = learningMemoryEntries

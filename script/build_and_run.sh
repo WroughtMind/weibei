@@ -608,6 +608,9 @@ verify_course_workspace_flow() {
     course-workspace-workflow-flow)
       report_file="$VERIFY_DATA_DIR/course-workspace-workflow-report.json"
       ;;
+    course-resume-point-flow)
+      report_file="$VERIFY_DATA_DIR/course-resume-point-report.json"
+      ;;
     *)
       return 0
       ;;
@@ -625,7 +628,23 @@ verify_course_workspace_flow() {
     return 1
   fi
 
-  if [[ "$VERIFY_SCENARIO" == "course-workspace-overview-flow" ]]; then
+  if [[ "$VERIFY_SCENARIO" == "course-resume-point-flow" ]]; then
+    if ! /usr/bin/jq -e '
+      .result == "pass"
+      and .readingPassed == true
+      and .scrollPreservedPoint == true
+      and .conversationPassed == true
+      and .persisted == true
+      and .sessionCount == 3
+      and .paneOrderPreserved == true
+      and .materialLocationID == "html-heading-2"
+      and .noteItemID == "course-note-a"
+    ' "$report_file" >/dev/null; then
+      echo "verify failed: course resume point did not restore one exact learning scene." >&2
+      /usr/bin/jq . "$report_file" >&2
+      return 1
+    fi
+  elif [[ "$VERIFY_SCENARIO" == "course-workspace-overview-flow" ]]; then
     if ! /usr/bin/jq -e '
       .result == "pass"
       and .materialCount == 3

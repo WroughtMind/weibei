@@ -13,6 +13,7 @@ enum ImportedIdentitySelfCheck {
         try legacyChatScopesMigrateOnceAndPersist()
         try failedLearningMemoryMigrationKeepsLegacySnapshotRecoverable()
         try learningMemoryEditsRejectTruncationAndRetrySave()
+        try courseResumePointRestoresOneAtomicLearningScene()
         try sameVolumeMoveKeepsIdentityRelationsNavigationAndIndex()
         try temporarilyUnavailableNoteRetainsLatestEdit()
         try offlineLaunchNoteRetainsEditWhenFileReturns()
@@ -25,6 +26,415 @@ enum ImportedIdentitySelfCheck {
         try failedWorkspaceSaveRecoversRenameOnRestart()
         try duplicateLegacyIdentityMigratesInOneLaunch()
         try replacedAndCrossVolumeFilesReceiveNewIdentities()
+    }
+
+    @MainActor
+    private static func courseResumePointRestoresOneAtomicLearningScene() throws {
+        let fixture = try WorkspaceFixture(name: "course-resume-point")
+        defer { fixture.remove() }
+
+        let materialURL = fixture.importsDirectory.appendingPathComponent("shared.html")
+        let noteURL = fixture.importsDirectory.appendingPathComponent("course-a-note.md")
+        let otherMaterialURL = fixture.importsDirectory.appendingPathComponent("course-b.txt")
+        let otherNoteURL = fixture.importsDirectory.appendingPathComponent("course-b-note.md")
+        try Data("<h1 id=\"a\">A</h1><h1 id=\"b\">B</h1>".utf8).write(to: materialURL)
+        try Data("# 课程 A 笔记".utf8).write(to: noteURL)
+        try Data("课程 B 文稿".utf8).write(to: otherMaterialURL)
+        try Data("# 课程 B 笔记".utf8).write(to: otherNoteURL)
+        let materialIdentity = ImportedFileIdentity(
+            volumeID: 80,
+            fileID: 801,
+            birthTimeSeconds: 8_001,
+            birthTimeNanoseconds: 81
+        )
+        let noteIdentity = ImportedFileIdentity(
+            volumeID: 80,
+            fileID: 802,
+            birthTimeSeconds: 8_002,
+            birthTimeNanoseconds: 82
+        )
+        let libraryIdentity = ImportedFileIdentity(
+            volumeID: 80,
+            fileID: 800,
+            birthTimeSeconds: 8_000,
+            birthTimeNanoseconds: 80
+        )
+        let otherMaterialIdentity = ImportedFileIdentity(
+            volumeID: 80,
+            fileID: 803,
+            birthTimeSeconds: 8_003,
+            birthTimeNanoseconds: 83
+        )
+        let otherNoteIdentity = ImportedFileIdentity(
+            volumeID: 80,
+            fileID: 804,
+            birthTimeSeconds: 8_004,
+            birthTimeNanoseconds: 84
+        )
+        let courseA = Course(id: UUID(), title: "课程 A")
+        let courseB = Course(id: UUID(), title: "课程 B")
+        let chatOnlyCourse = Course(id: UUID(), title: "仅对话课程")
+        let materialOnlyCourse = Course(id: UUID(), title: "仅文稿课程")
+        let material = StudyItem(
+            id: "resume-shared-material",
+            title: "共享文稿",
+            subtitle: materialURL.lastPathComponent,
+            kind: .html,
+            urlPath: materialURL.path,
+            importedFileIdentity: materialIdentity,
+            isSample: false,
+            storage: .shared(sharedRelativePath: "shared.html")
+        )
+        let note = StudyItem(
+            id: "resume-course-a-note",
+            title: "课程 A 笔记",
+            subtitle: noteURL.lastPathComponent,
+            kind: .markdown,
+            urlPath: noteURL.path,
+            importedFileIdentity: noteIdentity,
+            isSample: false,
+            isNotebookNote: true
+        )
+        let otherMaterial = StudyItem(
+            id: "resume-course-b-material",
+            title: "课程 B 文稿",
+            subtitle: otherMaterialURL.lastPathComponent,
+            kind: .text,
+            urlPath: otherMaterialURL.path,
+            importedFileIdentity: otherMaterialIdentity,
+            isSample: false
+        )
+        let otherNote = StudyItem(
+            id: "resume-course-b-note",
+            title: "课程 B 笔记",
+            subtitle: otherNoteURL.lastPathComponent,
+            kind: .markdown,
+            urlPath: otherNoteURL.path,
+            importedFileIdentity: otherNoteIdentity,
+            isSample: false,
+            isNotebookNote: true
+        )
+        let chatA1 = StudySession(
+            id: UUID(),
+            title: "课程 A Chat 1",
+            messages: [AgentMessage(role: .user, text: "A1", source: nil)],
+            courseID: courseA.id
+        )
+        let chatA2 = StudySession(
+            id: UUID(),
+            title: "课程 A Chat 2",
+            messages: [AgentMessage(role: .user, text: "A2", source: nil)],
+            courseID: courseA.id
+        )
+        let chatB = StudySession(
+            id: UUID(),
+            title: "课程 B Chat",
+            messages: [AgentMessage(role: .user, text: "B", source: nil)],
+            courseID: courseB.id
+        )
+        let chatOnly = StudySession(
+            id: UUID(),
+            title: "仅对话 Chat",
+            messages: [AgentMessage(role: .user, text: "只聊课程", source: nil)],
+            courseID: chatOnlyCourse.id
+        )
+        try fixture.write(
+            PersistedWorkspace(
+                importedItems: [material, note, otherMaterial, otherNote],
+                courses: [courseA, courseB, chatOnlyCourse, materialOnlyCourse],
+                courseItemMemberships: [
+                    CourseItemMembership(courseID: courseA.id, itemID: material.id),
+                    CourseItemMembership(courseID: courseB.id, itemID: material.id),
+                    CourseItemMembership(courseID: materialOnlyCourse.id, itemID: material.id),
+                    CourseItemMembership(courseID: courseA.id, itemID: note.id),
+                    CourseItemMembership(courseID: courseB.id, itemID: otherMaterial.id),
+                    CourseItemMembership(courseID: courseB.id, itemID: otherNote.id),
+                ],
+                activeCourseID: courseB.id,
+                courseLibraryRootPath: fixture.importsDirectory.path,
+                courseLibraryRootIdentity: libraryIdentity,
+                courseLibraryRootBookmarkData: Data("library-root".utf8),
+                studySessions: [chatA1, chatA2, chatB, chatOnly],
+                studySessionScopeMigrationVersion: 1,
+                activeStudySessionID: chatB.id
+            )
+        )
+
+        func makeStore(
+            workspaceSnapshotWriter: @escaping (Data, URL) throws -> Void = {
+                try $0.write(to: $1, options: [.atomic])
+            }
+        ) -> WorkspaceStore {
+            WorkspaceStore(
+                workspaceDirectory: fixture.workspaceDirectory,
+                importedFileIdentityResolver: { url in
+                    switch url.path {
+                    case materialURL.path: materialIdentity
+                    case noteURL.path: noteIdentity
+                    case otherMaterialURL.path: otherMaterialIdentity
+                    case otherNoteURL.path: otherNoteIdentity
+                    case fixture.importsDirectory.path: libraryIdentity
+                    default: nil
+                    }
+                },
+                courseRootBookmarkResolver: { _ in
+                    CourseProjectResolvedBookmark(
+                        url: fixture.importsDirectory,
+                        isStale: false
+                    )
+                },
+                courseSecurityScopeStarter: { _ in true },
+                courseSecurityScopeStopper: { _ in },
+                workspaceSnapshotWriter: workspaceSnapshotWriter,
+                selectionAskThreadDefaults: fixture.selectionAskThreadDefaults
+            )
+        }
+
+        let store = makeStore()
+        store.activateCourse(courseA.id)
+        try check(store.openCourseMaterial(material.id), "课程 A 无法打开共享文稿")
+        store.updateReaderHTMLLocation(id: "section-a", title: "A 段", reason: "scroll")
+        store.openCourseNote(note.id)
+        try check(
+            store.activateStudySession(
+                chatA2.id,
+                expectedCourseID: courseA.id,
+                expectedScopeNeedsReview: false
+            ),
+            "课程 A 无法切到指定 Chat"
+        )
+        store.setLayout(.immersiveReading)
+        store.updateReaderHTMLLocation(
+            id: "section-a-deep",
+            title: "A 深读段",
+            reason: "scroll"
+        )
+        store.setLayout(.immersiveConversation)
+        let captureStartedAt = Date()
+        try check(
+            store.activateStudySession(
+                chatA1.id,
+                expectedCourseID: courseA.id,
+                expectedScopeNeedsReview: false
+            )
+                && store.activateStudySession(
+                    chatA2.id,
+                    expectedCourseID: courseA.id,
+                    expectedScopeNeedsReview: false
+            ),
+            "沉浸对话无法切换并返回原 Chat"
+        )
+        let captureFinishedAt = Date()
+        let pointA = try require(
+            store.courseResumePoint(for: courseA.id),
+            "课程 A 没有保存学习现场"
+        )
+        try check(
+            pointA.materialLocation?.locationID == "section-a-deep"
+                && pointA.chatID == chatA2.id
+                && pointA.noteItemID == note.id
+                && pointA.savedAt >= captureStartedAt
+                && pointA.savedAt <= captureFinishedAt,
+            "沉浸阅读更新位置时丢掉了同一现场的精确 Chat 或笔记"
+        )
+
+        store.activateCourse(courseB.id)
+        try check(store.openCourseMaterial(material.id), "课程 B 无法打开共享文稿")
+        try check(
+            store.courseResumePoint(for: courseB.id)?.materialLocation?.locationID == nil
+                && store.readerLocationID == nil,
+            "课程 B 首次打开共享文稿时继承了课程 A 的位置"
+        )
+        store.updateReaderHTMLLocation(id: "section-b", title: "B 段", reason: "scroll")
+        try check(
+            store.activateStudySession(
+                chatB.id,
+                expectedCourseID: courseB.id,
+                expectedScopeNeedsReview: false
+            ),
+            "课程 B 无法切到自己的 Chat"
+        )
+        let pointB = try require(
+            store.courseResumePoint(for: courseB.id),
+            "课程 B 没有保存学习现场"
+        )
+        try check(
+            pointB.materialLocation?.locationID == "section-b"
+                && pointB.chatID == chatB.id
+                && pointB.noteItemID == nil,
+            "共享文稿的课程 B 位置或 Chat 串进了课程 A"
+        )
+        try check(
+            store.courseResumePoint(for: courseA.id)?.materialLocation?.locationID == "section-a-deep",
+            "课程 B 的共享文稿位置覆盖了课程 A 的恢复位置"
+        )
+
+        try check(store.flushPendingWorkspaceSave(), "课程学习现场无法写入磁盘")
+        let reopened = makeStore()
+        try check(
+            reopened.courseResumePoint(for: courseA.id) == pointA
+                && reopened.courseResumePoint(for: courseB.id) == pointB,
+            "重开后课程学习现场不一致"
+        )
+        let rollbackStore = makeStore { _, _ in
+            throw CheckError.failed("预期中的课程关系保存失败")
+        }
+        try check(
+            rollbackStore.courseResumePointSurvivesFailedMembershipSaveForSelfCheck(
+                itemID: material.id,
+                courseID: courseA.id
+            ),
+            "课程关系保存失败并回滚后，恢复点没有一起保留"
+        )
+        let committedRemovalStore = makeStore()
+        try check(
+            committedRemovalStore
+                .courseResumePointDoesNotReviveAfterSuccessfulMembershipSaveForSelfCheck(
+                    itemID: material.id,
+                    courseID: courseA.id
+                ),
+            "课程关系成功移除后，同进程重新加入错误复活了旧恢复位置"
+        )
+        let sessionCountBeforeReading = reopened.studySessions.count
+        reopened.activateCourse(courseB.id)
+        try check(reopened.openCourseMaterial(otherMaterial.id), "无法准备课程 B 的对照文稿")
+        reopened.openCourseNote(otherNote.id)
+        reopened.setLayout(.documentAgentNotes)
+        reopened.swapThreePaneSecondaryPanes()
+        let paneOrderBeforeReading = reopened.threePaneOrder
+        reopened.presentCourseWorkspace(.hub, courseID: courseA.id)
+        let chatBBeforeReading = try require(
+            reopened.studySessions.first { $0.id == chatB.id },
+            "重开后课程 B Chat 丢失"
+        )
+        try check(
+            reopened.resumeCourseReading(courseA.id)
+                && reopened.activeStudySessionID == chatB.id
+                && reopened.selectedMaterialItem?.id == material.id
+                && reopened.readerLocationID == "section-a-deep"
+                && reopened.activeNotebookItemID == note.id
+                && reopened.studySessions.first(where: { $0.id == chatB.id }) == chatBBeforeReading
+                && reopened.studySessions.count == sessionCountBeforeReading
+                && reopened.threePaneOrder == paneOrderBeforeReading
+                && reopened.focusedPane == .reader
+                && reopened.showReader
+                && reopened.showAgent
+                && reopened.showNotes
+                && reopened.layout.isDocumentThreePane
+                && !reopened.courseWorkspacePresented,
+            "继续阅读切换或改写了当前 Chat，或没有原样恢复课程 A 的位置、笔记和栏位顺序"
+        )
+        reopened.updateReaderHTMLLocation(
+            id: "section-a-resumed",
+            title: "A 继续阅读",
+            reason: "scroll"
+        )
+        try check(
+            reopened.courseResumePoint(for: courseA.id)?.chatID == chatA2.id
+                && reopened.courseResumePoint(for: courseA.id)?.noteItemID == note.id,
+            "继续阅读后滚动时丢掉了原课程 Chat 或笔记"
+        )
+        try check(
+            reopened.resumeCourseConversation(courseA.id)
+                && reopened.activeStudySessionID == chatA2.id
+                && reopened.readerLocationID == "section-a-resumed"
+                && reopened.activeNotebookItemID == note.id
+                && reopened.layout.isDocumentThreePane
+                && reopened.focusedPane == .agent
+                && reopened.showAgent
+                && reopened.studySessions.count == sessionCountBeforeReading,
+            "继续对话没有恢复精确 Chat 和同一学习现场"
+        )
+        try check(
+            reopened.activateStudySession(
+                chatOnly.id,
+                expectedCourseID: chatOnlyCourse.id,
+                expectedScopeNeedsReview: false
+            ),
+            "无法准备仅有 Chat 的课程现场"
+        )
+        reopened.presentCourseWorkspace(.hub, courseID: chatOnlyCourse.id)
+        try check(
+            reopened.courseResumePoint(for: chatOnlyCourse.id)?.materialLocation == nil
+                && reopened.courseResumePoint(for: chatOnlyCourse.id)?.noteItemID == nil
+                && reopened.resumeCourseConversation(chatOnlyCourse.id)
+                && reopened.activeStudySessionID == chatOnly.id
+                && !reopened.courseWorkspacePresented,
+            "仅有 Chat 的课程不能恢复对话"
+        )
+        reopened.activateCourse(materialOnlyCourse.id)
+        try check(
+            reopened.openCourseMaterial(material.id),
+            "无法准备仅有文稿的课程现场"
+        )
+        reopened.updateReaderHTMLLocation(
+            id: "section-material-only",
+            title: "仅文稿位置",
+            reason: "scroll"
+        )
+        reopened.presentCourseWorkspace(.hub, courseID: materialOnlyCourse.id)
+        try check(
+            reopened.courseResumePoint(for: materialOnlyCourse.id)?.chatID == nil
+                && reopened.courseResumePoint(for: materialOnlyCourse.id)?.noteItemID == nil
+                && reopened.resumeCourseReading(materialOnlyCourse.id)
+                && reopened.readerLocationID == "section-material-only"
+                && !reopened.courseWorkspacePresented,
+            "仅有文稿的课程不能恢复阅读"
+        )
+        try check(
+            reopened.activateStudySession(
+                chatA2.id,
+                expectedCourseID: courseA.id,
+                expectedScopeNeedsReview: false
+            ),
+            "可选状态检查后无法返回课程 A Chat"
+        )
+        try FileManager.default.removeItem(at: materialURL)
+        reopened.presentCourseWorkspace(.hub, courseID: courseA.id)
+        try check(
+            !reopened.resumeCourseReading(courseA.id)
+                && reopened.courseWorkspacePresented
+                && reopened.courseResumePoint(for: courseA.id)?.materialLocation != nil,
+            "文稿暂不可用时没有留在课程首页，或错误丢掉了恢复位置"
+        )
+        try check(
+            reopened.resumeCourseConversation(courseA.id)
+                && !reopened.courseWorkspacePresented
+                && reopened.activeStudySessionID == chatA2.id
+                && reopened.courseResumePoint(for: courseA.id)?.materialLocation != nil,
+            "文稿暂不可用时不应阻止恢复同一课程 Chat"
+        )
+
+        reopened.deleteStudySession(chatA2.id)
+        try check(
+            reopened.courseResumePoint(for: courseA.id)?.chatID == nil
+                && reopened.courseResumePoint(for: courseA.id)?.materialLocation != nil
+                && reopened.courseResumePoint(for: courseA.id)?.noteItemID == note.id,
+            "删除 Chat 时错误丢掉了仍有效的文稿或笔记现场"
+        )
+        reopened.setCourseIDs([], for: note.id)
+        try check(
+            reopened.courseResumePoint(for: courseA.id)?.noteItemID == nil
+                && reopened.courseResumePoint(for: courseA.id)?.materialLocation != nil,
+            "移出课程的笔记没有单独从学习现场清掉"
+        )
+        try check(reopened.flushPendingWorkspaceSave(), "移除课程资料前无法保存现场")
+        var membershipSnapshot = try fixture.readSnapshot()
+        membershipSnapshot.courseItemMemberships?.removeAll {
+            $0.courseID == courseA.id && $0.itemID == material.id
+        }
+        try fixture.write(membershipSnapshot)
+        let degraded = makeStore()
+        try check(
+            degraded.courseResumePoint(for: courseA.id) == nil
+                && degraded.courseResumePoint(for: courseB.id) != nil,
+            "课程 A 的无效现场没有清理，或误删了课程 B 的现场"
+        )
+        degraded.deleteCourse(courseB.id)
+        try check(
+            degraded.courseResumePoint(for: courseB.id) == nil,
+            "删除课程后仍残留课程学习现场"
+        )
     }
 
     @MainActor
@@ -610,6 +1020,27 @@ enum ImportedIdentitySelfCheck {
         try check(decodedMembership == membership, "课程入口路径和身份编码往返不一致")
         try check(decodedMembership.entryIdentity == entryIdentity, "系统文稿身份改变了文件入口身份等式")
 
+        let resumePoint = CourseResumePoint(
+            courseID: ownerCourseID,
+            materialLocation: StudyLocation(
+                itemID: ownedItem.id,
+                itemTitle: ownedItem.title,
+                pageIndex: 18
+            ),
+            chatID: UUID(),
+            noteItemID: "imported:note",
+            savedAt: Date(timeIntervalSince1970: 1_700_000_100)
+        )
+        let resumeSnapshot = PersistedWorkspace(courseResumePoints: [resumePoint])
+        let restoredResumeSnapshot = try JSONDecoder().decode(
+            PersistedWorkspace.self,
+            from: JSONEncoder().encode(resumeSnapshot)
+        )
+        try check(
+            restoredResumeSnapshot.courseResumePoints == [resumePoint],
+            "课程恢复点的文稿位置、Chat、笔记或时间编码往返不一致"
+        )
+
         let oldestMembershipID = UUID()
         let partialMemberships = CourseItemMemberships(values: [
             CourseItemMembership(
@@ -720,6 +1151,17 @@ enum ImportedIdentitySelfCheck {
                     visitCount: 3
                 ),
             ],
+            courseResumePoints: [
+                CourseResumePoint(
+                    courseID: courseID,
+                    materialLocation: StudyLocation(
+                        itemID: legacyMaterialID,
+                        itemTitle: "第一讲",
+                        locationTitle: "课程恢复位置",
+                        visitCount: 3
+                    )
+                ),
+            ],
             studySessions: [session],
             activeStudySessionID: session.id
         )
@@ -750,6 +1192,10 @@ enum ImportedIdentitySelfCheck {
         try check(store.noteText == "遗留缓存笔记", "升级后没有优先恢复旧版本未写回草稿")
         try check(store.linkedSourceIDs(for: note.id) == [material.id], "笔记资料关系没有随身份迁移")
         try check(store.studyLocation(for: material.id)?.itemID == material.id, "阅读位置没有随身份迁移")
+        try check(
+            store.courseResumePoint(for: courseID)?.materialLocation?.itemID == material.id,
+            "课程恢复位置没有随资料身份迁移"
+        )
         try check(Set(store.activeStudySession?.focusItemIDs ?? []) == Set([material.id, note.id]), "学习会话没有随身份迁移")
         try check(store.activeStudySession?.materialItemID == material.id, "学习会话主资料没有随身份迁移")
         try check(store.activeStudySession?.groupingMaterialItemID == material.id, "学习会话分组资料仍指向旧身份")
@@ -772,6 +1218,10 @@ enum ImportedIdentitySelfCheck {
         try check(migratedSession.groupingMaterialItemID == material.id, "保存后学习会话分组资料仍是旧身份")
         try check(migratedSession.focusItemIDs.contains(legacyMaterialID) == false, "保存后学习会话焦点仍有旧身份")
         try check(migratedSnapshot.selectionAskThreads?.first?.itemID == material.id, "保存后的同一工作区快照没有包含迁移后的选区问答")
+        try check(
+            migratedSnapshot.courseResumePoints?.first?.materialLocation?.itemID == material.id,
+            "保存后课程恢复位置仍指向旧资料身份"
+        )
         try check(migratedSnapshot.selectionAskThreads?.first?.messageIDs == selectionThread.messageIDs, "保存后的选区问答消息关系丢失")
         try check(
             fixture.selectionAskThreadDefaults.object(forKey: "weibei.selectionAskThreads.v1") == nil,
