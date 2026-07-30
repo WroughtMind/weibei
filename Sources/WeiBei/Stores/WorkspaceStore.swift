@@ -547,6 +547,9 @@ final class WorkspaceStore: ObservableObject {
     private var agentStopTask: Task<Void, Never>?
     private var pendingAgentSwitchTargetID: UUID?
     private var agentDraftsBySessionID: [UUID: String] = [:]
+    /// Session-local proof for the one allowed course-home reuse case.
+    /// Deliberately not persisted: reopening the App makes an old empty Chat non-fresh.
+    private var freshlyCreatedEmptyStudySessionID: UUID?
     private var quietInsightTask: Task<Void, Never>?
     private var quietInsightTaskID: UUID?
     private var agentContextRevision: UInt64 = 0
@@ -7186,6 +7189,7 @@ final class WorkspaceStore: ObservableObject {
         )
         studySessions.append(session)
         activeStudySessionID = session.id
+        freshlyCreatedEmptyStudySessionID = session.id
         messages = []
         agentDraft = ""
         restoreAgentReplyState(from: session)
@@ -7207,6 +7211,7 @@ final class WorkspaceStore: ObservableObject {
             return false
         }
         guard id != activeStudySessionID else { return true }
+        freshlyCreatedEmptyStudySessionID = nil
         dismissAgentSwitchConfirmation()
         saveActiveAgentDraft()
         syncActiveStudySession()
@@ -7242,6 +7247,9 @@ final class WorkspaceStore: ObservableObject {
             session.materialItemID = nil
         }
         studySessions[index] = session
+        if freshlyCreatedEmptyStudySessionID == id {
+            freshlyCreatedEmptyStudySessionID = nil
+        }
         if activeStudySessionID == id {
             invalidateAgentContext()
         }
@@ -7255,6 +7263,9 @@ final class WorkspaceStore: ObservableObject {
         let deletingActiveSession = activeStudySessionID == id
         if activeAgentReplyChatID == id {
             cancelAgentRequest(restoreDraft: false)
+        }
+        if freshlyCreatedEmptyStudySessionID == id {
+            freshlyCreatedEmptyStudySessionID = nil
         }
         agentDraftsBySessionID.removeValue(forKey: id)
         studySessions.remove(at: index)
@@ -7319,6 +7330,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func appendAgentMessage(_ message: AgentMessage) {
+        if freshlyCreatedEmptyStudySessionID == activeStudySessionID {
+            freshlyCreatedEmptyStudySessionID = nil
+        }
         messages.append(message)
         syncActiveStudySession(titleSeed: message.role == .user ? message.text : nil)
         save()
@@ -9009,9 +9023,7 @@ final class WorkspaceStore: ObservableObject {
             expectedCourseID: expectedCourseID,
             expectedScopeNeedsReview: expectedScopeNeedsReview
         ) else { return }
-        dismissCourseWorkspace(restoringFocus: false)
-        showLibrary = false
-        setLayout(.immersiveConversation)
+        openConversationInWorkspace(courseID: expectedCourseID)
         if let expectedCourseID {
             _ = captureCourseResumePoint(
                 courseID: expectedCourseID,
@@ -9021,37 +9033,96 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    /// Route one course-home question into the existing Chat/Pi pipeline.
+    /// The home keeps its own draft until this method has validated the course root.
+    @discardableResult
+    func submitCourseHomeQuestion(
+        _ rawQuestion: String,
+        in courseID: UUID
+    ) -> UUID? {
+        let question = rawQuestion.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard !question.isEmpty,
+              !isStoppingAgent,
+              let course = course(withID: courseID),
+              let expectedIdentity = course.sourceRootIdentity,
+              let rawRoot = courseRootURL(for: courseID),
+              let root = try? CourseProjectPathPolicy.existingDirectory(rawRoot),
+              importedFileIdentityResolver(root) == expectedIdentity else {
+            return nil
+        }
+
+        let reusableSession: StudySession? = {
+            guard let session = activeStudySession,
+                  session.id == freshlyCreatedEmptyStudySessionID,
+                  session.courseID == courseID,
+                  session.scopeNeedsReview == false,
+                  session.messages.isEmpty,
+                  agentDraft.trimmingCharacters(
+                    in: .whitespacesAndNewlines
+                  ).isEmpty else {
+                return nil
+            }
+            return session
+        }()
+        guard let session = reusableSession ?? createStudySession(courseID: courseID) else {
+            return nil
+        }
+
+        freshlyCreatedEmptyStudySessionID = nil
+        activeCourseID = courseID
+        agentDraft = question
+        agentDraftsBySessionID[session.id] = question
+        openConversationInWorkspace(courseID: courseID)
+        submitAgentDraft()
+        return session.id
+    }
+
+    private func openConversationInWorkspace(courseID: UUID?) {
+        if let courseID {
+            activeCourseID = courseID
+        }
+        setDocumentPaneSet([.reader, .agent, .notes])
+        layout = layoutMatchingThreePaneOrder(normalizedThreePaneOrder)
+        focus(.agent)
+        dismissCourseWorkspace(restoringFocus: false)
+        showLibrary = false
+        save()
+    }
+
     @discardableResult
     func resumeCourseReading(_ courseID: UUID) -> Bool {
-        resumeCoursePoint(courseID, conversation: false)
+        resumeCourseReadingPoint(courseID)
     }
 
     @discardableResult
     func resumeCourseConversation(_ courseID: UUID) -> Bool {
-        resumeCoursePoint(courseID, conversation: true)
+        guard let chatID = courseResumePoint(for: courseID)?.chatID,
+              let session = studySessions.first(where: {
+                  $0.id == chatID
+                      && !$0.messages.isEmpty
+                      && $0.scopeNeedsReview == false
+                      && primaryCourseID(for: $0) == courseID
+              }) else {
+            return false
+        }
+        continueCourseSession(
+            session.id,
+            expectedCourseID: courseID,
+            expectedScopeNeedsReview: false
+        )
+        return activeStudySessionID == session.id && !courseWorkspacePresented
     }
 
     @discardableResult
-    private func resumeCoursePoint(
-        _ courseID: UUID,
-        conversation: Bool
-    ) -> Bool {
+    private func resumeCourseReadingPoint(_ courseID: UUID) -> Bool {
         guard let point = courseResumePoint(for: courseID),
-              (!conversation && point.materialLocation != nil)
-                || (conversation && point.chatID != nil) else {
+              point.materialLocation != nil else {
             return false
         }
         isRestoringCourseResumePoint = true
         defer { isRestoringCourseResumePoint = false }
-        if conversation,
-           let chatID = point.chatID,
-           !activateStudySession(
-               chatID,
-               expectedCourseID: courseID,
-               expectedScopeNeedsReview: false
-           ) {
-            return false
-        }
 
         var restoredMaterial = false
         if let location = point.materialLocation {
@@ -9068,12 +9139,9 @@ final class WorkspaceStore: ObservableObject {
                         title: location.locationTitle
                     )
                 }
-            } else if !conversation {
+            } else {
                 return false
             }
-        }
-        if conversation, !restoredMaterial {
-            activeCourseID = courseID
         }
 
         var restoredNote = false
@@ -9086,10 +9154,9 @@ final class WorkspaceStore: ObservableObject {
         var panes = Set(visibleDocumentPaneOrder)
         if restoredMaterial { panes.insert(.reader) }
         if restoredNote { panes.insert(.notes) }
-        if conversation { panes.insert(.agent) }
         setDocumentPaneSet(panes)
         layout = layoutMatchingThreePaneOrder(normalizedThreePaneOrder)
-        focus(conversation ? .agent : .reader)
+        focus(.reader)
         dismissCourseWorkspace(restoringFocus: false)
         showLibrary = false
         save()
@@ -14552,17 +14619,42 @@ final class WorkspaceStore: ObservableObject {
             NoteSourceLink(noteItemID: noteA.id, sourceItemID: materialB.id),
             NoteSourceLink(noteItemID: noteB.id, sourceItemID: materialB.id),
         ]
+        let courseARoot = fixtureDirectory.appendingPathComponent(
+            "CourseA",
+            isDirectory: true
+        )
+        let courseBRoot = fixtureDirectory.appendingPathComponent(
+            "CourseB",
+            isDirectory: true
+        )
+        try? FileManager.default.createDirectory(
+            at: courseARoot,
+            withIntermediateDirectories: true
+        )
+        try? FileManager.default.createDirectory(
+            at: courseBRoot,
+            withIntermediateDirectories: true
+        )
         let courseA = Course(
             id: UUID(uuidString: "11111111-1111-1111-1111-111111111111")!,
             title: "货币金融学",
-            colorIndex: 0
+            colorIndex: 0,
+            sourceRootPath: courseARoot.path,
+            sourceRootIdentity: CourseProjectFileWorker.identity(at: courseARoot)
         )
         let courseB = Course(
             id: UUID(uuidString: "22222222-2222-2222-2222-222222222222")!,
             title: "经济思想史",
-            colorIndex: 1
+            colorIndex: 1,
+            sourceRootPath: courseBRoot.path,
+            sourceRootIdentity: CourseProjectFileWorker.identity(at: courseBRoot)
         )
         courses = [courseA, courseB]
+        resolvedCourseRootURLs = [
+            courseA.id: courseARoot,
+            courseB.id: courseBRoot,
+        ]
+        courseRootUnavailableReasons.removeAll()
         var verificationMemberships = CourseItemMemberships()
         verificationMemberships.assign(
             itemIDs: Set([materialA.id, materialB.id, noteA.id, noteB.id]),
@@ -14696,6 +14788,8 @@ final class WorkspaceStore: ObservableObject {
                     noteItemID: noteA.id
                 ),
             ]
+            readerLocationID = "html-heading-1"
+            readerLocationTitle = "名义利率与实际利率"
             presentCourseWorkspace(.hub, courseID: courseA.id)
             let openedWithoutMutation = courseWorkspacePresented
                 && courseWorkspaceCourseID == courseA.id
@@ -14823,6 +14917,186 @@ final class WorkspaceStore: ObservableObject {
             recordVerificationStage("course-home:resume-done")
             presentCourseWorkspace(.hub, courseID: courseA.id)
 
+            // B2b: the course home routes into the existing Chat/Pi pipeline
+            // without replacing the reader or note panes.
+            dismissCourseWorkspace()
+            _ = activateStudySession(
+                courseBSession.id,
+                expectedCourseID: courseB.id,
+                expectedScopeNeedsReview: false
+            )
+            activeCourseID = courseB.id
+            select(itemID: materialC.id)
+            readerLocationID = "html-heading-1"
+            readerLocationTitle = "名义利率与实际利率"
+            openCourseNote(noteC.id, in: courseB.id)
+            let chatRouteMaterialID = selectedItemID
+            let chatRouteLocationID = readerLocationID
+            let chatRouteNoteID = activeNotebookItemID
+            let chatRoutePaneOrder = threePaneOrder
+            let courseBMessagesBeforeQuestion = studySessions.first {
+                $0.id == courseBSession.id
+            }?.messages
+            let courseAChatCountBeforeQuestion = studySessions.filter {
+                $0.courseID == courseA.id
+            }.count
+            agentProviderID = .openai
+            agentAuthMethod = .apiKey
+            openAIAPIKey = ""
+            let homeQuestion = "请用一句话说明这门课研究什么。"
+            presentCourseWorkspace(.hub, courseID: courseA.id)
+            recordVerificationStage("course-home:question-submit-start")
+            let newCourseChatID = submitCourseHomeQuestion(
+                homeQuestion,
+                in: courseA.id
+            )
+            recordVerificationStage("course-home:question-submit-routed")
+            await agentRequestTask?.value
+            recordVerificationStage("course-home:question-submit-done")
+            let newCourseChat = newCourseChatID.flatMap { chatID in
+                studySessions.first { $0.id == chatID }
+            }
+            let newCourseQuestionPassed = newCourseChat?.courseID == courseA.id
+                && newCourseChat?.messages.contains {
+                    $0.role == .user && $0.text == homeQuestion
+                } == true
+                && studySessions.filter { $0.courseID == courseA.id }.count
+                    == courseAChatCountBeforeQuestion + 1
+                && studySessions.first { $0.id == courseBSession.id }?.messages
+                    == courseBMessagesBeforeQuestion
+                && selectedItemID == chatRouteMaterialID
+                && readerLocationID == chatRouteLocationID
+                && activeNotebookItemID == chatRouteNoteID
+                && threePaneOrder == chatRoutePaneOrder
+                && showReader
+                && showAgent
+                && showNotes
+                && !courseWorkspacePresented
+
+            let freshSession = createStudySession(courseID: courseA.id)
+            let countBeforeFreshReuse = studySessions.count
+            presentCourseWorkspace(.hub, courseID: courseA.id)
+            recordVerificationStage("course-home:fresh-reuse-start")
+            let reusedFreshSessionID = submitCourseHomeQuestion(
+                "这条问题应复用刚创建的空对话。",
+                in: courseA.id
+            )
+            await agentRequestTask?.value
+            recordVerificationStage("course-home:fresh-reuse-done")
+            let freshEmptyReusePassed = reusedFreshSessionID == freshSession?.id
+                && studySessions.count == countBeforeFreshReuse
+
+            let draftedEmptySession = createStudySession(courseID: courseA.id)
+            agentDraft = "必须保留的旧问题草稿"
+            let countBeforeDraftedQuestion = studySessions.count
+            presentCourseWorkspace(.hub, courseID: courseA.id)
+            recordVerificationStage("course-home:draft-route-start")
+            let draftedRouteID = submitCourseHomeQuestion(
+                "这条问题必须进入另一条新对话。",
+                in: courseA.id
+            )
+            await agentRequestTask?.value
+            recordVerificationStage("course-home:draft-route-done")
+            let draftedEmptyNotReused = draftedRouteID != draftedEmptySession?.id
+                && studySessions.count == countBeforeDraftedQuestion + 1
+                && draftedEmptySession.map {
+                    agentDraftsBySessionID[$0.id]
+                        == "必须保留的旧问题草稿"
+                } == true
+
+            let staleEmptySession = createStudySession(courseID: courseA.id)
+            _ = activateStudySession(
+                courseBSession.id,
+                expectedCourseID: courseB.id,
+                expectedScopeNeedsReview: false
+            )
+            if let staleEmptySession {
+                _ = activateStudySession(
+                    staleEmptySession.id,
+                    expectedCourseID: courseA.id,
+                    expectedScopeNeedsReview: false
+                )
+            }
+            let countBeforeStaleQuestion = studySessions.count
+            presentCourseWorkspace(.hub, courseID: courseA.id)
+            recordVerificationStage("course-home:stale-route-start")
+            let staleRouteID = submitCourseHomeQuestion(
+                "旧空对话不能被静默复用。",
+                in: courseA.id
+            )
+            await agentRequestTask?.value
+            recordVerificationStage("course-home:stale-route-done")
+            let staleEmptyNotReused = staleRouteID != staleEmptySession?.id
+                && studySessions.count == countBeforeStaleQuestion + 1
+
+            let exactResumeMessages = activeSession.messages
+            let materialBeforeExactResume = selectedItemID
+            let locationBeforeExactResume = readerLocationID
+            let noteBeforeExactResume = activeNotebookItemID
+            courseResumePoints = [
+                CourseResumePoint(
+                    courseID: courseA.id,
+                    materialLocation: StudyLocation(
+                        itemID: materialA.id,
+                        itemTitle: materialA.title,
+                        locationID: "old-course-a-location",
+                        locationTitle: "旧课程位置"
+                    ),
+                    chatID: activeSession.id,
+                    noteItemID: noteA.id
+                ),
+            ]
+            _ = activateStudySession(
+                courseBSession.id,
+                expectedCourseID: courseB.id,
+                expectedScopeNeedsReview: false
+            )
+            let countBeforeExactResume = studySessions.count
+            let paneOrderBeforeExactResume = threePaneOrder
+            presentCourseWorkspace(.hub, courseID: courseA.id)
+            let exactConversationResumePassed =
+                resumeCourseConversation(courseA.id)
+                && activeStudySessionID == activeSession.id
+                && messages == exactResumeMessages
+                && studySessions.count == countBeforeExactResume
+                && selectedItemID == materialBeforeExactResume
+                && readerLocationID == locationBeforeExactResume
+                && activeNotebookItemID == noteBeforeExactResume
+                && threePaneOrder == paneOrderBeforeExactResume
+                && showReader
+                && showAgent
+                && showNotes
+                && !courseWorkspacePresented
+
+            courseResumePoints = [
+                CourseResumePoint(
+                    courseID: courseA.id,
+                    chatID: UUID()
+                ),
+            ]
+            let chatBeforeInvalidResume = activeStudySessionID
+            presentCourseWorkspace(.hub, courseID: courseA.id)
+            let invalidResumePreserved = !resumeCourseConversation(courseA.id)
+                && activeStudySessionID == chatBeforeInvalidResume
+                && courseWorkspacePresented
+
+            courseResumePoints = [
+                CourseResumePoint(
+                    courseID: courseA.id,
+                    materialLocation: StudyLocation(
+                        itemID: materialA.id,
+                        itemTitle: materialA.title,
+                        locationID: "html-heading-1",
+                        locationTitle: "名义利率与实际利率",
+                        lastStudiedAt: Date().addingTimeInterval(-1_800),
+                        visitCount: 3
+                    ),
+                    chatID: activeSession.id,
+                    noteItemID: noteA.id
+                ),
+            ]
+            presentCourseWorkspace(.hub, courseID: courseA.id)
+
             let passed = openedWithoutMutation
                 && browsingIsolated
                 && dismissedWithoutMutation
@@ -14835,6 +15109,12 @@ final class WorkspaceStore: ObservableObject {
                 && sharedLocationsPassed
                 && sharedLocationsPersisted
                 && resumePassed
+                && newCourseQuestionPassed
+                && freshEmptyReusePassed
+                && draftedEmptyNotReused
+                && staleEmptyNotReused
+                && exactConversationResumePassed
+                && invalidResumePreserved
             writeCourseWorkspaceVerificationReport(
                 name: "course-home-report.json",
                 payload: [
@@ -14851,6 +15131,12 @@ final class WorkspaceStore: ObservableObject {
                     "sharedLocationsPassed": sharedLocationsPassed,
                     "sharedLocationsPersisted": sharedLocationsPersisted,
                     "resumePassed": resumePassed,
+                    "newCourseQuestionPassed": newCourseQuestionPassed,
+                    "freshEmptyReusePassed": freshEmptyReusePassed,
+                    "draftedEmptyNotReused": draftedEmptyNotReused,
+                    "staleEmptyNotReused": staleEmptyNotReused,
+                    "exactConversationResumePassed": exactConversationResumePassed,
+                    "invalidResumePreserved": invalidResumePreserved,
                     "courseWorkspacePresented": courseWorkspacePresented,
                     "workspaceCourseID": courseWorkspaceCourseID?.uuidString ?? "",
                     "activeCourseID": activeCourseID?.uuidString ?? "",
@@ -17986,9 +18272,16 @@ final class WorkspaceStore: ObservableObject {
                 backend: .pi
             )
         }
-        let isExplicitOfflineVerification = Self.environmentValue("WEIBEI_FORCE_OFFLINE_AGENT") == "1"
+        let verificationScenario = Self.environmentValue(
+            "WEIBEI_VERIFY_SCENARIO"
+        )
+        let isExplicitOfflineVerification =
+            Self.environmentValue("WEIBEI_FORCE_OFFLINE_AGENT") == "1"
             && Self.environmentValue("WEIBEI_SUPPRESS_ACTIVATION") == "1"
-            && Self.environmentValue("WEIBEI_VERIFY_SCENARIO") == "offline-learning-flow"
+            && (
+                verificationScenario == "offline-learning-flow"
+                    || verificationScenario == "course-home-flow"
+            )
         if isExplicitOfflineVerification {
             return try await OfflineStudyAgentRuntime().respond(to: request)
         }
