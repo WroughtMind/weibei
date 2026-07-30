@@ -11819,7 +11819,10 @@ final class WorkspaceStore: ObservableObject {
             let evidence = proposed.evidence.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty, !evidence.isEmpty else { continue }
             if (evidence.hasPrefix("[用户：本轮]") || evidence.hasPrefix("[会话：当前]")),
-               !Self.currentTurnEvidenceMatches(evidence, question: expectedUserQuestion) {
+               !StudyAgentCurrentTurnEvidence.matches(
+                   evidence,
+                   question: expectedUserQuestion
+               ) {
                 continue
             }
             if proposed.origin == .userStatement,
@@ -11899,7 +11902,7 @@ final class WorkspaceStore: ObservableObject {
         if changed { learningMemoryRevision &+= 1 }
         var acceptedUpdate = update
         acceptedUpdate.resolutions = update.resolutions.prefix(12).filter { resolution in
-            guard Self.currentTurnEvidenceMatches(
+            guard StudyAgentCurrentTurnEvidence.matches(
                 resolution.evidence.trimmingCharacters(in: .whitespacesAndNewlines),
                 question: expectedUserQuestion
             ),
@@ -11934,7 +11937,7 @@ final class WorkspaceStore: ObservableObject {
     func confirmLearningMemoryResolution(_ resolution: StudyAgentMemoryResolution) {
         guard latestAgentLearningUpdate?.resolutions.contains(resolution) == true,
               let question = latestAgentLearningUpdateQuestion,
-              Self.currentTurnEvidenceMatches(resolution.evidence, question: question),
+              StudyAgentCurrentTurnEvidence.matches(resolution.evidence, question: question),
               let memoryID = UUID(uuidString: resolution.memoryID),
               let index = learningMemoryEntries.firstIndex(where: {
                   $0.id == memoryID
@@ -11989,10 +11992,6 @@ final class WorkspaceStore: ObservableObject {
             .lowercased()
             .split(whereSeparator: { $0.isWhitespace || $0.isPunctuation })
             .joined()
-    }
-
-    private static func currentTurnEvidenceMatches(_ evidence: String, question: String) -> Bool {
-        StudyAgentCurrentTurnEvidence.matches(evidence, question: question)
     }
 
     func askToOrganizeNote() {

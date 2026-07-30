@@ -1143,7 +1143,10 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             let evidenceIsCurrentTurn = entry.evidence.hasPrefix("[用户：本轮]")
                 || entry.evidence.hasPrefix("[会话：当前]")
             if evidenceIsCurrentTurn,
-               !currentTurnEvidenceMatches(entry.evidence, question: run.userQuestion) {
+               !StudyAgentCurrentTurnEvidence.matches(
+                   entry.evidence,
+                   question: run.userQuestion
+               ) {
                 return "PI proposed learning memory without quoting the current user turn"
             }
             let evidenceIsReadSource = run.allowedSourceLabels.contains {
@@ -1159,15 +1162,14 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         }
         guard update.resolutions.allSatisfy({ resolution in
             run.resolvableMemoryIDs.contains(resolution.memoryID.lowercased())
-                && currentTurnEvidenceMatches(resolution.evidence, question: run.userQuestion)
+                && StudyAgentCurrentTurnEvidence.matches(
+                    resolution.evidence,
+                    question: run.userQuestion
+                )
         }) else {
             return "PI resolved learning memory without current-turn evidence"
         }
         return nil
-    }
-
-    private func currentTurnEvidenceMatches(_ evidence: String, question: String) -> Bool {
-        StudyAgentCurrentTurnEvidence.matches(evidence, question: question)
     }
 
     private func recordRejectedAction(
