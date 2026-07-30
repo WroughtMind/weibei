@@ -139,14 +139,17 @@ private func checkRPCDecoding() throws {
         "PI controlled Python results preserve operation, hashes, source run, and duration evidence"
     )
 
-    let courseRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-course","toolName":"weibei_course_search","isError":false,"result":{"details":{"kind":"course_search","contextRevision":"revision-7","results":[{"id":"material-rates","title":"利率","role":"material","searchText":"利率正文"},{"id":"note-rates","title":"课堂笔记","role":"note","searchText":"笔记正文"},{"id":"title-only","title":"只有标题","role":"material","searchText":""}],"evidenceLabels":["[材料：利率，条目：2]","[笔记：课堂笔记]"],"jumpEvidence":{"来源：利率，条目：2，第 3 页":"[材料：利率，条目：2]"}}}}"#.utf8))
+    let courseRead = try PiRPCMessageDecoder.decode(Data(#"{"type":"tool_execution_end","toolCallId":"tool-course","toolName":"weibei_course_search","isError":false,"result":{"details":{"kind":"course_search","contextRevision":"revision-7","results":[{"id":"material-rates","title":"利率","role":"material","searchText":"利率正文"},{"id":"note-rates","title":"课堂笔记","role":"note","searchText":"笔记正文"},{"id":"title-only","title":"只有标题","role":"material","searchText":""}],"evidenceLabels":["[材料：利率，条目：2]","[笔记：课堂笔记]"],"jumpEvidence":{"来源：利率":"[材料：利率，条目：2]","来源：利率，条目：2，第 3 页":"[材料：利率，条目：2]"}}}}"#.utf8))
     if case let .courseSourcesRead(id, revision, labels, assetIDs, jumpEvidence, sources) = courseRead {
         try piRequire(
             id == "tool-course"
                 && revision == "revision-7"
                 && labels == ["[材料：利率，条目：2]", "[笔记：课堂笔记]"]
                 && assetIDs == ["material-rates", "note-rates"]
-                && jumpEvidence == ["来源：利率，条目：2，第 3 页": "[材料：利率，条目：2]"]
+                && jumpEvidence == [
+                    "来源：利率": "[材料：利率，条目：2]",
+                    "来源：利率，条目：2，第 3 页": "[材料：利率，条目：2]",
+                ]
                 && sources.map(\.itemID) == ["material-rates", "note-rates"]
                 && sources.map(\.excerpt) == ["利率正文", "笔记正文"]
                 && sources.first?.pageIndex == 2

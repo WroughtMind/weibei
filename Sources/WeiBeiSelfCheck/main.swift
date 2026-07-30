@@ -314,14 +314,14 @@ func runRichAnswerEmbeddingSelfChecks() {
     expect(richAnswerTurnSource.contains("richAnswerFlow(richAnswer)")
         && richAnswerTurnSource.contains("ForEach(Array(presentation.resolvedParts.enumerated())")
         && richAnswerTurnSource.contains("case .narrative:")
-        && richAnswerTurnSource.contains("RichAnswerNarrativeText(text: text)")
+        && richAnswerTurnSource.contains("AgentCitationParser.parse(text).displayText")
         && richAnswerTurnSource.contains("case .scene:")
         && richAnswerTurnSource.contains("scopedRichAnswer(presentation, sceneID: sceneID)")
         && richAnswerTurnSource.contains("RichAnswerHost("), "rich answers render an inspectable narrative-scene sequence instead of always appending a mini-site after the text")
     expect(!richAnswerHostSource.contains("部分内容因证据或宿主能力不足已自动收敛")
         && richAnswerEngineSource.contains(#"\\hat\s*\{([^{}]+)\}"#)
         && richAnswerEngineSource.contains(#"\\bar\s*\{([^{}]+)\}"#)
-        && notesAgentSource.contains("AgentChatKaTeXMarkdown.prepare(text)")
+        && notesAgentSource.contains("AgentChatKaTeXMarkdown.prepare(displayMarkdown)")
         && notesAgentSource.contains("RichAnswerDisplayText.normalizedInlineMath(value)"), "rich answers keep renderer diagnostics in evidence while presenting common formulas as readable user-facing text")
     expect(richAnswerLibrarySource.contains("stages: z.array(LearningStage.ref).min(1).max(8)")
         && richAnswerLibrarySource.contains("FunctionPlot")
@@ -880,6 +880,9 @@ expect(!editorIndexSource.contains("WeiBeiStele")
     && !editorIndexSource.contains("font-family: var(--font-brand-latin)")
     && editorIndexSource.contains(".ProseMirror h1,\n    .ProseMirror h2,\n    .ProseMirror h3")
     && editorIndexSource.contains("letter-spacing: 0;"), "Web Markdown editor does not apply bundled WeiBei display fonts inside Markdown file content")
+expect(editorIndexSource.contains("a[href^=\"weibei-source\"]")
+    && editorIndexSource.contains("background: var(--cinnabar-soft)")
+    && editorIndexSource.contains("border: 1px solid var(--cinnabar-line)"), "inline source links keep the compact cinnabar tag treatment in Web Markdown")
 expect(editorIndexSource.contains(".ProseMirror blockquote.weibei-callout::before { content: attr(data-callout-title); }")
     && !editorIndexSource.contains("content: \"札记\"")
     && !editorIndexSource.contains("content: \"提示\"")
@@ -2681,12 +2684,12 @@ expect(readerViewSource.contains("private class ReaderSelectableTextView: NSText
     && readerViewSource.components(separatedBy: "let textView = ReaderSelectableTextView()").count >= 3
     && !readerViewSource.contains("let textView = NSTextView()"), "PDF OCR, sample PDF, and plain text readers accept first mouse for immediate drag selection")
 expect(readerViewSource.contains("private var ocrHighlightedLinesByPageIndex: [Int: Set<Int>] = [:]")
-    && readerViewSource.contains("func applySearch(_ query: String, in view: PDFView, force: Bool = false)")
-    && readerViewSource.contains("applyOCRSearch(query, in: view)")
+    && readerViewSource.contains("targetPageIndex: Int?")
+    && readerViewSource.contains("applyOCRSearch(")
     && readerViewSource.contains("line.text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive])")
     && readerViewSource.contains("highlightedLineIndexes: ocrHighlightedLinesByPageIndex[index] ?? []")
     && readerViewSource.contains("view.go(to: page)")
-    && readerViewSource.contains("self.applySearch(self.lastSearchQuery, in: view, force: true)"), "scanned PDF OCR search falls back to recognized lines, jumps to the first OCR hit, and highlights the matching line")
+    && readerViewSource.contains("targetPageIndex: self.lastSearchTargetPageIndex"), "scanned PDF OCR search falls back to recognized lines, jumps to the intended OCR page, and highlights the matching line")
 expect(readerViewSource.contains("view.highlightedSelections = matches")
     && readerViewSource.contains("view.go(to: first)")
     && !readerViewSource.contains("view.setCurrentSelection(first, animate: true)"), "PDF search highlights and jumps without creating a fake user selection or selection-agent context")
@@ -3083,6 +3086,34 @@ let workspaceStoreSource = readSource("Sources/WeiBei/Stores/WorkspaceStore.swif
 let modelListServiceSource = readSource("Sources/WeiBeiCore/AgentModelListService.swift")
 let workspaceModelsSource = readSource("Sources/WeiBeiCore/WorkspaceModels.swift")
 let piAgentRuntimeSource = readSource("Sources/WeiBeiCore/PiAgentRuntime.swift")
+expect(
+    notesAgentSource.contains("let availableSources = message.sources.filter")
+        && notesAgentSource.contains("AgentReplySourceInlinePresentation(")
+        && notesAgentSource.contains("handleSourceURL(url)")
+        && notesAgentSource.contains("attributed[range].backgroundColor")
+        && notesAgentSource.contains("Button(\"+\\(sources.count - 1)\")")
+        && notesAgentSource.contains("store.openAgentReplySource(source)")
+        && notesAgentSource.contains("store.messages.flatMap(\\.sources)")
+        && notesAgentSource.contains(".task(id: replySources)")
+        && workspaceStoreSource.contains("func canOpenAgentReplySource(_ source: AgentReplySource)")
+        && workspaceStoreSource.contains("func validateAgentReplySources(_ sources: [AgentReplySource]) async")
+        && workspaceStoreSource.contains("guard !sources.isEmpty else { return }")
+        && workspaceStoreSource.contains("Task.detached(priority: .utility)")
+        && workspaceStoreSource.contains("validatedAgentReplySourceIDs = nextAvailableIDs")
+        && workspaceStoreSource.contains("!canOpenAgentReplySource(movedSource)")
+        && workspaceStoreSource.contains("func openAgentReplySource(_ source: AgentReplySource)")
+        && workspaceStoreSource.contains("courseMembershipIndex.courseIDs(for: itemID).contains(courseID)")
+        && workspaceStoreSource.contains("revealDocumentPane(.agent, clearSelection: false)")
+        && workspaceStoreSource.contains("readerSourceHighlight = source.highlightQuery")
+        && workspaceStoreSource.contains("scenario == \"chat-source-navigation-flow\"")
+        && workspaceStoreSource.contains("chat-source-navigation-verified.txt")
+        && workspaceStoreSource.contains("html_rendered=\\(htmlRendered)")
+        && workspaceStoreSource.contains("markdown_rendered=\\(markdownRendered)")
+        && notesAgentSource.contains("let openableSourceLabels = Set(message.sources.compactMap")
+        && readerViewSource.contains("searchQuery: store.effectiveReaderSearch")
+        && readerViewSource.contains("searchTargetPageIndex: store.readerSourceHighlightPageIndex"),
+    "structured reply sources render as compact +N tags and open an exact in-course item without hiding Chat"
+)
 expect(modelListServiceSource.contains("enum ModelListStrategy")
     && modelListServiceSource.contains("case openAICompatible")
     && modelListServiceSource.contains("case anthropic")
@@ -4761,7 +4792,10 @@ expect(editorSource.contains("decorateSourceReferences") && editorSource.contain
 let richMarkdownEditorSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/RichMarkdownEditorView.swift")
 let richMarkdownEditorSource = (try? String(contentsOf: richMarkdownEditorSourceURL, encoding: .utf8)) ?? ""
-expect(richMarkdownEditorSource.contains("\"sourceReferenceActivated\"") && richMarkdownEditorSource.contains("onSourceReference(reference)"), "rich editor bridges source-reference clicks into Swift")
+expect(richMarkdownEditorSource.contains("\"sourceReferenceActivated\"")
+    && richMarkdownEditorSource.contains("onSourceReference(reference)")
+    && richMarkdownEditorSource.contains("scheme == \"weibei-source\"")
+    && richMarkdownEditorSource.contains("scheme == \"weibei-source-group\""), "rich editor bridges exact inline source links into Swift")
 expect(LibraryNavigator.adjacentID(in: [], selectedID: nil, step: 1) == nil, "library navigation empty")
 expect(LibraryNavigator.adjacentID(in: ["a", "b", "c"], selectedID: nil, step: 1) == "a", "library navigation defaults first")
 expect(LibraryNavigator.adjacentID(in: ["a", "b", "c"], selectedID: "b", step: 1) == "c", "library navigation next")
@@ -4876,6 +4910,71 @@ let replySource = AgentReplySource(
     label: "[材料：利率]",
     excerpt: "利率是资金的价格。",
     pageIndex: 17
+)
+expect(
+    replySource.positionLabel(language: .chinese) == "第 18 页",
+    "reply sources present their persisted page as a human one-based location"
+)
+let highlightedReplySource = AgentReplySource(
+    itemID: "material:rates",
+    kind: .material,
+    title: "利率",
+    label: "[材料：利率]",
+    excerpt: "【第 18 页】\n## 利率\n利率是资金的价格，并受期限和风险影响。"
+)
+expect(
+    highlightedReplySource.highlightQuery == "利率是资金的价格，并受期限和风险影响。",
+    "reply source highlighting skips page markers and Markdown headings"
+)
+let secondReplySource = AgentReplySource(
+    id: UUID(uuidString: "30000000-0000-0000-0000-000000000004")!,
+    itemID: "material:inflation",
+    kind: .material,
+    title: "通胀",
+    label: "[材料：通胀]",
+    excerpt: "通胀改变实际购买力。"
+)
+let thirdReplySource = AgentReplySource(
+    id: UUID(uuidString: "30000000-0000-0000-0000-000000000005")!,
+    itemID: "note:rates",
+    kind: .note,
+    title: "课堂笔记",
+    label: "[笔记：课堂笔记]",
+    excerpt: "名义利率和实际利率需要分开。"
+)
+let sourceMarkdown = """
+1. 列表保持完整
+
+```swift
+let rate = 0.03
+```
+
+利率需要结合通胀理解。[材料：利率]、[材料：通胀][笔记：课堂笔记]
+"""
+let inlineSources = AgentReplySourceInlinePresentation(
+    text: sourceMarkdown,
+    sources: [replySource, secondReplySource, thirdReplySource],
+    language: .chinese
+)
+let directSourceURL = URL(string: "weibei-source://\(replySource.id.uuidString.lowercased())")!
+let additionalSourceURL = URL(string: "weibei-source-group://0")!
+let attributedSourceLinks = (try? AttributedString(markdown: inlineSources.markdown))?
+    .runs
+    .compactMap(\.link) ?? []
+expect(
+    inlineSources.markdown.contains("```swift\nlet rate = 0.03\n```")
+        && inlineSources.markdown.contains("利率 · 第 18 页")
+        && inlineSources.markdown.contains("+2")
+        && !inlineSources.markdown.contains("[材料：利率]")
+        && inlineSources.source(for: directSourceURL) == replySource
+        && inlineSources.additionalSources(for: additionalSourceURL)
+            == [secondReplySource, thirdReplySource],
+    "inline reply sources preserve one Markdown document and collapse adjacent source labels into first plus N"
+)
+expect(
+    attributedSourceLinks.contains(directSourceURL)
+        && attributedSourceLinks.contains(additionalSourceURL),
+    "native Markdown preserves exact inline source and source-group links"
 )
 let replyAction = AgentReplyAction(
     id: UUID(uuidString: "30000000-0000-0000-0000-000000000003")!,

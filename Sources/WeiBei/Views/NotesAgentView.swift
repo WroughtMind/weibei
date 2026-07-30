@@ -1691,6 +1691,10 @@ struct AgentPaneView: View {
         AgentChatLayoutMetrics.isWide(layout: store.layout)
     }
 
+    private var replySources: [AgentReplySource] {
+        store.messages.flatMap(\.sources)
+    }
+
     /// Prefer a measured width; for immersive before the first probe, seed wide so we do not flash the three-pane strip size.
     private var agentPaneWidth: CGFloat {
         if measuredPaneWidth > 1 {
@@ -1896,6 +1900,9 @@ struct AgentPaneView: View {
             if usesWideChatLayout, measuredPaneWidth < 700 {
                 measuredPaneWidth = max(measuredPaneWidth, 1100)
             }
+        }
+        .task(id: replySources) {
+            await store.validateAgentReplySources(replySources)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("stable-document-slot-agent")
@@ -3290,6 +3297,17 @@ private struct AgentBubble: View {
 
     private var regularMessageContent: some View {
         let citationParse = AgentCitationParser.parse(message.text)
+        let availableSources = message.sources.filter {
+            store.canOpenAgentReplySource($0)
+        }
+        let legacyCitations = citationParse.citations.filter { citation in
+            switch citation.kind {
+            case .material, .note, .selection:
+                return false
+            case .learningRecord, .learningMemory, .session:
+                return true
+            }
+        }
         return VStack(alignment: .leading, spacing: 8) {
             messageMetadata
 
@@ -3303,6 +3321,22 @@ private struct AgentBubble: View {
                richAnswer.mode == .rich,
                !richAnswer.scenes.isEmpty {
                 richAnswerFlow(richAnswer)
+                if !availableSources.isEmpty {
+                    AgentReplySourceTagRow(sources: availableSources) { source in
+                        activateSource(source)
+                    }
+                }
+            } else if !availableSources.isEmpty {
+                AgentMessageMarkdownText(
+                    text: message.text,
+                    rendersRichMarkdown: true,
+                    usesFinalizedKaTeX: !isFailureMessage,
+                    messageID: message.id,
+                    sources: availableSources,
+                    onActivateSource: { source in
+                        activateSource(source)
+                    }
+                )
             } else {
                 // Hang-proof agent chat: finalized turns use KaTeX with frozen height;
                 // failures stay native text (no WebView). Never height→scroll.
@@ -3314,8 +3348,8 @@ private struct AgentBubble: View {
                 )
             }
 
-            if !citationParse.citations.isEmpty {
-                AgentCitationTagRow(citations: citationParse.citations) { citation in
+            if !legacyCitations.isEmpty {
+                AgentCitationTagRow(citations: legacyCitations) { citation in
                     activateCitation(citation)
                 }
             }
@@ -3397,13 +3431,21 @@ private struct AgentBubble: View {
         }
     }
 
+    private func activateSource(_ source: AgentReplySource) {
+        withAnimation(WeiBeiMotion.panel) {
+            _ = store.openAgentReplySource(source)
+        }
+    }
+
     @ViewBuilder
     private func richAnswerFlow(_ presentation: RichAnswerPresentation) -> some View {
         ForEach(Array(presentation.resolvedParts.enumerated()), id: \.offset) { index, part in
             switch part.kind {
             case .narrative:
                 if let text = part.text, !text.isEmpty {
-                    RichAnswerNarrativeText(text: text)
+                    RichAnswerNarrativeText(
+                        text: AgentCitationParser.parse(text).displayText
+                    )
                         .frame(
                             maxWidth: AgentChatLayoutMetrics.isWide(layout: store.layout)
                                 ? AgentChatLayoutMetrics.wideMaxWidth
@@ -3442,7 +3484,12 @@ private struct AgentBubble: View {
         scoped.scenes = [scene]
         scoped.parts = nil
         let evidenceIDs = Set(scene.evidenceIDs)
-        scoped.evidenceLedger = presentation.evidenceLedger.filter { evidenceIDs.contains($0.id) }
+        let openableSourceLabels = Set(message.sources.compactMap { source in
+            store.canOpenAgentReplySource(source) ? source.label : nil
+        })
+        scoped.evidenceLedger = presentation.evidenceLedger.filter {
+            evidenceIDs.contains($0.id) && openableSourceLabels.contains($0.sourceLabel)
+        }
         return scoped
     }
 
@@ -3577,16 +3624,12 @@ private struct AgentBubble: View {
     }
 
     private func openRichAnswerEvidence(_ evidence: RichAnswerEvidence) {
-        var label = evidence.sourceLabel.trimmingCharacters(in: .whitespacesAndNewlines)
-        if label.hasPrefix("["), label.hasSuffix("]"), label.count > 2 {
-            label = String(label.dropFirst().dropLast())
+        if let source = message.sources.first(where: {
+            $0.label == evidence.sourceLabel
+                && store.canOpenAgentReplySource($0)
+        }) {
+            _ = store.openAgentReplySource(source)
         }
-        for prefix in ["材料：", "笔记：", "选区："] where label.hasPrefix(prefix) {
-            label = String(label.dropFirst(prefix.count))
-            break
-        }
-        guard !label.isEmpty else { return }
-        store.openSourceReference("来源：\(label)")
     }
 
     private func openRichAnswerAsset(_ assetID: String) {
@@ -3857,6 +3900,184 @@ private enum AgentCitationParser {
     }
 }
 
+private struct AgentReplySourceTagRow: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let sources: [AgentReplySource]
+    var onActivate: (AgentReplySource) -> Void
+    @State private var showsMore = false
+
+    var body: some View {
+        HStack(spacing: 6) {
+            if let first = sources.first {
+                AgentReplySourceTag(source: first) {
+                    onActivate(first)
+                }
+            }
+            if sources.count > 1 {
+                Button("+\(sources.count - 1)") {
+                    showsMore.toggle()
+                }
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.secondaryInk)
+                .padding(.horizontal, 8)
+                .frame(height: 22)
+                .background(
+                    WeiBeiTheme.paperInset.opacity(0.48),
+                    in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                )
+                .overlay {
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                        .strokeBorder(WeiBeiTheme.hairline.opacity(0.42), lineWidth: 1)
+                }
+                .buttonStyle(.plain)
+                .help(store.ui("查看另外 \(sources.count - 1) 个来源", "View \(sources.count - 1) more sources"))
+                .popover(isPresented: $showsMore, arrowEdge: .bottom) {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(sources.dropFirst())) { source in
+                                Button {
+                                    showsMore = false
+                                    onActivate(source)
+                                } label: {
+                                    AgentReplySourceDetail(source: source)
+                                }
+                                .buttonStyle(.plain)
+                                if source.id != sources.last?.id {
+                                    Rectangle()
+                                        .fill(WeiBeiTheme.hairline.opacity(0.42))
+                                        .frame(height: 1)
+                                }
+                            }
+                        }
+                    }
+                    .frame(width: 340, height: min(CGFloat(sources.count - 1) * 86, 360))
+                    .padding(.vertical, 6)
+                }
+                .accessibilityLabel(
+                    Text(store.ui("展开另外 \(sources.count - 1) 个来源", "Expand \(sources.count - 1) more sources"))
+                )
+            }
+        }
+        .padding(.top, 2)
+    }
+}
+
+private struct AgentReplySourceTag: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let source: AgentReplySource
+    var action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: source.kind.sourceSystemImage)
+                    .font(.system(size: 9, weight: .semibold))
+                Text(label)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(hovering ? WeiBeiTheme.cinnabar : WeiBeiTheme.secondaryInk)
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .background(
+                WeiBeiTheme.paperInset.opacity(hovering ? 0.58 : 0.40),
+                in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(
+                        hovering
+                            ? WeiBeiTheme.cinnabar.opacity(0.28)
+                            : WeiBeiTheme.hairline.opacity(0.40),
+                        lineWidth: 1
+                    )
+            }
+        }
+        .buttonStyle(.plain)
+        .help(detailText)
+        .onHover { hovering in
+            withAnimation(WeiBeiMotion.hover) {
+                self.hovering = hovering
+            }
+        }
+        .accessibilityLabel(Text(store.ui("打开原文：\(label)", "Open source: \(label)")))
+    }
+
+    private var label: String {
+        let title = source.title.count > 18
+            ? String(source.title.prefix(16)) + "…"
+            : source.title
+        guard let position = source.positionLabel(language: store.interfaceLanguage) else {
+            return title
+        }
+        return "\(title) · \(position)"
+    }
+
+    private var detailText: String {
+        [
+            source.title,
+            source.positionLabel(language: store.interfaceLanguage),
+            source.excerpt.trimmingCharacters(in: .whitespacesAndNewlines),
+        ]
+        .compactMap { value in
+            guard let value, !value.isEmpty else { return nil }
+            return value
+        }
+        .joined(separator: "\n")
+    }
+}
+
+private struct AgentReplySourceDetail: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let source: AgentReplySource
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: source.kind.sourceSystemImage)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.cinnabar.opacity(0.82))
+                .frame(width: 16)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(source.title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(WeiBeiTheme.ink)
+                        .lineLimit(1)
+                    if let position = source.positionLabel(language: store.interfaceLanguage) {
+                        Text(position)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(WeiBeiTheme.secondaryInk)
+                            .lineLimit(1)
+                    }
+                }
+                Text(source.excerpt)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(WeiBeiTheme.secondaryInk)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 4)
+            Image(systemName: "arrow.up.right")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(WeiBeiTheme.tertiaryInk)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+    }
+}
+
+private extension AgentReplySourceKind {
+    var sourceSystemImage: String {
+        switch self {
+        case .material: return "doc.text"
+        case .note: return "note.text"
+        case .selection: return "text.quote"
+        }
+    }
+}
+
 private struct AgentCitationTagRow: View {
     @EnvironmentObject private var store: WorkspaceStore
     let citations: [AgentCitation]
@@ -4080,11 +4301,26 @@ private struct AgentMessageMarkdownText: View {
     /// Completed assistant turns only — never streaming, user, or failure bubbles.
     var usesFinalizedKaTeX: Bool = false
     var messageID: UUID? = nil
+    var sources: [AgentReplySource] = []
+    var onActivateSource: (AgentReplySource) -> Void = { _ in }
     @State private var finalizedRendererReady = false
     @State private var finalizedRendererFailed = false
+    @State private var expandedSourceURL: String?
+
+    private var sourcePresentation: AgentReplySourceInlinePresentation {
+        AgentReplySourceInlinePresentation(
+            text: text,
+            sources: sources,
+            language: store.interfaceLanguage
+        )
+    }
 
     private var finalizedMarkdown: String {
-        AgentChatKaTeXMarkdown.prepare(text)
+        AgentChatKaTeXMarkdown.prepare(displayMarkdown)
+    }
+
+    private var displayMarkdown: String {
+        AgentCitationParser.parse(sourcePresentation.markdown).displayText
     }
 
     /// Coarse cache bucket only; exactLayoutWidthKey below controls remeasurement.
@@ -4110,6 +4346,36 @@ private struct AgentMessageMarkdownText: View {
             }
         }
         .modifier(AgentMessageTextWidthModifier(fillsReadingColumn: rendersRichMarkdown || compact))
+        .environment(\.openURL, OpenURLAction { url in
+            handleSourceURL(url) ? .handled : .systemAction
+        })
+        .popover(
+            isPresented: Binding(
+                get: { expandedSources.isEmpty == false },
+                set: { if !$0 { expandedSourceURL = nil } }
+            ),
+            arrowEdge: .bottom
+        ) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(expandedSources) { source in
+                    Button {
+                        expandedSourceURL = nil
+                        onActivateSource(source)
+                    } label: {
+                        AgentReplySourceDetail(source: source)
+                    }
+                    .buttonStyle(.plain)
+                    if source.id != expandedSources.last?.id {
+                        Rectangle()
+                            .fill(WeiBeiTheme.hairline.opacity(0.42))
+                            .frame(height: 1)
+                    }
+                }
+            }
+            .frame(width: 340)
+            .padding(.vertical, 6)
+        }
+        .help(sourceHelp)
         .onChange(of: finalizedMarkdown) { _, _ in
             finalizedRendererReady = false
             finalizedRendererFailed = false
@@ -4154,7 +4420,13 @@ private struct AgentMessageMarkdownText: View {
                     seedContentHeight: cachedFinalizedHeight,
                     layoutWidthKey: exactLayoutWidthKey,
                     onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
-                    onSourceReference: { reference in store.openSourceReference(reference) },
+                    onSourceReference: { reference in
+                        if let url = URL(string: reference),
+                           handleSourceURL(url) {
+                            return
+                        }
+                        store.openSourceReference(reference)
+                    },
                     onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) },
                     onRenderReady: {
                         finalizedRendererFailed = false
@@ -4188,8 +4460,53 @@ private struct AgentMessageMarkdownText: View {
 
     private var renderedText: AttributedString {
         // Streaming / no-math path: Unicode math readability without WKWebView.
-        let display = RichAnswerDisplayText.normalizedInlineMath(text)
-        return (try? AttributedString(markdown: display)) ?? AttributedString(display)
+        let display = RichAnswerDisplayText.normalizedInlineMath(displayMarkdown)
+        var attributed = (try? AttributedString(markdown: display))
+            ?? AttributedString(display)
+        let sourceRanges = attributed.runs.compactMap { run -> Range<AttributedString.Index>? in
+            guard run.link.map(sourcePresentation.contains) == true else { return nil }
+            return run.range
+        }
+        for range in sourceRanges {
+            attributed[range].font = .system(size: compact ? 10.5 : 11, weight: .semibold)
+            attributed[range].foregroundColor = WeiBeiTheme.cinnabar
+            attributed[range].backgroundColor = WeiBeiTheme.paperInset.opacity(0.64)
+            attributed[range].underlineStyle = nil
+        }
+        return attributed
+    }
+
+    private var expandedSources: [AgentReplySource] {
+        expandedSourceURL.flatMap(sourcePresentation.additionalSources(for:)) ?? []
+    }
+
+    private var sourceHelp: String {
+        sources.map { source in
+            [
+                source.title,
+                source.positionLabel(language: store.interfaceLanguage),
+                source.excerpt.trimmingCharacters(in: .whitespacesAndNewlines),
+            ]
+            .compactMap { value in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
+            .joined(separator: " · ")
+        }
+        .joined(separator: "\n")
+    }
+
+    @discardableResult
+    private func handleSourceURL(_ url: URL) -> Bool {
+        if let source = sourcePresentation.source(for: url) {
+            onActivateSource(source)
+            return true
+        }
+        if !sourcePresentation.additionalSources(for: url).isEmpty {
+            expandedSourceURL = url.absoluteString
+            return true
+        }
+        return false
     }
 }
 

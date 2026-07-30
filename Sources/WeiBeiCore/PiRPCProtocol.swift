@@ -244,7 +244,7 @@ public enum PiRPCMessageDecoder {
                     let reference = jumpEvidence
                         .filter { $0.value == label }
                         .map(\.key)
-                        .min { left, right in
+                        .max { left, right in
                             left.components(separatedBy: "，").count
                                 < right.components(separatedBy: "，").count
                         }
