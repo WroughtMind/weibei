@@ -11,13 +11,13 @@ classify_path() {
   local path="$1"
 
   case "$path" in
-    Sources/*|Package.swift|Package.resolved|package.json|package-lock.json|script/*|.github/workflows/*|VERSION|DesignSystem/*|Config/*|Vendor/PiRuntime/*)
+    Sources/*|Package.swift|Package.resolved|package.json|package-lock.json|script/*|.github/workflows/*|VERSION|DesignSystem/*|Config/*|Vendor/PiRuntime/manifest.json)
       code=true
       ;;
   esac
 
   case "$path" in
-    Sources/*Pi*|Sources/WeiBeiCore/AgentResources/*|Sources/WeiBeiCore/StudyAgentRuntime.swift|Sources/WeiBeiCore/Agent*|Sources/WeiBei/Views/NotesAgentView.swift|script/prepare_pi_runtime.sh|Config/PiRuntime.entitlements|Vendor/PiRuntime/*)
+    Sources/*Pi*|Sources/WeiBeiCore/AgentResources/*|Sources/WeiBeiCore/StudyAgentRuntime.swift|Sources/WeiBeiCore/Agent*|Sources/WeiBei/Views/NotesAgentView.swift|script/prepare_pi_runtime.sh|Config/PiRuntime.entitlements|Vendor/PiRuntime/manifest.json)
       pi=true
       ;;
   esac
@@ -44,7 +44,7 @@ classify_path() {
   esac
 
   case "$path" in
-    VERSION|Package.swift|Package.resolved|package.json|package-lock.json|.github/workflows/*|script/build_and_run.sh|script/build_release_dmg.sh|script/dmg/*|script/homebrew/*|script/prepare_pi_runtime.sh|script/verify_release_metadata.sh|Docs/releases/*|PRIVACY.md|THIRD_PARTY_NOTICES.md|ASSET_ATTRIBUTIONS.md|DesignSystem/assets/app-icon/*|Config/*|Vendor/PiRuntime/*|*.entitlements|*/Info.plist)
+    VERSION|Package.swift|Package.resolved|package.json|package-lock.json|.github/workflows/*|script/build_and_run.sh|script/build_release_dmg.sh|script/dmg/*|script/homebrew/*|script/prepare_pi_runtime.sh|script/verify_release_metadata.sh|Docs/releases/*|PRIVACY.md|THIRD_PARTY_NOTICES.md|ASSET_ATTRIBUTIONS.md|DesignSystem/assets/app-icon/*|Config/*|Vendor/PiRuntime/manifest.json|Vendor/PiRuntime/LICENSE|Vendor/PiRuntime/THIRD_PARTY_NOTICES.md|*.entitlements|*/Info.plist)
       release=true
       ;;
   esac
@@ -106,6 +106,13 @@ if [[ "${1:-}" == "--self-check" ]]; then
   expect_scopes \
     "code=true pi=true editor=false data_safety=false release=true " \
     "Vendor/PiRuntime/manifest.json"
+  expect_scopes \
+    "code=false pi=false editor=false data_safety=false release=true " \
+    "Vendor/PiRuntime/LICENSE" \
+    "Vendor/PiRuntime/THIRD_PARTY_NOTICES.md"
+  expect_scopes \
+    "code=false pi=false editor=false data_safety=false release=false " \
+    "Vendor/PiRuntime/README.md"
   echo "CI scope self-check passed"
   exit 0
 fi
