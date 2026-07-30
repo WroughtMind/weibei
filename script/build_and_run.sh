@@ -652,6 +652,7 @@ verify_course_workspace_flow() {
       and .staleEmptyNotReused == true
       and .exactConversationResumePassed == true
       and .invalidResumePreserved == true
+      and .learningHighlightsPassed == true
       and .courseWorkspacePresented == true
       and .workspaceCourseID == "11111111-1111-1111-1111-111111111111"
       and .activeCourseID == "11111111-1111-1111-1111-111111111111"

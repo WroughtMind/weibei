@@ -14698,6 +14698,13 @@ final class WorkspaceStore: ObservableObject {
                 revision: 1,
                 entries: [
                     LearningMemoryEntry(
+                        kind: .summary,
+                        text: "已经理解名义利率与实际利率的区别，并开始联系货币政策工具。",
+                        evidence: "当前课程学习过程",
+                        origin: .agentInference,
+                        sessionID: activeSession.id
+                    ),
+                    LearningMemoryEntry(
                         kind: .confusion,
                         text: "仍不确定通货膨胀预期如何传导到名义利率。",
                         evidence: "用户在当前会话中明确提出",
@@ -14742,6 +14749,30 @@ final class WorkspaceStore: ObservableObject {
                 materialItemID: materialC.id
             )
             studySessions.append(courseBSession)
+            let courseAHighlights = CourseHomeLearningHighlights(
+                courseID: courseA.id,
+                learningMemoryEntries: learningMemoryEntries(
+                    in: .course(courseA.id)
+                ),
+                studySessions: studySessions
+            )
+            let courseBHighlights = CourseHomeLearningHighlights(
+                courseID: courseB.id,
+                learningMemoryEntries: learningMemoryEntries(
+                    in: .course(courseB.id)
+                ),
+                studySessions: studySessions
+            )
+            let learningHighlightsPassed =
+                courseAHighlights.summary?.kind == .summary
+                && courseAHighlights.summary?.text
+                    == "已经理解名义利率与实际利率的区别，并开始联系货币政策工具。"
+                && courseAHighlights.nextStepText
+                    == "完成名义利率与实际利率的对照例题。"
+                && courseAHighlights.nextStepSessionID == activeSession.id
+                && courseBHighlights.summary == nil
+                && courseBHighlights.nextStepText == nil
+                && courseBHighlights.nextStepSessionID == nil
             activeStudySessionID = courseBSession.id
             messages = courseBSession.messages
             activeCourseID = courseB.id
@@ -14829,13 +14860,13 @@ final class WorkspaceStore: ObservableObject {
                 query: "核心要点"
             )
             recordVerificationStage("course-home:search-done")
-            let searchPassed = documentSearch.contains {
+            let materialSearchPassed = documentSearch.contains {
                 $0.kind == .material && $0.itemID == materialB.id
-            } && chatSearch.contains {
-                $0.kind == .chat && $0.sessionID == activeSession.id
-            } && noteSearch.contains {
-                $0.kind == .note && $0.itemID == noteA.id
             }
+            let chatSearchPassed = chatSearch.contains {
+                $0.kind == .chat && $0.sessionID == activeSession.id
+            }
+            let searchPassed = materialSearchPassed && chatSearchPassed
             let noteSearchPassed = noteSearch.contains {
                 $0.kind == .note && $0.itemID == noteA.id
             }
@@ -15115,6 +15146,7 @@ final class WorkspaceStore: ObservableObject {
                 && staleEmptyNotReused
                 && exactConversationResumePassed
                 && invalidResumePreserved
+                && learningHighlightsPassed
             writeCourseWorkspaceVerificationReport(
                 name: "course-home-report.json",
                 payload: [
@@ -15124,6 +15156,8 @@ final class WorkspaceStore: ObservableObject {
                     "dismissedWithoutMutation": dismissedWithoutMutation,
                     "multipleContentPassed": multipleContentPassed,
                     "searchPassed": searchPassed,
+                    "materialSearchPassed": materialSearchPassed,
+                    "chatSearchPassed": chatSearchPassed,
                     "noteSearchPassed": noteSearchPassed,
                     "deletedNoteSearchPassed": deletedNoteSearchPassed,
                     "searchOffMainThread": searchOffMainThread,
@@ -15137,6 +15171,7 @@ final class WorkspaceStore: ObservableObject {
                     "staleEmptyNotReused": staleEmptyNotReused,
                     "exactConversationResumePassed": exactConversationResumePassed,
                     "invalidResumePreserved": invalidResumePreserved,
+                    "learningHighlightsPassed": learningHighlightsPassed,
                     "courseWorkspacePresented": courseWorkspacePresented,
                     "workspaceCourseID": courseWorkspaceCourseID?.uuidString ?? "",
                     "activeCourseID": activeCourseID?.uuidString ?? "",
