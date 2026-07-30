@@ -3182,6 +3182,7 @@ private struct SelectionFloatChrome: ViewModifier {
 
 private struct AgentBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var message: AgentMessage
     var openGlobalMemory: () -> Void
     @State private var hovering = false
@@ -3401,7 +3402,7 @@ private struct AgentBubble: View {
                 .padding(.top, 2)
             }
         }
-        .animation(WeiBeiMotion.reveal, value: message.memoryUpdate)
+        .animation(reduceMotion ? nil : WeiBeiMotion.reveal, value: message.memoryUpdate)
     }
 
     private func activateSource(_ source: AgentReplySource) {
@@ -3712,6 +3713,7 @@ private struct RichAnswerNarrativeText: View {
 
 private struct AgentReplyMemoryUpdateTag: View {
     @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let message: AgentMessage
     let update: AgentReplyMemoryUpdate
     let openGlobalMemory: () -> Void
@@ -3739,18 +3741,20 @@ private struct AgentReplyMemoryUpdateTag: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             Button {
-                withAnimation(WeiBeiMotion.micro) {
+                withAnimation(reduceMotion ? nil : WeiBeiMotion.micro) {
                     expanded.toggle()
                 }
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "brain.head.profile")
+                        .accessibilityHidden(true)
                     Text(store.ui(
                         "已更新学习记忆 · \(update.memoryIDs.count) 项",
                         "Learning memory updated · \(update.memoryIDs.count)"
                     ))
                     Image(systemName: expanded ? "chevron.up" : "chevron.down")
                         .font(.system(size: 8.5, weight: .bold))
+                        .accessibilityHidden(true)
                 }
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundStyle(WeiBeiTheme.cinnabar)
@@ -3766,6 +3770,10 @@ private struct AgentReplyMemoryUpdateTag: View {
                 }
             }
             .buttonStyle(.plain)
+            .accessibilityValue(Text(store.ui(
+                expanded ? "已展开" : "已收起",
+                expanded ? "Expanded" : "Collapsed"
+            )))
             .accessibilityIdentifier("agent-memory-update-tag")
 
             if expanded {
