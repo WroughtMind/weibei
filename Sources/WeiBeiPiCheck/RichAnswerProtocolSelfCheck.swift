@@ -10,7 +10,6 @@ func runRichAnswerProtocolSelfCheck() throws {
     try checkGeneratedUITreeRenders()
     try checkFormalRichAnswerRouteContract()
     try checkObjectiveRichAnswerRequirements()
-    try checkRichAnswerSupportCoverageChecklist()
     try checkPersistedRichAnswerReplayAdmission()
     try checkWholeCallRenderPlanBudgetIsolation()
     try checkTrustedAssetAdmissionAndPersistence()
@@ -45,25 +44,6 @@ func runRichAnswerProtocolSelfCheck() throws {
         RichAnswerPressureCases.learningQuestions.count == 40
             && RichAnswerPressureCases.faultInjectionCases.count == 10,
         "the pressure matrix keeps forty learning cases and ten controlled failures"
-    )
-}
-
-private func checkRichAnswerSupportCoverageChecklist() throws {
-    let checklist = RichAnswerSupportCoverageChecklist.make()
-    try richAnswerRequire(
-        checklist.formalRoutes.count == 8
-            && checklist.formalRoutes.map(\.id) == RichAnswerRendererRegistry.formalRouteIDs,
-        "the support checklist reports each formal route once in registry order"
-    )
-    try richAnswerRequire(
-        checklist.capabilityFamilies.count == 8
-            && Set(checklist.capabilityFamilies.map(\.family)) == Set(RichAnswerCapabilityFamily.allCases)
-            && checklist.capabilityFamilies.allSatisfy { !$0.pressureCaseIDs.isEmpty },
-        "the support checklist maps every capability family to at least one pressure case"
-    )
-    try richAnswerRequire(
-        checklist.isComplete,
-        "the support checklist distinguishes complete protocol and pressure-case coverage"
     )
 }
 

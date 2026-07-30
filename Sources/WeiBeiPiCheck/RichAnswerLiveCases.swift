@@ -39,58 +39,6 @@ enum RichAnswerObjectiveAcceptance {
     }
 }
 
-struct RichAnswerFormalRouteCoverage {
-    let id: String
-    let evidenceLevel: String
-}
-
-struct RichAnswerCapabilityFamilyCoverage {
-    let family: RichAnswerCapabilityFamily
-    let pressureCaseIDs: [String]
-}
-
-struct RichAnswerSupportCoverageChecklist {
-    let formalRoutes: [RichAnswerFormalRouteCoverage]
-    let capabilityFamilies: [RichAnswerCapabilityFamilyCoverage]
-
-    var isComplete: Bool {
-        formalRoutes.map(\.id) == RichAnswerRendererRegistry.formalRouteIDs
-            && Set(capabilityFamilies.map(\.family)) == Set(RichAnswerCapabilityFamily.allCases)
-            && capabilityFamilies.allSatisfy { !$0.pressureCaseIDs.isEmpty }
-    }
-
-    static func make() -> RichAnswerSupportCoverageChecklist {
-        let formalRoutes = RichAnswerRendererRegistry.formalRouteIDs.map {
-            RichAnswerFormalRouteCoverage(
-                id: $0,
-                evidenceLevel: "协议合同已验证"
-            )
-        }
-        let capabilityFamilies = RichAnswerCapabilityFamily.allCases.map { family in
-            RichAnswerCapabilityFamilyCoverage(
-                family: family,
-                pressureCaseIDs: RichAnswerPressureCases.learningQuestions.compactMap { pressureCase in
-                    pressureCase.expectedCapabilityFamilies.contains(family) ? pressureCase.id : nil
-                }
-            )
-        }
-        return RichAnswerSupportCoverageChecklist(
-            formalRoutes: formalRoutes,
-            capabilityFamilies: capabilityFamilies
-        )
-    }
-
-    var outputLines: [String] {
-        let routeLines = formalRoutes.map {
-            "正式路线\t\($0.id)\t\($0.evidenceLevel)"
-        }
-        let familyLines = capabilityFamilies.map {
-            "能力家族\t\($0.family.rawValue)\t压力样本 \($0.pressureCaseIDs.count) 个\t\($0.pressureCaseIDs.joined(separator: ","))"
-        }
-        return routeLines + familyLines
-    }
-}
-
 struct RichAnswerProfessionalFactObligation {
     let id: String
     let description: String
