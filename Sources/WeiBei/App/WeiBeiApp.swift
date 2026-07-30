@@ -440,6 +440,7 @@ private struct WindowChromeConfigurator: NSViewRepresentable {
             "reader-scroll-persistence-flow",
             "course-workspace-overview-flow",
             "course-workspace-workflow-flow",
+            "course-resume-point-flow",
             "learning-memory-scopes-flow",
         ].contains(scenario),
            let workspaceDirectory = environment["WEIBEI_WORKSPACE_DIR"] {

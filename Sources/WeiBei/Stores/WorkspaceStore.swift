@@ -382,7 +382,7 @@ final class WorkspaceStore: ObservableObject {
     }
     @Published var linkedSourcesPresented = false
     private(set) var studyLocationsByItemID: [String: StudyLocation] = [:]
-    @Published private(set) var courseResumePoints: [CourseResumePoint] = []
+    private(set) var courseResumePoints: [CourseResumePoint] = []
     @Published private(set) var learningMemoryStates: [ScopedLearningMemoryState] = []
     @Published private(set) var studySessions: [StudySession] = []
     @Published private(set) var activeStudySessionID: UUID?
@@ -560,6 +560,7 @@ final class WorkspaceStore: ObservableObject {
     private var noteSourceLinksMigrationVersion = 0
     private var studySessionScopeMigrationVersion = 0
     private var learningMemoryScopeMigrationVersion = 0
+    private var isRestoringCourseResumePoint = true
     private var legacyLearningMemoryEntries: [LearningMemoryEntry] = []
     private var legacyLearningMemoryRevision: UInt64 = 0
     private var noteSourceRelationIndex = NoteSourceRelationIndex(links: [])
@@ -928,6 +929,7 @@ final class WorkspaceStore: ObservableObject {
         let sanitizedCourseLibrary = sanitizeCourseLibrary()
         let migratedStudySessionScopes = migrateLegacyStudySessionScopes()
         let migratedLearningMemoryScopes = migrateLegacyLearningMemoryScopes()
+        let sanitizedCourseResumePoints = sanitizeCourseResumePoints()
         courseDocumentSearchIndex.synchronize(allItems)
         ensureActiveStudySession()
         let savedInitializationChanges: Bool
@@ -943,6 +945,7 @@ final class WorkspaceStore: ObservableObject {
                     || sanitizedCourseLibrary
                     || migratedStudySessionScopes
                     || migratedLearningMemoryScopes
+                    || sanitizedCourseResumePoints
                     || restoredCourseProjectRoots
                     || recoveredInterruptedAgentReply
                     || needsSelectionAskThreadsWorkspaceMigration {
@@ -960,6 +963,7 @@ final class WorkspaceStore: ObservableObject {
             restoreCurrentStudyLocation()
             recordCurrentStudyLocation(incrementVisit: false)
         }
+        isRestoringCourseResumePoint = false
         if !ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root") {
             startCourseFileMaintenance()
         }
@@ -1010,6 +1014,142 @@ final class WorkspaceStore: ObservableObject {
 
     func courseIDs(for itemID: String) -> [UUID] {
         courseMembershipIndex.courseIDs(for: itemID)
+    }
+
+    func courseResumePoint(for courseID: UUID) -> CourseResumePoint? {
+        courseResumePoints
+            .filter { $0.courseID == courseID }
+            .sorted { $0.savedAt > $1.savedAt }
+            .compactMap(validatedCourseResumePoint)
+            .first
+    }
+
+    private func validatedCourseResumePoint(
+        _ point: CourseResumePoint
+    ) -> CourseResumePoint? {
+        guard courses.contains(where: { $0.id == point.courseID }) else {
+            return nil
+        }
+        var result = point
+        if let itemID = result.materialLocation?.itemID,
+           !importedItems.contains(where: {
+               $0.id == itemID
+                   && !$0.isNotebookNote
+                   && courseMembershipIndex.courseIDs(for: itemID).contains(point.courseID)
+           }) {
+            result.materialLocation = nil
+        }
+        if let chatID = result.chatID,
+           !studySessions.contains(where: {
+               $0.id == chatID
+                   && $0.courseID == point.courseID
+                   && $0.scopeNeedsReview == false
+                   && !$0.messages.isEmpty
+           }) {
+            result.chatID = nil
+        }
+        if let noteItemID = result.noteItemID,
+           !importedItems.contains(where: {
+               $0.id == noteItemID
+                   && $0.isNotebookNote
+                   && courseMembershipIndex.courseIDs(for: noteItemID).contains(point.courseID)
+           }) {
+            result.noteItemID = nil
+        }
+        return result.materialLocation == nil
+            && result.chatID == nil
+            && result.noteItemID == nil
+            ? nil
+            : result
+    }
+
+    @discardableResult
+    private func sanitizeCourseResumePoints() -> Bool {
+        let sanitized = sanitizedCourseResumePoints()
+        guard sanitized != courseResumePoints else { return false }
+        courseResumePoints = sanitized
+        return true
+    }
+
+    private func sanitizedCourseResumePoints() -> [CourseResumePoint] {
+        var sanitized: [CourseResumePoint] = []
+        for courseID in Set(courseResumePoints.map(\.courseID)) {
+            if let point = courseResumePoint(for: courseID) {
+                sanitized.append(point)
+            }
+        }
+        sanitized.sort { $0.courseID.uuidString < $1.courseID.uuidString }
+        return sanitized
+    }
+
+    private func studyLocation(
+        for itemID: String,
+        in courseID: UUID?
+    ) -> StudyLocation? {
+        guard let courseID,
+              courseMembershipIndex.courseIDs(for: itemID).contains(courseID) else {
+            return studyLocationsByItemID[itemID]
+        }
+        if let location = courseResumePoint(for: courseID)?.materialLocation,
+           location.itemID == itemID {
+            return location
+        }
+        return courseMembershipIndex.courseIDs(for: itemID).count > 1
+            ? nil
+            : studyLocationsByItemID[itemID]
+    }
+
+    @discardableResult
+    private func captureCourseResumePoint(
+        courseID: UUID,
+        materialLocation forcedMaterialLocation: StudyLocation? = nil,
+        chatID forcedChatID: UUID? = nil,
+        noteItemID forcedNoteItemID: String? = nil
+    ) -> Bool {
+        guard !isRestoringCourseResumePoint,
+              courses.contains(where: { $0.id == courseID }) else {
+            return false
+        }
+        let existingPoint = courseResumePoint(for: courseID)
+        let activeMaterialLocation: StudyLocation? = selectedMaterialItem.flatMap { item in
+            guard courseMembershipIndex.courseIDs(for: item.id).contains(courseID) else {
+                return nil
+            }
+            return studyLocation(for: item.id, in: courseID)
+        }
+        let activeChatID: UUID? = activeStudySession.flatMap { session in
+            guard session.courseID == courseID,
+                  session.scopeNeedsReview == false,
+                  !session.messages.isEmpty else {
+                return nil
+            }
+            return session.id
+        }
+        let activeNoteItemID: String? = activeNoteItem.flatMap { item in
+            guard item.isNotebookNote,
+                  courseMembershipIndex.courseIDs(for: item.id).contains(courseID) else {
+                return nil
+            }
+            return item.id
+        }
+        guard let point = validatedCourseResumePoint(
+            CourseResumePoint(
+                courseID: courseID,
+                materialLocation: forcedMaterialLocation
+                    ?? activeMaterialLocation
+                    ?? existingPoint?.materialLocation,
+                chatID: forcedChatID ?? activeChatID ?? existingPoint?.chatID,
+                noteItemID: forcedNoteItemID
+                    ?? activeNoteItemID
+                    ?? existingPoint?.noteItemID
+            )
+        ) else {
+            return false
+        }
+        courseResumePoints.removeAll { $0.courseID == courseID }
+        courseResumePoints.append(point)
+        courseResumePoints.sort { $0.courseID.uuidString < $1.courseID.uuidString }
+        return true
     }
 
     var unassignedCourseMaterials: [StudyItem] {
@@ -6915,6 +7055,9 @@ final class WorkspaceStore: ObservableObject {
         restoreAgentReplyState(from: session)
         lastAgentReplyContextRevision = nil
         invalidateAgentContext()
+        if let courseID = session.courseID, !session.messages.isEmpty {
+            _ = captureCourseResumePoint(courseID: courseID, chatID: id)
+        }
         save()
         return true
     }
@@ -8273,9 +8416,18 @@ final class WorkspaceStore: ObservableObject {
             noteText = noteText(for: item)
             latestAgentNoteProposal = nil
             latestAgentLearningUpdate = nil
-            syncActiveStudySession()
+            if !isRestoringCourseResumePoint {
+                syncActiveStudySession()
+            }
             revealRichWritingSurface()
             focus(.notes)
+            if let activeCourseID,
+               courseMembershipIndex.courseIDs(for: item.id).contains(activeCourseID) {
+                _ = captureCourseResumePoint(
+                    courseID: activeCourseID,
+                    noteItemID: item.id
+                )
+            }
             save()
             return
         }
@@ -8299,6 +8451,9 @@ final class WorkspaceStore: ObservableObject {
         if itemChanged {
             readerLocationTitle = selectedMaterialItem.map(displayTitle)
             restoreCurrentStudyLocation()
+        } else if let item = selectedMaterialItem,
+                  courseMembershipIndex.courseIDs(for: item.id).count > 1 {
+            restoreCurrentStudyLocation()
         } else if readerLocationTitle == nil {
             readerLocationTitle = selectedMaterialItem.map(displayTitle)
         }
@@ -8306,7 +8461,9 @@ final class WorkspaceStore: ObservableObject {
         noteText = noteText(for: activeNoteItem)
         latestAgentNoteProposal = nil
         latestAgentLearningUpdate = nil
-        syncActiveStudySession()
+        if !isRestoringCourseResumePoint {
+            syncActiveStudySession()
+        }
         recordCurrentStudyLocation(incrementVisit: itemChanged)
         clearGeneratedQuietInsight()
         refreshQuietInsightIfNeeded()
@@ -8598,8 +8755,15 @@ final class WorkspaceStore: ObservableObject {
         } else {
             showReader = true
             focus(.reader)
-            save()
         }
+        if let activeCourseID,
+           let location = studyLocation(for: itemID, in: activeCourseID) {
+            _ = captureCourseResumePoint(
+                courseID: activeCourseID,
+                materialLocation: location
+            )
+        }
+        save()
         return true
     }
 
@@ -8661,6 +8825,87 @@ final class WorkspaceStore: ObservableObject {
         dismissCourseWorkspace(restoringFocus: false)
         showLibrary = false
         setLayout(.immersiveConversation)
+        if let expectedCourseID {
+            _ = captureCourseResumePoint(
+                courseID: expectedCourseID,
+                chatID: sessionID
+            )
+            save()
+        }
+    }
+
+    @discardableResult
+    func resumeCourseReading(_ courseID: UUID) -> Bool {
+        resumeCoursePoint(courseID, conversation: false)
+    }
+
+    @discardableResult
+    func resumeCourseConversation(_ courseID: UUID) -> Bool {
+        resumeCoursePoint(courseID, conversation: true)
+    }
+
+    @discardableResult
+    private func resumeCoursePoint(
+        _ courseID: UUID,
+        conversation: Bool
+    ) -> Bool {
+        guard let point = courseResumePoint(for: courseID),
+              (!conversation && point.materialLocation != nil)
+                || (conversation && point.chatID != nil) else {
+            return false
+        }
+        isRestoringCourseResumePoint = true
+        defer { isRestoringCourseResumePoint = false }
+        activeCourseID = courseID
+
+        if conversation,
+           let chatID = point.chatID,
+           !activateStudySession(
+               chatID,
+               expectedCourseID: courseID,
+               expectedScopeNeedsReview: false
+           ) {
+            return false
+        }
+
+        var restoredMaterial = false
+        if let location = point.materialLocation {
+            restoredMaterial = openCourseMaterial(location.itemID)
+            if restoredMaterial {
+                readerPageIndex = max(location.pageIndex ?? 0, 0)
+                readerLocationID = location.locationID
+                readerLocationTitle = location.locationTitle ?? location.itemTitle
+                if selectedMaterialItem?.kind == .pdf {
+                    requestReaderPDFPage(location.pageIndex, recordsLocation: false)
+                } else if selectedMaterialItem?.kind == .html {
+                    requestReaderHTMLLocation(
+                        id: location.locationID,
+                        title: location.locationTitle
+                    )
+                }
+            } else if !conversation {
+                return false
+            }
+        }
+
+        var restoredNote = false
+        if let noteItemID = point.noteItemID,
+           importedItems.contains(where: { $0.id == noteItemID && $0.isNotebookNote }) {
+            select(itemID: noteItemID)
+            restoredNote = activeNoteItemID == noteItemID
+        }
+
+        var panes = Set(visibleDocumentPaneOrder)
+        if restoredMaterial { panes.insert(.reader) }
+        if restoredNote { panes.insert(.notes) }
+        if conversation { panes.insert(.agent) }
+        setDocumentPaneSet(panes)
+        layout = layoutMatchingThreePaneOrder(normalizedThreePaneOrder)
+        focus(conversation ? .agent : .reader)
+        dismissCourseWorkspace(restoringFocus: false)
+        showLibrary = false
+        save()
+        return true
     }
 
     private func dismissCourseWorkspace(restoringFocus: Bool) {
@@ -9161,26 +9406,42 @@ final class WorkspaceStore: ObservableObject {
 
     private func recordCurrentStudyLocation(incrementVisit: Bool) {
         guard let item = selectedMaterialItem else { return }
-        let previous = studyLocationsByItemID[item.id]
+        let previous = studyLocation(for: item.id, in: activeCourseID)
         let itemTitle = sourceReferenceBaseTitle(for: item)
         let locationID = item.kind == .html ? readerLocationID : nil
         let pageIndex = item.kind == .pdf ? readerPageIndex : nil
-        if !incrementVisit,
-           previous?.itemTitle == itemTitle,
-           previous?.locationID == locationID,
-           previous?.locationTitle == readerLocationTitle,
-           previous?.pageIndex == pageIndex {
+        let locationChanged = incrementVisit
+            || previous?.itemTitle != itemTitle
+            || previous?.locationID != locationID
+            || previous?.locationTitle != readerLocationTitle
+            || previous?.pageIndex != pageIndex
+        let location = locationChanged
+            ? StudyLocation(
+                itemID: item.id,
+                itemTitle: itemTitle,
+                locationID: locationID,
+                locationTitle: readerLocationTitle,
+                pageIndex: pageIndex,
+                lastStudiedAt: Date(),
+                visitCount: max((previous?.visitCount ?? 0) + (incrementVisit ? 1 : 0), 1)
+            )
+            : previous
+        let resumePointChanged = locationChanged && (activeCourseID.flatMap { courseID in
+            guard courseMembershipIndex.courseIDs(for: item.id).contains(courseID),
+                  let location else {
+                return nil
+            }
+            return captureCourseResumePoint(
+                courseID: courseID,
+                materialLocation: location
+            )
+        } ?? false)
+        guard locationChanged || resumePointChanged else {
             return
         }
-        studyLocationsByItemID[item.id] = StudyLocation(
-            itemID: item.id,
-            itemTitle: itemTitle,
-            locationID: locationID,
-            locationTitle: readerLocationTitle,
-            pageIndex: pageIndex,
-            lastStudiedAt: Date(),
-            visitCount: max((previous?.visitCount ?? 0) + (incrementVisit ? 1 : 0), 1)
-        )
+        if let location, locationChanged {
+            studyLocationsByItemID[item.id] = location
+        }
         studyProgressSaveTask?.cancel()
         let delay = studyProgressSaveDelay
         studyProgressSaveTask = Task { @MainActor [weak self] in
@@ -9193,9 +9454,12 @@ final class WorkspaceStore: ObservableObject {
 
     private func restoreCurrentStudyLocation() {
         guard let item = selectedMaterialItem else { return }
-        guard let location = studyLocationsByItemID[item.id] else {
+        guard let location = studyLocation(for: item.id, in: activeCourseID) else {
             readerLocationID = nil
             readerLocationTitle = displayTitle(for: item)
+            readerPageIndex = 0
+            requestReaderPDFPage(nil, recordsLocation: false)
+            clearReaderHTMLLocationTarget()
             return
         }
         readerLocationID = item.kind == .html ? location.locationID : nil
@@ -12274,6 +12538,39 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    func courseResumePointSurvivesFailedMembershipSaveForSelfCheck(
+        itemID: String,
+        courseID: UUID
+    ) -> Bool {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-imported-identity"))
+        let previousMemberships = courseItemMemberships
+        courseItemMemberships.removeAll {
+            $0.courseID == courseID && $0.itemID == itemID
+        }
+        let saveFailed = !flushPendingWorkspaceSave()
+        courseItemMemberships = previousMemberships
+        return saveFailed
+            && courseResumePoint(for: courseID)?.materialLocation?.itemID == itemID
+    }
+
+    func courseResumePointDoesNotReviveAfterSuccessfulMembershipSaveForSelfCheck(
+        itemID: String,
+        courseID: UUID
+    ) -> Bool {
+        precondition(ProcessInfo.processInfo.arguments.contains("--self-check-imported-identity"))
+        let previousMemberships = courseItemMemberships
+        courseItemMemberships.removeAll {
+            $0.courseID == courseID && $0.itemID == itemID
+        }
+        guard flushPendingWorkspaceSave() else {
+            courseItemMemberships = previousMemberships
+            return false
+        }
+        courseItemMemberships = previousMemberships
+        let stayedRemoved = courseResumePoint(for: courseID)?.materialLocation?.itemID != itemID
+        return flushPendingWorkspaceSave() && stayedRemoved
+    }
+
     func agentProjectScopeForSelfCheck(
         courseID: UUID?
     ) throws -> StudyAgentProjectScope {
@@ -13302,6 +13599,7 @@ final class WorkspaceStore: ObservableObject {
             || scenario == "course-workspace-workflow-flow"
             || scenario == "course-index-navigation-flow"
             || scenario == "course-chat-scope-flow"
+            || scenario == "course-resume-point-flow"
             || scenario == "chat-reply-persistence-flow"
             || scenario == "chat-source-navigation-flow"
             || scenario == "chat-action-cards-flow"
@@ -13382,7 +13680,8 @@ final class WorkspaceStore: ObservableObject {
         if scenario == "course-workspace-overview-flow"
             || scenario == "course-workspace-workflow-flow"
             || scenario == "course-index-navigation-flow"
-            || scenario == "course-chat-scope-flow" {
+            || scenario == "course-chat-scope-flow"
+            || scenario == "course-resume-point-flow" {
             await runCourseWorkspaceVerification(scenario)
             return
         }
@@ -14042,6 +14341,112 @@ final class WorkspaceStore: ObservableObject {
                 ]
             )
             save()
+            recordVerificationStage("completed")
+            return
+        }
+
+        if scenario == "course-resume-point-flow" {
+            let courseBSession = StudySession(
+                title: "经济思想史 Chat",
+                messages: [
+                    AgentMessage(
+                        role: .user,
+                        text: "比较两种经济思想",
+                        source: materialC.title
+                    ),
+                ],
+                courseID: courseB.id,
+                focusItemIDs: [materialC.id],
+                materialItemID: materialC.id
+            )
+            studySessions = [activeSession, courseBSession, emptySession]
+            activeStudySessionID = activeSession.id
+            messages = activeSession.messages
+            courseResumePoints = [
+                CourseResumePoint(
+                    courseID: courseA.id,
+                    materialLocation: StudyLocation(
+                        itemID: materialA.id,
+                        itemTitle: materialA.title,
+                        locationID: "html-heading-1",
+                        locationTitle: "名义利率与实际利率",
+                        visitCount: 3
+                    ),
+                    chatID: activeSession.id,
+                    noteItemID: noteA.id
+                ),
+            ]
+            _ = activateStudySession(
+                courseBSession.id,
+                expectedCourseID: courseB.id,
+                expectedScopeNeedsReview: false
+            )
+            _ = openCourseMaterial(materialC.id)
+            openCourseNote(noteC.id)
+            swapThreePaneSecondaryPanes()
+            presentCourseWorkspace(.hub, courseID: courseA.id)
+            let sessionCount = studySessions.count
+            let paneOrder = threePaneOrder
+            let backgroundChat = studySessions.first { $0.id == courseBSession.id }
+            let readingPassed = resumeCourseReading(courseA.id)
+                && activeStudySessionID == courseBSession.id
+                && studySessions.first(where: { $0.id == courseBSession.id }) == backgroundChat
+                && selectedMaterialItem?.id == materialA.id
+                && readerLocationID == "html-heading-1"
+                && activeNotebookItemID == noteA.id
+                && focusedPane == .reader
+                && showReader
+                && showAgent
+                && showNotes
+                && layout.isDocumentThreePane
+                && !courseWorkspacePresented
+                && studySessions.count == sessionCount
+                && threePaneOrder == paneOrder
+            updateReaderHTMLLocation(
+                id: "html-heading-2",
+                title: "费雪效应",
+                reason: "scroll"
+            )
+            let scrollPreservedPoint = courseResumePoint(for: courseA.id)
+            let scrollPassed = scrollPreservedPoint?.materialLocation?.locationID
+                    == "html-heading-2"
+                && scrollPreservedPoint?.chatID == activeSession.id
+                && scrollPreservedPoint?.noteItemID == noteA.id
+            let conversationPassed = resumeCourseConversation(courseA.id)
+                && activeStudySessionID == activeSession.id
+                && readerLocationID == "html-heading-2"
+                && activeNotebookItemID == noteA.id
+                && focusedPane == .agent
+                && showAgent
+                && layout.isDocumentThreePane
+                && studySessions.count == sessionCount
+                && threePaneOrder == paneOrder
+            let saved = flushPendingWorkspaceSave()
+            let diskSnapshot = (try? Data(contentsOf: storageURL))
+                .flatMap { try? JSONDecoder().decode(PersistedWorkspace.self, from: $0) }
+            let diskPoint = diskSnapshot?.courseResumePoints?
+                .first { $0.courseID == courseA.id }
+            let persisted = saved
+                && diskPoint?.materialLocation?.locationID == "html-heading-2"
+                && diskPoint?.chatID == activeSession.id
+                && diskPoint?.noteItemID == noteA.id
+            let passed = readingPassed && scrollPassed && conversationPassed && persisted
+            writeCourseWorkspaceVerificationReport(
+                name: "course-resume-point-report.json",
+                payload: [
+                    "result": passed ? "pass" : "fail",
+                    "readingPassed": readingPassed,
+                    "scrollPreservedPoint": scrollPassed,
+                    "conversationPassed": conversationPassed,
+                    "persisted": persisted,
+                    "sessionCount": studySessions.count,
+                    "paneOrderPreserved": threePaneOrder == paneOrder,
+                    "activeChatID": activeStudySessionID?.uuidString ?? "",
+                    "materialLocationID": readerLocationID ?? "",
+                    "noteItemID": activeNotebookItemID ?? "",
+                ]
+            )
+            recordVerificationStage("course-resume-point:\(passed ? "pass" : "fail")")
             recordVerificationStage("completed")
             return
         }
@@ -16208,6 +16613,12 @@ final class WorkspaceStore: ObservableObject {
             appendAgentMessage(userMessage)
             appendMessageToActiveSelectionAskThread(userMessage.id)
             didAppendUserMessage = true
+            if let courseID = target.courseID {
+                _ = captureCourseResumePoint(
+                    courseID: courseID,
+                    chatID: target.sessionID
+                )
+            }
             guard flushPendingWorkspaceSave() else {
                 throw AgentConversationTargetError(
                     message: workspaceSaveError
@@ -18137,6 +18548,14 @@ final class WorkspaceStore: ObservableObject {
                 studyLocationsByItemID[newID] = location
             }
         }
+        for index in courseResumePoints.indices {
+            if courseResumePoints[index].materialLocation?.itemID == oldID {
+                courseResumePoints[index].materialLocation?.itemID = newID
+            }
+            if courseResumePoints[index].noteItemID == oldID {
+                courseResumePoints[index].noteItemID = newID
+            }
+        }
         for index in studySessions.indices {
             if studySessions[index].materialItemID == oldID {
                 studySessions[index].materialItemID = newID
@@ -19263,6 +19682,7 @@ final class WorkspaceStore: ObservableObject {
     @discardableResult
     private func performSaveNow() -> Bool {
         WeiBeiPerf.measure("workspace.save") {
+            let persistedCourseResumePoints = sanitizedCourseResumePoints()
             let snapshot = PersistedWorkspace(
                 importedItems: importedItems,
                 notesByItemID: notesByItemID,
@@ -19279,7 +19699,7 @@ final class WorkspaceStore: ObservableObject {
                 noteSourceLinks: noteSourceLinks,
                 noteSourceLinksMigrationVersion: noteSourceLinksMigrationVersion,
                 studyLocationsByItemID: studyLocationsByItemID,
-                courseResumePoints: courseResumePoints,
+                courseResumePoints: persistedCourseResumePoints,
                 learningMemoryStates: learningMemoryStates,
                 learningMemoryScopeMigrationVersion: learningMemoryScopeMigrationVersion,
                 studySessions: studySessions,
@@ -19306,6 +19726,7 @@ final class WorkspaceStore: ObservableObject {
             do {
                 let data = try JSONEncoder().encode(snapshot)
                 try workspaceSnapshotWriter(data, storageURL)
+                courseResumePoints = persistedCourseResumePoints
                 workspaceSaveError = nil
                 needsSelectionAskThreadsWorkspaceMigration = false
                 loadedSelectionAskThreadsFromWorkspaceSnapshot = true
