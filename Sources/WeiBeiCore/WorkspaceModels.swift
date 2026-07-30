@@ -1834,6 +1834,7 @@ public struct PersistedWorkspace: Codable {
     public var noteSourceLinks: [NoteSourceLink]?
     public var noteSourceLinksMigrationVersion: Int?
     public var studyLocationsByItemID: [String: StudyLocation]?
+    public var studyLocationsByCourseID: [String: [String: StudyLocation]]?
     public var courseResumePoints: [CourseResumePoint]?
     public var learningMemoryStates: [ScopedLearningMemoryState]?
     public var learningMemoryScopeMigrationVersion: Int?
@@ -1877,6 +1878,7 @@ public struct PersistedWorkspace: Codable {
         noteSourceLinks: [NoteSourceLink]? = nil,
         noteSourceLinksMigrationVersion: Int? = nil,
         studyLocationsByItemID: [String: StudyLocation]? = nil,
+        studyLocationsByCourseID: [String: [String: StudyLocation]]? = nil,
         courseResumePoints: [CourseResumePoint]? = nil,
         learningMemoryStates: [ScopedLearningMemoryState]? = nil,
         learningMemoryScopeMigrationVersion: Int? = nil,
@@ -1918,6 +1920,7 @@ public struct PersistedWorkspace: Codable {
         self.noteSourceLinks = noteSourceLinks
         self.noteSourceLinksMigrationVersion = noteSourceLinksMigrationVersion
         self.studyLocationsByItemID = studyLocationsByItemID
+        self.studyLocationsByCourseID = studyLocationsByCourseID
         self.courseResumePoints = courseResumePoints
         self.learningMemoryStates = learningMemoryStates
         self.learningMemoryScopeMigrationVersion = learningMemoryScopeMigrationVersion

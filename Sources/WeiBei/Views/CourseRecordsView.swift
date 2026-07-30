@@ -17,7 +17,7 @@ struct CourseRecordsView: View {
     }
 
     private var filteredSessions: [StudySession] {
-        guard let courseID = store.activeCourseID else { return [] }
+        guard let courseID = store.courseWorkspaceCourseID else { return [] }
         let cleaned = search.trimmingCharacters(in: .whitespacesAndNewlines)
         let sessions = store.sessionsTouchingCourse(courseID)
         guard !cleaned.isEmpty else { return sessions }
@@ -29,7 +29,7 @@ struct CourseRecordsView: View {
     }
 
     private var groups: [SessionGroup] {
-        guard let courseID = store.activeCourseID,
+        guard let courseID = store.courseWorkspaceCourseID,
               let course = store.course(withID: courseID),
               !filteredSessions.isEmpty else { return [] }
         return [
@@ -43,7 +43,7 @@ struct CourseRecordsView: View {
     }
 
     private var memoryScope: LearningMemoryScope? {
-        store.activeCourseID.map(LearningMemoryScope.course)
+        store.courseWorkspaceCourseID.map(LearningMemoryScope.course)
     }
 
     private var hasMemories: Bool {

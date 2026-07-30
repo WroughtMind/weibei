@@ -12,7 +12,7 @@ enum CourseWorkspacePage: String, CaseIterable, Identifiable {
     func label(language: WeiBeiInterfaceLanguage) -> String {
         switch self {
         case .hub:
-            language.text("课程空间", "Course Space")
+            language.text("课程首页", "Course Home")
         case .relations:
             language.text("关系台", "Relations")
         case .records:
@@ -59,8 +59,16 @@ struct CourseWorkspaceView: View {
                     searchFocused: $searchFocused,
                     isCompact: geometry.size.width < 900,
                     dismiss: store.dismissCourseWorkspace,
-                    importMaterials: store.importCourseMaterialsFromPanel,
-                    importNotes: store.importCourseNotesFromPanel,
+                    importMaterials: {
+                        store.importCourseMaterialsFromPanel(
+                            courseID: store.courseWorkspaceCourseID
+                        )
+                    },
+                    importNotes: {
+                        store.importCourseNotesFromPanel(
+                            courseID: store.courseWorkspaceCourseID
+                        )
+                    },
                     createNote: promptForNewNote
                 )
 
@@ -86,7 +94,7 @@ struct CourseWorkspaceView: View {
         .onChange(of: page) { _, _ in
             search = ""
         }
-        .onChange(of: store.activeCourseID) { _, newCourseID in
+        .onChange(of: store.courseWorkspaceCourseID) { _, newCourseID in
             selectedMaterialID = newCourseID.flatMap { store.courseMaterials(in: $0).first?.id }
             selectedNoteID = nil
             selectedSessionID = nil
@@ -115,8 +123,16 @@ struct CourseWorkspaceView: View {
                 openRelations: {
                     withAnimation(WeiBeiMotion.panel) { page = .relations }
                 },
-                importMaterials: store.importCourseMaterialsFromPanel,
-                importNotes: store.importCourseNotesFromPanel,
+                importMaterials: {
+                    store.importCourseMaterialsFromPanel(
+                        courseID: store.courseWorkspaceCourseID
+                    )
+                },
+                importNotes: {
+                    store.importCourseNotesFromPanel(
+                        courseID: store.courseWorkspaceCourseID
+                    )
+                },
                 createNote: promptForNewNote
             )
         case .relations:
@@ -144,7 +160,7 @@ struct CourseWorkspaceView: View {
     }
 
     private func createNewNote() {
-        guard let courseID = store.activeCourseID else {
+        guard let courseID = store.courseWorkspaceCourseID else {
             newNoteError = store.ui("无法新建笔记。", "Could not create the note.")
             return
         }
@@ -168,22 +184,33 @@ struct CourseWorkspaceView: View {
         case .hub:
             page = .hub
             selectedMaterialID = store.courseWorkspaceTargetItemID
-                ?? store.activeCourseID.flatMap { store.courseMaterials(in: $0).first?.id }
+                ?? store.courseWorkspaceCourseID.flatMap {
+                    store.courseMaterials(in: $0).first?.id
+                }
         case .relations:
             page = .relations
         case .materials:
             relationLens = .materials
-            selectedMaterialID = store.courseWorkspaceTargetItemID ?? store.courseMaterials.first?.id
+            selectedMaterialID = store.courseWorkspaceTargetItemID
+                ?? store.courseWorkspaceCourseID.flatMap {
+                    store.courseMaterials(in: $0).first?.id
+                }
             page = .relations
         case .notes:
             relationLens = .notes
-            selectedNoteID = store.courseWorkspaceTargetItemID ?? store.courseNotebookItems.first?.id
+            selectedNoteID = store.courseWorkspaceTargetItemID
+                ?? store.courseWorkspaceCourseID.flatMap {
+                    store.courseNotes(in: $0).first?.id
+                }
             page = .relations
         case .sessions:
             if let rawID = store.courseWorkspaceTargetItemID {
                 selectedSessionID = UUID(uuidString: rawID)
             }
-            selectedSessionID = selectedSessionID ?? store.recentCourseSessions.first?.id
+            selectedSessionID = selectedSessionID
+                ?? store.courseWorkspaceCourseID.flatMap {
+                    store.sessionsTouchingCourse($0).first?.id
+                }
             page = .records
         }
     }
@@ -261,13 +288,7 @@ struct CourseWorkspaceHeader: View {
             .buttonStyle(.plain)
             .accessibilityLabel(Text(store.ui("关闭课程空间并返回工作台", "Close course space")))
 
-            Group {
-                if page == .hub {
-                    hubTitleBlock
-                } else {
-                    pageTitleBlock
-                }
-            }
+            hubTitleBlock
             .frame(minWidth: isCompact ? 96 : 120, alignment: .leading)
 
             if isCompact {
@@ -368,10 +389,10 @@ struct CourseWorkspaceHeader: View {
             } else {
                 ForEach(store.courses) { course in
                     Button {
-                        store.activateCourse(course.id)
+                        store.selectCourseWorkspaceCourse(course.id)
                         page = .hub
                     } label: {
-                        if course.id == store.activeCourseID {
+                        if course.id == store.courseWorkspaceCourseID {
                             Label(course.title, systemImage: "checkmark")
                         } else {
                             Text(course.title)
@@ -397,29 +418,11 @@ struct CourseWorkspaceHeader: View {
         .accessibilityLabel(Text(store.ui("选择课程", "Select course")))
     }
 
-    private var pageTitleBlock: some View {
-        Text(pageTitle)
-            .font(courseTitleDisplayFont(pageTitle, size: 20))
-            .foregroundStyle(WeiBeiTheme.ink)
-            .lineLimit(1)
-    }
-
     private var hubCourseTitle: String {
-        if let course = store.courses.first(where: { $0.id == store.activeCourseID }) {
+        if let course = store.courseWorkspaceCourse {
             return course.title
         }
         return store.ui("选择课程", "Select course")
-    }
-
-    private var pageTitle: String {
-        switch page {
-        case .hub:
-            return hubCourseTitle
-        case .relations:
-            return store.ui("资料关系台", "Course Relations")
-        case .records:
-            return store.ui("学习记录", "Learning Records")
-        }
     }
 }
 
