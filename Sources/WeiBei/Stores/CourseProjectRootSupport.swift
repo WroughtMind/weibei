@@ -2729,6 +2729,7 @@ actor CourseProjectFileWorker {
         at url: URL,
         expectedDirectoryIdentity: ImportedFileIdentity,
         expectedPreviousData: Data,
+        afterSwapBeforeCommitValidation: () throws -> Void = {},
         afterCommitBeforeCleanup: () -> Void = {}
     ) throws {
         guard url.lastPathComponent == "course.json",
@@ -2749,6 +2750,14 @@ actor CourseProjectFileWorker {
             maximumByteCount: 1_048_576,
             temporaryBaseName: "course-manifest",
             beforeCommit: {
+                guard identity(at: directory)
+                        == expectedDirectoryIdentity else {
+                    throw CourseProjectFileWorkerError
+                        .verificationFailed
+                }
+            },
+            afterSwapBeforeCommitValidation: {
+                try afterSwapBeforeCommitValidation()
                 guard identity(at: directory)
                         == expectedDirectoryIdentity else {
                     throw CourseProjectFileWorkerError
@@ -2852,6 +2861,7 @@ actor CourseProjectFileWorker {
         maximumByteCount: Int = portableStateMaximumByteCount,
         temporaryBaseName: String = "course-state",
         beforeCommit: () throws -> Void,
+        afterSwapBeforeCommitValidation: () throws -> Void = {},
         afterCommitBeforeCleanup: () -> Void = {}
     ) throws {
         guard data.count <= maximumByteCount,
@@ -3061,6 +3071,17 @@ actor CourseProjectFileWorker {
             guard committedData == data else {
                 try rollBackSwapAndPreserveCandidate()
                 throw CourseProjectFileWorkerError.contentConflict
+            }
+            do {
+                try afterSwapBeforeCommitValidation()
+            } catch {
+                let validationError = error
+                try rollBackSwapAndPreserveCandidate()
+                guard Darwin.fsync(directoryDescriptor) == 0 else {
+                    throw CourseProjectFileWorkerError
+                        .verificationFailed
+                }
+                throw validationError
             }
             guard Darwin.fsync(directoryDescriptor) == 0 else {
                 try rollBackSwapAndPreserveCandidate()

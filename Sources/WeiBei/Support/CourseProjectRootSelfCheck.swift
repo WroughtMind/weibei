@@ -2201,7 +2201,8 @@ enum CourseProjectRootSelfCheck {
             ),
             "无法建立导出笔记"
         )
-        _ = try store.installPortableCourseStateFixtureForSelfCheck(
+        let fixtureState =
+            try store.installPortableCourseStateFixtureForSelfCheck(
             courseID: courseA,
             materialItemID: sharedItem.id,
             noteItemID: noteID,
@@ -2725,6 +2726,104 @@ enum CourseProjectRootSelfCheck {
             "封印已可靠规范化后，清理残留仍错误报失败或普通 manifest 不可读"
         )
 
+        let preCommitReplacementRoot =
+            exportParent.appendingPathComponent(
+                "清单提交前元数据替换",
+                isDirectory: true
+            )
+        _ = try store.exportPortableCourseCopyForSelfCheck(
+            courseID: courseA,
+            to: preCommitReplacementRoot
+        )
+        let preCommitReplacementRootIdentity = try require(
+            CourseProjectFileWorker.identity(
+                at: preCommitReplacementRoot
+            ),
+            "清单提交前元数据替换样本缺少根身份"
+        )
+        let preCommitReplacementSnapshot =
+            try CourseProjectFileWorker.portableAdoptionSnapshot(
+                at: preCommitReplacementRoot,
+                expectedRootIdentity:
+                    preCommitReplacementRootIdentity
+            )
+        let preCommitMetadata = preCommitReplacementRoot
+            .appendingPathComponent(".weibei", isDirectory: true)
+        let displacedPreCommitMetadata = preCommitReplacementRoot
+            .appendingPathComponent(
+                ".weibei-displaced-before-commit",
+                isDirectory: true
+            )
+        let replacementSentinel = preCommitMetadata
+            .appendingPathComponent("外部目录内容.txt")
+        let replacementSentinelData = Data(
+            "REAL_REPLACEMENT_DIRECTORY".utf8
+        )
+        var replacedMetadataAfterSwap = false
+        try expectFailure("清单交换后提交前元数据目录被替换") {
+            try CourseProjectFileWorker.replaceCourseManifest(
+                with: CourseProjectManifest(
+                    courseID: courseA
+                ).encoded(),
+                at: preCommitMetadata.appendingPathComponent(
+                    "course.json"
+                ),
+                expectedDirectoryIdentity:
+                    preCommitReplacementSnapshot.metadataIdentity,
+                expectedPreviousData:
+                    preCommitReplacementSnapshot.manifestData,
+                afterSwapBeforeCommitValidation: {
+                    replacedMetadataAfterSwap = true
+                    try FileManager.default.moveItem(
+                        at: preCommitMetadata,
+                        to: displacedPreCommitMetadata
+                    )
+                    try FileManager.default.createDirectory(
+                        at: preCommitMetadata,
+                        withIntermediateDirectories: false
+                    )
+                    try replacementSentinelData.write(
+                        to: replacementSentinel
+                    )
+                }
+            )
+        }
+        try expectFailure("替换元数据目录不得接收后续课程状态写入") {
+            try CourseProjectFileWorker.writePortableState(
+                Data("FORBIDDEN_LATE_STATE".utf8),
+                to: preCommitMetadata.appendingPathComponent(
+                    "course-state.json"
+                ),
+                expectedDirectoryIdentity:
+                    preCommitReplacementSnapshot.metadataIdentity,
+                expectedPreviousData: nil,
+                beforeCommit: {}
+            )
+        }
+        let restoredSealedManifestData = try Data(
+            contentsOf: displacedPreCommitMetadata
+                .appendingPathComponent("course.json")
+        )
+        let restoredSealedManifest = try JSONDecoder().decode(
+            CourseProjectManifest.self,
+            from: restoredSealedManifestData
+        )
+        let replacementMetadataNames = try FileManager.default
+            .contentsOfDirectory(
+                atPath: preCommitMetadata.path
+            )
+        try check(
+            replacedMetadataAfterSwap
+                && restoredSealedManifestData
+                    == preCommitReplacementSnapshot.manifestData
+                && restoredSealedManifest.portableExport != nil
+                && replacementMetadataNames
+                    == [replacementSentinel.lastPathComponent]
+                && Data(contentsOf: replacementSentinel)
+                    == replacementSentinelData,
+            "提交前目录替换没有恢复原封印，或向换入目录写入了清单/课程状态"
+        )
+
         for postSaveTamper in [
             (
                 name: "接管保存后状态篡改",
@@ -2800,10 +2899,14 @@ enum CourseProjectRootSelfCheck {
                             itemID: noteID,
                             courseID: courseA
                         )
+                    && tamperedAdoptionStore
+                        .pendingPortableNoteDraftForSelfCheck(
+                            itemID: noteID
+                        ) == fixtureState.draft
                     && stoppedExternalScopes.get().contains(
                         tamperedAdoptionRoot.canonicalFileURL
                     ),
-                "\(postSaveTamper.name)后错误消费封印，或危险课程根仍可读取笔记/没有释放外部授权"
+                "\(postSaveTamper.name)后错误消费封印，或危险课程根仍可读取笔记/草稿丢失/没有释放外部授权"
             )
         }
 
