@@ -436,7 +436,7 @@ verify_learning_flow_persistence() {
     for _ in {1..600}; do
       if [[ -s "$marker_file" ]] \
         && [[ -f "$workspace_file" ]] \
-        && /usr/bin/grep -q '"learningMemoryEntries"' "$workspace_file" \
+        && /usr/bin/grep -q '"learningMemoryStates"' "$workspace_file" \
         && /usr/bin/grep -q '"studyLocationsByItemID"' "$workspace_file" \
         && /usr/bin/grep -q '"studySessions"' "$workspace_file" \
         && /usr/bin/grep -q '"confusion"' "$workspace_file" \

@@ -49,9 +49,11 @@ public struct StudyLocation: Codable, Hashable, Sendable {
 
 public enum LearningMemoryKind: String, Codable, CaseIterable, Hashable, Sendable {
     case goal
+    case progress
     case understood
     case confusion
     case nextStep
+    case summary
     case preference
 }
 

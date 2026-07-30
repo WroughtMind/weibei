@@ -382,8 +382,7 @@ final class WorkspaceStore: ObservableObject {
     }
     @Published var linkedSourcesPresented = false
     private(set) var studyLocationsByItemID: [String: StudyLocation] = [:]
-    @Published private(set) var learningMemoryEntries: [LearningMemoryEntry] = []
-    @Published private(set) var learningMemoryRevision: UInt64 = 0
+    @Published private(set) var learningMemoryStates: [ScopedLearningMemoryState] = []
     @Published private(set) var studySessions: [StudySession] = []
     @Published private(set) var activeStudySessionID: UUID?
     /// Drawer open flag lives on `libraryDrawer` so toggles only refresh drawer chrome.
@@ -559,6 +558,9 @@ final class WorkspaceStore: ObservableObject {
     private let workspaceSaveDebounceNanoseconds: UInt64 = 280_000_000
     private var noteSourceLinksMigrationVersion = 0
     private var studySessionScopeMigrationVersion = 0
+    private var learningMemoryScopeMigrationVersion = 0
+    private var legacyLearningMemoryEntries: [LearningMemoryEntry] = []
+    private var legacyLearningMemoryRevision: UInt64 = 0
     private var noteSourceRelationIndex = NoteSourceRelationIndex(links: [])
     private var courseMembershipIndex = CourseItemMemberships()
     private var courseWorkspaceReturnFocus: PaneFocus?
@@ -924,6 +926,7 @@ final class WorkspaceStore: ObservableObject {
         let sanitizedNoteSourceLinks = sanitizeNoteSourceLinks()
         let sanitizedCourseLibrary = sanitizeCourseLibrary()
         let migratedStudySessionScopes = migrateLegacyStudySessionScopes()
+        let migratedLearningMemoryScopes = migrateLegacyLearningMemoryScopes()
         courseDocumentSearchIndex.synchronize(allItems)
         ensureActiveStudySession()
         let savedInitializationChanges: Bool
@@ -938,6 +941,7 @@ final class WorkspaceStore: ObservableObject {
                     || sanitizedNoteSourceLinks
                     || sanitizedCourseLibrary
                     || migratedStudySessionScopes
+                    || migratedLearningMemoryScopes
                     || restoredCourseProjectRoots
                     || recoveredInterruptedAgentReply
                     || needsSelectionAskThreadsWorkspaceMigration {
@@ -6679,7 +6683,9 @@ final class WorkspaceStore: ObservableObject {
     }
 
     var activeCourseMemories: [LearningMemoryEntry] {
-        orderedLearningMemoryEntries.filter { $0.status == .active }
+        guard let activeCourseID else { return [] }
+        return orderedLearningMemoryEntries(in: .course(activeCourseID))
+            .filter { $0.status == .active }
     }
 
     var recentCourseMessages: [AgentMessage] {
@@ -6694,7 +6700,7 @@ final class WorkspaceStore: ObservableObject {
             noteSourceLinks: noteSourceLinks,
             studyLocationsByItemID: studyLocationsByItemID,
             studySessions: studySessions,
-            learningMemoryEntries: learningMemoryEntries
+            learningMemoryEntries: activeCourseMemories
         )
     }
 
@@ -6793,16 +6799,14 @@ final class WorkspaceStore: ObservableObject {
         orderedStudySessions.filter { $0.scopeNeedsReview == true }
     }
 
-    var orderedLearningMemoryEntries: [LearningMemoryEntry] {
-        learningMemoryEntries.sorted { $0.updatedAt > $1.updatedAt }
-    }
-
     func learningMemoryKindLabel(_ kind: LearningMemoryKind) -> String {
         switch kind {
         case .goal: ui("目标", "Goal")
+        case .progress: ui("学习进度", "Progress")
         case .understood: ui("已理解", "Understood")
         case .confusion: ui("困惑", "Confusion")
         case .nextStep: ui("下一步", "Next Step")
+        case .summary: ui("学习小结", "Summary")
         case .preference: ui("偏好", "Preference")
         }
     }
@@ -6853,13 +6857,6 @@ final class WorkspaceStore: ObservableObject {
 
     var canResumePreviousStudy: Bool {
         lastStudyLocation != nil
-    }
-
-    var hasCurrentSessionInferredMemory: Bool {
-        guard let activeStudySessionID else { return false }
-        return learningMemoryEntries.contains {
-            $0.sessionID == activeStudySessionID && $0.origin == .agentInference
-        }
     }
 
     @discardableResult
@@ -6975,19 +6972,6 @@ final class WorkspaceStore: ObservableObject {
             lastAgentReplyContextRevision = nil
             invalidateAgentContext(restoreAgentDraft: false)
         }
-        save()
-    }
-
-    func clearCurrentSessionInferredMemory() {
-        guard let activeStudySessionID else { return }
-        let previousCount = learningMemoryEntries.count
-        learningMemoryEntries.removeAll {
-            $0.sessionID == activeStudySessionID && $0.origin == .agentInference
-        }
-        guard learningMemoryEntries.count != previousCount else { return }
-        learningMemoryRevision &+= 1
-        latestAgentLearningUpdate = nil
-        invalidateAgentContext()
         save()
     }
 
@@ -11696,6 +11680,166 @@ final class WorkspaceStore: ObservableObject {
         return changed
     }
 
+    @discardableResult
+    private func migrateLegacyLearningMemoryScopes() -> Bool {
+        guard learningMemoryScopeMigrationVersion < 1 else {
+            legacyLearningMemoryEntries = []
+            legacyLearningMemoryRevision = 0
+            return sanitizeLearningMemoryStates()
+        }
+
+        var nextStates: [ScopedLearningMemoryState] = []
+        var stateIndexByScope: [LearningMemoryScope: Int] = [:]
+        var seenMemoryIDs = Set<UUID>()
+
+        func append(_ entry: LearningMemoryEntry, to scope: LearningMemoryScope) {
+            guard seenMemoryIDs.insert(entry.id).inserted else { return }
+            let stateIndex: Int
+            if let existingIndex = stateIndexByScope[scope] {
+                stateIndex = existingIndex
+            } else {
+                stateIndex = nextStates.count
+                stateIndexByScope[scope] = stateIndex
+                nextStates.append(ScopedLearningMemoryState(scope: scope))
+            }
+            nextStates[stateIndex].entries.append(
+                Self.learningMemoryEntryWithInitialRevision(
+                    entry,
+                    revision: max(nextStates[stateIndex].revision, 1)
+                )
+            )
+            nextStates[stateIndex].revision = max(nextStates[stateIndex].revision, 1)
+        }
+
+        for state in learningMemoryStates {
+            if stateIndexByScope[state.scope] == nil {
+                stateIndexByScope[state.scope] = nextStates.count
+                nextStates.append(
+                    ScopedLearningMemoryState(
+                        scope: state.scope,
+                        revision: state.revision
+                    )
+                )
+            } else if let index = stateIndexByScope[state.scope] {
+                nextStates[index].revision = max(nextStates[index].revision, state.revision)
+            }
+            for entry in state.entries {
+                append(entry, to: state.scope)
+            }
+        }
+        for entry in legacyLearningMemoryEntries {
+            append(entry, to: learningMemoryScope(forLegacySessionID: entry.sessionID))
+        }
+        if let globalIndex = stateIndexByScope[.global] {
+            nextStates[globalIndex].revision = max(
+                nextStates[globalIndex].revision,
+                legacyLearningMemoryRevision
+            )
+        }
+
+        learningMemoryStates = nextStates
+        learningMemoryScopeMigrationVersion = 1
+        return true
+    }
+
+    @discardableResult
+    private func sanitizeLearningMemoryStates() -> Bool {
+        let previous = learningMemoryStates
+        var nextStates: [ScopedLearningMemoryState] = []
+        var stateIndexByScope: [LearningMemoryScope: Int] = [:]
+        var seenMemoryIDs = Set<UUID>()
+
+        for state in learningMemoryStates {
+            let stateIndex: Int
+            if let existingIndex = stateIndexByScope[state.scope] {
+                stateIndex = existingIndex
+            } else {
+                stateIndex = nextStates.count
+                stateIndexByScope[state.scope] = stateIndex
+                nextStates.append(
+                    ScopedLearningMemoryState(
+                        scope: state.scope,
+                        revision: state.revision
+                    )
+                )
+            }
+            nextStates[stateIndex].revision = max(nextStates[stateIndex].revision, state.revision)
+            for entry in state.entries where seenMemoryIDs.insert(entry.id).inserted {
+                nextStates[stateIndex].entries.append(
+                    Self.learningMemoryEntryWithInitialRevision(
+                        entry,
+                        revision: max(nextStates[stateIndex].revision, 1)
+                    )
+                )
+            }
+        }
+
+        learningMemoryStates = nextStates
+        return learningMemoryStates != previous
+    }
+
+    private static func learningMemoryEntryWithInitialRevision(
+        _ entry: LearningMemoryEntry,
+        revision: UInt64
+    ) -> LearningMemoryEntry {
+        guard entry.revisions?.isEmpty != false else { return entry }
+        var migrated = entry
+        migrated.revisions = [
+            LearningMemoryRevisionRecord(
+                revision: revision,
+                kind: entry.kind,
+                text: entry.text,
+                evidence: entry.evidence,
+                origin: entry.origin,
+                status: entry.status,
+                sessionID: entry.sessionID,
+                messageID: entry.messageID,
+                resolutionEvidence: entry.resolutionEvidence,
+                actor: .migration,
+                recordedAt: entry.updatedAt
+            ),
+        ]
+        return migrated
+    }
+
+    private func learningMemoryScope(forLegacySessionID sessionID: UUID?) -> LearningMemoryScope {
+        guard let sessionID,
+              let session = studySessions.first(where: { $0.id == sessionID }),
+              session.scopeNeedsReview == false,
+              let courseID = session.courseID else {
+            return .global
+        }
+        return .course(courseID)
+    }
+
+    func learningMemoryScope(courseID: UUID?) -> LearningMemoryScope {
+        courseID.map(LearningMemoryScope.course) ?? .global
+    }
+
+    func learningMemoryEntries(in scope: LearningMemoryScope) -> [LearningMemoryEntry] {
+        learningMemoryStates.first(where: { $0.scope == scope })?.entries ?? []
+    }
+
+    func orderedLearningMemoryEntries(in scope: LearningMemoryScope) -> [LearningMemoryEntry] {
+        learningMemoryEntries(in: scope).sorted { $0.updatedAt > $1.updatedAt }
+    }
+
+    func learningMemoryRevision(in scope: LearningMemoryScope) -> UInt64 {
+        learningMemoryStates.first(where: { $0.scope == scope })?.revision ?? 0
+    }
+
+    private func learningMemoryStateIndex(
+        for scope: LearningMemoryScope,
+        createIfMissing: Bool
+    ) -> Int? {
+        if let index = learningMemoryStates.firstIndex(where: { $0.scope == scope }) {
+            return index
+        }
+        guard createIfMissing else { return nil }
+        learningMemoryStates.append(ScopedLearningMemoryState(scope: scope))
+        return learningMemoryStates.indices.last
+    }
+
     private func nextCourseColorIndex() -> Int {
         let used = Set(courses.map(\.colorIndex))
         return (0..<8).first(where: { !used.contains($0) }) ?? (courses.count % 8)
@@ -12510,8 +12654,11 @@ final class WorkspaceStore: ObservableObject {
             )
     }
 
-    private func makeLearningContext() -> StudyAgentLearningContext {
-        let session = activeStudySession.map { session in
+    private func makeLearningContext(
+        target: AgentConversationTarget
+    ) -> StudyAgentLearningContext {
+        let targetSession = studySessions.first { $0.id == target.sessionID }
+        let session = targetSession.map { session in
             StudyAgentSessionSnapshot(
                 id: session.id.uuidString.lowercased(),
                 title: session.title,
@@ -12523,12 +12670,21 @@ final class WorkspaceStore: ObservableObject {
                 turnCount: session.messages.count
             )
         }
+        let scope = learningMemoryScope(courseID: target.courseID)
         return StudyAgentLearningContext(
-            memoryRevision: learningMemoryRevision,
-            lastLocation: lastStudyLocation,
-            memories: learningMemoryEntries,
+            memoryRevision: learningMemoryRevision(in: scope),
+            lastLocation: lastStudyLocation(in: target.courseID),
+            memories: Array(orderedLearningMemoryEntries(in: scope).prefix(200)),
             session: session
         )
+    }
+
+    private func lastStudyLocation(in courseID: UUID?) -> StudyLocation? {
+        guard let courseID else { return lastStudyLocation }
+        let itemIDs = Set(courseItems(in: courseID).map(\.id))
+        return studyLocationsByItemID.values
+            .filter { itemIDs.contains($0.itemID) }
+            .max { $0.lastStudiedAt < $1.lastStudiedAt }
     }
 
     private func sessionContinuitySummary(for session: StudySession) -> String {
@@ -12560,17 +12716,22 @@ final class WorkspaceStore: ObservableObject {
         expectedContextRevision: String,
         expectedMemoryRevision: UInt64,
         expectedUserQuestion: String,
-        sessionID: UUID
+        target: AgentConversationTarget,
+        messageID: UUID
     ) -> AgentReplyMemoryUpdate? {
-        if activeStudySessionID == sessionID {
+        if activeStudySessionID == target.sessionID {
             latestAgentLearningUpdate = nil
         }
+        let scope = learningMemoryScope(courseID: target.courseID)
         guard let update,
               update.contextRevision == expectedContextRevision,
               update.memoryRevision == expectedMemoryRevision,
-              learningMemoryRevision == expectedMemoryRevision else { return nil }
+              learningMemoryRevision(in: scope) == expectedMemoryRevision else { return nil }
 
-        var changed = false
+        var memoryEntries = learningMemoryEntries(in: scope)
+        let nextMemoryRevision = expectedMemoryRevision &+ 1
+        var sessionChanged = false
+        var memoryChanged = false
         var changedMemoryIDs: [UUID] = []
         let now = Date()
         for proposed in update.entries.prefix(12) {
@@ -12589,55 +12750,69 @@ final class WorkspaceStore: ObservableObject {
                 continue
             }
             let normalized = Self.normalizedMemoryText(text)
-            if let index = learningMemoryEntries.firstIndex(where: {
+            if let index = memoryEntries.firstIndex(where: {
                 $0.kind == proposed.kind
                     && $0.status == .active
                     && Self.normalizedMemoryText($0.text) == normalized
                     && (
                         $0.origin == .userStatement
                             || proposed.origin == .userStatement
-                            || $0.sessionID == sessionID
+                            || $0.sessionID == target.sessionID
                     )
             }) {
-                if learningMemoryEntries[index].origin == .userStatement,
+                if memoryEntries[index].origin == .userStatement,
                    proposed.origin != .userStatement {
                     continue
                 }
-                learningMemoryEntries[index].text = String(text.prefix(500))
-                learningMemoryEntries[index].evidence = String(evidence.prefix(400))
+                memoryEntries[index].text = String(text.prefix(500))
+                memoryEntries[index].evidence = String(evidence.prefix(400))
                 if proposed.origin == .userStatement {
-                    learningMemoryEntries[index].origin = .userStatement
-                    learningMemoryEntries[index].sessionID = sessionID
+                    memoryEntries[index].origin = .userStatement
                 }
-                learningMemoryEntries[index].updatedAt = now
-                changedMemoryIDs.append(learningMemoryEntries[index].id)
-                changed = true
+                memoryEntries[index].sessionID = target.sessionID
+                memoryEntries[index].messageID = messageID
+                memoryEntries[index].updatedAt = now
+                Self.appendLearningMemoryRevision(
+                    to: &memoryEntries[index],
+                    revision: nextMemoryRevision,
+                    actor: .agent,
+                    recordedAt: now
+                )
+                changedMemoryIDs.append(memoryEntries[index].id)
+                memoryChanged = true
             } else {
-                let entry = LearningMemoryEntry(
+                var entry = LearningMemoryEntry(
                     kind: proposed.kind,
                     text: String(text.prefix(500)),
                     evidence: String(evidence.prefix(400)),
                     origin: proposed.origin == .observed ? .agentInference : proposed.origin,
-                    sessionID: sessionID,
+                    sessionID: target.sessionID,
+                    messageID: messageID,
                     createdAt: now,
                     updatedAt: now
                 )
-                learningMemoryEntries.append(entry)
+                Self.appendLearningMemoryRevision(
+                    to: &entry,
+                    revision: nextMemoryRevision,
+                    actor: .agent,
+                    recordedAt: now
+                )
+                memoryEntries.append(entry)
                 changedMemoryIDs.append(entry.id)
-                changed = true
+                memoryChanged = true
             }
         }
 
-        if let index = studySessions.firstIndex(where: { $0.id == sessionID }) {
+        if let index = studySessions.firstIndex(where: { $0.id == target.sessionID }) {
             if let summary = update.sessionSummary?.trimmingCharacters(in: .whitespacesAndNewlines),
                !summary.isEmpty {
                 studySessions[index].summary = String(summary.prefix(2_000))
-                changed = true
+                sessionChanged = true
             }
             if !studySessions[index].flow.pinnedByUser,
                let phase = update.suggestedPhase {
                 studySessions[index].flow.phase = phase
-                changed = true
+                sessionChanged = true
             }
             let next = update.suggestedNext
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
@@ -12646,19 +12821,18 @@ final class WorkspaceStore: ObservableObject {
                 .map { String($0.prefix(300)) }
             if !next.isEmpty {
                 studySessions[index].flow.suggestedNext = next
-                changed = true
+                sessionChanged = true
             }
-            studySessions[index].updatedAt = now
+            if sessionChanged {
+                studySessions[index].updatedAt = now
+            }
         }
 
-        if learningMemoryEntries.count > 200 {
-            learningMemoryEntries = Array(
-                learningMemoryEntries
-                    .sorted { $0.updatedAt > $1.updatedAt }
-                    .prefix(200)
-            )
+        if memoryChanged,
+           let stateIndex = learningMemoryStateIndex(for: scope, createIfMissing: true) {
+            learningMemoryStates[stateIndex].entries = memoryEntries
+            learningMemoryStates[stateIndex].revision = nextMemoryRevision
         }
-        if changed { learningMemoryRevision &+= 1 }
         var acceptedUpdate = update
         acceptedUpdate.resolutions = update.resolutions.prefix(12).filter { resolution in
             guard StudyAgentCurrentTurnEvidence.matches(
@@ -12666,19 +12840,19 @@ final class WorkspaceStore: ObservableObject {
                 question: expectedUserQuestion
             ),
             let memoryID = UUID(uuidString: resolution.memoryID),
-            let memory = learningMemoryEntries.first(where: { $0.id == memoryID }) else {
+            let memory = memoryEntries.first(where: { $0.id == memoryID }) else {
                 return false
             }
             return memory.status == .active
                 && (memory.kind == .goal || memory.kind == .confusion || memory.kind == .nextStep)
         }
-        if activeStudySessionID == sessionID {
+        if activeStudySessionID == target.sessionID {
             latestAgentLearningUpdate = acceptedUpdate
             latestAgentLearningUpdateQuestion = expectedUserQuestion
         }
-        guard changed else { return nil }
+        guard memoryChanged else { return nil }
         let summary = changedMemoryIDs.compactMap { id in
-            learningMemoryEntries.first(where: { $0.id == id })?.text
+            memoryEntries.first(where: { $0.id == id })?.text
         }.prefix(3).joined(separator: "；")
         return AgentReplyMemoryUpdate(
             memoryIDs: changedMemoryIDs,
@@ -12688,62 +12862,155 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
-    func isLearningMemoryResolved(_ memoryID: String) -> Bool {
-        guard let id = UUID(uuidString: memoryID) else { return false }
-        return learningMemoryEntries.first(where: { $0.id == id })?.status == .resolved
+    private static func appendLearningMemoryRevision(
+        to entry: inout LearningMemoryEntry,
+        revision: UInt64,
+        actor: LearningMemoryRevisionActor,
+        recordedAt: Date
+    ) {
+        var revisions = entry.revisions ?? []
+        revisions.append(
+            LearningMemoryRevisionRecord(
+                revision: revision,
+                kind: entry.kind,
+                text: entry.text,
+                evidence: entry.evidence,
+                origin: entry.origin,
+                status: entry.status,
+                sessionID: entry.sessionID,
+                messageID: entry.messageID,
+                resolutionEvidence: entry.resolutionEvidence,
+                actor: actor,
+                recordedAt: recordedAt
+            )
+        )
+        entry.revisions = revisions
     }
 
-    func confirmLearningMemoryResolution(_ resolution: StudyAgentMemoryResolution) {
+    func isLearningMemoryResolved(
+        _ memoryID: String,
+        in scope: LearningMemoryScope
+    ) -> Bool {
+        guard let id = UUID(uuidString: memoryID) else { return false }
+        return learningMemoryEntries(in: scope)
+            .first(where: { $0.id == id })?
+            .status == .resolved
+    }
+
+    func confirmLearningMemoryResolution(
+        _ resolution: StudyAgentMemoryResolution,
+        in scope: LearningMemoryScope
+    ) {
         guard latestAgentLearningUpdate?.resolutions.contains(resolution) == true,
               let question = latestAgentLearningUpdateQuestion,
               StudyAgentCurrentTurnEvidence.matches(resolution.evidence, question: question),
-              let memoryID = UUID(uuidString: resolution.memoryID),
-              let index = learningMemoryEntries.firstIndex(where: {
+              let memoryID = UUID(uuidString: resolution.memoryID) else { return }
+        setLearningMemoryStatus(
+            memoryID,
+            in: scope,
+            status: .resolved,
+            resolutionEvidence: String(resolution.evidence.prefix(400))
+        )
+    }
+
+    func updateLearningMemory(
+        _ memoryID: UUID,
+        in scope: LearningMemoryScope,
+        kind: LearningMemoryKind,
+        text rawText: String
+    ) -> Bool {
+        let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty,
+              let stateIndex = learningMemoryStateIndex(for: scope, createIfMissing: false),
+              let entryIndex = learningMemoryStates[stateIndex].entries.firstIndex(where: {
                   $0.id == memoryID
-                      && $0.status == .active
-                      && ($0.kind == .goal || $0.kind == .confusion || $0.kind == .nextStep)
+              }) else {
+            return false
+        }
+        var entry = learningMemoryStates[stateIndex].entries[entryIndex]
+        let boundedText = String(text.prefix(500))
+        guard entry.kind != kind || entry.text != boundedText else { return true }
+        let now = Date()
+        let revision = learningMemoryStates[stateIndex].revision &+ 1
+        entry.kind = kind
+        entry.text = boundedText
+        entry.evidence = "[用户：界面修改]"
+        entry.origin = .userStatement
+        entry.sessionID = nil
+        entry.messageID = nil
+        entry.updatedAt = now
+        Self.appendLearningMemoryRevision(
+            to: &entry,
+            revision: revision,
+            actor: .user,
+            recordedAt: now
+        )
+        learningMemoryStates[stateIndex].entries[entryIndex] = entry
+        learningMemoryStates[stateIndex].revision = revision
+        invalidateAgentContext()
+        return save()
+    }
+
+    func resolveLearningMemory(
+        _ memoryID: UUID,
+        in scope: LearningMemoryScope
+    ) {
+        setLearningMemoryStatus(
+            memoryID,
+            in: scope,
+            status: .resolved,
+            resolutionEvidence: "[用户：界面确认]"
+        )
+    }
+
+    func restoreLearningMemory(
+        _ memoryID: UUID,
+        in scope: LearningMemoryScope
+    ) {
+        setLearningMemoryStatus(
+            memoryID,
+            in: scope,
+            status: .active,
+            resolutionEvidence: nil
+        )
+    }
+
+    private func setLearningMemoryStatus(
+        _ memoryID: UUID,
+        in scope: LearningMemoryScope,
+        status: LearningMemoryStatus,
+        resolutionEvidence: String?
+    ) {
+        guard let stateIndex = learningMemoryStateIndex(for: scope, createIfMissing: false),
+              let entryIndex = learningMemoryStates[stateIndex].entries.firstIndex(where: {
+                  $0.id == memoryID && $0.status != status
               }) else { return }
         let now = Date()
-        learningMemoryEntries[index].status = .resolved
-        learningMemoryEntries[index].resolvedAt = now
-        learningMemoryEntries[index].resolutionEvidence = String(resolution.evidence.prefix(400))
-        learningMemoryEntries[index].updatedAt = now
-        learningMemoryRevision &+= 1
+        let revision = learningMemoryStates[stateIndex].revision &+ 1
+        var entry = learningMemoryStates[stateIndex].entries[entryIndex]
+        entry.status = status
+        entry.resolvedAt = status == .resolved ? now : nil
+        entry.resolutionEvidence = resolutionEvidence
+        entry.updatedAt = now
+        Self.appendLearningMemoryRevision(
+            to: &entry,
+            revision: revision,
+            actor: .user,
+            recordedAt: now
+        )
+        learningMemoryStates[stateIndex].entries[entryIndex] = entry
+        learningMemoryStates[stateIndex].revision = revision
+        invalidateAgentContext()
         save()
     }
 
-    func resolveLearningMemory(_ memoryID: UUID) {
-        guard let index = learningMemoryEntries.firstIndex(where: {
-            $0.id == memoryID
-                && $0.status == .active
-                && ($0.kind == .goal || $0.kind == .confusion || $0.kind == .nextStep)
-        }) else { return }
-        let now = Date()
-        learningMemoryEntries[index].status = .resolved
-        learningMemoryEntries[index].resolvedAt = now
-        learningMemoryEntries[index].resolutionEvidence = "[用户：界面确认]"
-        learningMemoryEntries[index].updatedAt = now
-        learningMemoryRevision &+= 1
-        save()
-    }
-
-    func restoreLearningMemory(_ memoryID: UUID) {
-        guard let index = learningMemoryEntries.firstIndex(where: {
-            $0.id == memoryID && $0.status == .resolved
-        }) else { return }
-        let now = Date()
-        learningMemoryEntries[index].status = .active
-        learningMemoryEntries[index].resolvedAt = nil
-        learningMemoryEntries[index].resolutionEvidence = nil
-        learningMemoryEntries[index].updatedAt = now
-        learningMemoryRevision &+= 1
-        save()
-    }
-
-    func restoreLearningMemoryResolution(_ resolution: StudyAgentMemoryResolution) {
+    func restoreLearningMemoryResolution(
+        _ resolution: StudyAgentMemoryResolution,
+        in scope: LearningMemoryScope
+    ) {
         guard latestAgentLearningUpdate?.resolutions.contains(resolution) == true,
               let memoryID = UUID(uuidString: resolution.memoryID) else { return }
-        restoreLearningMemory(memoryID)
+        restoreLearningMemory(memoryID, in: scope)
     }
 
     private static func normalizedMemoryText(_ text: String) -> String {
@@ -13659,22 +13926,31 @@ final class WorkspaceStore: ObservableObject {
         studySessions = [activeSession, emptySession]
         activeStudySessionID = activeSession.id
         messages = activeSession.messages
-        learningMemoryEntries = [
-            LearningMemoryEntry(
-                kind: .confusion,
-                text: "仍不确定通货膨胀预期如何传导到名义利率。",
-                evidence: "用户在当前会话中明确提出",
-                origin: .userStatement,
-                sessionID: activeSession.id
-            ),
-            LearningMemoryEntry(
-                kind: .nextStep,
-                text: "完成名义利率与实际利率的对照例题。",
-                evidence: "当前会话建议",
-                origin: .agentInference,
-                sessionID: activeSession.id
+        learningMemoryStates = [
+            ScopedLearningMemoryState(
+                scope: .course(courseA.id),
+                revision: 1,
+                entries: [
+                    LearningMemoryEntry(
+                        kind: .confusion,
+                        text: "仍不确定通货膨胀预期如何传导到名义利率。",
+                        evidence: "用户在当前会话中明确提出",
+                        origin: .userStatement,
+                        sessionID: activeSession.id
+                    ),
+                    LearningMemoryEntry(
+                        kind: .nextStep,
+                        text: "完成名义利率与实际利率的对照例题。",
+                        evidence: "当前会话建议",
+                        origin: .agentInference,
+                        sessionID: activeSession.id
+                    ),
+                ].map {
+                    Self.learningMemoryEntryWithInitialRevision($0, revision: 1)
+                }
             ),
         ]
+        learningMemoryScopeMigrationVersion = 1
         layout = .documentAgentNotes
         showLibrary = false
         showReader = true
@@ -13974,7 +14250,7 @@ final class WorkspaceStore: ObservableObject {
                 noteSourceLinks: $0.noteSourceLinks ?? [],
                 studyLocationsByItemID: $0.studyLocationsByItemID ?? [:],
                 studySessions: $0.studySessions ?? [],
-                learningMemoryEntries: $0.learningMemoryEntries ?? []
+                learningMemoryEntries: ($0.learningMemoryStates ?? []).flatMap(\.entries)
             )
         }
         let persistencePassed = diskRelations.sourceIDs(for: noteA.id) == [materialA.id]
@@ -15715,7 +15991,8 @@ final class WorkspaceStore: ObservableObject {
             : sentNoteItem.map(displayTitle)
         let requestID = UUID()
         let requestWorkspaceRevision = agentContextRevision
-        let requestMemoryRevision = learningMemoryRevision
+        let requestMemoryScope = learningMemoryScope(courseID: target.courseID)
+        let requestMemoryRevision = learningMemoryRevision(in: requestMemoryScope)
         let sentMaterialTitle = sentMaterialItem == nil
             ? ui("未选择材料", "No material selected")
             : currentSourceReferenceTitle
@@ -15727,7 +16004,7 @@ final class WorkspaceStore: ObservableObject {
             projectAccess.sources.first(where: { $0.item.id == note.id })?.memoryText
         } ?? ""
         let sentNoteItemID = sentNoteItem?.id
-        let sentLearningContext = makeLearningContext()
+        let sentLearningContext = makeLearningContext(target: target)
         let sentVisualAssets = await currentVisualAssetsForAgent(access: projectAccess)
         defer { Self.removeAgentVisualSnapshots(sentVisualAssets) }
         let sentLanguage = interfaceLanguage
@@ -15900,7 +16177,8 @@ final class WorkspaceStore: ObservableObject {
                 expectedContextRevision: request.contextRevision,
                 expectedMemoryRevision: requestMemoryRevision,
                 expectedUserQuestion: request.question,
-                sessionID: target.sessionID
+                target: target,
+                messageID: assistantMessage.id
             )
             if activeStudySessionID == target.sessionID {
                 lastAgentReplyContextRevision = requestWorkspaceRevision
@@ -18658,8 +18936,10 @@ final class WorkspaceStore: ObservableObject {
         noteSourceLinks = snapshot.noteSourceLinks ?? []
         noteSourceLinksMigrationVersion = snapshot.noteSourceLinksMigrationVersion ?? 0
         studyLocationsByItemID = snapshot.studyLocationsByItemID ?? [:]
-        learningMemoryEntries = snapshot.learningMemoryEntries ?? []
-        learningMemoryRevision = snapshot.learningMemoryRevision ?? 0
+        learningMemoryStates = snapshot.learningMemoryStates ?? []
+        learningMemoryScopeMigrationVersion = snapshot.learningMemoryScopeMigrationVersion ?? 0
+        legacyLearningMemoryEntries = snapshot.learningMemoryEntries ?? []
+        legacyLearningMemoryRevision = snapshot.learningMemoryRevision ?? 0
         studySessions = (snapshot.studySessions ?? []).map { session in
             var bounded = session
             if bounded.messages.count > 500 {
@@ -18828,8 +19108,8 @@ final class WorkspaceStore: ObservableObject {
                 noteSourceLinks: noteSourceLinks,
                 noteSourceLinksMigrationVersion: noteSourceLinksMigrationVersion,
                 studyLocationsByItemID: studyLocationsByItemID,
-                learningMemoryEntries: learningMemoryEntries,
-                learningMemoryRevision: learningMemoryRevision,
+                learningMemoryStates: learningMemoryStates,
+                learningMemoryScopeMigrationVersion: learningMemoryScopeMigrationVersion,
                 studySessions: studySessions,
                 studySessionScopeMigrationVersion: studySessionScopeMigrationVersion,
                 activeStudySessionID: activeStudySessionID,
