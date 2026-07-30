@@ -246,28 +246,18 @@ enum RichAnswerVerificationFixture {
         let constraintScene = scene(.constraint)
         let conceptRows = constraintScene.ui?.datasets.first(where: { $0.id == "allocation-concept" })?.rows ?? []
         let practiceRows = constraintScene.ui?.datasets.first(where: { $0.id == "allocation-practice" })?.rows ?? []
-        let stateRows = constraintScene.ui?.datasets.first(where: { $0.id == "allocation-states" })?.rows ?? []
-        let stateControl = constraintScene.ui?.nodes.first(where: { $0.id == "allocation-state-control" })
-        let stateValues = Set(stateRows.compactMap(\.value))
         let satisfiesFixedTotal = conceptRows.allSatisfy { concept in
             practiceRows.contains { practice in
                 practice.value == concept.value
                     && abs((concept.result ?? 0) + (practice.result ?? 0) - 60) < 0.001
             }
         }
-        let discreteStatesDriveEveryBar = stateControl?.role == .sequence
-            && stateControl?.bindingID == "allocation-concept-time"
-            && stateControl?.datasetID == "allocation-states"
-            && stateRows.count == 5
-            && Set(conceptRows.compactMap(\.value)) == stateValues
-            && Set(practiceRows.compactMap(\.value)) == stateValues
         precondition(
             constraintScene.family == .calculationAndConstraints
                 && !conceptRows.isEmpty
                 && conceptRows.count == practiceRows.count
-                && satisfiesFixedTotal
-                && discreteStatesDriveEveryBar,
-            "约束计算素材必须由离散状态驱动两根柱，并在每个状态保持两项总和为 60"
+                && satisfiesFixedTotal,
+            "约束计算素材必须在每个可选状态保持两项总和为 60"
         )
     }()
 
@@ -878,7 +868,7 @@ enum RichAnswerVerificationFixture {
         family: .calculationAndConstraints,
         evidenceID: "allocation-source",
         nodes: [
-            RichAnswerUINode(id: "allocation-root", role: .vstack, children: ["allocation-head", "allocation-metrics", "allocation-canvas", "allocation-state-control", "allocation-source"], spacing: .regular),
+            RichAnswerUINode(id: "allocation-root", role: .vstack, children: ["allocation-head", "allocation-metrics", "allocation-canvas", "allocation-slider", "allocation-source"], spacing: .regular),
             RichAnswerUINode(id: "allocation-head", role: .text, label: "约束 · 总计 60 分钟", text: "调整概念理解时间，练习时间自动补足；两项之和始终保持 60 分钟。", evidenceIDs: ["allocation-source"], tone: .accent, emphasis: .strong),
             RichAnswerUINode(id: "allocation-metrics", role: .hstack, children: ["allocation-concept-metric", "allocation-practice-metric", "allocation-total"], spacing: .loose),
             RichAnswerUINode(id: "allocation-concept-metric", role: .metric, label: "概念理解", unit: "分钟", datasetID: "allocation-concept", bindingID: "allocation-concept-time", evidenceIDs: ["allocation-source"], tone: .accent, emphasis: .strong),
@@ -887,7 +877,7 @@ enum RichAnswerVerificationFixture {
             RichAnswerUINode(id: "allocation-canvas", role: .canvas, children: ["allocation-concept-bar", "allocation-practice-bar"], label: "时间分配", yAxis: RichAnswerAxis(label: "分钟", minimum: 0, maximum: 60, unit: "分钟"), size: .compact),
             RichAnswerUINode(id: "allocation-concept-bar", role: .bar, label: "概念理解", datasetID: "allocation-concept", bindingID: "allocation-concept-time", evidenceIDs: ["allocation-source"], fill: .solid, tone: .accent, emphasis: .strong),
             RichAnswerUINode(id: "allocation-practice-bar", role: .bar, label: "练习", datasetID: "allocation-practice", bindingID: "allocation-concept-time", evidenceIDs: ["allocation-source"], fill: .solid, tone: .positive, emphasis: .strong),
-            RichAnswerUINode(id: "allocation-state-control", role: .sequence, label: "选择分配方案", datasetID: "allocation-states", bindingID: "allocation-concept-time", evidenceIDs: ["allocation-source"], tone: .accent),
+            RichAnswerUINode(id: "allocation-slider", role: .slider, label: "概念理解时间", bindingID: "allocation-concept-time"),
             RichAnswerUINode(id: "allocation-source", role: .evidence, evidenceIDs: ["allocation-source"]),
         ],
         datasets: [
@@ -904,13 +894,6 @@ enum RichAnswerVerificationFixture {
                 RichAnswerUIDataRow(id: "allocation-practice-30", x: 0.70, y: 30.0 / 60.0, value: 30, result: 30, label: "练习 30 分钟", evidenceIDs: ["allocation-source"]),
                 RichAnswerUIDataRow(id: "allocation-practice-40", x: 0.70, y: 20.0 / 60.0, value: 40, result: 20, label: "练习 20 分钟", evidenceIDs: ["allocation-source"]),
                 RichAnswerUIDataRow(id: "allocation-practice-50", x: 0.70, y: 10.0 / 60.0, value: 50, result: 10, label: "练习 10 分钟", evidenceIDs: ["allocation-source"]),
-            ]),
-            RichAnswerUIDataset(id: "allocation-states", rows: [
-                RichAnswerUIDataRow(id: "allocation-state-10", x: 0.10, y: 0.50, value: 10, label: "10 / 50", evidenceIDs: ["allocation-source"]),
-                RichAnswerUIDataRow(id: "allocation-state-20", x: 0.30, y: 0.50, value: 20, label: "20 / 40", evidenceIDs: ["allocation-source"]),
-                RichAnswerUIDataRow(id: "allocation-state-30", x: 0.50, y: 0.50, value: 30, label: "30 / 30", evidenceIDs: ["allocation-source"]),
-                RichAnswerUIDataRow(id: "allocation-state-40", x: 0.70, y: 0.50, value: 40, label: "40 / 20", evidenceIDs: ["allocation-source"]),
-                RichAnswerUIDataRow(id: "allocation-state-50", x: 0.90, y: 0.50, value: 50, label: "50 / 10", evidenceIDs: ["allocation-source"]),
             ]),
         ],
         bindings: [
