@@ -254,9 +254,9 @@ struct WeiBeiApp: App {
                     }
                     .keyboardShortcut("f")
                 }
-                if store.isAskingAgent || !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if store.isAgentRunningInActiveChat || !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Button(store.sendAgentActionTitle) {
-                        store.isAskingAgent ? store.cancelAgentRequest() : store.askAgent()
+                        store.submitAgentDraft()
                     }
                         .keyboardShortcut(.return, modifiers: [.command])
                 }

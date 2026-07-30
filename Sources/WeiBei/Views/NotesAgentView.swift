@@ -263,11 +263,12 @@ private struct AgentComposerField: View {
     var submit: () -> Void
 
     private var canSend: Bool {
-        !store.isAskingAgent && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !store.isStoppingAgent
+            && !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private var showsControl: Bool {
-        store.isAskingAgent || canSend
+        store.isAgentRunningInActiveChat || canSend
     }
 
     private var isWideComposer: Bool { maxHeight != nil || showsModelFooter }
@@ -351,13 +352,13 @@ private struct AgentComposerField: View {
 
     private var sendButton: some View {
         Button {
-            store.isAskingAgent ? store.cancelAgentRequest() : submit()
+            store.isAgentRunningInActiveChat ? store.cancelAgentRequest() : submit()
         } label: {
-            Image(systemName: store.isAskingAgent ? "stop.fill" : "paperplane.fill")
+            Image(systemName: store.isAgentRunningInActiveChat ? "stop.fill" : "paperplane.fill")
         }
-        .buttonStyle(WeiBeiIconButtonStyle(size: sendButtonSize, prominence: store.isAskingAgent ? .neutral : .primary))
-        .accessibilityLabel(Text(store.isAskingAgent ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send")))
-        .help(store.isAskingAgent ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send"))
+        .buttonStyle(WeiBeiIconButtonStyle(size: sendButtonSize, prominence: store.isAgentRunningInActiveChat ? .neutral : .primary))
+        .accessibilityLabel(Text(store.isAgentRunningInActiveChat ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send")))
+        .help(store.isAgentRunningInActiveChat ? store.ui("停止回答", "Stop response") : store.ui("发送", "Send"))
         .keyboardShortcut(.return, modifiers: [.command])
         .transition(WeiBeiTransition.floating)
         .animation(WeiBeiMotion.micro, value: showsControl)
@@ -1748,7 +1749,7 @@ struct AgentPaneView: View {
                                     wide: wide
                                 )
                             }
-                            if store.isAskingAgent
+                            if store.isAgentRunningInActiveChat
                                 && !store.hasPersistedGeneratingAgentReply
                                 && !store.agentStreamingText.isEmpty {
                                 agentReadingColumn(
@@ -1762,7 +1763,7 @@ struct AgentPaneView: View {
                                 .id("agent-streaming-response")
                                 .transition(WeiBeiTransition.message)
                             }
-                            if store.isAskingAgent
+                            if store.isAgentRunningInActiveChat
                                 && !store.hasPersistedGeneratingAgentReply
                                 && store.agentStreamingText.isEmpty {
                                 agentReadingColumn(
@@ -1776,7 +1777,7 @@ struct AgentPaneView: View {
                                 .id("agent-thinking")
                                 .transition(WeiBeiTransition.message)
                             }
-                            if store.messages.isEmpty && !(store.isAskingAgent && store.agentStreamingText.isEmpty) {
+                            if store.messages.isEmpty && !(store.isAgentRunningInActiveChat && store.agentStreamingText.isEmpty) {
                                 emptyAgentState
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .transition(WeiBeiTransition.message)
@@ -2105,7 +2106,7 @@ struct AgentPaneView: View {
                     verticalPadding: wide ? 12 : 8,
                     showsModelFooter: wide
                 ) {
-                    store.askAgent()
+                    store.submitAgentDraft()
                 }
             }
             .font(.system(size: fontSize))
@@ -2215,7 +2216,7 @@ struct AgentPaneView: View {
         withAnimation(WeiBeiMotion.panel) {
             store.agentDraft = prompt
         }
-        store.askAgent()
+        store.submitAgentDraft()
     }
 
     /// Compact catalog for immersive hover tab + pane header.
@@ -2698,7 +2699,7 @@ struct FloatingSelectionAgentView: View {
         .scaleEffect(showsExpandedBody ? 1 : 0.985)
         .animation(WeiBeiMotion.panel, value: expanded)
         .animation(WeiBeiMotion.panel, value: store.pinnedFloatingAgent)
-        .animation(WeiBeiMotion.panel, value: store.isAskingAgent)
+        .animation(WeiBeiMotion.panel, value: store.isAgentRunningInActiveChat)
         .offset(x: dragOffset.width + settledOffset.width, y: dragOffset.height + settledOffset.height)
         .gesture(
             DragGesture()
@@ -2717,7 +2718,7 @@ struct FloatingSelectionAgentView: View {
                 }
         )
         .onChange(of: store.selectionContext) { previous, next in
-            guard !store.pinnedFloatingAgent, !store.isAskingAgent else { return }
+            guard !store.pinnedFloatingAgent, !store.isAgentRunningInActiveChat else { return }
             let sameContent = previous?.text == next?.text
                 && previous?.source == next?.source
                 && previous?.ownerTitle == next?.ownerTitle
@@ -2760,7 +2761,7 @@ struct FloatingSelectionAgentView: View {
                 }
             }
         }
-        .onChange(of: store.isAskingAgent) { _, asking in
+        .onChange(of: store.isAgentRunningInActiveChat) { _, asking in
             if asking {
                 withAnimation(WeiBeiMotion.panel) { expanded = true }
             }
@@ -2770,7 +2771,7 @@ struct FloatingSelectionAgentView: View {
         }
         .onAppear {
             draftFocused = store.focusedPane == .agent
-            if store.pinnedFloatingAgent || store.isAskingAgent || store.keepFloatingSelectionForAnswer {
+            if store.pinnedFloatingAgent || store.isAgentRunningInActiveChat || store.keepFloatingSelectionForAnswer {
                 expanded = true
             }
         }
@@ -2781,7 +2782,7 @@ struct FloatingSelectionAgentView: View {
 
     private var showsExpandedBody: Bool {
         // Capsule for bare selection; expand for 问 / pin / stream / 红线回访(keepOpen).
-        expanded || store.pinnedFloatingAgent || store.isAskingAgent || store.keepFloatingSelectionForAnswer
+        expanded || store.pinnedFloatingAgent || store.isAgentRunningInActiveChat || store.keepFloatingSelectionForAnswer
     }
 
     private var promptBody: some View {
@@ -2899,7 +2900,7 @@ struct FloatingSelectionAgentView: View {
             ScrollView(showsIndicators: false) {
                 // Same order as immersive chat: messages → streaming → thinking.
                 LazyVStack(alignment: .leading, spacing: 12) {
-                    if visibleFloatingMessages.isEmpty && !(store.isAskingAgent && store.agentStreamingText.isEmpty) {
+                    if visibleFloatingMessages.isEmpty && !(store.isAgentRunningInActiveChat && store.agentStreamingText.isEmpty) {
                         Text(store.ui("写下问题后发送，回答会出现在这里。", "Write a question and send — the reply appears here."))
                             .font(.system(size: 12))
                             .foregroundStyle(WeiBeiTheme.tertiaryInk)
@@ -2924,14 +2925,14 @@ struct FloatingSelectionAgentView: View {
                         }
                     }
 
-                    if store.isAskingAgent
+                    if store.isAgentRunningInActiveChat
                         && !store.hasPersistedGeneratingAgentReply
                         && !store.agentStreamingText.isEmpty {
                         floatStreamingBubble(text: store.agentStreamingText)
                             .id("selection-float-streaming")
                     }
 
-                    if store.isAskingAgent
+                    if store.isAgentRunningInActiveChat
                         && !store.hasPersistedGeneratingAgentReply
                         && store.agentStreamingText.isEmpty {
                         AgentThinkingIndicator()
@@ -3084,7 +3085,7 @@ struct FloatingSelectionAgentView: View {
     }
 
     private var floatingFeedHeight: CGFloat {
-        if store.isAskingAgent { return 160 }
+        if store.isAgentRunningInActiveChat { return 160 }
         if visibleFloatingMessages.isEmpty { return 88 }
         switch visibleFloatingMessages.count {
         case 1: return 130
@@ -3150,7 +3151,7 @@ struct FloatingSelectionAgentView: View {
     }
 
     private func sendDraft() {
-        guard !store.isAskingAgent,
+        guard !store.isStoppingAgent,
               !store.agentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         withAnimation(WeiBeiMotion.panel) {
             expanded = true
@@ -3161,7 +3162,7 @@ struct FloatingSelectionAgentView: View {
                 store.activeSelectionAskThreadID = thread.id
             }
         }
-        store.askAgent()
+        store.submitAgentDraft()
     }
 
     private func closeFloatingAgent() {
@@ -3446,11 +3447,11 @@ private struct AgentBubble: View {
     }
 
     private func submitRichAnswerAction(_ prompt: String) {
-        guard !store.isAskingAgent else { return }
+        guard !store.isStoppingAgent else { return }
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         store.agentDraft = trimmed
-        store.askAgent()
+        store.submitAgentDraft()
     }
 
     private func learningUpdateContent(_ update: StudyAgentLearningUpdate) -> some View {

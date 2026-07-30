@@ -402,6 +402,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     private var inputHandle: FileHandle?
     private var stdoutTask: Task<Void, Never>?
     private var stderrTask: Task<Void, Never>?
+    private var processGeneration: UInt64 = 0
     private var pendingCommands: [String: PendingCommand] = [:]
     private var activeRun: ActiveRun?
     private var startingRunID: UUID?
@@ -554,7 +555,15 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             throw failure
         }
 
-        return try await waitForRun(id: request.id)
+        let reply = try await waitForRun(id: request.id)
+        // PI emits agent_end before every post-turn hook is guaranteed to be flushed.
+        // An ordered state read gives those hooks a chance to finish before the
+        // process boundary prevents late events from entering the next turn.
+        _ = try? await readSessionState(binding: binding)
+        let completedProcess = process
+        shutdownProcess(reason: PiAgentRuntimeError.cancelled)
+        await forceStopIfNeeded(completedProcess, graceNanoseconds: 750_000_000)
+        return reply
     }
 
     public func cancel() async {
@@ -651,6 +660,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
         let contextURL = runtimeDirectory.appendingPathComponent("context.json")
         let process = Process()
+        processGeneration &+= 1
+        let generation = processGeneration
         let inputPipe = Pipe()
         let outputPipe = Pipe()
         let errorPipe = Pipe()
@@ -668,7 +679,13 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             sessionDirectory: binding.sessionDirectory
         )
         process.terminationHandler = { [weak self] terminated in
-            Task { await self?.processDidTerminate(pid: terminated.processIdentifier, status: terminated.terminationStatus) }
+            Task {
+                await self?.processDidTerminate(
+                    pid: terminated.processIdentifier,
+                    status: terminated.terminationStatus,
+                    generation: generation
+                )
+            }
         }
 
         stderrBuffer = ""
@@ -687,8 +704,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             throw PiAgentRuntimeError.launchFailed(error.localizedDescription)
         }
 
-        stdoutTask = readStdout(outputPipe.fileHandleForReading)
-        stderrTask = readStderr(errorPipe.fileHandleForReading)
+        stdoutTask = readStdout(outputPipe.fileHandleForReading, generation: generation)
+        stderrTask = readStderr(errorPipe.fileHandleForReading, generation: generation)
 
         do {
             let sessionState = try await readSessionState(binding: binding)
@@ -1371,7 +1388,10 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         })
     }
 
-    private func readStdout(_ handle: FileHandle) -> Task<Void, Never> {
+    private func readStdout(
+        _ handle: FileHandle,
+        generation: UInt64
+    ) -> Task<Void, Never> {
         Task.detached(priority: .userInitiated) { [weak self] in
             await self?.trace("stdout reader started")
             var framer = PiJSONLFramer()
@@ -1381,32 +1401,36 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                     if data.isEmpty { break }
                     let lines = try framer.append(data)
                     for line in lines {
-                        await self?.receiveStdoutLine(line)
+                        await self?.receiveStdoutLine(line, generation: generation)
                     }
                 }
                 _ = try framer.finish()
             } catch {
-                await self?.transportFailed(error)
+                await self?.transportFailed(error, generation: generation)
             }
         }
     }
 
-    private func readStderr(_ handle: FileHandle) -> Task<Void, Never> {
+    private func readStderr(
+        _ handle: FileHandle,
+        generation: UInt64
+    ) -> Task<Void, Never> {
         Task.detached(priority: .utility) { [weak self] in
             while !Task.isCancelled {
                 let data = handle.availableData
                 if data.isEmpty { break }
-                await self?.appendStderr(data)
+                await self?.appendStderr(data, generation: generation)
             }
         }
     }
 
-    private func receiveStdoutLine(_ line: Data) async {
+    private func receiveStdoutLine(_ line: Data, generation: UInt64) async {
+        guard generation == processGeneration else { return }
         let message: PiRPCIncomingMessage
         do {
             message = try PiRPCMessageDecoder.decode(line)
         } catch {
-            transportFailed(error)
+            transportFailed(error, generation: generation)
             return
         }
 
@@ -1414,7 +1438,10 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         case let .response(response):
             guard let id = response.id, let pending = pendingCommands.removeValue(forKey: id) else {
                 if response.command == "parse" {
-                    transportFailed(PiAgentRuntimeError.protocolFailure(response.error ?? "PI parse error"))
+                    transportFailed(
+                        PiAgentRuntimeError.protocolFailure(response.error ?? "PI parse error"),
+                        generation: generation
+                    )
                 }
                 return
             }
@@ -1874,7 +1901,8 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         shutdownProcess(reason: PiAgentRuntimeError.cancelled)
     }
 
-    private func appendStderr(_ data: Data) {
+    private func appendStderr(_ data: Data, generation: UInt64) {
+        guard generation == processGeneration else { return }
         let text = sanitizedDiagnostic(String(decoding: data, as: UTF8.self))
         stderrBuffer += text
         trace("stderr bytes=\(data.count)")
@@ -1883,12 +1911,14 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         }
     }
 
-    private func transportFailed(_ error: Error) {
+    private func transportFailed(_ error: Error, generation: UInt64) {
+        guard generation == processGeneration else { return }
         shutdownProcess(reason: PiAgentRuntimeError.protocolFailure(error.localizedDescription))
     }
 
-    private func processDidTerminate(pid: Int32, status: Int32) {
-        guard process?.processIdentifier == pid else { return }
+    private func processDidTerminate(pid: Int32, status: Int32, generation: UInt64) {
+        guard generation == processGeneration,
+              process?.processIdentifier == pid else { return }
         let detail = stderrBuffer.trimmingCharacters(in: .whitespacesAndNewlines)
         let message = detail.isEmpty ? "exit status \(status)" : String(detail.suffix(2_048))
         shutdownProcess(reason: PiAgentRuntimeError.launchFailed(message))
@@ -1915,6 +1945,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
 
     private func shutdownProcess(reason: Error) {
         trace("shutdown: \(reason.localizedDescription)")
+        processGeneration &+= 1
         clearContextSnapshot()
         idleShutdownTask?.cancel()
         idleShutdownTask = nil
