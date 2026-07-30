@@ -382,6 +382,7 @@ final class WorkspaceStore: ObservableObject {
     }
     @Published var linkedSourcesPresented = false
     private(set) var studyLocationsByItemID: [String: StudyLocation] = [:]
+    @Published private(set) var courseResumePoints: [CourseResumePoint] = []
     @Published private(set) var learningMemoryStates: [ScopedLearningMemoryState] = []
     @Published private(set) var studySessions: [StudySession] = []
     @Published private(set) var activeStudySessionID: UUID?
@@ -19105,6 +19106,7 @@ final class WorkspaceStore: ObservableObject {
         noteSourceLinks = snapshot.noteSourceLinks ?? []
         noteSourceLinksMigrationVersion = snapshot.noteSourceLinksMigrationVersion ?? 0
         studyLocationsByItemID = snapshot.studyLocationsByItemID ?? [:]
+        courseResumePoints = snapshot.courseResumePoints ?? []
         learningMemoryStates = snapshot.learningMemoryStates ?? []
         learningMemoryScopeMigrationVersion = snapshot.learningMemoryScopeMigrationVersion ?? 0
         legacyLearningMemoryEntries = snapshot.learningMemoryEntries ?? []
@@ -19277,6 +19279,7 @@ final class WorkspaceStore: ObservableObject {
                 noteSourceLinks: noteSourceLinks,
                 noteSourceLinksMigrationVersion: noteSourceLinksMigrationVersion,
                 studyLocationsByItemID: studyLocationsByItemID,
+                courseResumePoints: courseResumePoints,
                 learningMemoryStates: learningMemoryStates,
                 learningMemoryScopeMigrationVersion: learningMemoryScopeMigrationVersion,
                 studySessions: studySessions,

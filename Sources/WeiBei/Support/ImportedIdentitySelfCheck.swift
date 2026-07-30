@@ -610,6 +610,27 @@ enum ImportedIdentitySelfCheck {
         try check(decodedMembership == membership, "课程入口路径和身份编码往返不一致")
         try check(decodedMembership.entryIdentity == entryIdentity, "系统文稿身份改变了文件入口身份等式")
 
+        let resumePoint = CourseResumePoint(
+            courseID: ownerCourseID,
+            materialLocation: StudyLocation(
+                itemID: ownedItem.id,
+                itemTitle: ownedItem.title,
+                pageIndex: 18
+            ),
+            chatID: UUID(),
+            noteItemID: "imported:note",
+            savedAt: Date(timeIntervalSince1970: 1_700_000_100)
+        )
+        let resumeSnapshot = PersistedWorkspace(courseResumePoints: [resumePoint])
+        let restoredResumeSnapshot = try JSONDecoder().decode(
+            PersistedWorkspace.self,
+            from: JSONEncoder().encode(resumeSnapshot)
+        )
+        try check(
+            restoredResumeSnapshot.courseResumePoints == [resumePoint],
+            "课程恢复点的文稿位置、Chat、笔记或时间编码往返不一致"
+        )
+
         let oldestMembershipID = UUID()
         let partialMemberships = CourseItemMemberships(values: [
             CourseItemMembership(

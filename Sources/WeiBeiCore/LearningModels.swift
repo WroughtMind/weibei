@@ -47,6 +47,30 @@ public struct StudyLocation: Codable, Hashable, Sendable {
     }
 }
 
+public struct CourseResumePoint: Identifiable, Codable, Hashable, Sendable {
+    public var courseID: UUID
+    public var materialLocation: StudyLocation?
+    public var chatID: UUID?
+    public var noteItemID: String?
+    public var savedAt: Date
+
+    public var id: UUID { courseID }
+
+    public init(
+        courseID: UUID,
+        materialLocation: StudyLocation? = nil,
+        chatID: UUID? = nil,
+        noteItemID: String? = nil,
+        savedAt: Date = Date()
+    ) {
+        self.courseID = courseID
+        self.materialLocation = materialLocation
+        self.chatID = chatID
+        self.noteItemID = noteItemID
+        self.savedAt = savedAt
+    }
+}
+
 public enum LearningMemoryKind: String, Codable, CaseIterable, Hashable, Sendable {
     case goal
     case progress
