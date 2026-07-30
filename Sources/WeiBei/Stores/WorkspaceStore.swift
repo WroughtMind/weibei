@@ -2503,7 +2503,7 @@ final class WorkspaceStore: ObservableObject {
                     courseItemMemberships.lazy.filter {
                         $0.courseID == proposal.courseID
                     }.compactMap { membership in
-                        importedItems.first {
+                        self.importedItems.first {
                             $0.id == membership.itemID
                                 && $0.isNotebookNote
                         }?.id
