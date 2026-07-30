@@ -321,7 +321,7 @@ func runRichAnswerEmbeddingSelfChecks() {
     expect(!richAnswerHostSource.contains("部分内容因证据或宿主能力不足已自动收敛")
         && richAnswerEngineSource.contains(#"\\hat\s*\{([^{}]+)\}"#)
         && richAnswerEngineSource.contains(#"\\bar\s*\{([^{}]+)\}"#)
-        && notesAgentSource.contains("AgentChatKaTeXMarkdown.prepare(text)")
+        && notesAgentSource.contains("AgentChatKaTeXMarkdown.prepare(displayMarkdown)")
         && notesAgentSource.contains("RichAnswerDisplayText.normalizedInlineMath(value)"), "rich answers keep renderer diagnostics in evidence while presenting common formulas as readable user-facing text")
     expect(richAnswerLibrarySource.contains("stages: z.array(LearningStage.ref).min(1).max(8)")
         && richAnswerLibrarySource.contains("FunctionPlot")
@@ -880,6 +880,9 @@ expect(!editorIndexSource.contains("WeiBeiStele")
     && !editorIndexSource.contains("font-family: var(--font-brand-latin)")
     && editorIndexSource.contains(".ProseMirror h1,\n    .ProseMirror h2,\n    .ProseMirror h3")
     && editorIndexSource.contains("letter-spacing: 0;"), "Web Markdown editor does not apply bundled WeiBei display fonts inside Markdown file content")
+expect(editorIndexSource.contains("a[href^=\"weibei-source\"]")
+    && editorIndexSource.contains("background: var(--cinnabar-soft)")
+    && editorIndexSource.contains("border: 1px solid var(--cinnabar-line)"), "inline source links keep the compact cinnabar tag treatment in Web Markdown")
 expect(editorIndexSource.contains(".ProseMirror blockquote.weibei-callout::before { content: attr(data-callout-title); }")
     && !editorIndexSource.contains("content: \"札记\"")
     && !editorIndexSource.contains("content: \"提示\"")
@@ -3085,9 +3088,9 @@ let workspaceModelsSource = readSource("Sources/WeiBeiCore/WorkspaceModels.swift
 let piAgentRuntimeSource = readSource("Sources/WeiBeiCore/PiAgentRuntime.swift")
 expect(
     notesAgentSource.contains("let availableSources = message.sources.filter")
-        && notesAgentSource.contains("AgentReplySourceTextFlow(")
-        && notesAgentSource.contains("earliestSource(in: remaining)")
-        && notesAgentSource.contains("AgentReplySourceTagRow(sources: part.sources")
+        && notesAgentSource.contains("AgentReplySourceInlinePresentation(")
+        && notesAgentSource.contains("handleSourceURL(url)")
+        && notesAgentSource.contains("attributed[range].backgroundColor")
         && notesAgentSource.contains("Button(\"+\\(sources.count - 1)\")")
         && notesAgentSource.contains("store.openAgentReplySource(source)")
         && workspaceStoreSource.contains("func canOpenAgentReplySource(_ source: AgentReplySource)")
@@ -4779,7 +4782,10 @@ expect(editorSource.contains("decorateSourceReferences") && editorSource.contain
 let richMarkdownEditorSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     .appendingPathComponent("Sources/WeiBei/Views/RichMarkdownEditorView.swift")
 let richMarkdownEditorSource = (try? String(contentsOf: richMarkdownEditorSourceURL, encoding: .utf8)) ?? ""
-expect(richMarkdownEditorSource.contains("\"sourceReferenceActivated\"") && richMarkdownEditorSource.contains("onSourceReference(reference)"), "rich editor bridges source-reference clicks into Swift")
+expect(richMarkdownEditorSource.contains("\"sourceReferenceActivated\"")
+    && richMarkdownEditorSource.contains("onSourceReference(reference)")
+    && richMarkdownEditorSource.contains("scheme == \"weibei-source\"")
+    && richMarkdownEditorSource.contains("scheme == \"weibei-source-group\""), "rich editor bridges exact inline source links into Swift")
 expect(LibraryNavigator.adjacentID(in: [], selectedID: nil, step: 1) == nil, "library navigation empty")
 expect(LibraryNavigator.adjacentID(in: ["a", "b", "c"], selectedID: nil, step: 1) == "a", "library navigation defaults first")
 expect(LibraryNavigator.adjacentID(in: ["a", "b", "c"], selectedID: "b", step: 1) == "c", "library navigation next")
@@ -4909,6 +4915,56 @@ let highlightedReplySource = AgentReplySource(
 expect(
     highlightedReplySource.highlightQuery == "利率是资金的价格，并受期限和风险影响。",
     "reply source highlighting skips page markers and Markdown headings"
+)
+let secondReplySource = AgentReplySource(
+    id: UUID(uuidString: "30000000-0000-0000-0000-000000000004")!,
+    itemID: "material:inflation",
+    kind: .material,
+    title: "通胀",
+    label: "[材料：通胀]",
+    excerpt: "通胀改变实际购买力。"
+)
+let thirdReplySource = AgentReplySource(
+    id: UUID(uuidString: "30000000-0000-0000-0000-000000000005")!,
+    itemID: "note:rates",
+    kind: .note,
+    title: "课堂笔记",
+    label: "[笔记：课堂笔记]",
+    excerpt: "名义利率和实际利率需要分开。"
+)
+let sourceMarkdown = """
+1. 列表保持完整
+
+```swift
+let rate = 0.03
+```
+
+利率需要结合通胀理解。[材料：利率]、[材料：通胀][笔记：课堂笔记]
+"""
+let inlineSources = AgentReplySourceInlinePresentation(
+    text: sourceMarkdown,
+    sources: [replySource, secondReplySource, thirdReplySource],
+    language: .chinese
+)
+let directSourceURL = URL(string: "weibei-source://\(replySource.id.uuidString.lowercased())")!
+let additionalSourceURL = URL(string: "weibei-source-group://0")!
+let attributedSourceLinks = (try? AttributedString(markdown: inlineSources.markdown))?
+    .runs
+    .compactMap(\.link) ?? []
+expect(
+    inlineSources.markdown.contains("```swift\nlet rate = 0.03\n```")
+        && inlineSources.markdown.contains("利率 · 第 18 页")
+        && inlineSources.markdown.contains("+2")
+        && !inlineSources.markdown.contains("[材料：利率]")
+        && inlineSources.source(for: directSourceURL) == replySource
+        && inlineSources.additionalSources(for: additionalSourceURL)
+            == [secondReplySource, thirdReplySource],
+    "inline reply sources preserve one Markdown document and collapse adjacent source labels into first plus N"
+)
+expect(
+    attributedSourceLinks.contains(directSourceURL)
+        && attributedSourceLinks.contains(additionalSourceURL),
+    "native Markdown preserves exact inline source and source-group links"
 )
 let replyAction = AgentReplyAction(
     id: UUID(uuidString: "30000000-0000-0000-0000-000000000003")!,

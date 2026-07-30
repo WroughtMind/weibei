@@ -700,7 +700,9 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             }
 
             let scheme = targetURL.scheme?.lowercased()
-            if scheme == "http" || scheme == "https" || scheme == "mailto" {
+            if scheme == "weibei-source" || scheme == "weibei-source-group" {
+                onSourceReference(targetURL.absoluteString)
+            } else if scheme == "http" || scheme == "https" || scheme == "mailto" {
                 NSWorkspace.shared.open(targetURL)
             }
             // Never replace an answer/editor with an external or unknown page.

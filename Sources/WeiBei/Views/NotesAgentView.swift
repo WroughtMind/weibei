@@ -3296,7 +3296,7 @@ private struct AgentBubble: View {
         let legacyCitations = citationParse.citations.filter { citation in
             switch citation.kind {
             case .material, .note, .selection:
-                return message.sources.isEmpty
+                return false
             case .learningRecord, .learningMemory, .session:
                 return true
             }
@@ -3320,14 +3320,16 @@ private struct AgentBubble: View {
                     }
                 }
             } else if !availableSources.isEmpty {
-                AgentReplySourceTextFlow(
+                AgentMessageMarkdownText(
                     text: message.text,
+                    rendersRichMarkdown: true,
+                    usesFinalizedKaTeX: !isFailureMessage,
+                    messageID: message.id,
                     sources: availableSources,
-                    isFailureMessage: isFailureMessage,
-                    messageID: message.id
-                ) { source in
-                    activateSource(source)
-                }
+                    onActivateSource: { source in
+                        activateSource(source)
+                    }
+                )
             } else {
                 // Hang-proof agent chat: finalized turns use KaTeX with frozen height;
                 // failures stay native text (no WebView). Never height→scroll.
@@ -3615,18 +3617,7 @@ private struct AgentBubble: View {
                 && store.canOpenAgentReplySource($0)
         }) {
             _ = store.openAgentReplySource(source)
-            return
         }
-        var label = evidence.sourceLabel.trimmingCharacters(in: .whitespacesAndNewlines)
-        if label.hasPrefix("["), label.hasSuffix("]"), label.count > 2 {
-            label = String(label.dropFirst().dropLast())
-        }
-        for prefix in ["材料：", "笔记：", "选区："] where label.hasPrefix(prefix) {
-            label = String(label.dropFirst(prefix.count))
-            break
-        }
-        guard !label.isEmpty else { return }
-        store.openSourceReference("来源：\(label)")
     }
 
     private func openRichAnswerAsset(_ assetID: String) {
@@ -3956,70 +3947,6 @@ private struct AgentReplySourceTagRow: View {
             }
         }
         .padding(.top, 2)
-    }
-}
-
-private struct AgentReplySourceTextFlow: View {
-    let text: String
-    let sources: [AgentReplySource]
-    let isFailureMessage: Bool
-    let messageID: UUID
-    var onActivate: (AgentReplySource) -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            ForEach(Array(parts.enumerated()), id: \.offset) { index, part in
-                if !part.text.isEmpty {
-                    AgentMessageMarkdownText(
-                        text: part.text,
-                        rendersRichMarkdown: true,
-                        usesFinalizedKaTeX: !isFailureMessage,
-                        messageID: index == 0 ? messageID : nil
-                    )
-                }
-                if !part.sources.isEmpty {
-                    AgentReplySourceTagRow(sources: part.sources, onActivate: onActivate)
-                }
-            }
-        }
-    }
-
-    private var parts: [(text: String, sources: [AgentReplySource])] {
-        var result: [(text: String, sources: [AgentReplySource])] = []
-        var remaining = text[...]
-
-        while let match = earliestSource(in: remaining) {
-            let preceding = String(remaining[..<match.range.lowerBound])
-            var matchedSources = [match.source]
-            remaining = remaining[match.range.upperBound...]
-
-            while let next = earliestSource(in: remaining),
-                  remaining[..<next.range.lowerBound]
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                    .isEmpty {
-                matchedSources.append(next.source)
-                remaining = remaining[next.range.upperBound...]
-            }
-            result.append((
-                AgentCitationParser.parse(preceding).displayText,
-                matchedSources
-            ))
-        }
-
-        let tail = AgentCitationParser.parse(String(remaining)).displayText
-        if !tail.isEmpty || result.isEmpty {
-            result.append((tail, []))
-        }
-        return result
-    }
-
-    private func earliestSource(
-        in text: Substring
-    ) -> (source: AgentReplySource, range: Range<Substring.Index>)? {
-        sources.compactMap { source in
-            text.range(of: source.label).map { (source, $0) }
-        }
-        .min { $0.1.lowerBound < $1.1.lowerBound }
     }
 }
 
@@ -4362,11 +4289,26 @@ private struct AgentMessageMarkdownText: View {
     /// Completed assistant turns only — never streaming, user, or failure bubbles.
     var usesFinalizedKaTeX: Bool = false
     var messageID: UUID? = nil
+    var sources: [AgentReplySource] = []
+    var onActivateSource: (AgentReplySource) -> Void = { _ in }
     @State private var finalizedRendererReady = false
     @State private var finalizedRendererFailed = false
+    @State private var expandedSourceURL: String?
+
+    private var sourcePresentation: AgentReplySourceInlinePresentation {
+        AgentReplySourceInlinePresentation(
+            text: text,
+            sources: sources,
+            language: store.interfaceLanguage
+        )
+    }
 
     private var finalizedMarkdown: String {
-        AgentChatKaTeXMarkdown.prepare(text)
+        AgentChatKaTeXMarkdown.prepare(displayMarkdown)
+    }
+
+    private var displayMarkdown: String {
+        AgentCitationParser.parse(sourcePresentation.markdown).displayText
     }
 
     /// Coarse cache bucket only; exactLayoutWidthKey below controls remeasurement.
@@ -4392,6 +4334,36 @@ private struct AgentMessageMarkdownText: View {
             }
         }
         .modifier(AgentMessageTextWidthModifier(fillsReadingColumn: rendersRichMarkdown || compact))
+        .environment(\.openURL, OpenURLAction { url in
+            handleSourceURL(url) ? .handled : .systemAction
+        })
+        .popover(
+            isPresented: Binding(
+                get: { expandedSources.isEmpty == false },
+                set: { if !$0 { expandedSourceURL = nil } }
+            ),
+            arrowEdge: .bottom
+        ) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(expandedSources) { source in
+                    Button {
+                        expandedSourceURL = nil
+                        onActivateSource(source)
+                    } label: {
+                        AgentReplySourceDetail(source: source)
+                    }
+                    .buttonStyle(.plain)
+                    if source.id != expandedSources.last?.id {
+                        Rectangle()
+                            .fill(WeiBeiTheme.hairline.opacity(0.42))
+                            .frame(height: 1)
+                    }
+                }
+            }
+            .frame(width: 340)
+            .padding(.vertical, 6)
+        }
+        .help(sourceHelp)
         .onChange(of: finalizedMarkdown) { _, _ in
             finalizedRendererReady = false
             finalizedRendererFailed = false
@@ -4436,7 +4408,13 @@ private struct AgentMessageMarkdownText: View {
                     seedContentHeight: cachedFinalizedHeight,
                     layoutWidthKey: exactLayoutWidthKey,
                     onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
-                    onSourceReference: { reference in store.openSourceReference(reference) },
+                    onSourceReference: { reference in
+                        if let url = URL(string: reference),
+                           handleSourceURL(url) {
+                            return
+                        }
+                        store.openSourceReference(reference)
+                    },
                     onAppShortcut: { key, modifiers in store.handleAppShortcut(key: key, modifiers: modifiers) },
                     onRenderReady: {
                         finalizedRendererFailed = false
@@ -4470,8 +4448,53 @@ private struct AgentMessageMarkdownText: View {
 
     private var renderedText: AttributedString {
         // Streaming / no-math path: Unicode math readability without WKWebView.
-        let display = RichAnswerDisplayText.normalizedInlineMath(text)
-        return (try? AttributedString(markdown: display)) ?? AttributedString(display)
+        let display = RichAnswerDisplayText.normalizedInlineMath(displayMarkdown)
+        var attributed = (try? AttributedString(markdown: display))
+            ?? AttributedString(display)
+        let sourceRanges = attributed.runs.compactMap { run -> Range<AttributedString.Index>? in
+            guard run.link.map(sourcePresentation.contains) == true else { return nil }
+            return run.range
+        }
+        for range in sourceRanges {
+            attributed[range].font = .system(size: compact ? 10.5 : 11, weight: .semibold)
+            attributed[range].foregroundColor = WeiBeiTheme.cinnabar
+            attributed[range].backgroundColor = WeiBeiTheme.paperInset.opacity(0.64)
+            attributed[range].underlineStyle = nil
+        }
+        return attributed
+    }
+
+    private var expandedSources: [AgentReplySource] {
+        expandedSourceURL.flatMap(sourcePresentation.additionalSources(for:)) ?? []
+    }
+
+    private var sourceHelp: String {
+        sources.map { source in
+            [
+                source.title,
+                source.positionLabel(language: store.interfaceLanguage),
+                source.excerpt.trimmingCharacters(in: .whitespacesAndNewlines),
+            ]
+            .compactMap { value in
+                guard let value, !value.isEmpty else { return nil }
+                return value
+            }
+            .joined(separator: " · ")
+        }
+        .joined(separator: "\n")
+    }
+
+    @discardableResult
+    private func handleSourceURL(_ url: URL) -> Bool {
+        if let source = sourcePresentation.source(for: url) {
+            onActivateSource(source)
+            return true
+        }
+        if !sourcePresentation.additionalSources(for: url).isEmpty {
+            expandedSourceURL = url.absoluteString
+            return true
+        }
+        return false
     }
 }
 

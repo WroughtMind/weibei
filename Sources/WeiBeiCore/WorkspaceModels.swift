@@ -1425,6 +1425,108 @@ public struct AgentReplySource: Identifiable, Codable, Hashable, Sendable {
     }
 }
 
+public struct AgentReplySourceInlinePresentation: Sendable {
+    public let markdown: String
+    private let sourcesByURL: [String: AgentReplySource]
+    private let additionalSourcesByURL: [String: [AgentReplySource]]
+
+    public init(
+        text: String,
+        sources: [AgentReplySource],
+        language: WeiBeiInterfaceLanguage
+    ) {
+        var rendered = ""
+        var remaining = text[...]
+        var direct = [String: AgentReplySource]()
+        var additional = [String: [AgentReplySource]]()
+        var groupIndex = 0
+
+        while let match = Self.earliestSource(in: remaining, sources: sources) {
+            rendered += remaining[..<match.range.lowerBound]
+            var group = [match.source]
+            remaining = remaining[match.range.upperBound...]
+
+            while let next = Self.earliestSource(in: remaining, sources: sources),
+                  Self.isSourceSeparator(remaining[..<next.range.lowerBound]) {
+                group.append(next.source)
+                remaining = remaining[next.range.upperBound...]
+            }
+
+            let directURL = "weibei-source://\(match.source.id.uuidString.lowercased())"
+            direct[directURL] = match.source
+            rendered += Self.markdownLink(
+                Self.displayLabel(for: match.source, language: language),
+                url: directURL
+            )
+            if group.count > 1 {
+                let groupURL = "weibei-source-group://\(groupIndex)"
+                groupIndex += 1
+                additional[groupURL] = Array(group.dropFirst())
+                rendered += " " + Self.markdownLink("+\(group.count - 1)", url: groupURL)
+            }
+        }
+        rendered += remaining
+        markdown = rendered
+        sourcesByURL = direct
+        additionalSourcesByURL = additional
+    }
+
+    public func contains(_ url: URL) -> Bool {
+        sourcesByURL[url.absoluteString] != nil
+            || additionalSourcesByURL[url.absoluteString] != nil
+    }
+
+    public func source(for url: URL) -> AgentReplySource? {
+        sourcesByURL[url.absoluteString]
+    }
+
+    public func additionalSources(for url: URL) -> [AgentReplySource] {
+        additionalSourcesByURL[url.absoluteString] ?? []
+    }
+
+    public func additionalSources(for urlString: String) -> [AgentReplySource] {
+        additionalSourcesByURL[urlString] ?? []
+    }
+
+    private static func earliestSource(
+        in text: Substring,
+        sources: [AgentReplySource]
+    ) -> (source: AgentReplySource, range: Range<Substring.Index>)? {
+        sources.compactMap { source in
+            text.range(of: source.label).map { (source, $0) }
+        }
+        .min { $0.1.lowerBound < $1.1.lowerBound }
+    }
+
+    private static func isSourceSeparator(_ text: Substring) -> Bool {
+        let allowed = CharacterSet.whitespacesAndNewlines.union(
+            CharacterSet(charactersIn: "、,，;；/")
+        )
+        return text.unicodeScalars.allSatisfy(allowed.contains)
+    }
+
+    private static func displayLabel(
+        for source: AgentReplySource,
+        language: WeiBeiInterfaceLanguage
+    ) -> String {
+        let title = source.title.count > 18
+            ? String(source.title.prefix(16)) + "…"
+            : source.title
+        guard let position = source.positionLabel(language: language) else {
+            return title
+        }
+        return "\(title) · \(position)"
+    }
+
+    private static func markdownLink(_ label: String, url: String) -> String {
+        let escaped = label
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "[", with: "\\[")
+            .replacingOccurrences(of: "]", with: "\\]")
+        return "[ \(escaped) ](\(url))"
+    }
+}
+
 public enum AgentReplyActionKind: String, Codable, Hashable, Sendable {
     case writeNote
     case createRelation

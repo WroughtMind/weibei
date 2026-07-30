@@ -8724,14 +8724,10 @@ final class WorkspaceStore: ObservableObject {
                 return nil
             }
         }
-        if item.isSample || item.urlPath == nil {
+        if item.isSample || item.isNotebookNote {
             return item
         }
-        guard let url = item.url,
-              FileManager.default.isReadableFile(atPath: url.path) else {
-            return nil
-        }
-        return item
+        return item.urlPath == nil ? nil : item
     }
 
     /// Open a material/note citation from chat tags when the label is only a human title.
@@ -14053,46 +14049,102 @@ final class WorkspaceStore: ObservableObject {
         let chatID = UUID()
         let courseID = UUID(uuidString: "33333333-3333-3333-3333-333333333333")!
         let otherCourseID = UUID(uuidString: "44444444-4444-4444-4444-444444444444")!
+        let fixtureDirectory = workspaceDirectory
+            .appendingPathComponent("SourceNavigationCourse", isDirectory: true)
+        let pdfURL = fixtureDirectory.appendingPathComponent("rates.pdf")
+        let htmlURL = fixtureDirectory.appendingPathComponent("rates.html")
+        let markdownURL = fixtureDirectory.appendingPathComponent("notes.md")
+        try? FileManager.default.createDirectory(
+            at: fixtureDirectory,
+            withIntermediateDirectories: true
+        )
+        let pdfReady = Self.writeSamplePDF(to: pdfURL)
+        try? """
+        <!doctype html><html><body>
+        <h1>利率</h1>
+        <h2 id="real-rate">实际利率</h2>
+        <p>实际利率需要扣除通货膨胀。</p>
+        </body></html>
+        """.write(to: htmlURL, atomically: true, encoding: .utf8)
+        try? """
+        # 课堂笔记
+
+        名义利率和实际利率需要分开理解。
+        """.write(to: markdownURL, atomically: true, encoding: .utf8)
+        let pdfItem = StudyItem(
+            id: "source-nav-pdf",
+            title: "Mishkin 教材",
+            subtitle: pdfURL.lastPathComponent,
+            kind: .pdf,
+            urlPath: pdfURL.path,
+            isSample: false
+        )
+        let htmlItem = StudyItem(
+            id: "source-nav-html",
+            title: "课程讲义",
+            subtitle: htmlURL.lastPathComponent,
+            kind: .html,
+            urlPath: htmlURL.path,
+            isSample: false
+        )
+        let markdownItem = StudyItem(
+            id: "source-nav-markdown",
+            title: "课堂笔记",
+            subtitle: markdownURL.lastPathComponent,
+            kind: .markdown,
+            urlPath: markdownURL.path,
+            isSample: false
+        )
+        importedItems = [pdfItem, htmlItem, markdownItem]
         courses = [
             Course(id: courseID, title: "来源标签验收课", colorIndex: 0),
             Course(id: otherCourseID, title: "其他课程", colorIndex: 1),
         ]
         var memberships = CourseItemMemberships()
-        memberships.assign(itemIDs: ["sample-pdf", "sample-html", "sample-md"], to: courseID)
+        memberships.assign(
+            itemIDs: [pdfItem.id, htmlItem.id, markdownItem.id],
+            to: courseID
+        )
         courseItemMemberships = memberships.values
         activeCourseID = courseID
         let sources = [
             AgentReplySource(
-                itemID: "sample-pdf",
+                itemID: pdfItem.id,
                 courseID: courseID,
                 kind: .material,
-                title: "Mishkin 教材样例",
-                label: "[材料：Mishkin 教材样例]",
+                title: pdfItem.title,
+                label: "[材料：\(pdfItem.title)]",
                 excerpt: "利率是资金使用价格的表达。",
                 pageIndex: 0
             ),
             AgentReplySource(
-                itemID: "sample-html",
+                itemID: htmlItem.id,
                 courseID: courseID,
                 kind: .material,
-                title: "货币金融学课程 HTML",
-                label: "[材料：货币金融学课程 HTML]",
+                title: htmlItem.title,
+                label: "[材料：\(htmlItem.title)]",
                 excerpt: "实际利率需要扣除通货膨胀。",
-                sectionTitle: "实际利率"
+                sectionTitle: "实际利率",
+                sectionLocationID: "real-rate"
             ),
             AgentReplySource(
-                itemID: "sample-md",
+                itemID: markdownItem.id,
                 courseID: courseID,
                 kind: .material,
-                title: "课堂笔记样例",
-                label: "[材料：课堂笔记样例]",
+                title: markdownItem.title,
+                label: "[材料：\(markdownItem.title)]",
                 excerpt: "名义利率和实际利率需要分开理解。"
             ),
         ]
+        let replyText = """
+        利率是资金使用价格的表达。\(sources[0].label)
+
+        它需要结合通胀与课堂笔记理解。\(sources[1].label)、\(sources[2].label)
+        """
         let reply = AgentMessage(
             role: .assistant,
-            text: "利率是资金使用价格的表达。[材料：Mishkin 教材样例]\n\n它需要结合通胀与课堂笔记理解。[材料：货币金融学课程 HTML][材料：课堂笔记样例]",
-            source: "Mishkin 教材样例",
+            text: replyText,
+            source: pdfItem.title,
             backend: .pi,
             sources: sources,
             origin: AgentReplyOrigin(
@@ -14121,7 +14173,7 @@ final class WorkspaceStore: ObservableObject {
         agentSurface = .hidden
 
         let crossCourseSource = AgentReplySource(
-            itemID: "sample-pdf",
+            itemID: pdfItem.id,
             courseID: otherCourseID,
             kind: .material,
             title: "同名但不属于该课的资料",
@@ -14140,24 +14192,60 @@ final class WorkspaceStore: ObservableObject {
             && !openAgentReplySource(crossCourseSource)
             && !canOpenAgentReplySource(missingSource)
             && !openAgentReplySource(missingSource)
+        let inline = AgentReplySourceInlinePresentation(
+            text: replyText,
+            sources: sources,
+            language: interfaceLanguage
+        )
+        let firstSourceURL = URL(
+            string: "weibei-source://\(sources[0].id.uuidString.lowercased())"
+        )!
+        let additionalSourceURL = URL(string: "weibei-source-group://0")!
+        let inlineTagsWork = inline.source(for: firstSourceURL) == sources[0]
+            && inline.additionalSources(for: additionalSourceURL)
+                == [sources[2]]
+            && inline.markdown.contains("+1")
+        let openedHTML = openAgentReplySource(sources[1])
+        let htmlLocated = openedHTML
+            && activeStudySessionID == chatID
+            && selectedItemID == htmlItem.id
+            && readerTargetLocationID == "real-rate"
+            && readerTargetLocationTitle == "实际利率"
+            && readerSourceHighlight == sources[1].highlightQuery
+        let openedMarkdown = openAgentReplySource(sources[2])
+        let markdownHighlighted = openedMarkdown
+            && activeStudySessionID == chatID
+            && selectedItemID == markdownItem.id
+            && readerSourceHighlight == sources[2].highlightQuery
         let opened = openAgentReplySource(sources[0])
         let passed = rejectsInvalidSources
+            && pdfReady
+            && inlineTagsWork
+            && htmlLocated
+            && markdownHighlighted
             && opened
             && activeStudySessionID == chatID
-            && selectedItemID == "sample-pdf"
+            && selectedItemID == pdfItem.id
             && showReader
             && showAgent
             && readerSourceHighlight == sources[0].highlightQuery
             && readerSourceHighlightPageIndex == 0
             && messages.last?.sources == sources
+        save()
+        let restored = WorkspaceStore(workspaceDirectory: workspaceDirectory)
+        let reopenedReply = restored.studySessions
+            .first(where: { $0.id == chatID })?
+            .messages
+            .last
+        let reopened = reopenedReply?.sources == sources
+            && restored.canOpenAgentReplySource(sources[0])
         recordVerificationStage("chat-source-navigation:\(passed)")
-        if passed {
+        if passed && reopened {
             let markerURL = storageURL.deletingLastPathComponent()
                 .appendingPathComponent("chat-source-navigation-verified.txt")
-            try? "Structured source tags kept Chat visible and opened the exact page\n"
+            try? "Inline source tags survived reopen, kept Chat visible, and opened exact PDF, HTML, and Markdown locations\n"
                 .write(to: markerURL, atomically: true, encoding: .utf8)
         }
-        save()
         recordVerificationStage("completed")
     }
 
