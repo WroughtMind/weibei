@@ -69,7 +69,8 @@ struct CourseRecordsView: View {
                         if let memoryScope {
                             LearningMemoryListSection(
                                 scope: memoryScope,
-                                title: store.ui("本课记忆", "Course Memory")
+                                title: store.ui("本课记忆", "Course Memory"),
+                                search: search
                             )
                             if !groups.isEmpty {
                                 CourseHairline()
@@ -150,10 +151,20 @@ struct LearningMemoryListSection: View {
     @EnvironmentObject private var store: WorkspaceStore
     let scope: LearningMemoryScope
     let title: String
+    var search = ""
     @State private var editingMemory: LearningMemoryEntry?
 
     private var memories: [LearningMemoryEntry] {
-        store.orderedLearningMemoryEntries(in: scope)
+        let all = store.orderedLearningMemoryEntries(in: scope)
+        let cleaned = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return all }
+        return all.filter { memory in
+            store.learningMemoryKindLabel(memory.kind)
+                .localizedCaseInsensitiveContains(cleaned)
+                || memory.text.localizedCaseInsensitiveContains(cleaned)
+                || memory.evidence.localizedCaseInsensitiveContains(cleaned)
+                || memorySource(memory).localizedCaseInsensitiveContains(cleaned)
+        }
     }
 
     var body: some View {
@@ -172,7 +183,9 @@ struct LearningMemoryListSection: View {
             .padding(.vertical, 13)
 
             if memories.isEmpty {
-                Text(store.ui("还没有形成学习记忆。", "No learning memory yet."))
+                Text(search.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? store.ui("还没有形成学习记忆。", "No learning memory yet.")
+                    : store.ui("没有匹配的学习记忆。", "No matching learning memory."))
                     .font(.system(size: 12))
                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                     .padding(.horizontal, 16)
@@ -318,6 +331,7 @@ private struct LearningMemoryEditSheet: View {
 struct GlobalLearningMemorySheet: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.dismiss) private var dismiss
+    @State private var search = ""
 
     var body: some View {
         VStack(spacing: 0) {
@@ -325,6 +339,12 @@ struct GlobalLearningMemorySheet: View {
                 Text(store.ui("全局记忆", "Global Memory"))
                     .font(WeiBeiTypography.brandFont(language: store.interfaceLanguage, size: 19, weight: .semibold))
                 Spacer()
+                TextField(
+                    store.ui("搜索全局记忆", "Search global memory"),
+                    text: $search
+                )
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 220)
                 if let saveError = store.workspaceSaveError {
                     Button(action: { _ = store.retryWorkspaceSave() }) {
                         Label(
@@ -348,7 +368,8 @@ struct GlobalLearningMemorySheet: View {
             ScrollView {
                 LearningMemoryListSection(
                     scope: .global,
-                    title: store.ui("所有全局对话共用", "Shared by All Global Chats")
+                    title: store.ui("所有全局对话共用", "Shared by All Global Chats"),
+                    search: search
                 )
             }
         }

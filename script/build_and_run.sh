@@ -989,7 +989,8 @@ verify_learning_memory_scopes() {
         && /usr/bin/grep -q '^user_history=true$' "$report_file" \
         && /usr/bin/grep -q '^stable_ids=true$' "$report_file" \
         && /usr/bin/grep -q '^legacy_fields_removed=true$' "$report_file" \
-        && /usr/bin/grep -q '^persisted=true$' "$report_file"; then
+        && /usr/bin/grep -q '^persisted=true$' "$report_file" \
+        && /usr/bin/grep -q '^reply_tag_persisted=true$' "$report_file"; then
         return 0
       fi
       echo "verify failed: scoped learning memory lifecycle did not pass." >&2
