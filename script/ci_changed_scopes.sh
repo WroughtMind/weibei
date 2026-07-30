@@ -44,7 +44,7 @@ classify_path() {
   esac
 
   case "$path" in
-    VERSION|Package.swift|Package.resolved|package.json|package-lock.json|.github/workflows/*|script/build_and_run.sh|script/build_release_dmg.sh|script/dmg/*|script/homebrew/*|script/prepare_pi_runtime.sh|script/verify_release_metadata.sh|Docs/releases/*|PRIVACY.md|THIRD_PARTY_NOTICES.md|ASSET_ATTRIBUTIONS.md|DesignSystem/assets/app-icon/*|Config/*|Vendor/PiRuntime/manifest.json|Vendor/PiRuntime/LICENSE|Vendor/PiRuntime/THIRD_PARTY_NOTICES.md|*.entitlements|*/Info.plist)
+    VERSION|Package.swift|Package.resolved|package.json|package-lock.json|.github/workflows/*|script/build_and_run.sh|script/build_release_dmg.sh|script/dmg/*|script/homebrew/*|script/prepare_pi_runtime.sh|script/verify_release_metadata.sh|Docs/releases/*|LICENSE|PRIVACY.md|THIRD_PARTY_NOTICES.md|ASSET_ATTRIBUTIONS.md|DesignSystem/assets/app-icon/*|Config/*|Vendor/PiRuntime/manifest.json|Vendor/PiRuntime/LICENSE|Vendor/PiRuntime/THIRD_PARTY_NOTICES.md|*.entitlements|*/Info.plist)
       release=true
       ;;
   esac
@@ -108,7 +108,12 @@ if [[ "${1:-}" == "--self-check" ]]; then
     "Vendor/PiRuntime/manifest.json"
   expect_scopes \
     "code=false pi=false editor=false data_safety=false release=true " \
-    "Vendor/PiRuntime/LICENSE" \
+    "LICENSE"
+  expect_scopes \
+    "code=false pi=false editor=false data_safety=false release=true " \
+    "Vendor/PiRuntime/LICENSE"
+  expect_scopes \
+    "code=false pi=false editor=false data_safety=false release=true " \
     "Vendor/PiRuntime/THIRD_PARTY_NOTICES.md"
   expect_scopes \
     "code=false pi=false editor=false data_safety=false release=false " \
