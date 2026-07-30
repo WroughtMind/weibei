@@ -1159,7 +1159,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
         }
         guard update.resolutions.allSatisfy({ resolution in
             run.resolvableMemoryIDs.contains(resolution.memoryID.lowercased())
-                && resolutionEvidenceMatches(resolution.evidence, question: run.userQuestion)
+                && currentTurnEvidenceMatches(resolution.evidence, question: run.userQuestion)
         }) else {
             return "PI resolved learning memory without current-turn evidence"
         }
@@ -1167,10 +1167,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
     }
 
     private func currentTurnEvidenceMatches(_ evidence: String, question: String) -> Bool {
-        StudyAgentCurrentTurnEvidence.matches(evidence, question: question)
-    }
-
-    private func resolutionEvidenceMatches(_ evidence: String, question: String) -> Bool {
         StudyAgentCurrentTurnEvidence.matches(evidence, question: question)
     }
 
@@ -1876,7 +1872,6 @@ public actor PiAgentRuntime: StudyAgentRuntime {
                 refreshRunWatchdog()
                 return
             }
-            appendSources(run.contextSources, to: &run)
             activeRun = run
             trace("context read revision matched")
             refreshRunWatchdog()
@@ -1887,7 +1882,7 @@ public actor PiAgentRuntime: StudyAgentRuntime {
             run.allowedNoteSourceLabels.formUnion(labels)
             run.allowedAssetIDs.formUnion(assetIDs)
             registerJumpEvidence(jumpEvidence, in: &run)
-            appendSources(sources, to: &run)
+            run.contextSources.append(contentsOf: sources)
             activeRun = run
             refreshRunWatchdog()
 

@@ -11053,17 +11053,18 @@ export default function weibeiExtension(pi: ExtensionAPI) {
   });
 
   pi.on("context", async (event) => {
-    let currentRevision: string | undefined;
-    try {
-      currentRevision = (await readCurrentSnapshot()).contextRevision;
-    } catch {
-      currentRevision = undefined;
-    }
+    const currentSnapshot = await readCurrentSnapshot();
+    const currentRevision = currentSnapshot.contextRevision;
+    const currentFocusContent = currentFocusMessage(currentSnapshot);
 
     const staleToolCallIDs = new Set<string>();
     let latestCurrentFocusIndex = -1;
     event.messages.forEach((message, index) => {
-      if (message.role === "custom" && message.customType === "weibei-current-focus") {
+      if (
+        message.role === "custom" &&
+        message.customType === "weibei-current-focus" &&
+        message.content === currentFocusContent
+      ) {
         latestCurrentFocusIndex = index;
       }
     });
@@ -11072,8 +11073,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
         message.role === "toolResult" &&
         ALLOWED_TOOLS.has(message.toolName) &&
         !message.isError &&
-        (currentRevision === undefined ||
-          contextRevisionFromDetails(message.details) !== currentRevision)
+        contextRevisionFromDetails(message.details) !== currentRevision
       ) {
         staleToolCallIDs.add(message.toolCallId);
       }
@@ -11084,7 +11084,7 @@ export default function weibeiExtension(pi: ExtensionAPI) {
       if (
         message.role === "custom" &&
         message.customType === "weibei-current-focus" &&
-        index !== latestCurrentFocusIndex
+        (index !== latestCurrentFocusIndex || message.content !== currentFocusContent)
       ) {
         continue;
       }

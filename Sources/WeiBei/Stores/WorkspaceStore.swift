@@ -11899,7 +11899,7 @@ final class WorkspaceStore: ObservableObject {
         if changed { learningMemoryRevision &+= 1 }
         var acceptedUpdate = update
         acceptedUpdate.resolutions = update.resolutions.prefix(12).filter { resolution in
-            guard Self.resolutionEvidenceMatches(
+            guard Self.currentTurnEvidenceMatches(
                 resolution.evidence.trimmingCharacters(in: .whitespacesAndNewlines),
                 question: expectedUserQuestion
             ),
@@ -11934,7 +11934,7 @@ final class WorkspaceStore: ObservableObject {
     func confirmLearningMemoryResolution(_ resolution: StudyAgentMemoryResolution) {
         guard latestAgentLearningUpdate?.resolutions.contains(resolution) == true,
               let question = latestAgentLearningUpdateQuestion,
-              Self.resolutionEvidenceMatches(resolution.evidence, question: question),
+              Self.currentTurnEvidenceMatches(resolution.evidence, question: question),
               let memoryID = UUID(uuidString: resolution.memoryID),
               let index = learningMemoryEntries.firstIndex(where: {
                   $0.id == memoryID
@@ -11992,10 +11992,6 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private static func currentTurnEvidenceMatches(_ evidence: String, question: String) -> Bool {
-        StudyAgentCurrentTurnEvidence.matches(evidence, question: question)
-    }
-
-    private static func resolutionEvidenceMatches(_ evidence: String, question: String) -> Bool {
         StudyAgentCurrentTurnEvidence.matches(evidence, question: question)
     }
 

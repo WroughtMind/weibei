@@ -191,22 +191,42 @@ try {
     messages: [
       { role: "custom", customType: "weibei-current-focus", content: "old", display: false },
       { role: "user", content: "继续" },
-      { role: "custom", customType: "weibei-current-focus", content: "current", display: false },
+      beforeResult.message,
     ],
   });
   requireValue(
     filteredContext.messages.length === 2 &&
-      filteredContext.messages.at(-1)?.content === "current",
+      filteredContext.messages.at(-1)?.content === beforeResult.message.content,
     "后续回合仍把旧焦点和当前焦点一起交给 Pi",
+  );
+  const emptyFocusEnvelope = {
+    ...hookEnvelope,
+    contextRevision: "context-empty",
+    material: undefined,
+    note: { title: "当前笔记", text: "", isTruncated: false },
+    selection: undefined,
+    focus: undefined,
+  };
+  await writeFile(contextFile, JSON.stringify(emptyFocusEnvelope));
+  const clearedContext = await contextHook({
+    messages: [
+      { role: "custom", customType: "weibei-current-focus", content: beforeResult.message.content, display: false },
+      { role: "user", content: "现在没有打开资料" },
+    ],
+  });
+  requireValue(
+    clearedContext.messages.length === 1 &&
+      clearedContext.messages[0]?.role === "user",
+    "本轮没有焦点时仍把上一轮焦点交给 Pi",
   );
   await writeFile(contextFile, "{broken");
   let brokenContextRejected = false;
   try {
-    await beforeAgentStart({ systemPrompt: "base" });
+    await contextHook({ messages: [] });
   } catch {
     brokenContextRejected = true;
   }
-  requireValue(brokenContextRejected, "损坏的上下文快照被伪装成了无资料回合");
+  requireValue(brokenContextRejected, "回合中的损坏上下文快照被静默忽略");
   await writeFile(contextFile, JSON.stringify(hookEnvelope));
 
   const normalRead = await extension.readApprovedProjectFile(snapshot, item);

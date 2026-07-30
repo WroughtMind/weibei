@@ -194,9 +194,10 @@ private func checkHostCourseToolBridge(
         progress: nil
     )
     await runtime.shutdown()
-    guard reply.text == "宿主课程工具桥可用。" else {
+    guard reply.text == "宿主课程工具桥可用。",
+          reply.sources.isEmpty else {
         throw PiTerminalRuntimeSelfCheckError.failed(
-            "PI host tool bridge did not return an isolated response (\(reply.text))"
+            "PI host tool bridge returned an invalid reply or attached an uncited source"
         )
     }
     guard !FileManager.default.fileExists(atPath: staleResponseDirectory.path) else {
@@ -1214,7 +1215,7 @@ static void start_emitter(void) {
             }
             usleep(20000);
         }
-        printf("{\"type\":\"tool_execution_end\",\"toolCallId\":\"bridge-search\",\"toolName\":\"weibei_course_search\",\"isError\":false,\"result\":{\"details\":{\"kind\":\"course_search\",\"contextRevision\":\"%s\",\"results\":[],\"evidenceLabels\":[],\"jumpEvidence\":{}}}}\n", revision);
+        printf("{\"type\":\"tool_execution_end\",\"toolCallId\":\"bridge-search\",\"toolName\":\"weibei_course_search\",\"isError\":false,\"result\":{\"details\":{\"kind\":\"course_search\",\"contextRevision\":\"%s\",\"results\":[{\"id\":\"persistent-material\",\"title\":\"利率的含义\",\"role\":\"material\",\"searchText\":\"利率是资金的价格。\"}],\"evidenceLabels\":[\"[材料：利率的含义]\"],\"jumpEvidence\":{}}}}\n", revision);
         printf("{\"type\":\"agent_end\",\"messages\":[{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"%s\"}],\"stopReason\":\"stop\"}]}\n", ready ? "宿主课程工具桥可用。" : "宿主课程工具桥缺失。");
         fflush(stdout);
         _exit(0);

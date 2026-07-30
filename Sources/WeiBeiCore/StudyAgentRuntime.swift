@@ -14,9 +14,6 @@ public enum StudyAgentAnswerFormPolicy: String, Codable, Equatable, Sendable {
 public enum StudyAgentCurrentTurnEvidence {
     public static func matches(_ evidence: String, question: String) -> Bool {
         guard let statement = statement(in: evidence), statement.count >= 2 else { return false }
-        if statement.count < 4 {
-            return normalized(statement) == normalized(question)
-        }
         var searchStart = question.startIndex
         while searchStart < question.endIndex,
               let range = question.range(of: statement, range: searchStart..<question.endIndex) {
@@ -47,12 +44,6 @@ public enum StudyAgentCurrentTurnEvidence {
         return value.isEmpty ? nil : value
     }
 
-    private static func normalized(_ text: String) -> String {
-        text.unicodeScalars.filter {
-            !CharacterSet.whitespacesAndNewlines.contains($0)
-                && !CharacterSet.punctuationCharacters.contains($0)
-        }.map(String.init).joined()
-    }
 }
 
 public struct StudyAgentCourseCatalogItem: Codable, Equatable, Sendable {

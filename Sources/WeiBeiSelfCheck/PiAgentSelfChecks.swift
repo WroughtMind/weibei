@@ -992,7 +992,7 @@ private func checkBundledAgentResources() throws {
             && !runtimeSource.contains("answerValidationError")
             && !runtimeSource.contains("PiAgentRejectedReplyError")
             && !runtimeSource.contains("else if run.workflow == .noteMaking, run.proposal == nil")
-            && runtimeSource.contains("resolutionEvidenceMatches")
+            && runtimeSource.contains("currentTurnEvidenceMatches")
             && runtimeSource.contains("StudyAgentCurrentTurnEvidence.matches")
             && !runtimeSource.contains("allowsLearningOnlyAnswer")
             && !runtimeSource.contains("allowsSourcelessLimitation")
