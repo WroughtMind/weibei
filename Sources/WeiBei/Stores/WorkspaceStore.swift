@@ -6044,10 +6044,11 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         let membershipStillCommitted = input.memberships.contains {
+            // The persisted membership decides whether removal committed.
+            // The isolated link's inode is validated separately below.
             $0.courseID == journal.courseID
                 && $0.itemID == journal.itemID
                 && $0.courseRelativePath == journal.linkRelativePath
-                && $0.entryIdentity == journal.linkIdentity
         }
         let isolatedLinkURL = transactionDirectory.appendingPathComponent(
             "isolated-link"
