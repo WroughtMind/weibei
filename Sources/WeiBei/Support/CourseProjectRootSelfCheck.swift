@@ -14,6 +14,8 @@ enum CourseProjectRootSelfCheck {
         try movedLibraryIntoWorkspaceIsRejectedOnRestore()
         try libraryCreationDerivesSafeNameAndRejectsConflicts()
         try newCourseCreatesAtomicProjectAndManifest()
+        try portableCourseStateIsScopedAtomicAndRestorable()
+        try portableCourseStatePreservesOfflineAndCorruptChanges()
         try stagedAndWorkspaceFailuresLeaveNoGhostCourse()
         try failedAdoptionRollsBackOnlyItsOwnMetadata()
         try foreignWritesPreventRollbackDeletion()
@@ -231,6 +233,14 @@ enum CourseProjectRootSelfCheck {
             itemID: requestLegacyNote.id,
             courseID: courseA
         )
+        store.removeCourseMembershipForAgentSelfCheck(
+            itemID: requestLegacyMaterial.id,
+            courseID: courseA
+        )
+        store.removeCourseMembershipForAgentSelfCheck(
+            itemID: requestLegacyNote.id,
+            courseID: courseA
+        )
         let deniedRequest = try store.capturedAgentRequestForSelfCheck(
             courseID: courseA,
             materialItemID: requestLegacyMaterial.id,
@@ -252,15 +262,6 @@ enum CourseProjectRootSelfCheck {
                 }),
             "最终发给 Pi 的请求仍包含未通过课程授权的材料、笔记、选区或视觉附件"
         )
-        store.removeCourseMembershipForAgentSelfCheck(
-            itemID: requestLegacyMaterial.id,
-            courseID: courseA
-        )
-        store.removeCourseMembershipForAgentSelfCheck(
-            itemID: requestLegacyNote.id,
-            courseID: courseA
-        )
-
         let visualItem = try store.installCourseVisualForAgentSelfCheck(
             courseID: courseA,
             data: Data([
@@ -381,6 +382,24 @@ enum CourseProjectRootSelfCheck {
         snapshot.studySessions = [session]
         snapshot.activeStudySessionID = session.id
         try JSONEncoder().encode(snapshot).write(to: workspaceURL, options: [.atomic])
+        let portableStateURL = courseRoot.appendingPathComponent(
+            ".weibei/course-state.json"
+        )
+        var portableState = try JSONDecoder().decode(
+            CoursePortableState.self,
+            from: Data(contentsOf: portableStateURL)
+        )
+        portableState.studySessions = [session]
+        portableState.resumePoint = CourseResumePoint(
+            courseID: courseID,
+            chatID: session.id
+        )
+        portableState.revision &+= 1
+        portableState.savedAt = Date()
+        try JSONEncoder().encode(portableState).write(
+            to: portableStateURL,
+            options: [.atomic]
+        )
 
         let reopened = makeStore(fixture: fixture)
         try FileManager.default.removeItem(at: courseRoot)
@@ -886,6 +905,1330 @@ enum CourseProjectRootSelfCheck {
         store = makeStore(fixture: fixture)
         try check(store?.courseRootURL(for: courseID) == target.canonicalFileURL, "重开后没有恢复课程根")
         try check(store?.course(withID: courseID)?.sourceRootBookmarkData == nil, "重开后课程错误地产生独立授权")
+    }
+
+    @MainActor
+    private static func portableCourseStateIsScopedAtomicAndRestorable() throws {
+        let fixture = try Fixture(name: "portable-state")
+        defer { fixture.remove() }
+        let library = try fixture.makeDirectory("课程资料库")
+        let imports = try fixture.makeDirectory("待导入")
+        let store = makeStore(fixture: fixture)
+        try store.configureCourseLibrary(at: library)
+        let courseA = try store.createCourseInLibrary(title: "可携带课程")
+        let courseB = try store.createCourseInLibrary(title: "隔离课程")
+        let materialURL = imports.appendingPathComponent("本课程资料.txt")
+        let foreignURL = imports.appendingPathComponent("另一门课程资料.txt")
+        try Data("PORTABLE_COURSE_CONTENT".utf8).write(to: materialURL)
+        try Data("FOREIGN_COURSE_CONTENT".utf8).write(to: foreignURL)
+        let material = try store.importFileIntoCourseForSelfCheck(
+            materialURL,
+            courseID: courseA,
+            role: .material
+        ).item
+        let foreignMaterial = try store.importFileIntoCourseForSelfCheck(
+            foreignURL,
+            courseID: courseB,
+            role: .material
+        ).item
+        let noteID = try require(
+            store.createCourseNotebookNoteForSelfCheck(
+                courseID: courseA,
+                title: "可携带笔记"
+            ),
+            "无法建立可携带笔记"
+        )
+        let fixtureState = try store.installPortableCourseStateFixtureForSelfCheck(
+            courseID: courseA,
+            materialItemID: material.id,
+            noteItemID: noteID,
+            foreignCourseID: courseB,
+            foreignItemID: foreignMaterial.id
+        )
+        try check(store.flushPendingWorkspaceSave(), "课程可携带状态没有写入")
+
+        let courseARoot = try require(
+            store.courseRootURL(for: courseA),
+            "可携带课程根丢失"
+        )
+        let stateURL = courseARoot.appendingPathComponent(
+            ".weibei/course-state.json"
+        )
+        let stateData = try Data(contentsOf: stateURL)
+        let state = try JSONDecoder().decode(
+            CoursePortableState.self,
+            from: stateData
+        ).validated(expectedCourseID: courseA)
+        var unsafeSourceState = state
+        unsafeSourceState.studySessions[0].messages[
+            unsafeSourceState.studySessions[0].messages.count - 1
+        ].sources.append(
+            AgentReplySource(
+                itemID: foreignMaterial.id,
+                kind: .material,
+                title: "伪装成本课程的来源",
+                label: "伪装来源",
+                excerpt: "没有 courseID 也必须拒绝"
+            )
+        )
+        try expectFailure("无 courseID 的跨课来源校验") {
+            _ = try unsafeSourceState.validated(expectedCourseID: courseA)
+        }
+        var unsafeActionState = state
+        unsafeActionState.studySessions[0].messages[
+            unsafeActionState.studySessions[0].messages.count - 1
+        ].actions.append(
+            AgentReplyAction(
+                kind: .writeNote,
+                targetItemID: foreignMaterial.id
+            )
+        )
+        try expectFailure("无 courseID 的跨课动作校验") {
+            _ = try unsafeActionState.validated(expectedCourseID: courseA)
+        }
+        var unsafeMemoryState = state
+        unsafeMemoryState.studySessions[0].messages[
+            unsafeMemoryState.studySessions[0].messages.count - 1
+        ].memoryUpdate = AgentReplyMemoryUpdate(
+            memoryIDs: [UUID()],
+            summary: "伪装成本课程的记忆更新"
+        )
+        try expectFailure("跨作用域学习记忆校验") {
+            _ = try unsafeMemoryState.validated(expectedCourseID: courseA)
+        }
+        var crossCourseMemoryEntryState = state
+        crossCourseMemoryEntryState.learningMemoryState?.entries[0]
+            .sessionID = UUID()
+        try expectFailure("学习记忆 entry 跨课 Chat 校验") {
+            _ = try crossCourseMemoryEntryState.validated(
+                expectedCourseID: courseA
+            )
+        }
+        var crossCourseMemoryRevisionState = state
+        if let memory = crossCourseMemoryRevisionState
+            .learningMemoryState?.entries.first {
+            crossCourseMemoryRevisionState.learningMemoryState?
+                .entries[0].revisions = [
+                    LearningMemoryRevisionRecord(
+                        revision: 1,
+                        kind: memory.kind,
+                        text: memory.text,
+                        evidence: memory.evidence,
+                        origin: memory.origin,
+                        status: memory.status,
+                        sessionID: UUID(),
+                        actor: .agent
+                    ),
+                ]
+        }
+        try expectFailure("学习记忆 revision 跨课 Chat 校验") {
+            _ = try crossCourseMemoryRevisionState.validated(
+                expectedCourseID: courseA
+            )
+        }
+        var hiddenInternalPathState = state
+        hiddenInternalPathState.items[0].courseRelativePath =
+            ".weibei/秘密.txt"
+        try expectFailure("课程内部隐藏路径校验") {
+            _ = try hiddenInternalPathState.validated(
+                expectedCourseID: courseA
+            )
+        }
+        var gitInternalPathState = state
+        gitInternalPathState.items[0].courseRelativePath =
+            ".git/secret.txt"
+        try expectFailure("课程 Git 隐藏路径校验") {
+            _ = try gitInternalPathState.validated(
+                expectedCourseID: courseA
+            )
+        }
+        var duplicateRelationState = state
+        if let relation = duplicateRelationState.noteSourceLinks.first {
+            duplicateRelationState.noteSourceLinks.append(relation)
+            try expectFailure("重复关系 ID 校验") {
+                _ = try duplicateRelationState.validated(
+                    expectedCourseID: courseA
+                )
+            }
+        }
+        let savedReply = try require(
+            state.studySessions.first?.messages.last,
+            "课程 Chat 没有进入可携带状态"
+        )
+        try check(
+            state.items.map(\.itemID).sorted() == [material.id, noteID].sorted(),
+            "可携带状态混入另一门课程资料"
+        )
+        try check(
+            state.studySessions.count == 1
+                && state.studySessions[0].id == fixtureState.sessionID
+                && state.studySessions[0].messages.count == 501
+                && state.studySessions[0].messages.first?.id
+                    == fixtureState.firstMessageID
+                && state.studySessions[0].messages.first?
+                    .richAnswer?.narrative
+                    == fixtureState.firstRichNarrative
+                && state.studySessions[0].messages.first?
+                    .actions.first?.proposedMarkdown
+                    == "最早一条动作附件"
+                && state.studySessions[0].focusItemIDs == [material.id]
+                && savedReply.text == "课程回答正文必须保留。"
+                && savedReply.toolTrace.isEmpty,
+            "课程 Chat 的完整历史、回复附件或课程净化结果错误"
+        )
+        try check(
+            savedReply.sources.map(\.itemID) == [material.id]
+                && savedReply.actions.count == 1
+                && savedReply.actions[0].targetItemID == noteID
+                && savedReply.actions[0].sourceItemID == material.id
+                && savedReply.memoryUpdate?.memoryIDs == [fixtureState.memoryID],
+            "无 courseID 的跨课来源、动作或记忆引用进入了可携带状态"
+        )
+        try check(
+            state.learningMemoryState?.entries.map(\.id) == [fixtureState.memoryID]
+                && state.noteSourceLinks.count == 1
+                && state.noteSourceLinks[0].noteItemID == noteID
+                && state.noteSourceLinks[0].sourceItemID == material.id
+                && state.studyLocationsByItemID[material.id]?.locationID
+                    == "portable-location"
+                && state.resumePoint?.chatID == fixtureState.sessionID
+                && state.pendingNoteDrafts.first?.markdown == fixtureState.draft,
+            "课程记忆、关系、位置或未落盘草稿没有完整投影"
+        )
+        let serialized = try require(
+            String(data: stateData, encoding: .utf8),
+            "课程状态不是 UTF-8"
+        )
+        try check(
+            !serialized.contains(fixture.workspaceDirectory.path)
+                && !serialized.contains(courseARoot.path)
+                && !serialized.contains("toolTrace")
+                && !serialized.contains(foreignMaterial.id),
+            "课程状态泄露本机绝对路径、内部日志或另一门课程 ID"
+        )
+
+        let baselineWorkspace = try fixture.makeDirectory(
+            "首次基线冲突工作区"
+        )
+        var baselineSnapshot = try JSONDecoder().decode(
+            PersistedWorkspace.self,
+            from: Data(
+                contentsOf: fixture.workspaceDirectory
+                    .appendingPathComponent("workspace.json")
+            )
+        )
+        baselineSnapshot.coursePortableStateRevisions = nil
+        baselineSnapshot.coursePortableStateDigests = nil
+        baselineSnapshot.dirtyPortableCourseIDs = nil
+        let localOnlyMessageID = UUID()
+        if let sessionIndex = baselineSnapshot.studySessions?
+            .firstIndex(where: { $0.id == fixtureState.sessionID }) {
+            baselineSnapshot.studySessions?[sessionIndex].messages.append(
+                AgentMessage(
+                    id: localOnlyMessageID,
+                    role: .user,
+                    text: "本机旧工作区独有的 Chat 内容",
+                    source: nil
+                )
+            )
+        }
+        try JSONEncoder().encode(baselineSnapshot).write(
+            to: baselineWorkspace.appendingPathComponent("workspace.json"),
+            options: [.atomic]
+        )
+        let baselineDiskState = try Data(contentsOf: stateURL)
+        let baselineConflictStore = makeStore(
+            fixture: fixture,
+            workspaceDirectory: baselineWorkspace
+        )
+        try check(
+            baselineConflictStore.studySessions
+                .first { $0.id == fixtureState.sessionID }?
+                .messages.contains { $0.id == localOnlyMessageID } == true
+                && baselineConflictStore.workspaceSaveError != nil
+                && Data(contentsOf: stateURL) == baselineDiskState,
+            "已有旧工作区首次建立 baseline 时用磁盘状态覆盖了本机 Chat"
+        )
+
+        let reopenedWorkspace = try fixture.makeDirectory("另一台设备工作区")
+        let reopened = makeStore(
+            fixture: fixture,
+            workspaceDirectory: reopenedWorkspace
+        )
+        let restoredCourseID = try reopened.adoptCourseFolder(
+            at: courseARoot,
+            title: "用户临时输入的名称"
+        )
+        try check(restoredCourseID == courseA, "重开后课程稳定 ID 发生变化")
+        try check(
+            reopened.course(withID: courseA)?.title == "可携带课程"
+                && reopened.courseItemMemberships
+                    .filter { $0.courseID == courseA }
+                    .map(\.itemID).sorted() == [material.id, noteID].sorted()
+                && reopened.studySessions
+                    .filter { $0.courseID == courseA }
+                    .map(\.id) == [fixtureState.sessionID]
+                && reopened.studySessions
+                    .first { $0.id == fixtureState.sessionID }?
+                    .messages.count == 501
+                && reopened.studySessions
+                    .first { $0.id == fixtureState.sessionID }?
+                    .messages.first?.id == fixtureState.firstMessageID
+                && reopened.studySessions
+                    .first { $0.id == fixtureState.sessionID }?
+                    .messages.first?.richAnswer?.narrative
+                    == fixtureState.firstRichNarrative
+                && reopened.studySessions
+                    .first { $0.id == fixtureState.sessionID }?
+                    .messages.first?.actions.first?.proposedMarkdown
+                    == "最早一条动作附件"
+                && reopened.learningMemoryStates
+                    .first { $0.scope == .course(courseA) }?
+                    .entries.map(\.id) == [fixtureState.memoryID]
+                && reopened.noteSourceLinks.count == 1
+                && reopened.courseResumePoint(for: courseA)?.chatID
+                    == fixtureState.sessionID
+                && reopened.pendingPortableNoteDraftForSelfCheck(itemID: noteID)
+                    == fixtureState.draft,
+            "新工作区没有从课程文件夹恢复完整课程状态"
+        )
+
+        try store.shareCourseOwnedItemForSelfCheck(
+            itemID: material.id,
+            withCourseID: courseB
+        )
+        try check(store.flushPendingWorkspaceSave(), "共享资料状态没有写入")
+        let sharedStateData = try Data(contentsOf: stateURL)
+        let sharedState = try JSONDecoder().decode(
+            CoursePortableState.self,
+            from: sharedStateData
+        ).validated(expectedCourseID: courseA)
+        let sharedPortableItem = try require(
+            sharedState.items.first { $0.itemID == material.id },
+            "共享资料没有进入课程状态"
+        )
+        guard case let .sharedReference(
+            sharedRelativePath,
+            expectedSharedDigest
+        ) = sharedPortableItem.storage,
+        let expectedSharedDigest else {
+            throw CheckError.failed("课程状态没有保存共享资料合同")
+        }
+        let sharedURL = library.appendingPathComponent(sharedRelativePath)
+        let originalSharedData = try Data(contentsOf: sharedURL)
+        let canonicalSharedData = Data(
+            "共享 canonical item 的本机较新内容".utf8
+        )
+        try canonicalSharedData.write(to: sharedURL, options: [.atomic])
+        let canonicalSharedSnapshot =
+            try CourseProjectFileWorker.snapshotFile(at: sharedURL)
+        let canonicalSharedIdentity = try require(
+            CourseProjectFileWorker.identity(at: sharedURL),
+            "无法核验较新的共享 canonical item"
+        )
+        let canonicalWorkspace = try fixture.makeDirectory(
+            "共享 canonical 保留工作区"
+        )
+        var canonicalWorkspaceSnapshot = try JSONDecoder().decode(
+            PersistedWorkspace.self,
+            from: Data(
+                contentsOf: fixture.workspaceDirectory
+                    .appendingPathComponent("workspace.json")
+            )
+        )
+        let canonicalItemIndex = try require(
+            canonicalWorkspaceSnapshot.importedItems.firstIndex {
+                $0.id == material.id
+            },
+            "工作区缺少共享 canonical item"
+        )
+        canonicalWorkspaceSnapshot.importedItems[canonicalItemIndex]
+            .urlPath = sharedURL.path
+        canonicalWorkspaceSnapshot.importedItems[canonicalItemIndex]
+            .importedFileLastKnownPath = sharedURL.path
+        canonicalWorkspaceSnapshot.importedItems[canonicalItemIndex]
+            .importedFileIdentity = canonicalSharedIdentity
+        canonicalWorkspaceSnapshot.importedItems[canonicalItemIndex]
+            .contentRevision &+= 1
+        canonicalWorkspaceSnapshot.importedItems[canonicalItemIndex]
+            .contentDigest = canonicalSharedSnapshot.sha256
+        canonicalWorkspaceSnapshot.importedItems[canonicalItemIndex]
+            .fileByteCount = canonicalSharedSnapshot.byteCount
+        let canonicalMetadataSentinel: Int64 = 9_876_543_210
+        canonicalWorkspaceSnapshot.importedItems[canonicalItemIndex]
+            .fileModificationTimeNanoseconds = canonicalMetadataSentinel
+        canonicalWorkspaceSnapshot.coursePortableStateRevisions?[
+            courseA.uuidString.lowercased()
+        ] = sharedState.revision > 0 ? sharedState.revision - 1 : 0
+        canonicalWorkspaceSnapshot.coursePortableStateDigests?[
+            courseA.uuidString.lowercased()
+        ] = String(repeating: "0", count: 64)
+        try JSONEncoder().encode(canonicalWorkspaceSnapshot).write(
+            to: canonicalWorkspace.appendingPathComponent("workspace.json"),
+            options: [.atomic]
+        )
+        let canonicalStore = makeStore(
+            fixture: fixture,
+            workspaceDirectory: canonicalWorkspace
+        )
+        let preservedCanonical = try require(
+            canonicalStore.importedItems.first { $0.id == material.id },
+            "共享 canonical item 在课程恢复时丢失"
+        )
+        try check(
+            preservedCanonical.urlPath == sharedURL.path
+                && preservedCanonical.importedFileIdentity
+                    == canonicalSharedIdentity
+                && preservedCanonical.contentDigest
+                    == canonicalSharedSnapshot.sha256
+                && preservedCanonical.fileByteCount
+                    == canonicalSharedSnapshot.byteCount
+                && preservedCanonical.fileModificationTimeNanoseconds
+                    == canonicalMetadataSentinel,
+            "课程 A 的旧摘要覆盖了共享 canonical item 的真实文件状态"
+        )
+        try originalSharedData.write(to: sharedURL, options: [.atomic])
+        try sharedStateData.write(to: stateURL, options: [.atomic])
+
+        var crossCourseSharedState = sharedState
+        let sharedIndex = try require(
+            crossCourseSharedState.items.firstIndex {
+                $0.itemID == material.id
+            },
+            "共享资料索引丢失"
+        )
+        crossCourseSharedState.items[sharedIndex].storage =
+            .sharedReference(
+                sharedRelativePath: "隔离课程/笔记/秘密.md",
+                expectedContentDigest: expectedSharedDigest
+            )
+        try expectFailure("共享资料跨课程路径校验") {
+            _ = try crossCourseSharedState.validated(
+                expectedCourseID: courseA
+            )
+        }
+
+        var fakePDFNote = sharedState
+        fakePDFNote.items[sharedIndex].kind = .pdf
+        fakePDFNote.items[sharedIndex].isNotebookNote = true
+        fakePDFNote.items[sharedIndex].courseRelativePath =
+            "笔记/伪装笔记.pdf"
+        fakePDFNote.items[sharedIndex].storage = .courseOwned
+        try expectFailure("PDF 伪装成可写笔记") {
+            _ = try fakePDFNote.validated(expectedCourseID: courseA)
+        }
+
+        try Data("同名但内容已经被换掉".utf8).write(
+            to: sharedURL,
+            options: [.atomic]
+        )
+        let digestMismatchWorkspace = try fixture.makeDirectory(
+            "共享摘要不符工作区"
+        )
+        let digestMismatchStore = makeStore(
+            fixture: fixture,
+            workspaceDirectory: digestMismatchWorkspace
+        )
+        try digestMismatchStore.configureCourseLibrary(at: library)
+        _ = try digestMismatchStore.adoptCourseFolder(
+            at: courseARoot,
+            title: "共享摘要不符"
+        )
+        let unavailableSharedItem = try require(
+            digestMismatchStore.importedItems.first {
+                $0.id == material.id
+            },
+            "摘要不符时共享资料记录被吞掉"
+        )
+        try check(
+            unavailableSharedItem.url == nil
+                && unavailableSharedItem.importedFileIdentity == nil
+                && unavailableSharedItem.contentDigest
+                    == expectedSharedDigest,
+            "同名异内容的共享文件被静默接入课程"
+        )
+        try originalSharedData.write(to: sharedURL, options: [.atomic])
+
+        var unsafeEntryState = sharedState
+        unsafeEntryState.items.append(
+            CoursePortableItem(
+                itemID: "portable-unsafe-note",
+                title: "伪装笔记",
+                kind: .markdown,
+                isNotebookNote: true,
+                courseRelativePath: "笔记/伪装笔记.md",
+                storage: .courseOwned,
+                contentRevision: 1,
+                contentDigest: nil,
+                membershipCreatedAt: Date()
+            )
+        )
+        unsafeEntryState.revision &+= 1
+        unsafeEntryState.savedAt = Date()
+        let unsafeEntryData = try JSONEncoder().encode(unsafeEntryState)
+        let unsafeEntryURL = courseARoot.appendingPathComponent(
+            "笔记/伪装笔记.md"
+        )
+        try FileManager.default.createDirectory(
+            at: unsafeEntryURL,
+            withIntermediateDirectories: false
+        )
+        try unsafeEntryData.write(to: stateURL, options: [.atomic])
+        let directoryProbeWorkspace = try fixture.makeDirectory(
+            "目录伪装工作区"
+        )
+        let directoryProbe = makeStore(
+            fixture: fixture,
+            workspaceDirectory: directoryProbeWorkspace
+        )
+        try directoryProbe.configureCourseLibrary(at: library)
+        try expectFailure("目录伪装成课程笔记") {
+            _ = try directoryProbe.adoptCourseFolder(
+                at: courseARoot,
+                title: "目录伪装"
+            )
+        }
+        try check(unsafeEntryURL.isDirectory, "目录伪装校验改动了原目录")
+        try FileManager.default.removeItem(at: unsafeEntryURL)
+
+        let externalAliasTarget = imports.appendingPathComponent(
+            "课程外笔记.md"
+        )
+        let externalAliasData = Data("课程外内容不得接入".utf8)
+        try externalAliasData.write(to: externalAliasTarget)
+        try FileManager.default.createSymbolicLink(
+            at: unsafeEntryURL,
+            withDestinationURL: externalAliasTarget
+        )
+        let linkedEntryWorkspace = try fixture.makeDirectory(
+            "链接伪装工作区"
+        )
+        let linkedEntryProbe = makeStore(
+            fixture: fixture,
+            workspaceDirectory: linkedEntryWorkspace
+        )
+        try linkedEntryProbe.configureCourseLibrary(at: library)
+        try expectFailure("链接伪装成课程笔记") {
+            _ = try linkedEntryProbe.adoptCourseFolder(
+                at: courseARoot,
+                title: "链接伪装"
+            )
+        }
+        let preservedExternalAliasData = try Data(
+            contentsOf: externalAliasTarget
+        )
+        try check(
+            CourseProjectFileWorker.isSymbolicLink(at: unsafeEntryURL)
+                && preservedExternalAliasData == externalAliasData,
+            "链接伪装校验改动了课程外原文件"
+        )
+        try FileManager.default.removeItem(at: unsafeEntryURL)
+        try sharedStateData.write(to: stateURL, options: [.atomic])
+
+        var externalState = sharedState
+        externalState.revision &+= 1
+        externalState.savedAt = Date()
+        externalState.metadata.title = "Finder 外部更新"
+        externalState.metadata.updatedAt = externalState.savedAt
+        let externalStateData = try JSONEncoder().encode(externalState)
+        let casWorkspace = try fixture.makeDirectory("状态 CAS 竞态工作区")
+        var injectExternalState = false
+        let casStore = makeStore(
+            fixture: fixture,
+            workspaceDirectory: casWorkspace,
+            mutationHook: { stage in
+                guard injectExternalState,
+                      stage == .beforeCoursePortableStateCASPlacement else {
+                    return
+                }
+                injectExternalState = false
+                try externalStateData.write(
+                    to: stateURL,
+                    options: [.atomic]
+                )
+            }
+        )
+        _ = try casStore.adoptCourseFolder(
+            at: courseARoot,
+            title: "状态 CAS 竞态"
+        )
+        injectExternalState = true
+        casStore.renameCourse(courseA, title: "本机待保存更新")
+        let conflictStateURLs = try FileManager.default
+            .contentsOfDirectory(
+                at: stateURL.deletingLastPathComponent(),
+                includingPropertiesForKeys: nil
+            )
+            .filter {
+                $0.lastPathComponent.hasPrefix("course-state-conflict-")
+                    && $0.pathExtension == "json"
+            }
+        let preservedLocalConflict = try conflictStateURLs.contains { url in
+            let conflictState = try JSONDecoder().decode(
+                CoursePortableState.self,
+                from: Data(contentsOf: url)
+            )
+            return conflictState.metadata.title == "本机待保存更新"
+        }
+        try check(
+            Data(contentsOf: stateURL) == externalStateData
+                && casStore.course(withID: courseA)?.title
+                    == "本机待保存更新"
+                && casStore.workspaceSaveError != nil
+                && preservedLocalConflict,
+            "外部状态在原子替换前变化时没有同时保住外部版本与本机待保存版本"
+        )
+        for conflictURL in conflictStateURLs {
+            try FileManager.default.removeItem(at: conflictURL)
+        }
+        try sharedStateData.write(to: stateURL, options: [.atomic])
+
+        let swappedUnreadableTarget = imports.appendingPathComponent(
+            "状态竞态外部目标.json"
+        )
+        let swappedUnreadableTargetData = Data(
+            "Finder 外部版本不得被删除".utf8
+        )
+        try swappedUnreadableTargetData.write(
+            to: swappedUnreadableTarget
+        )
+        let swappedUnreadableWorkspace = try fixture.makeDirectory(
+            "交换后不可读状态工作区"
+        )
+        var injectUnreadableSwappedState = false
+        let swappedUnreadableStore = makeStore(
+            fixture: fixture,
+            workspaceDirectory: swappedUnreadableWorkspace,
+            mutationHook: { stage in
+                guard injectUnreadableSwappedState,
+                      stage == .beforeCoursePortableStateCASPlacement else {
+                    return
+                }
+                injectUnreadableSwappedState = false
+                try FileManager.default.removeItem(at: stateURL)
+                try FileManager.default.createSymbolicLink(
+                    at: stateURL,
+                    withDestinationURL: swappedUnreadableTarget
+                )
+            }
+        )
+        _ = try swappedUnreadableStore.adoptCourseFolder(
+            at: courseARoot,
+            title: "交换后不可读状态"
+        )
+        injectUnreadableSwappedState = true
+        swappedUnreadableStore.renameCourse(
+            courseA,
+            title: "交换后仍需保留的本机候选"
+        )
+        let unreadableConflictURLs = try FileManager.default
+            .contentsOfDirectory(
+                at: stateURL.deletingLastPathComponent(),
+                includingPropertiesForKeys: nil
+            )
+            .filter {
+                $0.lastPathComponent.hasPrefix(
+                    "course-state-conflict-"
+                )
+                    && $0.pathExtension == "json"
+            }
+        let unreadablePreservedLocalCandidate =
+            try unreadableConflictURLs.contains { url in
+                let conflictState = try JSONDecoder().decode(
+                    CoursePortableState.self,
+                    from: Data(contentsOf: url)
+                )
+                return conflictState.metadata.title
+                    == "交换后仍需保留的本机候选"
+            }
+        try check(
+            CourseProjectFileWorker.isSymbolicLink(at: stateURL)
+                && Data(contentsOf: swappedUnreadableTarget)
+                    == swappedUnreadableTargetData
+                && swappedUnreadableStore.workspaceSaveError != nil
+                && unreadablePreservedLocalCandidate,
+            "交换后旧状态变为不可读入口时删除了外部版本或本机候选"
+        )
+        for conflictURL in unreadableConflictURLs {
+            try FileManager.default.removeItem(at: conflictURL)
+        }
+        try FileManager.default.removeItem(at: stateURL)
+        try sharedStateData.write(to: stateURL, options: [.atomic])
+
+        let firstCreateRollbackWorkspace = try fixture.makeDirectory(
+            "首次状态回滚并发工作区"
+        )
+        var injectWorkspaceFailureAfterStateCreate = false
+        let firstCreateRollbackStore = makeStore(
+            fixture: fixture,
+            workspaceDirectory: firstCreateRollbackWorkspace,
+            workspaceWriter: { data, url in
+                guard injectWorkspaceFailureAfterStateCreate else {
+                    try data.write(to: url, options: [.atomic])
+                    return
+                }
+                injectWorkspaceFailureAfterStateCreate = false
+                try externalStateData.write(
+                    to: stateURL,
+                    options: [.atomic]
+                )
+                throw CheckError.injectedFailure
+            }
+        )
+        _ = try firstCreateRollbackStore.adoptCourseFolder(
+            at: courseARoot,
+            title: "首次状态回滚并发"
+        )
+        try FileManager.default.removeItem(at: stateURL)
+        injectWorkspaceFailureAfterStateCreate = true
+        firstCreateRollbackStore.renameCourse(
+            courseA,
+            title: "首次创建的本机候选"
+        )
+        let rollbackConflictURLs = try FileManager.default
+            .contentsOfDirectory(
+                at: stateURL.deletingLastPathComponent(),
+                includingPropertiesForKeys: nil
+            )
+            .filter {
+                $0.lastPathComponent.hasPrefix(
+                    "course-state-conflict-"
+                )
+                    && $0.pathExtension == "json"
+            }
+        let rollbackPreservedLocalCandidate =
+            try rollbackConflictURLs.contains { url in
+                let conflictState = try JSONDecoder().decode(
+                    CoursePortableState.self,
+                    from: Data(contentsOf: url)
+                )
+                return conflictState.metadata.title
+                    == "首次创建的本机候选"
+            }
+        try check(
+            Data(contentsOf: stateURL) == externalStateData
+                && firstCreateRollbackStore.workspaceSaveError != nil
+                && rollbackPreservedLocalCandidate,
+            "首次创建课程状态后总工作区失败时没有同时保住外部状态与本机候选"
+        )
+        for conflictURL in rollbackConflictURLs {
+            try FileManager.default.removeItem(at: conflictURL)
+        }
+        try sharedStateData.write(to: stateURL, options: [.atomic])
+
+        let existingRollbackWorkspace = try fixture.makeDirectory(
+            "已有状态回滚并发工作区"
+        )
+        var injectExistingRollbackFailure = false
+        let existingRollbackStore = makeStore(
+            fixture: fixture,
+            workspaceDirectory: existingRollbackWorkspace,
+            workspaceWriter: { data, url in
+                guard injectExistingRollbackFailure else {
+                    try data.write(to: url, options: [.atomic])
+                    return
+                }
+                injectExistingRollbackFailure = false
+                let handle = try FileHandle(forWritingTo: stateURL)
+                try handle.truncate(atOffset: 0)
+                try handle.write(contentsOf: externalStateData)
+                try handle.synchronize()
+                try handle.close()
+                throw CheckError.injectedFailure
+            }
+        )
+        _ = try existingRollbackStore.adoptCourseFolder(
+            at: courseARoot,
+            title: "已有状态回滚并发"
+        )
+        injectExistingRollbackFailure = true
+        existingRollbackStore.renameCourse(
+            courseA,
+            title: "已有状态回滚的本机候选"
+        )
+        let existingRollbackArtifacts = try FileManager.default
+            .contentsOfDirectory(
+                at: stateURL.deletingLastPathComponent(),
+                includingPropertiesForKeys: nil
+            )
+        let existingRollbackRejected =
+            try existingRollbackArtifacts.contains { url in
+                guard url.lastPathComponent.hasPrefix(
+                    "course-state-rejected-"
+                ),
+                url.pathExtension == "json" else {
+                    return false
+                }
+                return try Data(contentsOf: url) == externalStateData
+            }
+        let existingRollbackCandidate =
+            try existingRollbackArtifacts.contains { url in
+                guard url.lastPathComponent.hasPrefix(
+                    "course-state-conflict-"
+                ),
+                url.pathExtension == "json" else {
+                    return false
+                }
+                let conflictState = try JSONDecoder().decode(
+                    CoursePortableState.self,
+                    from: Data(contentsOf: url)
+                )
+                return conflictState.metadata.title
+                    == "已有状态回滚的本机候选"
+            }
+        try check(
+            Data(contentsOf: stateURL) == sharedStateData
+                && existingRollbackStore.workspaceSaveError != nil
+                && existingRollbackRejected
+                && existingRollbackCandidate,
+            "已有课程状态回滚遇到外部原地改写时没有同时保住旧状态、外部版本与本机候选"
+        )
+        for url in existingRollbackArtifacts
+        where url.lastPathComponent.hasPrefix(
+            "course-state-rejected-"
+        )
+            || url.lastPathComponent.hasPrefix(
+                "course-state-conflict-"
+            ) {
+            try FileManager.default.removeItem(at: url)
+        }
+
+        let unreadableRollbackTarget = imports.appendingPathComponent(
+            "回滚不可读外部目标.json"
+        )
+        let unreadableRollbackTargetData = Data(
+            "回滚时 Finder 外部入口必须保留".utf8
+        )
+        try unreadableRollbackTargetData.write(
+            to: unreadableRollbackTarget
+        )
+        let unreadableRollbackWorkspace = try fixture.makeDirectory(
+            "已有状态不可读回滚工作区"
+        )
+        var injectUnreadableRollbackFailure = false
+        let unreadableRollbackStore = makeStore(
+            fixture: fixture,
+            workspaceDirectory: unreadableRollbackWorkspace,
+            workspaceWriter: { data, url in
+                guard injectUnreadableRollbackFailure else {
+                    try data.write(to: url, options: [.atomic])
+                    return
+                }
+                injectUnreadableRollbackFailure = false
+                try FileManager.default.removeItem(at: stateURL)
+                try FileManager.default.createSymbolicLink(
+                    at: stateURL,
+                    withDestinationURL: unreadableRollbackTarget
+                )
+                throw CheckError.injectedFailure
+            }
+        )
+        _ = try unreadableRollbackStore.adoptCourseFolder(
+            at: courseARoot,
+            title: "已有状态不可读回滚"
+        )
+        injectUnreadableRollbackFailure = true
+        unreadableRollbackStore.renameCourse(
+            courseA,
+            title: "不可读回滚的本机候选"
+        )
+        let unreadableRollbackArtifacts = try FileManager.default
+            .contentsOfDirectory(
+                at: stateURL.deletingLastPathComponent(),
+                includingPropertiesForKeys: nil
+            )
+        let unreadableRollbackRejected =
+            try unreadableRollbackArtifacts.contains { url in
+                guard url.lastPathComponent.hasPrefix(
+                    "course-state-rejected-"
+                ),
+                url.pathExtension == "json",
+                CourseProjectFileWorker.isSymbolicLink(at: url) else {
+                    return false
+                }
+                return try Data(contentsOf: url)
+                    == unreadableRollbackTargetData
+            }
+        let unreadableRollbackCandidate =
+            try unreadableRollbackArtifacts.contains { url in
+                guard url.lastPathComponent.hasPrefix(
+                    "course-state-conflict-"
+                ),
+                url.pathExtension == "json" else {
+                    return false
+                }
+                let conflictState = try JSONDecoder().decode(
+                    CoursePortableState.self,
+                    from: Data(contentsOf: url)
+                )
+                return conflictState.metadata.title
+                    == "不可读回滚的本机候选"
+            }
+        try check(
+            Data(contentsOf: stateURL) == sharedStateData
+                && unreadableRollbackStore.workspaceSaveError != nil
+                && unreadableRollbackRejected
+                && unreadableRollbackCandidate
+                && Data(contentsOf: unreadableRollbackTarget)
+                    == unreadableRollbackTargetData,
+            "已有课程状态回滚遇到不可读外部入口时没有同时保住旧状态、外部入口与本机候选"
+        )
+        for url in unreadableRollbackArtifacts
+        where url.lastPathComponent.hasPrefix(
+            "course-state-rejected-"
+        )
+            || url.lastPathComponent.hasPrefix(
+                "course-state-conflict-"
+            ) {
+            try FileManager.default.removeItem(at: url)
+        }
+
+        let oversizedOriginalData = try Data(contentsOf: stateURL)
+        let oversizedHandle = try FileHandle(forWritingTo: stateURL)
+        try oversizedHandle.truncate(atOffset: 33 * 1_024 * 1_024)
+        try oversizedHandle.synchronize()
+        try oversizedHandle.close()
+        let oversizedIdentity = try require(
+            CourseProjectFileWorker.identity(at: stateURL),
+            "无法记录超大课程状态文件身份"
+        )
+        let oversizedSize = try require(
+            stateURL.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+            "无法记录超大课程状态文件大小"
+        )
+        let oversizedReadHandle = try FileHandle(forReadingFrom: stateURL)
+        let oversizedPrefix = try require(
+            oversizedReadHandle.read(upToCount: 128),
+            "无法读取超大课程状态文件前缀"
+        )
+        try oversizedReadHandle.close()
+        let oversizedWorkspace = try fixture.makeDirectory(
+            "超大状态拒读工作区"
+        )
+        let oversizedProbe = makeStore(
+            fixture: fixture,
+            workspaceDirectory: oversizedWorkspace
+        )
+        try oversizedProbe.configureCourseLibrary(at: library)
+        try expectFailure("33MB 课程状态有界拒读") {
+            _ = try oversizedProbe.adoptCourseFolder(
+                at: courseARoot,
+                title: "超大状态拒读"
+            )
+        }
+        let oversizedVerifyHandle = try FileHandle(forReadingFrom: stateURL)
+        let oversizedPrefixAfterRead = try require(
+            oversizedVerifyHandle.read(upToCount: 128),
+            "无法复核超大课程状态文件前缀"
+        )
+        try oversizedVerifyHandle.close()
+        try check(
+            CourseProjectFileWorker.identity(at: stateURL)
+                == oversizedIdentity
+                && stateURL.resourceValues(
+                    forKeys: [.fileSizeKey]
+                ).fileSize == oversizedSize
+                && oversizedSize == 33 * 1_024 * 1_024
+                && oversizedPrefixAfterRead == oversizedPrefix,
+            "拒读 33MB 课程状态时改动了原文件"
+        )
+        try oversizedOriginalData.write(to: stateURL, options: [.atomic])
+
+        let beforeLocalOversizedState = try Data(contentsOf: stateURL)
+        let oversizedMessageText = String(
+            repeating: "x",
+            count: 33 * 1_024 * 1_024
+        )
+        let oversizedMessageID =
+            try store.appendPortableCourseMessageForSelfCheck(
+                courseID: courseA,
+                text: oversizedMessageText
+            )
+        try check(
+            store.flushPendingWorkspaceSave(),
+            "本机课程状态超限时阻断了总工作区保存"
+        )
+        let localOversizedWorkspace = try JSONDecoder().decode(
+            PersistedWorkspace.self,
+            from: Data(
+                contentsOf: fixture.workspaceDirectory
+                    .appendingPathComponent("workspace.json")
+            )
+        )
+        let persistedOversizedMessage = localOversizedWorkspace
+            .studySessions?
+            .first { $0.id == fixtureState.sessionID }?
+            .messages
+            .first { $0.id == oversizedMessageID }
+        try check(
+            Data(contentsOf: stateURL) == beforeLocalOversizedState
+                && persistedOversizedMessage?.text.count
+                    == oversizedMessageText.count
+                && localOversizedWorkspace.dirtyPortableCourseIDs?
+                    .contains(courseA) == true
+                && store.workspaceSaveError?.contains("32 MB") == true,
+            "本机最终课程状态超过 32MB 时没有保存工作区、保留原状态或给出明确错误"
+        )
+        store.removePortableCourseMessageForSelfCheck(
+            courseID: courseA,
+            messageID: oversizedMessageID
+        )
+        let recoveredMessageID =
+            try store.appendPortableCourseMessageForSelfCheck(
+                courseID: courseA,
+                text: "缩小后的课程状态能够继续保存。"
+            )
+        let recoveredFromLocalOversize =
+            store.flushPendingWorkspaceSave()
+        let recoveredOversizeFlags =
+            store.portableStateFlagsForSelfCheck(courseID: courseA)
+        let recoveredCourseState = try JSONDecoder().decode(
+            CoursePortableState.self,
+            from: Data(contentsOf: stateURL)
+        ).validated(expectedCourseID: courseA)
+        try check(
+            recoveredFromLocalOversize
+                && !recoveredOversizeFlags.dirty
+                && !recoveredOversizeFlags.blocked
+                && !recoveredOversizeFlags.oversized
+                && store.workspaceSaveError?.contains("32 MB") != true
+                && recoveredCourseState.studySessions
+                    .flatMap(\.messages)
+                    .contains { $0.id == recoveredMessageID },
+            "课程内容缩小后没有从超限阻断中安全恢复"
+                + "（saved=\(recoveredFromLocalOversize)，"
+                + "error=\(store.workspaceSaveError ?? "nil")，"
+                + "flags=\(recoveredOversizeFlags)）"
+        )
+
+        let beforeFailedWrite = try Data(contentsOf: stateURL)
+        let failedWriteWorkspace = try fixture.makeDirectory("写入失败工作区")
+        var portableWriteCount = 0
+        let failingStore = makeStore(
+            fixture: fixture,
+            workspaceDirectory: failedWriteWorkspace,
+            portableStateWriter: {
+                data,
+                url,
+                directoryIdentity,
+                expectedPreviousData,
+                beforeCommit in
+                portableWriteCount += 1
+                if portableWriteCount > 0 {
+                    throw CheckError.injectedFailure
+                }
+                try CourseProjectFileWorker.writePortableState(
+                    data,
+                    to: url,
+                    expectedDirectoryIdentity: directoryIdentity,
+                    expectedPreviousData: expectedPreviousData,
+                    beforeCommit: beforeCommit
+                )
+            }
+        )
+        _ = try failingStore.adoptCourseFolder(
+            at: courseARoot,
+            title: "写入失败课程"
+        )
+        failingStore.renameCourse(courseA, title: "不应落盘的名称")
+        try check(
+            Data(contentsOf: stateURL) == beforeFailedWrite
+                && failingStore.workspaceSaveError != nil,
+            "可携带状态原子写失败后覆盖了已提交状态或没有明确报错"
+        )
+
+        let directoryRaceWorkspace = try fixture.makeDirectory(
+            "状态目录竞态工作区"
+        )
+        let metadataDirectory = courseARoot.appendingPathComponent(
+            ".weibei",
+            isDirectory: true
+        )
+        let movedMetadataDirectory = courseARoot.appendingPathComponent(
+            ".weibei-race-original",
+            isDirectory: true
+        )
+        var injectDirectoryRace = false
+        var didSwapMetadataDirectory = false
+        var directoryRaceStore: WorkspaceStore? = makeStore(
+            fixture: fixture,
+            workspaceDirectory: directoryRaceWorkspace,
+            portableStateWriter: {
+                data,
+                url,
+                directoryIdentity,
+                expectedPreviousData,
+                beforeCommit in
+                if injectDirectoryRace && !didSwapMetadataDirectory {
+                    try FileManager.default.moveItem(
+                        at: metadataDirectory,
+                        to: movedMetadataDirectory
+                    )
+                    try FileManager.default.createDirectory(
+                        at: metadataDirectory,
+                        withIntermediateDirectories: false
+                    )
+                    didSwapMetadataDirectory = true
+                }
+                try CourseProjectFileWorker.writePortableState(
+                    data,
+                    to: url,
+                    expectedDirectoryIdentity: directoryIdentity,
+                    expectedPreviousData: expectedPreviousData,
+                    beforeCommit: beforeCommit
+                )
+            }
+        )
+        _ = try directoryRaceStore?.adoptCourseFolder(
+            at: courseARoot,
+            title: "状态目录竞态"
+        )
+        let beforeDirectoryRace = try Data(contentsOf: stateURL)
+        injectDirectoryRace = true
+        directoryRaceStore?.renameCourse(
+            courseA,
+            title: "不得写入替换目录"
+        )
+        let replacementStateURL = metadataDirectory
+            .appendingPathComponent("course-state.json")
+        let movedStateURL = movedMetadataDirectory
+            .appendingPathComponent("course-state.json")
+        let movedStateData = try Data(contentsOf: movedStateURL)
+        try check(
+            didSwapMetadataDirectory
+                && directoryRaceStore?.workspaceSaveError != nil
+                && !replacementStateURL.exists
+                && movedStateData == beforeDirectoryRace,
+            "状态目录被替换后仍向未经核验的目录写入"
+        )
+        directoryRaceStore = nil
+        try FileManager.default.removeItem(at: metadataDirectory)
+        try FileManager.default.moveItem(
+            at: movedMetadataDirectory,
+            to: metadataDirectory
+        )
+
+        let workspaceFailureDirectory = try fixture.makeDirectory(
+            "总工作区写入失败"
+        )
+        var rejectWorkspaceWrite = false
+        var workspaceFailureStore: WorkspaceStore? = makeStore(
+            fixture: fixture,
+            workspaceDirectory: workspaceFailureDirectory,
+            workspaceWriter: { data, url in
+                if rejectWorkspaceWrite {
+                    throw CheckError.injectedFailure
+                }
+                try data.write(to: url, options: [.atomic])
+            }
+        )
+        _ = try workspaceFailureStore?.adoptCourseFolder(
+            at: courseARoot,
+            title: "总工作区失败课程"
+        )
+        let beforeWorkspaceFailure = try Data(contentsOf: stateURL)
+        let ghostSource = imports.appendingPathComponent("不应重现.txt")
+        try Data("GHOST_PORTABLE_ITEM".utf8).write(to: ghostSource)
+        rejectWorkspaceWrite = true
+        try expectFailure("总工作区失败后的课程状态回滚") {
+            _ = try workspaceFailureStore?
+                .importFileIntoCourseForSelfCheck(
+                    ghostSource,
+                    courseID: courseA,
+                    role: .material
+                )
+        }
+        try check(
+            try Data(contentsOf: stateURL) == beforeWorkspaceFailure
+                && !courseARoot.appendingPathComponent(
+                    "文稿/不应重现.txt"
+                ).exists,
+            "总工作区失败后课程状态或课程文件没有一起回滚"
+        )
+        workspaceFailureStore = nil
+        let afterWorkspaceFailure = makeStore(
+            fixture: fixture,
+            workspaceDirectory: workspaceFailureDirectory
+        )
+        try check(
+            !afterWorkspaceFailure.importedItems.contains {
+                $0.title == "不应重现"
+                    || $0.url?.lastPathComponent == "不应重现.txt"
+            },
+            "总工作区失败后重开出现了幽灵资料"
+        )
+
+        let memoryTextBeforeChatDeletion = try require(
+            store.learningMemoryStates
+                .first { $0.scope == .course(courseA) }?
+                .entries
+                .first { $0.id == fixtureState.memoryID }?
+                .text,
+            "删 Chat 前缺少课程学习记忆"
+        )
+        store.deleteStudySession(fixtureState.sessionID)
+        try check(
+            store.flushPendingWorkspaceSave(),
+            "删 Chat 后课程学习记忆没有保存"
+        )
+        let afterChatDeletionState = try JSONDecoder().decode(
+            CoursePortableState.self,
+            from: Data(contentsOf: stateURL)
+        ).validated(expectedCourseID: courseA)
+        let memoryAfterChatDeletion = try require(
+            afterChatDeletionState.learningMemoryState?
+                .entries
+                .first { $0.id == fixtureState.memoryID },
+            "删 Chat 后课程学习记忆被删除"
+        )
+        try check(
+            memoryAfterChatDeletion.text == memoryTextBeforeChatDeletion
+                && memoryAfterChatDeletion.sessionID == nil
+                && memoryAfterChatDeletion.messageID == nil
+                && (memoryAfterChatDeletion.revisions ?? [])
+                    .allSatisfy {
+                        $0.sessionID == nil && $0.messageID == nil
+                    }
+                && !afterChatDeletionState.studySessions.contains {
+                    $0.id == fixtureState.sessionID
+                },
+            "删 Chat 后记忆正文或历史没有保留，或仍携带悬空来源"
+        )
+        let chatDeletionReopenWorkspace = try fixture.makeDirectory(
+            "删 Chat 后重开工作区"
+        )
+        let chatDeletionReopenStore = makeStore(
+            fixture: fixture,
+            workspaceDirectory: chatDeletionReopenWorkspace
+        )
+        try chatDeletionReopenStore.configureCourseLibrary(at: library)
+        _ = try chatDeletionReopenStore.adoptCourseFolder(
+            at: courseARoot,
+            title: "删 Chat 后重开"
+        )
+        let reopenedMemory = chatDeletionReopenStore
+            .learningMemoryStates
+            .first { $0.scope == .course(courseA) }?
+            .entries
+            .first { $0.id == fixtureState.memoryID }
+        try check(
+            reopenedMemory?.text == memoryTextBeforeChatDeletion
+                && reopenedMemory?.sessionID == nil
+                && reopenedMemory?.messageID == nil
+                && !chatDeletionReopenStore.studySessions.contains {
+                    $0.id == fixtureState.sessionID
+                },
+            "删 Chat 后重开没有保留已净化的学习记忆"
+        )
+    }
+
+    @MainActor
+    private static func portableCourseStatePreservesOfflineAndCorruptChanges() throws {
+        let fixture = try Fixture(name: "portable-state-offline")
+        defer { fixture.remove() }
+        let courseRoot = try fixture.makeDirectory("外部课程")
+        let movedRoot = fixture.root.appendingPathComponent(
+            "暂时移走的外部课程",
+            isDirectory: true
+        )
+        var store: WorkspaceStore? = makeStore(fixture: fixture)
+        let courseID = try require(
+            store?.adoptCourseFolder(
+                at: courseRoot,
+                title: "外部课程"
+            ),
+            "无法建立离线课程样本"
+        )
+        let stateURL = courseRoot.appendingPathComponent(
+            ".weibei/course-state.json"
+        )
+        let originalState = try Data(contentsOf: stateURL)
+        try check(
+            store?.flushPendingWorkspaceSave() == true,
+            "离线课程基线没有保存"
+        )
+        store = nil
+
+        try FileManager.default.moveItem(at: courseRoot, to: movedRoot)
+        store = makeStore(fixture: fixture)
+        try check(
+            store?.courseRootURL(for: courseID) == nil,
+            "课程文件夹移走后仍被标记为可用"
+        )
+        store?.renameCourse(courseID, title: "离线期间更新的课程")
+        let offlineChatID = try require(
+            store?.createStudySession(courseID: courseID)?.id,
+            "课程根离线时无法保留新 Chat"
+        )
+        try check(
+            store?.flushPendingWorkspaceSave() == true,
+            "课程根离线时没有把较新缓存与 dirty 修订一起保存"
+        )
+        store = nil
+        try FileManager.default.moveItem(at: movedRoot, to: courseRoot)
+
+        store = makeStore(fixture: fixture)
+        let recoveredState = try JSONDecoder().decode(
+            CoursePortableState.self,
+            from: Data(contentsOf: stateURL)
+        )
+        try check(
+            recoveredState.metadata.title == "离线期间更新的课程"
+                && recoveredState.studySessions.contains {
+                    $0.id == offlineChatID
+                }
+                && Data(contentsOf: stateURL) != originalState,
+            "旧 course-state 在根恢复后覆盖了离线期间的新课程缓存"
+        )
+        try check(
+            store?.course(withID: courseID)?.title
+                == "离线期间更新的课程",
+            "根恢复后的运行态没有保留离线更新"
+        )
+        try check(
+            store?.flushPendingWorkspaceSave() == true,
+            "根恢复后的课程状态没有完成修订仲裁"
+        )
+        store = nil
+
+        var corruptObject = try require(
+            JSONSerialization.jsonObject(
+                with: Data(contentsOf: stateURL)
+            ) as? [String: Any],
+            "课程状态无法构造未来版本样本"
+        )
+        corruptObject["schemaVersion"] = 999
+        let corruptData = try JSONSerialization.data(
+            withJSONObject: corruptObject,
+            options: [.sortedKeys]
+        )
+        try corruptData.write(to: stateURL, options: [.atomic])
+        store = makeStore(fixture: fixture)
+        store?.renameCourse(courseID, title: "坏状态期间的本机更新")
+        try check(
+            store?.flushPendingWorkspaceSave() == true,
+            "坏状态存在时本机缓存无法安全保存"
+        )
+        try check(
+            Data(contentsOf: stateURL) == corruptData
+                && store?.workspaceSaveError != nil,
+            "未来版本或损坏 course-state 被本机缓存静默覆盖"
+        )
+        let cachedWorkspace = try JSONDecoder().decode(
+            PersistedWorkspace.self,
+            from: Data(
+                contentsOf: fixture.workspaceDirectory
+                    .appendingPathComponent("workspace.json")
+            )
+        )
+        try check(
+            cachedWorkspace.courses?.first {
+                $0.id == courseID
+            }?.title == "坏状态期间的本机更新"
+                && cachedWorkspace.dirtyPortableCourseIDs?
+                    .contains(courseID) == true,
+            "坏状态保护吞掉了本机较新缓存或没有记录 dirty 状态"
+        )
     }
 
     @MainActor
@@ -1957,7 +3300,7 @@ enum CourseProjectRootSelfCheck {
             )
             try check(
                 reopened.contentRevision == imported.contentRevision + 1,
-                "同 inode 内容变化没有增加修订号"
+                "同 inode 内容变化没有增加修订号（原 \(imported.contentRevision)，现 \(reopened.contentRevision)）"
             )
             try check(reopened.contentDigest != imported.contentDigest, "同 inode 内容变化没有更新摘要")
             try check(reopened.importedFileBookmarkData == nil, "原位编辑重开后生成单文件书签")
@@ -4340,6 +5683,38 @@ enum CourseProjectRootSelfCheck {
         )
         workspace.courseItemMemberships = memberships
         try JSONEncoder().encode(workspace).write(to: workspaceURL, options: [.atomic])
+        let portableStateURL = rootC.appendingPathComponent(
+            ".weibei/course-state.json"
+        )
+        var portableState = try JSONDecoder().decode(
+            CoursePortableState.self,
+            from: Data(contentsOf: portableStateURL)
+        )
+        portableState.items.append(
+            CoursePortableItem(
+                itemID: sharedItem.id,
+                title: sharedItem.title,
+                kind: sharedItem.kind,
+                isNotebookNote: sharedItem.isNotebookNote,
+                courseRelativePath: "文稿/恢复共享.txt",
+                storage: .sharedReference(
+                    sharedRelativePath: sharedRelativePath,
+                    expectedContentDigest: sharedItem.contentDigest
+                ),
+                contentRevision: sharedItem.contentRevision,
+                contentDigest: sharedItem.contentDigest,
+                fileByteCount: sharedItem.fileByteCount,
+                fileModificationTimeNanoseconds:
+                    sharedItem.fileModificationTimeNanoseconds,
+                membershipCreatedAt: Date()
+            )
+        )
+        portableState.revision &+= 1
+        portableState.savedAt = Date()
+        try JSONEncoder().encode(portableState).write(
+            to: portableStateURL,
+            options: [.atomic]
+        )
 
         store = makeStore(fixture: fixture)
         try store?.recoverCourseTransactionsForSelfCheck()
@@ -4389,6 +5764,7 @@ enum CourseProjectRootSelfCheck {
     @MainActor
     private static func makeStore(
         fixture: Fixture,
+        workspaceDirectory: URL? = nil,
         startAccessing: @escaping (URL) -> Bool = { _ in true },
         stopAccessing: @escaping (URL) -> Void = { _ in },
         mutationHook: @escaping (CourseProjectMutationStage) throws -> Void = { _ in },
@@ -4398,10 +5774,25 @@ enum CourseProjectRootSelfCheck {
         },
         workspaceWriter: @escaping (Data, URL) throws -> Void = {
             try $0.write(to: $1, options: [.atomic])
+        },
+        portableStateWriter: @escaping (
+            Data,
+            URL,
+            ImportedFileIdentity,
+            Data?,
+            () throws -> Void
+        ) throws -> Void = {
+            try CourseProjectFileWorker.writePortableState(
+                $0,
+                to: $1,
+                expectedDirectoryIdentity: $2,
+                expectedPreviousData: $3,
+                beforeCommit: $4
+            )
         }
     ) -> WorkspaceStore {
         WorkspaceStore(
-            workspaceDirectory: fixture.workspaceDirectory,
+            workspaceDirectory: workspaceDirectory ?? fixture.workspaceDirectory,
             courseRootBookmarkMaker: { Data($0.canonicalFileURL.path.utf8) },
             courseRootBookmarkResolver: bookmarkResolver ?? { data in
                     guard let path = String(data: data, encoding: .utf8) else { return nil }
@@ -4414,7 +5805,8 @@ enum CourseProjectRootSelfCheck {
             courseSecurityScopeStopper: stopAccessing,
             courseProjectMutationHook: mutationHook,
             courseFileSourceRemover: courseFileSourceRemover,
-            workspaceSnapshotWriter: workspaceWriter
+            workspaceSnapshotWriter: workspaceWriter,
+            coursePortableStateWriter: portableStateWriter
         )
     }
 
