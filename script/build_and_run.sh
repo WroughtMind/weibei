@@ -914,6 +914,36 @@ verify_chat_action_cards() {
   return 1
 }
 
+verify_learning_memory_scopes() {
+  if [[ "$VERIFY_SCENARIO" != "learning-memory-scopes-flow" ]]; then
+    return 0
+  fi
+
+  local report_file="$VERIFY_DATA_DIR/learning-memory-scopes-report.txt"
+  for _ in {1..60}; do
+    if [[ -f "$report_file" ]]; then
+      if /usr/bin/grep -q '^result=pass$' "$report_file" \
+        && /usr/bin/grep -q '^scopes_isolated=true$' "$report_file" \
+        && /usr/bin/grep -q '^independent_revisions=true$' "$report_file" \
+        && /usr/bin/grep -q '^user_history=true$' "$report_file" \
+        && /usr/bin/grep -q '^stable_ids=true$' "$report_file" \
+        && /usr/bin/grep -q '^legacy_fields_removed=true$' "$report_file" \
+        && /usr/bin/grep -q '^persisted=true$' "$report_file"; then
+        return 0
+      fi
+      echo "verify failed: scoped learning memory lifecycle did not pass." >&2
+      cat "$report_file" >&2
+      return 1
+    fi
+    sleep 0.2
+  done
+
+  echo "verify failed: scoped learning memory report was not produced." >&2
+  [[ -f "$VERIFY_DATA_DIR/verification-state.txt" ]] && cat "$VERIFY_DATA_DIR/verification-state.txt" >&2
+  [[ -s "$VERIFY_STDERR" ]] && cat "$VERIFY_STDERR" >&2
+  return 1
+}
+
 finish_verify_window() {
   verify_learning_flow_persistence
   verify_empty_workspace_state
@@ -925,6 +955,7 @@ finish_verify_window() {
   verify_reader_scroll_persistence
   verify_chat_reply_persistence
   verify_chat_action_cards
+  verify_learning_memory_scopes
   if [[ "$RUN_VISUAL_VERIFY" == true ]]; then
     visual_verify_window
   fi

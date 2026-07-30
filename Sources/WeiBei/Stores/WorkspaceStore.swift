@@ -13302,6 +13302,7 @@ final class WorkspaceStore: ObservableObject {
             || scenario == "chat-reply-persistence-flow"
             || scenario == "chat-source-navigation-flow"
             || scenario == "chat-action-cards-flow"
+            || scenario == "learning-memory-scopes-flow"
             || scenario == "loading-indicator-samples"
             || emptyWorkspaceScenarios.contains(scenario) else { return }
         didRunVerificationScenario = true
@@ -13353,6 +13354,10 @@ final class WorkspaceStore: ObservableObject {
             Task {
                 await runChatActionCardVerification()
             }
+            return
+        }
+        if scenario == "learning-memory-scopes-flow" {
+            runLearningMemoryScopesVerification()
             return
         }
         if scenario == "content-rail-dormant-preview" || scenario == "content-rail-activation-preview" {
@@ -14996,6 +15001,168 @@ final class WorkspaceStore: ObservableObject {
             .appendingPathComponent("chat-reply-persistence-report.txt")
         try? "\(report)\n".write(to: reportURL, atomically: true, encoding: .utf8)
         recordVerificationStage("chat-reply-persistence:\(passed ? "pass" : "fail")")
+        recordVerificationStage("completed")
+    }
+
+    private func runLearningMemoryScopesVerification() {
+        let courseAID = UUID(uuidString: "66666666-6666-6666-6666-666666666661")!
+        let courseBID = UUID(uuidString: "66666666-6666-6666-6666-666666666662")!
+        let courseAChatID = UUID(uuidString: "66666666-6666-6666-6666-666666666663")!
+        let courseBChatID = UUID(uuidString: "66666666-6666-6666-6666-666666666664")!
+        let globalChatID = UUID(uuidString: "66666666-6666-6666-6666-666666666665")!
+        let courseAMemoryID = UUID(uuidString: "66666666-6666-6666-6666-666666666666")!
+        let courseBMemoryID = UUID(uuidString: "66666666-6666-6666-6666-666666666667")!
+        let globalMemoryID = UUID(uuidString: "66666666-6666-6666-6666-666666666668")!
+        let now = Date()
+
+        func initialEntry(
+            id: UUID,
+            kind: LearningMemoryKind,
+            text: String,
+            sessionID: UUID
+        ) -> LearningMemoryEntry {
+            Self.learningMemoryEntryWithInitialRevision(
+                LearningMemoryEntry(
+                    id: id,
+                    kind: kind,
+                    text: text,
+                    evidence: "真实 App 作用域验收",
+                    origin: .agentInference,
+                    sessionID: sessionID,
+                    createdAt: now,
+                    updatedAt: now
+                ),
+                revision: 1
+            )
+        }
+
+        courses = [
+            Course(id: courseAID, title: "货币金融学", colorIndex: 0),
+            Course(id: courseBID, title: "经济思想史", colorIndex: 1),
+        ]
+        activeCourseID = courseAID
+        studySessions = [
+            StudySession(
+                id: courseAChatID,
+                title: "利率复习",
+                messages: [AgentMessage(role: .user, text: "继续复习利率", source: nil)],
+                courseID: courseAID
+            ),
+            StudySession(
+                id: courseBChatID,
+                title: "思想史复习",
+                messages: [AgentMessage(role: .user, text: "继续复习思想史", source: nil)],
+                courseID: courseBID
+            ),
+            StudySession(
+                id: globalChatID,
+                title: "跨课程计划",
+                messages: [AgentMessage(role: .user, text: "安排本周学习", source: nil)],
+                courseID: nil
+            ),
+        ]
+        activeStudySessionID = courseAChatID
+        messages = studySessions[0].messages
+        learningMemoryStates = [
+            ScopedLearningMemoryState(
+                scope: .global,
+                revision: 1,
+                entries: [
+                    initialEntry(
+                        id: globalMemoryID,
+                        kind: .goal,
+                        text: "本周完成两门课程复习",
+                        sessionID: globalChatID
+                    ),
+                ]
+            ),
+            ScopedLearningMemoryState(
+                scope: .course(courseAID),
+                revision: 1,
+                entries: [
+                    initialEntry(
+                        id: courseAMemoryID,
+                        kind: .confusion,
+                        text: "仍需区分名义利率和实际利率",
+                        sessionID: courseAChatID
+                    ),
+                ]
+            ),
+            ScopedLearningMemoryState(
+                scope: .course(courseBID),
+                revision: 1,
+                entries: [
+                    initialEntry(
+                        id: courseBMemoryID,
+                        kind: .understood,
+                        text: "已经理解古典经济学背景",
+                        sessionID: courseBChatID
+                    ),
+                ]
+            ),
+        ]
+        learningMemoryScopeMigrationVersion = 1
+
+        let globalRevisionBefore = learningMemoryRevision(in: .global)
+        let courseARevisionBefore = learningMemoryRevision(in: .course(courseAID))
+        let courseBRevisionBefore = learningMemoryRevision(in: .course(courseBID))
+        let edited = updateLearningMemory(
+            courseAMemoryID,
+            in: .course(courseAID),
+            kind: .progress,
+            text: "已能区分名义利率和实际利率，准备练习费雪方程"
+        )
+        resolveLearningMemory(globalMemoryID, in: .global)
+
+        let courseAEntry = learningMemoryEntries(in: .course(courseAID))
+            .first { $0.id == courseAMemoryID }
+        let globalEntry = learningMemoryEntries(in: .global)
+            .first { $0.id == globalMemoryID }
+        let scopesIsolated = edited
+            && courseAEntry?.kind == .progress
+            && courseAEntry?.revisions?.last?.actor == .user
+            && globalEntry?.status == .resolved
+            && learningMemoryRevision(in: .course(courseAID)) == courseARevisionBefore + 1
+            && learningMemoryRevision(in: .global) == globalRevisionBefore + 1
+            && learningMemoryRevision(in: .course(courseBID)) == courseBRevisionBefore
+            && learningMemoryEntries(in: .course(courseBID)).map(\.id) == [courseBMemoryID]
+
+        let saved = flushPendingWorkspaceSave()
+        let snapshot = (try? Data(contentsOf: storageURL)).flatMap {
+            try? JSONDecoder().decode(PersistedWorkspace.self, from: $0)
+        }
+        let persistedCourseA = snapshot?.learningMemoryStates?
+            .first { $0.scope == .course(courseAID) }?
+            .entries
+            .first { $0.id == courseAMemoryID }
+        let persistencePassed = saved
+            && snapshot?.learningMemoryScopeMigrationVersion == 1
+            && snapshot?.learningMemoryEntries == nil
+            && snapshot?.learningMemoryRevision == nil
+            && persistedCourseA?.text == courseAEntry?.text
+            && persistedCourseA?.revisions?.last?.actor == .user
+
+        layout = .documentAgentNotes
+        showLibrary = false
+        showReader = false
+        showAgent = true
+        showNotes = false
+        presentCourseWorkspace(.sessions, courseID: courseAID)
+
+        let passed = scopesIsolated && persistencePassed
+        let report = """
+        result=\(passed ? "pass" : "fail")
+        scopes_isolated=\(scopesIsolated)
+        independent_revisions=\(learningMemoryRevision(in: .course(courseBID)) == courseBRevisionBefore)
+        user_history=\(courseAEntry?.revisions?.last?.actor == .user)
+        stable_ids=\(persistedCourseA?.id == courseAMemoryID)
+        legacy_fields_removed=\(snapshot?.learningMemoryEntries == nil && snapshot?.learningMemoryRevision == nil)
+        persisted=\(persistencePassed)
+        """
+        let reportURL = storageURL.deletingLastPathComponent()
+            .appendingPathComponent("learning-memory-scopes-report.txt")
+        try? "\(report)\n".write(to: reportURL, atomically: true, encoding: .utf8)
+        recordVerificationStage("learning-memory-scopes:\(passed ? "pass" : "fail")")
         recordVerificationStage("completed")
     }
 
