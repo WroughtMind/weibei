@@ -2080,6 +2080,9 @@ final class WorkspaceStore: ObservableObject {
         candidateRootIdentity: ImportedFileIdentity,
         snapshot: CoursePortableAdoptionSnapshot
     ) throws -> CourseProjectRebindProposal {
+        guard !courseHasUnstableAgentState(existing.id) else {
+            throw CoursePortableExportError.unstableCourseState
+        }
         guard !registeredCourseRootIsAvailable(existing) else {
             throw CourseProjectRebindError.originalRootStillAvailable
         }
@@ -2099,6 +2102,25 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
+    private func courseHasUnstableAgentState(_ courseID: UUID) -> Bool {
+        let sessionIDs = Set(
+            studySessions.lazy.filter {
+                $0.courseID == courseID
+            }.map(\.id)
+        )
+        return studySessions.contains {
+            $0.courseID == courseID
+                && $0.messages.contains {
+                    $0.role == .assistant
+                        && $0.completionState == .generating
+                }
+        } || (
+            isAskingAgent
+                && activeAgentReplyChatID.map(sessionIDs.contains)
+                    == true
+        )
+    }
+
     private func evaluatedCourseRebindState(
         existing: Course,
         snapshot: CoursePortableAdoptionSnapshot
@@ -2115,6 +2137,10 @@ final class WorkspaceStore: ObservableObject {
         let state = try JSONDecoder()
             .decode(CoursePortableState.self, from: portableStateData)
             .validated(expectedCourseID: existing.id)
+        try validateCourseRebindStorage(
+            state,
+            courseID: existing.id
+        )
         let localState = try makeCoursePortableState(
             courseID: existing.id,
             revision: coursePortableStateRevisions[existing.id] ?? 0,
@@ -2159,6 +2185,34 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
+    private func validateCourseRebindStorage(
+        _ state: CoursePortableState,
+        courseID: UUID
+    ) throws {
+        let otherCourseItemIDs = Set(
+            courseItemMemberships.lazy.filter {
+                $0.courseID != courseID
+            }.map(\.itemID)
+        )
+        for portable in state.items
+        where otherCourseItemIDs.contains(portable.itemID) {
+            guard let existing = importedItems.first(where: {
+                $0.id == portable.itemID
+            }) else {
+                throw CoursePortableStateError.crossCourseReference
+            }
+            switch (portable.storage, existing.storage) {
+            case let (
+                .sharedReference(candidatePath, _),
+                .shared(existingPath)
+            ) where candidatePath == existingPath:
+                continue
+            default:
+                throw CoursePortableStateError.crossCourseReference
+            }
+        }
+    }
+
     private func localStateByMaterializingSharedItems(
         _ rawState: CoursePortableState,
         using manifest: CourseProjectManifest
@@ -2199,15 +2253,19 @@ final class WorkspaceStore: ObservableObject {
                 rawURL
             ),
             importedFileIdentityResolver(root) == expectedIdentity,
-            let snapshot = try? waitForCourseFileOperation({
-                try await self.courseProjectFileWorker.adoptionSnapshot(
-                    at: root,
-                    expectedRootIdentity: expectedIdentity
-                )
-            }) else {
+            let data = try? CourseProjectFileWorker.readBoundedRegularFile(
+                at: root.appendingPathComponent(".weibei/course.json"),
+                maximumByteCount: 1_048_576
+            ),
+            let manifest = try? JSONDecoder().decode(
+                CourseProjectManifest.self,
+                from: data
+            ),
+            manifest.schemaVersion
+                == CourseProjectManifest.currentSchemaVersion else {
                 return false
             }
-            return snapshot.manifest.courseID == course.id
+            return manifest.courseID == course.id
         }
 
         var candidates: [URL] = []
@@ -2253,17 +2311,42 @@ final class WorkspaceStore: ObservableObject {
         return matches(resolution.url)
     }
 
+    private func course(
+        matching proposal: CourseProjectRebindProposal
+    ) -> Course? {
+        courses.first {
+            $0.id == proposal.courseID
+                && $0 == proposal.expectedCourse
+        }
+    }
+
+    private func courseUsesRebindCandidate(
+        _ proposal: CourseProjectRebindProposal,
+        resolvedRoot: URL
+    ) -> Bool {
+        guard let current = course(withID: proposal.courseID),
+              current.sourceRootIdentity
+                == proposal.candidateRootIdentity,
+              let registeredRoot =
+                resolvedCourseRootURLs[proposal.courseID] else {
+            return false
+        }
+        return CourseProjectPathPolicy.isSame(
+            registeredRoot,
+            resolvedRoot
+        )
+    }
+
     @discardableResult
     func confirmCourseProjectRebind(
         _ proposal: CourseProjectRebindProposal
     ) throws -> UUID {
-        guard let courseIndex = courses.firstIndex(where: {
-            $0.id == proposal.courseID
-        }),
-        courses[courseIndex] == proposal.expectedCourse else {
+        guard let existing = course(matching: proposal) else {
             throw CourseProjectRebindError.proposalChanged
         }
-        let existing = courses[courseIndex]
+        guard !courseHasUnstableAgentState(existing.id) else {
+            throw CoursePortableExportError.unstableCourseState
+        }
         guard !registeredCourseRootIsAvailable(existing) else {
             throw CourseProjectRebindError.originalRootStillAvailable
         }
@@ -2337,13 +2420,25 @@ final class WorkspaceStore: ObservableObject {
                     == proposal.snapshot.completionData else {
                 throw CourseProjectRebindError.proposalChanged
             }
+            guard let currentCourse = course(matching: proposal),
+                  !courseHasUnstableAgentState(currentCourse.id) else {
+                throw CourseProjectRebindError.proposalChanged
+            }
+            guard !registeredCourseRootIsAvailable(currentCourse) else {
+                throw CourseProjectRebindError.originalRootStillAvailable
+            }
             let evaluation = try evaluatedCourseRebindState(
-                existing: existing,
+                existing: currentCourse,
                 snapshot: confirmedSnapshot
             )
             guard evaluation.localPayloadDigest
                     == proposal.expectedLocalPayloadDigest,
                   evaluation.impact == proposal.impact else {
+                throw CourseProjectRebindError.proposalChanged
+            }
+            guard let courseIndex = courses.firstIndex(where: {
+                $0 == currentCourse
+            }) else {
                 throw CourseProjectRebindError.proposalChanged
             }
 
@@ -2360,6 +2455,9 @@ final class WorkspaceStore: ObservableObject {
             let previousMessages = messages
             let previousNotesByItemID = notesByItemID
             let previousPendingNoteWrites = pendingNoteWritesByItemID
+            let previousLoadedCourseNoteText =
+                loadedCourseNoteTextByItemID
+            let previousNoteText = noteText
             let previousNoteBackingDigests =
                 noteBackingContentDigestsByItemID
             let previousPortableRevisions =
@@ -2378,7 +2476,7 @@ final class WorkspaceStore: ObservableObject {
                 courseRootUnavailableReasons[proposal.courseID]
             let previousScope = activeCourseSecurityScopes[scopeKey]
 
-            var reboundCourse = existing
+            var reboundCourse = currentCourse
             reboundCourse.sourceRootPath =
                 libraryRelativePath == nil ? resolvedRoot.path : nil
             reboundCourse.sourceRootRelativePath = libraryRelativePath
@@ -2397,10 +2495,45 @@ final class WorkspaceStore: ObservableObject {
             }
 
             do {
+                let reboundNoteItemIDs = Set(
+                    evaluation.state.items.lazy.filter {
+                        $0.isNotebookNote
+                    }.map(\.itemID)
+                ).union(
+                    courseItemMemberships.lazy.filter {
+                        $0.courseID == proposal.courseID
+                    }.compactMap { membership in
+                        importedItems.first {
+                            $0.id == membership.itemID
+                                && $0.isNotebookNote
+                        }?.id
+                    }
+                )
+                for itemID in reboundNoteItemIDs {
+                    courseNoteLoadGenerationByItemID[
+                        itemID,
+                        default: 0
+                    ] &+= 1
+                    courseNoteLoadTasksByItemID
+                        .removeValue(forKey: itemID)?
+                        .cancel()
+                    courseNoteWriteTasksByItemID
+                        .removeValue(forKey: itemID)?
+                        .cancel()
+                    courseNoteWritesInFlight.remove(itemID)
+                    loadedCourseNoteTextByItemID.removeValue(
+                        forKey: itemID
+                    )
+                }
                 try applyCoursePortableState(
                     evaluation.state,
                     courseID: proposal.courseID
                 )
+                if let activeNotebookItemID,
+                   reboundNoteItemIDs.contains(activeNotebookItemID) {
+                    noteText =
+                        notesByItemID[activeNotebookItemID] ?? ""
+                }
                 coursePortableStateRevisions[proposal.courseID] =
                     evaluation.state.revision
                 coursePortableStateDigests[proposal.courseID] =
@@ -2429,6 +2562,9 @@ final class WorkspaceStore: ObservableObject {
                 notesByItemID = previousNotesByItemID
                 pendingNoteWritesByItemID =
                     previousPendingNoteWrites
+                loadedCourseNoteTextByItemID =
+                    previousLoadedCourseNoteText
+                noteText = previousNoteText
                 noteBackingContentDigestsByItemID =
                     previousNoteBackingDigests
                 coursePortableStateRevisions =
@@ -2486,7 +2622,11 @@ final class WorkspaceStore: ObservableObject {
                                         proposal.candidateRootIdentity
                                 )
                         }
-                    guard finalSnapshot.metadataIdentity
+                    guard courseUsesRebindCandidate(
+                        proposal,
+                        resolvedRoot: resolvedRoot
+                    ),
+                    finalSnapshot.metadataIdentity
                             == confirmedSnapshot.metadataIdentity,
                           finalSnapshot.manifestData
                             == confirmedSnapshot.manifestData,
@@ -2511,6 +2651,12 @@ final class WorkspaceStore: ObservableObject {
                                 expectedPreviousData:
                                     finalSnapshot.manifestData
                             )
+                    }
+                    guard courseUsesRebindCandidate(
+                        proposal,
+                        resolvedRoot: resolvedRoot
+                    ) else {
+                        throw CourseProjectRebindError.proposalChanged
                     }
                 } catch {
                     resolvedCourseRootURLs.removeValue(
@@ -2621,22 +2767,7 @@ final class WorkspaceStore: ObservableObject {
               course.sourceRootIdentity == sourceRootIdentity else {
             throw CourseProjectRootError.unavailableLibrary
         }
-        let courseSessionIDs = Set(
-            studySessions.lazy.filter {
-                $0.courseID == courseID
-            }.map(\.id)
-        )
-        guard !studySessions.contains(where: {
-            $0.courseID == courseID
-                && $0.messages.contains {
-                    $0.role == .assistant
-                        && $0.completionState == .generating
-                }
-        }),
-        !(isAskingAgent
-            && activeAgentReplyChatID.map(
-                courseSessionIDs.contains
-            ) == true) else {
+        guard !courseHasUnstableAgentState(courseID) else {
             throw CoursePortableExportError.unstableCourseState
         }
         var state = try makeCoursePortableState(
@@ -22359,6 +22490,7 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         courseNoteLoadGenerationByItemID[itemID, default: 0] &+= 1
+        let generation = courseNoteLoadGenerationByItemID[itemID] ?? 0
         courseNoteLoadTasksByItemID[itemID]?.cancel()
         courseNoteLoadTasksByItemID[itemID] = nil
         courseNoteWritesInFlight.insert(itemID)
@@ -22371,6 +22503,15 @@ final class WorkspaceStore: ObservableObject {
                     item: item,
                     expectedContentDigest: expectedDigest
                 )
+                guard courseNoteLoadGenerationByItemID[itemID]
+                        == generation else {
+                    await rollbackCourseMarkdownWrite(
+                        journal: transaction.journal,
+                        transactionDirectory:
+                            transaction.transactionDirectory
+                    )
+                    return
+                }
                 let result = transaction.result
                 let previousItems = importedItems
                 let previousMemberships = courseItemMemberships
@@ -22416,6 +22557,10 @@ final class WorkspaceStore: ObservableObject {
                     startCourseOwnedNoteWriteIfNeeded(itemID: itemID)
                 }
             } catch CourseProjectFileWorkerError.contentConflict {
+                guard courseNoteLoadGenerationByItemID[itemID]
+                        == generation else {
+                    return
+                }
                 courseNoteWritesInFlight.remove(itemID)
                 courseNoteWriteTasksByItemID[itemID] = nil
                 noteFileError = ui(
@@ -22425,6 +22570,10 @@ final class WorkspaceStore: ObservableObject {
                 scheduleCourseNoteLoad(item)
                 save()
             } catch {
+                guard courseNoteLoadGenerationByItemID[itemID]
+                        == generation else {
+                    return
+                }
                 courseNoteWritesInFlight.remove(itemID)
                 courseNoteWriteTasksByItemID[itemID] = nil
                 noteFileError = ui(

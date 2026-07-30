@@ -744,6 +744,44 @@ enum CourseProjectRootSelfCheck {
             let store = makeStore(fixture: fixture)
             try store.configureCourseLibrary(at: library)
             let courseID = try store.createCourseInLibrary(title: "重绑课程")
+            let foreignCourseID = try store.createCourseInLibrary(
+                title: "隔离课程"
+            )
+            let imports = try fixture.makeDirectory("待导入")
+            let materialSource = imports.appendingPathComponent(
+                "重绑资料.txt"
+            )
+            let foreignSource = imports.appendingPathComponent(
+                "隔离资料.txt"
+            )
+            try Data("REBIND_MATERIAL".utf8).write(to: materialSource)
+            try Data("FOREIGN_MATERIAL".utf8).write(to: foreignSource)
+            let material = try store.importFileIntoCourseForSelfCheck(
+                materialSource,
+                courseID: courseID,
+                role: .material
+            ).item
+            let foreignMaterial =
+                try store.importFileIntoCourseForSelfCheck(
+                    foreignSource,
+                    courseID: foreignCourseID,
+                    role: .material
+                ).item
+            let noteID = try require(
+                store.createCourseNotebookNoteForSelfCheck(
+                    courseID: courseID,
+                    title: "重绑笔记"
+                ),
+                "没有建立重绑笔记"
+            )
+            let learningFixture =
+                try store.installPortableCourseStateFixtureForSelfCheck(
+                    courseID: courseID,
+                    materialItemID: material.id,
+                    noteItemID: noteID,
+                    foreignCourseID: foreignCourseID,
+                    foreignItemID: foreignMaterial.id
+                )
             let originalRoot = try require(
                 store.courseRootURL(for: courseID),
                 "重绑样本没有原课程根"
@@ -805,6 +843,20 @@ enum CourseProjectRootSelfCheck {
             try FileManager.default.moveItem(
                 at: originalRoot,
                 to: offlineOriginal
+            )
+            try store.setCourseReplyGeneratingForSelfCheck(
+                courseID: courseID,
+                generating: true
+            )
+            try expectFailure("生成回答时提出重绑") {
+                _ = try store.adoptCourseFolderOrProposeRebind(
+                    at: successfulCandidate,
+                    title: "不得重绑"
+                )
+            }
+            try store.setCourseReplyGeneratingForSelfCheck(
+                courseID: courseID,
+                generating: false
             )
             let workspaceURL = fixture.workspaceDirectory
                 .appendingPathComponent("workspace.json")
@@ -880,6 +932,21 @@ enum CourseProjectRootSelfCheck {
                     ".weibei/course.json"
                 )
             )
+            let reboundMembership = try require(
+                store.courseItemMemberships.first {
+                    $0.courseID == courseID
+                        && $0.itemID == material.id
+                },
+                "重绑后资料成员关系丢失"
+            )
+            let reboundMaterial = try require(
+                store.importedItems.first { $0.id == material.id },
+                "重绑后资料记录丢失"
+            )
+            let reboundMaterialURL =
+                reboundMembership.courseRelativePath.map {
+                    successfulCandidate.appendingPathComponent($0)
+                }
             try check(
                 reboundID == courseID
                     && store.course(withID: courseID)?.title
@@ -887,8 +954,31 @@ enum CourseProjectRootSelfCheck {
                     && store.courseRootURL(for: courseID)
                         == successfulCandidate.canonicalFileURL
                     && reboundManifest.courseID == courseID
-                    && reboundManifest.portableExport == nil,
-                "确认重绑没有保留课程身份、课程名或安全消费封印"
+                    && reboundManifest.portableExport == nil
+                    && reboundMaterial.url
+                        == reboundMaterialURL?.canonicalFileURL
+                    && reboundMaterial.importedFileIdentity
+                        == reboundMaterialURL.flatMap {
+                            CourseProjectFileWorker.identity(at: $0)
+                        }
+                    && store.studySessions.contains {
+                        $0.id == learningFixture.sessionID
+                    }
+                    && store.learningMemoryStates.first {
+                        $0.scope == .course(courseID)
+                    }?.entries.contains {
+                        $0.id == learningFixture.memoryID
+                    } == true
+                    && store.noteSourceLinks.contains {
+                        $0.noteItemID == noteID
+                            && $0.sourceItemID == material.id
+                    }
+                    && store.courseResumePoint(for: courseID)?.chatID
+                        == learningFixture.sessionID
+                    && store.pendingPortableNoteDraftForSelfCheck(
+                        itemID: noteID
+                    ) == learningFixture.draft,
+                "确认重绑没有保留课程身份、学习状态、稳定资料 ID 或安全消费封印"
             )
 
             let reopened = makeStore(fixture: fixture)
@@ -896,8 +986,52 @@ enum CourseProjectRootSelfCheck {
                 reopened.course(withID: courseID)?.title
                     == courseBeforeProposal.title
                     && reopened.courseRootURL(for: courseID)
-                        == successfulCandidate.canonicalFileURL,
-                "重开后没有恢复重绑课程根"
+                        == successfulCandidate.canonicalFileURL
+                    && reopened.importedItems.first {
+                        $0.id == material.id
+                    }?.url == reboundMaterialURL?.canonicalFileURL
+                    && reopened.studySessions.contains {
+                        $0.id == learningFixture.sessionID
+                    }
+                    && reopened.learningMemoryStates.first {
+                        $0.scope == .course(courseID)
+                    }?.entries.contains {
+                        $0.id == learningFixture.memoryID
+                    } == true
+                    && reopened.pendingPortableNoteDraftForSelfCheck(
+                        itemID: noteID
+                    ) == learningFixture.draft,
+                "重开后没有恢复重绑课程根、资料身份或学习状态"
+            )
+
+            let staleCourseCandidate = exportParent.appendingPathComponent(
+                "课程变化副本",
+                isDirectory: true
+            )
+            _ = try store.exportPortableCourseCopyForSelfCheck(
+                courseID: courseID,
+                to: staleCourseCandidate
+            )
+            try FileManager.default.moveItem(
+                at: successfulCandidate,
+                to: offlineParent.appendingPathComponent(
+                    "已重绑原件",
+                    isDirectory: true
+                )
+            )
+            let staleCourseProposal = try proposal(
+                for: staleCourseCandidate
+            )
+            store.renameCourse(courseID, title: "提案后课程已变化")
+            try expectFailure("提案后课程变化") {
+                _ = try store.confirmCourseProjectRebind(
+                    staleCourseProposal
+                )
+            }
+            try check(
+                store.course(withID: courseID)?.title
+                    == "提案后课程已变化",
+                "过期提案覆盖了确认前的课程变化"
             )
         }
 
@@ -977,6 +1111,162 @@ enum CourseProjectRootSelfCheck {
                     ) == candidateManifest
                     && scopeStops == stopsBeforeConfirmation + 1,
                 "重绑保存失败没有恢复课程、保留封印或只释放新授权"
+            )
+        }
+
+        do {
+            let fixture = try Fixture(name: "course-rebind-newer-state")
+            defer { fixture.remove() }
+            let library = try fixture.makeDirectory("课程资料库")
+            let exports = try fixture.makeDirectory("课程副本")
+            let offline = try fixture.makeDirectory("失联原件")
+            let store = makeStore(fixture: fixture)
+            try store.configureCourseLibrary(at: library)
+            let courseID = try store.createCourseInLibrary(
+                title: "本机旧标题"
+            )
+            let originalRoot = try require(
+                store.courseRootURL(for: courseID),
+                "较新状态样本没有原课程根"
+            )
+            let candidate = exports.appendingPathComponent(
+                "较新课程副本",
+                isDirectory: true
+            )
+            _ = try store.exportPortableCourseCopyForSelfCheck(
+                courseID: courseID,
+                to: candidate
+            )
+
+            let candidateWorkspace = try fixture.makeDirectory(
+                "候选编辑工作区"
+            )
+            let candidateStore = makeStore(
+                fixture: fixture,
+                workspaceDirectory: candidateWorkspace
+            )
+            let candidateCourseID =
+                try candidateStore.adoptCourseFolder(
+                    at: candidate,
+                    title: "临时名称"
+                )
+            candidateStore.renameCourse(
+                candidateCourseID,
+                title: "候选更新标题"
+            )
+            try check(
+                candidateStore.flushPendingWorkspaceSave(),
+                "候选较新状态没有保存"
+            )
+
+            try FileManager.default.moveItem(
+                at: originalRoot,
+                to: offline.appendingPathComponent(
+                    "原课程",
+                    isDirectory: true
+                )
+            )
+            let proposal: CourseProjectRebindProposal
+            switch try store.adoptCourseFolderOrProposeRebind(
+                at: candidate,
+                title: "不会覆盖候选标题"
+            ) {
+            case .opened:
+                throw CheckError.failed("较新候选被静默接管")
+            case .requiresRebind(let value):
+                proposal = value
+            }
+            try check(
+                proposal.impact == .useNewerCandidate,
+                "较新且本机干净的候选没有进入明确确认"
+            )
+            _ = try store.confirmCourseProjectRebind(proposal)
+            try check(
+                store.course(withID: courseID)?.title
+                    == "候选更新标题"
+                    && store.courseRootURL(for: courseID)
+                        == candidate.canonicalFileURL,
+                "确认后没有采用候选文件夹中的较新状态"
+            )
+        }
+
+        do {
+            let fixture = try Fixture(name: "course-rebind-shared-conflict")
+            defer { fixture.remove() }
+            let library = try fixture.makeDirectory("课程资料库")
+            let exports = try fixture.makeDirectory("课程副本")
+            let offline = try fixture.makeDirectory("失联原件")
+            let imports = try fixture.makeDirectory("待导入")
+            let store = makeStore(fixture: fixture)
+            try store.configureCourseLibrary(at: library)
+            let courseA = try store.createCourseInLibrary(title: "课程甲")
+            let courseB = try store.createCourseInLibrary(title: "课程乙")
+            let source = imports.appendingPathComponent("共享资料.txt")
+            try Data("SHARED_REBIND_CONTENT".utf8).write(to: source)
+            let material = try store.importFileIntoCourseForSelfCheck(
+                source,
+                courseID: courseA,
+                role: .material
+            ).item
+            try store.shareCourseOwnedItemForSelfCheck(
+                itemID: material.id,
+                withCourseID: courseB
+            )
+            try check(
+                store.flushPendingWorkspaceSave(),
+                "共享冲突样本没有保存"
+            )
+            let candidate = exports.appendingPathComponent(
+                "实体化副本",
+                isDirectory: true
+            )
+            _ = try store.exportPortableCourseCopyForSelfCheck(
+                courseID: courseA,
+                to: candidate
+            )
+            let sealedManifest = try Data(
+                contentsOf: candidate.appendingPathComponent(
+                    ".weibei/course.json"
+                )
+            )
+            let originalRoot = try require(
+                store.courseRootURL(for: courseA),
+                "共享冲突样本没有课程根"
+            )
+            try FileManager.default.moveItem(
+                at: originalRoot,
+                to: offline.appendingPathComponent(
+                    "课程甲",
+                    isDirectory: true
+                )
+            )
+            try expectFailure("跨课共享资料实体化重绑") {
+                _ = try store.adoptCourseFolderOrProposeRebind(
+                    at: candidate,
+                    title: "不得破坏共享资料"
+                )
+            }
+            let remainedShared: Bool
+            if let current = store.importedItems.first(where: {
+                $0.id == material.id
+            }),
+            case .shared = current.storage {
+                remainedShared = true
+            } else {
+                remainedShared = false
+            }
+            try check(
+                remainedShared
+                    && store.courseItemMemberships.contains {
+                        $0.courseID == courseB
+                            && $0.itemID == material.id
+                    }
+                    && Data(
+                        contentsOf: candidate.appendingPathComponent(
+                            ".weibei/course.json"
+                        )
+                    ) == sealedManifest,
+                "拒绝实体化冲突时破坏了另一门课程或候选封印"
             )
         }
     }
