@@ -574,6 +574,7 @@ final class WorkspaceStore: ObservableObject {
     private var lastCourseNoteWriteRanOnMainThread: Bool?
     private var lastCourseHomeSearchRanOnMainThread: Bool?
     private var lastPortableAdoptionReadRanOnMainThread: Bool?
+    private var lastCourseRebindRootSearchRanOnMainThread: Bool?
     private let workspaceDirectory: URL
     private let storageURL: URL
     private let notebookRenameJournalURL: URL
@@ -657,6 +658,8 @@ final class WorkspaceStore: ObservableObject {
     private var courseMembershipIndex = CourseItemMemberships()
     private var courseWorkspaceReturnFocus: PaneFocus?
     private var activeCourseSecurityScopes: [String: URL] = [:]
+    private var activeCourseSecurityScopeOwnerTokens: [String: UUID] = [:]
+    private var activeCourseRebindTokens: [UUID: UUID] = [:]
     private var resolvedCourseRootURLs: [UUID: URL] = [:]
     private var courseRootUnavailableReasons: [UUID: String] = [:]
     private let courseProjectFileWorker = CourseProjectFileWorker()
@@ -1954,6 +1957,9 @@ final class WorkspaceStore: ObservableObject {
         at canonicalRoot: URL,
         identity: ImportedFileIdentity
     ) throws -> UUID {
+        guard activeCourseRebindTokens[existing.id] == nil else {
+            throw CoursePortableExportError.unstableCourseState
+        }
         guard let courseIndex = courses.firstIndex(where: { $0.id == existing.id }) else {
             throw CourseProjectRootError.rootAlreadyRegistered
         }
@@ -2080,11 +2086,16 @@ final class WorkspaceStore: ObservableObject {
         candidateRootIdentity: ImportedFileIdentity,
         snapshot: CoursePortableAdoptionSnapshot
     ) throws -> CourseProjectRebindProposal {
-        guard !courseHasUnstableAgentState(existing.id) else {
+        guard !courseHasUnstableState(existing.id) else {
             throw CoursePortableExportError.unstableCourseState
         }
         guard !registeredCourseRootIsAvailable(existing) else {
             throw CourseProjectRebindError.originalRootStillAvailable
+        }
+        guard course(withID: existing.id) == existing,
+              activeCourseRebindTokens[existing.id] == nil,
+              !courseHasUnstableState(existing.id) else {
+            throw CourseProjectRebindError.proposalChanged
         }
         let evaluation = try evaluatedCourseRebindState(
             existing: existing,
@@ -2102,13 +2113,24 @@ final class WorkspaceStore: ObservableObject {
         )
     }
 
-    private func courseHasUnstableAgentState(_ courseID: UUID) -> Bool {
+    private func courseHasUnstableState(_ courseID: UUID) -> Bool {
         let sessionIDs = Set(
             studySessions.lazy.filter {
                 $0.courseID == courseID
             }.map(\.id)
         )
-        return studySessions.contains {
+        let noteItemIDs = Set(
+            courseItemMemberships.lazy.filter {
+                $0.courseID == courseID
+            }.map(\.itemID)
+        )
+        return pendingNotePersistenceByItemID.keys.contains {
+            noteItemIDs.contains($0)
+        } || stagedNoteDraft.map {
+            noteItemIDs.contains($0.itemID)
+        } == true || courseNoteWritesInFlight.contains {
+            noteItemIDs.contains($0)
+        } || studySessions.contains {
             $0.courseID == courseID
                 && $0.messages.contains {
                     $0.role == .assistant
@@ -2203,14 +2225,31 @@ final class WorkspaceStore: ObservableObject {
             }
             switch (portable.storage, existing.storage) {
             case let (
-                .sharedReference(candidatePath, _),
+                .sharedReference(candidatePath, candidateDigest),
                 .shared(existingPath)
-            ) where candidatePath == existingPath:
+            ) where candidatePath == existingPath
+                && candidateDigest != nil
+                && candidateDigest == portable.contentDigest
+                && candidateDigest == existing.contentDigest
+                && portable.kind == existing.kind
+                && portable.isNotebookNote == existing.isNotebookNote:
                 continue
             default:
                 throw CoursePortableStateError.crossCourseReference
             }
         }
+    }
+
+    func validateCourseRebindStorageForSelfCheck(
+        _ state: CoursePortableState,
+        courseID: UUID
+    ) throws {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        try validateCourseRebindStorage(state, courseID: courseID)
     }
 
     private func localStateByMaterializingSharedItems(
@@ -2283,11 +2322,17 @@ final class WorkspaceStore: ObservableObject {
             ) {
                 candidates.append(expected)
             }
-            if let moved = findDirectory(
-                with: expectedIdentity,
-                inside: libraryRoot
-            ) {
-                candidates.append(moved)
+            if let search = try? waitForCourseFileOperation({
+                await self.courseProjectFileWorker.findDirectory(
+                    with: expectedIdentity,
+                    inside: libraryRoot
+                )
+            }) {
+                lastCourseRebindRootSearchRanOnMainThread =
+                    search.ranOnMainThread
+                if let moved = search.url {
+                    candidates.append(moved)
+                }
             }
         }
         var checkedPaths = Set<String>()
@@ -2309,6 +2354,15 @@ final class WorkspaceStore: ObservableObject {
         }
         defer { courseSecurityScopeStopper(resolution.url) }
         return matches(resolution.url)
+    }
+
+    func courseRebindRootSearchRunsOffMainForSelfCheck() -> Bool {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        return lastCourseRebindRootSearchRanOnMainThread == false
     }
 
     private func course(
@@ -2344,8 +2398,18 @@ final class WorkspaceStore: ObservableObject {
         guard let existing = course(matching: proposal) else {
             throw CourseProjectRebindError.proposalChanged
         }
-        guard !courseHasUnstableAgentState(existing.id) else {
+        guard !courseHasUnstableState(existing.id) else {
             throw CoursePortableExportError.unstableCourseState
+        }
+        let rebindToken = UUID()
+        guard activeCourseRebindTokens[existing.id] == nil else {
+            throw CoursePortableExportError.unstableCourseState
+        }
+        activeCourseRebindTokens[existing.id] = rebindToken
+        defer {
+            if activeCourseRebindTokens[existing.id] == rebindToken {
+                activeCourseRebindTokens.removeValue(forKey: existing.id)
+            }
         }
         guard !registeredCourseRootIsAvailable(existing) else {
             throw CourseProjectRebindError.originalRootStillAvailable
@@ -2421,11 +2485,15 @@ final class WorkspaceStore: ObservableObject {
                 throw CourseProjectRebindError.proposalChanged
             }
             guard let currentCourse = course(matching: proposal),
-                  !courseHasUnstableAgentState(currentCourse.id) else {
+                  !courseHasUnstableState(currentCourse.id) else {
                 throw CourseProjectRebindError.proposalChanged
             }
             guard !registeredCourseRootIsAvailable(currentCourse) else {
                 throw CourseProjectRebindError.originalRootStillAvailable
+            }
+            guard course(matching: proposal) == currentCourse,
+                  !courseHasUnstableState(currentCourse.id) else {
+                throw CourseProjectRebindError.proposalChanged
             }
             let evaluation = try evaluatedCourseRebindState(
                 existing: currentCourse,
@@ -2475,6 +2543,19 @@ final class WorkspaceStore: ObservableObject {
             let previousUnavailableReason =
                 courseRootUnavailableReasons[proposal.courseID]
             let previousScope = activeCourseSecurityScopes[scopeKey]
+            let previousScopeOwnerToken =
+                activeCourseSecurityScopeOwnerTokens[scopeKey]
+            var didStopPreviousScope = false
+
+            func stopPreviousScopeIfNeeded() {
+                guard !didStopPreviousScope,
+                      let previousScope,
+                      previousScope != newScopeURL else {
+                    return
+                }
+                didStopPreviousScope = true
+                courseSecurityScopeStopper(previousScope)
+            }
 
             var reboundCourse = currentCourse
             reboundCourse.sourceRootPath =
@@ -2490,8 +2571,14 @@ final class WorkspaceStore: ObservableObject {
             )
             if let newScopeURL {
                 activeCourseSecurityScopes[scopeKey] = newScopeURL
+                activeCourseSecurityScopeOwnerTokens[scopeKey] =
+                    rebindToken
+                shouldStopNewScopeOnFailure = false
             } else {
                 activeCourseSecurityScopes.removeValue(forKey: scopeKey)
+                activeCourseSecurityScopeOwnerTokens.removeValue(
+                    forKey: scopeKey
+                )
             }
 
             do {
@@ -2601,6 +2688,14 @@ final class WorkspaceStore: ObservableObject {
                         forKey: scopeKey
                     )
                 }
+                if let previousScopeOwnerToken {
+                    activeCourseSecurityScopeOwnerTokens[scopeKey] =
+                        previousScopeOwnerToken
+                } else {
+                    activeCourseSecurityScopeOwnerTokens.removeValue(
+                        forKey: scopeKey
+                    )
+                }
                 if let newScopeURL {
                     courseSecurityScopeStopper(newScopeURL)
                     shouldStopNewScopeOnFailure = false
@@ -2659,31 +2754,42 @@ final class WorkspaceStore: ObservableObject {
                         throw CourseProjectRebindError.proposalChanged
                     }
                 } catch {
-                    resolvedCourseRootURLs.removeValue(
-                        forKey: proposal.courseID
-                    )
-                    courseRootUnavailableReasons[proposal.courseID] =
-                        error.localizedDescription
-                    if let scopedURL =
-                        activeCourseSecurityScopes.removeValue(
+                    if activeCourseRebindTokens[proposal.courseID]
+                            == rebindToken,
+                       courseUsesRebindCandidate(
+                           proposal,
+                           resolvedRoot: resolvedRoot
+                       ) {
+                        resolvedCourseRootURLs.removeValue(
+                            forKey: proposal.courseID
+                        )
+                        courseRootUnavailableReasons[proposal.courseID] =
+                            error.localizedDescription
+                    }
+                    if activeCourseSecurityScopeOwnerTokens[scopeKey]
+                            == rebindToken,
+                       let scopedURL =
+                            activeCourseSecurityScopes.removeValue(
+                                forKey: scopeKey
+                            ) {
+                        activeCourseSecurityScopeOwnerTokens.removeValue(
                             forKey: scopeKey
-                        ) {
+                        )
                         courseSecurityScopeStopper(scopedURL)
-                        shouldStopNewScopeOnFailure = false
                     }
-                    if let previousScope,
-                       previousScope != newScopeURL {
-                        courseSecurityScopeStopper(previousScope)
-                    }
+                    stopPreviousScopeIfNeeded()
                     cancelAgentRequestIfRunning(in: proposal.courseID)
                     invalidateAgentContext()
                     throw error
                 }
             }
 
-            if let previousScope,
-               previousScope != newScopeURL {
-                courseSecurityScopeStopper(previousScope)
+            stopPreviousScopeIfNeeded()
+            if activeCourseSecurityScopeOwnerTokens[scopeKey]
+                    == rebindToken {
+                activeCourseSecurityScopeOwnerTokens.removeValue(
+                    forKey: scopeKey
+                )
             }
             courseDocumentSearchIndex.synchronize(allItems)
             invalidateAgentContext()
@@ -2699,8 +2805,30 @@ final class WorkspaceStore: ObservableObject {
             shouldStopNewScopeOnFailure = false
             return proposal.courseID
         } catch {
-            if shouldStopNewScopeOnFailure,
-               let newScopeURL {
+            let scopeKey = "course:\(proposal.courseID.uuidString)"
+            if activeCourseRebindTokens[proposal.courseID] == rebindToken,
+               courseUsesRebindCandidate(
+                   proposal,
+                   resolvedRoot: resolvedRoot
+               ) {
+                resolvedCourseRootURLs.removeValue(
+                    forKey: proposal.courseID
+                )
+                courseRootUnavailableReasons[proposal.courseID] =
+                    error.localizedDescription
+            }
+            if activeCourseSecurityScopeOwnerTokens[scopeKey]
+                    == rebindToken,
+               let scopedURL =
+                    activeCourseSecurityScopes.removeValue(
+                        forKey: scopeKey
+                    ) {
+                activeCourseSecurityScopeOwnerTokens.removeValue(
+                    forKey: scopeKey
+                )
+                courseSecurityScopeStopper(scopedURL)
+            } else if shouldStopNewScopeOnFailure,
+                      let newScopeURL {
                 courseSecurityScopeStopper(newScopeURL)
             }
             throw error
@@ -2767,7 +2895,7 @@ final class WorkspaceStore: ObservableObject {
               course.sourceRootIdentity == sourceRootIdentity else {
             throw CourseProjectRootError.unavailableLibrary
         }
-        guard !courseHasUnstableAgentState(courseID) else {
+        guard !courseHasUnstableState(courseID) else {
             throw CoursePortableExportError.unstableCourseState
         }
         var state = try makeCoursePortableState(
@@ -3778,6 +3906,36 @@ final class WorkspaceStore: ObservableObject {
         }
         guard courseNoteWritesInFlight.isEmpty else {
             throw CourseOwnedFileError.verificationFailed
+        }
+    }
+
+    func stagePendingCourseNoteForSelfCheck(
+        itemID: String,
+        markdown: String
+    ) throws {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        guard let item = importedItems.first(where: {
+            $0.id == itemID && $0.isNotebookNote
+        }) else {
+            throw CourseOwnedFileError.verificationFailed
+        }
+        scheduleNotePersistence(markdown, for: item)
+    }
+
+    func discardPendingCourseNoteForSelfCheck(itemID: String) {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        cancelPendingNotePersistence(for: itemID)
+        pendingNotePersistenceByItemID.removeValue(forKey: itemID)
+        if stagedNoteDraft?.itemID == itemID {
+            stagedNoteDraft = nil
         }
     }
 
@@ -7663,6 +7821,7 @@ final class WorkspaceStore: ObservableObject {
         guard courses.contains(where: { $0.id == courseID }) else { return }
         cancelAgentRequestIfRunning(in: courseID)
         let scopeKey = "course:\(courseID.uuidString)"
+        activeCourseSecurityScopeOwnerTokens.removeValue(forKey: scopeKey)
         if let scopedURL = activeCourseSecurityScopes.removeValue(forKey: scopeKey) {
             courseSecurityScopeStopper(scopedURL)
         }
@@ -23158,7 +23317,10 @@ final class WorkspaceStore: ObservableObject {
     private func validatedPortableCourseOwnedFile(
         at candidate: URL,
         portable: CoursePortableItem
-    ) throws -> ImportedFileIdentity? {
+    ) throws -> (
+        identity: ImportedFileIdentity,
+        documentIdentifier: UInt64?
+    )? {
         switch CourseProjectFileWorker.entryPresence(at: candidate) {
         case .absent:
             return nil
@@ -23187,7 +23349,15 @@ final class WorkspaceStore: ObservableObject {
               importedFileIdentityResolver(candidate) == identity else {
             throw CoursePortableStateError.invalidItemStorage
         }
-        return identity
+        let documentIdentifier = try candidate.resourceValues(
+            forKeys: [.documentIdentifierKey]
+        ).documentIdentifier.flatMap {
+            $0 >= 0 ? UInt64($0) : nil
+        }
+        guard importedFileIdentityResolver(candidate) == identity else {
+            throw CoursePortableStateError.invalidItemStorage
+        }
+        return (identity, documentIdentifier)
     }
 
     private func resolvedSharedPortableFile(
@@ -23320,6 +23490,8 @@ final class WorkspaceStore: ObservableObject {
             let storage: StudyItemStorage
             let itemURL: URL?
             let itemIdentity: ImportedFileIdentity?
+            let membershipIdentity: ImportedFileIdentity?
+            let membershipDocumentIdentifier: UInt64?
             let preservedExistingShared: StudyItem?
             let existing = importedItems.first {
                 $0.id == portable.itemID
@@ -23328,10 +23500,15 @@ final class WorkspaceStore: ObservableObject {
             case .courseOwned:
                 storage = .courseOwned(ownerCourseID: courseID)
                 preservedExistingShared = nil
-                itemIdentity = try validatedPortableCourseOwnedFile(
+                let candidateIdentity =
+                    try validatedPortableCourseOwnedFile(
                     at: candidate,
                     portable: portable
                 )
+                itemIdentity = candidateIdentity?.identity
+                membershipIdentity = candidateIdentity?.identity
+                membershipDocumentIdentifier =
+                    candidateIdentity?.documentIdentifier
                 itemURL = itemIdentity == nil ? nil : candidate
             case let .sharedReference(
                 sharedRelativePath,
@@ -23390,6 +23567,14 @@ final class WorkspaceStore: ObservableObject {
                     itemURL = resolved?.url
                     itemIdentity = resolved?.identity
                 }
+                let candidateIdentity =
+                    try validatedPortableCourseOwnedFile(
+                        at: candidate,
+                        portable: portable
+                    )
+                membershipIdentity = candidateIdentity?.identity
+                membershipDocumentIdentifier =
+                    candidateIdentity?.documentIdentifier
             }
             if let existing,
             !previousItemIDs.contains(existing.id),
@@ -23416,21 +23601,13 @@ final class WorkspaceStore: ObservableObject {
                     fileModificationTimeNanoseconds:
                         portable.fileModificationTimeNanoseconds
                 )
-            let previousMembership = previousMemberships.first {
-                $0.itemID == portable.itemID
-                    && $0.courseRelativePath
-                        == portable.courseRelativePath
-            }
             restoredMemberships.append(
                 CourseItemMembership(
                     courseID: courseID,
                     itemID: portable.itemID,
                     courseRelativePath: portable.courseRelativePath,
-                    entryIdentity:
-                        CourseProjectFileWorker.identity(at: candidate)
-                            ?? previousMembership?.entryIdentity,
-                    documentIdentifier:
-                        previousMembership?.documentIdentifier,
+                    entryIdentity: membershipIdentity,
+                    documentIdentifier: membershipDocumentIdentifier,
                     createdAt: portable.membershipCreatedAt
                 )
             )
