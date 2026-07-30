@@ -608,6 +608,9 @@ verify_course_workspace_flow() {
     course-workspace-workflow-flow)
       report_file="$VERIFY_DATA_DIR/course-workspace-workflow-report.json"
       ;;
+    course-home-flow)
+      report_file="$VERIFY_DATA_DIR/course-home-report.json"
+      ;;
     course-resume-point-flow)
       report_file="$VERIFY_DATA_DIR/course-resume-point-report.json"
       ;;
@@ -628,7 +631,31 @@ verify_course_workspace_flow() {
     return 1
   fi
 
-  if [[ "$VERIFY_SCENARIO" == "course-resume-point-flow" ]]; then
+  if [[ "$VERIFY_SCENARIO" == "course-home-flow" ]]; then
+    if ! /usr/bin/jq -e '
+      .result == "pass"
+      and .openedWithoutMutation == true
+      and .browsingIsolated == true
+      and .dismissedWithoutMutation == true
+      and .multipleContentPassed == true
+      and .searchPassed == true
+      and .noteSearchPassed == true
+      and .deletedNoteSearchPassed == true
+      and .searchOffMainThread == true
+      and .failedOpenPreserved == true
+      and .sharedLocationsPassed == true
+      and .sharedLocationsPersisted == true
+      and .resumePassed == true
+      and .courseWorkspacePresented == true
+      and .workspaceCourseID == "11111111-1111-1111-1111-111111111111"
+      and .activeCourseID == "11111111-1111-1111-1111-111111111111"
+      and .materialLocationID == "html-heading-1"
+    ' "$report_file" >/dev/null; then
+      echo "verify failed: course home browsing changed the underlying workspace or failed to find real course content." >&2
+      /usr/bin/jq . "$report_file" >&2
+      return 1
+    fi
+  elif [[ "$VERIFY_SCENARIO" == "course-resume-point-flow" ]]; then
     if ! /usr/bin/jq -e '
       .result == "pass"
       and .readingPassed == true
@@ -645,8 +672,16 @@ verify_course_workspace_flow() {
       return 1
     fi
   elif [[ "$VERIFY_SCENARIO" == "course-workspace-overview-flow" ]]; then
-    if ! /usr/bin/jq -e '
+    if ! /usr/bin/jq -e --arg requested "${WEIBEI_VERIFY_COURSE_PAGE:-}" '
       .result == "pass"
+      and .routeRecognized == true
+      and (
+        ($requested == "hub" and .destination == "hub")
+        or ($requested == "notes" and .destination == "notes")
+        or (($requested == "materials" or $requested == "relations-large") and .destination == "materials")
+        or ($requested == "sessions" and .destination == "sessions")
+        or (($requested == "" or $requested == "relations") and .destination == "relations")
+      )
       and .materialCount == 3
       and .noteCount == 3
       and .explicitLinkCount == 3

@@ -24,7 +24,7 @@ struct CourseRelationPaperView: View {
 
     /// Prefer the course already open in course space; fall back to whole workspace.
     private var defaultScope: CourseRelationPaperScope {
-        if let courseID = store.activeCourseID,
+        if let courseID = store.courseWorkspaceCourseID,
            store.courses.contains(where: { $0.id == courseID }) {
             return .course(courseID)
         }
@@ -118,7 +118,7 @@ struct CourseRelationPaperView: View {
                 scope = defaultScope
             }
         }
-        .onChange(of: store.activeCourseID) { _, newID in
+        .onChange(of: store.courseWorkspaceCourseID) { _, newID in
             // Follow course switches from the title menu unless user picked a non-course filter.
             switch effectiveScope {
             case .all, .unassigned, .unlinked:
@@ -844,7 +844,7 @@ struct CourseRelationPaperView: View {
         // Only pin the workspace course when the user picks a concrete course unit.
         // "All / unassigned / unlinked" are paper filters, not "leave this course".
         if case .course(let courseID) = nextScope {
-            store.activateCourse(courseID)
+            store.selectCourseWorkspaceCourse(courseID)
         }
     }
 
@@ -865,10 +865,15 @@ struct CourseRelationPaperView: View {
         select(node)
         switch node.kind {
         case .material:
-            store.openCourseMaterial(node.itemID)
+            store.openCourseMaterial(node.itemID, in: workspaceCourseID)
         case .note:
-            store.openCourseNote(node.itemID)
+            store.openCourseNote(node.itemID, in: workspaceCourseID)
         }
+    }
+
+    private var workspaceCourseID: UUID? {
+        guard case .course(let courseID) = effectiveScope else { return nil }
+        return courseID
     }
 
     private func connectionState(for node: CourseRelationGraphNode) -> CourseRelationConnectionState {
