@@ -23601,18 +23601,28 @@ final class WorkspaceStore: ObservableObject {
                     itemURL = resolved?.url
                     itemIdentity = resolved?.identity
                 }
-                guard let libraryRoot = courseLibraryRootURL,
-                      let sharedLinkTarget =
-                        CourseProjectPathPolicy.resolvedRelativePath(
-                            sharedRelativePath,
-                            inside: libraryRoot
-                        ) else {
-                    throw CoursePortableStateError.invalidItemStorage
-                }
-                membershipIdentity = try validatedPortableSharedLink(
-                    at: candidate,
-                    sharedURL: sharedLinkTarget
+                let recordedLibraryRoot = (
+                    courseLibraryRootURL
+                        ?? courseLibraryRootPath.flatMap {
+                            guard $0.hasPrefix("/") else { return nil }
+                            return URL(
+                                fileURLWithPath: $0,
+                                isDirectory: true
+                            ).standardizedFileURL
+                        }
                 )
+                let sharedLinkTarget = recordedLibraryRoot.flatMap {
+                    CourseProjectPathPolicy.resolvedRelativePath(
+                        sharedRelativePath,
+                        inside: $0
+                    )
+                }
+                membershipIdentity = try sharedLinkTarget.map {
+                    try validatedPortableSharedLink(
+                        at: candidate,
+                        sharedURL: $0
+                    )
+                } ?? nil
                 membershipDocumentIdentifier = nil
             }
             if let existing,
