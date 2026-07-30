@@ -1246,12 +1246,18 @@ enum CourseProjectRootSelfCheck {
             case .requiresRebind(let value):
                 proposal = value
             }
+            let startsBeforeConfirmation = scopeStarts
             let stopsBeforeConfirmation = scopeStops
             _ = try store.confirmCourseProjectRebind(proposal)
+            let confirmationStarts =
+                scopeStarts - startsBeforeConfirmation
+            let confirmationStops =
+                scopeStops - stopsBeforeConfirmation
             try check(
                 store.courseRootURL(for: courseID)
                     == externalRoot.canonicalFileURL
-                    && scopeStops == stopsBeforeConfirmation + 1
+                    && confirmationStarts >= 1
+                    && confirmationStarts == confirmationStops
                     && scopeStarts - scopeStops == 2,
                 "同路径新 inode 重绑没有逐次配对安全授权"
             )
