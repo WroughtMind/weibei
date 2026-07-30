@@ -3724,12 +3724,12 @@ private struct AgentReplyMemoryUpdateTag: View {
         return origin.courseID.map(LearningMemoryScope.course) ?? .global
     }
 
-    private var memories: [LearningMemoryEntry] {
-        guard let scope else { return [] }
-        let scopedMemories = store.learningMemoryEntries(in: scope)
-        return update.memoryIDs.compactMap { id in
-            scopedMemories.first { $0.id == id }
-        }
+    private var revisions: [LearningMemoryRevisionRecord]? {
+        guard let scope else { return nil }
+        return update.revisions(
+            for: message.id,
+            in: store.learningMemoryEntries(in: scope)
+        )
     }
 
     private var canOpenAll: Bool {
@@ -3778,26 +3778,24 @@ private struct AgentReplyMemoryUpdateTag: View {
 
             if expanded {
                 VStack(alignment: .leading, spacing: 7) {
-                    if memories.isEmpty {
-                        Text(update.summary)
-                            .font(.caption)
-                            .foregroundStyle(WeiBeiTheme.secondaryInk)
-                            .fixedSize(horizontal: false, vertical: true)
-                    } else {
-                        ForEach(memories) { memory in
-                            let revision = memory.revisions?
-                                .last { $0.messageID == message.id }
+                    if let revisions {
+                        ForEach(revisions) { revision in
                             HStack(alignment: .firstTextBaseline, spacing: 7) {
-                                Text(store.learningMemoryKindLabel(revision?.kind ?? memory.kind))
+                                Text(store.learningMemoryKindLabel(revision.kind))
                                     .font(.system(size: 10.5, weight: .semibold))
                                     .foregroundStyle(WeiBeiTheme.cinnabar)
                                     .fixedSize()
-                                Text(revision?.text ?? memory.text)
+                                Text(revision.text)
                                     .font(.caption)
                                     .foregroundStyle(WeiBeiTheme.secondaryInk)
                                     .lineLimit(2)
                             }
                         }
+                    } else {
+                        Text(update.summary)
+                            .font(.caption)
+                            .foregroundStyle(WeiBeiTheme.secondaryInk)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
 
                     if canOpenAll {
