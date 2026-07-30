@@ -371,6 +371,18 @@ actor CourseProjectFileWorker {
         if currentData == previousData {
             return
         }
+        guard let previousData else {
+            try removePortableStateIfMatching(
+                attemptedData,
+                named: name,
+                relativeTo: directoryDescriptor
+            )
+            guard Darwin.fsync(directoryDescriptor) == 0,
+                  identity(at: directory) == expectedDirectoryIdentity else {
+                throw CourseProjectFileWorkerError.verificationFailed
+            }
+            return
+        }
         if let currentData, currentData != attemptedData {
             let quarantine =
                 "course-state-rejected-\(UUID().uuidString.lowercased()).json"
@@ -389,28 +401,15 @@ actor CourseProjectFileWorker {
                 throw CourseProjectFileWorkerError.verificationFailed
             }
         }
-        if let previousData {
-            try compareAndSwapPortableStateData(
-                previousData,
-                expectedPreviousData: currentData == attemptedData
-                    ? attemptedData
-                    : nil,
-                named: name,
-                relativeTo: directoryDescriptor,
-                beforeCommit: {}
-            )
-        } else if try readRegularFile(
+        try compareAndSwapPortableStateData(
+            previousData,
+            expectedPreviousData: currentData == attemptedData
+                ? attemptedData
+                : nil,
             named: name,
             relativeTo: directoryDescriptor,
-            maximumByteCount: portableStateMaximumByteCount
-        ) != nil {
-            let removed = name.withCString {
-                Darwin.unlinkat(directoryDescriptor, $0, 0)
-            }
-            guard removed == 0 else {
-                throw CourseProjectFileWorkerError.verificationFailed
-            }
-        }
+            beforeCommit: {}
+        )
         guard Darwin.fsync(directoryDescriptor) == 0,
               identity(at: directory) == expectedDirectoryIdentity else {
             throw CourseProjectFileWorkerError.verificationFailed
@@ -1382,16 +1381,10 @@ actor CourseProjectFileWorker {
         guard data.count <= portableStateMaximumByteCount else {
             throw CourseProjectFileWorkerError.fileTooLarge
         }
-        let currentData = try readRegularFile(
-            named: name,
-            relativeTo: directoryDescriptor,
-            maximumByteCount: portableStateMaximumByteCount
-        )
-        guard currentData == expectedPreviousData else {
-            throw CourseProjectFileWorkerError.contentConflict
-        }
-        let temporaryName =
-            ".course-state-\(UUID().uuidString.lowercased()).tmp"
+        let operationID = UUID().uuidString.lowercased()
+        let temporaryName = ".course-state-\(operationID).tmp"
+        let candidateBackupName =
+            ".course-state-candidate-\(operationID).tmp"
         let descriptor = temporaryName.withCString {
             Darwin.openat(
                 directoryDescriptor,
@@ -1404,6 +1397,7 @@ actor CourseProjectFileWorker {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
         var shouldRemoveTemporary = true
+        var shouldRemoveCandidateBackup = true
         defer {
             Darwin.close(descriptor)
             if shouldRemoveTemporary {
@@ -1411,6 +1405,58 @@ actor CourseProjectFileWorker {
                     _ = Darwin.unlinkat(directoryDescriptor, $0, 0)
                 }
             }
+            if shouldRemoveCandidateBackup {
+                candidateBackupName.withCString {
+                    _ = Darwin.unlinkat(directoryDescriptor, $0, 0)
+                }
+            }
+        }
+        func preserveCandidate(
+            named candidateName: String,
+            keepsTemporary: Bool
+        ) throws {
+            if keepsTemporary {
+                shouldRemoveTemporary = false
+            } else {
+                shouldRemoveCandidateBackup = false
+            }
+            let conflictName =
+                "course-state-conflict-\(UUID().uuidString.lowercased()).json"
+            let preserved = candidateName.withCString { sourceName in
+                conflictName.withCString { destinationName in
+                    Darwin.renameatx_np(
+                        directoryDescriptor,
+                        sourceName,
+                        directoryDescriptor,
+                        destinationName,
+                        UInt32(RENAME_EXCL)
+                    )
+                }
+            }
+            guard preserved == 0 else {
+                throw CourseProjectFileWorkerError.verificationFailed
+            }
+        }
+        func rollBackSwapAndPreserveCandidate() throws {
+            let rolledBack = temporaryName.withCString { sourceName in
+                name.withCString { destinationName in
+                    Darwin.renameatx_np(
+                        directoryDescriptor,
+                        sourceName,
+                        directoryDescriptor,
+                        destinationName,
+                        UInt32(RENAME_SWAP)
+                    )
+                }
+            }
+            guard rolledBack == 0 else {
+                shouldRemoveTemporary = false
+                throw CourseProjectFileWorkerError.verificationFailed
+            }
+            try preserveCandidate(
+                named: temporaryName,
+                keepsTemporary: true
+            )
         }
         try data.withUnsafeBytes { rawBuffer in
             guard let baseAddress = rawBuffer.baseAddress else { return }
@@ -1432,7 +1478,33 @@ actor CourseProjectFileWorker {
         guard Darwin.fsync(descriptor) == 0 else {
             throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
         }
+        let currentData: Data?
+        do {
+            currentData = try readRegularFile(
+                named: name,
+                relativeTo: directoryDescriptor,
+                maximumByteCount: portableStateMaximumByteCount
+            )
+        } catch {
+            try preserveCandidate(
+                named: temporaryName,
+                keepsTemporary: true
+            )
+            throw CourseProjectFileWorkerError.contentConflict
+        }
+        guard currentData == expectedPreviousData else {
+            try preserveCandidate(
+                named: temporaryName,
+                keepsTemporary: true
+            )
+            throw CourseProjectFileWorkerError.contentConflict
+        }
         try beforeCommit()
+        try writeExclusiveData(
+            data,
+            named: candidateBackupName,
+            relativeTo: directoryDescriptor
+        )
         if expectedPreviousData == nil {
             let placed = temporaryName.withCString { sourceName in
                 name.withCString { destinationName in
@@ -1447,6 +1519,10 @@ actor CourseProjectFileWorker {
             }
             guard placed == 0 else {
                 if errno == EEXIST {
+                    try preserveCandidate(
+                        named: temporaryName,
+                        keepsTemporary: true
+                    )
                     throw CourseProjectFileWorkerError.contentConflict
                 }
                 throw POSIXError(
@@ -1468,50 +1544,29 @@ actor CourseProjectFileWorker {
             }
             guard swapped == 0 else {
                 if errno == ENOENT {
+                    try preserveCandidate(
+                        named: temporaryName,
+                        keepsTemporary: true
+                    )
                     throw CourseProjectFileWorkerError.contentConflict
                 }
                 throw POSIXError(
                     POSIXErrorCode(rawValue: errno) ?? .EIO
                 )
             }
-            let displacedData = try readRegularFile(
-                named: temporaryName,
-                relativeTo: directoryDescriptor,
-                maximumByteCount: portableStateMaximumByteCount
-            )
+            let displacedData: Data?
+            do {
+                displacedData = try readRegularFile(
+                    named: temporaryName,
+                    relativeTo: directoryDescriptor,
+                    maximumByteCount: portableStateMaximumByteCount
+                )
+            } catch {
+                try rollBackSwapAndPreserveCandidate()
+                throw CourseProjectFileWorkerError.contentConflict
+            }
             guard displacedData == expectedPreviousData else {
-                let rolledBack = temporaryName.withCString { sourceName in
-                    name.withCString { destinationName in
-                        Darwin.renameatx_np(
-                            directoryDescriptor,
-                            sourceName,
-                            directoryDescriptor,
-                            destinationName,
-                            UInt32(RENAME_SWAP)
-                        )
-                    }
-                }
-                guard rolledBack == 0 else {
-                    shouldRemoveTemporary = false
-                    throw CourseProjectFileWorkerError.verificationFailed
-                }
-                let conflictName =
-                    "course-state-conflict-\(UUID().uuidString.lowercased()).json"
-                let preserved = temporaryName.withCString { sourceName in
-                    conflictName.withCString { destinationName in
-                        Darwin.renameatx_np(
-                            directoryDescriptor,
-                            sourceName,
-                            directoryDescriptor,
-                            destinationName,
-                            UInt32(RENAME_EXCL)
-                        )
-                    }
-                }
-                shouldRemoveTemporary = false
-                guard preserved == 0 else {
-                    throw CourseProjectFileWorkerError.verificationFailed
-                }
+                try rollBackSwapAndPreserveCandidate()
                 throw CourseProjectFileWorkerError.contentConflict
             }
             let removedDisplaced = temporaryName.withCString {
@@ -1522,13 +1577,192 @@ actor CourseProjectFileWorker {
             }
             shouldRemoveTemporary = false
         }
-        guard try readRegularFile(
-            named: name,
-            relativeTo: directoryDescriptor,
-            maximumByteCount: portableStateMaximumByteCount
-        ) == data else {
+        let finalData: Data?
+        do {
+            finalData = try readRegularFile(
+                named: name,
+                relativeTo: directoryDescriptor,
+                maximumByteCount: portableStateMaximumByteCount
+            )
+        } catch {
+            try preserveCandidate(
+                named: candidateBackupName,
+                keepsTemporary: false
+            )
             throw CourseProjectFileWorkerError.contentConflict
         }
+        guard finalData == data else {
+            try preserveCandidate(
+                named: candidateBackupName,
+                keepsTemporary: false
+            )
+            throw CourseProjectFileWorkerError.contentConflict
+        }
+        let removedCandidateBackup = candidateBackupName.withCString {
+            Darwin.unlinkat(directoryDescriptor, $0, 0)
+        }
+        guard removedCandidateBackup == 0 else {
+            shouldRemoveCandidateBackup = false
+            throw CourseProjectFileWorkerError.verificationFailed
+        }
+        shouldRemoveCandidateBackup = false
+    }
+
+    nonisolated private static func removePortableStateIfMatching(
+        _ attemptedData: Data,
+        named name: String,
+        relativeTo directoryDescriptor: Int32
+    ) throws {
+        let isolatedName =
+            "course-state-rollback-\(UUID().uuidString.lowercased()).json"
+        let isolated = name.withCString { sourceName in
+            isolatedName.withCString { destinationName in
+                Darwin.renameatx_np(
+                    directoryDescriptor,
+                    sourceName,
+                    directoryDescriptor,
+                    destinationName,
+                    UInt32(RENAME_EXCL)
+                )
+            }
+        }
+        if isolated != 0 {
+            if errno == ENOENT {
+                return
+            }
+            throw POSIXError(
+                POSIXErrorCode(rawValue: errno) ?? .EIO
+            )
+        }
+
+        func restoreIsolatedState() throws {
+            let restored = isolatedName.withCString { sourceName in
+                name.withCString { destinationName in
+                    Darwin.renameatx_np(
+                        directoryDescriptor,
+                        sourceName,
+                        directoryDescriptor,
+                        destinationName,
+                        UInt32(RENAME_EXCL)
+                    )
+                }
+            }
+            if restored == 0 {
+                return
+            }
+            let conflictName =
+                "course-state-conflict-\(UUID().uuidString.lowercased()).json"
+            let preserved = isolatedName.withCString { sourceName in
+                conflictName.withCString { destinationName in
+                    Darwin.renameatx_np(
+                        directoryDescriptor,
+                        sourceName,
+                        directoryDescriptor,
+                        destinationName,
+                        UInt32(RENAME_EXCL)
+                    )
+                }
+            }
+            guard preserved == 0 else {
+                throw CourseProjectFileWorkerError.verificationFailed
+            }
+            throw CourseProjectFileWorkerError.contentConflict
+        }
+
+        let isolatedData: Data
+        do {
+            guard let data = try readRegularFile(
+                named: isolatedName,
+                relativeTo: directoryDescriptor,
+                maximumByteCount: portableStateMaximumByteCount
+            ) else {
+                throw CourseProjectFileWorkerError.verificationFailed
+            }
+            isolatedData = data
+        } catch {
+            try restoreIsolatedState()
+            throw error
+        }
+        guard isolatedData == attemptedData else {
+            let candidateName =
+                "course-state-conflict-\(UUID().uuidString.lowercased()).json"
+            do {
+                try writeExclusiveData(
+                    attemptedData,
+                    named: candidateName,
+                    relativeTo: directoryDescriptor
+                )
+            } catch {
+                try restoreIsolatedState()
+                throw error
+            }
+            try restoreIsolatedState()
+            return
+        }
+        let removed = isolatedName.withCString {
+            Darwin.unlinkat(directoryDescriptor, $0, 0)
+        }
+        guard removed == 0 else {
+            try restoreIsolatedState()
+            throw CourseProjectFileWorkerError.verificationFailed
+        }
+    }
+
+    nonisolated private static func writeExclusiveData(
+        _ data: Data,
+        named name: String,
+        relativeTo directoryDescriptor: Int32
+    ) throws {
+        guard data.count <= portableStateMaximumByteCount else {
+            throw CourseProjectFileWorkerError.fileTooLarge
+        }
+        let descriptor = name.withCString {
+            Darwin.openat(
+                directoryDescriptor,
+                $0,
+                O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+                S_IRUSR | S_IWUSR
+            )
+        }
+        guard descriptor >= 0 else {
+            throw POSIXError(
+                POSIXErrorCode(rawValue: errno) ?? .EIO
+            )
+        }
+        var completed = false
+        defer {
+            Darwin.close(descriptor)
+            if !completed {
+                name.withCString {
+                    _ = Darwin.unlinkat(directoryDescriptor, $0, 0)
+                }
+            }
+        }
+        try data.withUnsafeBytes { rawBuffer in
+            guard let baseAddress = rawBuffer.baseAddress else {
+                return
+            }
+            var offset = 0
+            while offset < rawBuffer.count {
+                let written = Darwin.write(
+                    descriptor,
+                    baseAddress.advanced(by: offset),
+                    rawBuffer.count - offset
+                )
+                guard written > 0 else {
+                    throw POSIXError(
+                        POSIXErrorCode(rawValue: errno) ?? .EIO
+                    )
+                }
+                offset += written
+            }
+        }
+        guard Darwin.fsync(descriptor) == 0 else {
+            throw POSIXError(
+                POSIXErrorCode(rawValue: errno) ?? .EIO
+            )
+        }
+        completed = true
     }
 
     nonisolated private static func readRegularFile(

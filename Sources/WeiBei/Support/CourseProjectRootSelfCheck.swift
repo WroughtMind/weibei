@@ -1034,6 +1034,14 @@ enum CourseProjectRootSelfCheck {
                 expectedCourseID: courseA
             )
         }
+        var gitInternalPathState = state
+        gitInternalPathState.items[0].courseRelativePath =
+            ".git/secret.txt"
+        try expectFailure("课程 Git 隐藏路径校验") {
+            _ = try gitInternalPathState.validated(
+                expectedCourseID: courseA
+            )
+        }
         var duplicateRelationState = state
         if let relation = duplicateRelationState.noteSourceLinks.first {
             duplicateRelationState.noteSourceLinks.append(relation)
@@ -1475,6 +1483,139 @@ enum CourseProjectRootSelfCheck {
         }
         try sharedStateData.write(to: stateURL, options: [.atomic])
 
+        let swappedUnreadableTarget = imports.appendingPathComponent(
+            "状态竞态外部目标.json"
+        )
+        let swappedUnreadableTargetData = Data(
+            "Finder 外部版本不得被删除".utf8
+        )
+        try swappedUnreadableTargetData.write(
+            to: swappedUnreadableTarget
+        )
+        let swappedUnreadableWorkspace = try fixture.makeDirectory(
+            "交换后不可读状态工作区"
+        )
+        var injectUnreadableSwappedState = false
+        let swappedUnreadableStore = makeStore(
+            fixture: fixture,
+            workspaceDirectory: swappedUnreadableWorkspace,
+            mutationHook: { stage in
+                guard injectUnreadableSwappedState,
+                      stage == .beforeCoursePortableStateCASPlacement else {
+                    return
+                }
+                injectUnreadableSwappedState = false
+                try FileManager.default.removeItem(at: stateURL)
+                try FileManager.default.createSymbolicLink(
+                    at: stateURL,
+                    withDestinationURL: swappedUnreadableTarget
+                )
+            }
+        )
+        _ = try swappedUnreadableStore.adoptCourseFolder(
+            at: courseARoot,
+            title: "交换后不可读状态"
+        )
+        injectUnreadableSwappedState = true
+        swappedUnreadableStore.renameCourse(
+            courseA,
+            title: "交换后仍需保留的本机候选"
+        )
+        let unreadableConflictURLs = try FileManager.default
+            .contentsOfDirectory(
+                at: stateURL.deletingLastPathComponent(),
+                includingPropertiesForKeys: nil
+            )
+            .filter {
+                $0.lastPathComponent.hasPrefix(
+                    "course-state-conflict-"
+                )
+                    && $0.pathExtension == "json"
+            }
+        let unreadablePreservedLocalCandidate =
+            try unreadableConflictURLs.contains { url in
+                let conflictState = try JSONDecoder().decode(
+                    CoursePortableState.self,
+                    from: Data(contentsOf: url)
+                )
+                return conflictState.metadata.title
+                    == "交换后仍需保留的本机候选"
+            }
+        try check(
+            CourseProjectFileWorker.isSymbolicLink(at: stateURL)
+                && Data(contentsOf: swappedUnreadableTarget)
+                    == swappedUnreadableTargetData
+                && swappedUnreadableStore.workspaceSaveError != nil
+                && unreadablePreservedLocalCandidate,
+            "交换后旧状态变为不可读入口时删除了外部版本或本机候选"
+        )
+        for conflictURL in unreadableConflictURLs {
+            try FileManager.default.removeItem(at: conflictURL)
+        }
+        try FileManager.default.removeItem(at: stateURL)
+        try sharedStateData.write(to: stateURL, options: [.atomic])
+
+        let firstCreateRollbackWorkspace = try fixture.makeDirectory(
+            "首次状态回滚并发工作区"
+        )
+        var injectWorkspaceFailureAfterStateCreate = false
+        let firstCreateRollbackStore = makeStore(
+            fixture: fixture,
+            workspaceDirectory: firstCreateRollbackWorkspace,
+            workspaceWriter: { data, url in
+                guard injectWorkspaceFailureAfterStateCreate else {
+                    try data.write(to: url, options: [.atomic])
+                    return
+                }
+                injectWorkspaceFailureAfterStateCreate = false
+                try externalStateData.write(
+                    to: stateURL,
+                    options: [.atomic]
+                )
+                throw CheckError.injectedFailure
+            }
+        )
+        _ = try firstCreateRollbackStore.adoptCourseFolder(
+            at: courseARoot,
+            title: "首次状态回滚并发"
+        )
+        try FileManager.default.removeItem(at: stateURL)
+        injectWorkspaceFailureAfterStateCreate = true
+        firstCreateRollbackStore.renameCourse(
+            courseA,
+            title: "首次创建的本机候选"
+        )
+        let rollbackConflictURLs = try FileManager.default
+            .contentsOfDirectory(
+                at: stateURL.deletingLastPathComponent(),
+                includingPropertiesForKeys: nil
+            )
+            .filter {
+                $0.lastPathComponent.hasPrefix(
+                    "course-state-conflict-"
+                )
+                    && $0.pathExtension == "json"
+            }
+        let rollbackPreservedLocalCandidate =
+            try rollbackConflictURLs.contains { url in
+                let conflictState = try JSONDecoder().decode(
+                    CoursePortableState.self,
+                    from: Data(contentsOf: url)
+                )
+                return conflictState.metadata.title
+                    == "首次创建的本机候选"
+            }
+        try check(
+            Data(contentsOf: stateURL) == externalStateData
+                && firstCreateRollbackStore.workspaceSaveError != nil
+                && rollbackPreservedLocalCandidate,
+            "首次创建课程状态后总工作区失败时没有同时保住外部状态与本机候选"
+        )
+        for conflictURL in rollbackConflictURLs {
+            try FileManager.default.removeItem(at: conflictURL)
+        }
+        try sharedStateData.write(to: stateURL, options: [.atomic])
+
         let oversizedOriginalData = try Data(contentsOf: stateURL)
         let oversizedHandle = try FileHandle(forWritingTo: stateURL)
         try oversizedHandle.truncate(atOffset: 33 * 1_024 * 1_024)
@@ -1525,6 +1666,73 @@ enum CourseProjectRootSelfCheck {
             "拒读 33MB 课程状态时改动了原文件"
         )
         try oversizedOriginalData.write(to: stateURL, options: [.atomic])
+
+        let beforeLocalOversizedState = try Data(contentsOf: stateURL)
+        let oversizedMessageText = String(
+            repeating: "x",
+            count: 33 * 1_024 * 1_024
+        )
+        let oversizedMessageID =
+            try store.appendPortableCourseMessageForSelfCheck(
+                courseID: courseA,
+                text: oversizedMessageText
+            )
+        try check(
+            store.flushPendingWorkspaceSave(),
+            "本机课程状态超限时阻断了总工作区保存"
+        )
+        let localOversizedWorkspace = try JSONDecoder().decode(
+            PersistedWorkspace.self,
+            from: Data(
+                contentsOf: fixture.workspaceDirectory
+                    .appendingPathComponent("workspace.json")
+            )
+        )
+        let persistedOversizedMessage = localOversizedWorkspace
+            .studySessions?
+            .first { $0.id == fixtureState.sessionID }?
+            .messages
+            .first { $0.id == oversizedMessageID }
+        try check(
+            Data(contentsOf: stateURL) == beforeLocalOversizedState
+                && persistedOversizedMessage?.text.count
+                    == oversizedMessageText.count
+                && localOversizedWorkspace.dirtyPortableCourseIDs?
+                    .contains(courseA) == true
+                && store.workspaceSaveError?.contains("32 MB") == true,
+            "本机最终课程状态超过 32MB 时没有保存工作区、保留原状态或给出明确错误"
+        )
+        store.removePortableCourseMessageForSelfCheck(
+            courseID: courseA,
+            messageID: oversizedMessageID
+        )
+        let recoveredMessageID =
+            try store.appendPortableCourseMessageForSelfCheck(
+                courseID: courseA,
+                text: "缩小后的课程状态能够继续保存。"
+            )
+        let recoveredFromLocalOversize =
+            store.flushPendingWorkspaceSave()
+        let recoveredOversizeFlags =
+            store.portableStateFlagsForSelfCheck(courseID: courseA)
+        let recoveredCourseState = try JSONDecoder().decode(
+            CoursePortableState.self,
+            from: Data(contentsOf: stateURL)
+        ).validated(expectedCourseID: courseA)
+        try check(
+            recoveredFromLocalOversize
+                && !recoveredOversizeFlags.dirty
+                && !recoveredOversizeFlags.blocked
+                && !recoveredOversizeFlags.oversized
+                && store.workspaceSaveError?.contains("32 MB") != true
+                && recoveredCourseState.studySessions
+                    .flatMap(\.messages)
+                    .contains { $0.id == recoveredMessageID },
+            "课程内容缩小后没有从超限阻断中安全恢复"
+                + "（saved=\(recoveredFromLocalOversize)，"
+                + "error=\(store.workspaceSaveError ?? "nil")，"
+                + "flags=\(recoveredOversizeFlags)）"
+        )
 
         let beforeFailedWrite = try Data(contentsOf: stateURL)
         let failedWriteWorkspace = try fixture.makeDirectory("写入失败工作区")
@@ -1681,6 +1889,69 @@ enum CourseProjectRootSelfCheck {
                     || $0.url?.lastPathComponent == "不应重现.txt"
             },
             "总工作区失败后重开出现了幽灵资料"
+        )
+
+        let memoryTextBeforeChatDeletion = try require(
+            store.learningMemoryStates
+                .first { $0.scope == .course(courseA) }?
+                .entries
+                .first { $0.id == fixtureState.memoryID }?
+                .text,
+            "删 Chat 前缺少课程学习记忆"
+        )
+        store.deleteStudySession(fixtureState.sessionID)
+        try check(
+            store.flushPendingWorkspaceSave(),
+            "删 Chat 后课程学习记忆没有保存"
+        )
+        let afterChatDeletionState = try JSONDecoder().decode(
+            CoursePortableState.self,
+            from: Data(contentsOf: stateURL)
+        ).validated(expectedCourseID: courseA)
+        let memoryAfterChatDeletion = try require(
+            afterChatDeletionState.learningMemoryState?
+                .entries
+                .first { $0.id == fixtureState.memoryID },
+            "删 Chat 后课程学习记忆被删除"
+        )
+        try check(
+            memoryAfterChatDeletion.text == memoryTextBeforeChatDeletion
+                && memoryAfterChatDeletion.sessionID == nil
+                && memoryAfterChatDeletion.messageID == nil
+                && (memoryAfterChatDeletion.revisions ?? [])
+                    .allSatisfy {
+                        $0.sessionID == nil && $0.messageID == nil
+                    }
+                && !afterChatDeletionState.studySessions.contains {
+                    $0.id == fixtureState.sessionID
+                },
+            "删 Chat 后记忆正文或历史没有保留，或仍携带悬空来源"
+        )
+        let chatDeletionReopenWorkspace = try fixture.makeDirectory(
+            "删 Chat 后重开工作区"
+        )
+        let chatDeletionReopenStore = makeStore(
+            fixture: fixture,
+            workspaceDirectory: chatDeletionReopenWorkspace
+        )
+        try chatDeletionReopenStore.configureCourseLibrary(at: library)
+        _ = try chatDeletionReopenStore.adoptCourseFolder(
+            at: courseARoot,
+            title: "删 Chat 后重开"
+        )
+        let reopenedMemory = chatDeletionReopenStore
+            .learningMemoryStates
+            .first { $0.scope == .course(courseA) }?
+            .entries
+            .first { $0.id == fixtureState.memoryID }
+        try check(
+            reopenedMemory?.text == memoryTextBeforeChatDeletion
+                && reopenedMemory?.sessionID == nil
+                && reopenedMemory?.messageID == nil
+                && !chatDeletionReopenStore.studySessions.contains {
+                    $0.id == fixtureState.sessionID
+                },
+            "删 Chat 后重开没有保留已净化的学习记忆"
         )
     }
 

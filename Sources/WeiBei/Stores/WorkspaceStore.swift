@@ -92,6 +92,7 @@ private struct CoursePortableStateCommit {
     let previousDigests: [UUID: String]
     let previousDirtyCourseIDs: Set<UUID>
     let previousBlockedCourseIDs: Set<UUID>
+    let previousOversizedCourseIDs: Set<UUID>
     let previousNeedsBootstrap: Bool
 }
 
@@ -581,6 +582,7 @@ final class WorkspaceStore: ObservableObject {
     private var coursePortableStateDigests: [UUID: String] = [:]
     private var dirtyPortableCourseIDs = Set<UUID>()
     private var blockedPortableCourseIDs = Set<UUID>()
+    private var oversizedPortableCourseIDs = Set<UUID>()
     private var persistedWorkspaceCourseIDs = Set<UUID>()
     private var needsPortableCourseStateBootstrap = false
     @Published private var validatedAgentReplySourceIDs = Set<UUID>()
@@ -1661,6 +1663,8 @@ final class WorkspaceStore: ObservableObject {
         let previousPortableDigests = coursePortableStateDigests
         let previousDirtyPortableCourses = dirtyPortableCourseIDs
         let previousBlockedPortableCourses = blockedPortableCourseIDs
+        let previousOversizedPortableCourses =
+            oversizedPortableCourseIDs
         let previousPortableBootstrap =
             needsPortableCourseStateBootstrap
         guard importedFileIdentityResolver(canonicalRoot) == identity else {
@@ -1723,6 +1727,8 @@ final class WorkspaceStore: ObservableObject {
             coursePortableStateDigests = previousPortableDigests
             dirtyPortableCourseIDs = previousDirtyPortableCourses
             blockedPortableCourseIDs = previousBlockedPortableCourses
+            oversizedPortableCourseIDs =
+                previousOversizedPortableCourses
             needsPortableCourseStateBootstrap =
                 previousPortableBootstrap
             resolvedCourseRootURLs.removeValue(forKey: course.id)
@@ -11421,6 +11427,7 @@ final class WorkspaceStore: ObservableObject {
             var coordinatedDigest: String?
             var coordinationError: NSError?
             var operationError: Error?
+            let notebookMarkdownWriter = self.notebookMarkdownWriter
             let writeAndVerify: (URL) -> Void = { coordinatedURL in
                 do {
                     guard self.importedFileIdentityResolver(
@@ -11439,10 +11446,7 @@ final class WorkspaceStore: ObservableObject {
                         )
                     }
                     if willRewriteMarkdown {
-                        try self.notebookMarkdownWriter(
-                            retitledMarkdown,
-                            coordinatedURL
-                        )
+                        try notebookMarkdownWriter(retitledMarkdown, coordinatedURL)
                     }
                     let identityBeforeRead =
                         self.importedFileIdentityResolver(coordinatedURL)
@@ -13034,6 +13038,7 @@ final class WorkspaceStore: ObservableObject {
         let foreignMemoryID = UUID()
         let draft = "# 可携带笔记\n\n尚未写回的课程草稿。"
         let now = Date()
+        let firstMessageID = UUID()
         learningMemoryStates.removeAll {
             $0.scope == .course(courseID)
                 || $0.scope == .course(foreignCourseID)
@@ -13051,8 +13056,23 @@ final class WorkspaceStore: ObservableObject {
                         evidence: "课程 Chat",
                         origin: .agentInference,
                         sessionID: sessionID,
+                        messageID: firstMessageID,
                         createdAt: now,
-                        updatedAt: now
+                        updatedAt: now,
+                        revisions: [
+                            LearningMemoryRevisionRecord(
+                                revision: 1,
+                                kind: .progress,
+                                text: "已完成课程可携带状态测试。",
+                                evidence: "课程 Chat",
+                                origin: .agentInference,
+                                status: .active,
+                                sessionID: sessionID,
+                                messageID: firstMessageID,
+                                actor: .agent,
+                                recordedAt: now
+                            ),
+                        ]
                     ),
                 ]
             ),
@@ -13106,7 +13126,6 @@ final class WorkspaceStore: ObservableObject {
             targetItemID: noteItemID,
             sourceItemID: materialItemID
         )
-        let firstMessageID = UUID()
         let firstRichNarrative =
             "最早一条课程回复的富回答附件必须长期保留。"
         let firstReply = AgentMessage(
@@ -13252,6 +13271,75 @@ final class WorkspaceStore: ObservableObject {
         precondition(ProcessInfo.processInfo.arguments.contains("--self-check-course-project-root"))
         guard pendingNoteWritesByItemID[itemID] != nil else { return nil }
         return notesByItemID[itemID]
+    }
+
+    func appendPortableCourseMessageForSelfCheck(
+        courseID: UUID,
+        text: String
+    ) throws -> UUID {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        guard let sessionIndex = studySessions.firstIndex(where: {
+            $0.courseID == courseID && $0.scopeNeedsReview == false
+        }) else {
+            throw AgentConversationTargetError(
+                message: "可携带状态测试缺少课程 Chat"
+            )
+        }
+        let message = AgentMessage(
+            role: .user,
+            text: text,
+            source: nil
+        )
+        studySessions[sessionIndex].messages.append(message)
+        if activeStudySessionID == studySessions[sessionIndex].id {
+            messages = studySessions[sessionIndex].messages
+        }
+        return message.id
+    }
+
+    func removePortableCourseMessageForSelfCheck(
+        courseID: UUID,
+        messageID: UUID
+    ) {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        guard let sessionIndex = studySessions.firstIndex(where: {
+            $0.courseID == courseID && $0.scopeNeedsReview == false
+        }) else {
+            return
+        }
+        studySessions[sessionIndex].messages.removeAll {
+            $0.id == messageID
+        }
+        if activeStudySessionID == studySessions[sessionIndex].id {
+            messages = studySessions[sessionIndex].messages
+        }
+    }
+
+    func portableStateFlagsForSelfCheck(
+        courseID: UUID
+    ) -> (
+        dirty: Bool,
+        blocked: Bool,
+        oversized: Bool
+    ) {
+        precondition(
+            ProcessInfo.processInfo.arguments.contains(
+                "--self-check-course-project-root"
+            )
+        )
+        return (
+            dirtyPortableCourseIDs.contains(courseID),
+            blockedPortableCourseIDs.contains(courseID),
+            oversizedPortableCourseIDs.contains(courseID)
+        )
     }
 
     func removeCourseMembershipForAgentSelfCheck(
@@ -21352,10 +21440,10 @@ final class WorkspaceStore: ObservableObject {
             portableItems.lazy.filter(\.isNotebookNote).map(\.itemID)
         )
         let materialItemIDs = portableItemIDs.subtracting(noteItemIDs)
-        let memoryState = learningMemoryStates.first {
+        let rawMemoryState = learningMemoryStates.first {
             $0.scope == .course(courseID)
         }
-        let memoryIDs = Set(memoryState?.entries.map(\.id) ?? [])
+        let memoryIDs = Set(rawMemoryState?.entries.map(\.id) ?? [])
         let relations = noteSourceLinks.filter {
             noteItemIDs.contains($0.noteItemID)
                 && materialItemIDs.contains($0.sourceItemID)
@@ -21469,6 +21557,57 @@ final class WorkspaceStore: ObservableObject {
             return portable
         }
         .sorted { $0.createdAt < $1.createdAt }
+        let messageIDsBySessionID = Dictionary(
+            uniqueKeysWithValues: sessions.map {
+                ($0.id, Set($0.messages.map(\.id)))
+            }
+        )
+        func sanitizedMemoryProvenance(
+            sessionID: UUID?,
+            messageID: UUID?
+        ) -> (sessionID: UUID?, messageID: UUID?) {
+            guard let sessionID,
+                  let liveMessageIDs =
+                    messageIDsBySessionID[sessionID] else {
+                return (nil, nil)
+            }
+            guard let messageID else {
+                return (sessionID, nil)
+            }
+            return liveMessageIDs.contains(messageID)
+                ? (sessionID, messageID)
+                : (sessionID, nil)
+        }
+        var memoryState = rawMemoryState
+        if var sanitizedMemoryState = memoryState {
+            for entryIndex in sanitizedMemoryState.entries.indices {
+                var entry = sanitizedMemoryState.entries[entryIndex]
+                let entryProvenance = sanitizedMemoryProvenance(
+                    sessionID: entry.sessionID,
+                    messageID: entry.messageID
+                )
+                entry.sessionID = entryProvenance.sessionID
+                entry.messageID = entryProvenance.messageID
+                if var revisions = entry.revisions {
+                    for revisionIndex in revisions.indices {
+                        let revisionProvenance =
+                            sanitizedMemoryProvenance(
+                                sessionID:
+                                    revisions[revisionIndex].sessionID,
+                                messageID:
+                                    revisions[revisionIndex].messageID
+                            )
+                        revisions[revisionIndex].sessionID =
+                            revisionProvenance.sessionID
+                        revisions[revisionIndex].messageID =
+                            revisionProvenance.messageID
+                    }
+                    entry.revisions = revisions
+                }
+                sanitizedMemoryState.entries[entryIndex] = entry
+            }
+            memoryState = sanitizedMemoryState
+        }
         var locations: [String: StudyLocation] = [:]
         for itemID in materialItemIDs.sorted() {
             if let location = studyLocation(for: itemID, in: courseID) {
@@ -22049,6 +22188,7 @@ final class WorkspaceStore: ObservableObject {
         let previousDigests = coursePortableStateDigests
         let previousDirty = dirtyPortableCourseIDs
         let previousBlocked = blockedPortableCourseIDs
+        let previousOversized = oversizedPortableCourseIDs
         let previousNeedsBootstrap = needsPortableCourseStateBootstrap
         var committedWrites: [CoursePortableStateWriteRecord] = []
         var conflictedCourseID: UUID?
@@ -22090,10 +22230,26 @@ final class WorkspaceStore: ObservableObject {
                     blockedPortableCourseIDs.insert(courseID)
                     continue
                 }
+                var committed = candidate
+                committed.revision = currentRevision &+ 1
+                committed.savedAt = Date()
+                let committedData = try encodedCoursePortableState(
+                    committed
+                )
+                if committedData.count
+                    > CourseProjectFileWorker
+                        .portableStateMaximumByteCount {
+                    dirtyPortableCourseIDs.insert(courseID)
+                    blockedPortableCourseIDs.insert(courseID)
+                    oversizedPortableCourseIDs.insert(courseID)
+                    needsPortableCourseStateBootstrap = true
+                    continue
+                }
                 let payloadDigest = try coursePortableStatePayloadDigest(
                     candidate
                 )
                 guard let stateURL else {
+                    oversizedPortableCourseIDs.remove(courseID)
                     if knownDigest != payloadDigest {
                         dirtyPortableCourseIDs.insert(courseID)
                     }
@@ -22107,6 +22263,9 @@ final class WorkspaceStore: ObservableObject {
                             at: stateURL.deletingLastPathComponent()
                         ) else {
                     throw CoursePortableStateError.unsafeRelativePath
+                }
+                if oversizedPortableCourseIDs.remove(courseID) != nil {
+                    blockedPortableCourseIDs.remove(courseID)
                 }
                 if blockedPortableCourseIDs.contains(courseID) {
                     if knownDigest != payloadDigest {
@@ -22133,12 +22292,6 @@ final class WorkspaceStore: ObservableObject {
                         continue
                     }
                 }
-                var committed = candidate
-                committed.revision = currentRevision &+ 1
-                committed.savedAt = Date()
-                let committedData = try encodedCoursePortableState(
-                    committed
-                )
                 let previousData = stateExists
                     ? try CourseProjectFileWorker.readPortableState(
                         at: stateURL,
@@ -22211,6 +22364,7 @@ final class WorkspaceStore: ObservableObject {
             coursePortableStateDigests = previousDigests
             dirtyPortableCourseIDs = previousDirty
             blockedPortableCourseIDs = previousBlocked
+            oversizedPortableCourseIDs = previousOversized
             needsPortableCourseStateBootstrap = previousNeedsBootstrap
             if let conflictedCourseID {
                 dirtyPortableCourseIDs.insert(conflictedCourseID)
@@ -22230,6 +22384,7 @@ final class WorkspaceStore: ObservableObject {
             previousDigests: previousDigests,
             previousDirtyCourseIDs: previousDirty,
             previousBlockedCourseIDs: previousBlocked,
+            previousOversizedCourseIDs: previousOversized,
             previousNeedsBootstrap: previousNeedsBootstrap
         )
     }
@@ -22255,6 +22410,8 @@ final class WorkspaceStore: ObservableObject {
         coursePortableStateDigests = commit.previousDigests
         dirtyPortableCourseIDs = commit.previousDirtyCourseIDs
         blockedPortableCourseIDs = commit.previousBlockedCourseIDs
+        oversizedPortableCourseIDs =
+            commit.previousOversizedCourseIDs
         needsPortableCourseStateBootstrap =
             commit.previousNeedsBootstrap
         if rollbackFailed {
@@ -22554,7 +22711,12 @@ final class WorkspaceStore: ObservableObject {
                 try workspaceSnapshotWriter(data, storageURL)
                 persistedWorkspaceCourseIDs = Set(courses.map(\.id))
                 courseResumePoints = persistedCourseResumePoints
-                if blockedPortableCourseIDs.isEmpty {
+                if !oversizedPortableCourseIDs.isEmpty {
+                    workspaceSaveError = ui(
+                        "工作区内容已保存，但有课程的可携带状态超过 32 MB；课程文件夹中的原状态保持不变。请精简课程 Chat 或未写入草稿后重试。",
+                        "The workspace was saved, but a portable course state exceeds 32 MB. The state in the course folder was left unchanged. Reduce course chats or pending drafts, then retry."
+                    )
+                } else if blockedPortableCourseIDs.isEmpty {
                     workspaceSaveError = nil
                 } else {
                     workspaceSaveError = ui(

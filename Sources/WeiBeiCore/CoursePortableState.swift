@@ -457,7 +457,7 @@ public struct CoursePortableState: Codable, Equatable, Sendable {
                 let normalized = String(component)
                     .precomposedStringWithCanonicalMapping
                     .lowercased()
-                return !normalized.hasPrefix(".weibei")
+                return !normalized.hasPrefix(".")
             }
     }
 
