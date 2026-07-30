@@ -6364,16 +6364,16 @@ final class WorkspaceStore: ObservableObject {
             return false
         }
         let ownerMembershipCommitted = input.memberships.contains {
+            // The membership is durable commit evidence. Its physical link
+            // identity may legitimately disappear after the workspace save.
             $0.courseID == journal.ownerCourseID
                 && $0.itemID == journal.itemID
                 && $0.courseRelativePath == journal.sourceRelativePath
-                && $0.entryIdentity == journal.ownerLinkIdentity
         }
         let addedMembershipCommitted = input.memberships.contains {
             $0.courseID == journal.addedCourseID
                 && $0.itemID == journal.itemID
                 && $0.courseRelativePath == journal.addedLinkRelativePath
-                && $0.entryIdentity == journal.addedLinkIdentity
         }
         if itemCommitted,
            ownerMembershipCommitted,
