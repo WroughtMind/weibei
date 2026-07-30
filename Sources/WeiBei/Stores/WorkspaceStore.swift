@@ -13055,9 +13055,14 @@ final class WorkspaceStore: ObservableObject {
             if let rawMemoryID = proposal.memoryID {
                 guard let parsedMemoryID = UUID(uuidString: rawMemoryID),
                       entryTargetIDs.insert(parsedMemoryID).inserted,
-                      memoryEntries.contains(where: {
+                      let existingMemory = memoryEntries.first(where: {
                           $0.id == parsedMemoryID && $0.status == .active
                       }) else {
+                    return nil
+                }
+                if existingMemory.origin == .userStatement,
+                   !evidence.hasPrefix("[用户：本轮]"),
+                   !evidence.hasPrefix("[会话：当前]") {
                     return nil
                 }
                 memoryID = parsedMemoryID
@@ -13111,7 +13116,8 @@ final class WorkspaceStore: ObservableObject {
         for validated in validatedEntries {
             if let memoryID = validated.memoryID,
                let index = memoryEntries.firstIndex(where: { $0.id == memoryID }) {
-                let origin = memoryEntries[index].origin == .userStatement
+                let origin: LearningMemoryOrigin = validated.evidence
+                    .hasPrefix("[用户：本轮]")
                     ? .userStatement
                     : validated.origin
                 guard memoryEntries[index].kind != validated.proposal.kind
@@ -15773,6 +15779,96 @@ final class WorkspaceStore: ObservableObject {
                     .first(where: { $0.id == memoryID })
             }?.text == "用户修正：目前只会做最基础的费雪方程题"
 
+        let sourceOnlyRevision = learningMemoryRevision(in: .course(courseAID))
+        let sourceOnlyAttachment = createdMemoryID.flatMap { memoryID in
+            applyLearningUpdate(
+                StudyAgentLearningUpdate(
+                    contextRevision: "a5b-source-only",
+                    memoryRevision: sourceOnlyRevision,
+                    entries: [
+                        StudyAgentMemoryUpdateEntry(
+                            memoryID: memoryID.uuidString.lowercased(),
+                            kind: .understood,
+                            text: "已经完全掌握费雪方程",
+                            evidence: "[材料：利率章节]",
+                            origin: .agentInference
+                        ),
+                    ]
+                ),
+                expectedContextRevision: "a5b-source-only",
+                expectedMemoryRevision: sourceOnlyRevision,
+                expectedUserQuestion: "继续学习利率",
+                target: target(courseASecondChatID, courseID: courseAID),
+                messageID: UUID()
+            )
+        }
+        let sourceOnlyInferenceRejected = sourceOnlyAttachment == nil
+            && learningMemoryRevision(in: .course(courseAID)) == sourceOnlyRevision
+            && createdMemoryID.flatMap { memoryID in
+                learningMemoryEntries(in: .course(courseAID))
+                    .first(where: { $0.id == memoryID })
+            }?.origin == .userStatement
+
+        let explicitQuestion = "我确认目前只会做最基础的费雪方程题"
+        let explicitRevision = learningMemoryRevision(in: .course(courseAID))
+        let explicitAttachment = createdMemoryID.flatMap { memoryID in
+            applyLearningUpdate(
+                StudyAgentLearningUpdate(
+                    contextRevision: "a5b-user-confirmed",
+                    memoryRevision: explicitRevision,
+                    entries: [
+                        StudyAgentMemoryUpdateEntry(
+                            memoryID: memoryID.uuidString.lowercased(),
+                            kind: .progress,
+                            text: "目前只会做最基础的费雪方程题",
+                            evidence: "[用户：本轮] \(explicitQuestion)",
+                            origin: .userStatement
+                        ),
+                    ]
+                ),
+                expectedContextRevision: "a5b-user-confirmed",
+                expectedMemoryRevision: explicitRevision,
+                expectedUserQuestion: explicitQuestion,
+                target: target(courseASecondChatID, courseID: courseAID),
+                messageID: UUID()
+            )
+        }
+        let explicitUserUpdatePassed = explicitAttachment != nil
+            && createdMemoryID.flatMap { memoryID in
+                learningMemoryEntries(in: .course(courseAID))
+                    .first(where: { $0.id == memoryID })
+            }?.origin == .userStatement
+
+        let selfTestQuestion = "我刚才独立算出了这道题的实际利率"
+        let selfTestRevision = learningMemoryRevision(in: .course(courseAID))
+        let selfTestAttachment = createdMemoryID.flatMap { memoryID in
+            applyLearningUpdate(
+                StudyAgentLearningUpdate(
+                    contextRevision: "a5b-self-test",
+                    memoryRevision: selfTestRevision,
+                    entries: [
+                        StudyAgentMemoryUpdateEntry(
+                            memoryID: memoryID.uuidString.lowercased(),
+                            kind: .progress,
+                            text: "能独立完成基础费雪方程题",
+                            evidence: "[会话：当前] \(selfTestQuestion)",
+                            origin: .agentInference
+                        ),
+                    ]
+                ),
+                expectedContextRevision: "a5b-self-test",
+                expectedMemoryRevision: selfTestRevision,
+                expectedUserQuestion: selfTestQuestion,
+                target: target(courseASecondChatID, courseID: courseAID),
+                messageID: UUID()
+            )
+        }
+        let selfTestInferencePassed = selfTestAttachment != nil
+            && createdMemoryID.flatMap { memoryID in
+                learningMemoryEntries(in: .course(courseAID))
+                    .first(where: { $0.id == memoryID })
+            }?.origin == .agentInference
+
         activeStudySessionID = courseASecondChatID
         messages = studySessions.first(where: {
             $0.id == courseASecondChatID
@@ -15913,6 +16009,9 @@ final class WorkspaceStore: ObservableObject {
             && crossChatUpdatePassed
             && userCorrectionPassed
             && staleRejected
+            && sourceOnlyInferenceRejected
+            && explicitUserUpdatePassed
+            && selfTestInferencePassed
             && automaticResolutionPassed
             && invalidTargetRejected
             && globalScopePassed
@@ -15926,6 +16025,9 @@ final class WorkspaceStore: ObservableObject {
         cross_chat_update=\(crossChatUpdatePassed)
         user_correction=\(userCorrectionPassed)
         stale_rejected=\(staleRejected)
+        source_only_inference_rejected=\(sourceOnlyInferenceRejected)
+        explicit_user_update=\(explicitUserUpdatePassed)
+        self_test_inference=\(selfTestInferencePassed)
         automatic_resolution=\(automaticResolutionPassed)
         invalid_target_rejected=\(invalidTargetRejected)
         global_scope=\(globalScopePassed)
