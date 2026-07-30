@@ -1691,6 +1691,10 @@ struct AgentPaneView: View {
         AgentChatLayoutMetrics.isWide(layout: store.layout)
     }
 
+    private var replySources: [AgentReplySource] {
+        store.messages.flatMap(\.sources)
+    }
+
     /// Prefer a measured width; for immersive before the first probe, seed wide so we do not flash the three-pane strip size.
     private var agentPaneWidth: CGFloat {
         if measuredPaneWidth > 1 {
@@ -1896,6 +1900,9 @@ struct AgentPaneView: View {
             if usesWideChatLayout, measuredPaneWidth < 700 {
                 measuredPaneWidth = max(measuredPaneWidth, 1100)
             }
+        }
+        .task(id: replySources) {
+            await store.validateAgentReplySources(replySources)
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("stable-document-slot-agent")
@@ -3477,7 +3484,12 @@ private struct AgentBubble: View {
         scoped.scenes = [scene]
         scoped.parts = nil
         let evidenceIDs = Set(scene.evidenceIDs)
-        scoped.evidenceLedger = presentation.evidenceLedger.filter { evidenceIDs.contains($0.id) }
+        let openableSourceLabels = Set(message.sources.compactMap { source in
+            store.canOpenAgentReplySource(source) ? source.label : nil
+        })
+        scoped.evidenceLedger = presentation.evidenceLedger.filter {
+            evidenceIDs.contains($0.id) && openableSourceLabels.contains($0.sourceLabel)
+        }
         return scoped
     }
 

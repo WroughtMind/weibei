@@ -56,6 +56,58 @@ struct PaneExpansionRequest: Equatable {
     let role: WorkspacePaneRole
 }
 
+private struct AgentReplySourceFileSnapshot: Sendable {
+    let source: AgentReplySource
+    let itemID: String
+    let url: URL
+    let expectedIdentity: ImportedFileIdentity?
+}
+
+@MainActor
+enum ChatSourceNavigationVerifier {
+    private(set) static var markdownMatches = Set<String>()
+    private(set) static var htmlSectionIDs = [String]()
+    private(set) static var htmlActiveID: String?
+    private(set) static var htmlActiveReason = ""
+
+    static func reset() {
+        markdownMatches = []
+        htmlSectionIDs = []
+        htmlActiveID = nil
+        htmlActiveReason = ""
+    }
+
+    static func recordHTMLSections(_ ids: [String]) {
+        guard ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"]
+                == "chat-source-navigation-flow" else {
+            return
+        }
+        htmlSectionIDs = ids
+    }
+
+    static func recordHTMLActive(id: String?, reason: String) {
+        guard ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"]
+                == "chat-source-navigation-flow" else {
+            return
+        }
+        htmlActiveID = id
+        htmlActiveReason = reason
+    }
+
+    static func recordMarkdownSearch(itemID: String, query: String, found: Bool) {
+        guard found,
+              ProcessInfo.processInfo.environment["WEIBEI_VERIFY_SCENARIO"]
+                == "chat-source-navigation-flow" else {
+            return
+        }
+        markdownMatches.insert("\(itemID)\u{1F}\(query)")
+    }
+
+    static func foundMarkdown(itemID: String, query: String) -> Bool {
+        markdownMatches.contains("\(itemID)\u{1F}\(query)")
+    }
+}
+
 enum PaneToggleContinuityVerifier {
     private(set) static var isMeasuring = false
     private(set) static var htmlEventSequence = 0
@@ -478,6 +530,7 @@ final class WorkspaceStore: ObservableObject {
     private var quietInsightTask: Task<Void, Never>?
     private var quietInsightTaskID: UUID?
     private var agentContextRevision: UInt64 = 0
+    @Published private var validatedAgentReplySourceIDs = Set<UUID>()
     private var lastAgentReplyContextRevision: UInt64?
     private var latestAgentLearningUpdateQuestion: String?
     private var stagedNoteDraft: (itemID: String, value: String)?
@@ -8664,7 +8717,64 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func canOpenAgentReplySource(_ source: AgentReplySource) -> Bool {
-        agentReplySourceItem(source) != nil
+        guard let item = agentReplySourceItem(source) else { return false }
+        return item.isSample
+            || item.isNotebookNote
+            || validatedAgentReplySourceIDs.contains(source.id)
+    }
+
+    func validateAgentReplySources(_ sources: [AgentReplySource]) async {
+        guard !sources.isEmpty else { return }
+        var immediatelyAvailable = Set<UUID>()
+        var snapshots = [AgentReplySourceFileSnapshot]()
+
+        for source in sources {
+            guard let item = agentReplySourceItem(source) else { continue }
+            if item.isSample || item.isNotebookNote {
+                immediatelyAvailable.insert(source.id)
+            } else if let url = item.url {
+                snapshots.append(
+                    AgentReplySourceFileSnapshot(
+                        source: source,
+                        itemID: item.id,
+                        url: url.standardizedFileURL,
+                        expectedIdentity: item.importedFileIdentity
+                    )
+                )
+            }
+        }
+
+        let validationTask = Task.detached(priority: .utility) {
+            Set(snapshots.compactMap { snapshot -> UUID? in
+                guard !Task.isCancelled,
+                      FileManager.default.isReadableFile(atPath: snapshot.url.path),
+                      let identity = Self.resolveImportedFileIdentity(at: snapshot.url),
+                      snapshot.expectedIdentity.map({ $0 == identity }) ?? true else {
+                    return nil
+                }
+                return snapshot.source.id
+            })
+        }
+        let availableIDs = await withTaskCancellationHandler {
+            await validationTask.value
+        } onCancel: {
+            validationTask.cancel()
+        }
+        guard !Task.isCancelled else { return }
+
+        var nextAvailableIDs = immediatelyAvailable
+        for snapshot in snapshots where availableIDs.contains(snapshot.source.id) {
+            guard let current = agentReplySourceItem(snapshot.source),
+                  current.id == snapshot.itemID,
+                  current.url?.standardizedFileURL == snapshot.url,
+                  current.importedFileIdentity == snapshot.expectedIdentity else {
+                continue
+            }
+            nextAvailableIDs.insert(snapshot.source.id)
+        }
+        if validatedAgentReplySourceIDs != nextAvailableIDs {
+            validatedAgentReplySourceIDs = nextAvailableIDs
+        }
     }
 
     @discardableResult
@@ -8691,7 +8801,10 @@ final class WorkspaceStore: ObservableObject {
         } else {
             opened = openCourseMaterial(item.id)
         }
-        guard opened else { return false }
+        guard opened else {
+            validatedAgentReplySourceIDs.remove(source.id)
+            return false
+        }
 
         requestReaderPDFPage(
             item.kind == .pdf ? source.pageIndex : nil,
@@ -12407,7 +12520,9 @@ final class WorkspaceStore: ObservableObject {
             return
         }
         if scenario == "chat-source-navigation-flow" {
-            runChatSourceNavigationVerification()
+            Task {
+                await runChatSourceNavigationVerification()
+            }
             return
         }
         if scenario == "content-rail-dormant-preview" || scenario == "content-rail-activation-preview" {
@@ -14045,7 +14160,7 @@ final class WorkspaceStore: ObservableObject {
         recordVerificationStage("completed")
     }
 
-    private func runChatSourceNavigationVerification() {
+    private func runChatSourceNavigationVerification() async {
         let chatID = UUID()
         let courseID = UUID(uuidString: "33333333-3333-3333-3333-333333333333")!
         let otherCourseID = UUID(uuidString: "44444444-4444-4444-4444-444444444444")!
@@ -14054,13 +14169,15 @@ final class WorkspaceStore: ObservableObject {
         let pdfURL = fixtureDirectory.appendingPathComponent("rates.pdf")
         let htmlURL = fixtureDirectory.appendingPathComponent("rates.html")
         let markdownURL = fixtureDirectory.appendingPathComponent("notes.md")
+        let movedURL = fixtureDirectory.appendingPathComponent("moved-away.md")
+        let htmlSectionLocationID = "html-section-ef9ff782"
         try? FileManager.default.createDirectory(
             at: fixtureDirectory,
             withIntermediateDirectories: true
         )
         let pdfReady = Self.writeSamplePDF(to: pdfURL)
         try? """
-        <!doctype html><html><body>
+        <!doctype html><html><head><meta charset="utf-8"></head><body>
         <h1>利率</h1>
         <h2 id="real-rate">实际利率</h2>
         <p>实际利率需要扣除通货膨胀。</p>
@@ -14095,14 +14212,22 @@ final class WorkspaceStore: ObservableObject {
             urlPath: markdownURL.path,
             isSample: false
         )
-        importedItems = [pdfItem, htmlItem, markdownItem]
+        let movedItem = StudyItem(
+            id: "source-nav-moved",
+            title: "已移走资料",
+            subtitle: movedURL.lastPathComponent,
+            kind: .markdown,
+            urlPath: movedURL.path,
+            isSample: false
+        )
+        importedItems = [pdfItem, htmlItem, markdownItem, movedItem]
         courses = [
             Course(id: courseID, title: "来源标签验收课", colorIndex: 0),
             Course(id: otherCourseID, title: "其他课程", colorIndex: 1),
         ]
         var memberships = CourseItemMemberships()
         memberships.assign(
-            itemIDs: [pdfItem.id, htmlItem.id, markdownItem.id],
+            itemIDs: [pdfItem.id, htmlItem.id, markdownItem.id, movedItem.id],
             to: courseID
         )
         courseItemMemberships = memberships.values
@@ -14125,7 +14250,7 @@ final class WorkspaceStore: ObservableObject {
                 label: "[材料：\(htmlItem.title)]",
                 excerpt: "实际利率需要扣除通货膨胀。",
                 sectionTitle: "实际利率",
-                sectionLocationID: "real-rate"
+                sectionLocationID: htmlSectionLocationID
             ),
             AgentReplySource(
                 itemID: markdownItem.id,
@@ -14188,10 +14313,23 @@ final class WorkspaceStore: ObservableObject {
             label: "[材料：已失效资料]",
             excerpt: "不应打开。"
         )
+        let movedSource = AgentReplySource(
+            itemID: movedItem.id,
+            courseID: courseID,
+            kind: .material,
+            title: movedItem.title,
+            label: "[材料：\(movedItem.title)]",
+            excerpt: "文件已经移走，不应显示可点击标签。"
+        )
+        await validateAgentReplySources(
+            sources + [crossCourseSource, missingSource, movedSource]
+        )
         let rejectsInvalidSources = !canOpenAgentReplySource(crossCourseSource)
             && !openAgentReplySource(crossCourseSource)
             && !canOpenAgentReplySource(missingSource)
             && !openAgentReplySource(missingSource)
+            && !canOpenAgentReplySource(movedSource)
+            && !openAgentReplySource(movedSource)
         let inline = AgentReplySourceInlinePresentation(
             text: replyText,
             sources: sources,
@@ -14205,25 +14343,45 @@ final class WorkspaceStore: ObservableObject {
             && inline.additionalSources(for: additionalSourceURL)
                 == [sources[2]]
             && inline.markdown.contains("+1")
+        ChatSourceNavigationVerifier.reset()
         let openedHTML = openAgentReplySource(sources[1])
-        let htmlLocated = openedHTML
+        let htmlRequested = openedHTML
             && activeStudySessionID == chatID
             && selectedItemID == htmlItem.id
-            && readerTargetLocationID == "real-rate"
+            && readerTargetLocationID == htmlSectionLocationID
             && readerTargetLocationTitle == "实际利率"
             && readerSourceHighlight == sources[1].highlightQuery
+        let htmlRendered = await waitForChatSourceVerification {
+            self.selectedItemID == htmlItem.id
+                && self.readerLocationID == htmlSectionLocationID
+                && self.readerTargetLocationID == nil
+        }
         let openedMarkdown = openAgentReplySource(sources[2])
-        let markdownHighlighted = openedMarkdown
+        let markdownRequested = openedMarkdown
             && activeStudySessionID == chatID
             && selectedItemID == markdownItem.id
             && readerSourceHighlight == sources[2].highlightQuery
+        let markdownRendered = await waitForChatSourceVerification {
+            ChatSourceNavigationVerifier.foundMarkdown(
+                itemID: markdownItem.id,
+                query: sources[2].highlightQuery
+            )
+        }
         let opened = openAgentReplySource(sources[0])
+        let pdfRendered = await waitForChatSourceVerification {
+            self.selectedItemID == pdfItem.id
+                && self.readerTargetPageIndex == nil
+                && self.readerPageIndex == 0
+        }
         let passed = rejectsInvalidSources
             && pdfReady
             && inlineTagsWork
-            && htmlLocated
-            && markdownHighlighted
+            && htmlRequested
+            && htmlRendered
+            && markdownRequested
+            && markdownRendered
             && opened
+            && pdfRendered
             && activeStudySessionID == chatID
             && selectedItemID == pdfItem.id
             && showReader
@@ -14237,8 +14395,51 @@ final class WorkspaceStore: ObservableObject {
             .first(where: { $0.id == chatID })?
             .messages
             .last
+        await restored.validateAgentReplySources(sources)
+        let reopenedHTML = restored.openAgentReplySource(sources[1])
+            && restored.activeStudySessionID == chatID
+            && restored.selectedItemID == htmlItem.id
+            && restored.readerTargetLocationID == htmlSectionLocationID
+            && restored.readerSourceHighlight == sources[1].highlightQuery
+        let reopenedMarkdown = restored.openAgentReplySource(sources[2])
+            && restored.activeStudySessionID == chatID
+            && restored.selectedItemID == markdownItem.id
+            && restored.readerSourceHighlight == sources[2].highlightQuery
+        let reopenedPDF = restored.openAgentReplySource(sources[0])
+            && restored.activeStudySessionID == chatID
+            && restored.selectedItemID == pdfItem.id
+            && restored.readerTargetPageIndex == 0
+            && restored.readerSourceHighlight == sources[0].highlightQuery
         let reopened = reopenedReply?.sources == sources
-            && restored.canOpenAgentReplySource(sources[0])
+            && reopenedHTML
+            && reopenedMarkdown
+            && reopenedPDF
+        let report = """
+        result=\(passed && reopened ? "pass" : "fail")
+        rejects_invalid=\(rejectsInvalidSources)
+        pdf_ready=\(pdfReady)
+        inline_tags=\(inlineTagsWork)
+        html_requested=\(htmlRequested)
+        html_rendered=\(htmlRendered)
+        html_section_ids=\(ChatSourceNavigationVerifier.htmlSectionIDs.joined(separator: ","))
+        html_active_id=\(ChatSourceNavigationVerifier.htmlActiveID ?? "")
+        html_active_reason=\(ChatSourceNavigationVerifier.htmlActiveReason)
+        markdown_requested=\(markdownRequested)
+        markdown_rendered=\(markdownRendered)
+        pdf_opened=\(opened)
+        pdf_rendered=\(pdfRendered)
+        reopened_sources=\(reopenedReply?.sources == sources)
+        reopened_html=\(reopenedHTML)
+        reopened_markdown=\(reopenedMarkdown)
+        reopened_pdf=\(reopenedPDF)
+        """
+        try? "\(report)\n".write(
+            to: workspaceDirectory.appendingPathComponent(
+                "chat-source-navigation-report.txt"
+            ),
+            atomically: true,
+            encoding: .utf8
+        )
         recordVerificationStage("chat-source-navigation:\(passed)")
         if passed && reopened {
             let markerURL = storageURL.deletingLastPathComponent()
@@ -14247,6 +14448,16 @@ final class WorkspaceStore: ObservableObject {
                 .write(to: markerURL, atomically: true, encoding: .utf8)
         }
         recordVerificationStage("completed")
+    }
+
+    private func waitForChatSourceVerification(
+        _ condition: @MainActor () -> Bool
+    ) async -> Bool {
+        for _ in 0..<50 {
+            if condition() { return true }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        return false
     }
 
     private func configureEmptyWorkspaceVerificationScenario(_ scenario: String) {

@@ -428,6 +428,7 @@ struct ReaderView: View {
     }
 
     private func applyHTMLContentRailSections(_ sections: [WebReaderContentRailSection]) {
+        ChatSourceNavigationVerifier.recordHTMLSections(sections.map(\.id))
         let items = sections.map { section in
             ContentRailItem(
                 id: section.id,
@@ -448,6 +449,10 @@ struct ReaderView: View {
 
     private func applyHTMLContentRailActiveID(_ change: WebReaderContentRailActiveChange) {
         let id = change.id
+        ChatSourceNavigationVerifier.recordHTMLActive(
+            id: id,
+            reason: change.reason.rawValue
+        )
         if htmlContentRailActiveID != id {
             htmlContentRailActiveID = id
         }
@@ -2910,6 +2915,13 @@ private struct MarkdownDocumentReaderView: View {
             onWikiLink: onWikiLink,
             onSourceReference: onSourceReference,
             onAppShortcut: onAppShortcut,
+            onSearchResult: { query, found in
+                ChatSourceNavigationVerifier.recordMarkdownSearch(
+                    itemID: store.selectedMaterialItem?.id ?? "",
+                    query: query,
+                    found: found
+                )
+            },
             selectionAskMarks: selectionAskMarks,
             onSelectionAskMark: onSelectionAskMark
         )

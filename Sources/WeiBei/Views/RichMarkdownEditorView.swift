@@ -262,6 +262,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
     var onRenderReady: () -> Void = {}
     var onRenderFailure: () -> Void = {}
+    var onSearchResult: (String, Bool) -> Void = { _, _ in }
     /// JSON array of `{id,text}` for selection-ask underline marks (read-only surfaces).
     var selectionAskMarks: String = "[]"
     var onSelectionAskMark: (String) -> Void = { _ in }
@@ -290,6 +291,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onAppShortcut: onAppShortcut,
             onRenderReady: onRenderReady,
             onRenderFailure: onRenderFailure,
+            onSearchResult: onSearchResult,
             onSelectionAskMark: onSelectionAskMark
         )
     }
@@ -435,6 +437,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.onAppShortcut = onAppShortcut
         context.coordinator.onRenderReady = onRenderReady
         context.coordinator.onRenderFailure = onRenderFailure
+        context.coordinator.onSearchResult = onSearchResult
         let nextBaseURL = markdownBaseURL?.absoluteString ?? ""
         if context.coordinator.markdownBaseURLString != nextBaseURL {
             context.coordinator.markdownBaseURLString = nextBaseURL
@@ -600,6 +603,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool
         var onRenderReady: () -> Void
         var onRenderFailure: () -> Void
+        var onSearchResult: (String, Bool) -> Void
         var onSelectionAskMark: (String) -> Void
         var selectionAskMarks: String
         weak var webView: WKWebView?
@@ -642,6 +646,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             onAppShortcut: @escaping (String, NSEvent.ModifierFlags) -> Bool,
             onRenderReady: @escaping () -> Void,
             onRenderFailure: @escaping () -> Void,
+            onSearchResult: @escaping (String, Bool) -> Void,
             onSelectionAskMark: @escaping (String) -> Void
         ) {
             self.documentID = documentID
@@ -665,6 +670,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             self.onAppShortcut = onAppShortcut
             self.onRenderReady = onRenderReady
             self.onRenderFailure = onRenderFailure
+            self.onSearchResult = onSearchResult
             self.onSelectionAskMark = onSelectionAskMark
         }
 
@@ -915,7 +921,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             let query = ReaderSearch.cleaned(searchQuery)
             guard query != lastAppliedSearchQuery else { return }
             lastAppliedSearchQuery = query
-            evaluate("""
+            let script = """
             (() => {
               const query = \(Self.json(query));
               const selection = window.getSelection();
@@ -931,7 +937,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
               window.setTimeout(() => { window.weiBeiSuppressSelectionReport = false; }, 80);
               return found;
             })();
-            """)
+            """
+            webView?.evaluateJavaScript(script) { [weak self] value, error in
+                guard !query.isEmpty else { return }
+                self?.onSearchResult(query, error == nil && (value as? Bool) == true)
+            }
         }
 
         func applyFocus() {
