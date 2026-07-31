@@ -1697,11 +1697,10 @@ private struct AgentRailTurn {
 /// Critical: content width must always fit the measured pane. Never invent a floor larger
 /// than `availableWidth`, or multi-pane text centers as if the strip were full-window wide.
 private enum AgentChatLayoutMetrics {
-    static let compactMaxWidth: CGFloat = 760
-    /// Immersive conversation: Codex-like centered column that still scales with the window.
+    /// Codex-like centered column: scales with the window in every layout.
     /// Floor keeps narrow windows readable; cap keeps ultra-wide line length in check.
     static let wideMinWidth: CGFloat = 920
-    static let wideMaxWidth: CGFloat = 1180
+    static let wideMaxWidth: CGFloat = 1520
     static let wideWidthRatio: CGFloat = 0.78
     /// Content columns at least this wide read with the immersive typography tier,
     /// regardless of which layout hosts the chat pane.
@@ -1724,11 +1723,11 @@ private enum AgentChatLayoutMetrics {
     static func contentWidth(availableWidth: CGFloat, wide: Bool) -> CGFloat {
         let gutter = (wide ? wideSideGutter : compactSideGutter) * 2
         let usable = max(availableWidth - gutter, 1)
-        // Wide: grow with the window (78%), floored at 920, capped at 1180 for readability.
-        if wide {
-            return min(usable, wideMaxWidth, max(wideMinWidth, usable * wideWidthRatio))
-        }
-        return min(usable, compactMaxWidth)
+        // Codex-like in every layout: fill narrow panes outright, grow with the
+        // window (78%, floored at 920) on wide ones, cap at 1520 for line length.
+        // The layout enum no longer picks a different ceiling — a full-window
+        // chat tab must read as wide as immersive conversation.
+        return min(usable, wideMaxWidth, max(wideMinWidth, usable * wideWidthRatio))
     }
 
     static func composerHeight(wide: Bool) -> CGFloat {
@@ -3569,9 +3568,8 @@ private struct AgentBubble: View {
                         text: AgentCitationParser.parse(text).displayText
                     )
                         .frame(
-                            maxWidth: AgentChatLayoutMetrics.isWide(layout: store.layout)
-                                ? AgentChatLayoutMetrics.wideMaxWidth
-                                : AgentChatLayoutMetrics.compactMaxWidth,
+                            // Same Codex-like column as chat text in every layout.
+                            maxWidth: AgentChatLayoutMetrics.wideMaxWidth,
                             alignment: .leading
                         )
                 }
@@ -3587,9 +3585,8 @@ private struct AgentBubble: View {
                     )
                     .id("rich-answer-\(message.id.uuidString)-\(sceneID)-\(index)")
                     .frame(
-                        maxWidth: AgentChatLayoutMetrics.isWide(layout: store.layout)
-                            ? AgentChatLayoutMetrics.wideMaxWidth
-                            : AgentChatLayoutMetrics.compactMaxWidth,
+                        // Same Codex-like column as chat text in every layout.
+                        maxWidth: AgentChatLayoutMetrics.wideMaxWidth,
                         alignment: .leading
                     )
                 }
