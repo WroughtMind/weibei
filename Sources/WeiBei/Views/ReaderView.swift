@@ -2129,7 +2129,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
             if context.coordinator.loadedSignature != signature {
                 context.coordinator.loadedSignature = signature
                 context.coordinator.lastAppliedSelectionAskMarks = ""
-                view.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+                context.coordinator.loadUTF8HTML(at: url, signature: signature, into: view)
             } else {
                 context.coordinator.applySearch(in: view)
                 context.coordinator.applySelectionAskMarksIfNeeded()
@@ -2137,6 +2137,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
         } else if let html {
             let signature = "html:\(html.hashValue)"
             if context.coordinator.loadedSignature != signature {
+                context.coordinator.htmlLoadTask?.cancel()
                 context.coordinator.loadedSignature = signature
                 context.coordinator.lastAppliedSelectionAskMarks = ""
                 view.loadHTMLString(html, baseURL: nil)
@@ -2150,6 +2151,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
 
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
         PaneToggleContinuityVerifier.recordWebReaderDismantle()
+        coordinator.htmlLoadTask?.cancel()
         coordinator.removeVerificationScrollObserver()
         unbindScriptMessages(in: view)
         view.navigationDelegate = nil
@@ -2666,6 +2668,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
         var appearanceMode: WeiBeiAppearanceMode = .paper
         var adaptsDocumentColors = true
         var selectionAskMarks = "[]"
+        var htmlLoadTask: Task<Void, Never>?
         private var lastAppliedSearchQuery = ""
         var lastAppliedSelectionAskMarks = ""
         private var lastAppliedContentRailTargetRequestID: UUID?
@@ -2690,6 +2693,32 @@ struct WebReaderRepresentable: NSViewRepresentable {
             self.onAppShortcut = onAppShortcut
             self.onSelectionChange = onSelectionChange
             self.onSelectionAskMark = onSelectionAskMark
+        }
+
+        @MainActor
+        func loadUTF8HTML(at url: URL, signature: String, into view: WKWebView) {
+            htmlLoadTask?.cancel()
+            htmlLoadTask = Task { @MainActor [weak self, weak view] in
+                let data = await Task.detached(priority: .userInitiated) {
+                    try? Data(contentsOf: url, options: .mappedIfSafe)
+                }.value
+                guard !Task.isCancelled,
+                      let self,
+                      let view,
+                      webView === view,
+                      loadedSignature == signature else { return }
+                defer { htmlLoadTask = nil }
+                guard let data else {
+                    view.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
+                    return
+                }
+                view.load(
+                    data,
+                    mimeType: "text/html",
+                    characterEncodingName: "utf-8",
+                    baseURL: url.deletingLastPathComponent()
+                )
+            }
         }
 
         func applySelectionAskMarksIfNeeded() {
