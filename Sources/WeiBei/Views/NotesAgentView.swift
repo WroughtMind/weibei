@@ -1549,6 +1549,10 @@ struct MarkdownPreviewView: View {
     /// unfreeze every KaTeX row and spin sizeThatFits at 100% CPU (sample 662).
     var layoutWidthKey: Int = 0
     var isChatWideTypography = false
+    /// Streaming prefix mode: markdown grows append-only, so keep the current
+    /// frame height until the next real measurement instead of collapsing to
+    /// the 44pt loading height on every append (which strobed the chat).
+    var preservesHeightAcrossMarkdownChanges = false
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
@@ -1677,6 +1681,7 @@ struct MarkdownPreviewView: View {
         .onChange(of: markdown) { _, _ in
             guard compact && fitsContentHeight else { return }
             heightFrozen = false
+            if preservesHeightAcrossMarkdownChanges { return }
             contentHeight = Self.compactPreviewLoadingHeight
             onContentHeightChange()
         }
@@ -5021,6 +5026,10 @@ private struct AgentThinkingIndicator: View {
     @State private var cachedText = ""
     @State private var cachedTextWidth: CGFloat = 1
     @State private var motionEpoch = Date()
+    @State private var lastStatusSwitch = Date.distantPast
+    @State private var statusSwitchTask: Task<Void, Never>?
+
+    private static let minimumStatusHold: TimeInterval = 0.6
 
     /// 14.5pt — user feedback: the 12pt status read as an afterthought; the
     /// status line is the primary signal of what the agent is doing.
@@ -5082,9 +5091,25 @@ private struct AgentThinkingIndicator: View {
             motionEpoch = Date()
         }
         .onChange(of: statusText) { _, newText in
-            // Interrupt mid-orbit immediately; restart first bottom proofreading pass.
-            refreshCache(for: newText)
-            motionEpoch = Date()
+            // Hold each status >=600ms — rapid tool churn restarted the orbit
+            // every few frames and read as flicker instead of progress.
+            statusSwitchTask?.cancel()
+            let now = Date()
+            let elapsed = now.timeIntervalSince(lastStatusSwitch)
+            if elapsed >= Self.minimumStatusHold {
+                lastStatusSwitch = now
+                refreshCache(for: newText)
+                motionEpoch = Date()
+                return
+            }
+            let delay = Self.minimumStatusHold - elapsed
+            statusSwitchTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                guard !Task.isCancelled else { return }
+                lastStatusSwitch = Date()
+                refreshCache(for: statusText)
+                motionEpoch = Date()
+            }
         }
     }
 
@@ -5597,8 +5622,15 @@ private struct AgentStreamingResponse: View {
                         .padding(.leading, 2)
                 }
             }
-            // Streaming stays native + throttled — KaTeX only after the turn finalizes.
-            AgentStreamingMarkdownText(text: text, compact: false)
+            // Completed blocks render through the real Milkdown/KaTeX pipeline as
+            // they close; only the still-growing tail stays native (typewriter).
+            let split = AgentStreamingBlockSplitter.split(text)
+            if !split.stablePrefix.isEmpty {
+                AgentStreamingRenderedPrefix(markdown: split.stablePrefix)
+            }
+            if !split.tail.isEmpty {
+                AgentStreamingMarkdownText(text: split.tail, compact: false)
+            }
         }
         .padding(.vertical, 10)
         .padding(.leading, 20)
@@ -5608,33 +5640,77 @@ private struct AgentStreamingResponse: View {
     }
 }
 
-/// Throttled native markdown for in-flight tokens (avoids per-token AttributedString thrash).
+/// Renders closed streaming blocks through the mature pipeline. Height is
+/// preserved across appends (no 44pt collapse) and never frozen — a streaming
+/// row grows by design and lives only until the turn finalizes.
+private struct AgentStreamingRenderedPrefix: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @Environment(\.agentChatLayoutWidth) private var layoutWidth
+    var markdown: String
+
+    var body: some View {
+        MarkdownPreviewView(
+            markdown: AgentChatKaTeXMarkdown.prepare(markdown),
+            markdownBaseURL: store.currentMarkdownBaseURL,
+            appearanceMode: store.appearanceMode,
+            interfaceLanguage: store.interfaceLanguage,
+            compact: true,
+            fitsContentHeight: true,
+            freezeHeightAfterMeasure: false,
+            isChatWideTypography: layoutWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth,
+            preservesHeightAcrossMarkdownChanges: true
+        )
+    }
+}
+
+/// Typewriter tail: Pi delivers whole-snapshot updates that used to land as
+/// visible chunks every 100ms. Reveal characters on a paced pump instead —
+/// batch size adapts to the backlog so the tail catches up within ~1s and the
+/// turn never *feels* slower than the raw stream.
 private struct AgentStreamingMarkdownText: View {
     var text: String
     var compact: Bool = false
-    @State private var displayedText = ""
-    @State private var flushTask: Task<Void, Never>?
+    @State private var revealedCount = 0
+    @State private var pump: Task<Void, Never>?
 
     var body: some View {
         AgentMessageMarkdownText(
-            text: displayedText.isEmpty ? text : displayedText,
+            text: String(text.prefix(revealedCount)),
             rendersRichMarkdown: true,
             compact: compact,
             usesFinalizedKaTeX: false
         )
         .onAppear {
-            displayedText = text
+            // Mid-stream (re)mount — e.g. returning to a session — shows what
+            // has already arrived; the typewriter only paces new characters.
+            revealedCount = text.count
         }
-        .onChange(of: text) { _, newValue in
-            flushTask?.cancel()
-            flushTask = Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
-                guard !Task.isCancelled else { return }
-                displayedText = newValue
+        .onChange(of: text) { oldValue, newValue in
+            if !newValue.hasPrefix(oldValue.prefix(min(revealedCount, oldValue.count))) {
+                // Tail was rebased (its blocks closed into the rendered prefix).
+                revealedCount = 0
             }
+            startPump(targetCount: newValue.count)
         }
         .onDisappear {
-            flushTask?.cancel()
+            pump?.cancel()
+        }
+    }
+
+    private func startPump(targetCount: Int) {
+        pump?.cancel()
+        guard revealedCount < targetCount else {
+            revealedCount = min(revealedCount, targetCount)
+            return
+        }
+        pump = Task { @MainActor in
+            while !Task.isCancelled && revealedCount < targetCount {
+                let backlog = targetCount - revealedCount
+                // ~45 ticks/s; catch a 1000-char backlog in about a second.
+                let step = max(2, backlog / 40)
+                revealedCount = min(targetCount, revealedCount + step)
+                try? await Task.sleep(nanoseconds: 22_000_000)
+            }
         }
     }
 }
