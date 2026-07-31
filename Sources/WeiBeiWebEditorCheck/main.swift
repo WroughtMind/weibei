@@ -1881,18 +1881,18 @@ final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
                   let text = result["text"] as? String,
                   text.contains("利率基础"),
                   text.contains("名义利率与实际利率"),
-                  !text.contains("旧文稿"),
-                  result["color"] as? String == "rgb(12, 34, 56)" else {
-                failure = "UTF-8 HTML, stale-navigation cancellation, or same-directory resources failed: \(String(describing: value)); error=\(String(describing: error))"
+                  !text.contains("旧文稿") else {
+                failure = "UTF-8 HTML or stale-navigation cancellation failed: \(String(describing: value)); error=\(String(describing: error))"
                 isDone = true
                 return
             }
-            if result["imageWidth"] as? Int == 2 {
+            if result["color"] as? String == "rgb(12, 34, 56)",
+               result["imageWidth"] as? Int == 2 {
                 isDone = true
                 return
             }
             if Date() >= deadline {
-                failure = "same-directory image did not load: \(String(describing: value))"
+                failure = "same-directory HTML resources did not load: \(String(describing: value))"
                 isDone = true
                 return
             }
