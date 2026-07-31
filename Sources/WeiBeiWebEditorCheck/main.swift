@@ -1857,30 +1857,48 @@ final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         guard navigation === expectedNavigation else { return }
+        validateLoadedHTML(until: Date().addingTimeInterval(3))
+    }
+
+    private func validateLoadedHTML(until deadline: Date) {
         webView.evaluateJavaScript("""
         (() => {
           const image = document.getElementById('relative-image');
           return {
             text: document.body.innerText,
             color: getComputedStyle(document.body).color,
-            imageLoaded: Boolean(image?.complete && image.naturalWidth === 2)
+            imageWidth: image?.naturalWidth || 0
           };
         })();
         """) { [weak self] value, error in
             guard let self else { return }
-            guard error == nil,
-                  let result = value as? [String: Any],
+            guard error == nil, let result = value as? [String: Any] else {
+                failure = "UTF-8 HTML reader JavaScript failed: \(String(describing: error))"
+                isDone = true
+                return
+            }
+            guard
                   let text = result["text"] as? String,
                   text.contains("利率基础"),
                   text.contains("名义利率与实际利率"),
                   !text.contains("旧文稿"),
-                  result["color"] as? String == "rgb(12, 34, 56)",
-                  result["imageLoaded"] as? Bool == true else {
+                  result["color"] as? String == "rgb(12, 34, 56)" else {
                 failure = "UTF-8 HTML, stale-navigation cancellation, or same-directory resources failed: \(String(describing: value)); error=\(String(describing: error))"
                 isDone = true
                 return
             }
-            isDone = true
+            if result["imageWidth"] as? Int == 2 {
+                isDone = true
+                return
+            }
+            if Date() >= deadline {
+                failure = "same-directory image did not load: \(String(describing: value))"
+                isDone = true
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                self.validateLoadedHTML(until: deadline)
+            }
         }
     }
 
