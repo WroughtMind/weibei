@@ -4766,11 +4766,6 @@ private struct AgentMessageMarkdownText: View {
         // The 24pt-bucket cache supplies a first-frame seed, never readiness.
         // NEVER wire onContentHeightChange to scrollAgentToBottom.
         ZStack(alignment: .topLeading) {
-            if !finalizedRendererReady {
-                nativeBody
-                    .background(WeiBeiTheme.paper)
-                    .zIndex(1)
-            }
             if !finalizedRendererFailed {
                 MarkdownPreviewView(
                     markdown: finalizedMarkdown,
@@ -4800,12 +4795,24 @@ private struct AgentMessageMarkdownText: View {
                     },
                     onMeasuredHeight: { height in
                         AgentFinalizedMarkdownHeightCache.store(height, for: cacheKey)
-                        finalizedRendererReady = true
+                        if !finalizedRendererReady {
+                            finalizedRendererReady = true
+                        }
                     }
                 )
                 .allowsHitTesting(finalizedRendererReady)
                 .accessibilityHidden(!finalizedRendererReady)
+                .opacity(finalizedRendererReady ? 1 : 0.01)
                 .zIndex(0)
+            }
+            // Overlay only — never remove this node when ready flips, or LazyVStack
+            // remasures the row and re-enters PlatformView sizeThatFits.
+            if !finalizedRendererReady {
+                nativeBody
+                    .background(WeiBeiTheme.paper)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                    .zIndex(1)
             }
         }
     }

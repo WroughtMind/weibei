@@ -14,9 +14,11 @@ enum AgentChatKaTeXMarkdown {
         return text
     }
 
-    /// Keep ordinary one-paragraph / inline Markdown on native SwiftUI text.
-    /// WebKit is reserved for syntax whose layout or rendering actually needs
-    /// the mature block renderer (paragraphs, lists, tables, code, math, etc.).
+    /// Keep ordinary Markdown (paragraphs, lists, headings, emphasis) on native
+    /// SwiftUI `AttributedString`. WebKit is only for syntax that actually needs
+    /// Milkdown/KaTeX — math, tables, fenced code, images, HTML.
+    /// Hang sample build 664: scrolling the chat scroller onto a bullet-list
+    /// intro mounted WKWebView in LazyVStack and spun sizeThatFits at 100% CPU.
     static func requiresWebRenderer(_ preparedText: String) -> Bool {
         #if DEBUG
         assert(classifierSelfCheckPassed, "Agent Chat Markdown routing self-check failed")
@@ -30,7 +32,6 @@ enum AgentChatKaTeXMarkdown {
             || preparedText.contains("\\[")
             || preparedText.contains("\\begin{")
             || hasInlineMath(in: preparedText)
-            || preparedText.contains("[[")
             || preparedText.contains("![") {
             return true
         }
@@ -39,20 +40,11 @@ enum AgentChatKaTeXMarkdown {
             omittingEmptySubsequences: false,
             whereSeparator: \.isNewline
         )
-        var hasContent = false
-        var hasGapAfterContent = false
         for lineSlice in lines {
             let line = String(lineSlice)
             let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty {
-                if hasContent { hasGapAfterContent = true }
-                continue
-            }
-            if hasGapAfterContent {
-                return true
-            }
-            hasContent = true
-            if isBlockLine(trimmed, original: line) {
+            guard !trimmed.isEmpty else { continue }
+            if needsWebBlockLine(trimmed) {
                 return true
             }
         }
@@ -67,54 +59,22 @@ enum AgentChatKaTeXMarkdown {
         ) != nil
     }
 
-    private static func isBlockLine(_ trimmed: String, original: String) -> Bool {
-        if isHeading(trimmed)
-            || trimmed.hasPrefix(">")
-            || trimmed.hasPrefix("```")
+    /// Only blocks the native renderer cannot lay out safely in a LazyVStack.
+    private static func needsWebBlockLine(_ trimmed: String) -> Bool {
+        if trimmed.hasPrefix("```")
             || trimmed.hasPrefix("~~~")
-            || trimmed.hasPrefix("- ")
-            || trimmed.hasPrefix("* ")
-            || trimmed.hasPrefix("+ ")
-            || isOrderedListItem(trimmed)
-            || isHorizontalRule(trimmed)
-            || isSetextUnderline(trimmed)
             || isTableDelimiter(trimmed)
             || trimmed.hasPrefix("[^")
-            || isHTMLBlock(trimmed)
-            || original.hasPrefix("\t")
-            || original.hasPrefix("    ") {
+            || isHTMLBlock(trimmed) {
+            return true
+        }
+        // Pipe tables: header row then delimiter; catch dense pipe rows early.
+        if trimmed.contains("|"),
+           trimmed.filter({ $0 == "|" }).count >= 2,
+           !trimmed.hasPrefix("[[") {
             return true
         }
         return false
-    }
-
-    private static func isHeading(_ line: String) -> Bool {
-        let markerCount = line.prefix { $0 == "#" }.count
-        guard (1...6).contains(markerCount), line.count > markerCount else { return false }
-        let markerEnd = line.index(line.startIndex, offsetBy: markerCount)
-        return line[markerEnd].isWhitespace
-    }
-
-    private static func isOrderedListItem(_ line: String) -> Bool {
-        let digits = line.prefix { $0.isNumber }
-        guard !digits.isEmpty, digits.count < line.count else { return false }
-        let punctuationIndex = line.index(line.startIndex, offsetBy: digits.count)
-        guard line[punctuationIndex] == "." || line[punctuationIndex] == ")" else { return false }
-        let contentIndex = line.index(after: punctuationIndex)
-        return contentIndex < line.endIndex && line[contentIndex].isWhitespace
-    }
-
-    private static func isHorizontalRule(_ line: String) -> Bool {
-        let compact = line.filter { !$0.isWhitespace }
-        guard compact.count >= 3, let marker = compact.first, "-*_".contains(marker) else {
-            return false
-        }
-        return compact.allSatisfy { $0 == marker }
-    }
-
-    private static func isSetextUnderline(_ line: String) -> Bool {
-        guard let marker = line.first, marker == "=" || marker == "-" else { return false }
-        return line.allSatisfy { $0 == marker }
     }
 
     private static func isTableDelimiter(_ line: String) -> Bool {
@@ -135,15 +95,23 @@ enum AgentChatKaTeXMarkdown {
         let cases: [(String, Bool)] = [
             ("普通单段文字", false),
             ("带有 **行内强调** 的单段", false),
-            ("Setext 标题\n===", true),
+            ("两段文字\n\n第二段", false),
+            ("# 标题", false),
+            ("> 短引用", false),
+            ("- 单项列表", false),
+            ("1. 有序列表", false),
+            ("Setext 标题\n===", false),
+            ("$x=1$", true),
+            ("$$y=2$$", true),
+            ("| a | b |\n| --- | --- |", true),
+            ("```\ncode\n```", true),
+            ("![图](x.png)", true),
             ("<!-- HTML comment -->", true),
             ("<p>段落</p>", true),
             ("<section>章节</section>", true),
             ("<article>文章</article>", true),
             ("<nav>导航</nav>", true),
             ("<script>void 0</script>", true),
-            ("> 短引用", true),
-            ("- 单项列表", true),
         ]
         return cases.allSatisfy { requiresWebRendererUnchecked($0.0) == $0.1 }
     }()
