@@ -267,6 +267,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
     var appearanceMode: WeiBeiAppearanceMode = .paper
     var interfaceLanguage: WeiBeiInterfaceLanguage = .chinese
     var isCompactPreview = false
+    var isChatWideTypography = false
     var onSelectionChange: (String, CGPoint?) -> Void
     var onAskAgentWithSelection: (String, CGPoint?) -> Void
     var onContentHeightChange: (CGFloat) -> Void = { _ in }
@@ -333,9 +334,11 @@ struct RichMarkdownEditorView: NSViewRepresentable {
             window.weiBeiTheme = \(Self.json(appearanceMode.webThemeName));
             window.weiBeiInterfaceLanguage = \(Self.json(interfaceLanguage.rawValue));
             window.weiBeiMarkdownCompactPreview = \(isCompactPreview ? "true" : "false");
+            window.weiBeiChatWideTypography = \(isChatWideTypography ? "true" : "false");
             document.documentElement.dataset.weibeiTheme = window.weiBeiTheme;
             document.documentElement.dataset.weibeiLanguage = window.weiBeiInterfaceLanguage;
             document.documentElement.dataset.weibeiCompactPreview = window.weiBeiMarkdownCompactPreview ? "true" : "false";
+            document.documentElement.dataset.weibeiChatWide = window.weiBeiChatWideTypography ? "true" : "false";
             (() => {
               const appShortcutKey = (event) => {
                 if (/^Digit[0-9]$/.test(event.code)) return event.code.slice(5);
@@ -486,6 +489,12 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         context.coordinator.onActiveHeadingChange = onActiveHeadingChange
         context.coordinator.onSelectionAskMark = onSelectionAskMark
         context.coordinator.selectionAskMarks = selectionAskMarks
+        if context.coordinator.isChatWideTypography != isChatWideTypography {
+            context.coordinator.isChatWideTypography = isChatWideTypography
+            if context.coordinator.isReady {
+                context.coordinator.setChatWideTypography(isChatWideTypography)
+            }
+        }
 
         if context.coordinator.isReady, context.coordinator.webMarkdown != markdown {
             context.coordinator.setMarkdown(markdown)
@@ -644,6 +653,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
         var onSearchResult: (String, Bool) -> Void
         var onSelectionAskMark: (String) -> Void
         var selectionAskMarks: String
+        var isChatWideTypography = false
         weak var webView: WKWebView?
         var isReady = false
         var isEditable: Bool
@@ -802,6 +812,7 @@ struct RichMarkdownEditorView: NSViewRepresentable {
                 }
                 applySearch()
                 setTheme(appearanceMode)
+                setChatWideTypography(isChatWideTypography)
                 applyFocus()
                 applySelectionAskMarks(force: true)
                 runPendingCommandIfReady()
@@ -931,6 +942,13 @@ struct RichMarkdownEditorView: NSViewRepresentable {
 
         func setInterfaceLanguage(_ language: WeiBeiInterfaceLanguage) {
             evaluate("window.WeiBeiEditor?.setInterfaceLanguage(\(Self.json(language.rawValue)))")
+        }
+
+        func setChatWideTypography(_ wide: Bool) {
+            evaluate("""
+            window.weiBeiChatWideTypography = \(wide ? "true" : "false");
+            document.documentElement.dataset.weibeiChatWide = window.weiBeiChatWideTypography ? "true" : "false";
+            """)
         }
 
         func run(_ command: NoteEditorCommand) {

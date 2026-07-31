@@ -241,6 +241,9 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
           mermaidText: document.querySelector('.weibei-mermaid-render')?.textContent || '',
           mermaidSourceOpacity: getComputedStyle(document.querySelector('.weibei-mermaid-block') || document.body).opacity,
           mathInline: document.querySelectorAll('span[data-type="math_inline"], .math-inline, .katex').length,
+          mathBlockCount: document.querySelectorAll('div[data-type="math_block"], div[data-type="math-block"], .math-block').length,
+          mathBlockDisplay: document.querySelectorAll('div[data-type="math_block"] > .katex-display, div[data-type="math-block"] > .katex-display, .math-block > .katex-display').length,
+          mathBlockDisplayFontSize: getComputedStyle(document.querySelector('div[data-type="math_block"] > .katex-display, div[data-type="math-block"] > .katex-display, .math-block > .katex-display') || document.body).fontSize,
           mathInlineBackground: getComputedStyle(document.querySelector('span[data-type="math_inline"], .math-inline') || document.body).backgroundColor,
           mathInlineContainerColor: getComputedStyle(document.querySelector('span[data-type="math_inline"], .math-inline') || document.body).color,
           mathInlineContainerFontSize: getComputedStyle(document.querySelector('span[data-type="math_inline"], .math-inline') || document.body).fontSize,
@@ -474,6 +477,18 @@ final class EditorHarness: NSObject, WKScriptMessageHandler {
             }
             if result["mathInlineKatexFontSize"] as? String == "0px" {
                 self.fail("inline math rendered KaTeX should keep readable font size")
+                return
+            }
+            if (result["mathBlockCount"] as? Int ?? 0) < 1 {
+                self.fail("$$ block math did not parse into a math_block node")
+                return
+            }
+            if (result["mathBlockDisplay"] as? Int ?? 0) < 1 {
+                self.fail("block math did not upgrade to KaTeX displayMode (.katex-display missing)")
+                return
+            }
+            if result["mathBlockDisplayFontSize"] as? String == "0px" {
+                self.fail("block math display wrapper collapsed to zero font size")
                 return
             }
             if (result["mathInlineDirectTextNodes"] as? Int ?? 1) > 0 {

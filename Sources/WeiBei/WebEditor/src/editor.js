@@ -8,6 +8,7 @@ import { liftListItem } from '@milkdown/kit/prose/schema-list';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
 import { getMarkdown as readMarkdown, insert, replaceAll, replaceRange, $prose } from '@milkdown/kit/utils';
 import { katexOptionsCtx, math } from '@milkdown/plugin-math';
+import katex from 'katex';
 import 'katex/dist/katex.css';
 import mermaid from 'mermaid';
 import Prism from 'prismjs';
@@ -26,6 +27,25 @@ import 'prismjs/components/prism-swift';
 import 'prismjs/components/prism-tsx';
 import 'prismjs/components/prism-typescript';
 import 'prismjs/components/prism-yaml';
+
+// Stata has no official Prism component; econometrics answers lean on it heavily.
+// Line-leading `*` is a comment in Stata — colorized here so it does not read
+// as a stray Markdown artifact.
+Prism.languages.stata = {
+  comment: [
+    { pattern: /(^|\n)\s*\*.*/, lookbehind: true },
+    { pattern: /\/\/.*/ },
+    { pattern: /\/\*[\s\S]*?\*\//, greedy: true },
+  ],
+  string: { pattern: /"[^"\n]*"/, greedy: true },
+  macro: { pattern: /`[^'\n]*'|\$\{?\w+\}?/, alias: 'variable' },
+  keyword: /\b(?:use|clear|gen(?:erate)?|egen|replace|drop|keep|merge|append|save|import|export|reg(?:ress)?|ivregress|areg|xtreg|logit|probit|tobit|test|testparm|lincom|nlcom|margins|display|di|summarize|sum|tabulate|tab|describe|predict|estat|esttab|estimates|vce|robust|cluster|if|in|foreach|forvalues|while|else|local|global|scalar|matrix|by|bysort|sort|gsort|label|rename|recode|encode|decode|reshape|collapse|preserve|restore|set|version|capture|quietly|noisily)\b/,
+  function: /\b[a-zA-Z_]\w*(?=\()/,
+  number: /\b\d+(?:\.\d+)?(?:e[+-]?\d+)?\b/i,
+  operator: /[-+*/^=<>!&|~#]+/,
+  punctuation: /[(){}[\],;:]/,
+};
+Prism.languages.do = Prism.languages.stata;
 
 const bridge = window.webkit?.messageHandlers;
 let editor;
@@ -1193,6 +1213,34 @@ const insertImageFiles = async (files) => {
   replaceSelectionInternal(saved.map(markdownImage).join('\n\n'));
 };
 
+// plugin-math renders math_block nodes with inline-mode KaTeX (its shared
+// options cannot enable displayMode without breaking inline math). Re-render
+// block nodes in display mode so fractions, limits and sizing read like real
+// display equations; KaTeX centers them natively via .katex-display.
+const upgradeDisplayMath = () => {
+  // Synchronous on purpose: requestAnimationFrame never fires in occluded or
+  // offscreen WKWebViews (chat previews measure while hidden), which left
+  // block math stuck in inline mode. The dialect plugin already calls this
+  // after ProseMirror has flushed the DOM.
+  document
+    .querySelectorAll('.ProseMirror div[data-type="math_block"], .ProseMirror div[data-type="math-block"]')
+    .forEach((element) => {
+      const value = element.dataset.value || '';
+      if (element.dataset.weibeiDisplayValue === value) return;
+      try {
+        katex.render(value, element, {
+          throwOnError: false,
+          strict: false,
+          trust: false,
+          displayMode: true,
+        });
+        element.dataset.weibeiDisplayValue = value;
+      } catch (error) {
+        // Keep the inline-mode render; annotateMathErrors covers bad input.
+      }
+    });
+};
+
 const annotateMathErrors = () => {
   window.requestAnimationFrame(() => {
     document.querySelectorAll('.ProseMirror .katex-error').forEach((element) => {
@@ -1265,10 +1313,12 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
   view(view) {
     scheduleImageResolution(view);
     annotateMathErrors();
+    upgradeDisplayMath();
     return {
       update(updatedView) {
         scheduleImageResolution(updatedView);
         annotateMathErrors();
+        upgradeDisplayMath();
       },
     };
   },

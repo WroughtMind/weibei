@@ -338,6 +338,11 @@
       line-height: 1.68;
     }
 
+    :root[data-weibei-chat-wide="true"] .ProseMirror {
+      font-size: 16px;
+      line-height: 1.8;
+    }
+
     .ProseMirror::selection,
     .ProseMirror ::selection {
       background: var(--selection);
@@ -345,7 +350,10 @@
 
     .ProseMirror h1,
     .ProseMirror h2,
-    .ProseMirror h3 {
+    .ProseMirror h3,
+    .ProseMirror h4,
+    .ProseMirror h5,
+    .ProseMirror h6 {
       letter-spacing: 0;
       line-height: 1.32;
       margin: 1.15em 0 .55em;
@@ -354,14 +362,53 @@
 
     :root[data-weibei-compact-preview="true"] .ProseMirror h1,
     :root[data-weibei-compact-preview="true"] .ProseMirror h2,
-    :root[data-weibei-compact-preview="true"] .ProseMirror h3 {
-      margin: .55em 0 .25em;
+    :root[data-weibei-compact-preview="true"] .ProseMirror h3,
+    :root[data-weibei-compact-preview="true"] .ProseMirror h4,
+    :root[data-weibei-compact-preview="true"] .ProseMirror h5,
+    :root[data-weibei-compact-preview="true"] .ProseMirror h6 {
+      margin: .9em 0 .25em;
     }
 
     .ProseMirror h1 { font-size: 1.85rem; }
     .ProseMirror h2 { font-size: 1.42rem; }
-    .ProseMirror h3 { font-size: 1.16rem; }
-    .ProseMirror p { margin: .55em 0; }
+    .ProseMirror h3 { font-size: 1.22rem; }
+    .ProseMirror h4 { font-size: 1.12em; font-weight: 650; margin: 1em 0 .45em; }
+    .ProseMirror h5 {
+      font-size: .95em;
+      font-weight: 650;
+      letter-spacing: .02em;
+      color: var(--muted);
+      margin: .9em 0 .4em;
+    }
+    .ProseMirror h6 {
+      font-size: .88em;
+      font-weight: 650;
+      letter-spacing: .02em;
+      color: var(--muted);
+      margin: .85em 0 .35em;
+    }
+
+    :root[data-weibei-compact-preview="true"] .ProseMirror h4 {
+      margin: .9em 0 .2em;
+    }
+
+    :root[data-weibei-compact-preview="true"] .ProseMirror h5,
+    :root[data-weibei-compact-preview="true"] .ProseMirror h6 {
+      margin: .9em 0 .18em;
+    }
+
+    .ProseMirror p { margin: .65em 0; }
+
+    :root[data-weibei-compact-preview="true"] .ProseMirror p {
+      margin: .7em 0;
+    }
+
+    /* Read-only chat preview: model output often carries empty paragraphs
+       (esp. around display math) — collapse them so formulas do not float
+       inside a sea of blank lines. Notes editing keeps them visible. */
+    :root[data-weibei-compact-preview="true"] .ProseMirror p:has(> .ProseMirror-trailingBreak:only-child) {
+      display: none;
+    }
 
     :root[data-weibei-theme="inkstone"] .ProseMirror h1,
     :root[data-weibei-theme="stele"] .ProseMirror h1,
@@ -394,7 +441,14 @@
       max-width: 100%;
       height: auto;
       margin: 1.1em 0;
-      border: 1px solid var(--line);
+      border: 0;
+      border-radius: 8px;
+      box-shadow: 0 1px 4px rgba(60, 45, 30, .14);
+    }
+
+    :root[data-weibei-theme="inkstone"] .ProseMirror img,
+    :root[data-weibei-theme="stele"] .ProseMirror img {
+      box-shadow: 0 1px 4px rgba(0, 0, 0, .38);
     }
 
     .ProseMirror ul, .ProseMirror ol {
@@ -405,6 +459,15 @@
     .ProseMirror li {
       margin: .18em 0;
       padding-left: .1em;
+    }
+
+    .ProseMirror ul li::marker,
+    .ProseMirror ol li::marker {
+      color: var(--faint);
+    }
+
+    :root[data-weibei-compact-preview="true"] .ProseMirror li {
+      margin: .26em 0;
     }
 
     .ProseMirror li[data-item-type="task"] {
@@ -445,35 +508,34 @@
 
     .ProseMirror table {
       width: 100%;
-      margin: 1.05em 0;
+      margin: 1.1em 0;
       border-collapse: collapse;
       table-layout: fixed;
       font-size: .96em;
-      background: rgba(251, 245, 234, .52);
-    }
-
-    :root[data-weibei-theme="inkstone"] .ProseMirror table,
-    :root[data-weibei-theme="stele"] .ProseMirror table {
-      background: rgba(255, 255, 255, .02);
+      background: transparent;
     }
 
     .ProseMirror th,
     .ProseMirror td {
-      border: 1px solid var(--line);
-      padding: 7px 9px;
+      border: 0;
+      border-bottom: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
+      padding: .5em .7em;
+      text-align: left;
       vertical-align: top;
     }
 
     .ProseMirror th {
       color: var(--ink);
-      background: rgba(92, 70, 46, .075);
+      background: transparent;
       font-weight: 650;
+      letter-spacing: .01em;
+      border-bottom: 1.5px solid var(--line);
     }
 
     :root[data-weibei-theme="inkstone"] .ProseMirror th,
     :root[data-weibei-theme="stele"] .ProseMirror th {
       color: var(--blue-ink);
-      background: rgba(200, 185, 138, .08);
+      background: transparent;
     }
 
     .ProseMirror td > p,
@@ -484,23 +546,23 @@
 
     .ProseMirror hr {
       border: 0;
-      border-top: 1px solid var(--line);
-      margin: 1.6em 0;
+      border-top: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+      margin: 1.7em 0;
     }
 
     .ProseMirror blockquote {
       margin: 1em 0;
-      padding: .55em .9em;
-      border-left: 3px solid rgba(92, 70, 46, .36);
-      background: rgba(251, 245, 234, .48);
+      padding: .1em 0 .1em 1em;
+      border-left: 3px solid var(--cinnabar-line);
+      background: transparent;
       color: var(--muted);
     }
 
     :root[data-weibei-theme="inkstone"] .ProseMirror blockquote,
     :root[data-weibei-theme="stele"] .ProseMirror blockquote {
-      border-left-color: rgba(166, 54, 43, .55);
-      background: rgba(166, 54, 43, .08);
-      color: #c9bfa5;
+      border-left-color: var(--cinnabar-line);
+      background: transparent;
+      color: var(--muted);
     }
 
     .ProseMirror blockquote.weibei-callout {
@@ -662,19 +724,20 @@
     .ProseMirror code {
       font-family: "SF Mono", Menlo, ui-monospace, monospace;
       background: var(--code);
-      border-radius: 4px;
-      padding: 1px 5px;
-      font-size: .92em;
+      border-radius: 5px;
+      padding: .12em .4em;
+      font-size: .9em;
     }
 
     .ProseMirror pre {
       position: relative;
-      padding: 14px 15px;
-      border: 1px solid var(--line);
+      margin: .95em 0;
+      padding: .95em 1.1em;
+      border: 0;
+      border-radius: 8px;
       background: var(--code-paper);
-      overflow: auto;
+      overflow-x: auto;
       line-height: 1.62;
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .30);
     }
 
     :root[data-weibei-theme="inkstone"] .ProseMirror pre,
@@ -701,6 +764,7 @@
       display: block;
       padding: 0;
       background: transparent;
+      border: 0;
       border-radius: 0;
       font-size: .88em;
       color: var(--ink);
@@ -975,8 +1039,10 @@
       color: transparent;
       font-size: 0;
       line-height: 0;
-      background: rgba(63, 105, 82, .06);
-      border: 1px solid rgba(63, 105, 82, .12);
+      background: transparent;
+      border: 0;
+      text-align: center;
+      margin: .9em 0;
       user-select: none;
     }
 
@@ -988,20 +1054,62 @@
 
     :root[data-weibei-theme="inkstone"] .ProseMirror .math-block,
     :root[data-weibei-theme="stele"] .ProseMirror .math-block {
-      background: rgba(184, 138, 66, .08);
-      border-color: rgba(184, 138, 66, .18);
+      background: transparent;
+      border-color: transparent;
     }
 
     .ProseMirror span[data-type="math_inline"] > .katex,
     .ProseMirror span[data-type="math-inline"] > .katex,
-    .ProseMirror .math-inline > .katex,
+    .ProseMirror .math-inline > .katex {
+      color: rgba(33, 27, 23, .92);
+      /* rem on purpose: the container hides raw LaTeX via font-size: 0,
+         so any em-based size here would collapse to 0. */
+      font-size: 1rem;
+      line-height: 1.2;
+      user-select: text;
+    }
+
     .ProseMirror div[data-type="math_block"] > .katex,
     .ProseMirror div[data-type="math-block"] > .katex,
     .ProseMirror .math-block > .katex {
       color: rgba(33, 27, 23, .92);
-      font-size: 1rem;
-      line-height: 1.2;
+      display: inline-block;
+      font-size: 1.18rem;
+      line-height: 1.5;
       user-select: text;
+    }
+
+    /* displayMode upgrade path: KaTeX wraps in .katex-display (block, centered).
+       rem again — the container hides raw LaTeX via font-size: 0. */
+    .ProseMirror div[data-type="math_block"] > .katex-display,
+    .ProseMirror div[data-type="math-block"] > .katex-display,
+    .ProseMirror .math-block > .katex-display {
+      color: rgba(33, 27, 23, .92);
+      font-size: 1rem;
+      line-height: 1.5;
+      margin: .25em 0;
+      user-select: text;
+    }
+
+    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror div[data-type="math_block"] > .katex-display,
+    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror div[data-type="math-block"] > .katex-display,
+    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror .math-block > .katex-display {
+      font-size: .9rem;
+    }
+
+    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math_block"] > .katex-display,
+    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math_block"] > .katex-display,
+    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math-block"] > .katex-display,
+    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math-block"] > .katex-display,
+    :root[data-weibei-theme="inkstone"] .ProseMirror .math-block > .katex-display,
+    :root[data-weibei-theme="stele"] .ProseMirror .math-block > .katex-display {
+      color: #d7cbb0;
+    }
+
+    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror div[data-type="math_block"] > .katex,
+    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror div[data-type="math-block"] > .katex,
+    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror .math-block > .katex {
+      font-size: 1.05rem;
     }
 
     :root[data-weibei-theme="inkstone"] .ProseMirror span[data-type="math_inline"] > .katex,
@@ -1035,9 +1143,9 @@
     .ProseMirror span[data-type="math_inline"] > :not(.katex),
     .ProseMirror span[data-type="math-inline"] > :not(.katex),
     .ProseMirror .math-inline > :not(.katex),
-    .ProseMirror div[data-type="math_block"] > :not(.katex),
-    .ProseMirror div[data-type="math-block"] > :not(.katex),
-    .ProseMirror .math-block > :not(.katex) {
+    .ProseMirror div[data-type="math_block"] > :not(.katex):not(.katex-display),
+    .ProseMirror div[data-type="math-block"] > :not(.katex):not(.katex-display),
+    .ProseMirror .math-block > :not(.katex):not(.katex-display) {
       display: none !important;
     }
 

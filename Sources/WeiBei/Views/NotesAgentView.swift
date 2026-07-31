@@ -1548,6 +1548,7 @@ struct MarkdownPreviewView: View {
     /// the 24pt bucket — 1pt key changes caused scrollbar/layout jitter to
     /// unfreeze every KaTeX row and spin sizeThatFits at 100% CPU (sample 662).
     var layoutWidthKey: Int = 0
+    var isChatWideTypography = false
     var onWikiLink: (String) -> Void = { _ in }
     var onSourceReference: (String) -> Void = { _ in }
     var onAppShortcut: (String, NSEvent.ModifierFlags) -> Bool = { _, _ in false }
@@ -1563,6 +1564,7 @@ struct MarkdownPreviewView: View {
     @State private var contentHeight: CGFloat = Self.compactPreviewLoadingHeight
     @State private var heightFrozen = false
     @State private var lastLayoutWidthKey = 0
+    @State private var lastChatWideTypography = false
 
     var body: some View {
         RichMarkdownEditorView(
@@ -1573,6 +1575,7 @@ struct MarkdownPreviewView: View {
             appearanceMode: appearanceMode,
             interfaceLanguage: interfaceLanguage,
             isCompactPreview: compact,
+            isChatWideTypography: isChatWideTypography,
             onSelectionChange: onSelectionChange,
             onAskAgentWithSelection: onSelectionChange,
             onContentHeightChange: { height in
@@ -1640,6 +1643,7 @@ struct MarkdownPreviewView: View {
         .frame(height: compact && fitsContentHeight ? max(contentHeight, Self.compactPreviewLoadingHeight) : nil)
         .onAppear {
             lastLayoutWidthKey = layoutWidthKey
+            lastChatWideTypography = isChatWideTypography
             if let seed = seedContentHeight, seed.isFinite, seed > 0 {
                 contentHeight = max(ceil(seed), Self.compactPreviewLoadingHeight)
                 // Keep frozen across LazyVStack recycle. Unfreezing here forced
@@ -1665,6 +1669,11 @@ struct MarkdownPreviewView: View {
             guard previousBucket != nextBucket else { return }
             heightFrozen = false
         }
+        .onChange(of: isChatWideTypography) { _, wideTypography in
+            guard wideTypography != lastChatWideTypography else { return }
+            lastChatWideTypography = wideTypography
+            heightFrozen = false
+        }
         .onChange(of: markdown) { _, _ in
             guard compact && fitsContentHeight else { return }
             heightFrozen = false
@@ -1688,17 +1697,20 @@ private struct AgentRailTurn {
 /// Critical: content width must always fit the measured pane. Never invent a floor larger
 /// than `availableWidth`, or multi-pane text centers as if the strip were full-window wide.
 private enum AgentChatLayoutMetrics {
-    static let compactMaxWidth: CGFloat = 560
-    /// Immersive conversation: Codex-like centered column that still scales with the window.
-    /// Cap keeps line length readable on ultra-wide; floor is handled by usable width.
-    static let wideMaxWidth: CGFloat = 920
+    /// ChatGPT-like fixed comfortable column in every layout: narrow panes fill
+    /// outright, wide windows cap at ChatGPT's measured column (~960pt, 65% of a
+    /// 1470pt window) — user-calibrated against side-by-side screenshots.
+    static let wideMaxWidth: CGFloat = 960
+    /// Content columns at least this wide read with the immersive typography tier,
+    /// regardless of which layout hosts the chat pane.
+    static let wideTypographyMinContentWidth: CGFloat = 620
     static let compactSideGutter: CGFloat = 12
     /// Codex-style: modest side margin; column grows/shrinks with the window.
     static let wideSideGutter: CGFloat = 28
     static let compactComposerHeight: CGFloat = 52
     /// Immersive min height — grows with typed lines; never a giant empty white void.
     static let wideComposerMinHeight: CGFloat = 108
-    static let wideComposerMaxHeight: CGFloat = 220
+    static let wideComposerMaxHeight: CGFloat = 340
     static let compactFontSize: CGFloat = 14.5
     static let wideFontSize: CGFloat = 16
 
@@ -1710,11 +1722,10 @@ private enum AgentChatLayoutMetrics {
     static func contentWidth(availableWidth: CGFloat, wide: Bool) -> CGFloat {
         let gutter = (wide ? wideSideGutter : compactSideGutter) * 2
         let usable = max(availableWidth - gutter, 1)
-        // Wide: track the window, capped for readability (Codex ~720–920pt column).
-        if wide {
-            return min(usable, wideMaxWidth)
-        }
-        return min(usable, compactMaxWidth)
+        // ChatGPT-like in every layout: fill narrow panes outright, cap wide
+        // windows at one fixed readable column. The layout enum no longer picks
+        // a different ceiling — a full-window chat tab reads like immersive.
+        return min(usable, wideMaxWidth)
     }
 
     static func composerHeight(wide: Bool) -> CGFloat {
@@ -1795,6 +1806,8 @@ struct AgentPaneView: View {
             availableWidth: availableWidth,
             wide: wide
         )
+        let comfy = wide
+            || contentWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
         let geometryWidth = availableWidth
         let headerHeight: CGFloat = showsPaneHeader
             ? (availableWidth < 420 ? 44 : 54)
@@ -1824,7 +1837,7 @@ struct AgentPaneView: View {
                         // while dragging the chat scroller and froze the UI (build 664).
                         // Long histories fold behind a reveal button instead — unrendered
                         // rows cost nothing; keep full Markdown rendering for visible ones.
-                        VStack(alignment: .leading, spacing: wide ? 22 : 12) {
+                        VStack(alignment: .leading, spacing: comfy ? 22 : 12) {
                             if hiddenAgentHistoryCount > 0 {
                                 agentHistoryRevealButton(proxy: proxy)
                             }
@@ -2047,6 +2060,10 @@ struct AgentPaneView: View {
         ) {
             AgentBubble(
                 message: message,
+                // Typography follows the real column width, not the layout enum —
+                // a full-window chat tab is not .immersiveConversation but reads wide.
+                isChatWideTypography: wide
+                    || contentWidth >= AgentChatLayoutMetrics.wideTypographyMinContentWidth,
                 openGlobalMemory: {
                     globalMemoryPanelPresented = true
                 }
@@ -2069,13 +2086,10 @@ struct AgentPaneView: View {
     ) -> some View {
         let readingWidth: CGFloat = {
             let paneLimit = max(geometryWidth - (wideLayout ? 32 : 16), 1)
-            if wideLayout {
-                // Rich-answer canvas can use a slightly wider band inside the same axis.
-                let limit = canvasWide ? min(contentWidth + 40, paneLimit) : contentWidth
-                return min(min(contentWidth, limit), paneLimit)
-            }
-            let limit: CGFloat = canvasWide ? 540 : 500
-            // contentWidth already fits the strip; never force a design ceiling wider than the pane.
+            // Both tiers read the full content column. The old non-wide branch
+            // pinned messages at 500pt, so widening compactMaxWidth never reached
+            // the actual bubbles (composer grew, messages did not).
+            let limit = canvasWide ? min(contentWidth + 40, paneLimit) : contentWidth
             return min(min(max(contentWidth, 1), limit), paneLimit)
         }()
         let readingLeadingInset = max((geometryWidth - readingWidth) / 2, 0)
@@ -2290,12 +2304,19 @@ struct AgentPaneView: View {
         agentInputMaxWidth
     }
 
+    /// Composer and rhythm follow the real column width, not the layout enum —
+    /// a full-window chat tab deserves the same roomy composer as immersive.
+    private var usesComfortableChatMetrics: Bool {
+        usesWideChatLayout
+            || (agentInputMaxWidth ?? 0) >= AgentChatLayoutMetrics.wideTypographyMinContentWidth
+    }
+
     private var composerFieldHeight: CGFloat {
-        AgentChatLayoutMetrics.composerHeight(wide: usesWideChatLayout)
+        AgentChatLayoutMetrics.composerHeight(wide: usesComfortableChatMetrics)
     }
 
     private var composerFontSize: CGFloat {
-        AgentChatLayoutMetrics.composerFontSize(wide: usesWideChatLayout)
+        AgentChatLayoutMetrics.composerFontSize(wide: usesComfortableChatMetrics)
     }
 
     private var agentScrollBottomInset: CGFloat {
@@ -3147,6 +3168,7 @@ struct FloatingSelectionAgentView: View {
                     text: text,
                     rendersRichMarkdown: !isUser,
                     compact: true,
+                    isChatWideTypography: false,
                     usesFinalizedKaTeX: !isUser,
                     messageID: messageID
                 )
@@ -3313,6 +3335,7 @@ private struct AgentBubble: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var message: AgentMessage
+    var isChatWideTypography = false
     var openGlobalMemory: () -> Void
     @State private var hovering = false
 
@@ -3435,6 +3458,7 @@ private struct AgentBubble: View {
                 AgentMessageMarkdownText(
                     text: message.text,
                     rendersRichMarkdown: true,
+                    isChatWideTypography: isChatWideTypography,
                     usesFinalizedKaTeX: !isFailureMessage,
                     messageID: message.id,
                     sources: availableSources,
@@ -3448,6 +3472,7 @@ private struct AgentBubble: View {
                 AgentMessageMarkdownText(
                     text: citationParse.displayText,
                     rendersRichMarkdown: true,
+                    isChatWideTypography: isChatWideTypography,
                     usesFinalizedKaTeX: !isFailureMessage,
                     messageID: message.id
                 )
@@ -3550,9 +3575,8 @@ private struct AgentBubble: View {
                         text: AgentCitationParser.parse(text).displayText
                     )
                         .frame(
-                            maxWidth: AgentChatLayoutMetrics.isWide(layout: store.layout)
-                                ? AgentChatLayoutMetrics.wideMaxWidth
-                                : AgentChatLayoutMetrics.compactMaxWidth,
+                            // Same Codex-like column as chat text in every layout.
+                            maxWidth: AgentChatLayoutMetrics.wideMaxWidth,
                             alignment: .leading
                         )
                 }
@@ -3568,9 +3592,8 @@ private struct AgentBubble: View {
                     )
                     .id("rich-answer-\(message.id.uuidString)-\(sceneID)-\(index)")
                     .frame(
-                        maxWidth: AgentChatLayoutMetrics.isWide(layout: store.layout)
-                            ? AgentChatLayoutMetrics.wideMaxWidth
-                            : AgentChatLayoutMetrics.compactMaxWidth,
+                        // Same Codex-like column as chat text in every layout.
+                        maxWidth: AgentChatLayoutMetrics.wideMaxWidth,
                         alignment: .leading
                     )
                 }
@@ -4699,10 +4722,11 @@ private enum AgentFinalizedMarkdownHeightCache {
         values[key] = height
     }
 
-    static func cacheKey(messageID: UUID?, text: String, widthBucket: Int) -> String {
+    static func cacheKey(messageID: UUID?, text: String, widthBucket: Int, wideTypography: Bool) -> String {
         let id = messageID?.uuidString ?? "anon"
         let prefix = text.prefix(64)
-        return "\(id):\(text.count):\(prefix):w\(widthBucket)"
+        let tier = wideTypography ? "wide" : "compact"
+        return "\(id):\(text.count):\(prefix):w\(widthBucket):\(tier)"
     }
 
     static func widthBucket(_ width: CGFloat) -> Int {
@@ -4731,6 +4755,8 @@ private struct AgentMessageMarkdownText: View {
     var rendersRichMarkdown: Bool
     /// Selection-float / narrow surfaces: smaller type, still fills available width.
     var compact: Bool = false
+    /// Immersive conversation typography tier for finalized WebKit markdown.
+    var isChatWideTypography: Bool = false
     /// Completed assistant turns only — never streaming, user, or failure bubbles.
     var usesFinalizedKaTeX: Bool = false
     var messageID: UUID? = nil
@@ -4818,7 +4844,8 @@ private struct AgentMessageMarkdownText: View {
         AgentFinalizedMarkdownHeightCache.cacheKey(
             messageID: messageID,
             text: finalizedMarkdown,
-            widthBucket: layoutWidthBucket
+            widthBucket: layoutWidthBucket,
+            wideTypography: isChatWideTypography
         )
     }
 
@@ -4846,6 +4873,7 @@ private struct AgentMessageMarkdownText: View {
                     freezeHeightAfterMeasure: true,
                     seedContentHeight: cachedFinalizedHeight,
                     layoutWidthKey: layoutWidthBucket,
+                    isChatWideTypography: isChatWideTypography,
                     onWikiLink: { title in store.openOrCreateWikiNote(title: title) },
                     onSourceReference: { reference in
                         if let url = URL(string: reference),
