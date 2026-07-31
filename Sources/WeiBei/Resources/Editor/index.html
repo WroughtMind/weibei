@@ -1079,6 +1079,33 @@
       user-select: text;
     }
 
+    /* displayMode upgrade path: KaTeX wraps in .katex-display (block, centered).
+       rem again — the container hides raw LaTeX via font-size: 0. */
+    .ProseMirror div[data-type="math_block"] > .katex-display,
+    .ProseMirror div[data-type="math-block"] > .katex-display,
+    .ProseMirror .math-block > .katex-display {
+      color: rgba(33, 27, 23, .92);
+      font-size: 1rem;
+      line-height: 1.5;
+      margin: .25em 0;
+      user-select: text;
+    }
+
+    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror div[data-type="math_block"] > .katex-display,
+    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror div[data-type="math-block"] > .katex-display,
+    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror .math-block > .katex-display {
+      font-size: .9rem;
+    }
+
+    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math_block"] > .katex-display,
+    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math_block"] > .katex-display,
+    :root[data-weibei-theme="inkstone"] .ProseMirror div[data-type="math-block"] > .katex-display,
+    :root[data-weibei-theme="stele"] .ProseMirror div[data-type="math-block"] > .katex-display,
+    :root[data-weibei-theme="inkstone"] .ProseMirror .math-block > .katex-display,
+    :root[data-weibei-theme="stele"] .ProseMirror .math-block > .katex-display {
+      color: #d7cbb0;
+    }
+
     :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror div[data-type="math_block"] > .katex,
     :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror div[data-type="math-block"] > .katex,
     :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror .math-block > .katex {
@@ -1116,9 +1143,9 @@
     .ProseMirror span[data-type="math_inline"] > :not(.katex),
     .ProseMirror span[data-type="math-inline"] > :not(.katex),
     .ProseMirror .math-inline > :not(.katex),
-    .ProseMirror div[data-type="math_block"] > :not(.katex),
-    .ProseMirror div[data-type="math-block"] > :not(.katex),
-    .ProseMirror .math-block > :not(.katex) {
+    .ProseMirror div[data-type="math_block"] > :not(.katex):not(.katex-display),
+    .ProseMirror div[data-type="math-block"] > :not(.katex):not(.katex-display),
+    .ProseMirror .math-block > :not(.katex):not(.katex-display) {
       display: none !important;
     }
 

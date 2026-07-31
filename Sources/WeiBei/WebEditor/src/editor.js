@@ -8,6 +8,7 @@ import { liftListItem } from '@milkdown/kit/prose/schema-list';
 import { Decoration, DecorationSet } from '@milkdown/kit/prose/view';
 import { getMarkdown as readMarkdown, insert, replaceAll, replaceRange, $prose } from '@milkdown/kit/utils';
 import { katexOptionsCtx, math } from '@milkdown/plugin-math';
+import katex from 'katex';
 import 'katex/dist/katex.css';
 import mermaid from 'mermaid';
 import Prism from 'prismjs';
@@ -1212,6 +1213,32 @@ const insertImageFiles = async (files) => {
   replaceSelectionInternal(saved.map(markdownImage).join('\n\n'));
 };
 
+// plugin-math renders math_block nodes with inline-mode KaTeX (its shared
+// options cannot enable displayMode without breaking inline math). Re-render
+// block nodes in display mode so fractions, limits and sizing read like real
+// display equations; KaTeX centers them natively via .katex-display.
+const upgradeDisplayMath = () => {
+  window.requestAnimationFrame(() => {
+    document
+      .querySelectorAll('.ProseMirror div[data-type="math_block"], .ProseMirror div[data-type="math-block"]')
+      .forEach((element) => {
+        const value = element.dataset.value || '';
+        if (element.dataset.weibeiDisplayValue === value) return;
+        try {
+          katex.render(value, element, {
+            throwOnError: false,
+            strict: false,
+            trust: false,
+            displayMode: true,
+          });
+          element.dataset.weibeiDisplayValue = value;
+        } catch (error) {
+          // Keep the inline-mode render; annotateMathErrors covers bad input.
+        }
+      });
+  });
+};
+
 const annotateMathErrors = () => {
   window.requestAnimationFrame(() => {
     document.querySelectorAll('.ProseMirror .katex-error').forEach((element) => {
@@ -1284,10 +1311,12 @@ const weiBeiDialectPlugin = $prose(() => new Plugin({
   view(view) {
     scheduleImageResolution(view);
     annotateMathErrors();
+    upgradeDisplayMath();
     return {
       update(updatedView) {
         scheduleImageResolution(updatedView);
         annotateMathErrors();
+        upgradeDisplayMath();
       },
     };
   },
