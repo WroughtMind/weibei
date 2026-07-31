@@ -1805,6 +1805,7 @@ final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
     private let webView = WKWebView(frame: CGRect(x: 0, y: 0, width: 640, height: 480))
     private var isDone = false
     private var failure: String?
+    private var expectedNavigation: WKNavigation?
 
     override init() {
         super.init()
@@ -1839,7 +1840,12 @@ final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
         <p>名义利率与实际利率。</p>
         <img id="relative-image" src="marker.svg" alt="同目录图片">
         """.utf8)
-        webView.load(html, mimeType: "text/html", characterEncodingName: "utf-8", baseURL: fixtureRoot)
+        expectedNavigation = webView.load(
+            html,
+            mimeType: "text/html",
+            characterEncodingName: "utf-8",
+            baseURL: fixtureRoot
+        )
 
         let timeout = Date().addingTimeInterval(5)
         while !isDone && Date() < timeout {
@@ -1850,6 +1856,7 @@ final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        guard navigation === expectedNavigation else { return }
         webView.evaluateJavaScript("""
         (() => {
           const image = document.getElementById('relative-image');
@@ -1869,7 +1876,7 @@ final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
                   !text.contains("旧文稿"),
                   result["color"] as? String == "rgb(12, 34, 56)",
                   result["imageLoaded"] as? Bool == true else {
-                failure = "UTF-8 HTML, stale-navigation cancellation, or same-directory resources failed"
+                failure = "UTF-8 HTML, stale-navigation cancellation, or same-directory resources failed: \(String(describing: value)); error=\(String(describing: error))"
                 isDone = true
                 return
             }
@@ -1878,6 +1885,7 @@ final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        guard navigation === expectedNavigation else { return }
         failure = error.localizedDescription
         isDone = true
     }
@@ -1887,12 +1895,18 @@ final class UTF8HTMLReaderHarness: NSObject, WKNavigationDelegate {
         didFailProvisionalNavigation navigation: WKNavigation!,
         withError error: Error
     ) {
+        guard navigation === expectedNavigation else { return }
         failure = error.localizedDescription
         isDone = true
     }
 }
 
 NSApplication.shared.setActivationPolicy(.prohibited)
+if ProcessInfo.processInfo.environment["WEIBEI_HTML_READER_SELF_CHECK_ONLY"] == "1" {
+    UTF8HTMLReaderHarness().run()
+    print("WeiBei HTML reader check passed")
+    exit(0)
+}
 verifyAgentChatMarkdownSourceContract()
 UTF8HTMLReaderHarness().run()
 EditorHarness().run()
