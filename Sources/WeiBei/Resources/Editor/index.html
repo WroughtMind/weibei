@@ -403,6 +403,13 @@
       margin: .7em 0;
     }
 
+    /* Read-only chat preview: model output often carries empty paragraphs
+       (esp. around display math) — collapse them so formulas do not float
+       inside a sea of blank lines. Notes editing keeps them visible. */
+    :root[data-weibei-compact-preview="true"] .ProseMirror p:has(> .ProseMirror-trailingBreak:only-child) {
+      display: none;
+    }
+
     :root[data-weibei-theme="inkstone"] .ProseMirror h1,
     :root[data-weibei-theme="stele"] .ProseMirror h1,
 
@@ -1032,8 +1039,10 @@
       color: transparent;
       font-size: 0;
       line-height: 0;
-      background: rgba(63, 105, 82, .06);
-      border: 1px solid rgba(63, 105, 82, .12);
+      background: transparent;
+      border: 0;
+      text-align: center;
+      margin: .9em 0;
       user-select: none;
     }
 
@@ -1045,20 +1054,35 @@
 
     :root[data-weibei-theme="inkstone"] .ProseMirror .math-block,
     :root[data-weibei-theme="stele"] .ProseMirror .math-block {
-      background: rgba(184, 138, 66, .08);
-      border-color: rgba(184, 138, 66, .18);
+      background: transparent;
+      border-color: transparent;
     }
 
     .ProseMirror span[data-type="math_inline"] > .katex,
     .ProseMirror span[data-type="math-inline"] > .katex,
-    .ProseMirror .math-inline > .katex,
+    .ProseMirror .math-inline > .katex {
+      color: rgba(33, 27, 23, .92);
+      /* rem on purpose: the container hides raw LaTeX via font-size: 0,
+         so any em-based size here would collapse to 0. */
+      font-size: 1rem;
+      line-height: 1.2;
+      user-select: text;
+    }
+
     .ProseMirror div[data-type="math_block"] > .katex,
     .ProseMirror div[data-type="math-block"] > .katex,
     .ProseMirror .math-block > .katex {
       color: rgba(33, 27, 23, .92);
-      font-size: 1rem;
-      line-height: 1.2;
+      display: inline-block;
+      font-size: 1.18rem;
+      line-height: 1.5;
       user-select: text;
+    }
+
+    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror div[data-type="math_block"] > .katex,
+    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror div[data-type="math-block"] > .katex,
+    :root[data-weibei-compact-preview="true"]:not([data-weibei-chat-wide="true"]) .ProseMirror .math-block > .katex {
+      font-size: 1.05rem;
     }
 
     :root[data-weibei-theme="inkstone"] .ProseMirror span[data-type="math_inline"] > .katex,

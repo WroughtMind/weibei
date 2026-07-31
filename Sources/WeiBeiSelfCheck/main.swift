@@ -975,6 +975,8 @@ expect(
     editorIndexSource.contains(".ProseMirror .math-inline {\n      color: transparent")
         && editorIndexSource.contains("font-size: 0;")
         && editorIndexSource.contains("font-size: 1rem;")
+        && editorIndexSource.contains("font-size: 1.18rem;")
+        && editorIndexSource.contains("text-align: center;")
         && editorIndexSource.contains(".ProseMirror .katex-error {\n      color: var(--cinnabar)"),
     "math styling collapses raw source while keeping KaTeX and errors readable"
 )
