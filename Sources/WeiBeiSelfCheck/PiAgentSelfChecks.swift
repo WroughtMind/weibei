@@ -1160,12 +1160,8 @@ private func checkBundledAgentResources() throws {
             && !runtimeSource.contains("Always take home OAuth entries")
             && !runtimeSource.contains("PI returned a content answer without a current-turn source citation")
             && runtimeSource.contains("binary.sha256")
-            && runtimeSource.contains("usesNodeRuntime")
-            && runtimeSource.contains("node/bin/node")
-            && runtimeSource.contains("resolveLaunch")
-            && runtimeSource.contains("argumentPrefix")
             && runtimeSource.contains("SecStaticCodeCheckValidity"),
-        "PI host preserves ordinary text answers while isolating rejected actions and validating Node runtime integrity and code signatures"
+        "PI host preserves ordinary text answers while isolating rejected actions and validating binary integrity and code signatures"
     )
 }
 

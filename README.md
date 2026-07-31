@@ -84,7 +84,7 @@ For long or scanned PDFs, WeiBei extracts text in a resource-bounded helper proc
 
 - macOS 14 or later
 - Xcode Command Line Tools with Swift 5.9 support
-- Internet access on the first build to download and verify the pinned Node.js binary and Pi npm package
+- Internet access on the first build to download and verify the pinned Pi runtime
 - A configured supported model provider for live Agent responses
 - Node.js only when rebuilding the Milkdown web editor source
 

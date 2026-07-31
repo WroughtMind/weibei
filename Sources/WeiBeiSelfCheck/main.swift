@@ -756,22 +756,17 @@ let readmeSourceURL = URL(fileURLWithPath: FileManager.default.currentDirectoryP
     .appendingPathComponent("README.md")
 let readmeSource = (try? String(contentsOf: readmeSourceURL, encoding: .utf8)) ?? ""
 
-// F0: community and notarized packages both require recorded Pi/Node redistribution review.
+// F0: community and notarized packages both require recorded Pi/Bun redistribution review.
 let piReviewGateMarker = "if [[ \"${WEIBEI_PI_REDISTRIBUTION_REVIEWED:-}\" != \"1\" ]]; then"
 let piReviewGateIndex = releaseScript.range(of: piReviewGateMarker)?.lowerBound
 let notarizedModeIndex = releaseScript.range(of: "if [[ \"$MODE\" == \"notarized\" ]]; then")?.lowerBound
 expect(releaseScript.contains(piReviewGateMarker)
-    && releaseScript.contains("release failed: Pi/Node redistribution review is not recorded")
+    && releaseScript.contains("release failed: Pi/Bun redistribution review is not recorded")
     && releaseScript.components(separatedBy: "WEIBEI_PI_REDISTRIBUTION_REVIEWED").count == 2
     && piReviewGateIndex != nil
     && notarizedModeIndex != nil
     && piReviewGateIndex! < notarizedModeIndex!,
-    "release packaging requires Pi/Node redistribution review for community and notarized packages")
-expect(runScript.contains("node/bin/node")
-    && runScript.contains("ditto --norsrc --noextattr \"$PI_RUNTIME_DIR\" \"$PACKAGED_PI_ROOT\"")
-    && releaseScript.contains("PI_NODE=")
-    && releaseScript.contains("node/bin/node"),
-    "packaging embeds the Node-based Pi runtime tree and signs the Node binary")
+    "release packaging requires Pi/Bun redistribution review for community and notarized packages")
 
 // F0: isolation-only candidate update manifest entry.
 expect(appBuildInfoSource.contains("candidateManifestURLEnvironmentKey = \"WEIBEI_UPDATE_MANIFEST_URL\"")
@@ -832,15 +827,14 @@ expect(runScript.contains("${PRODUCT_NAME}_WeiBeiCore.bundle")
     && !runScript.contains("cp -R \"$resource_bundle\" \"$APP_BUNDLE/\""), "packaging places both Swift resource bundles once in the signed app Resources directory")
 expect(runScript.contains("prepare_pi_runtime.sh")
     && runScript.contains("PiRuntime/bin/pi")
-    && runScript.contains("node/bin/node")
     && runScript.contains("binary.sha256")
     && runScript.contains("pi_reports_expected_version")
     && runScript.contains("for attempt in {1..10}")
-    && runScript.contains("codesign --force --sign - --timestamp=none \"$PACKAGED_NODE\"")
+    && runScript.contains("codesign --force --sign - --timestamp=none \"$PACKAGED_PI\"")
     && runScript.contains("cmp -s \"$BUILD_BINARY\" \"$APP_BINARY\"")
     && runScript.contains("PACKAGED_UUID=")
     && runScript.contains("signed app binary UUID does not match the current Swift build")
-    && runScript.contains("codesign --verify --deep --strict \"$APP_BUNDLE\""), "packaging embeds and integrity-checks the signed Node-based PI runtime inside the app")
+    && runScript.contains("codesign --verify --deep --strict \"$APP_BUNDLE\""), "packaging embeds and integrity-checks the signed PI runtime inside the app")
 expect(runScript.contains("PDF_TEXT_WORKER_NAME=\"WeiBeiPDFTextWorker\"")
     && runScript.contains("cp \"$BUILD_PDF_TEXT_WORKER\" \"$PDF_TEXT_WORKER\"")
     && runScript.contains("cmp -s \"$BUILD_PDF_TEXT_WORKER\" \"$PDF_TEXT_WORKER\"")

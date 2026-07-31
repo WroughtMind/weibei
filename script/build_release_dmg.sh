@@ -33,8 +33,7 @@ APP_NAME="魏碑.app"
 BASE_APP="$ROOT_DIR/dist/$APP_NAME"
 RELEASE_DIR="$ROOT_DIR/dist/release"
 RELEASE_APP="$RELEASE_DIR/$APP_NAME"
-PI_LAUNCHER="$RELEASE_APP/Contents/Resources/PiRuntime/bin/pi"
-PI_NODE="$RELEASE_APP/Contents/Resources/PiRuntime/node/bin/node"
+PI_EXECUTABLE="$RELEASE_APP/Contents/Resources/PiRuntime/bin/pi"
 PI_HASH="$RELEASE_APP/Contents/Resources/PiRuntime/binary.sha256"
 PDF_HELPER="$RELEASE_APP/Contents/Helpers/WeiBeiPDFTextWorker"
 BACKGROUND="$ROOT_DIR/DesignSystem/assets/dmg/dmg-background.png"
@@ -60,10 +59,10 @@ if [[ "$PACKAGE_VERSION" != "$APP_VERSION" ]]; then
   echo "release failed: package.json version $PACKAGE_VERSION does not match VERSION $APP_VERSION" >&2
   exit 16
 fi
-# Community and notarized packages both redistribute the bundled Node + Pi npm runtime.
-# Recorded redistribution review is still required before either release route packages.
+# Community and notarized packages both redistribute the bundled Pi/Bun runtime.
+# G0.4 review must be recorded before either release route can package.
 if [[ "${WEIBEI_PI_REDISTRIBUTION_REVIEWED:-}" != "1" ]]; then
-  echo "release failed: Pi/Node redistribution review is not recorded" >&2
+  echo "release failed: Pi/Bun redistribution review is not recorded" >&2
   exit 11
 fi
 if [[ -n "$(git -C "$ROOT_DIR" status --porcelain=v1 --untracked-files=normal)" ]]; then
@@ -131,26 +130,26 @@ rm -rf "$RELEASE_APP"
 /usr/bin/ditto --norsrc --noextattr "$BASE_APP" "$RELEASE_APP"
 /usr/bin/xattr -cr "$RELEASE_APP"
 
-if [[ ! -x "$PI_LAUNCHER" || ! -x "$PI_NODE" || ! -x "$PDF_HELPER" || ! -f "$PI_ENTITLEMENTS" ]]; then
+if [[ ! -x "$PI_EXECUTABLE" || ! -x "$PDF_HELPER" || ! -f "$PI_ENTITLEMENTS" ]]; then
   echo "release failed: packaged executables or Pi entitlements are missing" >&2
   exit 12
 fi
 
 /usr/bin/codesign --force --options runtime "${TIMESTAMP_ARGUMENT[@]}" \
-  --entitlements "$PI_ENTITLEMENTS" --sign "$SIGN_IDENTITY" "$PI_NODE"
-/usr/bin/shasum -a 256 "$PI_NODE" | /usr/bin/awk '{print $1}' | /usr/bin/tee "$PI_HASH" >/dev/null
+  --entitlements "$PI_ENTITLEMENTS" --sign "$SIGN_IDENTITY" "$PI_EXECUTABLE"
+/usr/bin/shasum -a 256 "$PI_EXECUTABLE" | /usr/bin/awk '{print $1}' | /usr/bin/tee "$PI_HASH" >/dev/null
 /usr/bin/codesign --force --options runtime "${TIMESTAMP_ARGUMENT[@]}" \
   --sign "$SIGN_IDENTITY" "$PDF_HELPER"
 /usr/bin/codesign --force --options runtime "${TIMESTAMP_ARGUMENT[@]}" \
   --sign "$SIGN_IDENTITY" "$RELEASE_APP"
 
-/usr/bin/codesign --verify --strict --verbose=2 "$PI_NODE"
+/usr/bin/codesign --verify --strict --verbose=2 "$PI_EXECUTABLE"
 /usr/bin/codesign --verify --strict --verbose=2 "$PDF_HELPER"
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$RELEASE_APP"
 "$ROOT_DIR/script/verify_release_metadata.sh" --require-clean "$RELEASE_APP"
 
 BUILD_DIR="$(swift build -c release --show-bin-path)"
-WEIBEI_PI_EXECUTABLE="$PI_LAUNCHER" \
+WEIBEI_PI_EXECUTABLE="$PI_EXECUTABLE" \
 WEIBEI_PI_APP_BUNDLE="$RELEASE_APP" \
 WEIBEI_PI_LIVE_CHECK=0 \
   "$BUILD_DIR/WeiBeiPiCheck"
@@ -208,7 +207,6 @@ fi
 /usr/bin/codesign --verify --deep --strict "$MOUNT_DIR/$APP_NAME"
 MOUNTED_APP_BINARY="$MOUNT_DIR/$APP_NAME/Contents/MacOS/WeiBei"
 MOUNTED_PI="$MOUNT_DIR/$APP_NAME/Contents/Resources/PiRuntime/bin/pi"
-MOUNTED_NODE="$MOUNT_DIR/$APP_NAME/Contents/Resources/PiRuntime/node/bin/node"
 MOUNTED_PI_HASH="$MOUNT_DIR/$APP_NAME/Contents/Resources/PiRuntime/binary.sha256"
 if ! /usr/bin/cmp -s \
   "$RELEASE_APP/Contents/MacOS/WeiBei" \
@@ -216,8 +214,7 @@ if ! /usr/bin/cmp -s \
   echo "release failed: mounted DMG app differs from the release app" >&2
   exit 15
 fi
-if [[ ! -x "$MOUNTED_NODE" ]] \
-  || [[ "$(/usr/bin/shasum -a 256 "$MOUNTED_NODE" | /usr/bin/awk '{print $1}')" != "$(<"$MOUNTED_PI_HASH")" ]] \
+if [[ "$(/usr/bin/shasum -a 256 "$MOUNTED_PI" | /usr/bin/awk '{print $1}')" != "$(<"$MOUNTED_PI_HASH")" ]] \
   || [[ "$("$MOUNTED_PI" --version 2>/dev/null)" != "$(/usr/bin/plutil -extract piVersion raw -o - "$MOUNT_DIR/$APP_NAME/Contents/Resources/PiRuntime/manifest.json")" ]]; then
   echo "release failed: mounted DMG Pi runtime failed its hash or version check" >&2
   exit 17

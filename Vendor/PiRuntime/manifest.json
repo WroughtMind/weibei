@@ -1,24 +1,17 @@
 {
-  "schemaVersion": 2,
-  "runtimeKind": "node",
+  "schemaVersion": 1,
   "piVersion": "0.82.1",
-  "npmPackage": "@earendil-works/pi-coding-agent",
   "sourceRepository": "https://github.com/earendil-works/pi",
   "sourceCommit": "b4f293684bba718d59cc1157679bcf6157b3a7f5",
   "license": "MIT",
-  "node": {
-    "version": "22.19.0",
-    "artifacts": {
-      "darwin-arm64": {
-        "archive": "node-v22.19.0-darwin-arm64.tar.gz",
-        "sha256": "c59006db713c770d6ec63ae16cb3edc11f49ee093b5c415d667bb4f436c6526d",
-        "url": "https://nodejs.org/dist/v22.19.0/node-v22.19.0-darwin-arm64.tar.gz"
-      },
-      "darwin-x64": {
-        "archive": "node-v22.19.0-darwin-x64.tar.gz",
-        "sha256": "3cfed4795cd97277559763c5f56e711852d2cc2420bda1cea30c8aa9ac77ce0c",
-        "url": "https://nodejs.org/dist/v22.19.0/node-v22.19.0-darwin-x64.tar.gz"
-      }
+  "artifacts": {
+    "darwin-arm64": {
+      "archive": "pi-darwin-arm64.tar.gz",
+      "sha256": "ca5b660ee0dbf2b4169f69753cf60f4e0edddff4a49427cdd34660e41280249f"
+    },
+    "darwin-x64": {
+      "archive": "pi-darwin-x64.tar.gz",
+      "sha256": "a28cd67f9397a5ad99f9387713bf1c134b747d4b6cb25e00db4f7d009ee9f8c2"
     }
   }
 }
