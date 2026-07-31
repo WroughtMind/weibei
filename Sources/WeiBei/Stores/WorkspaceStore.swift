@@ -22119,24 +22119,35 @@ final class WorkspaceStore: ObservableObject {
             if updatesVisibleChat {
                 agentActivityText = ui("正在思考", "Thinking")
             }
-        case let .usingTool(name):
+        case let .usingTool(name, detail):
             guard updatesVisibleChat else { return }
+            let base: String
             switch name {
             case "weibei_context":
-                agentActivityText = ui("正在核对材料与笔记", "Checking material and notes")
-            case "weibei_course_map", "weibei_course_search", "weibei_course_read",
-                 "ls", "find", "grep", "read":
-                agentActivityText = ui("正在查找课程关联", "Finding course connections")
+                base = ui("正在核对材料与笔记", "Checking material and notes")
+            case "weibei_course_search", "grep", "find":
+                base = ui("正在搜索", "Searching")
+            case "weibei_course_read", "read":
+                base = ui("正在读取", "Reading")
+            case "weibei_course_map", "ls":
+                base = ui("正在查找课程关联", "Finding course connections")
             case "weibei_learning_memory":
-                agentActivityText = ui("正在回顾学习记忆", "Reviewing learning memory")
+                base = ui("正在回顾学习记忆", "Reviewing learning memory")
             case "weibei_learning_update":
-                agentActivityText = ui("正在整理学习进展", "Updating study progress")
+                base = ui("正在整理学习进展", "Updating study progress")
             case "weibei_note_proposal":
-                agentActivityText = ui("正在整理写入建议", "Preparing a note proposal")
+                base = ui("正在整理写入建议", "Preparing a note proposal")
             case "weibei_rich_answer":
-                agentActivityText = ui("正在组织富回答", "Building a rich answer")
+                base = ui("正在组织富回答", "Building a rich answer")
             default:
-                agentActivityText = ui("正在处理", "Working")
+                base = ui("正在处理", "Working")
+            }
+            // Surface what the agent is actually touching, ChatGPT-style:
+            // "正在搜索：泰勒展开" / "正在读取：导数.md".
+            if let detail, !detail.isEmpty {
+                agentActivityText = base + ui("：", ": ") + detail
+            } else {
+                agentActivityText = base
             }
         case let .text(text):
             if updatesVisibleChat {
