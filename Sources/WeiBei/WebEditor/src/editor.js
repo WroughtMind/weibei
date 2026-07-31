@@ -1218,25 +1218,27 @@ const insertImageFiles = async (files) => {
 // block nodes in display mode so fractions, limits and sizing read like real
 // display equations; KaTeX centers them natively via .katex-display.
 const upgradeDisplayMath = () => {
-  window.requestAnimationFrame(() => {
-    document
-      .querySelectorAll('.ProseMirror div[data-type="math_block"], .ProseMirror div[data-type="math-block"]')
-      .forEach((element) => {
-        const value = element.dataset.value || '';
-        if (element.dataset.weibeiDisplayValue === value) return;
-        try {
-          katex.render(value, element, {
-            throwOnError: false,
-            strict: false,
-            trust: false,
-            displayMode: true,
-          });
-          element.dataset.weibeiDisplayValue = value;
-        } catch (error) {
-          // Keep the inline-mode render; annotateMathErrors covers bad input.
-        }
-      });
-  });
+  // Synchronous on purpose: requestAnimationFrame never fires in occluded or
+  // offscreen WKWebViews (chat previews measure while hidden), which left
+  // block math stuck in inline mode. The dialect plugin already calls this
+  // after ProseMirror has flushed the DOM.
+  document
+    .querySelectorAll('.ProseMirror div[data-type="math_block"], .ProseMirror div[data-type="math-block"]')
+    .forEach((element) => {
+      const value = element.dataset.value || '';
+      if (element.dataset.weibeiDisplayValue === value) return;
+      try {
+        katex.render(value, element, {
+          throwOnError: false,
+          strict: false,
+          trust: false,
+          displayMode: true,
+        });
+        element.dataset.weibeiDisplayValue = value;
+      } catch (error) {
+        // Keep the inline-mode render; annotateMathErrors covers bad input.
+      }
+    });
 };
 
 const annotateMathErrors = () => {
