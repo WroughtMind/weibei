@@ -2137,7 +2137,8 @@ struct WebReaderRepresentable: NSViewRepresentable {
         } else if let html {
             let signature = "html:\(html.hashValue)"
             if context.coordinator.loadedSignature != signature {
-                context.coordinator.htmlLoadTask?.cancel()
+                view.stopLoading()
+                context.coordinator.cancelHTMLLoad()
                 context.coordinator.loadedSignature = signature
                 context.coordinator.lastAppliedSelectionAskMarks = ""
                 view.loadHTMLString(html, baseURL: nil)
@@ -2151,7 +2152,7 @@ struct WebReaderRepresentable: NSViewRepresentable {
 
     static func dismantleNSView(_ view: WKWebView, coordinator: Coordinator) {
         PaneToggleContinuityVerifier.recordWebReaderDismantle()
-        coordinator.htmlLoadTask?.cancel()
+        coordinator.cancelHTMLLoad()
         coordinator.removeVerificationScrollObserver()
         unbindScriptMessages(in: view)
         view.navigationDelegate = nil
@@ -2668,7 +2669,9 @@ struct WebReaderRepresentable: NSViewRepresentable {
         var appearanceMode: WeiBeiAppearanceMode = .paper
         var adaptsDocumentColors = true
         var selectionAskMarks = "[]"
+        var htmlReadTask: Task<Data?, Never>?
         var htmlLoadTask: Task<Void, Never>?
+        var htmlLoadRequestID: UUID?
         private var lastAppliedSearchQuery = ""
         var lastAppliedSelectionAskMarks = ""
         private var lastAppliedContentRailTargetRequestID: UUID?
@@ -2697,17 +2700,31 @@ struct WebReaderRepresentable: NSViewRepresentable {
 
         @MainActor
         func loadUTF8HTML(at url: URL, signature: String, into view: WKWebView) {
-            htmlLoadTask?.cancel()
+            view.stopLoading()
+            cancelHTMLLoad()
+            let requestID = UUID()
+            htmlLoadRequestID = requestID
+            let readTask = Task.detached(priority: .userInitiated) { () -> Data? in
+                guard !Task.isCancelled else { return nil }
+                guard let data = try? Data(contentsOf: url) else { return nil }
+                return Task.isCancelled ? nil : data
+            }
+            htmlReadTask = readTask
             htmlLoadTask = Task { @MainActor [weak self, weak view] in
-                let data = await Task.detached(priority: .userInitiated) {
-                    try? Data(contentsOf: url, options: .mappedIfSafe)
-                }.value
+                let data = await readTask.value
                 guard !Task.isCancelled,
                       let self,
                       let view,
                       webView === view,
+                      htmlLoadRequestID == requestID,
                       loadedSignature == signature else { return }
-                defer { htmlLoadTask = nil }
+                defer {
+                    if htmlLoadRequestID == requestID {
+                        htmlReadTask = nil
+                        htmlLoadTask = nil
+                        htmlLoadRequestID = nil
+                    }
+                }
                 guard let data else {
                     view.loadFileURL(url, allowingReadAccessTo: url.deletingLastPathComponent())
                     return
@@ -2719,6 +2736,14 @@ struct WebReaderRepresentable: NSViewRepresentable {
                     baseURL: url.deletingLastPathComponent()
                 )
             }
+        }
+
+        func cancelHTMLLoad() {
+            htmlReadTask?.cancel()
+            htmlLoadTask?.cancel()
+            htmlReadTask = nil
+            htmlLoadTask = nil
+            htmlLoadRequestID = nil
         }
 
         func applySelectionAskMarksIfNeeded() {
