@@ -164,6 +164,12 @@ struct CourseHubView: View {
             await refreshSearch(for: searchTaskID)
         }
         .onAppear(perform: ensureMaterialSelection)
+        .onAppear {
+            guard WeiBeiPerf.isEnabled else { return }
+            DispatchQueue.main.async {
+                store.finishCourseHomePerformanceNavigation()
+            }
+        }
         .onChange(of: courseID) { _, _ in
             showsAllContent = false
             courseQuestion = ""
@@ -795,6 +801,7 @@ struct CourseHubView: View {
             return
         }
 
+        let span = WeiBeiPerf.begin("course.search_to_next_main_queue_proxy")
         isSearching = true
         let outcome = await store.searchCourseHome(
             courseID: courseID,
@@ -803,11 +810,30 @@ struct CourseHubView: View {
         guard !Task.isCancelled,
               request == searchTaskID,
               store.courseWorkspaceCourseID == courseID else {
+            WeiBeiPerf.end(span, extra: "outcome=superseded")
             return
         }
         searchResults = outcome.results
         searchAvailability = outcome.availability
         isSearching = false
+        guard let span else { return }
+        let inputMode =
+            ProcessInfo.processInfo.environment[
+                "WEIBEI_PERF_SEARCH_UI_REPETITIONS"
+            ] == nil
+                ? "manual_ui"
+                : "verification_ui_state"
+        await withCheckedContinuation {
+            (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.main.async {
+                WeiBeiPerf.end(
+                    span,
+                    extra:
+                        "outcome=completed endpoint=next_main_queue_proxy input=\(inputMode) results=\(outcome.results.count)"
+                )
+                continuation.resume()
+            }
+        }
     }
 
     private func open(_ entry: CourseHomeEntry) {

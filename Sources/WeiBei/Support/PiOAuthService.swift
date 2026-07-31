@@ -198,6 +198,11 @@ final class PiOAuthService: ObservableObject {
     }
 
     private static func resolveNodeExecutable() -> URL? {
+        let span = WeiBeiPerf.begin("oauth.node_probe")
+        var outcome = "not_found"
+        defer {
+            WeiBeiPerf.end(span, extra: "outcome=\(outcome)")
+        }
         let candidates = [
             "/usr/local/bin/node",
             "/opt/homebrew/bin/node",
@@ -213,11 +218,13 @@ final class PiOAuthService: ObservableObject {
                             .appendingPathComponent(version)
                             .appendingPathComponent("bin/node")
                         if FileManager.default.isExecutableFile(atPath: node.path) {
+                            outcome = "found"
                             return node
                         }
                     }
                 }
             } else if FileManager.default.isExecutableFile(atPath: path) {
+                outcome = "found"
                 return URL(fileURLWithPath: path)
             }
         }
@@ -234,6 +241,7 @@ final class PiOAuthService: ObservableObject {
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !path.isEmpty,
            FileManager.default.isExecutableFile(atPath: path) {
+            outcome = "found"
             return URL(fileURLWithPath: path)
         }
         return nil

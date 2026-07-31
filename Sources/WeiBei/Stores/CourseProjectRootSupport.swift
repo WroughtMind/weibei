@@ -571,11 +571,46 @@ actor CourseProjectFileWorker {
             )
         }
         do {
-            let data = try JSONEncoder().encode(workspace)
-            try data.write(to: request.storageURL, options: [.atomic])
-            let verified = try Data(contentsOf: request.storageURL)
-            guard verified == data else {
-                throw CourseProjectFileWorkerError.verificationFailed
+            let encodeSpan = WeiBeiPerf.begin(
+                "workspace.save_encode"
+            )
+            let data: Data
+            do {
+                data = try JSONEncoder().encode(workspace)
+                WeiBeiPerf.end(
+                    encodeSpan,
+                    extra:
+                        "outcome=completed generation=\(request.generation)"
+                )
+            } catch {
+                WeiBeiPerf.end(
+                    encodeSpan,
+                    extra:
+                        "outcome=failed generation=\(request.generation)"
+                )
+                throw error
+            }
+            let diskSpan = WeiBeiPerf.begin(
+                "workspace.save_disk_commit_and_verify"
+            )
+            do {
+                try data.write(to: request.storageURL, options: [.atomic])
+                let verified = try Data(contentsOf: request.storageURL)
+                guard verified == data else {
+                    throw CourseProjectFileWorkerError.verificationFailed
+                }
+                WeiBeiPerf.end(
+                    diskSpan,
+                    extra:
+                        "outcome=completed generation=\(request.generation)"
+                )
+            } catch {
+                WeiBeiPerf.end(
+                    diskSpan,
+                    extra:
+                        "outcome=failed generation=\(request.generation)"
+                )
+                throw error
             }
         } catch {
             let rollbackFailed = Self.rollbackPortableWrites(committedWrites)
